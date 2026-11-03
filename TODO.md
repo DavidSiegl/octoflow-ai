@@ -110,18 +110,6 @@ is rewritten to say what is left.
   Raised by cross-review 114 (F9, nit, 2026-11-03): "`indexmap::IndexMap` is already in the build through
   `preserve_order`." Using it needs `indexmap` as a dependency of the engine's own, which the user approves; closes
   with that approval and `Map` replaced by `IndexMap`, or with the user's ruling that `Map` stays.
-- **serve's event stream can miss a finished run's last files.** `end_done_run` (`workflow.rs`) saves state.json
-  with the owner cleared, which makes the run finished, before it writes summary.md and metrics.json, and `release`
-  saves before summary.md likewise; `RunWatch::changes` (`serve/runs.rs`) reads a finished run's files again only
-  when its record changes. A poll that lands between the save and the writes keeps a file list without them for
-  good, so the desktop app never shows them. The e2e scenario `serve_endpoints_and_events` fails when it does:
-  PR-213's pr-head build, whose final checkpoint lacked metrics.json, where the branch build of the same commit
-  passed (2026-10-30). Again in PR-243 build #1 (head 25b87c0, 2026-11-03): the final checkpoint's fourth file
-  was review-1.md where the recording has metrics.json, while the branch build of the same commit
-  (octoflow-without-python-04 #1, ticket octoflow-without-python/04's branch) and PR-243 build #2 passed. Closes
-  with the files written before the save that finishes the run, or with the watch re-reading a finished run's files
-  until they stop changing.
-  Ticket: `.scratch/serve-run-files/issues/01-finished-run-files-reread.md` (#230).
 - **The desktop app ships its npm packages' code without their licenses.** `octoflow-third-party-licenses.html`
   (`packaging/about.toml`) lists the Rust crates only, as cargo-about reads Cargo's graph; the app's web view bundles
   `ui/package.json`'s runtime dependencies, React, react-markdown, remark-gfm and @tauri-apps/api with what they pull

@@ -217,10 +217,24 @@ impl Event {
 pub struct RunWatch<'p> {
     /// The project whose runs the stream tells of.
     project: &'p ProjectRuns,
-    /// By run id, the run's record without AGING_RECORD_KEYS and its files, as last sent.
-    sent: BTreeMap<String, (Object, Value)>,
+    /// By run id, what the stream last told of the run.
+    sent: BTreeMap<String, Sent>,
     /// The error the last problem event reported; None when there was none, or it cleared.
     problem: Option<String>,
+}
+
+/// What an event stream last told of one run.
+struct Sent {
+    /// The run's record without AGING_RECORD_KEYS.
+    key: Object,
+    /// The run's files, as last listed.
+    files: Value,
+    /// True when the last poll listed the files and got the same list as the poll before it, under the same record.
+    /// For a finished run that is taken to mean the engine is done writing its files: the ones it writes after the
+    /// save that finishes the run (end_done_run's and release's summary.md and metrics.json) follow that save by a few
+    /// host commands. Two polls one interval (SERVE_POLL) apart can both miss them only when those commands take
+    /// longer than the interval; then the stream tells of the files only at the record's next change.
+    files_settled: bool,
 }
 
 impl<'p> RunWatch<'p> {
@@ -237,9 +251,11 @@ impl<'p> RunWatch<'p> {
     ///   run's record event, if it has one.
     /// - problem, {"error"}: the project could not be read, and why; error is null once it can be again. First.
     ///
-    /// The first poll sends every run's record and files. A finished or failed run's files are read again only when
-    /// its record changes: nothing drives it. A poll that fails sends only its problem, and changes nothing else of
-    /// what the watch holds.
+    /// The first poll sends every run's record and files. A running run's files are listed on every poll. A finished
+    /// or failed run's are listed until two polls in a row with the same record list the same files, as the engine
+    /// writes summary.md and metrics.json after the save that finishes the run; then again only when its record
+    /// changes, as nothing else drives it. A poll that fails sends only its problem, and changes nothing else of what
+    /// the watch holds.
     pub fn poll(&mut self) -> Vec<Event> {
         match self.changes() {
             Ok(events) => self.problem_events(None).into_iter().chain(events).collect(),
@@ -259,19 +275,23 @@ impl<'p> RunWatch<'p> {
                 key.remove(aging);
             }
             let old = self.sent.get(&run_id);
-            let same_record = old.is_some_and(|(old_key, _)| *old_key == key);
+            let same_record = old.is_some_and(|old| old.key == key);
             let finished = record.get("health").is_none_or(Value::is_null);
-            let files = match old {
-                Some((_, old_files)) if same_record && finished => old_files.clone(),
-                _ => self.project.files(&run_id)?,
+            let (files, files_settled) = match old {
+                Some(old) if same_record && finished && old.files_settled => (old.files.clone(), true),
+                _ => {
+                    let files = self.project.files(&run_id)?;
+                    let settled = same_record && old.is_some_and(|old| old.files == files);
+                    (files, settled)
+                }
             };
             if !same_record {
                 events.push(Event::new("record", [("run", id.clone()), ("record", Value::Object(record))]));
             }
-            if old.is_none_or(|(_, old_files)| *old_files != files) {
+            if old.is_none_or(|old| old.files != files) {
                 events.push(Event::new("files", [("run", id), ("files", files.clone())]));
             }
-            sent.insert(run_id, (key, files));
+            sent.insert(run_id, Sent { key, files, files_settled });
         }
         for gone in self.sent.keys().filter(|id| !sent.contains_key(*id)) {
             events.push(Event::new("record", [("run", Value::from(gone.as_str())), ("record", Value::Null)]));

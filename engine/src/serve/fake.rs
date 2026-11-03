@@ -34,6 +34,8 @@ pub struct Files {
     pub run_states_error: Option<String>,
     /// How many times run_states was called: a poll of the project each.
     pub run_states_calls: usize,
+    /// How many times run_files was called: one listing of a run's directory each.
+    pub run_files_calls: usize,
 }
 
 impl ServeHost {
@@ -80,7 +82,8 @@ impl Host for ServeHost {
     }
 
     fn run_files(&self, run_dir: &str) -> Result<Vec<RunFile>, OrchestratorError> {
-        let s = self.state();
+        let mut s = self.state();
+        s.run_files_calls += 1;
         let mut files: Vec<(i64, String)> = s
             .files
             .keys()
