@@ -47,20 +47,16 @@ fn bad_files_are_refused_naming_them() {
         (
             "BUILD_PROMPT.md",
             b"Build {spec_path} in {cwd} {nope}; report to {build_path}.",
-            "placeholder {nope} is not one of the built-in text's; BUILD_PROMPT takes {build_path}, {cwd}, {spec_path}",
+            "placeholder {nope} at line 1, column 28 is not one this template takes; BUILD_PROMPT takes {build_path}, {cwd}, {spec_path}",
         ),
         (
             "BUILD_PROMPT.md",
             b"Build {spec_path} in {cwd}.",
             "placeholder {build_path} is missing; BUILD_PROMPT takes {build_path}, {cwd}, {spec_path}",
         ),
-        ("BLOCKED_NOTE.md", b"Ask {}.", "placeholder {} is not one of the built-in text's; BLOCKED_NOTE takes none"),
-        ("CONTINUE_PROMPT.md", b"Write {path!z}.", "cannot be filled in: ValueError: Unknown conversion specifier z"),
-        (
-            "CONTINUE_PROMPT.md",
-            b"Write {path}}.",
-            "Single '}' encountered in format string; write a literal brace as {{ or }}",
-        ),
+        ("BLOCKED_NOTE.md", b"Ask {}.", "placeholder {} at line 1, column 5 is a positional field; a placeholder is a name"),
+        ("CONTINUE_PROMPT.md", b"Write {path!z}.", "placeholder {path!z} at line 1, column 7 has a conversion; a placeholder takes none"),
+        ("CONTINUE_PROMPT.md", b"Write {path}}.", "} at line 1, column 13 closes no placeholder; write a literal brace as }}"),
         ("FIX_PROMPT.md", b"Fix \xe9", "not UTF-8 text"),
     ];
     for (name, text, message) in cases {
@@ -120,6 +116,16 @@ fn a_state_that_replaces_an_unknown_prompt() {
         "run state 20260929-120000-a1b2c3 replaces prompt ANOTHER, which this orchestrator lacks"
     );
     assert_eq!(saved_prompts(&Map::new(), "r").unwrap(), Prompts::default());
+}
+
+#[test]
+fn a_state_whose_prompt_an_earlier_release_could_fill_in_is_refused() {
+    let overrides: Map<String> = [("CONTINUE_PROMPT", "Go on to {path!s}.".to_string())].into_iter().collect();
+    assert_eq!(
+        saved_prompts(&overrides, "r").unwrap_err().0,
+        "run state r replaces prompt CONTINUE_PROMPT with a text this orchestrator cannot fill in: placeholder {path!s} \
+         at line 1, column 10 has a conversion; a placeholder takes none; finish the run with the release that started it"
+    );
 }
 
 #[test]

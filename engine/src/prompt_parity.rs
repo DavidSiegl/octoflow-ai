@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use crate::constants::{APPROVE, CHANGES_REQUESTED};
 use crate::pipeline::{Pipeline, Step};
 use crate::prompts::Prompt;
-use crate::py::format::parse;
+use crate::prompts::template;
 use crate::py::json::{Json, Map};
 use crate::state::RunState;
 use crate::test_support::recordings;
@@ -23,16 +23,16 @@ enum Piece {
     Any,
 }
 
-/// template as pieces, each placeholder that known gives a value filled in.
-fn pieces(template: &str, known: &dyn Fn(&str) -> Option<String>) -> Vec<Piece> {
-    let mut out = Vec::new();
-    for chunk in parse(template).expect("a template that parses") {
-        out.push(Piece::Text(chunk.literal));
-        if let Some(field) = chunk.field {
-            out.push(known(&field.name).map_or(Piece::Any, Piece::Text));
-        }
-    }
-    out
+/// The template text as pieces, each placeholder that known gives a value filled in.
+fn pieces(text: &str, known: &dyn Fn(&str) -> Option<String>) -> Vec<Piece> {
+    template::parse(text)
+        .expect("a template that parses")
+        .into_iter()
+        .map(|piece| match piece {
+            template::Piece::Text(text) => Piece::Text(text),
+            template::Piece::Placeholder(name) => known(&name).map_or(Piece::Any, Piece::Text),
+        })
+        .collect()
 }
 
 /// Every place in text that the pieces, matched from at, can end at.
@@ -159,7 +159,7 @@ fn firsts(s: &RunState, p: &Pipeline, role: &str, files: &BTreeSet<String>) -> V
 fn others(s: &RunState, p: &Pipeline) -> Vec<Vec<Piece>> {
     let prompts = s.prompts().expect("a run's prompts");
     let none = |_: &str| None;
-    let mut out: Vec<Vec<Piece>> = p.steps().iter().flat_map(Step::templates).map(|t| pieces(t, &none)).collect();
+    let mut out: Vec<Vec<Piece>> = p.steps().iter().flat_map(Step::templates).map(|(_, t)| pieces(t, &none)).collect();
     out.extend(Prompt::ALL.iter().map(|q| pieces(prompts.text(*q), &none)));
     out
 }

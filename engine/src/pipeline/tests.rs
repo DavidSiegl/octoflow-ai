@@ -119,7 +119,7 @@ fn role_without_label() {
 fn unknown_placeholder() {
     let st = with(Step::new("build", "build", "a-{n}.md", "write {spec_path}"), |s| s.edits = true);
     let e = Pipeline::new("bad", roles(&[("build", "Builder")]), vec![st]).unwrap_err();
-    assert_eq!(e, "workflow bad: step build: unknown prompt placeholder spec_path");
+    assert_eq!(e, "workflow bad: step build: prompt: placeholder {spec_path} at line 1, column 7 is not one this template takes");
 }
 
 #[test]

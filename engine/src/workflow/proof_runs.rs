@@ -11,8 +11,8 @@ use crate::proofs::{
     proof_finding, proof_outcome, proof_output, proofs_section, ProofRun, PROOFS_HEADING, PROOF_TAIL_LINES,
     REMOVE_TREE_SCRIPT,
 };
+use crate::prompts::template::fill;
 use crate::prompts::Prompt;
-use crate::py::format::format;
 use crate::py::text::{basename, rstrip, shlex_quote};
 
 /// Runs "$2" with sh in the directory "$1", under GNU timeout's limit of "$3" seconds where there is a timeout: it runs
@@ -171,7 +171,7 @@ impl Workflow<'_> {
         let copies = format!("{work_dir}/{PROOF_COPIES_DIR}");
         let copy = format!("{copies}/{written}");
         let proof = shlex_quote(&format!("{copy}/{file}"));
-        let cmd = format(command, &|name| (name == "proofs").then(|| proof.clone()))
+        let cmd = fill(command, &|name| (name == "proofs").then(|| proof.clone()))
             .map_err(|e| prompt_error("proof_command", &e))?;
         let limit = self.proof_timeout.to_string();
         let ran = self.ignore_orchestrator_dir(work_dir).and_then(|()| {

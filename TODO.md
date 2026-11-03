@@ -97,14 +97,14 @@ What is known to be open in `orchestrator.py` and `gate.py`, and why. An entry l
   in, minified into `ui/dist/` without their notices. All were MIT when the project took its license (2026-10-30).
   Closes with their license texts generated from `ui/package-lock.json` at build time, e.g. by a Vite license
   plugin, and bundled with the app beside the crates'.
-- **A prompt template's `.attribute` is an error in the Rust engine, where Python filled it in.** `crate::py::format`,
-  the port of `str.format` that fills workflow prompt templates (`workflow.rs`, `pipeline.rs`, `prompts.rs`), takes a
-  placeholder's value to be a str and answers any attribute with AttributeError (`Accessor::apply_to`), so a template
-  with `{diff.upper}` or `{diff.__class__}` stops the run. Python's `str.format` looked the attribute up on the str:
-  `<class 'str'>`, or a bound method's repr with its address, which no recording can hold. Indexes, `{diff[0]}`,
-  behave as Python's. Found by the code review of the engine's split under the gate's cognitive-complexity limit
-  (2026-10-30). Closes with the docs naming the difference as the engine's, or with attributes refused when the
-  workflow file is read, as a placeholder's name is checked there (`field_names`).
+- **A release that adds a placeholder to a built-in prompt would refuse every run that saved an override of it.**
+  `saved_prompts` (`engine/src/prompts.rs`) holds a run's saved prompt overrides to `prompt_problem` on resume, whose
+  rule that an override keep every placeholder of the built-in text never refused a resume before. No run can meet it
+  today, since overrides came with that rule (fb87a8f) and every built-in placeholder is older. Raised by cross-review
+  111, round 2 (2026-11-03): "if a later release adds a placeholder to a built-in text, every run that saved an
+  override of that text will be refused on resume, where it could still have been filled." Closes with the resume
+  check limited to what cannot be filled in, the template's form and unknown names, or with the release that adds
+  such a placeholder saying so in its notes.
 - **The Rust engine names itself `orchestrator.py`.** Its messages and hints were ported word for word, so the
   e2e recordings, made by the Python engine, hold them: `resume: orchestrator.py resume <id>` in `list` and the
   interrupted note (`cli/listing.rs`, `cli.rs`'s `resume_command`), `` `orchestrator.py workflows default` `` in
@@ -846,6 +846,14 @@ What is known to be open in `orchestrator.py` and `gate.py`, and why. An entry l
   after each save (Open issues, "No test crashes the Rust engine after each save").
 
 ## Fixed
+
+- **A prompt template's `.attribute` was an error in the Rust engine, where Python filled it in.** `crate::py::format`,
+  the port of `str.format` that filled workflow prompt templates, answered any attribute with AttributeError, so a
+  template with `{diff.upper}` stopped the run. Found by the code review of the engine's split under the gate's
+  cognitive-complexity limit (2026-10-30). Fixed (2026-11-03, octoflow-without-python ticket 05) by templates of
+  `{name}` alone (`crate::prompts::template`): an attribute, an index, a conversion, a format spec or a positional
+  field is refused when the workflow or prompt file is read, the placeholder and its line and column named, and
+  `py::format` is gone.
 
 - **The eval set's code had review 88's findings open.** Raised by cross-review 88 (2026-10-28) in code PR #167 brought.
   Fixed (2026-10-31, octoflow-without-python ticket 08) by the port of the eval set to Rust, `cargo xtask eval` and

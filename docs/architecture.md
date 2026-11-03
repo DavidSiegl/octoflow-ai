@@ -25,9 +25,9 @@ ported from. By module:
 
 | Module | What it holds |
 |---|---|
-| `py` | What the port needs of Python itself: `text` (str's `splitlines`, `strip`, `os.path.splitext`, `repr`, `difflib.get_close_matches`, text mode's universal newlines, with Python's character classes in `unicode_tables`, which `engine/tools/unicode_tables.py` writes), `format` (`str.format`'s language, filling and failing as Python does), `json` (`Json`, a value whose objects keep their order, and `Map`, written as `json.dumps` writes it; `parse_lossy` reads a lone surrogate as U+FFFD), `toml` (TOML as `tomllib` reads it, and what `str`, `repr` and `json.dumps` write of its values), `url` (`urllib.parse`'s `quote`, `urlencode`, `urlsplit`, `parse_qsl` and `unquote_plus`) and `datetime` (`IsoTime`, a time as CPython's C `fromisoformat` reads it, quirks included, with `IsoTime::timestamp`, which takes one without an offset in the machine's zone, and its date; `fromisoformat_timestamp`, the two in one call; and `strftime_local`, `time.strftime` there; the zone is jiff's, read as the C library reads it). |
+| `py` | What the port needs of Python itself: `text` (str's `splitlines`, `strip`, `os.path.splitext`, `repr`, `difflib.get_close_matches`, text mode's universal newlines, with Python's character classes in `unicode_tables`, which `engine/tools/unicode_tables.py` writes), `json` (`Json`, a value whose objects keep their order, and `Map`, written as `json.dumps` writes it; `parse_lossy` reads a lone surrogate as U+FFFD), `toml` (TOML as `tomllib` reads it, and what `str`, `repr` and `json.dumps` write of its values), `url` (`urllib.parse`'s `quote`, `urlencode`, `urlsplit`, `parse_qsl` and `unquote_plus`) and `datetime` (`IsoTime`, a time as CPython's C `fromisoformat` reads it, quirks included, with `IsoTime::timestamp`, which takes one without an offset in the machine's zone, and its date; `fromisoformat_timestamp`, the two in one call; and `strftime_local`, `time.strftime` there; the zone is jiff's, read as the C library reads it). |
 | `constants`, `error`, `env` | The constants, `OrchestratorError`, `child_env`, `ci_credentials` and `parse_env_file`; `ConfigDir` is `config_dir` and where its files are. |
-| `prompts` | The built-in prompts, `Prompts` (by `Prompt`), `load_prompts`, `prompt_problem` and `saved_prompts`. |
+| `prompts` | The built-in prompts, `Prompts` (by `Prompt`), `load_prompts`, `prompt_problem` and `saved_prompts`; `template`, the language of prompts, handoff file names and `proof_command`: `{name}` and the doubled braces `{{` and `}}`, nothing else. |
 | `pipeline`, `workflow_file` | `Step`, `Pipeline` with all its checks, `default_workflow`, `find_workflow`, `is_built_in`; `parse_workflow`, `load_workflow_file`, `workflow_files`, `named_workflow`, `workflow_definition`, `workflow_toml`, `run_pipeline` and `saved_pipeline`. |
 | `state` | `RunState`, with the fields of a `state.json` it does not know kept, after its own. |
 | `handoff`, `quality` | `parse_verdict` and `parse_blocked`; the quality-file reader, `parse_gate`, `gate_failures`, `finding_fingerprint`, and the engine's own quality files, `leak_report` and `build_failed_report`. |
@@ -177,8 +177,9 @@ one by path; the README's [Your own workflows](../README.md#your-own-workflows) 
 step can `use` a default step and override some of its fields; a role without a label keeps the default
 workflow's label for its key, or else is named after the key; a role's `model` sits under every model flag,
 and its `agent` (`Pipeline::agents`, one of `AGENT_KINDS`) under `--agent` and `--role-agent`. A
-file cannot take a built-in workflow's name. `Pipeline` also rejects a prompt or file that could not be filled
-in at run time (`fill_problem`), and a handoff file outside the run directory or named like the run's own
+file cannot take a built-in workflow's name. `Pipeline` also rejects a prompt or file that is not a template of
+known placeholders (`template_problem`, by `crate::prompts::template`), and a handoff file outside the run
+directory or named like the run's own
 `state.json`, `summary.md`, `metrics.json`, `quality-*` and `locked-*` files, and two steps whose files can share a name in some round (`Step::name_forms`,
 `shared_name` and `collision_problem`, an exact check). `state.json` saves
 the workflow's name and, for one that is not built in, its canonical definition (`workflow_definition`), which

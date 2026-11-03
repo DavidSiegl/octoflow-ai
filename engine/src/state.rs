@@ -343,7 +343,7 @@ impl RunState {
     }
 
     /// The prompts the run sends: those it started with (saved_prompts). Errors: its prompt_overrides name a prompt
-    /// this orchestrator lacks.
+    /// this orchestrator lacks, or replace one with a text a prompt file could not hold (prompt_problem).
     pub fn prompts(&self) -> Result<Prompts, OrchestratorError> {
         saved_prompts(&self.prompt_overrides, &self.run_id)
     }
