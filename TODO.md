@@ -67,6 +67,12 @@ What is known to be open in `orchestrator.py` and `gate.py`, and why. An entry l
 
 ## Open issues
 
+- **A turn can record `"seconds": -1`.** `end_turn` (`engine/src/workflow/turn.rs:525`–`531`) takes a turn's end from
+  the handoff file's mtime and its start from `host.now()` (`turn.rs:165`), two clocks read at whole seconds, so a
+  file written in the second the turn starts can end it a second before it began. Seen once in the e2e scenario
+  `no_pr_run` on 2026-11-03 (its spec turn, `metrics.json`), which then differs from its recording, since the
+  normalizer's `json_number` (`engine/e2e/src/normalize.rs:331`) takes no minus sign; three reruns passed. Closes when
+  a turn's seconds are clamped at 0, or both ends come from one clock.
 - **new-dependencies on Cargo: two readings of a manifest that its doc does not state.** In
   `engine/src/checks/dependencies.rs`, `cargo_manifest_dependencies` keeps the first entry of a crate across its tables,
   as `add_named` does across manifests: `foo = "1"` in `[dependencies]` and `foo = { git = "..." }` under
