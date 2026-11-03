@@ -175,8 +175,8 @@ pipeline {
                 TMPDIR = "${env.WORKSPACE_TMP}/tmp"
             }
             steps {
-                // What an earlier build of this workspace left there goes first, on the volume as it would not in
-                // /tmp. The chmod is for a directory a killed test left without write permission, such as
+                // What an earlier build of this workspace left there goes first: on the volume, unlike in the
+                // container's /tmp, it would otherwise stay. The chmod is for a directory a killed test left without write permission, such as
                 // engine/src/host/tests.rs's 0o500 one; a clear-out that still fails only warns, since failing here
                 // would fail every later build of this workspace until someone cleaned the volume by hand.
                 sh '''
