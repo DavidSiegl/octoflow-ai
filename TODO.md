@@ -6,14 +6,14 @@ is rewritten to say what is left.
 
 ## Planned
 
-- **The rename to Octoflow AI, the rest of it.** The product is Octoflow AI (README, window titles, pull request
-  text) and the binaries, release assets, `.deb` path, Tauri bundle and crates are `octoflow`; the bundle name has
-  no space because Tauri names the `.deb`, `.app` and `.dmg` after it verbatim. Still under the old name, each a
-  decision of its own: `~/.config/ai-agents-orchestrator/`, the
-  `.orchestrator/` project directory and the `orchestrator-ci/` branches, which are on users' disks and remotes and
-  need a fallback that reads the old location; the engine's binary `orchestrator` and the `Orchestrator-*` commit trailers; the
-  Jenkins folder `AI-Agents-Orchestrator`. The macOS app could show "Octoflow AI" in Finder while staying
-  `Octoflow.app`, with `CFBundleDisplayName` in a `ui/src-tauri/Info.plist`, unchecked on a Mac. Agreed 2026-10-25.
+- **The rename to Octoflow AI, the rest of it.** The product is Octoflow AI (README, window titles, pull request text)
+  and the release assets, `.deb` path, Tauri bundle and crates are `octoflow`; the bundle name has no space because
+  Tauri names the `.deb`, `.app` and `.dmg` after it verbatim. Still under the old name, each a decision of its own:
+  `~/.config/ai-agents-orchestrator/`, the `.orchestrator/` project directory and the `orchestrator-ci/` branches, which
+  are on users' disks and remotes and need a fallback that reads the old location; the engine's binary `orchestrator`
+  and the `Orchestrator-*` commit trailers; the Jenkins folder `AI-Agents-Orchestrator`. The macOS app could show
+  "Octoflow AI" in Finder while staying `Octoflow.app`, with `CFBundleDisplayName` in a `ui/src-tauri/Info.plist`,
+  unchecked on a Mac. Agreed 2026-10-25.
 
 - **The desktop app as the terminal client too: the macOS check.** Started with arguments, the app execs the
   orchestrator it bundles (`cli` in `ui/src-tauri/src/lib.rs`), so the AppImage is the CLI too and the README says
@@ -126,12 +126,12 @@ is rewritten to say what is left.
   harness on the engine's `FakeHost`, a `Host` whose write of `state.json` can stop the run, in
   `engine/src/workflow/tests/`.
 - **No contract test talks to the real Jenkins.** `tests/contract/test_jenkins.py` drove the Python engine's `CI`
-  against the live quality job, and went with it (rust-engine ticket 11, 2026-10-30); live-checks/01 (#131) asks for
-  one against the Rust engine's `Jenkins`. Closes with that ticket. Its cleanup must stop the quality build it
-  triggers, which the Python test's did not: a failure or a Ctrl-C there left the build holding an executor for up to
-  the 22 minutes build #59 took (cross-review 73, F11, 2026-10-27). The engine aborts no build either, so `CI` has no
-  call for it: a POST to `<job>/<number>/stop`, or the queue item's cancel, once the `agents` user is known to hold
-  Jenkins's Cancel permission on the job.
+  against the live quality job, and went with it (rust-engine ticket 11, 2026-10-30); live-checks/01 (#131) asks for one
+  against the Rust engine's `Jenkins`. Closes with that ticket. Its cleanup must stop the quality build it triggers,
+  which the Python test's did not: a failure or a Ctrl-C there left the build holding an executor for up to the 22
+  minutes build #59 took (cross-review 73, F11, 2026-10-27). The engine aborts no build either, so its `Jenkins`
+  (`engine/src/ci.rs`) has no call for it: a POST to `<job>/<number>/stop`, or the queue item's cancel, once the
+  `agents` user is known to hold Jenkins's Cancel permission on the job.
 - **`tests/test_docs.py` reads the engine's names by pattern.** `rust_names` finds each `fn`, type, `const`,
   `static`, `mod`, string literal, impl `fn` and struct field in `engine/src` by regular expression, not by parsing,
   so a name in a comment or a `macro_rules!` counts as defined, and a doc's `Type::member` is not checked at all, only
@@ -177,54 +177,55 @@ is rewritten to say what is left.
 - **A quality build now takes longer than `QUALITY_TIMEOUT`.** The contract test's one live run (live-checks/01,
   2026-10-27) triggered build #59 of `Octoflow-AI/py-octoflow-ai-quality` with `GIT_REF=main` (`f4628cc`): it ended
   SUCCESS after 1299 s, of which Test took 888 s, UI 229 s and Gate 172 s, so `tests/contract/test_jenkins.py` failed at
-  what was then its 1200 s cap (it now waits for the build to end, checks every answer, and fails last on the time the
-  quality file took), as a quality round of the engine would: `poll` (`engine/src/workflow/quality_rounds.rs`) gives up at
-  `QUALITY_TIMEOUT` (1200 s, `engine/src/constants.rs`) from the round's start, and Gate had not begun by then. The
-  suite grew by the parity scenarios (now `engine/e2e`), and PR-160's Test stage took 645 s. A resume gets a fresh timeout and adopts the running build, so a
-  run is not lost, but a quality round of this repository whose build takes as long fails once, and is judged only after
-  a resume. Not changed then: the Python engine was frozen until rust-engine ticket 11 replaced it, so a larger
-  `QUALITY_TIMEOUT` is the Rust engine's to set. Narrowed by PR #162 (2026-10-27) for a quality round whose change leaves what the
-  e2e scenarios depend on alone (Jenkinsfile, Test stage): its build leaves them out. A change that bumps the version
-  touches `engine/Cargo.toml` and `Cargo.lock`, so its build still runs them, and so does the contract test's build of
-  main whenever main's last commit was a releasing merge (build #59, before #162, ran them in any case); Gate's mutmut
-  time is narrowed by `gate.py --test-contexts` (gate-open-decisions ticket 06), which costs the Test stage about 7 %
-  more. Closes when a quality build that runs the scenarios fits in `QUALITY_TIMEOUT`, shown by live-checks/01's contract
-  test green against one, or with a larger `QUALITY_TIMEOUT` in the Rust engine.
+  what was then its 1200 s cap (it later waited for the build to end, checked every answer, and failed last on the time
+  the quality file took, until it went with the Python engine), as a quality round of the engine would: `poll`
+  (`engine/src/workflow/quality_rounds.rs`) gives up at `QUALITY_TIMEOUT` (1200 s, `engine/src/constants.rs`) from the
+  round's start, and Gate had not begun by then. The suite grew by the parity scenarios (now `engine/e2e`), and PR-160's
+  Test stage took 645 s. A resume gets a fresh timeout and adopts the running build, so a run is not lost, but a quality
+  round of this repository whose build takes as long fails once, and is judged only after a resume. Not changed then:
+  the Python engine was frozen until rust-engine ticket 11 replaced it, so a larger `QUALITY_TIMEOUT` is the Rust
+  engine's to set. Narrowed by PR #162 (2026-10-27) for a quality round whose change leaves what the e2e scenarios
+  depend on alone (Jenkinsfile, Test stage): its build leaves them out. A change that bumps the version touches
+  `engine/Cargo.toml` and `Cargo.lock`, so its build still runs them, and so does the contract test's build of main
+  whenever main's last commit was a releasing merge (build #59, before #162, ran them in any case); Gate's mutmut time
+  is narrowed by `gate.py --test-contexts` (gate-open-decisions ticket 06), which costs the Test stage about 7 % more.
+  Closes when a quality build that runs the scenarios fits in `QUALITY_TIMEOUT`, shown by live-checks/01's contract test
+  green against one, or with a larger `QUALITY_TIMEOUT` in the Rust engine.
 - **The Rust engine reads some input no run writes otherwise than the Python engine.** Each is a difference only for a
   file a human edited, or a case no test of the Python engine pins (rust-engine ticket 04, 2026-10-28): `state.json`
   with `NaN`, `Infinity` or an integer beyond 64 bits is refused, as serde_json reads it (`engine/src/py/json.rs`),
-  where Python reads it; a time is read as CPython 3.14's `fromisoformat` reads it (`crate::py::datetime`, since
-  ticket 06; one without an offset in the machine's zone since ticket 08's follow-ups, Fixed, "The Rust engine named a
-  new run by the time in UTC"; 3.13, which a system `python3` may be and `packaging/build-binary.sh` builds the Linux binary with, refuses hour 24,
-  which 3.14 reads as the next day's midnight, and reads `T12.5`, `T12:00.5` and `T12:00:00.Z`, which 3.14 refuses
-  (cross-review 92, F4); no harness or run writes either), and a turn whose start is not a time is left out of `summary.md` and `metrics.json`, where the Python engine
-  fails (`epoch_seconds` and `turn_starts` in `engine/src/summary.rs`); a `state.json` field of another type than the
-  Python engine writes is refused naming the run, where Python keeps it, and one it does not know is kept, where Python
-  drops it, as the spec asks (`RunState::from_saved`). And from the machine the agents run on (rust-engine ticket 05,
-  2026-10-28): a path git prints that is not UTF-8 is refused, naming it, by `Host::lock`, `locked_changes`,
-  `restore`, `changed_line_counts` and `crate::patch::added_lines` (so by the secret scan too), where Python reads it
-  as `os.fsdecode` does, and a base's gitleaks rules file that is not UTF-8 fails the scan closed, where the Python
-  engine crashes writing it (`engine/src/host.rs`, `utf8_path`; `engine/src/host/scan.rs`, `base_rules_file`).
-  And from the agents' session logs and herdr (rust-engine ticket 06, 2026-10-28): a session log's line that holds
-  `NaN`, `Infinity` or an integer beyond 64 bits is skipped, as `Json::parse` refuses it, where Python counts its
-  tokens, and a lone surrogate in a line, as an escape or as a byte that is not UTF-8, is read as U+FFFD, so that two
-  Claude Code message ids that differ only there count as one answer, where Python counts two
-  (`Harness::session_usage` in `engine/src/harness.rs`, `Json::parse_lossy`); a harness that is not one of
-  `AGENT_KINDS`, as a hand-edited `state.json` can name, is refused naming those there are (`crate::harness::harness`),
-  where the Python engine fails on a KeyError; and an answer of herdr's that lacks what its command gives, or is not
-  UTF-8, is a `bad_response` naming the command or a failure naming it (`engine/src/herdr.rs`), where Python fails on
-  a KeyError or a UnicodeDecodeError. And from the Workflow's locks and proofs (rust-engine ticket 08, part 4,
-  2026-10-29): a `restored` or `proofs` record of `state.json` without a field the engines write, or with one of
-  another type, stops the run naming it (`Restored::read` in `engine/src/workflow/locks.rs`, `ProofRun::read` in
-  `engine/src/proofs.rs`), where Python fails on a KeyError or a TypeError, or, for a `restored` record without
-  `paths`, restores nothing, or, for a `proofs` record without `said`, reads it only where it needs `said` (no release
-  wrote one: v0.24.0, the first with proofs, writes `said` in every record, and only commits before it on main did
-  not; cross-review 98, F1); and a proof's output that is not UTF-8 is quoted with each such byte as U+FFFD
-  (`Workflow::run_proof`), where Python keeps it as a lone surrogate, which `state.json` holds as an escape and the
-  write of the review then fails on (a UnicodeEncodeError, uncaught).
-  And from drain (rust-engine ticket 09b, 2026-10-29): a name in drain's DIR that is not UTF-8 is left out of the
-  queue (`crate::cli::drain::queue`, `read_queue`), where Python reads its spec.md through os.fsdecode.
-  Decided against unless a run is found that writes such input.
+  where Python reads it; a time is read as CPython 3.14's `fromisoformat` reads it (`crate::py::datetime`, since ticket
+  06; one without an offset in the machine's zone since ticket 08's follow-ups, which named a new run by the time in the
+  machine's zone, not in UTC; 3.13, which a system `python3` may be and `packaging/build-binary.sh` builds the Linux
+  binary with, refuses hour 24, which 3.14 reads as the next day's midnight, and reads `T12.5`, `T12:00.5` and
+  `T12:00:00.Z`, which 3.14 refuses (cross-review 92, F4); no harness or run writes either), and a turn whose start is
+  not a time is left out of `summary.md` and `metrics.json`, where the Python engine fails (`epoch_seconds` and
+  `turn_starts` in `engine/src/summary.rs`); a `state.json` field of another type than the Python engine writes is
+  refused naming the run, where Python keeps it, and one it does not know is kept, where Python drops it, as the spec
+  asks (`RunState::from_saved`). And from the machine the agents run on (rust-engine ticket 05, 2026-10-28): a path git
+  prints that is not UTF-8 is refused, naming it, by `Host::lock`, `locked_changes`, `restore`, `changed_line_counts`
+  and `crate::patch::added_lines` (so by the secret scan too), where Python reads it as `os.fsdecode` does, and a base's
+  gitleaks rules file that is not UTF-8 fails the scan closed, where the Python engine crashes writing it
+  (`engine/src/host.rs`, `utf8_path`; `engine/src/host/scan.rs`, `base_rules_file`). And from the agents' session logs
+  and herdr (rust-engine ticket 06, 2026-10-28): a session log's line that holds `NaN`, `Infinity` or an integer beyond
+  64 bits is skipped, as `Json::parse` refuses it, where Python counts its tokens, and a lone surrogate in a line, as an
+  escape or as a byte that is not UTF-8, is read as U+FFFD, so that two Claude Code message ids that differ only there
+  count as one answer, where Python counts two (`Harness::session_usage` in `engine/src/harness.rs`,
+  `Json::parse_lossy`); a harness that is not one of `AGENT_KINDS`, as a hand-edited `state.json` can name, is refused
+  naming those there are (`crate::harness::harness`), where the Python engine fails on a KeyError; and an answer of
+  herdr's that lacks what its command gives, or is not UTF-8, is a `bad_response` naming the command or a failure naming
+  it (`engine/src/herdr.rs`), where Python fails on a KeyError or a UnicodeDecodeError. And from the Workflow's locks
+  and proofs (rust-engine ticket 08, part 4, 2026-10-29): a `restored` or `proofs` record of `state.json` without a
+  field the engines write, or with one of another type, stops the run naming it (`Restored::read` in
+  `engine/src/workflow/locks.rs`, `ProofRun::read` in `engine/src/proofs.rs`), where Python fails on a KeyError or a
+  TypeError, or, for a `restored` record without `paths`, restores nothing, or, for a `proofs` record without `said`,
+  reads it only where it needs `said` (no release wrote one: v0.24.0, the first with proofs, writes `said` in every
+  record, and only commits before it on main did not; cross-review 98, F1); and a proof's output that is not UTF-8 is
+  quoted with each such byte as U+FFFD (`Workflow::run_proof`), where Python keeps it as a lone surrogate, which
+  `state.json` holds as an escape and the write of the review then fails on (a UnicodeEncodeError, uncaught). And from
+  drain (rust-engine ticket 09b, 2026-10-29): a name in drain's DIR that is not UTF-8 is left out of the queue
+  (`crate::cli::drain::queue`, `read_queue`), where Python reads its spec.md through os.fsdecode. Decided against unless
+  a run is found that writes such input.
 - **The Rust engine's Ctrl-C, what is left.** Rust-engine ticket 08's part 6 (2026-10-29) has a SIGINT raise the
   `Interrupt`, which stops the command the engine waits on (`crate::interrupt`), and since ticket 10 every command of
   the binary takes it. Not closed: (1) A
@@ -327,8 +328,8 @@ is rewritten to say what is left.
   workspace (`Cargo.toml`), whose tests the Test stage runs, so its `cargo test` (`ci/gate-rust/tests/schema.rs`) runs
   only by hand; its added lines are judged by clippy but count as nothing to cover. `tests/test_gate.py` builds the
   helper and runs it over Rust snippets, so the Test stage exercises its `flow` (gate-rust-checks ticket 03,
-  2026-10-30), but not its own tests. Narrowed by rust-engine ticket 04, after which Jenkins no longer ran the Rust tests
-  of `ui/src-tauri` alone, and the switch's merge of main (rust-engine ticket 11, 2026-10-30), which excluded the
+  2026-10-30), but not its own tests. Narrowed by rust-engine ticket 04, after which Jenkins no longer ran the Rust
+  tests of `ui/src-tauri` alone, and the switch's merge of main (rust-engine ticket 11, 2026-10-30), which excluded the
   helper. Closes with the Test stage also running `cargo nextest` in `ci/gate-rust` and passing its report to the gate.
 - **`GateChange.rust_files` starts one `git cat-file` per base `.rs` file.** `_rust_paths` in `gate.py` copies each
   base side out of git with its own process, so a change to N Rust files starts N git processes before the helper's
@@ -415,6 +416,15 @@ is rewritten to say what is left.
   gave golden files that finding. Closes with the golden directory a setting, beside the test-file patterns of
   `.scratch/gate-split/issues/04-configurable-test-files.md`, which does not name it yet.
 
+- **A quality build of a snapshot from before `gate.py` fails mypy.** A quality build judges by main's rules
+  (`--config`), and since the split main's `[tool.mypy] files` names `gate.py`, which mypy reads relative to the
+  judged tree; a run whose base predates the split has no `gate.py`, so mypy stops with `gate.py: error: Cannot read
+  file` (status 2) and the gate is ERROR on a failed condition the Builder cannot fix. mutmut's `source_paths`
+  names it too, so surviving-mutants is `not-run` there. Checked by hand against such a tree (2026-10-27). Affects
+  only runs started before the split merged that reach a quality round after it; closes by itself once none is
+  left, or with the gate passing mypy only the listed files the tree has. Cross-review 61 (F1, 2026-10-27): "the
+  gate is ERROR on a failed condition the Builder cannot fix", against the spec's "a quality build is judged by
+  main's gate and main's rules".
 - **`BUILD_CONFIG_FILES` does not list `gate.py`.** A pull request or main build runs its own tree's `gate.py`, so a
   change that loosens the gate gets no "Build configuration" notice in its quality file; `orchestrator.py`, which
   held the gate, was not listed either. Raised by cross-review 61 (F7, 2026-10-27). Closes with `gate.py` listed,
@@ -437,22 +447,22 @@ is rewritten to say what is left.
   3 x 6 x 30 s), against `QUALITY_TIMEOUT`. passes-at-base's groups share its one budget. Raised by cross-review 35
   (R1-5), which reads the spec's "the per-group runs share the check's time budget" as meant for passes-at-base,
   flaky-tests having none. Decided against (2026-10-27,
-  `.scratch/gate-open-decisions/issues/01-shared-time-budget.md`): a time budget shared by the reruns; the 30 s limit
-  stays, and `not-rerun` showing up often would be a question of its own.
+  `.scratch/gate-open-decisions/issues/01-shared-time-budget.md`): a time budget shared by the reruns, their groups
+  and mutmut; the 30 s limit and mutmut's 600 s stay, and `not-rerun` showing up often would be a question of its own.
 - **SSH connection sharing has not been timed on a real `--machine`.** `ssh_sharing_options` was measured against
   a user-level sshd on this host only, 20 commands in 0.24 s shared against 1.78 s unshared; no herdr machine is
   saved here, so `doctor --machine` was not timed before and after
   (`.scratch/doctor-ssh/issues/01-ssh-connection-sharing.md`, requirement 4). Raised by cross-review 33 (F7). Closes
   with `time orchestrator doctor --machine <m>` on the herdr machine, before and after, both times written into
   that ticket.
-- **`--machine` over SSH assumes a POSIX login shell and a server that takes several sessions.** Since
-  `run_tool` (`engine/src/cli/doctor.rs`), doctor takes a remote command's exit status 127 for not on PATH: a csh or tcsh login shell exits 1
-  ("Command not found."), so a missing gh reads as `gh auth status fails` and a missing git as a failed
-  `--version`; and a tool on PATH that exits 127 itself, such as a shim whose target is gone, reads as not on PATH.
-  And `ssh_sharing_options` overrides a target's own `ControlMaster no`, so a server with `MaxSessions 1` refuses
-  the second of two commands run at once on the shared connection (the desktop app and `serve` run several), which ssh
-  then fails. Raised by cross-review 33 (F4, F6), neither reproduced. Closes with doctor asking through `sh -c`, as
-  `on_path` does, and with an explicit `ControlMaster`/`ControlPath` in `ssh -G <target>` left in place.
+- **`--machine` over SSH assumes a POSIX login shell and a server that takes several sessions.** Since `run_tool`
+  (`engine/src/cli/doctor.rs`), doctor takes a remote command's exit status 127 for not on PATH: a csh or tcsh login
+  shell exits 1 ("Command not found."), so a missing gh reads as `gh auth status fails` and a missing git as a failed
+  `--version`; and a tool on PATH that exits 127 itself, such as a shim whose target is gone, reads as not on PATH. And
+  `ssh_sharing_options` overrides a target's own `ControlMaster no`, so a server with `MaxSessions 1` refuses the second
+  of two commands run at once on the shared connection (the desktop app and `serve` run several), which ssh then fails.
+  Raised by cross-review 33 (F4, F6), neither reproduced. Closes with doctor asking through `sh -c`, as `on_path` does,
+  and with an explicit `ControlMaster`/`ControlPath` in `ssh -G <target>` left in place.
 - **`TestGate.test_a_missing_tool_fails_naming_it` fails where shellcheck lives beside git.** `TestGate.setUp`
   (`tests/test_gate.py`) puts git's own directory on `PATH` after the stubs, so on a machine with
   `/usr/bin/shellcheck` (agentbox, Debian's package) removing the stub still finds the real one and the gate passes.
@@ -538,20 +548,20 @@ is rewritten to say what is left.
   request's review shows them, and each may take `PROOF_TIMEOUT`. Kept: a demonstrated defect is what the human
   most needs to see in a draft. Raised by the same review.
 - **What a proof writes outside its own directory can enter the commit.** A proof runs in the working tree
-  (`Workflow::run_proof`), and only its copy's directory is removed after it, so a file it writes elsewhere, such as
-  the `__pycache__` of a module it imports in a project that does not ignore those, stays for `Workflow::publish`'s
-  `git add --all`. In-place runs always had this; since proof-runs ticket 01 a worktree run has it too, its proofs
-  importing the worktree's code. Raised there (2026-10-27). Closes with `Workflow::publish` committing only what the turns
-  changed, or with proofs running in a throwaway copy of the tree.
-  Ticket: `.scratch/proof-runs/issues/03-proof-writes-stay-out-of-the-commit.md` (#234).
-- **A proof the Builder moves into the project stays carried as erroring.** `PROOFS_NOTE` lets the Builder move a
-  proof into the project as a regression test; `Workflow::run_proof` then records it "it did not run: ... is gone",
-  which is not a pass, so `Workflow::carried_proofs` keeps carrying it. Raised by the cross-review of proof-runs (review 64,
-  F9, 2026-10-27): "is carried and told as a standing finding in every later round": the Builder hears it does not
-  pass, and the verdict step hears it "no longer fails but errors", even when the moved test passes in the project.
-  Predates that branch, where the same move gave pytest's exit status 4, an error carried the same way. Closes with
-  `Workflow::carried_proofs` treating a missing proof as moved and dropping it, and the notes saying so.
-  Ticket: `.scratch/proof-runs/issues/04-moved-proof-not-carried.md` (#235).
+  (`Workflow::run_proof`), and only its copy's directory is removed after it, so a file it writes elsewhere, such as the
+  `__pycache__` of a module it imports in a project that does not ignore those, stays for `Workflow::publish`'s `git add
+  --all`. In-place runs always had this; since proof-runs ticket 01 a worktree run has it too, its proofs importing the
+  worktree's code. Raised there (2026-10-27). Closes with `Workflow::publish` committing only what the turns changed, or
+  with proofs running in a throwaway copy of the tree. Ticket:
+  `.scratch/proof-runs/issues/03-proof-writes-stay-out-of-the-commit.md` (#234).
+- **A proof the Builder moves into the project stays carried as erroring.** `PROOFS_NOTE` lets the Builder move a proof
+  into the project as a regression test; `Workflow::run_proof` then records it "it did not run: ... is gone", which is
+  not a pass, so `Workflow::carried_proofs` keeps carrying it. Raised by the cross-review of proof-runs (review 64, F9,
+  2026-10-27): "is carried and told as a standing finding in every later round": the Builder hears it does not pass, and
+  the verdict step hears it "no longer fails but errors", even when the moved test passes in the project. Predates that
+  branch, where the same move gave pytest's exit status 4, an error carried the same way. Closes with
+  `Workflow::carried_proofs` treating a missing proof as moved and dropping it, and the notes saying so. Ticket:
+  `.scratch/proof-runs/issues/04-moved-proof-not-carried.md` (#235).
 - **`expected-value-changed` misses an inline literal's sign, type or structure.** `_changed_literals` pairs
   assertions by `_shape` and compares `_literals`, which drops types and operators: `assert f() == -5` becoming
   `== 5` changes the shape (no pair, no finding), and `== 1` becoming `== True` gives equal literal lists
@@ -582,11 +592,11 @@ is rewritten to say what is left.
   rather than the head raises no pull-request event at all." Closes with a ruleset that requires the check on
   every branch, or one that restricts merges outside `main`.
 - **The secret scan does not look inside a file git takes for binary.** With no attributes, git still calls a file
-  binary when its first 8000 bytes hold a NUL, and `git log -p` prints "Binary files ... differ" for it, to gitleaks
-  and to `allow_comments` (`engine/src/host/scan.rs`) alike, so a secret or a `gitleaks:allow` in such a file is pushed unscanned. gitleaks'
-  own `git` mode has the same blind spot. Raised by the cross-review of `push-secret-scan` (F15, 2026-10-24). Closes
-  with a decision in the spec whether binary content is in scope, and, if it is, a `--text` diff or a scan of the
-  blobs themselves (`gitleaks dir` over the pushed files).
+  binary when its first 8000 bytes hold a NUL, and `git log -p` prints "Binary files ... differ" for it, to gitleaks and
+  to `allow_comments` (`engine/src/host/scan.rs`) alike, so a secret or a `gitleaks:allow` in such a file is pushed
+  unscanned. gitleaks' own `git` mode has the same blind spot. Raised by the cross-review of `push-secret-scan` (F15,
+  2026-10-24). Closes with a decision in the spec whether binary content is in scope, and, if it is, a `--text` diff or
+  a scan of the blobs themselves (`gitleaks dir` over the pushed files).
 - **The quality file's intro still says `orchestrator.py gate` judged the tree.** `judge_change` writes that intro,
   though since the split the program is `gate.py`. Left as it was on purpose (2026-10-27): `judge_change` scores 24,
   over the cognitive-complexity limit of 15, and the check pairs a function moved into a new file with its base only
@@ -617,7 +627,7 @@ is rewritten to say what is left.
   since those tests include dozens that build a small Cargo package with real cargo, cargo-nextest or
   cargo-mutants, each from a cold target directory in the rerun's copy. A change that adds many such tests is not
   rerun; that one closes with a limit that grows with the tests rerun (a time budget shared with mutmut was decided
-  against, `.scratch/gate-open-decisions/issues/01-shared-time-budget.md`).
+  against, "flaky-tests' reruns get one time limit a run", above).
 - **`tests/test_docs.py` gets `gate.py`'s parser by patching `argparse.ArgumentParser.parse_args`.**
   `gate.parse_args` builds its parser inline and returns only the parsed arguments, so `built_parser` calls it with
   `parse_args` patched class-wide to hand the parser back, and reads argparse's private `_actions`. Raised by
@@ -645,8 +655,8 @@ is rewritten to say what is left.
     while it ran (F5).
 - **`vague-names` does not split CamelCase in Python.** `vague_names` matches a whole Python name or its last
   `_`-separated word, so `user_data` is found but a class `InfoManager` or `UserData` is not; in Rust the last CamelCase
-  word is matched too (`_is_vague_in_rust`, gate-rust-checks ticket 04), which is Rust's counterpart. Closes, if the run metrics
-  show such names recur, with Python's matched the same way.
+  word is matched too (`_is_vague_in_rust`, gate-rust-checks ticket 04), which is Rust's counterpart. Closes, if the run
+  metrics show such names recur, with Python's matched the same way.
 - **`vague-names` reports a Rust trait impl's associated types and constants.** Only the name and parameters of a `fn`
   an `impl Trait for T` holds are skipped (`_rust_fixed_bindings`), as gate-rust-checks ticket 04 asked; a `type Value`
   or `const STATUS` the trait fixes is reported, as in serde's `impl Visitor for V { type Value = ...; }`. The helper's
@@ -734,28 +744,29 @@ is rewritten to say what is left.
   reported `not-rerun` and judged no test; the tests that change edits start mutmut, and rerunning their four test
   classes once takes about 50 s on the laptop. A limit that covers them (about 90 s, five seeds) would push the quality
   build past `QUALITY_TIMEOUT` beside the mutation budget, so the user kept 30 s (2026-10-24). `not-rerun` is a finding
-  to weigh, never a wrong verdict. Closes with lighter tests for the gate's own checks; one time budget the reruns and mutmut
-  share was decided against (2026-10-27, `.scratch/gate-open-decisions/issues/01-shared-time-budget.md`).
-- **A running build's quality.md is taken as whole once two reads agree.** The quality round's `gate_or_end` (`engine/src/workflow/quality_rounds.rs`) reads a still
-  running build's `quality.md` each poll and takes it when two reads at least `CI_POLL_SECONDS` apart are equal,
-  because Jenkins serves an artifact while `archiveArtifacts` is still copying it. Raised by the cross-review of
-  `quality-round-early-read` (F1, 2026-10-27): "Equal reads show only that the copy made no progress between them,
-  not that it finished." Two such reads are taken only once they hold a whole non-blank line (review 58, F1), so a
-  copy stalled that long past its first line and then resumed still hands the round a cut file, which shortens the
-  Builder's findings and `quality_rounds`' fingerprints.
-  Before 2026-10-27 the file was read only once the build ended; a copy that failed partway, ending the build, was
-  taken cut then too, and still is. Closes with a fixed last line that `gate.py` writes and the round
-  checks before taking the file (older gates, which the quality build of another project may run, write none), or
-  with asking Jenkins whether the Gate stage has completed.
+  to weigh, never a wrong verdict. Closes with lighter tests for the gate's own checks; one time budget the reruns and
+  mutmut share was decided against ("flaky-tests' reruns get one time limit a run", above).
+- **A running build's quality.md is taken as whole once two reads agree.** The quality round's `gate_or_end`
+  (`engine/src/workflow/quality_rounds.rs`) reads a still running build's `quality.md` each poll and takes it when two
+  reads at least `CI_POLL_SECONDS` apart are equal, because Jenkins serves an artifact while `archiveArtifacts` is still
+  copying it. Raised by the cross-review of `quality-round-early-read` (F1, 2026-10-27): "Equal reads show only that the
+  copy made no progress between them, not that it finished." Two such reads are taken only once they hold a whole
+  non-blank line (review 58, F1), so a copy stalled that long past its first line and then resumed still hands the round
+  a cut file, which shortens the Builder's findings and `quality_rounds`' fingerprints. Before 2026-10-27 the file was
+  read only once the build ended; a copy that failed partway, ending the build, was taken cut then too, and still is.
+  Closes with a fixed last line that `gate.py` writes and the round checks before taking the file (older gates, which
+  the quality build of another project may run, write none), or with asking Jenkins whether the Gate stage has
+  completed.
 - **The mutation budget leaves most of a large change's mutants untried.** `MUTATION_BUDGET` is 600 s. Measured on
   Jenkins on 2026-10-24: on PR #50 (surviving-mutants' change) mutmut tried 756 of 3079 mutants and the Gate stage took
-  683 s, the build about 850 s; on PR #51, 677 of 801 in a 638 s Gate stage. That fits `QUALITY_TIMEOUT` (1200 s, `engine/src/constants.rs`) with
-  about 350 s to spare, but not after a wait in Jenkins' queue, which counts against a quality round (PR #52 waited
-  about 860 s behind the others). Those were pull request builds; a quality build has skipped the Package stage since
-  2026-10-24, so it has more to spare than that. The user kept 600 s (2026-10-24): a stopped run says `budget-reached`,
-  never "none survived". Closes with mutants chosen by the changed lines rather than whole functions (a time budget
-  shared with the reruns was decided against, 2026-10-27). On PR #113 (2026-10-27) mutmut was stopped at 600 s after trying 0 of 253 mutants: its three runs of
-  the whole suite before the first mutant took the budget. Narrowed (2026-10-28, gate-open-decisions ticket 06): the
+  683 s, the build about 850 s; on PR #51, 677 of 801 in a 638 s Gate stage. That fits `QUALITY_TIMEOUT` (1200 s,
+  `engine/src/constants.rs`) with about 350 s to spare, but not after a wait in Jenkins' queue, which counts against a
+  quality round (PR #52 waited about 860 s behind the others). Those were pull request builds; a quality build has
+  skipped the Package stage since 2026-10-24, so it has more to spare than that. The user kept 600 s (2026-10-24): a
+  stopped run says `budget-reached`, never "none survived". Closes with mutants chosen by the changed lines rather than
+  whole functions (a time budget shared with the reruns was decided against, "flaky-tests' reruns get one time limit a
+  run", above). On PR #113 (2026-10-27) mutmut was stopped at 600 s after trying 0 of 253 mutants: its three runs of the
+  whole suite before the first mutant took the budget. Narrowed (2026-10-28, gate-open-decisions ticket 06): the
   Jenkinsfile's Test stage records a coverage context per test, and `gate.py --test-contexts` has mutmut run only the
   tests that reach the changed functions and its selection collects (`_recorded_tests`, `_narrowed_table`); replayed
   locally, PR #113's change took mutmut 77 s instead of 709 s, with the same verdicts. Still open: a change to a
@@ -773,10 +784,11 @@ is rewritten to say what is left.
   an orphan group of one process per CPU. It only happens when a change edits that code. Jenkins' process-tree
   killer should end them with the build; not checked. Closes with a check on a PR build, or with that test run
   without its own session under mutmut.
-- **The surviving-mutants check mutates Rust by added lines only.** cargo-mutants runs `--in-diff`, which mutates
-  only what the diff's added lines hold, so a Rust function whose edit only removes lines, such as a guard clause, is
-  not mutation-tested; Python's functions count removals (`_edits_function`, gate-open-decisions ticket 03). Closes with the Rust half choosing whole functions, as `_edits_function` does, and passing
-  them to cargo-mutants with `--re` or `--file` instead of the diff.
+- **The surviving-mutants check mutates Rust by added lines only.** cargo-mutants runs `--in-diff`, which mutates only
+  what the diff's added lines hold, so a Rust function whose edit only removes lines, such as a guard clause, is not
+  mutation-tested; Python's functions count removals (`_edits_function`, gate-open-decisions ticket 03). Closes with the
+  Rust half choosing whole functions, as `_edits_function` does, and passing them to cargo-mutants with `--re` or
+  `--file` instead of the diff.
 - **mutmut reads a symlinked `.py` file in the surviving-mutants copy.** `_copy_tracked` copies a tracked symlink
   as a link (`gate.py`), `_mark_for_mutmut` leaves links unmarked, and mutmut 3.8.0's `walk_all_files` lists
   a symlink to a file and `create_mutants_for_file` opens it. So once any changed function starts mutmut, a change
@@ -803,16 +815,16 @@ is rewritten to say what is left.
   a new function under its old name (review round 6, R6-F1). Decided by the user in review round 4 of ticket 06.
   Closes with a way to tell a copy from a rename, such as git's copy detection (`git diff -C`) on the change's
   files.
-- **`paths_between` (`engine/src/host.rs`) follows the user's `diff.relative`.** Its `git diff --name-only` has no `--no-relative`,
-  so with `diff.relative=true` in the user's git config and a `cwd` that is a subdirectory of the repository (not
-  checked whether a run can pass one), it lists only the paths under that subdirectory, and its `top_literal`
-  pathspecs for files elsewhere match nothing. `Host::lock` then returns fewer locked paths and
+- **`paths_between` (`engine/src/host.rs`) follows the user's `diff.relative`.** Its `git diff --name-only` has no
+  `--no-relative`, so with `diff.relative=true` in the user's git config and a `cwd` that is a subdirectory of the
+  repository (not checked whether a run can pass one), it lists only the paths under that subdirectory, and its
+  `top_literal` pathspecs for files elsewhere match nothing. `Host::lock` then returns fewer locked paths and
   `Host::locked_changes` misses edits to them; `locked_changes`'s own `git diff` has the same exposure. Raised by the
   cross-review of `trust-quality-at-pr` (review 49, F7, 2026-10-26), which found it in what is now `judging_changes`
-  (`engine/src/cli/judged.rs`) and fixed it there with `--no-relative`; of `paths_between` it said: "has the same exposure, but it is outside this
-  range". Closes with `--no-relative` on both calls and a test that sets `diff.relative` and locks from a
-  subdirectory.
-  Ticket: `.scratch/git-diff-relative/issues/01-locks-ignore-diff-relative.md` (#233).
+  (`engine/src/cli/judged.rs`) and fixed it there with `--no-relative`; of `paths_between` it said: "has the same
+  exposure, but it is outside this range". Closes with `--no-relative` on both calls and a test that sets
+  `diff.relative` and locks from a subdirectory. Ticket:
+  `.scratch/git-diff-relative/issues/01-locks-ignore-diff-relative.md` (#233).
 - **A run that dies right after it saved phase `done` never finishes ending.** `end_done_run`
   (`engine/src/workflow.rs`) saves `phase = DONE`, counts the turns' tokens (`count_tokens`), saves again with `owner`
   cleared, and only then writes `summary.md` and `metrics.json`, notifies the human that the run finished and closes
@@ -835,10 +847,10 @@ is rewritten to say what is left.
   Ticket: `.scratch/run-crash-ending/issues/02-alive-agent-session-noted.md` (#228).
 - **A resumed interview tells the human again that it waits for them.** `step_turn`'s `Announce::Interview`
   (`engine/src/workflow.rs`) has `announce` (`engine/src/workflow/turn.rs`) focus the human-paced agent's pane and
-  notify "<label> is waiting for you" in every orchestrator that takes the turn (`turn` calls it from `written` on
-  every pass), so a resume while the interview is under way repeats both, once per resume. Raised by cross-review 81 (F1, 2026-10-28) against ticket orchestrator-test-methods/05, which allows only
-  documented idempotent repeats: "Neither is idempotent: the cited comment … says each orchestrator does it again,
-  which is the repeat the ticket asks the test to fail on." The user ruled it a bug (2026-10-28), not wanted. The
-  Rust engine was ported to behave the same, untested as above. Closes with an engine that announces a turn only where
-  none did (for example, only when `prompted` is not the turn's file).
-  Ticket: `.scratch/run-crash-ending/issues/03-interview-announced-once.md` (#229).
+  notify "<label> is waiting for you" in every orchestrator that takes the turn (`turn` calls it from `written` on every
+  pass), so a resume while the interview is under way repeats both, once per resume. Raised by cross-review 81 (F1,
+  2026-10-28) against ticket orchestrator-test-methods/05, which allows only documented idempotent repeats: "Neither is
+  idempotent: the cited comment … says each orchestrator does it again, which is the repeat the ticket asks the test to
+  fail on." The user ruled it a bug (2026-10-28), not wanted. The Rust engine was ported to behave the same, untested as
+  above. Closes with an engine that announces a turn only where none did (for example, only when `prompted` is not the
+  turn's file). Ticket: `.scratch/run-crash-ending/issues/03-interview-announced-once.md` (#229).
