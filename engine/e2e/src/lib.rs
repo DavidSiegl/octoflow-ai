@@ -6,7 +6,8 @@
 //! fakes themselves (`fakes`), and the normalizer that makes two runs of a scenario compare equal (`normalize`).
 //!
 //! The recordings were made by the Python harness this replaced (tests/parity, removed by octoflow-without-python
-//! ticket 02), and this harness reads and writes them byte for byte as it did, through the engine's `py::json`.
+//! ticket 02); this harness compares a record with its recording as JSON values, not as text, and writes a recording
+//! as `recording_text` (tests/e2e/main.rs) formats it.
 
 pub mod fakes;
 pub mod ledger;
