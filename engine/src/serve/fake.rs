@@ -1,13 +1,14 @@
 //! The Python tests' ServeHost: a Host that serve's threads can share, its files in memory; and FakeConsole, the herdr
-//! its runs' agents are in.
+//! its runs' agents are in, which also launches the runs serve starts.
 
 use std::collections::BTreeMap;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::constants::RUNS_DIR;
 use crate::error::OrchestratorError;
-use crate::herdr::{AgentAddress, AgentConsole, HerdrError, HerdrServer};
+use crate::herdr::{AgentAddress, AgentConsole, HerdrError, HerdrServer, Launcher};
 use crate::host::{Exec, ExecError, Host, RunFile};
+use crate::serve::Reached;
 use serde_json::Value;
 
 /// A Host whose files are `files`, whose run_files lists those under a run directory by their `mtimes`, as the real
@@ -34,6 +35,10 @@ pub struct Files {
     pub run_states_error: Option<String>,
     /// How many times run_states was called: a poll of the project each.
     pub run_states_calls: usize,
+    /// How many times run_files was called: one listing of a run's directory each.
+    pub run_files_calls: usize,
+    /// While set, what every read fails with (still recorded in reads).
+    pub read_error: Option<String>,
 }
 
 impl ServeHost {
@@ -60,6 +65,9 @@ impl Host for ServeHost {
     fn read(&self, path: &str) -> Result<Option<String>, OrchestratorError> {
         let mut s = self.state();
         s.reads.push(path.to_string());
+        if let Some(e) = &s.read_error {
+            return Err(OrchestratorError(e.clone()));
+        }
         Ok(s.files.get(path).cloned())
     }
 
@@ -80,7 +88,8 @@ impl Host for ServeHost {
     }
 
     fn run_files(&self, run_dir: &str) -> Result<Vec<RunFile>, OrchestratorError> {
-        let s = self.state();
+        let mut s = self.state();
+        s.run_files_calls += 1;
         let mut files: Vec<(i64, String)> = s
             .files
             .keys()
@@ -94,7 +103,8 @@ impl Host for ServeHost {
 
 /// An AgentConsole whose agents show `screens`, by herdr name, whatever server they are addressed in, and which
 /// records what is typed into them in `typed`, and the server of each in `servers`. An agent without a screen has
-/// exited (herdr's agent_not_found).
+/// exited (herdr's agent_not_found). As a Launcher, it records each launch in `launches`, plays it by `on_launch`, and
+/// gives every launch pane LAUNCHED_PANE, whose command has exited once `exited` is set.
 #[derive(Default)]
 pub struct FakeConsole {
     state: Mutex<Consoled>,
@@ -111,6 +121,28 @@ pub struct Consoled {
     pub servers: Vec<Option<HerdrServer>>,
     /// While true, every command fails as herdr does when it cannot be reached (still recorded in `typed`).
     pub down: bool,
+    /// Each launch, (cwd, label, argv), in order.
+    pub launches: Vec<(String, String, Vec<String>)>,
+    /// What each launch then does, given its argv, as a run's command would: such as save a state.json.
+    pub on_launch: Option<OnLaunch>,
+    /// What LAUNCHED_PANE showed once its command exited; None while it runs.
+    pub exited: Option<String>,
+    /// While set, what every launch fails with, having launched nothing.
+    pub launch_error: Option<HerdrError>,
+    /// While set, what every look at whether a launched command has exited fails with.
+    pub exited_error: Option<HerdrError>,
+}
+
+/// What a FakeConsole does at a launch, given its argv (Consoled::on_launch).
+pub type OnLaunch = Box<dyn FnMut(&[String]) + Send>;
+
+/// The pane a FakeConsole launches every command in.
+pub const LAUNCHED_PANE: &str = "w9:p1";
+
+/// The project /proj on host, its agents in console and its runs launched by it there.
+pub fn reached(host: &Arc<ServeHost>, console: &Arc<FakeConsole>) -> Reached {
+    let dir = "/proj".to_string();
+    Reached { host: host.clone(), launch_dir: dir.clone(), dir, console: console.clone(), launcher: console.clone() }
 }
 
 impl FakeConsole {
@@ -144,5 +176,28 @@ impl AgentConsole for FakeConsole {
 
     fn send_keys(&self, agent: &AgentAddress, keys: &[&str]) -> Result<(), HerdrError> {
         self.answer(agent, format!("keys {} {}", agent.name, keys.join(" "))).map(drop)
+    }
+}
+
+impl Launcher for FakeConsole {
+    fn launch(&self, cwd: &str, label: &str, argv: &[String]) -> Result<String, HerdrError> {
+        let mut s = self.state();
+        if let Some(e) = &s.launch_error {
+            return Err(e.clone());
+        }
+        s.launches.push((cwd.to_string(), label.to_string(), argv.to_vec()));
+        if let Some(play) = s.on_launch.as_mut() {
+            play(argv);
+        }
+        Ok(LAUNCHED_PANE.to_string())
+    }
+
+    fn exited(&self, pane: &str, _lines: u32) -> Result<Option<String>, HerdrError> {
+        assert_eq!(pane, LAUNCHED_PANE, "only a launched pane is asked about");
+        let s = self.state();
+        match &s.exited_error {
+            Some(e) => Err(e.clone()),
+            None => Ok(s.exited.clone()),
+        }
     }
 }

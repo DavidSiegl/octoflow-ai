@@ -533,7 +533,7 @@ wheels = [
 
 [[package]]
 name = "octoflow"
-version = "0.54.2"
+version = "0.55.3"
 source = { virtual = "." }
 
 [package.dev-dependencies]

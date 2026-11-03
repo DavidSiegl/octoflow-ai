@@ -11,13 +11,16 @@ use std::sync::Arc;
 use crate::cli::listing::run_record;
 use crate::constants::RUNS_DIR;
 use crate::error::OrchestratorError;
-use crate::herdr::{AgentAddress, AgentConsole, HerdrError, HerdrServer};
+use crate::herdr::{AgentAddress, AgentConsole, HerdrError, HerdrServer, Launcher};
 use crate::host::Host;
 use crate::paths::file_name;
 use serde::Deserialize;
 use serde_json::Value;
 use crate::json::{object, Object, ValueExt};
+use crate::interrupt::Interrupt;
 use crate::runs::{local_host, pid_alive};
+use super::start::{RunRequest, StartWait, Started};
+use super::Reached;
 
 /// The keys of a run record that grow with every read of it while nothing happens; a change in them alone is no
 /// event. The client ages heartbeat_age itself from when it got the record.
@@ -75,6 +78,10 @@ pub struct ProjectRuns {
     host: Arc<dyn Host + Send + Sync>,
     /// Reaches the project's runs' agents, each in the herdr server its run saved.
     console: Arc<dyn AgentConsole>,
+    /// Starts a run's process where the human can watch it (Reached::launcher).
+    launcher: Arc<dyn Launcher>,
+    /// Where a run's process starts (Reached::launch_dir).
+    launch_dir: String,
     /// The project's absolute directory on host.
     cwd: String,
     /// The --machine and --cwd flags as the client gave them (target_args), for the records' resume commands.
@@ -84,14 +91,10 @@ pub struct ProjectRuns {
 }
 
 impl ProjectRuns {
-    /// The project in directory cwd, absolute, on host, its agents reached by console; target is as the field says.
-    pub fn new(
-        host: Arc<dyn Host + Send + Sync>,
-        console: Arc<dyn AgentConsole>,
-        cwd: String,
-        target: Vec<String>,
-    ) -> ProjectRuns {
-        ProjectRuns { host, console, cwd, target, pid_alive: Arc::new(pid_alive) }
+    /// The project reached; target is as the field says.
+    pub fn new(reached: Reached, target: Vec<String>) -> ProjectRuns {
+        let Reached { host, dir, console, launcher, launch_dir } = reached;
+        ProjectRuns { host, console, launcher, launch_dir, cwd: dir, target, pid_alive: Arc::new(pid_alive) }
     }
 
     /// As new, a run's owner on this machine taken to be alive by pid_alive instead.
@@ -180,10 +183,49 @@ impl ProjectRuns {
         Ok(AgentAddress { name: name.to_string(), server })
     }
 
+    /// Start the run request asks for, as run_id, by program, the orchestrator's binary, in a new herdr workspace
+    /// (Launcher::launch, labelled as the run labels its own, crate::workflow::workspace_label), and wait
+    /// (StartWait::until) for it to save its state.json or for its command to exit without one. The project is given to
+    /// `run` as `--cwd` and the directory serve resolved, for a project here, and as the client named it, with its
+    /// `--machine`, for one on a machine. Once the run is launched a look that fails, at its state.json or its pane, is
+    /// no answer: the wait goes on, so that the client still gets the id of a run that is running. Errors: Refused for
+    /// a run id that is not a plain name; Failed when herdr cannot launch it, as "no herdr server here; start herdr"
+    /// without a herdr server.
+    pub fn start(
+        &self,
+        request: &RunRequest,
+        program: &str,
+        run_id: &str,
+        wait: StartWait,
+        stopping: &Interrupt,
+    ) -> Result<Started, RunReadError> {
+        let state = format!("{}/state.json", self.dir(run_id)?);
+        let label = crate::workflow::workspace_label(run_id, &request.task);
+        // The pane starts in the resolved directory too, where a relative cwd or one with ~ would resolve elsewhere.
+        let target = if self.remote() { self.target.clone() } else { vec!["--cwd".to_string(), self.cwd.clone()] };
+        let argv = request.argv(program, run_id, &target);
+        let pane = self.launcher.launch(&self.launch_dir, &label, &argv).map_err(|e| match e.code() {
+            Some("server_not_running") => OrchestratorError::new("no herdr server here; start herdr"),
+            _ => e.into(),
+        })?;
+        let saved = || self.host.read(&state).is_ok_and(|text| text.is_some());
+        Ok(wait.until(stopping, || {
+            if saved() {
+                return Some(Started::Listed);
+            }
+            let shown = self.launcher.exited(&pane, START_ERROR_LINES).ok().flatten()?;
+            // It may have saved its state.json just before it exited, as a run that fails after its claim does.
+            Some(if saved() { Started::Listed } else { Started::Exited(shown) })
+        }))
+    }
+
     fn dir(&self, run_id: &str) -> Result<String, RunReadError> {
         Ok(format!("{}/{RUNS_DIR}/{}", self.cwd, plain_name(run_id)?))
     }
 }
+
+/// The most lines of its pane that a run which exited before it saved its state.json gives as its error.
+const START_ERROR_LINES: u32 = 20;
 
 /// The RunReadError of herdr's failure e on role's agent: Missing when the agent has exited.
 fn herdr_failure(role: &str, e: HerdrError) -> RunReadError {
@@ -217,10 +259,21 @@ impl Event {
 pub struct RunWatch<'p> {
     /// The project whose runs the stream tells of.
     project: &'p ProjectRuns,
-    /// By run id, the run's record without AGING_RECORD_KEYS and its files, as last sent.
-    sent: BTreeMap<String, (Object, Value)>,
+    /// By run id, what the stream last told of the run.
+    sent: BTreeMap<String, Sent>,
     /// The error the last problem event reported; None when there was none, or it cleared.
     problem: Option<String>,
+}
+
+/// What an event stream last told of one run.
+struct Sent {
+    /// The run's record without AGING_RECORD_KEYS.
+    key: Object,
+    /// The run's files, as last listed.
+    files: Value,
+    /// True means the run is finished and files is taken to be all it has under its record key, so they are not listed
+    /// again until the record changes; always false for a running run. RunWatch::poll says when a list settles.
+    files_settled: bool,
 }
 
 impl<'p> RunWatch<'p> {
@@ -237,9 +290,13 @@ impl<'p> RunWatch<'p> {
     ///   run's record event, if it has one.
     /// - problem, {"error"}: the project could not be read, and why; error is null once it can be again. First.
     ///
-    /// The first poll sends every run's record and files. A finished or failed run's files are read again only when
-    /// its record changes: nothing drives it. A poll that fails sends only its problem, and changes nothing else of
-    /// what the watch holds.
+    /// The first poll sends every run's record and files. A running run's files are listed on every poll. A finished
+    /// or failed run's are listed until two polls in a row with the same record list the same files; then again only
+    /// when its record changes, as nothing else drives it. The wait is for the files the engine writes after the save
+    /// that finishes the run (workflow.rs: end_done_run's summary.md and metrics.json, release's summary.md): a poll
+    /// interval (SERVE_POLL) is taken to be long enough for them, and ones written later are told of only at the
+    /// record's next change. A poll that fails sends only its problem, and changes nothing else of what the watch
+    /// holds.
     pub fn poll(&mut self) -> Vec<Event> {
         match self.changes() {
             Ok(events) => self.problem_events(None).into_iter().chain(events).collect(),
@@ -259,19 +316,23 @@ impl<'p> RunWatch<'p> {
                 key.remove(aging);
             }
             let old = self.sent.get(&run_id);
-            let same_record = old.is_some_and(|(old_key, _)| *old_key == key);
+            let same_record = old.is_some_and(|old| old.key == key);
             let finished = record.get("health").is_none_or(Value::is_null);
-            let files = match old {
-                Some((_, old_files)) if same_record && finished => old_files.clone(),
-                _ => self.project.files(&run_id)?,
+            let (files, files_settled) = match old {
+                Some(old) if same_record && finished && old.files_settled => (old.files.clone(), true),
+                _ => {
+                    let files = self.project.files(&run_id)?;
+                    let settled = finished && same_record && old.is_some_and(|old| old.files == files);
+                    (files, settled)
+                }
             };
             if !same_record {
                 events.push(Event::new("record", [("run", id.clone()), ("record", Value::Object(record))]));
             }
-            if old.is_none_or(|(_, old_files)| *old_files != files) {
+            if old.is_none_or(|old| old.files != files) {
                 events.push(Event::new("files", [("run", id), ("files", files.clone())]));
             }
-            sent.insert(run_id, (key, files));
+            sent.insert(run_id, Sent { key, files, files_settled });
         }
         for gone in self.sent.keys().filter(|id| !sent.contains_key(*id)) {
             events.push(Event::new("record", [("run", Value::from(gone.as_str())), ("record", Value::Null)]));

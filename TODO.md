@@ -69,6 +69,13 @@ is rewritten to say what is left.
 
 ## Open issues
 
+- **serve starts a run through a shell it takes for POSIX or fish.** `Launcher::launch` (`ProcessHerdr`,
+  `engine/src/herdr.rs`) gives the new pane's shell each word of the `run` command as an environment variable and
+  types `"$OCTOFLOW_ARG_0" "$OCTOFLOW_ARG_1" …; echo '<marker>'`, since herdr 0.9.1's `pane run` types its
+  arguments into the shell. bash, zsh, dash and fish run that; a pane whose shell is nushell, xonsh or PowerShell
+  does not, and POST /run answers 422 with the shell's error, or 202 when the marker never shows. Found while
+  implementing app-start-runs ticket 01 (2026-11-03). Closes with a launch that does not go through the pane's
+  shell: herdr starting the command itself in the new pane, if a later herdr can.
 - **new-dependencies on Cargo: two readings of a manifest that its doc does not state.** In
   `engine/src/checks/dependencies.rs`, `cargo_manifest_dependencies` keeps the first entry of a crate across its tables,
   as `add_named` does across manifests: `foo = "1"` in `[dependencies]` and `foo = { git = "..." }` under
@@ -105,18 +112,16 @@ is rewritten to say what is left.
   Raised by cross-review 114 (F9, nit, 2026-11-03): "`indexmap::IndexMap` is already in the build through
   `preserve_order`." Using it needs `indexmap` as a dependency of the engine's own, which the user approves; closes
   with that approval and `Map` replaced by `IndexMap`, or with the user's ruling that `Map` stays.
-- **serve's event stream can miss a finished run's last files.** `end_done_run` (`workflow.rs`) saves state.json
-  with the owner cleared, which makes the run finished, before it writes summary.md and metrics.json, and `release`
-  saves before summary.md likewise; `RunWatch::changes` (`serve/runs.rs`) reads a finished run's files again only
-  when its record changes. A poll that lands between the save and the writes keeps a file list without them for
-  good, so the desktop app never shows them. The e2e scenario `serve_endpoints_and_events` fails when it does:
-  PR-213's pr-head build, whose final checkpoint lacked metrics.json, where the branch build of the same commit
-  passed (2026-10-30). Again in PR-243 build #1 (head 25b87c0, 2026-11-03): the final checkpoint's fourth file
-  was review-1.md where the recording has metrics.json, while the branch build of the same commit
-  (octoflow-without-python-04 #1, ticket octoflow-without-python/04's branch) and PR-243 build #2 passed. Closes
-  with the files written before the save that finishes the run, or with the watch re-reading a finished run's files
-  until they stop changing.
-  Ticket: `.scratch/serve-run-files/issues/01-finished-run-files-reread.md` (#230).
+- **serve's event stream can still miss a finished run's last files when they take longer than a poll interval.**
+  `RunWatch::poll` (`engine/src/serve/runs.rs`) takes a finished run's files as complete once two polls one
+  `SERVE_POLL` apart (1 s local, 5 s remote) list the same set. Raised by cross-review 121 (F3, should-fix,
+  2026-11-03): "If the host commands between the finishing save and the last write (`workflow.rs` save →
+  `write_summary` → `write_metrics`; likewise for `release`) take longer than one interval, two polls list the same
+  incomplete set and the run is settled without summary.md/metrics.json until its record next changes. That is the
+  original symptom with a narrower window. On a remote project, `write_summary`'s `round_results` reads go over SSH,
+  so this is not out of reach." Closes with a settle rule that does not depend on the interval, such as settling
+  only once the finishing save is older than a bound (the record carries `heartbeat_age`), or with the engine
+  writing the files before that save where a takeover allows it (`end_done_run`; `release` saves first on purpose).
 - **The desktop app ships its npm packages' code without their licenses.** `octoflow-third-party-licenses.html`
   (`packaging/about.toml`) lists the Rust crates only, as cargo-about reads Cargo's graph; the app's web view bundles
   `ui/package.json`'s runtime dependencies, React, react-markdown, remark-gfm and @tauri-apps/api with what they pull
@@ -412,6 +417,13 @@ is rewritten to say what is left.
   outside the run directory, as a fix on main once the Python engine is gone, which it is since rust-engine ticket 11.
   Open until that fix.
   Ticket: `.scratch/serve-run-files/issues/02-links-outside-run-refused.md` (#231).
+- **`Host::read` fails for a file removed between its test and its read.** `[ -f "$1" ] || exit MISSING; cat -- "$1"`
+  (`engine/src/host.rs`, `fn read`) answers a file that goes away between the two with an error, not with None, so
+  serve's `/file` for a file `run_files` just listed, such as the secret scan's `leaks-publish.json`, and
+  `ProjectRuns::agent` for a run being pruned report a failure where "missing" is the answer. Raised by cross-review
+  120 (F3, 2026-11-03), against serve-run-files/03, which made the two listings skip such a file and left `read` out
+  of its scope. Closes with a cat that fails on a file no longer there answering None, and a test that removes the file
+  between the two.
 - **The e2e scenarios compare serve's event stream at checkpoints, not event by event.** `serve_endpoints_and_events`
   keeps, at each point where the run waits on an agent and once it is done, the last `record` and `files` event of
   each run (`engine/e2e/tests/e2e/scenarios.rs`, `last_by_run`). Raised by cross-review 65 (F10, 2026-10-27), against the

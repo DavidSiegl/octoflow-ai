@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use super::*;
 use crate::constants::{APPROVE, HEARTBEAT_SECONDS, STALE_SECONDS};
 use crate::runs::STALE;
-use crate::serve::fake::{FakeConsole, ServeHost};
+use crate::serve::fake::{reached, FakeConsole, ServeHost};
 
 const SERVE_ID: &str = "20261024-120000-5e7e00";
 
@@ -35,7 +35,7 @@ struct Watched {
 impl Watched {
     fn new() -> Watched {
         let host = Arc::new(ServeHost::on(None));
-        let project = ProjectRuns::new(host.clone(), Arc::new(FakeConsole::default()), "/proj".to_string(), vec![]);
+        let project = ProjectRuns::new(reached(&host, &Arc::default()), vec![]);
         Watched { host, project }
     }
 
@@ -87,16 +87,26 @@ fn a_run_turning_stale_is_an_event() {
 }
 
 #[test]
-fn a_finished_runs_files_are_read_again_only_when_it_changes() {
+fn a_finished_runs_files_are_read_until_they_settle_and_then_only_when_it_changes() {
     let w = Watched::new();
     let done = [("phase", Value::from("done")), ("verdict", Value::from(APPROVE))];
     w.save(0, &done);
     let mut watch = RunWatch::new(&w.project);
     watch.poll();
+    // The engine writes summary.md after the save that finished the run: the next poll still reads it.
     w.host.state().files.insert(format!("{}/summary.md", run_dir()), "done".to_string());
+    let events = watch.poll();
+    assert_eq!(kinds(&events), ["files"]);
+    assert_eq!(events[0].payload.get("files").unwrap().to_string(), r#"[{"name":"summary.md","mtime":0}]"#);
+    // A poll that reads the same list as the one before settles it, and from then on nothing lists the run's files.
     assert_eq!(watch.poll(), vec![]);
+    let listings = w.host.state().run_files_calls;
+    assert_eq!(watch.poll(), vec![]);
+    assert_eq!(w.host.state().run_files_calls, listings);
     w.save(0, &[done[0].clone(), done[1].clone(), ("closed", Value::from("2026-10-24T12:00:00Z"))]);
-    assert_eq!(kinds(&watch.poll()), ["record", "files"]);
+    assert_eq!(kinds(&watch.poll()), ["record"]);
+    w.host.state().files.insert(format!("{}/metrics.json", run_dir()), "{}".to_string());
+    assert_eq!(kinds(&watch.poll()), ["files"]);
 }
 
 #[test]
@@ -108,7 +118,7 @@ fn a_run_of_this_host_whose_orchestrator_exited_is_stale() {
     );
     w.save(HEARTBEAT_SECONDS + 1, &[("owner", owner)]);
     let console = Arc::new(FakeConsole::default());
-    let project = ProjectRuns::new(w.host.clone(), console, "/proj".to_string(), vec![]).with_pid_alive(|pid| {
+    let project = ProjectRuns::new(reached(&w.host, &console), vec![]).with_pid_alive(|pid| {
         ASKED.fetch_add(1, Ordering::SeqCst);
         assert_eq!(pid, 4242);
         false
@@ -203,7 +213,7 @@ fn state_json_and_names_outside_the_run_are_refused_unread() {
 fn an_agent_is_reached_in_the_herdr_server_its_run_saved() {
     let host = Arc::new(ServeHost::on(None));
     let console = Arc::new(FakeConsole::default());
-    let project = ProjectRuns::new(host.clone(), console.clone(), "/proj".to_string(), vec![]);
+    let project = ProjectRuns::new(reached(&host, &console), vec![]);
     console.state().screens.insert("build-5e7e00".to_string(), "> ready".to_string());
     let agents = serde_json::from_str::<Value>(r#"{"build": {"name": "build-5e7e00", "pane": "w1:p2"}}"#).unwrap();
     let save = |server: Option<&str>| {

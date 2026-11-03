@@ -143,6 +143,22 @@ fn a_rejected_verdict_keeps_its_record_under_its_new_name() {
 }
 
 #[test]
+fn a_file_stamped_in_the_second_before_its_turn_started_ends_the_turn_at_its_start() {
+    // As Linux stamps a file written within milliseconds of a start read at the turn of a second.
+    let mut review = review_turn(1, APPROVE);
+    let stamped_early: Turn = Box::new(move |prompt, state, host| {
+        let said = review(prompt, state, host);
+        let now = crate::host::Host::now(&**host).expect("the fake host has a clock");
+        host.state().mtimes.insert(state.review_path(1), now - 1);
+        said
+    });
+    let f = Fixture::new(vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)]), ("review", vec![stamped_early])]);
+    let mut wf = f.workflow(RunSettings::default());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert_eq!(record("review", "review-1.md", Some(0), Some(0)), wf.state().turns[2]);
+}
+
+#[test]
 fn a_state_without_turn_records_resumes_and_records_its_files_without_a_start() {
     let mut state = saved_run("review", 1, FULL);
     state.prompted = Some("review-1.md".into());

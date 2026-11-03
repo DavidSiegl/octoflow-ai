@@ -136,6 +136,10 @@ pub const STATE_FORMAT: u64 = 2;
 /// The release that first wrote STATE_FORMAT.
 pub const STATE_FORMAT_SINCE: &str = "0.54.0";
 
+/// A run id's key: its random suffix, the part after its last `-` (all of it without one).
+pub fn run_key(run_id: &str) -> &str {
+    run_id.rsplit('-').next().unwrap_or(run_id)
+}
 
 impl RunState {
     /// A new run's state: every field but these at its default.
@@ -246,9 +250,9 @@ impl RunState {
         saved_prompts(&self.prompt_overrides, &self.run_id)
     }
 
-    /// The run id's random suffix, which names its agents and labels its workspace.
+    /// The run id's random suffix, which names its agents and labels its workspace (run_key).
     pub fn key(&self) -> &str {
-        self.run_id.rsplit('-').next().unwrap_or(&self.run_id)
+        run_key(&self.run_id)
     }
 
     /// The run directory, in the project's checkout.
