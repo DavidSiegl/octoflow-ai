@@ -4,26 +4,35 @@
 use crate::constants::DEFAULT_AGENT;
 use crate::harness::{Tokens, Usage};
 use crate::pipeline::Pipeline;
-use crate::py::datetime::{civil_from_days, fromisoformat_timestamp};
-use crate::py::json::{Json, Map};
+use serde_json::Value;
+use crate::json::{Object, ValueExt};
 use crate::state::RunState;
+use jiff::Timestamp;
+use serde_json::json;
 
 /// The version of run_metrics' shape, raised when a key changes its meaning or goes.
 pub const METRICS_VERSION: i64 = 1;
 
-/// seconds since the epoch as an ISO 8601 UTC time to the second, as datetime.isoformat writes it:
-/// 2026-10-28T08:34:31+00:00.
+/// seconds since the epoch as an RFC 3339 time in UTC to the second, with its offset written out:
+/// 2026-10-28T08:34:31+00:00. The engine writes every time it records so.
 pub fn iso_utc(seconds: i64) -> String {
-    let (days, secs) = (seconds.div_euclid(86_400), seconds.rem_euclid(86_400));
-    let (year, month, day) = civil_from_days(days);
-    format!("{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}+00:00", secs / 3600, secs % 3600 / 60, secs % 60)
+    // Seconds beyond jiff's years -9999 to 9999 are clamped to its bounds; no clock gives them.
+    let seconds = seconds.clamp(Timestamp::MIN.as_second(), Timestamp::MAX.as_second());
+    let at = Timestamp::from_second(seconds).unwrap_or(Timestamp::UNIX_EPOCH);
+    at.strftime("%Y-%m-%dT%H:%M:%S+00:00").to_string()
 }
 
-/// The seconds since the epoch of an ISO 8601 time, as int(datetime.fromisoformat(iso).timestamp()) gives them, a time
-/// without an offset being the machine's local time (crate::py::datetime::fromisoformat_timestamp). Errors: iso is not
-/// a time fromisoformat reads, or one timestamp() refuses.
+/// The seconds since the epoch, with their fraction to the microsecond, of an ISO 8601 time with an offset (Z, +hh:mm
+/// or +hh), as jiff's Timestamp reads it: RFC 3339 and ISO 8601's basic format among its forms. Errors: iso is not
+/// such a time, a time without an offset among them, as jiff words it.
+pub fn epoch_time(iso: &str) -> Result<f64, String> {
+    let at: Timestamp = iso.parse().map_err(|e: jiff::Error| e.to_string())?;
+    Ok(at.as_microsecond() as f64 / 1e6)
+}
+
+/// epoch_time's whole seconds, the fraction cut off; errors as its.
 pub fn epoch_seconds(iso: &str) -> Result<i64, String> {
-    fromisoformat_timestamp(iso).map(|seconds| seconds.trunc() as i64)
+    epoch_time(iso).map(|seconds| seconds.floor() as i64)
 }
 
 /// A duration as summary.md and the tables write it: 42s, 3m 07s, 2h 05m.
@@ -48,13 +57,11 @@ pub fn format_age(seconds: i64) -> String {
     }
 }
 
-/// value as Python's str() writes it: a string as it is, None, True and False by name, a number as JSON does.
-fn py_str(value: Option<&Json>) -> String {
+/// value as a table cell shows it: a string as it is, anything else as JSON, and - for a value missing or null.
+fn cell(value: Option<&Value>) -> String {
     match value {
-        None | Some(Json::Null) => "None".into(),
-        Some(Json::Str(s)) => s.clone(),
-        Some(Json::Bool(b)) => if *b { "True" } else { "False" }.into(),
-        Some(other) => other.dumps(),
+        None | Some(Value::Null) => "-".into(),
+        Some(other) => other.text(),
     }
 }
 
@@ -73,50 +80,50 @@ struct TurnCells {
 impl TurnCells {
     /// A turn record's values as the tables show them. A start or duration that is not known shows as ?: a file
     /// written before turns were recorded, or a turn still open. A quality analysis runs in no harness.
-    fn of(t: &Map<Json>) -> TurnCells {
-        let truthy = |key: &str| t.get(key).filter(|v| v.truthy());
+    fn of(t: &Object) -> TurnCells {
+        let truthy = |key: &str| t.get(key).filter(|v| v.is_set());
         let harness = truthy("agent");
         let round = match truthy("quality_round") {
-            Some(q) => format!("{} q{}", py_str(t.get("round")), py_str(Some(q))),
-            None => py_str(t.get("round")),
+            Some(q) => format!("{} q{}", cell(t.get("round")), cell(Some(q))),
+            None => cell(t.get("round")),
         };
         let model = match (truthy("model"), harness) {
-            (Some(model), _) => py_str(Some(model)),
+            (Some(model), _) => cell(Some(model)),
             (None, Some(_)) => "default".into(),
             (None, None) => "-".into(),
         };
         let start = match truthy("started_at") {
             Some(at) => {
-                let at = py_str(Some(at)).replace('T', " ");
+                let at = cell(Some(at)).replace('T', " ");
                 at.strip_suffix("+00:00").unwrap_or(&at).to_string()
             }
             None => "?".into(),
         };
         let duration = match t.get("seconds") {
-            None | Some(Json::Null) => "?".into(),
-            Some(Json::Int(n)) => format_duration(i64::try_from(*n).unwrap_or(i64::MAX)),
-            Some(other) => py_str(Some(other)),
+            None | Some(Value::Null) => "?".into(),
+            Some(n) if n.is_i64() => format_duration(n.as_i64().unwrap_or(i64::MAX)),
+            Some(other) => cell(Some(other)),
         };
         TurnCells {
-            step: py_str(t.get("step")),
-            role: py_str(t.get("role")),
+            step: cell(t.get("step")),
+            role: cell(t.get("role")),
             round,
-            harness: harness.map_or("-".into(), |h| py_str(Some(h))),
+            harness: harness.map_or("-".into(), |h| cell(Some(h))),
             model,
             start,
             duration,
-            file: py_str(t.get("file")),
+            file: cell(t.get("file")),
         }
     }
 }
 
 /// The turns as a Markdown table, the human-paced ones marked: their time is the human's as much as the agent's.
-pub fn turns_table(turns: &[Map<Json>]) -> String {
+pub fn turns_table(turns: &[Object]) -> String {
     let head = ["step", "role", "round", "harness", "model", "start (UTC)", "duration", "file"].map(String::from);
     let mut rows = vec![head.to_vec(), vec!["---".to_string(); head.len()]];
     for t in turns {
         let mut c = TurnCells::of(t);
-        if t.get("human_paced").is_some_and(Json::truthy) {
+        if t.get("human_paced").is_some_and(Value::is_set) {
             c.step.push_str(" (human-paced)");
         }
         rows.push(vec![c.step, c.role, c.round, c.harness, c.model, c.start, c.duration, c.file]);
@@ -129,7 +136,7 @@ pub fn turns_table(turns: &[Map<Json>]) -> String {
 
 /// The turns as show prints them, a line each, in columns of step, round, harness, start, duration and file, each as
 /// wide as its widest cell, in characters.
-pub fn turn_lines(turns: &[Map<Json>]) -> Vec<String> {
+pub fn turn_lines(turns: &[Object]) -> Vec<String> {
     let rows: Vec<[String; 6]> = turns
         .iter()
         .map(|t| {
@@ -152,7 +159,7 @@ fn turn_starts(state: &RunState) -> Vec<i64> {
     state
         .turns
         .iter()
-        .filter_map(|t| t.get("started_at").filter(|at| at.truthy()))
+        .filter_map(|t| t.get("started_at").filter(|at| at.is_set()))
         .filter_map(|at| at.as_str().and_then(|at| epoch_seconds(at).ok()))
         .collect()
 }
@@ -207,13 +214,13 @@ pub fn run_summary(state: &RunState, pipeline: &Pipeline, rounds: &[String], now
 /// turn's start to the second its handoff file was written, summed, from usage, Harness::session_usage of the session
 /// it ran in throughout; "unknown" when there is no such usage, or the turn's session or either end is not known, or
 /// not a time.
-pub fn turn_tokens(turn: &Map<Json>, usage: Option<&[Usage]>) -> Json {
-    let unknown = || Json::from("unknown");
-    let known = |key: &str| turn.get(key).is_some_and(Json::truthy);
+pub fn turn_tokens(turn: &Object, usage: Option<&[Usage]>) -> Value {
+    let unknown = || Value::from("unknown");
+    let known = |key: &str| turn.get(key).is_some_and(Value::is_set);
     let Some(usage) = usage.filter(|_| known("session") && known("started_at") && known("ended_at")) else {
         return unknown();
     };
-    let time = |key: &str| turn.get(key).and_then(Json::as_str).and_then(|at| epoch_seconds(at).ok());
+    let time = |key: &str| turn.get(key).and_then(Value::as_str).and_then(|at| epoch_seconds(at).ok());
     let (Some(start), Some(end)) = (time("started_at"), time("ended_at")) else { return unknown() };
     // The answers within [start, end + 1), compared as Python compares an int with a float.
     let (start, end) = (start as f64, (end + 1) as f64);
@@ -225,39 +232,45 @@ pub fn turn_tokens(turn: &Map<Json>, usage: Option<&[Usage]>) -> Json {
 /// metrics.json of a run that is done, at now, in seconds since the epoch: one object of the run's outcome, its
 /// roles, its turns with their times and tokens, and its quality rounds with their fingerprints, never their
 /// findings' text. docs/design.md gives every key.
-pub fn run_metrics(state: &RunState, now: i64) -> Json {
+pub fn run_metrics(state: &RunState, now: i64) -> Value {
     let s = state;
     let start = turn_starts(s).into_iter().min();
-    let get = |t: &Map<Json>, key: &str| t.get(key).cloned().unwrap_or(Json::Null);
-    let turns = s.turns.iter().map(|t| {
-        let mut out = Map::new();
-        out.insert("step", get(t, "step"));
-        out.insert("role", get(t, "role"));
-        out.insert("harness", get(t, "agent"));
-        out.insert("model", get(t, "model"));
-        out.insert("round", get(t, "round"));
-        out.insert("quality_round", t.get("quality_round").cloned().unwrap_or(Json::Int(0)));
-        out.insert("human_paced", Json::Bool(t.get("human_paced").is_some_and(Json::truthy)));
-        out.insert("started_at", get(t, "started_at"));
-        out.insert("ended_at", get(t, "ended_at"));
-        out.insert("seconds", get(t, "seconds"));
-        let tokens = match t.get("tokens").filter(|v| v.truthy()) {
-            Some(tokens) => tokens.clone(),
-            None => Json::from("unknown"),
-        };
-        out.insert("tokens", if t.get("agent").is_some_and(Json::truthy) { tokens } else { Json::Null });
-        Json::Object(out)
-    });
-    let roles = s.agents.iter().map(|(role, agent)| {
-        let mut out = Map::new();
-        out.insert("harness", Json::from(agent.get("kind").map_or(DEFAULT_AGENT, String::as_str)));
-        out.insert("model", Json::from(s.models.get(role).cloned()));
-        (role, Json::Object(out))
-    });
+    let get = |t: &Object, key: &str| t.get(key).cloned().unwrap_or(Value::Null);
+    let turns: Vec<Value> = s
+        .turns
+        .iter()
+        .map(|t| {
+            let tokens = match t.get("tokens").filter(|v| v.is_set()) {
+                Some(tokens) => tokens.clone(),
+                None => Value::from("unknown"),
+            };
+            json!({
+                "step": get(t, "step"),
+                "role": get(t, "role"),
+                "harness": get(t, "agent"),
+                "model": get(t, "model"),
+                "round": get(t, "round"),
+                "quality_round": t.get("quality_round").cloned().unwrap_or(json!(0)),
+                "human_paced": t.get("human_paced").is_some_and(Value::is_set),
+                "started_at": get(t, "started_at"),
+                "ended_at": get(t, "ended_at"),
+                "seconds": get(t, "seconds"),
+                "tokens": if t.get("agent").is_some_and(Value::is_set) { tokens } else { Value::Null },
+            })
+        })
+        .collect();
+    let roles: Object = s
+        .agents
+        .iter()
+        .map(|(role, agent)| {
+            let harness = agent.get("kind").map_or(DEFAULT_AGENT, String::as_str);
+            (role.to_string(), json!({"harness": harness, "model": s.models.get(role)}))
+        })
+        .collect();
     let restored: usize = s
         .restored
         .iter()
-        .filter_map(|r| r.get("paths").and_then(Json::as_object))
+        .filter_map(|r| r.get("paths").and_then(Value::as_object))
         .flat_map(|paths| paths.values())
         .map(|ps| ps.as_array().map_or(0, Vec::len))
         .sum();
@@ -266,24 +279,24 @@ pub fn run_metrics(state: &RunState, now: i64) -> Json {
         (_, Some(e)) if !e.is_empty() => "error".into(),
         _ => "unfinished".into(),
     };
-    let mut out = Map::new();
-    out.insert("version", Json::from(METRICS_VERSION));
-    out.insert("run_id", Json::from(s.run_id.as_str()));
-    out.insert("workflow", Json::from(s.workflow.as_str()));
-    out.insert("outcome", Json::from(outcome));
-    out.insert("rounds", Json::Int(s.round.into()));
-    out.insert("max_rounds", Json::Int(s.max_rounds.into()));
-    out.insert("quality_gate", Json::Bool(s.had_quality_gate()));
-    out.insert("max_quality_rounds", if s.had_quality_gate() { Json::Int(s.max_quality_rounds.into()) } else { Json::Null });
-    out.insert("pull_request", Json::from(s.pr_url.clone()));
-    out.insert("started_at", Json::from(start.map(iso_utc)));
-    out.insert("ended_at", Json::from(iso_utc(now)));
-    out.insert("seconds", Json::from(start.map(|start| now - start)));
-    out.insert("roles", Json::Object(roles.collect()));
-    out.insert("turns", Json::Array(turns.collect()));
-    out.insert("quality_rounds", Json::Array(s.quality_rounds.iter().cloned().map(Json::Object).collect()));
-    out.insert("restored_locked_files", Json::Int(restored as i128));
-    Json::Object(out)
+    json!({
+        "version": METRICS_VERSION,
+        "run_id": s.run_id,
+        "workflow": s.workflow,
+        "outcome": outcome,
+        "rounds": s.round,
+        "max_rounds": s.max_rounds,
+        "quality_gate": s.had_quality_gate(),
+        "max_quality_rounds": if s.had_quality_gate() { Some(s.max_quality_rounds) } else { None },
+        "pull_request": s.pr_url,
+        "started_at": start.map(iso_utc),
+        "ended_at": iso_utc(now),
+        "seconds": start.map(|start| now - start),
+        "roles": roles,
+        "turns": turns,
+        "quality_rounds": s.quality_rounds,
+        "restored_locked_files": restored,
+    })
 }
 
 #[cfg(test)]

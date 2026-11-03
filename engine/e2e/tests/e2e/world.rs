@@ -22,7 +22,9 @@ use octoflow_e2e::scratch::Scratch;
 
 use crate::servers::{ServerFailure, Servers, JENKINS_TOKEN, JENKINS_USER, PYPI_CA};
 use octoflow_e2e::{array_at, object, object_at, procs, str_at, strings};
-use octoflow_engine::py::json::{Json, Map};
+use serde_json::Value;
+use octoflow_engine::map::Map;
+use octoflow_engine::json::Object;
 use octoflow_engine::host::shlex_quote;
 
 /// Who the world's commits are by: the harness's own, and the engine's, through the git configuration it is given.
@@ -194,9 +196,9 @@ pub struct World {
     /// Every invocation started, in order: invocation n is the n-th, from 1.
     pub invocations: Vec<Invocation>,
     /// What the scenario observed itself, by key, recorded under notes.
-    notes: Map<Json>,
+    notes: Object,
     /// The scenario's script, as the fakes read it from script.json.
-    script: Map<Json>,
+    script: Object,
     /// The fakes' state and the commands they got, which the world reads and changes too.
     pub ledger: Ledger,
 }
@@ -225,13 +227,13 @@ impl World {
         normalizer.literal(&checkout().to_string_lossy(), "<checkout>");
         let project = root.join("project");
         let origin = root.join("origin.git");
-        let script = Map::from_iter([
-            ("project", Json::from(project.to_string_lossy().as_ref())),
-            ("origin", Json::from(origin.to_string_lossy().as_ref())),
+        let script = octoflow_engine::json::object([
+            ("project", Value::from(project.to_string_lossy().as_ref())),
+            ("origin", Value::from(origin.to_string_lossy().as_ref())),
             ("agents", object([])),
-            ("machines", Json::Array(Vec::new())),
+            ("machines", Value::Array(Vec::new())),
             ("gh", object([])),
-            ("jenkins", object([("builds", Json::Array(Vec::new()))])),
+            ("jenkins", object([("builds", Value::Array(Vec::new()))])),
             ("pypi", object([])),
         ]);
         for d in ["home", "config/ai-agents-orchestrator", "bin", "fakes", "out", "tmp"] {
@@ -249,7 +251,7 @@ impl World {
             engine: engine.to_path_buf(),
             normalizer,
             invocations: Vec::new(),
-            notes: Map::new(),
+            notes: Object::new(),
             script,
         };
         world.write_script();
@@ -267,7 +269,7 @@ impl World {
 
     /// Script the role's agent: each action answers one prompt, in order, after those scripted before (see
     /// octoflow_e2e::fakes for what an action holds). A prompt beyond the last makes the agent exit.
-    pub fn agent<A: Into<Json>>(&mut self, role: &str, actions: impl IntoIterator<Item = A>) {
+    pub fn agent<A: Into<Value>>(&mut self, role: &str, actions: impl IntoIterator<Item = A>) {
         array_at(object_at(&mut self.script, "agents"), role).extend(actions.into_iter().map(Into::into));
         self.write_script();
     }
@@ -275,10 +277,10 @@ impl World {
     /// Save a herdr machine of that label, reached over the fake ssh, which runs every command here.
     pub fn machine(&mut self, label: &str) {
         let machine = object([
-            ("label", Json::from(label)),
-            ("id", Json::Str(format!("id-{label}"))),
-            ("enabled", Json::Bool(true)),
-            ("target", Json::Str(format!("parity@{label}"))),
+            ("label", Value::from(label)),
+            ("id", Value::String(format!("id-{label}"))),
+            ("enabled", Value::Bool(true)),
+            ("target", Value::String(format!("parity@{label}"))),
         ]);
         array_at(&mut self.script, "machines").push(machine);
         self.write_script();
@@ -288,52 +290,52 @@ impl World {
     /// ("quality", null for one that ended before its Gate stage), its failing tests ("tests", [name, detail] pairs, or
     /// null for no test report), its "console" and "description"; with "hold", it runs until release(hold), archiving
     /// nothing meanwhile.
-    pub fn jenkins_build(&mut self, build: Json) {
+    pub fn jenkins_build(&mut self, build: Value) {
         array_at(object_at(&mut self.script, "jenkins"), "builds").push(build);
         self.write_script();
     }
 
     /// Give the quality job a build that Jenkins keeps from before the scenario, as judged-in-quality reads it.
     pub fn retained_build(&mut self, number: i64, result: &str, description: &str) {
-        let build = object([("number", Json::Int(number.into())), ("result", Json::from(result)), ("description", Json::from(description))]);
+        let build = object([("number", Value::from(number)), ("result", Value::from(result)), ("description", Value::from(description))]);
         array_at(object_at(&mut self.script, "jenkins"), "retained").push(build);
         self.write_script();
     }
 
     /// Make PyPI answer GET /pypi/<name>/json with answer, its JSON API's document; any other name is a 404.
-    pub fn pypi_project(&mut self, name: &str, answer: Json) {
-        object_at(&mut self.script, "pypi").insert(name, answer);
+    pub fn pypi_project(&mut self, name: &str, answer: Value) {
+        object_at(&mut self.script, "pypi").insert(name.to_string(), answer);
         self.write_script();
     }
 
     /// Make gh's next `pr create` wait until release(hold).
     pub fn hold_pr_create(&mut self, hold: &str) {
-        object_at(&mut self.script, "gh").insert("create_hold", Json::from(hold));
+        object_at(&mut self.script, "gh").insert("create_hold".into(), Value::from(hold));
         self.write_script();
     }
 
     /// Change what gh says of pull request n, the n-th the engine opened: state (OPEN, CLOSED or MERGED), closedAt,
     /// mergeable, isDraft.
-    pub fn set_pr(&self, n: usize, fields: &[(&str, Json)]) {
+    pub fn set_pr(&self, n: usize, fields: &[(&str, Value)]) {
         self.ledger.change(|state| {
-            let Some(Json::Object(pr)) = object_at(state, "prs").get_mut(&n.to_string()) else {
+            let Some(Value::Object(pr)) = object_at(state, "prs").get_mut(&n.to_string()) else {
                 panic!("gh has opened no pull request {n}")
             };
             for (k, v) in fields {
-                pr.insert(*k, v.clone());
+                pr.insert(k.to_string(), v.clone());
             }
         });
     }
 
     /// Pull request n as gh holds it: base, head, title, body, isDraft, state, closedAt, mergeable.
-    pub fn pr(&self, n: usize) -> Json {
+    pub fn pr(&self, n: usize) -> Value {
         self.ledger.change(|state| object_at(state, "prs").get(&n.to_string()).cloned())
             .unwrap_or_else(|| panic!("gh has opened no pull request {n}"))
     }
 
     /// Let what waits on hold go on: an agent's action is done at herdr's next command and gh's pr create goes on.
     pub fn release(&self, hold: &str) {
-        self.ledger.change(|state| array_at(state, "released").push(Json::from(hold)));
+        self.ledger.change(|state| array_at(state, "released").push(Value::from(hold)));
     }
 
     /// Wait until the engine waits on hold, at a point where it does nothing but poll until hold is released, so that
@@ -400,8 +402,8 @@ impl World {
     }
 
     /// Add observed to the record under notes/key, normalized with the rest: what a scenario observed itself.
-    pub fn note(&mut self, key: &str, observed: Json) {
-        self.notes.insert(key, observed);
+    pub fn note(&mut self, key: &str, observed: Value) {
+        self.notes.insert(key.to_string(), observed);
     }
 
     // -- Running the engine ---------------------------------------------------
@@ -428,7 +430,7 @@ impl World {
             .unwrap_or_else(|e| panic!("starting {}: {e}", self.engine.display()));
         let pid = process.id();
         self.normalizer.pid(i64::from(pid), n);
-        self.ledger.change(|state| object_at(state, "engines").insert(n.to_string(), Json::Int(pid.into())));
+        self.ledger.change(|state| object_at(state, "engines").insert(n.to_string(), Value::from(pid)));
         let args = args.iter().map(|a| (*a).to_string()).collect();
         let servers = self.servers.failure();
         self.invocations.push(Invocation { args, process, out_path, output_recorded, killed: false, exit: None, servers });
@@ -452,8 +454,8 @@ impl World {
     pub fn run_key(&self, n: usize) -> String {
         let mut keys = Vec::new();
         for event in self.ledger.events() {
-            let Some(command) = event.get("herdr").and_then(Json::as_array) else { continue };
-            let words: Vec<&str> = command.iter().filter_map(Json::as_str).collect();
+            let Some(command) = event.get("herdr").and_then(Value::as_array) else { continue };
+            let words: Vec<&str> = command.iter().filter_map(Value::as_str).collect();
             let words = if words.first() == Some(&"--machine") { &words[2..] } else { &words[..] };
             if words.starts_with(&["workspace", "create"]) {
                 let label = words.iter().position(|w| *w == "--label").map(|i| words[i + 1]).unwrap_or_default();
@@ -465,9 +467,9 @@ impl World {
     }
 
     /// The saved state of the run with that key, as state.json holds it now.
-    pub fn run_state(&self, key: &str) -> Json {
+    pub fn run_state(&self, key: &str) -> Value {
         let path = octoflow_e2e::run_dir(&self.project, key).join("state.json");
-        Json::parse(&read_lossy(&path)).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+        serde_json::from_str::<Value>(&read_lossy(&path)).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
     }
 
     /// The environment of engine invocation n, or of the harness's own git for None: built afresh, so that nothing of
@@ -510,7 +512,7 @@ impl World {
     // -- Making the world -------------------------------------------------------
 
     fn write_script(&self) {
-        write_atomically(&self.root().join("script.json"), &Json::Object(self.script.clone()).dumps());
+        write_atomically(&self.root().join("script.json"), &Value::Object(self.script.clone()).to_string());
     }
 
     /// Shims of the fakes in bin/, and the harnesses' CLIs.
@@ -556,98 +558,98 @@ impl World {
     ///
     /// Panics first when a server's answer to the engine panicked (ServerFailure::check), which the record would show only
     /// as what that made the engine do.
-    pub fn record(&mut self) -> Json {
+    pub fn record(&mut self) -> Value {
         self.servers.failure().check();
-        let invocations: Vec<Json> = self.invocations.iter().map(invocation_record).collect();
+        let invocations: Vec<Value> = self.invocations.iter().map(invocation_record).collect();
         let events = self.events();
         let raw = object([
-            ("invocations", Json::Array(invocations)),
+            ("invocations", Value::Array(invocations)),
             ("events", events),
             ("run_files", self.run_files()),
             (
                 "repositories",
                 object([("project", self.repository(&self.project)), ("origin", self.repository(&self.origin))]),
             ),
-            ("notes", Json::Object(self.notes.clone())),
+            ("notes", Value::Object(self.notes.clone())),
         ]);
         self.normalizer.learn(&raw);
         self.normalized(&raw)
     }
 
-    fn normalized(&self, raw: &Json) -> Json {
+    fn normalized(&self, raw: &Value) -> Value {
         let normalizer = &self.normalizer;
-        let Json::Object(mut out) = normalizer.json(raw, false, None) else { unreachable!("a record is an object") };
-        if let Some(Json::Array(invocations)) = out.get_mut("invocations") {
+        let Value::Object(mut out) = normalizer.json(raw, false, None) else { unreachable!("a record is an object") };
+        if let Some(Value::Array(invocations)) = out.get_mut("invocations") {
             for inv in invocations {
-                let Json::Object(inv) = inv else { continue };
+                let Value::Object(inv) = inv else { continue };
                 for stream in ["stdout", "stderr"] {
                     let key = format!("{stream}_facts");
-                    if let Some(Json::Str(text)) = inv.remove(&key) {
+                    if let Some(Value::String(text)) = inv.remove(&key) {
                         inv.insert(key, strings(&facts(&normalizer.text(&text, true))));
                     }
                 }
             }
         }
         // Texts that word the clock's times, as the turns tables do.
-        let raw_events = raw.get("events").map(Json::as_object_or_empty).cloned().unwrap_or_default();
+        let raw_events = raw.get("events").and_then(Value::as_object).cloned().unwrap_or_default();
         let out_events = object_at(&mut out, "events");
         for (by, raw_list) in raw_events.iter() {
-            let Some(Json::Array(list)) = out_events.get_mut(&normalizer.text(by, false)) else { continue };
+            let Some(Value::Array(list)) = out_events.get_mut(&normalizer.text(by, false)) else { continue };
             for (raw_event, event) in raw_list.as_array().into_iter().flatten().zip(list.iter_mut()) {
-                if let (Some(stdin), Json::Object(event)) = (raw_event.get("stdin").and_then(Json::as_str), event) {
-                    event.insert("stdin", Json::Str(normalizer.text(stdin, true)));
+                if let (Some(stdin), Value::Object(event)) = (raw_event.get("stdin").and_then(Value::as_str), event) {
+                    event.insert("stdin".into(), Value::String(normalizer.text(stdin, true)));
                 }
             }
         }
-        let raw_files = raw.get("run_files").map(Json::as_object_or_empty).cloned().unwrap_or_default();
+        let raw_files = raw.get("run_files").and_then(Value::as_object).cloned().unwrap_or_default();
         let out_files = object_at(&mut out, "run_files");
         for (path, text) in raw_files.iter() {
             if path.ends_with("summary.md") {
-                out_files.insert(normalizer.text(path, false), Json::Str(normalizer.text(text.as_str().unwrap_or_default(), true)));
+                out_files.insert(normalizer.text(path, false), Value::String(normalizer.text(text.as_str().unwrap_or_default(), true)));
             }
         }
         // What a scenario notes may word the clock's times too.
-        out.insert("notes", normalizer.json(&Json::Object(self.notes.clone()), true, None));
-        Json::Object(out)
+        out.insert("notes".into(), normalizer.json(&Value::Object(self.notes.clone()), true, None));
+        Value::Object(out)
     }
 
     /// The ledger's events by invocation, each state.json parsed, and polls that repeated collapsed into one.
-    fn events(&mut self) -> Json {
-        let mut by: Map<Json> = Map::new();
+    fn events(&mut self) -> Value {
+        let mut by: Object = Object::new();
         for event in self.ledger.events() {
-            let Json::Object(mut event) = event else { continue };
+            let Value::Object(mut event) = event else { continue };
             let who = event.remove("by").and_then(|b| b.as_str().map(str::to_string)).unwrap_or_default();
             if let Some(logged) = event.get("state").cloned() {
-                let saved = Json::parse(str_at(&logged, "text")).unwrap_or_else(|e| panic!("a logged state: {e}"));
+                let saved = serde_json::from_str::<Value>(str_at(&logged, "text")).unwrap_or_else(|e| panic!("a logged state: {e}"));
                 // The fakes log a state only while its owner, if any, is a process of the invocation logging it.
-                let owner_pid = saved.get("owner").and_then(|o| o.get("pid")).and_then(Json::as_int);
+                let owner_pid = saved.get("owner").and_then(|o| o.get("pid")).and_then(Value::as_i64);
                 if let (Some(pid), Ok(n)) = (owner_pid, who.parse::<usize>()) {
-                    self.normalizer.pid(i64::try_from(pid).expect("a pid fits an i64"), n);
+                    self.normalizer.pid(pid, n);
                 }
-                event.insert("state", object([("path", octoflow_e2e::at(&logged, "path").clone()), ("saved", saved)]));
+                event.insert("state".into(), object([("path", octoflow_e2e::at(&logged, "path").clone()), ("saved", saved)]));
             }
-            array_at(&mut by, &who).push(Json::Object(event));
+            array_at(&mut by, &who).push(Value::Object(event));
         }
-        Json::Object(by.into_iter().map(|(who, events)| (who, Json::Array(collapsed(events.as_array().cloned().unwrap_or_default())))).collect())
+        Value::Object(by.into_iter().map(|(who, events)| (who, Value::Array(collapsed(events.as_array().cloned().unwrap_or_default())))).collect())
     }
 
     /// Every file under the project's .orchestrator, but the worktrees, by its path there: each directory's files in
     /// name order, then its directories', as os.walk lists them.
-    fn run_files(&self) -> Json {
+    fn run_files(&self) -> Value {
         let top = self.project.join(".orchestrator");
-        let mut files = Map::new();
+        let mut files = Object::new();
         walk(&top, &top, &mut files);
-        Json::Object(files)
+        Value::Object(files)
     }
 
     /// The repository's refs, every commit they reach, from the refs in name order and each commit's parents in order,
     /// and for a repository with a working tree, its worktrees' status and changed files.
-    fn repository(&self, repo: &Path) -> Json {
+    fn repository(&self, repo: &Path) -> Value {
         let lines = self.git(repo, &["for-each-ref", "--format=%(refname) %(objectname)"]);
-        let refs: Map<Json> = lines
+        let refs: Object = lines
             .lines()
             .filter_map(|line| line.split_once(' '))
-            .map(|(name, sha)| (name, Json::from(sha)))
+            .map(|(name, sha)| (name.to_string(), Value::from(sha)))
             .collect();
         let symbolic = Command::new("git")
             .args(["-C", &repo.to_string_lossy(), "symbolic-ref", "--quiet", "HEAD"])
@@ -661,10 +663,10 @@ impl World {
             Some(1) => "detached".to_string(),
             _ => panic!("git symbolic-ref HEAD in {}: {}", repo.display(), String::from_utf8_lossy(&symbolic.stderr)),
         };
-        let mut sorted: Vec<(&str, &Json)> = refs.iter().collect();
+        let mut sorted: Vec<(&String, &Value)> = refs.iter().collect();
         sorted.sort_by_key(|(name, _)| *name);
         let mut todo: Vec<String> = sorted.iter().filter_map(|(_, sha)| sha.as_str().map(str::to_string)).collect();
-        let mut commits: Map<Json> = Map::new();
+        let mut commits: Object = Object::new();
         while !todo.is_empty() {
             let sha = todo.remove(0);
             if commits.contains_key(&sha) || self.git(repo, &["cat-file", "-t", &sha]).trim() != "commit" {
@@ -672,22 +674,22 @@ impl World {
             }
             let commit = self.commit(repo, &sha);
             let parents: Vec<String> =
-                commit.get("parents").and_then(Json::as_array).into_iter().flatten().filter_map(|p| p.as_str().map(str::to_string)).collect();
+                commit.get("parents").and_then(Value::as_array).into_iter().flatten().filter_map(|p| p.as_str().map(str::to_string)).collect();
             commits.insert(sha, commit);
             todo.splice(0..0, parents);
         }
-        let mut out = Map::from_iter([
-            ("head", Json::Str(head)),
-            ("refs", Json::Object(refs)),
-            ("commits", Json::Array(commits.into_iter().map(|(_, c)| c).collect())),
+        let mut out = octoflow_engine::json::object([
+            ("head", Value::String(head)),
+            ("refs", Value::Object(refs)),
+            ("commits", Value::Array(commits.into_iter().map(|(_, c)| c).collect())),
         ]);
         if !repo.to_string_lossy().ends_with(".git") {
-            out.insert("worktrees", self.worktrees(repo));
+            out.insert("worktrees".into(), self.worktrees(repo));
         }
-        Json::Object(out)
+        Value::Object(out)
     }
 
-    fn commit(&self, repo: &Path, sha: &str) -> Json {
+    fn commit(&self, repo: &Path, sha: &str) -> Value {
         let parents: Vec<String> = self.git(repo, &["show", "--no-patch", "--format=%P", sha]).split_whitespace().map(str::to_string).collect();
         let message = self.git(repo, &["show", "--no-patch", "--format=%an <%ae>%n%B", sha]);
         let (author, body) = message.split_once('\n').unwrap_or((&message, ""));
@@ -696,25 +698,25 @@ impl World {
             .lines()
             .map(str::to_string)
             .collect();
-        let mut files = Map::new();
+        let mut files = Object::new();
         for line in &changes {
             let (change, path) = line.split_once('\t').unwrap_or_else(|| panic!("a name-status line: {line}"));
             if change != "D" {
-                files.insert(path, Json::Str(self.git(repo, &["show", &format!("{sha}:{path}")])));
+                files.insert(path.to_string(), Value::String(self.git(repo, &["show", &format!("{sha}:{path}")])));
             }
         }
         object([
-            ("sha", Json::from(sha)),
+            ("sha", Value::from(sha)),
             ("parents", strings(&parents)),
-            ("author", Json::from(author)),
-            ("message", Json::from(body)),
+            ("author", Value::from(author)),
+            ("message", Value::from(body)),
             ("changes", strings(&changes)),
-            ("files", Json::Object(files)),
+            ("files", Value::Object(files)),
         ])
     }
 
     /// Each worktree of repo: its path, branch, status and the text of each file the status names.
-    fn worktrees(&self, repo: &Path) -> Json {
+    fn worktrees(&self, repo: &Path) -> Value {
         let mut out = Vec::new();
         let mut tree: Map<String> = Map::new();
         let listing = self.git(repo, &["worktree", "list", "--porcelain"]);
@@ -733,23 +735,23 @@ impl World {
                 .lines()
                 .map(str::to_string)
                 .collect();
-            let mut changed = Map::new();
+            let mut changed = Object::new();
             for entry in &porcelain {
                 let name = entry.get(3..).unwrap_or_default();
                 let full = Path::new(&path).join(name);
                 if full.is_file() && !name.starts_with(".orchestrator/") {
-                    changed.insert(name, Json::Str(read_lossy(&full)));
+                    changed.insert(name.to_string(), Value::String(read_lossy(&full)));
                 }
             }
             out.push(object([
-                ("path", Json::Str(path)),
-                ("branch", Json::Str(tree.get("branch").cloned().unwrap_or_else(|| "detached".to_string()))),
+                ("path", Value::String(path)),
+                ("branch", Value::String(tree.get("branch").cloned().unwrap_or_else(|| "detached".to_string()))),
                 ("status", strings(&porcelain)),
-                ("changed", Json::Object(changed)),
+                ("changed", Value::Object(changed)),
             ]));
             tree = Map::new();
         }
-        Json::Array(out)
+        Value::Array(out)
     }
 }
 
@@ -763,19 +765,19 @@ impl Drop for World {
     }
 }
 
-fn invocation_record(inv: &Invocation) -> Json {
-    let exit = if inv.killed { Json::from("killed") } else { inv.exit.map_or(Json::Null, |e| Json::from(i64::from(e))) };
-    let mut record = Map::from_iter([("args", strings(&inv.args)), ("exit", exit)]);
+fn invocation_record(inv: &Invocation) -> Value {
+    let exit = if inv.killed { Value::from("killed") } else { inv.exit.map_or(Value::Null, |e| Value::from(i64::from(e))) };
+    let mut record = octoflow_engine::json::object([("args", strings(&inv.args)), ("exit", exit)]);
     if !inv.output_recorded {
-        return Json::Object(record);
+        return Value::Object(record);
     }
     if machine_read(&inv.args) {
-        record.insert("stdout", Json::Str(inv.stdout()));
+        record.insert("stdout".into(), Value::String(inv.stdout()));
     } else {
-        record.insert("stdout_facts", Json::Str(inv.stdout()));
+        record.insert("stdout_facts".into(), Value::String(inv.stdout()));
     }
-    record.insert("stderr_facts", Json::Str(inv.stderr()));
-    Json::Object(record)
+    record.insert("stderr_facts".into(), Value::String(inv.stderr()));
+    Value::Object(record)
 }
 
 /// Whether the engine's standard output for args is read by a program, so that it must come out byte for byte: a
@@ -790,7 +792,7 @@ fn machine_read(args: &[String]) -> bool {
 
 /// events with each run of events that repeats the run just before it dropped, for runs of up to four: a poll the
 /// engine repeats while it waits comes out once, however long the wait took.
-fn collapsed(events: Vec<Json>) -> Vec<Json> {
+fn collapsed(events: Vec<Value>) -> Vec<Value> {
     let mut out = events;
     let mut changed = true;
     while changed {
@@ -813,14 +815,14 @@ fn collapsed(events: Vec<Json>) -> Vec<Json> {
 /// Add each file under dir to files, by its path relative to top, as os.walk lists them from top: the directory's
 /// files in name order, then each subdirectory's in name order; top's worktrees directory, and directories reached by
 /// a symbolic link, left out.
-fn walk(top: &Path, dir: &Path, files: &mut Map<Json>) {
+fn walk(top: &Path, dir: &Path, files: &mut Object) {
     let Ok(entries) = fs::read_dir(dir) else { return };
     let mut names: Vec<_> = entries.flatten().map(|e| e.path()).collect();
     names.sort();
     let (dirs, plain): (Vec<_>, Vec<_>) = names.into_iter().partition(|p| p.is_dir());
     for path in plain {
         let relative = path.strip_prefix(top).expect("below top").to_string_lossy().into_owned();
-        files.insert(relative, Json::Str(read_lossy(&path)));
+        files.insert(relative, Value::String(read_lossy(&path)));
     }
     for path in dirs {
         let linked = fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink());
@@ -840,7 +842,7 @@ fn find_on_path(program: &str) -> Option<PathBuf> {
 #[test]
 fn a_dropped_world_leaves_nothing_of_its_engine_running() {
     let mut w = World::new("world_dropped", &crate::engine::binary());
-    let spec = object([("write", object([("spec.md", Json::from("# A spec\n"))])), ("hold", Json::from("spec"))]);
+    let spec = object([("write", object([("spec.md", Value::from("# A spec\n"))])), ("hold", Value::from("spec"))]);
     w.agent("spec", [spec]);
     let n = w.start(&["run", "--", "A task"], true);
     w.wait_reached("spec");

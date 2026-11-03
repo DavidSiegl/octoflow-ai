@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
 
-use octoflow_engine::py::json::Json;
+use serde_json::Value;
 
 /// The orchestrator binary the scenarios run: E2E_ENGINE's, when it is set; else this checkout's, `cargo build --locked
 /// -p octoflow-engine --bin orchestrator` run once per test process, in `e2e-engine/` beside this test's `deps/`. It is
@@ -41,9 +41,9 @@ fn build() -> PathBuf {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let paths: Vec<String> = stdout
         .lines()
-        .filter_map(|line| Json::parse(line).ok())
-        .filter(|m| m.get("reason").and_then(Json::as_str) == Some("compiler-artifact"))
-        .filter_map(|m| m.get("executable").and_then(Json::as_str).map(str::to_string))
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|m| m.get("reason").and_then(Value::as_str) == Some("compiler-artifact"))
+        .filter_map(|m| m.get("executable").and_then(Value::as_str).map(str::to_string))
         .collect();
     let [path] = paths.as_slice() else { panic!("cargo reported {} binaries for the engine, not one", paths.len()) };
     PathBuf::from(path)

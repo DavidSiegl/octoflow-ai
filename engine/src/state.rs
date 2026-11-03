@@ -1,5 +1,4 @@
-//! RunState: what a run has done so far, saved as state.json in its run directory, in the format the Python engine
-//! reads and writes, so that a run started by either engine resumes in the other.
+//! RunState: what a run has done so far, saved as state.json in its run directory.
 
 use crate::constants::{
     DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT, LOCAL_REFS_PREFIX, RUNS_DIR,
@@ -7,16 +6,17 @@ use crate::constants::{
 use crate::error::OrchestratorError;
 use crate::herdr::HerdrServer;
 use crate::prompts::{saved_prompts, Prompts};
-use crate::py::json::{Json, Map};
-use crate::workflow_file::saved_pipeline;
+use crate::json::Object;
+use crate::map::Map;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// What a run has done so far, saved as state.json in its run directory.
 ///
-/// state.json holds these fields in this order, as orchestrator.py's RunState declares them, herdr_server after
-/// machine and only when it is known (the field says why); a state read with fields
-/// this engine does not know keeps them, after its own, so that a state a newer engine wrote survives a round trip.
-/// The records a field holds as Json are kept as they were read, key order included.
-#[derive(Clone, Debug, PartialEq)]
+/// state.json is one line of JSON, an object: "format", STATE_FORMAT, then these fields in this order, then the fields
+/// of unknown. Every field that is not an Option must be there; a missing Option is None. The records a field holds
+/// as JSON are kept as they were read, key order included.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RunState {
     pub run_id: String,
     pub task: String,
@@ -27,9 +27,8 @@ pub struct RunState {
     /// The herdr server of this machine the run's agents run in: the one the engine that started the run, or last
     /// resumed it, reached, where it finds or starts each agent it comes to (one a resume has not come to yet may
     /// still be in an earlier server). serve reaches them there, from whatever environment it runs in. None for a
-    /// run on a machine, whose herdr serves it, for a run saved before the field existed, and for one whose server
-    /// could not be told (HerdrServer::of_environment): serve then reaches the server its own environment picks.
-    /// Left out of state.json while None, so that a state saved before it writes back as it was.
+    /// run on a machine, whose herdr serves it, and for one whose server could not be told
+    /// (HerdrServer::of_environment): serve then reaches the server its own environment picks.
     pub herdr_server: Option<HerdrServer>,
     /// The current step's id, or quality, publish or done. main starts a run at its workflow's first step.
     pub phase: String,
@@ -48,7 +47,7 @@ pub struct RunState {
     pub conflicts: Vec<String>,
     pub error: Option<String>,
     /// Per role: the agent's name, its pane, the harness it runs in (kind) and, once herdr reports it, its session id.
-    /// A record without a kind is a claude agent's, saved before there were others.
+    /// A record without a kind is a DEFAULT_AGENT agent's.
     pub agents: Map<Map<String>>,
     pub max_rounds: u32,
     /// Seconds a turn may take.
@@ -58,7 +57,7 @@ pub struct RunState {
     pub models: Map<String>,
     /// Per role: the harness its next agent starts in. A role missing here runs in DEFAULT_AGENT.
     pub agent_kinds: Map<String>,
-    /// False by default because a run saved before pull requests existed never switched to its own branch.
+    /// Whether the run works on a branch of its own and ends in a pull request; false for a --no-pr run.
     pub pull_request: bool,
     /// Basename of the handoff file whose prompt was delivered, so a resume does not prompt for it again.
     pub prompted: Option<String>,
@@ -67,9 +66,9 @@ pub struct RunState {
     pub retried: Vec<String>,
     pub retrying: Option<String>,
     /// The orchestrator process driving the run, {"host", "pid", "started_at"}; None while none does.
-    pub owner: Option<Map<Json>>,
+    pub owner: Option<Object>,
     pub heartbeat_at: Option<String>,
-    /// The Jenkins job that runs the quality gate; None for a run without the gate, as for one saved before it.
+    /// The Jenkins job that runs the quality gate; None for a run without the gate.
     pub quality_job: Option<String>,
     /// True once resume --no-quality-gate turned the gate off, for good: quality_job is None then, and the quality
     /// files written until then stay the run's (turn_quality_gate_off).
@@ -81,13 +80,13 @@ pub struct RunState {
     pub quality_round: u32,
     /// The quality build in flight, {ref, sha, queue_url, build}, each saved as soon as it is known. rejected lists
     /// builds of ref that ended without a verdict, so a resume does not adopt them again.
-    pub ci: Map<Json>,
-    /// The name of the run's workflow; a run saved before workflows existed ran the default.
+    pub ci: Object,
+    /// The name of the run's workflow.
     pub workflow: String,
     /// The workflow_definition of one that is not built in, so a resume does not depend on its file.
-    pub workflow_definition: Option<Json>,
+    pub workflow_definition: Option<Value>,
     /// Prompts::overrides of the prompts the run started with (load_prompts), so a resume does not depend on the
-    /// prompt files either; empty for the built-in texts, as for a run saved before prompt files.
+    /// prompt files either; empty for the built-in texts.
     pub prompt_overrides: Map<String>,
     /// What prune did with branch once the pull request was done: "deleted", or "kept: <why>". Written by
     /// prune_branches, never by the run itself.
@@ -99,87 +98,44 @@ pub struct RunState {
     /// never by the run itself; a closed run is not resumed.
     pub closed: Option<String>,
     /// One record per handoff file, in the order the turns started (Workflow::turn_record). A turn's record opens
-    /// when its prompt is delivered, or a quality analysis starts, and closes when its file is found. Absent from a
-    /// run saved before them.
-    pub turns: Vec<Map<Json>>,
+    /// when its prompt is delivered, or a quality analysis starts, and closes when its file is found.
+    pub turns: Vec<Object>,
     /// One record per quality round judged, in order: {"round", "quality_round", "gate", "conditions",
     /// "fingerprints_by_check"}, the last two as gate_failures reads them from its quality file. Fingerprints, never
     /// the findings' text, so that state.json stays small.
-    pub quality_rounds: Vec<Map<Json>>,
+    pub quality_rounds: Vec<Object>,
     /// The BLOCKED report the current turn waits on the human for, {"file", "question", "k"}: file is the handoff
     /// file's basename, and the report was moved to its k-th blocked name (Workflow::blocked_path). None otherwise.
-    pub blocked: Option<Map<Json>>,
+    pub blocked: Option<Object>,
     /// Per locking step (Step::locks), by id: the paths its last turn locked, as Host::lock gives them. Their locked
     /// versions are in the commit at lock_ref(step id).
     pub locked: Map<Vec<String>>,
     /// One record per editing turn that changed locked files, {"round", "file", "paths"}, in the order of the turns:
     /// file is the basename of the diff of what the turn changed in them, in the run directory, and paths are the
     /// files, by the id of the step that locked them. The files were restored once the record was saved.
-    pub restored: Vec<Map<Json>>,
+    pub restored: Vec<Object>,
     /// One record per run of a proof the verdict step wrote with a review that requested changes, {"round",
     /// "written", "file", "finding", "demonstrated", "said"}, in the order they ran: round is the round it ran in,
     /// written the round whose verdict step wrote it, file its basename in proofs_dir(written), finding the first
     /// number in that name, demonstrated whether it failed against the change, and said how it exited and the last
     /// PROOF_TAIL_LINES lines it printed. A proof first runs in the round that wrote it (Workflow::judge_proofs), then
-    /// again in every later round until it does not fail (Workflow::rerun_proofs). A record saved before written
-    /// existed is a first run, as crate::proofs::ProofRun reads it.
-    pub proofs: Vec<Map<Json>>,
-    /// The fields of a state.json that this engine does not know, as they were read, in their order.
-    pub unknown: Map<Json>,
+    /// again in every later round until it does not fail (Workflow::rerun_proofs).
+    pub proofs: Vec<Object>,
+    /// The fields of a state.json that this engine does not know, as they were read, in their order, so that a state
+    /// a later release of the same format wrote keeps them through a save. to_json writes them, never over a field of
+    /// the state's own.
+    #[serde(skip)]
+    pub unknown: Object,
 }
 
-/// The keys of state.json this engine knows, which from_saved keeps out of unknown: every field to_json writes, in its
-/// order, then agent_args, which it only reads. A state/tests.rs test holds to_json's keys to this list; that every
-/// recorded state writes back as it was holds Fields::read to it.
-const FIELDS: [&str; 46] = [
-    "run_id",
-    "task",
-    "cwd",
-    "machine",
-    "herdr_server",
-    "phase",
-    "round",
-    "workspace_id",
-    "root_pane",
-    "base",
-    "base_branch",
-    "branch",
-    "pr_url",
-    "verdict",
-    "conflicts",
-    "error",
-    "agents",
-    "max_rounds",
-    "turn_timeout",
-    "permission_mode",
-    "models",
-    "agent_kinds",
-    "pull_request",
-    "prompted",
-    "retried",
-    "retrying",
-    "owner",
-    "heartbeat_at",
-    "quality_job",
-    "quality_gate_disabled",
-    "max_quality_rounds",
-    "quality_round",
-    "ci",
-    "workflow",
-    "workflow_definition",
-    "prompt_overrides",
-    "branch_cleanup",
-    "worktree",
-    "closed",
-    "turns",
-    "quality_rounds",
-    "blocked",
-    "locked",
-    "restored",
-    "proofs",
-    // 0.3.0's permission mode, read into permission_mode and never written.
-    "agent_args",
-];
+/// The format of state.json this engine reads and writes, which its "format" field holds. A state.json written by a
+/// release before STATE_FORMAT_SINCE has no format, and is refused rather than read (RunState::from_saved): it was
+/// written in the Python engine's format.
+pub const STATE_FORMAT: u64 = 2;
+
+/// The release that first wrote STATE_FORMAT.
+pub const STATE_FORMAT_SINCE: &str = "0.54.0";
+
 
 impl RunState {
     /// A new run's state: every field but these at its default.
@@ -217,7 +173,7 @@ impl RunState {
             quality_gate_disabled: false,
             max_quality_rounds: DEFAULT_MAX_QUALITY_ROUNDS,
             quality_round: 0,
-            ci: Map::new(),
+            ci: Object::new(),
             workflow: "default".to_string(),
             workflow_definition: None,
             prompt_overrides: Map::new(),
@@ -230,115 +186,58 @@ impl RunState {
             locked: Map::new(),
             restored: Vec::new(),
             proofs: Vec::new(),
-            unknown: Map::new(),
+            unknown: Object::new(),
         }
     }
 
-    /// The state a state.json's text holds; an error for text that is not a JSON object, and as from_saved.
+    /// The state a state.json's text holds. Errors: the text is not a JSON object, and as from_saved.
     pub fn from_text(text: &str) -> Result<RunState, OrchestratorError> {
-        match Json::parse(text) {
-            Ok(Json::Object(saved)) => RunState::from_saved(&saved),
+        match serde_json::from_str::<Value>(text) {
+            Ok(Value::Object(saved)) => RunState::from_saved(&saved),
             Ok(_) => Err(OrchestratorError("a run state is a JSON object".into())),
             Err(e) => Err(OrchestratorError(format!("a run state that is not JSON: {e}"))),
         }
     }
 
-    /// A saved state, including one written before some of the fields existed, each of those at its default: one
-    /// saved by 0.3.0 has its agent_args read as its permission mode, and one without a root pane takes its
-    /// workflow's first role's pane. Errors, naming the run: run_id, task or cwd is missing, a field holds a value
-    /// of another type than its own, or agent_args name no permission mode.
-    pub fn from_saved(saved: &Map<Json>) -> Result<RunState, OrchestratorError> {
-        let run_id = saved.get("run_id").and_then(Json::as_str).unwrap_or("?");
-        let fields = Fields { saved, run_id };
-        let mut state = RunState::new(
-            &fields.required("run_id")?,
-            &fields.required("task")?,
-            &fields.required("cwd")?,
-        );
-        fields.read(&mut state)?;
-        if !saved.contains_key("permission_mode") {
-            state.permission_mode = saved_permission_mode(saved)?;
+    /// The state a saved state.json object holds. Errors, naming the run: format_problem's, and a field missing or
+    /// holding a value of another type than its own.
+    pub fn from_saved(saved: &Object) -> Result<RunState, OrchestratorError> {
+        if let Some(problem) = format_problem(saved) {
+            return Err(OrchestratorError(problem));
         }
-        state.unknown = saved.iter().filter(|(k, _)| !FIELDS.contains(k)).map(|(k, v)| (k, v.clone())).collect();
-        if state.root_pane.is_empty() {
-            let first = saved_pipeline(saved).and_then(|p| p.roles().keys().next().map(String::from));
-            if let Some(pane) = first.and_then(|role| state.agents.get(&role)).and_then(|agent| agent.get("pane")) {
-                state.root_pane = pane.clone();
-            }
-        }
+        let run_id = saved.get("run_id").and_then(Value::as_str).unwrap_or("?");
+        let mut fields = saved.clone();
+        fields.shift_remove("format");
+        // serde passes over the fields RunState does not have; unknown keeps them, in their order.
+        let mut state: RunState = serde_json::from_value(Value::Object(fields.clone()))
+            .map_err(|e| OrchestratorError(format!("run state {run_id} is invalid: {e}")))?;
+        // RunState writes every field it has, so a blank state's keys are all it knows.
+        let Value::Object(known) = RunState::new("", "", "").to_json() else { unreachable!("a run state is an object") };
+        state.unknown = fields.into_iter().filter(|(k, _)| !known.contains_key(k)).collect();
         Ok(state)
     }
 
-    /// The state as state.json holds it: every field FIELDS lists but agent_args, which is only read, and herdr_server
-    /// while it is None, in FIELDS's order, then the unknown ones.
-    pub fn to_json(&self) -> Json {
-        let text = |s: &str| Json::from(s);
-        let opt = |s: &Option<String>| Json::from(s.clone());
-        let list = |items: &[String]| Json::Array(items.iter().map(|s| text(s)).collect());
-        let strings = |map: &Map<String>| Json::Object(map.iter().map(|(k, v)| (k, text(v))).collect());
-        let records = |items: &[Map<Json>]| Json::Array(items.iter().cloned().map(Json::Object).collect());
-        let number = |n: u64| Json::Int(n.into());
-        let mut out = Map::new();
-        let s = self;
-        out.insert("run_id", text(&s.run_id));
-        out.insert("task", text(&s.task));
-        out.insert("cwd", text(&s.cwd));
-        out.insert("machine", opt(&s.machine));
-        if let Some(server) = &s.herdr_server {
-            out.insert("herdr_server", server.to_json());
-        }
-        out.insert("phase", text(&s.phase));
-        out.insert("round", number(s.round.into()));
-        out.insert("workspace_id", text(&s.workspace_id));
-        out.insert("root_pane", text(&s.root_pane));
-        out.insert("base", opt(&s.base));
-        out.insert("base_branch", opt(&s.base_branch));
-        out.insert("branch", opt(&s.branch));
-        out.insert("pr_url", opt(&s.pr_url));
-        out.insert("verdict", opt(&s.verdict));
-        out.insert("conflicts", list(&s.conflicts));
-        out.insert("error", opt(&s.error));
-        out.insert("agents", Json::Object(s.agents.iter().map(|(k, v)| (k, strings(v))).collect()));
-        out.insert("max_rounds", number(s.max_rounds.into()));
-        out.insert("turn_timeout", number(s.turn_timeout));
-        out.insert("permission_mode", opt(&s.permission_mode));
-        out.insert("models", strings(&s.models));
-        out.insert("agent_kinds", strings(&s.agent_kinds));
-        out.insert("pull_request", Json::Bool(s.pull_request));
-        out.insert("prompted", opt(&s.prompted));
-        out.insert("retried", list(&s.retried));
-        out.insert("retrying", opt(&s.retrying));
-        out.insert("owner", s.owner.clone().map_or(Json::Null, Json::Object));
-        out.insert("heartbeat_at", opt(&s.heartbeat_at));
-        out.insert("quality_job", opt(&s.quality_job));
-        out.insert("quality_gate_disabled", Json::Bool(s.quality_gate_disabled));
-        out.insert("max_quality_rounds", number(s.max_quality_rounds.into()));
-        out.insert("quality_round", number(s.quality_round.into()));
-        out.insert("ci", Json::Object(s.ci.clone()));
-        out.insert("workflow", text(&s.workflow));
-        out.insert("workflow_definition", s.workflow_definition.clone().unwrap_or(Json::Null));
-        out.insert("prompt_overrides", strings(&s.prompt_overrides));
-        out.insert("branch_cleanup", opt(&s.branch_cleanup));
-        out.insert("worktree", opt(&s.worktree));
-        out.insert("closed", opt(&s.closed));
-        out.insert("turns", records(&s.turns));
-        out.insert("quality_rounds", records(&s.quality_rounds));
-        out.insert("blocked", s.blocked.clone().map_or(Json::Null, Json::Object));
-        out.insert("locked", Json::Object(s.locked.iter().map(|(k, v)| (k, list(v))).collect()));
-        out.insert("restored", records(&s.restored));
-        out.insert("proofs", records(&s.proofs));
+    /// The state as state.json holds it: "format", then the fields in RunState's order, then the unknown ones.
+    pub fn to_json(&self) -> Value {
+        let mut saved = Object::new();
+        saved.insert("format".into(), Value::from(STATE_FORMAT));
+        // A struct of strings, numbers and JSON values serializes as an object without fail.
+        let Ok(Value::Object(fields)) = serde_json::to_value(self) else { unreachable!("a run state is an object") };
+        saved.extend(fields);
         // Never over a field of its own, which a stale copy of the state's would otherwise replace.
-        for (k, v) in s.unknown.iter() {
-            if !out.contains_key(k) {
-                out.insert(k, v.clone());
+        for (k, v) in &self.unknown {
+            if !saved.contains_key(k) {
+                saved.insert(k.clone(), v.clone());
             }
         }
-        Json::Object(out)
+        Value::Object(saved)
     }
 
-    /// state.json's text: to_json as json.dumps writes it, and a newline.
+    /// state.json's text: to_json on one line, and a newline. One line, because every release before
+    /// STATE_FORMAT_SINCE reads a project's states a line each, and a run such a release saved is to be finished or
+    /// closed with it (format_problem) in a project where this engine has saved runs too.
     pub fn to_text(&self) -> String {
-        self.to_json().dumps() + "\n"
+        self.to_json().to_string() + "\n"
     }
 
     /// The prompts the run sends: those it started with (saved_prompts). Errors: its prompt_overrides name a prompt
@@ -425,222 +324,21 @@ impl RunState {
     }
 }
 
-/// The permission mode of a state saved by 0.3.0, which kept it as Claude Code's agent_args; None for none. Errors:
-/// agent_args that are not --permission-mode and a mode.
-fn saved_permission_mode(saved: &Map<Json>) -> Result<Option<String>, OrchestratorError> {
-    let args = match saved.get("agent_args") {
-        Some(Json::Array(args)) if !args.is_empty() => args,
-        Some(other) if other.truthy() => &vec![other.clone()],
-        _ => return Ok(None),
-    };
-    match args.as_slice() {
-        [Json::Str(flag), Json::Str(mode)] if flag == "--permission-mode" => Ok(Some(mode.clone())),
-        _ => {
-            let run_id = saved.get("run_id").and_then(Json::as_str).unwrap_or("?");
-            Err(OrchestratorError(format!(
-                "run state {run_id} has agent_args {}, which name no permission mode",
-                list_repr(args)
-            )))
-        }
+/// Why this engine does not read the saved state.json object saved, naming its run and what to do with it: it has no
+/// format, as every state a release before STATE_FORMAT_SINCE wrote, or another format than STATE_FORMAT. None for a
+/// state of STATE_FORMAT, whose fields may still be wrong (from_saved).
+pub fn format_problem(saved: &Object) -> Option<String> {
+    let run_id = saved.get("run_id").and_then(Value::as_str).unwrap_or("?");
+    match saved.get("format") {
+        None => Some(format!(
+            "run {run_id} was saved by an octoflow before {STATE_FORMAT_SINCE}; finish or close it with that release, \
+             or remove {RUNS_DIR}/{run_id}"
+        )),
+        Some(format) if format.as_u64() == Some(STATE_FORMAT) => None,
+        Some(format) => Some(format!(
+            "run {run_id} has state format {format}, which this octoflow does not read; it reads format {STATE_FORMAT}"
+        )),
     }
-}
-
-/// A list as Python's repr writes it, but for its strings, which are quoted as Rust's Debug quotes a str.
-fn list_repr(items: &[Json]) -> String {
-    let parts: Vec<String> = items
-        .iter()
-        .map(|item| match item {
-            Json::Str(s) => format!("{s:?}"),
-            Json::Null => "None".to_string(),
-            Json::Bool(b) => if *b { "True" } else { "False" }.to_string(),
-            other => other.dumps(),
-        })
-        .collect();
-    format!("[{}]", parts.join(", "))
-}
-
-/// A saved state's fields, read into a RunState one by one, each one missing keeping its default.
-struct Fields<'a> {
-    saved: &'a Map<Json>,
-    run_id: &'a str,
-}
-
-impl Fields<'_> {
-    fn invalid(&self, key: &str, what: &str) -> OrchestratorError {
-        OrchestratorError(format!("run state {} is invalid: {key} is not {what}", self.run_id))
-    }
-
-    fn required(&self, key: &str) -> Result<String, OrchestratorError> {
-        match self.saved.get(key) {
-            None => Err(OrchestratorError(format!("run state {} is incomplete: it has no {key}", self.run_id))),
-            Some(Json::Str(s)) => Ok(s.clone()),
-            Some(_) => Err(self.invalid(key, "a string")),
-        }
-    }
-
-    fn text(&self, key: &str, slot: &mut String) -> Result<(), OrchestratorError> {
-        match self.saved.get(key) {
-            None => Ok(()),
-            Some(Json::Str(s)) => {
-                *slot = s.clone();
-                Ok(())
-            }
-            Some(_) => Err(self.invalid(key, "a string")),
-        }
-    }
-
-    fn optional(&self, key: &str, slot: &mut Option<String>) -> Result<(), OrchestratorError> {
-        match self.saved.get(key) {
-            None => Ok(()),
-            Some(Json::Null) => {
-                *slot = None;
-                Ok(())
-            }
-            Some(Json::Str(s)) => {
-                *slot = Some(s.clone());
-                Ok(())
-            }
-            Some(_) => Err(self.invalid(key, "a string or null")),
-        }
-    }
-
-    fn number<T: TryFrom<i128>>(&self, key: &str, slot: &mut T) -> Result<(), OrchestratorError> {
-        match self.saved.get(key) {
-            None => Ok(()),
-            Some(value) => {
-                let n = value.as_int().and_then(|n| T::try_from(n).ok());
-                *slot = n.ok_or_else(|| self.invalid(key, "a whole number of its range"))?;
-                Ok(())
-            }
-        }
-    }
-
-    fn flag(&self, key: &str, slot: &mut bool) -> Result<(), OrchestratorError> {
-        match self.saved.get(key) {
-            None => Ok(()),
-            Some(Json::Bool(b)) => {
-                *slot = *b;
-                Ok(())
-            }
-            Some(_) => Err(self.invalid(key, "true or false")),
-        }
-    }
-
-    fn strings(&self, key: &str, slot: &mut Vec<String>) -> Result<(), OrchestratorError> {
-        let Some(value) = self.saved.get(key) else { return Ok(()) };
-        *slot = string_list(value).ok_or_else(|| self.invalid(key, "a list of strings"))?;
-        Ok(())
-    }
-
-    fn string_map(&self, key: &str, slot: &mut Map<String>) -> Result<(), OrchestratorError> {
-        let Some(value) = self.saved.get(key) else { return Ok(()) };
-        *slot = string_map(value).ok_or_else(|| self.invalid(key, "an object of strings"))?;
-        Ok(())
-    }
-
-    fn object(&self, key: &str, slot: &mut Map<Json>) -> Result<(), OrchestratorError> {
-        match self.saved.get(key) {
-            None => Ok(()),
-            Some(Json::Object(map)) => {
-                *slot = map.clone();
-                Ok(())
-            }
-            Some(_) => Err(self.invalid(key, "an object")),
-        }
-    }
-
-    fn optional_object(&self, key: &str, slot: &mut Option<Map<Json>>) -> Result<(), OrchestratorError> {
-        match self.saved.get(key) {
-            None => Ok(()),
-            Some(Json::Null) => {
-                *slot = None;
-                Ok(())
-            }
-            Some(Json::Object(map)) => {
-                *slot = Some(map.clone());
-                Ok(())
-            }
-            Some(_) => Err(self.invalid(key, "an object or null")),
-        }
-    }
-
-    fn records(&self, key: &str, slot: &mut Vec<Map<Json>>) -> Result<(), OrchestratorError> {
-        let Some(value) = self.saved.get(key) else { return Ok(()) };
-        let records = value.as_array().and_then(|items| items.iter().map(|r| r.as_object().cloned()).collect());
-        *slot = records.ok_or_else(|| self.invalid(key, "a list of objects"))?;
-        Ok(())
-    }
-
-    /// Every field but run_id, task and cwd into state.
-    fn read(&self, s: &mut RunState) -> Result<(), OrchestratorError> {
-        self.optional("machine", &mut s.machine)?;
-        if let Some(value) = self.saved.get("herdr_server").filter(|v| !v.is_null()) {
-            let server = HerdrServer::from_json(value);
-            let server = server.ok_or_else(|| self.invalid("herdr_server", "an object of herdr's variables"))?;
-            s.herdr_server = Some(server);
-        }
-        self.text("phase", &mut s.phase)?;
-        self.number("round", &mut s.round)?;
-        self.text("workspace_id", &mut s.workspace_id)?;
-        self.text("root_pane", &mut s.root_pane)?;
-        self.optional("base", &mut s.base)?;
-        self.optional("base_branch", &mut s.base_branch)?;
-        self.optional("branch", &mut s.branch)?;
-        self.optional("pr_url", &mut s.pr_url)?;
-        self.optional("verdict", &mut s.verdict)?;
-        self.strings("conflicts", &mut s.conflicts)?;
-        self.optional("error", &mut s.error)?;
-        if let Some(value) = self.saved.get("agents") {
-            let agents = value.as_object().and_then(|map| {
-                map.iter().map(|(role, agent)| string_map(agent).map(|a| (role, a))).collect::<Option<Map<_>>>()
-            });
-            s.agents = agents.ok_or_else(|| self.invalid("agents", "an object of agents"))?;
-        }
-        self.number("max_rounds", &mut s.max_rounds)?;
-        self.number("turn_timeout", &mut s.turn_timeout)?;
-        self.optional("permission_mode", &mut s.permission_mode)?;
-        self.string_map("models", &mut s.models)?;
-        self.string_map("agent_kinds", &mut s.agent_kinds)?;
-        self.flag("pull_request", &mut s.pull_request)?;
-        self.optional("prompted", &mut s.prompted)?;
-        self.strings("retried", &mut s.retried)?;
-        self.optional("retrying", &mut s.retrying)?;
-        self.optional_object("owner", &mut s.owner)?;
-        self.optional("heartbeat_at", &mut s.heartbeat_at)?;
-        self.optional("quality_job", &mut s.quality_job)?;
-        self.flag("quality_gate_disabled", &mut s.quality_gate_disabled)?;
-        self.number("max_quality_rounds", &mut s.max_quality_rounds)?;
-        self.number("quality_round", &mut s.quality_round)?;
-        self.object("ci", &mut s.ci)?;
-        self.text("workflow", &mut s.workflow)?;
-        if let Some(definition) = self.saved.get("workflow_definition") {
-            s.workflow_definition = (!definition.is_null()).then(|| definition.clone());
-        }
-        self.string_map("prompt_overrides", &mut s.prompt_overrides)?;
-        self.optional("branch_cleanup", &mut s.branch_cleanup)?;
-        self.optional("worktree", &mut s.worktree)?;
-        self.optional("closed", &mut s.closed)?;
-        self.records("turns", &mut s.turns)?;
-        self.records("quality_rounds", &mut s.quality_rounds)?;
-        self.optional_object("blocked", &mut s.blocked)?;
-        if let Some(value) = self.saved.get("locked") {
-            let locked = value.as_object().and_then(|map| {
-                map.iter().map(|(step, paths)| string_list(paths).map(|p| (step, p))).collect::<Option<Map<_>>>()
-            });
-            s.locked = locked.ok_or_else(|| self.invalid("locked", "an object of lists of paths"))?;
-        }
-        self.records("restored", &mut s.restored)?;
-        self.records("proofs", &mut s.proofs)?;
-        Ok(())
-    }
-}
-
-fn string_list(value: &Json) -> Option<Vec<String>> {
-    value.as_array()?.iter().map(|item| item.as_str().map(String::from)).collect()
-}
-
-fn string_map(value: &Json) -> Option<Map<String>> {
-    value.as_object()?.iter().map(|(k, v)| v.as_str().map(|v| (k, v.to_string()))).collect()
 }
 
 #[cfg(test)]

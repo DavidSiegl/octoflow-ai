@@ -477,6 +477,12 @@ or conflicts (`.github/workflows/automerge.yml` says which wait).
   | `plan` | `--permission-mode plan` | dropped | `--sandbox read-only` | dropped |
   | `auto`, `dontAsk`, any other | passed through | dropped | dropped | dropped |
 
+- **`state.json` says its format, and a run an earlier release saved is refused, not migrated.** `"format": 2`
+  leads the file since the engine stopped writing the Python engine's JSON (0.54.0); a `state.json` without it is
+  refused by `resume` with what to do (finish or close the run with the release that started it, or remove its run
+  directory), and `list` shows it as unreadable, the same hint as its error. `prune` and `close` read only the
+  fields they need, so they work on such a run too. Migrating each earlier shape would keep code for states no run
+  writes any more (decided 2026-10-30, the octoflow-without-python spec).
 - **`state.json` saves the permission mode and the harnesses, not Claude Code's arguments.** The arguments
   depend on the harness, which `resume` can change, so they are built at each launch.
 - **Model names are passed as they are.** Every harness takes `--model`; translating names between providers

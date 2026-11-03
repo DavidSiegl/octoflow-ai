@@ -1,98 +1,66 @@
 use super::*;
-use crate::test_support::{oracle, recordings};
+use crate::test_support::recordings;
 
-/// The state.json texts a recording holds, as engine/tests/oracle/states.py's saved_states finds them: each one the
-/// ledger saw, as json.dumps writes it, then the run files'.
-fn saved_states(recording: &Json) -> Vec<String> {
-    fn walk(x: &Json, found: &mut Vec<String>) {
-        match x {
-            Json::Object(map) => {
-                let is_state = map.get("path").and_then(Json::as_str).is_some_and(|p| p.ends_with("state.json"));
-                if let (true, Some(saved @ Json::Object(_))) = (is_state, map.get("saved")) {
-                    found.push(saved.dumps() + "\n");
-                }
-                map.values().for_each(|v| walk(v, found));
+/// The state.json texts the e2e recordings hold among their run files.
+fn recorded_states() -> Vec<String> {
+    let mut texts = Vec::new();
+    for (_, recording) in recordings() {
+        let files = recording.get("run_files").and_then(Value::as_object).unwrap();
+        for (path, text) in files {
+            if path.ends_with("state.json") {
+                texts.push(text.as_str().unwrap().to_string());
             }
-            Json::Array(items) => items.iter().for_each(|v| walk(v, found)),
-            _ => {}
         }
     }
-    let mut found = Vec::new();
-    walk(recording.get("events").unwrap(), &mut found);
-    let files = recording.get("run_files").and_then(Json::as_object).unwrap();
-    found.extend(files.iter().filter(|(path, _)| path.ends_with("state.json")).map(|(_, text)| text.as_str().unwrap().to_string()));
-    found
+    texts
 }
 
 #[test]
 fn every_recorded_state_reads_and_writes_back_byte_for_byte() {
-    let mut texts: Vec<String> = Vec::new();
-    for (_, recording) in recordings() {
-        for text in saved_states(&recording) {
-            if !texts.contains(&text) {
-                texts.push(text);
-            }
-        }
-    }
-    let states = oracle("states.json");
-    assert_eq!(Some(texts.len() as i128), states.get("recorded").and_then(Json::as_int), "states.py counted others");
-    let changed = states.get("changed").and_then(Json::as_array).unwrap();
+    let texts = recorded_states();
+    assert!(!texts.is_empty());
     for text in &texts {
-        if changed.iter().any(|c| c.get("text").and_then(Json::as_str) == Some(text)) {
-            continue;
-        }
         let state = RunState::from_text(text).unwrap_or_else(|e| panic!("{e}: {text}"));
         assert_eq!(state.to_text(), *text);
     }
-    // The ones the Python engine writes back otherwise, older states among them.
-    assert!(!changed.is_empty());
-    for case in changed {
-        let text = case.get("text").and_then(Json::as_str).unwrap();
-        let back = case.get("back").unwrap();
-        match RunState::from_text(text) {
-            Ok(state) => assert_eq!(Some(state.to_text().as_str()), back.get("text").and_then(Json::as_str), "{text}"),
-            Err(e) => assert!(back.get("error").is_some(), "{text}: refused with {e}, read by Python"),
-        }
-    }
 }
 
 #[test]
-fn fields_it_does_not_know_are_kept_and_written_back() {
-    let mut state = RunState::new("20260929-120000-a1b2c3", "t", "/proj");
-    state.unknown.insert("later_field", Json::parse(r#"{"b": [1, 2.5], "a": null}"#).unwrap());
-    state.unknown.insert("another", Json::from("x"));
-    let text = state.to_text();
-    assert!(text.ends_with(", \"later_field\": {\"b\": [1, 2.5], \"a\": null}, \"another\": \"x\"}\n"), "{text}");
-    let back = RunState::from_text(&text).unwrap();
-    assert_eq!(back, state);
-    assert_eq!(back.to_text(), text);
-}
-
-#[test]
-fn fields_lists_every_field_to_json_writes_and_no_unknown_one_replaces_it() {
-    // herdr_server is written only when known: the default session is.
-    let mut full = RunState::new("r", "t", "/p");
-    full.herdr_server = HerdrServer::of_environment(&[]);
-    let written: Vec<String> = match full.to_json() {
-        Json::Object(map) => map.keys().map(String::from).collect(),
-        _ => panic!("an object"),
-    };
-    assert_eq!(written, FIELDS[..FIELDS.len() - 1]);
-    let mut state = RunState::new("r", "t", "/p");
-    state.unknown.insert("phase", Json::from("stale"));
-    assert!(state.to_text().contains("\"phase\": \"spec\""));
-    assert!(!state.to_text().contains("stale"));
-}
-
-#[test]
-fn a_new_state_writes_what_the_python_engines_does() {
+fn a_new_state_is_written_on_one_line_with_its_format_first() {
     let state = RunState::new("20260929-120000-a1b2c3", "add a rate limiter", "/proj");
     let text = state.to_text();
-    assert!(text.starts_with(
-        "{\"run_id\": \"20260929-120000-a1b2c3\", \"task\": \"add a rate limiter\", \"cwd\": \"/proj\", \"machine\": null, \
-         \"phase\": \"spec\", \"round\": 0, \"workspace_id\": \"\", \"root_pane\": \"\", \"base\": null,"
-    ));
-    assert!(text.ends_with("\"blocked\": null, \"locked\": {}, \"restored\": [], \"proofs\": []}\n"), "{text}");
+    assert!(
+        text.starts_with(
+            r#"{"format":2,"run_id":"20260929-120000-a1b2c3","task":"add a rate limiter","cwd":"/proj","machine":null,"herdr_server":null,"phase":"spec","#
+        ),
+        "{text}"
+    );
+    assert!(text.ends_with("\"restored\":[],\"proofs\":[]}\n"), "{text}");
+    assert_eq!(text.matches('\n').count(), 1);
+    assert_eq!(RunState::from_text(&text).unwrap(), state);
+}
+
+#[test]
+fn fields_it_does_not_know_are_kept_and_written_back_after_its_own() {
+    let mut state = RunState::new("20260929-120000-a1b2c3", "t", "/proj");
+    state.unknown.insert("later_field".into(), serde_json::json!({"b": [1, 2.5], "a": null}));
+    state.unknown.insert("another".into(), Value::from("x"));
+    let Value::Object(saved) = state.to_json() else { unreachable!("a state is saved as an object") };
+    let keys: Vec<&str> = saved.keys().map(String::as_str).collect();
+    assert_eq!(keys[keys.len() - 3..], ["proofs", "later_field", "another"]);
+    let back = RunState::from_text(&state.to_text()).unwrap();
+    assert_eq!(back, state);
+    assert_eq!(back.to_text(), state.to_text());
+}
+
+#[test]
+fn no_field_it_does_not_know_replaces_one_of_its_own() {
+    let mut state = RunState::new("r", "t", "/p");
+    state.unknown.insert("phase".into(), Value::from("stale"));
+    state.unknown.insert("format".into(), Value::from(9));
+    let saved = state.to_json();
+    assert_eq!(saved.get("phase"), Some(&Value::from("spec")));
+    assert_eq!(saved.get("format"), Some(&Value::from(STATE_FORMAT)));
 }
 
 /// The herdr server a CLI reaches with these variables set and no other.
@@ -101,80 +69,75 @@ fn server(set: &[(&str, &str)]) -> HerdrServer {
     HerdrServer::of_environment(&vars).unwrap()
 }
 
+/// A state of STATE_FORMAT with these fields replaced, or removed for None, as state.json's text.
+fn saved_with(fields: &[(&str, Option<&str>)]) -> String {
+    let Value::Object(mut saved) = RunState::new("r1", "t", "/p").to_json() else { unreachable!("an object") };
+    for (key, value) in fields {
+        match value {
+            Some(text) => saved.insert(key.to_string(), serde_json::from_str(text).unwrap()),
+            None => saved.remove(*key),
+        };
+    }
+    Value::Object(saved).to_string()
+}
+
 #[test]
-fn the_herdr_server_is_written_after_the_machine_and_read_back() {
+fn the_herdr_server_is_written_after_the_machine() {
     let mut state = RunState::new("20260929-120000-a1b2c3", "t", "/proj");
+    assert!(state.to_text().contains(r#""machine":null,"herdr_server":null,"#));
     state.herdr_server = Some(server(&[("HERDR_SOCKET_PATH", "/s/herdr.sock")]));
     let text = state.to_text();
-    let saved = r#""machine": null, "herdr_server": {"HERDR_SOCKET_PATH": "/s/herdr.sock", "HERDR_SESSION": null}, "#;
+    let saved = r#""machine":null,"herdr_server":{"HERDR_SOCKET_PATH":"/s/herdr.sock","HERDR_SESSION":null},"#;
     assert!(text.contains(saved), "{text}");
     assert_eq!(RunState::from_text(&text).unwrap(), state);
     // The default session, neither variable set, is a server too, and not the absence of one.
     state.herdr_server = Some(server(&[]));
-    let back = RunState::from_text(&state.to_text()).unwrap();
-    assert_eq!(back.herdr_server, Some(server(&[])));
-    state.herdr_server = Some(server(&[("HERDR_SESSION", "work")]));
-    assert_eq!(RunState::from_text(&state.to_text()).unwrap(), state);
-}
-
-#[test]
-fn a_state_saved_before_the_herdr_server_has_none_and_writes_back_without_it() {
-    let text = RunState::new("20260929-120000-a1b2c3", "t", "/proj").to_text();
-    assert!(!text.contains("herdr_server"), "{text}");
-    let state = RunState::from_text(&text).unwrap();
-    assert_eq!(state.herdr_server, None);
-    assert_eq!(state.to_text(), text);
-    let text = r#"{"run_id": "r1", "task": "t", "cwd": "/p", "herdr_server": null}"#;
-    assert_eq!(RunState::from_text(text).unwrap().herdr_server, None);
-    // A variable left out of the object was unset.
-    let text = r#"{"run_id": "r1", "task": "t", "cwd": "/p", "herdr_server": {"HERDR_SESSION": "work"}}"#;
-    assert_eq!(RunState::from_text(text).unwrap().herdr_server, Some(server(&[("HERDR_SESSION", "work")])));
-    for value in ["\"work\"", "{\"HERDR_SESSION\": 1}", "[]"] {
-        let text = format!(r#"{{"run_id": "r1", "task": "t", "cwd": "/p", "herdr_server": {value}}}"#);
-        let e = RunState::from_text(&text).unwrap_err();
-        assert_eq!(e.0, "run state r1 is invalid: herdr_server is not an object of herdr's variables");
+    assert_eq!(RunState::from_text(&state.to_text()).unwrap().herdr_server, Some(server(&[])));
+    // null is none, and a variable left out of the object was unset.
+    assert_eq!(RunState::from_text(&saved_with(&[("herdr_server", Some("null"))])).unwrap().herdr_server, None);
+    let session = saved_with(&[("herdr_server", Some(r#"{"HERDR_SESSION": "work"}"#))]);
+    assert_eq!(RunState::from_text(&session).unwrap().herdr_server, Some(server(&[("HERDR_SESSION", "work")])));
+    for value in ["\"work\"", "{\"HERDR_SESSION\": 1}", "1"] {
+        let e = RunState::from_text(&saved_with(&[("herdr_server", Some(value))])).unwrap_err();
+        assert!(e.0.starts_with("run state r1 is invalid: "), "{value}: {e}");
     }
 }
 
 #[test]
-fn a_state_without_its_required_fields_or_with_a_wrong_type_is_refused_naming_the_run() {
-    let e = RunState::from_text(r#"{"run_id": "r1", "task": "t"}"#).unwrap_err();
-    assert_eq!(e.0, "run state r1 is incomplete: it has no cwd");
-    let e = RunState::from_text(r#"{"task": "t", "cwd": "/p"}"#).unwrap_err();
-    assert_eq!(e.0, "run state ? is incomplete: it has no run_id");
+fn a_state_without_the_format_is_refused_with_what_to_do_with_its_run() {
+    let old = saved_with(&[("format", None)]);
+    let e = RunState::from_text(&old).unwrap_err();
+    assert_eq!(
+        e.0,
+        format!(
+            "run r1 was saved by an octoflow before {STATE_FORMAT_SINCE}; finish or close it with that release, or \
+             remove .orchestrator/runs/r1"
+        )
+    );
+    let other = saved_with(&[("format", Some("3"))]);
+    let e = RunState::from_text(&other).unwrap_err();
+    assert_eq!(e.0, "run r1 has state format 3, which this octoflow does not read; it reads format 2");
+}
+
+#[test]
+fn a_missing_option_is_none() {
+    let state = RunState::from_text(&saved_with(&[("error", None), ("owner", None), ("herdr_server", None)])).unwrap();
+    assert_eq!((state.error, state.owner, state.herdr_server), (None, None, None));
+}
+
+#[test]
+fn a_state_with_a_field_missing_or_of_the_wrong_type_is_refused_naming_the_run() {
     for (field, value) in [
-        ("round", "\"1\""), ("round", "-1"), ("phase", "1"), ("machine", "3"), ("conflicts", "[1]"), ("agents", "{\"a\": 1}"),
-        ("pull_request", "1"), ("owner", "[]"), ("ci", "null"), ("turns", "[1]"), ("locked", "{\"s\": [1]}"),
-        ("models", "{\"a\": null}"), ("run_id", "5"),
+        ("cwd", None), ("phase", None), ("round", Some("\"1\"")), ("round", Some("-1")), ("phase", Some("1")),
+        ("machine", Some("3")), ("conflicts", Some("[1]")), ("agents", Some("{\"a\": 1}")),
+        ("pull_request", Some("1")), ("owner", Some("[]")), ("ci", Some("null")), ("turns", Some("[1]")),
+        ("locked", Some("{\"s\": [1]}")), ("models", Some("{\"a\": null}")),
     ] {
-        let text = format!(r#"{{"run_id": "r1", "task": "t", "cwd": "/p", "{field}": {value}}}"#);
-        let e = RunState::from_text(&text).unwrap_err();
-        assert!(e.0.contains(&format!("is invalid: {field} is not")), "{field}: {e}");
+        let e = RunState::from_text(&saved_with(&[(field, value)])).unwrap_err();
+        assert!(e.0.starts_with("run state r1 is invalid: "), "{field}: {e}");
     }
     assert!(RunState::from_text("[]").is_err());
     assert!(RunState::from_text("{").is_err());
-}
-
-#[test]
-fn a_state_saved_by_0_3_0_reads_its_agent_args_as_the_permission_mode() {
-    let state = RunState::from_text(r#"{"run_id": "r", "task": "t", "cwd": "/p", "agent_args": ["--permission-mode", "plan"]}"#).unwrap();
-    assert_eq!(state.permission_mode.as_deref(), Some("plan"));
-    assert!(!state.to_text().contains("agent_args"));
-    let kept = RunState::from_text(r#"{"run_id": "r", "task": "t", "cwd": "/p", "permission_mode": null, "agent_args": ["--permission-mode", "plan"]}"#).unwrap();
-    assert_eq!(kept.permission_mode, None);
-    let e = RunState::from_text(r#"{"run_id": "r", "task": "t", "cwd": "/p", "agent_args": ["--model", null, true]}"#).unwrap_err();
-    assert_eq!(e.0, "run state r has agent_args [\"--model\", None, True], which name no permission mode");
-}
-
-#[test]
-fn the_root_pane_comes_from_the_workflows_first_role() {
-    let agents = r#""agents": {"review": {"name": "review-abc", "pane": "w9:p2"}, "build": {"name": "build-abc", "pane": "w9:p1"}}"#;
-    let quick = crate::workflow_file::workflow_definition(&crate::test_support::quick()).dumps();
-    let text = format!(r#"{{"run_id": "r-abc", "task": "t", "cwd": "/p", "workflow": "quick", "workflow_definition": {quick}, {agents}}}"#);
-    assert_eq!(RunState::from_text(&text).unwrap().root_pane, "w9:p1");
-    // A workflow this orchestrator does not know leaves it empty.
-    let text = format!(r#"{{"run_id": "r-abc", "task": "t", "cwd": "/p", "workflow": "quick", {agents}}}"#);
-    assert_eq!(RunState::from_text(&text).unwrap().root_pane, "");
 }
 
 #[test]
@@ -204,32 +167,4 @@ fn the_runs_paths() {
     assert_eq!(s.prompts().unwrap(), Prompts::default());
     s.prompt_overrides.insert("LATER_NOTE", "x".to_string());
     assert!(s.prompts().unwrap_err().0.contains("replaces prompt LATER_NOTE"));
-}
-
-#[test]
-fn a_state_with_a_field_it_does_not_know_and_without_later_ones_reads_with_their_defaults() {
-    // TestResume.test_from_dict_ignores_unknown_keys_and_fills_new_ones; the unknown field is kept, as
-    // fields_it_does_not_know_are_kept_and_written_back says.
-    let text = r#"{"run_id": "r-abc", "task": "t", "cwd": "/p", "later_field": 1,
-        "agents": {"spec": {"name": "spec-abc", "pane": "w9:p1"}}}"#;
-    let state = RunState::from_text(text).unwrap();
-    assert_eq!((state.root_pane.as_str(), state.prompted, state.owner), ("w9:p1", None, None));
-    assert_eq!(state.max_rounds, crate::constants::DEFAULT_MAX_ROUNDS);
-}
-
-#[test]
-fn a_state_saved_before_the_gate_has_none() {
-    // TestQualityCLI.test_state_saved_before_the_gate_has_none, on a review saved in round 1: its one case that is
-    // RunState's. Its others are the CLI's (test_flag_checks, test_gate_reaches_the_workflow,
-    // test_list_shows_the_quality_phase: crate::cli's tests) and resumable_state's
-    // (test_resume_limit_against_the_saved_quality_round, test_resume_limit_needs_the_gate: cli/start/tests.rs).
-    let mut state = RunState::new("20260929-120000-a1b2c3", "add a rate limiter", "/proj");
-    (state.phase, state.round) = ("review".into(), 1);
-    let mut saved = state.to_json().as_object().unwrap().clone();
-    for key in ["quality_job", "max_quality_rounds", "quality_round", "ci"] {
-        assert!(saved.remove(key).is_some(), "{key}");
-    }
-    let state = RunState::from_saved(&saved).unwrap();
-    assert_eq!((state.quality_job.as_deref(), state.quality_round, state.ci.is_empty()), (None, 0, true));
-    assert_eq!(state.last_report_path(1), state.build_path(1));
 }

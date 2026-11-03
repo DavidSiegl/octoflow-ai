@@ -201,11 +201,11 @@ fn every_roles_harness_is_saved() {
     let kinds = [("review", "pi".to_string())].into_iter().collect();
     f.workflow(with_agents(agent_settings(Some("plan"), &[], kinds))).run().unwrap();
     let saved = f.saved();
-    assert_eq!(saved.get("agent_kinds").unwrap().dumps(), r#"{"spec": "claude", "build": "claude", "review": "pi"}"#);
+    assert_eq!(saved.get("agent_kinds").unwrap().to_string(), r#"{"spec":"claude","build":"claude","review":"pi"}"#);
     assert_eq!(text(&saved, "permission_mode").as_deref(), Some("plan"));
     assert!(!saved.contains_key("agent_args"));
     let agents = saved.get("agents").unwrap().as_object().unwrap();
-    let recorded: Vec<(&str, &str)> = agents.iter().map(|(role, a)| (role, a.get("kind").unwrap().as_str().unwrap())).collect();
+    let recorded: Vec<(&str, &str)> = agents.iter().map(|(role, a)| (role.as_str(), a.get("kind").unwrap().as_str().unwrap())).collect();
     assert_eq!(recorded, [("spec", "claude"), ("build", "claude"), ("review", "pi")]);
 }
 
@@ -223,25 +223,11 @@ fn role_agent_starts_that_role_in_its_harness() {
     assert_eq!(started, expected.map(|(r, k)| (r.to_string(), k.to_string())));
 }
 
-/// state.json as 0.3.0 wrote it, in phase and round 2: Claude Code's agent_args, no harnesses, agent records without a
-/// kind; the Builder's in session s-build.
-fn v030_saved(phase: &str) -> Map<Json> {
-    let mut state = saved_run(phase, 2, FULL);
-    state.prompted = Some("build-2.md".into());
-    state.agents.get_mut("build").unwrap().insert("session", "s-build".to_string());
-    let mut saved = state.to_json().as_object().unwrap().clone();
-    for key in ["permission_mode", "agent_kinds"] {
-        saved.remove(key);
-    }
-    saved.insert("agent_args", Json::parse(r#"["--permission-mode", "acceptEdits"]"#).unwrap());
-    saved
-}
-
 #[test]
 fn resume_keeps_or_overrides_the_saved_harnesses() {
     let mut saved = saved_run("build", 2, FULL).to_json().as_object().unwrap().clone();
     let kinds = r#"{"spec": "claude", "build": "codex", "review": "gemini"}"#;
-    saved.insert("agent_kinds", Json::parse(kinds).unwrap());
+    saved.insert("agent_kinds".into(), serde_json::from_str::<Value>(kinds).unwrap());
     let cases: [(&[&str], Map<String>); 3] = [
         (&[], [("spec", "claude"), ("build", "codex"), ("review", "gemini")].map(|(r, k)| (r, k.to_string())).into_iter().collect()),
         (&["--agent", "pi"], every_role("pi")),
@@ -257,35 +243,14 @@ fn resume_keeps_or_overrides_the_saved_harnesses() {
 
 #[test]
 fn resume_with_a_new_harness_relaunches_in_it() {
-    let state = resumable(&["--agent", "pi"], &v030_saved("review")).unwrap();
+    let saved = saved_run("review", 2, FULL).to_json().as_object().unwrap().clone();
+    let state = resumable(&["--agent", "pi"], &saved).unwrap();
     let agents = agent_settings(state.permission_mode.as_deref(), &[], state.agent_kinds.clone());
     let script = vec![("review", vec![review_turn(2, APPROVE)])];
     let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &[], &[]);
     f.put(&f.state.build_path(2), "report 2");
     assert_eq!(f.workflow(RunSettings { agents, ..f.as_saved() }).run(), verdict(APPROVE));
     assert_eq!(f.herdr.state().kinds, [("review-a1b2c3".to_string(), "pi".to_string())]);
-}
-
-#[test]
-fn a_030_state_resumes_on_claude() {
-    let state = resumable(&[], &v030_saved("build")).unwrap();
-    assert_eq!((state.permission_mode.as_deref(), state.agent_kinds.is_empty()), (Some("acceptEdits"), true));
-    let seen = seen();
-    let mut agents = agent_settings(state.permission_mode.as_deref(), &[], state.agent_kinds.clone());
-    agents.models = state.models.clone();
-    let script = vec![("build", vec![recording(build_turn(2), &seen)]), ("review", vec![review_turn(2, APPROVE)])];
-    let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &[], &[]);
-    let mut wf = f.workflow(RunSettings { agents, ..f.as_saved() });
-    assert_eq!(wf.run(), verdict(APPROVE));
-    let args: Vec<Vec<String>> = starts(&f).into_iter().map(|(_, _, args)| args).collect();
-    let accept = strings(&["--permission-mode", "acceptEdits"]);
-    assert_eq!(args, [strings(&["--permission-mode", "acceptEdits", "--resume", "s-build"]), accept]);
-    let kinds = f.herdr.state().kinds.clone();
-    assert_eq!(kinds, [("build-a1b2c3".to_string(), "claude".to_string()), ("review-a1b2c3".into(), "claude".into())]);
-    assert_eq!(*seen.borrow(), [continue_prompt(&wf.state().build_path(2))]);
-    let saved = f.saved();
-    assert_eq!(text(&saved, "permission_mode").as_deref(), Some("acceptEdits"));
-    assert_eq!(saved.get("agent_kinds").unwrap().dumps(), r#"{"spec": "claude", "build": "claude", "review": "claude"}"#);
 }
 
 // -- TestWorkflowFileAgents ----------------------------------------------------------------------------------------
@@ -304,7 +269,7 @@ fn saved_with_the_run() {
     assert_eq!(wf.run(), verdict(APPROVE));
     let definition = wf.state().workflow_definition.clone().unwrap();
     let review = definition.get("roles").and_then(|r| r.get("review")).unwrap();
-    assert_eq!(review.dumps(), r#"{"label": "Reviewer", "agent": "codex"}"#);
+    assert_eq!(review.to_string(), r#"{"label":"Reviewer","agent":"codex"}"#);
     let back = crate::workflow_file::run_pipeline("coded", Some(&definition), &crate::prompts::Prompts::default()).unwrap();
     assert_eq!(back, p);
 }

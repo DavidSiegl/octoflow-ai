@@ -19,7 +19,7 @@ use crate::error::{os_error, OrchestratorError};
 use crate::herdr::{AgentConsole, ProcessHerdr};
 use crate::host::{Host, ProcessHost};
 use crate::interrupt::Interrupt;
-use crate::py::json::Json;
+use serde_json::Value;
 use crate::py::url::{parse_qsl, urlsplit};
 use runs::{AgentInput, Event, ProjectRuns, RunReadError, RunWatch};
 use setup::Setup;
@@ -100,8 +100,8 @@ fn serve(
             return EXIT_ERROR;
         }
     };
-    let line = Json::Object([("url", Json::from(server.url())), ("token", Json::from(server.token()))].into_iter().collect());
-    if let Err(e) = writeln!(out, "{}", line.dumps()).and_then(|()| out.flush()) {
+    let line = object([("url", Value::from(server.url())), ("token", Value::from(server.token()))]);
+    if let Err(e) = writeln!(out, "{line}").and_then(|()| out.flush()) {
         let _ = writeln!(err, "error: cannot print the server's address: {}", os_error(&e, None));
         return EXIT_ERROR;
     }
@@ -372,7 +372,7 @@ const SETUP_CHECKED: &str = "/setup/checked";
 const SETUP: &str = "/setup";
 
 /// What a request answered with JSON gets: its status and body.
-type Answer = (u16, Json);
+type Answer = (u16, Value);
 
 /// Answer request, as RunServer's doc comment says.
 fn answer(shared: &Shared, request: Request) {
@@ -483,7 +483,7 @@ fn setup_answer(shared: &Shared, path: &str, query: &HashMap<String, String>) ->
             }
         },
         SETUP_CHECKED => match shared.setup.checked() {
-            Ok(checked) => (200, object([("checked", Json::from(checked))])),
+            Ok(checked) => (200, object([("checked", Value::from(checked))])),
             Err(why) => (500, error(&why)),
         },
         _ => return None,
@@ -496,18 +496,18 @@ fn read_project(endpoint: Endpoint, project: &ProjectRuns, query: &HashMap<Strin
     let (run, name, role) = (param("run"), param("name"), param("role"));
     let answered = match endpoint {
         Endpoint::Runs => project.records().map_err(RunReadError::from).map(|records| {
-            let runs = Json::Array(records.into_iter().map(Json::Object).collect());
-            (200, object([("version", Json::from(RUN_RECORD_VERSION)), ("runs", runs)]))
+            let runs = Value::Array(records.into_iter().map(Value::Object).collect());
+            (200, object([("version", Value::from(RUN_RECORD_VERSION)), ("runs", runs)]))
         }),
-        Endpoint::Files => project.files(run).map(|files| (200, object([("run", Json::from(run)), ("files", files)]))),
+        Endpoint::Files => project.files(run).map(|files| (200, object([("run", Value::from(run)), ("files", files)]))),
         Endpoint::File => project.read(run, name).map(|text| match text {
-            Some(text) => (200, object([("run", Json::from(run)), ("name", Json::from(name)), ("text", Json::from(text))])),
+            Some(text) => (200, object([("run", Value::from(run)), ("name", Value::from(name)), ("text", Value::from(text))])),
             None => (404, error(&format!("no file {name} in run {run}"))),
         }),
         Endpoint::Agent => match agent_lines(query.get("lines")) {
             Err(answer) => Ok(answer),
             Ok(lines) => project.agent_text(run, role, lines).map(|text| {
-                (200, object([("run", Json::from(run)), ("role", Json::from(role)), ("text", Json::from(text))]))
+                (200, object([("run", Value::from(run)), ("role", Value::from(role)), ("text", Value::from(text))]))
             }),
         },
         Endpoint::Events => unreachable!("get answers it itself"),
@@ -544,7 +544,7 @@ fn post_input(shared: &Shared, mut request: Request, query: &HashMap<String, Str
     let param = |name: &str| query.get(name).map_or("", String::as_str);
     let (run, role) = (param("run"), param("role"));
     let (code, body) = match project.type_into(run, role, &input) {
-        Ok(()) => (200, object([("run", Json::from(run)), ("role", Json::from(role))])),
+        Ok(()) => (200, object([("run", Value::from(run)), ("role", Value::from(role))])),
         Err(e) => read_failure(e),
     };
     send_json(request, code, &body);
@@ -558,7 +558,7 @@ fn post_checked(shared: &Shared, request: Request, query: &HashMap<String, Strin
         return send_json(request, code, &body);
     }
     let (code, body) = match shared.setup.mark() {
-        Ok(()) => (200, object([("checked", Json::from(true))])),
+        Ok(()) => (200, object([("checked", Value::from(true))])),
         Err(why) => (500, error(&why)),
     };
     send_json(request, code, &body);
@@ -576,12 +576,12 @@ fn agent_input(request: &mut Request) -> Result<AgentInput, Answer> {
         return Err((413, error(&format!("the body is over {MAX_BODY_BYTES} bytes"))));
     }
     let shape = || (400, error(r#"the body must be {"text": "..."} or {"keys": ["...", ...]}"#));
-    let parsed = std::str::from_utf8(&body).ok().and_then(|text| Json::parse(text).ok()).ok_or_else(shape)?;
+    let parsed = std::str::from_utf8(&body).ok().and_then(|text| serde_json::from_str::<Value>(text).ok()).ok_or_else(shape)?;
     let fields = parsed.as_object().filter(|o| o.len() == 1).ok_or_else(shape)?;
-    if let Some(text) = fields.get("text").and_then(Json::as_str).filter(|t| !t.is_empty()) {
+    if let Some(text) = fields.get("text").and_then(Value::as_str).filter(|t| !t.is_empty()) {
         return Ok(AgentInput::Text(text.to_string()));
     }
-    let keys = fields.get("keys").and_then(Json::as_array).filter(|keys| !keys.is_empty()).ok_or_else(shape)?;
+    let keys = fields.get("keys").and_then(Value::as_array).filter(|keys| !keys.is_empty()).ok_or_else(shape)?;
     let keys: Option<Vec<String>> =
         keys.iter().map(|k| k.as_str().filter(|k| !k.is_empty()).map(String::from)).collect();
     keys.map(AgentInput::Keys).ok_or_else(shape)
@@ -644,10 +644,10 @@ fn allowed_origin(request: &Request) -> Vec<(String, String)> {
     }
 }
 
-/// Answer request with code and body as JSON, as json.dumps writes it, allowing its origin unless code is 403, and
+/// Answer request with code and body as compact JSON, allowing its origin unless code is 403, and
 /// naming the Bearer scheme with a 401.
-fn send_json(request: Request, code: u16, body: &Json) {
-    let mut response = with_header(Response::from_data(body.dumps()).with_status_code(code), "Content-Type", "application/json");
+fn send_json(request: Request, code: u16, body: &Value) {
+    let mut response = with_header(Response::from_data(body.to_string()).with_status_code(code), "Content-Type", "application/json");
     if code != 403 {
         for (name, value) in allowed_origin(&request) {
             response = with_header(response, &name, &value);
@@ -692,12 +692,12 @@ fn header<'r>(request: &'r Request, name: &'static str) -> Option<&'r str> {
     request.headers().iter().find(|h| h.field.equiv(name)).map(|h| h.value.as_str())
 }
 
-fn object<const N: usize>(pairs: [(&str, Json); N]) -> Json {
-    Json::Object(pairs.into_iter().collect())
+fn object<const N: usize>(pairs: [(&str, Value); N]) -> Value {
+    Value::Object(crate::json::object(pairs))
 }
 
-fn error(message: &str) -> Json {
-    object([("error", Json::from(message))])
+fn error(message: &str) -> Value {
+    object([("error", Value::from(message))])
 }
 
 /// The --machine and --cwd flags a request's machine and cwd stand for, each left out when empty, as Python's

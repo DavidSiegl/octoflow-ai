@@ -17,7 +17,7 @@ use crate::host::tests::Repo;
 use crate::host::Host;
 use crate::http::{Http, HttpError, Request, Response};
 use crate::interrupt::Interrupt;
-use crate::py::json::Map;
+use crate::map::Map;
 
 /// Python's JUDGING: the files whose change decides the judging, as the test knows them.
 const JUDGING: [&str; 6] = ["Jenkinsfile", "gate.py", "orchestrator.py", "pyproject.toml", "uv.lock", ".python-version"];

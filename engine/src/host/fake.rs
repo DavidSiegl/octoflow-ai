@@ -12,7 +12,8 @@ use crate::quality::Leak;
 use crate::constants::WORKTREES_DIR;
 use crate::error::OrchestratorError;
 use crate::host::tests::FAKE_TOKEN;
-use crate::py::json::{Json, Map};
+use serde_json::Value;
+use crate::map::Map;
 
 /// What a FakeHost's clock reads when the workflow's clock reads 0: far from it, so a time taken from the wrong clock
 /// shows.
@@ -104,7 +105,7 @@ pub(crate) struct FakeHost {
 #[derive(Clone, Debug)]
 pub(crate) enum FakePr {
     /// What gh prints: Host's two views print the whole object.
-    Prints(Json),
+    Prints(Value),
     /// gh fails so.
     Fails(Completed),
 }
@@ -242,7 +243,7 @@ pub(crate) type BeforeRename = Box<dyn FnMut(&str, &str)>;
 /// A test's hook on git commands (FakeState::before_git).
 pub(crate) type BeforeGit = Box<dyn FnMut(&str, &[&str])>;
 /// A test's own run_states (FakeState::run_states_with).
-pub(crate) type RunStatesWith = Box<dyn FnMut(&str) -> Option<Result<Vec<(u64, Json)>, OrchestratorError>>>;
+pub(crate) type RunStatesWith = Box<dyn FnMut(&str) -> Option<Result<Vec<(u64, Value)>, OrchestratorError>>>;
 
 impl FakeHost {
     /// A checkout of /proj at commit head (None: no repository with a commit), on branch.
@@ -786,7 +787,7 @@ impl Host for FakeHost {
                 .leaks
                 .iter()
                 .map(|leak| {
-                    let file = Json::from(leak.file.as_str()).dumps();
+                    let file = Value::from(leak.file.as_str()).to_string();
                     format!("{{\"Secret\": \"{FAKE_TOKEN}\", \"File\": {file}}}")
                 })
                 .collect();
@@ -811,7 +812,7 @@ impl Host for FakeHost {
         match args {
             ["pr", "view", url, "--json", "state,headRefOid,closedAt" | "state,isDraft,mergeable,body"] => {
                 match s.pull_requests.get(*url).unwrap_or_else(|| panic!("FakeHost has no pull request {url}")) {
-                    FakePr::Prints(pr) => Ok(ok(&pr.dumps())),
+                    FakePr::Prints(pr) => Ok(ok(&pr.to_string())),
                     FakePr::Fails(proc) => Ok(proc.clone()),
                 }
             }
@@ -844,7 +845,7 @@ impl Host for FakeHost {
         Ok(())
     }
 
-    fn run_states(&self, cwd: &str) -> Result<Vec<(u64, Json)>, OrchestratorError> {
+    fn run_states(&self, cwd: &str) -> Result<Vec<(u64, Value)>, OrchestratorError> {
         let hook = self.state().run_states_with.take();
         if let Some(mut hook) = hook {
             let answer = hook(cwd);
@@ -861,7 +862,7 @@ impl Host for FakeHost {
                 continue;
             };
             if name == "state.json" {
-                let state = Json::parse(text).map_err(OrchestratorError)?;
+                let state = serde_json::from_str::<Value>(text).map_err(|e| OrchestratorError(e.to_string()))?;
                 states.push((s.ages.get(run_id).copied().unwrap_or(0), state));
             }
         }

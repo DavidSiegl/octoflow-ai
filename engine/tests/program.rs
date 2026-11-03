@@ -223,7 +223,7 @@ impl Serving {
         rest.read_line(&mut line).expect("serve prints its line");
         let first: serde_json::Value = serde_json::from_str(&line).unwrap_or_else(|e| panic!("{line:?}: {e}"));
         let keys: Vec<&String> = first.as_object().expect("an object").keys().collect();
-        assert_eq!(keys, ["token", "url"], "{line}");
+        assert_eq!(keys, ["url", "token"], "{line}");
         let field = |key: &str| first[key].as_str().expect("a string").to_string();
         Serving { child, url: field("url"), token: field("token"), rest }
     }
@@ -280,7 +280,7 @@ fn serve_prints_one_json_line_then_serves_until_a_sigint_or_sigterm() {
         assert!(serving.url.starts_with("http://127.0.0.1:"), "{}", serving.url);
         assert_eq!(serving.token.len(), 43);
         let (status, body) = serving.get(&format!("/runs?cwd={}", encoded(&dir.0)));
-        assert_eq!((status, body.as_str()), (200, r#"{"version": 1, "runs": []}"#));
+        assert_eq!((status, body.as_str()), (200, r#"{"version":1,"runs":[]}"#));
         let (ended, out, err) = serving.stop(signal);
         assert_eq!(ended.code(), Some(0), "{signal}: {ended:?}");
         // Nothing more on standard output or standard error: no request is logged, the token least of all.
@@ -339,7 +339,7 @@ fn serve_reaches_a_machine_by_its_saved_target() {
     dir.tool("ssh", &ssh);
     let project = dir.0.join("proj");
     std::fs::create_dir_all(project.join(".orchestrator/runs/20261024-120000-5e7e00")).unwrap();
-    let state = r#"{"run_id": "20261024-120000-5e7e00", "task": "t", "phase": "build", "round": 1}"#;
+    let state = r#"{"format": 2, "run_id": "20261024-120000-5e7e00", "task": "t", "phase": "build", "round": 1}"#;
     std::fs::write(project.join(".orchestrator/runs/20261024-120000-5e7e00/state.json"), state).unwrap();
     let serving = Serving::start(&dir, &[]);
     let (status, body) = serving.get(&format!("/runs?cwd={}", encoded(&project)));
@@ -354,7 +354,7 @@ fn serve_reaches_a_machine_by_its_saved_target() {
     assert_eq!(lines.next(), Some("herdr machine list --json"));
     assert!(lines.all(|l| l.starts_with("ssh -o BatchMode=yes ") && l.contains(" me@box ")), "{log}");
     let (status, body) = serving.get(&format!("/runs?cwd={}&machine=nosuch", encoded(&project)));
-    assert_eq!((status, body.as_str()), (502, r#"{"error": "no saved herdr machine named nosuch"}"#));
+    assert_eq!((status, body.as_str()), (502, r#"{"error":"no saved herdr machine named nosuch"}"#));
     let (ended, _, err) = serving.stop(Signal::SIGTERM);
     assert_eq!(ended.code(), Some(0), "{err}");
 }

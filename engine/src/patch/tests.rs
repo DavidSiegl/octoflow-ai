@@ -1,19 +1,19 @@
 use super::*;
-use crate::py::json::Json;
+use serde_json::Value;
 use crate::test_support::oracle;
 
 
 /// added_lines as host.json writes Python's: each line's number as a string, its text as a string.
-fn as_recorded(added: &Map<AddedLines>) -> Json {
-    Json::Object(
+fn as_recorded(added: &Map<AddedLines>) -> Value {
+    Value::Object(
         added
             .iter()
             .map(|(path, lines)| {
                 let lines = lines
                     .iter()
-                    .map(|(n, text)| (n.to_string(), Json::from(std::str::from_utf8(text).expect("UTF-8"))))
+                    .map(|(n, text)| (n.to_string(), Value::from(std::str::from_utf8(text).expect("UTF-8"))))
                     .collect();
-                (path, Json::Object(lines))
+                (path.to_string(), Value::Object(lines))
             })
             .collect(),
     )
@@ -27,7 +27,7 @@ fn added_lines_reads_each_diff_as_the_python_engine_does() {
         let added = added_lines(diff.as_bytes()).expect("a diff of UTF-8 paths");
         assert_eq!(as_recorded(&added), case[1], "{diff:?}");
         let order: Vec<&str> = added.keys().collect();
-        let recorded: Vec<&str> = case[1].as_object().unwrap().keys().collect();
+        let recorded: Vec<&str> = case[1].as_object().unwrap().keys().map(String::as_str).collect();
         assert_eq!(order, recorded, "{diff:?}");
     }
 }

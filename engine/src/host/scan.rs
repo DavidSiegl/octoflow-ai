@@ -6,7 +6,7 @@ use std::fmt;
 use super::{checked, git_timed, Host, DEFAULT_TIMEOUT, IN_DIR};
 use crate::constants::{GITLEAKS_ALLOW, GITLEAKS_EXTEND_DEPTH, GITLEAKS_TIMEOUT, REMOTE};
 use crate::error::{shortened, OrchestratorError};
-use crate::py::json::Json;
+use serde_json::Value;
 use crate::quality::Leak;
 
 /// A push refused because what it would publish holds secrets, as Host::refuse_leaks finds them.
@@ -100,7 +100,7 @@ pub(super) fn scan_unpublished<H: Host + ?Sized>(
 /// The Leaks of a gitleaks JSON report, text; None when it is no list. Errors, saying why: text is not JSON, or a
 /// finding in the list lacks a field or has one of another type.
 fn findings(text: &str) -> Result<Option<Vec<Leak>>, String> {
-    let Json::Array(items) = Json::parse(text)? else {
+    let Value::Array(items) = serde_json::from_str::<Value>(text).map_err(|e| e.to_string())? else {
         return Ok(None);
     };
     items
@@ -111,9 +111,8 @@ fn findings(text: &str) -> Result<Option<Vec<Leak>>, String> {
             // In the order the Python engine reads them, so that the first field missing is the one named.
             let (rule, file) = (string("RuleID")?, string("File")?);
             let line = match field("StartLine")? {
-                Json::Int(n) => u64::try_from(*n).ok(),
-                Json::Float(x) if x.is_finite() && *x >= 0.0 => Some(x.trunc() as u64),
-                Json::Str(s) => super::python_int(s).and_then(|n| u64::try_from(n).ok()),
+                Value::Number(n) => n.as_u64().or_else(|| n.as_f64().filter(|x| *x >= 0.0).map(|x| x.trunc() as u64)),
+                Value::String(s) => super::python_int(s).and_then(|n| u64::try_from(n).ok()),
                 _ => None,
             };
             let line = line.ok_or("StartLine is no line number")?;
@@ -301,7 +300,7 @@ fn extended_file(config: &str) -> Result<Option<String>, String> {
         Some(extend) => gitleaks_key(extend, "path", false)?,
         None => None,
     };
-    let Some(path) = path.and_then(Json::as_str).filter(|p| !p.is_empty()) else {
+    let Some(path) = path.and_then(Value::as_str).filter(|p| !p.is_empty()) else {
         return Ok(None);
     };
     let name = normpath(path);
@@ -322,8 +321,8 @@ fn extended_file(config: &str) -> Result<Option<String>, String> {
 /// table's entry for key, a lower-case key of a gitleaks config, in whatever case table spells it, as gitleaks reads
 /// it; None where table has none. Errors, saying why as extended_file's do: table spells key more than one way, or its
 /// entry is not a table (a_table) or a string (not a_table).
-fn gitleaks_key<'a>(table: &'a Json, key: &str, a_table: bool) -> Result<Option<&'a Json>, String> {
-    let found: Vec<&Json> = match table.as_object() {
+fn gitleaks_key<'a>(table: &'a Value, key: &str, a_table: bool) -> Result<Option<&'a Value>, String> {
+    let found: Vec<&Value> = match table.as_object() {
         Some(map) => map.iter().filter(|(k, _)| k.to_lowercase() == key).map(|(_, v)| v).collect(),
         None => vec![],
     };

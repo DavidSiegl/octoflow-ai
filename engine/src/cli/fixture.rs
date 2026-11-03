@@ -16,7 +16,8 @@ use crate::herdr::fake::Turn;
 use crate::herdr::HerdrError;
 use crate::host::fake::FakeHost;
 use crate::host::ProcessHost;
-use crate::py::json::Json;
+use serde_json::Value;
+use crate::json::ValueExt;
 use crate::state::RunState;
 use crate::workflow::fixture::{new_state, Fixture};
 
@@ -154,17 +155,17 @@ impl Cli {
     }
 
     /// Put a run's saved state in /proj's runs, saved age seconds ago.
-    pub fn save(&self, state: &Json, age: u64) {
-        let run_id = state.get("run_id").map(Json::python_str).unwrap_or_default();
+    pub fn save(&self, state: &Value, age: u64) {
+        let run_id = state.get("run_id").map(Value::text).unwrap_or_default();
         let mut host = self.f.host.state();
-        host.files.insert(format!("/proj/{}/{run_id}/state.json", crate::constants::RUNS_DIR), state.dumps());
+        host.files.insert(format!("/proj/{}/{run_id}/state.json", crate::constants::RUNS_DIR), state.to_string());
         host.ages.insert(run_id, age);
     }
 
     /// A new run of argv (after `run`) in /proj, stopped at its first prompt as Python's tests stop one at
     /// Workflow.__init__ or run: how main's command ended, and the state.json of the run it started, None when it
     /// saved none.
-    pub fn started(&self, argv: &[&str]) -> (Result<Ended, Stop>, Option<Json>) {
+    pub fn started(&self, argv: &[&str]) -> (Result<Ended, Stop>, Option<Value>) {
         let states = |host: &FakeHost| -> Vec<String> {
             host.state().files.keys().filter(|p| p.ends_with("/state.json")).map(String::from).collect()
         };
@@ -176,7 +177,7 @@ impl Cli {
         let ended = self.ended(&argv);
         self.f.herdr.state().prompt_with = None;
         let new = states(&self.f.host).into_iter().find(|p| !before.contains(p));
-        let saved = new.map(|p| Json::parse(&self.f.host.state().files.get(&p).cloned().unwrap_or_default()));
+        let saved = new.map(|p| serde_json::from_str::<Value>(&self.f.host.state().files.get(&p).cloned().unwrap_or_default()));
         (ended, saved.map(|s| s.expect("state.json is JSON")))
     }
 
@@ -212,9 +213,9 @@ impl Cli {
     }
 
     /// The saved state of run_id in /proj, as JSON.
-    pub fn saved(&self, run_id: &str) -> Json {
+    pub fn saved(&self, run_id: &str) -> Value {
         let path = format!("/proj/{}/{run_id}/state.json", crate::constants::RUNS_DIR);
         let text = self.f.host.state().files.get(&path).cloned().unwrap_or_else(|| panic!("no {path}"));
-        Json::parse(&text).expect("state.json is JSON")
+        serde_json::from_str::<Value>(&text).expect("state.json is JSON")
     }
 }

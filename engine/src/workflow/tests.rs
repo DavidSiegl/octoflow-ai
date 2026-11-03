@@ -13,7 +13,9 @@ use crate::herdr::fake::{Call, Turn};
 use crate::herdr::Direction;
 use crate::host::fake::FakeHost;
 use crate::host::Host;
-use crate::py::json::{Json, Map};
+use serde_json::Value;
+use crate::map::Map;
+use crate::json::{Object, ValueExt};
 use crate::state::RunState;
 
 mod blocked;
@@ -133,8 +135,8 @@ fn strings(a: &[&str]) -> Vec<String> {
     a.iter().map(|s| s.to_string()).collect()
 }
 
-fn text(saved: &Map<Json>, key: &str) -> Option<String> {
-    saved.get(key).and_then(Json::as_str).map(String::from)
+fn text(saved: &Object, key: &str) -> Option<String> {
+    saved.get(key).and_then(Value::as_str).map(String::from)
 }
 
 #[test]
@@ -331,11 +333,11 @@ fn review_without_verdict_is_asked_for_once_more() {
     let saved = f.saved();
     assert_eq!((text(&saved, "phase"), saved.get("round"), text(&saved, "verdict")), (
         Some("done".into()),
-        Some(&Json::from(1)),
+        Some(&Value::from(1)),
         Some(APPROVE.into())
     ));
-    assert_eq!(saved.get("retried"), Some(&Json::Array(vec![Json::from("review-1.md")])));
-    assert_eq!(saved.get("retrying"), Some(&Json::Null));
+    assert_eq!(saved.get("retried"), Some(&Value::Array(vec![Value::from("review-1.md")])));
+    assert_eq!(saved.get("retrying"), Some(&Value::Null));
 }
 
 #[test]
@@ -371,8 +373,8 @@ fn review_malformed_twice_aborts() {
     assert_eq!(files.get(&format!("{}/review-1.rejected.md", f.state.dir())).map(String::as_str), Some("looks fine"));
     assert_eq!(files.get(&f.state.review_path(1)).map(String::as_str), Some("still no verdict"));
     let saved = f.saved();
-    assert_eq!(saved.get("retried"), Some(&Json::Array(vec![Json::from("review-1.md")])));
-    assert_eq!((saved.get("retrying"), saved.get("prompted")), (Some(&Json::Null), Some(&Json::Null)));
+    assert_eq!(saved.get("retried"), Some(&Value::Array(vec![Value::from("review-1.md")])));
+    assert_eq!((saved.get("retrying"), saved.get("prompted")), (Some(&Value::Null), Some(&Value::Null)));
 
     // A resume does not grant a second retry.
     let state = RunState::from_saved(&saved).unwrap();

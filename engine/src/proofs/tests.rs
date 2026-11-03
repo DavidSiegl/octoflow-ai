@@ -6,7 +6,7 @@ use crate::workflow_file::saved_pipeline;
 fn every_recorded_proof_run_is_reported_as_the_python_engine_does() {
     let mut compared = 0;
     for case in helper_cases() {
-        let Some(expected) = case.expected.get("proofs_section").and_then(Json::as_str) else { continue };
+        let Some(expected) = case.expected.get("proofs_section").and_then(Value::as_str) else { continue };
         let pipeline = saved_pipeline(&case.saved).unwrap();
         let s = &case.state;
         let proofs: Vec<ProofRun> = s.proofs.iter().map(|p| ProofRun::read(p).unwrap()).collect();
@@ -50,8 +50,8 @@ fn a_proof_run_is_read_and_written_as_the_python_engine_saves_it() {
     let read = run(old);
     assert_eq!(read.written, 2);
     assert_eq!(
-        Json::Object(read.record()).dumps(),
-        r#"{"round": 2, "written": 2, "file": "test_3.sh", "finding": 3, "demonstrated": true, "said": "it fails"}"#
+        Value::Object(read.record()).to_string(),
+        r#"{"round":2,"written":2,"file":"test_3.sh","finding":3,"demonstrated":true,"said":"it fails"}"#
     );
     let refused = [
         (r#"{"written": 1}"#, "a proof run saved in state.json has no round"),

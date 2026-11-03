@@ -18,6 +18,8 @@ use crate::runs::local_host;
 use crate::test_support::{quick, resumable, solo, TempDir};
 use crate::workflow::fixture::{quality_state, review_turn, saved_run, Fixture};
 use crate::workflow_file::{workflow_definition, workflow_toml};
+use crate::json::Object;
+use crate::json::object;
 
 /// resume's arguments in argv, after `resume`.
 fn resume_args(argv: &[&str]) -> ResumeArgs {
@@ -38,17 +40,17 @@ fn run_args(argv: &[&str], config: &ConfigDir) -> RunArgs {
 }
 
 /// state's state.json, with the fields of more put in.
-fn saved_with(state: &RunState, more: &[(&str, Json)]) -> Map<Json> {
-    let Json::Object(mut saved) = state.to_json() else { unreachable!("a state is saved as an object") };
+fn saved_with(state: &RunState, more: &[(&str, Value)]) -> Object {
+    let Value::Object(mut saved) = state.to_json() else { unreachable!("a state is saved as an object") };
     for (key, value) in more {
-        saved.insert(*key, value.clone());
+        saved.insert(key.to_string(), value.clone());
     }
     saved
 }
 
 /// map as JSON text, in its order.
 fn dumps(map: &Map<String>) -> String {
-    Json::Object(map.iter().map(|(k, v)| (k, Json::from(v.as_str()))).collect()).dumps()
+    serde_json::to_string(map).unwrap()
 }
 
 fn error(result: Result<RunState, OrchestratorError>) -> String {
@@ -60,11 +62,11 @@ fn error(result: Result<RunState, OrchestratorError>) -> String {
 
 // -- TestFindRun ---------------------------------------------------------------------------------------------------
 
-fn runs() -> Vec<(u64, Json)> {
+fn runs() -> Vec<(u64, Value)> {
     ["20260930-070000-c0ffee", "20260930-080000-beef00", "20260929-080000-beef00"]
         .iter()
         .zip(1..)
-        .map(|(id, age)| (age, Json::Object([("run_id", Json::from(*id))].into_iter().collect())))
+        .map(|(id, age)| (age, Value::Object(object([("run_id", Value::from(*id))]))))
         .collect()
 }
 
@@ -91,7 +93,7 @@ fn no_match() {
 // -- TestResumableState --------------------------------------------------------------------------------------------
 
 /// TestResumableState's saved run: in round 2 of build, with settings of its own, and the fields of more.
-fn saved_settings(more: &[(&str, Json)]) -> Map<Json> {
+fn saved_settings(more: &[(&str, Value)]) -> Object {
     let mut state = saved_run("build", 2, &["spec", "build"]);
     state.max_rounds = 3;
     state.turn_timeout = 600;
@@ -104,7 +106,7 @@ fn saved_settings(more: &[(&str, Json)]) -> Map<Json> {
 fn saved_settings_are_kept() {
     let state = resumable(&[], &saved_settings(&[])).unwrap();
     assert_eq!((state.max_rounds, state.turn_timeout, state.permission_mode.as_deref()), (3, 600, Some("auto")));
-    assert_eq!(dumps(&state.models), r#"{"build": "sonnet"}"#);
+    assert_eq!(dumps(&state.models), r#"{"build":"sonnet"}"#);
 }
 
 #[test]
@@ -112,7 +114,22 @@ fn flags_override_saved_settings() {
     let flags = ["--max-rounds", "5", "--timeout", "60", "--permission-mode", "acceptEdits", "--review-model", "opus"];
     let state = resumable(&flags, &saved_settings(&[])).unwrap();
     assert_eq!((state.max_rounds, state.turn_timeout, state.permission_mode.as_deref()), (5, 60, Some("acceptEdits")));
-    assert_eq!(dumps(&state.models), r#"{"build": "sonnet", "review": "opus"}"#);
+    assert_eq!(dumps(&state.models), r#"{"build":"sonnet","review":"opus"}"#);
+}
+
+#[test]
+fn a_run_an_earlier_release_saved_is_refused_with_what_to_do() {
+    let mut saved = saved_settings(&[]);
+    saved.shift_remove("format");
+    let e = error(resumable(&[], &saved));
+    assert_eq!(
+        e,
+        format!(
+            "run 20260929-120000-a1b2c3 was saved by an octoflow before {}; finish or close it with that release, or \
+             remove .orchestrator/runs/20260929-120000-a1b2c3",
+            crate::state::STATE_FORMAT_SINCE
+        )
+    );
 }
 
 #[test]
@@ -123,9 +140,9 @@ fn max_rounds_below_the_saved_round() {
 
 #[test]
 fn live_run_needs_force() {
-    let me = [("host", Json::from("here")), ("pid", Json::from(42)), ("started_at", Json::from("x"))];
-    let saved = Json::Object(saved_settings(&[("owner", Json::Object(me.into_iter().collect()))]));
-    let alive = |_: i128| true;
+    let me = [("host", Value::from("here")), ("pid", Value::from(42)), ("started_at", Value::from("x"))];
+    let saved = Value::Object(saved_settings(&[("owner", Value::Object(object(me)))]));
+    let alive = |_: i64| true;
     let e = resumable_state(&[(30, saved.clone())], &resume_args(&["a1b2c3"]), "/proj", "here", &alive).unwrap_err();
     assert_eq!(
         e.0,
@@ -140,13 +157,13 @@ fn machine_of_the_resume_is_saved() {
     let state = resumable(&["--machine", "remote", "--cwd", "~/p"], &saved_settings(&[])).unwrap();
     assert_eq!(state.machine.as_deref(), Some("remote"));
     // And without --machine none, whatever the run was started with.
-    let state = resumable(&[], &saved_settings(&[("machine", Json::from("box"))])).unwrap();
+    let state = resumable(&[], &saved_settings(&[("machine", Value::from("box"))])).unwrap();
     assert_eq!(state.machine, None);
 }
 
 #[test]
 fn a_closed_run_is_not_resumed_even_with_force() {
-    let saved = saved_settings(&[("closed", Json::from("2026-10-01T00:00:00+00:00"))]);
+    let saved = saved_settings(&[("closed", Value::from("2026-10-01T00:00:00+00:00"))]);
     assert_eq!(error(resumable(&["--force"], &saved)), "run 20260929-120000-a1b2c3 was closed; start a new run");
 }
 
@@ -156,8 +173,8 @@ fn a_closed_run_is_not_resumed_even_with_force() {
 /// the state resumable_state gives, its pid_alive taking every pid for alive.
 fn force_resume(host: Rc<FakeHost>) -> Fixture {
     let mut saved = saved_run("review", 1, &["spec", "build", "review"]);
-    let owner = [("host", Json::from(local_host())), ("pid", Json::from(4242)), ("started_at", Json::from("x"))];
-    saved.owner = Some(owner.into_iter().collect());
+    let owner = [("host", Value::from(local_host())), ("pid", Value::from(4242)), ("started_at", Value::from("x"))];
+    saved.owner = Some(object(owner));
     host.state().files.insert(format!("{}/state.json", saved.dir()), saved.to_text());
     host.state().ages.insert(saved.run_id.clone(), 30);
     let runs = host.run_states("/proj").unwrap();
@@ -183,11 +200,11 @@ fn force_does_not_override_another_live_run() {
     other.phase = "build".into();
     other.round = 1;
     let owner = [
-        ("host", Json::from(local_host())),
-        ("pid", Json::from(3_354_482)),
-        ("started_at", Json::from("2026-10-09T22:01:51+00:00")),
+        ("host", Value::from(local_host())),
+        ("pid", Value::from(3_354_482)),
+        ("started_at", Value::from("2026-10-09T22:01:51+00:00")),
     ];
-    other.owner = Some(owner.into_iter().collect());
+    other.owner = Some(object(owner));
     let other_path = format!("{}/state.json", other.dir());
     host.state().files.insert(other_path.clone(), other.to_text());
     host.state().ages.insert(other_id.to_string(), 16);
@@ -200,7 +217,7 @@ fn force_does_not_override_another_live_run() {
     );
     assert_eq!(e.to_string(), expected);
     let saved = f.saved();
-    assert_eq!((saved.get("error"), saved.get("owner")), (Some(&Json::from(expected)), Some(&Json::Null)));
+    assert_eq!((saved.get("error"), saved.get("owner")), (Some(&Value::from(expected)), Some(&Value::Null)));
     assert!(f.herdr.state().calls.is_empty());
     assert_eq!(f.host.state().files.get(&other_path), Some(&other.to_text()));
 }
@@ -209,26 +226,26 @@ fn force_does_not_override_another_live_run() {
 
 #[test]
 fn a_saved_definition_with_an_unreadable_template_stops_the_resume() {
-    let Json::Object(mut definition) = workflow_definition(&quick()) else { unreachable!("a definition is a table") };
-    let Some(Json::Array(steps)) = definition.get_mut("steps") else { unreachable!("a definition has steps") };
-    let Some(Json::Object(first)) = steps.get_mut(0) else { unreachable!("quick has a first step") };
-    first.insert("prompt", Json::from("{task:d}"));
-    let more = [("workflow", Json::from("quick")), ("workflow_definition", Json::Object(definition))];
+    let Value::Object(mut definition) = workflow_definition(&quick()) else { unreachable!("a definition is a table") };
+    let Some(Value::Array(steps)) = definition.get_mut("steps") else { unreachable!("a definition has steps") };
+    let Some(Value::Object(first)) = steps.get_mut(0) else { unreachable!("quick has a first step") };
+    first.insert("prompt".into(), Value::from("{task:d}"));
+    let more = [("workflow", Value::from("quick")), ("workflow_definition", Value::Object(definition))];
     let e = error(resumable(&[], &saved_with(&saved_run("build", 1, &[]), &more)));
     assert!(e.contains("saved with the run is invalid: step 1 (build): prompt: placeholder {task:d} at line 1, column 1 has a format spec"), "{e}");
 }
 
 #[test]
 fn a_corrupt_saved_definition_is_an_error() {
-    let definition = Json::Object([("steps", Json::Array(vec![]))].into_iter().collect());
-    let more = [("workflow", Json::from("quick")), ("workflow_definition", definition)];
+    let definition = Value::Object(object([("steps", Value::Array(vec![]))]));
+    let more = [("workflow", Value::from("quick")), ("workflow_definition", definition)];
     let e = error(resumable(&[], &saved_with(&saved_run("build", 1, &[]), &more)));
     assert!(e.contains("the definition of workflow quick saved with the run is invalid: it has no [[steps]]"), "{e}");
 }
 
 #[test]
 fn a_state_that_replaces_an_unknown_prompt() {
-    let overrides = Json::Object([("LATER_NOTE", Json::from("x"))].into_iter().collect());
+    let overrides = Value::Object(object([("LATER_NOTE", Value::from("x"))]));
     let e = error(resumable(&[], &saved_with(&saved_run("build", 1, &[]), &[("prompt_overrides", overrides)])));
     assert!(
         e.contains("run state 20260929-120000-a1b2c3 replaces prompt LATER_NOTE, which this orchestrator lacks"),
@@ -239,7 +256,7 @@ fn a_state_that_replaces_an_unknown_prompt() {
 // -- TestQualityCLI: a resume's quality round limit ------------------------------------------------------------------
 
 /// The state.json of a run in phase, round rnd and quality round q, with the quality gate.
-fn gated_run(phase: &str, rnd: u32, q: u32) -> Map<Json> {
+fn gated_run(phase: &str, rnd: u32, q: u32) -> Object {
     let mut state = saved_run(phase, rnd, &["spec", "build"]);
     state.quality_job = Some(JOB.to_string());
     state.quality_round = q;
@@ -261,7 +278,7 @@ fn resume_limit_against_the_saved_quality_round() {
     resumable(&["--max-quality-rounds", "1"], &gated_run("build", 2, 0)).unwrap();
     // Without the flag, the saved limit is checked the same way.
     let mut past = gated_run("build", 1, 3);
-    past.insert("max_quality_rounds", Json::from(3));
+    past.insert("max_quality_rounds".into(), Value::from(3));
     assert!(error(resumable(&[], &past)).ends_with("--max-quality-rounds 3 is too low"));
 }
 
@@ -318,8 +335,8 @@ fn a_new_run_takes_the_defaults_and_the_flags() {
     let (state, _) = new_state(&run_args(&flags, &config), "/proj", None, &world).unwrap();
     assert_eq!((state.max_rounds, state.turn_timeout, state.max_quality_rounds), (5, 60, 2));
     assert_eq!((state.permission_mode.as_deref(), state.machine.as_deref()), (Some("plan"), Some("box")));
-    assert_eq!(dumps(&state.models), r#"{"spec": "m", "build": "b", "review": "r"}"#);
-    assert_eq!(dumps(&state.agent_kinds), r#"{"spec": "gemini", "build": "codex", "review": "codex"}"#);
+    assert_eq!(dumps(&state.models), r#"{"spec":"m","build":"b","review":"r"}"#);
+    assert_eq!(dumps(&state.agent_kinds), r#"{"spec":"gemini","build":"codex","review":"codex"}"#);
     assert_eq!((state.pull_request, state.quality_job.as_deref()), (false, Some(JOB)));
     assert_eq!(state.worktree, Some(format!("/proj/.orchestrator/worktrees/{}", state.key())));
     // A timeout of 0 is none given, as Python's `args.timeout or DEFAULT_TURN_TIMEOUT` takes it.
@@ -387,7 +404,7 @@ fn a_resume_finds_its_run_on_the_host_and_switches_its_gate() {
 
 /// The herdr server whose session is session, its socket path unset.
 fn session(session: &str) -> HerdrServer {
-    HerdrServer::from_json(&Json::Object([("HERDR_SESSION", Json::from(session))].into_iter().collect())).unwrap()
+    serde_json::from_value(serde_json::json!({"HERDR_SESSION": session})).unwrap()
 }
 
 #[test]

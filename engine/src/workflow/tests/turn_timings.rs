@@ -14,6 +14,7 @@ use std::cell::RefCell;
 use super::*;
 use crate::host::fake::HOST_EPOCH;
 use crate::test_support::GOLDEN_SUMMARY;
+use crate::json::object;
 
 /// The run's summary.md, if written.
 fn summary(f: &Fixture) -> Option<String> {
@@ -45,7 +46,7 @@ fn each_turn_of_an_approved_run_is_recorded_on_the_host_clock() {
     ];
     assert_eq!(expected, wf.state().turns[..]);
     let saved = f.saved();
-    let turns: Vec<Map<Json>> = saved.get("turns").unwrap().as_array().unwrap().iter().map(|t| t.as_object().unwrap().clone()).collect();
+    let turns: Vec<Object> = saved.get("turns").unwrap().as_array().unwrap().iter().map(|t| t.as_object().unwrap().clone()).collect();
     assert_eq!(expected, turns[..]);
     // The workflow's own clock, which stamps the heartbeat, is HOST_EPOCH behind the host's.
     assert_eq!(text(&saved, "heartbeat_at").as_deref(), Some("1970-01-01T00:35:00+00:00"));
@@ -80,7 +81,7 @@ fn the_end_is_the_files_mtime_even_when_no_orchestrator_watched() {
     let f2 = Fixture::resume(Rc::clone(&f.host), saved, review, &["build"], &[]);
     let mut wf = f2.workflow(f2.as_saved());
     assert_eq!(wf.run(), verdict(APPROVE));
-    let builds: Vec<&Map<Json>> = wf.state().turns.iter().filter(|t| t.get("file") == Some(&Json::from("build-1.md"))).collect();
+    let builds: Vec<&Object> = wf.state().turns.iter().filter(|t| t.get("file") == Some(&Value::from("build-1.md"))).collect();
     assert_eq!([record("build", "build-1.md", Some(0), Some(1200))], builds.into_iter().cloned().collect::<Vec<_>>()[..]);
     assert_eq!(record("review", "review-1.md", Some(5000), Some(5100)), *wf.state().turns.last().unwrap());
     let written = summary(&f2).unwrap();
@@ -104,8 +105,8 @@ fn a_restarted_agent_keeps_its_turns_record() {
     let mut wf = f.workflow(f.as_saved());
     assert_eq!(wf.run(), verdict(APPROVE));
     assert!(called(&f, &Call::Prompt { name: "build-a1b2c3".into() }));
-    let files: Vec<&Json> = wf.state().turns.iter().map(|t| t.get("file").unwrap()).collect();
-    assert_eq!(files, [&Json::from("build-2.md"), &Json::from("review-2.md")]);
+    let files: Vec<&Value> = wf.state().turns.iter().map(|t| t.get("file").unwrap()).collect();
+    assert_eq!(files, [&Value::from("build-2.md"), &Value::from("review-2.md")]);
     assert_eq!(record("build", "build-2.md", Some(-1000), Some(50)).with("round", 2), wf.state().turns[0]);
 }
 
@@ -121,7 +122,7 @@ fn a_record_closed_before_the_run_moved_on_is_not_recorded_again() {
     assert_eq!(wf.run(), verdict(APPROVE));
     let turns = &wf.state().turns;
     assert_eq!([closed], turns[..turns.len() - 1]);
-    assert_eq!(turns.last().unwrap().get("file").unwrap(), &Json::from("review-1.md"));
+    assert_eq!(turns.last().unwrap().get("file").unwrap(), &Value::from("review-1.md"));
 }
 
 #[test]
@@ -142,15 +143,12 @@ fn a_rejected_verdict_keeps_its_record_under_its_new_name() {
 }
 
 #[test]
-fn a_state_saved_before_turns_resumes_and_records_its_files_without_a_start() {
+fn a_state_without_turn_records_resumes_and_records_its_files_without_a_start() {
     let mut state = saved_run("review", 1, FULL);
     state.prompted = Some("review-1.md".into());
     state.pull_request = true;
     state.base_branch = Some("main".into());
     state.branch = Some("orchestrator/x-a1b2c3".into());
-    let mut saved = state.to_json().as_object().unwrap().clone();
-    saved.remove("turns");
-    let state = RunState::from_saved(&saved).unwrap();
     assert!(state.turns.is_empty());
     let host = Rc::new(FakeHost::new(Some("def456"), "orchestrator/x-a1b2c3"));
     let f = Fixture::resume(host, state, vec![], &["review"], &[]);
@@ -233,16 +231,16 @@ fn a_run_without_turns_says_so() {
 
 #[test]
 fn a_run_taken_over_writes_no_summary() {
-    let other = Json::parse(r#"{"host": "laptop", "pid": 4242, "started_at": "2026-09-30T07:00:00+00:00"}"#).unwrap();
+    let other = serde_json::from_str::<Value>(r#"{"host": "laptop", "pid": 4242, "started_at": "2026-09-30T07:00:00+00:00"}"#).unwrap();
     for interrupted in [false, true] {
         let f = Fixture::new(vec![("spec", vec![spec_turn()]), ("build", vec![idle()])]);
         let path = format!("{}/state.json", f.state.dir());
         let (host, interrupt, theirs) = (Rc::clone(&f.host), f.interrupt.clone(), other.clone());
         f.clock.hook(move |now| {
-            let Ok(Json::Object(mut saved)) = Json::parse(&host.state().files.get(&path).unwrap().clone()) else { panic!() };
+            let Ok(Value::Object(mut saved)) = serde_json::from_str::<Value>(&host.state().files.get(&path).unwrap().clone()) else { panic!() };
             if now > 30.0 && saved.get("owner") != Some(&theirs) {
-                saved.insert("owner", theirs.clone());
-                host.state().files.insert(path.as_str(), Json::Object(saved).dumps());
+                saved.insert("owner".into(), theirs.clone());
+                host.state().files.insert(path.as_str(), Value::Object(saved).to_string());
                 if interrupted {
                     interrupt.raise();
                 }
@@ -265,7 +263,7 @@ fn a_run_taken_over_writes_no_summary() {
 fn a_failure_that_cannot_be_saved_still_writes_a_summary() {
     let f = Fixture::new(vec![("spec", vec![spec_turn()]), ("build", vec![idle()])]);
     f.host.state().before_write = Some(Box::new(|path, text| {
-        if path.ends_with("/state.json") && Json::parse(text).unwrap().get("error").is_some_and(Json::truthy) {
+        if path.ends_with("/state.json") && serde_json::from_str::<Value>(text).unwrap().get("error").is_some_and(Value::is_set) {
             return Err(OrchestratorError("ssh: connection reset".into()));
         }
         Ok(())
@@ -362,28 +360,28 @@ fn tokens_come_from_the_session_the_turn_ran_in() {
         s.agents.kinds.insert("review", "pi".into());
     }));
     assert_eq!(wf.run(), verdict(APPROVE));
-    let metrics = Json::parse(f.host.state().files.get(&format!("{}/metrics.json", f.state.dir())).unwrap()).unwrap();
+    let metrics = serde_json::from_str::<Value>(f.host.state().files.get(&format!("{}/metrics.json", f.state.dir())).unwrap()).unwrap();
     let tokens: Vec<(String, String)> = metrics.get("turns").unwrap()
         .as_array()
         .unwrap()
         .iter()
-        .map(|t| (t.get("role").unwrap().python_str(), t.get("tokens").unwrap().dumps()))
+        .map(|t| (t.get("role").unwrap().text(), t.get("tokens").unwrap().to_string()))
         .collect();
     assert_eq!(tokens, [
         ("spec".to_string(), r#""unknown""#.to_string()),
-        ("build".into(), r#"{"input": 11, "output": 22, "cache_read": 14, "cache_write": 2}"#.into()),
-        ("review".into(), r#"{"input": 5, "output": 6, "cache_read": 2, "cache_write": 0}"#.into()),
+        ("build".into(), r#"{"input":11,"output":22,"cache_read":14,"cache_write":2}"#.into()),
+        ("review".into(), r#"{"input":5,"output":6,"cache_read":2,"cache_write":0}"#.into()),
     ]);
     let known = sessions.borrow();
-    let turn_sessions: Vec<Json> = wf.state().turns[1..].iter().map(|t| t.get("session").unwrap().clone()).collect();
-    assert_eq!(turn_sessions, [Json::from(known.get("build").unwrap().as_str()), Json::from(known.get("review").unwrap().as_str())]);
+    let turn_sessions: Vec<Value> = wf.state().turns[1..].iter().map(|t| t.get("session").unwrap().clone()).collect();
+    assert_eq!(turn_sessions, [Value::from(known.get("build").unwrap().as_str()), Value::from(known.get("review").unwrap().as_str())]);
 }
 
 #[test]
 fn a_turn_that_changed_sessions_has_unknown_tokens() {
     let mut state = saved_run("build", 1, &["spec", "build"]);
     state.prompted = Some("build-1.md".into());
-    state.turns = vec![record("build", "build-1.md", Some(-100), None).with("session", "s-old").with("tokens", Json::Null).map()];
+    state.turns = vec![record("build", "build-1.md", Some(-100), None).with("session", "s-old").with("tokens", Value::Null).map()];
     let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![
         ("build", vec![build_turn(1)]),
         ("review", vec![review_turn(1, APPROVE)]),
@@ -393,12 +391,12 @@ fn a_turn_that_changed_sessions_has_unknown_tokens() {
     let mut wf = f.workflow(f.as_saved());
     assert_eq!(wf.run(), verdict(APPROVE));
     let first = &wf.state().turns[0];
-    assert_eq!((first.get("session").unwrap(), first.get("tokens").unwrap()), (&Json::Null, &Json::from("unknown")));
+    assert_eq!((first.get("session").unwrap(), first.get("tokens").unwrap()), (&Value::Null, &Value::from("unknown")));
 }
 
 // -- The cases of a gated run -------------------------------------------------------------------------------------
 
-fn field<'j>(t: &'j Map<Json>, key: &str) -> &'j Json {
+fn field<'j>(t: &'j Object, key: &str) -> &'j Value {
     t.get(key).unwrap_or_else(|| panic!("no {key} in {t:?}"))
 }
 
@@ -416,7 +414,7 @@ fn quality_rounds_and_answers_have_records_of_their_own() {
 
     assert_eq!(wf.run(), verdict(APPROVE));
     let turns = wf.state().turns.clone();
-    let shape: Vec<(Json, Json, Json, Json, Json)> = turns
+    let shape: Vec<(Value, Value, Value, Value, Value)> = turns
         .iter()
         .map(|t| {
             let get = |k: &str| field(t, k).clone();
@@ -424,7 +422,7 @@ fn quality_rounds_and_answers_have_records_of_their_own() {
         })
         .collect();
     let row = |file: &str, step: &str, n: i64, q: i64| {
-        (Json::from(file), Json::from(step), Json::from(step), Json::from(n), Json::from(q))
+        (Value::from(file), Value::from(step), Value::from(step), Value::from(n), Value::from(q))
     };
     assert_eq!(shape, [
         row("spec.md", "spec", 0, 0),
@@ -434,17 +432,17 @@ fn quality_rounds_and_answers_have_records_of_their_own() {
         row("quality-1-2.md", "quality", 1, 2),
         row("review-1.md", "review", 1, 0),
     ]);
-    let quality: Vec<&Map<Json>> = turns.iter().filter(|t| t.get("role") == Some(&Json::from("quality"))).collect();
+    let quality: Vec<&Object> = turns.iter().filter(|t| t.get("role") == Some(&Value::from("quality"))).collect();
     for t in &quality {
-        assert_eq!((field(t, "agent"), field(t, "model"), field(t, "human_paced")), (&Json::Null, &Json::Null, &Json::Bool(false)));
+        assert_eq!((field(t, "agent"), field(t, "model"), field(t, "human_paced")), (&Value::Null, &Value::Null, &Value::Bool(false)));
     }
-    let seconds = |t: &Map<Json>, k: &str| crate::summary::epoch_seconds(field(t, k).as_str().unwrap()).unwrap();
+    let seconds = |t: &Object, k: &str| crate::summary::epoch_seconds(field(t, k).as_str().unwrap()).unwrap();
     for t in &turns {
         assert!(seconds(t, "started_at") <= seconds(t, "ended_at"));
-        assert_eq!(field(t, "seconds"), &Json::from(seconds(t, "ended_at") - seconds(t, "started_at")));
+        assert_eq!(field(t, "seconds"), &Value::from(seconds(t, "ended_at") - seconds(t, "started_at")));
     }
     // Each quality round polls Jenkins, which takes the host's time too.
-    assert!(field(quality[0], "seconds").as_int().unwrap() > 0);
+    assert!(field(quality[0], "seconds").as_i64().unwrap() > 0);
     let summary = summary(&f).unwrap();
     assert!(summary.contains("| quality | quality | 1 q1 | - | - |"), "{summary}");
     assert!(summary.contains("- Round 1: quality gate ERROR, OK; review APPROVE\n"), "{summary}");
@@ -463,7 +461,7 @@ fn a_resumed_analysis_keeps_its_start() {
     ]);
     state.turns = vec![record("quality", "quality-1-1.md", Some(-500), None)
         .with("quality_round", 1)
-        .with("agent", Json::Null)
+        .with("agent", Value::Null)
         .map()];
     let f = Fixture::resume_gated(host, state, vec![("review", vec![review_turn(1, APPROVE)])], &[]);
     assert_eq!(f.ci.state().add_build(REF_1_1, green()), fake_ci_build);
@@ -471,9 +469,9 @@ fn a_resumed_analysis_keeps_its_start() {
 
     assert_eq!(wf.run(), verdict(APPROVE));
     // build-1.md was written before turns were recorded.
-    let files: Vec<&Json> = wf.state().turns.iter().map(|t| field(t, "file")).collect();
-    assert_eq!(files, [&Json::from("quality-1-1.md"), &Json::from("review-1.md")]);
-    assert_eq!(field(&wf.state().turns[0], "started_at"), &Json::from(at(-500)));
+    let files: Vec<&Value> = wf.state().turns.iter().map(|t| field(t, "file")).collect();
+    assert_eq!(files, [&Value::from("quality-1-1.md"), &Value::from("review-1.md")]);
+    assert_eq!(field(&wf.state().turns[0], "started_at"), &Value::from(at(-500)));
 }
 
 #[test]
@@ -499,17 +497,17 @@ fn a_gated_run_of_two_rounds_records_its_turns_and_quality_rounds() {
 
     let path = format!("{}/metrics.json", f.state.dir());
     let written = f.host.state().files.get(&path).cloned().unwrap();
-    assert_eq!(written.matches('\n').count(), 1);
-    let metrics = Json::parse(&written).unwrap();
+    assert!(written.ends_with("}\n"), "{written}");
+    let metrics = serde_json::from_str::<Value>(&written).unwrap();
     let metrics = metrics.as_object().unwrap();
-    let turns: Vec<&Map<Json>> = field(metrics, "turns").as_array().unwrap().iter().map(|t| t.as_object().unwrap()).collect();
-    let shape: Vec<(Json, Json, Json, Json)> = turns
+    let turns: Vec<&Object> = field(metrics, "turns").as_array().unwrap().iter().map(|t| t.as_object().unwrap()).collect();
+    let shape: Vec<(Value, Value, Value, Value)> = turns
         .iter()
         .map(|t| (field(t, "step").clone(), field(t, "round").clone(), field(t, "quality_round").clone(), field(t, "harness").clone()))
         .collect();
     let row = |step: &str, n: i64, q: i64| {
-        let harness = if step == "quality" { Json::Null } else { Json::from("claude") };
-        (Json::from(step), Json::from(n), Json::from(q), harness)
+        let harness = if step == "quality" { Value::Null } else { Value::from("claude") };
+        (Value::from(step), Value::from(n), Value::from(q), harness)
     };
     assert_eq!(shape, [
         row("spec", 0, 0),
@@ -524,82 +522,76 @@ fn a_gated_run_of_two_rounds_records_its_turns_and_quality_rounds() {
         row("quality", 2, 2),
         row("review", 2, 0),
     ]);
-    assert_eq!(field(turns[0], "seconds"), &Json::from(600));
-    let expected: Map<Json> = [
-        ("step", Json::from("build")),
-        ("role", Json::from("build")),
-        ("harness", Json::from("claude")),
-        ("model", Json::Null),
-        ("round", Json::from(1)),
-        ("quality_round", Json::from(1)),
-        ("human_paced", Json::Bool(false)),
-        ("started_at", Json::from(at(730))),
-        ("ended_at", Json::from(at(780))),
-        ("seconds", Json::from(50)),
-        ("tokens", Json::from("unknown")),
-    ]
-    .into_iter()
-    .collect();
+    assert_eq!(field(turns[0], "seconds"), &Value::from(600));
+    let expected: Object = object([
+        ("step", Value::from("build")),
+        ("role", Value::from("build")),
+        ("harness", Value::from("claude")),
+        ("model", Value::Null),
+        ("round", Value::from(1)),
+        ("quality_round", Value::from(1)),
+        ("human_paced", Value::Bool(false)),
+        ("started_at", Value::from(at(730))),
+        ("ended_at", Value::from(at(780))),
+        ("seconds", Value::from(50)),
+        ("tokens", Value::from("unknown")),
+    ]);
     assert_eq!(turns[3], &expected);
-    assert_eq!(field(turns[2], "tokens"), &Json::Null);
-    let tokens: Vec<&Json> = turns.iter().take(3).map(|t| field(t, "tokens")).collect();
-    assert_eq!(tokens, [&Json::from("unknown"), &Json::from("unknown"), &Json::Null]);
+    assert_eq!(field(turns[2], "tokens"), &Value::Null);
+    let tokens: Vec<&Value> = turns.iter().take(3).map(|t| field(t, "tokens")).collect();
+    assert_eq!(tokens, [&Value::from("unknown"), &Value::from("unknown"), &Value::Null]);
     let ruff = crate::quality::finding_fingerprint(Some("limiter.py"), "ruff F401", "`os` imported but unused");
-    let round = |n: i64, q: i64, failed: bool| -> Json {
-        let fingerprints: Map<Json> = if failed {
-            [("ruff", Json::Array(vec![Json::from(ruff.as_str())]))].into_iter().collect()
+    let round = |n: i64, q: i64, failed: bool| -> Value {
+        let fingerprints: Object = if failed {
+            object([("ruff", Value::Array(vec![Value::from(ruff.as_str())]))])
         } else {
-            Map::new()
+            Object::new()
         };
-        Json::Object(
-            [
-                ("round", Json::from(n)),
-                ("quality_round", Json::from(q)),
-                ("gate", Json::from(if failed { "ERROR" } else { "OK" })),
-                ("conditions", Json::Array(vec![])),
-                ("fingerprints_by_check", Json::Object(fingerprints)),
-            ]
-            .into_iter()
-            .collect(),
+        Value::Object(
+            object([
+                ("round", Value::from(n)),
+                ("quality_round", Value::from(q)),
+                ("gate", Value::from(if failed { "ERROR" } else { "OK" })),
+                ("conditions", Value::Array(vec![])),
+                ("fingerprints_by_check", Value::Object(fingerprints)),
+            ]),
         )
     };
-    let quality_rounds = Json::Array(vec![round(1, 1, true), round(1, 2, false), round(2, 1, true), round(2, 2, true)]);
+    let quality_rounds = Value::Array(vec![round(1, 1, true), round(1, 2, false), round(2, 1, true), round(2, 2, true)]);
     assert_eq!(field(metrics, "quality_rounds"), &quality_rounds);
     let expected = [
-        ("version", Json::from(1)),
-        ("run_id", Json::from(RUN_ID)),
-        ("workflow", Json::from("default")),
-        ("outcome", Json::from(APPROVE)),
-        ("rounds", Json::from(2)),
-        ("quality_gate", Json::Bool(true)),
-        ("max_quality_rounds", Json::from(3)),
-        ("pull_request", Json::from("https://github.com/o/r/pull/7")),
-        ("restored_locked_files", Json::from(0)),
+        ("version", Value::from(1)),
+        ("run_id", Value::from(RUN_ID)),
+        ("workflow", Value::from("default")),
+        ("outcome", Value::from(APPROVE)),
+        ("rounds", Value::from(2)),
+        ("quality_gate", Value::Bool(true)),
+        ("max_quality_rounds", Value::from(3)),
+        ("pull_request", Value::from("https://github.com/o/r/pull/7")),
+        ("restored_locked_files", Value::from(0)),
     ];
     for (key, value) in expected {
         assert_eq!(field(metrics, key), &value, "{key}");
     }
-    let claude: Json = Json::Object([("harness", Json::from("claude")), ("model", Json::Null)].into_iter().collect());
-    let roles: Map<Json> = [("spec", claude.clone()), ("build", claude.clone()), ("review", claude)].into_iter().collect();
-    assert_eq!(field(metrics, "roles"), &Json::Object(roles));
-    assert_eq!(field(metrics, "started_at"), &Json::from(at(0)));
+    let claude: Value = Value::Object(object([("harness", Value::from("claude")), ("model", Value::Null)]));
+    let roles: Object = object([("spec", claude.clone()), ("build", claude.clone()), ("review", claude)]);
+    assert_eq!(field(metrics, "roles"), &Value::Object(roles));
+    assert_eq!(field(metrics, "started_at"), &Value::from(at(0)));
     let ended = crate::summary::epoch_seconds(field(metrics, "ended_at").as_str().unwrap()).unwrap();
-    assert_eq!(field(metrics, "seconds"), &Json::from(ended - HOST_EPOCH));
+    assert_eq!(field(metrics, "seconds"), &Value::from(ended - HOST_EPOCH));
     assert_eq!(f.saved().get("quality_rounds"), Some(&quality_rounds));
 }
 
 #[test]
 fn a_resumed_quality_round_is_recorded_once() {
     let mut state = quality_state(1);
-    let recorded: Map<Json> = [
-        ("round", Json::from(1)),
-        ("quality_round", Json::from(1)),
-        ("gate", Json::from("OK")),
-        ("conditions", Json::Array(vec![])),
-        ("fingerprints_by_check", Json::Object(Map::new())),
-    ]
-    .into_iter()
-    .collect();
+    let recorded: Object = object([
+        ("round", Value::from(1)),
+        ("quality_round", Value::from(1)),
+        ("gate", Value::from("OK")),
+        ("conditions", Value::Array(vec![])),
+        ("fingerprints_by_check", Value::Object(Object::new())),
+    ]);
     state.quality_rounds = vec![recorded];
     let path = state.quality_path(1, 1);
     let f = Fixture::resume_gated(Rc::new(FakeHost::default()), state, vec![("review", vec![review_turn(1, APPROVE)])], &[]);

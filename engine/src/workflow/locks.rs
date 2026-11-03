@@ -8,7 +8,9 @@ use crate::error::OrchestratorError;
 use crate::paths::{file_name, split_extension};
 use crate::pipeline::Step;
 use crate::prompts::Prompt;
-use crate::py::json::{Json, Map};
+use serde_json::Value;
+use crate::map::Map;
+use crate::json::{object, Object};
 
 /// What one editing turn changed in other steps' locked files, as a RunState::restored record holds it.
 #[derive(Clone, Debug, PartialEq)]
@@ -25,15 +27,15 @@ struct Restored {
 impl Restored {
     /// The record's turn. Errors: a field missing or of another type than the engines write, as no engine's
     /// state.json has, where the Python engine fails on a KeyError or a TypeError.
-    fn read(record: &Map<Json>) -> Result<Restored, OrchestratorError> {
+    fn read(record: &Object) -> Result<Restored, OrchestratorError> {
         let field = |key: &str| {
             record.get(key).ok_or_else(|| OrchestratorError(format!("a restored record in state.json has no {key}")))
         };
-        let invalid = |key: &str, value: &Json, what: &str| {
-            OrchestratorError(format!("a restored record in state.json has {key} {}, not {what}", value.dumps()))
+        let invalid = |key: &str, value: &Value, what: &str| {
+            OrchestratorError(format!("a restored record in state.json has {key} {}, not {what}", value))
         };
         let round = field("round")?;
-        let round = round.as_int().and_then(|n| u32::try_from(n).ok()).ok_or_else(|| invalid("round", round, "a round"))?;
+        let round = round.as_i64().and_then(|n| u32::try_from(n).ok()).ok_or_else(|| invalid("round", round, "a round"))?;
         let file = field("file")?;
         let file = file.as_str().ok_or_else(|| invalid("file", file, "a string"))?.to_string();
         let paths = field("paths")?;
@@ -50,18 +52,16 @@ impl Restored {
         Ok(Restored { round, file, paths })
     }
 
-    /// The turn as a RunState::restored record, with its fields in the order the Python engine writes them.
-    fn record(&self) -> Map<Json> {
+    /// The turn as a RunState::restored record.
+    fn record(&self) -> Object {
         let paths = self.paths.iter().map(|(locker, paths)| {
-            (locker, Json::Array(paths.iter().map(|p| Json::from(p.as_str())).collect()))
+            (locker.to_string(), Value::Array(paths.iter().map(|p| Value::from(p.as_str())).collect()))
         });
-        [
-            ("round", Json::from(i64::from(self.round))),
-            ("file", Json::from(self.file.as_str())),
-            ("paths", Json::Object(paths.collect())),
-        ]
-        .into_iter()
-        .collect()
+        object([
+            ("round", Value::from(self.round)),
+            ("file", Value::from(self.file.as_str())),
+            ("paths", Value::Object(paths.collect())),
+        ])
     }
 }
 

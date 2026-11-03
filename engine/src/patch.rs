@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::error::OrchestratorError;
-use crate::py::json::Map;
+use crate::map::Map;
 
 /// The lines a file gains, by their line in the new tree, from 1, each one's bytes without the "+".
 pub type AddedLines = BTreeMap<u64, Vec<u8>>;

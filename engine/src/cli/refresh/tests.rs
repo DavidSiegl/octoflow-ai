@@ -7,8 +7,10 @@ use crate::constants::{APPROVE, CHANGES_REQUESTED, EXIT_ERROR, EXIT_WAITING};
 use crate::host::fake::{FakePr, PrEdit};
 use crate::host::Completed;
 use crate::pull_request::{conflict_warning, pr_body, GateEvidence};
-use crate::py::json::{Json, Map};
+use serde_json::Value;
+use crate::json::Object;
 use crate::state::RunState;
+use crate::json::object;
 
 const REFRESH_ID: &str = "20261001-120000-a1b2c3";
 const REFRESH_URL: &str = "https://github.com/o/r/pull/7";
@@ -32,19 +34,17 @@ fn done_run(run_id: &str, url: &str, conflicts: &[&str], verdict: &str) -> RunSt
 }
 
 /// What gh says of a pull request: OPEN, a draft, MERGEABLE and with body, with fields in place of those.
-fn pr(body: &str, fields: &[(&str, Json)]) -> FakePr {
-    let mut pr: Map<Json> = [
-        ("state", Json::from("OPEN")),
-        ("isDraft", Json::Bool(true)),
-        ("mergeable", Json::from("MERGEABLE")),
-        ("body", Json::from(body)),
-    ]
-    .into_iter()
-    .collect();
+fn pr(body: &str, fields: &[(&str, Value)]) -> FakePr {
+    let mut pr: Object = object([
+        ("state", Value::from("OPEN")),
+        ("isDraft", Value::Bool(true)),
+        ("mergeable", Value::from("MERGEABLE")),
+        ("body", Value::from(body)),
+    ]);
     for (key, value) in fields {
-        pr.insert(*key, value.clone());
+        pr.insert(key.to_string(), value.clone());
     }
-    FakePr::Prints(Json::Object(pr))
+    FakePr::Prints(Value::Object(pr))
 }
 
 /// The body pr_body writes for state.
@@ -73,31 +73,31 @@ impl Refresh {
 
     /// A done run whose pull request at url was opened over conflicts, and what gh says of it: pr(body) with fields,
     /// body the one pr_body wrote unless given. The run's saved state.
-    fn add(&self, run_id: &str, url: &str, conflicts: &[&str], verdict: &str, body: Option<&str>, fields: &[(&str, Json)]) -> Json {
+    fn add(&self, run_id: &str, url: &str, conflicts: &[&str], verdict: &str, body: Option<&str>, fields: &[(&str, Value)]) -> Value {
         let state = done_run(run_id, url, conflicts, verdict);
         let text = state.to_text();
         let body = body.map_or_else(|| body_of(&state), String::from);
         let mut host = self.cli.f.host.state();
         host.files.insert(format!("{}/state.json", state.dir()), text.clone());
         host.pull_requests.insert(url.to_string(), pr(&body, fields));
-        Json::parse(&text).unwrap()
+        serde_json::from_str::<Value>(&text).unwrap()
     }
 
     /// add with the defaults: REFRESH_ID, REFRESH_URL, conflicts in a.py, APPROVE.
-    fn add_run(&self, fields: &[(&str, Json)]) -> Json {
+    fn add_run(&self, fields: &[(&str, Value)]) -> Value {
         self.add(REFRESH_ID, REFRESH_URL, &["a.py"], APPROVE, None, fields)
     }
 
     /// Replace the run's saved state with saved, with fields changed.
-    fn resave(&self, run_id: &str, saved: &Json, fields: &[(&str, Json)]) {
+    fn resave(&self, run_id: &str, saved: &Value, fields: &[(&str, Value)]) {
         let mut saved = saved.as_object().unwrap().clone();
         for (key, value) in fields {
-            saved.insert(*key, value.clone());
+            saved.insert(key.to_string(), value.clone());
         }
-        self.cli.f.host.state().files.insert(state_path(run_id), Json::Object(saved).dumps());
+        self.cli.f.host.state().files.insert(state_path(run_id), Value::Object(saved).to_string());
     }
 
-    fn saved(&self) -> Json {
+    fn saved(&self) -> Value {
         self.cli.saved(REFRESH_ID)
     }
 
@@ -140,7 +140,7 @@ fn a_cleanly_merging_approved_draft_loses_its_warning_and_is_marked_ready() {
     assert_eq!(status, 0);
     assert_eq!(out, format!("{REFRESH_ID}: conflict cleared, ready for review  {REFRESH_URL}\n"));
     assert_eq!(t.pr_edits(), [body_edit(REFRESH_URL, &clean_body(APPROVE)), ready(REFRESH_URL)]);
-    assert_eq!(t.saved().get("conflicts"), Some(&Json::Array(vec![])));
+    assert_eq!(t.saved().get("conflicts"), Some(&Value::Array(vec![])));
     assert_eq!(t.cli.f.host.state().mtime_kept, [state_path(REFRESH_ID)]);
 }
 
@@ -152,13 +152,13 @@ fn a_run_that_did_not_succeed_keeps_its_draft() {
     assert_eq!(status, 0);
     assert_eq!(out, format!("{REFRESH_ID}: conflict cleared  {REFRESH_URL}\n"));
     assert_eq!(t.pr_edits(), [body_edit(REFRESH_URL, &clean_body(CHANGES_REQUESTED))]);
-    assert_eq!(t.saved().get("conflicts"), Some(&Json::Array(vec![])));
+    assert_eq!(t.saved().get("conflicts"), Some(&Value::Array(vec![])));
 }
 
 #[test]
 fn a_pull_request_already_out_of_draft_is_not_marked_again() {
     let t = Refresh::new();
-    t.add_run(&[("isDraft", Json::Bool(false))]);
+    t.add_run(&[("isDraft", Value::Bool(false))]);
     assert_eq!(t.refresh(&[REFRESH_ID]), (0, format!("{REFRESH_ID}: conflict cleared  {REFRESH_URL}\n")));
     assert!(matches!(&t.pr_edits()[..], [PrEdit::Body { .. }]), "{:?}", t.pr_edits());
 }
@@ -167,7 +167,7 @@ fn a_pull_request_already_out_of_draft_is_not_marked_again() {
 fn a_pull_request_that_still_conflicts_or_is_not_known_is_left() {
     for (mergeable, line) in [("CONFLICTING", "still conflicts"), ("UNKNOWN", "mergeability not known yet, try again")] {
         let t = Refresh::new();
-        let saved = t.add_run(&[("mergeable", Json::from(mergeable))]);
+        let saved = t.add_run(&[("mergeable", Value::from(mergeable))]);
         let (status, out) = t.refresh(&[REFRESH_ID]);
         assert_eq!(status, EXIT_WAITING);
         assert_eq!(out, format!("{REFRESH_ID}: {line}  {REFRESH_URL}\n"));
@@ -181,11 +181,11 @@ fn a_merged_or_closed_pull_request_only_forgets_the_conflict() {
     for state in ["MERGED", "CLOSED"] {
         let t = Refresh::new();
         // Whatever GitHub says of its mergeability, which decides nothing once it is not open.
-        t.add_run(&[("state", Json::from(state)), ("mergeable", Json::from("CONFLICTING"))]);
+        t.add_run(&[("state", Value::from(state)), ("mergeable", Value::from("CONFLICTING"))]);
         let line = format!("{REFRESH_ID}: {}, conflict forgotten\n", state.to_lowercase());
         assert_eq!(t.refresh(&[REFRESH_ID]), (0, line));
         assert_eq!(t.pr_edits(), []);
-        assert_eq!(t.saved().get("conflicts"), Some(&Json::Array(vec![])));
+        assert_eq!(t.saved().get("conflicts"), Some(&Value::Array(vec![])));
     }
 }
 
@@ -206,7 +206,7 @@ fn a_body_whose_warning_is_gone_is_not_edited() {
         t.add(REFRESH_ID, REFRESH_URL, &["a.py"], verdict, Some("Edited by hand.\n"), &[]);
         assert_eq!(t.refresh(&[REFRESH_ID]).0, 0);
         assert_eq!(t.pr_edits(), edits);
-        assert_eq!(t.saved().get("conflicts"), Some(&Json::Array(vec![])));
+        assert_eq!(t.saved().get("conflicts"), Some(&Value::Array(vec![])));
     }
 }
 
@@ -218,14 +218,14 @@ fn without_a_run_every_done_run_with_a_pull_request_and_conflicts_in_run_order()
     };
     let [a, b, c, d, e, f] = [('a', 1), ('b', 2), ('c', 3), ('d', 4), ('e', 5), ('f', 6)].map(|(k, n)| run(k, n));
     // Added out of order; d has no conflicts, e no pull request, f is not done.
-    t.add(&c.1, &c.0, &["a.py"], APPROVE, None, &[("mergeable", Json::from("CONFLICTING"))]);
+    t.add(&c.1, &c.0, &["a.py"], APPROVE, None, &[("mergeable", Value::from("CONFLICTING"))]);
     t.add(&a.1, &a.0, &["a.py"], APPROVE, None, &[]);
-    t.add(&b.1, &b.0, &["a.py"], APPROVE, None, &[("state", Json::from("MERGED"))]);
+    t.add(&b.1, &b.0, &["a.py"], APPROVE, None, &[("state", Value::from("MERGED"))]);
     t.add(&d.1, &d.0, &[], APPROVE, None, &[]);
     let saved = t.add(&e.1, &e.0, &["a.py"], APPROVE, None, &[]);
-    t.resave(&e.1, &saved, &[("pr_url", Json::Null)]);
+    t.resave(&e.1, &saved, &[("pr_url", Value::Null)]);
     let saved = t.add(&f.1, &f.0, &["a.py"], APPROVE, None, &[]);
-    t.resave(&f.1, &saved, &[("phase", Json::from("review"))]);
+    t.resave(&f.1, &saved, &[("phase", Value::from("review"))]);
     let (status, out) = t.refresh(&[]);
     assert_eq!(status, EXIT_WAITING);
     assert_eq!(
@@ -251,7 +251,7 @@ fn a_named_run_without_conflicts_or_not_done() {
     let t = Refresh::new();
     let saved = t.add(REFRESH_ID, REFRESH_URL, &[], APPROVE, None, &[]);
     assert_eq!(t.refresh(&[REFRESH_ID]), (0, format!("{REFRESH_ID}: no conflict to clear\n")));
-    t.resave(REFRESH_ID, &saved, &[("phase", Json::from("build"))]);
+    t.resave(REFRESH_ID, &saved, &[("phase", Value::from("build"))]);
     assert_eq!(t.refresh(&[REFRESH_ID]), (EXIT_ERROR, String::new()));
     assert!(t.error(&[REFRESH_ID]).contains(&format!("run {REFRESH_ID} is not done")));
     assert_eq!(t.refresh(&["ffffff"]), (EXIT_ERROR, String::new()));
@@ -276,12 +276,12 @@ fn a_state_saved_meanwhile_is_not_overwritten() {
     let saved = t.add_run(&[]);
     let path = state_path(REFRESH_ID);
     // The run is resumed once refresh has read its state: the file holds what the resume saved since.
-    t.resave(REFRESH_ID, &saved, &[("round", Json::from(2))]);
+    t.resave(REFRESH_ID, &saved, &[("round", Value::from(2))]);
     t.cli.f.host.state().run_states_with = Some(Box::new(move |_: &str| Some(Ok(vec![(0, saved.clone())]))));
     let error = t.error(&[REFRESH_ID]);
     assert!(error.contains(&format!("run {REFRESH_ID}: {path} changed while its pull request was refreshed")), "{error}");
-    assert_eq!(t.saved().get("conflicts"), Some(&Json::Array(vec![Json::from("a.py")])));
-    assert_eq!(t.saved().get("round"), Some(&Json::from(2)));
+    assert_eq!(t.saved().get("conflicts"), Some(&Value::Array(vec![Value::from("a.py")])));
+    assert_eq!(t.saved().get("round"), Some(&Value::from(2)));
 }
 
 #[test]

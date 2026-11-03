@@ -8,7 +8,7 @@ use crate::constants::RUNS_DIR;
 use crate::error::OrchestratorError;
 use crate::herdr::{AgentAddress, AgentConsole, HerdrError, HerdrServer};
 use crate::host::{Exec, ExecError, Host, RunFile};
-use crate::py::json::Json;
+use serde_json::Value;
 
 /// A Host whose files are `files`, whose run_files lists those under a run directory by their `mtimes`, as the real
 /// Host's does, and which records the path of every read in `reads`. It runs no command.
@@ -63,7 +63,7 @@ impl Host for ServeHost {
         Ok(s.files.get(path).cloned())
     }
 
-    fn run_states(&self, cwd: &str) -> Result<Vec<(u64, Json)>, OrchestratorError> {
+    fn run_states(&self, cwd: &str) -> Result<Vec<(u64, Value)>, OrchestratorError> {
         let mut s = self.state();
         s.run_states_calls += 1;
         if let Some(e) = &s.run_states_error {
@@ -73,7 +73,7 @@ impl Host for ServeHost {
         let mut states = vec![];
         for (path, text) in &s.files {
             if let Some((run_id, "state.json")) = path.strip_prefix(&runs).and_then(|rest| rest.split_once('/')) {
-                states.push((s.ages.get(run_id).copied().unwrap_or(0), Json::parse(text).map_err(OrchestratorError)?));
+                states.push((s.ages.get(run_id).copied().unwrap_or(0), serde_json::from_str::<Value>(text).map_err(|e| OrchestratorError(e.to_string()))?));
             }
         }
         Ok(states)

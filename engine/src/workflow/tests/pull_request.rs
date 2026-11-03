@@ -265,7 +265,7 @@ fn moved_base_is_merged_before_the_push() {
     assert!(!host.prs[0].draft);
     assert!(!host.prs[0].body.starts_with("> [!WARNING]"));
     drop(host);
-    assert_eq!(f.saved().get("conflicts"), Some(&Json::Array(vec![])));
+    assert_eq!(f.saved().get("conflicts"), Some(&Value::Array(vec![])));
     assert!(!f.told.titles().iter().any(|t| t.contains("conflicts")));
 }
 
@@ -324,7 +324,7 @@ fn conflict_is_aborted_and_opens_a_draft_that_says_so() {
         assert!(warning.contains(name), "{warning}");
     }
     drop(host);
-    let conflicts = Json::Array(vec![Json::from("limiter.py"), Json::from("docs/api.md")]);
+    let conflicts = Value::Array(vec![Value::from("limiter.py"), Value::from("docs/api.md")]);
     assert_eq!(f.saved().get("conflicts"), Some(&conflicts));
     assert!(f.told.titles().contains(&"Pull request conflicts with main".into()));
 }

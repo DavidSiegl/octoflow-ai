@@ -104,7 +104,7 @@ struct Blocked {
     f: Fixture,
     builds: Rc<RefCell<Vec<String>>>,
     reviews: Rc<RefCell<Vec<String>>>,
-    at_review: Rc<RefCell<Vec<Map<Json>>>>,
+    at_review: Rc<RefCell<Vec<Object>>>,
 }
 
 fn run_blocked(build: Vec<Turn>, review: Option<Vec<Turn>>) -> Blocked {
@@ -113,7 +113,7 @@ fn run_blocked(build: Vec<Turn>, review: Option<Vec<Turn>>) -> Blocked {
         let (at_review, mut approve) = (Rc::clone(&at_review), review_turn(1, APPROVE));
         let first: Turn = Box::new(move |prompt, state, host| {
             let saved = host.state().files.get(&format!("{D}/state.json")).cloned().expect("a saved state");
-            let Ok(Json::Object(saved)) = Json::parse(&saved) else { panic!("state.json is no object") };
+            let Ok(Value::Object(saved)) = serde_json::from_str::<Value>(&saved) else { panic!("state.json is no object") };
             at_review.borrow_mut().push(saved);
             approve(prompt, state, host)
         });
@@ -162,7 +162,7 @@ fn a_blocked_report_waits_for_the_human_then_goes_to_the_reviewer() {
     assert!(f.clock.now() >= 10.0 * STALL_SECONDS as f64);
     assert!(!f.told.titles().iter().any(|t| t.contains("idle")));
     let at_review = &b.at_review.borrow()[0];
-    assert_eq!((at_review.get("blocked"), at_review.get("round")), (Some(&Json::Null), Some(&Json::from(1))));
+    assert_eq!((at_review.get("blocked"), at_review.get("round")), (Some(&Value::Null), Some(&Value::from(1))));
     assert!(b.reviews.borrow()[0].contains(&format!("The Builder's report is in {}.", build_1())));
     assert_eq!(wf.state().blocked, None);
 }
@@ -193,14 +193,14 @@ fn the_wait_is_saved() {
     let (record, mut answer) = (Rc::clone(&during), answered(build_path(1), "report 1"));
     let wait: Turn = Box::new(move |prompt, state, host| {
         let saved = host.state().files.get(&format!("{D}/state.json")).cloned().expect("a saved state");
-        record.borrow_mut().push(Json::parse(&saved).unwrap());
+        record.borrow_mut().push(serde_json::from_str::<Value>(&saved).unwrap());
         answer(prompt, state, host)
     });
     let b = run_blocked(vec![blocked_report(build_path(1), QUESTION), wait], None);
     assert_eq!(b.f.workflow(RunSettings::default()).run(), verdict(APPROVE));
     let saved = &during.borrow()[0];
-    assert_eq!(saved.get("blocked").unwrap().dumps(), r#"{"file": "build-1.md", "question": "which database?", "k": 1}"#);
-    assert_eq!(saved.get("prompted"), Some(&Json::Null));
+    assert_eq!(saved.get("blocked").unwrap().to_string(), r#"{"file":"build-1.md","question":"which database?","k":1}"#);
+    assert_eq!(saved.get("prompted"), Some(&Value::Null));
 }
 
 #[test]
@@ -256,7 +256,7 @@ fn an_empty_report_after_a_block_aborts_and_ends_the_block() {
     let message = failure(b.f.workflow(RunSettings::default()).run());
     assert!(message.contains("build-1.md was written empty by the Builder"), "{message}");
     let saved = b.f.saved();
-    assert_eq!((saved.get("blocked"), saved.get("prompted")), (Some(&Json::Null), Some(&Json::Null)));
+    assert_eq!((saved.get("blocked"), saved.get("prompted")), (Some(&Value::Null), Some(&Value::Null)));
 }
 
 #[test]
@@ -404,7 +404,7 @@ fn the_wait_and_the_rewrite_are_a_human_paced_turn() {
 fn a_state_saved_before_blocks_loads_and_resumes() {
     let mut saved = saved_run("build", 1, &["spec", "build"]);
     saved.prompted = Some("build-1.md".into());
-    let Json::Object(mut saved) = saved.to_json() else { unreachable!() };
+    let Value::Object(mut saved) = saved.to_json() else { unreachable!() };
     saved.remove("blocked");
     let state = RunState::from_saved(&saved).unwrap();
     assert_eq!(state.blocked, None);
@@ -453,7 +453,7 @@ fn killing_host(kill_at: KillAt) -> Rc<FakeHost> {
 }
 
 fn saving_a_block(what: &str, path: &str, text: Option<&str>) -> bool {
-    let blocked = || Json::parse(text.unwrap_or_default()).is_ok_and(|s| s.get("blocked").is_some_and(|b| !b.is_null()));
+    let blocked = || serde_json::from_str::<Value>(text.unwrap_or_default()).is_ok_and(|s| s.get("blocked").is_some_and(|b| !b.is_null()));
     what == "write" && path.ends_with("state.json") && blocked()
 }
 
@@ -533,9 +533,9 @@ fn resume_blocked(state: RunState, host: Rc<FakeHost>, alive: &[&str], sessions:
     assert!(called(&f, &Call::Focus { name: "build-a1b2c3".into() }));
     let s = wf.state();
     let files: Vec<String> =
-        s.turns.iter().filter(|t| t.get("step") == Some(&Json::from("build"))).map(|t| t.get("file").map(Json::python_str).unwrap_or_default()).collect();
+        s.turns.iter().filter(|t| t.get("step") == Some(&Value::from("build"))).map(|t| t.get("file").map(Value::text).unwrap_or_default()).collect();
     assert_eq!(files, ["build-1.blocked-1.md", "build-1.md"]);
-    assert_eq!(s.turns[2].get("human_paced"), Some(&Json::Bool(true)));
+    assert_eq!(s.turns[2].get("human_paced"), Some(&Value::Bool(true)));
     assert_eq!(s.blocked, None);
     let prompts = seen.borrow().clone();
     prompts
@@ -554,8 +554,8 @@ fn killed_before_saving_the_block() {
 fn killed_between_saving_the_block_and_the_rename() {
     let host = killing_host(renaming_a_report);
     let (state, _) = kill(Rc::clone(&host), Also::Nowhere);
-    let block = state.blocked.clone().map(|b| Json::Object(b).dumps());
-    assert_eq!(block.as_deref(), Some(r#"{"file": "build-1.md", "question": "which database?", "k": 1}"#));
+    let block = state.blocked.clone().map(|b| Value::Object(b).to_string());
+    assert_eq!(block.as_deref(), Some(r#"{"file":"build-1.md","question":"which database?","k":1}"#));
     assert!(host.state().files.contains_key(&build_1()));
     assert!(!host.state().files.contains_key(&blocked_1()));
     assert_eq!(resume_blocked(state, host, &["build"], &[]), [blocked_prompt(&build_1(), 1)]);
@@ -566,7 +566,7 @@ fn killed_after_the_rename_before_the_prompt() {
     let host = killing_host(never);
     let (state, wait) = kill(Rc::clone(&host), Also::AtFocus);
     let k = state.blocked.as_ref().and_then(|b| b.get("k").cloned());
-    assert_eq!((k, state.prompted.clone(), wait), (Some(Json::from(1)), None, vec![]));
+    assert_eq!((k, state.prompted.clone(), wait), (Some(Value::from(1)), None, vec![]));
     assert!(!host.state().files.contains_key(&build_1()));
     assert_eq!(resume_blocked(state, host, &["build"], &[]), [blocked_prompt(&build_1(), 1)]);
 }
@@ -576,7 +576,7 @@ fn killed_waiting() -> (RunState, Rc<FakeHost>) {
     let host = killing_host(never);
     let (state, wait) = kill(Rc::clone(&host), Also::InWait);
     let k = state.blocked.as_ref().and_then(|b| b.get("k").cloned());
-    let expected = (Some(Json::from(1)), Some("build-1.md".to_string()), vec![blocked_prompt(&build_1(), 1)]);
+    let expected = (Some(Value::from(1)), Some("build-1.md".to_string()), vec![blocked_prompt(&build_1(), 1)]);
     assert_eq!((k, state.prompted.clone(), wait), expected);
     (state, host)
 }
@@ -619,7 +619,7 @@ fn a_report_written_while_no_orchestrator_watched_ends_the_wait() {
 #[test]
 fn a_block_without_its_number_stops_the_resume() {
     let mut state = saved_run("build", 1, &["spec", "build"]);
-    let Ok(Json::Object(block)) = Json::parse(r#"{"file": "build-1.md", "question": "which database?"}"#) else {
+    let Ok(Value::Object(block)) = serde_json::from_str::<Value>(r#"{"file": "build-1.md", "question": "which database?"}"#) else {
         unreachable!()
     };
     state.blocked = Some(block);

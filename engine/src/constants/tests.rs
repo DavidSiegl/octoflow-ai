@@ -1,23 +1,23 @@
 use super::*;
-use crate::py::json::Json;
+use serde_json::Value;
 use crate::test_support::oracle;
 
 /// A constant as json.dumps writes the Python engine's: a number, a string, or a tuple of them as a list.
 trait AsJson {
-    fn as_json(&self) -> Json;
+    fn as_json(&self) -> Value;
 }
 
 impl AsJson for &str {
-    fn as_json(&self) -> Json {
-        Json::from(*self)
+    fn as_json(&self) -> Value {
+        Value::from(*self)
     }
 }
 
 macro_rules! numbers {
     ($($t:ty),*) => {$(
         impl AsJson for $t {
-            fn as_json(&self) -> Json {
-                Json::Int(*self as i128)
+            fn as_json(&self) -> Value {
+                Value::from(*self as i64)
             }
         }
     )*};
@@ -25,14 +25,14 @@ macro_rules! numbers {
 numbers!(u32, u64, i32, i64, usize);
 
 impl<T: AsJson, const N: usize> AsJson for [T; N] {
-    fn as_json(&self) -> Json {
-        Json::Array(self.iter().map(AsJson::as_json).collect())
+    fn as_json(&self) -> Value {
+        Value::Array(self.iter().map(AsJson::as_json).collect())
     }
 }
 
 impl AsJson for (&str, &str) {
-    fn as_json(&self) -> Json {
-        Json::Array(vec![self.0.as_json(), self.1.as_json()])
+    fn as_json(&self) -> Value {
+        Value::Array(vec![self.0.as_json(), self.1.as_json()])
     }
 }
 
@@ -55,13 +55,13 @@ fn every_constant_is_the_python_engines() {
         EXIT_ERROR, EXIT_CHANGES_REQUESTED, EXIT_CONFLICT, EXIT_WAITING, EXIT_INTERRUPTED,
     ];
     let texts = oracle("texts.json");
-    let python = texts.get("constants").and_then(Json::as_object).unwrap();
+    let python = texts.get("constants").and_then(Value::as_object).unwrap();
     for (name, value) in &ported {
-        assert_eq!(python.get(name).map(Json::dumps), Some(value.dumps()), "{name}");
+        assert_eq!(python.get(*name).map(Value::to_string), Some(value.to_string()), "{name}");
     }
     // ROLE_LABELS is a dict in Python, a list of pairs here.
-    let labels: Vec<(&str, &str)> = python.get("ROLE_LABELS").and_then(Json::as_object).unwrap()
-        .iter().map(|(k, v)| (k, v.as_str().unwrap())).collect();
+    let labels: Vec<(&str, &str)> = python.get("ROLE_LABELS").and_then(Value::as_object).unwrap()
+        .iter().map(|(k, v)| (k.as_str(), v.as_str().unwrap())).collect();
     assert_eq!(labels, ROLE_LABELS);
     assert_eq!(ported.len() + 1, python.len(), "a constant of texts.py's list is not compared here");
 }

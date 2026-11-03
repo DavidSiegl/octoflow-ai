@@ -32,14 +32,14 @@ fn given(pipeline: &Pipeline, text: &str) -> RunSettings {
 
 /// A new run of pipeline given text as its spec, its roles played by script, run: the fixture, its verdict and the
 /// first state.json it wrote.
-fn run_seeded(script: Script, text: &str, pipeline: &Pipeline) -> (Fixture, Result<Option<String>, Stopped>, Map<Json>) {
+fn run_seeded(script: Script, text: &str, pipeline: &Pipeline) -> (Fixture, Result<Option<String>, Stopped>, Object) {
     let f = Fixture::on(Rc::new(FakeHost::default()), seeded_run(pipeline), script);
     let first = Rc::new(RefCell::new(None));
     let record = Rc::clone(&first);
     f.host.state().before_write = Some(Box::new(move |path, text| {
         let mut first = record.borrow_mut();
         if path.ends_with("/state.json") && first.is_none() {
-            let Ok(Json::Object(saved)) = Json::parse(text) else { panic!("state.json is no object") };
+            let Ok(Value::Object(saved)) = serde_json::from_str::<Value>(text) else { panic!("state.json is no object") };
             *first = Some(saved);
         }
         Ok(())
@@ -72,10 +72,10 @@ fn the_spec_is_the_contract_and_the_interview_is_skipped() {
     let writes = f.host.state().writes.clone();
     let index = |path: &str| writes.iter().position(|w| w == path).unwrap();
     assert!(index(&spec) < index(&format!("{D}/state.json")));
-    let agents = first_saved.get("agents").map(Json::dumps);
+    let agents = first_saved.get("agents").map(Value::to_string);
     assert_eq!(
         (text(&first_saved, "phase"), first_saved.get("round"), agents),
-        (Some("build".into()), Some(&Json::from(0)), Some("{}".into()))
+        (Some("build".into()), Some(&Value::from(0)), Some("{}".into()))
     );
     assert!(seen.borrow()[0].contains(&format!("The spec in {D}/spec.md was agreed")));
     // No Spec Collector: no agent, no pane, no notification.
@@ -85,7 +85,7 @@ fn the_spec_is_the_contract_and_the_interview_is_skipped() {
     assert!(calls_of(&f, "focus").is_empty());
     assert!(!f.told.titles().iter().any(|t| t.contains("waiting")));
     let saved = f.saved();
-    let roles: Vec<&str> = saved.get("agents").and_then(Json::as_object).unwrap().keys().collect();
+    let roles: Vec<&str> = saved.get("agents").and_then(Value::as_object).unwrap().keys().map(String::as_str).collect();
     assert_eq!(roles, ["build", "review"]);
     let log = f.told.lines();
     let copied = format!("[spec] spec.md is a copy of {SPEC_SOURCE}; skipping the Spec Collector's interview");
@@ -171,6 +171,6 @@ fn a_seeded_spec_has_no_record() {
     let f = Fixture::on(Rc::new(FakeHost::default()), seeded_run(&DEFAULT_WORKFLOW), script);
     let mut wf = f.workflow(given(&DEFAULT_WORKFLOW, GIVEN_SPEC));
     assert_eq!(wf.run(), verdict(APPROVE));
-    let files: Vec<String> = wf.state().turns.iter().map(|t| t.get("file").map(Json::python_str).unwrap_or_default()).collect();
+    let files: Vec<String> = wf.state().turns.iter().map(|t| t.get("file").map(Value::text).unwrap_or_default()).collect();
     assert_eq!(files, ["build-1.md", "review-1.md"]);
 }

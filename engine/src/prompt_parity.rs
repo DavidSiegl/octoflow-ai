@@ -11,7 +11,9 @@ use crate::constants::{APPROVE, CHANGES_REQUESTED};
 use crate::pipeline::{Pipeline, Step};
 use crate::prompts::Prompt;
 use crate::prompts::template;
-use crate::py::json::{Json, Map};
+use serde_json::Value;
+use crate::map::Map;
+use crate::json::Object;
 use crate::state::RunState;
 use crate::test_support::recordings;
 use crate::workflow_file::saved_pipeline;
@@ -165,15 +167,15 @@ fn others(s: &RunState, p: &Pipeline) -> Vec<Vec<Piece>> {
 }
 
 /// The latest state.json saved of each run, by its number in the recording's names, as the events give them.
-fn latest_states(events: &[Json], into: &mut Map<Map<Json>>) -> Vec<(String, String, Map<Json>)> {
+fn latest_states(events: &[Value], into: &mut Map<Object>) -> Vec<(String, String, Object)> {
     let mut prompts = Vec::new();
     for event in events {
-        if let Some(Json::Object(saved)) = event.get("state").and_then(|s| s.get("saved")) {
-            let run = saved.get("run_id").and_then(Json::as_str).unwrap_or_default().to_string();
+        if let Some(Value::Object(saved)) = event.get("state").and_then(|s| s.get("saved")) {
+            let run = saved.get("run_id").and_then(Value::as_str).unwrap_or_default().to_string();
             into.insert(run, saved.clone());
         }
-        let Some(args) = event.get("herdr").and_then(Json::as_array) else { continue };
-        let args: Vec<&str> = args.iter().filter_map(Json::as_str).collect();
+        let Some(args) = event.get("herdr").and_then(Value::as_array) else { continue };
+        let args: Vec<&str> = args.iter().filter_map(Value::as_str).collect();
         if let ["agent", "prompt", name, text] = args[..] {
             let (role, key) = name.rsplit_once("-<key:").expect("an agent named after its run's key");
             let run = format!("<run:{key}");
@@ -190,10 +192,10 @@ fn every_recorded_prompt_is_made_of_this_engines_templates_filled_in_as_the_pyth
     for (scenario, recording) in recordings() {
         let files: BTreeSet<String> = recording
             .get("run_files")
-            .and_then(Json::as_object)
+            .and_then(Value::as_object)
             .map(|files| files.keys().map(String::from).collect())
             .unwrap_or_default();
-        let events = recording.get("events").and_then(Json::as_object).cloned().unwrap_or_default();
+        let events = recording.get("events").and_then(Value::as_object).cloned().unwrap_or_default();
         let mut states = Map::new();
         for (_, invocation) in events {
             for (role, text, saved) in latest_states(invocation.as_array().unwrap(), &mut states) {

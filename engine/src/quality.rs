@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 
 use crate::constants::CONSOLE_TAIL_LINES;
 use crate::handoff::first_line_word;
-use crate::py::json::Map;
+use crate::map::Map;
 
 /// The words of the gate line, the file's first non-blank one. Only the engine writes BUILD_FAILED, for a build that
 /// ended before its Gate stage (Workflow::quality_report).

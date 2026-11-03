@@ -13,20 +13,20 @@ use crate::prompts::QUALITY_UNRESOLVED_NOTE;
 const FIRST_BUILD: i64 = 41;
 
 /// RunState::ci of round 1's first quality round in flight, its snapshot snap9, with these fields after ref and sha.
-fn in_flight(fields: &[(&str, Json)]) -> Map<Json> {
+fn in_flight(fields: &[(&str, Value)]) -> Object {
     let mut ci = ci_of(&[("ref", REF_1_1.into()), ("sha", "snap9".into())]);
     for (key, value) in fields {
-        ci.insert(*key, value.clone());
+        ci.insert(key.to_string(), value.clone());
     }
     ci
 }
 
-fn queue_url() -> (&'static str, Json) {
+fn queue_url() -> (&'static str, Value) {
     ("queue_url", format!("{JENKINS}/queue/item/1/").into())
 }
 
 /// quality_state(q) with ci.
-fn quality_in(q: u32, ci: Map<Json>) -> RunState {
+fn quality_in(q: u32, ci: Object) -> RunState {
     let mut state = quality_state(q);
     state.ci = ci;
     state
@@ -80,10 +80,10 @@ fn resume_of_a_state_saved_with_sonarqube() {
         1,
         in_flight(&[queue_url(), ("build", FIRST_BUILD.into()), ("ce_task", format!("task-{FIRST_BUILD}").into())]),
     );
-    let Ok(Json::Object(mut saved)) = Json::parse(&state.to_text()) else { panic!("a state is an object") };
-    saved.insert("quality_project", "py-ai-agents-orchestrator-a1b2c3".into());
-    saved.insert("quality_baseline", "analysis-base".into());
-    let state = RunState::from_text(&Json::Object(saved).dumps()).expect("an old state reads");
+    let Ok(Value::Object(mut saved)) = serde_json::from_str::<Value>(&state.to_text()) else { panic!("a state is an object") };
+    saved.insert("quality_project".into(), "py-ai-agents-orchestrator-a1b2c3".into());
+    saved.insert("quality_baseline".into(), "analysis-base".into());
+    let state = RunState::from_text(&Value::Object(saved).to_string()).expect("an old state reads");
     let builds = seen();
     let f = Fixture::resume_gated(
         Rc::new(FakeHost::default()),
@@ -104,7 +104,7 @@ fn resume_of_a_state_saved_with_sonarqube() {
     assert!(f.quality_file(1, 2).starts_with("GATE: OK"));
     // Python drops the fields it no longer knows when it saves; this engine keeps them as they were read
     // (RunState::unknown), and reads nothing from them.
-    assert_eq!(f.saved().get("quality_project"), Some(&Json::from("py-ai-agents-orchestrator-a1b2c3")));
+    assert_eq!(f.saved().get("quality_project"), Some(&Value::from("py-ai-agents-orchestrator-a1b2c3")));
 }
 
 #[test]
@@ -224,7 +224,7 @@ fn build_ends_alike_live_and_resumed() {
         } else {
             let e = failure(wf.run());
             assert!(e.contains(expected), "{name}: {e}");
-            assert_eq!(wf.state().ci, in_flight(&[("rejected", Json::Array(vec![FIRST_BUILD.into()]))]), "{name}");
+            assert_eq!(wf.state().ci, in_flight(&[("rejected", Value::Array(vec![FIRST_BUILD.into()]))]), "{name}");
         }
     }
 }

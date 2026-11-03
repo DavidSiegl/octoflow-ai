@@ -18,7 +18,8 @@ mod world;
 use std::path::PathBuf;
 
 use octoflow_e2e::scratch::Scratch;
-use octoflow_engine::py::json::{unicode_string, Json};
+use serde::Serialize;
+use serde_json::Value;
 
 /// The recordings scenarios are checked against: `<name>.json` in a directory, each read, or, when writing, written.
 struct Recordings {
@@ -44,62 +45,34 @@ impl Recordings {
         let got = w.record();
         let path = self.dir.join(format!("{name}.json"));
         if self.writing {
-            let mut text = String::new();
-            write_recording(&got, 0, &mut text);
-            text.push('\n');
-            std::fs::write(&path, text).unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
+            std::fs::write(&path, recording_text(&got)).unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
             return;
         }
         let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
             panic!("scenario {name} has no recording at {} ({e}); make it with E2E_RECORD=1, and review what it records", path.display())
         });
-        let want = Json::parse(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let want = serde_json::from_str::<Value>(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         if let Some(difference) = compare::first_difference(&want, &got, "$") {
             panic!("scenario {name} differs from its recording at {difference}");
         }
     }
 }
 
-/// Write json at out's end as the Python harness wrote a recording, `json.dump(json, f, indent=1, ensure_ascii=False)`:
-/// as py::json's dumps_indented(1), but with every character beyond ASCII as it is, not escaped. level is how many
-/// arrays and objects hold json.
-fn write_recording(json: &Json, level: usize, out: &mut String) {
-    let (open, between, close) = (format!("\n{}", " ".repeat(level + 1)), ",", format!("\n{}", " ".repeat(level)));
-    match json {
-        Json::Str(s) => out.push_str(&unicode_string(s)),
-        Json::Array(items) if !items.is_empty() => {
-            out.push('[');
-            for (i, item) in items.iter().enumerate() {
-                out.push_str(if i == 0 { "" } else { between });
-                out.push_str(&open);
-                write_recording(item, level + 1, out);
-            }
-            out.push_str(&close);
-            out.push(']');
-        }
-        Json::Object(map) if !map.is_empty() => {
-            out.push('{');
-            for (i, (key, value)) in map.iter().enumerate() {
-                out.push_str(if i == 0 { "" } else { between });
-                out.push_str(&open);
-                out.push_str(&unicode_string(key));
-                out.push_str(": ");
-                write_recording(value, level + 1, out);
-            }
-            out.push_str(&close);
-            out.push('}');
-        }
-        // A number, a constant, or an empty array or object, which dumps writes as json.dump does.
-        other => out.push_str(&other.dumps()),
-    }
+/// A recording's text: json pretty-printed with one space of indent a level, every character beyond ASCII as it is,
+/// and a newline.
+fn recording_text(json: &Value) -> String {
+    let mut out = Vec::new();
+    let mut writer = serde_json::Serializer::with_formatter(&mut out, serde_json::ser::PrettyFormatter::with_indent(b" "));
+    // A Value serializes into a Vec without fail, as UTF-8.
+    json.serialize(&mut writer).expect("JSON serializes");
+    String::from_utf8(out).expect("serde_json writes UTF-8") + "\n"
 }
 
 #[test]
 fn a_recording_keeps_characters_beyond_ascii_as_they_are() {
-    let record = Json::parse(r#"{"a": ["é \u2014", {}, []], "b": {"n": 1.5, "x": null}}"#).expect("JSON");
-    let mut text = String::new();
-    write_recording(&record, 0, &mut text);
-    assert_eq!(text, "{\n \"a\": [\n  \"é \u{2014}\",\n  {},\n  []\n ],\n \"b\": {\n  \"n\": 1.5,\n  \"x\": null\n }\n}");
+    let record = serde_json::from_str::<Value>(r#"{"a": ["é \u2014", {}, []], "b": {"n": 1.5, "x": null}}"#).expect("JSON");
+    let text = recording_text(&record);
+    assert_eq!(text, "{\n \"a\": [\n  \"é \u{2014}\",\n  {},\n  []\n ],\n \"b\": {\n  \"n\": 1.5,\n  \"x\": null\n }\n}\n");
 }
 
 /// Recordings in a directory of the test's own, removed when dropped, writing or not.
@@ -144,7 +117,7 @@ fn a_scenario_that_differs_from_its_recording_fails() {
 #[test]
 fn a_recording_written_holds_the_scenario_again() {
     let (_scratch, mut recordings) = scratch_recordings("written", true);
-    let scenario = |w: &mut world::World| w.note("seen", Json::from("once"));
+    let scenario = |w: &mut world::World| w.note("seen", Value::from("once"));
     recordings.check("check_written", scenario);
     recordings.writing = false;
     recordings.check("check_written", scenario);

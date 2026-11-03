@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use octoflow_engine::py::json::Json;
+use serde_json::Value;
 
 /// How long a request, or a read of the event stream, may wait on serve.
 const TIMEOUT: Duration = Duration::from_secs(60);
@@ -121,7 +121,7 @@ fn read_chunk(reader: &mut BufReader<TcpStream>) -> Option<Vec<u8>> {
 }
 
 /// One item of an event stream: an event, its kind and payload, or None for a keep-alive comment.
-pub type Item = Option<(String, Json)>;
+pub type Item = Option<(String, Value)>;
 
 /// serve's /events, read on a thread of its own: each event and each keep-alive comment as it arrives.
 pub struct EventStream {
@@ -157,7 +157,7 @@ impl EventStream {
     }
 
     /// The events read so far, in order, without the comments.
-    pub fn events(&self) -> Vec<(String, Json)> {
+    pub fn events(&self) -> Vec<(String, Value)> {
         self.items.lock().expect("the event stream's items").iter().filter_map(|(_, item)| item.clone()).collect()
     }
 
@@ -183,7 +183,7 @@ impl Drop for EventStream {
 /// and data lines, ended by a blank line, or a comment, `:`.
 fn read_events(reader: &mut BufReader<TcpStream>, chunked: bool, items: &Mutex<Vec<(Instant, Item)>>) {
     let mut pending = Vec::new();
-    let (mut kind, mut payload) = (None, Json::Null);
+    let (mut kind, mut payload) = (None, Value::Null);
     loop {
         let more = if chunked { read_chunk(reader) } else { read_line(reader).map(|l| format!("{l}\n").into_bytes()) };
         let Some(more) = more else { return };
@@ -195,12 +195,12 @@ fn read_events(reader: &mut BufReader<TcpStream>, chunked: bool, items: &Mutex<V
             if let Some(k) = line.strip_prefix("event: ") {
                 kind = Some(k.to_string());
             } else if let Some(data) = line.strip_prefix("data: ") {
-                payload = Json::parse(data).unwrap_or_else(|e| panic!("serve sent an event's data that is no JSON: {e}"));
+                payload = serde_json::from_str::<Value>(data).unwrap_or_else(|e| panic!("serve sent an event's data that is no JSON: {e}"));
             } else if line == ":" {
                 add(None);
             } else if line.is_empty() {
                 if let Some(k) = kind.take() {
-                    add(Some((k, std::mem::replace(&mut payload, Json::Null))));
+                    add(Some((k, std::mem::replace(&mut payload, Value::Null))));
                 }
             }
         }

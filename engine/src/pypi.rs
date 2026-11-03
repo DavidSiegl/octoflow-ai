@@ -7,7 +7,8 @@ use crate::constants::PYPI_TIMEOUT;
 use crate::error::shortened;
 use crate::http::{Http, HttpError, Method, Request};
 use crate::package_index::{IndexError, IndexedPackage, PackageIndex, Upload};
-use crate::py::json::Json;
+use serde_json::Value;
+use crate::json::ValueExt;
 use crate::py::url::quote;
 
 #[cfg(test)]
@@ -63,24 +64,24 @@ impl PackageIndex for PyPI {
 /// another shape.
 fn project_of(body: &[u8]) -> Result<IndexedPackage, String> {
     let text = std::str::from_utf8(body).map_err(|e| e.to_string())?;
-    let answer = Json::parse(text)?;
+    let answer = serde_json::from_str::<Value>(text).map_err(|e| e.to_string())?;
     let info = match &answer {
-        Json::Object(map) => map.get("info").ok_or("\"info\"")?,
+        Value::Object(map) => map.get("info").ok_or("\"info\"")?,
         _ => return Err("it has no info.version".to_string()),
     };
     let version = match info.get("version") {
-        Some(Json::Str(version)) => version.clone(),
+        Some(Value::String(version)) => version.clone(),
         _ => return Err("it has no info.version".to_string()),
     };
     let mut files = Vec::new();
-    match answer.get("releases").filter(|r| r.truthy()) {
+    match answer.get("releases").filter(|r| r.is_set()) {
         None => {}
-        Some(Json::Object(releases)) => {
+        Some(Value::Object(releases)) => {
             for release in releases.values() {
                 files.extend(iterated(release)?);
             }
         }
-        Some(other) => return Err(format!("'{}' object has no attribute 'values'", other.python_type())),
+        Some(other) => return Err(format!("releases is {}, not an object", other.kind())),
     }
     let first = first_upload(&files)?;
     let latest = first_upload(&answer.get("urls").map_or(Ok(Vec::new()), iterated)?)?;
@@ -88,23 +89,23 @@ fn project_of(body: &[u8]) -> Result<IndexedPackage, String> {
 }
 
 /// The items of `value or []`; an error for a true value that is not a list.
-fn iterated(value: &Json) -> Result<Vec<&Json>, String> {
+fn iterated(value: &Value) -> Result<Vec<&Value>, String> {
     match value {
-        Json::Array(items) => Ok(items.iter().collect()),
-        other if !other.truthy() => Ok(Vec::new()),
-        other => Err(format!("'{}' object is not iterable", other.python_type())),
+        Value::Array(items) => Ok(items.iter().collect()),
+        other if !other.is_set() => Ok(Vec::new()),
+        other => Err(format!("{} where an array belongs", other.kind())),
     }
 }
 
 /// The earliest upload_time_iso_8601 of PyPI's files, None for none.
-fn first_upload(files: &[&Json]) -> Result<Option<Upload>, String> {
+fn first_upload(files: &[&Value]) -> Result<Option<Upload>, String> {
     let mut first: Option<Upload> = None;
     for file in files {
         let time = match file {
-            Json::Object(file) => file.get("upload_time_iso_8601").ok_or("\"upload_time_iso_8601\"")?,
-            other => return Err(format!("'{}' object is not subscriptable", other.python_type())),
+            Value::Object(file) => file.get("upload_time_iso_8601").ok_or("\"upload_time_iso_8601\"")?,
+            other => return Err(format!("a file is {}, not an object", other.kind())),
         };
-        let Json::Str(time) = time else { return Err("fromisoformat: argument must be str".to_string()) };
+        let Value::String(time) = time else { return Err("upload_time_iso_8601 is not a string".to_string()) };
         let upload = Upload::from_iso(time)?;
         if first.as_ref().is_none_or(|f| upload.at < f.at) {
             first = Some(upload);
@@ -116,11 +117,11 @@ fn first_upload(files: &[&Json]) -> Result<Option<Upload>, String> {
 
 /// The project's license, as IndexedPackage::license holds it: its license expression, else the first line of its
 /// license field, cut to 80 characters, else its license classifier's last part; None when it states none.
-fn license(info: &Json) -> Result<Option<String>, String> {
+fn license(info: &Value) -> Result<Option<String>, String> {
     let text = |key: &str| -> Result<String, String> {
         match info.get(key) {
-            Some(Json::Str(s)) => Ok(s.trim().to_string()),
-            Some(value) if value.truthy() => Err(format!("'{}' object has no attribute 'strip'", value.python_type())),
+            Some(Value::String(s)) => Ok(s.trim().to_string()),
+            Some(value) if value.is_set() => Err(format!("{key} is {}, not a string", value.kind())),
             _ => Ok(String::new()),
         }
     };
@@ -133,16 +134,16 @@ fn license(info: &Json) -> Result<Option<String>, String> {
         return Ok(Some(shortened(field.lines().next().unwrap_or_default(), 80)));
     }
     // Iterated as `info.get("classifiers") or []` iterates it: a string by its characters, an object by its keys.
-    let classifiers: Vec<Json> = match info.get("classifiers") {
-        Some(Json::Str(text)) => text.chars().map(|c| Json::Str(c.to_string())).collect(),
-        Some(Json::Object(map)) => map.keys().map(Json::from).collect(),
+    let classifiers: Vec<Value> = match info.get("classifiers") {
+        Some(Value::String(text)) => text.chars().map(|c| Value::String(c.to_string())).collect(),
+        Some(Value::Object(map)) => map.keys().map(|k| Value::from(k.as_str())).collect(),
         Some(value) => iterated(value)?.into_iter().cloned().collect(),
         None => Vec::new(),
     };
     let mut licenses = Vec::new();
     for classifier in &classifiers {
-        let Json::Str(classifier) = classifier else {
-            return Err(format!("'{}' object has no attribute 'startswith'", classifier.python_type()));
+        let Value::String(classifier) = classifier else {
+            return Err(format!("a classifier is {}, not a string", classifier.kind()));
         };
         if classifier.starts_with("License :: ") {
             licenses.push(classifier);

@@ -6,7 +6,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use crate::constants::PYPI_TIMEOUT;
 use crate::host::fake::FakeTime;
 use crate::http::{Http, HttpError, Request, Response};
-use crate::py::json::{Json, Map};
+use serde_json::Value;
+use crate::json::Object;
+use crate::json::object;
 
 /// PyPI's JSON for a project with one early release and its latest, as https://docs.pypi.org/api/json/ has it:
 /// Python's pypi_project(). Each field is that function's argument of the name.
@@ -38,27 +40,21 @@ impl Default for ProjectJson {
 }
 
 impl ProjectJson {
-    pub fn json(&self) -> Json {
+    pub fn json(&self) -> Value {
         let files = |day: &str| {
             let file = |time: &str| format!(r#"{{"upload_time_iso_8601": "{day}T{time}"}}"#);
-            Json::parse(&format!("[{}, {}]", file("10:00:00.123456Z"), file("11:00:00Z"))).unwrap()
+            serde_json::from_str::<Value>(&format!("[{}, {}]", file("10:00:00.123456Z"), file("11:00:00Z"))).unwrap()
         };
-        let info: Map<Json> = [
-            ("version", Json::from(self.version)),
+        let info: Object = object([
+            ("version", Value::from(self.version)),
             ("license", self.license.into()),
             ("license_expression", self.expression.into()),
-            ("classifiers", Json::Array(self.classifiers.iter().map(|&c| c.into()).collect())),
-        ]
-        .into_iter()
-        .collect();
-        let releases: Map<Json> =
-            [("0.1", files(self.first)), ("0.2", Json::Array(Vec::new())), (self.version, files(self.latest))]
-                .into_iter()
-                .collect();
-        Json::Object(
-            [("info", Json::Object(info)), ("releases", Json::Object(releases)), ("urls", files(self.latest))]
-                .into_iter()
-                .collect(),
+            ("classifiers", Value::Array(self.classifiers.iter().map(|&c| c.into()).collect())),
+        ]);
+        let releases: Object =
+            object([("0.1", files(self.first)), ("0.2", Value::Array(Vec::new())), (self.version, files(self.latest))]);
+        Value::Object(
+            object([("info", Value::Object(info)), ("releases", Value::Object(releases)), ("urls", files(self.latest))]),
         )
     }
 }
@@ -67,7 +63,7 @@ impl ProjectJson {
 #[derive(Debug, Default)]
 pub(crate) struct FakePyPIState {
     /// Each project's JSON, by the name in its URL; any other name is a 404.
-    pub projects: Map<Json>,
+    pub projects: Object,
     /// Whether every request times out.
     pub down: bool,
     /// The project names asked for, in order.
@@ -86,11 +82,11 @@ pub(crate) struct FakePyPI {
 impl FakePyPI {
     /// PyPI with these projects, by name.
     pub fn with(projects: &[(&str, ProjectJson)]) -> Arc<FakePyPI> {
-        FakePyPI::from_json(projects.iter().map(|(name, p)| (*name, p.json())).collect())
+        FakePyPI::from_json(projects.iter().map(|(name, p)| (name.to_string(), p.json())).collect())
     }
 
     /// PyPI with these projects' JSON, by name.
-    pub fn from_json(projects: Map<Json>) -> Arc<FakePyPI> {
+    pub fn from_json(projects: Object) -> Arc<FakePyPI> {
         Arc::new(FakePyPI { state: Mutex::new(FakePyPIState { projects, ..FakePyPIState::default() }) })
     }
 
@@ -118,7 +114,7 @@ impl Http for FakePyPI {
             return Err(HttpError::NoAnswer("timed out".to_string()));
         }
         match state.projects.get(name) {
-            Some(project) => Ok(Response::ok(project.dumps())),
+            Some(project) => Ok(Response::ok(project.to_string())),
             None => Err(HttpError::Status(404)),
         }
     }

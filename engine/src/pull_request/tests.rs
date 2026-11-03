@@ -1,19 +1,19 @@
 use super::*;
-use crate::py::json::Json;
+use serde_json::Value;
 use crate::test_support::{helper_cases, TempDir};
 
 #[test]
 fn every_recorded_run_is_published_as_the_python_engine_does() {
     for case in helper_cases() {
-        let expected = |key: &str| case.expected.get(key).and_then(Json::as_str).map(String::from);
-        let place = format!("{} {} {}", expected("recording").unwrap(), expected("run_dir").unwrap(), case.expected.get("conflicts").unwrap().dumps());
+        let expected = |key: &str| case.expected.get(key).and_then(Value::as_str).map(String::from);
+        let place = format!("{} {} {}", expected("recording").unwrap(), expected("run_dir").unwrap(), case.expected.get("conflicts").unwrap());
         let s = &case.state;
         assert_eq!(spec_title(&case.spec), expected("spec_title"), "{place}");
         let title = spec_title(&case.spec).unwrap_or(s.task.clone());
         assert_eq!(Some(branch_name(&title, &s.run_id)), expected("branch_name"), "{place}");
         assert_eq!(Some(verdict_line(s)), expected("verdict_line"), "{place}");
         assert_eq!(Some(commit_note(s)), expected("commit_note"), "{place}");
-        let trailers = Json::Array(provenance(s, &case.evidence).into_iter().map(|(k, v)| Json::Array(vec![Json::from(k), Json::from(v)])).collect());
+        let trailers = Value::Array(provenance(s, &case.evidence).into_iter().map(|(k, v)| Value::Array(vec![Value::from(k), Value::from(v)])).collect());
         assert_eq!(Some(&trailers), case.expected.get("provenance"), "{place}");
         let body = pr_body(s, &case.spec, &case.report, &case.review, &case.evidence);
         assert_eq!(Some(body.clone()), expected("pr_body"), "{place}");

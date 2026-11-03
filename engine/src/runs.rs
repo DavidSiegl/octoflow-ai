@@ -3,7 +3,8 @@
 
 use crate::constants::{HEARTBEAT_SECONDS, STALE_SECONDS};
 use crate::pipeline::DONE;
-use crate::py::json::Json;
+use serde_json::Value;
+use crate::json::ValueExt;
 use crate::summary::format_age;
 
 /// A run an orchestrator still drives, as far as its heartbeat tells.
@@ -17,14 +18,14 @@ pub const STALE: &str = "stale";
 /// HEARTBEAT_SECONDS. The owner's pid can be checked only on its own host, local_host, by pid_alive. Host names can
 /// collide, so a dead pid counts only once a beat is late too; a live pid proves nothing, since pids are reused, so
 /// the age still applies to it. An owner's pid that is not a whole number is not checked.
-pub fn run_health(state: &Json, age: u64, local_host: &str, pid_alive: &dyn Fn(i128) -> bool) -> Option<(&'static str, String)> {
-    if state.get("phase").and_then(Json::as_str) == Some(DONE) || state.get("error").is_some_and(Json::truthy) {
+pub fn run_health(state: &Value, age: u64, local_host: &str, pid_alive: &dyn Fn(i64) -> bool) -> Option<(&'static str, String)> {
+    if state.get("phase").and_then(Value::as_str) == Some(DONE) || state.get("error").is_some_and(Value::is_set) {
         return None;
     }
-    let owner = state.get("owner").filter(|o| o.truthy());
-    let field = |key: &str| owner.and_then(|o| o.get(key)).map_or("None".to_string(), Json::python_str);
-    let pid = owner.and_then(|o| o.get("pid")).and_then(Json::as_int);
-    let local = owner.and_then(|o| o.get("host")).and_then(Json::as_str) == Some(local_host);
+    let owner = state.get("owner").filter(|o| o.is_set());
+    let field = |key: &str| owner.and_then(|o| o.get(key)).map_or("None".to_string(), Value::text);
+    let pid = owner.and_then(|o| o.get("pid")).and_then(Value::as_i64);
+    let local = owner.and_then(|o| o.get("host")).and_then(Value::as_str) == Some(local_host);
     if local && age > HEARTBEAT_SECONDS && pid.is_some_and(|pid| !pid_alive(pid)) {
         return Some((STALE, format!("orchestrator pid {} exited", field("pid"))));
     }
@@ -41,7 +42,7 @@ pub fn run_health(state: &Json, age: u64, local_host: &str, pid_alive: &dyn Fn(i
 /// Whether a process of that id exists on this machine, under this user or another, as kill(pid, 0) tells; false for
 /// an id beyond a pid's range. As in Python, an id of 0 or below is not a process's: it names a process group (0 this
 /// one's, -1 every process but this one and init, -N group N), which counts as alive when kill finds a process in it.
-pub fn pid_alive(pid: i128) -> bool {
+pub fn pid_alive(pid: i64) -> bool {
     use nix::errno::Errno;
     use nix::sys::signal::kill;
     use nix::unistd::Pid;

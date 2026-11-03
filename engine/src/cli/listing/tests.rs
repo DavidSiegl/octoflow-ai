@@ -38,50 +38,50 @@ const RUN_RECORD_KEYS: [&str; 23] = [
 ];
 
 /// JSON text as a value.
-fn json(text: &str) -> Json {
-    Json::parse(text).unwrap_or_else(|e| panic!("{text}: {e}"))
+fn json(text: &str) -> Value {
+    serde_json::from_str::<Value>(text).unwrap_or_else(|e| panic!("{text}: {e}"))
 }
 
-/// Python's run_record helper: a run of phase in round 1, its owner, error and verdict null.
-fn run(phase: &str) -> Json {
+/// Python's run_record helper: a run of phase in round 1, its owner, error and verdict null, of this engine's format.
+fn run(phase: &str) -> Value {
     json(&format!(
-        r#"{{"run_id": "{RUN_ID}", "task": "add a rate limiter", "phase": "{phase}", "round": 1, "owner": null,
-            "error": null, "verdict": null}}"#
+        r#"{{"format": 2, "run_id": "{RUN_ID}", "task": "add a rate limiter", "phase": "{phase}", "round": 1,
+            "owner": null, "error": null, "verdict": null}}"#
     ))
 }
 
 /// state with each of fields set, as Python's {**state, **fields}.
-fn with(state: Json, fields: &[(&str, Json)]) -> Json {
-    let Json::Object(mut map) = state else { panic!("a state is an object") };
+fn with(state: Value, fields: &[(&str, Value)]) -> Value {
+    let Value::Object(mut map) = state else { panic!("a state is an object") };
     for (key, value) in fields {
-        map.insert(*key, value.clone());
+        map.insert(key.to_string(), value.clone());
     }
-    Json::Object(map)
+    Value::Object(map)
 }
 
 /// The owner record of a run on this machine, "here": Python's ME.
-fn me() -> Json {
+fn me() -> Value {
     json(r#"{"host": "here", "pid": 4242, "started_at": "2026-09-30T07:00:00+00:00"}"#)
 }
 
 /// A run in build owned by ME.
-fn mine() -> Json {
+fn mine() -> Value {
     with(run("build"), &[("owner", me())])
 }
 
 /// A BLOCKED report's wait, as the Workflow saves it: Python's BLOCK.
-fn block() -> Json {
+fn block() -> Value {
     json(&format!(r#"{{"file": "build-1.md", "question": "{QUESTION}", "k": 1}}"#))
 }
 
 /// run_record of state, saved age seconds ago, on this machine "here" where every pid is alive or none is.
-fn record(state: &Json, age: u64, alive: bool, target: &[&str]) -> Map<Json> {
+fn record(state: &Value, age: u64, alive: bool, target: &[&str]) -> Object {
     let target: Vec<String> = target.iter().map(|s| s.to_string()).collect();
     run_record(state, age, "here", &move |_| alive, &target)
 }
 
 /// record's value of key.
-fn key(record: &Map<Json>, key: &str) -> Json {
+fn key(record: &Object, key: &str) -> Value {
     record.get(key).unwrap_or_else(|| panic!("no {key}")).clone()
 }
 
@@ -93,7 +93,7 @@ fn alive() -> Cli {
 }
 
 /// The run lines print_runs prints for runs, without the task lines under them, every pid alive.
-fn listed(runs: &[(u64, Json)], target: &[&str]) -> Vec<String> {
+fn listed(runs: &[(u64, Value)], target: &[&str]) -> Vec<String> {
     let cli = alive();
     let target: Vec<String> = target.iter().map(|s| s.to_string()).collect();
     cli.with(|world| print_runs(world, runs, &target));
@@ -107,8 +107,8 @@ fn print_runs_lists_each_run_and_its_task() {
     let runs = [
         (STALE_SECONDS + 1, run("spec")),
         (40, mine()),
-        (1_000_000, with(run("done"), &[("verdict", Json::from(APPROVE))])),
-        (1_000_000, with(run("build"), &[("error", Json::from("interrupted"))])),
+        (1_000_000, with(run("done"), &[("verdict", Value::from(APPROVE))])),
+        (1_000_000, with(run("build"), &[("error", Value::from("interrupted"))])),
     ];
     assert_eq!(listed(&runs, &["--machine", "remote", "--cwd", "~/proj"]), [
         "20260930-070000-c0ffee  spec     round 1  stale: no heartbeat for 5m; resume: orchestrator.py resume c0ffee --machine remote --cwd '~/proj'",
@@ -127,10 +127,10 @@ fn print_runs_lists_each_run_and_its_task() {
 fn print_closed_runs() {
     let closed = "workspace closed; worktree deleted";
     let runs = [
-        (STALE_SECONDS + 1, with(run("build"), &[("closed", Json::from(closed))])),
-        (1_000_000, with(run("done"), &[("verdict", Json::from(APPROVE)), ("closed", Json::from("workspace closed"))])),
-        (1_000_000, with(run("done"), &[("closed", Json::from("workspace already gone"))])),
-        (1_000_000, with(run("build"), &[("error", Json::from("interrupted")), ("closed", Json::from(closed))])),
+        (STALE_SECONDS + 1, with(run("build"), &[("closed", Value::from(closed))])),
+        (1_000_000, with(run("done"), &[("verdict", Value::from(APPROVE)), ("closed", Value::from("workspace closed"))])),
+        (1_000_000, with(run("done"), &[("closed", Value::from("workspace already gone"))])),
+        (1_000_000, with(run("build"), &[("error", Value::from("interrupted")), ("closed", Value::from(closed))])),
     ];
     assert_eq!(listed(&runs, &[]), [
         format!("20260930-070000-c0ffee  build    round 1  closed: {closed}"),
@@ -143,7 +143,7 @@ fn print_closed_runs() {
 // -- TestRunRecord ---------------------------------------------------------------------------------------------------
 
 /// A human-paced turn of step by role that has not ended: Python's open_turn.
-fn open_turn(step: &str, role: &str) -> Json {
+fn open_turn(step: &str, role: &str) -> Value {
     json(&format!(
         r#"{{"step": "{step}", "role": "{role}", "round": 1, "quality_round": 0, "file": "{step}.md",
             "agent": "claude", "model": null, "human_paced": true, "started_at": "2026-09-30T07:00:00Z",
@@ -153,31 +153,31 @@ fn open_turn(step: &str, role: &str) -> Json {
 
 #[test]
 fn every_key_is_present() {
-    let state = with(mine(), &[("branch", Json::from("orchestrator/x")), ("pr_url", Json::from(PR_URL))]);
+    let state = with(mine(), &[("branch", Value::from("orchestrator/x")), ("pr_url", Value::from(PR_URL))]);
     let record = record(&state, 40, true, &[]);
     assert_eq!(record.keys().collect::<Vec<_>>(), RUN_RECORD_KEYS);
-    assert_eq!(key(&record, "id"), Json::from(RUN_ID));
-    assert_eq!(key(&record, "key"), Json::from("c0ffee"));
-    assert_eq!(key(&record, "workflow"), Json::from("default"));
+    assert_eq!(key(&record, "id"), Value::from(RUN_ID));
+    assert_eq!(key(&record, "key"), Value::from("c0ffee"));
+    assert_eq!(key(&record, "workflow"), Value::from("default"));
     assert_eq!(
         key(&record, "steps"),
         json(r#"[{"id": "spec", "role": "spec"}, {"id": "build", "role": "build"}, {"id": "review", "role": "review"}]"#)
     );
     assert_eq!([key(&record, "phase"), key(&record, "round"), key(&record, "role")], [
-        Json::from("build"),
-        Json::from(1),
-        Json::from("build")
+        Value::from("build"),
+        Value::from(1),
+        Value::from("build")
     ]);
     assert_eq!([key(&record, "health"), key(&record, "health_reason"), key(&record, "heartbeat_age")], [
-        Json::from("running"),
-        Json::from("pid 4242 on here, beat 40s ago"),
-        Json::from(40)
+        Value::from("running"),
+        Value::from("pid 4242 on here, beat 40s ago"),
+        Value::from(40)
     ]);
     assert_eq!(key(&record, "pr"), json(&format!(r#"{{"url": "{PR_URL}", "state": null, "error": null}}"#)));
-    assert_eq!(key(&record, "branch"), Json::from("orchestrator/x"));
+    assert_eq!(key(&record, "branch"), Value::from("orchestrator/x"));
     assert_eq!(key(&record, "turns"), json("[]"));
-    assert_eq!((key(&record, "waiting"), key(&record, "resume_command")), (Json::Null, Json::Null));
-    Json::Object(record).dumps();
+    assert_eq!((key(&record, "waiting"), key(&record, "resume_command")), (Value::Null, Value::Null));
+    Value::Object(record).to_string();
 }
 
 #[test]
@@ -201,46 +201,65 @@ fn the_agents_are_those_started_with_their_names_and_kinds() {
 #[test]
 fn the_task_is_whole() {
     let task = "x".repeat(300);
-    assert_eq!(key(&record(&with(run("build"), &[("task", Json::from(task.as_str()))]), 40, true, &[]), "task"), Json::from(task));
+    assert_eq!(key(&record(&with(run("build"), &[("task", Value::from(task.as_str()))]), 40, true, &[]), "task"), Value::from(task));
 }
 
 #[test]
 fn a_state_from_before_the_newer_fields() {
-    let state = json(&format!(r#"{{"run_id": "{RUN_ID}", "task": "t", "phase": "review", "round": 2}}"#));
+    let state = json(&format!(r#"{{"format": 2, "run_id": "{RUN_ID}", "task": "t", "phase": "review", "round": 2}}"#));
     let record = record(&state, STALE_SECONDS + 1, true, &[]);
     assert_eq!(record.keys().collect::<Vec<_>>(), RUN_RECORD_KEYS);
     assert_eq!(
         [key(&record, "turns"), key(&record, "quality_round"), key(&record, "closed"), key(&record, "worktree")],
-        [json("[]"), Json::Null, Json::Null, Json::Null]
+        [json("[]"), Value::Null, Value::Null, Value::Null]
     );
     assert_eq!(key(&record, "waiting"), json(r#"{"reason": "stale", "detail": "orchestrator.py resume c0ffee"}"#));
 }
 
 #[test]
+fn a_run_an_earlier_release_saved_lists_as_unreadable_with_what_to_do() {
+    // Every state.json a release before crate::state::STATE_FORMAT_SINCE wrote: no format.
+    let state = json(&format!(r#"{{"run_id": "{RUN_ID}", "task": "t", "phase": "review", "round": 2}}"#));
+    let record = record(&state, STALE_SECONDS + 1, true, &[]);
+    let hint = format!(
+        "run {RUN_ID} was saved by an octoflow before {}; finish or close it with that release, or remove \
+         .orchestrator/runs/{RUN_ID}",
+        crate::state::STATE_FORMAT_SINCE
+    );
+    assert_eq!(key(&record, "error"), Value::from(hint.as_str()));
+    // resume refuses it, so it is offered neither as a wait nor as a command.
+    assert_eq!([key(&record, "waiting"), key(&record, "resume_command")], [Value::Null, Value::Null]);
+    let cli = Cli::new();
+    cli.save(&state, STALE_SECONDS + 1);
+    assert_eq!(cli.main(&["list", "--cwd", "/proj"]), 0);
+    assert_eq!(cli.take_out(), format!("{RUN_ID}  review   round 2  error: {hint}\n    t\n"));
+}
+
+#[test]
 fn a_workflow_this_orchestrator_cannot_load() {
-    let state = with(run("build"), &[("workflow", Json::from("gone")), ("quality_round", Json::from(2))]);
+    let state = with(run("build"), &[("workflow", Value::from("gone")), ("quality_round", Value::from(2))]);
     let record = record(&state, 40, true, &[]);
     assert_eq!(record.keys().collect::<Vec<_>>(), RUN_RECORD_KEYS);
     assert_eq!(
         [key(&record, "workflow"), key(&record, "steps"), key(&record, "role"), key(&record, "pane")],
-        [Json::from("gone"), Json::Null, Json::Null, Json::Null]
+        [Value::from("gone"), Value::Null, Value::Null, Value::Null]
     );
-    assert_eq!(key(&record, "quality_round"), Json::Null);
-    let quality = with(run("quality"), &[("workflow", Json::from("gone")), ("quality_round", Json::from(2))]);
-    assert_eq!(key(&super::tests::record(&quality, 40, true, &[]), "quality_round"), Json::from(2));
+    assert_eq!(key(&record, "quality_round"), Value::Null);
+    let quality = with(run("quality"), &[("workflow", Value::from("gone")), ("quality_round", Value::from(2))]);
+    assert_eq!(key(&super::tests::record(&quality, 40, true, &[]), "quality_round"), Value::from(2));
 }
 
 #[test]
 fn no_role_outside_the_steps() {
     for phase in ["quality", "publish", "done"] {
-        assert_eq!(key(&record(&run(phase), 40, true, &[]), "role"), Json::Null, "{phase}");
+        assert_eq!(key(&record(&run(phase), 40, true, &[]), "role"), Value::Null, "{phase}");
     }
 }
 
 #[test]
 fn quality_round_only_in_the_quality_loop_or_gated_step() {
-    for (phase, expected) in [("build", Json::from(2)), ("quality", Json::from(2)), ("review", Json::Null)] {
-        let state = with(run(phase), &[("quality_round", Json::from(2))]);
+    for (phase, expected) in [("build", Value::from(2)), ("quality", Value::from(2)), ("review", Value::Null)] {
+        let state = with(run(phase), &[("quality_round", Value::from(2))]);
         assert_eq!(key(&record(&state, 40, true, &[]), "quality_round"), expected, "{phase}");
     }
 }
@@ -250,52 +269,52 @@ fn blocked_waits_for_the_answer() {
     let state = with(mine(), &[
         ("blocked", json(r#"{"file": "build-1.md", "question": "which db?", "k": 1}"#)),
         ("agents", json(r#"{"build": {"name": "build-c0ffee", "pane": "w1:p2"}}"#)),
-        ("turns", Json::Array(vec![open_turn("spec", "spec")])),
+        ("turns", Value::Array(vec![open_turn("spec", "spec")])),
     ]);
     let record = record(&state, 40, true, &[]);
     assert_eq!(key(&record, "waiting"), json(r#"{"reason": "blocked", "detail": "which db?"}"#));
-    assert_eq!(key(&record, "pane"), Json::from("w1:p2"));
+    assert_eq!(key(&record, "pane"), Value::from("w1:p2"));
 }
 
 #[test]
 fn an_interview_waits_while_the_human_paced_turn_is_open() {
-    let waiting = |state: &Json| key(&record(state, 40, true, &[]), "waiting");
+    let waiting = |state: &Value| key(&record(state, 40, true, &[]), "waiting");
     let spec = with(run("spec"), &[("owner", me())]);
-    let state = with(spec.clone(), &[("turns", Json::Array(vec![open_turn("spec", "spec")]))]);
+    let state = with(spec.clone(), &[("turns", Value::Array(vec![open_turn("spec", "spec")]))]);
     assert_eq!(waiting(&state), json(r#"{"reason": "interview", "detail": "spec"}"#));
-    let ended = with(open_turn("spec", "spec"), &[("ended_at", Json::from("2026-09-30T07:05:00Z"))]);
-    assert_eq!(waiting(&with(state, &[("turns", Json::Array(vec![ended]))])), Json::Null);
-    assert_eq!(waiting(&spec), Json::Null);
+    let ended = with(open_turn("spec", "spec"), &[("ended_at", Value::from("2026-09-30T07:05:00Z"))]);
+    assert_eq!(waiting(&with(state, &[("turns", Value::Array(vec![ended]))])), Value::Null);
+    assert_eq!(waiting(&spec), Value::Null);
     // A Builder turn is not human-paced, open or not.
-    assert_eq!(waiting(&with(mine(), &[("turns", Json::Array(vec![open_turn("build", "build")]))])), Json::Null);
+    assert_eq!(waiting(&with(mine(), &[("turns", Value::Array(vec![open_turn("build", "build")]))])), Value::Null);
 }
 
 #[test]
 fn a_stale_run_waits_to_be_resumed_unless_closed() {
-    let record_of = |state: &Json, target: &[&str]| record(state, STALE_SECONDS + 1, true, target);
+    let record_of = |state: &Value, target: &[&str]| record(state, STALE_SECONDS + 1, true, target);
     let stale = record_of(&mine(), &["--machine", "m", "--cwd", "~/p"]);
     let command = "orchestrator.py resume c0ffee --machine m --cwd '~/p'";
     assert_eq!(key(&stale, "waiting"), json(&format!(r#"{{"reason": "stale", "detail": "{command}"}}"#)));
-    assert_eq!(key(&stale, "resume_command"), Json::from(command));
-    let closed = record_of(&with(mine(), &[("closed", Json::from("workspace closed"))]), &[]);
-    assert_eq!(key(&closed, "health"), Json::from("stale"));
-    assert_eq!((key(&closed, "waiting"), key(&closed, "resume_command")), (Json::Null, Json::Null));
+    assert_eq!(key(&stale, "resume_command"), Value::from(command));
+    let closed = record_of(&with(mine(), &[("closed", Value::from("workspace closed"))]), &[]);
+    assert_eq!(key(&closed, "health"), Value::from("stale"));
+    assert_eq!((key(&closed, "waiting"), key(&closed, "resume_command")), (Value::Null, Value::Null));
 }
 
 #[test]
 fn a_blocked_stale_run_waits_to_be_resumed() {
     let state = with(mine(), &[("blocked", json(r#"{"file": "build-1.md", "question": "q", "k": 1}"#))]);
-    assert_eq!(key(&record(&state, STALE_SECONDS + 1, true, &[]), "waiting").get("reason"), Some(&Json::from("stale")));
+    assert_eq!(key(&record(&state, STALE_SECONDS + 1, true, &[]), "waiting").get("reason"), Some(&Value::from("stale")));
 }
 
 #[test]
 fn finished_and_failed_runs_wait_for_nothing() {
-    for state in [with(run("done"), &[("verdict", Json::from(APPROVE))]), with(run("build"), &[("error", Json::from("interrupted"))])] {
+    for state in [with(run("done"), &[("verdict", Value::from(APPROVE))]), with(run("build"), &[("error", Value::from("interrupted"))])] {
         let record = record(&state, 1_000_000, true, &[]);
         assert_eq!([key(&record, "health"), key(&record, "waiting"), key(&record, "resume_command")], [
-            Json::Null,
-            Json::Null,
-            Json::Null
+            Value::Null,
+            Value::Null,
+            Value::Null
         ]);
     }
 }
@@ -306,16 +325,16 @@ fn plain_lines_in_each_state() {
         ("blocked", json(r#"{"file": "build-1.md", "question": "which db?", "k": 1}"#)),
         ("agents", json(r#"{"build": {"name": "build-c0ffee", "pane": "w1:p2"}}"#)),
     ]);
-    let approved = with(run("done"), &[("verdict", Json::from(APPROVE))]);
+    let approved = with(run("done"), &[("verdict", Value::from(APPROVE))]);
     let runs = [
         (40, mine()),
         (STALE_SECONDS + 1, mine()),
         (40, blocked),
-        (STALE_SECONDS + 1, with(run("build"), &[("closed", Json::from("workspace closed"))])),
-        (1_000_000, with(run("build"), &[("error", Json::from("interrupted"))])),
-        (1_000_000, with(approved.clone(), &[("pr_url", Json::from(PR_URL))])),
-        (1_000_000, with(approved, &[("workflow", Json::from("gone"))])),
-        (40, with(run("quality"), &[("owner", me()), ("quality_round", Json::from(2))])),
+        (STALE_SECONDS + 1, with(run("build"), &[("closed", Value::from("workspace closed"))])),
+        (1_000_000, with(run("build"), &[("error", Value::from("interrupted"))])),
+        (1_000_000, with(approved.clone(), &[("pr_url", Value::from(PR_URL))])),
+        (1_000_000, with(approved, &[("workflow", Value::from("gone"))])),
+        (40, with(run("quality"), &[("owner", me()), ("quality_round", Value::from(2))])),
     ];
     let rows = run_rows(&runs, "here", &|_| true, &[]);
     assert_eq!(rows.iter().map(run_line).collect::<Vec<_>>(), [
@@ -333,7 +352,7 @@ fn plain_lines_in_each_state() {
 #[test]
 fn show_starts_with_the_list_line() {
     let cli = alive();
-    let state = with(run("done"), &[("verdict", Json::from(APPROVE)), ("cwd", Json::from("/proj")), ("pr_url", Json::from(PR_URL))]);
+    let state = with(run("done"), &[("verdict", Value::from(APPROVE)), ("cwd", Value::from("/proj")), ("pr_url", Value::from(PR_URL))]);
     cli.save(&state, 0);
     cli.with(|world| show_run(world, "/proj", "c0ffee", &[])).unwrap();
     assert_eq!(cli.lines()[0], format!("20260930-070000-c0ffee  done     round 1  APPROVE  {PR_URL}"));
@@ -350,19 +369,19 @@ fn pr_states_are_filled_per_run() {
         host.pull_requests.insert(unusable.clone(), FakePr::Fails(Completed::new(4, "", "gh: not logged in")));
         host.pull_requests.insert(broken.clone(), FakePr::Fails(Completed::new(0, "nonsense", "")));
     }
-    let mut records: Vec<Map<Json>> = [PR_URL, &unusable, &broken]
+    let mut records: Vec<Object> = [PR_URL, &unusable, &broken]
         .iter()
-        .map(|url| record(&with(run("done"), &[("pr_url", Json::from(*url))]), 40, true, &[]))
+        .map(|url| record(&with(run("done"), &[("pr_url", Value::from(*url))]), 40, true, &[]))
         .collect();
     records.push(record(&run("done"), 40, true, &[]));
     cli.with(|world| fill_pr_states(world, "/proj", &mut records)).unwrap();
-    let pr = |i: usize, field: &str| records[i].get("pr").unwrap().get(field).cloned().unwrap_or(Json::Null);
+    let pr = |i: usize, field: &str| records[i].get("pr").unwrap().get(field).cloned().unwrap_or(Value::Null);
     assert_eq!(key(&records[0], "pr"), json(&format!(r#"{{"url": "{PR_URL}", "state": "MERGED", "error": null}}"#)));
-    assert_eq!(pr(1, "state"), Json::Null);
-    assert!(pr(1, "error").python_str().contains("not logged in"), "{:?}", pr(1, "error"));
-    assert_eq!(pr(2, "state"), Json::Null);
-    assert!(pr(2, "error").python_str().contains("nonsense"), "{:?}", pr(2, "error"));
-    assert_eq!(key(&records[3], "pr"), Json::Null);
+    assert_eq!(pr(1, "state"), Value::Null);
+    assert!(pr(1, "error").text().contains("not logged in"), "{:?}", pr(1, "error"));
+    assert_eq!(pr(2, "state"), Value::Null);
+    assert!(pr(2, "error").text().contains("nonsense"), "{:?}", pr(2, "error"));
+    assert_eq!(key(&records[3], "pr"), Value::Null);
     assert_eq!(cli.f.host.state().gh_calls.len(), 3);
 }
 
@@ -371,17 +390,17 @@ fn a_lookup_the_interrupt_failed_stops_the_listing() {
     let cli = Cli::new();
     let failing = FakePr::Fails(Completed::new(1, "", "killed"));
     cli.f.host.state().pull_requests.insert(PR_URL.into(), failing);
-    let mut records = vec![record(&with(run("done"), &[("pr_url", Json::from(PR_URL))]), 40, true, &[])];
+    let mut records = vec![record(&with(run("done"), &[("pr_url", Value::from(PR_URL))]), 40, true, &[])];
     cli.f.interrupt.raise();
     assert!(cli.with(|world| fill_pr_states(world, "/proj", &mut records)).is_err());
-    assert_eq!(records[0].get("pr").unwrap().get("error"), Some(&Json::Null));
+    assert_eq!(records[0].get("pr").unwrap().get("error"), Some(&Value::Null));
 }
 
 // -- TestListJSON, and TestCLI.test_list_on_machine_uses_ssh_host ----------------------------------------------------
 
 /// The document `list --json` with flags prints for runs, saved in /proj, checking it is one line of output, exit
 /// status 0 and no herdr call.
-fn list_json(cli: &Cli, flags: &[&str], runs: &[(u64, Json)]) -> Json {
+fn list_json(cli: &Cli, flags: &[&str], runs: &[(u64, Value)]) -> Value {
     for (age, state) in runs {
         cli.save(state, *age);
     }
@@ -402,13 +421,13 @@ fn no_runs() {
 #[test]
 fn one_record_per_run_in_order() {
     let cli = Cli::new();
-    let runs = [(40, mine()), (1_000_000, with(run("done"), &[("verdict", Json::from(APPROVE)), ("run_id", Json::from("x-beef00"))]))];
+    let runs = [(40, mine()), (1_000_000, with(run("done"), &[("verdict", Value::from(APPROVE)), ("run_id", Value::from("x-beef00"))]))];
     let doc = list_json(&cli, &[], &runs);
-    let records = doc.get("runs").and_then(Json::as_array).unwrap();
-    assert_eq!(records.iter().map(|r| r.get("key").unwrap().python_str()).collect::<Vec<_>>(), ["c0ffee", "beef00"]);
-    assert_eq!(records[0], Json::Object(run_record(&runs[0].1, 40, "here", &crate::runs::pid_alive, &[])));
-    // Written as json.dumps(..., indent=2) writes it.
-    assert_eq!(doc.dumps_indented(2), {
+    let records = doc.get("runs").and_then(Value::as_array).unwrap();
+    assert_eq!(records.iter().map(|r| r.get("key").unwrap().text()).collect::<Vec<_>>(), ["c0ffee", "beef00"]);
+    assert_eq!(records[0], Value::Object(run_record(&runs[0].1, 40, "here", &crate::runs::pid_alive, &[])));
+    // Written pretty-printed.
+    assert_eq!(serde_json::to_string_pretty(&doc).unwrap(), {
         cli.main(&["list", "--json", "--cwd", "/proj"]);
         cli.take_out().trim_end().to_string()
     });
@@ -417,7 +436,7 @@ fn one_record_per_run_in_order() {
 #[test]
 fn no_gh_without_pr_state() {
     let cli = Cli::new();
-    let doc = list_json(&cli, &[], &[(1_000_000, with(run("done"), &[("pr_url", Json::from(PR_URL))]))]);
+    let doc = list_json(&cli, &[], &[(1_000_000, with(run("done"), &[("pr_url", Value::from(PR_URL))]))]);
     assert_eq!(doc.get("runs").unwrap().as_array().unwrap()[0].get("pr"), Some(&json(&format!(r#"{{"url": "{PR_URL}", "state": null, "error": null}}"#))));
     assert!(cli.f.host.state().gh_calls.is_empty());
 }
@@ -427,10 +446,10 @@ fn pr_state() {
     let cli = Cli::new();
     let open = json(&format!(r#"{{"state": "OPEN", "headRefOid": "{}", "closedAt": null}}"#, "a".repeat(40)));
     cli.f.host.state().pull_requests.insert(PR_URL.into(), FakePr::Prints(open));
-    let runs = [(1_000_000, with(run("done"), &[("pr_url", Json::from(PR_URL))])), (1_000_000, with(run("done"), &[("run_id", Json::from("x-beef00"))]))];
+    let runs = [(1_000_000, with(run("done"), &[("pr_url", Value::from(PR_URL))])), (1_000_000, with(run("done"), &[("run_id", Value::from("x-beef00"))]))];
     let doc = list_json(&cli, &["--pr-state"], &runs);
     assert_eq!(cli.f.host.state().gh_calls, [vec!["pr", "view", PR_URL, "--json", "state,headRefOid,closedAt"]]);
-    assert_eq!(doc.get("runs").unwrap().as_array().unwrap()[0].get("pr").unwrap().get("state"), Some(&Json::from("OPEN")));
+    assert_eq!(doc.get("runs").unwrap().as_array().unwrap()[0].get("pr").unwrap().get("state"), Some(&Value::from("OPEN")));
 }
 
 #[test]
@@ -438,11 +457,11 @@ fn unusable_gh_still_lists() {
     let cli = Cli::new();
     let missing = FakePr::Fails(Completed::new(127, "", "sh: 1: exec: gh: not found"));
     cli.f.host.state().pull_requests.insert(PR_URL.into(), missing);
-    let doc = list_json(&cli, &["--pr-state"], &[(1_000_000, with(run("done"), &[("pr_url", Json::from(PR_URL))]))]);
+    let doc = list_json(&cli, &["--pr-state"], &[(1_000_000, with(run("done"), &[("pr_url", Value::from(PR_URL))]))]);
     let pr = doc.get("runs").unwrap().as_array().unwrap()[0].get("pr").unwrap().clone();
-    assert_eq!(pr.get("state"), Some(&Json::Null));
+    assert_eq!(pr.get("state"), Some(&Value::Null));
     assert_eq!(
-        pr.get("error").unwrap().python_str(),
+        pr.get("error").unwrap().text(),
         format!("gh pr view {PR_URL} --json state,headRefOid,closedAt failed with status 127: sh: 1: exec: gh: not found")
     );
 }
@@ -470,7 +489,7 @@ fn on_a_machine() {
     let doc = json(&cli.take_out());
     assert_eq!(
         doc.get("runs").unwrap().as_array().unwrap()[0].get("resume_command"),
-        Some(&Json::from("orchestrator.py resume c0ffee --machine remote --cwd '~/proj'"))
+        Some(&Value::from("orchestrator.py resume c0ffee --machine remote --cwd '~/proj'"))
     );
     assert!(cli.f.herdr.state().calls.is_empty());
     cli.f.host.state().run_states_with = Some(Box::new(|_| Some(Ok(vec![]))));
@@ -486,9 +505,9 @@ fn long_task() -> String {
 }
 
 /// Python's show_state: a run of the default workflow, done with APPROVE, in workspace w1, with fields set.
-fn show_state(fields: &[(&str, Json)]) -> Json {
+fn show_state(fields: &[(&str, Value)]) -> Value {
     let state = json(&format!(
-        r#"{{"run_id": "{SHOW_ID}", "task": "{}", "cwd": "/proj", "phase": "done", "round": 1, "verdict": "APPROVE",
+        r#"{{"format": 2, "run_id": "{SHOW_ID}", "task": "{}", "cwd": "/proj", "phase": "done", "round": 1, "verdict": "APPROVE",
             "workspace_id": "w1",
             "agents": {{"spec": {{"name": "spec-a1b2c3", "pane": "w1:p1"}},
                         "build": {{"name": "build-a1b2c3", "pane": "w1:p2", "kind": "codex"}},
@@ -499,7 +518,7 @@ fn show_state(fields: &[(&str, Json)]) -> Json {
 }
 
 /// A world whose /proj holds states, each saved 10^6 s ago: Python's ShowHost.
-fn show_host(states: &[Json]) -> Cli {
+fn show_host(states: &[Value]) -> Cli {
     let cli = alive();
     for state in states {
         cli.save(state, 1_000_000);
@@ -519,7 +538,7 @@ fn show(cli: &Cli, run_ref: &str) -> (i32, String) {
 }
 
 /// What `show a1b2c3` prints of states.
-fn shown(states: &[Json]) -> String {
+fn shown(states: &[Value]) -> String {
     let (status, out) = show(&show_host(states), "a1b2c3");
     assert_eq!(status, 0);
     out
@@ -532,7 +551,7 @@ fn has_line(out: &str, label: &str) -> bool {
 
 #[test]
 fn key_and_full_id_print_the_same() {
-    let cli = show_host(&[show_state(&[]), show_state(&[("run_id", Json::from("20260929-130000-ffffff"))])]);
+    let cli = show_host(&[show_state(&[]), show_state(&[("run_id", Value::from("20260929-130000-ffffff"))])]);
     put(&cli, "review-1.md", "VERDICT: APPROVE\n\nfine\n");
     let by_key = show(&cli, "a1b2c3");
     assert_eq!(by_key, show(&cli, SHOW_ID));
@@ -543,7 +562,7 @@ fn key_and_full_id_print_the_same() {
 
 #[test]
 fn unknown_or_ambiguous_run() {
-    let cli = show_host(&[show_state(&[]), show_state(&[("run_id", Json::from("20260930-120000-a1b2c3"))])]);
+    let cli = show_host(&[show_state(&[]), show_state(&[("run_id", Value::from("20260930-120000-a1b2c3"))])]);
     let cases = [
         ("nosuch", "no run nosuch under /proj/.orchestrator/runs".to_string()),
         ("a1b2c3", format!("a1b2c3 matches several runs ({SHOW_ID}, 20260930-120000-a1b2c3); give the full run id")),
@@ -557,9 +576,9 @@ fn unknown_or_ambiguous_run() {
 #[test]
 fn starts_with_the_list_line_and_the_whole_task() {
     let cases = [
-        show_state(&[("pr_url", Json::from(PR_URL))]),
-        show_state(&[("phase", Json::from("build")), ("owner", me()), ("verdict", Json::Null), ("workflow", Json::from("nosuch"))]),
-        show_state(&[("phase", Json::from("review")), ("verdict", Json::Null), ("error", Json::from("interrupted"))]),
+        show_state(&[("pr_url", Value::from(PR_URL))]),
+        show_state(&[("phase", Value::from("build")), ("owner", me()), ("verdict", Value::Null), ("workflow", Value::from("nosuch"))]),
+        show_state(&[("phase", Value::from("review")), ("verdict", Value::Null), ("error", Value::from("interrupted"))]),
     ];
     for saved in cases {
         let cli = show_host(&[saved]);
@@ -574,16 +593,16 @@ fn starts_with_the_list_line_and_the_whole_task() {
 #[test]
 fn branch_pull_request_and_conflicts() {
     let published = show_state(&[
-        ("branch", Json::from("orchestrator/x-a1b2c3")),
-        ("base_branch", Json::from("main")),
-        ("pr_url", Json::from(PR_URL)),
+        ("branch", Value::from("orchestrator/x-a1b2c3")),
+        ("base_branch", Value::from("main")),
+        ("pr_url", Value::from(PR_URL)),
         ("conflicts", json(r#"["a.py", "b c.py"]"#)),
     ]);
     let out = shown(&[published]);
     assert!(out.contains(&format!(
         "\nbranch     orchestrator/x-a1b2c3\nbase       main\npr         {PR_URL}\nconflicts  a.py, b c.py\nworkspace  w1\n"
     )), "{out}");
-    let out = shown(&[show_state(&[("pull_request", Json::Bool(false))])]);
+    let out = shown(&[show_state(&[("pull_request", Value::Bool(false))])]);
     for label in ["branch", "base", "pr", "conflicts"] {
         assert!(!has_line(&out, label), "{label}: {out}");
     }
@@ -591,43 +610,43 @@ fn branch_pull_request_and_conflicts() {
 
 #[test]
 fn branch_cleanup_once_set() {
-    let published = show_state(&[("branch", Json::from("orchestrator/x-a1b2c3")), ("pr_url", Json::from(PR_URL))]);
-    let out = shown(&[with(published.clone(), &[("branch_cleanup", Json::from("kept: checked out in /proj"))])]);
+    let published = show_state(&[("branch", Value::from("orchestrator/x-a1b2c3")), ("pr_url", Value::from(PR_URL))]);
+    let out = shown(&[with(published.clone(), &[("branch_cleanup", Value::from("kept: checked out in /proj"))])]);
     assert!(out.contains(&format!("pr         {PR_URL}\ncleanup    kept: checked out in /proj\n")), "{out}");
-    for saved in [published.clone(), with(published, &[("branch_cleanup", Json::Null)])] {
+    for saved in [published.clone(), with(published, &[("branch_cleanup", Value::Null)])] {
         assert!(!has_line(&shown(&[saved]), "cleanup"));
     }
 }
 
 #[test]
 fn closed_once_set() {
-    let out = shown(&[show_state(&[("closed", Json::from("workspace closed; worktree deleted; branch deleted"))])]);
+    let out = shown(&[show_state(&[("closed", Value::from("workspace closed; worktree deleted; branch deleted"))])]);
     assert!(out.contains("\nworkspace  w1\nclosed     workspace closed; worktree deleted; branch deleted\n"), "{out}");
-    for saved in [show_state(&[]), show_state(&[("closed", Json::Null)])] {
+    for saved in [show_state(&[]), show_state(&[("closed", Value::Null)])] {
         assert!(!has_line(&shown(&[saved]), "closed"));
     }
 }
 
 /// Python's turn: a turn record of step, of round 1 unless change says otherwise, that started and ended at these
 /// readings of the host's clock, None for one not known.
-fn turn(step: &str, file: &str, start: Option<i64>, end: Option<i64>, fields: &[(&str, Json)]) -> Json {
-    let at = |s: Option<i64>| s.map_or(Json::Null, |s| Json::from(iso_utc(HOST_EPOCH + s)));
+fn turn(step: &str, file: &str, start: Option<i64>, end: Option<i64>, fields: &[(&str, Value)]) -> Value {
+    let at = |s: Option<i64>| s.map_or(Value::Null, |s| Value::from(iso_utc(HOST_EPOCH + s)));
     let record = json(&format!(
         r#"{{"step": "{step}", "role": "{step}", "round": 1, "quality_round": 0, "file": "{file}", "agent": "claude",
             "model": null, "human_paced": false}}"#
     ));
-    let seconds = start.zip(end).map_or(Json::Null, |(s, e)| Json::from(e - s));
+    let seconds = start.zip(end).map_or(Value::Null, |(s, e)| Value::from(e - s));
     with(with(record, &[("started_at", at(start)), ("ended_at", at(end)), ("seconds", seconds)]), fields)
 }
 
 #[test]
 fn turns_once_recorded() {
-    let turns = Json::Array(vec![
-        turn("spec", "spec.md", Some(0), Some(4000), &[("round", Json::from(0)), ("human_paced", Json::Bool(true))]),
-        turn("build", "build-1.md", Some(4000), Some(4600), &[("agent", Json::from("codex"))]),
-        turn("quality", "quality-1-1.md", Some(4600), Some(4650), &[("quality_round", Json::from(1)), ("agent", Json::Null)]),
+    let turns = Value::Array(vec![
+        turn("spec", "spec.md", Some(0), Some(4000), &[("round", Value::from(0)), ("human_paced", Value::Bool(true))]),
+        turn("build", "build-1.md", Some(4000), Some(4600), &[("agent", Value::from("codex"))]),
+        turn("quality", "quality-1-1.md", Some(4600), Some(4650), &[("quality_round", Value::from(1)), ("agent", Value::Null)]),
         turn("review", "review-1.md", None, Some(4700), &[]),
-        turn("build", "build-2.md", Some(4800), None, &[("round", Json::from(2)), ("agent", Json::from("codex"))]),
+        turn("build", "build-2.md", Some(4800), None, &[("round", Value::from(2)), ("agent", Value::from("codex"))]),
     ]);
     let out = shown(&[show_state(&[("turns", turns)])]);
     assert!(out.contains(concat!(
@@ -646,7 +665,7 @@ fn turns_once_recorded() {
 #[test]
 fn worktree_of_a_worktree_run() {
     let worktree = "/proj/.orchestrator/worktrees/a1b2c3";
-    let out = shown(&[show_state(&[("worktree", Json::from(worktree)), ("branch", Json::from("orchestrator/x-a1b2c3"))])]);
+    let out = shown(&[show_state(&[("worktree", Value::from(worktree)), ("branch", Value::from("orchestrator/x-a1b2c3"))])]);
     assert!(out.contains(&format!("\nworktree   {worktree}\nbranch     orchestrator/x-a1b2c3\n")), "{out}");
     assert!(!has_line(&shown(&[show_state(&[])]), "worktree"));
 }
@@ -669,7 +688,7 @@ fn files_oldest_first() {
 
 #[test]
 fn the_last_review_in_a_later_round() {
-    let cli = show_host(&[show_state(&[("phase", Json::from("build")), ("round", Json::from(2)), ("verdict", Json::from(CHANGES_REQUESTED))])]);
+    let cli = show_host(&[show_state(&[("phase", Value::from("build")), ("round", Value::from(2)), ("verdict", Value::from(CHANGES_REQUESTED))])]);
     put(&cli, "review-1.md", "\n**VERDICT: CHANGES_REQUESTED**\n\n## Findings\n\n1. a bug\n");
     let out = show(&cli, "a1b2c3").1;
     assert!(out.ends_with(&format!("\nlast review: {SHOW_DIR}/review-1.md\n\n\n## Findings\n\n1. a bug\n")), "{out}");
@@ -678,7 +697,7 @@ fn the_last_review_in_a_later_round() {
 
 #[test]
 fn a_review_without_a_verdict_line_is_shown_whole() {
-    let cli = show_host(&[show_state(&[("phase", Json::from("review")), ("verdict", Json::Null)])]);
+    let cli = show_host(&[show_state(&[("phase", Value::from("review")), ("verdict", Value::Null)])]);
     put(&cli, "review-1.md", "half a review");
     let out = show(&cli, "a1b2c3").1;
     assert!(out.ends_with(&format!("\nlast review: {SHOW_DIR}/review-1.md\nhalf a review\n")), "{out}");
@@ -688,9 +707,9 @@ fn a_review_without_a_verdict_line_is_shown_whole() {
 fn no_last_review() {
     let solo = workflow_definition(&solo());
     let cases = [
-        show_state(&[("workflow", Json::from("solo")), ("workflow_definition", solo), ("verdict", Json::from("FINISHED"))]),
-        show_state(&[("phase", Json::from("spec")), ("round", Json::from(0)), ("verdict", Json::Null)]),
-        show_state(&[("workflow", Json::from("nosuch"))]),
+        show_state(&[("workflow", Value::from("solo")), ("workflow_definition", solo), ("verdict", Value::from("FINISHED"))]),
+        show_state(&[("phase", Value::from("spec")), ("round", Value::from(0)), ("verdict", Value::Null)]),
+        show_state(&[("workflow", Value::from("nosuch"))]),
     ];
     for saved in &cases {
         let cli = show_host(std::slice::from_ref(saved));
@@ -730,14 +749,14 @@ fn on_a_machine_everything_goes_over_ssh() {
     let proj = dir.join("proj");
     let run_dir = format!("{proj}/.orchestrator/runs/{SHOW_ID}");
     std::fs::create_dir_all(&run_dir).unwrap();
-    let saved = show_state(&[("phase", Json::from("build")), ("round", Json::from(2)), ("verdict", Json::from(CHANGES_REQUESTED))]);
+    let saved = show_state(&[("phase", Value::from("build")), ("round", Value::from(2)), ("verdict", Value::from(CHANGES_REQUESTED))]);
     let at = |seconds| std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds);
     let write = |name: &str, text: &str, seconds: u64| {
         let path = format!("{run_dir}/{name}");
         std::fs::write(&path, text).unwrap();
         std::fs::File::options().write(true).open(&path).unwrap().set_modified(at(seconds)).unwrap();
     };
-    write("state.json", &saved.dumps(), 1_000);
+    write("state.json", &saved.to_string(), 1_000);
     write("spec.md", "spec", 7);
     write("review-1.md", "VERDICT: CHANGES_REQUESTED\nremote findings\n", 9);
     write("build-1.md", "report", 8);
@@ -783,14 +802,14 @@ fn help() {
 #[test]
 fn show_names_the_gate() {
     let cases = [
-        (vec![("quality_job", Json::from(JOB))], Some(format!("quality    {JOB}"))),
-        (vec![("quality_gate_disabled", Json::Bool(true))], Some("quality    off (turned off by resume)".to_string())),
+        (vec![("quality_job", Value::from(JOB))], Some(format!("quality    {JOB}"))),
+        (vec![("quality_gate_disabled", Value::Bool(true))], Some("quality    off (turned off by resume)".to_string())),
         (vec![], None),
     ];
     for (fields, line) in cases {
         let cli = alive();
         let mut fields = fields;
-        fields.push(("cwd", Json::from("/proj")));
+        fields.push(("cwd", Value::from("/proj")));
         cli.save(&with(run("build"), &fields), 0);
         cli.with(|world| show_run(world, "/proj", "c0ffee", &[])).unwrap();
         let quality: Vec<String> = cli.lines().into_iter().filter(|l| l.starts_with("quality ")).collect();
@@ -811,7 +830,7 @@ fn a_running_blocked_run_shows_its_question_and_pane() {
 
 #[test]
 fn without_a_known_pane_only_the_question() {
-    let unknown = with(mine(), &[("blocked", block()), ("workflow", Json::from("nosuch"))]);
+    let unknown = with(mine(), &[("blocked", block()), ("workflow", Value::from("nosuch"))]);
     let no_agent = with(mine(), &[("blocked", block())]);
     assert_eq!(listed(&[(40, unknown), (40, no_agent)], &[]), [
         format!("20260930-070000-c0ffee  build    round 1  blocked: {QUESTION}  [nosuch workflow]"),
@@ -822,7 +841,7 @@ fn without_a_known_pane_only_the_question() {
 #[test]
 fn show_of_a_blocked_run() {
     let cli = alive();
-    cli.save(&show_state(&[("phase", Json::from("build")), ("owner", me()), ("verdict", Json::Null), ("blocked", block())]), 40);
+    cli.save(&show_state(&[("phase", Value::from("build")), ("owner", me()), ("verdict", Value::Null), ("blocked", block())]), 40);
     assert_eq!(cli.main(&["show", "a1b2c3", "--cwd", "/proj"]), 0);
     assert_eq!(cli.lines()[0], format!("{SHOW_ID}  build    round 1  blocked: {QUESTION} (pane w1:p2)"));
 }
@@ -831,8 +850,8 @@ fn show_of_a_blocked_run() {
 fn the_wait_is_listed() {
     // The state a Workflow saves while the Builder's BLOCKED report waits (crate::workflow's blocked tests).
     let saved = json(&format!(
-        r#"{{"run_id": "20260929-120000-a1b2c3", "task": "add a rate limiter", "cwd": "/proj", "phase": "build",
-            "round": 1, "owner": {{"host": "box", "pid": 7, "started_at": "2026-09-29T12:00:00+00:00"}},
+        r#"{{"format": 2, "run_id": "20260929-120000-a1b2c3", "task": "add a rate limiter", "cwd": "/proj",
+            "phase": "build", "round": 1, "owner": {{"host": "box", "pid": 7, "started_at": "2026-09-29T12:00:00+00:00"}},
             "agents": {{"spec": {{"name": "spec-a1b2c3", "pane": "w1:p1"}}, "build": {{"name": "build-a1b2c3", "pane": "w1:p2"}}}},
             "blocked": {{"file": "build-1.md", "question": "{QUESTION}", "k": 1}}, "prompted": null}}"#
     ));
@@ -848,15 +867,15 @@ fn the_wait_is_listed() {
 
 #[test]
 fn list_shows_the_quality_phase() {
-    let lines = listed(&[(1_000_000, with(run("quality"), &[("quality_round", Json::from(2))]))], &[]);
+    let lines = listed(&[(1_000_000, with(run("quality"), &[("quality_round", Value::from(2))]))], &[]);
     assert!(lines[0].starts_with("20260930-070000-c0ffee  quality  round 1 q2  stale"), "{}", lines[0]);
 }
 
 #[test]
 fn list_reads_the_gated_step_from_the_saved_definition() {
     let state = with(run("impl"), &[
-        ("quality_round", Json::from(2)),
-        ("workflow", Json::from("impl")),
+        ("quality_round", Value::from(2)),
+        ("workflow", Value::from("impl")),
         ("workflow_definition", workflow_definition(&impl_())),
     ]);
     let lines = listed(&[(1_000_000, state)], &[]);
@@ -882,13 +901,14 @@ fn the_metrics_command_prints_a_line_per_run_that_is_done() {
     let cli = Cli::on(Rc::new(FakeHost::default()));
     cli.f.run_processes();
     let argv = ["metrics", "--cwd", &proj.path()];
-    // A file that is not one JSON line is corrupt; the run writes each as one.
-    assert_eq!(cli.main(&argv), EXIT_ERROR);
-    std::fs::write(format!("{runs}/3-cccccc/metrics.json"), "{\"run_id\": \"3-cccccc\", \"outcome\": \"error\"}\n").unwrap();
-    cli.take_out();
+    // Each printed as one line, a file the run wrote over several lines too.
     assert_eq!(cli.main(&argv), 0);
     assert_eq!(cli.lines(), [
-        r#"{"run_id": "1-aaaaaa", "outcome": "APPROVE"}"#,
-        r#"{"run_id": "3-cccccc", "outcome": "error"}"#,
+        r#"{"run_id":"1-aaaaaa","outcome":"APPROVE"}"#,
+        r#"{"run_id":"3-cccccc","outcome":"error"}"#,
     ]);
+    // A file that is not JSON is corrupt.
+    std::fs::write(format!("{runs}/3-cccccc/metrics.json"), "{\"run_id\": ").unwrap();
+    cli.take_out();
+    assert_eq!(cli.main(&argv), EXIT_ERROR);
 }

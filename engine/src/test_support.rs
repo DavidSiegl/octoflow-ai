@@ -141,11 +141,10 @@ pub fn unhex(hex: &str) -> Vec<u8> {
 }
 
 /// An oracle file of engine/tests/oracle/, which its generator there wrote from the Python engine, parsed.
-pub fn oracle(file: &str) -> crate::py::json::Json {
+pub fn oracle(file: &str) -> serde_json::Value {
     let text = match file {
         "texts.json" => include_str!("../tests/oracle/texts.json"),
         "workflows.json" => include_str!("../tests/oracle/workflows.json"),
-        "states.json" => include_str!("../tests/oracle/states.json"),
         "quality.json" => include_str!("../tests/oracle/quality.json"),
         "helpers.json" => include_str!("../tests/oracle/helpers.json"),
         "host.json" => include_str!("../tests/oracle/host.json"),
@@ -154,13 +153,14 @@ pub fn oracle(file: &str) -> crate::py::json::Json {
         "cli.json" => include_str!("../tests/oracle/cli.json"),
         _ => panic!("no oracle file {file}"),
     };
-    crate::py::json::Json::parse(text).unwrap_or_else(|e| panic!("{file}: {e}"))
+    serde_json::from_str::<serde_json::Value>(text).unwrap_or_else(|e| panic!("{file}: {e}"))
 }
 
 // -- The workflows tests/test_orchestrator.py defines, by its names -------------------------------------------------
 
 use crate::pipeline::{Pipeline, PipelineSettings, Step};
-use crate::py::json::Map;
+use crate::map::Map;
+use crate::json::Object;
 
 /// A role map of (key, label) pairs, in pane order.
 pub fn roles(pairs: &[(&str, &str)]) -> Map<String> {
@@ -243,7 +243,7 @@ pub fn replaced(p: &Pipeline, change: impl FnOnce(&mut PipelineSettings)) -> Res
 }
 
 /// Each recording of the e2e scenarios, engine/e2e/recorded/<scenario>.json, by scenario, in name order.
-pub fn recordings() -> Vec<(String, crate::py::json::Json)> {
+pub fn recordings() -> Vec<(String, serde_json::Value)> {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/e2e/recorded");
     let mut paths: Vec<_> = std::fs::read_dir(dir).expect("the recordings").map(|e| e.expect("an entry").path()).collect();
     paths.sort();
@@ -253,7 +253,7 @@ pub fn recordings() -> Vec<(String, crate::py::json::Json)> {
         .map(|p| {
             let text = std::fs::read_to_string(&p).expect("a recording");
             let name = p.file_stem().and_then(|s| s.to_str()).expect("a name").to_string();
-            let recording = crate::py::json::Json::parse(&text).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+            let recording = serde_json::from_str::<serde_json::Value>(&text).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
             (name, recording)
         })
         .collect()
@@ -263,8 +263,8 @@ pub fn recordings() -> Vec<(String, crate::py::json::Json)> {
 /// recording as that script reads them, and the outputs it recorded.
 pub struct HelperCase {
     /// The case: its recording, run directory and conflicts, and the Python engine's outputs by helper.
-    pub expected: crate::py::json::Json,
-    pub saved: Map<crate::py::json::Json>,
+    pub expected: serde_json::Value,
+    pub saved: Object,
     pub state: crate::state::RunState,
     pub spec: String,
     pub report: String,
@@ -275,23 +275,23 @@ pub struct HelperCase {
 
 /// helpers.json's cases, their inputs read from the recordings.
 pub fn helper_cases() -> Vec<HelperCase> {
-    use crate::py::json::Json;
+    use serde_json::Value;
     let oracle = oracle("helpers.json");
-    let epoch = oracle.get("epoch").and_then(Json::as_int).unwrap() as i64;
-    let now = oracle.get("now").and_then(Json::as_int).unwrap() as i64;
+    let epoch = oracle.get("epoch").and_then(Value::as_i64).unwrap();
+    let now = oracle.get("now").and_then(Value::as_i64).unwrap();
     let recordings = recordings();
     let mut out = Vec::new();
-    for case in oracle.get("cases").and_then(Json::as_array).unwrap() {
-        let field = |key: &str| case.get(key).and_then(Json::as_str).unwrap().to_string();
+    for case in oracle.get("cases").and_then(Value::as_array).unwrap() {
+        let field = |key: &str| case.get(key).and_then(Value::as_str).unwrap().to_string();
         let (recording, run_dir) = (field("recording"), field("run_dir"));
         let name = recording.strip_suffix(".json").unwrap();
         let files = recordings.iter().find(|(n, _)| n == name).unwrap().1.get("run_files").unwrap().as_object().unwrap().clone();
-        let file = |name: &str| files.get(&format!("{run_dir}{name}")).and_then(Json::as_str).map(String::from);
+        let file = |name: &str| files.get(&format!("{run_dir}{name}")).and_then(Value::as_str).map(String::from);
         let text = denormalized(&file("state.json").unwrap(), epoch);
-        let Json::Object(mut saved) = Json::parse(&text).unwrap() else { panic!("a state") };
-        let conflicts = case.get("conflicts").and_then(Json::as_array).unwrap();
+        let Value::Object(mut saved) = serde_json::from_str::<Value>(&text).unwrap() else { panic!("a state") };
+        let conflicts = case.get("conflicts").and_then(Value::as_array).unwrap();
         if !conflicts.is_empty() {
-            saved.insert("conflicts", Json::Array(conflicts.clone()));
+            saved.insert("conflicts".into(), Value::Array(conflicts.clone()));
         }
         let state = crate::state::RunState::from_saved(&saved).unwrap();
         // helpers.py's last: the last of the run directory's files whose name matches, by name.
@@ -325,7 +325,7 @@ pub fn helper_cases() -> Vec<HelperCase> {
 /// crate::summary::iso_utc writes it, the first at epoch (Unix seconds) and each a minute after the one before, and
 /// each "<seconds>" string a count, 5 and then 7 more each time.
 fn denormalized(text: &str, epoch: i64) -> String {
-    use crate::py::json::Json;
+    use serde_json::Value;
     let mut out = String::new();
     let (mut times, mut counts) = (0, 5);
     let mut rest = text;
@@ -333,7 +333,7 @@ fn denormalized(text: &str, epoch: i64) -> String {
         out.push_str(&rest[..at]);
         rest = &rest[at..];
         if let Some(after) = rest.strip_prefix("\"<time>\"") {
-            out.push_str(&Json::from(crate::summary::iso_utc(epoch + 60 * times)).dumps());
+            out.push_str(&Value::from(crate::summary::iso_utc(epoch + 60 * times)).to_string());
             times += 1;
             rest = after;
         } else if let Some(after) = rest.strip_prefix("\"<seconds>\"") {
@@ -386,20 +386,20 @@ add a rate limiter
 ";
 
 /// The JSON object text holds, as a saved record reads; panics on text that is not one.
-pub fn object(text: &str) -> Map<crate::py::json::Json> {
-    match crate::py::json::Json::parse(text) {
-        Ok(crate::py::json::Json::Object(map)) => map,
+pub fn object(text: &str) -> Object {
+    match serde_json::from_str::<serde_json::Value>(text) {
+        Ok(serde_json::Value::Object(map)) => map,
         other => panic!("not a JSON object: {other:?}"),
     }
 }
 
 /// resumable_state for `resume a1b2c3` with flags over one run, saved as saved 10^4 s ago, in /proj, on host "here",
 /// whose pids are all dead: Python's resumable helpers.
-pub fn resumable(flags: &[&str], saved: &Map<crate::py::json::Json>) -> Result<crate::state::RunState, crate::error::OrchestratorError> {
+pub fn resumable(flags: &[&str], saved: &Object) -> Result<crate::state::RunState, crate::error::OrchestratorError> {
     let argv = ["resume", "a1b2c3"].iter().chain(flags).map(std::ffi::OsString::from);
     let Ok(crate::cli::Command::Resume(args)) = crate::cli::parse_args(argv, &crate::env::ConfigDir::at("/nowhere")) else {
         panic!("not a resume: {flags:?}")
     };
-    let runs = [(10_000, crate::py::json::Json::Object(saved.clone()))];
+    let runs = [(10_000, serde_json::Value::Object(saved.clone()))];
     crate::cli::resumable_state(&runs, &args, "/proj", "here", &|_| false).map(|(state, _)| state)
 }

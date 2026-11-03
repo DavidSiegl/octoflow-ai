@@ -12,7 +12,7 @@ use crate::package_index::PackageIndexes;
 use crate::patch::added_lines;
 use crate::pipeline::default_workflow;
 use crate::prompts::Prompts;
-use crate::py::json::Json;
+use serde_json::Value;
 use crate::pypi::fake::{FakePyPI, ProjectJson};
 use crate::quality::parse_gate;
 use crate::test_support::{oracle, quick, replaced};
@@ -128,59 +128,59 @@ pub(crate) fn always() -> bool {
     true
 }
 
-fn finding(json: &Json) -> Finding {
-    let text = |k: &str| json.get(k).and_then(Json::as_str).unwrap_or_default().to_string();
+fn finding(json: &Value) -> Finding {
+    let text = |k: &str| json.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
     Finding {
-        path: json.get("path").and_then(Json::as_str).map(str::to_string),
-        line: json.get("line").and_then(Json::as_int).map(|n| n as u64),
+        path: json.get("path").and_then(Value::as_str).map(str::to_string),
+        line: json.get("line").and_then(Value::as_i64).map(|n| n as u64),
         severity: if text("severity") == "error" { Severity::Error } else { Severity::Warning },
         rule: text("rule"),
         message: text("message"),
     }
 }
 
-fn int(json: &Json, key: &str) -> i64 {
-    json.get(key).and_then(Json::as_int).unwrap() as i64
+fn int(json: &Value, key: &str) -> i64 {
+    json.get(key).and_then(Value::as_i64).unwrap()
 }
 
 #[test]
 fn judge_run_adds_the_checks_findings_as_the_python_engine_does() {
-    for case in oracle("checks.json").get("judge_run").and_then(Json::as_array).unwrap() {
+    for case in oracle("checks.json").get("judge_run").and_then(Value::as_array).unwrap() {
         let checks: Vec<OrchestratorCheck> = case
             .get("checks")
-            .and_then(Json::as_array)
+            .and_then(Value::as_array)
             .unwrap()
             .iter()
             .map(|c| {
-                let list = |k: &str| c.get(k).and_then(Json::as_array).unwrap().iter().map(finding).collect::<Vec<_>>();
+                let list = |k: &str| c.get(k).and_then(Value::as_array).unwrap().iter().map(finding).collect::<Vec<_>>();
                 let found = CheckFindings { issues: list("issues"), to_weigh: list("to_weigh") };
                 let name: &'static str =
-                    Box::leak(c.get("name").and_then(Json::as_str).unwrap().to_string().into_boxed_str());
+                    Box::leak(c.get("name").and_then(Value::as_str).unwrap().to_string().into_boxed_str());
                 OrchestratorCheck { name, find: Box::new(move |_| Ok(found.clone())) }
             })
             .collect();
-        let quality = case.get("quality").and_then(Json::as_str).unwrap();
+        let quality = case.get("quality").and_then(Value::as_str).unwrap();
         let out = Change::new("").run(&always, |change| judge_run(quality, &checks, change).unwrap());
-        assert_eq!(out, case.get("out").and_then(Json::as_str).unwrap(), "{quality:?}");
+        assert_eq!(out, case.get("out").and_then(Value::as_str).unwrap(), "{quality:?}");
     }
 }
 
 #[test]
 fn judge_run_on_every_recorded_quality_file_gives_the_recorded_result() {
     let cases = oracle("checks.json");
-    let cases = cases.get("recorded").and_then(Json::as_array).unwrap();
+    let cases = cases.get("recorded").and_then(Value::as_array).unwrap();
     assert!(cases.len() >= 8, "the recordings' judged quality files");
     for case in cases {
-        let text = |k: &str| case.get(k).and_then(Json::as_str).unwrap().to_string();
+        let text = |k: &str| case.get(k).and_then(Value::as_str).unwrap().to_string();
         let mut files = Vec::new();
         for (commit, key) in [("base", "base_files"), ("new", "new_files")] {
-            for (path, text) in case.get(key).and_then(Json::as_object).unwrap().iter() {
+            for (path, text) in case.get(key).and_then(Value::as_object).unwrap().iter() {
                 files.push((commit, path.to_string(), text.as_str().map(str::to_string)));
             }
         }
         let counts = case
             .get("counts")
-            .and_then(Json::as_array)
+            .and_then(Value::as_array)
             .unwrap()
             .iter()
             .map(|c| {
@@ -188,13 +188,13 @@ fn judge_run_on_every_recorded_quality_file_gives_the_recorded_result() {
                 changed(
                     c[0].as_str().unwrap(),
                     c[1].as_str().unwrap(),
-                    c[2].as_int().unwrap() as u64,
-                    c[3].as_int().unwrap() as u64,
+                    c[2].as_i64().unwrap() as u64,
+                    c[3].as_i64().unwrap() as u64,
                 )
             })
             .collect();
         let change = Change { diff: text("diff"), files, spec: text("spec"), counts: Some(counts) };
-        let indexes = PackageIndexes::with_pypi(FakePyPI::from_json(case.get("pypi").and_then(Json::as_object).unwrap().clone()));
+        let indexes = PackageIndexes::with_pypi(FakePyPI::from_json(case.get("pypi").and_then(Value::as_object).unwrap().clone()));
         let pipeline = replaced(&default_workflow(&Prompts::default()), |s| {
             s.max_files = int(case, "max_files");
             s.max_lines = int(case, "max_lines");

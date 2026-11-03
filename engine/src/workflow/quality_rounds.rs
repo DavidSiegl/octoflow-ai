@@ -19,7 +19,8 @@ use crate::patch::added_lines;
 use crate::paths::file_name;
 use crate::pipeline::{Step, QUALITY};
 use crate::prompts::Prompt;
-use crate::py::json::{Json, Map};
+use serde_json::Value;
+use crate::json::{object, Object, ValueExt};
 use crate::quality::{build_failed_report, gate_failures, leak_report, parse_gate, under_gate_line, QUALITY_OK};
 use crate::state::RunState;
 
@@ -161,7 +162,7 @@ impl<'a> Workflow<'a> {
         };
         self.end_turn(QUALITY, &path)?;
         let Some(gate) = parse_gate(&text) else { return Err(self.reject(&path, "does not start with a GATE line")) };
-        let (round, quality_round) = (Json::from(i64::from(n)), Json::from(i64::from(q)));
+        let (round, quality_round) = (Value::from(i64::from(n)), Value::from(i64::from(q)));
         let recorded = self
             .state
             .quality_rounds
@@ -169,16 +170,16 @@ impl<'a> Workflow<'a> {
             .any(|r| r.get("round") == Some(&round) && r.get("quality_round") == Some(&quality_round));
         if !recorded {
             let failures = gate_failures(&text);
-            let strings = |items: &[String]| Json::Array(items.iter().map(|i| Json::from(i.as_str())).collect());
-            let fingerprints = failures.fingerprints.iter().map(|(check, found)| (check, strings(found))).collect();
+            let strings = |items: &[String]| Value::Array(items.iter().map(|i| Value::from(i.as_str())).collect());
+            let fingerprints = failures.fingerprints.iter().map(|(check, found)| (check.to_string(), strings(found))).collect();
             let record = [
                 ("round", round),
                 ("quality_round", quality_round),
-                ("gate", Json::from(gate)),
+                ("gate", Value::from(gate)),
                 ("conditions", strings(&failures.conditions)),
-                ("fingerprints_by_check", Json::Object(fingerprints)),
+                ("fingerprints_by_check", Value::Object(fingerprints)),
             ];
-            self.state.quality_rounds.push(record.into_iter().collect());
+            self.state.quality_rounds.push(object(record));
         }
         self.human.log(&format!("[quality] round {n}, quality round {q}: {gate}"));
         self.finish_analysis(&git_ref)?;
@@ -197,11 +198,11 @@ impl<'a> Workflow<'a> {
     ///
     /// Errors: as quality's; a secret in base or below it, which is the human's to rewrite.
     fn analyse(&mut self, git_ref: &str, deadline: f64, base: &str, message: &str) -> Outcome<Analysis> {
-        let fresh = self.state.ci.get("ref").and_then(Json::as_str) != Some(git_ref);
+        let fresh = self.state.ci.get("ref").and_then(Value::as_str) != Some(git_ref);
         if fresh {
-            if let Some(old) = self.state.ci.get("ref").filter(|r| r.truthy()).map(Json::python_str) {
+            if let Some(old) = self.state.ci.get("ref").filter(|r| r.is_set()).map(Value::text) {
                 delete_ci_ref(self.host, self.human, &self.state.cwd, &old);
-                self.state.ci = Map::new();
+                self.state.ci = Object::new();
             }
             let work_dir = self.state.work_dir().to_string();
             let sha = self.host.snapshot(&work_dir, base, message)?;
@@ -221,7 +222,7 @@ impl<'a> Workflow<'a> {
                 }
                 Err(PushError::Leaks(found)) => return Ok(Analysis::Leaked(found)),
             }
-            self.state.ci = [("ref", Json::from(git_ref)), ("sha", Json::from(sha))].into_iter().collect();
+            self.state.ci = object([("ref", Value::from(git_ref)), ("sha", Value::from(sha))]);
             self.save()?;
         }
         if !self.state.ci.contains_key("build") {
@@ -279,17 +280,17 @@ impl<'a> Workflow<'a> {
             };
             if let Some(found) = found {
                 self.human.log(&format!("[quality] adopting Jenkins build #{found} of {git_ref}"));
-                self.state.ci.insert("build", Json::from(found));
+                self.state.ci.insert("build".into(), Value::from(found));
                 return self.save();
             }
             let waiting = format!("triggering Jenkins job {} for {git_ref}", self.jenkins()?.job());
             let queue_url = self.once(&waiting, deadline, |wf| wf.jenkins()?.trigger(git_ref))?;
-            self.state.ci.insert("queue_url", Json::from(queue_url));
+            self.state.ci.insert("queue_url".into(), Value::from(queue_url));
             self.save()?;
         }
         let waiting = format!("waiting for Jenkins to start the build of {git_ref}");
         let build = self.poll(&waiting, deadline, |wf| wf.queued_build(git_ref))?;
-        self.state.ci.insert("build", Json::from(build));
+        self.state.ci.insert("build".into(), Value::from(build));
         self.save()
     }
 
@@ -349,12 +350,12 @@ impl<'a> Workflow<'a> {
     /// earlier or the rejected one given.
     fn cut_back(&mut self, rejected: Option<i64>) {
         let ci = &self.state.ci;
-        let mut skip = ci.get("rejected").and_then(Json::as_array).cloned().unwrap_or_default();
-        skip.extend(rejected.map(Json::from));
-        let field = |key: &str| ci.get(key).cloned().unwrap_or(Json::Null);
-        let mut cut: Map<Json> = [("ref", field("ref")), ("sha", field("sha"))].into_iter().collect();
+        let mut skip = ci.get("rejected").and_then(Value::as_array).cloned().unwrap_or_default();
+        skip.extend(rejected.map(Value::from));
+        let field = |key: &str| ci.get(key).cloned().unwrap_or(Value::Null);
+        let mut cut = object([("ref", field("ref")), ("sha", field("sha"))]);
         if !skip.is_empty() {
-            cut.insert("rejected", Json::Array(skip));
+            cut.insert("rejected".into(), Value::Array(skip));
         }
         self.state.ci = cut;
     }
@@ -515,12 +516,12 @@ impl<'a> Workflow<'a> {
 
     /// After the analysis of git_ref: delete the ref on origin and forget it, as its build no longer needs it.
     fn finish_analysis(&mut self, git_ref: &str) -> Outcome<()> {
-        if self.state.ci.get("ref").and_then(Json::as_str) == Some(git_ref) {
+        if self.state.ci.get("ref").and_then(Value::as_str) == Some(git_ref) {
             // Jenkins has checked the ref out by now, though the build may still run the stages after its Gate stage
             // (analyse); the Jenkinsfile's Checkout comment says why that is enough. A leftover is only clutter, which
             // the run's end tries again.
             delete_ci_ref(self.host, self.human, &self.state.cwd, git_ref);
-            self.state.ci = Map::new();
+            self.state.ci = Object::new();
         }
         self.save()
     }
@@ -545,7 +546,7 @@ impl<'a> Workflow<'a> {
     /// RunState::ci's field key, a string. Errors: it is missing or not a string, as no engine saves it.
     fn ci_text(&self, key: &str) -> Result<String, OrchestratorError> {
         match self.state.ci.get(key) {
-            Some(Json::Str(text)) => Ok(text.clone()),
+            Some(Value::String(text)) => Ok(text.clone()),
             other => Err(ci_error(key, other)),
         }
     }
@@ -553,20 +554,20 @@ impl<'a> Workflow<'a> {
     /// RunState::ci's build number. Errors: it is not an integer, as no engine saves it.
     fn ci_build(&self) -> Result<i64, OrchestratorError> {
         let build = self.state.ci.get("build");
-        build.and_then(Json::as_int).and_then(|number| i64::try_from(number).ok()).ok_or_else(|| ci_error("build", build))
+        build.and_then(Value::as_i64).ok_or_else(|| ci_error("build", build))
     }
 
     /// The builds RunState::ci records as rejected, which a resume never adopts; an entry that is no build number is
     /// none.
     fn ci_rejected(&self) -> Vec<i64> {
-        let rejected = self.state.ci.get("rejected").and_then(Json::as_array).map_or(&[][..], Vec::as_slice);
-        rejected.iter().filter_map(|number| number.as_int().and_then(|number| i64::try_from(number).ok())).collect()
+        let rejected = self.state.ci.get("rejected").and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
+        rejected.iter().filter_map(|number| number.as_i64()).collect()
     }
 }
 
 /// The error of a RunState::ci field, key, that is missing or of another type than the engines save.
-fn ci_error(key: &str, value: Option<&Json>) -> OrchestratorError {
-    let value = value.map_or("nothing".to_string(), Json::dumps);
+fn ci_error(key: &str, value: Option<&Value>) -> OrchestratorError {
+    let value = value.map_or("nothing".to_string(), Value::to_string);
     OrchestratorError(format!("state.json's ci holds {value} as its {key}, which no orchestrator saves"))
 }
 
@@ -589,7 +590,7 @@ pub(super) fn delete_ci_refs(host: &dyn Host, human: &dyn Human, state: &mut Run
     for git_ref in refs {
         delete_ci_ref(host, human, &state.cwd, &git_ref);
     }
-    state.ci = Map::new();
+    state.ci = Object::new();
 }
 
 /// Delete the branch git_ref on cwd's origin; a failure is only logged, to human.

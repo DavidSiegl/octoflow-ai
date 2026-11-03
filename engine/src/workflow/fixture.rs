@@ -15,9 +15,12 @@ use crate::package_index::PackageIndexes;
 use crate::host::fake::{FakeClock, FakeHost};
 use crate::host::{Host, ProcessHost};
 use crate::interrupt::Interrupt;
-use crate::py::json::{Json, Map};
+use serde_json::Value;
+use crate::map::Map;
+use crate::json::Object;
 use crate::runs::pid_alive;
 use crate::state::RunState;
+use crate::json::object;
 
 /// The run every test starts unless it says otherwise: Python's RunState("20260929-120000-a1b2c3", ...).
 pub(crate) const RUN_ID: &str = "20260929-120000-a1b2c3";
@@ -76,7 +79,7 @@ pub(crate) struct Fixture {
     pub told: Told,
     pub interrupt: Interrupt,
     /// The Workflow's pid_alive: crate::runs::pid_alive unless a test sets its own before making the Workflow.
-    pub pid_alive: Box<dyn Fn(i128) -> bool>,
+    pub pid_alive: Box<dyn Fn(i64) -> bool>,
     /// The state the Workflow starts from.
     pub state: RunState,
     /// The Jenkins behind jenkins, Python's FakeCI: there for every fixture, so that a run without the quality gate
@@ -119,7 +122,7 @@ impl Fixture {
         if host.state().clock.is_none() {
             host.state().clock = Some(Rc::clone(&clock));
         }
-        let pypi = FakePyPI::from_json(Map::new());
+        let pypi = FakePyPI::from_json(Object::new());
         let indexes = PackageIndexes::with_pypi(Arc::clone(&pypi) as Arc<dyn Http>);
         Fixture {
             host,
@@ -231,10 +234,10 @@ impl Fixture {
     }
 
     /// The run's state.json as the host holds it now.
-    pub fn saved(&self) -> Map<Json> {
+    pub fn saved(&self) -> Object {
         let text = self.host.state().files.get(&format!("{}/state.json", self.state.dir())).cloned();
-        match Json::parse(&text.expect("the run has a state.json")) {
-            Ok(crate::py::json::Json::Object(saved)) => saved,
+        match serde_json::from_str::<Value>(&text.expect("the run has a state.json")) {
+            Ok(serde_json::Value::Object(saved)) => saved,
             other => panic!("state.json is no object: {other:?}"),
         }
     }
@@ -365,49 +368,47 @@ pub(crate) fn at(seconds: i64) -> String {
 /// turn() makes it: equal to a record that holds each of its fields, whatever session and tokens that has unless
 /// with gives them.
 #[derive(Clone, Debug)]
-pub(crate) struct Record(Map<Json>);
+pub(crate) struct Record(Object);
 
 /// record of a turn of round 1 and quality round 0, by step's own role, in claude with no model, not human-paced.
 pub(crate) fn record(step: &str, file: &str, start: Option<i64>, end: Option<i64>) -> Record {
-    let time = |t: Option<i64>| t.map_or(Json::Null, |t| Json::from(at(t)));
+    let time = |t: Option<i64>| t.map_or(Value::Null, |t| Value::from(at(t)));
     let seconds = match (start, end) {
-        (Some(start), Some(end)) => Json::from(end - start),
-        _ => Json::Null,
+        (Some(start), Some(end)) => Value::from(end - start),
+        _ => Value::Null,
     };
     Record(
-        [
-            ("step", Json::from(step)),
-            ("role", Json::from(step)),
-            ("round", Json::from(1)),
-            ("quality_round", Json::from(0)),
-            ("file", Json::from(file)),
-            ("agent", Json::from("claude")),
-            ("model", Json::Null),
-            ("human_paced", Json::Bool(false)),
+        object([
+            ("step", Value::from(step)),
+            ("role", Value::from(step)),
+            ("round", Value::from(1)),
+            ("quality_round", Value::from(0)),
+            ("file", Value::from(file)),
+            ("agent", Value::from("claude")),
+            ("model", Value::Null),
+            ("human_paced", Value::Bool(false)),
             ("started_at", time(start)),
             ("ended_at", time(end)),
             ("seconds", seconds),
-        ]
-        .into_iter()
-        .collect(),
+        ]),
     )
 }
 
 impl Record {
     /// The record with field key holding value instead, or as well.
-    pub fn with(mut self, key: &str, value: impl Into<Json>) -> Record {
-        self.0.insert(key, value.into());
+    pub fn with(mut self, key: &str, value: impl Into<Value>) -> Record {
+        self.0.insert(key.to_string(), value.into());
         self
     }
 
     /// The record as a saved run holds it, Python's dict(turn(...)): only its fields.
-    pub fn map(&self) -> Map<Json> {
+    pub fn map(&self) -> Object {
         self.0.clone()
     }
 }
 
-impl PartialEq<Map<Json>> for Record {
-    fn eq(&self, other: &Map<Json>) -> bool {
+impl PartialEq<Object> for Record {
+    fn eq(&self, other: &Object) -> bool {
         self.0.iter().all(|(key, value)| other.get(key) == Some(value))
     }
 }
@@ -500,15 +501,15 @@ pub(crate) fn gated_building(script: Vec<(&str, Vec<Turn>)>, outcomes: Vec<Outco
 }
 
 /// RunState::ci of a round in flight, as pairs of its fields.
-pub(crate) fn ci_of(fields: &[(&str, Json)]) -> Map<Json> {
-    fields.iter().cloned().collect()
+pub(crate) fn ci_of(fields: &[(&str, Value)]) -> Object {
+    object(fields.iter().cloned())
 }
 
 impl Fixture {
     /// Python's resume_gated: a resume of state with the gate on, the ref in flight, if any, on origin, and round 1's
     /// build report written.
     pub fn resume_gated(host: Rc<FakeHost>, state: RunState, script: Vec<(&str, Vec<Turn>)>, alive: &[&str]) -> Fixture {
-        if let (Some(Json::Str(git_ref)), Some(Json::Str(sha))) = (state.ci.get("ref"), state.ci.get("sha")) {
+        if let (Some(Value::String(git_ref)), Some(Value::String(sha))) = (state.ci.get("ref"), state.ci.get("sha")) {
             let mut h = host.state();
             if !h.remote.contains_key(git_ref) {
                 h.remote.insert(git_ref.as_str(), sha.clone());
