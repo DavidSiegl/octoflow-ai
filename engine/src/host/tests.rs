@@ -271,6 +271,17 @@ fn read_missing_file() {
 }
 
 #[test]
+fn exists_finds_a_file_a_directory_or_a_dangling_link() {
+    let (d, host) = (TempDir::new(), ProcessHost::local(&Interrupt::new()));
+    assert!(host.exists(&d.path()).unwrap());
+    assert!(!host.exists(&d.join("runs")).unwrap());
+    put(&d.join("runs/a/state.json"), "{}");
+    assert!(host.exists(&d.join("runs/a")).unwrap() && host.exists(&d.join("runs/a/state.json")).unwrap());
+    std::os::unix::fs::symlink(d.join("nowhere"), d.join("link")).unwrap();
+    assert!(host.exists(&d.join("link")).unwrap());
+}
+
+#[test]
 fn read_failure_raises() {
     let d = TempDir::new();
     let path = d.join("spec.md");
