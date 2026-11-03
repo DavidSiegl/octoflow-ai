@@ -322,7 +322,10 @@ is rewritten to say what is left.
   report, by `#[coverage(off)]` once it is stable or by the tests moving to files that `--ignore-filename-regex`
   can leave out, or with `gate.py` skipping the lines a `#[cfg(test)]` item spans. The Rust engine's tests are in
   such files already (`engine/src/**/tests.rs`, `engine/src/prompt_parity.rs`, `engine/src/test_support.rs`); the
-  desktop shell's are a `#[cfg(test)]` module in `ui/src-tauri/src/lib.rs`.
+  desktop shell's are a `#[cfg(test)]` module in `ui/src-tauri/src/lib.rs`. That module also makes a change to the
+  desktop shell's tests alone need a version raise, and a place in the one-bumping-PR-at-a-time queue:
+  `ci/version-raised.sh` exempts `**/tests.rs`, not `lib.rs` (cross-review 117, F4, 2026-11-03). Moving it to
+  `ui/src-tauri/src/tests.rs` closes both.
 - **No build runs the Rust doctests.** cargo-nextest does not run doctests, and since the Test stage's `cargo llvm-cov
   nextest` replaced the UI stage's `cargo test`, nothing does: `octoflow_ui_lib` is an `rlib` among its crate types
   (`ui/src-tauri/Cargo.toml`), so `cargo test` ran them. The crate has no doc example today. Raised by cross-review 72
@@ -886,3 +889,10 @@ is rewritten to say what is left.
   fail on." The user ruled it a bug (2026-10-28), not wanted. The Rust engine was ported to behave the same, untested as
   above. Closes with an engine that announces a turn only where none did (for example, only when `prompted` is not the
   turn's file). Ticket: `.scratch/run-crash-ending/issues/03-interview-announced-once.md` (#229).
+- **Four copies of a scratch directory removed on drop, each named its own way.** The `TempDir`s of
+  `engine/src/test_support.rs` and `ui/src-tauri/src/lib.rs` name theirs by pid and a counter,
+  `engine/src/serve/tests.rs`'s by the test's name and pid under a TMPDIR it reads itself, and `xtask/src/process.rs`'s
+  by a prefix, pid, time and counter, retried until new; serve's drops a failed removal silently, and the others only
+  report it on standard error, which libtest hides on a passing test. Raised by cross-review 117 (F3, 2026-11-03):
+  "A fix to one, such as making names unique, has to be repeated in each." Closes with one shared type: a `tempfile`
+  dev-dependency, or a test-support crate the engine, the desktop shell and xtask all use.
