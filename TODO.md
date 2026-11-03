@@ -92,10 +92,11 @@ is rewritten to say what is left.
   when its record changes. A poll that lands between the save and the writes keeps a file list without them for
   good, so the desktop app never shows them. The e2e scenario `serve_endpoints_and_events` fails when it does:
   PR-213's pr-head build, whose final checkpoint lacked metrics.json, where the branch build of the same commit
-  passed (2026-10-30). Again in PR-243 build #1 (head 25b87c0, 2026-11-03): checkpoint 3's fourth file was
-  review-1.md where the recording has metrics.json, while branch build octoflow-without-python-04 #1 of the same commit
-  and PR-243 build #2 passed. Closes with the files written before the save that finishes the run, or with the watch
-  re-reading a finished run's files until they stop changing.
+  passed (2026-10-30). Again in PR-243 build #1 (head 25b87c0, 2026-11-03): the final checkpoint's fourth file
+  was review-1.md where the recording has metrics.json, while the branch build of the same commit
+  (octoflow-without-python-04 #1, ticket octoflow-without-python/04's branch) and PR-243 build #2 passed. Closes
+  with the files written before the save that finishes the run, or with the watch re-reading a finished run's files
+  until they stop changing.
   Ticket: `.scratch/serve-run-files/issues/01-finished-run-files-reread.md` (#230).
 - **The desktop app ships its npm packages' code without their licenses.** `octoflow-third-party-licenses.html`
   (`packaging/about.toml`) lists the Rust crates only, as cargo-about reads Cargo's graph; the app's web view bundles
@@ -554,11 +555,12 @@ is rewritten to say what is left.
   fields. Found while porting setup-checks ticket 02 (2026-11-03). Closes with the two fixes worded for both, or
   check_setup told which it is wording them for.
 - **No test reaches the setup marker's real path.** serve's tests build their `Setup` with `Setup::new` and a marker
-  path of their own (`engine/src/serve/tests.rs`); `Setup::of`, which serve starts with, and
-  `ConfigDir::setup_checked_path` (`engine/src/env.rs`) run in none. So `setup_checked_path` returning an empty path,
-  or one outside the configuration directory, fails no test, and the dialog would open on every start or the marker go
-  elsewhere unnoticed. Found on setup-checks ticket 02's branch (2026-11-03). Closes with a test that `Setup::of` on a
-  `ConfigDir` in a temporary directory writes and finds `setup-checked` there.
+  path of their own (`engine/src/serve/tests.rs`); the e2e scenario that starts the real serve, and with it `Setup::of`,
+  never asks for `/setup` or `/setup/checked`; and `path_follows_xdg_config_home` (`engine/src/env/tests.rs`) asserts
+  every `ConfigDir` accessor but `setup_checked_path`. So `setup_checked_path` returning an empty path, or one outside
+  the configuration directory, fails no test, and the dialog would open on every start or the marker go elsewhere
+  unnoticed. Found on setup-checks ticket 02's branch (2026-11-03). Closes with `setup_checked_path` asserted beside the
+  other accessors in that test.
 - **`doctor` checks gitleaks's `git` subcommand, not its version.** README asks for gitleaks 8.19 or later; the
   check reuses `Host.gitleaks_problem`, the run's pre-push check, which asks `gitleaks git --help` because a
   distribution's build may print no version number. So `doctor` shows no gitleaks version. Kept by choice
