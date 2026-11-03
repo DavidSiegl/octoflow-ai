@@ -9,6 +9,8 @@
 
 use std::cell::Cell;
 use std::ffi::OsString;
+use std::path::Path;
+use std::sync::OnceLock;
 use std::io::Write;
 
 use crate::ci::Jenkins;
@@ -40,6 +42,7 @@ mod workflows;
 
 pub use args::{parse_args, Command, RunsCommand, Target};
 pub use start::{new_state, resumable_state, resumed_state};
+pub(crate) use start::new_run_id;
 
 /// What a command talks to once connected: the Workflow's collaborators but its Jenkins, which each run makes for
 /// its own job, and where the orchestrator's configuration is.
@@ -133,7 +136,8 @@ pub(super) enum Stop {
     Interrupted(Option<String>),
 }
 
-/// The program: argv are its arguments, without its own name. Returns its exit status: a usage error's 2 (help's 0),
+/// The program: argv is its command line, the name it was invoked by first, which the hints that name a command give
+/// from then on (program_name), then its arguments. Returns its exit status: a usage error's 2 (help's 0),
 /// EXIT_ERROR for an error, EXIT_INTERRUPTED once the Interrupt is raised (crate::interrupt::exit then ends a process
 /// that got a SIGTERM or SIGHUP by that signal), serve's (crate::serve::serve_command), or how the run ended
 /// (finish). Prints what the command prints and the run's last line on stdout, and its log, errors and the usage on
@@ -145,6 +149,10 @@ pub(super) enum Stop {
 /// SIGINT, SIGTERM and SIGHUP: serve's own, or else crate::interrupt::by_signals, which those signals then raise
 /// rather than end the process.
 pub fn main(argv: impl IntoIterator<Item = OsString>) -> i32 {
+    let mut argv = argv.into_iter();
+    if let Some(name) = argv.next().as_deref().map(Path::new).and_then(Path::file_name) {
+        let _ = INVOKED_AS.set(name.to_string_lossy().into_owned());
+    }
     let config = ConfigDir::from_env();
     let command = match parse_args(argv, &config) {
         Ok(command) => command,
@@ -515,10 +523,21 @@ fn finish(verdict: &str, state: &RunState, pipeline: &Pipeline, print: &dyn Fn(&
     }
 }
 
+/// The file name of the program's command line's first word, as main was given it; unset until main runs, and when that
+/// word is empty or names no file.
+static INVOKED_AS: OnceLock<String> = OnceLock::new();
+
+/// The program's name, as the usage and a hint that names a command to run give it: the file name it was invoked by
+/// (`orchestrator`, or a link's or a copy's own name), or `orchestrator`, the binary's, before main runs or when it was
+/// invoked by none.
+pub fn program_name() -> &'static str {
+    INVOKED_AS.get().map_or("orchestrator", String::as_str)
+}
+
 /// The command that resumes the run run_id names, by its key, with target's --machine and --cwd flags.
 pub fn resume_command(run_id: &str, target: &[String]) -> String {
     let key = run_id.rsplit('-').next().unwrap_or(run_id);
-    let argv: Vec<&str> = ["orchestrator.py", "resume", key].into_iter().chain(target.iter().map(String::as_str)).collect();
+    let argv: Vec<&str> = [program_name(), "resume", key].into_iter().chain(target.iter().map(String::as_str)).collect();
     shlex_join(&argv)
 }
 

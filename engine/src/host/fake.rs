@@ -594,6 +594,13 @@ impl Host for FakeHost {
         Ok(self.state().files.get(path).cloned())
     }
 
+    /// Whether a file is at path, or under it as its directory: a fake holds files only.
+    fn exists(&self, path: &str) -> Result<bool, OrchestratorError> {
+        let s = self.state();
+        let under = format!("{}/", path.trim_end_matches('/'));
+        Ok(s.files.contains_key(path) || s.files.keys().any(|p| p.starts_with(&under)))
+    }
+
     /// The path as given, as Python's tests patch resolve_dir to give theirs: a fake's paths are absolute already,
     /// and none is a link.
     fn resolve_dir(&self, path: &str) -> Result<String, OrchestratorError> {

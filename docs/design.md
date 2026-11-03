@@ -508,10 +508,12 @@ or conflicts (`.github/workflows/automerge.yml` says which wait).
 
 ### Turn timings
 
-- **Both ends of a turn come from the project host's clock.** The start is that host's `date +%s`, read over
-  SSH with `--machine` just before the prompt goes out, and the end is the handoff file's mtime there, which
-  the same clock stamped. As for staleness, one clock means no skew between machines can distort a duration,
-  and no agent can seem to finish before its turn started.
+- **Both ends of a turn come from the project host.** The start is that host's `date +%s`, read over SSH with
+  `--machine` just before the prompt goes out, and the end is the handoff file's mtime there. As for staleness,
+  one host means no skew between machines can distort a duration. The two are still not one clock: Linux stamps
+  an mtime from a coarser clock that trails `date`'s by a few milliseconds, so a file written that soon after a
+  start read at the turn of a second is stamped in the second before. `end_turn` counts such an end as the
+  start, so no agent can seem to finish before its turn started.
 - **The end is the file's mtime, not when the orchestrator saw it.** A turn finished while no orchestrator ran
   would otherwise last until the resume.
 - **A file with no open record still gets one.** Without a start it has no duration, but the table lists every

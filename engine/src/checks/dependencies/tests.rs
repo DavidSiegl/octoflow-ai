@@ -1,5 +1,6 @@
 //! tests/test_orchestrator.py's TestNewDependencies, and the manifests, requirements, spec names and lines that name a
-//! package of checks.json, as the Python engine reads them.
+//! package of checks.json, as the Python engine read them, but where a manifest holds a value Python read in its own
+//! terms: since octoflow-without-python ticket 06 such a value is compared and written as TOML.
 
 use std::sync::Arc;
 
@@ -586,7 +587,7 @@ fn a_read_error_fails_the_check() {
     );
 }
 
-// -- The Python engine's readings, from checks.json -----------------------------------------------------------------
+// -- The readings of checks.json -----------------------------------------------------------------------------------
 
 fn kind_name(kind: SourceKind) -> &'static str {
     match kind {
@@ -618,7 +619,7 @@ fn cases(key: &str) -> Vec<Value> {
 }
 
 #[test]
-fn manifests_read_as_the_python_engine_reads_them() {
+fn manifests_read_as_checks_json_says() {
     for case in cases("dependencies") {
         let file = |k: &str| case.get(k).and_then(Value::as_str).map(|t| t.as_bytes().to_vec());
         let (pyproject, lock) = (file("pyproject"), file("lock"));
@@ -644,7 +645,7 @@ fn manifests_read_as_the_python_engine_reads_them() {
 }
 
 #[test]
-fn requirements_names_and_lines_read_as_the_python_engine_reads_them() {
+fn requirements_names_and_lines_read_as_checks_json_says() {
     for case in cases("requirements") {
         let case = case.as_array().unwrap();
         let got = match requirement_of(&::toml::Value::String(case[0].as_str().unwrap().to_string())) {
@@ -1029,4 +1030,32 @@ fn a_cargo_manifest_anywhere_starts_the_check_and_one_untouched_does_not() {
         rules(&find_crates(&member, &crates).issues),
         [(Some("Cargo.toml"), None, "not-in-spec")]
     );
+}
+
+#[test]
+fn a_value_is_written_as_toml_on_one_line() {
+    let read = |literal: &str| format!("v = {literal}").parse::<::toml::Table>().unwrap().remove("v").unwrap();
+    for (literal, written) in [
+        (r#""a \"b\" \\ c""#, r#""a \"b\" \\ c""#),
+        ("\"tab\\there\\u0001\\u007f é\"", "\"tab\\there\\u0001\\u007F é\""),
+        ("5", "5"),
+        ("1.5", "1.5"),
+        ("1e100", "1e100"),
+        ("-0.0", "-0.0"),
+        ("-inf", "-inf"),
+        ("nan", "nan"),
+        ("true", "true"),
+        ("1979-05-27T07:32:00Z", "1979-05-27T07:32:00Z"),
+        ("[]", "[]"),
+        ("[1, \"a\", [2]]", "[1, \"a\", [2]]"),
+        ("{}", "{}"),
+        ("{ k = 1, \"a b\" = [], \"\" = { x-y_z = false } }", "{ k = 1, \"a b\" = [], \"\" = { x-y_z = false } }"),
+    ] {
+        let value = read(literal);
+        assert_eq!(toml_text(&value), written, "{literal}");
+        if literal != "nan" {
+            assert_eq!(read(&toml_text(&value)), value, "{literal} reads back");
+        }
+    }
+    assert_eq!(place_text(&read("\"a \\\"b\\\"\"")), "a \"b\"");
 }

@@ -49,8 +49,8 @@ pub enum Command {
         /// --target: the branch the pull request would merge into.
         branch: String,
     },
-    /// `serve`: serve the runs of any project, read-only, over HTTP on 127.0.0.1, also answering the origins given
-    /// with --origin, in their order.
+    /// `serve`: serve the runs of any project, and start new ones, over HTTP on 127.0.0.1, also answering the origins
+    /// given with --origin, in their order.
     Serve(Vec<String>),
 }
 
@@ -132,6 +132,9 @@ pub struct RunArgs {
     pub spec: Option<String>,
     /// --no-pr: leave the change uncommitted instead of opening a pull request.
     pub no_pr: bool,
+    /// --run-id, hidden: the id the run takes instead of a new one, in new_run_id's format (run_id_arg checks it), as
+    /// serve's POST /run gives it so that it can wait for that run; None for a new one.
+    pub run_id: Option<String>,
 }
 
 /// `drain`'s flags and arguments.
@@ -204,10 +207,11 @@ impl Target {
 /// What the human wrote after the program's name, read: the Command, or the clap error that ends the program instead.
 ///
 /// The error is a usage error (exit status 2, its text naming the problem, for clap's print), or the help a --help
-/// asked for (exit status 0). config is where the workflow files that --workflow offers are.
+/// asked for (exit status 0); both name the program as super::program_name does. config is where the workflow files
+/// that --workflow offers are.
 pub fn parse_args(argv: impl IntoIterator<Item = OsString>, config: &ConfigDir) -> Result<Command, clap::Error> {
     let mut p = parser(config);
-    let matches = p.try_get_matches_from_mut(std::iter::once(OsString::from("orchestrator")).chain(argv))?;
+    let matches = p.try_get_matches_from_mut(std::iter::once(OsString::from(super::program_name())).chain(argv))?;
     let command = match matches.subcommand() {
         Some(("run", m)) => Command::Run(RunArgs {
             target: target(m),
@@ -216,6 +220,7 @@ pub fn parse_args(argv: impl IntoIterator<Item = OsString>, config: &ConfigDir) 
             task: string(m, "task"),
             spec: string(m, "spec"),
             no_pr: m.get_flag("no-pr"),
+            run_id: string(m, "run-id"),
         }),
         Some(("drain", m)) => Command::Drain(DrainArgs {
             run: RunArgs {
@@ -225,6 +230,7 @@ pub fn parse_args(argv: impl IntoIterator<Item = OsString>, config: &ConfigDir) 
                 task: None,
                 spec: None,
                 no_pr: false,
+                run_id: None,
             },
             dir: string(m, "dir").unwrap_or_else(|| DRAIN_DIR.to_string()),
             dry_run: m.get_flag("dry-run"),
@@ -282,7 +288,9 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         .arg(Arg::new("no-pr").long("no-pr").action(ArgAction::SetTrue).help(
             "leave the change uncommitted in the working tree and the workspace open, instead of opening a pull \
              request",
-        ));
+        ))
+        // Hidden: serve's, so that it knows the id of the run it starts (crate::serve, POST /run).
+        .arg(Arg::new("run-id").long("run-id").value_name("ID").value_parser(run_id_arg).hide(true));
     let resume = clap::Command::new("resume")
         .about("continue a run whose orchestrator has stopped")
         .long_about(
@@ -447,12 +455,13 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         ))
         .args(target_args());
     let serve = clap::Command::new("serve")
-        .about("serve the runs of any project, read-only, over HTTP on 127.0.0.1, for the desktop app")
+        .about("serve the runs of any project over HTTP on 127.0.0.1, and start new ones, for the desktop app")
         .long_about(
-            "Serve the runs of any project, local or on a saved herdr machine, read-only: the run records list --json \
-             prints, each run's files and their contents, and a stream of events as they change. Prints one JSON \
-             line, {\"url\": ..., \"token\": ...}, then serves on a free port of 127.0.0.1 until SIGINT or SIGTERM, \
-             and exits 0. Every request needs the token.",
+            "Serve the runs of any project, local or on a saved herdr machine: the run records list --json prints, \
+             each run's files and their contents, and a stream of events as they change; type into a run's agents; \
+             and start a run, in a new workspace of this machine's herdr server, where it can be watched and \
+             interrupted as one started here. Prints one JSON line, {\"url\": ..., \"token\": ...}, then serves on a \
+             free port of 127.0.0.1 until SIGINT or SIGTERM, and exits 0. Every request needs the token.",
         )
         .arg(Arg::new("origin").long("origin").value_name("ORIGIN").action(ArgAction::Append).help(
             "also answer requests from this origin, such as the desktop app's webview, tauri://localhost; repeatable",
@@ -595,6 +604,17 @@ fn starts_args(config: &ConfigDir) -> Vec<Arg> {
              JENKINS_TOKEN, from the environment or ~/.config/ai-agents-orchestrator/ci.env",
         ),
     ]
+}
+
+/// A run id as new_run_id makes them: YYYYMMDD-HHMMSS-hhhhhh, digits and then six lowercase hex digits.
+fn run_id_arg(text: &str) -> Result<String, String> {
+    let parts: Vec<&str> = text.split('-').collect();
+    let digits = |s: &str, n: usize| s.len() == n && s.bytes().all(|b| b.is_ascii_digit());
+    let hex = |s: &str| s.len() == 6 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    match parts[..] {
+        [date, time, key] if digits(date, 8) && digits(time, 6) && hex(key) => Ok(text.to_string()),
+        _ => Err(format!("expected a run id such as 20261029-142233-a1b2c3, not {text:?}")),
+    }
 }
 
 /// ROLE=MODEL, each part non-empty.

@@ -11,9 +11,10 @@ use super::*;
 use crate::cli::listing::run_record;
 use crate::constants::{APPROVE, RUNS_DIR, STALE_SECONDS};
 use crate::json::{Object, ValueExt};
-use crate::py::url::urlencode;
+use crate::http::urlencode;
 use crate::cli::doctor::{Check, Level};
-use crate::serve::fake::{FakeConsole, ServeHost};
+use crate::serve::fake::{reached, FakeConsole, ServeHost};
+use crate::herdr::HerdrError;
 
 const SERVE_ID: &str = "20261024-120000-5e7e00";
 const TAURI_ORIGIN: &str = "tauri://localhost";
@@ -44,6 +45,24 @@ fn host_with_run(ssh_target: Option<&str>) -> Arc<ServeHost> {
     host
 }
 
+/// What a test's RunServer is started with, beside its projects and origins.
+struct Options {
+    /// How often its event streams poll.
+    polls: Polls,
+    /// Its setup checks and marker.
+    setup: Setup,
+    /// Where its workflow files are; by default a directory that is not there, so only the built-in ones.
+    config: ConfigDir,
+    /// How POST /run waits.
+    wait: StartWait,
+}
+
+impl Default for Options {
+    fn default() -> Options {
+        Options { polls: SERVE_POLL, setup: unchecked(), config: ConfigDir::at("/nowhere/config"), wait: START_WAIT }
+    }
+}
+
 /// A RunServer for a test, the projects it connected, as (machine, cwd), and the herdr of every project.
 struct Served {
     server: RunServer,
@@ -59,11 +78,11 @@ impl Served {
     }
 
     fn fake_polling(host: &Arc<ServeHost>, origins: &[&str], polls: Polls) -> Served {
-        Served::fake_with(host, origins, polls, unchecked())
+        Served::fake_with(host, origins, Options { polls, ..Options::default() })
     }
 
-    /// A server whose every project is host's /proj, its setup checked and marked by setup.
-    fn fake_with(host: &Arc<ServeHost>, origins: &[&str], polls: Polls, setup: Setup) -> Served {
+    /// A server whose every project is host's /proj, started with options.
+    fn fake_with(host: &Arc<ServeHost>, origins: &[&str], options: Options) -> Served {
         let host = Arc::clone(host);
         let connects = Arc::new(Mutex::new(vec![]));
         let seen = Arc::clone(&connects);
@@ -71,25 +90,25 @@ impl Served {
         let herdr = Arc::clone(&console);
         let connect = move |machine: &str, cwd: &str, _: &Interrupt| {
             seen.lock().unwrap().push((machine.to_string(), cwd.to_string()));
-            Ok(Reached { host: host.clone(), dir: "/proj".to_string(), console: herdr.clone() })
+            Ok(reached(&host, &herdr))
         };
-        Served { console, ..Served::start(Box::new(connect), origins, polls, connects, setup) }
+        Served { console, ..Served::start(Box::new(connect), origins, connects, options) }
     }
 
     /// A server whose projects are the real directories here.
     fn real() -> Served {
-        Served::start(Box::new(project_host), &[], SERVE_POLL, Arc::default(), unchecked())
+        Served::start(Box::new(project_host), &[], Arc::default(), Options::default())
     }
 
     fn start(
         connect: Box<Connect>,
         origins: &[&str],
-        polls: Polls,
         connects: Arc<Mutex<Vec<(String, String)>>>,
-        setup: Setup,
+        options: Options,
     ) -> Served {
         let origins: Vec<String> = origins.iter().map(|o| o.to_string()).collect();
-        let server = RunServer::start_polling(&origins, connect, setup, polls).expect("the server starts");
+        let Options { polls, setup, config, wait } = options;
+        let server = RunServer::start_polling(&origins, connect, setup, config, polls, wait).expect("the server starts");
         let port = port_of(server.url());
         Served { server, port, connects, console: Arc::default() }
     }
@@ -282,7 +301,7 @@ fn runs_are_list_json_records_on_a_machine() {
     assert_eq!(doc, object([("version", Value::from(1)), ("runs", Value::Array(listed))]));
     assert_eq!(
         doc.get("runs").and_then(Value::as_array).and_then(|r| r[0].get("resume_command")),
-        Some(&Value::from("orchestrator.py resume 5e7e00 --machine remote --cwd '~/proj'"))
+        Some(&Value::from("orchestrator resume 5e7e00 --machine remote --cwd '~/proj'"))
     );
 }
 
@@ -445,7 +464,7 @@ fn setup_served(marker: &str, checks: Vec<Check>) -> (Served, Asked) {
         checks.clone()
     };
     let setup = Setup::new(Box::new(check), marker.to_string());
-    (Served::fake_with(&Arc::new(ServeHost::on(None)), &[], SERVE_POLL, setup), asked)
+    (Served::fake_with(&Arc::new(ServeHost::on(None)), &[], Options { setup, ..Options::default() }), asked)
 }
 
 fn a_check(name: &str, level: Level, ok: bool) -> Check {
@@ -535,7 +554,7 @@ fn unknown_endpoint() {
 #[test]
 fn an_unreadable_project_is_a_bad_gateway() {
     let connect = |_: &str, _: &str, _: &Interrupt| Err(OrchestratorError::new("no saved herdr machine named nosuch"));
-    let served = Served::start(Box::new(connect), &[], SERVE_POLL, Arc::default(), unchecked());
+    let served = Served::start(Box::new(connect), &[], Arc::default(), Options::default());
     let reply = served.get(&Served::query("/runs", &[("machine", "nosuch")]), &[]);
     assert_eq!(reply.status, Some(502));
     assert_eq!(reply.body, r#"{"error":"no saved herdr machine named nosuch"}"#);
@@ -876,7 +895,7 @@ fn a_bad_input_is_refused_before_the_project_is_reached() {
         seen.lock().unwrap().push((machine.to_string(), cwd.to_string()));
         Err(OrchestratorError::new("ssh: connection refused"))
     };
-    let served = Served::start(Box::new(connect), &[], SERVE_POLL, Arc::clone(&connects), unchecked());
+    let served = Served::start(Box::new(connect), &[], Arc::clone(&connects), Options::default());
     let target = Served::query("/agent/input", &[("run", SERVE_ID), ("role", "build"), ("machine", "box")]);
     assert_eq!(served.post(&target, r#"{"keys": []}"#).status, Some(400));
     let long = format!(r#"{{"text": "{}"}}"#, "x".repeat(MAX_BODY_BYTES));
@@ -884,6 +903,210 @@ fn a_bad_input_is_refused_before_the_project_is_reached() {
     assert!(connects.lock().unwrap().is_empty(), "a bad body reached the project");
     let reply = served.post(&target, r#"{"text": "go"}"#);
     assert_eq!((reply.status, reply.error()), (Some(502), "ssh: connection refused".to_string()));
+}
+
+// -- POST /run and GET /workflows: starting a run ---------------------------------------------------------------
+
+/// A wait for a started run short enough for a test.
+const QUICK_WAIT: StartWait = StartWait { every: Duration::from_millis(10), limit: Duration::from_millis(300) };
+
+/// A server whose every project is host's /proj, waiting QUICK_WAIT for a run it starts.
+fn starting(host: &Arc<ServeHost>) -> Served {
+    Served::fake_with(host, &[], Options { wait: QUICK_WAIT, ..Options::default() })
+}
+
+/// The run id an argv of POST /run's starts, from its --run-id.
+fn started_id(argv: &[String]) -> String {
+    argv.iter().find_map(|w| w.strip_prefix("--run-id=")).expect("a --run-id").to_string()
+}
+
+#[test]
+fn a_run_that_saves_its_state_is_answered_with_its_id_and_runs_its_own_program_in_a_workspace() {
+    // A project on a machine: its run is given the machine and the cwd as the client named them.
+    let host = Arc::new(ServeHost::on(Some("me@box")));
+    let served = starting(&host);
+    let saving = Arc::clone(&host);
+    served.console.state().on_launch = Some(Box::new(move |argv: &[String]| {
+        let id = started_id(argv);
+        saving.state().files.insert(format!("/proj/{RUNS_DIR}/{id}/state.json"), serve_state(&id, &[]));
+    }));
+    let body = r#"{"task": "--add a rate limiter", "workflow": "quick", "agent": "codex", "model": "-m",
+                   "role_agents": {"review": "pi", "build": "claude"}, "role_models": {"review": "o3"},
+                   "no_pr": true, "worktree": true}"#;
+    let reply = served.post(&Served::query("/run", &[("machine", "box")]), body);
+    assert_eq!(reply.status, Some(201), "{}", reply.body);
+    let id = reply.json()["run"].as_str().expect("the run's id").to_string();
+    let launches = served.console.state().launches.clone();
+    let [(cwd, label, argv)] = &launches[..] else { panic!("one launch: {launches:?}") };
+    assert_eq!(cwd, "/proj");
+    assert_eq!(*label, crate::workflow::workspace_label(&id, "--add a rate limiter"));
+    let program = std::env::current_exe().unwrap().into_os_string().into_string().unwrap();
+    let expected = [
+        program.as_str(), "run", &format!("--run-id={id}"), "--machine", "box", "--cwd", "~/proj", "--workflow=quick",
+        "--agent=codex", "--model=-m", "--role-agent=review=pi", "--role-agent=build=claude", "--role-model=review=o3",
+        "--no-pr", "--worktree", "--", "--add a rate limiter",
+    ];
+    assert_eq!(argv, &expected);
+    // An id as run's own, which `run --run-id` takes.
+    let argv = ["run", "--run-id", &id, "t"].map(std::ffi::OsString::from);
+    assert!(crate::cli::parse_args(argv, &ConfigDir::at("/nowhere")).is_ok(), "{id}");
+}
+
+#[test]
+fn a_run_of_a_project_here_is_given_the_directory_serve_resolved() {
+    let host = Arc::new(ServeHost::on(None));
+    let served = starting(&host);
+    // ~/proj, as the client named it, resolves to /proj (the fake connect's), which the pane starts in too.
+    assert_eq!(served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#).status, Some(202));
+    let argv = served.console.state().launches[0].2.clone();
+    assert_eq!(argv[3..], ["--cwd", "/proj", "--", "t"]);
+}
+
+#[test]
+fn a_look_that_fails_once_the_run_is_launched_is_no_answer() {
+    let host = Arc::new(ServeHost::on(None));
+    let served = starting(&host);
+    let saving = Arc::clone(&host);
+    served.console.state().on_launch = Some(Box::new(move |argv: &[String]| {
+        let id = started_id(argv);
+        saving.state().files.insert(format!("/proj/{RUNS_DIR}/{id}/state.json"), serve_state(&id, &[]));
+    }));
+    // A pane the human closed: the run's state.json still tells.
+    served.console.state().exited_error = Some(HerdrError::new("pane_not_found", "pane w9:p1 not found"));
+    let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#);
+    assert_eq!(reply.status, Some(201), "{}", reply.body);
+    // Neither can be looked at: the client still gets the id of the run that is running.
+    host.state().read_error = Some("ssh: connection reset".to_string());
+    let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#);
+    assert_eq!(reply.status, Some(202), "{}", reply.body);
+    assert!(reply.json()["run"].is_string());
+}
+
+#[test]
+fn a_replaced_program_is_started_as_the_one_now_at_its_path() {
+    let there = |p: &str| p == "/bin/orchestrator";
+    assert_eq!(live_program("/bin/orchestrator (deleted)".into(), there), "/bin/orchestrator");
+    assert_eq!(live_program("/gone/orchestrator (deleted)".into(), there), "/gone/orchestrator (deleted)");
+    assert_eq!(live_program("/bin/orchestrator".into(), there), "/bin/orchestrator");
+}
+
+#[test]
+fn a_run_that_exits_without_its_state_is_answered_with_what_its_pane_showed() {
+    let host = Arc::new(ServeHost::on(None));
+    let served = starting(&host);
+    served.console.state().exited = Some("error: invalid value 'nope' for '--workflow <WORKFLOW>'".to_string());
+    let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t", "workflow": "nope"}"#);
+    assert_eq!(reply.status, Some(422));
+    let id = reply.json()["run"].as_str().expect("the run's id").to_string();
+    let why = format!("run {id} exited before it saved its state; its pane showed:\nerror: invalid value 'nope' for '--workflow <WORKFLOW>'");
+    assert_eq!(reply.error(), why);
+}
+
+#[test]
+fn a_run_neither_listed_nor_exited_in_time_is_answered_as_not_yet_listed() {
+    let host = Arc::new(ServeHost::on(None));
+    let served = starting(&host);
+    let started = Instant::now();
+    let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#);
+    assert!(started.elapsed() >= QUICK_WAIT.limit, "it waited {:?}", started.elapsed());
+    assert_eq!(reply.status, Some(202));
+    let answer = reply.json();
+    assert_eq!(answer["listed"], Value::from(false));
+    assert_eq!(answer.as_object().map(|o| o.len()), Some(2), "{answer}");
+    // A run that saved its state.json just before it exited is listed.
+    let saving = Arc::clone(&host);
+    let mut console = served.console.state();
+    console.exited = Some("error: the checkout is busy".to_string());
+    console.on_launch = Some(Box::new(move |argv: &[String]| {
+        let id = started_id(argv);
+        saving.state().files.insert(format!("/proj/{RUNS_DIR}/{id}/state.json"), serve_state(&id, &[]));
+    }));
+    drop(console);
+    assert_eq!(served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#).status, Some(201));
+}
+
+#[test]
+fn without_a_herdr_server_here_a_run_is_refused_saying_to_start_one() {
+    let host = Arc::new(ServeHost::on(None));
+    let served = starting(&host);
+    served.console.state().launch_error = Some(HerdrError::new("server_not_running", "no herdr server is running"));
+    let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#);
+    assert_eq!((reply.status, reply.error()), (Some(502), "no herdr server here; start herdr".to_string()));
+    served.console.state().launch_error = Some(HerdrError::new("timeout", "herdr workspace create did not return"));
+    let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#);
+    assert_eq!((reply.status, reply.error()), (Some(502), "herdr timeout: herdr workspace create did not return".to_string()));
+}
+
+#[test]
+fn a_bad_run_body_is_refused_before_the_project_is_reached_and_nothing_is_launched() {
+    let connects = Arc::new(Mutex::new(vec![]));
+    let seen = Arc::clone(&connects);
+    let connect = move |machine: &str, cwd: &str, _: &Interrupt| {
+        seen.lock().unwrap().push((machine.to_string(), cwd.to_string()));
+        Err(OrchestratorError::new("ssh: connection refused"))
+    };
+    let served = Served::start(Box::new(connect), &[], Arc::clone(&connects), Options::default());
+    let target = Served::query("/run", &[("machine", "box")]);
+    let reply = served.post(&target, r#"{"task": ""}"#);
+    assert_eq!((reply.status, reply.error()), (Some(400), "task must be a string that is not empty".to_string()));
+    let long = format!(r#"{{"task": "{}"}}"#, "x".repeat(MAX_BODY_BYTES));
+    assert_eq!(served.post(&target, &long).status, Some(413));
+    assert!(connects.lock().unwrap().is_empty(), "a bad body reached the project");
+    let reply = served.post(&target, r#"{"task": "go"}"#);
+    assert_eq!((reply.status, reply.error()), (Some(502), "ssh: connection refused".to_string()));
+    // Without a cwd.
+    assert_eq!(served.post("/run", r#"{"task": "go"}"#).status, Some(400));
+}
+
+#[test]
+fn a_run_needs_the_token_and_the_server_s_own_origin() {
+    let host = Arc::new(ServeHost::on(None));
+    let served = starting(&host);
+    let (target, body) = (Served::query("/run", &[]), r#"{"task": "t"}"#);
+    let length = body.len().to_string();
+    assert_eq!(served.ask_with_body("POST", &target, &[("Content-Length", &length)], body).status, Some(401));
+    let bearer = format!("Bearer {}", served.token());
+    let headers = [("Authorization", bearer.as_str()), ("Origin", "http://evil.example"), ("Content-Length", &length)];
+    assert_eq!(served.ask_with_body("POST", &target, &headers, body).status, Some(403));
+    assert!(served.console.state().launches.is_empty());
+}
+
+#[test]
+fn workflows_are_the_configuration_s_with_their_roles_and_the_harnesses() {
+    let d = crate::test_support::TempDir::new();
+    std::fs::create_dir_all(d.join("workflows")).unwrap();
+    let solo = "description = \"one builder\"\n[roles]\nbuild = { label = \"Solo\", agent = \"codex\", model = \"o3\" }\n\
+                [[steps]]\nid = \"build\"\nfile = \"build.md\"\nprompt = \"Build {task} in {cwd}; report to {path}.\"\n\
+                edits = true\n";
+    std::fs::write(d.join("workflows/solo.toml"), solo).unwrap();
+    std::fs::write(d.join("workflows/broken.toml"), "not toml [").unwrap();
+    let served = Served::fake_with(&Arc::new(ServeHost::on(None)), &[], Options { config: ConfigDir::at(&d.path()), ..Options::default() });
+    let reply = served.get("/workflows", &[]);
+    assert_eq!(reply.status, Some(200), "{}", reply.body);
+    let answer = reply.json();
+    assert_eq!(answer["agents"], serde_json::json!(crate::constants::AGENT_KINDS));
+    let workflows = answer["workflows"].as_array().unwrap();
+    let names: Vec<&str> = workflows.iter().map(|w| w["name"].as_str().unwrap()).collect();
+    let mut expected: Vec<&str> = crate::pipeline::WORKFLOWS.iter().copied().chain(["broken", "solo"]).collect();
+    expected.sort_unstable();
+    assert_eq!(names, expected);
+    let named = |name: &str| workflows.iter().find(|w| w["name"] == name).unwrap().clone();
+    let roles = serde_json::json!([
+        {"role": "spec", "label": "Spec Collector", "agent": "claude", "model": null},
+        {"role": "build", "label": "Builder", "agent": "claude", "model": null},
+        {"role": "review", "label": "Reviewer", "agent": "claude", "model": null},
+    ]);
+    assert_eq!(named("default")["roles"], roles);
+    let solo = named("solo");
+    assert_eq!(solo["description"], "one builder", "{solo}");
+    assert_eq!(solo["roles"], serde_json::json!([{"role": "build", "label": "Solo", "agent": "codex", "model": "o3"}]));
+    let broken = named("broken");
+    let broken_file = d.join("workflows/broken.toml");
+    assert!(broken["error"].as_str().is_some_and(|e| e.starts_with(&format!("{broken_file}: "))), "{broken}");
+    assert_eq!(broken.as_object().unwrap().len(), 2);
+    // No project is reached, so none is named.
+    assert!(served.connects.lock().unwrap().is_empty());
+    assert_eq!(served.ask("GET", "/workflows", &[]).status, Some(401));
 }
 
 // -- TestServeEvents and TestServeEventsOnAMachine ---------------------------------------------------------------
@@ -1149,13 +1372,13 @@ impl Write for Lines {
 fn in_process() {
     let host = Arc::new(ServeHost::on(None));
     let connect = move |_: &str, _: &str, _: &Interrupt| {
-        Ok(Reached { host: host.clone(), dir: "/proj".to_string(), console: Arc::new(FakeConsole::default()) })
+        Ok(reached(&host, &Arc::default()))
     };
     let (lines, printed) = mpsc::channel();
     let (stop, stopped) = mpsc::channel::<()>();
     let serving = std::thread::spawn(move || {
         let mut err = vec![];
-        let status = serve(RunServer::start(&[], Box::new(connect), unchecked()), &mut Lines(lines), &mut err, || {
+        let status = serve(RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config")), &mut Lines(lines), &mut err, || {
             stopped.recv().map_err(io::Error::other)
         });
         (status, err)
@@ -1195,7 +1418,7 @@ impl Write for BrokenPipe {
 #[test]
 fn an_unprintable_line_ends_it() {
     let connect = |_: &str, _: &str, _: &Interrupt| Err(OrchestratorError::new("not asked"));
-    let started = RunServer::start(&[], Box::new(connect), unchecked()).unwrap();
+    let started = RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config")).unwrap();
     let port = port_of(started.url());
     let mut err = vec![];
     let status = serve(Ok(started), &mut BrokenPipe, &mut err, || -> io::Result<()> { panic!("serve waited") });
@@ -1216,7 +1439,7 @@ fn no_port() {
 #[test]
 fn a_wait_for_the_signals_that_fails_ends_it() {
     let connect = |_: &str, _: &str, _: &Interrupt| Err(OrchestratorError::new("not asked"));
-    let started = RunServer::start(&[], Box::new(connect), unchecked()).unwrap();
+    let started = RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config")).unwrap();
     let port = port_of(started.url());
     let (mut out, mut err) = (vec![], vec![]);
     let status = serve(Ok(started), &mut out, &mut err, || Err(io::Error::from_raw_os_error(22)));

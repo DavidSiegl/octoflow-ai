@@ -345,6 +345,23 @@ fn a_new_run_takes_the_defaults_and_the_flags() {
 }
 
 #[test]
+fn a_new_run_takes_the_run_id_given_unless_its_directory_is_there() {
+    let (f, d) = (Fixture::new(vec![]), TempDir::new());
+    let config = ConfigDir::at(&d.path());
+    let world = connected(&f, &config, &no_jenkins);
+    let id = "20261103-142233-a1b2c3";
+    let (state, _) = new_state(&run_args(&["--run-id", id, "t"], &config), "/proj", None, &world).unwrap();
+    assert_eq!(state.run_id, id);
+    // A directory with any file in it, a state.json or not, is a run's.
+    f.host.state().files.insert(format!("/proj/.orchestrator/runs/{id}/log.md"), String::new());
+    let e = new_state(&run_args(&["--run-id", id, "t"], &config), "/proj", None, &world).unwrap_err();
+    assert_eq!(e.0, format!("/proj/.orchestrator/runs/{id} exists already; a new run needs an id of its own"));
+    // Another project's run of that id is no matter.
+    let (state, _) = new_state(&run_args(&["--run-id", id, "t"], &config), "/other", None, &world).unwrap();
+    assert_eq!(state.run_id, id);
+}
+
+#[test]
 fn a_new_run_from_a_spec_starts_after_its_contract_step_and_takes_its_title() {
     let (f, d) = (Fixture::new(vec![]), TempDir::new());
     let config = ConfigDir::at(&d.path());

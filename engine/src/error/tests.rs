@@ -38,3 +38,12 @@ fn the_closest_name_is_the_fewest_edits_away_within_half_its_length() {
     assert_eq!(closest_name("ab", ["ax", "ay"]), Some("ax"), "the first of a tie");
     assert_eq!(closest_name("x", []), None);
 }
+
+#[test]
+fn text_that_is_not_toml_says_where() {
+    let why = |text: &str| toml_syntax_error(text, &text.parse::<toml::Table>().unwrap_err());
+    assert_eq!(why("a = 1\n[b\n").split(" (at ").nth(1), Some("line 2, column 3)"));
+    assert!(why("a = 1\nb").ends_with("(at line 2, column 2)"), "{}", why("a = 1\nb"));
+    // The column counts characters, not bytes.
+    assert!(why("\"é\" = @").ends_with("(at line 1, column 7)"), "{}", why("\"é\" = @"));
+}
