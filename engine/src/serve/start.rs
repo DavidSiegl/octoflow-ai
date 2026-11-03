@@ -93,7 +93,7 @@ impl RunRequest {
         if let Some(unknown) = fields.keys().find(|k| !FIELDS.contains(&k.as_str())) {
             return Err(format!("unknown field {unknown:?}; the fields are {}", FIELDS.join(", ")));
         }
-        if fields.iter().any(|(name, json)| holds_nul(name) || value_holds_nul(json)) {
+        if fields.iter().any(|(name, json)| holds_nul(name) || json_holds_nul(json)) {
             return Err("the body's strings must hold no NUL character, which no command's argument can".to_string());
         }
         let given = |name: &str| fields.get(name).filter(|v| !v.is_null());
@@ -133,7 +133,9 @@ impl RunRequest {
         let mut argv = vec![program.to_string(), "run".to_string(), format!("--run-id={run_id}")];
         argv.extend(target.iter().cloned());
         let flags = [("workflow", &self.workflow), ("agent", &self.agent), ("model", &self.model)];
-        argv.extend(flags.into_iter().filter_map(|(name, value)| value.as_ref().map(|v| format!("--{name}={v}"))));
+        for (name, given) in flags {
+            argv.extend(given.as_ref().map(|setting| format!("--{name}={setting}")));
+        }
         argv.extend(self.role_agents.iter().map(|(role, kind)| format!("--role-agent={role}={kind}")));
         argv.extend(self.role_models.iter().map(|(role, model)| format!("--role-model={role}={model}")));
         for (on, flag) in [(self.no_pr, "--no-pr"), (self.worktree, "--worktree")] {
@@ -182,32 +184,32 @@ fn holds_nul(text: &str) -> bool {
     text.contains('\0')
 }
 
-/// Whether a string of value, or a key of an object in it, holds a NUL.
-fn value_holds_nul(value: &Value) -> bool {
-    match value {
+/// Whether a string of json, or a key of an object in it, holds a NUL.
+fn json_holds_nul(json: &Value) -> bool {
+    match json {
         Value::String(s) => holds_nul(s),
-        Value::Array(items) => items.iter().any(value_holds_nul),
-        Value::Object(fields) => fields.iter().any(|(k, v)| holds_nul(k) || value_holds_nul(v)),
+        Value::Array(items) => items.iter().any(json_holds_nul),
+        Value::Object(fields) => fields.iter().any(|(k, v)| holds_nul(k) || json_holds_nul(v)),
         _ => false,
     }
 }
 
-/// The (role, value) pairs of value, the body's field name, in its order; none when it is not given. Each value must
-/// be one of allowed when given. Errors: value is not an object of such pairs.
-fn by_role(value: Option<&Value>, name: &str, allowed: Option<&[&str]>) -> Result<Vec<(String, String)>, String> {
-    let Some(value) = value else { return Ok(vec![]) };
+/// The (role, setting) pairs of field, the body's field name, in its order; none when it is not given. Each setting
+/// must be one of allowed when given. Errors: field is not an object of such pairs.
+fn by_role(field: Option<&Value>, name: &str, allowed: Option<&[&str]>) -> Result<Vec<(String, String)>, String> {
+    let Some(field) = field else { return Ok(vec![]) };
     let shape = || match allowed {
         Some(kinds) => format!("{name} must be an object of role to one of {}", kinds.join(", ")),
         None => format!("{name} must be an object of role to a string that is not empty"),
     };
     // A role with `=` would split elsewhere than its own end in --role-agent's and --role-model's ROLE=VALUE.
     let role_ok = |role: &str| !role.is_empty() && !role.contains('=');
-    let value_ok = |v: &str| !v.is_empty() && allowed.is_none_or(|a| a.contains(&v));
-    let pairs = value.as_object().ok_or_else(shape)?;
+    let setting_ok = |v: &str| !v.is_empty() && allowed.is_none_or(|a| a.contains(&v));
+    let pairs = field.as_object().ok_or_else(shape)?;
     pairs
         .iter()
         .map(|(role, v)| match v.as_str() {
-            Some(v) if role_ok(role) && value_ok(v) => Ok((role.clone(), v.to_string())),
+            Some(v) if role_ok(role) && setting_ok(v) => Ok((role.clone(), v.to_string())),
             _ => Err(shape()),
         })
         .collect()
