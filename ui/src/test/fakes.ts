@@ -1,4 +1,5 @@
 import { vi } from "vitest";
+import type { SetupReport } from "../api";
 import recorded from "./recorded-stream.json";
 
 /** The events `orchestrator.py serve` sent over a scripted run, recorded off a real server: each batch is what one
@@ -70,16 +71,40 @@ export class FakeEventSource {
   }
 }
 
+/** The setup a stubbed server answers: whether the marker is there (`checked`, true unless given, so that the
+ * dialog does not open by itself in a test that does not ask for it), the report /setup gives, and the error that
+ * POST /setup/checked fails with, if it fails; `marked` counts the POSTs that wrote the marker. */
+export interface FakeSetup {
+  checked?: boolean;
+  report?: SetupReport;
+  markError?: string;
+  marked?: number;
+}
+
 /** Stub EventSource, and fetch with a server whose /file answers the text of `files` by name, else 404; whose /agent
- * answers the screen of `agents` by role, else 404 as for an agent that has exited; and whose POST /agent/input
- * takes any input. */
-export function stubServer(files: Record<string, string>, agents: Record<string, string> = {}) {
+ * answers the screen of `agents` by role, else 404 as for an agent that has exited; whose POST /agent/input takes
+ * any input; and whose /setup endpoints answer as `setup` says, a POST of /setup/checked setting its `checked`. */
+export function stubServer(files: Record<string, string>, agents: Record<string, string> = {}, setup: FakeSetup = {}) {
   FakeEventSource.opened = [];
   vi.stubGlobal("EventSource", FakeEventSource);
   const answer = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     const { pathname, searchParams } = new URL(url);
     const role = searchParams.get("role") ?? "";
+    if (pathname === "/setup") {
+      return answer(200, setup.report ?? { checks: [], passed: true });
+    }
+    if (pathname === "/setup/checked" && init?.method === "POST") {
+      if (setup.markError !== undefined) {
+        return answer(500, { error: setup.markError });
+      }
+      setup.checked = true;
+      setup.marked = (setup.marked ?? 0) + 1;
+      return answer(200, { checked: true });
+    }
+    if (pathname === "/setup/checked") {
+      return answer(200, { checked: setup.checked ?? true });
+    }
     if (pathname === "/agent/input") {
       return init?.method === "POST" ? answer(200, { run: "r", role }) : answer(501, {});
     }

@@ -520,6 +520,12 @@ What is known to be open in `orchestrator.py` and `gate.py`, and why. An entry l
   README's `herdr integration install gemini` may name a kind herdr no longer has. Found by the doctor run
   (2026-10-24); not checked whether `agent start --kind gemini` still works. Closes once `AGENT_KINDS` and the README
   name the kind herdr installs for Gemini, or herdr is shown to accept `gemini`.
+- **The desktop app's setup dialog shows doctor's fixes in the CLI's words.** `check_setup`
+  (`engine/src/cli/doctor.rs`) words its fixes for a command line: "run from a herdr pane, or pass --machine", "pass
+  --cwd a git checkout". `/setup` (`engine/src/serve/setup.rs`) passes them on as they are, so the dialog
+  (`ui/src/components/SetupDialog.tsx`) names flags where the app has the project bar's Machine and Project folder
+  fields. Found while porting setup-checks ticket 02 (2026-11-03). Closes with the two fixes worded for both, or
+  check_setup told which it is wording them for.
 - **`doctor` checks gitleaks's `git` subcommand, not its version.** README asks for gitleaks 8.19 or later; the
   check reuses `Host.gitleaks_problem`, the run's pre-push check, which asks `gitleaks git --help` because a
   distribution's build may print no version number. So `doctor` shows no gitleaks version. Kept by choice

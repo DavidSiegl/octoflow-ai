@@ -1,4 +1,4 @@
-// The protocol of `orchestrator serve`: its run records, file lists, events and agents. The engine's RunServer
+// The protocol of `orchestrator serve`: its run records, file lists, events and agents, and the setup checks. The engine's RunServer
 // (engine/src/serve.rs) and RunWatch document the endpoints and the events, and run_record every key of a record.
 
 /** Where the sidecar's server listens, as the Tauri shell got it from `serve`'s first line. */
@@ -83,6 +83,23 @@ export type RunEvent =
 
 export const EVENT_KINDS = ["record", "files", "problem"] as const;
 
+/** One thing a run needs, as `orchestrator doctor` checks it: `required` for any run, `needed-for-pr` for a run
+ * that opens a pull request, `optional` for some runs only. When not ok, detail says why and fix what to run or do;
+ * fix is empty when ok. */
+export interface SetupCheck {
+  name: string;
+  level: "required" | "needed-for-pr" | "optional";
+  ok: boolean;
+  detail: string;
+  fix: string;
+}
+
+/** A project's setup checks, in the order the server made them; passed is true when every `required` one is ok. */
+export interface SetupReport {
+  checks: SetupCheck[];
+  passed: boolean;
+}
+
 /** A request the server did not answer as asked, with the HTTP status it answered and its error message. */
 export class HttpError extends Error {
   constructor(
@@ -117,25 +134,51 @@ export class Api {
   /** Type input into the run's agent of role, without waiting for the agent to take it; rejects with the server's
    * error message. */
   async typeInto(project: Project, run: string, role: string, input: AgentInput): Promise<void> {
-    const response = await fetch(this.url("/agent/input", project, { run, role }), {
+    await this.json(this.url("/agent/input", project, { run, role }), {
       method: "POST",
-      headers: { Authorization: `Bearer ${this.connection.token}`, "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
     });
-    if (!response.ok) {
-      const body = (await response.json().catch(() => ({}))) as { error?: string };
-      throw new HttpError(response.status, body.error ?? `HTTP ${response.status}`);
-    }
+  }
+
+  /** What the project needs for a run, checked where its agents run. The checks take a few seconds, longer on a
+   * machine; a check that fails is part of the report, not a rejection. */
+  async setupChecks(project: Project): Promise<SetupReport> {
+    return this.json(this.url("/setup", project, {})) as Promise<SetupReport>;
+  }
+
+  /** Whether the setup dialog has been closed with every required check passed, on this computer, for any project;
+   * rejects when the server cannot tell. */
+  async setupChecked(): Promise<boolean> {
+    const body = (await this.json(`${this.connection.url}/setup/checked`)) as { checked: boolean };
+    return body.checked;
+  }
+
+  /** Record that the setup dialog has been closed with every required check passed, so that it no longer opens by
+   * itself; rejects with why it could not be recorded. */
+  async markSetupChecked(): Promise<void> {
+    await this.json(`${this.connection.url}/setup/checked`, { method: "POST" });
   }
 
   /** The text field of a GET of url's JSON; rejects with the server's error message, or the status. */
   private async text(url: string): Promise<string> {
-    const response = await fetch(url, { headers: { Authorization: `Bearer ${this.connection.token}` } });
-    const body = (await response.json()) as { text?: string; error?: string };
-    if (!response.ok || body.text === undefined) {
-      throw new HttpError(response.status, body.error ?? `HTTP ${response.status}`);
+    const body = (await this.json(url)) as { text?: string };
+    if (body.text === undefined) {
+      throw new HttpError(200, "the answer has no text");
     }
     return body.text;
+  }
+
+  /** The JSON body of a request of url, with the token and init; rejects with an HttpError carrying the server's
+   * error message, or the status, for any answer but a 2xx. */
+  private async json(url: string, init: RequestInit = {}): Promise<unknown> {
+    const headers = { ...init.headers, Authorization: `Bearer ${this.connection.token}` };
+    const response = await fetch(url, { ...init, headers });
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    if (!response.ok) {
+      throw new HttpError(response.status, body.error ?? `HTTP ${response.status}`);
+    }
+    return body;
   }
 
   private url(path: string, project: Project, params: Record<string, string>): string {

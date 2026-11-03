@@ -29,7 +29,7 @@ pub(crate) fn without_withheld(vars: impl Iterator<Item = (OsString, OsString)>)
 }
 
 /// The orchestrator's own configuration directory, on the machine it runs on, and where in it each of its files is:
-/// ci.env, the prompt files and the workflow files.
+/// ci.env, the prompt files, the workflow files and the desktop app's setup marker.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfigDir {
     /// The directory's path, without a trailing "/".
@@ -76,6 +76,12 @@ impl ConfigDir {
     /// Where `run --workflow NAME` finds NAME.toml (crate::workflow_file).
     pub fn workflows_dir(&self) -> String {
         self.join("workflows")
+    }
+
+    /// The file whose presence means the desktop app's setup dialog once closed with every Required check passed, so
+    /// that it no longer opens by itself (crate::serve::setup); empty.
+    pub fn setup_checked_path(&self) -> String {
+        self.join("setup-checked")
     }
 
     fn join(&self, name: &str) -> String {

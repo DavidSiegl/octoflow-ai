@@ -229,13 +229,13 @@ fn setup(tools: &FakeTools, machine: Option<&str>, cwd: Option<&str>) -> BTreeMa
 }
 
 fn check_in_pane(tools: &FakeTools, machine: Option<&str>, cwd: Option<&str>, in_pane: bool) -> BTreeMap<String, Check> {
-    let checks = check_setup(&tools.host(&[]), &tools.herdr(machine), cwd, in_pane);
+    let checks = check_setup(&tools.host(&[]), &tools.herdr(machine), cwd, in_pane, Level::Required);
     checks.into_iter().map(|c| (c.name.clone(), c)).collect()
 }
 
 /// The names of check_setup's checks on tools, in order.
 fn names(tools: &FakeTools, cwd: Option<&str>) -> Vec<String> {
-    check_setup(&tools.host(&[]), &tools.herdr(None), cwd, true).into_iter().map(|c| c.name).collect()
+    check_setup(&tools.host(&[]), &tools.herdr(None), cwd, true, Level::Required).into_iter().map(|c| c.name).collect()
 }
 
 /// What report_checks prints for checks, and its exit status.
@@ -570,6 +570,18 @@ fn outside_a_herdr_pane() {
 }
 
 #[test]
+fn outside_a_herdr_pane_at_a_lower_level() {
+    let tools = FakeTools::new();
+    let checks = check_setup(&tools.host(&[]), &tools.herdr(None), None, false, Level::Optional);
+    let reach = checks.iter().find(|c| c.name == "reaching herdr").expect("a check of reaching herdr");
+    assert_eq!((reach.level, reach.ok), (Level::Optional, false));
+    // On a machine, reaching herdr does not depend on a pane, and stays Required.
+    let checks = check_setup(&tools.host(&[]), &tools.herdr(Some("box")), None, false, Level::Optional);
+    let reach = checks.iter().find(|c| c.name == "reaching herdr").expect("a check of reaching herdr");
+    assert_eq!((reach.level, reach.ok), (Level::Required, true));
+}
+
+#[test]
 fn on_a_machine() {
     let tools = FakeTools::new();
     let checks = check_in_pane(&tools, Some("box"), Some("/proj"), false);
@@ -615,7 +627,7 @@ fn machine_not_saved_disabled_or_unreachable() {
         assert_eq!(checks[&format!("herdr on {machine}")].detail, "skipped: needs reaching herdr");
         assert_eq!(checks["gh"].detail, "skipped: needs reaching herdr");
         assert_eq!(checks["origin"].detail, "skipped: needs git checkout");
-        let order: Vec<String> = check_setup(&tools.host(&[]), &tools.herdr(Some(machine)), Some("/proj"), true)
+        let order: Vec<String> = check_setup(&tools.host(&[]), &tools.herdr(Some(machine)), Some("/proj"), true, Level::Required)
             .into_iter()
             .map(|c| c.name)
             .collect();
@@ -658,7 +670,7 @@ fn machine_herdr_versions_checked_apart() {
 fn commands_get_the_child_env() {
     let tools = FakeTools::new();
     let host = tools.host(&[("JENKINS_TOKEN", "secret")]);
-    check_setup(&host, &tools.herdr(Some("box")), Some("/proj"), true);
+    check_setup(&host, &tools.herdr(Some("box")), Some("/proj"), true, Level::Required);
     let envs = tools.tools().envs.clone();
     // The herdr runner's commands are not given theirs here; ProcessHerdr's own tests hold it to child_env.
     assert!(envs.iter().any(|env| !env.is_empty()));

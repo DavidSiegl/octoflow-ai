@@ -125,6 +125,9 @@ first time when a browser downloaded it, as it does the binary.
   herdr pane's, else `HERDR_SESSION`'s, else the default one.
 - **Project bar:** a project folder and, for agents on another machine, a saved herdr machine. The app reopens
   the project you opened last.
+- **Setup:** "Check setup…" shows what `orchestrator doctor --machine --cwd` checks for the open project, with
+  the fix for each problem. It opens by itself when the app starts, until you have closed it once with everything
+  a run needs present.
 
 Each download is the CLI too, with the same commands and flags; started without arguments, the app opens its
 window:
