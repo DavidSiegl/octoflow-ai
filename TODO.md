@@ -69,14 +69,13 @@ is rewritten to say what is left.
 
 ## Open issues
 
-- **serve starts a run by typing it into a shell it takes for POSIX or fish.** `Launcher::launch` (`ProcessHerdr`,
-  `engine/src/herdr.rs`) types the `run` command into the new pane's shell, each word in single quotes with `'\''`
-  for a quote, and ends the line with `; echo` of the marker `exited` looks for, since herdr 0.9.1's `pane run`
-  types its arguments joined by spaces. bash, zsh, dash and fish read that back word for word; a pane whose shell is
-  nushell, xonsh or PowerShell does not, and the run fails or never shows as exited, so POST /run answers 202 or 422
-  with the shell's error. Found while implementing app-start-runs ticket 01 (2026-11-03). Closes with a launch that
-  does not go through the pane's shell: herdr starting the command itself in the new pane, if a later herdr can, or
-  a `sh -c` the line is given to as one quoted word, which needs only that the shell quotes as POSIX does.
+- **serve starts a run through a shell it takes for POSIX or fish.** `Launcher::launch` (`ProcessHerdr`,
+  `engine/src/herdr.rs`) gives the new pane's shell each word of the `run` command as an environment variable and
+  types `"$OCTOFLOW_ARG_0" "$OCTOFLOW_ARG_1" …; echo '<marker>'`, since herdr 0.9.1's `pane run` types its
+  arguments into the shell. bash, zsh, dash and fish run that; a pane whose shell is nushell, xonsh or PowerShell
+  does not, and POST /run answers 422 with the shell's error, or 202 when the marker never shows. Found while
+  implementing app-start-runs ticket 01 (2026-11-03). Closes with a launch that does not go through the pane's
+  shell: herdr starting the command itself in the new pane, if a later herdr can.
 - **new-dependencies on Cargo: two readings of a manifest that its doc does not state.** In
   `engine/src/checks/dependencies.rs`, `cargo_manifest_dependencies` keeps the first entry of a crate across its tables,
   as `add_named` does across manifests: `foo = "1"` in `[dependencies]` and `foo = { git = "..." }` under

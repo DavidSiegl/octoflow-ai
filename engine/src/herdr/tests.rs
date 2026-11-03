@@ -498,34 +498,64 @@ fn launching(screen: &str) -> (ProcessHerdr, Commands) {
 }
 
 #[test]
-fn launch_opens_a_workspace_and_types_the_command_quoted_as_one_argument() {
+fn launch_gives_each_word_to_the_new_shell_as_a_variable_and_types_only_their_names() {
     let (herdr, ran) = launching("");
-    let argv = argv(&["/bin/orchestrator", "run", "--model=--session", "--", "it's $HOME\n--remote"]);
+    let argv = argv(&["/bin/orchestrator", "run", "--model=--session", "--", "x\u{15}touch /tmp/pwned #"]);
     assert_eq!(herdr.launch("/proj", "a1b2c3 a task", &argv).unwrap(), "w1:p1");
     let ran: Vec<Vec<String>> = ran.lock().unwrap().iter().map(|(argv, _)| argv.clone()).collect();
-    let create = ["herdr", "workspace", "create", "--cwd", "/proj", "--label", "a1b2c3 a task", "--no-focus"];
+    let create = [
+        "herdr", "workspace", "create", "--cwd", "/proj", "--label", "a1b2c3 a task", "--no-focus",
+        "--env", "OCTOFLOW_ARG_0=/bin/orchestrator", "--env", "OCTOFLOW_ARG_1=run",
+        "--env", "OCTOFLOW_ARG_2=--model=--session", "--env", "OCTOFLOW_ARG_3=--",
+        "--env", "OCTOFLOW_ARG_4=x\u{15}touch /tmp/pwned #",
+    ];
     assert_eq!(ran[0], create);
-    let line = "'/bin/orchestrator' 'run' '--model=--session' '--' 'it'\\''s $HOME\n--remote'; \
-                echo 'octoflow: the command in pane w1:p1 has exited'";
-    assert_eq!(ran[1], ["herdr", "pane", "run", "w1:p1", line]);
+    let line = r#""$OCTOFLOW_ARG_0" "$OCTOFLOW_ARG_1" "$OCTOFLOW_ARG_2" "$OCTOFLOW_ARG_3" "$OCTOFLOW_ARG_4"; "#.to_string()
+        + "echo 'octoflow: the command in pane w1:p1 has exited'";
+    assert_eq!(ran[1], ["herdr", "pane", "run", "w1:p1", &line]);
     assert_eq!(ran.len(), 2);
 }
 
 #[test]
 fn the_typed_line_gives_a_shell_back_each_word_then_the_marker_alone_on_its_line() {
     let (herdr, ran) = launching("");
-    let words = ["printf", "<%s>\\n", "it's", "$HOME `x`", "two\nlines", "\\'", ""];
+    let words = ["printf", "<%s>\\n", "it's", "$HOME `x`", "two\nlines", "\\'", "a\u{3}b\u{15}c\td", ""];
     herdr.launch("/proj", "l", &argv(&words)).unwrap();
-    let line = last(&ran).0[4].clone();
-    let out = std::process::Command::new("sh").args(["-c", &line]).output().unwrap();
+    let ran = ran.lock().unwrap().clone();
+    // The shell herdr starts, with the variables the create gave it, reading the typed line.
+    let mut shell = std::process::Command::new("sh");
+    for pair in ran[0].0.iter().skip_while(|w| *w != "--env").filter(|w| *w != "--env") {
+        let (name, value) = pair.split_once('=').unwrap();
+        shell.env(name, value);
+    }
+    let out = shell.args(["-c", &ran[1].0[4]]).output().unwrap();
     let printed = String::from_utf8(out.stdout).unwrap();
-    let expected = "<it's>\n<$HOME `x`>\n<two\nlines>\n<\\'>\n<>\noctoflow: the command in pane w1:p1 has exited\n";
+    let expected = "<it's>\n<$HOME `x`>\n<two\nlines>\n<\\'>\n<a\u{3}b\u{15}c\td>\n<>\n\
+                    octoflow: the command in pane w1:p1 has exited\n";
     assert_eq!(printed, expected);
 }
 
 #[test]
+fn a_command_herdr_does_not_take_closes_the_workspace_it_opened() {
+    let ran: Commands = Arc::default();
+    let seen = ran.clone();
+    let herdr = ProcessHerdr::with_runner(None, move |argv, limit| {
+        seen.lock().unwrap().push((argv.to_vec(), limit));
+        let created = result(r#"{"workspace": {"workspace_id": "w1"}, "root_pane": {"pane_id": "w1:p1"}}"#);
+        Ok(match argv[1..3].join(" ").as_str() {
+            "workspace create" => (0, created.into_bytes(), vec![]),
+            "pane run" => (1, vec![], error("pane_not_found", "pane w1:p1 not found").into_bytes()),
+            _ => (0, result("{}").into_bytes(), vec![]),
+        })
+    });
+    let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err();
+    assert_eq!(e.code(), Some("pane_not_found"));
+    assert_eq!(last(&ran).0, ["herdr", "workspace", "close", "w1"]);
+}
+
+#[test]
 fn exited_gives_what_the_pane_showed_before_the_marker_once_it_is_there() {
-    let running = "$ '/bin/orchestrator' 'run'; echo 'octoflow: the command in pane w1:p1 has exited'\nworking\n";
+    let running = "$ \"$OCTOFLOW_ARG_0\"; echo 'octoflow: the command in pane w1:p1 has exited'\nworking\n";
     let (herdr, ran) = launching(running);
     assert_eq!(herdr.exited("w1:p1", 3).unwrap(), None);
     assert_eq!(last(&ran).0, ["herdr", "pane", "read", "w1:p1", "--source", "recent-unwrapped", "--lines", "8"]);

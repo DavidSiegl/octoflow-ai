@@ -35,6 +35,8 @@ pub struct Files {
     pub run_states_error: Option<String>,
     /// How many times run_states was called: a poll of the project each.
     pub run_states_calls: usize,
+    /// While set, what every read fails with (still recorded in reads).
+    pub read_error: Option<String>,
 }
 
 impl ServeHost {
@@ -61,6 +63,9 @@ impl Host for ServeHost {
     fn read(&self, path: &str) -> Result<Option<String>, OrchestratorError> {
         let mut s = self.state();
         s.reads.push(path.to_string());
+        if let Some(e) = &s.read_error {
+            return Err(OrchestratorError(e.clone()));
+        }
         Ok(s.files.get(path).cloned())
     }
 
@@ -121,6 +126,8 @@ pub struct Consoled {
     pub exited: Option<String>,
     /// While set, what every launch fails with, having launched nothing.
     pub launch_error: Option<HerdrError>,
+    /// While set, what every look at whether a launched command has exited fails with.
+    pub exited_error: Option<HerdrError>,
 }
 
 /// What a FakeConsole does at a launch, given its argv (Consoled::on_launch).
@@ -184,6 +191,10 @@ impl Launcher for FakeConsole {
 
     fn exited(&self, pane: &str, _lines: u32) -> Result<Option<String>, HerdrError> {
         assert_eq!(pane, LAUNCHED_PANE, "only a launched pane is asked about");
-        Ok(self.state().exited.clone())
+        let s = self.state();
+        match &s.exited_error {
+            Some(e) => Err(e.clone()),
+            None => Ok(s.exited.clone()),
+        }
     }
 }

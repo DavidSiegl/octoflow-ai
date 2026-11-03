@@ -9,9 +9,9 @@ use serde_json::{json, Value};
 use crate::constants::{AGENT_KINDS, DEFAULT_AGENT};
 use crate::env::ConfigDir;
 use crate::error::OrchestratorError;
-use crate::pipeline::{find_workflow, Pipeline, WORKFLOWS};
+use crate::pipeline::Pipeline;
 use crate::prompts::Prompts;
-use crate::workflow_file::{load_workflow_file, workflow_files, workflow_names};
+use crate::workflow_file::{named_workflow, workflow_names};
 
 /// How long POST /run waits for the run it started to save its state.json: checking every `every`, for at most
 /// `limit` in all.
@@ -75,6 +75,9 @@ impl RunRequest {
         if let Some(unknown) = fields.keys().find(|k| !FIELDS.contains(&k.as_str())) {
             return Err(format!("unknown field {unknown:?}; the fields are {}", FIELDS.join(", ")));
         }
+        if fields.iter().any(|(name, value)| holds_nul(name) || value_holds_nul(value)) {
+            return Err("the body's strings must hold no NUL character, which no command's argument can".to_string());
+        }
         let given = |name: &str| fields.get(name).filter(|v| !v.is_null());
         let text = |name: &str| -> Result<Option<String>, String> {
             match given(name) {
@@ -128,23 +131,17 @@ impl RunRequest {
 /// What GET /workflows answers: {"workflows", "agents"}. workflows is each workflow `run --workflow` offers from
 /// config (workflow_names), in that order, as {"name", "description", "roles"}, roles being each of its roles in pane
 /// order as {"role", "label", "agent", "model"}: the harness the role runs in unless the run names another, its
-/// workflow's or DEFAULT_AGENT, and its workflow's model, null for the harness's own; a workflow file that does not
-/// load is {"name", "error"} instead, its error as `workflows` prints it. agents is AGENT_KINDS. The workflows are
-/// worded by the built-in prompts, which change no role, harness or model. Errors: the workflows directory cannot be
-/// listed.
+/// workflow's or DEFAULT_AGENT, and its workflow's model, null for the harness's own; one that does not load, as a
+/// workflow file may not, is {"name", "error"} instead, its error as `run --workflow` would give it
+/// (named_workflow). agents is AGENT_KINDS. The workflows are worded by the built-in prompts, which change no role,
+/// harness or model. Errors: the workflows directory cannot be listed.
 pub fn offered_workflows(config: &ConfigDir) -> Result<Value, OrchestratorError> {
     let built_in = Prompts::default();
-    let files = workflow_files(config)?;
     let mut workflows = vec![];
     for name in workflow_names(config)? {
-        let loaded = match files.get(&name) {
-            Some(path) if !WORKFLOWS.contains(&name.as_str()) => load_workflow_file(path, &built_in)
-                .map_err(|e| e.0.strip_prefix(&format!("{path}: ")).unwrap_or(&e.0).to_string()),
-            _ => find_workflow(&name, &built_in).map_err(|e| e.0),
-        };
-        let entry = match loaded {
+        let entry = match named_workflow(config, &name, &built_in) {
             Ok(pipeline) => json!({"name": name, "description": pipeline.description(), "roles": roles(&pipeline)}),
-            Err(why) => json!({"name": name, "error": why}),
+            Err(e) => json!({"name": name, "error": e.0}),
         };
         workflows.push(entry);
     }
@@ -161,6 +158,20 @@ fn roles(pipeline: &Pipeline) -> Vec<Value> {
             json!({"role": role, "label": label, "agent": agent, "model": pipeline.models().get(role)})
         })
         .collect()
+}
+
+fn holds_nul(text: &str) -> bool {
+    text.contains('\0')
+}
+
+/// Whether a string of value, or a key of an object in it, holds a NUL.
+fn value_holds_nul(value: &Value) -> bool {
+    match value {
+        Value::String(s) => holds_nul(s),
+        Value::Array(items) => items.iter().any(value_holds_nul),
+        Value::Object(fields) => fields.iter().any(|(k, v)| holds_nul(k) || value_holds_nul(v)),
+        _ => false,
+    }
 }
 
 /// The (role, value) pairs of value, the body's field name, in its order; none when it is not given. Each value must

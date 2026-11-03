@@ -1347,14 +1347,14 @@ impl<'a> Workflow<'a> {
     }
 }
 
-/// The error of a prompt template named name that cannot be filled in, which the checks of Pipeline, of prompt files
-/// and of a run's saved prompts (saved_prompts) leave no case for.
 /// The label of the herdr workspace of the run run_id, for task: its key and its task, the first 40 characters, so
 /// that the human can tell a run's workspace in herdr's list. serve labels the workspace it starts a run in so too.
 pub fn workspace_label(run_id: &str, task: &str) -> String {
     format!("{} {task}", crate::state::run_key(run_id)).chars().take(40).collect()
 }
 
+/// The error of a prompt template named name that cannot be filled in, which the checks of Pipeline, of prompt files
+/// and of a run's saved prompts (saved_prompts) leave no case for.
 fn prompt_error(name: &str, e: &TemplateError) -> OrchestratorError {
     OrchestratorError(format!("prompt {name} cannot be filled in: {e}"))
 }

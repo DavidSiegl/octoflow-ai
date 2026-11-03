@@ -922,7 +922,8 @@ fn started_id(argv: &[String]) -> String {
 
 #[test]
 fn a_run_that_saves_its_state_is_answered_with_its_id_and_runs_its_own_program_in_a_workspace() {
-    let host = Arc::new(ServeHost::on(None));
+    // A project on a machine: its run is given the machine and the cwd as the client named them.
+    let host = Arc::new(ServeHost::on(Some("me@box")));
     let served = starting(&host);
     let saving = Arc::clone(&host);
     served.console.state().on_launch = Some(Box::new(move |argv: &[String]| {
@@ -949,6 +950,44 @@ fn a_run_that_saves_its_state_is_answered_with_its_id_and_runs_its_own_program_i
     // An id as run's own, which `run --run-id` takes.
     let argv = ["run", "--run-id", &id, "t"].map(std::ffi::OsString::from);
     assert!(crate::cli::parse_args(argv, &ConfigDir::at("/nowhere")).is_ok(), "{id}");
+}
+
+#[test]
+fn a_run_of_a_project_here_is_given_the_directory_serve_resolved() {
+    let host = Arc::new(ServeHost::on(None));
+    let served = starting(&host);
+    // ~/proj, as the client named it, resolves to /proj (the fake connect's), which the pane starts in too.
+    assert_eq!(served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#).status, Some(202));
+    let argv = served.console.state().launches[0].2.clone();
+    assert_eq!(argv[3..], ["--cwd", "/proj", "--", "t"]);
+}
+
+#[test]
+fn a_look_that_fails_once_the_run_is_launched_is_no_answer() {
+    let host = Arc::new(ServeHost::on(None));
+    let served = starting(&host);
+    let saving = Arc::clone(&host);
+    served.console.state().on_launch = Some(Box::new(move |argv: &[String]| {
+        let id = started_id(argv);
+        saving.state().files.insert(format!("/proj/{RUNS_DIR}/{id}/state.json"), serve_state(&id, &[]));
+    }));
+    // A pane the human closed: the run's state.json still tells.
+    served.console.state().exited_error = Some(HerdrError::new("pane_not_found", "pane w9:p1 not found"));
+    let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#);
+    assert_eq!(reply.status, Some(201), "{}", reply.body);
+    // Neither can be looked at: the client still gets the id of the run that is running.
+    host.state().read_error = Some("ssh: connection reset".to_string());
+    let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#);
+    assert_eq!(reply.status, Some(202), "{}", reply.body);
+    assert!(reply.json()["run"].is_string());
+}
+
+#[test]
+fn a_replaced_program_is_started_as_the_one_now_at_its_path() {
+    let there = |p: &str| p == "/bin/orchestrator";
+    assert_eq!(live_program("/bin/orchestrator (deleted)".into(), there), "/bin/orchestrator");
+    assert_eq!(live_program("/gone/orchestrator (deleted)".into(), there), "/gone/orchestrator (deleted)");
+    assert_eq!(live_program("/bin/orchestrator".into(), there), "/bin/orchestrator");
 }
 
 #[test]
@@ -1062,7 +1101,8 @@ fn workflows_are_the_configuration_s_with_their_roles_and_the_harnesses() {
     assert_eq!(solo["description"], "one builder", "{solo}");
     assert_eq!(solo["roles"], serde_json::json!([{"role": "build", "label": "Solo", "agent": "codex", "model": "o3"}]));
     let broken = named("broken");
-    assert!(broken["error"].as_str().is_some_and(|e| !e.is_empty() && !e.contains(&d.path())), "{broken}");
+    let broken_file = d.join("workflows/broken.toml");
+    assert!(broken["error"].as_str().is_some_and(|e| e.starts_with(&format!("{broken_file}: "))), "{broken}");
     assert_eq!(broken.as_object().unwrap().len(), 2);
     // No project is reached, so none is named.
     assert!(served.connects.lock().unwrap().is_empty());

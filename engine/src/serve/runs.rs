@@ -186,9 +186,11 @@ impl ProjectRuns {
     /// Start the run request asks for, as run_id, by program, the orchestrator's binary, in a new herdr workspace
     /// (Launcher::launch, labelled as the run labels its own, crate::workflow::workspace_label), and wait as wait
     /// says for it to save its state.json, for its command to exit without one, or for stopping to be raised, which
-    /// ends the wait as Unlisted. Errors: Refused for a run id that is not a plain name; Failed when herdr cannot
-    /// launch it, as "no herdr server here; start herdr" without a herdr server, or when the project or the pane
-    /// cannot be read.
+    /// ends the wait as Unlisted. The project is given to `run` as `--cwd` and the directory serve resolved, for a
+    /// project here, and as the client named it, with its `--machine`, for one on a machine. Once the run is launched
+    /// a look that fails, at its state.json or its pane, is no answer: the wait goes on, so that the client still gets
+    /// the id of a run that is running. Errors: Refused for a run id that is not a plain name; Failed when herdr
+    /// cannot launch it, as "no herdr server here; start herdr" without a herdr server.
     pub fn start(
         &self,
         request: &RunRequest,
@@ -199,19 +201,22 @@ impl ProjectRuns {
     ) -> Result<Started, RunReadError> {
         let state = format!("{}/state.json", self.dir(run_id)?);
         let label = crate::workflow::workspace_label(run_id, &request.task);
-        let argv = request.argv(program, run_id, &self.target);
+        // The pane starts in the resolved directory too, where a relative cwd or one with ~ would resolve elsewhere.
+        let target = if self.remote() { self.target.clone() } else { vec!["--cwd".to_string(), self.cwd.clone()] };
+        let argv = request.argv(program, run_id, &target);
         let pane = self.launcher.launch(&self.launch_dir, &label, &argv).map_err(|e| match e.code() {
             Some("server_not_running") => OrchestratorError::new("no herdr server here; start herdr"),
             _ => e.into(),
         })?;
+        let saved = || self.host.read(&state).is_ok_and(|text| text.is_some());
         let deadline = std::time::Instant::now() + wait.limit;
         loop {
-            if self.host.read(&state)?.is_some() {
+            if saved() {
                 return Ok(Started::Listed);
             }
-            if let Some(shown) = self.launcher.exited(&pane, START_ERROR_LINES).map_err(OrchestratorError::from)? {
+            if let Ok(Some(shown)) = self.launcher.exited(&pane, START_ERROR_LINES) {
                 // It may have saved its state.json just before it exited, as a run that fails after its claim does.
-                return Ok(if self.host.read(&state)?.is_some() { Started::Listed } else { Started::Exited(shown) });
+                return Ok(if saved() { Started::Listed } else { Started::Exited(shown) });
             }
             if stopping.is_raised() || std::time::Instant::now() >= deadline {
                 return Ok(Started::Unlisted);

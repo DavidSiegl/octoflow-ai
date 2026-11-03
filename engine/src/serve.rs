@@ -631,12 +631,9 @@ fn post_run(shared: &Shared, mut request: Request, query: &HashMap<String, Strin
 /// The answer to POST /run once its body is run and its project project: the run started, by this program, as a new
 /// run id, and waited for.
 fn start_answer(shared: &Shared, project: &ProjectRuns, run: &RunRequest) -> Answer {
-    let program = match std::env::current_exe().map(std::path::PathBuf::into_os_string) {
-        Ok(path) => match path.into_string() {
-            Ok(path) => path,
-            Err(path) => return (500, error(&format!("serve's program {path:?} is not UTF-8"))),
-        },
-        Err(e) => return (500, error(&format!("cannot tell serve's program: {}", os_error(&e, None)))),
+    let program = match serve_program() {
+        Ok(path) => path,
+        Err(why) => return (500, error(&why)),
     };
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
     let run_id = match crate::cli::new_run_id(now) {
@@ -651,6 +648,23 @@ fn start_answer(shared: &Shared, project: &ProjectRuns, run: &RunRequest) -> Ans
         }
         Ok(Started::Unlisted) => (202, object([("run", Value::from(run_id)), ("listed", Value::from(false))])),
         Err(e) => read_failure(e),
+    }
+}
+
+/// The path of serve's own program, which POST /run starts its runs by. Errors: it cannot be told, or is not UTF-8.
+fn serve_program() -> Result<String, String> {
+    let path = std::env::current_exe().map_err(|e| format!("cannot tell serve's program: {}", os_error(&e, None)))?;
+    let path = path.into_os_string().into_string().map_err(|p| format!("serve's program {p:?} is not UTF-8"))?;
+    Ok(live_program(path, |p| std::path::Path::new(p).exists()))
+}
+
+/// The program at path, as current_exe names it, where a run can start it: Linux's /proc/self/exe names a program
+/// replaced while it runs, as a build or an upgrade replaces serve's, as `<path> (deleted)`, and the program now at
+/// path, by exists, is the one to start. As it is otherwise.
+fn live_program(path: String, exists: impl Fn(&str) -> bool) -> String {
+    match path.strip_suffix(" (deleted)") {
+        Some(replaced) if exists(replaced) => replaced.to_string(),
+        _ => path,
     }
 }
 

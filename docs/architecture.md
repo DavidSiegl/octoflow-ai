@@ -219,9 +219,10 @@ from a herdr pane.
   machine, herdr forwards to the machine's own herdr, and nothing is saved.
 - **Starting a run.** `POST /run` (`serve/start.rs`, `ProjectRuns::start`) makes a run id as `run` would
   (`new_run_id`), opens a workspace in this machine's herdr server, the one serve's environment reaches, labelled
-  as the run labels its own (`workspace_label`), and types its own binary's `run --run-id ID …` into the pane's
-  shell (`Launcher`, `herdr.rs`), each word quoted, so the run can be watched and interrupted there and outlives
-  serve. A project on a machine is started from here too, as `run --machine M --cwd DIR …` in a workspace in
+  as the run labels its own (`workspace_label`), and runs its own binary's `run --run-id ID …` in the pane's
+  shell (`Launcher`, `herdr.rs`), so the run can be watched and interrupted there and outlives serve. herdr's
+  `pane run` types what it is given, so each word goes to the new shell as an environment variable instead, and
+  only `"$OCTOFLOW_ARG_0" …` is typed. A project on a machine is started from here too, as `run --machine M --cwd DIR …` in a workspace in
   serve's own directory: the run's process is local and its agents are on the machine, as from the CLI. The
   hidden `--run-id` lets serve then wait for exactly that run: its `state.json` saved answers 201; the command's
   end without one, told by a line the shell prints after it, answers 422 with what the pane showed; neither
@@ -265,9 +266,10 @@ from a herdr pane.
   It refuses such a path before anything is read (`RunReadError::Refused`), which the server answers with 403. An
   agent is named only by its run and role, which `ProjectRuns` looks up in the run's `state.json`, so a client can
   read or type into no other herdr agent; a POST body is read to at most 64 KiB (`MAX_BODY_BYTES`). `POST /run`
-  runs a command a client chose only within `run`'s flags: the program is serve's own, every word of the body is
-  one argument quoted for the shell, each flag's value joined to its flag and the task after `--`, so no value is
-  taken for another flag or for shell syntax.
+  runs a command a client chose only within `run`'s flags: the program is serve's own, each flag's value is joined
+  to its flag and the task comes after `--`, so no value is taken for another flag, and no word is typed into the
+  shell, where a quote, a `$` or a control character such as ^U could make it a command of its own: the shell
+  gets each one as an environment variable.
 - **Streams.** An event stream to an HTTP/1.1 client is chunked, so that it ends with its last chunk at a stop; to
   an HTTP/1.0 client it ends with the connection. The requests tiny_http reads otherwise than the Python engine's
   http.server did are `TODO.md`'s Open issue "serve answers some requests otherwise than Python's http.server".

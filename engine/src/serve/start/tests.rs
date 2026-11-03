@@ -52,7 +52,9 @@ fn a_body_of_another_shape_is_refused_naming_what_is_wrong() {
         (r#"{"task": "t", "role_models": {"a=b": "m"}}"#, "role_models must be an object of role to a string that is not empty"),
         (r#"{"task": "t", "role_models": {"": "m"}}"#, "role_models must be an object of role to a string that is not empty"),
         (r#"{"task": "t", "role_models": {"build": ""}}"#, "role_models must be an object of role to a string that is not empty"),
-        (r#"{"task": "t", "spec": "/s.md"}"#, "unknown field \"spec\"; the fields are task, workflow, agent, model, role_agents, role_models, no_pr, worktree"),
+        (r#"{"task": "t\u0000"}"#, "the body's strings must hold no NUL character, which no command's argument can"),
+        (r#"{"task": "t", "role_models": {"b\u0000": "m"}}"#, "the body's strings must hold no NUL character, which no command's argument can"),
+        (r#"{"task": "t", "spec": "/s.md"}"#,"unknown field \"spec\"; the fields are task, workflow, agent, model, role_agents, role_models, no_pr, worktree"),
     ];
     for (body, why) in cases {
         assert_eq!(parsed(body), Err(why.to_string()), "{body}");

@@ -236,8 +236,10 @@ pub trait AgentConsole: Send + Sync {
 /// new herdr workspace's pane, where it outlives serve, and tell from the pane when it has exited.
 pub trait Launcher: Send + Sync {
     /// Open a workspace labelled label whose pane's shell starts in cwd, without focusing it, and run argv there as
-    /// one command, each word as given whatever the shell would make of it (quotes, `$`, newlines); gives the pane's
-    /// id. Errors: herdr's, such as server_not_running when no herdr server can be reached.
+    /// one command, each word as given, whatever a shell or a terminal would make of its characters (quotes, `$`,
+    /// newlines, control characters); gives the pane's id. A word must hold no NUL, which no process argument can.
+    /// Errors: herdr's, such as server_not_running when no herdr server can be reached; the workspace is closed again
+    /// when it opened but the command could not be given to it.
     fn launch(&self, cwd: &str, label: &str, argv: &[String]) -> Result<String, HerdrError>;
 
     /// What the pane showed of the command launch ran there, at most its last lines lines, once it has exited; None
@@ -246,28 +248,41 @@ pub trait Launcher: Send + Sync {
 }
 
 /// The line a shell prints in pane once the command Launcher::launch typed there has exited. It names the pane, so
-/// that no line of the command's own arguments, which the shell echoes as they were typed, can be it unless it knew
-/// the pane's id in advance; and launch types it quoted, so that the typed line is not it either.
+/// that no output of the command can be it unless it knew the pane's id in advance; and launch types it quoted, so
+/// that the typed line, which the terminal shows, is not it either.
 fn exit_marker(pane: &str) -> String {
     format!("octoflow: the command in pane {pane} has exited")
 }
 
-/// word as a POSIX shell, and fish, read it back as one word, unchanged: in single quotes, each single quote in it
-/// written as '\''.
-fn shell_word(word: &str) -> String {
-    format!("'{}'", word.replace('\'', r"'\''"))
+/// The environment variable of the new pane's shell that holds word i of a command Launcher::launch runs.
+fn launched_word(i: usize) -> String {
+    format!("OCTOFLOW_ARG_{i}")
 }
 
 impl Launcher for ProcessHerdr {
+    /// herdr 0.9.1's `pane run` types its arguments, joined by spaces, into the pane's shell as keystrokes, so no word
+    /// of argv is typed: each is given to the new pane's shell as an environment variable (`workspace create --env`),
+    /// and the typed line is only `"$OCTOFLOW_ARG_0" "$OCTOFLOW_ARG_1" ...; echo '<marker>'`, which POSIX shells and
+    /// fish read alike. A word typed even quoted would reach the terminal's line editing first: a ^U erases what was
+    /// typed before it, and a ^C or ^M ends the line, so a client's text could run as a command of its own.
     fn launch(&self, cwd: &str, label: &str, argv: &[String]) -> Result<String, HerdrError> {
-        let (_, pane) = self.create_workspace(cwd, label)?;
-        let command: Vec<String> = argv.iter().map(|w| shell_word(w)).collect();
-        // One argument, starting with a quote: herdr's `pane run` joins its arguments with spaces and types them, and
-        // takes its long launch options out of all of its argv (argument), which a word of argv could otherwise be.
-        let line = format!("{}; echo {}", command.join(" "), shell_word(&exit_marker(&pane)));
+        let words: Vec<String> = argv.iter().enumerate().map(|(i, w)| format!("{}={w}", launched_word(i))).collect();
+        let mut args = vec!["workspace", "create", "--cwd", cwd, "--label", label, "--no-focus"];
+        for word in &words {
+            args.extend(["--env", word.as_str()]);
+        }
+        let created = self.call(&args)?;
+        let workspace = field(&created, "workspace create", &["workspace", "workspace_id"])?;
+        let pane = field(&created, "workspace create", &["root_pane", "pane_id"])?;
+        let typed: Vec<String> = (0..argv.len()).map(|i| format!("\"${}\"", launched_word(i))).collect();
+        // A pane id is herdr's, such as w1:p1, with no quote in it.
+        let line = format!("{}; echo '{}'", typed.join(" "), exit_marker(&pane));
         // `pane run` prints nothing on success; its errors are JSON as every command's.
-        let args = ["pane", "run", &pane, argument("a command", &line)?];
-        self.exec_forwarded(&args, Some(Duration::from_secs(CALL_LIMIT_SECONDS)))?;
+        if let Err(e) = self.exec_forwarded(&["pane", "run", &pane, &line], Some(Duration::from_secs(CALL_LIMIT_SECONDS))) {
+            // An idle shell nobody asked for; when the close fails too, the error that matters is still the run's.
+            let _ = self.close_workspace(&workspace);
+            return Err(e);
+        }
         Ok(pane)
     }
 
