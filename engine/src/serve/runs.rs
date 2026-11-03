@@ -251,9 +251,10 @@ impl<'p> RunWatch<'p> {
     /// The first poll sends every run's record and files. A running run's files are listed on every poll. A finished
     /// or failed run's are listed until two polls in a row with the same record list the same files; then again only
     /// when its record changes, as nothing else drives it. The wait is for the files the engine writes after the save
-    /// that finishes the run (summary.md and metrics.json, in workflow.rs's end_done_run and release): a poll interval
-    /// (SERVE_POLL) is taken to be long enough for them, and ones written later are told of only at the record's next
-    /// change. A poll that fails sends only its problem, and changes nothing else of what the watch holds.
+    /// that finishes the run (workflow.rs: end_done_run's summary.md and metrics.json, release's summary.md): a poll
+    /// interval (SERVE_POLL) is taken to be long enough for them, and ones written later are told of only at the
+    /// record's next change. A poll that fails sends only its problem, and changes nothing else of what the watch
+    /// holds.
     pub fn poll(&mut self) -> Vec<Event> {
         match self.changes() {
             Ok(events) => self.problem_events(None).into_iter().chain(events).collect(),
