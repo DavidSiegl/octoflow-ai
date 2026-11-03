@@ -111,7 +111,7 @@ pub fn report_checks(checks: &[Check], say: &dyn Fn(&str)) -> i32 {
 /// interrupt, once local's is raised, which nothing is printed for.
 pub(super) fn doctor_command(local: &Local, target: &Target) -> Result<i32, OrchestratorError> {
     let herdr = (local.herdr)(target.machine.as_deref());
-    let checks = check_setup(local.host, &herdr, target.cwd.as_deref(), local.in_herdr_pane);
+    let checks = check_setup(local.host, &herdr, target.cwd.as_deref(), local.in_herdr_pane, Level::Required);
     if local.interrupt.is_raised() {
         return Err(OrchestratorError::new("interrupted"));
     }
@@ -123,21 +123,28 @@ pub(super) fn doctor_command(local: &Local, target: &Target) -> Result<i32, Orch
 /// its origin.
 ///
 /// host runs commands on this machine, where the orchestrator runs and whose herdr a run drives. Without a machine the
-/// agents run here too, and herdr is reached from a herdr pane, which in_herdr_pane says this process is in. With
-/// one, this herdr must find the machine saved and enabled, and every later check runs on its SSH target, through a
+/// agents run here too, and herdr is reached from a herdr pane, which in_herdr_pane says this process is in; that
+/// check has pane_level, Required where runs start from this process, as doctor's, Optional for one that starts none,
+/// as serve's for the desktop app, for which a pane matters only where the user starts a run. With one, this herdr must find the machine saved and enabled, and every later check runs on its SSH target, through a
 /// Host that starts commands as host does (ProcessHost::over_ssh). cwd is the project's directory where the agents
 /// run, a leading ~ meaning the home directory there, as for a run; without it the project is not checked.
 ///
 /// Only reads: it installs, logs in and writes nothing. A check that fails, or cannot run or times out, has ok false
 /// and the error as its detail. A check that needs an earlier one that failed is skipped: ok false, with a detail
 /// naming that one. So one failure does not stop the rest, and nothing is an error.
-pub fn check_setup(host: &ProcessHost, herdr: &ProcessHerdr, cwd: Option<&str>, in_herdr_pane: bool) -> Vec<Check> {
+pub fn check_setup(
+    host: &ProcessHost,
+    herdr: &ProcessHerdr,
+    cwd: Option<&str>,
+    in_herdr_pane: bool,
+    pane_level: Level,
+) -> Vec<Check> {
     let mut checks: Vec<Check> = Vec::new();
     let install_herdr = format!("install herdr {} or later, or update it with `herdr update`", dotted(&HERDR_MIN_VERSION));
     let mut found = check(&mut checks, "herdr", Level::Required, &install_herdr, None, "", &mut || {
         tool_version(host, "herdr", &HERDR_MIN_VERSION)
     });
-    let (reach_host, reach) = reach_herdr(host, herdr, &found, in_herdr_pane);
+    let (reach_host, reach) = reach_herdr(host, herdr, &found, in_herdr_pane, pane_level);
     checks.push(reach.clone());
     // On a machine every check needs reaching it; reach_host is only used once it is.
     let machine = herdr.machine();
@@ -231,24 +238,23 @@ fn skipped(name: &str, level: Level, needs: &Check) -> Check {
 }
 
 /// The Host the agents run on, None when it cannot be reached, and the Check of reaching herdr: as connect needs it,
-/// from a herdr pane without herdr's machine; with one, the machine saved and enabled, and its SSH target answering
+/// from a herdr pane without herdr's machine, at pane_level; with one, Required, the machine saved and enabled, and its SSH target answering
 /// non-interactive SSH, which is skipped when local_herdr, the Check of herdr here, is not ok.
 fn reach_herdr(
     host: &ProcessHost,
     herdr: &ProcessHerdr,
     local_herdr: &Check,
     in_herdr_pane: bool,
+    pane_level: Level,
 ) -> (Option<ProcessHost>, Check) {
     let name = "reaching herdr";
     let reached = |ok: bool, detail: String, fix: String| Check { name: name.into(), level: Level::Required, ok, detail, fix };
     let Some(machine) = herdr.machine() else {
-        return match in_herdr_pane {
-            true => (Some(host.clone()), reached(true, "inside a herdr pane".into(), String::new())),
-            false => {
-                let fix = "run from a herdr pane, or pass --machine".to_string();
-                (Some(host.clone()), reached(false, "not inside a herdr pane".into(), fix))
-            }
+        let check = match in_herdr_pane {
+            true => reached(true, "inside a herdr pane".into(), String::new()),
+            false => reached(false, "not inside a herdr pane".into(), "run from a herdr pane, or pass --machine".into()),
         };
+        return (Some(host.clone()), Check { level: pane_level, ..check });
     };
     if !local_herdr.ok {
         return (None, skipped(name, Level::Required, local_herdr));

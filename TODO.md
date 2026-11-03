@@ -405,9 +405,12 @@ is rewritten to say what is left.
 - **Two e2e scenarios once saw a turn end a second before it started.** In one `cargo nextest run --workspace` of
   octoflow-without-python ticket 03's branch on a loaded machine (2026-11-03), `agent_exits` recorded a turn's
   `"seconds": -1` in `state.json` and `workflow_product_team` a `-<duration>` in its turns table, where their
-  recordings hold a duration of 0 or more; both passed when run again, and in the two full runs before. Not
-  investigated: whether the turn's start and end come from clocks that can disagree by a second (the engine's and
-  a fake's `date`, say). Closes with that cause found and the turn's seconds taken from one clock.
+  recordings hold a duration of 0 or more; both passed when run again, and in the two full runs before. `no_pr_run`
+  did the same once on setup-checks ticket 02's branch (2026-11-03, its spec turn's `"seconds": -1` in
+  `metrics.json`), and passed in three reruns. A likely cause: `end_turn` (`engine/src/workflow/turn.rs:525`–`531`)
+  takes a turn's end from the handoff file's mtime and its start from `host.now()` (`turn.rs:165`), two clocks read
+  at whole seconds, so a file written in the second the turn starts can end it a second before it began. Closes with
+  that cause confirmed and the turn's seconds taken from one clock, or clamped at 0.
 
 - **`test-integrity` knows golden files only by this repository's layout.** `_golden_file` (`gate.py`) takes a
   golden file to be one under a `golden` directory inside a `tests` directory, as `tests/golden.py` keeps them, so
@@ -495,6 +498,16 @@ is rewritten to say what is left.
   (2026-10-25). Closes with a `TMPDIR` the build removes around `tauri build`, and with a README note, or a newer
   runtime that cleans up, for users.
   Ticket: `.scratch/desktop-packaging-gaps/issues/03-appimage-extraction-cleaned-up.md` (#241).
+- **The Package stage still runs programs it wrote to `/tmp`, kept out of agentbox0's Falco mail only by path
+  exceptions that let any binary placed under those paths run unreported.** The Test and Gate stages set `TMPDIR` to
+  `$WORKSPACE_TMP/tmp`, on the agent's volume, which the rule cannot see (the Jenkinsfile's Test stage says why),
+  but Package keeps `/tmp`. There the linuxdeploy and appimagetool that `packaging/build-desktop.sh` runs under
+  `APPIMAGE_EXTRACT_AND_RUN` extract themselves into `$TMPDIR/appimage_extracted_<hash>` (entry above) and run from
+  there. The homelab excepts those paths (falco/rules/homelab.yaml, `appimage_extracted`). Each stage now creates
+  its own TMPDIR, so a stage added later has to copy both lines. Raised by cross-review 71 (F1, F3: "set TMPDIR for
+  every stage that runs what it builds (one pipeline-level definition next to CARGO_HOME would do)"). Closes with
+  that pipeline-level `TMPDIR`, created before any stage that uses it, and a Package stage seen to pass with it on
+  agentbox0. The homelab can then drop `appimage_extracted`.
 - **No build has yet been seen waiting for `ci/cargo-lock.sh` on the Jenkins agent.** PR #88's builds ran both
   cargo steps through it on agentbox0 (builds 1-3, 2026-10-25), so the agent image has `flock` and the lock file's
   directory is writable, and a quality-style build (`GIT_REF` set) ran `--no-wait`; but the two run side by side
@@ -532,6 +545,12 @@ is rewritten to say what is left.
   README's `herdr integration install gemini` may name a kind herdr no longer has. Found by the doctor run
   (2026-10-24); not checked whether `agent start --kind gemini` still works. Closes once `AGENT_KINDS` and the README
   name the kind herdr installs for Gemini, or herdr is shown to accept `gemini`.
+- **The desktop app's setup dialog shows doctor's fixes in the CLI's words.** `check_setup`
+  (`engine/src/cli/doctor.rs`) words its fixes for a command line: "run from a herdr pane, or pass --machine", "pass
+  --cwd a git checkout". `/setup` (`engine/src/serve/setup.rs`) passes them on as they are, so the dialog
+  (`ui/src/components/SetupDialog.tsx`) names flags where the app has the project bar's Machine and Project folder
+  fields. Found while porting setup-checks ticket 02 (2026-11-03). Closes with the two fixes worded for both, or
+  check_setup told which it is wording them for.
 - **`doctor` checks gitleaks's `git` subcommand, not its version.** README asks for gitleaks 8.19 or later; the
   check reuses `Host.gitleaks_problem`, the run's pre-push check, which asks `gitleaks git --help` because a
   distribution's build may print no version number. So `doctor` shows no gitleaks version. Kept by choice
