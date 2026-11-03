@@ -92,7 +92,9 @@ is rewritten to say what is left.
   when its record changes. A poll that lands between the save and the writes keeps a file list without them for
   good, so the desktop app never shows them. The e2e scenario `serve_endpoints_and_events` fails when it does:
   PR-213's pr-head build, whose final checkpoint lacked metrics.json, where the branch build of the same commit
-  passed (2026-10-30). Closes with the files written before the save that finishes the run, or with the watch
+  passed (2026-10-30). Again in PR-243 build #1 (head 25b87c0, 2026-11-03): checkpoint 3's fourth file was
+  review-1.md where the recording has metrics.json, while branch build octoflow-without-python-04 #1 of the same commit
+  and PR-243 build #2 passed. Closes with the files written before the save that finishes the run, or with the watch
   re-reading a finished run's files until they stop changing.
   Ticket: `.scratch/serve-run-files/issues/01-finished-run-files-reread.md` (#230).
 - **The desktop app ships its npm packages' code without their licenses.** `octoflow-third-party-licenses.html`
