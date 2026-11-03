@@ -115,7 +115,8 @@ as often as it comes back `BLOCKED:`, with `BLOCKED_PROMPT`, no timeout and no s
 `BLOCKED_NOTE` to every prompt of such a step. `save` checks the owner before every write and stops the run as `Stopped::TakenOver`
 after a takeover; `heartbeat` keeps `state.json` fresh while a turn runs. `written` and `quality` open a turn's
 record in `turns` (`turn_record`, started by `Host::now`) and `end_turn` closes it at the handoff file's
-`Host::mtime`; both read the project host's clock. The end of `run` and `release` write `summary.md` (`run_summary`,
+`Host::mtime`, or at the start when that mtime reads earlier; both read the project host. The end of `run` and
+`release` write `summary.md` (`run_summary`,
 with `turns_table`), except after a takeover; `pr_body` adds the same table and `show` prints `turn_lines`. A run
 that is done first counts each agent turn's tokens (`count_tokens`: `Host::session_log` reads the session's log
 where its harness's `SessionLog` says its harness keeps one, and `turn_tokens` sums the answers within the turn), then writes
