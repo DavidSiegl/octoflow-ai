@@ -159,7 +159,8 @@ fn judging_changes(host: &dyn Host, root: &str, a: &str, b: &str) -> Result<Vec<
     let literal = top_literal(&JUDGING_FILES);
     args.extend(literal.iter().map(String::as_str));
     let names = host.git_verbatim(root, &args)?;
-    // The pathspecs admit only JUDGING_FILES, whose names are ASCII.
+    // Only a file under a directory of JUDGING_FILES can have a name that is not UTF-8; such a name only says which
+    // file a refusal is for, so it is given with U+FFFD in place of what is not.
     Ok(names.split(|&c| c == 0).filter(|p| !p.is_empty()).map(|p| String::from_utf8_lossy(p).into_owned()).collect())
 }
 
