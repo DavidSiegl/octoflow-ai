@@ -6,6 +6,7 @@ use super::worktree::worktree_run;
 use super::*;
 use crate::constants::{HEARTBEAT_SECONDS, STALE_SECONDS};
 use crate::runs::local_host;
+use crate::json::object;
 
 const OTHER_ID: &str = "20261009-220151-537935";
 
@@ -15,22 +16,22 @@ fn other_dir() -> String {
 
 /// A FakeHost whose /proj holds run OTHER_ID, which this host's orchestrator pid 3354482 last saved age seconds ago,
 /// its state.json's fields overridden by those of saved.
-fn host_with_other_run(age: u64, saved: &[(&str, Json)]) -> Rc<FakeHost> {
+fn host_with_other_run(age: u64, saved: &[(&str, Value)]) -> Rc<FakeHost> {
     let host = FakeHost::default();
     let mut other = RunState::new(OTHER_ID, "another task", "/proj");
     other.phase = "build".into();
     other.round = 1;
-    let Json::Object(mut state) = other.to_json() else { unreachable!() };
+    let Value::Object(mut state) = other.to_json() else { unreachable!() };
     let owner = [
-        ("host", Json::from(local_host())),
-        ("pid", Json::from(3_354_482)),
-        ("started_at", Json::from("2026-10-09T22:01:51+00:00")),
+        ("host", Value::from(local_host())),
+        ("pid", Value::from(3_354_482)),
+        ("started_at", Value::from("2026-10-09T22:01:51+00:00")),
     ];
-    state.insert("owner", Json::Object(owner.into_iter().collect()));
+    state.insert("owner".into(), Value::Object(object(owner)));
     for (key, value) in saved {
-        state.insert(*key, value.clone());
+        state.insert(key.to_string(), value.clone());
     }
-    host.state().files.insert(format!("{}/state.json", other_dir()), Json::Object(state).dumps());
+    host.state().files.insert(format!("{}/state.json", other_dir()), Value::Object(state).to_string());
     host.state().ages.insert(OTHER_ID.into(), age);
     Rc::new(host)
 }
@@ -47,7 +48,7 @@ fn assert_refused(f: &Fixture, settings: RunSettings, beat: &str) {
     );
     assert_eq!(message, expected);
     let saved = f.saved();
-    assert_eq!((text(&saved, "error"), saved.get("owner")), (Some(message), Some(&Json::Null)));
+    assert_eq!((text(&saved, "error"), saved.get("owner")), (Some(message), Some(&Value::Null)));
     assert!(f.herdr.state().calls.is_empty());
     assert_eq!(f.host.state().files.get(&other_path).cloned(), other);
 }
@@ -75,10 +76,10 @@ fn resume_is_refused_while_another_runs() {
 
 #[test]
 fn runs_nothing_drives_do_not_block() {
-    let done = [("phase", Json::from("done")), ("verdict", Json::from(APPROVE)), ("owner", Json::Null)];
-    let failed = [("error", Json::from("interrupted")), ("owner", Json::Null)];
+    let done = [("phase", Value::from("done")), ("verdict", Value::from(APPROVE)), ("owner", Value::Null)];
+    let failed = [("error", Value::from("interrupted")), ("owner", Value::Null)];
     // (case, age, the saved state's fields, whether its pid is alive)
-    type Case<'a> = (&'a str, u64, &'a [(&'a str, Json)], bool);
+    type Case<'a> = (&'a str, u64, &'a [(&'a str, Value)], bool);
     let cases: [Case; 4] = [
         ("stale", STALE_SECONDS + 1, &[], true),
         ("dead pid on this host", HEARTBEAT_SECONDS + 1, &[], false),
@@ -130,13 +131,13 @@ fn two_runs_that_claim_together_both_refuse() {
     for f in [&first, second] {
         let saved = f.saved();
         assert!(text(&saved, "error").unwrap().contains("one run at a time per checkout"));
-        assert_eq!(saved.get("owner"), Some(&Json::Null));
+        assert_eq!(saved.get("owner"), Some(&Value::Null));
     }
 }
 
 #[test]
 fn worktree_runs_do_not_refuse_each_other() {
-    let host = host_with_other_run(16, &[("worktree", Json::from("/proj/.orchestrator/worktrees/537935"))]);
+    let host = host_with_other_run(16, &[("worktree", Value::from("/proj/.orchestrator/worktrees/537935"))]);
     let mut f = worktree_run(host, None);
     f.pid_alive = Box::new(|_| true);
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
@@ -144,7 +145,7 @@ fn worktree_runs_do_not_refuse_each_other() {
 
 #[test]
 fn a_worktree_run_and_one_in_the_checkout_do_not_refuse_each_other() {
-    let in_place = Fixture::on(host_with_other_run(16, &[("worktree", Json::from("/elsewhere"))]), new_state(), approved());
+    let in_place = Fixture::on(host_with_other_run(16, &[("worktree", Value::from("/elsewhere"))]), new_state(), approved());
     let in_worktree = worktree_run(host_with_other_run(16, &[]), Some(approved()));
     // An in-place run beside a live worktree run, and a worktree run beside a live in-place run.
     for mut f in [in_place, in_worktree] {

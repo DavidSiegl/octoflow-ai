@@ -142,8 +142,8 @@ fn a_resume_between_the_turn_and_the_restore_still_restores() {
     assert_eq!(f.host.state().files.get(TEST_FILE).unwrap(), "assert True");
     let saved = f.saved();
     assert_eq!(
-        (saved.get("phase").unwrap().dumps(), saved.get("locked").unwrap().dumps(), saved.get("restored").unwrap().dumps()),
-        (r#""build""#.to_string(), r#"{"tests": ["test_limiter.py"]}"#.to_string(), "[]".to_string())
+        (saved.get("phase").unwrap().to_string(), saved.get("locked").unwrap().to_string(), saved.get("restored").unwrap().to_string()),
+        (r#""build""#.to_string(), r#"{"tests":["test_limiter.py"]}"#.to_string(), "[]".to_string())
     );
 
     let state = RunState::from_saved(&saved).unwrap();
@@ -151,7 +151,7 @@ fn a_resume_between_the_turn_and_the_restore_still_restores() {
     let mut wf = f2.workflow(with_pipeline(&locking(), f2.as_saved()));
     assert_eq!(wf.run(), verdict(APPROVE));
     assert_eq!(f2.host.state().files.get(TEST_FILE).unwrap(), "assert limit() == 3");
-    let files: Vec<&str> = wf.state().restored.iter().map(|r| r.get("file").and_then(Json::as_str).unwrap()).collect();
+    let files: Vec<&str> = wf.state().restored.iter().map(|r| r.get("file").and_then(Value::as_str).unwrap()).collect();
     assert_eq!(files, ["locked-build-1.diff"]);
 }
 
@@ -226,6 +226,6 @@ fn the_gate_judges_the_restored_tests() {
         .collect();
     let restored = Some("assert limit() == 3".to_string());
     assert_eq!(judged, [restored.clone(), restored]);
-    let files: Vec<Option<&str>> = wf.state().restored.iter().map(|r| r.get("file").and_then(Json::as_str)).collect();
+    let files: Vec<Option<&str>> = wf.state().restored.iter().map(|r| r.get("file").and_then(Value::as_str)).collect();
     assert_eq!(files, [Some("locked-build-1.diff"), Some("locked-build-1-q1.diff")]);
 }

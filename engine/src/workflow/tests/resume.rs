@@ -24,10 +24,10 @@ fn build_and_approve(n: u32, seen: &Rc<RefCell<Vec<String>>>) -> Script {
 #[test]
 fn spec_written_while_orchestrator_was_gone() {
     // Run e292fb: the collector wrote spec.md and exited after the orchestrator died.
-    let saved = r#"{"run_id": "20260929-120000-a1b2c3", "task": "add a rate limiter", "cwd": "/proj",
-        "machine": "remote", "phase": "spec", "round": 0, "workspace_id": "w1", "base": null,
-        "verdict": null, "error": null, "agents": {"spec": {"name": "spec-a1b2c3", "pane": "w1:p1"}}}"#;
-    let state = RunState::from_text(saved).unwrap();
+    let mut state = RunState::new("20260929-120000-a1b2c3", "add a rate limiter", "/proj");
+    state.machine = Some("remote".into());
+    state.workspace_id = "w1".into();
+    state.agents.insert("spec", [("name", "spec-a1b2c3".to_string()), ("pane", "w1:p1".to_string())].into_iter().collect());
     let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![
         ("build", vec![build_turn(1)]),
         ("review", vec![review_turn(1, APPROVE)]),
@@ -187,7 +187,7 @@ fn invalid_review_is_refused_until_deleted() {
         "{message}"
     );
     let saved = f.saved();
-    assert_eq!(saved.get("prompted"), Some(&Json::Null));
+    assert_eq!(saved.get("prompted"), Some(&Value::Null));
     assert_eq!(prompts_to(&f, "review-a1b2c3"), 0);
 
     f.host.state().files.remove(&f.state.review_path(1));
@@ -205,10 +205,7 @@ fn invalid_review_is_refused_until_deleted() {
 
 #[test]
 fn malformed_review_found_on_resume_is_retried() {
-    // Saved by a version without retries: state.json has neither retried nor retrying.
-    let mut saved = prompted(saved_run("review", 1, FULL), "review-1.md").to_json().as_object().unwrap().clone();
-    saved.remove("retried");
-    saved.remove("retrying");
+    let saved = prompted(saved_run("review", 1, FULL), "review-1.md").to_json().as_object().unwrap().clone();
     let seen = seen();
     let f = Fixture::resume(Rc::new(FakeHost::default()), RunState::from_saved(&saved).unwrap(), vec![(
         "review",

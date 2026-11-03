@@ -6,7 +6,7 @@ use crate::error::{closest_name, OrchestratorError};
 use crate::host::line_ends_as_lf;
 use crate::paths::split_extension;
 use crate::proof_copies_dir;
-use crate::py::json::Map;
+use crate::map::Map;
 
 pub mod template;
 

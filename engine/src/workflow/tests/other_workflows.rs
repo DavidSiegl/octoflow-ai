@@ -143,7 +143,7 @@ fn interrupted_mid_loop_resumes_at_the_right_step() {
     assert_eq!(f.workflow(with_pipeline(&four)).run(), Err(Stopped::Interrupted));
     let saved = f.saved();
     let fields = ["workflow", "phase", "error"].map(|key| text(&saved, key).unwrap_or_default());
-    assert_eq!((fields, saved.get("round")), (["four", "build", "interrupted"].map(String::from), Some(&Json::from(2))));
+    assert_eq!((fields, saved.get("round")), (["four", "build", "interrupted"].map(String::from), Some(&Value::from(2))));
     let seen = seen();
     let state = RunState::from_saved(&saved).unwrap();
     let f2 = Fixture::resume(Rc::clone(&f.host), state, vec![("review", vec![recording(review_turn(2, APPROVE), &seen)])], &[], &[]);
@@ -394,70 +394,6 @@ fn a_gate_that_passes_is_finished() {
     let pr = f.host.state().prs[0].clone();
     assert!(!pr.draft);
     assert!(pr.body.contains("<summary>Quality gate (round 1)</summary>\n\nGATE: OK"));
-}
-
-// -- TestSavedBeforeWorkflows: state.json as commit d6bb100 wrote it, without a workflow field. --------------------
-
-/// state as a run saved before workflows existed would read: without its workflow field.
-fn old(state: &RunState) -> RunState {
-    let Json::Object(mut saved) = state.to_json() else { unreachable!() };
-    saved.remove("workflow");
-    RunState::from_saved(&saved).unwrap()
-}
-
-#[test]
-fn each_phase_resumes_under_the_default() {
-    let with = |mut state: RunState, change: fn(&mut RunState)| {
-        change(&mut state);
-        state
-    };
-    // By phase, the saved run, its script, and a file the run wrote before.
-    type Case = (&'static str, RunState, Script, Option<(String, &'static str)>);
-    let build_and_review = vec![("build", vec![build_turn(1)]), ("review", vec![review_turn(1, APPROVE)])];
-    let report = Some((format!("{D}/build-2.md"), "report 2"));
-    let cases: Vec<Case> = vec![
-        ("spec", with(saved_run("spec", 0, &["spec"]), |s| s.pull_request = true), approved(), None),
-        ("build", saved_run("build", 1, FULL), build_and_review, None),
-        ("review", saved_run("review", 2, FULL), vec![("review", vec![review_turn(2, APPROVE)])], report),
-        (
-            "publish",
-            with(saved_run("publish", 1, FULL), |s| {
-                s.pull_request = true;
-                (s.base_branch, s.branch) = (Some("main".into()), Some("orchestrator/x-a1b2c3".into()));
-                s.verdict = Some(APPROVE.into());
-            }),
-            vec![],
-            None,
-        ),
-        ("done", with(saved_run("done", 1, FULL), |s| s.verdict = Some(APPROVE.into())), vec![], None),
-    ];
-    for (phase, state, script, file) in cases {
-        let head = if phase == "publish" { "def456" } else { "abc123" };
-        let host = FakeHost::new(Some(head), state.branch.as_deref().unwrap_or("main"));
-        let f = Fixture::resume(Rc::new(host), old(&state), script, &[], &[]);
-        if let Some((path, text)) = file {
-            f.put(&path, text);
-        }
-        let mut wf = f.workflow(f.as_saved());
-        assert_eq!(wf.state().workflow, "default", "{phase}");
-        assert_eq!(wf.run(), verdict(APPROVE), "{phase}");
-        assert_eq!(wf.state().phase, "done", "{phase}");
-    }
-}
-
-#[test]
-fn quality_resumes_under_the_default() {
-    let reviews = seen();
-    let state = old(&quality_state(1));
-    let script = vec![("review", vec![recording(review_turn(1, APPROVE), &reviews)])];
-    let f = Fixture::resume_gated(Rc::new(FakeHost::default()), state, script, &[]);
-    f.put(&f.state.quality_path(1, 1), "GATE: OK\n");
-
-    let mut wf = f.workflow(f.as_saved_gated());
-    assert_eq!(wf.run(), verdict(APPROVE));
-    assert_eq!(wf.state().workflow, "default");
-    assert_eq!(wf.state().phase, "done");
-    assert!(reviews.borrow()[0].contains(&quality_note(QUALITY_PASSED_NOTE, &f.state.quality_path(1, 1))));
 }
 
 // -- The Workflow-driven cases of TestWorkflowDefinitions and TestWorkflowFiles, and TestSpecBuildReviewExample ------

@@ -28,11 +28,12 @@ use crate::host::fake::{FakePr, PrEdit};
 use crate::host::Completed;
 use crate::pipeline::Pipeline;
 use crate::pull_request::conflict_warning;
-use crate::py::json::Map;
+use crate::json::{Object, ValueExt};
 use crate::spec_file::SpecFile;
 use crate::state::RunState;
 use crate::test_support::{TempDir, EXAMPLES};
 use crate::workflow::fixture::{build_turn, review_turn};
+use crate::json::object;
 
 const PR_A: &str = "https://github.com/o/r/pull/1";
 const PR_B: &str = "https://github.com/o/r/pull/2";
@@ -60,7 +61,7 @@ fn ready(title: &str) -> String {
 }
 
 /// Fields of a saved state, each in place of the state's own.
-type Fields = Vec<(&'static str, Json)>;
+type Fields = Vec<(&'static str, Value)>;
 
 /// How one scripted run ends, given its state to change as the run would.
 type Outcome = Box<dyn FnOnce(&mut RunState) -> Result<Option<String>, Stopped>>;
@@ -155,34 +156,32 @@ impl Drain {
     }
 
     /// A run of the spec's, as an interrupted drain leaves it in the project's runs, saved age seconds ago.
-    fn saved_run(&self, slug: &str, run_id: &str, age: u64, fields: &[(&str, Json)]) {
+    fn saved_run(&self, slug: &str, run_id: &str, age: u64, fields: &[(&str, Value)]) {
         let state = RunState::new(run_id, &format!("spec {slug}"), "/proj");
-        let mut saved: Map<Json> = Json::parse(&state.to_text()).unwrap().as_object().unwrap().clone();
+        let mut saved: Object = serde_json::from_str::<Value>(&state.to_text()).unwrap().as_object().unwrap().clone();
         for (key, value) in fields {
-            saved.insert(*key, value.clone());
+            saved.insert(key.to_string(), value.clone());
         }
-        self.cli.save(&Json::Object(saved), age);
+        self.cli.save(&Value::Object(saved), age);
     }
 
     /// What gh says of the pull request at url: state, headRefOid and closedAt, with fields in place of those.
-    fn pull_request(&self, url: &str, state: &str, fields: &[(&str, Json)]) {
-        let mut pr: Map<Json> =
-            [("state", Json::from(state)), ("headRefOid", Json::from("a".repeat(40))), ("closedAt", Json::Null)]
-                .into_iter()
-                .collect();
+    fn pull_request(&self, url: &str, state: &str, fields: &[(&str, Value)]) {
+        let mut pr: Object =
+            object([("state", Value::from(state)), ("headRefOid", Value::from("a".repeat(40))), ("closedAt", Value::Null)]);
         for (key, value) in fields {
-            pr.insert(*key, value.clone());
+            pr.insert(key.to_string(), value.clone());
         }
-        self.cli.f.host.state().pull_requests.insert(url.into(), FakePr::Prints(Json::Object(pr)));
+        self.cli.f.host.state().pull_requests.insert(url.into(), FakePr::Prints(Value::Object(pr)));
     }
 
     /// Give the project a done run whose branch the sweep of earlier runs' branches would prune, so that whether the
     /// sweep ran shows in gh's calls (swept); its gh is logged out, so the sweep stops at it.
     fn sweepable(&self) {
         let fields = [
-            ("phase", Json::from(DONE)),
-            ("branch", Json::from("orchestrator/swept-5eeeee")),
-            ("pr_url", Json::from(SWEPT_PR)),
+            ("phase", Value::from(DONE)),
+            ("branch", Value::from("orchestrator/swept-5eeeee")),
+            ("pr_url", Value::from(SWEPT_PR)),
         ];
         self.saved_run("swept", "20261001-000000-5eeeee", 10_000, &fields);
         let unusable = Completed { status: 4, stdout: String::new(), stderr: "not logged in".into() };
@@ -249,7 +248,7 @@ impl Drain {
         self.runs.borrow()[n].0.run_id.clone()
     }
 
-    fn run_conflicts(&self, run_id: &str) -> Json {
+    fn run_conflicts(&self, run_id: &str) -> Value {
         self.cli.saved(run_id).get("conflicts").cloned().unwrap()
     }
 
@@ -634,19 +633,19 @@ fn a_ctrl_c_between_runs_stops_the_drain_with_the_changes_printed() {
 
 #[test]
 fn a_finished_run_on_the_run_line_is_taken_up_without_a_new_run() {
-    let pr_a = || ("pr_url", Json::from(PR_A));
-    let verdict = |v: &str| ("verdict", Json::from(v));
+    let pr_a = || ("pr_url", Value::from(PR_A));
+    let verdict = |v: &str| ("verdict", Value::from(v));
     let cases: [(Fields, &str, Option<&str>); 5] = [
         (vec![verdict(APPROVE), pr_a()], SPEC_IN_REVIEW, Some(PR_A)),
         (vec![verdict(FINISHED), pr_a()], SPEC_IN_REVIEW, Some(PR_A)),
-        (vec![verdict(APPROVE), pr_a(), ("conflicts", Json::Array(vec![Json::from("x.py")]))], SPEC_FOR_HUMAN, Some(PR_A)),
+        (vec![verdict(APPROVE), pr_a(), ("conflicts", Value::Array(vec![Value::from("x.py")]))], SPEC_FOR_HUMAN, Some(PR_A)),
         (vec![verdict(CHANGES_REQUESTED), pr_a()], SPEC_FOR_HUMAN, Some(PR_A)),
         (vec![verdict(CHANGES_REQUESTED)], SPEC_FOR_HUMAN, None),
     ];
     for (mut fields, spec_after, pr) in cases {
         let d = Drain::new();
         d.spec("a", &spec_text("First", Some(SPEC_READY), &["Run: 20261024-100000-aaaaaa"]));
-        fields.push(("phase", Json::from(DONE)));
+        fields.push(("phase", Value::from(DONE)));
         d.saved_run("a", "20261024-100000-aaaaaa", 10_000, &fields);
         d.pull_request(PR_A, "OPEN", &[]);
         let r = d.drain(vec![], &[]);
@@ -662,7 +661,7 @@ fn a_finished_runs_pull_request_is_followed_in_the_same_pass() {
     for (pr_state, spec_after) in [("MERGED", SPEC_DONE), ("CLOSED", SPEC_FOR_HUMAN), ("OPEN", SPEC_IN_REVIEW)] {
         let d = Drain::new();
         d.spec("a", &spec_text("First", Some(SPEC_READY), &[&format!("Run: {run_id}")]));
-        let fields = [("phase", Json::from(DONE)), ("verdict", Json::from(APPROVE)), ("pr_url", Json::from(PR_A))];
+        let fields = [("phase", Value::from(DONE)), ("verdict", Value::from(APPROVE)), ("pr_url", Value::from(PR_A))];
         d.saved_run("a", run_id, 10_000, &fields);
         d.pull_request(PR_A, pr_state, &[]);
         assert_eq!(d.refreshed(), [(0, entries(&[(STATUS_KEY, spec_after), (PR_KEY, PR_A)]))], "{pr_state}");
@@ -676,7 +675,7 @@ fn one_drain_marks_a_merged_finished_run_done_and_runs_its_dependant() {
     let run_id = "20261024-100000-aaaaaa";
     d.spec("a", &spec_text("First", Some(SPEC_READY), &[&format!("Run: {run_id}")]));
     d.spec("b", &spec_text("Second", Some(SPEC_READY), &["Blocked by: a"]));
-    let fields = [("phase", Json::from(DONE)), ("verdict", Json::from(APPROVE)), ("pr_url", Json::from(PR_A))];
+    let fields = [("phase", Value::from(DONE)), ("verdict", Value::from(APPROVE)), ("pr_url", Value::from(PR_A))];
     d.saved_run("a", run_id, 10_000, &fields);
     d.pull_request(PR_A, "MERGED", &[]);
     let r = d.drain(vec![], &["--dry-run"]);
@@ -692,21 +691,21 @@ fn one_drain_marks_a_merged_finished_run_done_and_runs_its_dependant() {
 
 /// Spec a, of status, whose run with verdict opened PR_A over a conflict in x.py, and what gh says of PR_A: OPEN, a
 /// draft and MERGEABLE unless pr says otherwise, its body the warning and a line. The run's id.
-fn conflicted_spec(d: &Drain, status: &str, verdict: &str, pr: &[(&str, Json)]) -> String {
+fn conflicted_spec(d: &Drain, status: &str, verdict: &str, pr: &[(&str, Value)]) -> String {
     let run_id = "20261024-100000-aaaaaa";
     d.spec("a", &spec_text("First", Some(status), &[&format!("Run: {run_id}"), &format!("PR: {PR_A}")]));
     let fields = [
-        ("phase", Json::from(DONE)),
-        ("verdict", Json::from(verdict)),
-        ("pr_url", Json::from(PR_A)),
-        ("base_branch", Json::from("main")),
-        ("conflicts", Json::Array(vec![Json::from("x.py")])),
+        ("phase", Value::from(DONE)),
+        ("verdict", Value::from(verdict)),
+        ("pr_url", Value::from(PR_A)),
+        ("base_branch", Value::from("main")),
+        ("conflicts", Value::Array(vec![Value::from("x.py")])),
     ];
     d.saved_run("a", run_id, 10_000, &fields);
     let body = format!("{}\n\nOpened by run {run_id}.\n", conflict_warning(Some("main"), &["x.py".to_string()]));
-    let mut all = vec![("isDraft", Json::Bool(true)), ("mergeable", Json::from("MERGEABLE")), ("body", Json::from(body))];
+    let mut all = vec![("isDraft", Value::Bool(true)), ("mergeable", Value::from("MERGEABLE")), ("body", Value::from(body))];
     all.extend(pr.iter().cloned());
-    let state = pr.iter().find(|(k, _)| *k == "state").map_or("OPEN".to_string(), |(_, v)| v.python_str());
+    let state = pr.iter().find(|(k, _)| *k == "state").map_or("OPEN".to_string(), |(_, v)| v.text());
     d.pull_request(PR_A, &state, &all);
     run_id.to_string()
 }
@@ -723,7 +722,7 @@ fn a_spec_for_the_human_only_for_its_conflict_goes_to_review_once_refresh_clears
     let body = format!("Opened by run {run_id}.\n");
     let edits = [PrEdit::Body { url: PR_A.into(), body }, PrEdit::Ready { url: PR_A.into() }];
     assert_eq!(d.cli.f.host.state().pr_edits, edits);
-    assert_eq!(d.run_conflicts(&run_id), Json::Array(vec![]));
+    assert_eq!(d.run_conflicts(&run_id), Value::Array(vec![]));
 }
 
 #[test]
@@ -732,7 +731,7 @@ fn a_spec_for_the_human_stays_when_its_run_did_not_succeed_or_still_conflicts() 
         [(CHANGES_REQUESTED, ("", ""), 1), (APPROVE, ("mergeable", "CONFLICTING"), 0), (APPROVE, ("state", "CLOSED"), 0)];
     for (verdict, (key, value), edits) in cases {
         let d = Drain::new();
-        let pr: Vec<(&str, Json)> = if key.is_empty() { vec![] } else { vec![(key, Json::from(value))] };
+        let pr: Vec<(&str, Value)> = if key.is_empty() { vec![] } else { vec![(key, Value::from(value))] };
         let run_id = conflicted_spec(&d, SPEC_FOR_HUMAN, verdict, &pr);
         let r = d.drain(vec![], &[]);
         assert_eq!(r.status, 0, "{}", r.err);
@@ -751,14 +750,14 @@ fn an_in_review_specs_run_is_refreshed_too() {
     let r = d.drain(vec![], &[]);
     assert_eq!(r.status, 0);
     assert_eq!(d.header("a"), (some(SPEC_IN_REVIEW), Some(run_id.clone()), some(PR_A)));
-    assert_eq!(d.run_conflicts(&run_id), Json::Array(vec![]));
+    assert_eq!(d.run_conflicts(&run_id), Value::Array(vec![]));
     assert_eq!(r.out, "all specs cleared\n");
 }
 
 #[test]
 fn an_in_review_spec_whose_refresh_finds_its_pull_request_merged_is_done_asking_gh_once() {
     let d = Drain::new();
-    conflicted_spec(&d, SPEC_IN_REVIEW, APPROVE, &[("state", Json::from("MERGED"))]);
+    conflicted_spec(&d, SPEC_IN_REVIEW, APPROVE, &[("state", Value::from("MERGED"))]);
     assert_eq!(d.refreshed(), [(0, entries(&[(STATUS_KEY, SPEC_DONE)]))]);
     assert_eq!(d.views(), [PR_A]);
 }
@@ -774,7 +773,7 @@ fn a_spec_for_the_human_whose_conflict_clears_has_one_entry_and_gh_asked_once() 
 #[test]
 fn a_spec_for_the_human_whose_refresh_finds_its_pull_request_merged_is_done_asking_gh_once() {
     let d = Drain::new();
-    conflicted_spec(&d, SPEC_FOR_HUMAN, APPROVE, &[("state", Json::from("MERGED"))]);
+    conflicted_spec(&d, SPEC_FOR_HUMAN, APPROVE, &[("state", Value::from("MERGED"))]);
     assert_eq!(d.refreshed(), [(0, entries(&[(STATUS_KEY, SPEC_DONE)]))]);
     assert_eq!(d.views(), [PR_A]);
 }
@@ -782,7 +781,7 @@ fn a_spec_for_the_human_whose_refresh_finds_its_pull_request_merged_is_done_aski
 #[test]
 fn a_refresh_of_another_pull_request_than_the_spec_s_settles_nothing_by_it() {
     let d = Drain::new();
-    let run_id = conflicted_spec(&d, SPEC_IN_REVIEW, APPROVE, &[("state", Json::from("MERGED"))]);
+    let run_id = conflicted_spec(&d, SPEC_IN_REVIEW, APPROVE, &[("state", Value::from("MERGED"))]);
     d.spec("a", &spec_text("First", Some(SPEC_IN_REVIEW), &[&format!("Run: {run_id}"), &format!("PR: {PR_B}")]));
     d.pull_request(PR_B, "OPEN", &[]);
     assert_eq!(d.refreshed(), []);
@@ -800,17 +799,17 @@ fn a_dry_run_shows_the_move_and_refreshes_nothing() {
     assert!(!r.err.contains("conflict cleared"));
     assert_eq!(d.text("a"), before);
     assert_eq!(d.cli.f.host.state().pr_edits, []);
-    assert_eq!(d.run_conflicts(&run_id), Json::Array(vec![Json::from("x.py")]));
+    assert_eq!(d.run_conflicts(&run_id), Value::Array(vec![Value::from("x.py")]));
 }
 
 #[test]
 fn an_unfinished_run_on_the_run_line_stops_the_drain_before_any_run() {
     let run_id = "20261024-100000-aaaaaa";
     let stale = HEARTBEAT_SECONDS + STALE_SECONDS;
-    let owner = Json::parse(r#"{"host": "elsewhere", "pid": 1}"#).unwrap();
+    let owner = serde_json::from_str::<Value>(r#"{"host": "elsewhere", "pid": 1}"#).unwrap();
     // The project is --cwd /proj's, which the command repeats, where Python's test patches resolve_dir.
     let resume = "resume it with `orchestrator.py resume aaaaaa --cwd /proj`";
-    let cases: [(Option<Fields>, u64, &str, &str); 5] = [
+    let cases: [(Option<Fields>, u64, &str, &str); 6] = [
         (
             Some(vec![("owner", owner)]),
             0,
@@ -818,8 +817,10 @@ fn an_unfinished_run_on_the_run_line_stops_the_drain_before_any_run() {
             "wait for it to finish, or remove the Run: line",
         ),
         (Some(vec![]), stale, "is stale (no heartbeat for", resume),
-        (Some(vec![("error", Json::from("interrupted"))]), stale, "failed: interrupted", resume),
-        (Some(vec![("closed", Json::from("workspace closed"))]), stale, "was closed (workspace closed)", "; remove the Run: line from"),
+        (Some(vec![("error", Value::from("interrupted"))]), stale, "failed: interrupted", resume),
+        (Some(vec![("closed", Value::from("workspace closed"))]), stale, "was closed (workspace closed)", "; remove the Run: line from"),
+        // resume refuses a state of another format, so drain does not offer it.
+        (Some(vec![("format", Value::from(1))]), stale, "cannot be resumed: run 20261024-100000-aaaaaa has state format 1", "; remove the Run: line from"),
         (None, 0, "is not under /proj/.orchestrator/runs", "; remove the Run: line from"),
     ];
     for (fields, age, why, remedy) in cases {
@@ -828,7 +829,7 @@ fn an_unfinished_run_on_the_run_line_stops_the_drain_before_any_run() {
         d.spec("a", &spec_text("First", Some(SPEC_READY), &[&format!("Run: {run_id}")]));
         d.spec("b", &ready("Second"));
         if let Some(mut fields) = fields {
-            fields.push(("phase", Json::from("build")));
+            fields.push(("phase", Value::from("build")));
             d.saved_run("a", run_id, age, &fields);
         }
         let before = d.text("a");
@@ -839,6 +840,36 @@ fn an_unfinished_run_on_the_run_line_stops_the_drain_before_any_run() {
         assert!(r.err.contains(&format!("{} to start the spec over", d.path("a"))), "{}", r.err);
         assert_eq!((d.text("a"), d.header("b")), (before, (some(SPEC_READY), None, None)));
         assert_eq!(r.out, "");
+        assert!(!d.swept(), "{why}");
+    }
+}
+
+#[test]
+fn a_run_an_earlier_release_saved_is_waited_for_while_it_runs_and_never_resumed() {
+    let run_id = "20261024-100000-aaaaaa";
+    let stale = HEARTBEAT_SECONDS + STALE_SECONDS;
+    let owner = serde_json::from_str::<Value>(r#"{"host": "elsewhere", "pid": 1}"#).unwrap();
+    let cases: [(Option<Value>, u64, &str, &str); 2] = [
+        // Its own release is still driving it: removing its directory would pull the run out from under that process.
+        (Some(owner), 0, "is running (pid 1 on elsewhere, beat 0s ago)", "wait for it to finish, or remove the Run: line"),
+        (None, stale, "cannot be resumed: run 20261024-100000-aaaaaa was saved by an octoflow before", "; remove the Run: line from"),
+    ];
+    for (owner, age, why, remedy) in cases {
+        let d = Drain::new();
+        d.sweepable();
+        d.spec("a", &spec_text("First", Some(SPEC_READY), &[&format!("Run: {run_id}")]));
+        let mut saved = serde_json::from_str::<Value>(&RunState::new(run_id, "spec a", "/proj").to_text()).unwrap();
+        let fields = saved.as_object_mut().unwrap();
+        fields.remove("format");
+        fields.insert("phase".into(), Value::from("build"));
+        if let Some(owner) = owner {
+            fields.insert("owner".into(), owner);
+        }
+        d.cli.save(&saved, age);
+        let r = d.drain(vec![], &[]);
+        assert_eq!(r.status, EXIT_ERROR);
+        assert!(r.err.starts_with(&format!("error: spec a: run {run_id}, on its Run: line, {why}")), "{}", r.err);
+        assert!(r.err.contains(remedy), "{}", r.err);
         assert!(!d.swept(), "{why}");
     }
 }
@@ -909,7 +940,7 @@ fn only_the_header_lines_drain_owns_change() {
         let header =
             ["Owner: me", "Status:   ready-for-agent  ", "Blocked by:", "Run: stale", "## Notes", "PR: not in the header"];
         d.spec("a", &spec_text_nl("First", None, &header, nl));
-        let fields = [("phase", Json::from(DONE)), ("verdict", Json::from(APPROVE)), ("pr_url", Json::from(PR_A))];
+        let fields = [("phase", Value::from(DONE)), ("verdict", Value::from(APPROVE)), ("pr_url", Value::from(PR_A))];
         d.saved_run("a", "stale", 0, &fields);
         d.pull_request(PR_A, "OPEN", &[]);
         assert_eq!(d.drain(vec![], &[]).status, 0);
@@ -963,7 +994,7 @@ fn dry_run_changes_nothing_and_says_what_it_would_do() {
     d.spec("d", &ready("D"));
     d.spec("e", &spec_text("E", Some(SPEC_READY), &["Blocked by: d"]));
     d.pull_request(PR_A, "MERGED", &[]);
-    let fields = [("phase", Json::from(DONE)), ("verdict", Json::from(APPROVE)), ("pr_url", Json::from(PR_B))];
+    let fields = [("phase", Value::from(DONE)), ("verdict", Value::from(APPROVE)), ("pr_url", Value::from(PR_B))];
     d.saved_run("c", "20261024-100000-cccccc", 0, &fields);
     d.pull_request(PR_B, "OPEN", &[]);
     let texts = || -> Vec<String> { ["a", "b", "c", "d", "e"].iter().map(|s| d.text(s)).collect() };

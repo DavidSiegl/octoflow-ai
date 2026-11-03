@@ -88,7 +88,7 @@ fn worktree_is_added_from_origin_before_the_workspace_opens() {
     let (record, host, state_path) = (Rc::clone(&at_workspace), Rc::clone(&f.host), format!("{}/state.json", f.state.dir()));
     f.herdr.state().before_call = Some(Box::new(move |call| {
         if let Call::Workspace { .. } = call {
-            let saved = Json::parse(host.state().files.get(&state_path).unwrap()).unwrap();
+            let saved = serde_json::from_str::<Value>(host.state().files.get(&state_path).unwrap()).unwrap();
             let added = host.state().worktrees.contains_key(WORKTREE);
             record.borrow_mut().push((saved.get("worktree").cloned(), added));
         }
@@ -110,7 +110,7 @@ fn worktree_is_added_from_origin_before_the_workspace_opens() {
             ("/proj".to_string(), strings(&["worktree", "add", "--detach", WORKTREE, "origin/main"])),
         ]
     );
-    assert_eq!(*at_workspace.borrow(), [(Some(Json::from(WORKTREE)), true)]);
+    assert_eq!(*at_workspace.borrow(), [(Some(Value::from(WORKTREE)), true)]);
     assert_eq!(wf.state().base_branch.as_deref(), Some("main"));
 }
 
@@ -161,9 +161,9 @@ fn publishing_removes_the_worktree() {
     let (record, host, state_path) = (Rc::clone(&removed), Rc::clone(&f.host), format!("{}/state.json", f.state.dir()));
     f.host.state().before_git = Some(Box::new(move |cwd, args| {
         if args.starts_with(&["worktree", "remove"]) {
-            let saved = Json::parse(host.state().files.get(&state_path).unwrap()).unwrap();
+            let saved = serde_json::from_str::<Value>(host.state().files.get(&state_path).unwrap()).unwrap();
             let path = args.last().unwrap().to_string();
-            record.borrow_mut().push((cwd.to_string(), path, saved.get("pr_url").map(Json::python_str)));
+            record.borrow_mut().push((cwd.to_string(), path, saved.get("pr_url").map(Value::text)));
         }
     }));
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
@@ -279,7 +279,7 @@ fn a_state_saved_without_worktree_resumes_in_place() {
     let mut state = saved_run("review", 1, FULL);
     state.pull_request = true;
     (state.base_branch, state.branch) = (Some("main".into()), Some(RUN_BRANCH.into()));
-    let Json::Object(mut saved) = state.to_json() else { unreachable!() };
+    let Value::Object(mut saved) = state.to_json() else { unreachable!() };
     saved.remove("worktree");
     let state = RunState::from_saved(&saved).unwrap();
     assert_eq!((state.worktree.as_deref(), state.work_dir()), (None, "/proj"));

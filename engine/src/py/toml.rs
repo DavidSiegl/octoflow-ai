@@ -4,8 +4,6 @@
 use ::toml::value::{Datetime, Offset};
 use ::toml::{Table, Value};
 
-use super::json::Json;
-
 /// The table text holds, as tomllib.loads reads it; for text that is not TOML, why not, as [`syntax_error`] words
 /// it. The toml crate reads TOML 1.1, some of which tomllib before Python 3.15 refuses.
 pub fn loads(text: &str) -> Result<Table, String> {
@@ -116,7 +114,8 @@ fn instant(d: &Datetime) -> Option<(i64, u32)> {
         Offset::Z => 0,
         Offset::Custom { minutes } => i64::from(minutes),
     };
-    let days = crate::py::datetime::days_from_civil(i64::from(date.year), i64::from(date.month), i64::from(date.day));
+    let civil = jiff::civil::Date::new(i16::try_from(date.year).ok()?, date.month as i8, date.day as i8).ok()?;
+    let days = i64::from(civil.since(jiff::civil::date(1970, 1, 1)).ok()?.get_days());
     let clock = i64::from(time.hour) * 3600 + i64::from(time.minute) * 60 + i64::from(time.second.unwrap_or(0));
     Some((days * 86_400 + clock - minutes * 60, time.nanosecond.unwrap_or(0) / 1000))
 }
@@ -160,7 +159,7 @@ pub fn repr(value: &Value) -> String {
     match value {
         Value::String(s) => format!("{s:?}"),
         Value::Integer(n) => n.to_string(),
-        Value::Float(x) => Json::Float(*x).python_str(),
+        Value::Float(x) => float_text(*x).replace("Infinity", "inf").replace("NaN", "nan"),
         Value::Boolean(b) => if *b { "True" } else { "False" }.to_string(),
         Value::Datetime(d) => datetime_repr(d),
         Value::Array(items) => format!("[{}]", items.iter().map(repr).collect::<Vec<_>>().join(", ")),
@@ -173,23 +172,113 @@ pub fn repr(value: &Value) -> String {
     }
 }
 
-/// value as json.dumps writes it; for a datetime, date or time anywhere in it, json.dumps's TypeError's message.
+/// value as json.dumps writes it: ", " and ": " between items and keys, every character outside printable ASCII
+/// escaped, and a float as Python's repr writes it; for a datetime, date or time anywhere in it, json.dumps's
+/// TypeError's message.
 pub fn json_dumps(value: &Value) -> Result<String, String> {
-    to_json(value).map(|json| json.dumps())
+    let mut out = String::new();
+    write_json(value, &mut out)?;
+    Ok(out)
 }
 
-fn to_json(value: &Value) -> Result<Json, String> {
-    Ok(match value {
-        Value::String(s) => Json::Str(s.clone()),
-        Value::Integer(n) => Json::Int((*n).into()),
-        Value::Float(x) => Json::Float(*x),
-        Value::Boolean(b) => Json::Bool(*b),
+/// Write value at out's end as json_dumps writes it; errors as its.
+fn write_json(value: &Value, out: &mut String) -> Result<(), String> {
+    match value {
+        Value::String(s) => write_ascii_string(s, out),
+        Value::Integer(n) => out.push_str(&n.to_string()),
+        Value::Float(x) => out.push_str(&float_text(*x)),
+        Value::Boolean(b) => out.push_str(if *b { "true" } else { "false" }),
         Value::Datetime(_) => return Err(format!("Object of type {} is not JSON serializable", python_type(value))),
-        Value::Array(items) => Json::Array(items.iter().map(to_json).collect::<Result<_, _>>()?),
-        Value::Table(table) => {
-            Json::Object(table.iter().map(|(k, v)| Ok((k.clone(), to_json(v)?))).collect::<Result<_, String>>()?)
+        Value::Array(items) => {
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                write_json(item, out)?;
+            }
+            out.push(']');
         }
-    })
+        Value::Table(table) => {
+            out.push('{');
+            for (i, (k, v)) in table.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                write_ascii_string(k, out);
+                out.push_str(": ");
+                write_json(v, out)?;
+            }
+            out.push('}');
+        }
+    }
+    Ok(())
+}
+
+/// s as a JSON string with json.dumps's ensure_ascii: `"` and `\` escaped, "\n", "\r", "\t", "\b" and "\f" by
+/// their letters, every other character outside space to `~` as `\u` and four hex digits, a surrogate pair beyond
+/// U+FFFF.
+fn write_ascii_string(s: &str, out: &mut String) {
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            ' '..='~' => out.push(c),
+            _ => {
+                let mut units = [0u16; 2];
+                for unit in c.encode_utf16(&mut units) {
+                    out.push_str(&format!("\\u{unit:04x}"));
+                }
+            }
+        }
+    }
+    out.push('"');
+}
+
+/// x as Python's float.__repr__ writes it, which json.dumps uses: the shortest digits that read back as x, in
+/// positional notation for exponents from -4 to 15 with at least one digit after the point, else in scientific
+/// notation with a sign and at least two digits in the exponent; NaN and Infinity as json.dumps writes them.
+fn float_text(x: f64) -> String {
+    if x.is_nan() {
+        return "NaN".to_string();
+    }
+    if x.is_infinite() {
+        return if x > 0.0 { "Infinity" } else { "-Infinity" }.to_string();
+    }
+    // Rust's {:e} gives the shortest round-trip digits, as d.ddde<exp>.
+    let sci = format!("{x:e}");
+    let (mantissa, exp) = sci.split_once('e').unwrap_or((&sci, "0"));
+    let exp: i32 = exp.parse().unwrap_or(0);
+    let sign = if mantissa.starts_with('-') { "-" } else { "" };
+    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    let body = if (-4..16).contains(&exp) { positional(&digits, exp + 1) } else { scientific(&digits, exp) };
+    format!("{sign}{body}")
+}
+
+/// The number whose significant digits are digits, without sign, with the decimal point after point of them, in
+/// positional notation with at least one digit after the point: 0.0012 for "12" at -2, 1200.0 for "12" at 4.
+fn positional(digits: &str, point: i32) -> String {
+    if point <= 0 {
+        format!("0.{}{}", "0".repeat(point.unsigned_abs() as usize), digits)
+    } else if point as usize >= digits.len() {
+        format!("{}{}.0", digits, "0".repeat(point as usize - digits.len()))
+    } else {
+        format!("{}.{}", &digits[..point as usize], &digits[point as usize..])
+    }
+}
+
+/// The number whose significant digits are digits, without sign, times ten to exp, in scientific notation with a
+/// sign and at least two digits in the exponent: 1.25e+16 for "125" at 16, 5e-05 for "5" at -5.
+fn scientific(digits: &str, exp: i32) -> String {
+    let rest = if digits.len() > 1 { format!(".{}", &digits[1..]) } else { String::new() };
+    let exp_sign = if exp < 0 { '-' } else { '+' };
+    format!("{}{rest}e{exp_sign}{:02}", &digits[..1], exp.unsigned_abs())
 }
 
 /// A TOML datetime as Python's repr writes what tomllib reads it as: datetime.datetime, datetime.date or

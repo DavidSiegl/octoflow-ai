@@ -25,7 +25,8 @@ use super::*;
 use crate::ci::fake::{jenkins_on, FakeJenkins, JOB};
 use crate::constants::APPROVE;
 use crate::host::fake::FakeHost;
-use crate::py::json::Json;
+use serde_json::Value;
+use crate::json::ValueExt;
 use crate::workflow::fixture::{build_turn, saved_run, then_interrupted, Fixture};
 use super::fixture::Cli;
 use crate::constants::{CHANGES_REQUESTED, FINISHED};
@@ -113,7 +114,7 @@ fn the_cli_runs_the_workflow_with_the_new_job() {
     assert_eq!(*jobs.borrow(), [JOB, JOB]);
     assert_eq!(ci.state().names.first().map(String::as_str), Some("parameters"));
     let saved = f.saved();
-    assert_eq!((saved.get("quality_job"), saved.get("max_quality_rounds")), (Some(&Json::from(JOB)), Some(&Json::from(2))));
+    assert_eq!((saved.get("quality_job"), saved.get("max_quality_rounds")), (Some(&Value::from(JOB)), Some(&Value::from(2))));
 }
 
 #[test]
@@ -154,7 +155,7 @@ fn a_ctrl_c_in_the_workflow_names_the_run_it_stopped() {
         panic!("the run was not interrupted")
     };
     assert_eq!(run_id, "20260929-120000-a1b2c3");
-    assert_eq!(f.saved().get("error"), Some(&Json::from("interrupted")));
+    assert_eq!(f.saved().get("error"), Some(&Value::from("interrupted")));
 }
 
 #[test]
@@ -203,7 +204,7 @@ fn configured(d: &TempDir, files: &[(&str, &str)]) -> Cli {
 }
 
 /// The state.json of the new run that `run` with argv started on cli's fakes, stopped at its first prompt.
-fn started(cli: &Cli, argv: &[&str]) -> Json {
+fn started(cli: &Cli, argv: &[&str]) -> Value {
     match cli.started(argv) {
         (Err(Stop::Failed(e)), Some(saved)) if e.0.contains("at its first prompt") => saved,
         (ended, saved) => panic!("{argv:?} did not start a run: {:?}, {saved:?}", ended.err().map(|e| match e {
@@ -214,8 +215,8 @@ fn started(cli: &Cli, argv: &[&str]) -> Json {
 }
 
 /// The value of key in saved, as JSON text.
-fn field(saved: &Json, key: &str) -> String {
-    saved.get(key).unwrap_or(&Json::Null).dumps()
+fn field(saved: &Value, key: &str) -> String {
+    saved.get(key).unwrap_or(&Value::Null).to_string()
 }
 
 /// The error a run of argv in /proj stops with before it starts any agent.
@@ -227,7 +228,7 @@ fn refused(cli: &Cli, argv: &[&str]) -> String {
     e
 }
 
-const EVERY_ROLE_CLAUDE: &str = r#"{"spec": "claude", "build": "claude", "review": "claude"}"#;
+const EVERY_ROLE_CLAUDE: &str = r#"{"spec":"claude","build":"claude","review":"claude"}"#;
 
 #[test]
 fn permission_mode_and_models_reach_the_workflow() {
@@ -235,7 +236,7 @@ fn permission_mode_and_models_reach_the_workflow() {
     let saved = started(&cli, &["task", "--permission-mode", "auto"]);
     assert_eq!(field(&saved, "permission_mode"), r#""auto""#);
     let saved = started(&cli, &["task", "--permission-mode", "auto", "--model", "sonnet", "--review-model", "opus"]);
-    assert_eq!(field(&saved, "models"), r#"{"spec": "sonnet", "build": "sonnet", "review": "opus"}"#);
+    assert_eq!(field(&saved, "models"), r#"{"spec":"sonnet","build":"sonnet","review":"opus"}"#);
     assert_eq!(field(&saved, "permission_mode"), r#""auto""#);
 }
 
@@ -243,9 +244,9 @@ fn permission_mode_and_models_reach_the_workflow() {
 fn role_models() {
     let cases: [(&[&str], &str); 4] = [
         (&[], "{}"),
-        (&["--model", "claude-opus-5-5"], r#"{"spec": "claude-opus-5-5", "build": "claude-opus-5-5", "review": "claude-opus-5-5"}"#),
-        (&["--model", "sonnet", "--review-model", "opus"], r#"{"spec": "sonnet", "build": "sonnet", "review": "opus"}"#),
-        (&["--build-model", "sonnet"], r#"{"build": "sonnet"}"#),
+        (&["--model", "claude-opus-5-5"], r#"{"spec":"claude-opus-5-5","build":"claude-opus-5-5","review":"claude-opus-5-5"}"#),
+        (&["--model", "sonnet", "--review-model", "opus"], r#"{"spec":"sonnet","build":"sonnet","review":"opus"}"#),
+        (&["--build-model", "sonnet"], r#"{"build":"sonnet"}"#),
     ];
     for (flags, models) in cases {
         let argv: Vec<&str> = flags.iter().copied().chain(["task"]).collect();
@@ -258,7 +259,7 @@ fn a_model_reaches_a_role_without_its_own_flag() {
     let d = TempDir::new();
     let cli = configured(&d, &[("four.toml", &workflow_toml(&crate::test_support::four()))]);
     let saved = started(&cli, &["--workflow-file", &d.join("four.toml"), "--model", "X", "--build-model", "Y", "task"]);
-    assert_eq!(field(&saved, "models"), r#"{"spec": "X", "tests": "X", "build": "Y", "review": "X"}"#);
+    assert_eq!(field(&saved, "models"), r#"{"spec":"X","tests":"X","build":"Y","review":"X"}"#);
 }
 
 #[test]
@@ -358,8 +359,8 @@ fn a_resume_on_another_branch_exits_1() {
     assert!(e.contains(&format!("check out {branch} and resume")), "{e}");
     assert_eq!(cli.main(&["resume", "a1b2c3", "--cwd", "/proj"]), EXIT_ERROR);
     let saved = cli.f.saved();
-    assert!(saved.get("error").map(Json::python_str).unwrap_or_default().contains("check out"));
-    assert_eq!(saved.get("owner"), Some(&Json::Null));
+    assert!(saved.get("error").map(Value::text).unwrap_or_default().contains("check out"));
+    assert_eq!(saved.get("owner"), Some(&Value::Null));
     assert!(cli.f.herdr.state().calls.is_empty());
 }
 
@@ -368,7 +369,7 @@ fn the_default_workflow_is_the_default() {
     let cli = Cli::new();
     let plain = started(&cli, &["task", "--model", "m"]);
     let named = started(&cli, &["task", "--model", "m", "--workflow", "default"]);
-    let same = |saved: &Json| {
+    let same = |saved: &Value| {
         ["workflow", "phase", "models", "agent_kinds", "workflow_definition", "pull_request", "max_rounds"].map(|k| field(saved, k))
     };
     assert_eq!(same(&plain), same(&named));
@@ -402,7 +403,7 @@ fn a_workflow_file_is_offered_and_started() {
     let cli = configured(&d, &[("workflows/quick.toml", &workflow_toml(&crate::test_support::quick()))]);
     let saved = started(&cli, &["task", "--workflow", "quick", "--model", "X"]);
     assert_eq!((field(&saved, "workflow"), field(&saved, "phase")), (r#""quick""#.into(), r#""build""#.into()));
-    assert_eq!(field(&saved, "models"), r#"{"build": "X", "review": "X"}"#);
+    assert_eq!(field(&saved, "models"), r#"{"build":"X","review":"X"}"#);
 }
 
 /// A Cli whose configuration has the example product-team workflow file.
@@ -418,7 +419,7 @@ fn run_a_workflow_file_by_name_or_path() {
     assert_eq!((field(&saved, "workflow"), field(&saved, "phase")), (r#""product-team""#.into(), r#""spec""#.into()));
     let team = load_workflow_file(&example("product-team"), &crate::prompts::Prompts::default()).unwrap();
     assert_eq!(saved.get("workflow_definition"), Some(&workflow_definition(&team)));
-    assert_eq!(field(&saved, "models"), r#"{"tests": "sonnet"}"#);
+    assert_eq!(field(&saved, "models"), r#"{"tests":"sonnet"}"#);
     let saved = started(&cli, &["task", "--workflow-file", &example("quick")]);
     assert_eq!((field(&saved, "workflow"), field(&saved, "phase")), (r#""quick""#.into(), r#""build""#.into()));
 }
@@ -429,9 +430,9 @@ fn model_flags_override_the_files_models() {
     let cli = with_product_team(&d);
     let saved = started(&cli, &["task", "--workflow", "product-team", "--model", "X"]);
     // The file's models first, then the flags', as Python's {**pipeline.models, **role_models(...)}.
-    assert_eq!(field(&saved, "models"), r#"{"tests": "X", "spec": "X", "design": "X", "build": "X", "review": "X"}"#);
+    assert_eq!(field(&saved, "models"), r#"{"tests":"X","spec":"X","design":"X","build":"X","review":"X"}"#);
     let flags = ["task", "--workflow", "product-team", "--role-model", "tests=haiku", "--role-model", "spec=opus", "--build-model", "Y"];
-    assert_eq!(field(&started(&cli, &flags), "models"), r#"{"tests": "haiku", "spec": "opus", "build": "Y"}"#);
+    assert_eq!(field(&started(&cli, &flags), "models"), r#"{"tests":"haiku","spec":"opus","build":"Y"}"#);
 }
 
 #[test]
@@ -454,17 +455,17 @@ fn resume_takes_role_model() {
     state.models = [("tests", "sonnet".to_string())].into_iter().collect();
     state.workflow = "product-team".into();
     state.workflow_definition = Some(workflow_definition(&team));
-    let Json::Object(saved) = state.to_json() else { unreachable!("a state is saved as an object") };
+    let Value::Object(saved) = state.to_json() else { unreachable!("a state is saved as an object") };
     let resumed = crate::test_support::resumable(&["--role-model", "review=opus"], &saved).unwrap();
-    assert_eq!(Json::Object(resumed.models.iter().map(|(k, v)| (k, Json::from(v.as_str()))).collect()).dumps(), r#"{"tests": "sonnet", "review": "opus"}"#);
+    assert_eq!(serde_json::to_string(&resumed.models).unwrap(), r#"{"tests":"sonnet","review":"opus"}"#);
 }
 
 /// GIVEN_SPEC of TestSpecCLI: CRLF and trailing blanks, which the run's copy keeps.
 const GIVEN_SPEC: &str = "# Add a token-bucket rate limiter\r\n\r\n## Goal\r\nlimit requests  \n\n";
 
 /// The spec the run of saved was seeded with, as the host holds it.
-fn seeded(cli: &Cli, saved: &Json) -> Option<String> {
-    let dir = format!("/proj/.orchestrator/runs/{}", saved.get("run_id").map(Json::python_str).unwrap_or_default());
+fn seeded(cli: &Cli, saved: &Value) -> Option<String> {
+    let dir = format!("/proj/.orchestrator/runs/{}", saved.get("run_id").map(Value::text).unwrap_or_default());
     cli.f.host.state().files.get(&format!("{dir}/spec.md")).cloned()
 }
 
@@ -503,7 +504,7 @@ fn a_relative_spec_path_is_the_shells_not_cwds() {
     let (_, saved) = cli.started(&["--spec", &relative, "--cwd", "/elsewhere"]);
     let saved = saved.expect("the run saved its state");
     assert_eq!(field(&saved, "cwd"), r#""/elsewhere""#);
-    let dir = format!("/elsewhere/.orchestrator/runs/{}", saved.get("run_id").unwrap().python_str());
+    let dir = format!("/elsewhere/.orchestrator/runs/{}", saved.get("run_id").unwrap().text());
     assert_eq!(cli.f.host.state().files.get(&format!("{dir}/spec.md")).map(String::as_str), Some(GIVEN_SPEC));
 }
 
@@ -526,7 +527,7 @@ fn the_spec_combines_with_the_other_run_flags() {
         let argv: Vec<&str> = ["--spec", &spec].iter().copied().chain(flags.iter().copied()).collect();
         let saved = started(&cli, &argv);
         assert_eq!((field(&saved, "phase"), field(&saved, key)), (r#""build""#.to_string(), value.to_string()), "{flags:?}");
-        let dir = format!("{}/.orchestrator/runs/{}", saved.get("cwd").unwrap().python_str(), saved.get("run_id").unwrap().python_str());
+        let dir = format!("{}/.orchestrator/runs/{}", saved.get("cwd").unwrap().text(), saved.get("run_id").unwrap().text());
         assert_eq!(cli.f.host.state().files.get(&format!("{dir}/spec.md")).map(String::as_str), Some(GIVEN_SPEC), "{flags:?}");
         // The quality gate's job is had for the run.
         assert_eq!(cli.jobs.borrow().len(), usize::from(key == "quality_job"), "{flags:?}");
@@ -563,23 +564,23 @@ fn harness_precedence() {
     let coded = "roles.review = { agent = \"codex\" }\n[[steps]]\nuse = \"spec\"\n[[steps]]\nuse = \"build\"\n\
                  [[steps]]\nuse = \"review\"\n";
     let cli = configured(&d, &[("workflows/coded.toml", coded)]);
-    let every = |kind: &str| format!(r#"{{"spec": "{kind}", "build": "{kind}", "review": "{kind}"}}"#);
+    let every = |kind: &str| format!(r#"{{"spec":"{kind}","build":"{kind}","review":"{kind}"}}"#);
     let cases: [(&[&str], String); 8] = [
         (&[], EVERY_ROLE_CLAUDE.into()),
         (&["--agent", "codex"], every("codex")),
-        (&["--agent", "gemini", "--role-agent", "review=pi"], r#"{"spec": "gemini", "build": "gemini", "review": "pi"}"#.into()),
-        (&["--role-agent", "build=opencode"], r#"{"spec": "claude", "build": "opencode", "review": "claude"}"#.into()),
-        (&["--workflow", "coded"], r#"{"spec": "claude", "build": "claude", "review": "codex"}"#.into()),
+        (&["--agent", "gemini", "--role-agent", "review=pi"], r#"{"spec":"gemini","build":"gemini","review":"pi"}"#.into()),
+        (&["--role-agent", "build=opencode"], r#"{"spec":"claude","build":"opencode","review":"claude"}"#.into()),
+        (&["--workflow", "coded"], r#"{"spec":"claude","build":"claude","review":"codex"}"#.into()),
         (&["--workflow", "coded", "--agent", "gemini"], every("gemini")),
-        (&["--workflow", "coded", "--role-agent", "review=pi"], r#"{"spec": "claude", "build": "claude", "review": "pi"}"#.into()),
-        (&["--workflow", "coded", "--agent", "pi", "--role-agent", "spec=claude"], r#"{"spec": "claude", "build": "pi", "review": "pi"}"#.into()),
+        (&["--workflow", "coded", "--role-agent", "review=pi"], r#"{"spec":"claude","build":"claude","review":"pi"}"#.into()),
+        (&["--workflow", "coded", "--agent", "pi", "--role-agent", "spec=claude"], r#"{"spec":"claude","build":"pi","review":"pi"}"#.into()),
     ];
     for (flags, kinds) in cases {
         let argv: Vec<&str> = flags.iter().copied().chain(["task"]).collect();
         assert_eq!(field(&started(&cli, &argv), "agent_kinds"), kinds, "{flags:?}");
     }
     let saved = started(&cli, &["task", "--agent", "codex", "--role-agent", "spec=claude"]);
-    assert_eq!(field(&saved, "agent_kinds"), r#"{"spec": "claude", "build": "codex", "review": "codex"}"#);
+    assert_eq!(field(&saved, "agent_kinds"), r#"{"spec":"claude","build":"codex","review":"codex"}"#);
 }
 
 #[test]
@@ -596,7 +597,7 @@ fn the_gate_reaches_the_workflow() {
 fn the_worktree_flag_reaches_the_workflow() {
     let cli = Cli::new();
     let saved = started(&cli, &["task", "--worktree"]);
-    let key = saved.get("run_id").unwrap().python_str().rsplit('-').next().unwrap().to_string();
+    let key = saved.get("run_id").unwrap().text().rsplit('-').next().unwrap().to_string();
     assert_eq!(field(&saved, "worktree"), format!(r#""/proj/.orchestrator/worktrees/{key}""#));
     assert_eq!(field(&started(&cli, &["task"]), "worktree"), "null");
 }
@@ -623,14 +624,16 @@ fn list_names_a_non_default_workflow() {
         let mut state = saved_run("done", 1, &[]);
         state.run_id = id.into();
         state.verdict = Some(APPROVE.into());
-        let Json::Object(mut saved) = state.to_json() else { unreachable!("a state is saved as an object") };
+        let Value::Object(mut saved) = state.to_json() else { unreachable!("a state is saved as an object") };
         match workflow {
-            Some(name) => saved.insert("workflow", Json::from(name)),
+            Some(name) => {
+                saved.insert("workflow".into(), Value::from(name));
+            }
             None => {
                 saved.remove("workflow");
             }
         }
-        Json::Object(saved)
+        Value::Object(saved)
     };
     cli.save(&done("20260930-070000-c0ffe1", None), 1_000_000);
     cli.save(&done("20260930-070000-c0ffe2", Some("default")), 1_000_000);

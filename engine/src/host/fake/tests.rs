@@ -213,7 +213,7 @@ fn pull_requests_through_host_s_views() {
     let host = FakeHost::default();
     let url = "https://github.com/o/r/pull/7";
     let head = "a".repeat(40);
-    let pr = Json::parse(&format!("{{\"state\": \"OPEN\", \"headRefOid\": \"{head}\", \"closedAt\": null}}"));
+    let pr = serde_json::from_str::<Value>(&format!("{{\"state\": \"OPEN\", \"headRefOid\": \"{head}\", \"closedAt\": null}}"));
     host.state().pull_requests.insert(url.into(), FakePr::Prints(pr.unwrap()));
     let read = host.pull_request("/proj", url).unwrap();
     assert_eq!(read, PullRequest { state: "OPEN".into(), head_ref_oid: "a".repeat(40), closed_at: None });

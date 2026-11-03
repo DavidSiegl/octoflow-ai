@@ -20,7 +20,7 @@ fn build_prompts(f: &Fixture) -> Vec<String> {
 }
 
 /// A default run whose Builder drops both prompts: the fixture, the run's error and the state it saved.
-fn failed_twice() -> (Fixture, String, Map<Json>) {
+fn failed_twice() -> (Fixture, String, Object) {
     let f = default_run(build_turn(1));
     f.herdr.state().dropped.insert("build".into(), 2);
     let error = failure(f.workflow(RunSettings::default()).run());
@@ -35,14 +35,14 @@ fn an_agent_that_turns_working_is_prompted_once() {
     let (host, seen, spec, path) = (Rc::clone(&f.host), Rc::clone(&prompted), f.state.spec_path(), f.state.dir() + "/state.json");
     f.clock.hook(move |now| {
         if now > STALL_SECONDS as f64 && host.read(&spec).unwrap().is_none() {
-            let saved = Json::parse(&host.read(&path).unwrap().unwrap()).unwrap();
+            let saved = serde_json::from_str::<Value>(&host.read(&path).unwrap().unwrap()).unwrap();
             seen.borrow_mut().push(saved.get("prompted").cloned().unwrap());
             host.write(&spec, "spec", false).unwrap();
         }
     });
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
     assert_eq!(prompts_to(&f, "spec-a1b2c3"), 1);
-    assert_eq!(*prompted.borrow(), [Json::from("spec.md")]);
+    assert_eq!(*prompted.borrow(), [Value::from("spec.md")]);
     assert_eq!(PROMPT_DELIVERY_SECONDS, 30);
     assert_eq!(f.herdr.state().deliveries, [("spec-a1b2c3".to_string(), Some(30_000))]);
 }

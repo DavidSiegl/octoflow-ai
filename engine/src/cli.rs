@@ -20,7 +20,7 @@ use crate::herdr::ProcessHerdr;
 use crate::host::{shlex_join, Host, ProcessHost};
 use crate::interrupt::Interrupt;
 use crate::pipeline::Pipeline;
-use crate::py::json::Json;
+use serde_json::Value;
 use crate::package_index::PackageIndexes;
 use crate::runs::{local_host, pid_alive};
 use crate::spec_file::{read_spec_file, SpecFile};
@@ -396,15 +396,9 @@ fn runs_command(runs: &RunsCommand, world: &Connected, cwd: &str, target: &[Stri
             if *pr_state {
                 listing::fill_pr_states(world, cwd, &mut records)?;
             }
-            let document: Json = Json::Object(
-                [
-                    ("version", Json::from(listing::RUN_RECORD_VERSION)),
-                    ("runs", Json::Array(records.into_iter().map(Json::Object).collect())),
-                ]
-                .into_iter()
-                .collect(),
-            );
-            world.say(&document.dumps_indented(2));
+            let document = serde_json::json!({"version": listing::RUN_RECORD_VERSION, "runs": records});
+            // A Value serializes without fail.
+            world.say(&serde_json::to_string_pretty(&document).expect("JSON serializes"));
         }
         RunsCommand::List { json: false, .. } => listing::print_runs(world, &host.run_states(cwd)?, target),
         RunsCommand::Show(run_ref) => listing::show_run(world, cwd, run_ref, target)?,
@@ -413,7 +407,7 @@ fn runs_command(runs: &RunsCommand, world: &Connected, cwd: &str, target: &[Stri
         }
         RunsCommand::Metrics => {
             for record in host.run_metrics(cwd)? {
-                world.say(&record.dumps());
+                world.say(&record.to_string());
             }
         }
         RunsCommand::Prune { dry_run } => prune::print_pruned(world, &prune::prune_branches(world, cwd, *dry_run, true)?),
@@ -429,24 +423,25 @@ fn runs_command(runs: &RunsCommand, world: &Connected, cwd: &str, target: &[Stri
 pub fn record_in_state(
     host: &dyn Host,
     path: &str,
-    saved: &Json,
+    saved: &Value,
     key: &str,
-    recorded: Json,
+    recorded: Value,
     meanwhile: &str,
 ) -> Result<(), OrchestratorError> {
     let text = host.read(path)?;
     let unchanged = match &text {
         None => false,
-        Some(text) => Json::parse(text).map_err(|e| OrchestratorError(format!("corrupt {path}: {e}")))? == *saved,
+        Some(text) => serde_json::from_str::<Value>(text).map_err(|e| OrchestratorError(format!("corrupt {path}: {e}")))? == *saved,
     };
     if !unchanged {
         return Err(OrchestratorError(format!("{path} changed while {meanwhile}; {key} is not recorded")));
     }
-    let Json::Object(mut updated) = saved.clone() else {
+    let Value::Object(mut updated) = saved.clone() else {
         return Err(OrchestratorError(format!("corrupt {path}: not a JSON object")));
     };
-    updated.insert(key, recorded);
-    host.write(path, &format!("{}\n", Json::Object(updated).dumps()), true)
+    updated.insert(key.to_string(), recorded);
+    // One line, as RunState::to_text writes a state, whatever format saved is of.
+    host.write(path, &format!("{}\n", Value::Object(updated)), true)
 }
 
 /// Drive the run state describes through pipeline, by the settings saved in state, to its verdict. spec is the file

@@ -5,7 +5,7 @@ use crate::test_support::{oracle, TempDir};
 fn a_timeout_is_worded_as_python_words_it() {
     let argv: Vec<String> = ["sh", "-c", "it's", "_", "é\n"].map(String::from).into();
     let recorded = oracle("host.json");
-    assert_eq!(timed_out(&argv, 60), recorded.get("timeout").and_then(crate::py::json::Json::as_str).unwrap());
+    assert_eq!(timed_out(&argv, 60), recorded.get("timeout").and_then(serde_json::Value::as_str).unwrap());
 }
 
 #[test]

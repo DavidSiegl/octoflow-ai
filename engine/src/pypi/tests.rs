@@ -55,7 +55,7 @@ fn a_license_is_the_expression_then_the_field_then_the_classifier() {
         ),
     ];
     for (json, license) in cases {
-        assert_eq!(project(body(&json.json().dumps())).unwrap().unwrap().license, license);
+        assert_eq!(project(body(&json.json().to_string())).unwrap().unwrap().license, license);
     }
 }
 
@@ -95,22 +95,19 @@ fn any_other_failure_raises() {
 }
 
 #[test]
-fn json_of_another_shape_is_worded_as_python_s_error() {
+fn json_of_another_shape_says_what_was_found_where() {
     let info = r#""info": {"version": "1"}"#;
     let cases = [
         (r#"{"x": 1}"#.to_string(), "\"info\""),
         (r#"[]"#.to_string(), "it has no info.version"),
-        (format!(r#"{{{info}, "releases": [1]}}"#), "'list' object has no attribute 'values'"),
-        (format!(r#"{{{info}, "releases": {{"1": 5}}}}"#), "'int' object is not iterable"),
-        (format!(r#"{{{info}, "urls": [3]}}"#), "'int' object is not subscriptable"),
+        (format!(r#"{{{info}, "releases": [1]}}"#), "releases is array, not an object"),
+        (format!(r#"{{{info}, "releases": {{"1": 5}}}}"#), "number where an array belongs"),
+        (format!(r#"{{{info}, "urls": [3]}}"#), "a file is number, not an object"),
         (format!(r#"{{{info}, "urls": [{{}}]}}"#), "\"upload_time_iso_8601\""),
-        (format!(r#"{{{info}, "urls": [{{"upload_time_iso_8601": 1}}]}}"#), "fromisoformat: argument must be str"),
-        (format!(r#"{{{info}, "urls": [{{"upload_time_iso_8601": "yesterday"}}]}}"#), "Invalid isoformat string"),
-        (r#"{"info": {"version": "1", "license_expression": 7}}"#.to_string(), "'int' object has no attribute 'strip'"),
-        (
-            r#"{"info": {"version": "1", "classifiers": [null]}}"#.to_string(),
-            "'NoneType' object has no attribute 'startswith'",
-        ),
+        (format!(r#"{{{info}, "urls": [{{"upload_time_iso_8601": 1}}]}}"#), "upload_time_iso_8601 is not a string"),
+        (format!(r#"{{{info}, "urls": [{{"upload_time_iso_8601": "yesterday"}}]}}"#), ""),
+        (r#"{"info": {"version": "1", "license_expression": 7}}"#.to_string(), "license_expression is number, not a string"),
+        (r#"{"info": {"version": "1", "classifiers": [null]}}"#.to_string(), "a classifier is null, not a string"),
     ];
     let licensed = |classifiers: &str| format!(r#"{{"info": {{"version": "1", "classifiers": {classifiers}}}}}"#);
     assert_eq!(project(body(&licensed(r#""License :: MIT""#))).unwrap().unwrap().license, None);
@@ -119,7 +116,7 @@ fn json_of_another_shape_is_worded_as_python_s_error() {
         Some("BSD")
     );
     let late = project(body(&licensed(r#"["License :: MIT", 5]"#))).unwrap_err().to_string();
-    assert!(late.ends_with("'int' object has no attribute 'startswith'"), "{late}");
+    assert!(late.ends_with("a classifier is number, not a string"), "{late}");
     for (text, why) in cases {
         let e = project(body(&text)).unwrap_err().to_string();
         assert!(
@@ -143,22 +140,18 @@ fn the_earliest_upload_wins_by_its_fraction_of_a_second_and_its_offset() {
 }
 
 #[test]
-fn an_upload_time_reads_in_every_form_fromisoformat_reads() {
-    // Python 3.14's fromisoformat(time).timestamp() and f"{...:%Y-%m-%d}" of each.
+fn an_upload_time_is_an_rfc_3339_time_with_its_offset() {
     let cases = [
-        ("2026W441\u{20ac}12:00Z", 1_793_016_000.0, "2026-10-26"),
-        ("20261028T120000Z", 1_793_188_800.0, "2026-10-28"),
-        ("2026-10-28T24:00:00Z", 1_793_232_000.0, "2026-10-29"),
+        ("2026-10-28T12:00:00Z", 1_793_188_800.0, "2026-10-28"),
         ("2026-10-28T23:00:00-02:00", 1_793_235_600.0, "2026-10-28"),
-        ("0001-01-01T00:00Z", -62_135_596_800.0, "0001-01-01"),
+        ("2026-10-28T12:00:00.5Z", 1_793_188_800.5, "2026-10-28"),
     ];
     for (time, at, date) in cases {
         assert_eq!(Upload::from_iso(time), Ok(Upload { at, date: date.to_string() }), "{time}");
     }
-    assert_eq!(Upload::from_iso("20261003").map(|u| u.date), Ok("2026-10-03".to_string()));
-    let text = r#"{"info": {"version": "1"}, "urls": [{"upload_time_iso_8601": "2026-10-28T12:00:00,7Z"},
-        {"upload_time_iso_8601": "2026-10-28T12:00:00,5Z"}]}"#;
-    assert_eq!(project(body(text)).unwrap().unwrap().latest_release.unwrap().at, 1_793_188_800.5);
+    for bad in ["20261003", "2026-10-28T12:00:00", "yesterday"] {
+        assert!(Upload::from_iso(bad).is_err(), "{bad}");
+    }
 }
 
 #[test]

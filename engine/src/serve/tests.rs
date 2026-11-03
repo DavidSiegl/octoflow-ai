@@ -10,7 +10,7 @@ use std::time::Instant;
 use super::*;
 use crate::cli::listing::run_record;
 use crate::constants::{APPROVE, RUNS_DIR, STALE_SECONDS};
-use crate::py::json::Map;
+use crate::json::{Object, ValueExt};
 use crate::py::url::urlencode;
 use crate::cli::doctor::{Check, Level};
 use crate::serve::fake::{FakeConsole, ServeHost};
@@ -23,19 +23,18 @@ fn run_dir() -> String {
 }
 
 /// serve_state(**kw) of the Python tests, for run_id, as state.json's text.
-fn serve_state(run_id: &str, extra: &[(&str, Json)]) -> String {
-    let mut state: Map<Json> = [
-        ("run_id", Json::from(run_id)),
-        ("task", Json::from("add a rate limiter")),
-        ("phase", Json::from("build")),
-        ("round", Json::from(1)),
-    ]
-    .into_iter()
-    .collect();
+fn serve_state(run_id: &str, extra: &[(&str, Value)]) -> String {
+    let mut state = crate::json::object([
+        ("format", Value::from(crate::state::STATE_FORMAT)),
+        ("run_id", Value::from(run_id)),
+        ("task", Value::from("add a rate limiter")),
+        ("phase", Value::from("build")),
+        ("round", Value::from(1)),
+    ]);
     for (key, value) in extra {
-        state.insert(*key, value.clone());
+        state.insert(key.to_string(), value.clone());
     }
-    Json::Object(state).dumps()
+    Value::Object(state).to_string()
 }
 
 /// A ServeHost for /proj that holds the run's state, as serve_state() saves it.
@@ -163,13 +162,13 @@ impl Reply {
         self.headers.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
     }
 
-    fn json(&self) -> Json {
+    fn json(&self) -> Value {
         assert_eq!(self.header("Content-Type"), Some("application/json"), "{self:?}");
-        Json::parse(&self.body).expect("a JSON body")
+        serde_json::from_str::<Value>(&self.body).expect("a JSON body")
     }
 
     fn error(&self) -> String {
-        self.json().get("error").map(Json::python_str).expect("an error")
+        self.json().get("error").map(Value::text).expect("an error")
     }
 }
 
@@ -232,7 +231,7 @@ impl TempDir {
         std::fs::write(path, text).expect("the file is written");
     }
 
-    fn save(&self, run_id: &str, extra: &[(&str, Json)]) {
+    fn save(&self, run_id: &str, extra: &[(&str, Value)]) {
         self.write(&format!("{RUNS_DIR}/{run_id}/state.json"), &serve_state(run_id, extra));
     }
 
@@ -248,11 +247,11 @@ impl Drop for TempDir {
 }
 
 /// record without the keys that age with every read.
-fn without_aging(mut record: Map<Json>) -> Json {
+fn without_aging(mut record: Object) -> Value {
     for key in runs::AGING_RECORD_KEYS {
         record.remove(key);
     }
-    Json::Object(record)
+    Value::Object(record)
 }
 
 // -- TestServeEndpoints ------------------------------------------------------------------------------------------
@@ -261,9 +260,9 @@ fn without_aging(mut record: Map<Json>) -> Json {
 fn runs_are_list_json_records_on_a_machine() {
     let host = Arc::new(ServeHost::on(Some("remote-host")));
     let owner = object([
-        ("host", Json::from(crate::runs::local_host())),
-        ("pid", Json::from(i64::from(std::process::id()))),
-        ("started_at", Json::from("x")),
+        ("host", Value::from(crate::runs::local_host())),
+        ("pid", Value::from(i64::from(std::process::id()))),
+        ("started_at", Value::from("x")),
     ]);
     host.state().files.insert(format!("{}/state.json", run_dir()), serve_state(SERVE_ID, &[("owner", owner)]));
     host.state().ages.insert(SERVE_ID.to_string(), STALE_SECONDS + 1);
@@ -273,17 +272,17 @@ fn runs_are_list_json_records_on_a_machine() {
     assert_eq!(*served.connects.lock().unwrap(), [("remote".to_string(), "~/proj".to_string())]);
     // As list --json --machine remote --cwd ~/proj prints it.
     let target = ["--machine", "remote", "--cwd", "~/proj"].map(String::from);
-    let listed: Vec<Json> = host
+    let listed: Vec<Value> = host
         .run_states("/proj")
         .unwrap()
         .iter()
-        .map(|(age, s)| Json::Object(run_record(s, *age, &crate::runs::local_host(), &crate::runs::pid_alive, &target)))
+        .map(|(age, s)| Value::Object(run_record(s, *age, &crate::runs::local_host(), &crate::runs::pid_alive, &target)))
         .collect();
     let doc = reply.json();
-    assert_eq!(doc, object([("version", Json::from(1)), ("runs", Json::Array(listed))]));
+    assert_eq!(doc, object([("version", Value::from(1)), ("runs", Value::Array(listed))]));
     assert_eq!(
-        doc.get("runs").and_then(Json::as_array).and_then(|r| r[0].get("resume_command")),
-        Some(&Json::from("orchestrator.py resume 5e7e00 --machine remote --cwd '~/proj'"))
+        doc.get("runs").and_then(Value::as_array).and_then(|r| r[0].get("resume_command")),
+        Some(&Value::from("orchestrator.py resume 5e7e00 --machine remote --cwd '~/proj'"))
     );
 }
 
@@ -291,22 +290,22 @@ fn runs_are_list_json_records_on_a_machine() {
 fn runs_are_list_json_records_locally() {
     let d = TempDir::new("records");
     d.save(SERVE_ID, &[]);
-    d.save("x-beef00", &[("phase", Json::from("done")), ("verdict", Json::from(APPROVE))]);
+    d.save("x-beef00", &[("phase", Value::from("done")), ("verdict", Value::from(APPROVE))]);
     let served = Served::real();
     let reply = served.get(&d.query("/runs"), &[]);
     assert_eq!(reply.status, Some(200));
     let target = ["--cwd".to_string(), d.0.clone()];
     // A second may pass between the two reads; everything else is the same.
-    let listed: Vec<Json> = ProcessHost::local(&Interrupt::new())
+    let listed: Vec<Value> = ProcessHost::local(&Interrupt::new())
         .run_states(&d.0)
         .unwrap()
         .iter()
         .map(|(age, s)| without_aging(run_record(s, *age, &crate::runs::local_host(), &crate::runs::pid_alive, &target)))
         .collect();
     let doc = reply.json();
-    assert_eq!(doc.get("version"), Some(&Json::from(1)));
-    let served_runs: Vec<Json> =
-        doc.get("runs").and_then(Json::as_array).unwrap().iter().map(|r| without_aging(r.as_object().unwrap().clone())).collect();
+    assert_eq!(doc.get("version"), Some(&Value::from(1)));
+    let served_runs: Vec<Value> =
+        doc.get("runs").and_then(Value::as_array).unwrap().iter().map(|r| without_aging(r.as_object().unwrap().clone())).collect();
     assert_eq!(served_runs.len(), 2);
     assert_eq!(served_runs, listed);
 }
@@ -335,7 +334,7 @@ fn files_with_their_mtimes() {
     assert_eq!(reply.status, Some(200));
     assert_eq!(
         reply.body,
-        format!(r#"{{"run": "{SERVE_ID}", "files": [{{"name": "spec.md", "mtime": 100}}, {{"name": "build-1.md", "mtime": 200}}]}}"#)
+        format!(r#"{{"run":"{SERVE_ID}","files":[{{"name":"spec.md","mtime":100}},{{"name":"build-1.md","mtime":200}}]}}"#)
     );
 }
 
@@ -346,7 +345,7 @@ fn file() {
     let served = Served::fake(&host, &[]);
     let reply = served.get(&Served::query("/file", &[("run", SERVE_ID), ("name", "spec.md")]), &[]);
     assert_eq!(reply.status, Some(200));
-    assert_eq!(reply.body, format!(r##"{{"run": "{SERVE_ID}", "name": "spec.md", "text": "# Spec\n"}}"##));
+    assert_eq!(reply.body, format!(r##"{{"run":"{SERVE_ID}","name":"spec.md","text":"# Spec\n"}}"##));
 }
 
 #[test]
@@ -408,11 +407,11 @@ fn a_link_in_the_run_directory_is_followed_as_python_follows_it() {
     std::os::unix::fs::symlink(format!("{}/outside.txt", d.0), format!("{}/{RUNS_DIR}/{SERVE_ID}/link.md", d.0)).unwrap();
     let served = Served::real();
     let reply = served.get(&format!("/file?{}", urlencode(&[("cwd", &d.0), ("run", SERVE_ID), ("name", "link.md")])), &[]);
-    assert_eq!((reply.status, reply.json().get("text")), (Some(200), Some(&Json::from("outside"))));
+    assert_eq!((reply.status, reply.json().get("text")), (Some(200), Some(&Value::from("outside"))));
     // A run directory that is a link is listed through it, as Python lists it.
     std::os::unix::fs::symlink(&d.0, format!("{}/{RUNS_DIR}/linked", d.0)).unwrap();
     let reply = served.get(&format!("/files?{}", urlencode(&[("cwd", &d.0), ("run", "linked")])), &[]);
-    let names: Vec<String> = reply.json().get("files").and_then(Json::as_array).unwrap().iter().map(|f| f.get("name").unwrap().python_str()).collect();
+    let names: Vec<String> = reply.json().get("files").and_then(Value::as_array).unwrap().iter().map(|f| f.get("name").unwrap().text()).collect();
     assert_eq!((reply.status, names), (Some(200), vec!["outside.txt".to_string()]));
 }
 
@@ -462,8 +461,8 @@ fn setup_checks_the_project_without_reaching_it() {
     assert_eq!(reply.status, Some(200));
     assert_eq!(
         reply.body,
-        r#"{"checks": [{"name": "herdr", "level": "required", "ok": true, "detail": "herdr detail", "fix": ""}, "#.to_string()
-            + r#"{"name": "gh", "level": "needed-for-pr", "ok": false, "detail": "gh detail", "fix": "install gh"}], "passed": true}"#
+        r#"{"checks":[{"name":"herdr","level":"required","ok":true,"detail":"herdr detail","fix":""},"#.to_string()
+            + r#"{"name":"gh","level":"needed-for-pr","ok":false,"detail":"gh detail","fix":"install gh"}],"passed":true}"#
     );
     assert_eq!(*asked.lock().unwrap(), [("box".to_string(), "~/proj".to_string())]);
     assert_eq!(*served.connects.lock().unwrap(), Vec::<(String, String)>::new(), "a project was reached");
@@ -474,7 +473,7 @@ fn setup_has_not_passed_with_a_required_check_failed() {
     let checks = vec![a_check("herdr", Level::Required, false), a_check("codex CLI", Level::Optional, false)];
     let (served, _) = setup_served("/nowhere/setup-checked", checks);
     let reply = served.get(&Served::query("/setup", &[]), &[]);
-    assert_eq!(reply.json().get("passed"), Some(&Json::from(false)));
+    assert_eq!(reply.json().get("passed"), Some(&Value::from(false)));
 }
 
 #[test]
@@ -494,11 +493,11 @@ fn the_setup_marker_is_written_and_read() {
     let marker = format!("{}/config/setup-checked", d.0);
     let (served, asked) = setup_served(&marker, vec![]);
     let checked = |served: &Served| served.get("/setup/checked", &[]).json().get("checked").cloned();
-    assert_eq!(checked(&served), Some(Json::from(false)));
+    assert_eq!(checked(&served), Some(Value::from(false)));
     let reply = served.post("/setup/checked", "");
-    assert_eq!((reply.status, reply.body.as_str()), (Some(200), r#"{"checked": true}"#));
+    assert_eq!((reply.status, reply.body.as_str()), (Some(200), r#"{"checked":true}"#));
     assert_eq!(std::fs::read(&marker).expect("the marker is written"), b"");
-    assert_eq!(checked(&served), Some(Json::from(true)));
+    assert_eq!(checked(&served), Some(Value::from(true)));
     // Writing it again leaves it.
     assert_eq!(served.post("/setup/checked", "").status, Some(200));
     assert!(asked.lock().unwrap().is_empty(), "the marker needs no check");
@@ -539,7 +538,7 @@ fn an_unreadable_project_is_a_bad_gateway() {
     let served = Served::start(Box::new(connect), &[], SERVE_POLL, Arc::default(), unchecked());
     let reply = served.get(&Served::query("/runs", &[("machine", "nosuch")]), &[]);
     assert_eq!(reply.status, Some(502));
-    assert_eq!(reply.body, r#"{"error": "no saved herdr machine named nosuch"}"#);
+    assert_eq!(reply.body, r#"{"error":"no saved herdr machine named nosuch"}"#);
 }
 
 #[test]
@@ -560,7 +559,7 @@ fn a_target_read_as_http_server_reads_it() {
     let base = format!("cwd=%7E%2Fproj&run={SERVE_ID}&name=nope&name=spec.md");
     for target in [format!("//file?{base}"), format!("/file?{base}#frag"), format!("http://127.0.0.1:{}/file?{base}", served.port)] {
         let reply = served.get(&target, &[]);
-        assert_eq!((reply.status, reply.json().get("text")), (Some(200), Some(&Json::from("x"))), "{target}");
+        assert_eq!((reply.status, reply.json().get("text")), (Some(200), Some(&Value::from("x"))), "{target}");
     }
     let reply = served.get(&format!("/file?{base}&name=..%2Fx"), &[]);
     assert_eq!((reply.status, reply.error()), (Some(403), "\"../x\" is not a name in the run directory".to_string()));
@@ -786,7 +785,7 @@ fn writes_are_not_served() {
 fn served_with_agent() -> Served {
     let host = Arc::new(ServeHost::on(None));
     let agents = r#"{"spec": {"name": "", "pane": ""}, "build": {"name": "build-5e7e00", "pane": "w1:p2"}}"#;
-    let state = serve_state(SERVE_ID, &[("agents", Json::parse(agents).unwrap())]);
+    let state = serve_state(SERVE_ID, &[("agents", serde_json::from_str::<Value>(agents).unwrap())]);
     host.state().files.insert(format!("{}/state.json", run_dir()), state);
     let served = Served::fake(&host, &[]);
     served.console.state().screens.insert("build-5e7e00".to_string(), "> ready\n".to_string());
@@ -800,7 +799,7 @@ fn an_agent_s_text_is_read_through_herdr_by_run_and_role() {
     assert_eq!(reply.status, Some(200));
     assert_eq!(
         reply.json(),
-        object([("run", Json::from(SERVE_ID)), ("role", Json::from("build")), ("text", Json::from("> ready\n"))])
+        object([("run", Value::from(SERVE_ID)), ("role", Value::from("build")), ("text", Value::from("> ready\n"))])
     );
     let reply = served.get(&Served::query("/agent", &[("run", SERVE_ID), ("role", "build"), ("lines", "50")]), &[]);
     assert_eq!(reply.status, Some(200));
@@ -838,7 +837,7 @@ fn input_is_typed_into_the_agent_as_a_prompt_or_keys() {
     let target = Served::query("/agent/input", &[("run", SERVE_ID), ("role", "build")]);
     let reply = served.post(&target, r#"{"text": "per client, please"}"#);
     assert_eq!(reply.status, Some(200));
-    assert_eq!(reply.json(), object([("run", Json::from(SERVE_ID)), ("role", Json::from("build"))]));
+    assert_eq!(reply.json(), object([("run", Value::from(SERVE_ID)), ("role", Value::from("build"))]));
     assert_eq!(served.post(&target, r#"{"keys": ["esc", "ctrl+c"]}"#).status, Some(200));
     let typed = ["submit build-5e7e00 per client, please", "keys build-5e7e00 esc ctrl+c"];
     assert_eq!(served.console.state().typed, typed);
@@ -894,7 +893,7 @@ fn a_bad_input_is_refused_before_the_project_is_reached() {
 struct EventStream {
     /// The response's status line and headers.
     head: String,
-    events: mpsc::Receiver<(String, Json)>,
+    events: mpsc::Receiver<(String, Value)>,
     /// Gets one message when the response has ended.
     ended: mpsc::Receiver<()>,
     /// The connection, which the stream's reader shares, closed when the stream is dropped, as a client that goes.
@@ -926,7 +925,7 @@ impl EventStream {
                 if let Some(k) = line.strip_prefix("event: ") {
                     kind = Some(k.to_string());
                 } else if let Some(d) = line.strip_prefix("data: ") {
-                    payload = Some(Json::parse(d).expect("JSON data"));
+                    payload = Some(serde_json::from_str::<Value>(d).expect("JSON data"));
                 } else if let (true, Some(k), Some(p)) = (line.is_empty(), kind.take(), payload.take()) {
                     let _ = send.send((k, p));
                 }
@@ -937,7 +936,7 @@ impl EventStream {
     }
 
     /// The next event, as (kind, payload); fails the test when none comes within timeout.
-    fn next(&self, timeout: Duration) -> (String, Json) {
+    fn next(&self, timeout: Duration) -> (String, Value) {
         self.events.recv_timeout(timeout).unwrap_or_else(|_| panic!("no event within {timeout:?}"))
     }
 
@@ -983,12 +982,12 @@ fn the_stream() {
     assert!(stream.head.contains("\r\nContent-Type: text/event-stream\r\n"), "{}", stream.head);
     assert!(stream.head.contains("\r\nCache-Control: no-store\r\n"), "{}", stream.head);
     let (kind, record) = stream.next(Duration::from_secs(2));
-    assert_eq!((kind.as_str(), record.get("run")), ("record", Some(&Json::from(SERVE_ID))));
-    assert_eq!(record.get("record").and_then(|r| r.get("phase")), Some(&Json::from("build")));
+    assert_eq!((kind.as_str(), record.get("run")), ("record", Some(&Value::from(SERVE_ID))));
+    assert_eq!(record.get("record").and_then(|r| r.get("phase")), Some(&Value::from("build")));
     let (kind, files) = stream.next(Duration::from_secs(2));
     assert_eq!(kind, "files");
-    let names = |files: &Json| -> Vec<String> {
-        files.get("files").and_then(Json::as_array).unwrap().iter().map(|f| f.get("name").unwrap().python_str()).collect()
+    let names = |files: &Value| -> Vec<String> {
+        files.get("files").and_then(Value::as_array).unwrap().iter().map(|f| f.get("name").unwrap().text()).collect()
     };
     assert_eq!(names(&files), ["spec.md"]);
 
@@ -996,13 +995,13 @@ fn the_stream() {
     let soon = |started: Instant, expected_kind: &str, run: &str| {
         let (kind, payload) = stream.next(Duration::from_secs(3));
         assert!(started.elapsed() <= Duration::from_secs(2), "{kind} after {:?}", started.elapsed());
-        assert_eq!((kind.as_str(), payload.get("run")), (expected_kind, Some(&Json::from(run))));
+        assert_eq!((kind.as_str(), payload.get("run")), (expected_kind, Some(&Value::from(run))));
         payload
     };
     let started = Instant::now();
-    d.save(SERVE_ID, &[("phase", Json::from("review"))]);
+    d.save(SERVE_ID, &[("phase", Value::from("review"))]);
     let record = soon(started, "record", SERVE_ID);
-    assert_eq!(record.get("record").and_then(|r| r.get("phase")), Some(&Json::from("review")));
+    assert_eq!(record.get("record").and_then(|r| r.get("phase")), Some(&Value::from("review")));
 
     let started = Instant::now();
     // A second later, so that the new file sorts after spec.md by its modification time.
@@ -1014,11 +1013,11 @@ fn the_stream() {
     let started = Instant::now();
     d.save("20261024-130000-a11ce0", &[]);
     soon(started, "record", "20261024-130000-a11ce0");
-    assert_eq!(soon(started, "files", "20261024-130000-a11ce0").get("files"), Some(&Json::Array(vec![])));
+    assert_eq!(soon(started, "files", "20261024-130000-a11ce0").get("files"), Some(&Value::Array(vec![])));
 
     let started = Instant::now();
     std::fs::remove_dir_all(format!("{}/{RUNS_DIR}/{SERVE_ID}", d.0)).unwrap();
-    assert_eq!(soon(started, "record", SERVE_ID).get("record"), Some(&Json::Null));
+    assert_eq!(soon(started, "record", SERVE_ID).get("record"), Some(&Value::Null));
 }
 
 #[test]
@@ -1037,10 +1036,10 @@ fn an_unreadable_project_is_a_problem_event() {
     let stream = EventStream::open(&served, &d.query("/events"), "");
     let (kind, payload) = stream.next(Duration::from_secs(2));
     assert_eq!(kind, "problem");
-    assert!(payload.get("error").unwrap().python_str().contains("corrupt run state"), "{payload:?}");
+    assert!(payload.get("error").unwrap().text().contains("corrupt run state"), "{payload:?}");
     let started = Instant::now();
     d.save(SERVE_ID, &[]);
-    assert_eq!(stream.next(Duration::from_secs(3)), ("problem".to_string(), object([("error", Json::Null)])));
+    assert_eq!(stream.next(Duration::from_secs(3)), ("problem".to_string(), object([("error", Value::Null)])));
     assert_eq!(stream.next(Duration::from_secs(3)).0, "record");
     assert!(started.elapsed() <= Duration::from_secs(2), "{:?}", started.elapsed());
 }
@@ -1093,9 +1092,9 @@ fn changes_are_polled_on_a_machine() {
     host.state().files.insert(format!("{}/review-1.md", run_dir()), "VERDICT: APPROVE\n".to_string());
     let (kind, payload) = stream.next(Duration::from_secs(2));
     assert_eq!(kind, "files");
-    assert_eq!(payload.dumps(), format!(r#"{{"run": "{SERVE_ID}", "files": [{{"name": "review-1.md", "mtime": 0}}]}}"#));
+    assert_eq!(payload.to_string(), format!(r#"{{"run":"{SERVE_ID}","files":[{{"name":"review-1.md","mtime":0}}]}}"#));
     host.state().files.remove(&format!("{}/state.json", run_dir()));
-    let gone = object([("run", Json::from(SERVE_ID)), ("record", Json::Null)]);
+    let gone = object([("run", Value::from(SERVE_ID)), ("record", Value::Null)]);
     assert_eq!(stream.next(Duration::from_secs(2)), ("record".to_string(), gone));
 }
 
@@ -1107,7 +1106,7 @@ fn a_machine_is_polled_less_often() {
     let stream = EventStream::open(&served, &Served::query("/events", &[("machine", "remote")]), "");
     // The first poll, whenever the handler gets to it, sends the run; only a change after it waits for the next.
     assert_eq!(stream.kinds(2), ["record", "files"]);
-    host.state().files.insert(format!("{}/state.json", run_dir()), serve_state(SERVE_ID, &[("phase", Json::from("review"))]));
+    host.state().files.insert(format!("{}/state.json", run_dir()), serve_state(SERVE_ID, &[("phase", Value::from("review"))]));
     assert!(stream.events.recv_timeout(Duration::from_secs(1)).is_err());
 }
 
@@ -1167,13 +1166,13 @@ fn in_process() {
     }
     let line = String::from_utf8(line).unwrap();
     assert!(line.ends_with('\n') && line.matches('\n').count() == 1, "{line:?}");
-    let first = Json::parse(&line).unwrap();
+    let first = serde_json::from_str::<Value>(&line).unwrap();
     assert_eq!(first.as_object().unwrap().keys().collect::<Vec<_>>(), ["url", "token"]);
-    let port = port_of(&first.get("url").unwrap().python_str());
-    let token = first.get("token").unwrap().python_str();
+    let port = port_of(&first.get("url").unwrap().text());
+    let token = first.get("token").unwrap().text();
     let raw = format!("GET /runs?cwd=x&token={token} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
     let reply = exchange(port, raw.as_bytes());
-    assert_eq!((reply.status, reply.body.as_str()), (Some(200), r#"{"version": 1, "runs": []}"#));
+    assert_eq!((reply.status, reply.body.as_str()), (Some(200), r#"{"version":1,"runs":[]}"#));
     stop.send(()).unwrap();
     let (status, err) = serving.join().unwrap();
     assert_eq!((status, err), (0, vec![]));
@@ -1222,7 +1221,7 @@ fn a_wait_for_the_signals_that_fails_ends_it() {
     let (mut out, mut err) = (vec![], vec![]);
     let status = serve(Ok(started), &mut out, &mut err, || Err(io::Error::from_raw_os_error(22)));
     assert_eq!(status, EXIT_ERROR);
-    assert!(String::from_utf8(out).unwrap().starts_with(r#"{"url": "http://127.0.0.1:"#));
+    assert!(String::from_utf8(out).unwrap().starts_with(r#"{"url":"http://127.0.0.1:"#));
     assert_eq!(String::from_utf8(err).unwrap(), "error: cannot wait for SIGINT and SIGTERM: [Errno 22] Invalid argument\n");
     assert_eq!(status_at(port), None, "the stopped server still answers");
 }

@@ -84,8 +84,32 @@ is rewritten to say what is left.
   put the first at 16 of the gate's cognitive-complexity limit of 15 (PR #214), which 20aa212 met by moving the
   `workspace = true` resolution into `cargo_member_entry` instead. Deferred from cross-review of 20aa212 (F1, nit,
   2026-10-30): "A method there used at both sites would remove that branch from `cargo_manifest_dependencies` and keep
-  inheritance inline." Closes with ticket octoflow-without-python/04, which replaces `py::json::Map` with
-  `serde_json`'s map, whose `entry(..).or_insert(..)` both sites can take.
+  inheritance inline." Ticket octoflow-without-python/04 kept that map as `crate::map::Map` (`engine/src/map.rs`), since
+  serde_json's map holds only JSON values and these hold `Dependency`s; closes with a first-wins insert there, both
+  sites taking it.
+- **Readers of `state.json` still take records an earlier release wrote.** Since octoflow-without-python ticket 04
+  (2026-11-03) a `state.json` without the format marker is refused (`crate::state::format_problem`), so no record an
+  earlier release wrote reaches them, but `ProofRun::read` (`engine/src/proofs.rs`) still reads a `proofs` record
+  without `written` as a first run, `Restored::read` (`engine/src/workflow/locks.rs`) a `restored` record without
+  `paths` as restoring nothing, and the turn and agent readers a record without `kind` as `DEFAULT_AGENT`'s. Each is
+  a branch no format-2 run takes. Closes with those branches removed and the records' fields required, as
+  `RunState`'s are.
+- **`a_server_that_stops_accepting_is_started_again_on_the_port` fails about one run in four.** The engine's lib tests
+  (`engine/src/serve/tests.rs`) got an empty-bodied 500 from the port in 3 of 10 runs on main at 6bc3bb3 and 1 of 4
+  on ticket octoflow-without-python/04's branch, both under `cargo test`'s parallel threads; alone it passed every time.
+  serve answers every error with a JSON body, so the 500 is likely another test's server that took the port the
+  stopped one freed. Found 2026-11-03 while verifying ticket 04. Closes with the test holding its port, or another
+  check that the new server answers, and a run of the suite repeated without failure.
+- **`py::toml` keeps a port of Python's `json.dumps`.** Ticket octoflow-without-python/04 moved `json.dumps`'s spacing,
+  `ensure_ascii` and float `repr` from `py::json` into `engine/src/py/toml.rs` (`json_dumps`), for the one message
+  that quotes an unknown package source (`unknown_source`, `engine/src/checks/dependencies.rs`). Raised by
+  cross-review 114 (F8, nit, 2026-11-03): "This is drift from 'py::json … becomes serde_json'. Ticket 06 (py::toml)
+  may be its home." Closes with ticket octoflow-without-python/06, which replaces `py::toml`.
+- **`crate::map::Map` hand-writes an insertion-ordered map.** `engine/src/map.rs`, moved out of `py::json` by ticket
+  octoflow-without-python/04 for the engine's maps of values that are not JSON (`Map<Dependency>`, `Map<String>`).
+  Raised by cross-review 114 (F9, nit, 2026-11-03): "`indexmap::IndexMap` is already in the build through
+  `preserve_order`." Using it needs `indexmap` as a dependency of the engine's own, which the user approves; closes
+  with that approval and `Map` replaced by `IndexMap`, or with the user's ruling that `Map` stays.
 - **serve's event stream can miss a finished run's last files.** `end_done_run` (`workflow.rs`) saves state.json
   with the owner cleared, which makes the run finished, before it writes summary.md and metrics.json, and `release`
   saves before summary.md likewise; `RunWatch::changes` (`serve/runs.rs`) reads a finished run's files again only
@@ -192,38 +216,33 @@ is rewritten to say what is left.
   Closes when a quality build that runs the scenarios fits in `QUALITY_TIMEOUT`, shown by live-checks/01's contract test
   green against one, or with a larger `QUALITY_TIMEOUT` in the Rust engine.
 - **The Rust engine reads some input no run writes otherwise than the Python engine.** Each is a difference only for a
-  file a human edited, or a case no test of the Python engine pins (rust-engine ticket 04, 2026-10-28): `state.json`
-  with `NaN`, `Infinity` or an integer beyond 64 bits is refused, as serde_json reads it (`engine/src/py/json.rs`),
-  where Python reads it; a time is read as CPython 3.14's `fromisoformat` reads it (`crate::py::datetime`, since ticket
-  06; one without an offset in the machine's zone since ticket 08's follow-ups, which named a new run by the time in the
-  machine's zone, not in UTC; 3.13, which a system `python3` may be and `packaging/build-binary.sh` builds the Linux
-  binary with, refuses hour 24, which 3.14 reads as the next day's midnight, and reads `T12.5`, `T12:00.5` and
-  `T12:00:00.Z`, which 3.14 refuses (cross-review 92, F4); no harness or run writes either), and a turn whose start is
-  not a time is left out of `summary.md` and `metrics.json`, where the Python engine fails (`epoch_seconds` and
-  `turn_starts` in `engine/src/summary.rs`); a `state.json` field of another type than the Python engine writes is
-  refused naming the run, where Python keeps it, and one it does not know is kept, where Python drops it, as the spec
-  asks (`RunState::from_saved`). And from the machine the agents run on (rust-engine ticket 05, 2026-10-28): a path git
-  prints that is not UTF-8 is refused, naming it, by `Host::lock`, `locked_changes`, `restore`, `changed_line_counts`
-  and `crate::patch::added_lines` (so by the secret scan too), where Python reads it as `os.fsdecode` does, and a base's
-  gitleaks rules file that is not UTF-8 fails the scan closed, where the Python engine crashes writing it
-  (`engine/src/host.rs`, `utf8_path`; `engine/src/host/scan.rs`, `base_rules_file`). And from the agents' session logs
-  and herdr (rust-engine ticket 06, 2026-10-28): a session log's line that holds `NaN`, `Infinity` or an integer beyond
-  64 bits is skipped, as `Json::parse` refuses it, where Python counts its tokens, and a lone surrogate in a line, as an
-  escape or as a byte that is not UTF-8, is read as U+FFFD, so that two Claude Code message ids that differ only there
-  count as one answer, where Python counts two (`Harness::session_usage` in `engine/src/harness.rs`,
-  `Json::parse_lossy`); a harness that is not one of `AGENT_KINDS`, as a hand-edited `state.json` can name, is refused
-  naming those there are (`crate::harness::harness`), where the Python engine fails on a KeyError; and an answer of
-  herdr's that lacks what its command gives, or is not UTF-8, is a `bad_response` naming the command or a failure naming
-  it (`engine/src/herdr.rs`), where Python fails on a KeyError or a UnicodeDecodeError. And from the Workflow's locks
-  and proofs (rust-engine ticket 08, part 4, 2026-10-29): a `restored` or `proofs` record of `state.json` without a
-  field the engines write, or with one of another type, stops the run naming it (`Restored::read` in
-  `engine/src/workflow/locks.rs`, `ProofRun::read` in `engine/src/proofs.rs`), where Python fails on a KeyError or a
-  TypeError, or, for a `restored` record without `paths`, restores nothing, or, for a `proofs` record without `said`,
-  reads it only where it needs `said` (no release wrote one: v0.24.0, the first with proofs, writes `said` in every
-  record, and only commits before it on main did not; cross-review 98, F1); and a proof's output that is not UTF-8 is
-  quoted with each such byte as U+FFFD (`Workflow::run_proof`), where Python keeps it as a lone surrogate, which
-  `state.json` holds as an escape and the write of the review then fails on (a UnicodeEncodeError, uncaught). And from
-  drain (rust-engine ticket 09b, 2026-10-29): a name in drain's DIR that is not UTF-8 is left out of the queue
+  file a human edited, or a case no test of the Python engine pins (rust-engine ticket 04, 2026-10-28): a time is read
+  only with its offset, as jiff's `Timestamp` reads an ISO 8601 time (`crate::summary::epoch_time`, since
+  octoflow-without-python ticket 04), where Python's `fromisoformat` takes one without an offset in the machine's zone
+  and reads hour 24 and week dates, so a session log's line or a `closedAt` of such a time is skipped or refused; and a
+  turn whose start is not a time is left out of `summary.md` and `metrics.json`, where the Python engine fails
+  (`epoch_seconds` and `turn_starts` in `engine/src/summary.rs`). And from the machine the agents run on (rust-engine
+  ticket 05, 2026-10-28): a path git prints that is not UTF-8 is refused, naming it, by `Host::lock`, `locked_changes`,
+  `restore`, `changed_line_counts` and `crate::patch::added_lines` (so by the secret scan too), where Python reads it as
+  `os.fsdecode` does, and a base's gitleaks rules file that is not UTF-8 fails the scan closed, where the Python engine
+  crashes writing it (`engine/src/host.rs`, `utf8_path`; `engine/src/host/scan.rs`, `base_rules_file`). And from the
+  agents' session logs and herdr (rust-engine ticket 06, 2026-10-28): a session log's line that holds `NaN` or
+  `Infinity` is skipped, as serde_json refuses it, and a count beyond 64 bits is not an integer, where Python counts its
+  tokens, and a lone surrogate in a line, as an escape or as a byte that is not UTF-8, is read as U+FFFD, so that two
+  Claude Code message ids that differ only there count as one answer, where Python counts two (`Harness::session_usage`
+  in `engine/src/harness.rs`, `without_lone_surrogates`); a harness that is not one of `AGENT_KINDS`, as a hand-edited
+  `state.json` can name, is refused naming those there are (`crate::harness::harness`), where the Python engine fails on
+  a KeyError; and an answer of herdr's that lacks what its command gives, or is not UTF-8, is a `bad_response` naming
+  the command or a failure naming it (`engine/src/herdr.rs`), where Python fails on a KeyError or a UnicodeDecodeError.
+  And from the Workflow's locks and proofs (rust-engine ticket 08, part 4, 2026-10-29): a `restored` or `proofs` record
+  of `state.json` without a field the engines write, or with one of another type, stops the run naming it
+  (`Restored::read` in `engine/src/workflow/locks.rs`, `ProofRun::read` in `engine/src/proofs.rs`), where Python fails
+  on a KeyError or a TypeError, or, for a `restored` record without `paths`, restores nothing, or, for a `proofs` record
+  without `said`, reads it only where it needs `said` (no release wrote one: v0.24.0, the first with proofs, writes
+  `said` in every record, and only commits before it on main did not; cross-review 98, F1); and a proof's output that is
+  not UTF-8 is quoted with each such byte as U+FFFD (`Workflow::run_proof`), where Python keeps it as a lone surrogate,
+  which `state.json` holds as an escape and the write of the review then fails on (a UnicodeEncodeError, uncaught). And
+  from drain (rust-engine ticket 09b, 2026-10-29): a name in drain's DIR that is not UTF-8 is left out of the queue
   (`crate::cli::drain::queue`, `read_queue`), where Python reads its spec.md through os.fsdecode. Decided against unless
   a run is found that writes such input.
 - **The Rust engine's Ctrl-C, what is left.** Rust-engine ticket 08's part 6 (2026-10-29) has a SIGINT raise the
@@ -254,15 +273,6 @@ is rewritten to say what is left.
   the follow-ups extend it to SIGTERM and SIGHUP. nix reads a signal's disposition only through `sigaction`, which
   is `unsafe`. Closes with that query, the user's choice of a second `unsafe` block, or with refusing to start on a
   Linux without `/proc`.
-- **The Rust engine's fromisoformat words some errors as CPython 3.13 does.** `IsoTime::parse`
-  (`engine/src/py/datetime.rs`, rust-engine ticket 06) says its errors are 3.14's, but gives 3.13's wording for a
-  year, month or day out of range and an offset of a day or more: `year 0 is out of range` where 3.14 says `year must
-  be in 1..9999, not 0`, `month must be in 1..12` (3.14 adds `, not 13`), `day is out of range for month` (3.14:
-  `day 29 must be in range 1..28 for month 2 in year 2026`), and the offset's message without 3.14's `, not
-  datetime.timedelta(...)`; 28 of the 3106 `fromisoformat` cases of `engine/tests/oracle/harness.json` differ so.
-  The oracle test compares only whether such a time is refused (found by cross-review 102's F3, 2026-10-29, when it
-  began comparing `timestamp()`'s own refusals by their message). Only the wording differs, and only for times no harness,
-  run or PyPI writes. Closes with the messages worded as 3.14's and the test comparing every message.
 - **The commands the Rust engine runs outlive an engine that is SIGKILLed.** Each command runs in a process group of its
   own (rust-engine tickets 05, 06), so a SIGKILL of the engine, or of its group, ends the engine and leaves a running
   `herdr agent wait`, `gh pr create` or push to finish unwatched, where the Python engine's children are in its group

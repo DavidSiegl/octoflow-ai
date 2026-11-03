@@ -13,7 +13,8 @@ use std::thread::JoinHandle;
 
 use octoflow_e2e::ledger::Ledger;
 use octoflow_e2e::{array_at, holds, object, object_at, procs};
-use octoflow_engine::py::json::{Json, Map};
+use serde_json::Value;
+use octoflow_engine::json::Object;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
@@ -119,11 +120,11 @@ impl Drop for Servers {
 
 /// Log event, a request a server got, in the world's ledger, by the latest invocation, "0" before the first, with
 /// that invocation's processes as the ones whose run states count (Ledger::log).
-fn log_request(ledger: &Ledger, event: Map<Json>) {
+fn log_request(ledger: &Ledger, event: Object) {
     ledger.change(|state| {
         let latest = object_at(state, "engines")
             .iter()
-            .filter_map(|(n, pid)| Some((n.parse::<usize>().ok()?, pid.as_int()?)))
+            .filter_map(|(n, pid)| Some((n.parse::<usize>().ok()?, pid.as_i64()?)))
             .max();
         let (n, pids) = match latest {
             Some((n, pid)) => {
@@ -147,14 +148,14 @@ fn log_request(ledger: &Ledger, event: Map<Json>) {
 fn jenkins_answer(world: &Path, base_url: &str, mut request: tiny_http::Request) {
     let method = request.method().as_str().to_string();
     let target = request.url().to_string();
-    let mut event = Map::from_iter([("jenkins", Json::from(format!("{method} {target}")))]);
+    let mut event = octoflow_engine::json::object([("jenkins", Value::from(format!("{method} {target}")))]);
     let form = (method == "POST").then(|| {
         let mut body = String::new();
         request.as_reader().read_to_string(&mut body).unwrap_or_else(|e| panic!("reading a Jenkins request: {e}"));
         parse_qs(&body)
     });
     if let Some(form) = &form {
-        event.insert("form", form_json(form));
+        event.insert("form".into(), form_json(form));
     }
     let ledger = Ledger::new(world);
     log_request(&ledger, event);
@@ -176,8 +177,8 @@ impl Answer {
         Answer { status, body: body.to_string(), json: false, location: None }
     }
 
-    fn json(body: &Json) -> Answer {
-        Answer { status: 200, body: body.dumps(), json: true, location: None }
+    fn json(body: &Value) -> Answer {
+        Answer { status: 200, body: body.to_string(), json: true, location: None }
     }
 
     fn send(self, request: tiny_http::Request) {
@@ -204,7 +205,7 @@ fn jenkins_route(ledger: &Ledger, base_url: &str, method: &str, target: &str, fo
     let prefix: String = JOB.split('/').map(|part| format!("/job/{part}")).collect::<String>() + "/";
     if let Some(item) = path.strip_prefix("/queue/item/") {
         let number: i64 = item.split('/').next().and_then(|n| n.parse().ok()).expect("a queue item's number");
-        return Answer::json(&object([("cancelled", Json::Bool(false)), ("executable", object([("number", Json::Int(number.into()))]))]));
+        return Answer::json(&object([("cancelled", Value::Bool(false)), ("executable", object([("number", Value::from(number))]))]));
     }
     let Some(rest) = path.strip_prefix(&prefix) else { return Answer::text(404, "no such job") };
     let script = ledger.script();
@@ -213,15 +214,15 @@ fn jenkins_route(ledger: &Ledger, base_url: &str, method: &str, target: &str, fo
         Err(found) => found,
     };
     let (_, what) = rest.split_once('/').unwrap_or((rest, ""));
-    let quality = build.get("quality").and_then(Json::as_str);
+    let quality = build.get("quality").and_then(Value::as_str);
     match what {
         "api/json" => {
-            let result = if held { Json::Null } else { build.get("result").cloned().unwrap_or(Json::Null) };
-            Answer::json(&object([("building", Json::Bool(held)), ("result", result)]))
+            let result = if held { Value::Null } else { build.get("result").cloned().unwrap_or(Value::Null) };
+            Answer::json(&object([("building", Value::Bool(held)), ("result", result)]))
         }
         "artifact/quality.md" if quality.is_some() && !held => Answer::text(200, quality.unwrap_or_default()),
-        "testReport/api/json" if build.get("tests").is_some_and(|t| *t != Json::Null) => Answer::json(&test_report(&build)),
-        "consoleText" => Answer::text(200, build.get("console").and_then(Json::as_str).unwrap_or_default()),
+        "testReport/api/json" if build.get("tests").is_some_and(|t| *t != Value::Null) => Answer::json(&test_report(&build)),
+        "consoleText" => Answer::text(200, build.get("console").and_then(Value::as_str).unwrap_or_default()),
         _ => Answer::text(404, "not found"),
     }
 }
@@ -230,17 +231,17 @@ fn jenkins_route(ledger: &Ledger, base_url: &str, method: &str, target: &str, fo
 /// whether it is held, for jenkins_route to answer from. A poll of a held build's quality.md marks its hold reached:
 /// it is the last request of the engine's poll of a running build, after which it sleeps and polls again.
 fn jenkins_build_of(
-    state: &mut Map<Json>,
-    script: &Json,
+    state: &mut Object,
+    script: &Value,
     base_url: &str,
     method: &str,
     rest: &str,
     query: &str,
     form: Option<&Vec<(String, Vec<String>)>>,
-) -> Result<Answer, (Json, bool)> {
+) -> Result<Answer, (Value, bool)> {
     if rest == "buildWithParameters" && method == "POST" {
         let git_ref = form.and_then(|f| f.iter().find(|(k, _)| k == "GIT_REF")).map(|(_, v)| v[0].clone()).unwrap_or_default();
-        array_at(state, "triggered").push(Json::from(git_ref));
+        array_at(state, "triggered").push(Value::from(git_ref));
         let n = builds(script, state).keys().max().copied().unwrap_or_default();
         let location = Some(format!("{base_url}/queue/item/{n}/"));
         return Ok(Answer { status: 201, body: String::new(), json: false, location });
@@ -254,11 +255,11 @@ fn jenkins_build_of(
     let Some(build) = number.parse::<i64>().ok().and_then(|n| builds.get(&n)).cloned() else {
         return Ok(Answer::text(404, "no such build"));
     };
-    let hold = build.get("hold").and_then(Json::as_str).filter(|h| !h.is_empty()).map(str::to_string);
+    let hold = build.get("hold").and_then(Value::as_str).filter(|h| !h.is_empty()).map(str::to_string);
     let held = hold.as_deref().is_some_and(|h| !holds(state, "released", h));
     if let Some(hold) = hold.filter(|_| held && what == "artifact/quality.md") {
         if !holds(state, "reached", &hold) {
-            array_at(state, "reached").push(Json::from(hold));
+            array_at(state, "reached").push(Value::from(hold));
         }
     }
     Err((build, held))
@@ -266,69 +267,69 @@ fn jenkins_build_of(
 
 /// The job's builds by number: the retained ones, then those triggered so far, each its scripted outcome (a FAILURE
 /// without a quality file past the last scripted) with its GIT_REF under "ref".
-fn builds(script: &Json, state: &mut Map<Json>) -> std::collections::BTreeMap<i64, Json> {
+fn builds(script: &Value, state: &mut Object) -> std::collections::BTreeMap<i64, Value> {
     let jenkins = script.get("jenkins");
-    let list = |key: &str| jenkins.and_then(|j| j.get(key)).and_then(Json::as_array).cloned().unwrap_or_default();
+    let list = |key: &str| jenkins.and_then(|j| j.get(key)).and_then(Value::as_array).cloned().unwrap_or_default();
     let mut out = std::collections::BTreeMap::new();
     for retained in list("retained") {
         let mut build = retained.as_object().cloned().expect("a retained build is an object");
-        build.insert("ref", Json::Null);
-        let number = build.get("number").and_then(Json::as_int).expect("a retained build's number");
-        out.insert(i64::try_from(number).expect("a build number fits an i64"), Json::Object(build));
+        build.insert("ref".into(), Value::Null);
+        let number = build.get("number").and_then(Value::as_i64).expect("a retained build's number");
+        out.insert(number, Value::Object(build));
     }
     let first = out.keys().max().copied().unwrap_or(0) + 1;
     let scripted = list("builds");
     for (k, git_ref) in array_at(state, "triggered").iter().enumerate() {
-        let mut build = scripted.get(k).and_then(Json::as_object).cloned().unwrap_or_else(|| {
-            Map::from_iter([("result", Json::from("FAILURE")), ("quality", Json::Null)])
+        let mut build = scripted.get(k).and_then(Value::as_object).cloned().unwrap_or_else(|| {
+            octoflow_engine::json::object([("result", Value::from("FAILURE")), ("quality", Value::Null)])
         });
         let number = first + i64::try_from(k).expect("a build count fits an i64");
-        build.insert("number", Json::Int(number.into()));
-        build.insert("ref", git_ref.clone());
-        out.insert(number, Json::Object(build));
+        build.insert("number".into(), Value::from(number));
+        build.insert("ref".into(), git_ref.clone());
+        out.insert(number, Value::Object(build));
     }
     out
 }
 
 /// The job's api/json for the tree the engine asks for: its parameters, its builds' GIT_REFs, or its builds' results
 /// and descriptions; builds newest first.
-fn job(tree: &str, builds: &std::collections::BTreeMap<i64, Json>) -> Json {
+fn job(tree: &str, builds: &std::collections::BTreeMap<i64, Value>) -> Value {
     let newest = builds.values().rev();
-    let number = |b: &Json| b.get("number").cloned().unwrap_or(Json::Null);
+    let number = |b: &Value| b.get("number").cloned().unwrap_or(Value::Null);
     if tree.contains("parameterDefinitions") {
-        let parameters = Json::Array(vec![object([("name", Json::from("GIT_REF"))])]);
-        return object([("property", Json::Array(vec![object([("parameterDefinitions", parameters)])]))]);
+        let parameters = Value::Array(vec![object([("name", Value::from("GIT_REF"))])]);
+        return object([("property", Value::Array(vec![object([("parameterDefinitions", parameters)])]))]);
     }
     if tree.contains("actions") {
         let builds = newest.map(|b| {
-            let parameter = object([("name", Json::from("GIT_REF")), ("value", b.get("ref").cloned().unwrap_or(Json::Null))]);
-            let actions = Json::Array(vec![object([("parameters", Json::Array(vec![parameter]))])]);
+            let parameter = object([("name", Value::from("GIT_REF")), ("value", b.get("ref").cloned().unwrap_or(Value::Null))]);
+            let actions = Value::Array(vec![object([("parameters", Value::Array(vec![parameter]))])]);
             object([("number", number(b)), ("actions", actions)])
         });
-        return object([("builds", Json::Array(builds.collect()))]);
+        return object([("builds", Value::Array(builds.collect()))]);
     }
     let builds = newest.map(|b| {
-        let field = |k: &str| b.get(k).cloned().unwrap_or(Json::Null);
+        let field = |k: &str| b.get(k).cloned().unwrap_or(Value::Null);
         object([("number", number(b)), ("result", field("result")), ("description", field("description"))])
     });
-    object([("builds", Json::Array(builds.collect()))])
+    object([("builds", Value::Array(builds.collect()))])
 }
 
 /// A build's test report: each of its failing tests, (dotted name, detail), as a failed case of one suite.
-fn test_report(build: &Json) -> Json {
-    let tests = build.get("tests").and_then(Json::as_array).cloned().unwrap_or_default();
+fn test_report(build: &Value) -> Value {
+    let tests = build.get("tests").and_then(Value::as_array).cloned().unwrap_or_default();
     let cases = tests.iter().map(|t| {
         let pair = t.as_array().expect("a test is a [name, detail] pair");
         let name = pair[0].as_str().expect("a test's name");
         let (class, short) = name.rsplit_once('.').unwrap_or((name, name));
         object([
-            ("className", Json::from(class)),
-            ("name", Json::from(short)),
-            ("status", Json::from("FAILED")),
+            ("className", Value::from(class)),
+            ("name", Value::from(short)),
+            ("status", Value::from("FAILED")),
             ("errorDetails", pair[1].clone()),
         ])
     });
-    object([("suites", Json::Array(vec![object([("cases", Json::Array(cases.collect()))])]))])
+    object([("suites", Value::Array(vec![object([("cases", Value::Array(cases.collect()))])]))])
 }
 
 /// A form or query string's fields, each with its values in order, as Python's urllib.parse.parse_qs reads it: `+`
@@ -350,8 +351,8 @@ fn parse_qs(text: &str) -> Vec<(String, Vec<String>)> {
     out
 }
 
-fn form_json(form: &[(String, Vec<String>)]) -> Json {
-    Json::Object(form.iter().map(|(k, v)| (k.as_str(), octoflow_e2e::strings(v))).collect())
+fn form_json(form: &[(String, Vec<String>)]) -> Value {
+    Value::Object(form.iter().map(|(k, v)| (k.clone(), octoflow_e2e::strings(v))).collect())
 }
 
 /// text with each `%XX` decoded to its byte, X a hex digit, the bytes read as UTF-8 with replacement, as
@@ -455,11 +456,11 @@ fn proxy_connection(mut stream: TcpStream, world: &Path, tls: Arc<rustls::Server
     let mut tls_stream = rustls::StreamOwned::new(connection, stream);
     let Some(head) = read_head(&mut tls_stream) else { return };
     let path = head.split(' ').nth(1).unwrap_or_default().to_string();
-    log_request(&Ledger::new(world), Map::from_iter([("pypi", Json::from(format!("GET {path}")))]));
+    log_request(&Ledger::new(world), octoflow_engine::json::object([("pypi", Value::from(format!("GET {path}")))]));
     let name = path.strip_prefix("/pypi/").map(|rest| unquote(rest.split('/').next().unwrap_or_default()));
     let answer = name.and_then(|name| Ledger::new(world).script().get("pypi").and_then(|p| p.get(&name)).cloned());
     let (status, body) = match answer {
-        Some(answer) => ("200 OK", answer.dumps()),
+        Some(answer) => ("200 OK", answer.to_string()),
         None => ("404 Not Found", "not found".to_string()),
     };
     let response = format!("HTTP/1.0 {status}\r\nContent-Length: {}\r\n\r\n{body}", body.len());

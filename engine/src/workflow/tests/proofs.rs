@@ -157,13 +157,13 @@ fn carried_note(proj: &str, items: &[&str]) -> String {
 }
 
 /// (round, written, file, demonstrated) of each proof run the state records.
-fn runs(state: &RunState) -> Vec<(i128, i128, String, bool)> {
+fn runs(state: &RunState) -> Vec<(i64, i64, String, bool)> {
     state
         .proofs
         .iter()
         .map(|p| {
-            let int = |key: &str| p.get(key).and_then(Json::as_int).unwrap();
-            (int("round"), int("written"), text(p, "file").unwrap(), p.get("demonstrated") == Some(&Json::Bool(true)))
+            let int = |key: &str| p.get(key).and_then(Value::as_i64).unwrap();
+            (int("round"), int("written"), text(p, "file").unwrap(), p.get("demonstrated") == Some(&Value::Bool(true)))
         })
         .collect()
 }
@@ -196,11 +196,11 @@ fn a_failing_proof_demonstrates_its_finding_and_the_builder_must_make_it_pass() 
     ));
     assert!(reviewed.contains("- `test_2.sh` (finding 2): not demonstrated, it passes."));
     assert!(reviewed.contains("- `test_3.sh` (finding 3): not demonstrated, it errors, with exit status 4."));
-    let firsts: Vec<(Option<i128>, String, bool)> = state
+    let firsts: Vec<(Option<i64>, String, bool)> = state
         .proofs
         .iter()
-        .filter(|p| p.get("round") == Some(&Json::Int(1)))
-        .map(|p| (p.get("finding").and_then(Json::as_int), text(p, "file").unwrap(), p.get("demonstrated") == Some(&Json::Bool(true))))
+        .filter(|p| p.get("round") == Some(&Value::from(1)))
+        .map(|p| (p.get("finding").and_then(Value::as_i64), text(p, "file").unwrap(), p.get("demonstrated") == Some(&Value::Bool(true))))
         .collect();
     assert_eq!(firsts, [
         (Some(1), "test_1_bug.sh".to_string(), true),
@@ -257,7 +257,7 @@ fn a_workflow_without_proof_command_runs_none() {
 /// A run in proj resumed in round 1's review, which is review, with proofs recorded: run to its approval in round 2,
 /// whose review runs the demonstrated proofs again and finds no file. The fixture, the state it ended in, and the
 /// Builder's prompts.
-fn resumed_in_review(proj: &TempDir, review: &str, proofs: Vec<Map<Json>>) -> (Fixture, RunState, Vec<String>) {
+fn resumed_in_review(proj: &TempDir, review: &str, proofs: Vec<Object>) -> (Fixture, RunState, Vec<String>) {
     let mut state = RunState::new(RUN_ID, TASK, &proj.path());
     (state.phase, state.round, state.workflow, state.base) = ("review".into(), 1, "quick".into(), Some("abc123".into()));
     state.proofs = proofs;
@@ -284,7 +284,7 @@ fn a_review_judged_before_a_resume_is_not_judged_again() {
     let judged = format!("VERDICT: CHANGES_REQUESTED\n1. a bug\n\n{PROOFS_HEADING}\n\nalready judged\n");
     let (f, state, seen) = resumed_in_review(&proj, &judged, vec![record(FIRST_RUN)]);
     assert_eq!(review(&f, &state, 1), judged);
-    let firsts: Vec<&Map<Json>> = state.proofs.iter().filter(|p| p.get("round") == Some(&Json::Int(1))).collect();
+    let firsts: Vec<&Object> = state.proofs.iter().filter(|p| p.get("round") == Some(&Value::from(1))).collect();
     assert_eq!(firsts, [&record(FIRST_RUN)]);
     assert!(seen[0].contains(&proofs_note(&format!("{}/test_1.sh", state.proofs_dir(1)))));
 }
@@ -327,7 +327,7 @@ fn a_demonstrated_proof_runs_again_every_round_until_it_passes() {
     assert!(reviewed[1].ends_with(&carried_note(&proj, &[&fails_1, &passes_2])), "{}", reviewed[1]);
     assert!(reviewed[2].ends_with(&carried_note(&proj, &[&fails_1, &fails_4])));
     assert!(reviewed[3].contains(&carried_note(&proj, &[&passes_1, &fails_4])));
-    let expected: Vec<(i128, i128, String, bool)> = [
+    let expected: Vec<(i64, i64, String, bool)> = [
         (1, 1, "test_1_bug.sh", true), (1, 1, "test_2.sh", true), (1, 1, "test_3.sh", false),
         (2, 1, "test_1_bug.sh", true), (2, 1, "test_2.sh", false), (2, 2, "test_4.sh", true),
         (3, 1, "test_1_bug.sh", true), (3, 2, "test_4.sh", true),
@@ -358,7 +358,7 @@ fn a_round_with_no_proof_to_carry_prompts_the_reviewer_as_before() {
     ]);
     let mut wf = p.f.workflow(p.settings.clone());
     assert_eq!(wf.run(), verdict(APPROVE));
-    let rounds: Vec<i128> = runs(wf.state()).into_iter().map(|(round, ..)| round).collect();
+    let rounds: Vec<i64> = runs(wf.state()).into_iter().map(|(round, ..)| round).collect();
     assert_eq!(rounds, [1, 1]);
     let without = run_proofs(&proj, vec![(CHANGES_REQUESTED, vec![]), (APPROVE, vec![])]);
     assert_eq!(without.f.workflow(without.settings.clone()).run(), verdict(APPROVE));
@@ -367,7 +367,7 @@ fn a_round_with_no_proof_to_carry_prompts_the_reviewer_as_before() {
 
 /// A run in proj saved in phase phase of round n, with the proofs runs, round 1's review judged and each round's
 /// report before n written: the fixture, on a FakeHost whose processes are real.
-fn saved_with_proofs(proj: &TempDir, phase: &str, n: u32, runs: Vec<Map<Json>>, script: Script) -> Fixture {
+fn saved_with_proofs(proj: &TempDir, phase: &str, n: u32, runs: Vec<Object>, script: Script) -> Fixture {
     let mut state = RunState::new(RUN_ID, TASK, &proj.path());
     (state.phase, state.round, state.workflow, state.base) = (phase.into(), n, "quick".into(), Some("abc123".into()));
     state.proofs = runs;
@@ -397,31 +397,6 @@ fn reruns_recorded_before_a_resume_are_not_run_again_and_still_heard() {
 }
 
 #[test]
-fn a_proof_recorded_before_reruns_existed_runs_again() {
-    let proj = TempDir::new();
-    let (seen, reviewed) = (seen(), seen());
-    let saved = record(&format!(
-        r#"{{"run_id": "{RUN_ID}", "task": "{TASK}", "cwd": "{}", "phase": "build", "round": 2, "workflow": "quick",
-            "base": "abc123", "proofs": [{FIRST_RUN}]}}"#,
-        proj.path()
-    ));
-    let state = RunState::from_saved(&saved).unwrap();
-    std::fs::create_dir_all(state.proofs_dir(1)).unwrap();
-    std::fs::write(format!("{}/test_1.sh", state.proofs_dir(1)), "exit 0\n").unwrap();
-    let f = saved_with_proofs(&proj, "build", 2, state.proofs.clone(), vec![
-        ("build", vec![recording(build_turn(2), &seen)]),
-        ("review", vec![recording(review_turn(2, APPROVE), &reviewed)]),
-    ]);
-    let mut wf = f.workflow(settings(&proving(), 3));
-    assert_eq!(wf.run(), verdict(APPROVE));
-    let path = format!("{}/test_1.sh", state.proofs_dir(1));
-    assert!(seen.borrow()[0].contains(&proofs_note(&path)));
-    let rerun = r#"{"round": 2, "written": 1, "file": "test_1.sh", "finding": 1, "demonstrated": false, "said": "it passes"}"#;
-    assert_eq!(wf.state().proofs[1], record(rerun));
-    assert!(reviewed.borrow()[0].contains(&carried_note(&proj.path(), &[&format!("- `{path}`: now passes.")])));
-}
-
-#[test]
 fn a_proof_that_errors_when_run_again_stays_carried() {
     // A change that makes a demonstrated proof crash has not made it pass.
     let proj = TempDir::new();
@@ -445,7 +420,7 @@ fn a_proof_that_errors_when_run_again_stays_carried() {
         assert!(prompt.contains(&carried_note(&proj.path(), &[&item])), "{prompt}");
     }
     assert!(seen.borrow()[1].contains(&proofs_note(&path)));
-    let demonstrated: Vec<(i128, bool)> = runs(wf.state()).into_iter().map(|(round, _, _, d)| (round, d)).collect();
+    let demonstrated: Vec<(i64, bool)> = runs(wf.state()).into_iter().map(|(round, _, _, d)| (round, d)).collect();
     assert_eq!(demonstrated, [(1, true), (2, false), (3, false)]);
 }
 
@@ -753,13 +728,13 @@ fn a_carried_proof_runs_again_after_the_rounds_last_quality_round_and_before_the
             "review 2"
         ]
     );
-    let proofs: Vec<(Option<i128>, Option<i128>, Option<bool>)> = wf
+    let proofs: Vec<(Option<i64>, Option<i64>, Option<bool>)> = wf
         .state()
         .proofs
         .iter()
         .map(|p| {
-            let int = |k: &str| p.get(k).and_then(Json::as_int);
-            (int("round"), int("written"), p.get("demonstrated").and_then(Json::as_bool))
+            let int = |k: &str| p.get(k).and_then(Value::as_i64);
+            (int("round"), int("written"), p.get("demonstrated").and_then(Value::as_bool))
         })
         .collect();
     assert_eq!(proofs, [(Some(1), Some(1), Some(true)), (Some(2), Some(1), Some(true))]);

@@ -1,6 +1,6 @@
 [package]
 name = "octoflow-engine"
-version = "0.53.2"
+version = "0.54.0"
 description = "The orchestrator's engine, ported from orchestrator.py (the rust-engine spec)"
 edition = "2021"
 license = "MIT OR Apache-2.0"
@@ -10,9 +10,9 @@ publish = false
 # The command line (crate::cli): its subcommands, flags and usage errors, by the builder API, which can lay out a flag
 # per role and share groups of flags between subcommands as argparse's parents do. 4.6.7 is from 2026-09-14.
 clap = { version = "4.6.7", default-features = false, features = ["std", "help", "usage", "error-context", "string"] }
-# The machine's local time, as Python's time.strftime and a naive datetime's timestamp() read it (py/datetime.rs): its
-# zone from TZ, else /etc/localtime, else UTC, and a zone's rules from /usr/share/zoneinfo, with no database of its
-# own. 0.2.38 is from 2026-10-06; ui/src-tauri's crates had it in Cargo.lock already. Approved by the user for ticket
+# Times: RFC 3339 times read and written in state.json and the records, and the machine's local time a new run's id
+# is named by (cli/start.rs), its zone from TZ, else /etc/localtime, else UTC, and a zone's rules from
+# /usr/share/zoneinfo, with no database of its own. 0.2.38 is from 2026-10-06; ui/src-tauri's crates had it in Cargo.lock already. Approved by the user for ticket
 # 08, 2026-10-29.
 jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
 # Process groups and signals, the user's id, the machine's name and its monotonic clock, through nix's safe API: a Host
@@ -20,9 +20,11 @@ jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-sy
 # thread waits for and the program ends by (interrupt.rs), a run's owner record names its host and pid (runs.rs), and a
 # run's deadlines are kept on the clock Python's time.monotonic reads (workflow/system.rs).
 nix = { version = "0.31", default-features = false, features = ["hostname", "signal", "time", "user"] }
-serde = "1"
-# float_roundtrip: a float reads as the nearest f64, as Python reads it, so that state.json writes back as it was.
-serde_json = { version = "1", features = ["float_roundtrip"] }
+# derive: RunState's state.json (state.rs).
+serde = { version = "1", features = ["derive"] }
+# JSON (crate::json): preserve_order keeps an object's keys in the order they came, so that a record written back,
+# and what list and show print of it, keep the order it was written in.
+serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
 # Jenkins and PyPI, over HTTP or HTTPS (http.rs): blocking, and with rustls rather than the system's TLS library, given
 # the certificates it trusts (root_certs; ureq's own Mozilla roots only as the fallback there); gzip and the other

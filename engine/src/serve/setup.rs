@@ -9,7 +9,7 @@ use crate::error::os_error;
 use crate::herdr::ProcessHerdr;
 use crate::host::ProcessHost;
 use crate::interrupt::Interrupt;
-use crate::py::json::Json;
+use serde_json::Value;
 
 use super::object;
 
@@ -44,11 +44,11 @@ impl Setup {
     /// passed is not doctor's exit status (crate::cli::doctor::report_checks), which a failed NeededForPr check also
     /// makes 1: a missing gh login stops a run at its pull request, which doctor is asked about, but it is no reason
     /// for the dialog to open by itself at every start.
-    pub fn checks(&self, machine: &str, cwd: &str, stopping: &Interrupt) -> Json {
+    pub fn checks(&self, machine: &str, cwd: &str, stopping: &Interrupt) -> Value {
         let checks = (self.check)(machine, cwd, stopping);
         let passed = checks.iter().all(|c| c.ok || c.level != Level::Required);
-        let checks = Json::Array(checks.iter().map(check_json).collect());
-        object([("checks", checks), ("passed", Json::from(passed))])
+        let checks = Value::Array(checks.iter().map(check_json).collect());
+        object([("checks", checks), ("passed", Value::from(passed))])
     }
 
     /// Whether the marker is there. Errors: whether it is cannot be told, as when the directory cannot be searched.
@@ -87,12 +87,12 @@ pub(crate) fn checks_through(host: &ProcessHost, herdr: &ProcessHerdr, cwd: &str
     check_setup(host, herdr, Some(cwd), in_herdr_pane, Level::Optional)
 }
 
-fn check_json(c: &Check) -> Json {
+fn check_json(c: &Check) -> Value {
     object([
-        ("name", Json::from(c.name.as_str())),
-        ("level", Json::from(c.level.as_str())),
-        ("ok", Json::from(c.ok)),
-        ("detail", Json::from(c.detail.as_str())),
-        ("fix", Json::from(c.fix.as_str())),
+        ("name", Value::from(c.name.as_str())),
+        ("level", Value::from(c.level.as_str())),
+        ("ok", Value::from(c.ok)),
+        ("detail", Value::from(c.detail.as_str())),
+        ("fix", Value::from(c.fix.as_str())),
     ])
 }

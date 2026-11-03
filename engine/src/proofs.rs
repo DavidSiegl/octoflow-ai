@@ -3,7 +3,8 @@
 
 use crate::constants::PROOF_COPIES_DIR;
 use crate::error::OrchestratorError;
-use crate::py::json::{Json, Map};
+use serde_json::Value;
+use crate::json::{object, Object};
 
 /// The heading of the section Workflow::judge_proofs appends to a review, which a Reviewer's own section is unlikely
 /// to take.
@@ -53,16 +54,16 @@ impl ProofRun {
     /// Errors: a field missing or of another type than the engines write, as no released engine's state.json has
     /// (since v0.24.0, the first with proofs, every record has each field but written), where the Python engine fails
     /// on a KeyError or a TypeError.
-    pub fn read(record: &Map<Json>) -> Result<ProofRun, OrchestratorError> {
+    pub fn read(record: &Object) -> Result<ProofRun, OrchestratorError> {
         let field = |key: &str| {
             record.get(key).ok_or_else(|| OrchestratorError(format!("a proof run saved in state.json has no {key}")))
         };
-        let invalid = |key: &str, value: &Json, what: &str| {
-            OrchestratorError(format!("a proof run saved in state.json has {key} {}, not {what}", value.dumps()))
+        let invalid = |key: &str, value: &Value, what: &str| {
+            OrchestratorError(format!("a proof run saved in state.json has {key} {}, not {what}", value))
         };
         let round_of = |key: &str| {
             let value = field(key)?;
-            value.as_int().and_then(|n| u32::try_from(n).ok()).ok_or_else(|| invalid(key, value, "a round"))
+            value.as_i64().and_then(|n| u32::try_from(n).ok()).ok_or_else(|| invalid(key, value, "a round"))
         };
         let text_of = |key: &str| {
             let value = field(key)?;
@@ -71,26 +72,24 @@ impl ProofRun {
         let round = round_of("round")?;
         let written = if record.contains_key("written") { round_of("written")? } else { round };
         let finding = match field("finding")? {
-            Json::Null => None,
-            value => Some(value.as_int().and_then(|n| u64::try_from(n).ok()).ok_or_else(|| invalid("finding", value, "a number"))?),
+            Value::Null => None,
+            value => Some(value.as_i64().and_then(|n| u64::try_from(n).ok()).ok_or_else(|| invalid("finding", value, "a number"))?),
         };
         let demonstrated = field("demonstrated")?;
         let demonstrated = demonstrated.as_bool().ok_or_else(|| invalid("demonstrated", demonstrated, "true or false"))?;
         Ok(ProofRun { round, written, file: text_of("file")?, finding, demonstrated, said: text_of("said")? })
     }
 
-    /// The run as a RunState::proofs record, with its fields in the order the Python engine writes them.
-    pub fn record(&self) -> Map<Json> {
-        [
-            ("round", Json::from(i64::from(self.round))),
-            ("written", Json::from(i64::from(self.written))),
-            ("file", Json::from(self.file.as_str())),
-            ("finding", self.finding.map_or(Json::Null, |n| Json::Int(n.into()))),
-            ("demonstrated", Json::Bool(self.demonstrated)),
-            ("said", Json::from(self.said.as_str())),
-        ]
-        .into_iter()
-        .collect()
+    /// The run as a RunState::proofs record.
+    pub fn record(&self) -> Object {
+        object([
+            ("round", Value::from(self.round)),
+            ("written", Value::from(self.written)),
+            ("file", Value::from(self.file.as_str())),
+            ("finding", Value::from(self.finding)),
+            ("demonstrated", Value::Bool(self.demonstrated)),
+            ("said", Value::from(self.said.as_str())),
+        ])
     }
 
     /// Whether the run passed: exited 0, neither failing nor erroring.

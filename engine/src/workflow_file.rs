@@ -29,7 +29,9 @@ use crate::paths::{file_name, split_extension};
 use crate::pipeline::{default_workflow, find_workflow, Pipeline, PipelineSettings, Step, DEFAULT_WORKFLOW, WORKFLOWS};
 use crate::prompts::template::{is_name, placeholders};
 use crate::prompts::{files_with_extension, saved_prompts, Prompts};
-use crate::py::json::{unicode_string, Json, Map};
+use serde_json::Value;
+use crate::map::Map;
+use crate::json::{Object, ValueExt};
 
 /// The keys a workflow definition's top table may have.
 pub const WORKFLOW_KEYS: [&str; 6] = ["description", "roles", "steps", "proof_command", "max_files", "max_lines"];
@@ -105,18 +107,18 @@ pub fn load_workflow_file(path: &str, prompts: &Prompts) -> Result<Pipeline, Orc
     parse_workflow(name, &definition, prompts).map_err(|e| OrchestratorError(format!("{path}: {e}")))
 }
 
-/// The table TOML text holds, as Json; the parser's error, with its line and column, for text that is not TOML.
-pub fn parse_toml(text: &str) -> Result<Json, String> {
-    toml::from_str::<Json>(text).map_err(|e| crate::py::toml::syntax_error(text, &e))
+/// The table TOML text holds, as Value; the parser's error, with its line and column, for text that is not TOML.
+pub fn parse_toml(text: &str) -> Result<Value, String> {
+    toml::from_str::<Value>(text).map_err(|e| crate::py::toml::syntax_error(text, &e))
 }
 
 /// The workflow a definition describes, as a workflow file or a run's state.json holds it, a step with a use taking
 /// the fields of that step of the default workflow as prompts words it; what is wrong with it otherwise.
-pub fn parse_workflow(name: &str, definition: &Json, prompts: &Prompts) -> Result<Pipeline, String> {
-    let empty = Map::new();
+pub fn parse_workflow(name: &str, definition: &Value, prompts: &Prompts) -> Result<Pipeline, String> {
+    let empty = Object::new();
     let definition = definition.as_object().unwrap_or(&empty);
     check_keys(definition, &WORKFLOW_KEYS, "the file")?;
-    let raw_steps = match definition.get("steps").and_then(Json::as_array) {
+    let raw_steps = match definition.get("steps").and_then(Value::as_array) {
         Some(steps) if !steps.is_empty() => steps,
         _ => return Err("it has no [[steps]]".into()),
     };
@@ -124,7 +126,7 @@ pub fn parse_workflow(name: &str, definition: &Json, prompts: &Prompts) -> Resul
     let steps = raw_steps.iter().enumerate().map(|(i, raw)| parse_step(i + 1, raw, &default)).collect::<Result<Vec<_>, _>>()?;
     let declared = match definition.get("roles") {
         None => Map::new(),
-        Some(Json::Object(raw_roles)) => {
+        Some(Value::Object(raw_roles)) => {
             raw_roles.iter().map(|(role, raw)| parse_role(role, raw).map(|table| (role, table))).collect::<Result<_, _>>()?
         }
         Some(_) => return Err("roles must be a table".into()),
@@ -145,19 +147,19 @@ pub fn parse_workflow(name: &str, definition: &Json, prompts: &Prompts) -> Resul
     };
     let description = match definition.get("description") {
         None => String::new(),
-        Some(Json::Str(s)) => s.clone(),
+        Some(Value::String(s)) => s.clone(),
         Some(_) => return Err("description must be a string".into()),
     };
     let proof_command = match definition.get("proof_command") {
-        None | Some(Json::Null) => None,
-        Some(Json::Str(s)) => Some(s.clone()),
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) => Some(s.clone()),
         Some(_) => return Err("proof_command must be a string".into()),
     };
     let mut budget = [DEFAULT_MAX_FILES, DEFAULT_MAX_LINES];
     for (key, slot) in BUDGET_KEYS.iter().zip(budget.iter_mut()) {
-        if let Some(value) = definition.get(key) {
+        if let Some(value) = definition.get(*key) {
             // A bool is no number of lines, though Python's isinstance takes true for an int.
-            let number = value.as_int().and_then(|n| i64::try_from(n).ok());
+            let number = value.as_i64();
             *slot = number.ok_or_else(|| format!("{key} must be a whole number"))?;
         }
     }
@@ -173,33 +175,33 @@ pub fn parse_workflow(name: &str, definition: &Json, prompts: &Prompts) -> Resul
 }
 
 /// The ROLE_KEYS a role's entry in [roles] sets: a string is its label.
-fn parse_role(role: &str, raw: &Json) -> Result<Map<String>, String> {
+fn parse_role(role: &str, raw: &Value) -> Result<Map<String>, String> {
     let place = format!("role {role}");
     if !is_name(role) {
         return Err(format!("{place}: a role key may use only letters, digits, - and _"));
     }
     let table = match raw {
-        Json::Str(label) => return Ok([("label", label.clone())].into_iter().collect()),
-        Json::Object(table) => table,
+        Value::String(label) => return Ok([("label", label.clone())].into_iter().collect()),
+        Value::Object(table) => table,
         _ => return Err(format!("{place}: give a label, or a table with label, model and agent")),
     };
     check_keys(table, &ROLE_KEYS, &place)?;
     table
         .iter()
         .map(|(key, value)| match value {
-            Json::Str(s) => Ok((key, s.clone())),
+            Value::String(s) => Ok((key, s.clone())),
             _ => Err(format!("{place}: {key} must be a string")),
         })
         .collect()
 }
 
 /// Step i of a definition, its use resolved against default, the default workflow.
-fn parse_step(i: usize, raw: &Json, default: &Pipeline) -> Result<Step, String> {
-    let Json::Object(raw) = raw else {
+fn parse_step(i: usize, raw: &Value, default: &Pipeline) -> Result<Step, String> {
+    let Value::Object(raw) = raw else {
         return Err(format!("step {i} must be a table"));
     };
     let place = match raw.get("id") {
-        Some(Json::Str(id)) => format!("step {i} ({id})"),
+        Some(Value::String(id)) => format!("step {i} ({id})"),
         _ => format!("step {i}"),
     };
     let mut keys: Vec<&str> = STEP_KEYS.to_vec();
@@ -207,10 +209,10 @@ fn parse_step(i: usize, raw: &Json, default: &Pipeline) -> Result<Step, String> 
     check_keys(raw, &keys, &place)?;
     let mut fields = used_step(raw, &place, default)?;
     for (key, value) in raw.iter().filter(|(key, _)| *key != "use") {
-        fields.insert(key, value.clone());
+        fields.insert(key.clone(), value.clone());
     }
     if !fields.contains_key("role") {
-        fields.insert("role", fields.get("id").cloned().unwrap_or(Json::Null));
+        fields.insert("role".into(), fields.get("id").cloned().unwrap_or(Value::Null));
     }
     for key in ["id", "file", "prompt"] {
         if !fields.contains_key(key) {
@@ -220,8 +222,8 @@ fn parse_step(i: usize, raw: &Json, default: &Pipeline) -> Result<Step, String> 
     for (key, value) in fields.iter() {
         check_step_value(key, value, &place)?;
     }
-    let text = |key: &str| fields.get(key).and_then(Json::as_str).map(String::from);
-    let flag = |key: &str| fields.get(key).and_then(Json::as_bool).unwrap_or(false);
+    let text = |key: &str| fields.get(key).and_then(Value::as_str).map(String::from);
+    let flag = |key: &str| fields.get(key).and_then(Value::as_bool).unwrap_or(false);
     let mut st = Step::new(
         &text("id").unwrap_or_default(),
         &text("role").unwrap_or_default(),
@@ -240,8 +242,8 @@ fn parse_step(i: usize, raw: &Json, default: &Pipeline) -> Result<Step, String> 
 }
 
 /// The fields of the step of default, the default workflow, that raw's use names; none without a use.
-fn used_step(raw: &Map<Json>, place: &str, default: &Pipeline) -> Result<Map<Json>, String> {
-    let Some(used) = raw.get("use") else { return Ok(Map::new()) };
+fn used_step(raw: &Object, place: &str, default: &Pipeline) -> Result<Object, String> {
+    let Some(used) = raw.get("use") else { return Ok(Object::new()) };
     match used.as_str().and_then(|id| default.step(id)) {
         Some(st) => Ok(step_fields(st)),
         None => {
@@ -251,14 +253,14 @@ fn used_step(raw: &Map<Json>, place: &str, default: &Pipeline) -> Result<Map<Jso
     }
 }
 
-fn check_step_value(key: &str, value: &Json, place: &str) -> Result<(), String> {
+fn check_step_value(key: &str, value: &Value, place: &str) -> Result<(), String> {
     if STEP_FLAGS.contains(&key) {
         return match value {
-            Json::Bool(_) => Ok(()),
+            Value::Bool(_) => Ok(()),
             _ => Err(format!("{place}: {key} must be true or false")),
         };
     }
-    let Json::Str(text) = value else {
+    let Value::String(text) = value else {
         return Err(format!("{place}: {key} must be a string"));
     };
     if (key == "id" || key == "role") && !is_name(text) {
@@ -269,9 +271,9 @@ fn check_step_value(key: &str, value: &Json, place: &str) -> Result<(), String> 
 
 /// An error naming the first key of table that is not one of known, with the known key closest to it, or else all
 /// of them.
-fn check_keys(table: &Map<Json>, known: &[&str], place: &str) -> Result<(), String> {
+fn check_keys(table: &Object, known: &[&str], place: &str) -> Result<(), String> {
     for key in table.keys() {
-        if known.contains(&key) {
+        if known.contains(&key.as_str()) {
             continue;
         }
         let hint = match closest_name(key, known.iter().copied()) {
@@ -325,30 +327,30 @@ fn title_ascii(s: &str) -> String {
 }
 
 /// The step's fields that differ from their defaults, in declaration order.
-pub fn step_fields(st: &Step) -> Map<Json> {
-    let mut fields = Map::new();
-    fields.insert("id", Json::from(st.id.as_str()));
-    fields.insert("role", Json::from(st.role.as_str()));
-    fields.insert("file", Json::from(st.file.as_str()));
-    fields.insert("prompt", Json::from(st.prompt.as_str()));
+pub fn step_fields(st: &Step) -> Object {
+    let mut fields = Object::new();
+    fields.insert("id".into(), Value::from(st.id.as_str()));
+    fields.insert("role".into(), Value::from(st.role.as_str()));
+    fields.insert("file".into(), Value::from(st.file.as_str()));
+    fields.insert("prompt".into(), Value::from(st.prompt.as_str()));
     let optional = [("again", &st.again), ("fresh_note", &st.fresh_note)];
     for (key, value) in optional {
         if let Some(text) = value {
-            fields.insert(key, Json::from(text.as_str()));
+            fields.insert(key.into(), Value::from(text.as_str()));
         }
     }
     let flags = [("fresh_repeats_again", st.fresh_repeats_again), ("human_paced", st.human_paced), ("edits", st.edits)];
     for (key, on) in flags {
         if on {
-            fields.insert(key, Json::Bool(true));
+            fields.insert(key.into(), Value::Bool(true));
         }
     }
     if let Some(target) = &st.loop_to {
-        fields.insert("loop_to", Json::from(target.as_str()));
+        fields.insert("loop_to".into(), Value::from(target.as_str()));
     }
     for (key, on) in [("quality_gated", st.quality_gated), ("locks", st.locks)] {
         if on {
-            fields.insert(key, Json::Bool(true));
+            fields.insert(key.into(), Value::Bool(true));
         }
     }
     fields
@@ -357,62 +359,62 @@ pub fn step_fields(st: &Step) -> Map<Json> {
 /// The canonical definition of a workflow, which parse_workflow turns back into it: description, max_files,
 /// max_lines and proof_command where they are not the default, every role with its label, model and agent, and
 /// every step's step_fields.
-pub fn workflow_definition(p: &Pipeline) -> Json {
-    let mut d = Map::new();
+pub fn workflow_definition(p: &Pipeline) -> Value {
+    let mut d = Object::new();
     if !p.description().is_empty() {
-        d.insert("description", Json::from(p.description()));
+        d.insert("description".into(), Value::from(p.description()));
     }
     if p.max_files() != DEFAULT_MAX_FILES {
-        d.insert("max_files", Json::from(p.max_files()));
+        d.insert("max_files".into(), Value::from(p.max_files()));
     }
     if p.max_lines() != DEFAULT_MAX_LINES {
-        d.insert("max_lines", Json::from(p.max_lines()));
+        d.insert("max_lines".into(), Value::from(p.max_lines()));
     }
     if let Some(command) = p.proof_command().filter(|c| !c.is_empty()) {
-        d.insert("proof_command", Json::from(command));
+        d.insert("proof_command".into(), Value::from(command));
     }
     let roles = p
         .roles()
         .iter()
         .map(|(role, label)| {
-            let mut table = Map::new();
-            table.insert("label", Json::from(label.as_str()));
+            let mut table = Object::new();
+            table.insert("label".into(), Value::from(label.as_str()));
             for (key, setting) in [("model", p.models()), ("agent", p.agents())] {
                 if let Some(value) = setting.get(role) {
-                    table.insert(key, Json::from(value.as_str()));
+                    table.insert(key.into(), Value::from(value.as_str()));
                 }
             }
-            (role, Json::Object(table))
+            (role.to_string(), Value::Object(table))
         })
         .collect();
-    d.insert("roles", Json::Object(roles));
-    d.insert("steps", Json::Array(p.steps().iter().map(|st| Json::Object(step_fields(st))).collect()));
-    Json::Object(d)
+    d.insert("roles".into(), Value::Object(roles));
+    d.insert("steps".into(), Value::Array(p.steps().iter().map(|st| Value::Object(step_fields(st))).collect()));
+    Value::Object(d)
 }
 
 /// The workflow as a workflow file: workflow_definition as TOML, a role and a step a table each.
 pub fn workflow_toml(p: &Pipeline) -> String {
     let d = workflow_definition(p);
-    let text = |key: &str| d.get(key).and_then(Json::as_str);
+    let text = |key: &str| d.get(key).and_then(Value::as_str);
     let mut lines = Vec::new();
     if let Some(description) = text("description") {
         lines.push(format!("description = {}", toml_string(description)));
     }
     for key in BUDGET_KEYS {
         if let Some(value) = d.get(key) {
-            lines.push(format!("{key} = {}", value.dumps()));
+            lines.push(format!("{key} = {value}"));
         }
     }
     if let Some(command) = text("proof_command") {
         lines.push(format!("proof_command = {}", toml_string(command)));
     }
     let tables = |key: &str| d.get(key).cloned();
-    if let Some(Json::Object(roles)) = tables("roles") {
+    if let Some(Value::Object(roles)) = tables("roles") {
         for (role, table) in roles.iter() {
             lines.extend(toml_table(&format!("[roles.{role}]"), table));
         }
     }
-    if let Some(Json::Array(steps)) = tables("steps") {
+    if let Some(Value::Array(steps)) = tables("steps") {
         for st in &steps {
             lines.extend(toml_table("[[steps]]", st));
         }
@@ -423,11 +425,11 @@ pub fn workflow_toml(p: &Pipeline) -> String {
 /// The lines of a TOML table under header, such as "[[steps]]", led by a blank line: a `key = value` line for each
 /// field of table in its order, a boolean written as one and anything else as toml_string writes a string, "" for a
 /// value that is not one. A table that is not a JSON object has no fields.
-fn toml_table(header: &str, table: &Json) -> Vec<String> {
+fn toml_table(header: &str, table: &Value) -> Vec<String> {
     let mut lines = vec![String::new(), header.to_string()];
-    for (k, v) in table.as_object().into_iter().flat_map(Map::iter) {
+    for (k, v) in table.as_object().into_iter().flat_map(Object::iter) {
         let value = match v {
-            Json::Bool(b) => b.to_string(),
+            Value::Bool(b) => b.to_string(),
             _ => toml_string(v.as_str().unwrap_or_default()),
         };
         lines.push(format!("{k} = {value}"));
@@ -443,12 +445,13 @@ fn toml_string(s: &str) -> String {
     if s.contains('\n') && !s.contains("'''") && !s.ends_with('\'') && literal_ok {
         return format!("'''\n{s}'''");
     }
-    unicode_string(s).replace('\u{7f}', "\\u007f")
+    // serde_json escapes the control characters, as \u and four hex digits, but not DEL.
+    serde_json::to_string(s).expect("a string serializes").replace('\u{7f}', "\\u007f")
 }
 
 /// A run's workflow: the definition saved with it, or the built-in workflow of its name worded by the run's prompts.
 /// Errors: no built-in workflow has the name, or the saved definition is invalid.
-pub fn run_pipeline(name: &str, definition: Option<&Json>, prompts: &Prompts) -> Result<Pipeline, OrchestratorError> {
+pub fn run_pipeline(name: &str, definition: Option<&Value>, prompts: &Prompts) -> Result<Pipeline, OrchestratorError> {
     match definition {
         None => find_workflow(name, prompts),
         // A saved definition is canonical, with no use for prompts to word.
@@ -461,14 +464,14 @@ pub fn run_pipeline(name: &str, definition: Option<&Json>, prompts: &Prompts) ->
 /// The workflow of a saved state.json, or None when this orchestrator cannot tell: its workflow, by its
 /// workflow_definition, else the built-in one of its name, worded by its prompt_overrides; a state saved before
 /// workflows existed ran the default.
-pub fn saved_pipeline(saved: &Map<Json>) -> Option<Pipeline> {
-    let name = saved.get("workflow").filter(|w| w.truthy()).map_or(Some("default"), Json::as_str)?;
+pub fn saved_pipeline(saved: &Object) -> Option<Pipeline> {
+    let name = saved.get("workflow").filter(|w| w.is_set()).map_or(Some("default"), Value::as_str)?;
     let definition = saved.get("workflow_definition").filter(|d| !d.is_null());
-    let overrides = match saved.get("prompt_overrides").filter(|o| o.truthy()) {
+    let overrides = match saved.get("prompt_overrides").filter(|o| o.is_set()) {
         None => Map::new(),
         Some(o) => o.as_object()?.iter().map(|(k, v)| v.as_str().map(|v| (k, v.to_string()))).collect::<Option<_>>()?,
     };
-    let run_id = saved.get("run_id").and_then(Json::as_str).unwrap_or("?");
+    let run_id = saved.get("run_id").and_then(Value::as_str).unwrap_or("?");
     let prompts = saved_prompts(&overrides, run_id).ok()?;
     run_pipeline(name, definition, &prompts).ok()
 }

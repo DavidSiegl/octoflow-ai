@@ -16,9 +16,12 @@ use crate::herdr::fake::Call;
 use crate::herdr::HerdrError;
 use crate::host::tests::Repo;
 use crate::host::Host;
-use crate::py::json::Map;
+use crate::map::Map;
+use crate::json::Object;
 use crate::test_support::resumable;
 use crate::workflow::fixture::saved_run;
+use crate::state::RunState;
+use crate::json::object;
 
 const CLOSE_ID: &str = "20261001-120000-a1b2c3";
 const CLOSE_BRANCH: &str = "orchestrator/x-a1b2c3";
@@ -37,7 +40,7 @@ struct Close {
 }
 
 /// Fields put over add's defaults.
-type Fields<'a> = &'a [(&'a str, Json)];
+type Fields<'a> = &'a [(&'a str, Value)];
 
 impl Close {
     fn new() -> Close {
@@ -49,7 +52,7 @@ impl Close {
 
     /// A run in workspace w1 that failed, a --worktree run unless worktree is false, whose worktree holds a.py
     /// uncommitted and whose branch is at its base, saved age seconds ago with fields; returns its saved state.
-    fn add(&self, age: u64, worktree: bool, fields: Fields) -> Map<Json> {
+    fn add(&self, age: u64, worktree: bool, fields: Fields) -> Object {
         let mut state = RunState::new(CLOSE_ID, "a task", "/proj");
         state.phase = "build".into();
         state.round = 1;
@@ -59,12 +62,12 @@ impl Close {
         state.branch = Some(CLOSE_BRANCH.into());
         state.error = Some("interrupted".into());
         state.worktree = worktree.then(self::worktree);
-        let Json::Object(mut saved) = state.to_json() else { unreachable!("a state is saved as an object") };
+        let Value::Object(mut saved) = state.to_json() else { unreachable!("a state is saved as an object") };
         for (key, value) in fields {
-            saved.insert(*key, value.clone());
+            saved.insert(key.to_string(), value.clone());
         }
         let mut host = self.cli.f.host.state();
-        host.files.insert(close_state(), format!("{}\n", Json::Object(saved.clone()).dumps()));
+        host.files.insert(close_state(), format!("{}\n", Value::Object(saved.clone())));
         host.ages.insert(CLOSE_ID.into(), age);
         if worktree {
             host.worktrees.insert(self::worktree(), CLOSE_BRANCH.into());
@@ -91,12 +94,12 @@ impl Close {
         self.cli.error(&["close", "--cwd", "/proj", "a1b2c3"])
     }
 
-    fn saved(&self) -> Map<Json> {
+    fn saved(&self) -> Object {
         self.cli.saved(CLOSE_ID).as_object().cloned().expect("an object")
     }
 
-    fn closed(&self) -> Json {
-        self.saved().get("closed").cloned().unwrap_or(Json::Null)
+    fn closed(&self) -> Value {
+        self.saved().get("closed").cloned().unwrap_or(Value::Null)
     }
 
     /// Everything of the project close might change: files, worktrees, branches and uncommitted changes.
@@ -110,7 +113,7 @@ impl Close {
     }
 
     fn assert_closed(&self, line: &str) {
-        assert_eq!(self.closed(), Json::from(line));
+        assert_eq!(self.closed(), Value::from(line));
         assert_eq!(self.cli.f.host.state().mtime_kept, [close_state()]);
     }
 }
@@ -119,18 +122,16 @@ fn closing_w1() -> Vec<Call> {
     vec![Call::Close { workspace: "w1".into() }]
 }
 
-fn me() -> Json {
-    Json::Object(
-        [("host", Json::from("here")), ("pid", Json::from(4242)), ("started_at", Json::from("2026-09-30T07:00:00+00:00"))]
-            .into_iter()
-            .collect(),
+fn me() -> Value {
+    Value::Object(
+        object([("host", Value::from("here")), ("pid", Value::from(4242)), ("started_at", Value::from("2026-09-30T07:00:00+00:00"))]),
     )
 }
 
 #[test]
 fn running_run_is_refused_untouched() {
     let c = Close::new();
-    c.add(0, true, &[("error", Json::Null), ("owner", me())]);
+    c.add(0, true, &[("error", Value::Null), ("owner", me())]);
     let before = c.project();
     assert_eq!(c.close(&[]), (EXIT_ERROR, String::new()));
     assert_eq!(
@@ -192,7 +193,7 @@ fn branch_with_commits_beyond_base_is_kept() {
 #[test]
 fn branch_of_a_run_without_a_base_is_kept() {
     let c = Close::new();
-    c.add(0, true, &[("base", Json::Null)]);
+    c.add(0, true, &[("base", Value::Null)]);
     c.close(&[]);
     assert!(c.cli.f.host.state().branches.contains_key(CLOSE_BRANCH));
     c.assert_closed("workspace closed; worktree deleted; branch kept: the run has no base to compare it with");
@@ -200,8 +201,8 @@ fn branch_of_a_run_without_a_base_is_kept() {
 
 #[test]
 fn stale_runs_are_cleaned_up_as_failed_ones() {
-    let cases: [(u64, Vec<(&str, Json)>); 2] =
-        [(STALE_SECONDS + 1, vec![("error", Json::Null)]), (HEARTBEAT_SECONDS + 1, vec![("error", Json::Null), ("owner", me())])];
+    let cases: [(u64, Vec<(&str, Value)>); 2] =
+        [(STALE_SECONDS + 1, vec![("error", Value::Null)]), (HEARTBEAT_SECONDS + 1, vec![("error", Value::Null), ("owner", me())])];
     for (age, fields) in cases {
         let c = Close::new();
         c.add(age, true, &fields);
@@ -230,7 +231,7 @@ fn failed_in_place_run_only_loses_its_workspace() {
 #[test]
 fn finished_no_pr_worktree_run_keeps_its_worktree() {
     let c = Close::new();
-    c.add(0, true, &[("phase", Json::from("done")), ("error", Json::Null), ("verdict", Json::from(APPROVE))]);
+    c.add(0, true, &[("phase", Value::from("done")), ("error", Value::Null), ("verdict", Value::from(APPROVE))]);
     let (status, out) = c.close(&[]);
     assert_eq!(status, 0);
     let wt = worktree();
@@ -248,8 +249,8 @@ fn finished_no_pr_worktree_run_keeps_its_worktree() {
 #[test]
 fn finished_worktree_run_whose_worktree_went_with_its_pull_request() {
     let c = Close::new();
-    let pr = ("pr_url", Json::from("https://github.com/o/r/pull/7"));
-    c.add(0, true, &[("phase", Json::from("done")), ("error", Json::Null), ("verdict", Json::from(APPROVE)), pr]);
+    let pr = ("pr_url", Value::from("https://github.com/o/r/pull/7"));
+    c.add(0, true, &[("phase", Value::from("done")), ("error", Value::Null), ("verdict", Value::from(APPROVE)), pr]);
     c.cli.f.host.state().worktrees = Map::new();
     c.close(&[]);
     c.assert_closed("workspace closed");
@@ -260,7 +261,7 @@ fn a_workspace_herdr_lacks_is_already_gone() {
     for workspace in ["w1", ""] {
         let c = Close::new();
         c.cli.f.herdr.state().workspaces.clear();
-        c.add(0, true, &[("workspace_id", Json::from(workspace))]);
+        c.add(0, true, &[("workspace_id", Value::from(workspace))]);
         let (status, out) = c.close(&[]);
         assert_eq!(status, 0);
         assert!(!out.contains("closed workspace"));
@@ -316,7 +317,7 @@ fn resume_of_a_closed_run_exits_1() {
 
 #[test]
 fn state_saved_before_close_existed_loads_and_resumes() {
-    let Json::Object(mut saved) = saved_run("build", 1, &["spec", "build"]).to_json() else { unreachable!() };
+    let Value::Object(mut saved) = saved_run("build", 1, &["spec", "build"]).to_json() else { unreachable!() };
     saved.remove("closed");
     assert_eq!(resumable(&[], &saved).unwrap().closed, None);
 }
@@ -330,14 +331,26 @@ fn state_saved_meanwhile_is_not_overwritten() {
     c.cli.f.herdr.state().before_call = Some(Box::new(move |call| {
         if matches!(call, Call::Close { .. }) {
             let text = host.state().files.get(&close_state()).cloned().unwrap();
-            let Ok(Json::Object(mut saved)) = Json::parse(&text) else { unreachable!() };
-            saved.insert("round", Json::from(2));
-            host.state().files.insert(close_state(), Json::Object(saved).dumps());
+            let Ok(Value::Object(mut saved)) = serde_json::from_str::<Value>(&text) else { unreachable!() };
+            saved.insert("round".into(), Value::from(2));
+            host.state().files.insert(close_state(), Value::Object(saved).to_string());
         }
     }));
     assert_eq!(c.close(&[]).0, EXIT_ERROR);
     let saved = c.saved();
-    assert_eq!((saved.get("round"), saved.get("closed")), (Some(&Json::from(2)), Some(&Json::Null)));
+    assert_eq!((saved.get("round"), saved.get("closed")), (Some(&Value::from(2)), Some(&Value::Null)));
+}
+
+#[test]
+fn a_run_an_earlier_release_saved_is_closed_as_any_other() {
+    // Its state.json has no format (crate::state::format_problem), which close does not need.
+    let c = Close::new();
+    let mut saved = c.add(0, true, &[]);
+    saved.shift_remove("format");
+    c.cli.f.host.state().files.insert(close_state(), format!("{}\n", Value::Object(saved)));
+    assert_eq!(c.close(&[]).0, 0);
+    c.assert_closed("workspace closed; worktree deleted; branch deleted");
+    assert!(!c.saved().contains_key("format"));
 }
 
 #[test]
@@ -348,7 +361,7 @@ fn the_error_of_a_state_saved_meanwhile_names_the_file() {
     c.cli.f.herdr.state().before_call = Some(Box::new(move |_| {
         let path = close_state();
         let text = host.state().files.get(&path).cloned().unwrap();
-        host.state().files.insert(path, text.replace("\"round\": 1", "\"round\": 2"));
+        host.state().files.insert(path, text.replace("\"round\": 1", "\"round\": 2").replace("\"round\":1", "\"round\":2"));
     }));
     assert_eq!(c.error(), format!("{} changed while the run was closed; closed is not recorded", close_state()));
 }
@@ -361,7 +374,7 @@ fn herdr_failure_records_nothing() {
     assert_eq!(c.close(&[]).0, EXIT_ERROR);
     assert!(c.error().contains("herdr is down"));
     assert!(c.cli.f.host.state().git_calls.is_empty() && c.cli.f.host.state().writes.is_empty());
-    assert_eq!(c.closed(), Json::Null);
+    assert_eq!(c.closed(), Value::Null);
 }
 
 #[test]
@@ -373,7 +386,7 @@ fn git_failure_records_nothing_and_a_second_close_finishes() {
     // A second close, which fails as the first did, the workspace gone with the first.
     assert!(c.error().contains("cannot remove a locked working tree"));
     assert!(c.cli.f.host.state().writes.is_empty());
-    assert_eq!(c.closed(), Json::Null);
+    assert_eq!(c.closed(), Value::Null);
     assert!(c.cli.f.host.state().branches.contains_key(CLOSE_BRANCH));
 
     c.cli.f.host.state().remove_error = None;
@@ -443,8 +456,8 @@ fn close_on_real_git() {
     assert!(!std::path::Path::new(&wt).exists());
     assert!(!repo.git(&["worktree", "list", "--porcelain"]).contains(&wt));
     assert_eq!(repo.host.branch_commit(&repo.path, CLOSE_BRANCH).unwrap(), None);
-    let saved = Json::parse(&repo.host.read(&path).unwrap().unwrap()).unwrap();
-    assert_eq!(saved.get("closed"), Some(&Json::from(closed.as_str())));
+    let saved = serde_json::from_str::<Value>(&repo.host.read(&path).unwrap().unwrap()).unwrap();
+    assert_eq!(saved.get("closed"), Some(&Value::from(closed.as_str())));
     assert_eq!(repo.host.mtime(&path).unwrap(), 1_000_000_000);
     assert!(cli.f.herdr.state().calls.is_empty());
 }

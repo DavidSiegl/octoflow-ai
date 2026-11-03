@@ -9,7 +9,8 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use nix::fcntl::{Flock, FlockArg};
-use octoflow_engine::py::json::{Json, Map};
+use serde_json::Value;
+use octoflow_engine::json::{Object, ValueExt};
 
 use crate::{object, object_at, procs};
 
@@ -44,7 +45,7 @@ impl Ledger {
 
     /// f's result, given the state, locked against every other process of the world until f returns; the state as f
     /// left it is then saved. Panics, naming the file, when the lock, the state's read or its write fails.
-    pub fn change<T>(&self, f: impl FnOnce(&mut Map<Json>) -> T) -> T {
+    pub fn change<T>(&self, f: impl FnOnce(&mut Object) -> T) -> T {
         let lock_path = self.path("lock");
         let file = OpenOptions::new()
             .create(true)
@@ -56,34 +57,34 @@ impl Ledger {
             .unwrap_or_else(|(_, e)| panic!("locking {}: {e}", lock_path.display()));
         let path = self.path("state.json");
         let mut state = match fs::read_to_string(&path) {
-            Ok(text) => match Json::parse(&text) {
-                Ok(Json::Object(state)) => state,
+            Ok(text) => match serde_json::from_str::<Value>(&text) {
+                Ok(Value::Object(state)) => state,
                 other => panic!("{} is not a JSON object: {other:?}", path.display()),
             },
-            Err(e) if e.kind() == ErrorKind::NotFound => Map::new(),
+            Err(e) if e.kind() == ErrorKind::NotFound => Object::new(),
             Err(e) => panic!("reading {}: {e}", path.display()),
         };
         let result = f(&mut state);
-        write_atomically(&path, &Json::Object(state).dumps());
+        write_atomically(&path, &Value::Object(state).to_string());
         result
     }
 
     /// Append event to the log, by invocation `by`, after a `state` event for each run whose state.json changed since
     /// it was last logged and is the run of one of engine_pids or of none (changed_states). Call inside `change`,
     /// whose state is `state`.
-    pub fn log(&self, state: &mut Map<Json>, event: Map<Json>, by: &str, engine_pids: &BTreeSet<i32>) {
+    pub fn log(&self, state: &mut Object, event: Object, by: &str, engine_pids: &BTreeSet<i32>) {
         let project = crate::str_at(&self.script(), "project").to_string();
         let mut lines = String::new();
         for changed in changed_states(state, Path::new(&project), engine_pids) {
-            lines.push_str(&object([("by", Json::from(by)), ("state", changed)]).dumps());
+            lines.push_str(&object([("by", Value::from(by)), ("state", changed)]).to_string());
             lines.push('\n');
         }
-        let mut line = Map::new();
-        line.insert("by", Json::from(by));
+        let mut line = Object::new();
+        line.insert("by".into(), Value::from(by));
         for (k, v) in event {
             line.insert(k, v);
         }
-        lines.push_str(&Json::Object(line).dumps());
+        lines.push_str(&Value::Object(line).to_string());
         lines.push('\n');
         let path = self.path("events.jsonl");
         let mut file = OpenOptions::new()
@@ -95,21 +96,21 @@ impl Ledger {
     }
 
     /// Every event logged so far, in order, each an object with its invocation under "by".
-    pub fn events(&self) -> Vec<Json> {
+    pub fn events(&self) -> Vec<Value> {
         let path = self.path("events.jsonl");
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
             Err(e) if e.kind() == ErrorKind::NotFound => return Vec::new(),
             Err(e) => panic!("reading {}: {e}", path.display()),
         };
-        text.lines().map(|line| Json::parse(line).unwrap_or_else(|e| panic!("{}: {e}", path.display()))).collect()
+        text.lines().map(|line| serde_json::from_str::<Value>(line).unwrap_or_else(|e| panic!("{}: {e}", path.display()))).collect()
     }
 
     /// The scenario's script as the world last wrote it.
-    pub fn script(&self) -> Json {
+    pub fn script(&self) -> Value {
         let path = self.world.join("script.json");
         let text = fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
-        Json::parse(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+        serde_json::from_str::<Value>(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
     }
 
     /// The pids of this fake's engine invocation that are its ancestors: from the process the world started for the
@@ -120,14 +121,14 @@ impl Ledger {
         let n = invocation();
         let deadline = Instant::now() + ENGINE_WAIT;
         let root = loop {
-            let root = self.change(|state| object_at(state, "engines").get(&n).and_then(Json::as_int));
+            let root = self.change(|state| object_at(state, "engines").get(&n).and_then(Value::as_i64));
             if root.is_some() || Instant::now() > deadline {
                 break root;
             }
             sleep(POLL);
         };
         let chain = procs::ancestors();
-        match root.and_then(|r| chain.iter().position(|&p| i128::from(p) == r)) {
+        match root.and_then(|r| chain.iter().position(|&p| i64::from(p) == r)) {
             Some(i) => chain[..=i].iter().copied().collect(),
             None => BTreeSet::new(),
         }
@@ -154,7 +155,7 @@ pub fn write_atomically(path: &Path, text: &str) {
 /// scheduler decides. heartbeat_at is left out of the comparison: it changes with time alone. A run with no state
 /// yet is passed over (run_state). Panics, naming the path, where the Python harness's `_changed_states` raised: when
 /// runs/ is there but cannot be listed, at a state run_state refuses, and at an owner that is no object.
-fn changed_states(state: &mut Map<Json>, project: &Path, engine_pids: &BTreeSet<i32>) -> Vec<Json> {
+fn changed_states(state: &mut Object, project: &Path, engine_pids: &BTreeSet<i32>) -> Vec<Value> {
     let runs = crate::runs_dir(project);
     let mut names: Vec<String> = match fs::read_dir(&runs) {
         Ok(entries) => entries
@@ -170,19 +171,19 @@ fn changed_states(state: &mut Map<Json>, project: &Path, engine_pids: &BTreeSet<
     for name in names {
         let path = runs.join(&name).join("state.json");
         let Some((text, mut saved)) = run_state(&path) else { continue };
-        if let Some(owner) = saved.get("owner").filter(|o| o.truthy()) {
-            let Json::Object(owner) = owner else { panic!("{}: an owner that is no object", path.display()) };
-            let pid = owner.get("pid").and_then(Json::as_int);
-            if !pid.is_some_and(|pid| engine_pids.iter().any(|&p| i128::from(p) == pid)) {
+        if let Some(owner) = saved.get("owner").filter(|o| o.is_set()) {
+            let Value::Object(owner) = owner else { panic!("{}: an owner that is no object", path.display()) };
+            let pid = owner.get("pid").and_then(Value::as_i64);
+            if !pid.is_some_and(|pid| engine_pids.iter().any(|&p| i64::from(p) == pid)) {
                 continue;
             }
         }
         saved.remove("heartbeat_at");
-        let key = sorted(&Json::Object(saved)).dumps();
+        let key = sorted(&Value::Object(saved)).to_string();
         let path = path.to_string_lossy().into_owned();
-        if last.get(&path).and_then(Json::as_str) != Some(key.as_str()) {
-            last.insert(path.clone(), Json::Str(key));
-            changed.push(object([("path", Json::Str(path)), ("text", Json::Str(text))]));
+        if last.get(&path).and_then(Value::as_str) != Some(key.as_str()) {
+            last.insert(path.clone(), Value::String(key));
+            changed.push(object([("path", Value::String(path)), ("text", Value::String(text))]));
         }
     }
     changed
@@ -192,35 +193,35 @@ fn changed_states(state: &mut Map<Json>, project: &Path, engine_pids: &BTreeSet<
 /// caught FileNotFoundError or ValueError: no state.json yet, in a run directory the engine has
 /// not saved in, or text that is not UTF-8 or not JSON. Panics, naming path, where Python raised: any other failure to
 /// read it (a state.json that is a directory, an entry of runs/ that is a file), and JSON that is no object.
-fn run_state(path: &Path) -> Option<(String, Map<Json>)> {
+fn run_state(path: &Path) -> Option<(String, Object)> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
         // InvalidData: not UTF-8, which Python's read raises as UnicodeDecodeError, a ValueError.
         Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::InvalidData) => return None,
         Err(e) => panic!("reading {}: {e}", path.display()),
     };
-    match Json::parse(&text) {
-        Ok(Json::Object(saved)) => Some((text, saved)),
-        Ok(other) => panic!("{} holds no JSON object: {}", path.display(), other.dumps()),
+    match serde_json::from_str::<Value>(&text) {
+        Ok(Value::Object(saved)) => Some((text, saved)),
+        Ok(other) => panic!("{} holds no JSON object: {}", path.display(), other),
         Err(_) => None,
     }
 }
 
 /// json with every object's keys sorted, as json.dumps's sort_keys writes it.
-fn sorted(json: &Json) -> Json {
+fn sorted(json: &Value) -> Value {
     match json {
-        Json::Object(map) => {
-            let mut pairs: Vec<(&str, &Json)> = map.iter().collect();
+        Value::Object(map) => {
+            let mut pairs: Vec<(&String, &Value)> = map.iter().collect();
             pairs.sort_by_key(|(k, _)| *k);
-            Json::Object(pairs.into_iter().map(|(k, v)| (k, sorted(v))).collect())
+            Value::Object(pairs.into_iter().map(|(k, v)| (k.clone(), sorted(v))).collect())
         }
-        Json::Array(items) => Json::Array(items.iter().map(sorted).collect()),
+        Value::Array(items) => Value::Array(items.iter().map(sorted).collect()),
         other => other.clone(),
     }
 }
 
 /// Wait for f to hold under the ledger's lock, polling every POLL.
-pub fn wait_until(ledger: &Ledger, mut f: impl FnMut(&mut Map<Json>) -> bool) {
+pub fn wait_until(ledger: &Ledger, mut f: impl FnMut(&mut Object) -> bool) {
     while !ledger.change(&mut f) {
         sleep(POLL);
     }
@@ -262,7 +263,7 @@ mod tests {
         }
 
         /// The paths changed_states finds changed, in its order, for an engine of pids.
-        fn changed(&self, state: &mut Map<Json>, pids: &[i32]) -> Vec<String> {
+        fn changed(&self, state: &mut Object, pids: &[i32]) -> Vec<String> {
             let pids: BTreeSet<i32> = pids.iter().copied().collect();
             let changed = changed_states(state, self.0.path(), &pids);
             changed.iter().map(|c| crate::str_at(c, "path").to_string()).collect()
@@ -272,7 +273,7 @@ mod tests {
     #[test]
     fn a_project_without_runs_has_none_to_log() {
         let project = Project::new("no-runs", &[]);
-        let mut state = Map::new();
+        let mut state = Object::new();
         assert!(project.changed(&mut state, &[]).is_empty());
         assert!(state.get("last_states").is_none());
     }
@@ -281,10 +282,10 @@ mod tests {
     fn a_state_is_logged_once_until_it_changes_but_for_its_heartbeat() {
         let project = Project::new("logged", &[("a", Some(r#"{"phase": "spec", "heartbeat_at": "1"}"#))]);
         let a = project.state_path("a");
-        let mut state = Map::new();
+        let mut state = Object::new();
         assert_eq!(project.changed(&mut state, &[]), std::slice::from_ref(&a));
-        let logged = object([(a.as_str(), Json::from(r#"{"phase": "spec"}"#))]);
-        assert_eq!(state.get("last_states").map(Json::dumps), Some(logged.dumps()));
+        let logged = object([(a.as_str(), Value::from(r#"{"phase":"spec"}"#))]);
+        assert_eq!(state.get("last_states").map(Value::to_string), Some(logged.to_string()));
         assert!(project.changed(&mut state, &[]).is_empty());
         project.write("a", r#"{"phase": "spec", "heartbeat_at": "2"}"#);
         assert!(project.changed(&mut state, &[]).is_empty());
@@ -297,9 +298,9 @@ mod tests {
         let project = Project::new("unsaved", &[("a", None), ("b", Some(r#"{"phase": "sp"#)), ("c", Some("{}"))]);
         let c = project.state_path("c");
         fs::write(&c, [b'{', 0xff, b'}']).unwrap_or_else(|e| panic!("writing {c}: {e}"));
-        let mut state = Map::new();
+        let mut state = Object::new();
         assert!(project.changed(&mut state, &[]).is_empty());
-        assert_eq!(state.get("last_states").map(Json::dumps).as_deref(), Some("{}"));
+        assert_eq!(state.get("last_states").map(Value::to_string).as_deref(), Some("{}"));
         // Once written whole, b's state is logged as a first one.
         project.write("b", r#"{"phase": "spec"}"#);
         assert_eq!(project.changed(&mut state, &[]), [project.state_path("b")]);
@@ -315,12 +316,12 @@ mod tests {
             ("e", Some(r#"{"owner": {"host": "h"}}"#)),
         ];
         let project = Project::new("owners", &runs);
-        assert_eq!(project.changed(&mut Map::new(), &[7]), ["a", "c", "d"].map(|run| project.state_path(run)));
+        assert_eq!(project.changed(&mut Object::new(), &[7]), ["a", "c", "d"].map(|run| project.state_path(run)));
     }
 
     /// The message changed_states panics with in project, as Python's _changed_states raises there.
     fn failure(project: &Project) -> String {
-        let failure = std::panic::catch_unwind(|| project.changed(&mut Map::new(), &[])).expect_err("a panic");
+        let failure = std::panic::catch_unwind(|| project.changed(&mut Object::new(), &[])).expect_err("a panic");
         failure.downcast_ref::<String>().cloned().unwrap_or_default()
     }
 

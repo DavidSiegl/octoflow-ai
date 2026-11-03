@@ -7,7 +7,8 @@
 use std::time::Instant;
 
 use octoflow_e2e::{array_at, object, object_at};
-use octoflow_engine::py::json::{Json, Map};
+use serde_json::Value;
+use octoflow_engine::json::Object;
 
 use crate::client;
 use crate::servers::JOB;
@@ -23,43 +24,43 @@ const TEST_WITH_SUBTRACT: &str = "from calc import add, subtract\n\n\ndef test_a
 const TASK: &str = "Add a subtract function";
 
 /// An agent's action (octoflow_e2e::fakes says what one holds), built up from `writes`.
-struct Action(Map<Json>);
+struct Action(Object);
 
 impl Action {
     /// Also make these changes to the working tree, path to text, before writing the action's file.
     fn edit(mut self, files: &[(&str, &str)]) -> Action {
-        let edits: Map<Json> = files.iter().map(|(path, text)| (*path, Json::from(*text))).collect();
-        self.0.insert("edit", Json::Object(edits));
+        let edits: Object = files.iter().map(|(path, text)| (path.to_string(), Value::from(*text))).collect();
+        self.0.insert("edit".into(), Value::Object(edits));
         self
     }
 
     /// Do it only once the world releases hold.
     fn hold(mut self, hold: &str) -> Action {
-        self.0.insert("hold", Json::from(hold));
+        self.0.insert("hold".into(), Value::from(hold));
         self
     }
 
     /// Exit the agent afterwards.
     fn exit(mut self) -> Action {
-        self.0.insert("exit", Json::Bool(true));
+        self.0.insert("exit".into(), Value::Bool(true));
         self
     }
 }
 
-impl From<Action> for Json {
-    fn from(action: Action) -> Json {
-        Json::Object(action.0)
+impl From<Action> for Value {
+    fn from(action: Action) -> Value {
+        Value::Object(action.0)
     }
 }
 
 /// The action of an agent that writes text to file in the run directory.
 fn writes(file: &str, text: &str) -> Action {
-    Action(Map::from_iter([("write", object([(file, Json::from(text))])), ("edit", object([]))]))
+    Action(octoflow_engine::json::object([("write", object([(file, Value::from(text))])), ("edit", object([]))]))
 }
 
 /// An agent that exits without doing anything.
-fn exits() -> Json {
-    object([("exit", Json::Bool(true))])
+fn exits() -> Value {
+    object([("exit", Value::Bool(true))])
 }
 
 fn spec_written() -> Action {
@@ -225,7 +226,7 @@ pub fn proofs_run(w: &mut World) {
     let review = "VERDICT: CHANGES_REQUESTED\n\n1. src/calc.py:7: the sign is wrong.\n";
     let proof = object([(
         "write",
-        object([("proofs-1/test_1_sign.sh", Json::from(PROOF)), ("review-1.md", Json::from(review))]),
+        object([("proofs-1/test_1_sign.sh", Value::from(PROOF)), ("review-1.md", Value::from(review))]),
     )]);
     w.agent("review", [proof, approved(2).into()]);
     w.run(&["run", "--workflow-file", &path, "--", TASK]);
@@ -240,43 +241,43 @@ const PYPROJECT_WITH_ATTRS: &str =
     "[project]\nname = \"parity-project\"\nversion = \"0.1.0\"\ndependencies = [\"attrs>=25\"]\n";
 
 /// A quality build the scenario scripts (World::jenkins_build), built up from `build`.
-struct Build(Map<Json>);
+struct Build(Object);
 
 impl Build {
     /// Its failing tests, (dotted name, detail), in its test report.
     fn tests(mut self, tests: &[(&str, &str)]) -> Build {
-        let pairs = tests.iter().map(|(name, detail)| Json::Array(vec![Json::from(*name), Json::from(*detail)]));
-        self.0.insert("tests", Json::Array(pairs.collect()));
+        let pairs = tests.iter().map(|(name, detail)| Value::Array(vec![Value::from(*name), Value::from(*detail)]));
+        self.0.insert("tests".into(), Value::Array(pairs.collect()));
         self
     }
 
     fn console(mut self, console: &str) -> Build {
-        self.0.insert("console", Json::from(console));
+        self.0.insert("console".into(), Value::from(console));
         self
     }
 
     /// Keep it running until the world releases hold.
     fn hold(mut self, hold: &str) -> Build {
-        self.0.insert("hold", Json::from(hold));
+        self.0.insert("hold".into(), Value::from(hold));
         self
     }
 }
 
-impl From<Build> for Json {
-    fn from(build: Build) -> Json {
-        Json::Object(build.0)
+impl From<Build> for Value {
+    fn from(build: Build) -> Value {
+        Value::Object(build.0)
     }
 }
 
 /// A build that ends with result, archiving quality, or nothing for None: one that ended before its Gate stage.
 fn build(result: &str, quality: Option<&str>) -> Build {
-    Build(Map::from_iter([
-        ("result", Json::from(result)),
-        ("quality", quality.map_or(Json::Null, Json::from)),
-        ("tests", Json::Null),
-        ("console", Json::from("")),
-        ("hold", Json::Null),
-        ("description", Json::Null),
+    Build(octoflow_engine::json::object([
+        ("result", Value::from(result)),
+        ("quality", quality.map_or(Value::Null, Value::from)),
+        ("tests", Value::Null),
+        ("console", Value::from("")),
+        ("hold", Value::Null),
+        ("description", Value::Null),
     ]))
 }
 
@@ -289,7 +290,7 @@ fn gated<'a>(args: &[&'a str]) -> Vec<&'a str> {
 /// orchestrator's checks look up on PyPI.
 pub fn quality_passes(w: &mut World) {
     w.jenkins_build(build("SUCCESS", Some("GATE: OK\n\nEvery condition holds.\n")).into());
-    let attrs = Json::parse(
+    let attrs = serde_json::from_str::<Value>(
         r#"{"info": {"version": "25.3.0", "license_expression": "MIT"},
             "releases": {"15.0.0": [{"upload_time_iso_8601": "2015-01-29T00:00:00Z"}],
                          "25.3.0": [{"upload_time_iso_8601": "2025-03-13T00:00:00Z"}]},
@@ -523,18 +524,18 @@ pub fn takeover(w: &mut World) {
     w.wait_reached("build");
     let key = w.run_key(1);
     let second = w.start(&["resume", "--force", &key], true);
-    let second_pid = i128::from(w.invocation(second).pid());
+    let second_pid = i64::from(w.invocation(second).pid());
     w.wait_for(
-        || w.run_state(&key).get("owner").and_then(|o| o.get("pid")).and_then(Json::as_int) == Some(second_pid),
+        || w.run_state(&key).get("owner").and_then(|o| o.get("pid")).and_then(Value::as_i64) == Some(second_pid),
         "the second orchestrator to claim the run",
     );
     // The second has claimed it; once it waits on the Builder too, let the Builder finish.
     w.wait_for(
         || {
             w.ledger.events().iter().any(|e| {
-                let by_second = e.get("by").and_then(Json::as_str) == Some("2");
+                let by_second = e.get("by").and_then(Value::as_str) == Some("2");
                 let words: Vec<&str> =
-                    e.get("herdr").and_then(Json::as_array).into_iter().flatten().filter_map(Json::as_str).collect();
+                    e.get("herdr").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).collect();
                 by_second && words.starts_with(&["agent", "get"])
             })
         },
@@ -555,8 +556,8 @@ fn approved_run(w: &mut World) {
     w.run(&["run", "--", TASK]);
 }
 
-fn merged() -> [(&'static str, Json); 2] {
-    [("state", Json::from("MERGED")), ("closedAt", Json::from("2026-01-02T00:00:00Z"))]
+fn merged() -> [(&'static str, Value); 2] {
+    [("state", Value::from("MERGED")), ("closedAt", Value::from("2026-01-02T00:00:00Z"))]
 }
 
 /// list, list --json with --pr-state, show and metrics, over a finished run and a failed one.
@@ -633,9 +634,9 @@ pub fn prompt_file_run(w: &mut World) {
 /// mergeable, so the warning goes from its description, it is marked ready, and the run forgets its conflicts.
 pub fn conflict_refreshed(w: &mut World) {
     publish_with_conflict(w);
-    w.set_pr(1, &[("mergeable", Json::from("CONFLICTING"))]);
+    w.set_pr(1, &[("mergeable", Value::from("CONFLICTING"))]);
     w.run(&["refresh"]);
-    w.set_pr(1, &[("mergeable", Json::from("MERGEABLE"))]);
+    w.set_pr(1, &[("mergeable", Value::from("MERGEABLE"))]);
     let key = w.run_key(1);
     w.run(&["refresh", &key]);
     let pr = w.pr(1);
@@ -658,7 +659,7 @@ const SERVE_HEADERS: [&str; 7] = [
 /// One request to serve at address, with token as its bearer when given, as {"request", "status", "headers",
 /// "body"}: the headers of SERVE_HEADERS it sent, and the body as served, its files sorted by name where it lists a
 /// run's files, whose order is by modification time and so by the clock.
-fn serve_request(address: &str, token: Option<&str>, target: &str, method: &str, headers: &[(&str, &str)]) -> Json {
+fn serve_request(address: &str, token: Option<&str>, target: &str, method: &str, headers: &[(&str, &str)]) -> Value {
     let bearer = token.map(|t| format!("Bearer {t}"));
     let mut sent: Vec<(&str, &str)> = headers.to_vec();
     if let Some(bearer) = &bearer {
@@ -669,50 +670,50 @@ fn serve_request(address: &str, token: Option<&str>, target: &str, method: &str,
     let response = client::request(address, method, target, &sent);
     let text = String::from_utf8_lossy(&response.body).into_owned();
     let body = if target.starts_with("/files") && response.status == 200 {
-        let mut files = Json::parse(&text).unwrap_or_else(|e| panic!("serve's {target} is no JSON: {e}"));
-        if let Json::Object(fields) = &mut files {
-            if let Some(Json::Array(list)) = fields.get_mut("files") {
+        let mut files = serde_json::from_str::<Value>(&text).unwrap_or_else(|e| panic!("serve's {target} is no JSON: {e}"));
+        if let Value::Object(fields) = &mut files {
+            if let Some(Value::Array(list)) = fields.get_mut("files") {
                 list.sort_by(|a, b| str_of(a, "name").cmp(str_of(b, "name")));
             }
         }
         files
     } else {
-        Json::from(text)
+        Value::from(text)
     };
-    let kept = SERVE_HEADERS.iter().filter_map(|k| response.header(k).map(|v| (*k, Json::from(v))));
+    let kept = SERVE_HEADERS.iter().filter_map(|k| response.header(k).map(|v| (*k, Value::from(v))));
     object([
-        ("request", Json::from(format!("{method} {target}"))),
-        ("status", Json::Int(response.status.into())),
-        ("headers", Json::Object(kept.collect())),
+        ("request", Value::from(format!("{method} {target}"))),
+        ("status", Value::from(response.status)),
+        ("headers", Value::Object(octoflow_engine::json::object(kept))),
         ("body", body),
     ])
 }
 
-fn str_of<'a>(json: &'a Json, key: &str) -> &'a str {
-    json.get(key).and_then(Json::as_str).unwrap_or_default()
+fn str_of<'a>(json: &'a Value, key: &str) -> &'a str {
+    json.get(key).and_then(Value::as_str).unwrap_or_default()
 }
 
 /// Of events, the last record and the last files of each run, and the last problem: what a client that folds the
 /// stream, as the desktop app does, holds after them. Files are sorted by name, as serve_request sorts them. An event
 /// of any other kind is kept whole, in order, under "other".
-fn last_by_run(events: &[(String, Json)]) -> Map<Json> {
-    let mut out = Map::from_iter([("records", object([])), ("files", object([]))]);
+fn last_by_run(events: &[(String, Value)]) -> Object {
+    let mut out = octoflow_engine::json::object([("records", object([])), ("files", object([]))]);
     for (kind, payload) in events {
         let run = || str_of(payload, "run").to_string();
         match kind.as_str() {
             "record" => {
-                let record = payload.get("record").cloned().unwrap_or(Json::Null);
+                let record = payload.get("record").cloned().unwrap_or(Value::Null);
                 object_at(&mut out, "records").insert(run(), record);
             }
             "files" => {
-                let mut files = payload.get("files").and_then(Json::as_array).cloned().unwrap_or_default();
+                let mut files = payload.get("files").and_then(Value::as_array).cloned().unwrap_or_default();
                 files.sort_by(|a, b| str_of(a, "name").cmp(str_of(b, "name")));
-                object_at(&mut out, "files").insert(run(), Json::Array(files));
+                object_at(&mut out, "files").insert(run(), Value::Array(files));
             }
             "problem" => {
-                out.insert("problem", payload.get("error").cloned().unwrap_or(Json::Null));
+                out.insert("problem".into(), payload.get("error").cloned().unwrap_or(Value::Null));
             }
-            _ => array_at(&mut out, "other").push(Json::Array(vec![Json::from(kind.as_str()), payload.clone()])),
+            _ => array_at(&mut out, "other").push(Value::Array(vec![Value::from(kind.as_str()), payload.clone()])),
         }
     }
     out
@@ -737,12 +738,12 @@ fn quote(text: &str) -> String {
 
 /// One checkpoint of the event stream: what it held, folded (last_by_run), while the engine waited on hold, or once
 /// the run was done for None.
-fn checkpoint(stream: &client::EventStream, hold: Option<&str>) -> Json {
-    let mut point = Map::from_iter([("waiting on", hold.map_or(Json::Null, Json::from))]);
+fn checkpoint(stream: &client::EventStream, hold: Option<&str>) -> Value {
+    let mut point = octoflow_engine::json::object([("waiting on", hold.map_or(Value::Null, Value::from))]);
     for (k, v) in last_by_run(&stream.events()) {
         point.insert(k, v);
     }
-    Json::Object(point)
+    Value::Object(point)
 }
 
 /// serve: its endpoints and security checks, and an event stream over a run, read at each point where the run waits
@@ -750,7 +751,7 @@ fn checkpoint(stream: &client::EventStream, hold: Option<&str>) -> Json {
 pub fn serve_endpoints_and_events(w: &mut World) {
     let serve = w.start(&["serve", "--origin", "tauri://localhost"], true);
     w.wait_for(|| w.invocations[serve - 1].stdout().ends_with('\n'), "serve to print its address");
-    let first = Json::parse(&w.invocation(serve).stdout()).expect("serve's first line is JSON");
+    let first = serde_json::from_str::<Value>(&w.invocation(serve).stdout()).expect("serve's first line is JSON");
     let (url, token) = (str_of(&first, "url").to_string(), str_of(&first, "token").to_string());
     let address = url.strip_prefix("http://").expect("serve's URL is http").to_string();
     w.normalizer.literal(&token, "<token>");
@@ -807,14 +808,14 @@ pub fn serve_endpoints_and_events(w: &mut World) {
     let pid = nix::unistd::Pid::from_raw(w.invocation(serve).pid());
     nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM).unwrap_or_else(|e| panic!("stopping serve: {e}"));
     w.invocation(serve).wait();
-    w.note("requests", Json::Array(requests));
-    let content_type = stream.content_type.clone().map_or(Json::Null, Json::from);
+    w.note("requests", Value::Array(requests));
+    let content_type = stream.content_type.clone().map_or(Value::Null, Value::from);
     w.note(
         "event stream",
         object([
-            ("status", Json::Int(stream.status.into())),
+            ("status", Value::from(stream.status)),
             ("content type", content_type),
-            ("checkpoints", Json::Array(checkpoints)),
+            ("checkpoints", Value::Array(checkpoints)),
         ]),
     );
 }
@@ -843,9 +844,9 @@ pub fn specs_drained(w: &mut World) {
     w.run(&["drain", &dir]);
     w.set_pr(1, &merged());
     w.run(&["drain", "--dry-run", &dir]);
-    let notes: Map<Json> =
-        specs.iter().map(|(slug, _)| (*slug, Json::Str(read(&format!("{dir}/{slug}/spec.md"))))).collect();
-    w.note("specs", Json::Object(notes));
+    let notes: Object =
+        specs.iter().map(|(slug, _)| (slug.to_string(), Value::String(read(&format!("{dir}/{slug}/spec.md"))))).collect();
+    w.note("specs", Value::Object(notes));
 }
 
 /// doctor here, with --cwd, and on a machine: what it asks herdr and gh, and its exit status. Its lines are noted
@@ -862,9 +863,9 @@ pub fn doctor_checks(w: &mut World) {
         let n = w.start(args, false);
         w.invocation(n).wait();
     }
-    let lines: Vec<Json> =
+    let lines: Vec<Value> =
         w.invocations.iter().map(|inv| octoflow_e2e::strings(&host_free(&inv.stdout()))).collect();
-    w.note("lines", Json::Array(lines));
+    w.note("lines", Value::Array(lines));
 }
 
 /// doctor's lines without those of the git and tkinter checks, and their fixes, which say what the host has.

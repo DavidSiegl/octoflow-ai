@@ -8,7 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use crate::constants::{CI_ENV, GIT_PATHSPEC_ENV};
 use crate::error::{os_error, OrchestratorError};
-use crate::py::json::Map;
+use crate::map::Map;
 
 /// The environment for every process the orchestrator starts: its own, without the CI credentials (CI_ENV) and
 /// without GIT_PATHSPEC_ENV.

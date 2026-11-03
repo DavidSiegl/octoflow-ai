@@ -5,21 +5,22 @@
 use super::*;
 use crate::constants::DEFAULT_AGENT;
 use crate::test_support::{oracle, unhex};
+use crate::json::Object;
 
 /// The cases harness.json holds of kind.
-fn cases(kind: &str) -> Vec<Vec<Json>> {
+fn cases(kind: &str) -> Vec<Vec<Value>> {
     let recorded = oracle("harness.json");
-    let cases = recorded.get(kind).and_then(Json::as_array).unwrap_or_else(|| panic!("harness.json has no {kind}"));
+    let cases = recorded.get(kind).and_then(Value::as_array).unwrap_or_else(|| panic!("harness.json has no {kind}"));
     cases.iter().map(|case| case.as_array().cloned().unwrap()).collect()
 }
 
 /// A string or null of the oracle as an Option.
-fn text(value: &Json) -> Option<&str> {
+fn text(value: &Value) -> Option<&str> {
     value.as_str()
 }
 
 /// A list of strings of the oracle.
-fn strings(value: &Json) -> Vec<String> {
+fn strings(value: &Value) -> Vec<String> {
     value.as_array().unwrap().iter().map(|a| a.as_str().unwrap().to_string()).collect()
 }
 
@@ -30,30 +31,30 @@ fn every_harness_s_tables_are_the_python_engine_s() {
     let kinds: Vec<&str> = HARNESSES.iter().map(|h| h.kind).collect();
     assert_eq!(strings(constants.get("AGENT_KINDS").unwrap()), kinds);
     assert_eq!(kinds, AGENT_KINDS);
-    assert_eq!(constants.get("DEFAULT_AGENT").and_then(Json::as_str), Some(DEFAULT_AGENT));
+    assert_eq!(constants.get("DEFAULT_AGENT").and_then(Value::as_str), Some(DEFAULT_AGENT));
     // Python's four tables, as the rows here make them.
-    let (mut permissions, mut resume, mut add_dir, mut logs) = (Map::new(), Map::new(), Map::new(), Map::new());
+    let (mut permissions, mut resume, mut add_dir, mut logs) = (Object::new(), Object::new(), Object::new(), Object::new());
     for h in &HARNESSES {
         if let Permissions::Equivalents(table) = h.permissions {
-            let mut modes = Map::new();
+            let mut modes = Object::new();
             for (mode, args) in table {
-                modes.insert(*mode, Json::Array(args.iter().map(|a| Json::from(*a)).collect()));
+                modes.insert(mode.to_string(), Value::Array(args.iter().map(|a| Value::from(*a)).collect()));
             }
-            permissions.insert(h.kind, Json::Object(modes));
+            permissions.insert(h.kind.into(), Value::Object(modes));
         }
         let (Resume::Flag(word) | Resume::Subcommand(word)) = h.resume;
-        resume.insert(h.kind, Json::from(word));
+        resume.insert(h.kind.into(), Value::from(word));
         if let Some(flag) = h.add_dir {
-            add_dir.insert(h.kind, Json::from(flag));
+            add_dir.insert(h.kind.into(), Value::from(flag));
         }
         if let Some(log) = h.session_log {
-            logs.insert(h.kind, Json::from(log.glob));
+            logs.insert(h.kind.into(), Value::from(log.glob));
         }
     }
-    assert_eq!(constants.get("PERMISSION_ARGS"), Some(&Json::Object(permissions)));
-    assert_eq!(constants.get("RESUME_ARGS"), Some(&Json::Object(resume)));
-    assert_eq!(constants.get("ADD_DIR_ARGS"), Some(&Json::Object(add_dir)));
-    assert_eq!(constants.get("SESSION_LOGS"), Some(&Json::Object(logs)));
+    assert_eq!(constants.get("PERMISSION_ARGS"), Some(&Value::Object(permissions)));
+    assert_eq!(constants.get("RESUME_ARGS"), Some(&Value::Object(resume)));
+    assert_eq!(constants.get("ADD_DIR_ARGS"), Some(&Value::Object(add_dir)));
+    assert_eq!(constants.get("SESSION_LOGS"), Some(&Value::Object(logs)));
     // Only codex resumes by a subcommand, and its arguments start with it (launch_args below).
     assert!(HARNESSES.iter().all(|h| matches!(h.resume, Resume::Subcommand(_)) == (h.kind == "codex")));
 }
@@ -128,11 +129,36 @@ fn every_session_log_reads_as_the_python_engine_reads_it() {
     assert!(cases.len() >= 13);
     for case in cases {
         let [kind, name, log, expected] = &case[..] else { panic!("{case:?}") };
+        if name == "times in each form" {
+            // Python's fromisoformat forms; the times this engine reads are a_time_is_read_only_with_its_offset's.
+            continue;
+        }
         let usage = harness(kind.as_str().unwrap()).unwrap().session_usage(&unhex(log.as_str().unwrap()));
-        let usage: Vec<Json> =
-            usage.into_iter().map(|u| Json::Array(vec![Json::Float(u.when), u.tokens.to_json()])).collect();
-        assert_eq!(&Json::Array(usage), expected, "{} {}", kind.dumps(), name.dumps());
+        let usage: Vec<Value> =
+            usage.into_iter().map(|u| Value::Array(vec![Value::from(u.when), u.tokens.to_json()])).collect();
+        assert_eq!(&Value::Array(usage), expected, "{} {}", kind, name);
     }
+}
+
+#[test]
+fn a_time_is_read_only_with_its_offset() {
+    let line = |n: u32, at: &str| {
+        format!(
+            r#"{{"type": "assistant", "timestamp": "{at}", "message": {{"id": "m{n}", "usage": {{"input_tokens": {n}, "output_tokens": {n}}}}}}}"#
+        )
+    };
+    let times = [
+        "2026-10-03T04:00:01.000Z", "2026-10-03T04:00:02.000+00:00", "2026-10-03T04:00:03.000+02:00",
+        "2026-10-03T04:00:07.123456789Z", "20261003T040009Z", "2026-10-03T24:00:00Z", "2026-10-03T04:00:13+00",
+        "2026-10-03T04:00:14",
+    ];
+    let log: Vec<String> = times.iter().zip(1..).map(|(at, n)| line(n, at)).collect();
+    let usage = harness("claude").unwrap().session_usage((log.join("\n") + "\n").as_bytes());
+    let read: Vec<(f64, i64)> = usage.iter().map(|u| (u.when, u.tokens.input)).collect();
+    // Hour 24 and a time without an offset are not read; the line is skipped.
+    let want = [(1_791_000_001.0, 1), (1_791_000_002.0, 2), (1_790_992_803.0, 3), (1_791_000_007.123456, 4)];
+    assert_eq!(read[..4], want);
+    assert_eq!(read[4..], [(1_791_000_009.0, 5), (1_791_000_013.0, 7)]);
 }
 
 #[test]
