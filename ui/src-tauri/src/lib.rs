@@ -505,16 +505,27 @@ mod tests {
         assert_eq!(located, Orchestrator::Binary(PathBuf::from("/elsewhere/orchestrator")));
     }
 
+    /// Write an executable script with the given text at path, by a child process: this one never opens the file for
+    /// writing. A test thread that forks inherits every descriptor this process has open, until its child execs; while
+    /// any process holds the file open for writing, executing it fails with ETXTBSY, "Text file busy".
+    #[cfg(unix)]
+    fn write_script(path: &Path, text: &str) {
+        let written = Command::new("sh")
+            .args(["-c", "printf %s \"$2\" > \"$1\" && chmod 755 \"$1\"", "sh"])
+            .arg(path)
+            .arg(text)
+            .status()
+            .expect("sh runs");
+        assert!(written.success(), "writing the script {}: {written}", path.display());
+    }
+
     #[test]
     #[cfg(unix)]
     fn serves_a_bundled_binary_without_a_project() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = TempDir::new();
         let binary = dir.join(BUNDLED_NAME);
         // serve's first line, then a process for stop to kill.
-        let script = "#!/bin/sh\necho '{\"url\": \"http://127.0.0.1:9\", \"token\": \"t\"}'\nexec sleep 60\n";
-        std::fs::write(&binary, script).expect("a stand-in binary");
-        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).expect("an executable");
+        write_script(&binary, "#!/bin/sh\necho '{\"url\": \"http://127.0.0.1:9\", \"token\": \"t\"}'\nexec sleep 60\n");
         let sidecar = Sidecar::start(&Orchestrator::Binary(binary), "tauri://localhost");
         let connection = sidecar.connection.clone().expect("the sidecar started");
         assert_eq!(connection.url, "http://127.0.0.1:9");

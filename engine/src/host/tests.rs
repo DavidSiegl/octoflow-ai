@@ -32,12 +32,17 @@ pub(crate) fn host_with_tools(dir: &str) -> ProcessHost {
     ProcessHost::in_environment(environment(Some(dir), &[]).into_iter(), &Interrupt::new())
 }
 
-/// Write an executable script named name into dir.
+/// Write an executable script named name into dir, making dir, by a child process: this one never opens the file for
+/// writing. A test thread that forks inherits every descriptor this process has open, until its child execs; while any
+/// process holds the file open for writing, executing it fails with ETXTBSY, "Text file busy".
 pub(crate) fn tool(dir: &str, name: &str, script: &str) {
     std::fs::create_dir_all(dir).expect("the tools' directory");
     let path = format!("{dir}/{name}");
-    std::fs::write(&path, script).expect("the script");
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("an executable script");
+    let written = std::process::Command::new("sh")
+        .args(["-c", "printf %s \"$2\" > \"$1\" && chmod 755 \"$1\"", "sh", &path, script])
+        .status()
+        .expect("sh runs");
+    assert!(written.success(), "writing the script {path}: {written}");
 }
 
 /// Write text to the file at path, making its directories.

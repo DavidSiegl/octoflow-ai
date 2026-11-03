@@ -6,7 +6,6 @@
 //! normalized, for main.rs to compare with the scenario's recording.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -515,7 +514,9 @@ impl World {
         write_atomically(&self.root().join("script.json"), &Value::Object(self.script.clone()).to_string());
     }
 
-    /// Shims of the fakes in bin/, and the harnesses' CLIs.
+    /// Shims of the fakes in bin/, and the harnesses' CLIs, each written by a child process: this one never opens them
+    /// for writing. A test thread that forks inherits every descriptor this process has open, until its child execs;
+    /// while any process holds a file open for writing, executing it fails with ETXTBSY, "Text file busy".
     fn make_bin(&self) {
         let root = shlex_quote(&self.root().to_string_lossy());
         let mut shims: Vec<(String, String)> = fakes()
@@ -526,9 +527,13 @@ impl World {
         shims.extend(AGENT_KINDS.iter().map(|kind| ((*kind).to_string(), "exit 0".to_string())));
         for (program, body) in shims {
             let path = self.root().join("bin").join(program);
-            fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
-                .unwrap_or_else(|e| panic!("making {} executable: {e}", path.display()));
+            let written = Command::new("sh")
+                .args(["-c", "printf %s \"$2\" > \"$1\" && chmod 755 \"$1\"", "sh"])
+                .arg(&path)
+                .arg(format!("#!/bin/sh\n{body}\n"))
+                .status()
+                .unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
+            assert!(written.success(), "writing {}: {written}", path.display());
         }
     }
 

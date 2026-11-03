@@ -325,7 +325,15 @@ is rewritten to say what is left.
   desktop shell's are a `#[cfg(test)]` module in `ui/src-tauri/src/lib.rs`. That module also makes a change to the
   desktop shell's tests alone need a version raise, and a place in the one-bumping-PR-at-a-time queue:
   `ci/version-raised.sh` exempts `**/tests.rs`, not `lib.rs` (cross-review 117, F4, 2026-11-03). Moving it to
-  `ui/src-tauri/src/tests.rs` closes both.
+  `ui/src-tauri/src/tests.rs` closes both, once the gate lets a moved test keep its `cfg` (next entry): tried by
+  ui-test-text-file-busy/01 (2026-11-03) and dropped for that, so that ticket's fix to one of these tests bumped.
+- **The gate takes a moved Rust test's own `cfg` for a skip the change added.** `_rust_skips` (`gate.py`) reports a
+  skipping attribute (`#[cfg(unix)]`, `#[ignore]`, …) on any line the change added, so a test moved to another file
+  with its attributes fails the gate with `test-integrity skip` errors, though nothing new is skipped; the
+  `removed-test` check follows the same move by the test's `body_digest` (docs/quality-gate.md, "Rust tests").
+  Found 2026-11-03 moving the desktop shell's 26 tests out of `ui/src-tauri/src/lib.rs` (ui-test-text-file-busy/01):
+  six errors, one for each `cfg` the tests carried. Closes with a skip attribute on a test matched to the base's test
+  of the same body digest counted only when that test did not carry it.
 - **No build runs the Rust doctests.** cargo-nextest does not run doctests, and since the Test stage's `cargo llvm-cov
   nextest` replaced the UI stage's `cargo test`, nothing does: `octoflow_ui_lib` is an `rlib` among its crate types
   (`ui/src-tauri/Cargo.toml`), so `cargo test` ran them. The crate has no doc example today. Raised by cross-review 72
@@ -895,4 +903,8 @@ is rewritten to say what is left.
   by a prefix, pid, time and counter, retried until new; serve's drops a failed removal silently, and the others only
   report it on standard error, which libtest hides on a passing test. Raised by cross-review 117 (F3, 2026-11-03):
   "A fix to one, such as making names unique, has to be repeated in each." Closes with one shared type: a `tempfile`
-  dev-dependency, or a test-support crate the engine, the desktop shell and xtask all use.
+  dev-dependency, or a test-support crate the engine, the desktop shell and xtask all use. The same holds for the
+  writer of an executable script, which a child process writes so that no test thread's fork holds it open for
+  writing when it is run (ETXTBSY, ui-test-text-file-busy/01, 2026-11-03): `tool` in `engine/src/host/tests.rs`,
+  `Dir::tool` in `engine/tests/program.rs`, `World::make_bin` in `engine/e2e/tests/e2e/world.rs` and `write_script`
+  in `ui/src-tauri/src/lib.rs` each run the same `sh` line; that crate would hold it once.

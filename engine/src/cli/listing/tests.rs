@@ -728,16 +728,12 @@ fn no_last_review() {
 /// with sh, as sshd would run it there.
 fn fake_ssh(dir: &TempDir) -> ProcessHost {
     let bin = dir.join("bin");
-    std::fs::create_dir_all(&bin).unwrap();
-    let ssh = format!("{bin}/ssh");
     let script = format!(
         "#!/bin/sh\n[ \"$1\" = -o ] || exit 99\neval \"last=\\${{$#}}\"\nprintf '%s\\n' \"$last\" | tr '\\n' ' ' >> '{}'\necho >> '{}'\nexec sh -c \"$last\"\n",
         dir.join("calls"),
         dir.join("calls")
     );
-    std::fs::write(&ssh, script).unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::host::tests::tool(&bin, "ssh", &script);
     let path = format!("{bin}:{}", std::env::var("PATH").unwrap_or_default());
     let vars = std::env::vars_os().filter(|(k, _)| k != "PATH").chain([("PATH".into(), path.into())]);
     ProcessHost::in_environment(vars, &Interrupt::new()).over_ssh("remote-host")
