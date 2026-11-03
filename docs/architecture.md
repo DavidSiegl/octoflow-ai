@@ -222,8 +222,9 @@ from a herdr pane.
   as the run labels its own (`workspace_label`), and runs its own binary's `run --run-id ID …` in the pane's
   shell (`Launcher`, `herdr.rs`), so the run can be watched and interrupted there and outlives serve. herdr's
   `pane run` types what it is given, so each word goes to the new shell as an environment variable instead, and
-  only `"$OCTOFLOW_ARG_0" …` is typed. A project on a machine is started from here too, as `run --machine M --cwd DIR …` in a workspace in
-  serve's own directory: the run's process is local and its agents are on the machine, as from the CLI. The
+  only `"$OCTOFLOW_ARG_0" …` is typed. A project on a machine is started from here too, as
+  `run --machine M --cwd DIR …` in a workspace in serve's own directory: the run's process is local and its agents
+  are on the machine, as from the CLI. The
   hidden `--run-id` lets serve then wait for exactly that run: its `state.json` saved answers 201; the command's
   end without one, told by a line the shell prints after it, answers 422 with what the pane showed; neither
   within 30 seconds (`START_WAIT`) answers 202. Without a herdr server here, any project's run is refused.
