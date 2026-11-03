@@ -411,6 +411,13 @@ is rewritten to say what is left.
   outside the run directory, as a fix on main once the Python engine is gone, which it is since rust-engine ticket 11.
   Open until that fix.
   Ticket: `.scratch/serve-run-files/issues/02-links-outside-run-refused.md` (#231).
+- **`Host::read` fails for a file removed between its test and its read.** `[ -f "$1" ] || exit MISSING; cat -- "$1"`
+  (`engine/src/host.rs`, `fn read`) answers a file that goes away between the two with an error, not with None, so
+  serve's `/file` for a file `run_files` just listed, such as the secret scan's `leaks-publish.json`, and
+  `ProjectRuns::agent` for a run being pruned report a failure where "missing" is the answer. Raised by cross-review
+  120 (F3, 2026-11-03), against serve-run-files/03, which made the two listings skip such a file and left `read` out
+  of its scope. Closes with a cat that fails on a file no longer there answering None, and a test that removes the file
+  between the two.
 - **The e2e scenarios compare serve's event stream at checkpoints, not event by event.** `serve_endpoints_and_events`
   keeps, at each point where the run waits on an agent and once it is done, the last `record` and `files` event of
   each run (`engine/e2e/tests/e2e/scenarios.rs`, `last_by_run`). Raised by cross-review 65 (F10, 2026-10-27), against the

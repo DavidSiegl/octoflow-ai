@@ -37,6 +37,15 @@ pub const IN_DIR: &str = "cd -- \"$1\" && shift && exec \"$@\"";
 /// The name of a run directory's file that the engine's metrics command reads (crate::summary::run_metrics).
 const METRICS_FILE: &str = "metrics.json";
 
+/// sh, inside a loop over files $f: what ends that pass when the command before it failed. A file gone since the loop
+/// found it is skipped, as a running run removes some of its files and prune a whole run (serve-run-files/03); one
+/// still there fails the script.
+const SKIP_F_IF_GONE: &str = "{ [ -f \"$f\" ] || continue; exit 1; }";
+
+/// sh: sets m to the modification time of file $f, in seconds since the epoch; fails when stat does. stat -c is GNU,
+/// stat -f is BSD.
+const MTIME_OF_F: &str = "m=$(stat -c %Y -- \"$f\" 2>/dev/null || stat -f %m -- \"$f\")";
+
 /// What one command printed, and how it ended, as [`Host::exec`] gives it: its output as the bytes it wrote.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Exec {
@@ -817,14 +826,11 @@ pub trait Host {
     /// cannot shift it. A run whose directory is removed while the runs are read, as prune removes one, is among them
     /// or not, never an error. Errors: a state.json that is still there cannot be stat'ed or read, or is not JSON.
     fn run_states(&self, cwd: &str) -> Result<Vec<(u64, Value)>, OrchestratorError> {
-        // stat -c is GNU, stat -f is BSD. Each state follows its age and a blank, and ends at a NUL, which no JSON text
-        // holds, so a state.json a human pretty-printed reads as well as the engine's one line. A stat or cat that
-        // fails on a state.json gone since the glob skips it, as run_files does a file.
+        // Each state follows its age and a blank, and ends at a NUL, which no JSON text holds, so a state.json a human
+        // pretty-printed reads as well as the engine's one line.
         let script = format!(
             "now=$(date +%s) || exit 1; for f in \"$1\"/{RUNS_DIR}/*/state.json; do [ -f \"$f\" ] || continue; \
-             m=$(stat -c %Y -- \"$f\" 2>/dev/null || stat -f %m -- \"$f\") \
-             || {{ [ -f \"$f\" ] || continue; exit 1; }}; \
-             s=$(cat -- \"$f\") || {{ [ -f \"$f\" ] || continue; exit 1; }}; \
+             {MTIME_OF_F} || {SKIP_F_IF_GONE}; s=$(cat -- \"$f\") || {SKIP_F_IF_GONE}; \
              printf \"%s %s\\000\" \"$((now - m))\" \"$s\"; done; true"
         );
         let out = self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?;
@@ -887,15 +893,13 @@ pub trait Host {
     /// run removes some, is in the list or not, never an error. Errors: stat fails on a file that is still there, or
     /// prints what is not a time.
     fn run_files(&self, run_dir: &str) -> Result<Vec<RunFile>, OrchestratorError> {
-        // Each entry is "<mtime> <path>" ended by a NUL, which no path holds. stat -c is GNU, stat -f is BSD. A stat
-        // that fails on a file gone since the glob is skipped (serve-run-files/03: the secret scan's
-        // leaks-publish.json went so, failing serve's event stream).
-        let script = "for f in \"$1\"/*; do [ -f \"$f\" ] || continue; \
-                      case \"${f##*/}\" in state.json|*.tmp.*) continue;; esac; \
-                      m=$(stat -c %Y -- \"$f\" 2>/dev/null || stat -f %m -- \"$f\") \
-                      || { [ -f \"$f\" ] || continue; exit 1; }; \
-                      printf \"%s %s\\0\" \"$m\" \"$f\"; done; true";
-        let out = self.check(&["sh", "-c", script, "_", run_dir], None, DEFAULT_TIMEOUT)?;
+        // Each entry is "<mtime> <path>" ended by a NUL, which no path holds.
+        let script = format!(
+            "for f in \"$1\"/*; do [ -f \"$f\" ] || continue; \
+             case \"${{f##*/}}\" in state.json|*.tmp.*) continue;; esac; \
+             {MTIME_OF_F} || {SKIP_F_IF_GONE}; printf \"%s %s\\0\" \"$m\" \"$f\"; done; true"
+        );
+        let out = self.check(&["sh", "-c", &script, "_", run_dir], None, DEFAULT_TIMEOUT)?;
         let mut files = vec![];
         for entry in out.split('\0').filter(|e| !e.is_empty()) {
             let (mtime, path) = entry.split_once(' ').unwrap_or((entry, ""));
