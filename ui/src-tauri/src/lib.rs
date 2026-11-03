@@ -420,21 +420,27 @@ mod tests {
         Path::new(&format!("/proc/{pid}")).exists()
     }
 
-    /// An empty directory of one test's own under the system's temporary directory, removed with everything in it
-    /// when dropped, so it must outlive every use of its path. Each test passes a name no other test uses: tests run
-    /// in parallel in one process, whose pid is the rest of the name.
+    /// A new directory of its own under the system's temporary directory, removed with everything in it when
+    /// dropped, so it must outlive every use of its path.
     struct TempDir(PathBuf);
 
     impl TempDir {
-        fn new(test: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!("octoflow-ui-{test}-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&dir);
+        fn new() -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static COUNT: AtomicU64 = AtomicU64::new(0);
+            let n = COUNT.fetch_add(1, Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!("octoflow-ui-test-{}-{n}", std::process::id()));
             std::fs::create_dir_all(&dir).expect("a scratch directory");
             TempDir(dir)
         }
 
         fn path(&self) -> &Path {
             &self.0
+        }
+
+        /// The path of name in the directory.
+        fn join(&self, name: impl AsRef<Path>) -> PathBuf {
+            self.0.join(name)
         }
     }
 
@@ -467,7 +473,7 @@ mod tests {
 
     #[test]
     fn locates_the_checkout_s_build_without_a_bundled_binary() {
-        let dir = TempDir::new("checkout");
+        let dir = TempDir::new();
         let located = Orchestrator::locate_from(None, Some(dir.path()));
         let Orchestrator::Checkout(binary) = &located else { panic!("{located:?}") };
         assert_eq!(binary, &checkout_build(std::env::var_os("CARGO_TARGET_DIR")), "{located}");
@@ -484,20 +490,18 @@ mod tests {
 
     #[test]
     fn locates_the_bundled_binary_beside_the_executable() {
-        let scratch = TempDir::new("bundled");
-        let dir = scratch.path();
+        let dir = TempDir::new();
         std::fs::write(dir.join(BUNDLED_NAME), "").expect("a stand-in binary");
-        let located = Orchestrator::locate_from(None, Some(dir));
+        let located = Orchestrator::locate_from(None, Some(dir.path()));
         assert_eq!(located, Orchestrator::Binary(dir.join(BUNDLED_NAME)));
         assert_eq!(located.project(), None);
     }
 
     #[test]
     fn the_environment_wins_over_the_bundled_binary() {
-        let scratch = TempDir::new("environment");
-        let dir = scratch.path();
+        let dir = TempDir::new();
         std::fs::write(dir.join(BUNDLED_NAME), "").expect("a stand-in binary");
-        let located = Orchestrator::locate_from(Some("/elsewhere/orchestrator".into()), Some(dir));
+        let located = Orchestrator::locate_from(Some("/elsewhere/orchestrator".into()), Some(dir.path()));
         assert_eq!(located, Orchestrator::Binary(PathBuf::from("/elsewhere/orchestrator")));
     }
 
@@ -505,8 +509,8 @@ mod tests {
     #[cfg(unix)]
     fn serves_a_bundled_binary_without_a_project() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = TempDir::new("bundled-serve");
-        let binary = dir.path().join(BUNDLED_NAME);
+        let dir = TempDir::new();
+        let binary = dir.join(BUNDLED_NAME);
         // serve's first line, then a process for stop to kill.
         let script = "#!/bin/sh\necho '{\"url\": \"http://127.0.0.1:9\", \"token\": \"t\"}'\nexec sleep 60\n";
         std::fs::write(&binary, script).expect("a stand-in binary");
@@ -595,7 +599,7 @@ mod tests {
     #[test]
     fn an_extracted_appimage_started_by_its_apprun_is_one_too() {
         // squashfs-root/AppRun sets APPDIR and the bundle's variables, but no APPIMAGE.
-        let dir = TempDir::new("squashfs-root");
+        let dir = TempDir::new();
         let root = dir.path().canonicalize().expect("a scratch directory");
         std::fs::write(root.join("AppRun"), "").expect("a stand-in AppRun");
         let python_home = format!("{}/usr/", root.display());
@@ -620,8 +624,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn the_bundle_is_appdir_and_what_it_resolves_to() {
-        let scratch = TempDir::new("linked-appdir");
-        let dir = scratch.path();
+        let dir = TempDir::new();
         std::fs::create_dir_all(dir.join("real/app/usr/lib")).expect("an AppDir");
         std::fs::write(dir.join("real/app/AppRun"), "").expect("a stand-in AppRun");
         std::os::unix::fs::symlink(dir.join("real"), dir.join("link")).expect("a link");
