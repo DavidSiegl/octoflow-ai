@@ -162,7 +162,8 @@ impl Workflow<'_> {
         self.human.log(&format!("[{role}] working in pane {}", self.agent_field(role, "pane")));
         if let Some(message) = self.prompt_for(how, &file, &t.text, t.fresh_text.as_deref(), path)? {
             // A resumed or restarted turn keeps its record and start. Read before the prompt goes out, so that no
-            // agent can write its file before its turn started.
+            // agent can write its file before its turn started (its mtime still can: end_turn counts that as the
+            // start).
             let started = if self.open_turn(&file).is_some() { None } else { Some(self.host.now()?) };
             self.deliver(role, path, &message)?;
             // Recorded only once the prompt is taken. Dying between sending and confirming costs one duplicate
@@ -502,6 +503,11 @@ impl Workflow<'_> {
     /// Close the record of the turn that wrote path, found written, at the file's mtime: the turn ended then, even
     /// if no orchestrator was watching. A file whose turn has no record, as one written before turns were recorded,
     /// gets one with no start.
+    ///
+    /// An mtime before the turn's start counts as the start, so that a turn never ends before it started nor lasts
+    /// less than 0s. The two do not come from one clock: the start is `date`'s reading, taken before the prompt went
+    /// out, while Linux stamps an mtime from a coarser clock that trails it by up to a few milliseconds, so a file
+    /// written that soon after a start read at the turn of a second is stamped in the second before.
     pub(super) fn end_turn(&mut self, role: &str, path: &str) -> Outcome<()> {
         let file = file_name(path);
         let i = match self.open_turn(file) {
@@ -518,12 +524,17 @@ impl Workflow<'_> {
         if self.state.turns[i].get("session").unwrap_or(&Value::Null) != &session.unwrap_or(Value::Null) {
             self.state.turns[i].insert("session".into(), Value::Null);
         }
-        let ended = self.host.mtime(path)?;
+        let started = self.state.turns[i]
+            .get("started_at")
+            .and_then(Value::as_str)
+            .map(epoch_seconds)
+            .transpose()
+            .map_err(|e| OrchestratorError(format!("the turn that wrote {file} started at no time: {e}")))?;
+        let mtime = self.host.mtime(path)?;
+        let ended = started.map_or(mtime, |started| mtime.max(started));
         let record = &mut self.state.turns[i];
         record.insert("ended_at".into(), Value::from(iso_utc(ended)));
-        if let Some(started) = record.get("started_at").and_then(Value::as_str) {
-            let started = epoch_seconds(started)
-                .map_err(|e| OrchestratorError(format!("the turn that wrote {file} started at no time: {e}")))?;
+        if let Some(started) = started {
             record.insert("seconds".into(), Value::from(ended - started));
         }
         self.save()
