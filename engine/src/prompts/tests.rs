@@ -54,13 +54,9 @@ fn bad_files_are_refused_naming_them() {
             b"Build {spec_path} in {cwd}.",
             "placeholder {build_path} is missing; BUILD_PROMPT takes {build_path}, {cwd}, {spec_path}",
         ),
-        ("BLOCKED_NOTE.md", b"Ask {}.", "placeholder {} is not one of the built-in text's; BLOCKED_NOTE takes none"),
-        ("CONTINUE_PROMPT.md", b"Write {path!z}.", "cannot be filled in: ValueError: Unknown conversion specifier z"),
-        (
-            "CONTINUE_PROMPT.md",
-            b"Write {path}}.",
-            "Single '}' encountered in format string; write a literal brace as {{ or }}",
-        ),
+        ("BLOCKED_NOTE.md", b"Ask {}.", "placeholder {} at line 1, column 5 is a positional field; a placeholder is a name"),
+        ("CONTINUE_PROMPT.md", b"Write {path!z}.", "placeholder {path!z} at line 1, column 7 has a conversion; a placeholder takes none"),
+        ("CONTINUE_PROMPT.md", b"Write {path}}.", "} at line 1, column 13 closes no placeholder; write a literal brace as }}"),
         ("FIX_PROMPT.md", b"Fix \xe9", "not UTF-8 text"),
     ];
     for (name, text, message) in cases {

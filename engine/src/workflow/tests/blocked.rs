@@ -60,7 +60,7 @@ fn blocked_prompt(path: &str, k: u32) -> String {
         "blocked_path" => Some(blocked.clone()),
         _ => None,
     };
-    crate::py::format::format(crate::prompts::BLOCKED_PROMPT, &value).expect("the built-in prompt fills in")
+    crate::prompts::template::fill(crate::prompts::BLOCKED_PROMPT, &value).expect("the built-in prompt fills in")
 }
 
 /// The names of the blocked reports on the host, sorted.
@@ -310,7 +310,7 @@ fn the_note_is_in_every_prompt_of_the_steps_that_can_block_only() {
 
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
     // First, quality fix and again; the fresh prompts are in default_prompts.rs's golden texts.
-    let blocked_note = crate::py::format::format(crate::prompts::BLOCKED_NOTE, &|_| None).unwrap();
+    let blocked_note = crate::prompts::template::fill(crate::prompts::BLOCKED_NOTE, &|_| None).unwrap();
     assert_eq!(builds.borrow().len(), 3);
     for prompt in builds.borrow().iter() {
         assert!(prompt.ends_with(&note()));

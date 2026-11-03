@@ -686,6 +686,6 @@ fn a_state_saved_before_prompt_files_resumes_with_the_built_in_texts() {
         "build_path" => Some(format!("{D}/build-2.md")),
         _ => None,
     };
-    let built_in = crate::py::format::format(FIX_PROMPT, &fix).unwrap();
+    let built_in = crate::prompts::template::fill(FIX_PROMPT, &fix).unwrap();
     assert!(seen.borrow()[0].contains(&built_in), "{}", seen.borrow()[0]);
 }

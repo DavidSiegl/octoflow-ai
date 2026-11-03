@@ -26,8 +26,8 @@ use crate::constants::{BUDGET_KEYS, DEFAULT_MAX_FILES, DEFAULT_MAX_LINES};
 use crate::env::ConfigDir;
 use crate::error::{strerror, OrchestratorError};
 use crate::pipeline::{default_workflow, find_workflow, Pipeline, PipelineSettings, Step, DEFAULT_WORKFLOW, WORKFLOWS};
+use crate::prompts::template::placeholders;
 use crate::prompts::{files_with_extension, saved_prompts, Prompts};
-use crate::py::format::field_names;
 use crate::py::json::{unicode_string, Json, Map};
 use crate::py::text::{basename, close_match, splitext, title_ascii};
 
@@ -270,9 +270,7 @@ fn check_step_value(key: &str, value: &Json, place: &str) -> Result<(), String> 
     if (key == "id" || key == "role") && !is_name(text) {
         return Err(format!("{place}: {key} may use only letters, digits, - and _"));
     }
-    field_names(text)
-        .map(|_| ())
-        .map_err(|e| format!("{place}: {key}: {e}; write a literal brace as {{{{ or }}}}"))
+    placeholders(text).map(|_| ()).map_err(|e| format!("{place}: {key}: {e}"))
 }
 
 /// An error naming the first key of table that is not one of known, with the known key closest to it, or else all

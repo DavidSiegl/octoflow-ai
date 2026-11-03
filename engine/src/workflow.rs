@@ -23,11 +23,11 @@ use crate::herdr::{Herdr, HerdrError};
 use crate::host::{Host, PushError};
 use crate::interrupt::Interrupt;
 use crate::pipeline::{is_built_in, Pipeline, Step, DONE, METRICS_FILE, PUBLISH, QUALITY, SUMMARY_FILE};
+use crate::prompts::template::{fill, TemplateError};
 use crate::prompts::{Prompt, Prompts};
 use crate::proofs::PROOF_TIMEOUT;
 use crate::pull_request::{branch_name, commit_note, pr_body, provenance, spec_title, GateEvidence, QualityFile};
 use crate::package_index::PackageIndexes;
-use crate::py::format::format;
 use crate::py::json::{Json, Map};
 use crate::py::text::{basename, rstrip, strip};
 use crate::quality::parse_gate;
@@ -931,12 +931,12 @@ impl<'a> Workflow<'a> {
     fn step_prompts(&self, step: &Step, n: u32) -> Result<(String, Option<String>), OrchestratorError> {
         let s = &self.state;
         let q = if step.quality_gated { s.quality_round } else { 0 };
-        let mut fill = Map::new();
+        let mut values = Map::new();
         for name in step.placeholders() {
             let value = self.placeholder(&name, step, n)?;
-            fill.insert(name, value);
+            values.insert(name, value);
         }
-        let template = |t: &str| format(t, &|name| fill.get(name).cloned()).map_err(|e| prompt_error(&step.id, &e));
+        let template = |t: &str| fill(t, &|name| values.get(name).cloned()).map_err(|e| prompt_error(&step.id, &e));
         // What the verdict step hears of its round besides its prompt: its last quality file, the locked files
         // restored, and the proofs run again.
         let notes = if step.loop_to.is_some() {
@@ -1023,7 +1023,7 @@ impl<'a> Workflow<'a> {
     /// One of the prompts the workflow's definition does not word, filled in with values.
     fn fill(&self, p: Prompt, values: &[(&str, &str)]) -> Result<String, OrchestratorError> {
         let value = |name: &str| values.iter().find(|(n, _)| *n == name).map(|(_, v)| v.to_string());
-        format(self.prompts.text(p), &value).map_err(|e| prompt_error(p.name(), &e))
+        fill(self.prompts.text(p), &value).map_err(|e| prompt_error(p.name(), &e))
     }
 
     /// Before the first editing step: create the run's branch from the base branch, brought up to origin's, unless
@@ -1347,6 +1347,6 @@ impl<'a> Workflow<'a> {
 
 /// The error of a prompt template named name that cannot be filled in, which the checks of Pipeline and of prompt
 /// files leave no case for.
-fn prompt_error(name: &str, e: &crate::py::format::FormatError) -> OrchestratorError {
-    OrchestratorError(format!("prompt {name} cannot be filled in: {}", e.named()))
+fn prompt_error(name: &str, e: &TemplateError) -> OrchestratorError {
+    OrchestratorError(format!("prompt {name} cannot be filled in: {e}"))
 }

@@ -321,13 +321,13 @@ pub(crate) fn retry_prompt(path: &str) -> String {
         "changes" => Some(crate::constants::CHANGES_REQUESTED.to_string()),
         _ => None,
     };
-    crate::py::format::format(crate::prompts::RETRY_VERDICT_PROMPT, &value).expect("the built-in prompt fills in")
+    crate::prompts::template::fill(crate::prompts::RETRY_VERDICT_PROMPT, &value).expect("the built-in prompt fills in")
 }
 
 /// The prompt that tells a resumed agent to go on writing path.
 pub(crate) fn continue_prompt(path: &str) -> String {
     let value = |name: &str| (name == "path").then(|| path.to_string());
-    crate::py::format::format(crate::prompts::CONTINUE_PROMPT, &value).expect("the built-in prompt fills in")
+    crate::prompts::template::fill(crate::prompts::CONTINUE_PROMPT, &value).expect("the built-in prompt fills in")
 }
 
 /// turn, its agent working for seconds of the host's time before it plays turn: the host's clock moves on without
@@ -414,7 +414,7 @@ impl PartialEq<Map<Json>> for Record {
 
 /// What every prompt of a step that can block ends with.
 pub(crate) fn note() -> String {
-    let text = crate::py::format::format(crate::prompts::BLOCKED_NOTE, &|_| None).expect("the built-in note fills in");
+    let text = crate::prompts::template::fill(crate::prompts::BLOCKED_NOTE, &|_| None).expect("the built-in note fills in");
     format!("\n\n{text}")
 }
 
@@ -534,7 +534,7 @@ impl Fixture {
 /// template, one of crate::prompts' prompts, filled in with values by name.
 pub(crate) fn filled(template: &str, values: &[(&str, &str)]) -> String {
     let value = |name: &str| values.iter().find(|(n, _)| *n == name).map(|(_, v)| v.to_string());
-    crate::py::format::format(template, &value).expect("the prompt fills in")
+    crate::prompts::template::fill(template, &value).expect("the prompt fills in")
 }
 
 /// The QUALITY_FIX_PROMPT the Builder of state's run hears for quality round q of round n.

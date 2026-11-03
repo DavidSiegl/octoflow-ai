@@ -61,7 +61,7 @@ fn locked_note(steps: &str, paths: &str, diff_paths: &str) -> String {
         "diff_paths" => Some(diff_paths.to_string()),
         _ => None,
     };
-    let note = crate::py::format::format(crate::prompts::LOCKED_NOTE, &value).expect("the built-in note fills in");
+    let note = crate::prompts::template::fill(crate::prompts::LOCKED_NOTE, &value).expect("the built-in note fills in");
     format!("\n\n{note}")
 }
 
