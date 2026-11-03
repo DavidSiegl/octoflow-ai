@@ -78,6 +78,7 @@ is rewritten to say what is left.
   shape. Raised, not recorded, by cross-review of 20aa212 (2026-10-30); both predate it. Closes with the rule chosen and
   stated on `cargo_dependencies`'s doc: the first entry, or every source a crate is named with; and a non-boolean
   `workspace` refused.
+  Ticket: `.scratch/cargo-dependency-rules/issues/01-one-rule-per-crate-entry.md` (#237).
 - **`Map` has no first-wins insert.** `cargo_manifest_dependencies` and `add_named`
   (`engine/src/checks/dependencies.rs`) each spell out `if !out.contains_key(&key) { out.insert(..) }`, a branch that
   put the first at 16 of the gate's cognitive-complexity limit of 15 (PR #214), which 20aa212 met by moving the
@@ -93,12 +94,14 @@ is rewritten to say what is left.
   PR-213's pr-head build, whose final checkpoint lacked metrics.json, where the branch build of the same commit
   passed (2026-10-30). Closes with the files written before the save that finishes the run, or with the watch
   re-reading a finished run's files until they stop changing.
+  Ticket: `.scratch/serve-run-files/issues/01-finished-run-files-reread.md` (#230).
 - **The desktop app ships its npm packages' code without their licenses.** `octoflow-third-party-licenses.html`
   (`packaging/about.toml`) lists the Rust crates only, as cargo-about reads Cargo's graph; the app's web view bundles
   `ui/package.json`'s runtime dependencies, React, react-markdown, remark-gfm and @tauri-apps/api with what they pull
   in, minified into `ui/dist/` without their notices. All were MIT when the project took its license (2026-10-30).
   Closes with their license texts generated from `ui/package-lock.json` at build time, e.g. by a Vite license
   plugin, and bundled with the app beside the crates'.
+  Ticket: `.scratch/desktop-packaging-gaps/issues/01-npm-licenses-shipped.md` (#239).
 - **A release that adds a placeholder to a built-in prompt would refuse every run that saved an override of it.**
   `saved_prompts` (`engine/src/prompts.rs`) holds a run's saved prompt overrides to `prompt_problem` on resume, whose
   rule that an override keep every placeholder of the built-in text never refused a resume before. No run can meet it
@@ -107,6 +110,7 @@ is rewritten to say what is left.
   override of that text will be refused on resume, where it could still have been filled." Closes with the resume
   check limited to what cannot be filled in, the template's form and unknown names, or with the release that adds
   such a placeholder saying so in its notes.
+  Ticket: `.scratch/prompt-override-resume/issues/01-resume-refuses-only-unfillable-overrides.md` (#238).
 - **The Rust engine names itself `orchestrator.py`.** Its messages and hints were ported word for word, so the
   e2e recordings, made by the Python engine, hold them: `resume: orchestrator.py resume <id>` in `list` and the
   interrupted note (`cli/listing.rs`, `cli.rs`'s `resume_command`), `` `orchestrator.py workflows default` `` in
@@ -389,6 +393,7 @@ is rewritten to say what is left.
   (2026-10-29, the user): keep the Python engine's behaviour until the switch, then refuse a link whose target is
   outside the run directory, as a fix on main once the Python engine is gone, which it is since rust-engine ticket 11.
   Open until that fix.
+  Ticket: `.scratch/serve-run-files/issues/02-links-outside-run-refused.md` (#231).
 - **The e2e scenarios compare serve's event stream at checkpoints, not event by event.** `serve_endpoints_and_events`
   keeps, at each point where the run waits on an agent and once it is done, the last `record` and `files` event of
   each run (`engine/e2e/tests/e2e/scenarios.rs`, `last_by_run`). Raised by cross-review 65 (F10, 2026-10-27), against the
@@ -470,6 +475,7 @@ is rewritten to say what is left.
   Ctrl-C reaches the whole process group and is not affected; the mounted AppImage was not checked. Closes with
   `Cli::exec` asking the kernel for a signal when its parent, the runtime, dies (`PR_SET_PDEATHSIG`) when the app
   runs extracted, checked on a built AppImage, or with a runtime that forwards signals.
+  Ticket: `.scratch/desktop-packaging-gaps/issues/02-appimage-signal-reaches-the-cli.md` (#240).
 - **An AppImage run without FUSE leaves its extraction in `/tmp`.** Under `APPIMAGE_EXTRACT_AND_RUN` the
   AppImage runtime that linuxdeploy-plugin-appimage bundles extracts into `$TMPDIR/appimage_extracted_<hash>` and
   never removes it. `packaging/build-desktop.sh` sets the variable for the whole Tauri build, so linuxdeploy and
@@ -478,6 +484,7 @@ is rewritten to say what is left.
   test already points `TMPDIR` into its own directory. Found in the second build round of run 20261025-081413-327fc2
   (2026-10-25). Closes with a `TMPDIR` the build removes around `tauri build`, and with a README note, or a newer
   runtime that cleans up, for users.
+  Ticket: `.scratch/desktop-packaging-gaps/issues/03-appimage-extraction-cleaned-up.md` (#241).
 - **No build has yet been seen waiting for `ci/cargo-lock.sh` on the Jenkins agent.** PR #88's builds ran both
   cargo steps through it on agentbox0 (builds 1-3, 2026-10-25), so the agent image has `flock` and the lock file's
   directory is writable, and a quality-style build (`GIT_REF` set) ran `--no-wait`; but the two run side by side
@@ -526,6 +533,7 @@ is rewritten to say what is left.
   ready for review that no drain marks `done` once merged. Kept so that drain never overrides a status the human
   set. Raised while building the refresh command (2026-10-25). Closes with the run recording that a refresh cleared
   its conflict, which drain then reads, or with refresh moving the spec itself.
+  Ticket: `.scratch/drain-refresh-cleared/issues/01-refresh-records-a-cleared-conflict.md` (#236).
 - **Proofs run after the last round's review too.** No Builder turn follows to read them; only the draft pull
   request's review shows them, and each may take `PROOF_TIMEOUT`. Kept: a demonstrated defect is what the human
   most needs to see in a draft. Raised by the same review.
@@ -535,6 +543,7 @@ is rewritten to say what is left.
   `git add --all`. In-place runs always had this; since proof-runs ticket 01 a worktree run has it too, its proofs
   importing the worktree's code. Raised there (2026-10-27). Closes with `Workflow::publish` committing only what the turns
   changed, or with proofs running in a throwaway copy of the tree.
+  Ticket: `.scratch/proof-runs/issues/03-proof-writes-stay-out-of-the-commit.md` (#234).
 - **A proof the Builder moves into the project stays carried as erroring.** `PROOFS_NOTE` lets the Builder move a
   proof into the project as a regression test; `Workflow::run_proof` then records it "it did not run: ... is gone",
   which is not a pass, so `Workflow::carried_proofs` keeps carrying it. Raised by the cross-review of proof-runs (review 64,
@@ -542,6 +551,7 @@ is rewritten to say what is left.
   pass, and the verdict step hears it "no longer fails but errors", even when the moved test passes in the project.
   Predates that branch, where the same move gave pytest's exit status 4, an error carried the same way. Closes with
   `Workflow::carried_proofs` treating a missing proof as moved and dropping it, and the notes saying so.
+  Ticket: `.scratch/proof-runs/issues/04-moved-proof-not-carried.md` (#235).
 - **`expected-value-changed` misses an inline literal's sign, type or structure.** `_changed_literals` pairs
   assertions by `_shape` and compares `_literals`, which drops types and operators: `assert f() == -5` becoming
   `== 5` changes the shape (no pair, no finding), and `== 1` becoming `== True` gives equal literal lists
@@ -552,6 +562,7 @@ is rewritten to say what is left.
   `refs/orchestrator/<key>/locked/` (`RunState::lock_ref`) until the run ends `done` (`Workflow::clean_up_locks`);
   `close` and `prune` do not delete them, so a failed run's locked snapshots are never collected by `git gc`. Closes
   with `close` and `prune` deleting `RunState::refs_prefix` as they delete the run's branch.
+  Ticket: `.scratch/close-run-refs/issues/01-close-deletes-run-refs.md` (#232).
 - **An agent's pull request can reach `main` on rules it wrote itself, with no human.** Jenkins's App reports
   `continuous-integration/jenkins/pr-head`, which the agents' token cannot post, but a pull request build runs
   the pull request's own `Jenkinsfile` and gate (`docs/quality-gate.md`, What the Gate stage judges), and since
@@ -801,6 +812,7 @@ is rewritten to say what is left.
   (`engine/src/cli/judged.rs`) and fixed it there with `--no-relative`; of `paths_between` it said: "has the same exposure, but it is outside this
   range". Closes with `--no-relative` on both calls and a test that sets `diff.relative` and locks from a
   subdirectory.
+  Ticket: `.scratch/git-diff-relative/issues/01-locks-ignore-diff-relative.md` (#233).
 - **A run that dies right after it saved phase `done` never finishes ending.** `end_done_run`
   (`engine/src/workflow.rs`) saves `phase = DONE`, counts the turns' tokens (`count_tokens`), saves again with `owner`
   cleared, and only then writes `summary.md` and `metrics.json`, notifies the human that the run finished and closes
@@ -811,6 +823,7 @@ is rewritten to say what is left.
   behave the same, with no test that crashes it after each save ("No test crashes the Rust engine after each save",
   above). Closes with a resume of a `done` run that finishes whatever of that ending is missing (each step can tell:
   the files exist, `owner` is cleared, the tokens are counted).
+  Ticket: `.scratch/run-crash-ending/issues/01-done-run-finishes-its-ending.md` (#227).
 - **A crash between an agent's start and its session being saved costs that turn its session.** `start`
   (`engine/src/workflow/turn.rs`) saves the agent's record, then asks herdr for it and `note_session` saves the
   session. A resume after the first save finds the agent alive (`agent` returns `How::Alive`) and prompts it without
@@ -819,6 +832,7 @@ is rewritten to say what is left.
   `count_tokens` cannot count its tokens. Found in the Python engine by orchestrator-test-methods/05 (2026-10-28),
   ported to the Rust engine unchanged, untested as above. Closes with `agent` noting the session of an agent it finds
   alive.
+  Ticket: `.scratch/run-crash-ending/issues/02-alive-agent-session-noted.md` (#228).
 - **A resumed interview tells the human again that it waits for them.** `step_turn`'s `Announce::Interview`
   (`engine/src/workflow.rs`) has `announce` (`engine/src/workflow/turn.rs`) focus the human-paced agent's pane and
   notify "<label> is waiting for you" in every orchestrator that takes the turn (`turn` calls it from `written` on
@@ -827,3 +841,4 @@ is rewritten to say what is left.
   which is the repeat the ticket asks the test to fail on." The user ruled it a bug (2026-10-28), not wanted. The
   Rust engine was ported to behave the same, untested as above. Closes with an engine that announces a turn only where
   none did (for example, only when `prompted` is not the turn's file).
+  Ticket: `.scratch/run-crash-ending/issues/03-interview-announced-once.md` (#229).
