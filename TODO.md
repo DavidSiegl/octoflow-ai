@@ -551,6 +551,12 @@ is rewritten to say what is left.
   (`ui/src/components/SetupDialog.tsx`) names flags where the app has the project bar's Machine and Project folder
   fields. Found while porting setup-checks ticket 02 (2026-11-03). Closes with the two fixes worded for both, or
   check_setup told which it is wording them for.
+- **No test reaches the setup marker's real path.** serve's tests build their `Setup` with `Setup::new` and a marker
+  path of their own (`engine/src/serve/tests.rs`); `Setup::of`, which serve starts with, and
+  `ConfigDir::setup_checked_path` (`engine/src/env.rs`) run in none. So `setup_checked_path` returning an empty path,
+  or one outside the configuration directory, fails no test, and the dialog would open on every start or the marker go
+  elsewhere unnoticed. Found on setup-checks ticket 02's branch (2026-11-03). Closes with a test that `Setup::of` on a
+  `ConfigDir` in a temporary directory writes and finds `setup-checked` there.
 - **`doctor` checks gitleaks's `git` subcommand, not its version.** README asks for gitleaks 8.19 or later; the
   check reuses `Host.gitleaks_problem`, the run's pre-push check, which asks `gitleaks git --help` because a
   distribution's build may print no version number. So `doctor` shows no gitleaks version. Kept by choice
