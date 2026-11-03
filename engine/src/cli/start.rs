@@ -40,7 +40,11 @@ pub fn new_state(
         (None, Some(spec)) => spec.task(),
         (None, None) => String::new(),
     };
-    let mut state = RunState::new(&new_run_id(world.with.clocks.wall())?, &task, cwd);
+    let run_id = match &args.run_id {
+        Some(id) => given_run_id(id, cwd, world)?,
+        None => new_run_id(world.with.clocks.wall())?,
+    };
+    let mut state = RunState::new(&run_id, &task, cwd);
     state.machine = args.target.machine.clone();
     state.herdr_server = world.with.herdr.server();
     state.phase = first.id.clone();
@@ -68,10 +72,21 @@ pub(super) fn flagged_workflow(args: &RunArgs, prompts: &Prompts, world: &Connec
     }
 }
 
+/// id, run --run-id's, once no run of the project at cwd has it: its directory is not there. Errors: it is, or that
+/// cannot be told.
+fn given_run_id(id: &str, cwd: &str, world: &Connected) -> Result<String, OrchestratorError> {
+    let dir = format!("{cwd}/{RUNS_DIR}/{id}");
+    if world.with.host.exists(&dir)? {
+        return Err(OrchestratorError(format!("{dir} exists already; a new run needs an id of its own")));
+    }
+    Ok(id.to_string())
+}
+
 /// A new run's id: the time wall (seconds since the epoch) names in the machine's zone (jiff's TimeZone::system: TZ,
 /// else /etc/localtime, else UTC), and six random hex digits, as 20261029-142233-a1b2c3. Errors: the
-/// system's random bytes cannot be read, or wall is beyond the year 9999.
-fn new_run_id(wall: f64) -> Result<String, OrchestratorError> {
+/// system's random bytes cannot be read, or wall is beyond the year 9999. serve's POST /run makes its runs' ids so
+/// too, and run --run-id takes only ids of this format (args::run_id_arg).
+pub(crate) fn new_run_id(wall: f64) -> Result<String, OrchestratorError> {
     let bytes: [u8; 3] = crate::env::random_bytes()
         .map_err(|e| OrchestratorError(format!("cannot read /dev/urandom for a run id: {e}")))?;
     let at = jiff::Timestamp::from_second(wall.floor() as i64)
