@@ -47,7 +47,7 @@ fn bad_files_are_refused_naming_them() {
         (
             "BUILD_PROMPT.md",
             b"Build {spec_path} in {cwd} {nope}; report to {build_path}.",
-            "placeholder {nope} is not one of the built-in text's; BUILD_PROMPT takes {build_path}, {cwd}, {spec_path}",
+            "placeholder {nope} at line 1, column 28 is not one this template takes; BUILD_PROMPT takes {build_path}, {cwd}, {spec_path}",
         ),
         (
             "BUILD_PROMPT.md",
@@ -116,6 +116,16 @@ fn a_state_that_replaces_an_unknown_prompt() {
         "run state 20260929-120000-a1b2c3 replaces prompt ANOTHER, which this orchestrator lacks"
     );
     assert_eq!(saved_prompts(&Map::new(), "r").unwrap(), Prompts::default());
+}
+
+#[test]
+fn a_state_whose_prompt_an_earlier_release_could_fill_in_is_refused() {
+    let overrides: Map<String> = [("CONTINUE_PROMPT", "Go on to {path!s}.".to_string())].into_iter().collect();
+    assert_eq!(
+        saved_prompts(&overrides, "r").unwrap_err().0,
+        "run state r replaces prompt CONTINUE_PROMPT with a text this orchestrator cannot fill in: placeholder {path!s} \
+         at line 1, column 10 has a conversion; a placeholder takes none; finish the run with the release that started it"
+    );
 }
 
 #[test]

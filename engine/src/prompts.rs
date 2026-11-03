@@ -9,7 +9,7 @@ use crate::py::text::close_match;
 
 pub mod template;
 
-use template::placeholders;
+use template::{fill, placeholders};
 
 // -- The built-in texts. Each is a template (template.rs) whose placeholders a prompt file replacing it must keep
 // -- (prompt_problem).
@@ -295,11 +295,19 @@ impl Prompts {
 }
 
 /// The prompts a run started with, from the overrides saved with it (RunState::prompt_overrides); an error when they
-/// name a prompt this orchestrator lacks.
+/// name a prompt this orchestrator lacks, or when one holds what a prompt file may not (prompt_problem), as an
+/// override saved by a release that took more of a placeholder than its name does.
 pub fn saved_prompts(overrides: &Map<String>, run_id: &str) -> Result<Prompts, OrchestratorError> {
-    Prompts::from_overrides(overrides).map_err(|unknown| {
+    let prompts = Prompts::from_overrides(overrides).map_err(|unknown| {
         OrchestratorError(format!("run state {run_id} replaces prompt {unknown}, which this orchestrator lacks"))
-    })
+    })?;
+    match overrides.iter().find_map(|(name, text)| prompt_problem(name, text).map(|problem| (name, problem))) {
+        Some((name, problem)) => Err(OrchestratorError(format!(
+            "run state {run_id} replaces prompt {name} with a text this orchestrator cannot fill in: {problem}; \
+             finish the run with the release that started it"
+        ))),
+        None => Ok(prompts),
+    }
 }
 
 // -- Prompt files --------------------------------------------------------------------------------------------------
@@ -378,7 +386,7 @@ pub fn load_prompts(config: &ConfigDir) -> Result<Prompts, OrchestratorError> {
 }
 
 /// What stops text from replacing the built-in prompt of that name, a Prompt's, or None: a placeholder the built-in
-/// text lacks or a missing one it has, or a template that cannot be read (template::parse).
+/// text lacks, naming where it is, or a missing one it has, or a template that cannot be read (template::parse).
 pub fn prompt_problem(name: &str, text: &str) -> Option<String> {
     let built_in = Prompt::named(name)?.built_in();
     let used = match placeholders(text) {
@@ -394,8 +402,9 @@ pub fn prompt_problem(name: &str, text: &str) -> Option<String> {
         let list: Vec<String> = wanted.iter().map(|p| format!("{{{p}}}")).collect();
         format!("{name} takes {}", list.join(", "))
     };
-    if let Some(extra) = used.iter().filter(|p| !wanted.contains(p)).min() {
-        return Some(format!("placeholder {{{extra}}} is not one of the built-in text's; {takes}"));
+    let empty = |p: &str| wanted.iter().any(|w| w == p).then(String::new);
+    if let Err(e) = fill(text, &empty) {
+        return Some(format!("{e}; {takes}"));
     }
     let missing = wanted.iter().filter(|p| !used.contains(p)).min()?;
     Some(format!("placeholder {{{missing}}} is missing; {takes}"))

@@ -26,7 +26,7 @@ use crate::constants::{BUDGET_KEYS, DEFAULT_MAX_FILES, DEFAULT_MAX_LINES};
 use crate::env::ConfigDir;
 use crate::error::{strerror, OrchestratorError};
 use crate::pipeline::{default_workflow, find_workflow, Pipeline, PipelineSettings, Step, DEFAULT_WORKFLOW, WORKFLOWS};
-use crate::prompts::template::placeholders;
+use crate::prompts::template::{is_name, placeholders};
 use crate::prompts::{files_with_extension, saved_prompts, Prompts};
 use crate::py::json::{unicode_string, Json, Map};
 use crate::py::text::{basename, close_match, splitext, title_ascii};
@@ -52,12 +52,6 @@ pub const STEP_KEYS: [&str; 12] = [
 ];
 /// The steps' flags, the fields of STEP_KEYS that are false by default.
 const STEP_FLAGS: [&str; 5] = ["fresh_repeats_again", "human_paced", "edits", "quality_gated", "locks"];
-
-/// Whether name may name a role, a step or a workflow, which name agents, panes, phases and prompt placeholders:
-/// letters, digits, - and _, at least one.
-fn is_name(name: &str) -> bool {
-    !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}
 
 /// Name -> path of each workflow file in config's workflows_dir, unparsed, in name order; none without the
 /// directory. Errors: the directory cannot be listed.

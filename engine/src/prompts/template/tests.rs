@@ -34,9 +34,10 @@ fn each_refused_brace_names_the_placeholder_and_where_it_is() {
         ("{0!r}", "placeholder {0!r} at line 1, column 1 is a positional field; a placeholder is a name"),
         ("{ task }", "placeholder { task } at line 1, column 1 is not a name; a name may use only letters, digits, - and _"),
         ("é {a{b}", "placeholder {a{b} at line 1, column 3 is not a name; a name may use only letters, digits, - and _"),
-        ("x\n\n  {task", "{ at line 3, column 3 is not closed; write a literal brace as {{"),
+        ("x\n\n  {task", "{ at line 3, column 3 is not closed on its line; write a literal brace as {{"),
+        ("a {stray\nlater }} and {task}", "{ at line 1, column 3 is not closed on its line; write a literal brace as {{"),
         ("{task}}", "} at line 1, column 7 closes no placeholder; write a literal brace as }}"),
-        ("Write {nope}.", "placeholder {nope} at line 1, column 7 has no value"),
+        ("Write {nope}.", "placeholder {nope} at line 1, column 7 is not one this template takes"),
     ] {
         assert_eq!(fill(template, &values).unwrap_err().to_string(), message, "{template:?}");
     }
@@ -46,4 +47,12 @@ fn each_refused_brace_names_the_placeholder_and_where_it_is() {
 fn an_unreadable_placeholder_is_refused_before_a_missing_value_is() {
     let e = fill("{nope} {task!r}", &values).unwrap_err();
     assert!(e.to_string().starts_with("placeholder {task!r}"), "{e}");
+}
+
+#[test]
+fn is_name_takes_letters_digits_dashes_and_underscores() {
+    assert!(is_name("prev_my-step2"));
+    assert!(!is_name(""));
+    assert!(!is_name("a b"));
+    assert!(!is_name("é"));
 }

@@ -159,7 +159,7 @@ fn firsts(s: &RunState, p: &Pipeline, role: &str, files: &BTreeSet<String>) -> V
 fn others(s: &RunState, p: &Pipeline) -> Vec<Vec<Piece>> {
     let prompts = s.prompts().expect("a run's prompts");
     let none = |_: &str| None;
-    let mut out: Vec<Vec<Piece>> = p.steps().iter().flat_map(Step::templates).map(|t| pieces(t, &none)).collect();
+    let mut out: Vec<Vec<Piece>> = p.steps().iter().flat_map(Step::templates).map(|(_, t)| pieces(t, &none)).collect();
     out.extend(Prompt::ALL.iter().map(|q| pieces(prompts.text(*q), &none)));
     out
 }

@@ -1345,8 +1345,8 @@ impl<'a> Workflow<'a> {
     }
 }
 
-/// The error of a prompt template named name that cannot be filled in, which the checks of Pipeline and of prompt
-/// files leave no case for.
+/// The error of a prompt template named name that cannot be filled in, which the checks of Pipeline, of prompt files
+/// and of a run's saved prompts (saved_prompts) leave no case for.
 fn prompt_error(name: &str, e: &TemplateError) -> OrchestratorError {
     OrchestratorError(format!("prompt {name} cannot be filled in: {e}"))
 }

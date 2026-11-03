@@ -154,14 +154,18 @@ impl Step {
         self.path(run_dir, n, q)
     }
 
-    /// The step's prompt templates: prompt, and again and fresh_note where it has them.
-    pub fn templates(&self) -> Vec<&str> {
-        [Some(&self.prompt), self.again.as_ref(), self.fresh_note.as_ref()].into_iter().flatten().map(String::as_str).collect()
+    /// The step's prompt templates, each with its key in a workflow file: prompt, and again and fresh_note where it
+    /// has them.
+    pub fn templates(&self) -> Vec<(&'static str, &str)> {
+        [("prompt", Some(&self.prompt)), ("again", self.again.as_ref()), ("fresh_note", self.fresh_note.as_ref())]
+            .into_iter()
+            .filter_map(|(key, template)| Some((key, template?.as_str())))
+            .collect()
     }
 
     /// The names of every placeholder its templates use; one that does not parse adds none.
     pub fn placeholders(&self) -> BTreeSet<String> {
-        self.templates().into_iter().flat_map(|t| placeholders(t).unwrap_or_default()).collect()
+        self.templates().into_iter().flat_map(|(_, t)| placeholders(t).unwrap_or_default()).collect()
     }
 }
 
@@ -399,15 +403,12 @@ impl Pipeline {
             if !self.roles.contains_key(&st.role) {
                 return Some(format!("step {}: role {} has no label", st.id, st.role));
             }
-            if let Some(problem) = template_problem(st) {
+            if let Some(problem) = template_problem(st, &known) {
                 return Some(format!("step {}: {problem}", st.id));
             }
             if st.per_round() && i < first_edit {
                 // Round 0 lasts until the first editing step, so such a file would be numbered 0.
                 return Some(format!("step {}: a per-round handoff file needs an editing step at or before it", st.id));
-            }
-            if let Some(unknown) = st.placeholders().iter().find(|p| !known.contains(p.as_str())) {
-                return Some(format!("step {}: unknown prompt placeholder {unknown}", st.id));
             }
             if let Some(problem) = file_name_problem(st) {
                 return Some(format!("step {}: {problem}", st.id));
@@ -538,24 +539,18 @@ impl Pipeline {
     }
 }
 
-/// What stops the step's file and prompts from being read as templates (crate::prompts::template), or its file from
-/// using {n} alone: None for nothing.
-fn template_problem(step: &Step) -> Option<String> {
-    let templates = [
-        ("file", Some(&step.file)),
-        ("prompt", Some(&step.prompt)),
-        ("again", step.again.as_ref()),
-        ("fresh_note", step.fresh_note.as_ref()),
-    ];
-    for (key, template) in templates {
-        if let Some(Err(e)) = template.map(|t| placeholders(t)) {
-            return Some(format!("{key}: {e}"));
+/// What stops the step's file from being read as a template (crate::prompts::template) using {n} alone, or its prompts
+/// from being read as templates whose placeholders are all of known: None for nothing.
+fn template_problem(step: &Step, known: &BTreeSet<&str>) -> Option<String> {
+    match placeholders(&step.file) {
+        Err(e) => return Some(format!("file: {e}")),
+        Ok(names) if names.iter().any(|name| name != "n") => {
+            return Some(format!("handoff file {} may use only {{n}}", step.file));
         }
+        Ok(_) => {}
     }
-    if placeholders(&step.file).unwrap_or_default().iter().any(|f| f != "n") {
-        return Some(format!("handoff file {} may use only {{n}}", step.file));
-    }
-    None
+    let empty = |name: &str| known.contains(name).then(String::new);
+    step.templates().into_iter().find_map(|(key, template)| fill(template, &empty).err().map(|e| format!("{key}: {e}")))
 }
 
 /// What makes the step's handoff file, filled in, no plain name of the step's own: None for nothing.
