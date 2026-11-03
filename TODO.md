@@ -412,9 +412,12 @@ What is known to be open in `orchestrator.py` and `gate.py`, and why. An entry l
 - **Two e2e scenarios once saw a turn end a second before it started.** In one `cargo nextest run --workspace` of
   octoflow-without-python ticket 03's branch on a loaded machine (2026-11-03), `agent_exits` recorded a turn's
   `"seconds": -1` in `state.json` and `workflow_product_team` a `-<duration>` in its turns table, where their
-  recordings hold a duration of 0 or more; both passed when run again, and in the two full runs before. Not
-  investigated: whether the turn's start and end come from clocks that can disagree by a second (the engine's and
-  a fake's `date`, say). Closes with that cause found and the turn's seconds taken from one clock.
+  recordings hold a duration of 0 or more; both passed when run again, and in the two full runs before. `no_pr_run`
+  did the same once on setup-checks ticket 02's branch (2026-11-03, its spec turn's `"seconds": -1` in
+  `metrics.json`), and passed in three reruns. A likely cause: `end_turn` (`engine/src/workflow/turn.rs:525`–`531`)
+  takes a turn's end from the handoff file's mtime and its start from `host.now()` (`turn.rs:165`), two clocks read
+  at whole seconds, so a file written in the second the turn starts can end it a second before it began. Closes with
+  that cause confirmed and the turn's seconds taken from one clock, or clamped at 0.
 
 - **`test-integrity` knows golden files only by this repository's layout.** `_golden_file` (`gate.py`) takes a
   golden file to be one under a `golden` directory inside a `tests` directory, as `tests/golden.py` keeps them, so
@@ -535,6 +538,12 @@ What is known to be open in `orchestrator.py` and `gate.py`, and why. An entry l
   README's `herdr integration install gemini` may name a kind herdr no longer has. Found by the doctor run
   (2026-10-24); not checked whether `agent start --kind gemini` still works. Closes once `AGENT_KINDS` and the README
   name the kind herdr installs for Gemini, or herdr is shown to accept `gemini`.
+- **The desktop app's setup dialog shows doctor's fixes in the CLI's words.** `check_setup`
+  (`engine/src/cli/doctor.rs`) words its fixes for a command line: "run from a herdr pane, or pass --machine", "pass
+  --cwd a git checkout". `/setup` (`engine/src/serve/setup.rs`) passes them on as they are, so the dialog
+  (`ui/src/components/SetupDialog.tsx`) names flags where the app has the project bar's Machine and Project folder
+  fields. Found while porting setup-checks ticket 02 (2026-11-03). Closes with the two fixes worded for both, or
+  check_setup told which it is wording them for.
 - **`doctor` checks gitleaks's `git` subcommand, not its version.** README asks for gitleaks 8.19 or later; the
   check reuses `Host.gitleaks_problem`, the run's pre-push check, which asks `gitleaks git --help` because a
   distribution's build may print no version number. So `doctor` shows no gitleaks version. Kept by choice
@@ -861,20 +870,6 @@ What is known to be open in `orchestrator.py` and `gate.py`, and why. An entry l
   after each save (Open issues, "No test crashes the Rust engine after each save").
 
 ## Fixed
-
-- **The Rust engine's fromisoformat worded some errors as CPython 3.13 does.** `IsoTime::parse`
-  (`engine/src/py/datetime.rs`, rust-engine ticket 06) gave 3.13's wording for a year, month or day out of range and an
-  offset of a day or more, where it said its errors were 3.14's. Fixed (2026-11-03, octoflow-without-python ticket 04)
-  by its removal: times are read and written by jiff (`crate::summary::epoch_time`, `iso_utc`), with jiff's errors,
-  and `py::datetime` is gone.
-
-- **The Rust engine wrote `state.json`, `metrics.json` and its JSON in the Python engine's form.** `crate::py::json`
-  wrote every JSON file as `json.dumps` writes it, floats as Python's `repr`, so that a run either engine started
-  resumed in the other. Fixed (2026-11-03, octoflow-without-python ticket 04) by serde_json: `state.json` and
-  `metrics.json` are compact JSON on one line, which earlier releases still read a line at a time, with `"format": 2`
-  leading `state.json` (`crate::state::STATE_FORMAT`), and a
-  `state.json` without it, which every earlier release wrote, is refused naming what to do with the run; `list`
-  shows such a run as unreadable, and `prune` and `close` work on it. `py::json` is gone.
 
 - **A prompt template's `.attribute` was an error in the Rust engine, where Python filled it in.** `crate::py::format`,
   the port of `str.format` that filled workflow prompt templates, answered any attribute with AttributeError, so a

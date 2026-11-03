@@ -14,6 +14,7 @@ use tiny_http::{Header, Request, Response};
 
 use crate::cli::listing::RUN_RECORD_VERSION;
 use crate::constants::EXIT_ERROR;
+use crate::env::ConfigDir;
 use crate::error::{os_error, OrchestratorError};
 use crate::herdr::{AgentConsole, ProcessHerdr};
 use crate::host::{Host, ProcessHost};
@@ -21,10 +22,12 @@ use crate::interrupt::Interrupt;
 use serde_json::Value;
 use crate::py::url::{parse_qsl, urlsplit};
 use runs::{AgentInput, Event, ProjectRuns, RunReadError, RunWatch};
+use setup::Setup;
 
 #[cfg(test)]
 mod fake;
 pub mod runs;
+pub mod setup;
 
 /// How often an event stream reads its project's runs again. A read of a local project starts a few short processes;
 /// on a --machine, each of them is an SSH round trip, so a machine's project is read less often.
@@ -60,7 +63,7 @@ pub struct Reached {
 /// which must stop the Host's commands. Errors: the project cannot be reached. [`project_host`] is the real one.
 pub type Connect = dyn Fn(&str, &str, &Interrupt) -> Result<Reached, OrchestratorError> + Send + Sync;
 
-/// The program's `serve`: start a RunServer that also answers origins, print {"url", "token"} as one JSON line on
+/// The program's `serve`: start a RunServer that also answers origins, its setup marker in config, print {"url", "token"} as one JSON line on
 /// standard output, and serve until SIGINT or SIGTERM; returns 0 then, the server stopped. Returns EXIT_ERROR, with
 /// one line on standard error, when no port can be bound, or when the line cannot be printed, as when whoever
 /// started serve has stopped reading its standard output: nobody could reach the server then. SIGHUP keeps its
@@ -70,13 +73,13 @@ pub type Connect = dyn Fn(&str, &str, &Interrupt) -> Result<Reached, Orchestrato
 /// instead of it: SIGINT and SIGTERM are blocked in every thread and waited for here, also when the process started
 /// with one ignored, as Python's signal.signal replaces an ignored disposition (Linux delivers a blocked signal that
 /// is ignored to sigwait; a BSD kernel, macOS's, discards it, so there serve does not stop at an ignored one).
-pub fn serve_command(origins: &[String]) -> i32 {
+pub fn serve_command(origins: &[String], config: &ConfigDir) -> i32 {
     let signals: SigSet = [Signal::SIGINT, Signal::SIGTERM].into_iter().collect();
     if let Err(e) = signals.thread_block() {
         eprintln!("error: cannot wait for SIGINT and SIGTERM: {e}");
         return EXIT_ERROR;
     }
-    let started = RunServer::start(origins, Box::new(project_host));
+    let started = RunServer::start(origins, Box::new(project_host), Setup::of(config));
     serve(started, &mut io::stdout(), &mut io::stderr(), || signals.wait().map(drop).map_err(io::Error::from))
 }
 
@@ -128,7 +131,8 @@ pub fn project_host(machine: &str, cwd: &str, stopping: &Interrupt) -> Result<Re
 }
 
 /// serve's HTTP server, on a free port of 127.0.0.1, with its token, answering until it is dropped. Its endpoints
-/// each name the project by ?cwd= and an optional ?machine=, and answer JSON; each is a GET but /agent/input:
+/// but /setup/checked each name the project by ?cwd= and an optional ?machine=, and answer JSON; each is a GET but
+/// the two POSTs:
 ///
 /// - /runs: {"version", "runs"}, as `list --json` prints it.
 /// - /files?run=ID: {"run", "files"}, the run's files as ProjectRuns::files lists them.
@@ -141,6 +145,13 @@ pub fn project_host(machine: &str, cwd: &str, stopping: &Interrupt) -> Result<Re
 ///   or {"keys": ["esc", ...]}, pressed in order, and answers {"run", "role"}, without waiting for the agent to take
 ///   it; 400 for a body of another shape, 413 for one over MAX_BODY_BYTES, both before the project is reached, 404 as
 ///   /agent's, and 502 for a text or key herdr cannot be given (AgentConsole::submit and send_keys say which).
+/// - /setup?cwd=DIR: {"checks", "passed"}, the project's setup checks as Setup::checks gives them; 400 for a cwd
+///   missing or empty. It does not reach the project as the others do, so that a machine that is not saved or a
+///   folder that is missing shows as a failed check, not as 502.
+/// - /setup/checked: {"checked"}, whether the setup dialog has closed with every Required check passed
+///   (Setup::checked); 500 when that cannot be told.
+/// - POST /setup/checked: records that it has (Setup::mark), whatever the checks say, and answers {"checked": true};
+///   500 when the marker cannot be written.
 /// - /events: a text/event-stream of RunWatch's events, polled every SERVE_POLL.local, every SERVE_POLL.remote for a
 ///   --machine project, until the client goes or the server stops. An HTTP/1.1 client gets it chunked, so that the
 ///   end of the stream is the end of the response; an HTTP/1.0 client's ends when the connection closes.
@@ -182,20 +193,27 @@ struct Shared {
     connect: Box<Connect>,
     /// By the machine and directory a request names, the project connect gave for them, each connected once.
     projects: Mutex<HashMap<(String, String), Arc<ProjectRuns>>>,
+    /// What /setup and /setup/checked answer from.
+    setup: Setup,
     /// How often its event streams poll their projects.
     polls: Polls,
 }
 
 impl RunServer {
     /// Bind a free port of 127.0.0.1 and start answering on it, also requests from origins (the desktop app's webview,
-    /// such as tauri://localhost), each project reached by connect. Errors: no port can be bound, or no token made
-    /// from the system's random bytes, or no thread started.
-    pub fn start(origins: &[String], connect: Box<Connect>) -> io::Result<RunServer> {
-        RunServer::start_polling(origins, connect, SERVE_POLL)
+    /// such as tauri://localhost), each project reached by connect, its setup checked and marked by setup. Errors: no
+    /// port can be bound, or no token made from the system's random bytes, or no thread started.
+    pub fn start(origins: &[String], connect: Box<Connect>, setup: Setup) -> io::Result<RunServer> {
+        RunServer::start_polling(origins, connect, setup, SERVE_POLL)
     }
 
     /// As start, the event streams polling every polls.
-    pub(crate) fn start_polling(origins: &[String], connect: Box<Connect>, polls: Polls) -> io::Result<RunServer> {
+    pub(crate) fn start_polling(
+        origins: &[String],
+        connect: Box<Connect>,
+        setup: Setup,
+        polls: Polls,
+    ) -> io::Result<RunServer> {
         let token = new_token()?;
         let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
         let port = listener.local_addr()?.port();
@@ -210,6 +228,7 @@ impl RunServer {
             stopping: Interrupt::new(),
             connect,
             projects: Mutex::new(HashMap::new()),
+            setup,
             polls,
         });
         let listening = Arc::new(Mutex::new(Some(Arc::new(on(&listener)?))));
@@ -333,21 +352,24 @@ enum Endpoint {
 }
 
 impl Endpoint {
-    /// The endpoint at path, and the parameters it needs besides cwd; None for no endpoint.
+    /// The endpoint at path, and the parameters it needs; None for no endpoint.
     fn at(path: &str) -> Option<(Endpoint, &'static [&'static str])> {
         Some(match path {
-            "/runs" => (Endpoint::Runs, &[]),
-            "/files" => (Endpoint::Files, &["run"]),
-            "/file" => (Endpoint::File, &["run", "name"]),
-            "/agent" => (Endpoint::Agent, &["run", "role"]),
-            "/events" => (Endpoint::Events, &[]),
+            "/runs" => (Endpoint::Runs, &["cwd"]),
+            "/files" => (Endpoint::Files, &["cwd", "run"]),
+            "/file" => (Endpoint::File, &["cwd", "run", "name"]),
+            "/agent" => (Endpoint::Agent, &["cwd", "run", "role"]),
+            "/events" => (Endpoint::Events, &["cwd"]),
             _ => return None,
         })
     }
 }
 
-/// The one endpoint a POST may name.
+/// The endpoints a POST may name.
 const AGENT_INPUT: &str = "/agent/input";
+const SETUP_CHECKED: &str = "/setup/checked";
+/// The setup dialog's checks, a GET endpoint outside Endpoint (setup_answer).
+const SETUP: &str = "/setup";
 
 /// What a request answered with JSON gets: its status and body.
 type Answer = (u16, Value);
@@ -358,6 +380,7 @@ fn answer(shared: &Shared, request: Request) {
     match request.method().as_str() {
         "GET" => get(shared, request, &path, &query),
         "POST" if path == AGENT_INPUT => post_input(shared, request, &query),
+        "POST" if path == SETUP_CHECKED => post_checked(shared, request, &query),
         "OPTIONS" => preflight(shared, request),
         method => {
             let method = format!("{method:?}");
@@ -388,12 +411,17 @@ fn refusal(shared: &Shared, request: &Request, query: &HashMap<String, String>) 
     None
 }
 
-/// The project query names, once query holds cwd and every one of params. Errors: 400 naming the missing
+/// 400 naming the parameters of params that query lacks; None when it has them all.
+fn missing(query: &HashMap<String, String>, params: &[&str]) -> Option<Answer> {
+    let missing: Vec<&str> = params.iter().copied().filter(|p| !query.contains_key(*p)).collect();
+    (!missing.is_empty()).then(|| (400, error(&format!("missing parameter {}", missing.join(", ")))))
+}
+
+/// The project query names, once query holds every one of params, cwd among them. Errors: 400 naming the missing
 /// parameters, 502 for a project that cannot be reached.
 fn project_of(shared: &Shared, query: &HashMap<String, String>, params: &[&str]) -> Result<Arc<ProjectRuns>, Answer> {
-    let missing: Vec<&str> = std::iter::once("cwd").chain(params.iter().copied()).filter(|p| !query.contains_key(*p)).collect();
-    if !missing.is_empty() {
-        return Err((400, error(&format!("missing parameter {}", missing.join(", ")))));
+    if let Some(answer) = missing(query, params) {
+        return Err(answer);
     }
     let param = |name: &str| query.get(name).map_or("", String::as_str);
     shared.project(param("machine"), param("cwd")).map_err(|e| (502, error(&e.0)))
@@ -431,12 +459,39 @@ fn get(shared: &Shared, request: Request, path: &str, query: &HashMap<String, St
         return send_json(request, code, &body);
     }
     let Some((endpoint, params)) = Endpoint::at(path) else {
-        return send_json(request, 404, &error(&format!("no endpoint {path}")));
+        let (code, body) = setup_answer(shared, path, query).unwrap_or_else(|| (404, error(&format!("no endpoint {path}"))));
+        return send_json(request, code, &body);
     };
-    let project = match project_of(shared, query, params) {
-        Ok(project) => project,
-        Err((code, body)) => return send_json(request, code, &body),
+    let (code, body) = match project_of(shared, query, params) {
+        Ok(project) if matches!(endpoint, Endpoint::Events) => return events(shared, request, &project),
+        Ok(project) => read_project(endpoint, &project, query),
+        Err(answer) => answer,
     };
+    send_json(request, code, &body);
+}
+
+/// The answer to a GET of /setup or /setup/checked at path with the query's parameters, as RunServer's doc comment
+/// gives them; None for any other path. They check what a project needs, so unlike Endpoint's they do not reach it.
+fn setup_answer(shared: &Shared, path: &str, query: &HashMap<String, String>) -> Option<Answer> {
+    Some(match path {
+        SETUP => match query.get("cwd").map(String::as_str) {
+            None => (400, error("missing parameter cwd")),
+            Some("") => (400, error("parameter cwd is empty")),
+            Some(cwd) => {
+                let machine = query.get("machine").map_or("", String::as_str);
+                (200, shared.setup.checks(machine, cwd, &shared.stopping))
+            }
+        },
+        SETUP_CHECKED => match shared.setup.checked() {
+            Ok(checked) => (200, object([("checked", Value::from(checked))])),
+            Err(why) => (500, error(&why)),
+        },
+        _ => return None,
+    })
+}
+
+/// The answer of endpoint, one that reads project and answers at once, with the query's parameters.
+fn read_project(endpoint: Endpoint, project: &ProjectRuns, query: &HashMap<String, String>) -> Answer {
     let param = |name: &str| query.get(name).map_or("", String::as_str);
     let (run, name, role) = (param("run"), param("name"), param("role"));
     let answered = match endpoint {
@@ -455,10 +510,9 @@ fn get(shared: &Shared, request: Request, path: &str, query: &HashMap<String, St
                 (200, object([("run", Value::from(run)), ("role", Value::from(role)), ("text", Value::from(text))]))
             }),
         },
-        Endpoint::Events => return events(shared, request, &project),
+        Endpoint::Events => unreachable!("get answers it itself"),
     };
-    let (code, body) = answered.unwrap_or_else(read_failure);
-    send_json(request, code, &body);
+    answered.unwrap_or_else(read_failure)
 }
 
 /// The lines /agent gives for its ?lines=, given: AGENT_LINES's default without one. Errors: 400 for one that is not
@@ -483,7 +537,7 @@ fn post_input(shared: &Shared, mut request: Request, query: &HashMap<String, Str
         Ok(input) => input,
         Err((code, body)) => return send_json(request, code, &body),
     };
-    let project = match project_of(shared, query, &["run", "role"]) {
+    let project = match project_of(shared, query, &["cwd", "run", "role"]) {
         Ok(project) => project,
         Err((code, body)) => return send_json(request, code, &body),
     };
@@ -492,6 +546,20 @@ fn post_input(shared: &Shared, mut request: Request, query: &HashMap<String, Str
     let (code, body) = match project.type_into(run, role, &input) {
         Ok(()) => (200, object([("run", Value::from(run)), ("role", Value::from(role))])),
         Err(e) => read_failure(e),
+    };
+    send_json(request, code, &body);
+}
+
+/// Answer a POST of /setup/checked, which needs no parameter, by writing the setup marker. It trusts the caller that
+/// every Required check passed rather than checking again, which would run the checks twice for one Close: the marker
+/// only keeps the dialog from opening by itself, and "Check setup…" opens it whatever the marker says.
+fn post_checked(shared: &Shared, request: Request, query: &HashMap<String, String>) {
+    if let Some((code, body)) = refusal(shared, &request, query) {
+        return send_json(request, code, &body);
+    }
+    let (code, body) = match shared.setup.mark() {
+        Ok(()) => (200, object([("checked", Value::from(true))])),
+        Err(why) => (500, error(&why)),
     };
     send_json(request, code, &body);
 }

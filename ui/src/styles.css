@@ -295,3 +295,71 @@ ul.files time {
 .agent form input {
   flex: 1;
 }
+
+/* The setup dialog, over the rest of the window. */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(19 27 37 / 80%);
+}
+
+.setup {
+  width: min(44em, 90vw);
+  max-height: 85vh;
+  overflow-y: auto;
+  padding: 16px 20px;
+  background: var(--navy-light);
+  border: 1px solid var(--navy-hover);
+  border-radius: 6px;
+}
+
+.setup h2 {
+  margin-top: 0;
+}
+
+.setup .where {
+  color: var(--muted-mint);
+  font-family: ui-monospace, monospace;
+}
+
+ul.checks {
+  list-style: none;
+  padding: 0;
+}
+
+.checks li {
+  margin-bottom: 6px;
+}
+
+.checks .word {
+  display: inline-block;
+  width: 5em;
+  font-weight: bold;
+}
+
+.checks [data-state="ok"] .word {
+  color: var(--mint);
+}
+
+.checks [data-state="missing"] .word {
+  color: var(--coral);
+}
+
+.checks [data-state="warn"] .word {
+  color: var(--amber);
+}
+
+.checks .fix {
+  margin: 2px 0 0 5em;
+  font-family: ui-monospace, monospace;
+  color: var(--muted-mint);
+}
+
+.setup footer {
+  display: flex;
+  justify-content: end;
+  gap: 8px;
+}
