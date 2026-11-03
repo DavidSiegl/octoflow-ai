@@ -67,12 +67,6 @@ What is known to be open in `orchestrator.py` and `gate.py`, and why. An entry l
 
 ## Open issues
 
-- **A turn can record `"seconds": -1`.** `end_turn` (`engine/src/workflow/turn.rs:525`–`531`) takes a turn's end from
-  the handoff file's mtime and its start from `host.now()` (`turn.rs:165`), two clocks read at whole seconds, so a
-  file written in the second the turn starts can end it a second before it began. Seen once in the e2e scenario
-  `no_pr_run` on 2026-11-03 (its spec turn, `metrics.json`), which then differs from its recording, since the
-  normalizer's `json_number` (`engine/e2e/src/normalize.rs:331`) takes no minus sign; three reruns passed. Closes when
-  a turn's seconds are clamped at 0, or both ends come from one clock.
 - **new-dependencies on Cargo: two readings of a manifest that its doc does not state.** In
   `engine/src/checks/dependencies.rs`, `cargo_manifest_dependencies` keeps the first entry of a crate across its tables,
   as `add_named` does across manifests: `foo = "1"` in `[dependencies]` and `foo = { git = "..." }` under
@@ -407,9 +401,12 @@ What is known to be open in `orchestrator.py` and `gate.py`, and why. An entry l
 - **Two e2e scenarios once saw a turn end a second before it started.** In one `cargo nextest run --workspace` of
   octoflow-without-python ticket 03's branch on a loaded machine (2026-11-03), `agent_exits` recorded a turn's
   `"seconds": -1` in `state.json` and `workflow_product_team` a `-<duration>` in its turns table, where their
-  recordings hold a duration of 0 or more; both passed when run again, and in the two full runs before. Not
-  investigated: whether the turn's start and end come from clocks that can disagree by a second (the engine's and
-  a fake's `date`, say). Closes with that cause found and the turn's seconds taken from one clock.
+  recordings hold a duration of 0 or more; both passed when run again, and in the two full runs before. `no_pr_run`
+  did the same once on setup-checks ticket 02's branch (2026-11-03, its spec turn's `"seconds": -1` in
+  `metrics.json`), and passed in three reruns. A likely cause: `end_turn` (`engine/src/workflow/turn.rs:525`–`531`)
+  takes a turn's end from the handoff file's mtime and its start from `host.now()` (`turn.rs:165`), two clocks read
+  at whole seconds, so a file written in the second the turn starts can end it a second before it began. Closes with
+  that cause confirmed and the turn's seconds taken from one clock, or clamped at 0.
 
 - **`test-integrity` knows golden files only by this repository's layout.** `_golden_file` (`gate.py`) takes a
   golden file to be one under a `golden` directory inside a `tests` directory, as `tests/golden.py` keeps them, so
