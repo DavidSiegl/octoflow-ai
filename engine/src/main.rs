@@ -2,5 +2,5 @@
 
 fn main() {
     // cli::main starts the signal handling, so it runs before any other thread starts.
-    octoflow_engine::interrupt::exit(octoflow_engine::cli::main(std::env::args_os().skip(1)));
+    octoflow_engine::interrupt::exit(octoflow_engine::cli::main(std::env::args_os()));
 }

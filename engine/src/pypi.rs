@@ -5,11 +5,10 @@ use std::sync::Arc;
 
 use crate::constants::PYPI_TIMEOUT;
 use crate::error::shortened;
-use crate::http::{Http, HttpError, Method, Request};
+use crate::http::{quote, Http, HttpError, Method, Request};
 use crate::package_index::{IndexError, IndexedPackage, PackageIndex, Upload};
 use serde_json::Value;
 use crate::json::ValueExt;
-use crate::py::url::quote;
 
 #[cfg(test)]
 pub(crate) mod fake;

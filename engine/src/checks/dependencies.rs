@@ -9,9 +9,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use ::toml::{Table, Value};
 
 use super::{CheckFindings, Finding, RunChange};
-use crate::error::OrchestratorError;
+use crate::error::{toml_syntax_error, OrchestratorError};
 use crate::map::Map;
-use crate::py::toml::{hashable, json_dumps, loads, python_type, repr, same_key, str as py_str, truthy};
 use crate::package_index::{IndexedPackage, PackageIndex, PackageIndexes};
 
 /// A new dependency whose first release is fewer days old than this is flagged: few have used it yet, and a name
@@ -186,7 +185,7 @@ fn toml_manifest(read: &ReadFile, path: &str) -> Result<Result<Table, String>, O
     let Some(bytes) = read(path)? else { return Ok(Ok(Table::new())) };
     Ok(match std::str::from_utf8(&bytes) {
         Err(e) => Err(format!("it is not UTF-8: {e}")),
-        Ok(text) => loads(text).map_err(|why| format!("it is not TOML: {why}")),
+        Ok(text) => text.parse::<Table>().map_err(|e| format!("it is not TOML: {}", toml_syntax_error(text, &e))),
     })
 }
 
@@ -199,10 +198,10 @@ fn pyproject_dependencies(pyproject: &Table) -> Result<Sources, String> {
         .into_iter()
         .find(|i| i.get("default") == Some(&Value::Boolean(true)))
         .and_then(|i| index_source(i.get("url")));
-    let own = match project.get("name").filter(|name| truthy(name)) {
+    let own = match project.get("name") {
         None => String::new(),
         Some(Value::String(name)) => package_key(name),
-        Some(other) => return Err(format!("expected string or bytes-like object, got '{}'", python_type(other))),
+        Some(_) => return Err("[project] name is not a string".to_string()),
     };
     let mut out = Map::new();
     for (place, requirements) in requirement_lists(project, pyproject)? {
@@ -252,12 +251,8 @@ fn uv_indexes(uv: &Table) -> Result<Vec<&Table>, String> {
 /// The PackageSource of each package `[tool.uv.sources]` names, by package_key; None for one from PyPI's index. Of a
 /// package with several sources, each for some platforms, the first.
 fn uv_sources(uv: &Table) -> Result<Sources, String> {
-    // Each index's URL by its name, a later index of a name taking its place, as a dict of them does.
     let indexes: Vec<(Option<&Value>, Option<&Value>)> =
         uv_indexes(uv)?.into_iter().map(|i| (i.get("name"), i.get("url"))).collect();
-    for name in indexes.iter().filter_map(|(name, _)| *name) {
-        hashable(name)?;
-    }
     let mut out = Map::new();
     for (name, entry) in toml_table(uv, "sources")? {
         let first = match entry {
@@ -265,46 +260,108 @@ fn uv_sources(uv: &Table) -> Result<Sources, String> {
             other => other,
         };
         let Value::Table(first) = first else { return Err(format!("[tool.uv.sources] {name} is not a table")) };
-        out.insert(package_key(name), uv_source(first, &indexes)?);
+        out.insert(package_key(name), uv_source(first, &indexes));
     }
     Ok(out)
 }
 
-/// The PackageSource of a `[tool.uv.sources]` entry, given the indexes' URLs by name.
-fn uv_source(entry: &Table, indexes: &[(Option<&Value>, Option<&Value>)]) -> Result<Option<PackageSource>, String> {
+/// The PackageSource of a `[tool.uv.sources]` entry, given each index's (name, URL), in the order `[[tool.uv.index]]`
+/// lists them. An entry's `index` names the last index of that name, its value compared with the name's as TOML
+/// values, of the same type and value; an index of no such name, or one without a URL or whose URL is the empty
+/// string, is named by the entry's `index` itself. Any other URL, of whatever type, names it.
+fn uv_source(entry: &Table, indexes: &[(Option<&Value>, Option<&Value>)]) -> Option<PackageSource> {
     if entry.get("workspace") == Some(&Value::Boolean(true)) {
-        return Ok(Some(PackageSource::new(SourceKind::Workspace, "")));
+        return Some(PackageSource::new(SourceKind::Workspace, ""));
     }
     if let Some(index) = entry.get("index") {
-        hashable(index)?;
         let url = indexes
             .iter()
             .rev()
-            .find(|(name, _)| name.is_some_and(|name| same_key(name, index)))
+            .find(|(name, _)| *name == Some(index))
             .and_then(|(_, url)| *url)
-            .filter(|url| truthy(url));
-        return Ok(index_source(Some(url.unwrap_or(index))));
+            .filter(|url| url.as_str() != Some(""));
+        return index_source(Some(url.unwrap_or(index)));
     }
     for (key, kind) in [("path", SourceKind::Path), ("git", SourceKind::Git), ("url", SourceKind::Url)] {
         if let Some(place) = entry.get(key) {
-            return Ok(Some(PackageSource::new(kind, py_str(place))));
+            return Some(PackageSource::new(kind, place_text(place)));
         }
     }
-    unknown_source(entry).map(Some)
+    Some(unknown_source(entry))
 }
 
-/// The PackageSource of a source table of a shape this reader does not know, written as an inline table; why not, for
-/// one json.dumps cannot write.
-fn unknown_source(table: &Table) -> Result<PackageSource, String> {
-    let entries =
-        table.iter().map(|(k, v)| Ok(format!("{k} = {}", json_dumps(v)?))).collect::<Result<Vec<_>, String>>()?;
-    Ok(PackageSource::new(SourceKind::Unknown, format!("{{ {} }}", entries.join(", "))))
+/// The PackageSource of a source table of a shape this reader does not know: the table, written as an inline TOML
+/// table.
+fn unknown_source(table: &Table) -> PackageSource {
+    PackageSource::new(SourceKind::Unknown, table_text(table))
 }
 
-/// The PackageSource of a package from the index at url, None standing for Python's None; None for PyPI's.
+/// What an index without a URL is named by, in place of its URL.
+const NO_INDEX_URL: &str = "(no url)";
+
+/// The PackageSource of a package from the index at url, which is None for an index without one; None for PyPI's.
 fn index_source(url: Option<&Value>) -> Option<PackageSource> {
-    let url = url.map_or_else(|| "None".to_string(), py_str);
+    let url = url.map_or_else(|| NO_INDEX_URL.to_string(), place_text);
     (url.trim_end_matches('/') != PYPI_INDEX_URL).then(|| PackageSource::new(SourceKind::Index, url))
+}
+
+/// A manifest's value as a PackageSource's place gives it: a string as it is, anything else as [`toml_text`] writes
+/// it.
+fn place_text(place: &Value) -> String {
+    match place {
+        Value::String(s) => s.clone(),
+        other => toml_text(other),
+    }
+}
+
+/// value as TOML writes it on one line, an array or a table inline: `"a \"b\""`, `5`, `1.5`, `inf`, `true`,
+/// `1979-05-27T07:32:00Z`, `[1, "a"]`, `{ k = 1, "a b" = [] }`, `{}`.
+fn toml_text(value: &Value) -> String {
+    match value {
+        Value::String(s) => toml_string(s),
+        Value::Integer(n) => n.to_string(),
+        Value::Float(x) if x.is_nan() => "nan".to_string(),
+        // Debug writes a finite float with a point or an exponent, as TOML wants it, and infinity as TOML does.
+        Value::Float(x) => format!("{x:?}"),
+        Value::Boolean(b) => b.to_string(),
+        Value::Datetime(d) => d.to_string(),
+        Value::Array(items) => format!("[{}]", items.iter().map(toml_text).collect::<Vec<_>>().join(", ")),
+        Value::Table(table) => table_text(table),
+    }
+}
+
+/// table as an inline TOML table, as [`toml_text`] writes one.
+fn table_text(table: &Table) -> String {
+    if table.is_empty() {
+        return "{}".to_string();
+    }
+    let bare = |k: &str| !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    let entries: Vec<String> = table
+        .iter()
+        .map(|(k, v)| format!("{} = {}", if bare(k) { k.clone() } else { toml_string(k) }, toml_text(v)))
+        .collect();
+    format!("{{ {} }}", entries.join(", "))
+}
+
+/// s as a TOML basic string: in `"`, with `"` and `\` escaped, a control character by its letter or as `\u` and
+/// four hex digits, and every other character as it is.
+fn toml_string(s: &str) -> String {
+    let mut out = String::from('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04X}", u32::from(c))),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// python_dependencies's locked packages of a uv.lock, parsed; why not, for one of another shape.
@@ -323,7 +380,7 @@ fn uv_lock_packages(lock: &Table) -> Result<Sources, String> {
     for (name, source) in
         packages.into_iter().filter(|(_, s)| !s.contains_key("editable") && !s.contains_key("virtual"))
     {
-        out.insert(package_key(&name), lock_source(source)?);
+        out.insert(package_key(&name), lock_source(source));
     }
     Ok(out)
 }
@@ -341,9 +398,9 @@ fn locked_package(package: &Value) -> Option<(String, &Table)> {
 }
 
 /// The PackageSource of a uv.lock package's source table.
-fn lock_source(source: &Table) -> Result<Option<PackageSource>, String> {
+fn lock_source(source: &Table) -> Option<PackageSource> {
     if let Some(registry) = source.get("registry") {
-        return Ok(index_source(Some(registry)));
+        return index_source(Some(registry));
     }
     for (key, kind) in [
         ("path", SourceKind::Path),
@@ -352,10 +409,10 @@ fn lock_source(source: &Table) -> Result<Option<PackageSource>, String> {
         ("url", SourceKind::Url),
     ] {
         if let Some(place) = source.get(key) {
-            return Ok(Some(PackageSource::new(kind, py_str(place))));
+            return Some(PackageSource::new(kind, place_text(place)));
         }
     }
-    unknown_source(source).map(Some)
+    Some(unknown_source(source))
 }
 
 /// The table key of the TOML table parent, an empty one when it has none; why not, when key is not a table.
@@ -376,7 +433,7 @@ fn empty_table() -> &'static Table {
 /// name, as the regular expression `\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)\s*(?:\[[^\]]*\]\s*)?(?:@\s*(\S+))?`
 /// matches its start, a blank (`\s`) being what char::is_whitespace takes; why not, for anything else.
 fn requirement_of(requirement: &Value) -> Result<(String, Option<String>), String> {
-    let refused = || format!("{} is not a requirement", repr(requirement));
+    let refused = || format!("{} is not a requirement", toml_text(requirement));
     let Value::String(text) = requirement else { return Err(refused()) };
     let rest = text.trim_start();
     let name_class = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-');
@@ -560,12 +617,12 @@ fn cargo_entry(name: &str, entry: &Value, place: &str) -> Result<(String, Option
     let source = if table.contains_key("path") {
         Some(PackageSource::new(SourceKind::Workspace, ""))
     } else if let Some(git) = table.get("git") {
-        Some(PackageSource::new(SourceKind::Git, py_str(git)))
+        Some(PackageSource::new(SourceKind::Git, place_text(git)))
     } else {
         table
             .get("registry-index")
             .or_else(|| table.get("registry"))
-            .map(|registry| PackageSource::new(SourceKind::Index, py_str(registry)))
+            .map(|registry| PackageSource::new(SourceKind::Index, place_text(registry)))
     };
     Ok((package_key(crate_name), source))
 }

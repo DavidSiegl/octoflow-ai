@@ -319,7 +319,7 @@ fn help_names_the_flags_python_names() {
         let python: std::collections::BTreeSet<String> = flags
             .get(name)
             .and_then(Value::as_array)
-            .unwrap_or_else(|| panic!("orchestrator.py has no command {name}"))
+            .unwrap_or_else(|| panic!("cli.json has no command {name}"))
             .iter()
             .map(Value::text)
             .collect();

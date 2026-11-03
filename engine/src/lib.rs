@@ -1,7 +1,6 @@
-//! The orchestrator's engine: the Rust port of orchestrator.py (the rust-engine spec), which reads and writes every
-//! file, prompt and run state as the Python engine does.
+//! The orchestrator's engine: the Rust port of the Python engine (the rust-engine spec), which reads and writes its
+//! files, prompts and run state in Rust's own terms since the octoflow-without-python spec (docs/architecture.md).
 
-pub mod py;
 pub mod ci;
 pub mod cli;
 pub mod checks;

@@ -387,7 +387,7 @@ fn the_running_spec_emptied_during_a_failed_run_is_not_recorded() {
     assert_eq!(r.status, EXIT_ERROR);
     assert_eq!(d.text("a"), "");
     assert!(r.err.contains("error: the Builder's pane is gone\n"), "{}", r.err);
-    assert!(r.err.contains(&format!("orchestrator.py resume {}", run_id.rsplit('-').next().unwrap())), "{}", r.err);
+    assert!(r.err.contains(&format!("orchestrator resume {}", run_id.rsplit('-').next().unwrap())), "{}", r.err);
     assert!(r.err.contains(&format!("a: {why}; not recording Status: ready-for-human\n")), "{}", r.err);
     assert!(!r.err.contains("a is ready-for-human"));
     assert_eq!(r.out, "a: ready-for-agent -> gone\n");
@@ -597,7 +597,7 @@ fn a_failed_run_stops_the_drain_with_its_resume_command() {
     assert_eq!(d.header("a"), (some(SPEC_FOR_HUMAN), Some(run_id.clone()), None));
     assert_eq!(d.header("b"), (some(SPEC_READY), None, None));
     assert!(r.err.contains("error: the Builder's pane is gone\n"), "{}", r.err);
-    assert!(r.err.contains(&format!("orchestrator.py resume {}", run_id.rsplit('-').next().unwrap())), "{}", r.err);
+    assert!(r.err.contains(&format!("orchestrator resume {}", run_id.rsplit('-').next().unwrap())), "{}", r.err);
     assert!(r.err.contains("a is ready-for-human\n"), "{}", r.err);
     assert_eq!(r.out, "a: ready-for-agent -> ready-for-human\n");
 }
@@ -612,7 +612,7 @@ fn an_interrupted_run_keeps_its_spec_ready_with_its_run() {
     assert_eq!(r.status, EXIT_INTERRUPTED);
     assert_eq!(d.header("a"), (some(SPEC_READY), Some(run_id.clone()), None));
     let key = run_id.rsplit('-').next().unwrap();
-    assert!(r.err.contains(&format!("resume with: orchestrator.py resume {key} --machine m --cwd '~/p'")), "{}", r.err);
+    assert!(r.err.contains(&format!("resume with: orchestrator resume {key} --machine m --cwd '~/p'")), "{}", r.err);
     // Its Run: line is a change drain made, printed as Python's finally prints it.
     assert_eq!(r.out, "a: ready-for-agent -> ready-for-agent\n");
 }
@@ -808,7 +808,7 @@ fn an_unfinished_run_on_the_run_line_stops_the_drain_before_any_run() {
     let stale = HEARTBEAT_SECONDS + STALE_SECONDS;
     let owner = serde_json::from_str::<Value>(r#"{"host": "elsewhere", "pid": 1}"#).unwrap();
     // The project is --cwd /proj's, which the command repeats, where Python's test patches resolve_dir.
-    let resume = "resume it with `orchestrator.py resume aaaaaa --cwd /proj`";
+    let resume = "resume it with `orchestrator resume aaaaaa --cwd /proj`";
     let cases: [(Option<Fields>, u64, &str, &str); 6] = [
         (
             Some(vec![("owner", owner)]),

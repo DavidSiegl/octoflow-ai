@@ -20,7 +20,7 @@ use crate::herdr::{AgentConsole, ProcessHerdr};
 use crate::host::{Host, ProcessHost};
 use crate::interrupt::Interrupt;
 use serde_json::Value;
-use crate::py::url::{parse_qsl, urlsplit};
+use url::{parse_qsl, urlsplit};
 use runs::{AgentInput, Event, ProjectRuns, RunReadError, RunWatch};
 use setup::Setup;
 
@@ -28,6 +28,7 @@ use setup::Setup;
 mod fake;
 pub mod runs;
 pub mod setup;
+pub mod url;
 
 /// How often an event stream reads its project's runs again. A read of a local project starts a few short processes;
 /// on a --machine, each of them is an SSH round trip, so a machine's project is read less often.

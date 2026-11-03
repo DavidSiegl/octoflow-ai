@@ -1,36 +1,7 @@
-//! URLs as urllib.parse writes and reads their parts: every URL the engine asks for is the one the Python engine asked
-//! for, the same path segments, query and form, byte for byte ([`quote`], [`urlencode`]), and a request serve answers
-//! is read as Python's http.server reads it ([`urlsplit`], [`parse_qsl`]).
+//! The target of a request serve answers, split into its parts ([`urlsplit`]) and its query into its parameters
+//! ([`parse_qsl`]).
 
-/// s with every byte of its UTF-8 that is not a letter, a digit or one of `_.-~` written as `%XX`, in upper case:
-/// urllib.parse.quote(s, safe=""), a path segment or a query value that cannot end the part it is in.
-pub fn quote(s: &str) -> String {
-    escaped(s, false)
-}
-
-/// The pairs as a query string or a form body: each name and value quoted as [`quote`] quotes, but a blank written as
-/// `+`, joined by `=` and `&` in the order given, as urllib.parse.urlencode writes a dict.
-pub fn urlencode(pairs: &[(&str, &str)]) -> String {
-    pairs
-        .iter()
-        .map(|(name, value)| format!("{}={}", escaped(name, true), escaped(value, true)))
-        .collect::<Vec<_>>()
-        .join("&")
-}
-
-fn escaped(s: &str, plus_for_blank: bool) -> String {
-    let mut out = String::with_capacity(s.len());
-    for &b in s.as_bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'.' | b'-' | b'~' => out.push(char::from(b)),
-            b' ' if plus_for_blank => out.push('+'),
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
-}
-
-/// The parts of a URL as urllib.parse.urlsplit splits it, each a slice of the URL as it came, its % escapes kept.
+/// The parts of a URL, each as it came, its % escapes kept.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SplitUrl {
     /// Before the first `:`, when that is a scheme (a letter, then letters, digits, `+`, `-` and `.`), in lower case;
@@ -46,9 +17,8 @@ pub struct SplitUrl {
     pub fragment: String,
 }
 
-/// url split as urllib.parse.urlsplit(url) splits it: leading C0 controls and blanks dropped, and every tab, CR and
-/// LF removed, first. Not ported: the ValueError Python raises for a netloc with one square bracket and no other, or
-/// with characters NFKC normalization turns into a delimiter; such a netloc is kept as it is.
+/// url split into its parts, after its leading C0 controls and blanks are dropped and every tab, CR and LF in it
+/// removed. A netloc is kept as it is, whatever it holds.
 pub fn urlsplit(url: &str) -> SplitUrl {
     let url: String = url.trim_start_matches(|c: char| c <= ' ').chars().filter(|c| !matches!(c, '\t' | '\r' | '\n')).collect();
     let mut rest = url.as_str();
@@ -78,9 +48,8 @@ pub fn urlsplit(url: &str) -> SplitUrl {
     }
 }
 
-/// The name and value pairs of a query string, in order, as urllib.parse.parse_qsl(query, keep_blank_values=True)
-/// reads them: split at each `&`, empty pieces skipped, a piece without `=` a name with an empty value, each name and
-/// value unquoted by [`unquote_plus`].
+/// The name and value pairs of a query string, in order: split at each `&`, empty pieces skipped, a piece without `=`
+/// a name with an empty value, each name and value unquoted by [`unquote_plus`].
 pub fn parse_qsl(query: &str) -> Vec<(String, String)> {
     query
         .split('&')
@@ -93,8 +62,8 @@ pub fn parse_qsl(query: &str) -> Vec<(String, String)> {
 }
 
 /// s with each `+` a blank and each `%XX` (two hex digits, either case) the byte it names, the bytes then read as
-/// UTF-8 with each invalid sequence U+FFFD, as urllib.parse.unquote_plus(s) reads it; a `%` without two hex digits
-/// after it stays as it is. Characters beyond ASCII are kept as they are, as Python keeps them.
+/// UTF-8 with each invalid sequence U+FFFD; a `%` without two hex digits after it stays as it is, and a character
+/// beyond ASCII as it is.
 pub fn unquote_plus(s: &str) -> String {
     let s = s.replace('+', " ");
     let bytes = s.as_bytes();
