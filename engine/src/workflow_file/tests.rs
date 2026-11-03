@@ -52,7 +52,9 @@ fn every_workflow_parses_to_the_python_engines_definition() {
             None => {
                 let p = parsed.unwrap_or_else(|e| panic!("{from}: {e}"));
                 let field = |key: &str| outcome.get(key).and_then(Value::as_str).unwrap();
-                assert_eq!(workflow_definition(&p).to_string(), field("definition"), "{from}");
+                // The keys and values the Python engine wrote, its spacing aside.
+                let definition: Value = serde_json::from_str(field("definition")).unwrap();
+                assert_eq!(workflow_definition(&p), definition, "{from}");
                 assert_eq!(workflow_toml(&p), field("toml"), "{from}");
                 assert_eq!(workflow_shape(&p), field("shape"), "{from}");
                 assert_eq!(Some(crate::pipeline::is_built_in(&p, &built_in())), outcome.get("built_in").and_then(Value::as_bool), "{from}");

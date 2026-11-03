@@ -261,7 +261,7 @@ impl Jenkins {
         for build in listed(job.get("builds")) {
             let build = build.as_object().ok_or_else(shape)?;
             let built = git_ref_parameter(build).ok_or_else(shape)?;
-            let number = build.get("number").and_then(Value::as_i64).and_then(|n| i64::try_from(n).ok());
+            let number = build.get("number").and_then(Value::as_i64);
             if let (Some(Value::String(built)), Some(number)) = (built, number) {
                 if built == git_ref && !skip.contains(&number) {
                     return Ok(Some(number));
@@ -287,7 +287,7 @@ impl Jenkins {
         builds
             .iter()
             .map(|build| {
-                let number = build.get("number").and_then(Value::as_i64).and_then(|n| i64::try_from(n).ok());
+                let number = build.get("number").and_then(Value::as_i64);
                 let result = optional_text(build.get("result"));
                 let description = optional_text(build.get("description"));
                 match (number, result, description) {

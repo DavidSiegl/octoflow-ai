@@ -67,7 +67,7 @@ impl Close {
             saved.insert(key.to_string(), value.clone());
         }
         let mut host = self.cli.f.host.state();
-        host.files.insert(close_state(), format!("{}\n", Value::Object(saved.clone()).to_string()));
+        host.files.insert(close_state(), format!("{}\n", Value::Object(saved.clone())));
         host.ages.insert(CLOSE_ID.into(), age);
         if worktree {
             host.worktrees.insert(self::worktree(), CLOSE_BRANCH.into());

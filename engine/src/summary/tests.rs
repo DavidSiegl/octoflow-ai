@@ -14,7 +14,9 @@ fn every_recorded_run_is_summed_up_as_the_python_engine_does() {
         let pipeline = saved_pipeline(&case.saved);
         let rounds: Vec<String> = (1..=case.state.round).map(|k| format!("Round {k}: as recorded")).collect();
         assert_eq!(pipeline.map(|p| run_summary(&case.state, &p, &rounds, case.now)), expected("run_summary"), "{place}");
-        assert_eq!(Some(run_metrics(&case.state, case.now).to_string()), expected("run_metrics"), "{place}");
+        // The keys and values the Python engine wrote, its spacing aside.
+        let recorded = expected("run_metrics").map(|text| serde_json::from_str::<Value>(&text).unwrap());
+        assert_eq!(Some(run_metrics(&case.state, case.now)), recorded, "{place}");
         let lines = Value::Array(turn_lines(&case.state.turns).into_iter().map(Value::from).collect());
         assert_eq!(Some(&lines), case.expected.get("turn_lines"), "{place}");
     }
@@ -156,7 +158,7 @@ fn turn_tokens_sums_the_answers_within_the_turn_as_the_python_engine_does() {
         assert_eq!(expected.len(), logs.len() + 1);
         for (usage, expected) in logs.iter().map(|u| u.as_deref().map(Some)).chain([Some(None)]).zip(expected) {
             if let Some(usage) = usage {
-                assert_eq!(&turn_tokens(turn, usage), expected, "{}", case.to_string());
+                assert_eq!(&turn_tokens(turn, usage), expected, "{}", case);
             }
         }
     }

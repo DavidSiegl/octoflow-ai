@@ -524,7 +524,7 @@ mod tests {
 
     fn oracle_str(item: &Value, i: usize) -> &str {
         let found = item.as_array().and_then(|a| a.get(i)).and_then(Value::as_str);
-        found.unwrap_or_else(|| panic!("no string {i} in {}", item.to_string()))
+        found.unwrap_or_else(|| panic!("no string {i} in {}", item))
     }
 
     #[test]

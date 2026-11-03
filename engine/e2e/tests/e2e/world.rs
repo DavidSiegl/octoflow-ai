@@ -624,7 +624,7 @@ impl World {
                 // The fakes log a state only while its owner, if any, is a process of the invocation logging it.
                 let owner_pid = saved.get("owner").and_then(|o| o.get("pid")).and_then(Value::as_i64);
                 if let (Some(pid), Ok(n)) = (owner_pid, who.parse::<usize>()) {
-                    self.normalizer.pid(i64::try_from(pid).expect("a pid fits an i64"), n);
+                    self.normalizer.pid(pid, n);
                 }
                 event.insert("state".into(), object([("path", octoflow_e2e::at(&logged, "path").clone()), ("saved", saved)]));
             }

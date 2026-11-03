@@ -82,7 +82,7 @@ pub fn herdr(ledger: &Ledger, args: &[String]) -> i32 {
         }
         Err(e) => {
             let error = object([("code", Value::from(e.code)), ("message", Value::String(e.message))]);
-            eprintln!("{}", object([("error", error)]).to_string());
+            eprintln!("{}", object([("error", error)]));
             1
         }
     }

@@ -210,7 +210,7 @@ impl Event {
     /// The event as one Server-Sent Event of its kind, its payload the one line of JSON in its data field, as
     /// json.dumps writes it: Python's sse_event.
     pub fn sse(&self) -> String {
-        format!("event: {}\ndata: {}\n\n", self.kind, self.payload.to_string())
+        format!("event: {}\ndata: {}\n\n", self.kind, self.payload)
     }
 }
 

@@ -136,7 +136,7 @@ fn every_session_log_reads_as_the_python_engine_reads_it() {
         let usage = harness(kind.as_str().unwrap()).unwrap().session_usage(&unhex(log.as_str().unwrap()));
         let usage: Vec<Value> =
             usage.into_iter().map(|u| Value::Array(vec![Value::from(u.when), u.tokens.to_json()])).collect();
-        assert_eq!(&Value::Array(usage), expected, "{} {}", kind.to_string(), name.to_string());
+        assert_eq!(&Value::Array(usage), expected, "{} {}", kind, name);
     }
 }
 

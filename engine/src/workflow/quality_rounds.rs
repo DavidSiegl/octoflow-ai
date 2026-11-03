@@ -554,14 +554,14 @@ impl<'a> Workflow<'a> {
     /// RunState::ci's build number. Errors: it is not an integer, as no engine saves it.
     fn ci_build(&self) -> Result<i64, OrchestratorError> {
         let build = self.state.ci.get("build");
-        build.and_then(Value::as_i64).and_then(|number| i64::try_from(number).ok()).ok_or_else(|| ci_error("build", build))
+        build.and_then(Value::as_i64).ok_or_else(|| ci_error("build", build))
     }
 
     /// The builds RunState::ci records as rejected, which a resume never adopts; an entry that is no build number is
     /// none.
     fn ci_rejected(&self) -> Vec<i64> {
         let rejected = self.state.ci.get("rejected").and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
-        rejected.iter().filter_map(|number| number.as_i64().and_then(|number| i64::try_from(number).ok())).collect()
+        rejected.iter().filter_map(|number| number.as_i64()).collect()
     }
 }
 

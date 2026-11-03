@@ -60,12 +60,12 @@ pub fn holds(map: &Object, key: &str, s: &str) -> bool {
 
 /// The value at key of the object json, which must be one and have it; panics naming key otherwise.
 pub fn at<'a>(json: &'a Value, key: &str) -> &'a Value {
-    json.get(key).unwrap_or_else(|| panic!("no {key} in {}", json.to_string()))
+    json.get(key).unwrap_or_else(|| panic!("no {key} in {}", json))
 }
 
 /// The string at key of the object json; panics naming key when it has none.
 pub fn str_at<'a>(json: &'a Value, key: &str) -> &'a str {
-    at(json, key).as_str().unwrap_or_else(|| panic!("{key} is not a string in {}", json.to_string()))
+    at(json, key).as_str().unwrap_or_else(|| panic!("{key} is not a string in {}", json))
 }
 
 /// Where the engine keeps the runs of the project at project, a directory per run named `<run id>-<key>`.

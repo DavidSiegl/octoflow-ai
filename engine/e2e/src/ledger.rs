@@ -202,7 +202,7 @@ fn run_state(path: &Path) -> Option<(String, Object)> {
     };
     match serde_json::from_str::<Value>(&text) {
         Ok(Value::Object(saved)) => Some((text, saved)),
-        Ok(other) => panic!("{} holds no JSON object: {}", path.display(), other.to_string()),
+        Ok(other) => panic!("{} holds no JSON object: {}", path.display(), other),
         Err(_) => None,
     }
 }

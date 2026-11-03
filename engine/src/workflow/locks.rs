@@ -32,7 +32,7 @@ impl Restored {
             record.get(key).ok_or_else(|| OrchestratorError(format!("a restored record in state.json has no {key}")))
         };
         let invalid = |key: &str, value: &Value, what: &str| {
-            OrchestratorError(format!("a restored record in state.json has {key} {}, not {what}", value.to_string()))
+            OrchestratorError(format!("a restored record in state.json has {key} {}, not {what}", value))
         };
         let round = field("round")?;
         let round = round.as_i64().and_then(|n| u32::try_from(n).ok()).ok_or_else(|| invalid("round", round, "a round"))?;

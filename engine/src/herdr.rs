@@ -328,7 +328,7 @@ impl ProcessHerdr {
         let machine = self.machine.clone();
         for p in profiles {
             if p.as_object().is_none() {
-                return Err(bad(format!("a machine is not an object: {}", p.to_string())));
+                return Err(bad(format!("a machine is not an object: {}", p)));
             }
             if [names(p, "label"), names(p, "id")].contains(&Some(machine.clone())) {
                 let name = machine.as_deref().unwrap_or("None");

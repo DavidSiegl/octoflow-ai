@@ -135,7 +135,7 @@ impl Prune {
             saved.insert(key.to_string(), value);
         }
         let mut host = self.host();
-        host.files.insert(state_path(&run_id), format!("{}\n", Value::Object(saved).to_string()));
+        host.files.insert(state_path(&run_id), format!("{}\n", Value::Object(saved)));
         host.pull_requests.insert(url, r.pr);
         if let Some(at) = r.local {
             host.branches.insert(branch.as_str(), at.to_string());

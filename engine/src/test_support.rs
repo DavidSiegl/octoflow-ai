@@ -277,8 +277,8 @@ pub struct HelperCase {
 pub fn helper_cases() -> Vec<HelperCase> {
     use serde_json::Value;
     let oracle = oracle("helpers.json");
-    let epoch = oracle.get("epoch").and_then(Value::as_i64).unwrap() as i64;
-    let now = oracle.get("now").and_then(Value::as_i64).unwrap() as i64;
+    let epoch = oracle.get("epoch").and_then(Value::as_i64).unwrap();
+    let now = oracle.get("now").and_then(Value::as_i64).unwrap();
     let recordings = recordings();
     let mut out = Vec::new();
     for case in oracle.get("cases").and_then(Value::as_array).unwrap() {

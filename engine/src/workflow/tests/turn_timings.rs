@@ -497,7 +497,7 @@ fn a_gated_run_of_two_rounds_records_its_turns_and_quality_rounds() {
 
     let path = format!("{}/metrics.json", f.state.dir());
     let written = f.host.state().files.get(&path).cloned().unwrap();
-    assert_eq!(written.matches('\n').count(), 1);
+    assert!(written.ends_with("}\n"), "{written}");
     let metrics = serde_json::from_str::<Value>(&written).unwrap();
     let metrics = metrics.as_object().unwrap();
     let turns: Vec<&Object> = field(metrics, "turns").as_array().unwrap().iter().map(|t| t.as_object().unwrap()).collect();

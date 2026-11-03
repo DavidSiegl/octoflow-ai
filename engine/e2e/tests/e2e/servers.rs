@@ -275,7 +275,7 @@ fn builds(script: &Value, state: &mut Object) -> std::collections::BTreeMap<i64,
         let mut build = retained.as_object().cloned().expect("a retained build is an object");
         build.insert("ref".into(), Value::Null);
         let number = build.get("number").and_then(Value::as_i64).expect("a retained build's number");
-        out.insert(i64::try_from(number).expect("a build number fits an i64"), Value::Object(build));
+        out.insert(number, Value::Object(build));
     }
     let first = out.keys().max().copied().unwrap_or(0) + 1;
     let scripted = list("builds");

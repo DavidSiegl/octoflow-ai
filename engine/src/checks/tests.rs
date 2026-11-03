@@ -140,7 +140,7 @@ fn finding(json: &Value) -> Finding {
 }
 
 fn int(json: &Value, key: &str) -> i64 {
-    json.get(key).and_then(Value::as_i64).unwrap() as i64
+    json.get(key).and_then(Value::as_i64).unwrap()
 }
 
 #[test]

@@ -59,7 +59,7 @@ impl ProofRun {
             record.get(key).ok_or_else(|| OrchestratorError(format!("a proof run saved in state.json has no {key}")))
         };
         let invalid = |key: &str, value: &Value, what: &str| {
-            OrchestratorError(format!("a proof run saved in state.json has {key} {}, not {what}", value.to_string()))
+            OrchestratorError(format!("a proof run saved in state.json has {key} {}, not {what}", value))
         };
         let round_of = |key: &str| {
             let value = field(key)?;

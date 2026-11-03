@@ -6,7 +6,7 @@ use crate::test_support::{helper_cases, TempDir};
 fn every_recorded_run_is_published_as_the_python_engine_does() {
     for case in helper_cases() {
         let expected = |key: &str| case.expected.get(key).and_then(Value::as_str).map(String::from);
-        let place = format!("{} {} {}", expected("recording").unwrap(), expected("run_dir").unwrap(), case.expected.get("conflicts").unwrap().to_string());
+        let place = format!("{} {} {}", expected("recording").unwrap(), expected("run_dir").unwrap(), case.expected.get("conflicts").unwrap());
         let s = &case.state;
         assert_eq!(spec_title(&case.spec), expected("spec_title"), "{place}");
         let title = spec_title(&case.spec).unwrap_or(s.task.clone());

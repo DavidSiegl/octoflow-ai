@@ -42,7 +42,7 @@ pub fn first_difference(want: &Value, got: &Value, path: &str) -> Option<String>
             let line = |lines: &[&str]| lines.get(i).map_or("(no line)".to_string(), |l| format!("{l:?}"));
             Some(format!("{path}, line {}:\n  recorded: {}\n  got:      {}", i + 1, line(&la), line(&lb)))
         }
-        _ => (want != got).then(|| format!("{path}: recorded {}, got {}", want.to_string(), got.to_string())),
+        _ => (want != got).then(|| format!("{path}: recorded {}, got {}", want, got)),
     }
 }
 
