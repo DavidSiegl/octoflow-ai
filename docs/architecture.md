@@ -178,7 +178,8 @@ step can `use` a default step and override some of its fields; a role without a 
 workflow's label for its key, or else is named after the key; a role's `model` sits under every model flag,
 and its `agent` (`Pipeline::agents`, one of `AGENT_KINDS`) under `--agent` and `--role-agent`. A
 file cannot take a built-in workflow's name. `Pipeline` also rejects a prompt or file that is not a template of
-known placeholders (`template_problem`, by `crate::prompts::template`), and a handoff file outside the run directory or named like the run's own
+known placeholders (`template_problem`, by `crate::prompts::template`), and a handoff file outside the run
+directory or named like the run's own
 `state.json`, `summary.md`, `metrics.json`, `quality-*` and `locked-*` files, and two steps whose files can share a name in some round (`Step::name_forms`,
 `shared_name` and `collision_problem`, an exact check). `state.json` saves
 the workflow's name and, for one that is not built in, its canonical definition (`workflow_definition`), which

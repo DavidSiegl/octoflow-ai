@@ -97,6 +97,14 @@ What is known to be open in `orchestrator.py` and `gate.py`, and why. An entry l
   in, minified into `ui/dist/` without their notices. All were MIT when the project took its license (2026-10-30).
   Closes with their license texts generated from `ui/package-lock.json` at build time, e.g. by a Vite license
   plugin, and bundled with the app beside the crates'.
+- **A release that adds a placeholder to a built-in prompt would refuse every run that saved an override of it.**
+  `saved_prompts` (`engine/src/prompts.rs`) holds a run's saved prompt overrides to `prompt_problem` on resume, whose
+  rule that an override keep every placeholder of the built-in text never refused a resume before. No run can meet it
+  today, since overrides came with that rule (fb87a8f) and every built-in placeholder is older. Raised by cross-review
+  111, round 2 (2026-11-03): "if a later release adds a placeholder to a built-in text, every run that saved an
+  override of that text will be refused on resume, where it could still have been filled." Closes with the resume
+  check limited to what cannot be filled in, the template's form and unknown names, or with the release that adds
+  such a placeholder saying so in its notes.
 - **The Rust engine names itself `orchestrator.py`.** Its messages and hints were ported word for word, so the
   e2e recordings, made by the Python engine, hold them: `resume: orchestrator.py resume <id>` in `list` and the
   interrupted note (`cli/listing.rs`, `cli.rs`'s `resume_command`), `` `orchestrator.py workflows default` `` in
