@@ -14,10 +14,9 @@ use std::time::{Duration, Instant};
 use nix::sys::signal::{killpg, SigSet, Signal};
 use nix::unistd::{getuid, Pid};
 
-use super::{Exec, ExecError, Host};
+use super::{shlex_join, Exec, ExecError, Host};
 use crate::error::{os_error, OrchestratorError};
 use crate::interrupt::Interrupt;
-use crate::py::text::{is_space, repr, shlex_join};
 
 /// How long, in seconds, an SSH master connection (ssh_sharing_options) outlives the last command that used it.
 pub const SSH_CONTROL_PERSIST_SECONDS: u64 = 60;
@@ -178,7 +177,7 @@ fn ssh_argv(target: &str, options: Vec<String>, argv: &[&str]) -> Vec<String> {
 
 /// What Python's subprocess.TimeoutExpired says of argv, run with a timeout of seconds.
 fn timed_out(argv: &[String], seconds: u64) -> String {
-    let listed: Vec<String> = argv.iter().map(|a| repr(a)).collect();
+    let listed: Vec<String> = argv.iter().map(|a| format!("{a:?}")).collect();
     format!("Command '[{}]' timed out after {seconds} seconds", listed.join(", "))
 }
 
@@ -431,7 +430,7 @@ impl Drop for SshControl {
 /// A new directory for SSH control sockets in parent, only the user's; None when parent would give a socket path ssh
 /// rejects, too long or with a character its option parser takes apart, or the directory cannot be made.
 fn new_ssh_control_dir(parent: &str) -> Option<String> {
-    if parent.is_empty() || parent.chars().any(|c| is_space(c) || "%\"'\\".contains(c)) {
+    if parent.is_empty() || parent.chars().any(|c| c.is_whitespace() || "%\"'\\".contains(c)) {
         return None;
     }
     // The socket's path: parent, the directory's name, and %C, the hash of the connection's endpoints, 40 hex digits.

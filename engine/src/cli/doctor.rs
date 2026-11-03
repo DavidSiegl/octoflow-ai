@@ -7,7 +7,6 @@ use crate::constants::{AGENT_KINDS, DEFAULT_AGENT, EXIT_ERROR, GITLEAKS_INSTALL,
 use crate::error::OrchestratorError;
 use crate::herdr::ProcessHerdr;
 use crate::host::{checked, decoded, Completed, ExecError, Host, ProcessHost, DEFAULT_TIMEOUT};
-use crate::py::text::{is_space, repr, splitlines, strip};
 
 /// The oldest herdr a run works with, by the numbers its --version prints.
 pub const HERDR_MIN_VERSION: [u64; 2] = [0, 9];
@@ -189,7 +188,7 @@ pub fn check_setup(
         });
         let fix = format!("git remote add {REMOTE} <url>");
         check(&mut checks, "origin", Level::NeededForPr, &fix, Some(&checkout), "", &mut || {
-            Ok(strip(&agents.git(&checkout.detail, &["remote", "get-url", REMOTE])?).to_string())
+            Ok(agents.git(&checkout.detail, &["remote", "get-url", REMOTE])?.trim().to_string())
         });
     }
     checks
@@ -279,7 +278,7 @@ fn reach_herdr(
 /// Where command is on host's PATH. Unmet: it is not there.
 fn on_path(host: &dyn Host, command: &str) -> Probed {
     let proc = host.run(&["sh", "-c", "command -v -- \"$1\"", "_", command], None, DEFAULT_TIMEOUT)?;
-    let path = strip(&proc.stdout);
+    let path = proc.stdout.trim();
     if proc.status != 0 || path.is_empty() {
         return Err(Unmet::new(format!("{command} is not on PATH")));
     }
@@ -306,9 +305,9 @@ fn run_tool(host: &dyn Host, argv: &[&str], timeout: u64) -> Result<Completed, U
 /// minimum or later. Unmet: it is missing, prints no version or an older one, or fails.
 fn tool_version(host: &dyn Host, command: &str, minimum: &[u64]) -> Probed {
     let argv = [command, "--version"];
-    let said = strip(&checked(host, &argv, run_tool(host, &argv, DEFAULT_TIMEOUT)?)?).to_string();
+    let said = checked(host, &argv, run_tool(host, &argv, DEFAULT_TIMEOUT)?)?.trim().to_string();
     let Some(number) = version_number(&said) else {
-        return Err(Unmet::new(format!("{command} --version prints no version number: {}", repr(&said))));
+        return Err(Unmet::new(format!("{command} --version prints no version number: {said:?}")));
     };
     let parts: Vec<u64> = number.split('.').map(|n| n.parse().unwrap_or(u64::MAX)).collect();
     if parts.as_slice() < minimum {
@@ -379,11 +378,12 @@ impl<'h> IntegrationStatus<'h> {
 /// Each harness's integration state, by its kind, from `herdr integration status`, whose lines read
 /// `<kind>: current (vN) (<path>)`, `<kind>: not installed (<path>)` or the like for another state, and a kind may
 /// carry a note, as `letta (experimental): ...`. The state is what follows the colon, the path left out. A kind listed
-/// twice has its last state. Python's integration_states and its pattern `(\S+)[^:]*: (.*?)(?: \([^()]*\))?`.
+/// twice has its last state. Python's integration_states and its pattern `(\S+)[^:]*: (.*?)(?: \([^()]*\))?`, a blank
+/// (`\S`'s complement) being what char::is_whitespace takes.
 pub fn integration_states(listing: &str) -> Vec<(String, String)> {
     let mut states: Vec<(String, String)> = Vec::new();
-    for line in splitlines(listing) {
-        let line = crate::py::text::strip(line);
+    for line in listing.lines() {
+        let line = line.trim();
         let Some((kind, state)) = integration_line(line) else { continue };
         match states.iter_mut().find(|(k, _)| *k == kind) {
             Some(entry) => entry.1 = state,
@@ -397,7 +397,7 @@ pub fn integration_states(listing: &str) -> Vec<(String, String)> {
 /// for a line in no such form.
 fn integration_line(line: &str) -> Option<(String, String)> {
     // The kind is the longest run of non-blanks at the start after which the first colon is followed by a space.
-    let run = line.char_indices().find(|&(_, c)| is_space(c)).map_or(line.len(), |(i, _)| i);
+    let run = line.char_indices().find(|&(_, c)| c.is_whitespace()).map_or(line.len(), |(i, _)| i);
     let ends = line[..run].char_indices().map(|(i, c)| i + c.len_utf8()).rev();
     for end in ends {
         let rest = &line[end..];
@@ -423,8 +423,8 @@ fn without_path(state: &str) -> &str {
 fn gh_logged_in(host: &dyn Host) -> Probed {
     let proc = run_tool(host, &["gh", "auth", "status"], NETWORK_TIMEOUT)?;
     if proc.status != 0 {
-        let said = Some(strip(&proc.stderr)).filter(|s| !s.is_empty()).unwrap_or_else(|| strip(&proc.stdout));
-        let said: Vec<&str> = splitlines(said).into_iter().take(4).map(strip).collect();
+        let said = Some(proc.stderr.trim()).filter(|s| !s.is_empty()).unwrap_or_else(|| proc.stdout.trim());
+        let said: Vec<&str> = said.lines().take(4).map(str::trim).collect();
         let said = said.join(" ");
         let detail = if said.is_empty() { String::new() } else { format!(": {said}") };
         return Err(Unmet::with_fix(format!("gh auth status fails{detail}"), "gh auth login"));
@@ -438,10 +438,10 @@ fn top_level(host: &dyn Host, cwd: &str) -> Probed {
     let path = host.resolve_dir(cwd).map_err(|e| Unmet::new(format!("{cwd} is not a directory: {e}")))?;
     let proc = host.git_run(&path, &["rev-parse", "--show-toplevel"], DEFAULT_TIMEOUT)?;
     if proc.status != 0 {
-        let first = splitlines(strip(&proc.stderr)).first().map(|l| format!(": {l}")).unwrap_or_default();
+        let first = proc.stderr.trim().lines().next().map(|l| format!(": {l}")).unwrap_or_default();
         return Err(Unmet::new(format!("{cwd} is not in a git checkout{first}")));
     }
-    Ok(strip(&proc.stdout).to_string())
+    Ok(proc.stdout.trim().to_string())
 }
 
 #[cfg(test)]

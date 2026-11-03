@@ -13,8 +13,8 @@ use crate::constants::RUNS_DIR;
 use crate::error::OrchestratorError;
 use crate::herdr::{AgentAddress, AgentConsole, HerdrError, HerdrServer};
 use crate::host::Host;
+use crate::paths::file_name;
 use crate::py::json::{Json, Map};
-use crate::py::text::repr;
 use crate::runs::{local_host, pid_alive};
 
 /// The keys of a run record that grow with every read of it while nothing happens; a change in them alone is no
@@ -50,10 +50,10 @@ impl From<OrchestratorError> for RunReadError {
 }
 
 /// name, if it names an entry of a directory itself: not empty, `.` or `..`, and without a slash or NUL. Errors:
-/// RunReadError::Refused otherwise, naming it as Python's repr writes it.
+/// RunReadError::Refused otherwise, naming it quoted as Rust's Debug quotes a str.
 pub fn plain_name(name: &str) -> Result<&str, RunReadError> {
     if matches!(name, "" | "." | "..") || name.contains(['/', '\0']) {
-        return Err(RunReadError::Refused(format!("{} is not a name in the run directory", repr(name))));
+        return Err(RunReadError::Refused(format!("{name:?} is not a name in the run directory")));
     }
     Ok(name)
 }
@@ -121,7 +121,7 @@ impl ProjectRuns {
     pub fn files(&self, run_id: &str) -> Result<Json, RunReadError> {
         let files = self.host.run_files(&self.dir(run_id)?)?;
         let entry = |path: &str, mtime: i64| {
-            let name = path.rsplit('/').next().unwrap_or(path);
+            let name = file_name(path);
             Json::Object([("name", Json::from(name)), ("mtime", Json::from(mtime))].into_iter().collect())
         };
         Ok(Json::Array(files.iter().map(|f| entry(&f.path, f.mtime)).collect()))

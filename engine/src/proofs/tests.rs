@@ -36,7 +36,7 @@ fn a_proofs_section_names_each_proof_and_the_findings_left_unproven() {
          copy's. A proof that fails demonstrates its finding; one that passes or errors does not.\n\n\
          - `test_1_rate.py` (finding 1): demonstrated, it fails.\n\n  ````\n  E   assert 2 == 3\n  last\n  ````\n\n\
          - `check.sh` (no finding): not demonstrated, it did not run: gone.\n\n\
-         Findings without a proof, unproven: 2, 3.\n"
+         Findings without a proof, unproven: 2.\n"
     );
     assert_eq!((proofs[0].written, proofs[1].written), (1, 1));
     assert!(!proofs[0].passed());

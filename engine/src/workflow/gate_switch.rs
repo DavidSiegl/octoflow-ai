@@ -6,8 +6,8 @@ use super::Human;
 use crate::ci::Jenkins;
 use crate::error::OrchestratorError;
 use crate::host::Host;
+use crate::paths::file_name;
 use crate::pipeline::{Pipeline, Step, DONE, PUBLISH, QUALITY};
-use crate::py::text::basename;
 use crate::state::RunState;
 
 /// Turn the quality gate of the run in state, of workflow pipeline, on with jenkins's job, as resume --quality-gate
@@ -43,7 +43,7 @@ pub fn turn_quality_gate_on(
     let mut judge_first = false;
     if let Some(following) = pipeline.after(&gated.id).filter(|f| f.id == s.phase) {
         let path = following.path(&s.dir(), s.round, 0);
-        let file = basename(&path);
+        let file = file_name(&path);
         // A turn that was prompted, asked again for its verdict, or is waiting on its BLOCKED answer has seen the
         // change; only one with none of these has not.
         let blocked = s.blocked.as_ref().and_then(|b| b.get("file")).and_then(|f| f.as_str());

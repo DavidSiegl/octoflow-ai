@@ -6,7 +6,6 @@ use crate::harness::{Tokens, Usage};
 use crate::pipeline::Pipeline;
 use crate::py::datetime::{civil_from_days, fromisoformat_timestamp};
 use crate::py::json::{Json, Map};
-use crate::py::text::{rstrip, strip};
 use crate::state::RunState;
 
 /// The version of run_metrics' shape, raised when a key changes its meaning or goes.
@@ -142,7 +141,7 @@ pub fn turn_lines(turns: &[Map<Json>]) -> Vec<String> {
     rows.iter()
         .map(|r| {
             let cells: Vec<String> = r.iter().zip(&widths).map(|(cell, w)| format!("{cell:<w$}")).collect();
-            rstrip(&cells.join("  ")).to_string()
+            cells.join("  ").trim_end().to_string()
         })
         .collect()
 }
@@ -187,7 +186,7 @@ pub fn run_summary(state: &RunState, pipeline: &Pipeline, rounds: &[String], now
         String::new(),
         "## Task".into(),
         String::new(),
-        strip(&s.task).to_string(),
+        s.task.trim().to_string(),
         String::new(),
         "## Roles".into(),
         String::new(),

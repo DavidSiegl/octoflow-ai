@@ -40,7 +40,7 @@ fn an_unreadable_spec_is_an_error() {
     let binary = file(&dir, "spec.bin", b"\xff\xfe# spec");
     assert_eq!(
         error(&binary),
-        format!("spec file {binary} is not UTF-8 text: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte")
+        format!("spec file {binary} is not UTF-8 text: invalid utf-8 sequence of 1 bytes from index 0")
     );
 }
 

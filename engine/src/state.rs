@@ -8,7 +8,6 @@ use crate::error::OrchestratorError;
 use crate::herdr::HerdrServer;
 use crate::prompts::{saved_prompts, Prompts};
 use crate::py::json::{Json, Map};
-use crate::py::text::repr;
 use crate::workflow_file::saved_pipeline;
 
 /// What a run has done so far, saved as state.json in its run directory.
@@ -446,12 +445,12 @@ fn saved_permission_mode(saved: &Map<Json>) -> Result<Option<String>, Orchestrat
     }
 }
 
-/// A list as Python's repr writes it, its strings quoted as repr quotes them.
+/// A list as Python's repr writes it, but for its strings, which are quoted as Rust's Debug quotes a str.
 fn list_repr(items: &[Json]) -> String {
     let parts: Vec<String> = items
         .iter()
         .map(|item| match item {
-            Json::Str(s) => repr(s),
+            Json::Str(s) => format!("{s:?}"),
             Json::Null => "None".to_string(),
             Json::Bool(b) => if *b { "True" } else { "False" }.to_string(),
             other => other.dumps(),

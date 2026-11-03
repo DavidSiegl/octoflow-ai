@@ -216,7 +216,7 @@ fn a_herdr_that_cannot_be_run_or_read_names_the_command() {
 fn an_answer_that_is_no_result_is_a_bad_response() {
     for (printed, why) in [
         ("not json", "agent focus: "),
-        (r#"{"id": "cli:x"}"#, "agent focus: 'result'"),
+        (r#"{"id": "cli:x"}"#, "agent focus: \"result\""),
         ("[1]", "agent focus: the answer is not an object: [1]"),
     ] {
         let (herdr, _) = answering(None, 0, printed, "");

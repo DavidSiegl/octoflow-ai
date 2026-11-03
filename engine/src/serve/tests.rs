@@ -383,7 +383,7 @@ fn paths_outside_the_run_directory_are_refused_unread() {
         let why = if name == "state.json" {
             "state.json is not a handoff file".to_string()
         } else {
-            format!("{} is not a name in the run directory", repr(if run == SERVE_ID { name } else { run }))
+            format!("{:?} is not a name in the run directory", if run == SERVE_ID { name } else { run })
         };
         assert_eq!(reply.error(), why, "{run:?} {name:?}");
     }
@@ -563,7 +563,7 @@ fn a_target_read_as_http_server_reads_it() {
         assert_eq!((reply.status, reply.json().get("text")), (Some(200), Some(&Json::from("x"))), "{target}");
     }
     let reply = served.get(&format!("/file?{base}&name=..%2Fx"), &[]);
-    assert_eq!((reply.status, reply.error()), (Some(403), "'../x' is not a name in the run directory".to_string()));
+    assert_eq!((reply.status, reply.error()), (Some(403), "\"../x\" is not a name in the run directory".to_string()));
 }
 
 // -- TestServeSecurity -------------------------------------------------------------------------------------------
@@ -774,7 +774,7 @@ fn writes_are_not_served() {
         assert_eq!(reply.status, Some(501), "{method}");
         assert_eq!(reply.header("Content-Type"), Some("text/html;charset=utf-8"));
         if method != "HEAD" {
-            assert!(reply.body.contains(&format!("<p>Message: Unsupported method ('{method}').</p>")), "{}", reply.body);
+            assert!(reply.body.contains(&format!("<p>Message: Unsupported method (\"{method}\").</p>")), "{}", reply.body);
         }
     }
     assert_eq!(*served.connects.lock().unwrap(), [(String::new(), "~/proj".to_string())]);
@@ -823,7 +823,7 @@ fn an_agent_that_is_not_there_is_not_found() {
     assert_eq!(ask(SERVE_ID, "review"), (Some(404), format!("run {SERVE_ID} has no review agent")));
     assert_eq!(ask(SERVE_ID, "spec"), (Some(404), format!("run {SERVE_ID} has no spec agent")));
     assert_eq!(ask("nosuch", "build"), (Some(404), "no run nosuch".to_string()));
-    assert_eq!(ask("../x", "build"), (Some(403), "'../x' is not a name in the run directory".to_string()));
+    assert_eq!(ask("../x", "build"), (Some(403), "\"../x\" is not a name in the run directory".to_string()));
     served.console.state().screens.clear();
     assert_eq!(ask(SERVE_ID, "build"), (Some(404), "the build agent has exited".to_string()));
     served.console.state().down = true;

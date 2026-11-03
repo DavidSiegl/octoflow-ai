@@ -10,9 +10,9 @@ use crate::error::OrchestratorError;
 use crate::handoff::{parse_blocked, parse_verdict};
 use crate::harness::harness;
 use crate::herdr::{Agent, Direction, HerdrError};
+use crate::paths::{file_name, split_extension};
 use crate::prompts::Prompt;
 use crate::py::json::{Json, Map};
-use crate::py::text::{basename, splitext, strip};
 use crate::summary::{epoch_seconds, iso_utc};
 
 /// What a turn does once its agent is ready, before any prompt.
@@ -98,7 +98,7 @@ impl Workflow<'_> {
             return self.verdict_turn(t);
         }
         let blocks = t.judged == Judged::Blocking;
-        let file = basename(&t.path).to_string();
+        let file = file_name(&t.path).to_string();
         let block = self.state.blocked.clone().filter(|b| blocks && file_of(b) == Some(&file));
         let out = match block {
             // A resume in the middle of a block.
@@ -117,7 +117,7 @@ impl Workflow<'_> {
                 }
             }
         };
-        if strip(&out).is_empty() {
+        if out.trim().is_empty() {
             let why = format!("was written empty by the {}", self.label(&t.role));
             return Err(self.reject(&t.path, &why));
         }
@@ -126,7 +126,7 @@ impl Workflow<'_> {
 
     /// turn for the verdict step: its file, once it starts with a VERDICT line.
     fn verdict_turn(&mut self, mut t: Turn) -> Outcome<String> {
-        let file = basename(&t.path).to_string();
+        let file = file_name(&t.path).to_string();
         if self.state.retrying.as_deref() == Some(&file) {
             t.text = self.retry_prompt(&t.path)?;
             t.fresh_text = Some(t.text.clone());
@@ -149,7 +149,7 @@ impl Workflow<'_> {
     /// The handoff file as the role wrote it, before turn judges it.
     fn written(&mut self, t: &Turn) -> Outcome<String> {
         let (role, path) = (t.role.as_str(), t.path.as_str());
-        let file = basename(path).to_string();
+        let file = file_name(path).to_string();
         // First, because the role may have written it while no orchestrator was watching.
         if let Some(out) = self.host.read(path)? {
             self.human.log(&format!("[{role}] {file} is already written"));
@@ -218,7 +218,7 @@ impl Workflow<'_> {
     /// Move a BLOCKED report aside to its next blocked name, and record the block, so that the turn waits for the
     /// human's answer and then for the report again. Returns the record, RunState::blocked.
     fn block(&mut self, role: &str, path: &str, question: &str) -> Outcome<Map<Json>> {
-        let file = basename(path).to_string();
+        let file = file_name(path).to_string();
         let s = &mut self.state;
         let k = match &s.blocked {
             Some(b) if file_of(b) == Some(&file) => block_number(b)? + 1,
@@ -236,7 +236,7 @@ impl Workflow<'_> {
         s.blocked = Some(record.clone());
         // The turn's record, which written closed, goes with the file, as in retry; the wait opens a record of its
         // own, human-paced (turn_record).
-        let moved = basename(&blocked).to_string();
+        let moved = file_name(&blocked).to_string();
         if let Some(t) = s.turns.iter_mut().rev().find(|t| file_of(t) == Some(&file)) {
             t.insert("file", Json::from(moved.as_str()));
         }
@@ -326,8 +326,8 @@ impl Workflow<'_> {
 
     /// Move a malformed verdict file aside so its role writes it again; end the run if its retry is used.
     fn retry(&mut self, role: &str, path: &str, out: &str) -> Outcome<()> {
-        let file = basename(path).to_string();
-        let why = if strip(out).is_empty() {
+        let file = file_name(path).to_string();
+        let why = if out.trim().is_empty() {
             format!("was written empty by the {}", self.label(role))
         } else {
             "does not start with a VERDICT line".to_string()
@@ -345,7 +345,7 @@ impl Workflow<'_> {
         self.state.retrying = Some(file.clone());
         // The turn's record, which written closed, goes with the file, whose mtime the rename kept; the retry opens a
         // record of its own.
-        let moved = basename(&rejected).to_string();
+        let moved = file_name(&rejected).to_string();
         if let Some(record) = self.state.turns.iter_mut().rev().find(|t| file_of(t) == Some(&file)) {
             record.insert("file", Json::from(moved.as_str()));
         }
@@ -384,7 +384,7 @@ impl Workflow<'_> {
 
     /// Poll until the role writes path, telling the human when it is blocked or stalled.
     fn await_handoff(&mut self, role: &str, path: &str, timeout: Option<u64>, watch_stalls: bool) -> Outcome<String> {
-        let (label, file) = (self.label(role), basename(path).to_string());
+        let (label, file) = (self.label(role), file_name(path).to_string());
         let deadline = timeout.map(|t| self.clocks.monotonic() + t as f64);
         // Since when the agent has shown idle or done without the file; None while it works.
         let mut quiet_since: Option<f64> = None;
@@ -507,7 +507,7 @@ impl Workflow<'_> {
     /// if no orchestrator was watching. A file whose turn has no record, as one written before turns were recorded,
     /// gets one with no start.
     pub(super) fn end_turn(&mut self, role: &str, path: &str) -> Outcome<()> {
-        let file = basename(path);
+        let file = file_name(path);
         let i = match self.open_turn(file) {
             Some(i) => i,
             // Closed already, by an orchestrator that stopped before the run moved on.
@@ -706,7 +706,7 @@ fn file_of(record: &Map<Json>) -> Option<&str> {
 
 /// Where a BLOCKED report of the handoff file at path is moved the k-th time its turn blocks.
 fn blocked_path(path: &str, k: i128) -> String {
-    let (stem, ext) = splitext(path);
+    let (stem, ext) = split_extension(path);
     format!("{stem}.blocked-{k}{ext}")
 }
 
@@ -725,6 +725,6 @@ fn block_field<'b>(block: &'b Map<Json>, key: &str) -> Result<&'b Json, Orchestr
 
 /// Where a malformed verdict file is moved, for its retry.
 fn rejected_path(path: &str) -> String {
-    let (stem, ext) = splitext(path);
+    let (stem, ext) = split_extension(path);
     format!("{stem}.rejected{ext}")
 }

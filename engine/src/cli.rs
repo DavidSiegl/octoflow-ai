@@ -17,10 +17,9 @@ use crate::env::ConfigDir;
 use crate::error::OrchestratorError;
 use crate::harness::AgentSettings;
 use crate::herdr::ProcessHerdr;
-use crate::host::{Host, ProcessHost};
+use crate::host::{shlex_join, Host, ProcessHost};
 use crate::interrupt::Interrupt;
 use crate::pipeline::Pipeline;
-use crate::py::text::shlex_join;
 use crate::py::json::Json;
 use crate::package_index::PackageIndexes;
 use crate::runs::{local_host, pid_alive};
@@ -247,7 +246,7 @@ fn judged_in_quality_command(local: &Local, job: &str, branch: &str) -> Result<i
         }
         Err(e) if local.interrupt.is_raised() => Err(e),
         Err(e) => {
-            (local.stderr)(&format!("judged-in-quality: {}\n", crate::py::text::splitlines(&e.0).join(" ")));
+            (local.stderr)(&format!("judged-in-quality: {}\n", e.0.lines().collect::<Vec<_>>().join(" ")));
             Ok(EXIT_ERROR)
         }
     }

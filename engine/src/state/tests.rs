@@ -163,7 +163,7 @@ fn a_state_saved_by_0_3_0_reads_its_agent_args_as_the_permission_mode() {
     let kept = RunState::from_text(r#"{"run_id": "r", "task": "t", "cwd": "/p", "permission_mode": null, "agent_args": ["--permission-mode", "plan"]}"#).unwrap();
     assert_eq!(kept.permission_mode, None);
     let e = RunState::from_text(r#"{"run_id": "r", "task": "t", "cwd": "/p", "agent_args": ["--model", null, true]}"#).unwrap_err();
-    assert_eq!(e.0, "run state r has agent_args ['--model', None, True], which name no permission mode");
+    assert_eq!(e.0, "run state r has agent_args [\"--model\", None, True], which name no permission mode");
 }
 
 #[test]

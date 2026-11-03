@@ -6,9 +6,9 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::constants::CRATES_IO_TIMEOUT;
+use crate::error::shortened;
 use crate::http::{Http, HttpError, Method, Request};
 use crate::package_index::{IndexError, IndexedPackage, PackageIndex, Upload};
-use crate::py::text::{shortened, utf8_error};
 use crate::py::url::quote;
 
 #[cfg(test)]
@@ -68,7 +68,7 @@ impl PackageIndex for CratesIo {
 
 /// The crate of crates.io's JSON answer; why not, for an answer of another shape.
 fn crate_of(body: &[u8]) -> Result<IndexedPackage, String> {
-    let text = std::str::from_utf8(body).map_err(|e| utf8_error(body, &e))?;
+    let text = std::str::from_utf8(body).map_err(|e| e.to_string())?;
     let answer: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
     let krate = answer.get("crate").filter(|c| c.is_object()).ok_or("it has no crate")?;
     let created = krate.get("created_at").and_then(Value::as_str).ok_or("it has no crate.created_at")?;

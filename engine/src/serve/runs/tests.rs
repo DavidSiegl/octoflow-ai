@@ -160,7 +160,7 @@ fn a_run_id_that_is_not_a_plain_name_is_a_problem() {
     let w = Watched::new();
     w.host.state().files.insert(format!("{}/state.json", run_dir()), r#"{"run_id": "../.."}"#.to_string());
     let events = RunWatch::new(&w.project).poll();
-    assert_eq!(events[0].payload.dumps(), r#"{"error": "'../..' is not a name in the run directory"}"#);
+    assert_eq!(events[0].payload.dumps(), r#"{"error": "\"../..\" is not a name in the run directory"}"#);
     assert_eq!(events.len(), 1);
 }
 
@@ -170,13 +170,13 @@ fn plain_names_and_the_rest() {
         assert_eq!(plain_name(name), Ok(name), "{name:?}");
     }
     for (name, said) in [
-        ("", "''"),
-        (".", "'.'"),
-        ("..", "'..'"),
-        ("../x", "'../x'"),
-        ("/etc/passwd", "'/etc/passwd'"),
-        ("a/", "'a/'"),
-        ("spec\0.md", "'spec\\x00.md'"),
+        ("", r#""""#),
+        (".", r#"".""#),
+        ("..", r#""..""#),
+        ("../x", r#""../x""#),
+        ("/etc/passwd", r#""/etc/passwd""#),
+        ("a/", r#""a/""#),
+        ("spec\0.md", r#""spec\0.md""#),
     ] {
         assert_eq!(plain_name(name), Err(RunReadError::Refused(format!("{said} is not a name in the run directory"))));
     }
@@ -193,8 +193,8 @@ fn state_json_and_names_outside_the_run_are_refused_unread() {
     };
     assert_eq!(refused(SERVE_ID, "state.json"), "state.json is not a handoff file");
     // The run id is checked first, as Python's f-string evaluates it first.
-    assert_eq!(refused("..", "../secret"), "'..' is not a name in the run directory");
-    assert_eq!(refused(SERVE_ID, "../../../secret"), "'../../../secret' is not a name in the run directory");
+    assert_eq!(refused("..", "../secret"), "\"..\" is not a name in the run directory");
+    assert_eq!(refused(SERVE_ID, "../../../secret"), "\"../../../secret\" is not a name in the run directory");
     assert!(matches!(w.project.files("../.."), Err(RunReadError::Refused(_))));
     assert_eq!(w.host.state().reads, Vec::<String>::new());
     assert_eq!(w.project.read(SERVE_ID, "spec.md"), Ok(None));

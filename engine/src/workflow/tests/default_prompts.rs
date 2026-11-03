@@ -12,6 +12,7 @@
 use super::*;
 use crate::ci::fake::Outcome;
 use crate::env::ConfigDir;
+use crate::paths::file_name;
 use crate::pipeline::{find_workflow, Pipeline, DEFAULT_WORKFLOW};
 use crate::prompts::{load_prompts, FIX_PROMPT};
 use crate::test_support::{quick, TempDir, EXAMPLES};
@@ -393,7 +394,7 @@ fn gate_passes_after_a_fix_then_runs_out() {
         .writes
         .iter()
         .filter(|p| p.starts_with(D) && !p.ends_with("state.json"))
-        .map(|p| crate::py::text::basename(p).to_string())
+        .map(|p| file_name(p).to_string())
         .collect();
     assert_eq!(written, [
         "spec.md",
