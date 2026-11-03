@@ -476,6 +476,76 @@ fn herdr_gets_no_credentials() {
     assert_scrubbed(&std::fs::read_to_string(env).unwrap());
 }
 
+// -- Launcher --------------------------------------------------------------------------------------------------------
+
+/// A ProcessHerdr that opens workspace w1 with pane w1:p1, takes every `pane run`, and shows screen at every
+/// `pane read`; and what it ran.
+fn launching(screen: &str) -> (ProcessHerdr, Commands) {
+    let ran: Commands = Arc::default();
+    let (seen, screen) = (ran.clone(), screen.to_string());
+    let herdr = ProcessHerdr::with_runner(None, move |argv, limit| {
+        seen.lock().unwrap().push((argv.to_vec(), limit));
+        let out = match (argv[1].as_str(), argv[2].as_str()) {
+            ("workspace", "create") => {
+                result(r#"{"workspace": {"workspace_id": "w1"}, "root_pane": {"pane_id": "w1:p1"}}"#)
+            }
+            ("pane", "read") => screen.clone(),
+            _ => String::new(),
+        };
+        Ok((0, out.into_bytes(), vec![]))
+    });
+    (herdr, ran)
+}
+
+#[test]
+fn launch_opens_a_workspace_and_types_the_command_quoted_as_one_argument() {
+    let (herdr, ran) = launching("");
+    let argv = argv(&["/bin/orchestrator", "run", "--model=--session", "--", "it's $HOME\n--remote"]);
+    assert_eq!(herdr.launch("/proj", "a1b2c3 a task", &argv).unwrap(), "w1:p1");
+    let ran: Vec<Vec<String>> = ran.lock().unwrap().iter().map(|(argv, _)| argv.clone()).collect();
+    let create = ["herdr", "workspace", "create", "--cwd", "/proj", "--label", "a1b2c3 a task", "--no-focus"];
+    assert_eq!(ran[0], create);
+    let line = "'/bin/orchestrator' 'run' '--model=--session' '--' 'it'\\''s $HOME\n--remote'; \
+                echo 'octoflow: the command in pane w1:p1 has exited'";
+    assert_eq!(ran[1], ["herdr", "pane", "run", "w1:p1", line]);
+    assert_eq!(ran.len(), 2);
+}
+
+#[test]
+fn the_typed_line_gives_a_shell_back_each_word_then_the_marker_alone_on_its_line() {
+    let (herdr, ran) = launching("");
+    let words = ["printf", "<%s>\\n", "it's", "$HOME `x`", "two\nlines", "\\'", ""];
+    herdr.launch("/proj", "l", &argv(&words)).unwrap();
+    let line = last(&ran).0[4].clone();
+    let out = std::process::Command::new("sh").args(["-c", &line]).output().unwrap();
+    let printed = String::from_utf8(out.stdout).unwrap();
+    let expected = "<it's>\n<$HOME `x`>\n<two\nlines>\n<\\'>\n<>\noctoflow: the command in pane w1:p1 has exited\n";
+    assert_eq!(printed, expected);
+}
+
+#[test]
+fn exited_gives_what_the_pane_showed_before_the_marker_once_it_is_there() {
+    let running = "$ '/bin/orchestrator' 'run'; echo 'octoflow: the command in pane w1:p1 has exited'\nworking\n";
+    let (herdr, ran) = launching(running);
+    assert_eq!(herdr.exited("w1:p1", 3).unwrap(), None);
+    assert_eq!(last(&ran).0, ["herdr", "pane", "read", "w1:p1", "--source", "recent-unwrapped", "--lines", "8"]);
+    let ended = format!("{running}error: no workflow x\noctoflow: the command in pane w1:p1 has exited  \n$ ");
+    let (herdr, _) = launching(&ended);
+    assert_eq!(herdr.exited("w1:p1", 2).unwrap().as_deref(), Some("working\nerror: no workflow x"));
+    // Another pane's marker is not this one's.
+    let (herdr, _) = launching("octoflow: the command in pane w1:p2 has exited\n");
+    assert_eq!(herdr.exited("w1:p1", 2).unwrap(), None);
+}
+
+#[test]
+fn launch_fails_as_herdr_does_without_a_server() {
+    let message = "no herdr server is running at /s.sock";
+    let (herdr, ran) = answering(None, 1, "", &error("server_not_running", message));
+    let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err();
+    assert_eq!(e, HerdrError::new("server_not_running", message));
+    assert_eq!(ran.lock().unwrap().len(), 1, "nothing is typed without a workspace");
+}
+
 // -- What the e2e scenarios recorded ---------------------------------------------------------------------------------
 
 /// Give herdr the method call that makes the recorded command args (without --machine); None for a command that is

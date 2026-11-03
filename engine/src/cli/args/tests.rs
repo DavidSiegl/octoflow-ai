@@ -56,6 +56,19 @@ fn a_run_with_nothing_but_its_task_has_every_flag_unset() {
 }
 
 #[test]
+fn run_id_takes_only_an_id_of_new_run_ids_format_and_is_not_in_the_help() {
+    assert_eq!(run(&["t"]).run_id, None);
+    assert_eq!(run(&["--run-id", "20261103-142233-a1b2c3", "t"]).run_id.as_deref(), Some("20261103-142233-a1b2c3"));
+    for bad in ["20261103-142233-A1B2C3", "20261103-142233-a1b2c", "2026110-142233-a1b2c3", "../x", "x", ""] {
+        let (e, status) = refused(&["run", "--run-id", bad, "t"]);
+        assert!(e.contains("expected a run id such as 20261029-142233-a1b2c3"), "{bad}: {e}");
+        assert_eq!(status, 2, "{bad}");
+    }
+    let help = parse(&["run", "--help"]).unwrap_err().to_string();
+    assert!(!help.contains("--run-id"), "{help}");
+}
+
+#[test]
 fn every_flag_of_run() {
     let args = run(&[
         "--machine", "box", "--cwd", "/p", "--max-rounds", "4", "--timeout", "90", "--permission-mode", "plan",

@@ -11,13 +11,16 @@ use std::sync::Arc;
 use crate::cli::listing::run_record;
 use crate::constants::RUNS_DIR;
 use crate::error::OrchestratorError;
-use crate::herdr::{AgentAddress, AgentConsole, HerdrError, HerdrServer};
+use crate::herdr::{AgentAddress, AgentConsole, HerdrError, HerdrServer, Launcher};
 use crate::host::Host;
 use crate::paths::file_name;
 use serde::Deserialize;
 use serde_json::Value;
 use crate::json::{object, Object, ValueExt};
+use crate::interrupt::Interrupt;
 use crate::runs::{local_host, pid_alive};
+use super::start::{RunRequest, StartWait, Started};
+use super::Reached;
 
 /// The keys of a run record that grow with every read of it while nothing happens; a change in them alone is no
 /// event. The client ages heartbeat_age itself from when it got the record.
@@ -75,6 +78,10 @@ pub struct ProjectRuns {
     host: Arc<dyn Host + Send + Sync>,
     /// Reaches the project's runs' agents, each in the herdr server its run saved.
     console: Arc<dyn AgentConsole>,
+    /// Starts a run's process where the human can watch it (Reached::launcher).
+    launcher: Arc<dyn Launcher>,
+    /// Where a run's process starts (Reached::launch_dir).
+    launch_dir: String,
     /// The project's absolute directory on host.
     cwd: String,
     /// The --machine and --cwd flags as the client gave them (target_args), for the records' resume commands.
@@ -84,14 +91,10 @@ pub struct ProjectRuns {
 }
 
 impl ProjectRuns {
-    /// The project in directory cwd, absolute, on host, its agents reached by console; target is as the field says.
-    pub fn new(
-        host: Arc<dyn Host + Send + Sync>,
-        console: Arc<dyn AgentConsole>,
-        cwd: String,
-        target: Vec<String>,
-    ) -> ProjectRuns {
-        ProjectRuns { host, console, cwd, target, pid_alive: Arc::new(pid_alive) }
+    /// The project reached; target is as the field says.
+    pub fn new(reached: Reached, target: Vec<String>) -> ProjectRuns {
+        let Reached { host, dir, console, launcher, launch_dir } = reached;
+        ProjectRuns { host, console, launcher, launch_dir, cwd: dir, target, pid_alive: Arc::new(pid_alive) }
     }
 
     /// As new, a run's owner on this machine taken to be alive by pid_alive instead.
@@ -180,10 +183,50 @@ impl ProjectRuns {
         Ok(AgentAddress { name: name.to_string(), server })
     }
 
+    /// Start the run request asks for, as run_id, by program, the orchestrator's binary, in a new herdr workspace
+    /// (Launcher::launch, labelled as the run labels its own, crate::workflow::workspace_label), and wait as wait
+    /// says for it to save its state.json, for its command to exit without one, or for stopping to be raised, which
+    /// ends the wait as Unlisted. Errors: Refused for a run id that is not a plain name; Failed when herdr cannot
+    /// launch it, as "no herdr server here; start herdr" without a herdr server, or when the project or the pane
+    /// cannot be read.
+    pub fn start(
+        &self,
+        request: &RunRequest,
+        program: &str,
+        run_id: &str,
+        wait: StartWait,
+        stopping: &Interrupt,
+    ) -> Result<Started, RunReadError> {
+        let state = format!("{}/state.json", self.dir(run_id)?);
+        let label = crate::workflow::workspace_label(run_id, &request.task);
+        let argv = request.argv(program, run_id, &self.target);
+        let pane = self.launcher.launch(&self.launch_dir, &label, &argv).map_err(|e| match e.code() {
+            Some("server_not_running") => OrchestratorError::new("no herdr server here; start herdr"),
+            _ => e.into(),
+        })?;
+        let deadline = std::time::Instant::now() + wait.limit;
+        loop {
+            if self.host.read(&state)?.is_some() {
+                return Ok(Started::Listed);
+            }
+            if let Some(shown) = self.launcher.exited(&pane, START_ERROR_LINES).map_err(OrchestratorError::from)? {
+                // It may have saved its state.json just before it exited, as a run that fails after its claim does.
+                return Ok(if self.host.read(&state)?.is_some() { Started::Listed } else { Started::Exited(shown) });
+            }
+            if stopping.is_raised() || std::time::Instant::now() >= deadline {
+                return Ok(Started::Unlisted);
+            }
+            stopping.sleep(wait.every);
+        }
+    }
+
     fn dir(&self, run_id: &str) -> Result<String, RunReadError> {
         Ok(format!("{}/{RUNS_DIR}/{}", self.cwd, plain_name(run_id)?))
     }
 }
+
+/// The most lines of its pane that a run which exited before it saved its state.json gives as its error.
+const START_ERROR_LINES: u32 = 20;
 
 /// The RunReadError of herdr's failure e on role's agent: Missing when the agent has exited.
 fn herdr_failure(role: &str, e: HerdrError) -> RunReadError {

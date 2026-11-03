@@ -40,6 +40,7 @@ mod workflows;
 
 pub use args::{parse_args, Command, RunsCommand, Target};
 pub use start::{new_state, resumable_state, resumed_state};
+pub(crate) use start::new_run_id;
 
 /// What a command talks to once connected: the Workflow's collaborators but its Jenkins, which each run makes for
 /// its own job, and where the orchestrator's configuration is.

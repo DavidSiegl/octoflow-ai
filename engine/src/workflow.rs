@@ -773,7 +773,7 @@ impl<'a> Workflow<'a> {
                 agent.insert("pane", String::new());
             }
         }
-        let label: String = format!("{} {}", s.key(), s.task).chars().take(40).collect();
+        let label = workspace_label(&s.run_id, &s.task);
         let (workspace, root) = self.herdr.create_workspace(s.work_dir(), &label)?;
         (s.workspace_id, s.root_pane) = (workspace, root);
         self.human.log(&format!("run {} in herdr workspace {}", s.run_id, s.workspace_id));
@@ -1349,6 +1349,12 @@ impl<'a> Workflow<'a> {
 
 /// The error of a prompt template named name that cannot be filled in, which the checks of Pipeline, of prompt files
 /// and of a run's saved prompts (saved_prompts) leave no case for.
+/// The label of the herdr workspace of the run run_id, for task: its key and its task, the first 40 characters, so
+/// that the human can tell a run's workspace in herdr's list. serve labels the workspace it starts a run in so too.
+pub fn workspace_label(run_id: &str, task: &str) -> String {
+    format!("{} {task}", crate::state::run_key(run_id)).chars().take(40).collect()
+}
+
 fn prompt_error(name: &str, e: &TemplateError) -> OrchestratorError {
     OrchestratorError(format!("prompt {name} cannot be filled in: {e}"))
 }

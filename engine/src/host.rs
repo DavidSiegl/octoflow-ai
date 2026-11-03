@@ -239,6 +239,18 @@ pub trait Host {
         }
     }
 
+    /// Whether anything, a file, a directory or a link, is at path. Errors: it cannot be told, as when the host cannot
+    /// be reached.
+    fn exists(&self, path: &str) -> Result<bool, OrchestratorError> {
+        let script = format!("[ -e \"$1\" ] || [ -L \"$1\" ] || exit {MISSING_FILE_STATUS}");
+        let proc = self.run(&["sh", "-c", &script, "_", path], None, DEFAULT_TIMEOUT)?;
+        match proc.status {
+            0 => Ok(true),
+            MISSING_FILE_STATUS => Ok(false),
+            _ => Err(OrchestratorError(format!("checking for {path}: {}", proc.stderr.trim()))),
+        }
+    }
+
     /// Replace the file's contents with text, making its directory if it is missing; with keep_mtime, the existing
     /// file keeps its modification time. keep_mtime is for a state.json written by someone other than its run: its
     /// age is the run's heartbeat. The file is written aside and renamed into place, so a reader never sees half of
