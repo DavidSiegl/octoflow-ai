@@ -111,7 +111,7 @@ fn print_runs_lists_each_run_and_its_task() {
         (1_000_000, with(run("build"), &[("error", Value::from("interrupted"))])),
     ];
     assert_eq!(listed(&runs, &["--machine", "remote", "--cwd", "~/proj"]), [
-        "20260930-070000-c0ffee  spec     round 1  stale: no heartbeat for 5m; resume: orchestrator.py resume c0ffee --machine remote --cwd '~/proj'",
+        "20260930-070000-c0ffee  spec     round 1  stale: no heartbeat for 5m; resume: orchestrator resume c0ffee --machine remote --cwd '~/proj'",
         "20260930-070000-c0ffee  build    round 1  running: pid 4242 on here, beat 40s ago",
         "20260930-070000-c0ffee  done     round 1  APPROVE",
         "20260930-070000-c0ffee  build    round 1  error: interrupted",
@@ -213,7 +213,7 @@ fn a_state_from_before_the_newer_fields() {
         [key(&record, "turns"), key(&record, "quality_round"), key(&record, "closed"), key(&record, "worktree")],
         [json("[]"), Value::Null, Value::Null, Value::Null]
     );
-    assert_eq!(key(&record, "waiting"), json(r#"{"reason": "stale", "detail": "orchestrator.py resume c0ffee"}"#));
+    assert_eq!(key(&record, "waiting"), json(r#"{"reason": "stale", "detail": "orchestrator resume c0ffee"}"#));
 }
 
 #[test]
@@ -293,7 +293,7 @@ fn an_interview_waits_while_the_human_paced_turn_is_open() {
 fn a_stale_run_waits_to_be_resumed_unless_closed() {
     let record_of = |state: &Value, target: &[&str]| record(state, STALE_SECONDS + 1, true, target);
     let stale = record_of(&mine(), &["--machine", "m", "--cwd", "~/p"]);
-    let command = "orchestrator.py resume c0ffee --machine m --cwd '~/p'";
+    let command = "orchestrator resume c0ffee --machine m --cwd '~/p'";
     assert_eq!(key(&stale, "waiting"), json(&format!(r#"{{"reason": "stale", "detail": "{command}"}}"#)));
     assert_eq!(key(&stale, "resume_command"), Value::from(command));
     let closed = record_of(&with(mine(), &[("closed", Value::from("workspace closed"))]), &[]);
@@ -339,7 +339,7 @@ fn plain_lines_in_each_state() {
     let rows = run_rows(&runs, "here", &|_| true, &[]);
     assert_eq!(rows.iter().map(run_line).collect::<Vec<_>>(), [
         "20260930-070000-c0ffee  build    round 1  running: pid 4242 on here, beat 40s ago".to_string(),
-        "20260930-070000-c0ffee  build    round 1  stale: no heartbeat for 5m; resume: orchestrator.py resume c0ffee".into(),
+        "20260930-070000-c0ffee  build    round 1  stale: no heartbeat for 5m; resume: orchestrator resume c0ffee".into(),
         "20260930-070000-c0ffee  build    round 1  blocked: which db? (pane w1:p2)".into(),
         "20260930-070000-c0ffee  build    round 1  closed: workspace closed".into(),
         "20260930-070000-c0ffee  build    round 1  error: interrupted".into(),
@@ -489,7 +489,7 @@ fn on_a_machine() {
     let doc = json(&cli.take_out());
     assert_eq!(
         doc.get("runs").unwrap().as_array().unwrap()[0].get("resume_command"),
-        Some(&Value::from("orchestrator.py resume c0ffee --machine remote --cwd '~/proj'"))
+        Some(&Value::from("orchestrator resume c0ffee --machine remote --cwd '~/proj'"))
     );
     assert!(cli.f.herdr.state().calls.is_empty());
     cli.f.host.state().run_states_with = Some(Box::new(|_| Some(Ok(vec![]))));
@@ -774,7 +774,7 @@ fn on_a_machine_everything_goes_over_ssh() {
     assert!(out.ends_with(&format!(
         "\nfiles\n    {run_dir}/spec.md\n    {run_dir}/build-1.md\n    {review}\n\nlast review: {review}\nremote findings\n"
     )), "{out}");
-    assert!(out.contains("resume: orchestrator.py resume a1b2c3 --machine M --cwd '~/proj'"), "{out}");
+    assert!(out.contains("resume: orchestrator resume a1b2c3 --machine M --cwd '~/proj'"), "{out}");
     // Each command went through ssh, the reads of the reviews among them, latest round first.
     let calls = std::fs::read_to_string(dir.join("calls")).unwrap();
     let reads: Vec<&str> = calls.lines().filter(|c| c.contains("/review-")).collect();
@@ -824,7 +824,7 @@ fn a_running_blocked_run_shows_its_question_and_pane() {
     let blocked = with(mine(), &[("blocked", block()), ("agents", json(r#"{"build": {"pane": "w1:p2"}}"#))]);
     assert_eq!(listed(&[(40, blocked.clone()), (STALE_SECONDS + 1, blocked)], &[]), [
         format!("20260930-070000-c0ffee  build    round 1  blocked: {QUESTION} (pane w1:p2)"),
-        "20260930-070000-c0ffee  build    round 1  stale: no heartbeat for 5m; resume: orchestrator.py resume c0ffee".into(),
+        "20260930-070000-c0ffee  build    round 1  stale: no heartbeat for 5m; resume: orchestrator resume c0ffee".into(),
     ]);
 }
 

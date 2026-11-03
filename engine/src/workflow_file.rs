@@ -109,7 +109,7 @@ pub fn load_workflow_file(path: &str, prompts: &Prompts) -> Result<Pipeline, Orc
 
 /// The table TOML text holds, as Value; the parser's error, with its line and column, for text that is not TOML.
 pub fn parse_toml(text: &str) -> Result<Value, String> {
-    toml::from_str::<Value>(text).map_err(|e| crate::py::toml::syntax_error(text, &e))
+    toml::from_str::<Value>(text).map_err(|e| crate::error::toml_syntax_error(text, &e))
 }
 
 /// The workflow a definition describes, as a workflow file or a run's state.json holds it, a step with a use taking

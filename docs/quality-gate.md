@@ -1190,8 +1190,8 @@ q ≥ 1, where the Builder is answering quality round q. `resume` also takes `--
 `judged-in-quality --quality-gate JOB --target BRANCH` exits 0 when a quality build of `JOB` already judged
 `HEAD` as a pull request's build into `BRANCH` would: among the builds Jenkins keeps, it ended SUCCESS, and its
 description (above) names `HEAD`'s tree, the merge base of `HEAD` and `origin/BRANCH` as its parent, and a `main`
-commit at which `Jenkinsfile`, `gate.py`, `orchestrator.py`, `pyproject.toml`, `uv.lock` and `.python-version` are
-as in `HEAD` and at that merge base. Such a build runs the e2e scenarios (`engine/e2e`) only if the change
+commit at which `Jenkinsfile`, `gate.py`, `pyproject.toml`, `uv.lock`, `.python-version`, `rust-toolchain.toml` and
+`Cargo.lock` are as in `HEAD` and at that merge base. Such a build runs the e2e scenarios (`engine/e2e`) only if the change
 touches what they depend on, where a pull request build always runs them; every path that could make the two differ
 makes the quality build run them too (the Jenkinsfile's Test stage lists them). Otherwise, and on any error, such as
 Jenkins unreachable, an HTTP error or a commit it cannot fetch, it exits 1 with one line on standard error naming the condition the closest build fails, or

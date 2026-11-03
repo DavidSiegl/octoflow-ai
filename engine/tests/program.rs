@@ -92,6 +92,26 @@ fn a_command_about_runs_outside_a_herdr_pane_is_refused_but_workflows_is_not() {
 }
 
 #[test]
+fn a_hint_names_the_program_by_the_file_name_it_was_invoked_by() {
+    let dir = Dir::new("invoked");
+    let hint = |out: &Output| {
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        stdout.lines().find(|l| l.contains(" workflows default`")).map(String::from)
+    };
+    let out = program(&dir, &["workflows"], None).output().expect("the program runs");
+    assert!(hint(&out).is_some_and(|l| l.contains("`orchestrator workflows default`")), "{:?}", hint(&out));
+    let out = Command::new(env!("CARGO_BIN_EXE_orchestrator"))
+        .arg0("/opt/octoflow/bin/octoflow")
+        .arg("workflows")
+        .env("XDG_CONFIG_HOME", dir.0.join("config"))
+        .current_dir(&dir.0)
+        .stdin(Stdio::null())
+        .output()
+        .expect("the program runs");
+    assert!(hint(&out).is_some_and(|l| l.contains("`octoflow workflows default`")), "{:?}", hint(&out));
+}
+
+#[test]
 fn standard_output_that_takes_no_write_is_an_error() {
     // As Python's print raising OSError ends orchestrator.py with status 1: what the command prints is its product.
     let dir = Dir::new("full");

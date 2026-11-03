@@ -8,8 +8,9 @@ use crate::error::{shortened, OrchestratorError};
 use crate::host::{top_literal, Host, DEFAULT_TIMEOUT};
 
 /// The files that decide how a change is judged: the stages, the gate, its rules, the versions of its tools and the
-/// Python they run on. judged_in_quality trusts a quality build only when none of them differs.
-pub const JUDGING_FILES: [&str; 6] = ["Jenkinsfile", "gate.py", "orchestrator.py", "pyproject.toml", "uv.lock", ".python-version"];
+/// Python and the Rust they run on. judged_in_quality trusts a quality build only when none of them differs.
+pub const JUDGING_FILES: [&str; 7] =
+    ["Jenkinsfile", "gate.py", "pyproject.toml", "uv.lock", ".python-version", "rust-toolchain.toml", "Cargo.lock"];
 
 /// What a quality build's description says it judged, in the format the comment above the Jenkinsfile's Checkout
 /// stage defines: `judged tree=<sha> parent=<sha> main=<sha>`, each sha SHA-1's 40 lowercase hex digits or SHA-256's

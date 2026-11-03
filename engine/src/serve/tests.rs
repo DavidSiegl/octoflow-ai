@@ -11,7 +11,7 @@ use super::*;
 use crate::cli::listing::run_record;
 use crate::constants::{APPROVE, RUNS_DIR, STALE_SECONDS};
 use crate::json::{Object, ValueExt};
-use crate::py::url::urlencode;
+use crate::http::urlencode;
 use crate::cli::doctor::{Check, Level};
 use crate::serve::fake::{FakeConsole, ServeHost};
 
@@ -282,7 +282,7 @@ fn runs_are_list_json_records_on_a_machine() {
     assert_eq!(doc, object([("version", Value::from(1)), ("runs", Value::Array(listed))]));
     assert_eq!(
         doc.get("runs").and_then(Value::as_array).and_then(|r| r[0].get("resume_command")),
-        Some(&Value::from("orchestrator.py resume 5e7e00 --machine remote --cwd '~/proj'"))
+        Some(&Value::from("orchestrator resume 5e7e00 --machine remote --cwd '~/proj'"))
     );
 }
 
