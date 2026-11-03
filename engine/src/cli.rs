@@ -440,9 +440,8 @@ pub fn record_in_state(
         return Err(OrchestratorError(format!("corrupt {path}: not a JSON object")));
     };
     updated.insert(key.to_string(), recorded);
-    // As RunState::to_text writes a state, whatever format saved is of.
-    let text = serde_json::to_string_pretty(&updated).map_err(|e| OrchestratorError(format!("{path}: {e}")))?;
-    host.write(path, &format!("{text}\n"), true)
+    // One line, as RunState::to_text writes a state, whatever format saved is of.
+    host.write(path, &format!("{}\n", Value::Object(updated)), true)
 }
 
 /// Drive the run state describes through pipeline, by the settings saved in state, to its verdict. spec is the file

@@ -207,8 +207,7 @@ impl Event {
         Event { kind, payload: Value::Object(object(pairs)) }
     }
 
-    /// The event as one Server-Sent Event of its kind, its payload the one line of JSON in its data field, as
-    /// json.dumps writes it: Python's sse_event.
+    /// The event as one Server-Sent Event of its kind, its payload in its data field as one line of compact JSON.
     pub fn sse(&self) -> String {
         format!("event: {}\ndata: {}\n\n", self.kind, self.payload)
     }
@@ -252,7 +251,7 @@ impl<'p> RunWatch<'p> {
         let mut events = vec![];
         let mut sent = BTreeMap::new();
         for record in self.project.records()? {
-            // A state.json's run_id is a string; one that is not names the run as Python's str() writes it.
+            // A state.json's run_id is a string; one that is not names the run as its JSON.
             let id = record.get("id").cloned().unwrap_or(Value::Null);
             let run_id = id.text();
             let mut key = record.clone();

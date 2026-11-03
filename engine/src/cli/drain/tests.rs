@@ -809,7 +809,7 @@ fn an_unfinished_run_on_the_run_line_stops_the_drain_before_any_run() {
     let owner = serde_json::from_str::<Value>(r#"{"host": "elsewhere", "pid": 1}"#).unwrap();
     // The project is --cwd /proj's, which the command repeats, where Python's test patches resolve_dir.
     let resume = "resume it with `orchestrator.py resume aaaaaa --cwd /proj`";
-    let cases: [(Option<Fields>, u64, &str, &str); 5] = [
+    let cases: [(Option<Fields>, u64, &str, &str); 6] = [
         (
             Some(vec![("owner", owner)]),
             0,
@@ -819,6 +819,8 @@ fn an_unfinished_run_on_the_run_line_stops_the_drain_before_any_run() {
         (Some(vec![]), stale, "is stale (no heartbeat for", resume),
         (Some(vec![("error", Value::from("interrupted"))]), stale, "failed: interrupted", resume),
         (Some(vec![("closed", Value::from("workspace closed"))]), stale, "was closed (workspace closed)", "; remove the Run: line from"),
+        // resume refuses a state of another format, so drain does not offer it.
+        (Some(vec![("format", Value::from(1))]), stale, "cannot be resumed: run 20261024-100000-aaaaaa has state format 1", "; remove the Run: line from"),
         (None, 0, "is not under /proj/.orchestrator/runs", "; remove the Run: line from"),
     ];
     for (fields, age, why, remedy) in cases {

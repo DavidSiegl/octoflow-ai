@@ -393,6 +393,10 @@ fn unfinished_run(
     if let Some(closed) = s.get("closed").filter(|c| c.is_set()) {
         return (format!("was closed ({})", closed.text()), start_over);
     }
+    // resume refuses a run whose state.json it cannot read; the problem says what to do instead.
+    if let Some(problem) = s.as_object().and_then(crate::state::format_problem) {
+        return (format!("cannot be resumed: {problem}"), start_over);
+    }
     let world = prs.world;
     let resume = format!("resume it with `{}`, or {start_over}", resume_command(run_id, target));
     match run_health(s, *age, world.local_host, world.with.pid_alive) {

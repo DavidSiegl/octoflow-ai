@@ -13,8 +13,8 @@ use serde_json::Value;
 
 /// What a run has done so far, saved as state.json in its run directory.
 ///
-/// state.json is an object: "format", STATE_FORMAT, then these fields in this order, herdr_server only when it is
-/// known (the field says why), then the fields of unknown. Every other field must be there. The records a field holds
+/// state.json is one line of JSON, an object: "format", STATE_FORMAT, then these fields in this order, then the fields
+/// of unknown. Every field that is not an Option must be there; a missing Option is None. The records a field holds
 /// as JSON are kept as they were read, key order included.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RunState {
@@ -28,9 +28,7 @@ pub struct RunState {
     /// resumed it, reached, where it finds or starts each agent it comes to (one a resume has not come to yet may
     /// still be in an earlier server). serve reaches them there, from whatever environment it runs in. None for a
     /// run on a machine, whose herdr serves it, and for one whose server could not be told
-    /// (HerdrServer::of_environment): serve then reaches the server its own environment picks. Left out of state.json
-    /// while None.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// (HerdrServer::of_environment): serve then reaches the server its own environment picks.
     pub herdr_server: Option<HerdrServer>,
     /// The current step's id, or quality, publish or done. main starts a run at its workflow's first step.
     pub phase: String,
@@ -213,8 +211,9 @@ impl RunState {
         // serde passes over the fields RunState does not have; unknown keeps them, in their order.
         let mut state: RunState = serde_json::from_value(Value::Object(fields.clone()))
             .map_err(|e| OrchestratorError(format!("run state {run_id} is invalid: {e}")))?;
+        // RunState writes every field it has, so a blank state's keys are all it knows.
         let Value::Object(known) = RunState::new("", "", "").to_json() else { unreachable!("a run state is an object") };
-        state.unknown = fields.into_iter().filter(|(k, _)| !known.contains_key(k) && k != "herdr_server").collect();
+        state.unknown = fields.into_iter().filter(|(k, _)| !known.contains_key(k)).collect();
         Ok(state)
     }
 
@@ -234,10 +233,11 @@ impl RunState {
         Value::Object(saved)
     }
 
-    /// state.json's text: to_json, pretty-printed, and a newline.
+    /// state.json's text: to_json on one line, and a newline. One line, because every release before
+    /// STATE_FORMAT_SINCE reads a project's states a line each, and a run such a release saved is to be finished or
+    /// closed with it (format_problem) in a project where this engine has saved runs too.
     pub fn to_text(&self) -> String {
-        // As to_json.
-        serde_json::to_string_pretty(&self.to_json()).expect("a run state serializes") + "\n"
+        self.to_json().to_string() + "\n"
     }
 
     /// The prompts the run sends: those it started with (saved_prompts). Errors: its prompt_overrides name a prompt

@@ -26,17 +26,17 @@ fn every_recorded_state_reads_and_writes_back_byte_for_byte() {
 }
 
 #[test]
-fn a_new_state_is_written_pretty_with_its_format_first() {
+fn a_new_state_is_written_on_one_line_with_its_format_first() {
     let state = RunState::new("20260929-120000-a1b2c3", "add a rate limiter", "/proj");
     let text = state.to_text();
     assert!(
         text.starts_with(
-            "{\n  \"format\": 2,\n  \"run_id\": \"20260929-120000-a1b2c3\",\n  \"task\": \"add a rate limiter\",\n  \
-             \"cwd\": \"/proj\",\n  \"machine\": null,\n  \"phase\": \"spec\",\n"
+            r#"{"format":2,"run_id":"20260929-120000-a1b2c3","task":"add a rate limiter","cwd":"/proj","machine":null,"herdr_server":null,"phase":"spec","#
         ),
         "{text}"
     );
-    assert!(text.ends_with("  \"restored\": [],\n  \"proofs\": []\n}\n"), "{text}");
+    assert!(text.ends_with("\"restored\":[],\"proofs\":[]}\n"), "{text}");
+    assert_eq!(text.matches('\n').count(), 1);
     assert_eq!(RunState::from_text(&text).unwrap(), state);
 }
 
@@ -82,13 +82,12 @@ fn saved_with(fields: &[(&str, Option<&str>)]) -> String {
 }
 
 #[test]
-fn the_herdr_server_is_written_after_the_machine_and_only_when_known() {
+fn the_herdr_server_is_written_after_the_machine() {
     let mut state = RunState::new("20260929-120000-a1b2c3", "t", "/proj");
-    assert!(!state.to_text().contains("herdr_server"));
+    assert!(state.to_text().contains(r#""machine":null,"herdr_server":null,"#));
     state.herdr_server = Some(server(&[("HERDR_SOCKET_PATH", "/s/herdr.sock")]));
     let text = state.to_text();
-    let saved = "\"machine\": null,\n  \"herdr_server\": {\n    \"HERDR_SOCKET_PATH\": \"/s/herdr.sock\",\n    \
-                 \"HERDR_SESSION\": null\n  },\n";
+    let saved = r#""machine":null,"herdr_server":{"HERDR_SOCKET_PATH":"/s/herdr.sock","HERDR_SESSION":null},"#;
     assert!(text.contains(saved), "{text}");
     assert_eq!(RunState::from_text(&text).unwrap(), state);
     // The default session, neither variable set, is a server too, and not the absence of one.
@@ -118,6 +117,12 @@ fn a_state_without_the_format_is_refused_with_what_to_do_with_its_run() {
     let other = saved_with(&[("format", Some("3"))]);
     let e = RunState::from_text(&other).unwrap_err();
     assert_eq!(e.0, "run r1 has state format 3, which this octoflow does not read; it reads format 2");
+}
+
+#[test]
+fn a_missing_option_is_none() {
+    let state = RunState::from_text(&saved_with(&[("error", None), ("owner", None), ("herdr_server", None)])).unwrap();
+    assert_eq!((state.error, state.owner, state.herdr_server), (None, None, None));
 }
 
 #[test]

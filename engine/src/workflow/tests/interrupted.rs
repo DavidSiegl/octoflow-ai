@@ -85,7 +85,7 @@ fn a_ctrl_c_that_fails_the_done_runs_save_is_the_interrupt_not_a_failure() {
     let f = Fixture::new(approved());
     let (interrupt, state) = (f.interrupt.clone(), format!("{}/state.json", f.state.dir()));
     f.host.state().before_write = Some(Box::new(move |path, text| {
-        if path == state && text.contains("\"phase\": \"done\"") {
+        if path == state && text.contains("\"phase\":\"done\"") {
             interrupt.raise();
             return Err(crate::error::OrchestratorError(format!("{path}: interrupted")));
         }

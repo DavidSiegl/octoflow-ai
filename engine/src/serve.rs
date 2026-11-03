@@ -576,7 +576,7 @@ fn allowed_origin(request: &Request) -> Vec<(String, String)> {
     }
 }
 
-/// Answer request with code and body as JSON, as json.dumps writes it, allowing its origin unless code is 403, and
+/// Answer request with code and body as compact JSON, allowing its origin unless code is 403, and
 /// naming the Bearer scheme with a 401.
 fn send_json(request: Request, code: u16, body: &Value) {
     let mut response = with_header(Response::from_data(body.to_string()).with_status_code(code), "Content-Type", "application/json");

@@ -621,9 +621,8 @@ impl<'a> Workflow<'a> {
     fn write_metrics(&self) {
         let s = &self.state;
         let written = self.host.now().and_then(|now| {
-            // A Value serializes without fail.
-            let text = serde_json::to_string_pretty(&run_metrics(s, now)).expect("JSON serializes") + "\n";
-            self.host.write(&format!("{}/{METRICS_FILE}", s.dir()), &text, false)
+            // One line, which `metrics` of a release before crate::state::STATE_FORMAT_SINCE reads a file at a time.
+            self.host.write(&format!("{}/{METRICS_FILE}", s.dir()), &(run_metrics(s, now).to_string() + "\n"), false)
         });
         if let Err(e) = written {
             self.human.log(&format!("could not write {METRICS_FILE}: {e}"));

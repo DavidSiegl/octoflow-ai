@@ -41,8 +41,10 @@ pub fn close_run(world: &Connected, cwd: &str, run_ref: &str) -> Result<String, 
     let host = world.with.host;
     let runs = host.run_states(cwd)?;
     let (age, saved) = find_run(&runs, run_ref, cwd)?;
-    let state: Closing = serde_json::from_value(saved.clone())
-        .map_err(|e| OrchestratorError(format!("run state under {cwd}/{RUNS_DIR} is invalid: {e}")))?;
+    let state: Closing = serde_json::from_value(saved.clone()).map_err(|e| {
+        let run_id = saved.get("run_id").and_then(Value::as_str).unwrap_or("?");
+        OrchestratorError(format!("run state {run_id} is invalid: {e}"))
+    })?;
     if let Some(closed) = state.closed.as_deref().filter(|c| !c.is_empty()) {
         world.say(&format!("run {} is already closed: {closed}", state.run_id));
         return Ok(closed.to_string());

@@ -86,7 +86,7 @@ line per turn.
 
 ## Run metrics
 
-A run that is done writes `metrics.json` in its run directory, one JSON object, pretty-printed, and `orchestrator
+A run that is done writes `metrics.json` in its run directory, one JSON object on one line, and `orchestrator
 metrics` prints every run's of a project, a line each, oldest first; a run that failed or was interrupted has none
 until a resume finishes it. Its keys:
 

@@ -817,7 +817,7 @@ pub trait Host {
     /// cannot shift it. Errors: a state.json that is not JSON.
     fn run_states(&self, cwd: &str) -> Result<Vec<(u64, Value)>, OrchestratorError> {
         // stat -c is GNU, stat -f is BSD. Each state follows its age and a blank, and ends at a NUL, which no JSON text
-        // holds: a state.json spans several lines.
+        // holds, so a state.json a human pretty-printed reads as well as the engine's one line.
         let script = format!(
             "now=$(date +%s) || exit 1; for f in \"$1\"/{RUNS_DIR}/*/state.json; do [ -f \"$f\" ] || continue; \
              m=$(stat -c %Y -- \"$f\" 2>/dev/null || stat -f %m -- \"$f\") || exit 1; \
@@ -863,7 +863,7 @@ pub trait Host {
     /// The metrics.json of each run of the project at cwd that has one, oldest run first. Errors: one that is not
     /// JSON.
     fn run_metrics(&self, cwd: &str) -> Result<Vec<Value>, OrchestratorError> {
-        // Each file ends at a NUL, which no JSON text holds: a metrics.json spans several lines.
+        // Each file ends at a NUL, which no JSON text holds, so one a human pretty-printed reads as well.
         let script = format!(
             "for f in \"$1\"/{RUNS_DIR}/*/{METRICS_FILE}; do [ -f \"$f\" ] || continue; cat -- \"$f\" && printf '\\000'; \
              done; true"

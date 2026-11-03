@@ -97,6 +97,16 @@ What is known to be open in `orchestrator.py` and `gate.py`, and why. An entry l
   serve answers every error with a JSON body, so the 500 is likely another test's server that took the port the
   stopped one freed. Found 2026-11-03 while verifying ticket 04. Closes with the test holding its port, or another
   check that the new server answers, and a run of the suite repeated without failure.
+- **`py::toml` keeps a port of Python's `json.dumps`.** Ticket octoflow-without-python/04 moved `json.dumps`'s spacing,
+  `ensure_ascii` and float `repr` from `py::json` into `engine/src/py/toml.rs` (`json_dumps`), for the one message
+  that quotes an unknown package source (`unknown_source`, `engine/src/checks/dependencies.rs`). Raised by
+  cross-review 114 (F8, nit, 2026-11-03): "This is drift from 'py::json … becomes serde_json'. Ticket 06 (py::toml)
+  may be its home." Closes with ticket octoflow-without-python/06, which replaces `py::toml`.
+- **`crate::map::Map` hand-writes an insertion-ordered map.** `engine/src/map.rs`, moved out of `py::json` by ticket
+  octoflow-without-python/04 for the engine's maps of values that are not JSON (`Map<Dependency>`, `Map<String>`).
+  Raised by cross-review 114 (F9, nit, 2026-11-03): "`indexmap::IndexMap` is already in the build through
+  `preserve_order`." Using it needs `indexmap` as a dependency of the engine's own, which the user approves; closes
+  with that approval and `Map` replaced by `IndexMap`, or with the user's ruling that `Map` stays.
 - **serve's event stream can miss a finished run's last files.** `end_done_run` (`workflow.rs`) saves state.json
   with the owner cleared, which makes the run finished, before it writes summary.md and metrics.json, and `release`
   saves before summary.md likewise; `RunWatch::changes` (`serve/runs.rs`) reads a finished run's files again only
@@ -861,7 +871,8 @@ What is known to be open in `orchestrator.py` and `gate.py`, and why. An entry l
 - **The Rust engine wrote `state.json`, `metrics.json` and its JSON in the Python engine's form.** `crate::py::json`
   wrote every JSON file as `json.dumps` writes it, floats as Python's `repr`, so that a run either engine started
   resumed in the other. Fixed (2026-11-03, octoflow-without-python ticket 04) by serde_json: `state.json` and
-  `metrics.json` are pretty-printed, with `"format": 2` leading `state.json` (`crate::state::STATE_FORMAT`), and a
+  `metrics.json` are compact JSON on one line, which earlier releases still read a line at a time, with `"format": 2`
+  leading `state.json` (`crate::state::STATE_FORMAT`), and a
   `state.json` without it, which every earlier release wrote, is refused naming what to do with the run; `list`
   shows such a run as unreadable, and `prune` and `close` work on it. `py::json` is gone.
 
