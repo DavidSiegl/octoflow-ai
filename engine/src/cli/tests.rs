@@ -174,10 +174,10 @@ fn finish_names_the_verdict_and_the_exit_status() {
 #[test]
 fn the_resume_hint() {
     let target = ["--machine".to_string(), "box".to_string(), "--cwd".to_string(), "~/my project".to_string()];
-    assert_eq!(resume_command("20260929-120000-a1b2c3", &target), "orchestrator.py resume a1b2c3 --machine box --cwd '~/my project'");
+    assert_eq!(resume_command("20260929-120000-a1b2c3", &target), "orchestrator resume a1b2c3 --machine box --cwd '~/my project'");
     assert_eq!(
         interrupted_note(Some("20260929-120000-a1b2c3"), &[]),
-        "interrupted; the role agents keep running in herdr; resume with: orchestrator.py resume a1b2c3"
+        "interrupted; the role agents keep running in herdr; resume with: orchestrator resume a1b2c3"
     );
     assert_eq!(interrupted_note(None, &target), "interrupted; the role agents keep running in herdr");
     assert_eq!(command(&["run", "--machine", "box", "--cwd", "/p", "t"]).target().unwrap().flags(), target[..2].iter().cloned().chain(["--cwd".into(), "/p".into()]).collect::<Vec<_>>());
@@ -343,7 +343,7 @@ fn an_interrupted_run_names_its_resume_command() {
     let ended = cli.played(&["task"], vec![("spec", vec![interrupted])]);
     let Err(Stop::Interrupted(Some(run_id))) = &ended else { panic!("not interrupted with its run") };
     let key = run_id.rsplit('-').next().unwrap();
-    assert_eq!(interrupted_note(Some(run_id), &[]), format!("interrupted; the role agents keep running in herdr; resume with: orchestrator.py resume {key}"));
+    assert_eq!(interrupted_note(Some(run_id), &[]), format!("interrupted; the role agents keep running in herdr; resume with: orchestrator resume {key}"));
     assert_eq!(cli.status(ended, &["run", "task"]), EXIT_INTERRUPTED);
 }
 

@@ -19,8 +19,17 @@ use crate::http::{Http, HttpError, Request, Response};
 use crate::interrupt::Interrupt;
 use crate::map::Map;
 
-/// Python's JUDGING: the files whose change decides the judging, as the test knows them.
-const JUDGING: [&str; 6] = ["Jenkinsfile", "gate.py", "orchestrator.py", "pyproject.toml", "uv.lock", ".python-version"];
+/// The files whose change decides the judging, as the test knows them: for ci/gate-rust, a file under it.
+const JUDGING: [&str; 8] = [
+    "Jenkinsfile",
+    "gate.py",
+    "ci/gate-rust/src/main.rs",
+    "pyproject.toml",
+    "uv.lock",
+    ".python-version",
+    "rust-toolchain.toml",
+    "Cargo.lock",
+];
 /// The GIT_REF the builds were of; judged-in-quality never reads it.
 const QUALITY_REF: &str = "orchestrator-ci/r-1-q1";
 
@@ -259,10 +268,10 @@ fn the_judging_files_are_compared_whole_from_a_subdirectory_under_diff_relative(
 #[test]
 fn a_build_by_a_main_with_other_judging_files_does_not() {
     let t = Judging::new();
-    let main = t.push_main("orchestrator.py", "a newer gate\n");
+    let main = t.push_main("rust-toolchain.toml", "[toolchain]\nchannel = \"1.99\"\n");
     let base = t.base();
     let n = t.build(format!("judged tree={} parent={base} main={main}", t.tree));
-    t.refused(&[], &[&format!("#{n}"), &main, "orchestrator.py"]);
+    t.refused(&[], &[&format!("#{n}"), &main, "rust-toolchain.toml"]);
 }
 
 #[test]

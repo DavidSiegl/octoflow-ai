@@ -41,6 +41,21 @@ pub fn strerror(e: &std::io::Error) -> String {
     }
 }
 
+/// Why text is not TOML, on one line: the parser's message, then `(at line L, column C)` where it found the problem,
+/// both counted from 1, the column in characters; the message alone when the parser names no place.
+pub fn toml_syntax_error(text: &str, e: &toml::de::Error) -> String {
+    let message = e.message().trim_end();
+    match e.span() {
+        Some(span) => {
+            let before = &text[..span.start.min(text.len())];
+            let line = before.matches('\n').count() + 1;
+            let column = before.rsplit('\n').next().unwrap_or(before).chars().count() + 1;
+            format!("{message} (at line {line}, column {column})")
+        }
+        None => message.to_string(),
+    }
+}
+
 /// text as a message quotes it, cut to at most n characters: as it is when it fits, else its first n - 1 characters
 /// and "…". n is at least 1.
 pub fn shortened(text: &str, n: usize) -> String {

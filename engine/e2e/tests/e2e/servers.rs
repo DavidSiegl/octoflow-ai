@@ -358,7 +358,8 @@ fn form_json(form: &[(String, Vec<String>)]) -> Value {
 /// text with each `%XX` decoded to its byte, X a hex digit, the bytes read as UTF-8 with replacement, as
 /// urllib.parse.unquote does; a `%` before anything else stays as it is.
 ///
-/// Not the engine's `py::url::unquote_plus`, which octoflow-without-python ticket 06 removes with `crate::py`.
+/// Not the engine's `serve::url::unquote_plus`: the fake servers read the engine's requests with code of their own,
+/// so that a fault the engine's URL code shares between writing and reading still shows.
 fn unquote(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());

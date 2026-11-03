@@ -369,3 +369,17 @@ fn methods_and_headers_read_as_named() {
     assert_eq!(request.header("Accept"), None);
     assert_eq!(Response::ok("b"), Response { status: 200, headers: Vec::new(), body: b"b".to_vec() });
 }
+
+#[test]
+fn quote_keeps_only_the_unreserved_characters() {
+    assert_eq!(quote("a b/c?d=e&f~g_h.i-j"), "a%20b%2Fc%3Fd%3De%26f~g_h.i-j");
+    assert_eq!(quote("Folder é"), "Folder%20%C3%A9");
+    assert_eq!(quote(""), "");
+}
+
+#[test]
+fn urlencode_writes_a_blank_as_a_plus() {
+    assert_eq!(urlencode(&[("tree", "building,result")]), "tree=building%2Cresult");
+    assert_eq!(urlencode(&[("GIT_REF", "a b+c"), ("x y", "")]), "GIT_REF=a+b%2Bc&x+y=");
+    assert_eq!(urlencode(&[]), "");
+}

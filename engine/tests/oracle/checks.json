@@ -1143,7 +1143,7 @@
      "f",
      [
       "unknown",
-      "{ mirror = 1.5, n = [true, \"\\u00e9\", -0.0, Infinity] }"
+      "{ mirror = 1.5, n = [true, \"\u00e9\", -0.0, inf] }"
      ]
     ],
     [
@@ -1169,36 +1169,29 @@
    "lock": null,
    "direct": [],
    "locked": [],
-   "unreadable": [
-    [
-     "pyproject.toml",
-     "Object of type datetime is not JSON serializable"
-    ]
-   ]
+   "unreadable": []
   },
   {
    "pyproject": "[project]\ndependencies = [\"a\"]\n[tool.uv.sources]\na = { index = [\"x\"] }\n",
    "lock": null,
-   "direct": [],
-   "locked": [],
-   "unreadable": [
+   "direct": [
     [
-     "pyproject.toml",
-     "cannot use 'list' as a dict key (unhashable type: 'list')"
+     "a",
+     [
+      "index",
+      "[\"x\"]"
+     ]
     ]
-   ]
+   ],
+   "locked": [],
+   "unreadable": []
   },
   {
    "pyproject": "[[tool.uv.index]]\nname = [\"x\"]\n[tool.uv.sources]\na = { path = \"p\" }\n",
    "lock": null,
    "direct": [],
    "locked": [],
-   "unreadable": [
-    [
-     "pyproject.toml",
-     "cannot use 'list' as a dict key (unhashable type: 'list')"
-    ]
-   ]
+   "unreadable": []
   },
   {
    "pyproject": "[project]\ndependencies = [\"a\", \"b\", \"c\", \"d\", \"e\"]\n[[tool.uv.index]]\nname = 1979-05-27T07:32:00Z\nurl = \"https://t/simple\"\n[[tool.uv.index]]\nname = 9007199254740993\nurl = \"https://n/simple\"\n[[tool.uv.index]]\nname = 1979-05-27T07:32:00\nurl = \"https://l/simple\"\n[tool.uv.sources]\na = { index = 1979-05-27T00:32:00-07:00 }\nb = { index = 9007199254740992.0 }\nc = { index = 1979-05-27T07:32:00.000 }\nd = { index = 1979-05-27T07:32:00.0000001 }\ne = { index = 1979-05-27T14:32:00.0000009+07:00 }\n",
@@ -1208,7 +1201,7 @@
      "a",
      [
       "index",
-      "https://t/simple"
+      "1979-05-27T00:32:00-07:00"
      ]
     ],
     [
@@ -1222,21 +1215,21 @@
      "c",
      [
       "index",
-      "https://l/simple"
+      "1979-05-27T07:32:00.0"
      ]
     ],
     [
      "d",
      [
       "index",
-      "https://l/simple"
+      "1979-05-27T07:32:00.0000001"
      ]
     ],
     [
      "e",
      [
       "index",
-      "https://t/simple"
+      "1979-05-27T14:32:00.0000009+07:00"
      ]
     ]
    ],
@@ -1251,14 +1244,14 @@
      "a",
      [
       "index",
-      "https://one/simple"
+      "true"
      ]
     ],
     [
      "b",
      [
       "index",
-      "https://one/simple"
+      "1.0"
      ]
     ]
    ],
@@ -1273,7 +1266,7 @@
      "a",
      [
       "unknown",
-      "{ mirror = {\"x\": 1} }"
+      "{ mirror = { x = 1 } }"
      ]
     ]
    ],
@@ -1292,13 +1285,48 @@
      ]
     ]
    ],
-   "locked": [],
-   "unreadable": [
+   "locked": [
     [
-     "uv.lock",
-     "Object of type date is not JSON serializable"
+     "a",
+     null
+    ],
+    [
+     "b-c",
+     [
+      "git",
+      "https://g/b?rev=1#abc"
+     ]
+    ],
+    [
+     "d",
+     [
+      "path",
+      "../d"
+     ]
+    ],
+    [
+     "u",
+     [
+      "url",
+      "https://u/u.whl"
+     ]
+    ],
+    [
+     "o",
+     [
+      "unknown",
+      "{ other = 1979-05-27 }"
+     ]
+    ],
+    [
+     "nosource",
+     [
+      "unknown",
+      "{}"
+     ]
     ]
-   ]
+   ],
+   "unreadable": []
   },
   {
    "pyproject": "[project]\nname = \"p\"\ndependencies = [\"a\"]\n",
@@ -1306,16 +1334,22 @@
    "direct": [
     [
      "a",
-     null
+     [
+      "unknown",
+      "{ x = 07:32:00 }"
+     ]
     ]
    ],
-   "locked": [],
-   "unreadable": [
+   "locked": [
     [
-     "uv.lock",
-     "Object of type time is not JSON serializable"
+     "a",
+     [
+      "unknown",
+      "{ x = 07:32:00 }"
+     ]
     ]
-   ]
+   ],
+   "unreadable": []
   },
   {
    "pyproject": "[project\n",
@@ -1385,7 +1419,7 @@
    "unreadable": [
     [
      "pyproject.toml",
-     "datetime.date(1979, 5, 27) is not a requirement"
+     "1979-05-27 is not a requirement"
     ]
    ]
   },
@@ -1397,7 +1431,7 @@
    "unreadable": [
     [
      "pyproject.toml",
-     "expected string or bytes-like object, got 'int'"
+     "[project] name is not a string"
     ]
    ]
   },
@@ -1817,214 +1851,5 @@
    "ab",
    1
   ]
- ],
- "toml_values": [
-  {
-   "literal": "\"text\"",
-   "type": "str",
-   "str": "text",
-   "repr": "\"text\"",
-   "json": "\"text\""
-  },
-  {
-   "literal": "'it\"s'",
-   "type": "str",
-   "str": "it\"s",
-   "repr": "\"it\\\"s\"",
-   "json": "\"it\\\"s\""
-  },
-  {
-   "literal": "\"it's\"",
-   "type": "str",
-   "str": "it's",
-   "repr": "\"it's\"",
-   "json": "\"it's\""
-  },
-  {
-   "literal": "\"tab\\t\\u00e9\"",
-   "type": "str",
-   "str": "tab\t\u00e9",
-   "repr": "\"tab\\t\u00e9\"",
-   "json": "\"tab\\t\\u00e9\""
-  },
-  {
-   "literal": "5",
-   "type": "int",
-   "str": "5",
-   "repr": "5",
-   "json": "5"
-  },
-  {
-   "literal": "-0",
-   "type": "int",
-   "str": "0",
-   "repr": "0",
-   "json": "0"
-  },
-  {
-   "literal": "2.5",
-   "type": "float",
-   "str": "2.5",
-   "repr": "2.5",
-   "json": "2.5"
-  },
-  {
-   "literal": "1e300",
-   "type": "float",
-   "str": "1e+300",
-   "repr": "1e+300",
-   "json": "1e+300"
-  },
-  {
-   "literal": "inf",
-   "type": "float",
-   "str": "inf",
-   "repr": "inf",
-   "json": "Infinity"
-  },
-  {
-   "literal": "-inf",
-   "type": "float",
-   "str": "-inf",
-   "repr": "-inf",
-   "json": "-Infinity"
-  },
-  {
-   "literal": "nan",
-   "type": "float",
-   "str": "nan",
-   "repr": "nan",
-   "json": "NaN"
-  },
-  {
-   "literal": "-0.0",
-   "type": "float",
-   "str": "-0.0",
-   "repr": "-0.0",
-   "json": "-0.0"
-  },
-  {
-   "literal": "true",
-   "type": "bool",
-   "str": "True",
-   "repr": "True",
-   "json": "true"
-  },
-  {
-   "literal": "false",
-   "type": "bool",
-   "str": "False",
-   "repr": "False",
-   "json": "false"
-  },
-  {
-   "literal": "[1, 'a', [true]]",
-   "type": "list",
-   "str": "[1, \"a\", [True]]",
-   "repr": "[1, \"a\", [True]]",
-   "json": "[1, \"a\", [true]]"
-  },
-  {
-   "literal": "[]",
-   "type": "list",
-   "str": "[]",
-   "repr": "[]",
-   "json": "[]"
-  },
-  {
-   "literal": "{ k = 1, 'q\"' = \"a\" }",
-   "type": "dict",
-   "str": "{\"k\": 1, \"q\\\"\": \"a\"}",
-   "repr": "{\"k\": 1, \"q\\\"\": \"a\"}",
-   "json": "{\"k\": 1, \"q\\\"\": \"a\"}"
-  },
-  {
-   "literal": "{}",
-   "type": "dict",
-   "str": "{}",
-   "repr": "{}",
-   "json": "{}"
-  },
-  {
-   "literal": "1979-05-27T07:32:00Z",
-   "type": "datetime",
-   "str": "1979-05-27 07:32:00+00:00",
-   "repr": "datetime.datetime(1979, 5, 27, 7, 32, tzinfo=datetime.timezone.utc)",
-   "json": {
-    "error": "Object of type datetime is not JSON serializable"
-   }
-  },
-  {
-   "literal": "1979-05-27T07:32:00.999999+01:30",
-   "type": "datetime",
-   "str": "1979-05-27 07:32:00.999999+01:30",
-   "repr": "datetime.datetime(1979, 5, 27, 7, 32, 0, 999999, tzinfo=datetime.timezone(datetime.timedelta(seconds=5400)))",
-   "json": {
-    "error": "Object of type datetime is not JSON serializable"
-   }
-  },
-  {
-   "literal": "1979-05-27T07:32:05-07:00",
-   "type": "datetime",
-   "str": "1979-05-27 07:32:05-07:00",
-   "repr": "datetime.datetime(1979, 5, 27, 7, 32, 5, tzinfo=datetime.timezone(datetime.timedelta(days=-1, seconds=61200)))",
-   "json": {
-    "error": "Object of type datetime is not JSON serializable"
-   }
-  },
-  {
-   "literal": "1979-05-27T00:00:00",
-   "type": "datetime",
-   "str": "1979-05-27 00:00:00",
-   "repr": "datetime.datetime(1979, 5, 27, 0, 0)",
-   "json": {
-    "error": "Object of type datetime is not JSON serializable"
-   }
-  },
-  {
-   "literal": "1979-05-27T07:32:00.5",
-   "type": "datetime",
-   "str": "1979-05-27 07:32:00.500000",
-   "repr": "datetime.datetime(1979, 5, 27, 7, 32, 0, 500000)",
-   "json": {
-    "error": "Object of type datetime is not JSON serializable"
-   }
-  },
-  {
-   "literal": "1979-05-27",
-   "type": "date",
-   "str": "1979-05-27",
-   "repr": "datetime.date(1979, 5, 27)",
-   "json": {
-    "error": "Object of type date is not JSON serializable"
-   }
-  },
-  {
-   "literal": "07:32:00",
-   "type": "time",
-   "str": "07:32:00",
-   "repr": "datetime.time(7, 32)",
-   "json": {
-    "error": "Object of type time is not JSON serializable"
-   }
-  },
-  {
-   "literal": "07:32:05.25",
-   "type": "time",
-   "str": "07:32:05.250000",
-   "repr": "datetime.time(7, 32, 5, 250000)",
-   "json": {
-    "error": "Object of type time is not JSON serializable"
-   }
-  },
-  {
-   "literal": "00:00:00",
-   "type": "time",
-   "str": "00:00:00",
-   "repr": "datetime.time(0, 0)",
-   "json": {
-    "error": "Object of type time is not JSON serializable"
-   }
-  }
  ]
 }

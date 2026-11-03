@@ -7,9 +7,8 @@ use serde_json::Value;
 
 use crate::constants::CRATES_IO_TIMEOUT;
 use crate::error::shortened;
-use crate::http::{Http, HttpError, Method, Request};
+use crate::http::{quote, Http, HttpError, Method, Request};
 use crate::package_index::{IndexError, IndexedPackage, PackageIndex, Upload};
-use crate::py::url::quote;
 
 #[cfg(test)]
 pub(crate) mod fake;

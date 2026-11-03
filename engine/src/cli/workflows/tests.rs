@@ -52,7 +52,7 @@ fn workflows_lists_them() {
         "    Product Manager -> Architect -> QA Engineer -> Engineer <-> Tech Lead".into(),
         String::new(),
         format!(
-            "Add one as {workflows}/NAME.toml; `orchestrator.py workflows default` prints the default as a file to \
+            "Add one as {workflows}/NAME.toml; `orchestrator workflows default` prints the default as a file to \
              start from."
         ),
     ]);
