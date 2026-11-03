@@ -16,18 +16,21 @@ use crate::cli::listing::RUN_RECORD_VERSION;
 use crate::constants::EXIT_ERROR;
 use crate::env::ConfigDir;
 use crate::error::{os_error, OrchestratorError};
-use crate::herdr::{AgentConsole, ProcessHerdr};
+use crate::herdr::{AgentConsole, Launcher, ProcessHerdr};
 use crate::host::{Host, ProcessHost};
 use crate::interrupt::Interrupt;
 use serde_json::Value;
-use crate::py::url::{parse_qsl, urlsplit};
+use url::{parse_qsl, urlsplit};
 use runs::{AgentInput, Event, ProjectRuns, RunReadError, RunWatch};
 use setup::Setup;
+use start::{RunRequest, StartWait, Started, START_WAIT};
 
 #[cfg(test)]
 mod fake;
 pub mod runs;
 pub mod setup;
+pub mod start;
+pub mod url;
 
 /// How often an event stream reads its project's runs again. A read of a local project starts a few short processes;
 /// on a --machine, each of them is an SSH round trip, so a machine's project is read less often.
@@ -56,6 +59,12 @@ pub struct Reached {
     pub dir: String,
     /// Reaches its runs' agents, each by its AgentAddress.
     pub console: Arc<dyn AgentConsole>,
+    /// Starts a run's process for POST /run, in a pane of this machine's herdr server, the one serve's environment
+    /// reaches, for a project here and one on a machine alike: a machine's run is driven from here, as from the CLI.
+    pub launcher: Arc<dyn Launcher>,
+    /// The directory of this machine a run's process starts in: dir for a project here, serve's own working
+    /// directory for one on a machine, which the run reaches over SSH.
+    pub launch_dir: String,
 }
 
 /// How a RunServer reaches the project a request names: given the saved herdr machine (empty for this one) and the
@@ -63,7 +72,7 @@ pub struct Reached {
 /// which must stop the Host's commands. Errors: the project cannot be reached. [`project_host`] is the real one.
 pub type Connect = dyn Fn(&str, &str, &Interrupt) -> Result<Reached, OrchestratorError> + Send + Sync;
 
-/// The program's `serve`: start a RunServer that also answers origins, its setup marker in config, print {"url", "token"} as one JSON line on
+/// The program's `serve`: start a RunServer that also answers origins, its setup marker and workflows in config, print {"url", "token"} as one JSON line on
 /// standard output, and serve until SIGINT or SIGTERM; returns 0 then, the server stopped. Returns EXIT_ERROR, with
 /// one line on standard error, when no port can be bound, or when the line cannot be printed, as when whoever
 /// started serve has stopped reading its standard output: nobody could reach the server then. SIGHUP keeps its
@@ -79,7 +88,7 @@ pub fn serve_command(origins: &[String], config: &ConfigDir) -> i32 {
         eprintln!("error: cannot wait for SIGINT and SIGTERM: {e}");
         return EXIT_ERROR;
     }
-    let started = RunServer::start(origins, Box::new(project_host), Setup::of(config));
+    let started = RunServer::start(origins, Box::new(project_host), Setup::of(config), config.clone());
     serve(started, &mut io::stdout(), &mut io::stderr(), || signals.wait().map(drop).map_err(io::Error::from))
 }
 
@@ -118,21 +127,31 @@ fn serve(
 /// directory, cwd's, which may start with ~, and the console that reaches its agents, this machine's herdr
 /// forwarding to machine. Each command is stopped by stopping. Python's project_host: without connect's check for a
 /// herdr pane, since reading a project sends herdr no command, so a window started from a file manager reads it too.
+/// A run it starts is launched in this machine's herdr server (Reached::launcher).
 /// On this machine, an agent's commands go to the herdr server its run saved (RunState::herdr_server), whatever
 /// server serve's own environment picks; an agent of a run saved before runs saved it is reached in the one serve's
 /// environment picks (HERDR_SOCKET_PATH, else HERDR_SESSION, else the default session). Errors: the machine is not
-/// saved or enabled, or the directory cannot be entered.
+/// saved or enabled, or the directory cannot be entered; for a project on a machine, serve's own working directory
+/// cannot be told.
 pub fn project_host(machine: &str, cwd: &str, stopping: &Interrupt) -> Result<Reached, OrchestratorError> {
     let here = ProcessHost::local(stopping);
     let herdr = ProcessHerdr::new(Some(machine), stopping);
     let host = if machine.is_empty() { here } else { here.over_ssh(&herdr.ssh_target()?) };
     let dir = host.resolve_dir(cwd)?;
-    Ok(Reached { host: Arc::new(host), dir, console: Arc::new(herdr) })
+    let launch_dir = if machine.is_empty() { dir.clone() } else { serve_dir()? };
+    let launcher = Arc::new(ProcessHerdr::new(None, stopping));
+    Ok(Reached { host: Arc::new(host), dir, console: Arc::new(herdr), launcher, launch_dir })
+}
+
+/// serve's working directory. Errors: it cannot be told, or is not UTF-8.
+fn serve_dir() -> Result<String, OrchestratorError> {
+    let dir = std::env::current_dir().map_err(|e| OrchestratorError(format!("cannot tell serve's directory: {e}")))?;
+    dir.into_os_string().into_string().map_err(|d| OrchestratorError(format!("serve's directory {d:?} is not UTF-8")))
 }
 
 /// serve's HTTP server, on a free port of 127.0.0.1, with its token, answering until it is dropped. Its endpoints
-/// but /setup/checked each name the project by ?cwd= and an optional ?machine=, and answer JSON; each is a GET but
-/// the two POSTs:
+/// but /setup/checked and /workflows each name the project by ?cwd= and an optional ?machine=, and answer JSON; each
+/// is a GET but the three POSTs:
 ///
 /// - /runs: {"version", "runs"}, as `list --json` prints it.
 /// - /files?run=ID: {"run", "files"}, the run's files as ProjectRuns::files lists them.
@@ -152,6 +171,15 @@ pub fn project_host(machine: &str, cwd: &str, stopping: &Interrupt) -> Result<Re
 ///   (Setup::checked); 500 when that cannot be told.
 /// - POST /setup/checked: records that it has (Setup::mark), whatever the checks say, and answers {"checked": true};
 ///   500 when the marker cannot be written.
+/// - /workflows: what a run can be started with, as start::offered_workflows gives it from the configuration
+///   directory; 500 when its workflows directory cannot be listed.
+/// - POST /run?cwd=DIR: starts the run the JSON body asks for (start::RunRequest::parse), as a new run id, in a new
+///   herdr workspace of this machine (Reached::launcher) where its `run` command can be watched and interrupted, and
+///   waits for it (start::START_WAIT, ProjectRuns::start). 201 {"run"} once it has saved its state.json; 422 {"error",
+///   "run"} when `run` exited without saving one, error ending with the last lines its pane showed; 202 {"run",
+///   "listed": false} after 30 seconds of neither. 400 for a body RunRequest::parse refuses and 413 as for
+///   /agent/input, both before the project is reached; 502 when herdr cannot launch it, "no herdr server here; start
+///   herdr" without a herdr server here.
 /// - /events: a text/event-stream of RunWatch's events, polled every SERVE_POLL.local, every SERVE_POLL.remote for a
 ///   --machine project, until the client goes or the server stops. An HTTP/1.1 client gets it chunked, so that the
 ///   end of the stream is the end of the response; an HTTP/1.0 client's ends when the connection closes.
@@ -197,22 +225,29 @@ struct Shared {
     setup: Setup,
     /// How often its event streams poll their projects.
     polls: Polls,
+    /// Where /workflows finds the workflow files.
+    config: ConfigDir,
+    /// How POST /run waits for the run it starts.
+    start_wait: StartWait,
 }
 
 impl RunServer {
     /// Bind a free port of 127.0.0.1 and start answering on it, also requests from origins (the desktop app's webview,
-    /// such as tauri://localhost), each project reached by connect, its setup checked and marked by setup. Errors: no
-    /// port can be bound, or no token made from the system's random bytes, or no thread started.
-    pub fn start(origins: &[String], connect: Box<Connect>, setup: Setup) -> io::Result<RunServer> {
-        RunServer::start_polling(origins, connect, setup, SERVE_POLL)
+    /// such as tauri://localhost), each project reached by connect, its setup checked and marked by setup, the
+    /// workflows a run can be started with read from config. Errors: no port can be bound, or no token made from the
+    /// system's random bytes, or no thread started.
+    pub fn start(origins: &[String], connect: Box<Connect>, setup: Setup, config: ConfigDir) -> io::Result<RunServer> {
+        RunServer::start_polling(origins, connect, setup, config, SERVE_POLL, START_WAIT)
     }
 
-    /// As start, the event streams polling every polls.
+    /// As start, the event streams polling every polls, and POST /run waiting as start_wait says.
     pub(crate) fn start_polling(
         origins: &[String],
         connect: Box<Connect>,
         setup: Setup,
+        config: ConfigDir,
         polls: Polls,
+        start_wait: StartWait,
     ) -> io::Result<RunServer> {
         let token = new_token()?;
         let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
@@ -230,6 +265,8 @@ impl RunServer {
             projects: Mutex::new(HashMap::new()),
             setup,
             polls,
+            config,
+            start_wait,
         });
         let listening = Arc::new(Mutex::new(Some(Arc::new(on(&listener)?))));
         let (dispatched, to) = (Arc::clone(&listening), Arc::clone(&shared));
@@ -314,7 +351,7 @@ impl Shared {
             return Ok(Arc::clone(project));
         }
         let reached = (self.connect)(machine, cwd, &self.stopping)?;
-        let project = Arc::new(ProjectRuns::new(reached.host, reached.console, reached.dir, target_args(machine, cwd)));
+        let project = Arc::new(ProjectRuns::new(reached, target_args(machine, cwd)));
         self.lock_projects().insert(key, Arc::clone(&project));
         Ok(project)
     }
@@ -368,8 +405,11 @@ impl Endpoint {
 /// The endpoints a POST may name.
 const AGENT_INPUT: &str = "/agent/input";
 const SETUP_CHECKED: &str = "/setup/checked";
-/// The setup dialog's checks, a GET endpoint outside Endpoint (setup_answer).
+const RUN: &str = "/run";
+/// The GET endpoints outside Endpoint, which reach no project (unreached_answer): the setup dialog's checks, and the
+/// workflows a run can be started with.
 const SETUP: &str = "/setup";
+const WORKFLOWS: &str = "/workflows";
 
 /// What a request answered with JSON gets: its status and body.
 type Answer = (u16, Value);
@@ -381,6 +421,7 @@ fn answer(shared: &Shared, request: Request) {
         "GET" => get(shared, request, &path, &query),
         "POST" if path == AGENT_INPUT => post_input(shared, request, &query),
         "POST" if path == SETUP_CHECKED => post_checked(shared, request, &query),
+        "POST" if path == RUN => post_run(shared, request, &query),
         "OPTIONS" => preflight(shared, request),
         method => {
             let method = format!("{method:?}");
@@ -459,7 +500,8 @@ fn get(shared: &Shared, request: Request, path: &str, query: &HashMap<String, St
         return send_json(request, code, &body);
     }
     let Some((endpoint, params)) = Endpoint::at(path) else {
-        let (code, body) = setup_answer(shared, path, query).unwrap_or_else(|| (404, error(&format!("no endpoint {path}"))));
+        let (code, body) =
+            unreached_answer(shared, path, query).unwrap_or_else(|| (404, error(&format!("no endpoint {path}"))));
         return send_json(request, code, &body);
     };
     let (code, body) = match project_of(shared, query, params) {
@@ -470,9 +512,10 @@ fn get(shared: &Shared, request: Request, path: &str, query: &HashMap<String, St
     send_json(request, code, &body);
 }
 
-/// The answer to a GET of /setup or /setup/checked at path with the query's parameters, as RunServer's doc comment
-/// gives them; None for any other path. They check what a project needs, so unlike Endpoint's they do not reach it.
-fn setup_answer(shared: &Shared, path: &str, query: &HashMap<String, String>) -> Option<Answer> {
+/// The answer to a GET of /setup, /setup/checked or /workflows at path with the query's parameters, as RunServer's
+/// doc comment gives them; None for any other path. Unlike Endpoint's they reach no project: the setup checks check
+/// what one needs, and the workflows are this machine's, where a run serve starts runs.
+fn unreached_answer(shared: &Shared, path: &str, query: &HashMap<String, String>) -> Option<Answer> {
     Some(match path {
         SETUP => match query.get("cwd").map(String::as_str) {
             None => (400, error("missing parameter cwd")),
@@ -485,6 +528,10 @@ fn setup_answer(shared: &Shared, path: &str, query: &HashMap<String, String>) ->
         SETUP_CHECKED => match shared.setup.checked() {
             Ok(checked) => (200, object([("checked", Value::from(checked))])),
             Err(why) => (500, error(&why)),
+        },
+        WORKFLOWS => match start::offered_workflows(&shared.config) {
+            Ok(workflows) => (200, workflows),
+            Err(e) => (500, error(&e.0)),
         },
         _ => return None,
     })
@@ -564,9 +611,66 @@ fn post_checked(shared: &Shared, request: Request, query: &HashMap<String, Strin
     send_json(request, code, &body);
 }
 
-/// The input request's body asks /agent/input to type, as RunServer's doc comment gives its shapes. Errors: 413 for a
-/// body over MAX_BODY_BYTES, 400 for one that cannot be read or is of another shape.
-fn agent_input(request: &mut Request) -> Result<AgentInput, Answer> {
+/// Answer a POST of /run with the query's parameters, as target gives them: start the run its body asks for, as
+/// RunServer's doc comment says. The body is read and checked before the project is reached, as post_input's.
+fn post_run(shared: &Shared, mut request: Request, query: &HashMap<String, String>) {
+    if let Some((code, body)) = refusal(shared, &request, query) {
+        return send_json(request, code, &body);
+    }
+    let parsed = read_body(&mut request).and_then(|body| RunRequest::parse(&body).map_err(|why| (400, error(&why))));
+    let run = match parsed {
+        Ok(run) => run,
+        Err((code, body)) => return send_json(request, code, &body),
+    };
+    let (code, body) = match project_of(shared, query, &["cwd"]) {
+        Ok(project) => start_answer(shared, &project, &run),
+        Err(answer) => answer,
+    };
+    send_json(request, code, &body);
+}
+
+/// The answer to POST /run once its body is run and its project project: the run started, by this program, as a new
+/// run id, and waited for.
+fn start_answer(shared: &Shared, project: &ProjectRuns, run: &RunRequest) -> Answer {
+    let program = match serve_program() {
+        Ok(path) => path,
+        Err(why) => return (500, error(&why)),
+    };
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
+    let run_id = match crate::cli::new_run_id(now) {
+        Ok(id) => id,
+        Err(e) => return (500, error(&e.0)),
+    };
+    match project.start(run, &program, &run_id, shared.start_wait, &shared.stopping) {
+        Ok(Started::Listed) => (201, object([("run", Value::from(run_id))])),
+        Ok(Started::Exited(shown)) => {
+            let why = format!("run {run_id} exited before it saved its state; its pane showed:\n{shown}");
+            (422, object([("error", Value::from(why)), ("run", Value::from(run_id))]))
+        }
+        Ok(Started::Unlisted) => (202, object([("run", Value::from(run_id)), ("listed", Value::from(false))])),
+        Err(e) => read_failure(e),
+    }
+}
+
+/// The path of serve's own program, which POST /run starts its runs by. Errors: it cannot be told, or is not UTF-8.
+fn serve_program() -> Result<String, String> {
+    let path = std::env::current_exe().map_err(|e| format!("cannot tell serve's program: {}", os_error(&e, None)))?;
+    let path = path.into_os_string().into_string().map_err(|p| format!("serve's program {p:?} is not UTF-8"))?;
+    Ok(live_program(path, |p| std::path::Path::new(p).exists()))
+}
+
+/// The program at path, as current_exe names it, where a run can start it: Linux's /proc/self/exe names a program
+/// replaced while it runs, as a build or an upgrade replaces serve's, as `<path> (deleted)`, and the program now at
+/// path, by exists, is the one to start. As it is otherwise.
+fn live_program(path: String, exists: impl Fn(&str) -> bool) -> String {
+    match path.strip_suffix(" (deleted)") {
+        Some(replaced) if exists(replaced) => replaced.to_string(),
+        _ => path,
+    }
+}
+
+/// request's body. Errors: 413 for one over MAX_BODY_BYTES, 400 for one that cannot be read.
+fn read_body(request: &mut Request) -> Result<Vec<u8>, Answer> {
     let mut body = Vec::new();
     let limit = MAX_BODY_BYTES as u64 + 1;
     if let Err(e) = request.as_reader().take(limit).read_to_end(&mut body) {
@@ -575,6 +679,13 @@ fn agent_input(request: &mut Request) -> Result<AgentInput, Answer> {
     if body.len() > MAX_BODY_BYTES {
         return Err((413, error(&format!("the body is over {MAX_BODY_BYTES} bytes"))));
     }
+    Ok(body)
+}
+
+/// The input request's body asks /agent/input to type, as RunServer's doc comment gives its shapes. Errors: 413 for a
+/// body over MAX_BODY_BYTES, 400 for one that cannot be read or is of another shape.
+fn agent_input(request: &mut Request) -> Result<AgentInput, Answer> {
+    let body = read_body(request)?;
     let shape = || (400, error(r#"the body must be {"text": "..."} or {"keys": ["...", ...]}"#));
     let parsed = std::str::from_utf8(&body).ok().and_then(|text| serde_json::from_str::<Value>(text).ok()).ok_or_else(shape)?;
     let fields = parsed.as_object().filter(|o| o.len() == 1).ok_or_else(shape)?;

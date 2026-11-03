@@ -30,6 +30,7 @@ FLAG = re.compile(r"(?<![\w-])--[a-z][a-z0-9-]*")
 # None stands for the command itself.
 NOT_IN_THE_PARSER = {
     ("roadmap.md", "resume", "--workflow"): "a planned feature, K",
+    ("architecture.md", "run", "--run-id"): "hidden from run's help: serve's, for the runs POST /run starts",
 }
 
 # Backticked ALL_CAPS names the docs give that are neither the engine's (engine/src) nor gate.py's, with where they

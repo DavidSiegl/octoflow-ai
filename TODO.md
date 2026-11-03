@@ -69,6 +69,13 @@ is rewritten to say what is left.
 
 ## Open issues
 
+- **serve starts a run through a shell it takes for POSIX or fish.** `Launcher::launch` (`ProcessHerdr`,
+  `engine/src/herdr.rs`) gives the new pane's shell each word of the `run` command as an environment variable and
+  types `"$OCTOFLOW_ARG_0" "$OCTOFLOW_ARG_1" …; echo '<marker>'`, since herdr 0.9.1's `pane run` types its
+  arguments into the shell. bash, zsh, dash and fish run that; a pane whose shell is nushell, xonsh or PowerShell
+  does not, and POST /run answers 422 with the shell's error, or 202 when the marker never shows. Found while
+  implementing app-start-runs ticket 01 (2026-11-03). Closes with a launch that does not go through the pane's
+  shell: herdr starting the command itself in the new pane, if a later herdr can.
 - **new-dependencies on Cargo: two readings of a manifest that its doc does not state.** In
   `engine/src/checks/dependencies.rs`, `cargo_manifest_dependencies` keeps the first entry of a crate across its tables,
   as `add_named` does across manifests: `foo = "1"` in `[dependencies]` and `foo = { git = "..." }` under
@@ -100,11 +107,6 @@ is rewritten to say what is left.
   serve answers every error with a JSON body, so the 500 is likely another test's server that took the port the
   stopped one freed. Found 2026-11-03 while verifying ticket 04. Closes with the test holding its port, or another
   check that the new server answers, and a run of the suite repeated without failure.
-- **`py::toml` keeps a port of Python's `json.dumps`.** Ticket octoflow-without-python/04 moved `json.dumps`'s spacing,
-  `ensure_ascii` and float `repr` from `py::json` into `engine/src/py/toml.rs` (`json_dumps`), for the one message
-  that quotes an unknown package source (`unknown_source`, `engine/src/checks/dependencies.rs`). Raised by
-  cross-review 114 (F8, nit, 2026-11-03): "This is drift from 'py::json … becomes serde_json'. Ticket 06 (py::toml)
-  may be its home." Closes with ticket octoflow-without-python/06, which replaces `py::toml`.
 - **`crate::map::Map` hand-writes an insertion-ordered map.** `engine/src/map.rs`, moved out of `py::json` by ticket
   octoflow-without-python/04 for the engine's maps of values that are not JSON (`Map<Dependency>`, `Map<String>`).
   Raised by cross-review 114 (F9, nit, 2026-11-03): "`indexmap::IndexMap` is already in the build through
@@ -138,15 +140,6 @@ is rewritten to say what is left.
   check limited to what cannot be filled in, the template's form and unknown names, or with the release that adds
   such a placeholder saying so in its notes.
   Ticket: `.scratch/prompt-override-resume/issues/01-resume-refuses-only-unfillable-overrides.md` (#238).
-- **The Rust engine names itself `orchestrator.py`.** Its messages and hints were ported word for word, so the
-  e2e recordings, made by the Python engine, hold them: `resume: orchestrator.py resume <id>` in `list` and the
-  interrupted note (`cli/listing.rs`, `cli.rs`'s `resume_command`), `` `orchestrator.py workflows default` `` in
-  `workflows` (`cli/workflows.rs`), and `orchestrator.py` among `judged-in-quality`'s `JUDGING_FILES`, a file the
-  tree no longer has, while the files the build's Rust depends on, `rust-toolchain.toml` and `Cargo.lock`, are not
-  among them, so a quality build of another toolchain counts as having judged the tree. Found by rust-engine ticket 11
-  and its code review (2026-10-30). Closes with the engine naming itself `orchestrator`, its tests and the e2e
-  recordings changed with it, and `JUDGING_FILES` the files that judge the tree now, in a change of its own after the
-  switch.
 - **No test crashes the Rust engine after each save.** `tests/test_crash_resume.py` crashed the Python engine
   in-process right after every write of `state.json` and resumed it, and went with that engine (rust-engine ticket 11,
   2026-10-30). The e2e scenarios still kill the Rust engine as a program, once per phase. Closes with a crash
@@ -246,8 +239,15 @@ is rewritten to say what is left.
   not UTF-8 is quoted with each such byte as U+FFFD (`Workflow::run_proof`), where Python keeps it as a lone surrogate,
   which `state.json` holds as an escape and the write of the review then fails on (a UnicodeEncodeError, uncaught). And
   from drain (rust-engine ticket 09b, 2026-10-29): a name in drain's DIR that is not UTF-8 is left out of the queue
-  (`crate::cli::drain::queue`, `read_queue`), where Python reads its spec.md through os.fsdecode. Decided against unless
-  a run is found that writes such input.
+  (`crate::cli::drain::queue`, `read_queue`), where Python reads its spec.md through os.fsdecode. And from the manifests
+  the new-dependencies check reads (octoflow-without-python ticket 06, 2026-11-03): their values are compared and
+  written as TOML (`crate::checks::dependencies`), so a `[tool.uv.sources]` entry's `index` names only an index whose
+  `name` is the same TOML value, where Python's `==` took 1, 1.0 and true for one name and datetimes for one by their
+  instant; a source of a shape the check does not know is written as an inline TOML table, one holding a datetime too,
+  where Python's `json.dumps` refused it and the manifest was unreadable; and a `[project] name` that is not a string is
+  refused, where Python took 0, false or an empty list for no name; and an index's `url` of false, 0, an empty list or
+  an empty table names that index, where Python took it for no URL and named the index by the entry's `index`. Decided
+  against unless a run is found that writes such input.
 - **The Rust engine's Ctrl-C, what is left.** Rust-engine ticket 08's part 6 (2026-10-29) has a SIGINT raise the
   `Interrupt`, which stops the command the engine waits on (`crate::interrupt`), and since ticket 10 every command of
   the binary takes it. Not closed: (1) A
@@ -306,12 +306,12 @@ is rewritten to say what is left.
   macOS, where neither engine reads the keychain; and without either variable, on a machine with no certificate at all,
   it trusts Mozilla's roots (webpki-roots), where Python trusts none and fails every https request; and the timeout
   bounds the connect and each read and write, as urllib's does, but not name resolution. In what it reads
-  (`engine/src/ci.rs`, `engine/src/pypi.rs`, `engine/src/py/toml.rs`): an answer of Jenkins's of another shape than a
-  queue item, a build's result, a list of builds or a test report is a `CIError` that may pass, where the Python engine
-  fails with an `AttributeError`, and a queue item's `executable.number` that is not an integer is one too, where Python
-  keeps it; a manifest is read as TOML 1.1, which tomllib before Python 3.15 refuses in part, and why one is not TOML is
-  the toml crate's words with tomllib's `(at line L, column C)`; and rustls refuses a server certificate that is a
-  CA's own, as a self-signed one made by `openssl req -x509` with its default extensions is (`CaUsedAsEndEntity`),
+  (`engine/src/ci.rs`, `engine/src/pypi.rs`, `engine/src/checks/dependencies.rs`): an answer of Jenkins's of another
+  shape than a queue item, a build's result, a list of builds or a test report is a `CIError` that may pass, where the
+  Python engine fails with an `AttributeError`, and a queue item's `executable.number` that is not an integer is one
+  too, where Python keeps it; a manifest is read as TOML 1.1, which tomllib before Python 3.15 refuses in part, and why
+  one is not TOML is the toml crate's words with `(at line L, column C)`; and rustls refuses a server certificate that
+  is a CA's own, as a self-signed one made by `openssl req -x509` with its default extensions is (`CaUsedAsEndEntity`),
   where OpenSSL accepts it when it is trusted, so the e2e scenarios' PyPI has a leaf under a CA of its own (found by
   ticket 08's part 7, 2026-10-29). Closes, for the proxy, with a transport that sends an
   http request through a proxy as urllib does, or with `no_proxy` naming Jenkins; the rest decided against unless a
@@ -389,7 +389,7 @@ is rewritten to say what is left.
   it as Latin-1 and answers, a token so 401 (`non_ascii_tokens`); a header's value loses its trailing blanks, so a
   `Host` or `Authorization` header with one passes where Python's fails it; a header continued on a folded line is
   refused with 400, where Python joins the lines; a netloc with one square bracket in an absolute request target is
-  read as it is (`crate::py::url::urlsplit`), where Python's handler fails on urlsplit's ValueError and answers
+  read as it is (`crate::serve::url::urlsplit`), where Python's handler fails on urlsplit's ValueError and answers
   nothing; tiny_http answers a bad request line, an `Expect` other than `100-continue` and HTTP/2 itself (400, 417,
   505), and neither those nor the 501 to another method are logged on stderr, where http.server logs each error it
   sends; and a reply names tiny_http in its `Server` header. An event stream to an HTTP/1.1 client is chunked, ending

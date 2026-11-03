@@ -11,11 +11,10 @@ use crate::constants::{CI_ENV, CI_TOKENS, CONSOLE_TAIL_LINES, HTTP_TIMEOUT, JOB_
 use crate::env::{ci_credentials, ConfigDir};
 use crate::error::OrchestratorError;
 use crate::host::line_ends_as_lf;
-use crate::http::{Http, HttpClient, HttpError, Method, Request, Response};
+use crate::http::{quote, urlencode, Http, HttpClient, HttpError, Method, Request, Response};
 use serde_json::Value;
 use crate::map::Map;
 use crate::json::{Object, ValueExt};
-use crate::py::url::{quote, urlencode};
 
 #[cfg(test)]
 pub(crate) mod fake;

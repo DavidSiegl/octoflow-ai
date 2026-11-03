@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use super::*;
 use crate::constants::{APPROVE, HEARTBEAT_SECONDS, STALE_SECONDS};
 use crate::runs::STALE;
-use crate::serve::fake::{FakeConsole, ServeHost};
+use crate::serve::fake::{reached, FakeConsole, ServeHost};
 
 const SERVE_ID: &str = "20261024-120000-5e7e00";
 
@@ -35,7 +35,7 @@ struct Watched {
 impl Watched {
     fn new() -> Watched {
         let host = Arc::new(ServeHost::on(None));
-        let project = ProjectRuns::new(host.clone(), Arc::new(FakeConsole::default()), "/proj".to_string(), vec![]);
+        let project = ProjectRuns::new(reached(&host, &Arc::default()), vec![]);
         Watched { host, project }
     }
 
@@ -108,7 +108,7 @@ fn a_run_of_this_host_whose_orchestrator_exited_is_stale() {
     );
     w.save(HEARTBEAT_SECONDS + 1, &[("owner", owner)]);
     let console = Arc::new(FakeConsole::default());
-    let project = ProjectRuns::new(w.host.clone(), console, "/proj".to_string(), vec![]).with_pid_alive(|pid| {
+    let project = ProjectRuns::new(reached(&w.host, &console), vec![]).with_pid_alive(|pid| {
         ASKED.fetch_add(1, Ordering::SeqCst);
         assert_eq!(pid, 4242);
         false
@@ -203,7 +203,7 @@ fn state_json_and_names_outside_the_run_are_refused_unread() {
 fn an_agent_is_reached_in_the_herdr_server_its_run_saved() {
     let host = Arc::new(ServeHost::on(None));
     let console = Arc::new(FakeConsole::default());
-    let project = ProjectRuns::new(host.clone(), console.clone(), "/proj".to_string(), vec![]);
+    let project = ProjectRuns::new(reached(&host, &console), vec![]);
     console.state().screens.insert("build-5e7e00".to_string(), "> ready".to_string());
     let agents = serde_json::from_str::<Value>(r#"{"build": {"name": "build-5e7e00", "pane": "w1:p2"}}"#).unwrap();
     let save = |server: Option<&str>| {

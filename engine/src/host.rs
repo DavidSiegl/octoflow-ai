@@ -248,6 +248,18 @@ pub trait Host {
         }
     }
 
+    /// Whether anything, a file, a directory or a link, is at path. Errors: it cannot be told, as when the host cannot
+    /// be reached.
+    fn exists(&self, path: &str) -> Result<bool, OrchestratorError> {
+        let script = format!("[ -e \"$1\" ] || [ -L \"$1\" ] || exit {MISSING_FILE_STATUS}");
+        let proc = self.run(&["sh", "-c", &script, "_", path], None, DEFAULT_TIMEOUT)?;
+        match proc.status {
+            0 => Ok(true),
+            MISSING_FILE_STATUS => Ok(false),
+            _ => Err(OrchestratorError(format!("checking for {path}: {}", proc.stderr.trim()))),
+        }
+    }
+
     /// Replace the file's contents with text, making its directory if it is missing; with keep_mtime, the existing
     /// file keeps its modification time. keep_mtime is for a state.json written by someone other than its run: its
     /// age is the run's heartbeat. The file is written aside and renamed into place, so a reader never sees half of
@@ -266,9 +278,9 @@ pub trait Host {
         self.check(&["mv", "-f", "--", path, new_path], None, DEFAULT_TIMEOUT).map(drop)
     }
 
-    /// The time on this host, in seconds since the epoch. now and mtime read this host's clock, the one that stamps
-    /// the handoff files, so a turn's start and end come from one clock, and skew between machines cannot distort its
-    /// duration. Errors: date prints what is not a time.
+    /// The time on this host, in seconds since the epoch. now and mtime both read this host, the one that stamps the
+    /// handoff files, so skew between machines cannot distort a turn's duration; an mtime can still trail now by a few
+    /// milliseconds (Workflow::end_turn says why). Errors: date prints what is not a time.
     fn now(&self) -> Result<i64, OrchestratorError> {
         seconds(&self.check(&["date", "+%s"], None, DEFAULT_TIMEOUT)?, "date +%s")
     }
