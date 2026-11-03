@@ -582,6 +582,19 @@ fn outside_a_herdr_pane_at_a_lower_level() {
 }
 
 #[test]
+fn serve_checks_a_project_outside_a_herdr_pane() {
+    // The desktop app's sidecar is in no herdr pane: with everything else present, reaching herdr fails but is
+    // Optional, so no Required check fails and the setup dialog may record that it passed.
+    let tools = FakeTools::new();
+    let checks = crate::serve::setup::checks_through(&tools.host(&[]), &tools.herdr(None), "/proj", false);
+    let reach = checks.iter().find(|c| c.name == "reaching herdr").expect("a check of reaching herdr");
+    assert_eq!((reach.level, reach.ok), (Level::Optional, false));
+    let failed: Vec<&str> = checks.iter().filter(|c| !c.ok).map(|c| c.name.as_str()).collect();
+    assert_eq!(failed, ["reaching herdr"]);
+    assert!(checks.iter().any(|c| c.name == "origin"), "the project at cwd is checked: {checks:?}");
+}
+
+#[test]
 fn on_a_machine() {
     let tools = FakeTools::new();
     let checks = check_in_pane(&tools, Some("box"), Some("/proj"), false);

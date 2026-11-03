@@ -170,13 +170,17 @@ export class Api {
   }
 
   /** The JSON body of a request of url, with the token and init; rejects with an HttpError carrying the server's
-   * error message, or the status, for any answer but a 2xx. */
+   * error message, or the status, for any answer but a 2xx, and for a 2xx whose body is not JSON. */
   private async json(url: string, init: RequestInit = {}): Promise<unknown> {
     const headers = { ...init.headers, Authorization: `Bearer ${this.connection.token}` };
     const response = await fetch(url, { ...init, headers });
-    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    // undefined: the body is not JSON, which an error answer may be, but no 2xx one.
+    const body = (await response.json().catch(() => undefined)) as { error?: string } | undefined;
     if (!response.ok) {
-      throw new HttpError(response.status, body.error ?? `HTTP ${response.status}`);
+      throw new HttpError(response.status, body?.error ?? `HTTP ${response.status}`);
+    }
+    if (body === undefined) {
+      throw new HttpError(response.status, "the answer is not JSON");
     }
     return body;
   }

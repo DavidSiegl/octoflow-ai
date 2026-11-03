@@ -482,6 +482,9 @@ fn setup_needs_the_project() {
     let (served, asked) = setup_served("/nowhere/setup-checked", vec![]);
     let reply = served.get("/setup?machine=box", &[]);
     assert_eq!((reply.status, reply.error()), (Some(400), "missing parameter cwd".to_string()));
+    // An empty cwd would check the sidecar's own directory, a project nobody named.
+    let reply = served.get("/setup?cwd=&machine=box", &[]);
+    assert_eq!((reply.status, reply.error()), (Some(400), "parameter cwd is empty".to_string()));
     assert!(asked.lock().unwrap().is_empty());
 }
 

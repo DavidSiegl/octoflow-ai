@@ -11,6 +11,8 @@ use crate::host::ProcessHost;
 use crate::interrupt::Interrupt;
 use crate::py::json::Json;
 
+use super::object;
+
 /// How a Setup checks a project: given the saved herdr machine (empty for this one), the project's directory, which
 /// may start with ~, and the Interrupt the server raises when it stops, which must stop the checks' commands; the
 /// checks, in check_setup's order. [`project_checks`] is the real one.
@@ -38,11 +40,15 @@ impl Setup {
     /// /setup's answer for the project: {"checks": [...], "passed"}, each check as {"name", "level", "ok", "detail",
     /// "fix"}, its level as Level::as_str names it, and passed true when every Required one is ok, which is when the
     /// dialog may write the marker. A check that fails is part of the answer, never an error.
+    ///
+    /// passed is not doctor's exit status (crate::cli::doctor::report_checks), which a failed NeededForPr check also
+    /// makes 1: a missing gh login stops a run at its pull request, which doctor is asked about, but it is no reason
+    /// for the dialog to open by itself at every start.
     pub fn checks(&self, machine: &str, cwd: &str, stopping: &Interrupt) -> Json {
         let checks = (self.check)(machine, cwd, stopping);
         let passed = checks.iter().all(|c| c.ok || c.level != Level::Required);
         let checks = Json::Array(checks.iter().map(check_json).collect());
-        Json::Object([("checks", checks), ("passed", Json::from(passed))].into_iter().collect())
+        object([("checks", checks), ("passed", Json::from(passed))])
     }
 
     /// Whether the marker is there. Errors: whether it is cannot be told, as when the directory cannot be searched.
@@ -50,8 +56,9 @@ impl Setup {
         std::path::Path::new(&self.marker).try_exists().map_err(|e| self.failed("look for", &e))
     }
 
-    /// Write the marker, an empty file, creating its directory when missing; one already there stays. Errors: the
-    /// directory or the file cannot be made.
+    /// Write the marker, an empty file, creating its directory when missing; one already there stays. It does not
+    /// check that the dialog's checks passed: that is the caller's to know (serve's post_checked says why). Errors:
+    /// the directory or the file cannot be made.
     pub fn mark(&self) -> Result<(), String> {
         let path = std::path::Path::new(&self.marker);
         if let Some(dir) = path.parent() {
@@ -72,19 +79,20 @@ impl Setup {
 pub fn project_checks(machine: &str, cwd: &str, stopping: &Interrupt) -> Vec<Check> {
     let host = ProcessHost::local(stopping);
     let herdr = ProcessHerdr::new(Some(machine), stopping);
-    check_setup(&host, &herdr, Some(cwd), crate::cli::in_herdr_pane(), Level::Optional)
+    checks_through(&host, &herdr, cwd, crate::cli::in_herdr_pane())
+}
+
+/// project_checks through host and herdr, from a herdr pane or not as in_herdr_pane says.
+pub(crate) fn checks_through(host: &ProcessHost, herdr: &ProcessHerdr, cwd: &str, in_herdr_pane: bool) -> Vec<Check> {
+    check_setup(host, herdr, Some(cwd), in_herdr_pane, Level::Optional)
 }
 
 fn check_json(c: &Check) -> Json {
-    Json::Object(
-        [
-            ("name", Json::from(c.name.as_str())),
-            ("level", Json::from(c.level.as_str())),
-            ("ok", Json::from(c.ok)),
-            ("detail", Json::from(c.detail.as_str())),
-            ("fix", Json::from(c.fix.as_str())),
-        ]
-        .into_iter()
-        .collect(),
-    )
+    object([
+        ("name", Json::from(c.name.as_str())),
+        ("level", Json::from(c.level.as_str())),
+        ("ok", Json::from(c.ok)),
+        ("detail", Json::from(c.detail.as_str())),
+        ("fix", Json::from(c.fix.as_str())),
+    ])
 }

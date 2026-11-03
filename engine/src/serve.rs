@@ -146,9 +146,9 @@ pub fn project_host(machine: &str, cwd: &str, stopping: &Interrupt) -> Result<Re
 ///   or {"keys": ["esc", ...]}, pressed in order, and answers {"run", "role"}, without waiting for the agent to take
 ///   it; 400 for a body of another shape, 413 for one over MAX_BODY_BYTES, both before the project is reached, 404 as
 ///   /agent's, and 502 for a text or key herdr cannot be given (AgentConsole::submit and send_keys say which).
-/// - /setup: {"checks", "passed"}, the project's setup checks as Setup::checks gives them. It does not reach the
-///   project as the others do, so that a machine that is not saved or a folder that is missing shows as a failed
-///   check, not as 502.
+/// - /setup?cwd=DIR: {"checks", "passed"}, the project's setup checks as Setup::checks gives them; 400 for a cwd
+///   missing or empty. It does not reach the project as the others do, so that a machine that is not saved or a
+///   folder that is missing shows as a failed check, not as 502.
 /// - /setup/checked: {"checked"}, whether the setup dialog has closed with every Required check passed
 ///   (Setup::checked); 500 when that cannot be told.
 /// - POST /setup/checked: records that it has (Setup::mark), whatever the checks say, and answers {"checked": true};
@@ -350,8 +350,6 @@ enum Endpoint {
     File,
     Agent,
     Events,
-    Setup,
-    SetupChecked,
 }
 
 impl Endpoint {
@@ -363,8 +361,6 @@ impl Endpoint {
             "/file" => (Endpoint::File, &["cwd", "run", "name"]),
             "/agent" => (Endpoint::Agent, &["cwd", "run", "role"]),
             "/events" => (Endpoint::Events, &["cwd"]),
-            "/setup" => (Endpoint::Setup, &["cwd"]),
-            SETUP_CHECKED => (Endpoint::SetupChecked, &[]),
             _ => return None,
         })
     }
@@ -373,6 +369,8 @@ impl Endpoint {
 /// The endpoints a POST may name.
 const AGENT_INPUT: &str = "/agent/input";
 const SETUP_CHECKED: &str = "/setup/checked";
+/// The setup dialog's checks, a GET endpoint outside Endpoint (setup_answer).
+const SETUP: &str = "/setup";
 
 /// What a request answered with JSON gets: its status and body.
 type Answer = (u16, Json);
@@ -462,24 +460,35 @@ fn get(shared: &Shared, request: Request, path: &str, query: &HashMap<String, St
         return send_json(request, code, &body);
     }
     let Some((endpoint, params)) = Endpoint::at(path) else {
-        return send_json(request, 404, &error(&format!("no endpoint {path}")));
+        let (code, body) = setup_answer(shared, path, query).unwrap_or_else(|| (404, error(&format!("no endpoint {path}"))));
+        return send_json(request, code, &body);
     };
-    let param = |name: &str| query.get(name).map_or("", String::as_str);
-    // The setup endpoints check what a project needs, so they must not need to reach it first.
-    let (code, body) = match endpoint {
-        Endpoint::Setup => missing(query, params)
-            .unwrap_or_else(|| (200, shared.setup.checks(param("machine"), param("cwd"), &shared.stopping))),
-        Endpoint::SetupChecked => match shared.setup.checked() {
+    let (code, body) = match project_of(shared, query, params) {
+        Ok(project) if matches!(endpoint, Endpoint::Events) => return events(shared, request, &project),
+        Ok(project) => read_project(endpoint, &project, query),
+        Err(answer) => answer,
+    };
+    send_json(request, code, &body);
+}
+
+/// The answer to a GET of /setup or /setup/checked at path with the query's parameters, as RunServer's doc comment
+/// gives them; None for any other path. They check what a project needs, so unlike Endpoint's they do not reach it.
+fn setup_answer(shared: &Shared, path: &str, query: &HashMap<String, String>) -> Option<Answer> {
+    Some(match path {
+        SETUP => match query.get("cwd").map(String::as_str) {
+            None => (400, error("missing parameter cwd")),
+            Some("") => (400, error("parameter cwd is empty")),
+            Some(cwd) => {
+                let machine = query.get("machine").map_or("", String::as_str);
+                (200, shared.setup.checks(machine, cwd, &shared.stopping))
+            }
+        },
+        SETUP_CHECKED => match shared.setup.checked() {
             Ok(checked) => (200, object([("checked", Json::from(checked))])),
             Err(why) => (500, error(&why)),
         },
-        _ => match project_of(shared, query, params) {
-            Ok(project) if matches!(endpoint, Endpoint::Events) => return events(shared, request, &project),
-            Ok(project) => read_project(endpoint, &project, query),
-            Err(answer) => answer,
-        },
-    };
-    send_json(request, code, &body);
+        _ => return None,
+    })
 }
 
 /// The answer of endpoint, one that reads project and answers at once, with the query's parameters.
@@ -502,7 +511,7 @@ fn read_project(endpoint: Endpoint, project: &ProjectRuns, query: &HashMap<Strin
                 (200, object([("run", Json::from(run)), ("role", Json::from(role)), ("text", Json::from(text))]))
             }),
         },
-        Endpoint::Events | Endpoint::Setup | Endpoint::SetupChecked => unreachable!("get answers it itself"),
+        Endpoint::Events => unreachable!("get answers it itself"),
     };
     answered.unwrap_or_else(read_failure)
 }
@@ -542,7 +551,9 @@ fn post_input(shared: &Shared, mut request: Request, query: &HashMap<String, Str
     send_json(request, code, &body);
 }
 
-/// Answer a POST of /setup/checked, which needs no parameter, by writing the setup marker.
+/// Answer a POST of /setup/checked, which needs no parameter, by writing the setup marker. It trusts the caller that
+/// every Required check passed rather than checking again, which would run the checks twice for one Close: the marker
+/// only keeps the dialog from opening by itself, and "Check setup…" opens it whatever the marker says.
 fn post_checked(shared: &Shared, request: Request, query: &HashMap<String, String>) {
     if let Some((code, body)) = refusal(shared, &request, query) {
         return send_json(request, code, &body);

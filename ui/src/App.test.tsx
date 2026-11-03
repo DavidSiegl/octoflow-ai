@@ -412,6 +412,24 @@ describe("the setup dialog", () => {
     expect(setup.marked).toBe(1);
   });
 
+  it("writes the marker once for a double click on Close", async () => {
+    const setup: FakeSetup = { checked: false, report: { ...REPORT, checks: [...REPORT.checks] } };
+    await openWith(setup);
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
+    await within(dialog).findByText("herdr 0.9.1", { exact: false });
+    const close = within(dialog).getByRole("button", { name: "Close" });
+    fireEvent.click(close);
+    fireEvent.click(close);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(setup.marked).toBe(1);
+  });
+
+  it("shows an answer to /setup that is not JSON as an error", async () => {
+    await openWith({ checked: false, reportText: "" });
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
+    expect(await within(dialog).findByText("the answer is not JSON")).toBeInTheDocument();
+  });
+
   it("does not write the marker when a required check failed", async () => {
     const setup: FakeSetup = { checked: false, report: { ...FAILED, checks: [...FAILED.checks] } };
     await openWith(setup);

@@ -77,6 +77,8 @@ export class FakeEventSource {
 export interface FakeSetup {
   checked?: boolean;
   report?: SetupReport;
+  /** A body /setup answers with 200 in place of report's JSON, such as one that is not JSON. */
+  reportText?: string;
   markError?: string;
   marked?: number;
 }
@@ -92,6 +94,9 @@ export function stubServer(files: Record<string, string>, agents: Record<string,
     const { pathname, searchParams } = new URL(url);
     const role = searchParams.get("role") ?? "";
     if (pathname === "/setup") {
+      if (setup.reportText !== undefined) {
+        return new Response(setup.reportText, { status: 200 });
+      }
       return answer(200, setup.report ?? { checks: [], passed: true });
     }
     if (pathname === "/setup/checked" && init?.method === "POST") {
