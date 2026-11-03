@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { AGENT_POLL_MS } from "./components/AgentPanes";
-import { CONNECTION, FakeEventSource, RECORDED, stubServer } from "./test/fakes";
+import { CONNECTION, FakeEventSource, RECORDED, stubServer, type FakeSetup } from "./test/fakes";
 
 const RUN = "20261024-140000-c0ffee";
 const DONE = "20261024-090000-beef00";
@@ -144,7 +144,8 @@ describe("the run detail", () => {
     expect(within(detail).getByRole("cell", { name: "20" })).toBeInTheDocument();
     expect(detail.querySelector("article script, article b")).toBeNull();
     expect(within(detail).queryByText(/alert/)).not.toBeInTheDocument();
-    const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
+    const calls = fetch.mock.calls as unknown as [string, RequestInit][];
+    const [url, init] = calls.find(([u]) => new URL(u).pathname === "/file") ?? ["", {}];
     expect(new URL(url).searchParams.get("name")).toBe("spec.md");
     expect(new URL(url).searchParams.get("run")).toBe(RUN);
     expect(init.headers).toEqual({ Authorization: "Bearer s3cret" });
@@ -344,5 +345,121 @@ describe("the agents", () => {
     fireEvent.click(screen.getByRole("button", { name: "‹ Runs" }));
     fireEvent.click(row(DONE));
     expect(within(screen.getByRole("region", { name: "agents" })).getByText("No agent has started yet.")).toBeInTheDocument();
+  });
+});
+
+describe("the setup dialog", () => {
+  const REPORT = {
+    checks: [
+      { name: "herdr", level: "required", ok: true, detail: "herdr 0.9.1", fix: "" },
+      { name: "reaching herdr", level: "optional", ok: false, detail: "not inside a herdr pane", fix: "run from a herdr pane, or pass --machine" },
+      { name: "gh", level: "needed-for-pr", ok: false, detail: "gh auth status fails", fix: "gh auth login" },
+    ],
+    passed: true,
+  } as const;
+  const FAILED = { checks: [{ name: "git", level: "required", ok: false, detail: "git is not on PATH", fix: "install git 2.36 or later" }], passed: false } as const;
+
+  async function openWith(setup: FakeSetup) {
+    const fetch = stubServer({}, {}, setup);
+    render(<App connect={connect} />);
+    await waitFor(() => expect(FakeEventSource.opened).toHaveLength(1));
+    return fetch;
+  }
+
+  function setupCalls(fetch: ReturnType<typeof stubServer>) {
+    return fetch.mock.calls.map(([url]) => new URL(url as string)).filter((url) => url.pathname === "/setup");
+  }
+
+  it("opens by itself without the marker, and checks the open project", async () => {
+    const fetch = await openWith({ checked: false, report: { ...REPORT, checks: [...REPORT.checks] } });
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
+    expect(await within(dialog).findByText("herdr 0.9.1", { exact: false })).toBeInTheDocument();
+    const required = within(dialog).getByRole("region", { name: "Needed for any run" });
+    expect(within(required).getByText("ok")).toBeInTheDocument();
+    const pr = within(dialog).getByRole("region", { name: "Needed to open a pull request" });
+    expect(within(pr).getByText("missing")).toBeInTheDocument();
+    expect(within(pr).getByText("fix: gh auth login")).toBeInTheDocument();
+    const some = within(dialog).getByRole("region", { name: "Needed by some runs" });
+    expect(within(some).getByText("warn")).toBeInTheDocument();
+    const [url] = setupCalls(fetch);
+    expect(url?.searchParams.get("cwd")).toBe("/home/me/proj");
+  });
+
+  it("does not open by itself with the marker", async () => {
+    const fetch = await openWith({ checked: true });
+    await waitFor(() => expect(fetch.mock.calls.some(([url]) => new URL(url as string).pathname === "/setup/checked")).toBe(true));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(setupCalls(fetch)).toHaveLength(0);
+  });
+
+  it("opens from Check setup…, for the open project", async () => {
+    const fetch = await openWith({ checked: true, report: { ...REPORT, checks: [...REPORT.checks] } });
+    fireEvent.change(screen.getByLabelText("Machine"), { target: { value: "devbox" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check setup…" }));
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
+    expect(within(dialog).getByText("/home/me/proj on this computer")).toBeInTheDocument();
+    await within(dialog).findByText("herdr 0.9.1", { exact: false });
+    expect(setupCalls(fetch)[0]?.searchParams.has("machine")).toBe(false);
+  });
+
+  it("writes the marker on Close when every required check passed", async () => {
+    const setup: FakeSetup = { checked: false, report: { ...REPORT, checks: [...REPORT.checks] } };
+    await openWith(setup);
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
+    await within(dialog).findByText("herdr 0.9.1", { exact: false });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(setup.marked).toBe(1);
+  });
+
+  it("writes the marker once for a double click on Close", async () => {
+    const setup: FakeSetup = { checked: false, report: { ...REPORT, checks: [...REPORT.checks] } };
+    await openWith(setup);
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
+    await within(dialog).findByText("herdr 0.9.1", { exact: false });
+    const close = within(dialog).getByRole("button", { name: "Close" });
+    fireEvent.click(close);
+    fireEvent.click(close);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(setup.marked).toBe(1);
+  });
+
+  it("shows an answer to /setup that is not JSON as an error", async () => {
+    await openWith({ checked: false, reportText: "" });
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
+    expect(await within(dialog).findByText("the answer is not JSON")).toBeInTheDocument();
+  });
+
+  it("does not write the marker when a required check failed", async () => {
+    const setup: FakeSetup = { checked: false, report: { ...FAILED, checks: [...FAILED.checks] } };
+    await openWith(setup);
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
+    expect(await within(dialog).findByText("fix: install git 2.36 or later")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(setup.marked).toBeUndefined();
+  });
+
+  it("shows a marker that cannot be written, and closes without it the next time", async () => {
+    const setup: FakeSetup = { checked: false, report: { ...REPORT, checks: [...REPORT.checks] }, markError: "cannot write /cfg/setup-checked: [Errno 13] Permission denied" };
+    await openWith(setup);
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
+    await within(dialog).findByText("herdr 0.9.1", { exact: false });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    expect(await within(dialog).findByText(/Could not record that setup was checked: cannot write \/cfg\/setup-checked/)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("checks again", async () => {
+    const setup: FakeSetup = { checked: false, report: { ...FAILED, checks: [...FAILED.checks] } };
+    const fetch = await openWith(setup);
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
+    await within(dialog).findByText("fix: install git 2.36 or later");
+    setup.report = { ...REPORT, checks: [...REPORT.checks] };
+    fireEvent.click(within(dialog).getByRole("button", { name: "Check again" }));
+    expect(await within(dialog).findByText("herdr 0.9.1", { exact: false })).toBeInTheDocument();
+    expect(within(dialog).queryByText("fix: install git 2.36 or later")).not.toBeInTheDocument();
+    expect(setupCalls(fetch)).toHaveLength(2);
   });
 });

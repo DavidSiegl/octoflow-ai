@@ -3,6 +3,7 @@ import { Api, type Connection, type Project } from "./api";
 import { ProjectBar } from "./components/ProjectBar";
 import { RunDetail } from "./components/RunDetail";
 import { RunsOverview } from "./components/RunsOverview";
+import { SetupDialog } from "./components/SetupDialog";
 import { useNow, useRunStream } from "./hooks";
 import { runsNewestFirst } from "./runs";
 
@@ -47,13 +48,34 @@ export function App({ connect }: { connect: () => Promise<Connection> }) {
 function Connected({ connection }: { connection: Connection }) {
   const api = useMemo(() => new Api(connection), [connection]);
   const [project, setProject] = useState(() => savedProject(connection.project));
+  const [settingUp, setSettingUp] = useState(false);
+  // On start, with a project, the setup dialog opens by itself until it has been closed with every required check
+  // passed. When the server cannot tell whether it has, the dialog stays closed: "Check setup…" still opens it.
+  const [startedWithProject] = useState(project.cwd !== "");
+  useEffect(() => {
+    if (!startedWithProject) {
+      return;
+    }
+    let current = true;
+    api.setupChecked().then(
+      (checked) => current && !checked && setSettingUp(true),
+      () => {},
+    );
+    return () => {
+      current = false;
+    };
+  }, [api, startedWithProject]);
   const open = (next: Project) => {
     saveProject(next);
     setProject(next);
   };
   return (
     <main>
-      <ProjectBar project={project} onOpen={open} />
+      <ProjectBar project={project} onOpen={open} onCheckSetup={() => setSettingUp(true)} />
+      {settingUp && project.cwd && (
+        // Keyed by the project, so opening another one while it is open checks that one.
+        <SetupDialog key={`setup:${project.machine}:${project.cwd}`} api={api} project={project} onClose={() => setSettingUp(false)} />
+      )}
       {project.cwd ? (
         // Keyed by the project, so opening another one starts from its overview.
         <ProjectRuns key={`${project.machine}:${project.cwd}`} api={api} project={project} />
