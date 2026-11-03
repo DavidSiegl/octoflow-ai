@@ -144,37 +144,37 @@
   [
    "[extend]\npath = '/etc/x.toml'\n",
    {
-    "error": "extends '/etc/x.toml', which is an absolute path"
+    "error": "extends \"/etc/x.toml\", which is an absolute path"
    }
   ],
   [
    "[extend]\npath = 'rules/../../x.toml'\n",
    {
-    "error": "extends 'rules/../../x.toml', which leaves the repository"
+    "error": "extends \"rules/../../x.toml\", which leaves the repository"
    }
   ],
   [
    "[extend]\npath = '..'\n",
    {
-    "error": "extends '..', which leaves the repository"
+    "error": "extends \"..\", which leaves the repository"
    }
   ],
   [
    "[extend]\npath = 'rules/..'\n",
    {
-    "error": "extends 'rules/..', which is the top level, no file"
+    "error": "extends \"rules/..\", which is the top level, no file"
    }
   ],
   [
    "[extend]\npath = '.'\n",
    {
-    "error": "extends '.', which is the top level, no file"
+    "error": "extends \".\", which is the top level, no file"
    }
   ],
   [
    "[extend]\npath = \"a\\u0000.toml\"\n",
    {
-    "error": "extends 'a\\x00.toml', which holds a NUL"
+    "error": "extends \"a\\0.toml\", which holds a NUL"
    }
   ],
   [
@@ -234,7 +234,7 @@
   "gitleaks found 2 secrets in what the push would publish, so nothing was pushed (report: /r/leaks.json):\n- `cfg.py:1` github-pat in c0ffeec0ffee (fingerprint `c0ffee:cfg.py:github-pat:1`)\n- `a b.py:12` gitleaks-allow in abababababab (fingerprint `x:a b.py:gitleaks-allow:12`)",
   "gitleaks found 1 secret in what the push would publish, so nothing was pushed (report: /r/leaks.json):\n- `cfg.py:1` github-pat in c0ffeec0ffee (fingerprint `c0ffee:cfg.py:github-pat:1`)"
  ],
- "timeout": "Command '['sh', '-c', \"it's\", '_', 'é\\n']' timed out after 60 seconds",
+ "timeout": "Command '[\"sh\", \"-c\", \"it's\", \"_\", \"é\\n\"]' timed out after 60 seconds",
  "shortened": [
   [
    "",

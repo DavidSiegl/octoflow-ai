@@ -214,9 +214,7 @@ What is known to be open in `orchestrator.py` and `gate.py`, and why. An entry l
   (`Workflow::run_proof`), where Python keeps it as a lone surrogate, which `state.json` holds as an escape and the
   write of the review then fails on (a UnicodeEncodeError, uncaught).
   And from drain (rust-engine ticket 09b, 2026-10-29): a name in drain's DIR that is not UTF-8 is left out of the
-  queue (`crate::cli::drain::queue`, `read_queue`), where Python reads its spec.md through os.fsdecode; and doctor
-  reads a tool's version number in ASCII digits only (`crate::cli::doctor`, `version_number`), where Python's `\d`
-  takes any Unicode digit (cross-review 104, F6).
+  queue (`crate::cli::drain::queue`, `read_queue`), where Python reads its spec.md through os.fsdecode.
   Decided against unless a run is found that writes such input.
 - **The Rust engine's Ctrl-C, what is left.** Rust-engine ticket 08's part 6 (2026-10-29) has a SIGINT raise the
   `Interrupt`, which stops the command the engine waits on (Fixed, "A Ctrl-C at the terminal does not reach the
@@ -400,6 +398,12 @@ What is known to be open in `orchestrator.py` and `gate.py`, and why. An entry l
   many events a step sends depends on where serve's one-second poll falls among the run's saves, so the stream
   between two checkpoints differs from run to run. Closes with a serve whose poll the harness can step, which would
   be a hook in the engine, or the user's ruling that the folded stream is the contract, as the desktop app reads it.
+- **Two e2e scenarios once saw a turn end a second before it started.** In one `cargo nextest run --workspace` of
+  octoflow-without-python ticket 03's branch on a loaded machine (2026-11-03), `agent_exits` recorded a turn's
+  `"seconds": -1` in `state.json` and `workflow_product_team` a `-<duration>` in its turns table, where their
+  recordings hold a duration of 0 or more; both passed when run again, and in the two full runs before. Not
+  investigated: whether the turn's start and end come from clocks that can disagree by a second (the engine's and
+  a fake's `date`, say). Closes with that cause found and the turn's seconds taken from one clock.
 
 - **`test-integrity` knows golden files only by this repository's layout.** `_golden_file` (`gate.py`) takes a
   golden file to be one under a `golden` directory inside a `tests` directory, as `tests/golden.py` keeps them, so

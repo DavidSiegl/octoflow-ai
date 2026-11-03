@@ -480,7 +480,7 @@ fn a_manifest_that_cannot_be_read_fails_unchecked() {
         (b"[project]\ndependencies = \"x\"\n", "not a list"),
         (b"[project]\ndependencies = [\"=x\"]\n", "is not a requirement"),
         // As Host::file_at gives a file that is not UTF-8: TOML must be.
-        (b"[project]\ndependencies = [\"\xff\"]\n", "codec can't decode byte 0xff"),
+        (b"[project]\ndependencies = [\"\xff\"]\n", "invalid utf-8 sequence of 1 bytes from index 27"),
     ];
     for (text, why) in cases {
         let base = pyproject_with(&[]).into_bytes();

@@ -14,9 +14,9 @@
 use super::*;
 use crate::ci::fake::{credentials, Outcome, JOB};
 use crate::constants::{FINISHED, QUALITY_GATE_FAILED};
+use crate::paths::file_name;
 use crate::prompts::QUALITY_PASSED_NOTE;
 use crate::pipeline::{Pipeline, Step, DEFAULT_WORKFLOW};
-use crate::py::text::basename;
 use crate::test_support::{four, impl_, quick, roles, solo, TempDir, EXAMPLES};
 use crate::workflow_file::{load_workflow_file, workflow_definition};
 
@@ -190,7 +190,7 @@ fn impl_turn(n: u32, q: u32) -> Turn {
 /// The files the run wrote to its run directory, but state.json, by name and in order.
 fn written(f: &Fixture) -> Vec<String> {
     let h = f.host.state();
-    h.writes.iter().filter(|p| p.starts_with(D) && !p.ends_with("state.json")).map(|p| basename(p).to_string()).collect()
+    h.writes.iter().filter(|p| p.starts_with(D) && !p.ends_with("state.json")).map(|p| file_name(p).to_string()).collect()
 }
 
 /// A saved run of the impl workflow in round 1 of phase impl, with the gate's job and the Implementer's agent.

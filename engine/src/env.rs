@@ -8,7 +8,6 @@ use std::os::unix::fs::PermissionsExt;
 
 use crate::constants::{CI_ENV, GIT_PATHSPEC_ENV};
 use crate::error::{os_error, OrchestratorError};
-use crate::py::text::utf8_error;
 use crate::py::json::Map;
 
 /// The environment for every process the orchestrator starts: its own, without the CI credentials (CI_ENV) and
@@ -138,7 +137,7 @@ pub fn ci_credentials(environ: &dyn Fn(&str) -> Option<String>, path: &str) -> R
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).map_err(|e| unreadable(&e, false))?;
     let text = String::from_utf8(bytes).map_err(|e| {
-        OrchestratorError(format!("could not read {path}: {}", utf8_error(e.as_bytes(), &e.utf8_error())))
+        OrchestratorError(format!("could not read {path}: {}", e.utf8_error()))
     })?;
     let mut values = parse_env_file(&text, path)?;
     for (k, v) in found {

@@ -6,7 +6,7 @@
 use std::collections::HashSet;
 
 use crate::error::{os_error, strerror, OrchestratorError};
-use crate::py::text::strip;
+use crate::paths::file_name;
 use crate::spec_file::{read_spec_file, SpecFile};
 use crate::workflow::Human;
 
@@ -47,7 +47,7 @@ fn header_end(lines: &[&str]) -> usize {
 /// The entry on line when it is key's, `<key>:` and the entry, blanks at its ends removed; None for another line.
 fn keyed_text<'l>(line: &'l str, key: &str) -> Option<&'l str> {
     let body = line.trim_end_matches(['\r', '\n']);
-    body.strip_prefix(key)?.strip_prefix(':').map(strip)
+    body.strip_prefix(key)?.strip_prefix(':').map(str::trim)
 }
 
 /// The entry on the spec header's first key line, blanks at its ends removed; None when the header has none.
@@ -94,13 +94,13 @@ pub fn with_header_field(text: &str, key: &str, entry: &str) -> Result<String, O
 /// NO_BLOCKERS.
 pub fn blocker_slugs(line: Option<&str>) -> Vec<String> {
     let line = line.unwrap_or("");
-    if NO_BLOCKERS.contains(&strip(line).to_lowercase().as_str()) {
+    if NO_BLOCKERS.contains(&line.trim().to_lowercase().as_str()) {
         return vec![];
     }
     line.split(',')
-        .map(strip)
+        .map(str::trim)
         .filter(|e| !e.is_empty())
-        .map(|e| if e.ends_with("/spec.md") { basename(dirname(e)) } else { e }.to_string())
+        .map(|e| if e.ends_with("/spec.md") { file_name(dirname(e)) } else { e }.to_string())
         .collect()
 }
 
@@ -114,11 +114,6 @@ fn dirname(path: &str) -> &str {
     } else {
         trimmed
     }
-}
-
-/// path's last component, as Python's os.path.basename gives it: after its last slash.
-fn basename(path: &str) -> &str {
-    &path[path.rfind('/').map_or(0, |i| i + 1)..]
 }
 
 /// Make text, line endings as they are, the contents of the file at path on this machine.
@@ -135,8 +130,7 @@ pub fn replace_local_file(path: &str, text: &str) -> Result<(), OrchestratorErro
             std::fs::set_permissions(&tmp, meta.permissions()).map_err(|e| os_error(&e, Some(&tmp)))?;
         }
         std::fs::rename(&tmp, &real).map_err(|e| {
-            let repr = crate::py::text::repr;
-            format!("{}: {} -> {}", os_error(&e, None), repr(&tmp), repr(&real))
+            format!("{}: {tmp:?} -> {real:?}", os_error(&e, None))
         })
     })();
     written.map_err(|why| {

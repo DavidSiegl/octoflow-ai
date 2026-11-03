@@ -2004,7 +2004,7 @@
     "headers": {
      "Content-Type": "application/json"
     },
-    "body": "{\"error\": \"'../x' is not a name in the run directory\"}"
+    "body": "{\"error\": \"\\\"../x\\\" is not a name in the run directory\"}"
    },
    {
     "request": "GET /file?cwd=<world>/project&run=<run:1>&name=nothing.md",

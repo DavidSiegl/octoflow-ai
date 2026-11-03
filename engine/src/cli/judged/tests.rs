@@ -18,7 +18,6 @@ use crate::host::Host;
 use crate::http::{Http, HttpError, Request, Response};
 use crate::interrupt::Interrupt;
 use crate::py::json::Map;
-use crate::py::text::strip;
 
 /// Python's JUDGING: the files whose change decides the judging, as the test knows them.
 const JUDGING: [&str; 6] = ["Jenkinsfile", "gate.py", "orchestrator.py", "pyproject.toml", "uv.lock", ".python-version"];
@@ -55,7 +54,7 @@ impl Judging {
         repo.git(&["push", "--quiet", "origin", "HEAD:refs/heads/main"]);
         repo.git(&["checkout", "--quiet", "-b", "pr"]);
         let head = repo.commit(&[("f.py", "f.py 2\n")], "change");
-        let tree = strip(&repo.git(&["rev-parse", "HEAD^{tree}"])).to_string();
+        let tree = repo.git(&["rev-parse", "HEAD^{tree}"]).trim().to_string();
         Judging { repo, origin, head, tree, fake: FakeJenkins::new() }
     }
 
@@ -97,7 +96,7 @@ impl Judging {
         let identity = ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"];
         host.git(&other, &[&identity[..], &["commit", "--quiet", "-m", "main moves"]].concat()).unwrap();
         host.git(&other, &["push", "--quiet", "origin", "HEAD:refs/heads/main"]).unwrap();
-        strip(&host.git(&other, &["rev-parse", "HEAD"]).unwrap()).to_string()
+        host.git(&other, &["rev-parse", "HEAD"]).unwrap().trim().to_string()
     }
 
     /// judged-in-quality with args in place of `--quality-gate JOB --target main`, in the repository's top level.
@@ -236,7 +235,7 @@ fn a_change_to_a_file_that_decides_the_judging_is_judged_in_full() {
         let mut t = Judging::new();
         t.repo.put(name, "changed\n");
         t.repo.commit(&[], &format!("edit {name}"));
-        t.tree = strip(&t.repo.git(&["rev-parse", "HEAD^{tree}"])).to_string();
+        t.tree = t.repo.git(&["rev-parse", "HEAD^{tree}"]).trim().to_string();
         t.build(t.description());
         t.refused(&[], &[name]);
         assert!(!t.fake.state().names.contains(&"builds".to_string()), "{name}: Jenkins was asked");
@@ -250,7 +249,7 @@ fn the_judging_files_are_compared_whole_from_a_subdirectory_under_diff_relative(
     t.repo.put("sub/g.py", "g\n");
     t.repo.put("Jenkinsfile", "changed\n");
     t.repo.commit(&[], "edit Jenkinsfile");
-    t.tree = strip(&t.repo.git(&["rev-parse", "HEAD^{tree}"])).to_string();
+    t.tree = t.repo.git(&["rev-parse", "HEAD^{tree}"]).trim().to_string();
     t.build(t.description());
     let sub = format!("{}/sub", t.repo.path);
     let j = t.judged_with(&[], &sub, &credentials(), Arc::clone(&t.fake) as Arc<dyn Http>);
@@ -407,7 +406,7 @@ fn a_target_that_is_not_a_branch_name_fails_before_git_fetches_it() {
         let j = t.judged(&["--quality-gate", JOB, &flag]);
         assert_ne!(j.status, 0);
         assert_eq!(j.err.matches('\n').count(), 1, "{}", j.err);
-        assert!(j.err.contains(&format!("'{target}' is not a branch name")), "{}", j.err);
+        assert!(j.err.contains(&format!("{target:?} is not a branch name")), "{}", j.err);
         assert_eq!(tracking(&t), before, "{target}: git fetched");
     }
     assert!(t.fake.state().requests.is_empty());
@@ -430,7 +429,7 @@ fn without_a_merge_base_it_fails() {
     t.repo.git(&["checkout", "--quiet", "--orphan", "lone"]);
     t.repo.put("f.py", "alone\n");
     t.repo.commit(&[], "lone");
-    t.tree = strip(&t.repo.git(&["rev-parse", "HEAD^{tree}"])).to_string();
+    t.tree = t.repo.git(&["rev-parse", "HEAD^{tree}"]).trim().to_string();
     t.build(t.description());
     t.refused(&[], &["merge base"]);
 }

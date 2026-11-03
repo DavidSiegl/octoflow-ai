@@ -22,6 +22,7 @@ use crate::harness::{harness, AgentSettings};
 use crate::herdr::{Herdr, HerdrError};
 use crate::host::{Host, PushError};
 use crate::interrupt::Interrupt;
+use crate::paths::file_name;
 use crate::pipeline::{is_built_in, Pipeline, Step, DONE, METRICS_FILE, PUBLISH, QUALITY, SUMMARY_FILE};
 use crate::prompts::template::{fill, TemplateError};
 use crate::prompts::{Prompt, Prompts};
@@ -29,7 +30,6 @@ use crate::proofs::PROOF_TIMEOUT;
 use crate::pull_request::{branch_name, commit_note, pr_body, provenance, spec_title, GateEvidence, QualityFile};
 use crate::package_index::PackageIndexes;
 use crate::py::json::{Json, Map};
-use crate::py::text::{basename, rstrip, strip};
 use crate::quality::parse_gate;
 use crate::runs::{local_host, run_health, RUNNING};
 use crate::spec_file::SpecFile;
@@ -471,7 +471,7 @@ impl<'a> Workflow<'a> {
                 "{cwd} is not a git repository with a commit, which --worktree needs"
             ))));
         }
-        let branch = strip(&self.host.git(&cwd, &["rev-parse", "--abbrev-ref", "HEAD"])?).to_string();
+        let branch = self.host.git(&cwd, &["rev-parse", "--abbrev-ref", "HEAD"])?.trim().to_string();
         if branch == "HEAD" {
             return Err(Stopped::Failed(OrchestratorError(format!(
                 "{cwd} is on a detached HEAD; --worktree bases the run on the checked-out branch, so check one out"
@@ -583,7 +583,7 @@ impl<'a> Workflow<'a> {
         self.human.log(&format!(
             "[{}] {} is a copy of {}; skipping the {}'s {skipped}",
             contract.role,
-            basename(&path),
+            file_name(&path),
             spec.path,
             self.label(&contract.role)
         ));
@@ -697,7 +697,7 @@ impl<'a> Workflow<'a> {
         if self.host.git_head(&cwd)?.is_none() {
             return Err(OrchestratorError(format!("{cwd} is not a git repository with a commit; pass --no-pr")));
         }
-        let branch = strip(&self.host.git(&cwd, &["rev-parse", "--abbrev-ref", "HEAD"])?).to_string();
+        let branch = self.host.git(&cwd, &["rev-parse", "--abbrev-ref", "HEAD"])?.trim().to_string();
         if branch == "HEAD" {
             return Err(OrchestratorError(format!(
                 "{cwd} is on a detached HEAD; check out the branch the pull request targets"
@@ -726,7 +726,7 @@ impl<'a> Workflow<'a> {
             Some(b) if s.pull_request && !b.is_empty() && s.pr_url.as_deref().is_none_or(str::is_empty) => b,
             _ => return Ok(()),
         };
-        let current = strip(&self.host.git(s.work_dir(), &["rev-parse", "--abbrev-ref", "HEAD"])?).to_string();
+        let current = self.host.git(s.work_dir(), &["rev-parse", "--abbrev-ref", "HEAD"])?.trim().to_string();
         // A detached HEAD reads as "HEAD", so it never matches.
         if &current != branch {
             return Err(OrchestratorError(format!(
@@ -742,10 +742,10 @@ impl<'a> Workflow<'a> {
     fn require_clean(&self) -> Result<(), OrchestratorError> {
         let work_dir = self.state.work_dir();
         let dirty = self.host.git(work_dir, &["status", "--porcelain"])?;
-        if !strip(&dirty).is_empty() {
+        if !dirty.trim().is_empty() {
             return Err(OrchestratorError(format!(
                 "{work_dir} has uncommitted changes; commit or stash them first:\n{}",
-                rstrip(&dirty)
+                dirty.trim_end()
             )));
         }
         Ok(())
@@ -1036,7 +1036,7 @@ impl<'a> Workflow<'a> {
         self.state.branch = Some(branch.clone());
         let (cwd, work_dir) = (self.state.cwd.clone(), self.state.work_dir().to_string());
         // Already there when an earlier orchestrator stopped between the switch and saving the next phase.
-        let current = strip(&self.host.git(&work_dir, &["rev-parse", "--abbrev-ref", "HEAD"])?).to_string();
+        let current = self.host.git(&work_dir, &["rev-parse", "--abbrev-ref", "HEAD"])?.trim().to_string();
         if current != branch {
             // Checked again: the human may have touched the tree during the interview.
             self.require_clean()?;
@@ -1080,11 +1080,11 @@ impl<'a> Workflow<'a> {
             }
             let spec = self.last_text(pipeline.contract(), 0)?;
             let s = &self.state;
-            let first_line = strip(&s.task).split('\n').next().unwrap_or_default().to_string();
+            let first_line = s.task.trim().split('\n').next().unwrap_or_default().to_string();
             let title = spec_title(&spec).filter(|t| !t.is_empty()).unwrap_or(first_line);
             let title: String = if title.is_empty() { s.run_id.clone() } else { title }.chars().take(72).collect();
             let quality = self.gate_evidence(s.round)?;
-            if !strip(&self.host.git(&wd, &["status", "--porcelain"])?).is_empty() {
+            if !self.host.git(&wd, &["status", "--porcelain"])?.trim().is_empty() {
                 self.host.git(&wd, &["add", "--all"])?;
                 let trailers: Vec<String> = provenance(s, &quality)
                     .into_iter()

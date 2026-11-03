@@ -4,9 +4,8 @@
 
 use crate::ci::{Jenkins, QualityBuild};
 use crate::constants::REMOTE;
-use crate::error::OrchestratorError;
+use crate::error::{shortened, OrchestratorError};
 use crate::host::{top_literal, Host, DEFAULT_TIMEOUT};
-use crate::py::text::{repr, shortened, strip};
 
 /// The files that decide how a change is judged: the stages, the gate, its rules, the versions of its tools and the
 /// Python they run on. judged_in_quality trusts a quality build only when none of them differs.
@@ -62,18 +61,18 @@ pub fn judged_in_quality(host: &dyn Host, root: &str, ci: &Jenkins, target: &str
     // @{-N} into the branch checked out N switches ago.
     let branch_ref = format!("refs/heads/{target}");
     if target.starts_with('-') || host.git_run(root, &["check-ref-format", &branch_ref], DEFAULT_TIMEOUT)?.status != 0 {
-        return Err(OrchestratorError(format!("{} is not a branch name", repr(target))));
+        return Err(OrchestratorError(format!("{target:?} is not a branch name")));
     }
     let tracking = format!("refs/remotes/{REMOTE}/{target}");
     host.git(root, &["fetch", "--quiet", REMOTE, &format!("+{branch_ref}:{tracking}")])?;
-    let tree = strip(&host.git(root, &["rev-parse", "--verify", "HEAD^{tree}"])?).to_string();
+    let tree = host.git(root, &["rev-parse", "--verify", "HEAD^{tree}"])?.trim().to_string();
     let merge_base = host.git_run(root, &["merge-base", "HEAD", &tracking], DEFAULT_TIMEOUT)?;
     if merge_base.status != 0 {
         // merge-base exits 1, printing nothing, when the commits have no common ancestor.
-        let why = Some(strip(&merge_base.stderr)).filter(|s| !s.is_empty()).unwrap_or("no common ancestor");
+        let why = Some(merge_base.stderr.trim()).filter(|s| !s.is_empty()).unwrap_or("no common ancestor");
         return Err(OrchestratorError(format!("HEAD has no merge base with {REMOTE}/{target}: {why}")));
     }
-    let base = strip(&merge_base.stdout).to_string();
+    let base = merge_base.stdout.trim().to_string();
     let changed = judging_changes(host, root, &base, "HEAD")?;
     if !changed.is_empty() {
         return Err(OrchestratorError(format!(
@@ -115,7 +114,7 @@ fn build_trust(
 ) -> Result<(u32, Option<String>), OrchestratorError> {
     let n = build.number;
     let Some(judged) = build.description.as_deref().and_then(Judged::read) else {
-        let quoted = build.description.as_deref().map_or_else(|| "None".to_string(), repr);
+        let quoted = build.description.as_deref().map_or_else(|| "None".to_string(), |d| format!("{d:?}"));
         return Ok((0, Some(format!("build #{n}'s description is not `judged tree=<sha> parent=<sha> main=<sha>`: {quoted}"))));
     };
     if judged.tree != tree {

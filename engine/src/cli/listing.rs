@@ -9,7 +9,6 @@ use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
 use crate::pipeline::{workflow_shape, Pipeline, QUALITY};
 use crate::py::json::{Json, Map};
-use crate::py::text::{splitlines_keepends, strip};
 use crate::runs::{run_health, RUNNING, STALE};
 use crate::summary::turn_lines;
 use crate::workflow_file::saved_pipeline;
@@ -347,8 +346,8 @@ fn last_review(
         if parse_verdict(&text).is_none() {
             return Ok(Some((path, text)));
         }
-        let lines = splitlines_keepends(&text);
-        let first = lines.iter().position(|line| !strip(line).is_empty());
+        let lines: Vec<&str> = text.split_inclusive('\n').collect();
+        let first = lines.iter().position(|line| !line.trim().is_empty());
         let without: String = lines.iter().enumerate().filter(|(i, _)| Some(*i) != first).map(|(_, l)| *l).collect();
         return Ok(Some((path, without)));
     }

@@ -47,8 +47,8 @@ fn a_path_that_is_not_utf8_is_refused() {
         b"rename to \xe9\n",
     ] {
         let e = added_lines(diff).unwrap_err();
-        assert!(e.0.starts_with("the diff names a path that is not UTF-8: '"), "{diff:?}: {e}");
-        assert!(e.0.ends_with("\u{fffd}'"), "{diff:?}: {e}");
+        assert!(e.0.starts_with("the diff names a path that is not UTF-8: \""), "{diff:?}: {e}");
+        assert!(e.0.ends_with("\u{fffd}\""), "{diff:?}: {e}");
     }
 }
 

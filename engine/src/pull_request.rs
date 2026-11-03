@@ -4,7 +4,6 @@
 use crate::constants::{
     APPROVE, BRANCH_PREFIX, DEFAULT_AGENT, FINISHED, PR_SECTION_LIMIT, QUALITY_GATE_FAILED, SUCCEEDED,
 };
-use crate::py::text::{is_space, splitlines, strip};
 use crate::quality::parse_gate;
 use crate::state::RunState;
 use crate::summary::turns_table;
@@ -12,10 +11,10 @@ use crate::summary::turns_table;
 /// The `# ` heading on the spec's first non-blank line, without the blanks around it; None when that line is no
 /// such heading, or the spec is blank.
 pub fn spec_title(spec: &str) -> Option<String> {
-    let line = strip(splitlines(spec).into_iter().find(|line| !strip(line).is_empty())?);
+    let line = spec.lines().find(|line| !line.trim().is_empty())?.trim();
     let rest = line.strip_prefix('#')?;
-    let title = rest.trim_start_matches(is_space);
-    (title.len() < rest.len() && !title.is_empty()).then(|| strip(title).to_string())
+    let title = rest.trim_start();
+    (title.len() < rest.len() && !title.is_empty()).then(|| title.trim().to_string())
 }
 
 /// The branch a run publishes its change on: BRANCH_PREFIX, the title lower-cased with each run of characters other
@@ -232,7 +231,7 @@ fn details(summary: &str, text: &str, open: bool) -> String {
     format!(
         "<details{}>\n<summary>{summary}</summary>\n\n{}\n\n</details>",
         if open { " open" } else { "" },
-        strip(text)
+        text.trim()
     )
 }
 

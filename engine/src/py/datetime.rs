@@ -8,7 +8,6 @@
 use jiff::tz::TimeZone;
 use jiff::Timestamp;
 
-use super::text::repr;
 
 /// A time as `datetime.fromisoformat` reads it in CPython 3.14, which .python-version pins for the repository's tests
 /// and harness.json's answers; 3.13 reads a few malformed times otherwise (TODO.md, "The Rust engine reads some input
@@ -136,7 +135,7 @@ pub fn fromisoformat_timestamp(iso: &str) -> Result<f64, String> {
 /// since 1970-01-01T00:00 of its date and time as they are written, and its offset from UTC in microseconds, None for a
 /// time without one. Errors: as IsoTime::parse's.
 fn fromisoformat(iso: &str) -> Result<(i128, Option<i128>), String> {
-    let invalid = || format!("Invalid isoformat string: {}", repr(iso));
+    let invalid = || format!("Invalid isoformat string: {iso:?}");
     if iso.chars().count() < 7 {
         return Err(invalid());
     }

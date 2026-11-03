@@ -85,11 +85,11 @@ fn a_directory_or_an_unreadable_file_is_named_as_python_names_it() {
     let dir = TempDir::new();
     let path = dir.join("ci.env");
     std::fs::create_dir(&path).unwrap();
-    assert_eq!(ci_credentials(&from(&[]), &path).unwrap_err().0, format!("could not read {path}: [Errno 21] Is a directory: '{path}'"));
+    assert_eq!(ci_credentials(&from(&[]), &path).unwrap_err().0, format!("could not read {path}: [Errno 21] Is a directory: {path:?}"));
     let (_dir, path) = env_file("JENKINS_URL=x\n", 0o000);
     // root reads any file; anyone else is refused.
     if let Err(e) = ci_credentials(&from(&[]), &path) {
-        assert_eq!(e.0, format!("could not read {path}: [Errno 13] Permission denied: '{path}'"));
+        assert_eq!(e.0, format!("could not read {path}: [Errno 13] Permission denied: {path:?}"));
     }
 }
 
@@ -101,7 +101,7 @@ fn a_file_that_is_not_utf8_is_named() {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     assert_eq!(
         ci_credentials(&from(&[]), &path).unwrap_err().0,
-        format!("could not read {path}: 'utf-8' codec can't decode byte 0xff in position 12: invalid start byte")
+        format!("could not read {path}: invalid utf-8 sequence of 1 bytes from index 12")
     );
 }
 

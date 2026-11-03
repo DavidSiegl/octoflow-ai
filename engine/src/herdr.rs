@@ -18,10 +18,9 @@ use std::time::Duration;
 
 use crate::constants::AGENT_START_TIMEOUT_MS;
 use crate::error::OrchestratorError;
-use crate::host::{run_process, ProcessError};
+use crate::host::{line_ends_as_lf, run_process, ProcessError};
 use crate::interrupt::Interrupt;
 use crate::py::json::Json;
-use crate::py::text::{strip, universal_newlines};
 
 #[cfg(test)]
 pub(crate) mod fake;
@@ -378,8 +377,8 @@ impl ProcessHerdr {
         let bad = |why: String| HerdrError::new("bad_response", format!("{command}: {why}"));
         let mut answer = Json::parse(&out).map_err(bad)?;
         match &mut answer {
-            Json::Object(map) => map.remove("result").ok_or_else(|| bad("'result'".to_string())),
-            _ => Err(bad(format!("the answer is not an object: {}", strip(&out)))),
+            Json::Object(map) => map.remove("result").ok_or_else(|| bad("\"result\"".to_string())),
+            _ => Err(bad(format!("the answer is not an object: {}", out.trim()))),
         }
     }
 
@@ -417,7 +416,7 @@ impl ProcessHerdr {
         };
         let decode = |bytes: Vec<u8>| {
             String::from_utf8(bytes)
-                .map(|text| universal_newlines(&text))
+                .map(|text| line_ends_as_lf(&text))
                 .map_err(|e| failed(format!("printed what is not UTF-8: {}", e.utf8_error())))
         };
         let (stdout, stderr) = (decode(stdout)?, decode(stderr)?);
@@ -450,7 +449,7 @@ fn herdr_error(status: i32, stdout: &str, stderr: &str) -> HerdrError {
         }
     }
     let printed = if stderr.is_empty() { stdout } else { stderr };
-    HerdrError::new(&format!("exit_{status}"), strip(printed))
+    HerdrError::new(&format!("exit_{status}"), printed.trim())
 }
 
 /// A string field of an answer, at the path of keys; bad_response naming the command and the path when it is not

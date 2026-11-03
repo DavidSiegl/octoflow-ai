@@ -5,7 +5,6 @@ use ::toml::value::{Datetime, Offset};
 use ::toml::{Table, Value};
 
 use super::json::Json;
-use super::text::repr as str_repr;
 
 /// The table text holds, as tomllib.loads reads it; for text that is not TOML, why not, as [`syntax_error`] words
 /// it. The toml crate reads TOML 1.1, some of which tomllib before Python 3.15 refuses.
@@ -155,11 +154,11 @@ fn datetime_str(d: &Datetime) -> String {
     }
 }
 
-/// value as Python's repr() writes it: `'text'`, `5`, `2.5`, `True`, `[1, 'a']`, `{'k': 1}`, or a datetime's
-/// `datetime.date(2020, 1, 31)`.
+/// value as Python's repr() writes it, but for its strings, which are quoted as Rust's Debug quotes a str: `"text"`,
+/// `5`, `2.5`, `True`, `[1, "a"]`, `{"k": 1}`, or a datetime's `datetime.date(2020, 1, 31)`.
 pub fn repr(value: &Value) -> String {
     match value {
-        Value::String(s) => str_repr(s),
+        Value::String(s) => format!("{s:?}"),
         Value::Integer(n) => n.to_string(),
         Value::Float(x) => Json::Float(*x).python_str(),
         Value::Boolean(b) => if *b { "True" } else { "False" }.to_string(),
@@ -168,7 +167,7 @@ pub fn repr(value: &Value) -> String {
         Value::Table(table) => {
             format!(
                 "{{{}}}",
-                table.iter().map(|(k, v)| format!("{}: {}", str_repr(k), repr(v))).collect::<Vec<_>>().join(", ")
+                table.iter().map(|(k, v)| format!("{k:?}: {}", repr(v))).collect::<Vec<_>>().join(", ")
             )
         }
     }

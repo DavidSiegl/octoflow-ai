@@ -11,6 +11,7 @@ use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use super::*;
 use crate::constants::NO_QUESTION;
 use crate::host::fake::HOST_EPOCH;
+use crate::paths::{file_name, split_extension};
 use crate::pipeline::DEFAULT_WORKFLOW;
 use crate::test_support::EXAMPLES;
 use crate::workflow_file::{load_workflow_file, workflow_toml};
@@ -53,7 +54,7 @@ fn answered(path_of: impl Fn(&RunState) -> String + 'static, text: &str) -> Turn
 
 /// The prompt of the wait for the human's answer to the k-th block of the report at path.
 fn blocked_prompt(path: &str, k: u32) -> String {
-    let (stem, ext) = crate::py::text::splitext(path);
+    let (stem, ext) = split_extension(path);
     let blocked = format!("{stem}.blocked-{k}{ext}");
     let value = |name: &str| match name {
         "path" => Some(path.to_string()),
@@ -70,7 +71,7 @@ fn blocked_files(host: &FakeHost) -> Vec<String> {
         .files
         .keys()
         .filter(|p| p.contains(".blocked-"))
-        .map(|p| crate::py::text::basename(p).to_string())
+        .map(|p| file_name(p).to_string())
         .collect();
     names.sort();
     names

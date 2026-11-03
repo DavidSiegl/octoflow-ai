@@ -3,6 +3,7 @@
 //! engine's answers.
 
 use super::*;
+use crate::error::shortened;
 use crate::interrupt::Interrupt;
 use crate::host::tests::{environment, put, read, tool, Repo, FAKE_TOKEN};
 use crate::host::{ProcessHost, PushError};
@@ -280,7 +281,7 @@ fn an_extend_the_scan_cannot_take_from_the_base_blocks_the_push() {
         ),
         ("pathspec magic", &[(".gitleaks.toml", "[extend]\npath = ':/a.txt'\n")], ":/a.txt"),
         ("not TOML", &[(".gitleaks.toml", "[extend]\npath = 'one.toml'\n"), ("one.toml", "[extend\n")], "one.toml"),
-        ("NUL", &[(".gitleaks.toml", "[extend]\npath = \"a\\u0000.toml\"\n")], "a\\x00.toml"),
+        ("NUL", &[(".gitleaks.toml", "[extend]\npath = \"a\\u0000.toml\"\n")], "a\\0.toml"),
         ("top level", &[(".gitleaks.toml", "[extend]\npath = 'rules/..'\n")], "rules/.."),
         ("not a string", &[(".gitleaks.toml", "[extend]\npath = 1\n")], ".gitleaks.toml gives a path"),
         ("twice", &[(".gitleaks.toml", "[extend]\npath = 'a.toml'\nPath = 'b.toml'\n")], ".gitleaks.toml"),
@@ -331,7 +332,7 @@ fn a_merge_counts_what_it_adds_not_what_its_parents_had() {
     r.git(&["switch", "--quiet", "main"]);
     r.commit(&[("mine.txt", "mine\n")], "mine");
     r.git(&["merge", "--quiet", "--no-edit", "upstream"]);
-    s.push(strip(&r.git(&["rev-parse", "HEAD"]))).unwrap();
+    s.push(r.git(&["rev-parse", "HEAD"]).trim()).unwrap();
     // An edit made in a merge is the merge's own.
     r.git(&["switch", "--quiet", "-c", "side", "HEAD~1"]);
     r.commit(&[("side.txt", "side\n")], "side");
@@ -354,7 +355,7 @@ fn an_octopus_merge_is_refused() {
     r.git(&["switch", "--quiet", "main"]);
     r.commit(&[("mine.txt", "mine\n")], "mine");
     r.git(&["merge", "--quiet", "--no-edit", "s1", "s2"]);
-    let e = s.failure(strip(&r.git(&["rev-parse", "HEAD"])));
+    let e = s.failure(r.git(&["rev-parse", "HEAD"]).trim());
     assert!(e.contains("three or more parents"), "{e}");
     assert!(!s.pushed());
 }
@@ -382,7 +383,7 @@ fn committed_gitattributes_do_not_hide_an_allow_whatever_git_s_config() {
     // gitleaks gets the same git environment, which brings back no tree's attributes.
     let seen = s.seen("env");
     let env: Vec<(&str, &str)> = seen.lines().filter_map(|l| l.split_once('=')).collect();
-    let empty_tree = strip(&s.repo.git(&["hash-object", "-t", "tree", "/dev/null"])).to_string();
+    let empty_tree = s.repo.git(&["hash-object", "-t", "tree", "/dev/null"]).trim().to_string();
     assert!(env.contains(&("GIT_CONFIG_VALUE_0", empty_tree.as_str())), "{seen}");
     let attributes_back = ["GIT_ATTR_SOURCE", "GIT_WORK_TREE", "GIT_CONFIG_PARAMETERS"];
     assert!(!env.iter().any(|(k, _)| attributes_back.contains(k)), "{seen}");
@@ -428,7 +429,7 @@ fn a_gitleaks_that_cannot_judge_blocks_the_push() {
         ("bad-config", "status 1 and wrote no report"),
         ("report:{}", "status 0 and wrote no finding"),
         ("report:[{\"RuleID\": 1}]", "cannot be read"),
-        ("report:[{\"File\": \"f\"}]", "cannot be read: 'RuleID'"),
+        ("report:[{\"File\": \"f\"}]", "cannot be read: \"RuleID\""),
         (
             "report:[{\"RuleID\": \"r\", \"File\": \"f\", \"StartLine\": \"x\", \"Commit\": \"c\", \
              \"Fingerprint\": \"p\"}]",
@@ -479,7 +480,7 @@ fn push_branch_scans_the_branch_s_commit_and_tracks_it() {
     s.repo.host.push_branch(&s.repo.path, "orchestrator/x-a1b2c3", s.repo.base(), &report).unwrap();
     assert!(s.argv().iter().any(|a| a.contains(&commit)));
     assert!(s.on_origin().contains(&"refs/heads/orchestrator/x-a1b2c3".to_string()));
-    assert_eq!(strip(&s.repo.git(&["rev-parse", "--abbrev-ref", "@{upstream}"])), "origin/orchestrator/x-a1b2c3");
+    assert_eq!(s.repo.git(&["rev-parse", "--abbrev-ref", "@{upstream}"]).trim(), "origin/orchestrator/x-a1b2c3");
     // A secret in the branch's commit stops it.
     let leak = s.repo.commit(&[("c.py", "x = 1  # gitleaks:allow\n")], "allow");
     let pushed = s.repo.host.push_branch(&s.repo.path, "orchestrator/x-a1b2c3", s.repo.base(), &report);

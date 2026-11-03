@@ -9,7 +9,6 @@ use crate::error::OrchestratorError;
 use crate::host::{GhError, Host, PullRequest};
 use crate::py::datetime::fromisoformat_timestamp;
 use crate::py::json::Json;
-use crate::py::text::repr;
 use crate::runs::{run_health, RUNNING};
 use crate::state::RunState;
 
@@ -172,7 +171,7 @@ pub fn pull_request_pending(pr: &PullRequest, number: &str, now: f64) -> Result<
     }
     let closed = pr.closed_at.as_deref().map(fromisoformat_timestamp);
     let Some(Ok(closed)) = closed else {
-        let at = pr.closed_at.as_deref().map_or("None".to_string(), repr);
+        let at = pr.closed_at.as_deref().map_or("None".to_string(), |at| format!("{at:?}"));
         return Err(OrchestratorError(format!("PR #{number} is closed at {at}, which is not a time")));
     };
     if now - closed > CLOSED_BRANCH_GRACE as f64 {

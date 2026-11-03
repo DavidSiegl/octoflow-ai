@@ -8,8 +8,8 @@ use crate::constants::{CRATES_IO_TIMEOUT, PYPI_TIMEOUT};
 use crate::error::OrchestratorError;
 use crate::handoff::labelled_word;
 use crate::host::ChangedFile;
+use crate::paths::file_name;
 use crate::pipeline::Pipeline;
-use crate::py::text::{basename, decimal_value, strip};
 use crate::package_index::PackageIndexes;
 use crate::quality::{
     one_line, QUALITY_ERROR, QUALITY_FAILED_CONDITIONS, QUALITY_FINDINGS_LIMIT, QUALITY_OK, QUALITY_TO_WEIGH_NOTE,
@@ -173,12 +173,12 @@ fn named(name: &str, finding: Finding) -> Finding {
     Finding { rule, ..finding }
 }
 
-/// The largest number a line of quality starts with, followed by ". ", in any script's decimal digits; 0 for none.
+/// The largest number a line of quality starts with, in ASCII digits, followed by ". "; 0 for none.
 fn last_number(quality: &str) -> u128 {
     quality
         .split('\n')
         .filter_map(|line| {
-            let digits: Vec<u32> = line.chars().map_while(decimal_value).collect();
+            let digits: Vec<u32> = line.chars().map_while(|c| c.to_digit(10)).collect();
             let rest = line.chars().skip(digits.len()).take(2).collect::<String>();
             (!digits.is_empty() && rest == ". ")
                 .then(|| digits.iter().fold(0u128, |n, &d| n.saturating_mul(10).saturating_add(u128::from(d))))
@@ -192,7 +192,7 @@ fn last_number(quality: &str) -> u128 {
 /// itself a `## ` heading, so crate::quality::parse_gate reads ERROR from the result.
 fn failed_by(quality: &str, conditions: &[String]) -> String {
     let mut lines: Vec<String> = quality.split('\n').map(str::to_string).collect();
-    let at = lines.iter().position(|line| !strip(line).is_empty()).unwrap_or(0);
+    let at = lines.iter().position(|line| !line.trim().is_empty()).unwrap_or(0);
     if let Some(found) = labelled_word(&lines[at], "GATE", &[QUALITY_OK]) {
         lines[at].replace_range(found.word_start..found.end, QUALITY_ERROR);
     }
@@ -283,7 +283,7 @@ pub fn unexpected_paths(change: &RunChange) -> CheckFindings {
     let paths: BTreeSet<&str> = change.files.iter().map(|f| f.path.as_str()).collect();
     let to_weigh = paths
         .into_iter()
-        .filter(|path| !change.spec.contains(path) && !change.spec.contains(basename(path)))
+        .filter(|path| !change.spec.contains(path) && !change.spec.contains(file_name(path)))
         .map(|path| {
             Finding::warning(Some(path), None, "", "the spec mentions neither this path nor its file name.".to_string())
         })

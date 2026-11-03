@@ -2,10 +2,11 @@
 //! byte for byte the Python engine's, since the prompts are the product.
 
 use crate::env::ConfigDir;
-use crate::error::OrchestratorError;
+use crate::error::{closest_name, OrchestratorError};
+use crate::host::line_ends_as_lf;
+use crate::paths::split_extension;
 use crate::proof_copies_dir;
 use crate::py::json::Map;
-use crate::py::text::close_match;
 
 pub mod template;
 
@@ -318,12 +319,11 @@ pub fn prompt_files(dir: &str) -> Result<Map<String>, OrchestratorError> {
     files_with_extension(dir, ".md")
 }
 
-/// Name -> path of each file in dir whose extension (os.path.splitext's) is ext, in name order, the name being the
+/// Name -> path of each file in dir whose extension (split_extension's) is ext, in name order, the name being the
 /// file's without its extension; none without the directory. Errors: the directory cannot be listed. A file whose
 /// name is not UTF-8 is left out.
 pub(crate) fn files_with_extension(dir: &str, ext: &str) -> Result<Map<String>, OrchestratorError> {
     use crate::error::strerror;
-    use crate::py::text::splitext;
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Map::new()),
@@ -340,7 +340,7 @@ pub(crate) fn files_with_extension(dir: &str, ext: &str) -> Result<Map<String>, 
     Ok(names
         .iter()
         .filter_map(|name| {
-            let (stem, found) = splitext(name);
+            let (stem, found) = split_extension(name);
             (found == ext).then(|| (stem, format!("{dir}/{name}")))
         })
         .collect())
@@ -357,7 +357,7 @@ pub fn load_prompts(config: &ConfigDir) -> Result<Prompts, OrchestratorError> {
     for (name, path) in prompt_files(&config.prompts_dir())? {
         if Prompt::named(&name).is_none() {
             let names = Prompt::ALL.iter().map(|p| p.name());
-            let hint = match close_match(&name, names) {
+            let hint = match closest_name(&name, names) {
                 Some(close) => format!("did you mean {close}.md?"),
                 None => {
                     let mut sorted: Vec<&str> = Prompt::ALL.iter().map(|p| p.name()).collect();
@@ -370,12 +370,8 @@ pub fn load_prompts(config: &ConfigDir) -> Result<Prompts, OrchestratorError> {
         let bytes = std::fs::read(&path)
             .map_err(|e| OrchestratorError(format!("cannot read prompt file {path}: {}", strerror(&e))))?;
         let text = String::from_utf8(bytes)
-            .map_err(|e| {
-                let why = crate::py::text::utf8_error(e.as_bytes(), &e.utf8_error());
-                OrchestratorError(format!("{path}: not UTF-8 text: {why}"))
-            })?
-            .replace("\r\n", "\n")
-            .replace('\r', "\n");
+            .map(|text| line_ends_as_lf(&text))
+            .map_err(|e| OrchestratorError(format!("{path}: not UTF-8 text: {}", e.utf8_error())))?;
         let text = text.strip_suffix('\n').unwrap_or(&text).to_string();
         if let Some(problem) = prompt_problem(&name, &text) {
             return Err(OrchestratorError(format!("{path}: {problem}")));
