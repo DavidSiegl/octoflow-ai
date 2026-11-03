@@ -257,9 +257,9 @@ pub trait Host {
         self.check(&["mv", "-f", "--", path, new_path], None, DEFAULT_TIMEOUT).map(drop)
     }
 
-    /// The time on this host, in seconds since the epoch. now and mtime read this host's clock, the one that stamps
-    /// the handoff files, so a turn's start and end come from one clock, and skew between machines cannot distort its
-    /// duration. Errors: date prints what is not a time.
+    /// The time on this host, in seconds since the epoch. now and mtime both read this host, the one that stamps the
+    /// handoff files, so skew between machines cannot distort a turn's duration; an mtime can still trail now by a few
+    /// milliseconds (Workflow::end_turn says why). Errors: date prints what is not a time.
     fn now(&self) -> Result<i64, OrchestratorError> {
         seconds(&self.check(&["date", "+%s"], None, DEFAULT_TIMEOUT)?, "date +%s")
     }
