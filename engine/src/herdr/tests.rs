@@ -525,8 +525,8 @@ fn the_typed_line_gives_a_shell_back_each_word_then_the_marker_alone_on_its_line
     // The shell herdr starts, with the variables the create gave it, reading the typed line.
     let mut shell = std::process::Command::new("sh");
     for pair in ran[0].0.iter().skip_while(|w| *w != "--env").filter(|w| *w != "--env") {
-        let (name, value) = pair.split_once('=').unwrap();
-        shell.env(name, value);
+        let (name, word) = pair.split_once('=').unwrap();
+        shell.env(name, word);
     }
     let out = shell.args(["-c", &ran[1].0[4]]).output().unwrap();
     let printed = String::from_utf8(out.stdout).unwrap();

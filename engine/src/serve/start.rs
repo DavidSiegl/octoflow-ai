@@ -2,13 +2,14 @@
 //! answer; [`RunRequest`], POST /run's body, and the `run` command it is; [`StartWait`], how long POST /run waits for
 //! the run; and [`Started`], how the wait ended. ProjectRuns::start starts it.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
 use crate::constants::{AGENT_KINDS, DEFAULT_AGENT};
 use crate::env::ConfigDir;
 use crate::error::OrchestratorError;
+use crate::interrupt::Interrupt;
 use crate::pipeline::Pipeline;
 use crate::prompts::Prompts;
 use crate::workflow_file::{named_workflow, workflow_names};
@@ -21,6 +22,23 @@ pub struct StartWait {
     pub every: Duration,
     /// From the run's start, after which serve answers that it is not yet listed.
     pub limit: Duration,
+}
+
+impl StartWait {
+    /// The answer look gives, asked at once and then every `every`, or Unlisted once `limit` has passed, or stopping
+    /// is raised, without one. look answers None for "not yet".
+    pub fn until(&self, stopping: &Interrupt, mut look: impl FnMut() -> Option<Started>) -> Started {
+        let deadline = Instant::now() + self.limit;
+        loop {
+            if let Some(answer) = look() {
+                return answer;
+            }
+            if stopping.is_raised() || Instant::now() >= deadline {
+                return Started::Unlisted;
+            }
+            stopping.sleep(self.every);
+        }
+    }
 }
 
 /// serve's wait for a run it starts (the app-start-runs spec's Decision 5: 30 seconds).
@@ -75,7 +93,7 @@ impl RunRequest {
         if let Some(unknown) = fields.keys().find(|k| !FIELDS.contains(&k.as_str())) {
             return Err(format!("unknown field {unknown:?}; the fields are {}", FIELDS.join(", ")));
         }
-        if fields.iter().any(|(name, value)| holds_nul(name) || value_holds_nul(value)) {
+        if fields.iter().any(|(name, json)| holds_nul(name) || value_holds_nul(json)) {
             return Err("the body's strings must hold no NUL character, which no command's argument can".to_string());
         }
         let given = |name: &str| fields.get(name).filter(|v| !v.is_null());
