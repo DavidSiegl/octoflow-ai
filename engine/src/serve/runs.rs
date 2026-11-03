@@ -229,11 +229,8 @@ struct Sent {
     key: Object,
     /// The run's files, as last listed.
     files: Value,
-    /// True when the last poll listed the files and got the same list as the poll before it, under the same record.
-    /// For a finished run that is taken to mean the engine is done writing its files: the ones it writes after the
-    /// save that finishes the run (end_done_run's and release's summary.md and metrics.json) follow that save by a few
-    /// host commands. Two polls one interval (SERVE_POLL) apart can both miss them only when those commands take
-    /// longer than the interval; then the stream tells of the files only at the record's next change.
+    /// True means the run is finished and files is taken to be all it has under its record key, so they are not listed
+    /// again until the record changes; always false for a running run. RunWatch::poll says when a list settles.
     files_settled: bool,
 }
 
@@ -252,10 +249,11 @@ impl<'p> RunWatch<'p> {
     /// - problem, {"error"}: the project could not be read, and why; error is null once it can be again. First.
     ///
     /// The first poll sends every run's record and files. A running run's files are listed on every poll. A finished
-    /// or failed run's are listed until two polls in a row with the same record list the same files, as the engine
-    /// writes summary.md and metrics.json after the save that finishes the run; then again only when its record
-    /// changes, as nothing else drives it. A poll that fails sends only its problem, and changes nothing else of what
-    /// the watch holds.
+    /// or failed run's are listed until two polls in a row with the same record list the same files; then again only
+    /// when its record changes, as nothing else drives it. The wait is for the files the engine writes after the save
+    /// that finishes the run (summary.md and metrics.json, in workflow.rs's end_done_run and release): a poll interval
+    /// (SERVE_POLL) is taken to be long enough for them, and ones written later are told of only at the record's next
+    /// change. A poll that fails sends only its problem, and changes nothing else of what the watch holds.
     pub fn poll(&mut self) -> Vec<Event> {
         match self.changes() {
             Ok(events) => self.problem_events(None).into_iter().chain(events).collect(),
@@ -281,7 +279,7 @@ impl<'p> RunWatch<'p> {
                 Some(old) if same_record && finished && old.files_settled => (old.files.clone(), true),
                 _ => {
                     let files = self.project.files(&run_id)?;
-                    let settled = same_record && old.is_some_and(|old| old.files == files);
+                    let settled = finished && same_record && old.is_some_and(|old| old.files == files);
                     (files, settled)
                 }
             };
