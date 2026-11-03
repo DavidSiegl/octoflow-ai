@@ -1,8 +1,17 @@
 import { useState, type FormEvent } from "react";
 import type { Project } from "../api";
 
-/** The project folder and machine fields; onOpen gets the project they name when the form is submitted. */
-export function ProjectBar({ project, onOpen }: { project: Project; onOpen: (project: Project) => void }) {
+interface Props {
+  /** The project open now. */
+  project: Project;
+  /** Gets the project the fields name when the form is submitted. */
+  onOpen: (project: Project) => void;
+  /** Called by "Check setup…", which checks the project open now, not what the fields hold. */
+  onCheckSetup: () => void;
+}
+
+/** The project folder and machine fields, and the button that checks the open project's setup. */
+export function ProjectBar({ project, onOpen, onCheckSetup }: Props) {
   const [cwd, setCwd] = useState(project.cwd);
   const [machine, setMachine] = useState(project.machine);
   const submit = (event: FormEvent) => {
@@ -21,6 +30,9 @@ export function ProjectBar({ project, onOpen }: { project: Project; onOpen: (pro
       </label>
       <button type="submit" disabled={!cwd.trim()}>
         Open
+      </button>
+      <button type="button" onClick={onCheckSetup} disabled={!project.cwd}>
+        Check setup…
       </button>
     </form>
   );

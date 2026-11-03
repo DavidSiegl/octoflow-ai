@@ -12,6 +12,7 @@ use crate::cli::listing::run_record;
 use crate::constants::{APPROVE, RUNS_DIR, STALE_SECONDS};
 use crate::py::json::Map;
 use crate::py::url::urlencode;
+use crate::cli::doctor::{Check, Level};
 use crate::serve::fake::{FakeConsole, ServeHost};
 
 const SERVE_ID: &str = "20261024-120000-5e7e00";
@@ -59,6 +60,11 @@ impl Served {
     }
 
     fn fake_polling(host: &Arc<ServeHost>, origins: &[&str], polls: Polls) -> Served {
+        Served::fake_with(host, origins, polls, unchecked())
+    }
+
+    /// A server whose every project is host's /proj, its setup checked and marked by setup.
+    fn fake_with(host: &Arc<ServeHost>, origins: &[&str], polls: Polls, setup: Setup) -> Served {
         let host = Arc::clone(host);
         let connects = Arc::new(Mutex::new(vec![]));
         let seen = Arc::clone(&connects);
@@ -68,17 +74,23 @@ impl Served {
             seen.lock().unwrap().push((machine.to_string(), cwd.to_string()));
             Ok(Reached { host: host.clone(), dir: "/proj".to_string(), console: herdr.clone() })
         };
-        Served { console, ..Served::start(Box::new(connect), origins, polls, connects) }
+        Served { console, ..Served::start(Box::new(connect), origins, polls, connects, setup) }
     }
 
     /// A server whose projects are the real directories here.
     fn real() -> Served {
-        Served::start(Box::new(project_host), &[], SERVE_POLL, Arc::default())
+        Served::start(Box::new(project_host), &[], SERVE_POLL, Arc::default(), unchecked())
     }
 
-    fn start(connect: Box<Connect>, origins: &[&str], polls: Polls, connects: Arc<Mutex<Vec<(String, String)>>>) -> Served {
+    fn start(
+        connect: Box<Connect>,
+        origins: &[&str],
+        polls: Polls,
+        connects: Arc<Mutex<Vec<(String, String)>>>,
+        setup: Setup,
+    ) -> Served {
         let origins: Vec<String> = origins.iter().map(|o| o.to_string()).collect();
-        let server = RunServer::start_polling(&origins, connect, polls).expect("the server starts");
+        let server = RunServer::start_polling(&origins, connect, setup, polls).expect("the server starts");
         let port = port_of(server.url());
         Served { server, port, connects, console: Arc::default() }
     }
@@ -195,6 +207,11 @@ fn status_at(port: u16) -> Option<u16> {
     let mut got = String::new();
     let _ = conn.read_to_string(&mut got);
     got.split(' ').nth(1).and_then(|s| s.parse().ok())
+}
+
+/// A Setup for a test that asks for no setup: checking a project fails the test, and the marker is nowhere.
+fn unchecked() -> Setup {
+    Setup::new(Box::new(|_: &str, _: &str, _: &Interrupt| panic!("no setup check was expected")), "/nowhere/setup-checked".into())
 }
 
 /// A directory of the test's own, removed when it is dropped.
@@ -416,6 +433,99 @@ fn missing_parameter() {
     assert_eq!(*served.connects.lock().unwrap(), Vec::<(String, String)>::new());
 }
 
+/// Each (machine, cwd) a project's setup was checked for, in order.
+type Asked = Arc<Mutex<Vec<(String, String)>>>;
+
+/// A server for the setup tests, its marker at marker, its every project checked as checks, each check's (machine,
+/// cwd) recorded in the Asked it returns.
+fn setup_served(marker: &str, checks: Vec<Check>) -> (Served, Asked) {
+    let asked = Arc::new(Mutex::new(vec![]));
+    let seen = Arc::clone(&asked);
+    let check = move |machine: &str, cwd: &str, _: &Interrupt| {
+        seen.lock().unwrap().push((machine.to_string(), cwd.to_string()));
+        checks.clone()
+    };
+    let setup = Setup::new(Box::new(check), marker.to_string());
+    (Served::fake_with(&Arc::new(ServeHost::on(None)), &[], SERVE_POLL, setup), asked)
+}
+
+fn a_check(name: &str, level: Level, ok: bool) -> Check {
+    let fix = if ok { String::new() } else { format!("install {name}") };
+    Check { name: name.to_string(), level, ok, detail: format!("{name} detail"), fix }
+}
+
+#[test]
+fn setup_checks_the_project_without_reaching_it() {
+    let checks = vec![a_check("herdr", Level::Required, true), a_check("gh", Level::NeededForPr, false)];
+    let (served, asked) = setup_served("/nowhere/setup-checked", checks);
+    let reply = served.get(&Served::query("/setup", &[("machine", "box")]), &[]);
+    assert_eq!(reply.status, Some(200));
+    assert_eq!(
+        reply.body,
+        r#"{"checks": [{"name": "herdr", "level": "required", "ok": true, "detail": "herdr detail", "fix": ""}, "#.to_string()
+            + r#"{"name": "gh", "level": "needed-for-pr", "ok": false, "detail": "gh detail", "fix": "install gh"}], "passed": true}"#
+    );
+    assert_eq!(*asked.lock().unwrap(), [("box".to_string(), "~/proj".to_string())]);
+    assert_eq!(*served.connects.lock().unwrap(), Vec::<(String, String)>::new(), "a project was reached");
+}
+
+#[test]
+fn setup_has_not_passed_with_a_required_check_failed() {
+    let checks = vec![a_check("herdr", Level::Required, false), a_check("codex CLI", Level::Optional, false)];
+    let (served, _) = setup_served("/nowhere/setup-checked", checks);
+    let reply = served.get(&Served::query("/setup", &[]), &[]);
+    assert_eq!(reply.json().get("passed"), Some(&Json::from(false)));
+}
+
+#[test]
+fn setup_needs_the_project() {
+    let (served, asked) = setup_served("/nowhere/setup-checked", vec![]);
+    let reply = served.get("/setup?machine=box", &[]);
+    assert_eq!((reply.status, reply.error()), (Some(400), "missing parameter cwd".to_string()));
+    // An empty cwd would check the sidecar's own directory, a project nobody named.
+    let reply = served.get("/setup?cwd=&machine=box", &[]);
+    assert_eq!((reply.status, reply.error()), (Some(400), "parameter cwd is empty".to_string()));
+    assert!(asked.lock().unwrap().is_empty());
+}
+
+#[test]
+fn the_setup_marker_is_written_and_read() {
+    let d = TempDir::new("marker");
+    let marker = format!("{}/config/setup-checked", d.0);
+    let (served, asked) = setup_served(&marker, vec![]);
+    let checked = |served: &Served| served.get("/setup/checked", &[]).json().get("checked").cloned();
+    assert_eq!(checked(&served), Some(Json::from(false)));
+    let reply = served.post("/setup/checked", "");
+    assert_eq!((reply.status, reply.body.as_str()), (Some(200), r#"{"checked": true}"#));
+    assert_eq!(std::fs::read(&marker).expect("the marker is written"), b"");
+    assert_eq!(checked(&served), Some(Json::from(true)));
+    // Writing it again leaves it.
+    assert_eq!(served.post("/setup/checked", "").status, Some(200));
+    assert!(asked.lock().unwrap().is_empty(), "the marker needs no check");
+}
+
+#[test]
+fn a_setup_marker_that_cannot_be_written_or_looked_for_is_500() {
+    let d = TempDir::new("unmarkable");
+    d.write("config", "a file where the directory should be");
+    let marker = format!("{}/config/setup-checked", d.0);
+    let (served, _) = setup_served(&marker, vec![]);
+    let reply = served.post("/setup/checked", "");
+    assert_eq!(reply.status, Some(500));
+    assert!(reply.error().starts_with(&format!("cannot create the directory of {marker}: ")), "{}", reply.error());
+    let reply = served.get("/setup/checked", &[]);
+    assert_eq!(reply.status, Some(500));
+    assert!(reply.error().starts_with(&format!("cannot look for {marker}: ")), "{}", reply.error());
+}
+
+#[test]
+fn the_setup_marker_needs_the_token() {
+    let (served, _) = setup_served("/nowhere/setup-checked", vec![]);
+    let port = served.port;
+    let raw = format!("POST /setup/checked HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    assert_eq!(exchange(port, raw.as_bytes()).status, Some(401));
+}
+
 #[test]
 fn unknown_endpoint() {
     let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
@@ -426,7 +536,7 @@ fn unknown_endpoint() {
 #[test]
 fn an_unreadable_project_is_a_bad_gateway() {
     let connect = |_: &str, _: &str, _: &Interrupt| Err(OrchestratorError::new("no saved herdr machine named nosuch"));
-    let served = Served::start(Box::new(connect), &[], SERVE_POLL, Arc::default());
+    let served = Served::start(Box::new(connect), &[], SERVE_POLL, Arc::default(), unchecked());
     let reply = served.get(&Served::query("/runs", &[("machine", "nosuch")]), &[]);
     assert_eq!(reply.status, Some(502));
     assert_eq!(reply.body, r#"{"error": "no saved herdr machine named nosuch"}"#);
@@ -767,7 +877,7 @@ fn a_bad_input_is_refused_before_the_project_is_reached() {
         seen.lock().unwrap().push((machine.to_string(), cwd.to_string()));
         Err(OrchestratorError::new("ssh: connection refused"))
     };
-    let served = Served::start(Box::new(connect), &[], SERVE_POLL, Arc::clone(&connects));
+    let served = Served::start(Box::new(connect), &[], SERVE_POLL, Arc::clone(&connects), unchecked());
     let target = Served::query("/agent/input", &[("run", SERVE_ID), ("role", "build"), ("machine", "box")]);
     assert_eq!(served.post(&target, r#"{"keys": []}"#).status, Some(400));
     let long = format!(r#"{{"text": "{}"}}"#, "x".repeat(MAX_BODY_BYTES));
@@ -1046,7 +1156,7 @@ fn in_process() {
     let (stop, stopped) = mpsc::channel::<()>();
     let serving = std::thread::spawn(move || {
         let mut err = vec![];
-        let status = serve(RunServer::start(&[], Box::new(connect)), &mut Lines(lines), &mut err, || {
+        let status = serve(RunServer::start(&[], Box::new(connect), unchecked()), &mut Lines(lines), &mut err, || {
             stopped.recv().map_err(io::Error::other)
         });
         (status, err)
@@ -1086,7 +1196,7 @@ impl Write for BrokenPipe {
 #[test]
 fn an_unprintable_line_ends_it() {
     let connect = |_: &str, _: &str, _: &Interrupt| Err(OrchestratorError::new("not asked"));
-    let started = RunServer::start(&[], Box::new(connect)).unwrap();
+    let started = RunServer::start(&[], Box::new(connect), unchecked()).unwrap();
     let port = port_of(started.url());
     let mut err = vec![];
     let status = serve(Ok(started), &mut BrokenPipe, &mut err, || -> io::Result<()> { panic!("serve waited") });
@@ -1107,7 +1217,7 @@ fn no_port() {
 #[test]
 fn a_wait_for_the_signals_that_fails_ends_it() {
     let connect = |_: &str, _: &str, _: &Interrupt| Err(OrchestratorError::new("not asked"));
-    let started = RunServer::start(&[], Box::new(connect)).unwrap();
+    let started = RunServer::start(&[], Box::new(connect), unchecked()).unwrap();
     let port = port_of(started.url());
     let (mut out, mut err) = (vec![], vec![]);
     let status = serve(Ok(started), &mut out, &mut err, || Err(io::Error::from_raw_os_error(22)));

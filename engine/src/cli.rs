@@ -155,7 +155,7 @@ pub fn main(argv: impl IntoIterator<Item = OsString>) -> i32 {
         }
     };
     if let Command::Serve(origins) = &command {
-        return crate::serve::serve_command(origins);
+        return crate::serve::serve_command(origins, &config);
     }
     let interrupt = &match crate::interrupt::by_signals() {
         Ok(interrupt) => interrupt,
@@ -313,7 +313,7 @@ fn connect(command: &Command, local: &Local, human: &LocalHuman) -> Result<Ended
 
 /// Whether this process runs in a pane herdr manages, which a run without a machine needs: without a machine, herdr
 /// commands target whichever session is focused, and only such a pane knows it is talking to its own.
-fn in_herdr_pane() -> bool {
+pub(crate) fn in_herdr_pane() -> bool {
     std::env::var_os("HERDR_ENV").is_some_and(|v| v == "1")
 }
 
