@@ -311,7 +311,7 @@ fn main() -> ExitCode {
 "##;
 
 const DOCS_TESTS: &str = r##"use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use kvstore::{delete, get, keys, put};
@@ -323,21 +323,30 @@ fn store(name: &str) -> PathBuf {
     dir.join("store.txt")
 }
 
+fn remove_store(path: &Path) {
+    fs::remove_dir_all(path.parent().unwrap()).unwrap();
+}
+
 #[test]
 fn put_get_delete() {
     let path = store("put");
     put(&path, "a", "1").unwrap();
-    assert_eq!(get(&path, "a").unwrap(), Some("1".to_string()));
-    assert_eq!(keys(&path).unwrap(), ["a"]);
-    assert!(delete(&path, "a").unwrap());
-    assert!(!delete(&path, "a").unwrap());
-    assert_eq!(get(&path, "a").unwrap(), None);
+    let (got, listed) = (get(&path, "a").unwrap(), keys(&path).unwrap());
+    let (deleted, deleted_again) = (delete(&path, "a").unwrap(), delete(&path, "a").unwrap());
+    let got_after = get(&path, "a").unwrap();
+    remove_store(&path);
+    assert_eq!(got, Some("1".to_string()));
+    assert_eq!(listed, ["a"]);
+    assert!(deleted);
+    assert!(!deleted_again);
+    assert_eq!(got_after, None);
 }
 
 #[test]
 fn get_of_a_missing_key_exits_1() {
     let path = store("missing");
     let status = Command::new(env!("CARGO_BIN_EXE_kvstore")).arg("--file").arg(&path).args(["get", "nope"]).status();
+    remove_store(&path);
     assert_eq!(status.unwrap().code(), Some(1));
 }
 "##;
