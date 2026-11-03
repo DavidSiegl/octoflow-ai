@@ -236,7 +236,7 @@ fn permission_mode_and_models_reach_the_workflow() {
     let saved = started(&cli, &["task", "--permission-mode", "auto"]);
     assert_eq!(field(&saved, "permission_mode"), r#""auto""#);
     let saved = started(&cli, &["task", "--permission-mode", "auto", "--model", "sonnet", "--review-model", "opus"]);
-    assert_eq!(field(&saved,"models"), r#"{"spec":"sonnet","build":"sonnet","review":"opus"}"#);
+    assert_eq!(field(&saved, "models"), r#"{"spec":"sonnet","build":"sonnet","review":"opus"}"#);
     assert_eq!(field(&saved, "permission_mode"), r#""auto""#);
 }
 
@@ -259,7 +259,7 @@ fn a_model_reaches_a_role_without_its_own_flag() {
     let d = TempDir::new();
     let cli = configured(&d, &[("four.toml", &workflow_toml(&crate::test_support::four()))]);
     let saved = started(&cli, &["--workflow-file", &d.join("four.toml"), "--model", "X", "--build-model", "Y", "task"]);
-    assert_eq!(field(&saved,"models"), r#"{"spec":"X","tests":"X","build":"Y","review":"X"}"#);
+    assert_eq!(field(&saved, "models"), r#"{"spec":"X","tests":"X","build":"Y","review":"X"}"#);
 }
 
 #[test]
@@ -403,7 +403,7 @@ fn a_workflow_file_is_offered_and_started() {
     let cli = configured(&d, &[("workflows/quick.toml", &workflow_toml(&crate::test_support::quick()))]);
     let saved = started(&cli, &["task", "--workflow", "quick", "--model", "X"]);
     assert_eq!((field(&saved, "workflow"), field(&saved, "phase")), (r#""quick""#.into(), r#""build""#.into()));
-    assert_eq!(field(&saved,"models"), r#"{"build":"X","review":"X"}"#);
+    assert_eq!(field(&saved, "models"), r#"{"build":"X","review":"X"}"#);
 }
 
 /// A Cli whose configuration has the example product-team workflow file.
@@ -419,7 +419,7 @@ fn run_a_workflow_file_by_name_or_path() {
     assert_eq!((field(&saved, "workflow"), field(&saved, "phase")), (r#""product-team""#.into(), r#""spec""#.into()));
     let team = load_workflow_file(&example("product-team"), &crate::prompts::Prompts::default()).unwrap();
     assert_eq!(saved.get("workflow_definition"), Some(&workflow_definition(&team)));
-    assert_eq!(field(&saved,"models"), r#"{"tests":"sonnet"}"#);
+    assert_eq!(field(&saved, "models"), r#"{"tests":"sonnet"}"#);
     let saved = started(&cli, &["task", "--workflow-file", &example("quick")]);
     assert_eq!((field(&saved, "workflow"), field(&saved, "phase")), (r#""quick""#.into(), r#""build""#.into()));
 }
@@ -430,9 +430,9 @@ fn model_flags_override_the_files_models() {
     let cli = with_product_team(&d);
     let saved = started(&cli, &["task", "--workflow", "product-team", "--model", "X"]);
     // The file's models first, then the flags', as Python's {**pipeline.models, **role_models(...)}.
-    assert_eq!(field(&saved,"models"), r#"{"tests":"X","spec":"X","design":"X","build":"X","review":"X"}"#);
+    assert_eq!(field(&saved, "models"), r#"{"tests":"X","spec":"X","design":"X","build":"X","review":"X"}"#);
     let flags = ["task", "--workflow", "product-team", "--role-model", "tests=haiku", "--role-model", "spec=opus", "--build-model", "Y"];
-    assert_eq!(field(&started(&cli, &flags),"models"), r#"{"tests":"haiku","spec":"opus","build":"Y"}"#);
+    assert_eq!(field(&started(&cli, &flags), "models"), r#"{"tests":"haiku","spec":"opus","build":"Y"}"#);
 }
 
 #[test]
