@@ -171,11 +171,21 @@ pipeline {
                 // program run from a file written there ("Drop and execute new binary in container", Critical): 109
                 // mails in 15 minutes on 2026-11-03. The workspace's own target/ is on the volume and was never
                 // reported. Python's tempfile takes /tmp, silently, for a TMPDIR that does not exist, so each stage
-                // creates it first; this one empties it as well, since nothing else removes what an earlier build left.
+                // creates it first. The Package stage still uses /tmp (TODO.md).
                 TMPDIR = "${env.WORKSPACE_TMP}/tmp"
             }
             steps {
-                sh 'rm -rf "$TMPDIR" && mkdir -p "$TMPDIR"'
+                // What an earlier build of this workspace left there goes first, on the volume as it would not in
+                // /tmp. The chmod is for a directory a killed test left without write permission, such as
+                // engine/src/host/tests.rs's 0o500 one; a clear-out that still fails only warns, since failing here
+                // would fail every later build of this workspace until someone cleaned the volume by hand.
+                sh '''
+                    if [ -e "$TMPDIR" ]; then
+                        { chmod -R u+rwX "$TMPDIR" && rm -rf "$TMPDIR"; } ||
+                            echo "could not empty $TMPDIR; what an earlier build left there stays" >&2
+                    fi
+                    mkdir -p "$TMPDIR"
+                '''
                 // A failing test does not stop the build here: the Gate stage judges it with everything else, so a
                 // quality build's report lists failing tests and findings together. Any other exit status means
                 // pytest itself could not run.

@@ -483,6 +483,16 @@ What is known to be open in `orchestrator.py` and `gate.py`, and why. An entry l
   test already points `TMPDIR` into its own directory. Found in the second build round of run 20261025-081413-327fc2
   (2026-10-25). Closes with a `TMPDIR` the build removes around `tauri build`, and with a README note, or a newer
   runtime that cleans up, for users.
+- **The Package stage still runs programs it wrote to `/tmp`, which agentbox0's Falco mails as "Drop and execute
+  new binary in container".** The Test and Gate stages set `TMPDIR` to `$WORKSPACE_TMP/tmp`, on the agent's
+  volume, which the rule cannot see (the Jenkinsfile's Test stage says why), but Package keeps `/tmp`. There the
+  linuxdeploy and appimagetool that `packaging/build-desktop.sh` runs under `APPIMAGE_EXTRACT_AND_RUN` extract
+  themselves into `$TMPDIR/appimage_extracted_<hash>` (entry above) and run from there. The homelab excepts those
+  paths (falco/rules/homelab.yaml, `appimage_extracted`). Each stage now creates its own TMPDIR, so a stage added
+  later has to copy both lines. Raised by cross-review 71 (F1, F3: "set TMPDIR for every stage that runs what it
+  builds (one pipeline-level definition next to CARGO_HOME would do)"). Closes with that pipeline-level `TMPDIR`,
+  created before any stage that uses it, and a Package stage seen to pass with it on agentbox0. The homelab can
+  then drop `appimage_extracted`.
 - **No build has yet been seen waiting for `ci/cargo-lock.sh` on the Jenkins agent.** PR #88's builds ran both
   cargo steps through it on agentbox0 (builds 1-3, 2026-10-25), so the agent image has `flock` and the lock file's
   directory is writable, and a quality-style build (`GIT_REF` set) ran `--no-wait`; but the two run side by side
