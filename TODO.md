@@ -110,6 +110,16 @@ is rewritten to say what is left.
   Raised by cross-review 114 (F9, nit, 2026-11-03): "`indexmap::IndexMap` is already in the build through
   `preserve_order`." Using it needs `indexmap` as a dependency of the engine's own, which the user approves; closes
   with that approval and `Map` replaced by `IndexMap`, or with the user's ruling that `Map` stays.
+- **serve's event stream can still miss a finished run's last files when they take longer than a poll interval.**
+  `RunWatch::poll` (`engine/src/serve/runs.rs`) takes a finished run's files as complete once two polls one
+  `SERVE_POLL` apart (1 s local, 5 s remote) list the same set. Raised by cross-review 121 (F3, should-fix,
+  2026-11-03): "If the host commands between the finishing save and the last write (`workflow.rs` save →
+  `write_summary` → `write_metrics`; likewise for `release`) take longer than one interval, two polls list the same
+  incomplete set and the run is settled without summary.md/metrics.json until its record next changes. That is the
+  original symptom with a narrower window. On a remote project, `write_summary`'s `round_results` reads go over SSH,
+  so this is not out of reach." Closes with a settle rule that does not depend on the interval, such as settling
+  only once the finishing save is older than a bound (the record carries `heartbeat_age`), or with the engine
+  writing the files before that save where a takeover allows it (`end_done_run`; `release` saves first on purpose).
 - **The desktop app ships its npm packages' code without their licenses.** `octoflow-third-party-licenses.html`
   (`packaging/about.toml`) lists the Rust crates only, as cargo-about reads Cargo's graph; the app's web view bundles
   `ui/package.json`'s runtime dependencies, React, react-markdown, remark-gfm and @tauri-apps/api with what they pull
