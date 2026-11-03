@@ -19,9 +19,17 @@ use crate::http::{Http, HttpError, Request, Response};
 use crate::interrupt::Interrupt;
 use crate::map::Map;
 
-/// The files whose change decides the judging, as the test knows them.
-const JUDGING: [&str; 7] =
-    ["Jenkinsfile", "gate.py", "pyproject.toml", "uv.lock", ".python-version", "rust-toolchain.toml", "Cargo.lock"];
+/// The files whose change decides the judging, as the test knows them: for ci/gate-rust, a file under it.
+const JUDGING: [&str; 8] = [
+    "Jenkinsfile",
+    "gate.py",
+    "ci/gate-rust/src/main.rs",
+    "pyproject.toml",
+    "uv.lock",
+    ".python-version",
+    "rust-toolchain.toml",
+    "Cargo.lock",
+];
 /// The GIT_REF the builds were of; judged-in-quality never reads it.
 const QUALITY_REF: &str = "orchestrator-ci/r-1-q1";
 

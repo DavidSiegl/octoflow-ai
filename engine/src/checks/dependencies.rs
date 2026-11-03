@@ -267,8 +267,8 @@ fn uv_sources(uv: &Table) -> Result<Sources, String> {
 
 /// The PackageSource of a `[tool.uv.sources]` entry, given each index's (name, URL), in the order `[[tool.uv.index]]`
 /// lists them. An entry's `index` names the last index of that name, its value compared with the name's as TOML
-/// values, of the same type and value; an index of no such name, or one without a URL or with an empty one, is
-/// named by the entry's `index` itself.
+/// values, of the same type and value; an index of no such name, or one without a URL or whose URL is the empty
+/// string, is named by the entry's `index` itself. Any other URL, of whatever type, names it.
 fn uv_source(entry: &Table, indexes: &[(Option<&Value>, Option<&Value>)]) -> Option<PackageSource> {
     if entry.get("workspace") == Some(&Value::Boolean(true)) {
         return Some(PackageSource::new(SourceKind::Workspace, ""));
@@ -293,7 +293,7 @@ fn uv_source(entry: &Table, indexes: &[(Option<&Value>, Option<&Value>)]) -> Opt
 /// The PackageSource of a source table of a shape this reader does not know: the table, written as an inline TOML
 /// table.
 fn unknown_source(table: &Table) -> PackageSource {
-    PackageSource::new(SourceKind::Unknown, toml_text(&Value::Table(table.clone())))
+    PackageSource::new(SourceKind::Unknown, table_text(table))
 }
 
 /// What an index without a URL is named by, in place of its URL.
@@ -326,16 +326,21 @@ fn toml_text(value: &Value) -> String {
         Value::Boolean(b) => b.to_string(),
         Value::Datetime(d) => d.to_string(),
         Value::Array(items) => format!("[{}]", items.iter().map(toml_text).collect::<Vec<_>>().join(", ")),
-        Value::Table(table) if table.is_empty() => "{}".to_string(),
-        Value::Table(table) => {
-            let bare = |k: &str| !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
-            let entries: Vec<String> = table
-                .iter()
-                .map(|(k, v)| format!("{} = {}", if bare(k) { k.clone() } else { toml_string(k) }, toml_text(v)))
-                .collect();
-            format!("{{ {} }}", entries.join(", "))
-        }
+        Value::Table(table) => table_text(table),
     }
+}
+
+/// table as an inline TOML table, as [`toml_text`] writes one.
+fn table_text(table: &Table) -> String {
+    if table.is_empty() {
+        return "{}".to_string();
+    }
+    let bare = |k: &str| !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    let entries: Vec<String> = table
+        .iter()
+        .map(|(k, v)| format!("{} = {}", if bare(k) { k.clone() } else { toml_string(k) }, toml_text(v)))
+        .collect();
+    format!("{{ {} }}", entries.join(", "))
 }
 
 /// s as a TOML basic string: in `"`, with `"` and `\` escaped, a control character by its letter or as `\u` and

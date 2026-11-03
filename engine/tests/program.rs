@@ -92,7 +92,7 @@ fn a_command_about_runs_outside_a_herdr_pane_is_refused_but_workflows_is_not() {
 }
 
 #[test]
-fn a_hint_names_the_program_by_the_file_name_it_was_invoked_by() {
+fn the_hints_and_the_usage_name_the_program_by_the_file_name_it_was_invoked_by() {
     let dir = Dir::new("invoked");
     let hint = |out: &Output| {
         let stdout = String::from_utf8_lossy(&out.stdout);
@@ -109,6 +109,16 @@ fn a_hint_names_the_program_by_the_file_name_it_was_invoked_by() {
         .output()
         .expect("the program runs");
     assert!(hint(&out).is_some_and(|l| l.contains("`octoflow workflows default`")), "{:?}", hint(&out));
+    let out = Command::new(env!("CARGO_BIN_EXE_orchestrator"))
+        .arg0("octoflow")
+        .arg("--bogus")
+        .env("XDG_CONFIG_HOME", dir.0.join("config"))
+        .current_dir(&dir.0)
+        .stdin(Stdio::null())
+        .output()
+        .expect("the program runs");
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("Usage: octoflow "), "{}", stderr(&out));
 }
 
 #[test]

@@ -238,8 +238,9 @@ is rewritten to say what is left.
   `name` is the same TOML value, where Python's `==` took 1, 1.0 and true for one name and datetimes for one by their
   instant; a source of a shape the check does not know is written as an inline TOML table, one holding a datetime too,
   where Python's `json.dumps` refused it and the manifest was unreadable; and a `[project] name` that is not a string is
-  refused, where Python took 0, false or an empty list for no name. Decided against unless a run is found that writes
-  such input.
+  refused, where Python took 0, false or an empty list for no name; and an index's `url` of false, 0, an empty list or
+  an empty table names that index, where Python took it for no URL and named the index by the entry's `index`. Decided
+  against unless a run is found that writes such input.
 - **The Rust engine's Ctrl-C, what is left.** Rust-engine ticket 08's part 6 (2026-10-29) has a SIGINT raise the
   `Interrupt`, which stops the command the engine waits on (`crate::interrupt`), and since ticket 10 every command of
   the binary takes it. Not closed: (1) A

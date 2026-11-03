@@ -526,8 +526,9 @@ fn finish(verdict: &str, state: &RunState, pipeline: &Pipeline, print: &dyn Fn(&
 /// word is empty or names no file.
 static INVOKED_AS: OnceLock<String> = OnceLock::new();
 
-/// The program's name, for a hint that names a command to run: the file name it was invoked by (`orchestrator`, or a
-/// link's or a copy's own name), or `orchestrator`, the binary's, before main runs or when it was invoked by none.
+/// The program's name, as the usage and a hint that names a command to run give it: the file name it was invoked by
+/// (`orchestrator`, or a link's or a copy's own name), or `orchestrator`, the binary's, before main runs or when it was
+/// invoked by none.
 pub fn program_name() -> &'static str {
     INVOKED_AS.get().map_or("orchestrator", String::as_str)
 }

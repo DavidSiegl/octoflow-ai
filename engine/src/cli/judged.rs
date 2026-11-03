@@ -1,16 +1,26 @@
 //! `judged-in-quality`: whether a retained build of the quality job already judged the checkout's HEAD as a pull
-//! request's build into a branch would, so that build need not judge it again (docs/quality-gate.md says when), as
-//! orchestrator.py's judged_in_quality decides it.
+//! request's build into a branch would, so that build need not judge it again (docs/quality-gate.md says when). Ported
+//! from the Python engine's judged_in_quality, but for the files that decide the judging (JUDGING_FILES).
 
 use crate::ci::{Jenkins, QualityBuild};
 use crate::constants::REMOTE;
 use crate::error::{shortened, OrchestratorError};
 use crate::host::{top_literal, Host, DEFAULT_TIMEOUT};
 
-/// The files that decide how a change is judged: the stages, the gate, its rules, the versions of its tools and the
-/// Python and the Rust they run on. judged_in_quality trusts a quality build only when none of them differs.
-pub const JUDGING_FILES: [&str; 7] =
-    ["Jenkinsfile", "gate.py", "pyproject.toml", "uv.lock", ".python-version", "rust-toolchain.toml", "Cargo.lock"];
+/// The files that decide how a change is judged, a directory standing for every file under it: the stages, the gate,
+/// the helper it reads Rust through (which a quality build, like gate.py, takes from the main commit it judges by), its
+/// rules, the versions of its tools and the Python and the Rust they run on. judged_in_quality trusts a quality build
+/// only when none of them differs.
+pub const JUDGING_FILES: [&str; 8] = [
+    "Jenkinsfile",
+    "gate.py",
+    "ci/gate-rust",
+    "pyproject.toml",
+    "uv.lock",
+    ".python-version",
+    "rust-toolchain.toml",
+    "Cargo.lock",
+];
 
 /// What a quality build's description says it judged, in the format the comment above the Jenkinsfile's Checkout
 /// stage defines: `judged tree=<sha> parent=<sha> main=<sha>`, each sha SHA-1's 40 lowercase hex digits or SHA-256's
@@ -141,8 +151,8 @@ fn build_trust(
     Ok((5, None))
 }
 
-/// Those of JUDGING_FILES whose file differs between commits a and b, its mode included, or that only one of them
-/// has, in git's order. Errors: git fails.
+/// The files of JUDGING_FILES that differ between commits a and b, their mode included, or that only one of them has,
+/// in git's order: a file under a directory of JUDGING_FILES by its own path. Errors: git fails.
 fn judging_changes(host: &dyn Host, root: &str, a: &str, b: &str) -> Result<Vec<String>, OrchestratorError> {
     // --no-relative: under the user's diff.relative, a diff run in a subdirectory lists none of the top's files.
     let mut args = vec!["diff", "--name-only", "-z", "--no-relative", "--no-renames", "--no-ext-diff", a, b, "--"];
