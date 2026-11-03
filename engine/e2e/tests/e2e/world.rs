@@ -514,9 +514,8 @@ impl World {
         write_atomically(&self.root().join("script.json"), &Value::Object(self.script.clone()).to_string());
     }
 
-    /// Shims of the fakes in bin/, and the harnesses' CLIs, each written by a child process: this one never opens them
-    /// for writing. A test thread that forks inherits every descriptor this process has open, until its child execs;
-    /// while any process holds a file open for writing, executing it fails with ETXTBSY, "Text file busy".
+    /// Shims of the fakes in bin/, and the harnesses' CLIs, each written by a child process; for why a child process
+    /// writes them: `tool` in engine/src/host/tests.rs.
     fn make_bin(&self) {
         let root = shlex_quote(&self.root().to_string_lossy());
         let mut shims: Vec<(String, String)> = fakes()

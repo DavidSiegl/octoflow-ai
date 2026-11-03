@@ -28,10 +28,8 @@ impl Dir {
         Dir(dir)
     }
 
-    /// Put an executable script named name, whose text is script, in the directory's bin, by a child process: this
-    /// one never opens the file for writing. A test thread that forks inherits every descriptor this process has open,
-    /// until its child execs; while any process holds the file open for writing, executing it fails with ETXTBSY,
-    /// "Text file busy".
+    /// Put an executable script named name, whose text is script, in the directory's bin, by a child process; for
+    /// why a child process writes it: `tool` in engine/src/host/tests.rs.
     fn tool(&self, name: &str, script: &str) {
         let path = self.0.join("bin").join(name);
         let written = Command::new("sh")
@@ -39,7 +37,7 @@ impl Dir {
             .arg(&path)
             .arg(script)
             .status()
-            .expect("sh runs");
+            .unwrap_or_else(|e| panic!("writing the script {}: {e}", path.display()));
         assert!(written.success(), "writing the script {}: {written}", path.display());
     }
 }

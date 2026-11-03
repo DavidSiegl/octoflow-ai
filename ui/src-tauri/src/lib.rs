@@ -505,17 +505,16 @@ mod tests {
         assert_eq!(located, Orchestrator::Binary(PathBuf::from("/elsewhere/orchestrator")));
     }
 
-    /// Write an executable script with the given text at path, by a child process: this one never opens the file for
-    /// writing. A test thread that forks inherits every descriptor this process has open, until its child execs; while
-    /// any process holds the file open for writing, executing it fails with ETXTBSY, "Text file busy".
+    /// Write an executable script with the given text at path, by a child process; for why a child process writes it:
+    /// `tool` in engine/src/host/tests.rs.
     #[cfg(unix)]
-    fn write_script(path: &Path, text: &str) {
+    fn put_executable(path: &Path, text: &str) {
         let written = Command::new("sh")
             .args(["-c", "printf %s \"$2\" > \"$1\" && chmod 755 \"$1\"", "sh"])
             .arg(path)
             .arg(text)
             .status()
-            .expect("sh runs");
+            .unwrap_or_else(|e| panic!("writing the script {}: {e}", path.display()));
         assert!(written.success(), "writing the script {}: {written}", path.display());
     }
 
@@ -525,7 +524,8 @@ mod tests {
         let dir = TempDir::new();
         let binary = dir.join(BUNDLED_NAME);
         // serve's first line, then a process for stop to kill.
-        write_script(&binary, "#!/bin/sh\necho '{\"url\": \"http://127.0.0.1:9\", \"token\": \"t\"}'\nexec sleep 60\n");
+        let script = "#!/bin/sh\necho '{\"url\": \"http://127.0.0.1:9\", \"token\": \"t\"}'\nexec sleep 60\n";
+        put_executable(&binary, script);
         let sidecar = Sidecar::start(&Orchestrator::Binary(binary), "tauri://localhost");
         let connection = sidecar.connection.clone().expect("the sidecar started");
         assert_eq!(connection.url, "http://127.0.0.1:9");

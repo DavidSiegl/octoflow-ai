@@ -32,16 +32,20 @@ pub(crate) fn host_with_tools(dir: &str) -> ProcessHost {
     ProcessHost::in_environment(environment(Some(dir), &[]).into_iter(), &Interrupt::new())
 }
 
-/// Write an executable script named name into dir, making dir, by a child process: this one never opens the file for
-/// writing. A test thread that forks inherits every descriptor this process has open, until its child execs; while any
-/// process holds the file open for writing, executing it fails with ETXTBSY, "Text file busy".
+/// Write an executable script named name into dir, making dir first.
+///
+/// The script is written by a child process, so that the test's own process never has it open for writing: a test
+/// thread that forks inherits every descriptor this process has open, until its child execs, and while any process
+/// holds the file open for writing, executing it fails with ETXTBSY, "Text file busy". The other crates' script writers
+/// (`Dir::tool` in engine/tests/program.rs, `World::make_bin` in engine/e2e, `put_executable` in ui/src-tauri) do the
+/// same for this reason and point here.
 pub(crate) fn tool(dir: &str, name: &str, script: &str) {
     std::fs::create_dir_all(dir).expect("the tools' directory");
     let path = format!("{dir}/{name}");
     let written = std::process::Command::new("sh")
         .args(["-c", "printf %s \"$2\" > \"$1\" && chmod 755 \"$1\"", "sh", &path, script])
         .status()
-        .expect("sh runs");
+        .unwrap_or_else(|e| panic!("writing the script {path}: {e}"));
     assert!(written.success(), "writing the script {path}: {written}");
 }
 

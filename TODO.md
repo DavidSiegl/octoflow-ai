@@ -903,8 +903,10 @@ is rewritten to say what is left.
   by a prefix, pid, time and counter, retried until new; serve's drops a failed removal silently, and the others only
   report it on standard error, which libtest hides on a passing test. Raised by cross-review 117 (F3, 2026-11-03):
   "A fix to one, such as making names unique, has to be repeated in each." Closes with one shared type: a `tempfile`
-  dev-dependency, or a test-support crate the engine, the desktop shell and xtask all use. The same holds for the
-  writer of an executable script, which a child process writes so that no test thread's fork holds it open for
-  writing when it is run (ETXTBSY, ui-test-text-file-busy/01, 2026-11-03): `tool` in `engine/src/host/tests.rs`,
-  `Dir::tool` in `engine/tests/program.rs`, `World::make_bin` in `engine/e2e/tests/e2e/world.rs` and `write_script`
-  in `ui/src-tauri/src/lib.rs` each run the same `sh` line; that crate would hold it once.
+  dev-dependency, or a test-support crate the engine, the desktop shell and xtask all use.
+- **Four copies of the test writer of an executable script.** A test's script is written by a child process, so that
+  no test thread's fork holds it open for writing when it runs (ETXTBSY; ui-test-text-file-busy/01, 2026-11-03). The
+  same `sh` line is in `tool` (`engine/src/host/tests.rs`, which says why), `Dir::tool` (`engine/tests/program.rs`),
+  `World::make_bin` (`engine/e2e/tests/e2e/world.rs`) and `put_executable` (`ui/src-tauri/src/lib.rs`). Raised by
+  cross-review 123 (F2, nit): "A correction to the writer has to land in all four, and a copy that is missed brings
+  the flake back in that crate." Closes with one writer in the test-support crate the entry above would make.
