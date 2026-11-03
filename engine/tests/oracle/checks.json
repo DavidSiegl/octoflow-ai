@@ -681,7 +681,7 @@
      ]
     }
    ],
-   "out": "\n\n**GATE: ERROR**\n\nintro\n\n## Failed conditions\n\n- one\n- two\n- 1 findings of the `c` check; each is listed below.\n\n## Issues\n\n\u0663. x\n12 y\n\n## The orchestrator's checks\n\nThe orchestrator ran these itself after the build, with what the build does not see: the run's spec and its workflow.\n\n4. `a.py (the whole file)` error c r: whole file\n\nThese do not fail the gate. Fix each, or say in your report why it should stand.\n\n5. The change as a whole: error c: the change\\u2028as a whole\n"
+   "out": "\n\n**GATE: ERROR**\n\nintro\n\n## Failed conditions\n\n- one\n- two\n- 1 findings of the `c` check; each is listed below.\n\n## Issues\n\n\u0663. x\n12 y\n\n## The orchestrator's checks\n\nThe orchestrator ran these itself after the build, with what the build does not see: the run's spec and its workflow.\n\n1. `a.py (the whole file)` error c r: whole file\n\nThese do not fail the gate. Fix each, or say in your report why it should stand.\n\n2. The change as a whole: error c: the change\\u2028as a whole\n"
   },
   {
    "quality": "## GATE: OK\n## Findings\n\n7. `a.py:1` error x: y",
@@ -1361,7 +1361,7 @@
     ],
     [
      "pyproject.toml",
-     "'=x' is not a requirement"
+     "\"=x\" is not a requirement"
     ]
    ]
   },
@@ -1629,13 +1629,13 @@
   [
    "=x",
    {
-    "error": "'=x' is not a requirement"
+    "error": "\"=x\" is not a requirement"
    }
   ],
   [
    "",
    {
-    "error": "'' is not a requirement"
+    "error": "\"\" is not a requirement"
    }
   ],
   [
@@ -1676,7 +1676,7 @@
   [
    "\u00e9",
    {
-    "error": "'\u00e9' is not a requirement"
+    "error": "\"\u00e9\" is not a requirement"
    }
   ],
   [
@@ -1823,14 +1823,14 @@
    "literal": "\"text\"",
    "type": "str",
    "str": "text",
-   "repr": "'text'",
+   "repr": "\"text\"",
    "json": "\"text\""
   },
   {
    "literal": "'it\"s'",
    "type": "str",
    "str": "it\"s",
-   "repr": "'it\"s'",
+   "repr": "\"it\\\"s\"",
    "json": "\"it\\\"s\""
   },
   {
@@ -1844,7 +1844,7 @@
    "literal": "\"tab\\t\\u00e9\"",
    "type": "str",
    "str": "tab\t\u00e9",
-   "repr": "'tab\\t\u00e9'",
+   "repr": "\"tab\\t\u00e9\"",
    "json": "\"tab\\t\\u00e9\""
   },
   {
@@ -1920,8 +1920,8 @@
   {
    "literal": "[1, 'a', [true]]",
    "type": "list",
-   "str": "[1, 'a', [True]]",
-   "repr": "[1, 'a', [True]]",
+   "str": "[1, \"a\", [True]]",
+   "repr": "[1, \"a\", [True]]",
    "json": "[1, \"a\", [true]]"
   },
   {
@@ -1934,8 +1934,8 @@
   {
    "literal": "{ k = 1, 'q\"' = \"a\" }",
    "type": "dict",
-   "str": "{'k': 1, 'q\"': 'a'}",
-   "repr": "{'k': 1, 'q\"': 'a'}",
+   "str": "{\"k\": 1, \"q\\\"\": \"a\"}",
+   "repr": "{\"k\": 1, \"q\\\"\": \"a\"}",
    "json": "{\"k\": 1, \"q\\\"\": \"a\"}"
   },
   {

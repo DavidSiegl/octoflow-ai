@@ -208,14 +208,14 @@ fn force_does_not_override_another_live_run() {
 // -- TestWorkflowFiles and TestPromptFiles: what a resume cannot read ------------------------------------------------
 
 #[test]
-fn a_saved_definition_that_cannot_be_filled_in_stops_the_resume() {
+fn a_saved_definition_with_an_unreadable_template_stops_the_resume() {
     let Json::Object(mut definition) = workflow_definition(&quick()) else { unreachable!("a definition is a table") };
     let Some(Json::Array(steps)) = definition.get_mut("steps") else { unreachable!("a definition has steps") };
     let Some(Json::Object(first)) = steps.get_mut(0) else { unreachable!("quick has a first step") };
     first.insert("prompt", Json::from("{task:d}"));
     let more = [("workflow", Json::from("quick")), ("workflow_definition", Json::Object(definition))];
     let e = error(resumable(&[], &saved_with(&saved_run("build", 1, &[]), &more)));
-    assert!(e.contains("saved with the run is invalid: workflow quick: step build: prompt cannot be filled in"), "{e}");
+    assert!(e.contains("saved with the run is invalid: step 1 (build): prompt: placeholder {task:d} at line 1, column 1 has a format spec"), "{e}");
 }
 
 #[test]

@@ -6,7 +6,6 @@ use crate::constants::RUNS_DIR;
 use crate::error::OrchestratorError;
 use crate::herdr::Herdr;
 use crate::py::json::Json;
-use crate::py::text::splitlines;
 use crate::runs::{run_health, RUNNING};
 use crate::state::RunState;
 
@@ -72,7 +71,7 @@ fn discard_run_worktree(world: &Connected, cwd: &str, state: &RunState) -> Resul
     let mut done = vec![];
     if host.is_worktree(cwd, worktree)? {
         let status = host.git(worktree, &["status", "--porcelain"])?;
-        let changes = splitlines(&status);
+        let changes: Vec<&str> = status.lines().collect();
         if !changes.is_empty() {
             world.say(&format!("discarding in {worktree}:"));
             for line in changes {

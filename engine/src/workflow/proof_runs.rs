@@ -5,15 +5,15 @@
 use super::{prompt_error, Outcome, Workflow};
 use crate::constants::PROOF_COPIES_DIR;
 use crate::error::OrchestratorError;
-use crate::host::DEFAULT_TIMEOUT;
+use crate::host::{shlex_quote, DEFAULT_TIMEOUT};
+use crate::paths::file_name;
 use crate::pipeline::Step;
 use crate::proofs::{
     proof_finding, proof_outcome, proof_output, proofs_section, ProofRun, PROOFS_HEADING, PROOF_TAIL_LINES,
     REMOVE_TREE_SCRIPT,
 };
+use crate::prompts::template::fill;
 use crate::prompts::Prompt;
-use crate::py::format::format;
-use crate::py::text::{basename, rstrip, shlex_quote};
 
 /// Runs "$2" with sh in the directory "$1", under GNU timeout's limit of "$3" seconds where there is a timeout: it runs
 /// the proof in a process group of its own and kills all of it, so nothing a proof started goes on writing to the
@@ -44,7 +44,7 @@ impl Workflow<'_> {
                 .host
                 .run_files(&self.state.proofs_dir(n))?
                 .iter()
-                .map(|f| basename(&f.path).to_string())
+                .map(|f| file_name(&f.path).to_string())
                 .collect();
             files.sort();
             for file in files {
@@ -171,7 +171,7 @@ impl Workflow<'_> {
         let copies = format!("{work_dir}/{PROOF_COPIES_DIR}");
         let copy = format!("{copies}/{written}");
         let proof = shlex_quote(&format!("{copy}/{file}"));
-        let cmd = format(command, &|name| (name == "proofs").then(|| proof.clone()))
+        let cmd = fill(command, &|name| (name == "proofs").then(|| proof.clone()))
             .map_err(|e| prompt_error("proof_command", &e))?;
         let limit = self.proof_timeout.to_string();
         let ran = self.ignore_orchestrator_dir(work_dir).and_then(|()| {
@@ -189,7 +189,7 @@ impl Workflow<'_> {
             Err(e) => return Ok((false, format!("it did not run: {e}"))),
         };
         let output = String::from_utf8_lossy(&proc.stdout).into_owned() + &proc.stderr;
-        let lines: Vec<&str> = rstrip(&output).split('\n').collect();
+        let lines: Vec<&str> = output.trim_end().split('\n').collect();
         let tail = lines[lines.len().saturating_sub(PROOF_TAIL_LINES)..].join("\n");
         let how = match proc.status {
             0 => "it passes".to_string(),

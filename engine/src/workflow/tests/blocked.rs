@@ -11,6 +11,7 @@ use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use super::*;
 use crate::constants::NO_QUESTION;
 use crate::host::fake::HOST_EPOCH;
+use crate::paths::{file_name, split_extension};
 use crate::pipeline::DEFAULT_WORKFLOW;
 use crate::test_support::EXAMPLES;
 use crate::workflow_file::{load_workflow_file, workflow_toml};
@@ -53,14 +54,14 @@ fn answered(path_of: impl Fn(&RunState) -> String + 'static, text: &str) -> Turn
 
 /// The prompt of the wait for the human's answer to the k-th block of the report at path.
 fn blocked_prompt(path: &str, k: u32) -> String {
-    let (stem, ext) = crate::py::text::splitext(path);
+    let (stem, ext) = split_extension(path);
     let blocked = format!("{stem}.blocked-{k}{ext}");
     let value = |name: &str| match name {
         "path" => Some(path.to_string()),
         "blocked_path" => Some(blocked.clone()),
         _ => None,
     };
-    crate::py::format::format(crate::prompts::BLOCKED_PROMPT, &value).expect("the built-in prompt fills in")
+    crate::prompts::template::fill(crate::prompts::BLOCKED_PROMPT, &value).expect("the built-in prompt fills in")
 }
 
 /// The names of the blocked reports on the host, sorted.
@@ -70,7 +71,7 @@ fn blocked_files(host: &FakeHost) -> Vec<String> {
         .files
         .keys()
         .filter(|p| p.contains(".blocked-"))
-        .map(|p| crate::py::text::basename(p).to_string())
+        .map(|p| file_name(p).to_string())
         .collect();
     names.sort();
     names
@@ -310,7 +311,7 @@ fn the_note_is_in_every_prompt_of_the_steps_that_can_block_only() {
 
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
     // First, quality fix and again; the fresh prompts are in default_prompts.rs's golden texts.
-    let blocked_note = crate::py::format::format(crate::prompts::BLOCKED_NOTE, &|_| None).unwrap();
+    let blocked_note = crate::prompts::template::fill(crate::prompts::BLOCKED_NOTE, &|_| None).unwrap();
     assert_eq!(builds.borrow().len(), 3);
     for prompt in builds.borrow().iter() {
         assert!(prompt.ends_with(&note()));
@@ -374,7 +375,7 @@ fn a_blocked_verdict_file_gets_the_verdict_retry() {
 fn workflow_definitions_do_not_contain_the_note() {
     let default = &*DEFAULT_WORKFLOW;
     assert!(!workflow_toml(default).contains("BLOCKED"));
-    assert!(!default.steps().iter().flat_map(|st| st.templates()).any(|t| t.contains("BLOCKED")));
+    assert!(!default.steps().iter().flat_map(|st| st.templates()).any(|(_, t)| t.contains("BLOCKED")));
 }
 
 #[test]

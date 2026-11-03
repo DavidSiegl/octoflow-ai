@@ -5,10 +5,10 @@ use std::collections::BTreeSet;
 
 use super::{Outcome, Stopped, Workflow};
 use crate::error::OrchestratorError;
+use crate::paths::{file_name, split_extension};
 use crate::pipeline::Step;
 use crate::prompts::Prompt;
 use crate::py::json::{Json, Map};
-use crate::py::text::{basename, splitext};
 
 /// What one editing turn changed in other steps' locked files, as a RunState::restored record holds it.
 #[derive(Clone, Debug, PartialEq)]
@@ -71,7 +71,7 @@ impl Workflow<'_> {
     ///
     /// Errors: git fails, saving fails, or the step locks before the run has a base, which goto rules out.
     pub(super) fn hold_locks(&mut self, step: &Step, n: u32) -> Outcome<()> {
-        let file = format!("locked-{}.diff", splitext(basename(&self.own_path(step, n))).0);
+        let file = format!("locked-{}.diff", split_extension(file_name(&self.own_path(step, n))).0);
         let saved = self.restored()?.into_iter().find(|r| r.file == file);
         let record = match saved {
             Some(record) => Some(record),

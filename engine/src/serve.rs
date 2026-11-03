@@ -19,7 +19,6 @@ use crate::herdr::{AgentConsole, ProcessHerdr};
 use crate::host::{Host, ProcessHost};
 use crate::interrupt::Interrupt;
 use crate::py::json::Json;
-use crate::py::text::repr;
 use crate::py::url::{parse_qsl, urlsplit};
 use runs::{AgentInput, Event, ProjectRuns, RunReadError, RunWatch};
 
@@ -361,7 +360,7 @@ fn answer(shared: &Shared, request: Request) {
         "POST" if path == AGENT_INPUT => post_input(shared, request, &query),
         "OPTIONS" => preflight(shared, request),
         method => {
-            let method = repr(method);
+            let method = format!("{method:?}");
             send(request, unsupported(&method));
         }
     }
@@ -592,7 +591,7 @@ fn send_json(request: Request, code: u16, body: &Json) {
     send(request, response);
 }
 
-/// The 501 http.server's send_error gives a request of method, as Python's repr writes it.
+/// The 501 http.server's send_error gives a request of method, which the caller passes already quoted.
 fn unsupported(method: &str) -> Response<io::Cursor<Vec<u8>>> {
     let escaped = method.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
     let page = format!(

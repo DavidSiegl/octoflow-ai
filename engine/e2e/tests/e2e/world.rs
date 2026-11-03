@@ -23,7 +23,7 @@ use octoflow_e2e::scratch::Scratch;
 use crate::servers::{ServerFailure, Servers, JENKINS_TOKEN, JENKINS_USER, PYPI_CA};
 use octoflow_e2e::{array_at, object, object_at, procs, str_at, strings};
 use octoflow_engine::py::json::{Json, Map};
-use octoflow_engine::py::text::shlex_quote;
+use octoflow_engine::host::shlex_quote;
 
 /// Who the world's commits are by: the harness's own, and the engine's, through the git configuration it is given.
 const GIT_NAME: &str = "Parity";

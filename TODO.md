@@ -97,14 +97,14 @@ What is known to be open in `orchestrator.py` and `gate.py`, and why. An entry l
   in, minified into `ui/dist/` without their notices. All were MIT when the project took its license (2026-10-30).
   Closes with their license texts generated from `ui/package-lock.json` at build time, e.g. by a Vite license
   plugin, and bundled with the app beside the crates'.
-- **A prompt template's `.attribute` is an error in the Rust engine, where Python filled it in.** `crate::py::format`,
-  the port of `str.format` that fills workflow prompt templates (`workflow.rs`, `pipeline.rs`, `prompts.rs`), takes a
-  placeholder's value to be a str and answers any attribute with AttributeError (`Accessor::apply_to`), so a template
-  with `{diff.upper}` or `{diff.__class__}` stops the run. Python's `str.format` looked the attribute up on the str:
-  `<class 'str'>`, or a bound method's repr with its address, which no recording can hold. Indexes, `{diff[0]}`,
-  behave as Python's. Found by the code review of the engine's split under the gate's cognitive-complexity limit
-  (2026-10-30). Closes with the docs naming the difference as the engine's, or with attributes refused when the
-  workflow file is read, as a placeholder's name is checked there (`field_names`).
+- **A release that adds a placeholder to a built-in prompt would refuse every run that saved an override of it.**
+  `saved_prompts` (`engine/src/prompts.rs`) holds a run's saved prompt overrides to `prompt_problem` on resume, whose
+  rule that an override keep every placeholder of the built-in text never refused a resume before. No run can meet it
+  today, since overrides came with that rule (fb87a8f) and every built-in placeholder is older. Raised by cross-review
+  111, round 2 (2026-11-03): "if a later release adds a placeholder to a built-in text, every run that saved an
+  override of that text will be refused on resume, where it could still have been filled." Closes with the resume
+  check limited to what cannot be filled in, the template's form and unknown names, or with the release that adds
+  such a placeholder saying so in its notes.
 - **The Rust engine names itself `orchestrator.py`.** Its messages and hints were ported word for word, so the
   e2e recordings, made by the Python engine, hold them: `resume: orchestrator.py resume <id>` in `list` and the
   interrupted note (`cli/listing.rs`, `cli.rs`'s `resume_command`), `` `orchestrator.py workflows default` `` in
@@ -214,9 +214,7 @@ What is known to be open in `orchestrator.py` and `gate.py`, and why. An entry l
   (`Workflow::run_proof`), where Python keeps it as a lone surrogate, which `state.json` holds as an escape and the
   write of the review then fails on (a UnicodeEncodeError, uncaught).
   And from drain (rust-engine ticket 09b, 2026-10-29): a name in drain's DIR that is not UTF-8 is left out of the
-  queue (`crate::cli::drain::queue`, `read_queue`), where Python reads its spec.md through os.fsdecode; and doctor
-  reads a tool's version number in ASCII digits only (`crate::cli::doctor`, `version_number`), where Python's `\d`
-  takes any Unicode digit (cross-review 104, F6).
+  queue (`crate::cli::drain::queue`, `read_queue`), where Python reads its spec.md through os.fsdecode.
   Decided against unless a run is found that writes such input.
 - **The Rust engine's Ctrl-C, what is left.** Rust-engine ticket 08's part 6 (2026-10-29) has a SIGINT raise the
   `Interrupt`, which stops the command the engine waits on (Fixed, "A Ctrl-C at the terminal does not reach the
@@ -400,6 +398,12 @@ What is known to be open in `orchestrator.py` and `gate.py`, and why. An entry l
   many events a step sends depends on where serve's one-second poll falls among the run's saves, so the stream
   between two checkpoints differs from run to run. Closes with a serve whose poll the harness can step, which would
   be a hook in the engine, or the user's ruling that the folded stream is the contract, as the desktop app reads it.
+- **Two e2e scenarios once saw a turn end a second before it started.** In one `cargo nextest run --workspace` of
+  octoflow-without-python ticket 03's branch on a loaded machine (2026-11-03), `agent_exits` recorded a turn's
+  `"seconds": -1` in `state.json` and `workflow_product_team` a `-<duration>` in its turns table, where their
+  recordings hold a duration of 0 or more; both passed when run again, and in the two full runs before. Not
+  investigated: whether the turn's start and end come from clocks that can disagree by a second (the engine's and
+  a fake's `date`, say). Closes with that cause found and the turn's seconds taken from one clock.
 
 - **`test-integrity` knows golden files only by this repository's layout.** `_golden_file` (`gate.py`) takes a
   golden file to be one under a `golden` directory inside a `tests` directory, as `tests/golden.py` keeps them, so
@@ -856,6 +860,14 @@ What is known to be open in `orchestrator.py` and `gate.py`, and why. An entry l
   after each save (Open issues, "No test crashes the Rust engine after each save").
 
 ## Fixed
+
+- **A prompt template's `.attribute` was an error in the Rust engine, where Python filled it in.** `crate::py::format`,
+  the port of `str.format` that filled workflow prompt templates, answered any attribute with AttributeError, so a
+  template with `{diff.upper}` stopped the run. Found by the code review of the engine's split under the gate's
+  cognitive-complexity limit (2026-10-30). Fixed (2026-11-03, octoflow-without-python ticket 05) by templates of
+  `{name}` alone (`crate::prompts::template`): an attribute, an index, a conversion, a format spec or a positional
+  field is refused when the workflow or prompt file is read, the placeholder and its line and column named, and
+  `py::format` is gone.
 
 - **The eval set's code had review 88's findings open.** Raised by cross-review 88 (2026-10-28) in code PR #167 brought.
   Fixed (2026-10-31, octoflow-without-python ticket 08) by the port of the eval set to Rust, `cargo xtask eval` and

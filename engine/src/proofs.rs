@@ -4,7 +4,6 @@
 use crate::constants::PROOF_COPIES_DIR;
 use crate::error::OrchestratorError;
 use crate::py::json::{Json, Map};
-use crate::py::text::decimal_value;
 
 /// The heading of the section Workflow::judge_proofs appends to a review, which a Reviewer's own section is unlikely
 /// to take.
@@ -21,10 +20,10 @@ pub const REMOVE_TREE_SCRIPT: &str = r#"{ [ ! -e "$1" ] || chmod -R u+rwX -- "$1
 /// The number of the finding a proof file is for: the first number in its name, as in test_3_rate.py; None for a name
 /// without one.
 pub fn proof_finding(file: &str) -> Option<u64> {
-    let start = file.find(|c| decimal_value(c).is_some())?;
+    let start = file.find(|c: char| c.is_ascii_digit())?;
     let mut n: u64 = 0;
     for c in file[start..].chars() {
-        let Some(d) = decimal_value(c) else { break };
+        let Some(d) = c.to_digit(10) else { break };
         n = n.saturating_mul(10).saturating_add(d.into());
     }
     Some(n)
@@ -149,12 +148,12 @@ pub fn proofs_section(command: &str, cwd: &str, review: &str, proofs: &[ProofRun
 }
 
 /// The number of each line of review that starts with one and ". ", as re.findall(r"^(\d+)\. ", review,
-/// re.MULTILINE) finds them: lines end at "\n" alone, and the digits are Python's decimal ones.
+/// re.MULTILINE) finds them: lines end at "\n" alone, and the digits are ASCII ones.
 fn numbered_findings(review: &str) -> Vec<i128> {
     review
         .split('\n')
         .filter_map(|line| {
-            let digits: Vec<u32> = line.chars().map_while(decimal_value).collect();
+            let digits: Vec<u32> = line.chars().map_while(|c| c.to_digit(10)).collect();
             let rest = &line[line.char_indices().nth(digits.len()).map_or(line.len(), |(i, _)| i)..];
             (!digits.is_empty() && rest.starts_with(". "))
                 .then(|| digits.iter().fold(0i128, |n, d| n.saturating_mul(10).saturating_add((*d).into())))

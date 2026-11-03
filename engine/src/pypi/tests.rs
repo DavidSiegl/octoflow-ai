@@ -98,12 +98,12 @@ fn any_other_failure_raises() {
 fn json_of_another_shape_is_worded_as_python_s_error() {
     let info = r#""info": {"version": "1"}"#;
     let cases = [
-        (r#"{"x": 1}"#.to_string(), "'info'"),
+        (r#"{"x": 1}"#.to_string(), "\"info\""),
         (r#"[]"#.to_string(), "it has no info.version"),
         (format!(r#"{{{info}, "releases": [1]}}"#), "'list' object has no attribute 'values'"),
         (format!(r#"{{{info}, "releases": {{"1": 5}}}}"#), "'int' object is not iterable"),
         (format!(r#"{{{info}, "urls": [3]}}"#), "'int' object is not subscriptable"),
-        (format!(r#"{{{info}, "urls": [{{}}]}}"#), "'upload_time_iso_8601'"),
+        (format!(r#"{{{info}, "urls": [{{}}]}}"#), "\"upload_time_iso_8601\""),
         (format!(r#"{{{info}, "urls": [{{"upload_time_iso_8601": 1}}]}}"#), "fromisoformat: argument must be str"),
         (format!(r#"{{{info}, "urls": [{{"upload_time_iso_8601": "yesterday"}}]}}"#), "Invalid isoformat string"),
         (r#"{"info": {"version": "1", "license_expression": 7}}"#.to_string(), "'int' object has no attribute 'strip'"),
@@ -130,7 +130,7 @@ fn json_of_another_shape_is_worded_as_python_s_error() {
     assert!(project(Ok(Response::ok(b"\xff".to_vec())))
         .unwrap_err()
         .to_string()
-        .ends_with("'utf-8' codec can't decode byte 0xff in position 0: invalid start byte"));
+        .ends_with("invalid utf-8 sequence of 1 bytes from index 0"));
 }
 
 #[test]

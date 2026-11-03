@@ -4,7 +4,6 @@ use std::collections::BTreeMap;
 
 use crate::error::OrchestratorError;
 use crate::py::json::Map;
-use crate::py::text::repr;
 
 /// The lines a file gains, by their line in the new tree, from 1, each one's bytes without the "+".
 pub type AddedLines = BTreeMap<u64, Vec<u8>>;
@@ -192,7 +191,7 @@ fn unquote(name: &[u8]) -> Vec<u8> {
 fn utf8_path(bytes: Vec<u8>) -> Result<String, OrchestratorError> {
     String::from_utf8(bytes).map_err(|e| {
         let shown = String::from_utf8_lossy(e.as_bytes()).into_owned();
-        OrchestratorError(format!("the diff names a path that is not UTF-8: {}", repr(&shown)))
+        OrchestratorError(format!("the diff names a path that is not UTF-8: {shown:?}"))
     })
 }
 

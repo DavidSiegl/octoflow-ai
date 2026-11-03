@@ -12,6 +12,7 @@
 use super::*;
 use crate::ci::fake::Outcome;
 use crate::env::ConfigDir;
+use crate::paths::file_name;
 use crate::pipeline::{find_workflow, Pipeline, DEFAULT_WORKFLOW};
 use crate::prompts::{load_prompts, FIX_PROMPT};
 use crate::test_support::{quick, TempDir, EXAMPLES};
@@ -393,7 +394,7 @@ fn gate_passes_after_a_fix_then_runs_out() {
         .writes
         .iter()
         .filter(|p| p.starts_with(D) && !p.ends_with("state.json"))
-        .map(|p| crate::py::text::basename(p).to_string())
+        .map(|p| file_name(p).to_string())
         .collect();
     assert_eq!(written, [
         "spec.md",
@@ -686,6 +687,6 @@ fn a_state_saved_before_prompt_files_resumes_with_the_built_in_texts() {
         "build_path" => Some(format!("{D}/build-2.md")),
         _ => None,
     };
-    let built_in = crate::py::format::format(FIX_PROMPT, &fix).unwrap();
+    let built_in = crate::prompts::template::fill(FIX_PROMPT, &fix).unwrap();
     assert!(seen.borrow()[0].contains(&built_in), "{}", seen.borrow()[0]);
 }

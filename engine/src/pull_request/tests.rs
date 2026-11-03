@@ -39,7 +39,7 @@ fn spec_titles() {
     assert_eq!(spec_title("\n# Add a limiter \n## Goal").as_deref(), Some("Add a limiter"));
     assert_eq!(spec_title("## Goal\n# Late title"), None);
     assert_eq!(spec_title("#Title"), None);
-    // A \x1c ends a line, as str.splitlines reads it.
+    // A \x1c is no blank, so the # is not followed by one.
     assert_eq!(spec_title("  #\u{1c} Title\u{a0}"), None);
     assert_eq!(spec_title("  #\t\u{3000}Title\u{a0}"), Some("Title".into()));
     assert_eq!(spec_title("# \n"), None);

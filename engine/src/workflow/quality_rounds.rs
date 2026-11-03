@@ -16,10 +16,10 @@ use crate::constants::{CI_POLL_SECONDS, CI_REF_PREFIX, QUALITY_TIMEOUT, REMOTE};
 use crate::error::OrchestratorError;
 use crate::host::{Host, LeaksFound, PushError};
 use crate::patch::added_lines;
+use crate::paths::file_name;
 use crate::pipeline::{Step, QUALITY};
 use crate::prompts::Prompt;
 use crate::py::json::{Json, Map};
-use crate::py::text::{basename, strip};
 use crate::quality::{build_failed_report, gate_failures, leak_report, parse_gate, under_gate_line, QUALITY_OK};
 use crate::state::RunState;
 
@@ -128,7 +128,7 @@ impl<'a> Workflow<'a> {
     /// does not start with a GATE line; a secret is in the run's base; git, a file or saving fails; the Ctrl-C.
     fn quality(&mut self, n: u32, q: u32) -> Outcome<&'static str> {
         let path = self.state.quality_path(n, q);
-        let file = basename(&path).to_string();
+        let file = file_name(&path).to_string();
         let git_ref = format!("{CI_REF_PREFIX}{}-{n}-q{q}", self.state.key());
         let text = match self.host.read(&path)? {
             Some(text) => {
@@ -245,7 +245,7 @@ impl<'a> Workflow<'a> {
             if let Some(text) = quality.as_deref().filter(|text| earlier.as_deref() == Some(*text)) {
                 let mut lines: Vec<&str> = text.split('\n').collect();
                 lines.pop();
-                if lines.iter().any(|line| !strip(line).is_empty()) {
+                if lines.iter().any(|line| !line.trim().is_empty()) {
                     return Ok(Some((None, quality)));
                 }
             }

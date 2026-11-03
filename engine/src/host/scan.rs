@@ -5,9 +5,8 @@ use std::fmt;
 
 use super::{checked, git_timed, Host, DEFAULT_TIMEOUT, IN_DIR};
 use crate::constants::{GITLEAKS_ALLOW, GITLEAKS_EXTEND_DEPTH, GITLEAKS_TIMEOUT, REMOTE};
-use crate::error::OrchestratorError;
+use crate::error::{shortened, OrchestratorError};
 use crate::py::json::Json;
-use crate::py::text::{repr, shortened, strip};
 use crate::quality::Leak;
 
 /// A push refused because what it would publish holds secrets, as Host::refuse_leaks finds them.
@@ -65,7 +64,7 @@ pub(super) fn scan_unpublished<H: Host + ?Sized>(
     }
     let log_opts = format!("--diff-merges=remerge --no-textconv {commit} --not {remotes}");
     let empty_tree = host.git(cwd, &["hash-object", "-t", "tree", "/dev/null"])?;
-    let git_env = scan_git_env(strip(&git_dir), strip(&empty_tree));
+    let git_env = scan_git_env(git_dir.trim(), empty_tree.trim());
     let log_flag = format!("--log-opts={log_opts}");
     let mut argv = vec!["sh", "-c", IN_DIR, "_", &rules];
     argv.extend(git_env.iter().map(String::as_str));
@@ -73,7 +72,7 @@ pub(super) fn scan_unpublished<H: Host + ?Sized>(
     argv.extend(["--report-format", "json", "--report-path", report_path, "--config", &config]);
     argv.extend(["--gitleaks-ignore-path", &ignore, &source]);
     let proc = host.run(&argv, None, GITLEAKS_TIMEOUT)?;
-    let last = strip(&proc.stderr).rsplit('\n').next().unwrap_or_default();
+    let last = proc.stderr.trim().rsplit('\n').next().unwrap_or_default();
     let said = shortened(if last.is_empty() { "nothing" } else { last }, 160);
     if proc.status != 0 && proc.status != 1 {
         return Err(OrchestratorError(format!("{failed}: it exited with status {}: {said}", proc.status)));
@@ -107,7 +106,7 @@ fn findings(text: &str) -> Result<Option<Vec<Leak>>, String> {
     items
         .iter()
         .map(|f| {
-            let field = |key: &str| f.get(key).ok_or_else(|| repr(key));
+            let field = |key: &str| f.get(key).ok_or_else(|| format!("{key:?}"));
             let string = |key: &str| field(key)?.as_str().map(String::from).ok_or(format!("{key} is no string"));
             // In the order the Python engine reads them, so that the first field missing is the one named.
             let (rule, file) = (string("RuleID")?, string("File")?);
@@ -222,11 +221,11 @@ fn write_base_rules<H: Host + ?Sized>(
         let name = normpath(&extended);
         if chain.contains(&name) {
             let round = [chain.as_slice(), std::slice::from_ref(&name)].concat().join(" -> ");
-            return Err(refused(&chain, format!("extends {}, which comes back round: {round}", repr(&extended))));
+            return Err(refused(&chain, format!("extends {extended:?}, which comes back round: {round}")));
         }
         text = match base_rules_file(host, cwd, base, &name)? {
             Some(text) => text,
-            None => return Err(refused(&chain, format!("extends {}, which is no file in base", repr(&extended)))),
+            None => return Err(refused(&chain, format!("extends {extended:?}, which is no file in base"))),
         };
         chain.push(name);
         spelled = extended;
@@ -317,7 +316,7 @@ fn extended_file(config: &str) -> Result<Option<String>, String> {
     } else {
         return Ok(Some(path.to_string()));
     };
-    Err(format!("extends {}, which {why}", repr(path)))
+    Err(format!("extends {path:?}, which {why}"))
 }
 
 /// table's entry for key, a lower-case key of a gitleaks config, in whatever case table spells it, as gitleaks reads

@@ -201,7 +201,7 @@ fn invalid_files_name_the_problem() {
         ("step 1 (build): use names no step of the default workflow; it has spec, build, review", format!("[[steps]]\nuse = \"test\"\n{step}")),
         ("step 1 (build): edits must be true or false", format!("[[steps]]\n{}", step.replace("true", "\"yes\""))),
         (
-            "step 1 (build): prompt: Single '}' encountered in format string; write a literal brace as {{ or }}",
+            "step 1 (build): prompt: } at line 1, column 3 closes no placeholder; write a literal brace as }}",
             "[[steps]]\nid = \"build\"\nfile = \"b-{n}.md\"\nprompt = \"a } b\"\nedits = true\n".into(),
         ),
         ("role build: give a label, or a table with label, model and agent", format!("roles.build = 3\n[[steps]]\n{step}")),
@@ -217,17 +217,26 @@ fn invalid_files_name_the_problem() {
         ("role build: label must be a string", format!("roles.build = {{ label = 3 }}\n[[steps]]\n{step}")),
         ("step 1 must be a table", "steps = [3]\n".into()),
         ("step 1 (build): prompt must be a string", format!("[[steps]]\n{}", step.replace("\"{path}\"", "3"))),
-        // Placeholders that are all known, but that could not be filled in when the step comes up.
-        ("step build: prompt cannot be filled in: ValueError: Unknown format code 'd'", format!("[[steps]]\n{}", step.replace("\"{path}\"", "\"{task:d}\""))),
-        ("step build: prompt cannot be filled in: ValueError: Unknown conversion specifier z", format!("[[steps]]\n{}", step.replace("\"{path}\"", "\"{task!z}\""))),
-        ("step build: again cannot be filled in: KeyError: 'nope'", format!("[[steps]]\n{step}again = \"{{task:{{nope}}}}\"\n")),
+        // Placeholders that are all known names, but written as more than a name.
+        (
+            "step 1 (build): prompt: placeholder {task:d} at line 1, column 1 has a format spec; a placeholder takes none",
+            format!("[[steps]]\n{}", step.replace("\"{path}\"", "\"{task:d}\"")),
+        ),
+        (
+            "step 1 (build): prompt: placeholder {task!z} at line 1, column 1 has a conversion; a placeholder takes none",
+            format!("[[steps]]\n{}", step.replace("\"{path}\"", "\"{task!z}\"")),
+        ),
+        (
+            "step 1 (build): again: placeholder {diff.upper} at line 1, column 1 has an attribute; a placeholder takes none",
+            format!("[[steps]]\n{step}again = \"{{diff.upper}}\"\n"),
+        ),
     ]
     .into_iter()
     .map(|(m, t)| (m.to_string(), t))
     .collect();
-    for name in ["b-{n!s}.md", "b-{n:d}.md", "b-{n:{x}}.md"] {
+    for (name, why) in [("b-{n!s}.md", "{n!s} at line 1, column 3 has a conversion"), ("b-{n:d}.md", "{n:d} at line 1, column 3 has a format spec")] {
         cases.push((
-            format!("step build: handoff file {name} may use {{n}} only as it is, with no format spec or conversion"),
+            format!("step 1 (build): file: placeholder {why}; a placeholder takes none"),
             format!("[[steps]]\n{}", step.replace("b-{n}.md", name)),
         ));
     }
@@ -262,13 +271,13 @@ fn a_table_with_two_problems_names_the_first_in_the_file_as_python_does() {
 }
 
 #[test]
-fn a_saved_definition_that_cannot_be_filled_in_or_is_corrupt_is_refused() {
+fn a_saved_definition_with_an_unreadable_template_or_corrupt_is_refused() {
     let Json::Object(mut definition) = workflow_definition(&quick()) else { panic!("an object") };
     let Some(Json::Array(steps)) = definition.get_mut("steps") else { panic!("steps") };
     let Json::Object(first) = &mut steps[0] else { panic!("a step") };
     first.insert("prompt", Json::from("{task:d}"));
     let e = run_pipeline("quick", Some(&Json::Object(definition)), &built_in()).unwrap_err();
-    assert!(e.0.starts_with("the definition of workflow quick saved with the run is invalid: workflow quick: step build: prompt cannot be filled in"), "{e}");
+    assert!(e.0.starts_with("the definition of workflow quick saved with the run is invalid: step 1 (build): prompt: placeholder {task:d} at line 1, column 1 has a format spec"), "{e}");
     let e = run_pipeline("quick", Some(&Json::parse(r#"{"steps": []}"#).unwrap()), &built_in()).unwrap_err();
     assert_eq!(e.0, "the definition of workflow quick saved with the run is invalid: it has no [[steps]]");
     assert!(run_pipeline("quick", None, &built_in()).unwrap_err().0.starts_with("unknown workflow quick"));

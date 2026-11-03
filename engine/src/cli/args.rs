@@ -601,7 +601,7 @@ fn starts_args(config: &ConfigDir) -> Vec<Arg> {
 fn role_model_arg(text: &str) -> Result<(String, String), String> {
     match text.split_once('=') {
         Some((role, model)) if !role.is_empty() && !model.is_empty() => Ok((role.to_string(), model.to_string())),
-        _ => Err(format!("expected ROLE=MODEL, not {}", crate::py::text::repr(text))),
+        _ => Err(format!("expected ROLE=MODEL, not {text:?}")),
     }
 }
 
@@ -612,9 +612,8 @@ fn role_agent_arg(text: &str) -> Result<(String, String), String> {
             Ok((role.to_string(), kind.to_string()))
         }
         _ => Err(format!(
-            "expected ROLE=KIND, where KIND is one of {}; not {}",
-            AGENT_KINDS.join(", "),
-            crate::py::text::repr(text)
+            "expected ROLE=KIND, where KIND is one of {}; not {text:?}",
+            AGENT_KINDS.join(", ")
         )),
     }
 }

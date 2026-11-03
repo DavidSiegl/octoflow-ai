@@ -7,10 +7,10 @@ use std::sync::LazyLock;
 
 use crate::constants::{AGENT_KINDS, DEFAULT_MAX_FILES, DEFAULT_MAX_LINES, ROLE_LABELS};
 use crate::error::OrchestratorError;
+use crate::paths::split_extension;
 use crate::prompts::{Prompt, Prompts};
-use crate::py::format::{field_names, format, parse};
+use crate::prompts::template::{fill, parse, placeholders, Piece};
 use crate::py::json::Map;
-use crate::py::text::splitext;
 
 /// Run phases that are no step's: the quality loop after a quality-gated step's turn, and the run's last two.
 pub const QUALITY: &str = "quality";
@@ -105,7 +105,7 @@ impl Step {
 
     /// Whether the step writes a file per round: its file has an {n}.
     pub fn per_round(&self) -> bool {
-        field_names(&self.file).is_ok_and(|names| names.iter().any(|n| n == "n"))
+        placeholders(&self.file).is_ok_and(|names| names.iter().any(|n| n == "n"))
     }
 
     /// Whether a BLOCKED report pauses the turn for the human. A human-paced step has the human at hand already,
@@ -125,11 +125,11 @@ impl Step {
     /// with -q<q> before the extension.
     pub fn name(&self, n: impl Into<i64>, q: u32) -> String {
         let number = n.into().to_string();
-        let name = format(&self.file, &|field| (field == "n").then(|| number.clone())).unwrap_or(self.file.clone());
+        let name = fill(&self.file, &|field| (field == "n").then(|| number.clone())).unwrap_or(self.file.clone());
         if q == 0 {
             return name;
         }
-        let (stem, ext) = splitext(&name);
+        let (stem, ext) = split_extension(&name);
         format!("{stem}-q{q}{ext}")
     }
 
@@ -139,7 +139,7 @@ impl Step {
         if self.quality_gated {
             // As name() does: -q<q> before the extension, where the template splits at the same dot as the filled-in
             // name, since a round number has none.
-            let (stem, ext) = splitext(&self.file);
+            let (stem, ext) = split_extension(&self.file);
             let mut tokens = name_tokens(stem);
             tokens.extend([Some('-'), Some('q'), None]);
             tokens.extend(name_tokens(ext));
@@ -154,24 +154,28 @@ impl Step {
         self.path(run_dir, n, q)
     }
 
-    /// The step's prompt templates: prompt, and again and fresh_note where it has them.
-    pub fn templates(&self) -> Vec<&str> {
-        [Some(&self.prompt), self.again.as_ref(), self.fresh_note.as_ref()].into_iter().flatten().map(String::as_str).collect()
+    /// The step's prompt templates, each with its key in a workflow file: prompt, and again and fresh_note where it
+    /// has them.
+    pub fn templates(&self) -> Vec<(&'static str, &str)> {
+        [("prompt", Some(&self.prompt)), ("again", self.again.as_ref()), ("fresh_note", self.fresh_note.as_ref())]
+            .into_iter()
+            .filter_map(|(key, template)| Some((key, template?.as_str())))
+            .collect()
     }
 
     /// The names of every placeholder its templates use; one that does not parse adds none.
     pub fn placeholders(&self) -> BTreeSet<String> {
-        self.templates().into_iter().flat_map(|t| field_names(t).unwrap_or_default()).collect()
+        self.templates().into_iter().flat_map(|(_, t)| placeholders(t).unwrap_or_default()).collect()
     }
 }
 
 /// A template as its characters, with None for each field: the {n} of a handoff file's name.
 fn name_tokens(template: &str) -> NameTokens {
     let mut tokens = Vec::new();
-    for chunk in parse(template).unwrap_or_default() {
-        tokens.extend(chunk.literal.chars().map(Some));
-        if chunk.field.is_some() {
-            tokens.push(None);
+    for piece in parse(template).unwrap_or_default() {
+        match piece {
+            Piece::Text(text) => tokens.extend(text.chars().map(Some)),
+            Piece::Placeholder(_) => tokens.push(None),
         }
     }
     tokens
@@ -289,8 +293,8 @@ impl Pipeline {
         if self.verdict_step().is_none() {
             return Some("proof_command runs the verdict step's proofs, and the workflow has no verdict step".into());
         }
-        match field_names(command) {
-            Err(e) => Some(format!("proof_command: {e}; write a literal brace as {{{{ or }}}}")),
+        match placeholders(command) {
+            Err(e) => Some(format!("proof_command: {e}")),
             Ok(names) if names != ["proofs"] => {
                 Some("proof_command must name the proof file once, as {proofs}, and no other placeholder".into())
             }
@@ -399,24 +403,14 @@ impl Pipeline {
             if !self.roles.contains_key(&st.role) {
                 return Some(format!("step {}: role {} has no label", st.id, st.role));
             }
-            match field_names(&st.file) {
-                Err(e) => return Some(e.to_string()),
-                Ok(fields) if fields.iter().any(|f| f != "n") => {
-                    return Some(format!("step {}: handoff file {} may use only {{n}}", st.id, st.file));
-                }
-                Ok(_) => {}
+            if let Some(problem) = template_problem(st, &known) {
+                return Some(format!("step {}: {problem}", st.id));
             }
             if st.per_round() && i < first_edit {
                 // Round 0 lasts until the first editing step, so such a file would be numbered 0.
                 return Some(format!("step {}: a per-round handoff file needs an editing step at or before it", st.id));
             }
-            if let Some(e) = st.templates().into_iter().find_map(|template| field_names(template).err()) {
-                return Some(e.to_string());
-            }
-            if let Some(unknown) = st.placeholders().iter().find(|p| !known.contains(p.as_str())) {
-                return Some(format!("step {}: unknown prompt placeholder {unknown}", st.id));
-            }
-            if let Some(problem) = fill_problem(st, &known) {
+            if let Some(problem) = file_name_problem(st) {
                 return Some(format!("step {}: {problem}", st.id));
             }
         }
@@ -545,18 +539,22 @@ impl Pipeline {
     }
 }
 
-/// What stops the step's file or prompts from being filled in at run time, which a bad format spec, conversion or
-/// nested field would, though its placeholders are all known; None for nothing.
-fn fill_problem(step: &Step, known: &BTreeSet<&str>) -> Option<String> {
-    // A plain {n}, so that name_tokens knows every name it can give.
-    let chunks = parse(&step.file).unwrap_or_default();
-    let fields = chunks.iter().filter_map(|c| c.field.as_ref()).filter(|f| !f.name.is_empty());
-    if fields.into_iter().any(|f| !f.spec.is_empty() || f.conversion.is_some()) {
-        return Some(format!(
-            "handoff file {} may use {{n}} only as it is, with no format spec or conversion",
-            step.file
-        ));
+/// What stops the step's file from being read as a template (crate::prompts::template) using {n} alone, or its prompts
+/// from being read as templates whose placeholders are all of known: None for nothing.
+fn template_problem(step: &Step, known: &BTreeSet<&str>) -> Option<String> {
+    match placeholders(&step.file) {
+        Err(e) => return Some(format!("file: {e}")),
+        Ok(names) if names.iter().any(|name| name != "n") => {
+            return Some(format!("handoff file {} may use only {{n}}", step.file));
+        }
+        Ok(_) => {}
     }
+    let empty = |name: &str| known.contains(name).then(String::new);
+    step.templates().into_iter().find_map(|(key, template)| fill(template, &empty).err().map(|e| format!("{key}: {e}")))
+}
+
+/// What makes the step's handoff file, filled in, no plain name of the step's own: None for nothing.
+fn file_name_problem(step: &Step) -> Option<String> {
     let name = step.name(1, 0);
     if name.contains('/') || matches!(name.as_str(), "" | "." | "..") || is_run_file(&name) {
         return Some(format!(
@@ -564,14 +562,6 @@ fn fill_problem(step: &Step, known: &BTreeSet<&str>) -> Option<String> {
              quality-*, locked-* or proofs-*, which the run writes itself",
             step.file
         ));
-    }
-    // Every value a prompt is filled in with is a string.
-    let empty = |field: &str| known.contains(field).then(String::new);
-    for (field, template) in [("prompt", Some(&step.prompt)), ("again", step.again.as_ref()), ("fresh_note", step.fresh_note.as_ref())] {
-        let Some(template) = template else { continue };
-        if let Err(e) = format(template, &empty) {
-            return Some(format!("{field} cannot be filled in: {}", e.named()));
-        }
     }
     None
 }
