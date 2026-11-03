@@ -311,33 +311,50 @@ fn main() -> ExitCode {
 "##;
 
 const DOCS_TESTS: &str = r##"use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use kvstore::{delete, get, keys, put};
 
-fn store(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("kvstore-test-{name}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    dir.join("store.txt")
+/// A store file in a directory of the test's own, removed with the directory when dropped, by a failing test too.
+struct Store(PathBuf);
+
+impl Store {
+    fn new(name: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("kvstore-test-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        Store(dir.join("store.txt"))
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Store {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(self.0.parent().unwrap());
+    }
 }
 
 #[test]
 fn put_get_delete() {
-    let path = store("put");
-    put(&path, "a", "1").unwrap();
-    assert_eq!(get(&path, "a").unwrap(), Some("1".to_string()));
-    assert_eq!(keys(&path).unwrap(), ["a"]);
-    assert!(delete(&path, "a").unwrap());
-    assert!(!delete(&path, "a").unwrap());
-    assert_eq!(get(&path, "a").unwrap(), None);
+    let store = Store::new("put");
+    let path = store.path();
+    put(path, "a", "1").unwrap();
+    assert_eq!(get(path, "a").unwrap(), Some("1".to_string()));
+    assert_eq!(keys(path).unwrap(), ["a"]);
+    assert!(delete(path, "a").unwrap());
+    assert!(!delete(path, "a").unwrap());
+    assert_eq!(get(path, "a").unwrap(), None);
 }
 
 #[test]
 fn get_of_a_missing_key_exits_1() {
-    let path = store("missing");
-    let status = Command::new(env!("CARGO_BIN_EXE_kvstore")).arg("--file").arg(&path).args(["get", "nope"]).status();
+    let store = Store::new("missing");
+    let status =
+        Command::new(env!("CARGO_BIN_EXE_kvstore")).arg("--file").arg(store.path()).args(["get", "nope"]).status();
     assert_eq!(status.unwrap().code(), Some(1));
 }
 "##;
