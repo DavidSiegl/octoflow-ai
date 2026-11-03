@@ -756,6 +756,10 @@ pub fn serve_endpoints_and_events(w: &mut World) {
     w.normalizer.literal(&token, "<token>");
     w.normalizer.literal(&address, "<serve>");
     let cwd = quote(&w.project.to_string_lossy());
+    // The request lines carry the world's root quoted, which is not the root World::new replaces when it holds a
+    // character quote escapes, such as the @ of a Jenkins workspace's <job>@tmp, where the Test stage's TMPDIR is.
+    let quoted_root = quote(&w.root().to_string_lossy());
+    w.normalizer.literal(&quoted_root, "<world>");
     let port = address.rsplit(':').next().expect("serve's port");
     let runs = format!("/runs?cwd={cwd}");
     let tok = Some(token.as_str());
