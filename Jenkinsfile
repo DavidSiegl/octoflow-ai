@@ -164,8 +164,18 @@ pipeline {
             environment {
                 // tests/conftest.py's larger profile: a build tries ten times the examples a local run does.
                 HYPOTHESIS_PROFILE = 'ci'
+                // Temporary files on the agent's mounted volume, beside the workspace, rather than in /tmp, for this
+                // stage and the Gate stage. The tests and the gate build Rust in temporary directories and run what
+                // they build: the test fixtures' build scripts and test binaries, and cargo-mutants on the gate's copy
+                // of a tree. /tmp is in the container's writable layer, where the agent host's Falco reports every
+                // program run from a file written there ("Drop and execute new binary in container", Critical): 109
+                // mails in 15 minutes on 2026-11-03. The workspace's own target/ is on the volume and was never
+                // reported. Python's tempfile takes /tmp, silently, for a TMPDIR that does not exist, so each stage
+                // creates it first; this one empties it as well, since nothing else removes what an earlier build left.
+                TMPDIR = "${env.WORKSPACE_TMP}/tmp"
             }
             steps {
+                sh 'rm -rf "$TMPDIR" && mkdir -p "$TMPDIR"'
                 // A failing test does not stop the build here: the Gate stage judges it with everything else, so a
                 // quality build's report lists failing tests and findings together. Any other exit status means
                 // pytest itself could not run.
@@ -270,7 +280,12 @@ pipeline {
         // not judge fails any build.
         stage('Gate') {
             when { expression { return env.JUDGED_AT_PR != 'true' } }
+            environment {
+                // Off the writable layer, as the Test stage's says why.
+                TMPDIR = "${env.WORKSPACE_TMP}/tmp"
+            }
             steps {
+                sh 'mkdir -p "$TMPDIR"'
                 script {
                     def gate = 'gate.py'
                     def rules = 'pyproject.toml'
