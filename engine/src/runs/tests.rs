@@ -2,41 +2,38 @@
 
 use super::*;
 use crate::constants::APPROVE;
+use crate::json::object;
 
 const ME_PID: i64 = 4242;
 
 /// Python's run_record: a run of 20260930-070000-c0ffee in round 1 of phase, with owner, error and verdict.
-fn run_record(phase: &str, owner: Option<Json>, error: Option<&str>, verdict: Option<&str>) -> Json {
-    let text = |s: Option<&str>| s.map_or(Json::Null, Json::from);
-    Json::Object(
-        [
-            ("run_id", Json::from("20260930-070000-c0ffee")),
-            ("task", Json::from("add a rate limiter")),
-            ("phase", Json::from(phase)),
-            ("round", Json::from(1)),
-            ("owner", owner.unwrap_or(Json::Null)),
+fn run_record(phase: &str, owner: Option<Value>, error: Option<&str>, verdict: Option<&str>) -> Value {
+    let text = |s: Option<&str>| s.map_or(Value::Null, Value::from);
+    Value::Object(
+        object([
+            ("run_id", Value::from("20260930-070000-c0ffee")),
+            ("task", Value::from("add a rate limiter")),
+            ("phase", Value::from(phase)),
+            ("round", Value::from(1)),
+            ("owner", owner.unwrap_or(Value::Null)),
             ("error", text(error)),
             ("verdict", text(verdict)),
-        ]
-        .into_iter()
-        .collect(),
+        ]),
     )
 }
 
 /// ME, the owner on host "here", or on another host.
-fn owner(host: &str) -> Json {
-    Json::Object(
-        [
-            ("host", Json::from(host)),
-            ("pid", Json::from(ME_PID)),
-            ("started_at", Json::from("2026-09-30T07:00:00+00:00")),
-        ]
-        .into_iter()
-        .collect(),
+fn owner(host: &str) -> Value {
+    Value::Object(
+        object([
+            ("host", Value::from(host)),
+            ("pid", Value::from(ME_PID)),
+            ("started_at", Value::from("2026-09-30T07:00:00+00:00")),
+        ]),
     )
 }
 
-fn health(record: &Json, age: u64, alive: bool) -> Option<(&'static str, String)> {
+fn health(record: &Value, age: u64, alive: bool) -> Option<(&'static str, String)> {
     run_health(record, age, "here", &|_| alive)
 }
 
@@ -78,7 +75,7 @@ fn finished_and_failed_runs_are_never_stale() {
 
 #[test]
 fn own_process_is_alive() {
-    assert!(pid_alive(std::process::id() as i128));
+    assert!(pid_alive(i64::from(std::process::id())));
 }
 
 #[test]
@@ -87,8 +84,8 @@ fn exited_process_is_not() {
     let mut child = std::process::Command::new("true").spawn().expect("true starts");
     let pid = child.id();
     child.wait().expect("true ends");
-    assert!(!pid_alive(pid as i128));
-    assert!(!pid_alive(i128::from(i32::MAX) + 1));
+    assert!(!pid_alive(i64::from(pid)));
+    assert!(!pid_alive(i64::from(i32::MAX) + 1));
 }
 
 #[test]

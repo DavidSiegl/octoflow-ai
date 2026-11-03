@@ -38,24 +38,23 @@ fn count(calls: &[Vec<String>], call: &[&str]) -> usize {
 
 /// The run fails naming both branches, state.json records it as resumable, and nothing in git_calls changed the
 /// tree, the branch or origin. The state saved.
-fn assert_refused(f: &Fixture, current: &str) -> Map<Json> {
+fn assert_refused(f: &Fixture, current: &str) -> Object {
     let message = failure(f.workflow(f.as_saved()).run());
     assert_eq!(
         message,
         format!("/proj is on {current}, not {BRANCH}, which holds this run's change; check out {BRANCH} and resume")
     );
     let saved = f.saved();
-    assert_eq!((text(&saved, "error"), saved.get("owner")), (Some(message), Some(&Json::Null)));
+    assert_eq!((text(&saved, "error"), saved.get("owner")), (Some(message), Some(&Value::Null)));
     assert!(!git_calls(f).iter().any(|c| MUTATING.contains(&c[0].as_str())), "{:?}", git_calls(f));
     assert!(f.host.state().prs.is_empty());
     saved
 }
 
 #[test]
-fn run_saved_before_pull_requests_opens_none() {
-    let mut saved = saved_run("review", 1, FULL).to_json().as_object().unwrap().clone();
-    saved.remove("pull_request");
-    let state = RunState::from_saved(&saved).unwrap();
+fn a_run_without_a_pull_request_opens_none() {
+    let state = saved_run("review", 1, FULL);
+    assert!(!state.pull_request);
     let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![("review", vec![review_turn(1, APPROVE)])], &[], &[]);
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
     assert!(f.host.state().prs.is_empty());
@@ -214,7 +213,7 @@ fn branch_switched_during_a_turn_is_refused_before_the_commit() {
                 format!("/proj is on main, not {BRANCH}, which holds this run's change; check out {BRANCH} and resume")
             );
             let saved = f.saved();
-            assert_eq!((text(&saved, "error"), saved.get("owner")), (Some(message), Some(&Json::Null)));
+            assert_eq!((text(&saved, "error"), saved.get("owner")), (Some(message), Some(&Value::Null)));
             assert!(f.host.state().prs.is_empty());
             saved
         };

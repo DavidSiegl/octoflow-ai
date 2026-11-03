@@ -15,6 +15,8 @@ pub mod herdr;
 pub mod host;
 pub mod http;
 pub mod interrupt;
+pub mod json;
+pub mod map;
 pub mod package_index;
 pub mod patch;
 pub mod paths;

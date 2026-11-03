@@ -7,14 +7,18 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]
-# py::json, for the fakes' ledger and the recordings: objects that keep their keys' order and text written as
-# json.dumps writes it, which the recordings, made by the Python harness, hold byte for byte.
+# The engine's ordered Map and its JSON helpers (octoflow_engine::json).
 octoflow-engine = { path = ".." }
+# JSON for the fakes' ledger, the script and the recordings: preserve_order keeps an object's keys in their order,
+# which a recording is compared in (tests/e2e/compare.rs).
+serde_json = { version = "1", features = ["preserve_order"] }
 # The ledger's lock (flock), the world's kill of an invocation (signals) and the host's name, which the normalizer
 # writes as <host>: the engine's own dependency, with the fs feature for flock.
 nix = { version = "0.31", default-features = false, features = ["fs", "hostname", "signal"] }
 
 [dev-dependencies]
+# Writing a recording through serde_json's pretty printer with an indent of its own (tests/e2e/main.rs).
+serde = "1"
 # The world's fake Jenkins (tests/e2e/servers.rs): the engine's own HTTP server, as its http.rs and ci.rs tests use it.
 tiny_http = "0.12"
 # The world's fake PyPI, which the engine reaches over TLS through the world's HTTPS proxy: rustls and its key and

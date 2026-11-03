@@ -7,7 +7,8 @@
 //! hand, with their semantics: `\b` is a change between a word character (a letter, a digit or `_`, as Python's
 //! Unicode `\w`) and any other, `\d` an ASCII digit (the records hold no other), and hex is `[0-9a-f]`.
 
-use octoflow_engine::py::json::{Json, Map};
+use serde_json::Value;
+use octoflow_engine::map::Map;
 
 /// The JSON keys whose numbers are times measured by a clock: a turn's or a run's seconds, a state's age, a file's
 /// modification time. Sorted, as normalize.py's alternation of them is.
@@ -67,8 +68,8 @@ impl Normalizer {
 
     /// Number the runs and git objects in record in the order they appear in its json.dumps text, after those learnt
     /// before.
-    pub fn learn(&mut self, record: &Json) {
-        let text: Vec<char> = record.dumps().chars().collect();
+    pub fn learn(&mut self, record: &Value) {
+        let text: Vec<char> = record.to_string().chars().collect();
         let mut i = 0;
         while i < text.len() {
             match run_id(&text, i) {
@@ -138,15 +139,15 @@ impl Normalizer {
         s = substitute(&s, |c, i| time(c, i).map(|end| (end, "<time>".to_string())));
         s = substitute(&s, |c, i| {
             TIMED_KEYS.iter().find_map(|key| {
-                let end = json_number(c, i, key)?;
-                Some((end, format!("\"{key}\": \"<seconds>\"")))
+                let (colon, end) = json_number(c, i, key)?;
+                Some((end, format!("\"{key}\"{colon}\"<seconds>\"")))
             })
         });
         s = substitute(&s, |c, i| {
-            let end = json_number(c, i, "pid")?;
-            let digits: String = c[i + "\"pid\": ".len()..end].iter().collect();
+            let (colon, end) = json_number(c, i, "pid")?;
+            let digits: String = c[i + "\"pid\"".len() + colon.len()..end].iter().collect();
             let pid = digits.parse::<i64>().ok().and_then(|p| self.pid_placeholder(p));
-            Some((end, format!("\"pid\": \"{}\"", pid.unwrap_or("<pid:?>"))))
+            Some((end, format!("\"pid\"{colon}\"{}\"", pid.unwrap_or("<pid:?>"))))
         });
         for (pid, placeholder) in &self.pids {
             let digits: Vec<char> = pid.to_string().chars().collect();
@@ -168,17 +169,17 @@ impl Normalizer {
 
     /// node with text() applied to every string and key in it, and the ints under TIMED_KEYS and the pids under "pid"
     /// replaced; with timed, every string is taken as timed. key is the key node is under, if any.
-    pub fn json(&self, node: &Json, timed: bool, key: Option<&str>) -> Json {
+    pub fn json(&self, node: &Value, timed: bool, key: Option<&str>) -> Value {
         match node {
-            Json::Object(map) => {
-                Json::Object(map.iter().map(|(k, v)| (self.text(k, false), self.json(v, timed, Some(k)))).collect())
+            Value::Object(map) => {
+                Value::Object(map.iter().map(|(k, v)| (self.text(k, false), self.json(v, timed, Some(k)))).collect())
             }
-            Json::Array(items) => Json::Array(items.iter().map(|v| self.json(v, timed, key)).collect()),
-            Json::Str(s) => Json::Str(self.text(s, timed || key.is_some_and(|k| TIMED_TEXT_KEYS.contains(&k)))),
-            Json::Int(_) if key.is_some_and(|k| TIMED_KEYS.contains(&k)) => Json::from("<seconds>"),
-            Json::Int(n) if key == Some("pid") => {
-                let pid = i64::try_from(*n).ok().and_then(|p| self.pid_placeholder(p));
-                Json::from(pid.unwrap_or("<pid:?>"))
+            Value::Array(items) => Value::Array(items.iter().map(|v| self.json(v, timed, key)).collect()),
+            Value::String(s) => Value::String(self.text(s, timed || key.is_some_and(|k| TIMED_TEXT_KEYS.contains(&k)))),
+            Value::Number(n) if n.is_i64() && key.is_some_and(|k| TIMED_KEYS.contains(&k)) => Value::from("<seconds>"),
+            Value::Number(n) if n.is_i64() && key == Some("pid") => {
+                let pid = n.as_i64().and_then(|p| self.pid_placeholder(p));
+                Value::from(pid.unwrap_or("<pid:?>"))
             }
             other => other.clone(),
         }
@@ -327,11 +328,13 @@ fn time(c: &[char], i: usize) -> Option<usize> {
     Some(offset.unwrap_or(end))
 }
 
-/// `"key": ` and the digits after it, at i, as JSON text such as metrics.json's holds a number: their end.
-fn json_number(c: &[char], i: usize, key: &str) -> Option<usize> {
-    let head: Vec<char> = format!("\"{key}\": ").chars().collect();
+/// `"key":`, a blank or none, and the digits after it, at i, as JSON text such as metrics.json's holds a number, pretty
+/// or compact: the colon with its blank, if any, and the digits' end.
+fn json_number(c: &[char], i: usize, key: &str) -> Option<(&'static str, usize)> {
+    let head: Vec<char> = format!("\"{key}\":").chars().collect();
     (c.get(i..i + head.len()) == Some(&head[..])).then_some(())?;
-    digit_run(c, i + head.len())
+    let colon = if c.get(i + head.len()) == Some(&' ') { ": " } else { ":" };
+    Some((colon, digit_run(c, i + head.len() + colon.len() - 1)?))
 }
 
 /// A duration at i as format_duration and format_age write it, `5s`, `2m 05s`, `1h 02m`, `2m` or `1h2m`:
@@ -428,7 +431,7 @@ mod tests {
 
     fn normalizer() -> Normalizer {
         let mut n = Normalizer::new();
-        n.learn(&Json::from("20260101-120000-abc123 and 0123456789abcdef0123456789abcdef01234567"));
+        n.learn(&Value::from("20260101-120000-abc123 and 0123456789abcdef0123456789abcdef01234567"));
         n
     }
 
@@ -457,6 +460,8 @@ mod tests {
             n.text(text, false),
             r#"at <time>, "seconds": "<seconds>", "pid": "<pid:2>", "pid": "<pid:?>", pid <pid:2> x42420"#
         );
+        // Compact JSON, as serve's events hold it, keeps its form.
+        assert_eq!(n.text(r#"{"seconds":12,"pid":4242}"#, false), r#"{"seconds":"<seconds>","pid":"<pid:2>"}"#);
     }
 
     #[test]
@@ -473,17 +478,17 @@ mod tests {
         let mut n = Normalizer::new();
         n.literal("/w", "<world>");
         n.pid(10, 1);
-        let node = Json::Object(Map::from_iter([
-            ("/w/x", Json::from("/w/y")),
-            ("seconds", Json::from(3)),
-            ("pid", Json::from(10)),
-            ("health_reason", Json::from("beat 3s ago")),
-            ("n", Json::from(3)),
+        let node = Value::Object(octoflow_engine::json::object([
+            ("/w/x", Value::from("/w/y")),
+            ("seconds", Value::from(3)),
+            ("pid", Value::from(10)),
+            ("health_reason", Value::from("beat 3s ago")),
+            ("n", Value::from(3)),
         ]));
-        let got = n.json(&node, false, None).dumps();
+        let got = n.json(&node, false, None).to_string();
         assert_eq!(
             got,
-            r#"{"<world>/x": "<world>/y", "seconds": "<seconds>", "pid": "<pid:1>", "health_reason": "beat <duration> ago", "n": 3}"#
+            r#"{"<world>/x":"<world>/y","seconds":"<seconds>","pid":"<pid:1>","health_reason":"beat <duration> ago","n":3}"#
         );
     }
 
@@ -495,13 +500,13 @@ mod tests {
 
     /// What the Python harness's normalizer gave for these inputs, made by it before octoflow-without-python ticket 02
     /// removed it, with the normalizer oracle_normalizer makes.
-    fn oracle() -> Json {
-        Json::parse(include_str!("normalize/oracle.json")).expect("oracle.json is JSON")
+    fn oracle() -> Value {
+        serde_json::from_str::<Value>(include_str!("normalize/oracle.json")).expect("oracle.json is JSON")
     }
 
     /// The normalizer the oracle was made with: without the host's name, which could occur in an input on some host;
     /// two literals, one inside the other; three pids, the first registered twice; and the oracle's record learnt.
-    fn oracle_normalizer(oracle: &Json) -> Normalizer {
+    fn oracle_normalizer(oracle: &Value) -> Normalizer {
         let mut n = Normalizer::new();
         n.literals.clear();
         n.literal("/w/orld", "<world>");
@@ -513,13 +518,13 @@ mod tests {
         n
     }
 
-    fn oracle_items<'a>(oracle: &'a Json, key: &str) -> &'a [Json] {
-        oracle.get(key).and_then(Json::as_array).unwrap_or_else(|| panic!("oracle.json has no {key} list"))
+    fn oracle_items<'a>(oracle: &'a Value, key: &str) -> &'a [Value] {
+        oracle.get(key).and_then(Value::as_array).unwrap_or_else(|| panic!("oracle.json has no {key} list"))
     }
 
-    fn oracle_str(item: &Json, i: usize) -> &str {
-        let found = item.as_array().and_then(|a| a.get(i)).and_then(Json::as_str);
-        found.unwrap_or_else(|| panic!("no string {i} in {}", item.dumps()))
+    fn oracle_str(item: &Value, i: usize) -> &str {
+        let found = item.as_array().and_then(|a| a.get(i)).and_then(Value::as_str);
+        found.unwrap_or_else(|| panic!("no string {i} in {}", item.to_string()))
     }
 
     #[test]
@@ -539,14 +544,14 @@ mod tests {
         let n = oracle_normalizer(&oracle);
         let json_in = oracle.get("json_in").expect("oracle.json has json_in");
         let want = oracle_items(&oracle, "json");
-        assert_eq!(n.json(json_in, false, None).dumps(), want[1].dumps());
-        assert_eq!(n.json(&Json::parse(r#"{"a": "5s"}"#).expect("JSON"), true, None).dumps(), want[2].dumps());
+        assert_eq!(n.json(json_in, false, None).to_string(), want[1].to_string());
+        assert_eq!(n.json(&serde_json::from_str::<Value>(r#"{"a": "5s"}"#).expect("JSON"), true, None).to_string(), want[2].to_string());
     }
 
     #[test]
     fn facts_are_found_as_python_found_them() {
         for case in oracle_items(&oracle(), "facts") {
-            let want = case.as_array().and_then(|a| a.get(1)).and_then(Json::as_array).expect("a list of facts");
+            let want = case.as_array().and_then(|a| a.get(1)).and_then(Value::as_array).expect("a list of facts");
             let want: Vec<&str> = want.iter().map(|f| f.as_str().expect("a fact")).collect();
             assert_eq!(facts(oracle_str(case, 0)), want);
         }

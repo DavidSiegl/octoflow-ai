@@ -8,7 +8,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use super::Jenkins;
 use crate::constants::{HTTP_TIMEOUT, JOB_PARAMETERS};
 use crate::http::{Http, HttpError, Request, Response};
-use crate::py::json::{Json, Map};
+use serde_json::Value;
+use crate::map::Map;
 
 /// The Jenkins of the tests: JENKINS_URL, without its slash.
 pub(crate) const JENKINS: &str = "https://jenkins.example";
@@ -162,8 +163,8 @@ enum Answer {
 
 impl Answer {
     /// The body that is value, as JSON, with no Location.
-    fn json(value: Json) -> Answer {
-        Answer::Body(value.dumps(), None)
+    fn json(value: Value) -> Answer {
+        Answer::Body(value.to_string(), None)
     }
 }
 
@@ -231,20 +232,20 @@ impl FakeJenkinsState {
                     "parameters",
                     Answer::json(object(&[(
                         "property",
-                        Json::Array(vec![object(&[]), object(&[("parameterDefinitions", Json::Array(definitions))])]),
+                        Value::Array(vec![object(&[]), object(&[("parameterDefinitions", Value::Array(definitions))])]),
                     )])),
                 ))
             }
             "api/json" if tree.contains("description") => {
                 let builds = self.builds.iter().rev().map(|(&n, b)| {
-                    let result = if b.left > 0 { Json::Null } else { b.outcome.result.as_str().into() };
+                    let result = if b.left > 0 { Value::Null } else { b.outcome.result.as_str().into() };
                     object(&[
                         ("number", n.into()),
                         ("result", result),
                         ("description", b.outcome.description.clone().into()),
                     ])
                 });
-                Some(("builds", Answer::json(object(&[("builds", Json::Array(builds.collect()))]))))
+                Some(("builds", Answer::json(object(&[("builds", Value::Array(builds.collect()))]))))
             }
             "api/json" => {
                 let builds = self.builds.iter().rev().take(20).map(|(&n, b)| {
@@ -253,11 +254,11 @@ impl FakeJenkinsState {
                         ("number", n.into()),
                         (
                             "actions",
-                            Json::Array(vec![object(&[]), object(&[("parameters", Json::Array(vec![parameter]))])]),
+                            Value::Array(vec![object(&[]), object(&[("parameters", Value::Array(vec![parameter]))])]),
                         ),
                     ])
                 });
-                Some(("find", Answer::json(object(&[("builds", Json::Array(builds.collect()))]))))
+                Some(("find", Answer::json(object(&[("builds", Value::Array(builds.collect()))]))))
             }
             "buildWithParameters" if method == "POST" => {
                 let outcome = self.outcomes.pop_front().unwrap_or_else(|| Outcome::gate("OK", &[]));
@@ -300,7 +301,7 @@ impl FakeJenkinsState {
         let answered = match what {
             "api/json" if build.left > 0 => {
                 build.left -= 1;
-                ("build", Answer::json(object(&[("building", true.into()), ("result", Json::Null)])))
+                ("build", Answer::json(object(&[("building", true.into()), ("result", Value::Null)])))
             }
             "api/json" => (
                 "build",
@@ -317,7 +318,7 @@ impl FakeJenkinsState {
             },
             "testReport/api/json" if !build.outcome.test_report => ("tests", Answer::Status(404)),
             "testReport/api/json" => {
-                let mut cases: Vec<Json> = build
+                let mut cases: Vec<Value> = build
                     .outcome
                     .tests
                     .iter()
@@ -334,11 +335,11 @@ impl FakeJenkinsState {
                     ("className", "t".into()),
                     ("name", "ok".into()),
                     ("status", "PASSED".into()),
-                    ("errorDetails", Json::Null),
+                    ("errorDetails", Value::Null),
                 ]));
                 (
                     "tests",
-                    Answer::json(object(&[("suites", Json::Array(vec![object(&[("cases", Json::Array(cases))])]))])),
+                    Answer::json(object(&[("suites", Value::Array(vec![object(&[("cases", Value::Array(cases))])]))])),
                 )
             }
             "consoleText" => ("console", Answer::Body(build.outcome.console.clone(), None)),
@@ -379,8 +380,8 @@ impl Http for FakeJenkins {
     }
 }
 
-fn object(pairs: &[(&str, Json)]) -> Json {
-    Json::Object(pairs.iter().cloned().collect())
+fn object(pairs: &[(&str, Value)]) -> Value {
+    Value::Object(crate::json::object(pairs.iter().cloned()))
 }
 
 /// The path and the query of an absolute URL.

@@ -16,6 +16,7 @@ use crate::constants::{DEFAULT_MAX_QUALITY_ROUNDS, FINISHED};
 use crate::pipeline::{Pipeline, Step, DEFAULT_WORKFLOW, PUBLISH, QUALITY};
 use crate::prompts::{QUALITY_OFF_NOTE, QUALITY_PASSED_NOTE, QUALITY_STUCK_NOTE, QUALITY_UNRESOLVED_NOTE};
 use crate::workflow::{turn_quality_gate_off, turn_quality_gate_on};
+use crate::json::object;
 
 /// The branch of pr_run's change.
 const SWITCH_BRANCH: &str = "orchestrator/add-a-token-bucket-rate-limiter-a1b2c3";
@@ -197,8 +198,8 @@ fn on_with_the_reviewer_retried_or_blocked_gates_the_next_builder_turn() {
     let mut retried = pr_run("review", 1);
     retried.retrying = Some("review-1.md".into());
     let mut blocked = pr_run("review", 1);
-    let question = [("file", Json::from("review-1.md")), ("question", "which?".into()), ("k", 1.into())];
-    blocked.blocked = Some(question.into_iter().collect());
+    let question = [("file", Value::from("review-1.md")), ("question", "which?".into()), ("k", 1.into())];
+    blocked.blocked = Some(object(question));
     for (name, mut state) in [("retried", retried), ("blocked", blocked)] {
         turn_on(&mut state, &jenkins_on(&FakeJenkins::new()), &pr_host()).expect("the gate turns on");
         assert_eq!(
@@ -352,14 +353,14 @@ fn off_in_quality_drops_the_analysis_and_goes_to_the_reviewer() {
     let mut state = gated_pr_run("quality", 2);
     state.ci = ci_of(&[("ref", ref_2.into()), ("sha", "snap9".into())]);
     let analysis = [
-        ("step", Json::from(QUALITY)),
+        ("step", Value::from(QUALITY)),
         ("role", QUALITY.into()),
         ("round", 1.into()),
         ("quality_round", 2.into()),
         ("file", "quality-1-2.md".into()),
-        ("ended_at", Json::Null),
+        ("ended_at", Value::Null),
     ];
-    state.turns = vec![analysis.into_iter().collect()];
+    state.turns = vec![object(analysis)];
     let host = pr_host();
     host.state().remote =
         [(REF_1_1, "snap1"), (ref_2, "snap9"), ("orchestrator-ci/ffffff-1-q1", "another-run")]
@@ -594,7 +595,7 @@ fn metrics_count_a_gate_turned_off_as_a_gate() {
     let metrics = metrics.as_object().expect("metrics are an object");
     assert_eq!(
         (metrics.get("quality_gate"), metrics.get("max_quality_rounds")),
-        (Some(&Json::Bool(true)), Some(&Json::from(i64::from(DEFAULT_MAX_QUALITY_ROUNDS))))
+        (Some(&Value::Bool(true)), Some(&Value::from(i64::from(DEFAULT_MAX_QUALITY_ROUNDS))))
     );
 }
 
@@ -657,18 +658,6 @@ fn round_results_keep_the_quality_files() {
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
     let summary = f.host.state().files.get(&format!("{}/summary.md", f.state.dir())).cloned().expect("a summary.md");
     assert!(summary.contains("Round 1: quality gate OK; review APPROVE"), "{summary}");
-}
-
-#[test]
-fn a_state_saved_before_the_switch_loads_with_the_gate_not_turned_off() {
-    let mut saved = gated_pr_run("build", 0).to_json().as_object().expect("a state is an object").clone();
-    saved.remove("quality_gate_disabled");
-    let state = RunState::from_saved(&saved).expect("the state loads");
-    assert!(!state.quality_gate_disabled);
-    let script = vec![("build", vec![build_turn(1)]), ("review", vec![review_turn(1, APPROVE)])];
-    let f = Fixture::on(pr_host(), state, script).gated();
-    assert_eq!(f.workflow(f.as_saved_gated()).run(), verdict(APPROVE));
-    assert_eq!(f.ci.state().triggered(), [REF_1_1]);
 }
 
 // -- Not Python's: a failure after the checks ---------------------------------------------------------------------

@@ -86,7 +86,7 @@ impl Scan {
     }
 
     fn argv(&self) -> Vec<String> {
-        let argv = Json::parse(&self.seen("argv")).unwrap();
+        let argv = serde_json::from_str::<Value>(&self.seen("argv")).unwrap();
         argv.as_array().unwrap().iter().map(|a| a.as_str().unwrap().to_string()).collect()
     }
 
@@ -491,7 +491,7 @@ fn push_branch_scans_the_branch_s_commit_and_tracks_it() {
 
 // -- The scan's helpers against the Python engine ---------------------------------------------------------------------
 
-fn recorded(kind: &str) -> Json {
+fn recorded(kind: &str) -> Value {
     oracle("host.json").get(kind).cloned().unwrap_or_else(|| panic!("host.json has no {kind}"))
 }
 
@@ -501,7 +501,7 @@ fn an_extended_file_is_found_as_the_python_engine_finds_it() {
         let case = case.as_array().unwrap();
         let config = case[0].as_str().unwrap();
         let ours = extended_file(config);
-        match (case[1].get("ok"), case[1].get("error").and_then(Json::as_str)) {
+        match (case[1].get("ok"), case[1].get("error").and_then(Value::as_str)) {
             (Some(ok), _) => assert_eq!(ours, Ok(ok.as_str().map(String::from)), "{config:?}"),
             // The TOML parser's own words differ from tomllib's; the rest is the Python engine's.
             (_, Some(error)) if error.starts_with("is not TOML: ") => {
@@ -533,7 +533,7 @@ fn a_leak_is_worded_as_the_python_engine_words_it() {
     let words = recorded("leaks");
     let words = words.as_array().unwrap();
     let each: Vec<String> = leaks.iter().map(Leak::to_string).collect();
-    let recorded_each: Vec<&str> = words[0].as_array().unwrap().iter().filter_map(Json::as_str).collect();
+    let recorded_each: Vec<&str> = words[0].as_array().unwrap().iter().filter_map(Value::as_str).collect();
     assert_eq!(each, recorded_each);
     let found = |leaks: &[Leak]| LeaksFound { leaks: leaks.to_vec(), report_path: "/r/leaks.json".into() }.to_string();
     assert_eq!(found(&leaks), words[1].as_str().unwrap());

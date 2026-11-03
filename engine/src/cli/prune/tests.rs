@@ -18,9 +18,12 @@ use crate::cli::Stop;
 use crate::constants::{APPROVE, STALE_SECONDS};
 use crate::host::fake::{FakeHost, FakePr};
 use crate::host::Completed;
-use crate::py::json::Map;
+use crate::map::Map;
+use crate::json::Object;
 use crate::summary::iso_utc;
 use crate::workflow::fixture::{build_turn, review_turn, saved_run, spec_turn, Fixture};
+use crate::state::RunState;
+use crate::json::object;
 
 const PR_HEAD: &str = "1111111111111111111111111111111111111111";
 const OLDER: &str = "2222222222222222222222222222222222222222";
@@ -31,9 +34,9 @@ const DAY: f64 = 86_400.0;
 
 /// What gh pr view prints of a pull request.
 fn pr(state: &str, head: &str, closed_at: Option<f64>) -> FakePr {
-    let closed = closed_at.map_or(Json::Null, |t| Json::from(iso_utc(t as i64).replace("+00:00", "Z")));
-    FakePr::Prints(Json::Object(
-        [("state", Json::from(state)), ("headRefOid", Json::from(head)), ("closedAt", closed)].into_iter().collect(),
+    let closed = closed_at.map_or(Value::Null, |t| Value::from(iso_utc(t as i64).replace("+00:00", "Z")));
+    FakePr::Prints(Value::Object(
+        object([("state", Value::from(state)), ("headRefOid", Value::from(head)), ("closedAt", closed)]),
     ))
 }
 
@@ -64,7 +67,7 @@ struct Run {
     remote: Option<&'static str>,
     branch: Option<&'static str>,
     /// Fields of its state.json put over the defaults.
-    fields: Vec<(&'static str, Json)>,
+    fields: Vec<(&'static str, Value)>,
 }
 
 fn run(key: &'static str, pr: FakePr) -> Run {
@@ -92,7 +95,7 @@ impl Run {
         self
     }
 
-    fn with(mut self, key: &'static str, value: impl Into<Json>) -> Run {
+    fn with(mut self, key: &'static str, value: impl Into<Value>) -> Run {
         self.fields.push((key, value.into()));
         self
     }
@@ -127,12 +130,12 @@ impl Prune {
         state.base_branch = Some("main".into());
         state.branch = Some(branch.clone());
         state.pr_url = Some(url.clone());
-        let Json::Object(mut saved) = state.to_json() else { unreachable!("a state is saved as an object") };
+        let Value::Object(mut saved) = state.to_json() else { unreachable!("a state is saved as an object") };
         for (key, value) in r.fields {
-            saved.insert(key, value);
+            saved.insert(key.to_string(), value);
         }
         let mut host = self.host();
-        host.files.insert(state_path(&run_id), format!("{}\n", Json::Object(saved).dumps()));
+        host.files.insert(state_path(&run_id), format!("{}\n", Value::Object(saved).to_string()));
         host.pull_requests.insert(url, r.pr);
         if let Some(at) = r.local {
             host.branches.insert(branch.as_str(), at.to_string());
@@ -143,17 +146,17 @@ impl Prune {
         run_id
     }
 
-    fn saved(&self, run_id: &str) -> Map<Json> {
+    fn saved(&self, run_id: &str) -> Object {
         self.cli.saved(run_id).as_object().cloned().expect("an object")
     }
 
-    fn cleanup(&self, run_id: &str) -> Json {
-        self.saved(run_id).get("branch_cleanup").cloned().unwrap_or(Json::Null)
+    fn cleanup(&self, run_id: &str) -> Value {
+        self.saved(run_id).get("branch_cleanup").cloned().unwrap_or(Value::Null)
     }
 
     /// Replace run_id's state.json with saved.
-    fn resave(&self, run_id: &str, saved: Map<Json>) {
-        self.host().files.insert(state_path(run_id), Json::Object(saved).dumps());
+    fn resave(&self, run_id: &str, saved: Object) {
+        self.host().files.insert(state_path(run_id), Value::Object(saved).to_string());
     }
 
     /// prune_branches by run id, ordered as returned.
@@ -207,7 +210,7 @@ fn merged_at_the_pull_requests_head() {
     assert!(host.git_calls.contains(&push), "{:?}", host.git_calls);
     assert_eq!(host.gh_calls, [strings(&["pr", "view", "https://github.com/o/r/pull/7", "--json", "state,headRefOid,closedAt"])]);
     drop(host);
-    assert_eq!(p.cleanup(&run_id), Json::from("deleted"));
+    assert_eq!(p.cleanup(&run_id), Value::from("deleted"));
 }
 
 #[test]
@@ -235,7 +238,7 @@ fn local_ahead_of_the_pull_requests_head_is_kept() {
         let count = format!("{PR_HEAD}..refs/heads/orchestrator/task-aaaaaa");
         assert!(host.git_calls.contains(&strings(&["rev-list", "--count", &count])));
     }
-    assert_eq!(p.cleanup(&run_id), Json::from("kept: local has 3 commits beyond PR #7"));
+    assert_eq!(p.cleanup(&run_id), Value::from("kept: local has 3 commits beyond PR #7"));
 }
 
 #[test]
@@ -253,7 +256,7 @@ fn remote_moved_past_the_pull_requests_head_is_kept() {
     let r = p.pruned(&run_id);
     assert_eq!((r.local.as_str(), r.remote.as_str()), ("deleted", "kept: remote has commits beyond PR #7"));
     assert_eq!(p.host().remote.get("orchestrator/task-aaaaaa").map(String::as_str), Some(LATER));
-    assert_eq!(p.cleanup(&run_id), Json::from("kept: remote has commits beyond PR #7"));
+    assert_eq!(p.cleanup(&run_id), Value::from("kept: remote has commits beyond PR #7"));
     assert!(!p.host().git_calls.iter().any(|c| c.iter().any(|a| a == "--delete")));
 }
 
@@ -283,7 +286,7 @@ fn checked_out_branch_is_kept() {
         let kept = format!("kept: checked out in {place}");
         assert_eq!((r.local.as_str(), r.remote.as_str()), (kept.as_str(), "deleted"), "{place}");
         assert!(p.host().branches.contains_key("orchestrator/task-aaaaaa"));
-        assert_eq!(p.cleanup(&run_id), Json::from(kept));
+        assert_eq!(p.cleanup(&run_id), Value::from(kept));
     }
 }
 
@@ -295,7 +298,7 @@ fn both_sides_kept_records_both_reasons() {
     p.prune(false, false);
     assert_eq!(
         p.cleanup(&run_id),
-        Json::from("kept: local has 2 commits beyond PR #7; remote has commits beyond PR #7")
+        Value::from("kept: local has 2 commits beyond PR #7; remote has commits beyond PR #7")
     );
 }
 
@@ -339,10 +342,10 @@ fn closed_15_days_ago_is_deleted() {
 fn running_run_is_skipped() {
     // Saved a moment ago by an orchestrator on another host: RUNNING, whatever its pid.
     let p = Prune::new();
-    let owner = Json::Object(
-        [("host", Json::from("elsewhere")), ("pid", Json::from(1)), ("started_at", Json::from("x"))].into_iter().collect(),
+    let owner = Value::Object(
+        object([("host", Value::from("elsewhere")), ("pid", Value::from(1)), ("started_at", Value::from("x"))]),
     );
-    p.add(run("aaaaaa", merged()).with("phase", "build").with("verdict", Json::Null).with("owner", owner));
+    p.add(run("aaaaaa", merged()).with("phase", "build").with("verdict", Value::Null).with("owner", owner));
     assert!(p.prune(false, false).is_empty());
     assert!(p.host().gh_calls.is_empty() && p.deleting_calls().is_empty());
 }
@@ -350,7 +353,7 @@ fn running_run_is_skipped() {
 #[test]
 fn stale_run_is_a_candidate_and_keeps_its_age() {
     let p = Prune::new();
-    let run_id = p.add(run("aaaaaa", merged()).with("phase", "publish").with("verdict", Json::Null));
+    let run_id = p.add(run("aaaaaa", merged()).with("phase", "publish").with("verdict", Value::Null));
     p.host().ages.insert(run_id.clone(), STALE_SECONDS + 1);
     assert_eq!(p.pruned(&run_id).cleanup.as_deref(), Some("deleted"));
     assert_eq!(p.host().mtime_kept, [state_path(&run_id)]);
@@ -372,7 +375,7 @@ fn runs_without_a_pull_request_are_never_touched() {
     let p = Prune::new();
     let run_id = p.add(run("aaaaaa", merged()));
     let mut saved = p.saved(&run_id);
-    saved.insert("pr_url", Json::Null);
+    saved.insert("pr_url".into(), Value::Null);
     p.resave(&run_id, saved);
     assert!(p.prune(false, false).is_empty());
     assert!(p.host().gh_calls.is_empty());
@@ -387,8 +390,8 @@ fn recorded_runs() {
     assert!(p.host().gh_calls.is_empty());
     let pruned = p.prune(false, true);
     assert_eq!(pruned.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), [kept.as_str()]);
-    assert_eq!(p.cleanup(&kept), Json::from("deleted"));
-    assert_eq!(p.cleanup(&done), Json::from("deleted"));
+    assert_eq!(p.cleanup(&kept), Value::from("deleted"));
+    assert_eq!(p.cleanup(&done), Value::from("deleted"));
 }
 
 #[test]
@@ -400,7 +403,7 @@ fn saved_before_prune_existed() {
     p.resave(&run_id, saved.clone());
     assert_eq!(RunState::from_saved(&saved).unwrap().branch_cleanup, None);
     assert_eq!(p.pruned(&run_id).cleanup.as_deref(), Some("deleted"));
-    saved.insert("branch_cleanup", Json::from("deleted"));
+    saved.insert("branch_cleanup".into(), Value::from("deleted"));
     assert_eq!(p.saved(&run_id), saved);
 }
 
@@ -431,7 +434,7 @@ fn gh_failure_on_one_run_skips_only_that_run() {
     );
     let said = format!("could not prune the branch of run {failed}: gh pr view");
     assert!(p.log().iter().any(|l| l.starts_with(&said)), "{:?}", p.log());
-    assert_eq!(p.cleanup(&failed), Json::Null);
+    assert_eq!(p.cleanup(&failed), Value::Null);
     assert!(p.host().branches.contains_key("orchestrator/task-aaaaaa"));
     assert_eq!(pruned.get(&fine).unwrap().cleanup.as_deref(), Some("deleted"));
 }
@@ -449,7 +452,7 @@ fn rejected_lease_skips_the_run() {
     let r = p.pruned(&run_id);
     assert!(r.skipped.as_deref().unwrap().contains("stale info"), "{r:?}");
     assert!(p.log().iter().any(|l| l.starts_with(&format!("could not prune the branch of run {run_id}"))));
-    assert_eq!(p.cleanup(&run_id), Json::Null);
+    assert_eq!(p.cleanup(&run_id), Value::Null);
 }
 
 #[test]
@@ -472,14 +475,17 @@ fn unusable_gh_stops_the_sweep_after_one_line() {
 }
 
 #[test]
-fn unreadable_state_skips_the_run() {
+fn a_run_an_earlier_release_saved_is_pruned_as_any_other() {
+    // Its state.json has no format (crate::state::format_problem), which prune does not need.
     let p = Prune::new();
     let run_id = p.add(run("aaaaaa", merged()));
     let mut saved = p.saved(&run_id);
-    saved.remove("task");
+    saved.remove("format");
     p.resave(&run_id, saved);
-    assert!(p.pruned(&run_id).skipped.as_deref().unwrap().contains("is incomplete"));
-    assert!(p.deleting_calls().is_empty());
+    assert_eq!(p.pruned(&run_id).cleanup.as_deref(), Some(BRANCH_DELETED));
+    let saved = p.saved(&run_id);
+    assert_eq!(saved.get("branch_cleanup"), Some(&Value::from(BRANCH_DELETED)));
+    assert!(!saved.contains_key("format"));
 }
 
 #[test]
@@ -489,14 +495,14 @@ fn state_saved_meanwhile_is_not_overwritten() {
     // At the first git command, which is after gh pr view.
     let (host, path) = (Rc::clone(&p.cli.f.host), state_path(&run_id));
     let mut saved = p.saved(&run_id);
-    saved.insert("round", Json::from(2));
-    let resumed = Json::Object(saved).dumps();
+    saved.insert("round".into(), Value::from(2));
+    let resumed = Value::Object(saved).to_string();
     p.host().before_git = Some(Box::new(move |_, _| {
         host.state().files.insert(path.as_str(), resumed.clone());
     }));
     assert!(p.pruned(&run_id).skipped.as_deref().unwrap().contains("changed while its branch was pruned"));
-    assert_eq!(p.saved(&run_id).get("round"), Some(&Json::from(2)));
-    assert_eq!(p.cleanup(&run_id), Json::Null);
+    assert_eq!(p.saved(&run_id).get("round"), Some(&Value::from(2)));
+    assert_eq!(p.cleanup(&run_id), Value::Null);
 }
 
 // -- TestHostPullRequest.test_closed_without_a_time, and closedAt in the machine's zone ----------------------------
@@ -514,30 +520,10 @@ fn closed_without_a_time() {
 }
 
 /// What the zone test's child process checks, set to the test's name.
-const IN_ZONE: &str = "OCTOFLOW_PRUNE_ZONE_CHILD";
-
 #[test]
-fn a_closing_time_without_an_offset_is_read_in_the_machine_s_zone() {
-    let name = "cli::prune::tests::a_closing_time_without_an_offset_is_read_in_the_machine_s_zone";
-    if std::env::var_os(IN_ZONE).is_none() {
-        // The zone is the process's, read from TZ: this test checks in a copy of itself run 5:45 east of UTC.
-        let exe = std::env::current_exe().expect("the test binary");
-        let out = std::process::Command::new(exe)
-            .args(["--exact", name, "--nocapture"])
-            .env(IN_ZONE, "1")
-            .env("TZ", "<+0545>-5:45")
-            .output()
-            .expect("the test binary runs");
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
-        assert!(String::from_utf8_lossy(&out.stdout).contains("1 passed"), "{}", String::from_utf8_lossy(&out.stdout));
-        return;
-    }
-    // 2026-10-01T12:00:00 here is 06:15 UTC.
-    let closed = fromisoformat_timestamp("2026-10-01T06:15:00+00:00").unwrap();
-    let grace = CLOSED_BRANCH_GRACE as f64;
-    let pr = closed_at(Some("2026-10-01T12:00:00"));
-    assert_eq!(pull_request_pending(&pr, "7", closed + grace + 1.0).unwrap(), None);
-    assert!(pull_request_pending(&pr, "7", closed + grace - 1.0).unwrap().is_some());
+fn a_closing_time_without_an_offset_is_not_a_time() {
+    let e = pull_request_pending(&closed_at(Some("2026-10-01T12:00:00")), "7", 0.0).unwrap_err();
+    assert_eq!(e.0, "PR #7 is closed at \"2026-10-01T12:00:00\", which is not a time");
 }
 
 // -- TestSweepSummary ------------------------------------------------------------------------------------------------
@@ -578,7 +564,7 @@ fn nothing_when_there_was_nothing_to_do() {
     // Both sides already gone: recorded, but nothing deleted.
     let gone = p.add(run("cccccc", merged()).n(9).local(None).remote(None));
     assert!(p.sweep().is_empty());
-    assert_eq!(p.cleanup(&gone), Json::from("deleted"));
+    assert_eq!(p.cleanup(&gone), Value::from("deleted"));
 }
 
 #[test]
@@ -742,7 +728,7 @@ fn deletes_merged_branches_before_the_interview() {
     let (branches, remote) = t.seen.borrow().clone().expect("the interview ran");
     assert!(branches.is_empty());
     assert!(!remote.contains_key("orchestrator/task-aaaaaa"));
-    assert_eq!(t.p.cleanup(&earlier), Json::from("deleted"));
+    assert_eq!(t.p.cleanup(&earlier), Value::from("deleted"));
     assert!(t.p.log().iter().any(|l| l == "deleted 1 branch of earlier runs"), "{:?}", t.p.log());
 }
 
@@ -831,6 +817,6 @@ fn prune_on_real_git() {
     assert_eq!((r.local.as_str(), r.remote.as_str(), r.cleanup.as_deref()), ("deleted", "deleted", Some("deleted")));
     assert_eq!(repo.git(&["for-each-ref", "refs/heads/orchestrator/", "refs/remotes/origin/orchestrator/"]), "");
     assert_eq!(repo.host.remote_branch_commit(&repo.path, "orchestrator/x-a1b2c3").unwrap(), None);
-    let saved = Json::parse(&repo.host.read(&path).unwrap().unwrap()).unwrap();
-    assert_eq!(saved.get("branch_cleanup"), Some(&Json::from("deleted")));
+    let saved = serde_json::from_str::<Value>(&repo.host.read(&path).unwrap().unwrap()).unwrap();
+    assert_eq!(saved.get("branch_cleanup"), Some(&Value::from("deleted")));
 }

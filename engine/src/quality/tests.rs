@@ -1,45 +1,46 @@
 use super::*;
-use crate::py::json::Json;
+use serde_json::Value;
+use crate::json::Object;
 use crate::test_support::{oracle, Rng};
+use crate::json::object;
 
-fn case_text(case: &Json, key: &str) -> String {
-    case.get(key).and_then(Json::as_str).unwrap_or_else(|| panic!("no {key}")).to_string()
+fn case_text(case: &Value, key: &str) -> String {
+    case.get(key).and_then(Value::as_str).unwrap_or_else(|| panic!("no {key}")).to_string()
 }
 
 /// The quality file of quality.json named from.
 fn quality_file(from: &str) -> String {
     let quality = oracle("quality.json");
-    let files = quality.get("files").and_then(Json::as_array).unwrap();
-    let file = files.iter().find(|f| f.get("from").and_then(Json::as_str) == Some(from)).unwrap_or_else(|| panic!("no {from}"));
+    let files = quality.get("files").and_then(Value::as_array).unwrap();
+    let file = files.iter().find(|f| f.get("from").and_then(Value::as_str) == Some(from)).unwrap_or_else(|| panic!("no {from}"));
     case_text(file, "text")
 }
 
 fn fingerprints_json(failures: &GateFailures) -> String {
-    let map = failures.fingerprints.iter().map(|(k, v)| (k, Json::Array(v.iter().map(|f| Json::from(f.as_str())).collect())));
-    Json::Object(map.collect()).dumps()
+    serde_json::to_string(&failures.fingerprints).unwrap()
 }
 
 #[test]
 fn every_quality_file_reads_as_the_python_engine_reads_it() {
     let quality = oracle("quality.json");
-    let files = quality.get("files").and_then(Json::as_array).unwrap();
+    let files = quality.get("files").and_then(Value::as_array).unwrap();
     assert!(files.len() >= 25, "quality.json holds {} files", files.len());
     for file in files {
         let (from, text) = (case_text(file, "from"), case_text(file, "text"));
-        assert_eq!(parse_gate(&text), file.get("gate").and_then(Json::as_str), "{from}");
+        assert_eq!(parse_gate(&text), file.get("gate").and_then(Value::as_str), "{from}");
         let failures = gate_failures(&text);
-        let conditions = Json::Array(failures.conditions.iter().map(|c| Json::from(c.as_str())).collect());
-        assert_eq!(conditions.dumps(), file.get("conditions").unwrap().dumps(), "{from}");
-        assert_eq!(fingerprints_json(&failures), file.get("fingerprints").unwrap().dumps(), "{from}");
+        let conditions = Value::Array(failures.conditions.iter().map(|c| Value::from(c.as_str())).collect());
+        assert_eq!(conditions.to_string(), file.get("conditions").unwrap().to_string(), "{from}");
+        assert_eq!(fingerprints_json(&failures), file.get("fingerprints").unwrap().to_string(), "{from}");
     }
 }
 
-fn leak(value: &Json) -> Leak {
+fn leak(value: &Value) -> Leak {
     let field = |key: &str| case_text(value, key);
     Leak {
         rule: field("rule"),
         file: field("file"),
-        line: value.get("line").and_then(Json::as_int).unwrap() as u64,
+        line: value.get("line").and_then(Value::as_i64).unwrap() as u64,
         commit: field("commit"),
         fingerprint: field("fingerprint"),
     }
@@ -48,12 +49,12 @@ fn leak(value: &Json) -> Leak {
 #[test]
 fn the_engines_quality_files_are_written_as_the_python_engine_writes_them() {
     let quality = oracle("quality.json");
-    for case in quality.get("leak_reports").and_then(Json::as_array).unwrap() {
-        let leaks: Vec<Leak> = case.get("leaks").and_then(Json::as_array).unwrap().iter().map(leak).collect();
+    for case in quality.get("leak_reports").and_then(Value::as_array).unwrap() {
+        let leaks: Vec<Leak> = case.get("leaks").and_then(Value::as_array).unwrap().iter().map(leak).collect();
         assert_eq!(leak_report(&leaks, &case_text(case, "intro")), case_text(case, "text"));
     }
-    for case in quality.get("build_failed").and_then(Json::as_array).unwrap() {
-        let tests: Option<Vec<(String, String)>> = case.get("tests").and_then(Json::as_array).map(|tests| {
+    for case in quality.get("build_failed").and_then(Value::as_array).unwrap() {
+        let tests: Option<Vec<(String, String)>> = case.get("tests").and_then(Value::as_array).map(|tests| {
             tests.iter().map(|t| {
                 let pair = t.as_array().unwrap();
                 (pair[0].as_str().unwrap().to_string(), pair[1].as_str().unwrap().to_string())
@@ -62,11 +63,11 @@ fn the_engines_quality_files_are_written_as_the_python_engine_writes_them() {
         let text = build_failed_report(&case_text(case, "intro"), tests.as_deref(), &case_text(case, "console"));
         assert_eq!(text, case_text(case, "text"));
     }
-    for case in quality.get("one_line").and_then(Json::as_array).unwrap() {
+    for case in quality.get("one_line").and_then(Value::as_array).unwrap() {
         let pair = case.as_array().unwrap();
         assert_eq!(one_line(pair[0].as_str().unwrap()), pair[1].as_str().unwrap());
     }
-    for case in quality.get("fingerprints").and_then(Json::as_array).unwrap() {
+    for case in quality.get("fingerprints").and_then(Value::as_array).unwrap() {
         let c = case.as_array().unwrap();
         assert_eq!(finding_fingerprint(c[0].as_str(), c[1].as_str().unwrap(), c[2].as_str().unwrap()), c[3].as_str().unwrap());
     }
@@ -95,7 +96,7 @@ fn reads_the_secrets_of_a_leak_file_whichever_snapshot_and_line() {
         l.fingerprint = "snap2:limiter.py:github-pat:9".into();
     });
     let pat = finding_fingerprint(Some("limiter.py"), "gitleaks github-pat", "");
-    assert_eq!(fingerprints_json(&first), format!("{{\"gitleaks\": [\"{pat}-1\"]}}"));
+    assert_eq!(fingerprints_json(&first), format!("{{\"gitleaks\":[\"{pat}-1\"]}}"));
     assert!(report(std::slice::from_ref(&moved)).repeats(&first));
     let other_rule = Leak { rule: "aws-access-token".into(), ..moved.clone() };
     assert!(!report(&[other_rule]).repeats(&first));
@@ -121,16 +122,14 @@ fn reads_failing_findings_and_tests_and_leaves_findings_to_weigh_out() {
         failures.conditions,
         ["1 tests fail; each is listed below.", "1 findings of the `diff-budget` check; each is listed below."]
     );
-    let fp = |path: Option<&str>, rule: &str, message: &str| Json::Array(vec![Json::from(finding_fingerprint(path, rule, message))]);
-    let expected: Map<Json> = [
+    let fp = |path: Option<&str>, rule: &str, message: &str| Value::Array(vec![Value::from(finding_fingerprint(path, rule, message))]);
+    let expected: Object = object([
         ("ruff", fp(Some("a.py"), "ruff F401", "`os` unused")),
         ("mypy", fp(Some("b.py"), "mypy", "bad: 2 errors")),
         ("tests", fp(Some("tests.test_a.T.test_x"), "tests", "")),
         ("diff-budget", fp(None, "diff-budget", "too big: 900 lines")),
-    ]
-    .into_iter()
-    .collect();
-    assert_eq!(Json::parse(&fingerprints_json(&failures)).unwrap(), Json::Object(expected));
+    ]);
+    assert_eq!(serde_json::from_str::<Value>(&fingerprints_json(&failures)).unwrap(), Value::Object(expected));
 }
 
 #[test]

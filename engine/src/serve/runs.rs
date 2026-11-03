@@ -14,7 +14,9 @@ use crate::error::OrchestratorError;
 use crate::herdr::{AgentAddress, AgentConsole, HerdrError, HerdrServer};
 use crate::host::Host;
 use crate::paths::file_name;
-use crate::py::json::{Json, Map};
+use serde::Deserialize;
+use serde_json::Value;
+use crate::json::{object, Object, ValueExt};
 use crate::runs::{local_host, pid_alive};
 
 /// The keys of a run record that grow with every read of it while nothing happens; a change in them alone is no
@@ -78,7 +80,7 @@ pub struct ProjectRuns {
     /// The --machine and --cwd flags as the client gave them (target_args), for the records' resume commands.
     target: Vec<String>,
     /// Whether a process of an id runs on this machine, as run_health asks it: crate::runs::pid_alive, but in tests.
-    pid_alive: Arc<dyn Fn(i128) -> bool + Send + Sync>,
+    pid_alive: Arc<dyn Fn(i64) -> bool + Send + Sync>,
 }
 
 impl ProjectRuns {
@@ -94,7 +96,7 @@ impl ProjectRuns {
 
     /// As new, a run's owner on this machine taken to be alive by pid_alive instead.
     #[cfg(test)]
-    pub(crate) fn with_pid_alive(self, pid_alive: impl Fn(i128) -> bool + Send + Sync + 'static) -> ProjectRuns {
+    pub(crate) fn with_pid_alive(self, pid_alive: impl Fn(i64) -> bool + Send + Sync + 'static) -> ProjectRuns {
         ProjectRuns { pid_alive: Arc::new(pid_alive), ..self }
     }
 
@@ -105,7 +107,7 @@ impl ProjectRuns {
 
     /// Each run's record, as `list --json` prints them (run_record, this machine being the one serve runs on).
     /// Errors: the runs cannot be read.
-    pub fn records(&self) -> Result<Vec<Map<Json>>, OrchestratorError> {
+    pub fn records(&self) -> Result<Vec<Object>, OrchestratorError> {
         let here = local_host();
         Ok(self
             .host
@@ -118,13 +120,13 @@ impl ProjectRuns {
     /// The run's files, oldest first, as a JSON list of {"name", "mtime"}, mtime in seconds since the epoch; [] for a
     /// run without a directory. Errors: Refused for a run id that is not a plain name, Failed when the directory
     /// cannot be listed.
-    pub fn files(&self, run_id: &str) -> Result<Json, RunReadError> {
+    pub fn files(&self, run_id: &str) -> Result<Value, RunReadError> {
         let files = self.host.run_files(&self.dir(run_id)?)?;
         let entry = |path: &str, mtime: i64| {
             let name = file_name(path);
-            Json::Object([("name", Json::from(name)), ("mtime", Json::from(mtime))].into_iter().collect())
+            Value::Object(object([("name", Value::from(name)), ("mtime", Value::from(mtime))]))
         };
-        Ok(Json::Array(files.iter().map(|f| entry(&f.path, f.mtime)).collect()))
+        Ok(Value::Array(files.iter().map(|f| entry(&f.path, f.mtime)).collect()))
     }
 
     /// The text of the run's file name; None when there is no such file. A symbolic link in the run directory is
@@ -164,15 +166,15 @@ impl ProjectRuns {
     fn agent(&self, run_id: &str, role: &str) -> Result<AgentAddress, RunReadError> {
         let path = format!("{}/state.json", self.dir(run_id)?);
         let text = self.host.read(&path)?.ok_or_else(|| RunReadError::Missing(format!("no run {run_id}")))?;
-        let state = Json::parse(&text).map_err(|e| OrchestratorError(format!("{path}: {e}")))?;
-        let name = state.get("agents").and_then(|a| a.get(role)).and_then(|a| a.get("name")).and_then(Json::as_str);
+        let state = serde_json::from_str::<Value>(&text).map_err(|e| OrchestratorError(format!("{path}: {e}")))?;
+        let name = state.get("agents").and_then(|a| a.get(role)).and_then(|a| a.get("name")).and_then(Value::as_str);
         let Some(name) = name.filter(|n| !n.is_empty()) else {
             return Err(RunReadError::Missing(format!("run {run_id} has no {role} agent")));
         };
         let server = match state.get("herdr_server").filter(|s| !s.is_null()) {
             None => None,
-            Some(saved) => Some(HerdrServer::from_json(saved).ok_or_else(|| {
-                OrchestratorError(format!("{path}: herdr_server is not an object of herdr's variables"))
+            Some(saved) => Some(HerdrServer::deserialize(saved).map_err(|e| {
+                OrchestratorError(format!("{path}: herdr_server is not an object of herdr's variables: {e}"))
             })?),
         };
         Ok(AgentAddress { name: name.to_string(), server })
@@ -197,18 +199,18 @@ pub struct Event {
     /// "record", "files" or "problem", as RunWatch::poll describes them.
     pub kind: &'static str,
     /// What it tells, a JSON object.
-    pub payload: Json,
+    pub payload: Value,
 }
 
 impl Event {
-    fn new(kind: &'static str, pairs: [(&str, Json); 2]) -> Event {
-        Event { kind, payload: Json::Object(pairs.into_iter().collect()) }
+    fn new(kind: &'static str, pairs: [(&str, Value); 2]) -> Event {
+        Event { kind, payload: Value::Object(object(pairs)) }
     }
 
     /// The event as one Server-Sent Event of its kind, its payload the one line of JSON in its data field, as
     /// json.dumps writes it: Python's sse_event.
     pub fn sse(&self) -> String {
-        format!("event: {}\ndata: {}\n\n", self.kind, self.payload.dumps())
+        format!("event: {}\ndata: {}\n\n", self.kind, self.payload.to_string())
     }
 }
 
@@ -217,7 +219,7 @@ pub struct RunWatch<'p> {
     /// The project whose runs the stream tells of.
     project: &'p ProjectRuns,
     /// By run id, the run's record without AGING_RECORD_KEYS and its files, as last sent.
-    sent: BTreeMap<String, (Map<Json>, Json)>,
+    sent: BTreeMap<String, (Object, Value)>,
     /// The error the last problem event reported; None when there was none, or it cleared.
     problem: Option<String>,
 }
@@ -251,21 +253,21 @@ impl<'p> RunWatch<'p> {
         let mut sent = BTreeMap::new();
         for record in self.project.records()? {
             // A state.json's run_id is a string; one that is not names the run as Python's str() writes it.
-            let id = record.get("id").cloned().unwrap_or(Json::Null);
-            let run_id = id.python_str();
+            let id = record.get("id").cloned().unwrap_or(Value::Null);
+            let run_id = id.text();
             let mut key = record.clone();
             for aging in AGING_RECORD_KEYS {
                 key.remove(aging);
             }
             let old = self.sent.get(&run_id);
             let same_record = old.is_some_and(|(old_key, _)| *old_key == key);
-            let finished = record.get("health").is_none_or(Json::is_null);
+            let finished = record.get("health").is_none_or(Value::is_null);
             let files = match old {
                 Some((_, old_files)) if same_record && finished => old_files.clone(),
                 _ => self.project.files(&run_id)?,
             };
             if !same_record {
-                events.push(Event::new("record", [("run", id.clone()), ("record", Json::Object(record))]));
+                events.push(Event::new("record", [("run", id.clone()), ("record", Value::Object(record))]));
             }
             if old.is_none_or(|(_, old_files)| *old_files != files) {
                 events.push(Event::new("files", [("run", id), ("files", files.clone())]));
@@ -273,7 +275,7 @@ impl<'p> RunWatch<'p> {
             sent.insert(run_id, (key, files));
         }
         for gone in self.sent.keys().filter(|id| !sent.contains_key(*id)) {
-            events.push(Event::new("record", [("run", Json::from(gone.as_str())), ("record", Json::Null)]));
+            events.push(Event::new("record", [("run", Value::from(gone.as_str())), ("record", Value::Null)]));
         }
         self.sent = sent;
         Ok(events)
@@ -284,7 +286,7 @@ impl<'p> RunWatch<'p> {
             return vec![];
         }
         self.problem.clone_from(&error);
-        vec![Event { kind: "problem", payload: Json::Object([("error", Json::from(error))].into_iter().collect()) }]
+        vec![Event { kind: "problem", payload: Value::Object(object([("error", Value::from(error))])) }]
     }
 }
 

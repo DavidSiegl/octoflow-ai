@@ -1,19 +1,19 @@
 use super::*;
-use crate::py::json::Json;
+use serde_json::Value as JsonValue;
 use crate::test_support::oracle;
 
 #[test]
 fn values_are_written_as_python_writes_what_tomllib_reads() {
-    for case in oracle("checks.json").get("toml_values").and_then(Json::as_array).unwrap() {
-        let text = |k: &str| case.get(k).and_then(Json::as_str).unwrap().to_string();
+    for case in oracle("checks.json").get("toml_values").and_then(JsonValue::as_array).unwrap() {
+        let text = |k: &str| case.get(k).and_then(JsonValue::as_str).unwrap().to_string();
         let literal = text("literal");
         let value = loads(&format!("v = {literal}")).unwrap().remove("v").unwrap();
         assert_eq!(python_type(&value), text("type"), "{literal}");
         assert_eq!(str(&value), text("str"), "{literal}");
         assert_eq!(repr(&value), text("repr"), "{literal}");
         let dumped = match json_dumps(&value) {
-            Ok(text) => Json::Str(text),
-            Err(e) => Json::Object([("error", Json::from(e))].into_iter().collect()),
+            Ok(text) => JsonValue::String(text),
+            Err(e) => serde_json::json!({"error": e}),
         };
         assert_eq!(&dumped, case.get("json").unwrap(), "{literal}");
     }

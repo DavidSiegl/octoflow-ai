@@ -7,8 +7,9 @@ use crate::constants::{DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_T
 use crate::error::OrchestratorError;
 use crate::pipeline::{Pipeline, DONE, QUALITY};
 use crate::prompts::{load_prompts, Prompts};
-use crate::py::datetime::strftime_local;
-use crate::py::json::{Json, Map};
+use serde_json::Value;
+use crate::map::Map;
+use crate::json::ValueExt;
 use crate::runs::{run_health, RUNNING};
 use crate::spec_file::SpecFile;
 use crate::state::RunState;
@@ -67,14 +68,15 @@ pub(super) fn flagged_workflow(args: &RunArgs, prompts: &Prompts, world: &Connec
     }
 }
 
-/// A new run's id, as Python's new_run_id makes it: the time wall (seconds since the epoch) names in the machine's
-/// zone (crate::py::datetime::strftime_local), and six random hex digits, as 20261029-142233-a1b2c3. Errors: the
+/// A new run's id: the time wall (seconds since the epoch) names in the machine's zone (jiff's TimeZone::system: TZ,
+/// else /etc/localtime, else UTC), and six random hex digits, as 20261029-142233-a1b2c3. Errors: the
 /// system's random bytes cannot be read, or wall is beyond the year 9999.
 fn new_run_id(wall: f64) -> Result<String, OrchestratorError> {
     let bytes: [u8; 3] = crate::env::random_bytes()
         .map_err(|e| OrchestratorError(format!("cannot read /dev/urandom for a run id: {e}")))?;
-    let time = strftime_local("%Y%m%d-%H%M%S", wall.floor() as i64)
+    let at = jiff::Timestamp::from_second(wall.floor() as i64)
         .map_err(|e| OrchestratorError(format!("cannot name a run by the time {wall}: {e}")))?;
+    let time = at.to_zoned(jiff::tz::TimeZone::system()).strftime("%Y%m%d-%H%M%S").to_string();
     let key: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     Ok(format!("{time}-{key}"))
 }
@@ -108,11 +110,11 @@ pub fn resumed_state(args: &ResumeArgs, cwd: &str, world: &Connected) -> Result<
 /// args.force is not given; it is past the round limit it would have; a --role-model or --role-agent names a role
 /// its workflow lacks; or its quality round limit does not hold (resume_quality_limit).
 pub fn resumable_state(
-    runs: &[(u64, Json)],
+    runs: &[(u64, Value)],
     args: &ResumeArgs,
     cwd: &str,
     local_host: &str,
-    pid_alive: &dyn Fn(i128) -> bool,
+    pid_alive: &dyn Fn(i64) -> bool,
 ) -> Result<(RunState, Pipeline), OrchestratorError> {
     let (age, saved) = find_run(runs, &args.run_ref, cwd)?;
     let saved_map = saved.as_object().ok_or_else(|| OrchestratorError("a run state is a JSON object".into()))?;
@@ -156,11 +158,11 @@ pub fn resumable_state(
 }
 
 /// The run of runs named by its full id, or else by its key. Errors: none or several match.
-pub(super) fn find_run<'r>(runs: &'r [(u64, Json)], run_ref: &str, cwd: &str) -> Result<&'r (u64, Json), OrchestratorError> {
-    let id = |run: &(u64, Json)| run.1.get("run_id").map(|v| v.as_str().map_or_else(|| v.python_str(), String::from));
+pub(super) fn find_run<'r>(runs: &'r [(u64, Value)], run_ref: &str, cwd: &str) -> Result<&'r (u64, Value), OrchestratorError> {
+    let id = |run: &(u64, Value)| run.1.get("run_id").map(|v| v.as_str().map_or_else(|| v.text(), String::from));
     let mut matches: Vec<_> = runs.iter().filter(|r| id(r).as_deref() == Some(run_ref)).collect();
     if matches.is_empty() {
-        let key = |r: &(u64, Json)| id(r).unwrap_or_default().rsplit('-').next().map(String::from);
+        let key = |r: &(u64, Value)| id(r).unwrap_or_default().rsplit('-').next().map(String::from);
         matches = runs.iter().filter(|r| key(r).as_deref() == Some(run_ref)).collect();
     }
     match matches[..] {

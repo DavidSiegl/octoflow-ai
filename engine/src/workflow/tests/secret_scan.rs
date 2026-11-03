@@ -76,7 +76,7 @@ fn a_secret_in_a_snapshot_goes_back_to_the_builder() {
     assert!(quality.contains("so it was not pushed and Jenkins did not judge the change"));
     let in_snapshot = Leak { commit: "snap1".into(), ..leak() };
     assert!(quality.contains(&format!("## Secrets found\n\n1. {in_snapshot}\n")), "{quality}");
-    assert_eq!(wf.state().quality_rounds[0].get("gate"), Some(&Json::from(QUALITY_LEAK)));
+    assert_eq!(wf.state().quality_rounds[0].get("gate"), Some(&Value::from(QUALITY_LEAK)));
     assert_eq!(*builds.borrow(), [quality_fix(state, 1, 1) + &note()]);
     // Only the clean second snapshot was pushed and built.
     let pushes: Vec<Vec<String>> = f
@@ -106,7 +106,7 @@ fn a_resume_finds_the_leak_quality_file() {
     let mut wf = f.workflow(RunSettings::default());
     assert_eq!(wf.run(), Err(Stopped::Interrupted));
     let s = wf.state();
-    assert_eq!((s.phase.as_str(), s.quality_round, s.ci.clone()), ("build", 1, Map::new()));
+    assert_eq!((s.phase.as_str(), s.quality_round, s.ci.clone()), ("build", 1, Object::new()));
     // As if the orchestrator had stopped after writing the quality file, before it moved on.
     let mut state = s.clone();
     state.phase = "quality".into();
@@ -149,8 +149,8 @@ fn a_secret_the_builder_leaves_in_stops_the_loop_early() {
     let s = wf.state();
     assert_eq!((s.quality_round, prompts_to(&f, "build-a1b2c3")), (2, 2));
     assert!(reviews.borrow()[0].contains(&quality_note(QUALITY_STUCK_NOTE, &s.quality_path(1, 2))));
-    let fingerprint = Json::Array(vec![Json::from(finding_fingerprint(Some("limiter.py"), "gitleaks github-pat", "") + "-1")]);
-    let found: Vec<Option<&Json>> =
+    let fingerprint = Value::Array(vec![Value::from(finding_fingerprint(Some("limiter.py"), "gitleaks github-pat", "") + "-1")]);
+    let found: Vec<Option<&Value>> =
         s.quality_rounds.iter().map(|r| r.get("fingerprints_by_check").and_then(|f| f.get("gitleaks"))).collect();
     assert_eq!(found, [Some(&fingerprint), Some(&fingerprint)]);
     assert!(f.ci.state().triggered().is_empty());
@@ -168,8 +168,8 @@ fn removing_one_of_two_secrets_of_a_kind_keeps_the_loop_going() {
     );
     let mut wf = f.workflow(RunSettings::default());
     assert_eq!(wf.run(), verdict(APPROVE));
-    let gates: Vec<Option<&Json>> = wf.state().quality_rounds.iter().map(|r| r.get("gate")).collect();
-    let (leaked, ok) = (Json::from(QUALITY_LEAK), Json::from(QUALITY_OK));
+    let gates: Vec<Option<&Value>> = wf.state().quality_rounds.iter().map(|r| r.get("gate")).collect();
+    let (leaked, ok) = (Value::from(QUALITY_LEAK), Value::from(QUALITY_OK));
     assert_eq!(gates, [Some(&leaked), Some(&leaked), Some(&ok)]);
     assert_eq!(prompts_to(&f, "build-a1b2c3"), 3);
 }

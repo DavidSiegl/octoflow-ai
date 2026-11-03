@@ -12,7 +12,8 @@ use crate::harness::harness;
 use crate::herdr::{Agent, Direction, HerdrError};
 use crate::paths::{file_name, split_extension};
 use crate::prompts::Prompt;
-use crate::py::json::{Json, Map};
+use serde_json::Value;
+use crate::json::{object, Object, ValueExt};
 use crate::summary::{epoch_seconds, iso_utc};
 
 /// What a turn does once its agent is ready, before any prompt.
@@ -202,7 +203,7 @@ impl Workflow<'_> {
 
     /// The report of a blocked turn once it is no longer BLOCKED, block being the state's record of the block it is
     /// in (RunState::blocked); each that still is waits again (block).
-    fn unblocked(&mut self, role: &str, path: &str, mut block: Map<Json>) -> Outcome<String> {
+    fn unblocked(&mut self, role: &str, path: &str, mut block: Object) -> Outcome<String> {
         let out = loop {
             let out = self.block_answer(role, path, &block)?;
             match parse_blocked(&out) {
@@ -217,7 +218,7 @@ impl Workflow<'_> {
 
     /// Move a BLOCKED report aside to its next blocked name, and record the block, so that the turn waits for the
     /// human's answer and then for the report again. Returns the record, RunState::blocked.
-    fn block(&mut self, role: &str, path: &str, question: &str) -> Outcome<Map<Json>> {
+    fn block(&mut self, role: &str, path: &str, question: &str) -> Outcome<Object> {
         let file = file_name(path).to_string();
         let s = &mut self.state;
         let k = match &s.blocked {
@@ -229,16 +230,13 @@ impl Workflow<'_> {
         // report to be judged again, as block k once more, or the wait under way, never a report lost or counted
         // twice. No prompt counts as delivered, so even an agent that is alive gets BLOCKED_PROMPT.
         s.prompted = None;
-        let record: Map<Json> =
-            [("file", Json::from(file.as_str())), ("question", Json::from(question)), ("k", Json::Int(k))]
-                .into_iter()
-                .collect();
+        let record = object([("file", Value::from(file.as_str())), ("question", Value::from(question)), ("k", Value::from(k))]);
         s.blocked = Some(record.clone());
         // The turn's record, which written closed, goes with the file, as in retry; the wait opens a record of its
         // own, human-paced (turn_record).
         let moved = file_name(&blocked).to_string();
         if let Some(t) = s.turns.iter_mut().rev().find(|t| file_of(t) == Some(&file)) {
-            t.insert("file", Json::from(moved.as_str()));
+            t.insert("file".into(), Value::from(moved.as_str()));
         }
         self.save()?;
         self.host.rename(path, &blocked)?;
@@ -247,7 +245,7 @@ impl Workflow<'_> {
     }
 
     /// Make the rename of the block, RunState::blocked, that the orchestrator saved but may have died before making.
-    fn finish_block(&self, path: &str, block: &Map<Json>) -> Result<(), OrchestratorError> {
+    fn finish_block(&self, path: &str, block: &Object) -> Result<(), OrchestratorError> {
         let blocked = blocked_path(path, block_number(block)?);
         if self.host.read(&blocked)?.is_none() && self.host.read(path)?.is_some() {
             self.host.rename(path, &blocked)?;
@@ -259,10 +257,10 @@ impl Workflow<'_> {
     ///
     /// As for the interview: no turn timeout and no stall notice, since the agent waits for the human. A resumed wait
     /// announces itself again, and prompts as prompt_for does, with BLOCKED_PROMPT in place of the step's.
-    fn block_answer(&mut self, role: &str, path: &str, block: &Map<Json>) -> Outcome<String> {
+    fn block_answer(&mut self, role: &str, path: &str, block: &Object) -> Outcome<String> {
         let blocked = blocked_path(path, block_number(block)?);
         let prompt = self.fill(Prompt::BlockedPrompt, &[("path", path), ("blocked_path", &blocked)])?;
-        let question = block_field(block, "question")?.python_str();
+        let question = block_field(block, "question")?.text();
         let t = Turn {
             role: role.to_string(),
             path: path.to_string(),
@@ -347,7 +345,7 @@ impl Workflow<'_> {
         // record of its own.
         let moved = file_name(&rejected).to_string();
         if let Some(record) = self.state.turns.iter_mut().rev().find(|t| file_of(t) == Some(&file)) {
-            record.insert("file", Json::from(moved.as_str()));
+            record.insert("file".into(), Value::from(moved.as_str()));
         }
         self.save()?;
         self.human.log(&format!("[{role}] {file} {why}; moved it to {moved}, prompting once more"));
@@ -459,32 +457,32 @@ impl Workflow<'_> {
 
     /// The index in RunState.turns of the record of the turn under way that writes file; None when there is none.
     pub(super) fn open_turn(&self, file: &str) -> Option<usize> {
-        self.state.turns.iter().position(|t| file_of(t) == Some(file) && t.get("ended_at").is_some_and(Json::is_null))
+        self.state.turns.iter().position(|t| file_of(t) == Some(file) && t.get("ended_at").is_some_and(Value::is_null))
     }
 
     /// An open record of the current phase's turn that writes file: the current step's, or with no step of the phase,
     /// a quality analysis, which runs no agent. started is None when the turn's start is not known.
-    pub(super) fn turn_record(&self, role: &str, file: &str, started: Option<i64>) -> Map<Json> {
+    pub(super) fn turn_record(&self, role: &str, file: &str, started: Option<i64>) -> Object {
         let s = &self.state;
         let step = self.pipeline.step(&s.phase);
         let known = s.agents.get(role);
-        let text = |value: Option<&String>| value.map_or(Json::Null, |v| Json::from(v.as_str()));
+        let text = |value: Option<&String>| value.map_or(Value::Null, |v| Value::from(v.as_str()));
         let (agent, model, session) = match step {
-            None => (Json::Null, Json::Null, Json::Null),
+            None => (Value::Null, Value::Null, Value::Null),
             Some(_) => {
                 let kind = known.and_then(|a| a.get("kind")).filter(|k| !k.is_empty());
                 let kind = kind.or_else(|| s.agent_kinds.get(role)).map_or(DEFAULT_AGENT, String::as_str);
-                (Json::from(kind), text(s.models.get(role)), text(known.and_then(|a| a.get("session"))))
+                (Value::from(kind), text(s.models.get(role)), text(known.and_then(|a| a.get("session"))))
             }
         };
         let blocked = s.blocked.as_ref().is_some_and(|b| file_of(b) == Some(file));
         let quality_round = if step.is_none_or(|st| st.quality_gated) { s.quality_round } else { 0 };
-        [
-            ("step", Json::from(s.phase.as_str())),
-            ("role", Json::from(role)),
-            ("round", Json::from(i64::from(s.round))),
-            ("quality_round", Json::from(i64::from(quality_round))),
-            ("file", Json::from(file)),
+        object([
+            ("step", Value::from(s.phase.as_str())),
+            ("role", Value::from(role)),
+            ("round", Value::from(i64::from(s.round))),
+            ("quality_round", Value::from(i64::from(quality_round))),
+            ("file", Value::from(file)),
             // The agent's session for the whole turn, None when that is not known: end_turn clears it for a turn that
             // ended in another session than it started in.
             ("agent", agent),
@@ -492,15 +490,13 @@ impl Workflow<'_> {
             ("session", session),
             // The tokens of the turn, which count_tokens counts once the run is done; None until then, and always
             // for a quality analysis.
-            ("tokens", Json::Null),
+            ("tokens", Value::Null),
             // A blocked turn's wait for the human's answer, and the rewrite after it, is paced by the human too.
-            ("human_paced", Json::from(step.is_some_and(|st| st.human_paced) || blocked)),
-            ("started_at", started.map_or(Json::Null, |t| Json::from(iso_utc(t)))),
-            ("ended_at", Json::Null),
-            ("seconds", Json::Null),
-        ]
-        .into_iter()
-        .collect()
+            ("human_paced", Value::from(step.is_some_and(|st| st.human_paced) || blocked)),
+            ("started_at", started.map_or(Value::Null, |t| Value::from(iso_utc(t)))),
+            ("ended_at", Value::Null),
+            ("seconds", Value::Null),
+        ])
     }
 
     /// Close the record of the turn that wrote path, found written, at the file's mtime: the turn ended then, even
@@ -518,17 +514,17 @@ impl Workflow<'_> {
                 self.state.turns.len() - 1
             }
         };
-        let session = self.state.agents.get(role).and_then(|a| a.get("session")).map(|s| Json::from(s.as_str()));
-        if self.state.turns[i].get("session").unwrap_or(&Json::Null) != &session.unwrap_or(Json::Null) {
-            self.state.turns[i].insert("session", Json::Null);
+        let session = self.state.agents.get(role).and_then(|a| a.get("session")).map(|s| Value::from(s.as_str()));
+        if self.state.turns[i].get("session").unwrap_or(&Value::Null) != &session.unwrap_or(Value::Null) {
+            self.state.turns[i].insert("session".into(), Value::Null);
         }
         let ended = self.host.mtime(path)?;
         let record = &mut self.state.turns[i];
-        record.insert("ended_at", Json::from(iso_utc(ended)));
-        if let Some(started) = record.get("started_at").and_then(Json::as_str) {
+        record.insert("ended_at".into(), Value::from(iso_utc(ended)));
+        if let Some(started) = record.get("started_at").and_then(Value::as_str) {
             let started = epoch_seconds(started)
                 .map_err(|e| OrchestratorError(format!("the turn that wrote {file} started at no time: {e}")))?;
-            record.insert("seconds", Json::from(ended - started));
+            record.insert("seconds".into(), Value::from(ended - started));
         }
         self.save()
     }
@@ -700,26 +696,26 @@ impl Workflow<'_> {
 }
 
 /// The file a turn record, or the record of a block (RunState::blocked), is of; None for a record without one.
-fn file_of(record: &Map<Json>) -> Option<&str> {
-    record.get("file").and_then(Json::as_str)
+fn file_of(record: &Object) -> Option<&str> {
+    record.get("file").and_then(Value::as_str)
 }
 
 /// Where a BLOCKED report of the handoff file at path is moved the k-th time its turn blocks.
-fn blocked_path(path: &str, k: i128) -> String {
+fn blocked_path(path: &str, k: i64) -> String {
     let (stem, ext) = split_extension(path);
     format!("{stem}.blocked-{k}{ext}")
 }
 
 /// The k of a block, RunState::blocked: how many times its turn has blocked, its report's blocked name's number.
 /// Errors: as block_field's, and for a k that is no integer.
-fn block_number(block: &Map<Json>) -> Result<i128, OrchestratorError> {
+fn block_number(block: &Object) -> Result<i64, OrchestratorError> {
     let k = block_field(block, "k")?;
-    k.as_int().ok_or_else(|| OrchestratorError(format!("the block saved in state.json has k {}, no number", k.dumps())))
+    k.as_i64().ok_or_else(|| OrchestratorError(format!("the block saved in state.json has k {k}, no number")))
 }
 
 /// The field key of a block, RunState::blocked. Errors: the record lacks it, as only a state.json edited by hand
 /// does, where Python's engine fails with a KeyError.
-fn block_field<'b>(block: &'b Map<Json>, key: &str) -> Result<&'b Json, OrchestratorError> {
+fn block_field<'b>(block: &'b Object, key: &str) -> Result<&'b Value, OrchestratorError> {
     block.get(key).ok_or_else(|| OrchestratorError(format!("the block saved in state.json has no {key}")))
 }
 

@@ -10,7 +10,8 @@ use std::collections::HashSet;
 
 use crate::constants::AGENT_KINDS;
 use crate::error::OrchestratorError;
-use crate::py::json::{Json, Map};
+use serde_json::Value;
+use crate::map::Map;
 
 /// How each role's agent starts: the permission mode, and by role its model and its harness (kinds). A role missing
 /// from models starts on its harness's default model, and one missing from kinds in DEFAULT_AGENT.
@@ -187,8 +188,8 @@ impl Harness {
 
     /// The token usage this harness's session log, as its SessionLog finds it, records for each answer of the model,
     /// oldest first; none for a harness without a session log. log is the file as it is on disk, each line read as
-    /// json.loads reads it but for a lone surrogate (Json::parse_lossy), as which os.fsdecode reads a byte that is not
-    /// UTF-8 too. A line that is not a record of an answer, or whose counts are not all integers, is skipped. Claude
+    /// read as JSON with each lone surrogate as U+FFFD (without_lone_surrogates), as each byte that is not UTF-8
+    /// is too. A line that is not a record of an answer, or whose counts are not all integers, is skipped. Claude
     /// Code writes one line per content block of an answer, each with the answer's usage, so each answer counts once,
     /// at its first line that names its usage and time.
     pub fn session_usage(&self, log: &[u8]) -> Vec<Usage> {
@@ -213,38 +214,38 @@ pub struct Usage {
     pub tokens: Tokens,
 }
 
-/// Token counts, by kind, as metrics.json writes them. A count is whatever integer the log holds, as Python sums it.
+/// Token counts, by kind, as metrics.json writes them. A count is whatever integer the log holds; sums saturate.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Tokens {
     /// Input tokens not read from the cache: Claude Code's input_tokens, pi's input.
-    pub input: i128,
+    pub input: i64,
     /// Output tokens: Claude Code's output_tokens, pi's output.
-    pub output: i128,
+    pub output: i64,
     /// Input tokens read from the cache: Claude Code's cache_read_input_tokens, pi's cacheRead; 0 when not logged.
-    pub cache_read: i128,
+    pub cache_read: i64,
     /// Input tokens written to the cache: Claude Code's cache_creation_input_tokens, pi's cacheWrite; 0 when not
     /// logged.
-    pub cache_write: i128,
+    pub cache_write: i64,
 }
 
 impl Tokens {
     /// The counts as metrics.json and state.json write them: `{"input", "output", "cache_read", "cache_write"}`.
-    pub fn to_json(self) -> Json {
-        let mut map = Map::new();
-        map.insert("input", Json::Int(self.input));
-        map.insert("output", Json::Int(self.output));
-        map.insert("cache_read", Json::Int(self.cache_read));
-        map.insert("cache_write", Json::Int(self.cache_write));
-        Json::Object(map)
+    pub fn to_json(self) -> Value {
+        serde_json::json!({
+            "input": self.input,
+            "output": self.output,
+            "cache_read": self.cache_read,
+            "cache_write": self.cache_write,
+        })
     }
 
     /// These counts and other's, added.
     pub fn plus(self, other: Tokens) -> Tokens {
         Tokens {
-            input: self.input + other.input,
-            output: self.output + other.output,
-            cache_read: self.cache_read + other.cache_read,
-            cache_write: self.cache_write + other.cache_write,
+            input: self.input.saturating_add(other.input),
+            output: self.output.saturating_add(other.output),
+            cache_read: self.cache_read.saturating_add(other.cache_read),
+            cache_write: self.cache_write.saturating_add(other.cache_write),
         }
     }
 }
@@ -263,15 +264,18 @@ enum MessageId {
 
 impl MessageId {
     /// The id value is; None for a list or an object, which a set cannot hold (Python's TypeError).
-    fn of(value: Option<&Json>) -> Option<MessageId> {
+    fn of(value: Option<&Value>) -> Option<MessageId> {
         Some(match value {
-            None | Some(Json::Null) => MessageId::None,
-            Some(Json::Str(s)) => MessageId::Str(s.clone()),
-            Some(Json::Bool(b)) => MessageId::Int(i128::from(*b)),
-            Some(Json::Int(n)) => MessageId::Int(*n),
-            Some(Json::Float(x)) if x.fract() == 0.0 && x.abs() < 1e38 => MessageId::Int(*x as i128),
-            Some(Json::Float(x)) => MessageId::Float(x.to_bits()),
-            Some(Json::Array(_) | Json::Object(_)) => return None,
+            None | Some(Value::Null) => MessageId::None,
+            Some(Value::String(s)) => MessageId::Str(s.clone()),
+            Some(Value::Bool(b)) => MessageId::Int(i128::from(*b)),
+            Some(Value::Number(n)) => match (n.as_i64(), n.as_u64(), n.as_f64()) {
+                (Some(i), _, _) => MessageId::Int(i.into()),
+                (None, Some(u), _) => MessageId::Int(u.into()),
+                (None, None, Some(x)) if x.fract() == 0.0 && x.abs() < 1e38 => MessageId::Int(x as i128),
+                (None, None, x) => MessageId::Float(x.unwrap_or(f64::NAN).to_bits()),
+            },
+            Some(Value::Array(_) | Value::Object(_)) => return None,
         })
     }
 }
@@ -282,14 +286,14 @@ impl MessageId {
 fn answer_usage(format: LogFormat, line: &str, seen: &mut HashSet<MessageId>) -> Option<Usage> {
     // Each step in the order Python's takes it: a step that fails skips the line, and the steps before it have had
     // their effect on seen.
-    let entry = Json::parse_lossy(line).ok()?;
+    let entry: Value = serde_json::from_str(&without_lone_surrogates(line)).ok()?;
     let entry = entry.as_object()?;
     let message = entry.get("message")?.as_object()?;
     let usage = message.get("usage")?;
-    let when = crate::py::datetime::fromisoformat_timestamp(entry.get("timestamp")?.as_str()?).ok()?;
+    let when = crate::summary::epoch_time(entry.get("timestamp")?.as_str()?).ok()?;
     let keys = match format {
         LogFormat::ClaudeCode => {
-            if entry.get("type").and_then(Json::as_str) != Some("assistant") {
+            if entry.get("type").and_then(Value::as_str) != Some("assistant") {
                 return None;
             }
             if !seen.insert(MessageId::of(message.get("id"))?) {
@@ -298,7 +302,7 @@ fn answer_usage(format: LogFormat, line: &str, seen: &mut HashSet<MessageId>) ->
             ["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"]
         }
         LogFormat::Pi => {
-            if message.get("role").and_then(Json::as_str) != Some("assistant") {
+            if message.get("role").and_then(Value::as_str) != Some("assistant") {
                 return None;
             }
             ["input", "output", "cacheRead", "cacheWrite"]
@@ -308,14 +312,54 @@ fn answer_usage(format: LogFormat, line: &str, seen: &mut HashSet<MessageId>) ->
     // bool or a float (Python's `type(v) is int`).
     let usage = usage.as_object()?;
     let (input, output) = (usage.get(keys[0])?, usage.get(keys[1])?);
-    let cache = |key: &str| usage.get(key).map_or(Some(0), Json::as_int);
+    let cache = |key: &str| usage.get(key).map_or(Some(0), Value::as_i64);
     let tokens = Tokens {
-        input: input.as_int()?,
-        output: output.as_int()?,
+        input: input.as_i64()?,
+        output: output.as_i64()?,
         cache_read: cache(keys[2])?,
         cache_write: cache(keys[3])?,
     };
     Some(Usage { when, tokens })
+}
+
+/// JSON text with each lone surrogate escape in its strings (\\ud800 to \\udfff, not half of a high-low pair) made
+/// \\ufffd: a session log that JSON.stringify wrote from a string cut in the middle of a pair holds them, and
+/// serde_json refuses them. Text that is not JSON is left so, for the parser to refuse.
+fn without_lone_surrogates(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains("\\u") {
+        return text.into();
+    }
+    // The code unit of the \\uXXXX escape at byte i of text, if one is there.
+    let escape = |i: usize| -> Option<u32> {
+        let hex = text.get(i..i + 6)?.strip_prefix("\\u")?;
+        hex.bytes().all(|b| b.is_ascii_hexdigit()).then(|| u32::from_str_radix(hex, 16).ok())?
+    };
+    let bytes = text.as_bytes();
+    let (mut out, mut copied, mut i, mut in_string) = (String::new(), 0, 0, false);
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => {
+                in_string = !in_string;
+                i += 1;
+            }
+            b'\\' if in_string => match escape(i) {
+                Some(0xD800..=0xDBFF) if matches!(escape(i + 6), Some(0xDC00..=0xDFFF)) => i += 12,
+                Some(0xD800..=0xDFFF) => {
+                    out.push_str(&text[copied..i]);
+                    out.push_str("\\ufffd");
+                    i += 6;
+                    copied = i;
+                }
+                _ => i += 2,
+            },
+            _ => i += 1,
+        }
+    }
+    if copied == 0 {
+        return text.into();
+    }
+    out.push_str(&text[copied..]);
+    out.into()
 }
 
 #[cfg(test)]

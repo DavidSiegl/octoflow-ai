@@ -14,9 +14,9 @@ fn state_writes(f: &Fixture) -> usize {
 }
 
 /// The saved state.json's field key, as the host holds it now.
-fn saved_field(host: &FakeHost, path: &str, key: &str) -> Json {
+fn saved_field(host: &FakeHost, path: &str, key: &str) -> Value {
     let text = host.state().files.get(path).cloned().expect("a state.json");
-    Json::parse(&text).unwrap().get(key).cloned().unwrap_or(Json::Null)
+    serde_json::from_str::<Value>(&text).unwrap().get(key).cloned().unwrap_or(Value::Null)
 }
 
 #[test]
@@ -35,7 +35,7 @@ fn heartbeat_during_a_long_interview() {
     // About one write a minute over the 30-minute interview, not one per 3 s poll.
     let minutes = (10 * STALL_SECONDS / HEARTBEAT_SECONDS) as f64;
     assert!((state_writes(&f) as f64 - minutes).abs() < 8.0, "{} writes", state_writes(&f));
-    let mut distinct = beats.borrow().iter().map(Json::dumps).collect::<Vec<_>>();
+    let mut distinct = beats.borrow().iter().map(Value::to_string).collect::<Vec<_>>();
     distinct.dedup();
     assert!(distinct.len() as f64 > minutes - 2.0, "{} beats", distinct.len());
 }
@@ -57,9 +57,9 @@ fn owner_is_recorded_and_released() {
     ]);
     f.workflow(RunSettings::default()).run().unwrap();
     let owner = owners.borrow()[0].clone();
-    assert_eq!(owner.get("pid"), Some(&Json::from(i64::from(std::process::id()))));
-    assert_eq!(owner.get("host"), Some(&Json::from(local_host())));
-    assert_eq!(f.saved().get("owner"), Some(&Json::Null));
+    assert_eq!(owner.get("pid"), Some(&Value::from(i64::from(std::process::id()))));
+    assert_eq!(owner.get("host"), Some(&Value::from(local_host())));
+    assert_eq!(f.saved().get("owner"), Some(&Value::Null));
 }
 
 #[test]
@@ -114,16 +114,16 @@ fn failed_heartbeat_is_not_fatal() {
 fn takeover_stops_without_saving() {
     let f = Fixture::new(vec![("spec", vec![spec_turn()]), ("build", vec![idle()])]);
     let path = format!("{}/state.json", f.state.dir());
-    let other: Json = Json::parse(r#"{"host": "laptop", "pid": 4242, "started_at": "2026-09-30T07:00:00+00:00"}"#).unwrap();
+    let other: Value = serde_json::from_str::<Value>(r#"{"host": "laptop", "pid": 4242, "started_at": "2026-09-30T07:00:00+00:00"}"#).unwrap();
     let (host, theirs) = (Rc::clone(&f.host), other.clone());
     f.clock.hook(move |now| {
         if now > 30.0 && saved_field(&host, &path, "owner") != theirs {
-            let mut saved = match Json::parse(host.state().files.get(&path).unwrap()) {
-                Ok(Json::Object(saved)) => saved,
+            let mut saved = match serde_json::from_str::<Value>(host.state().files.get(&path).unwrap()) {
+                Ok(Value::Object(saved)) => saved,
                 other => panic!("{other:?}"),
             };
-            saved.insert("owner", theirs.clone());
-            host.state().files.insert(path.as_str(), Json::Object(saved).dumps());
+            saved.insert("owner".into(), theirs.clone());
+            host.state().files.insert(path.as_str(), Value::Object(saved).to_string());
         }
     });
     match f.workflow(RunSettings::default()).run() {
@@ -132,7 +132,7 @@ fn takeover_stops_without_saving() {
     }
     let saved = f.saved();
     assert_eq!(saved.get("owner"), Some(&other));
-    assert_eq!(saved.get("error"), Some(&Json::Null));
+    assert_eq!(saved.get("error"), Some(&Value::Null));
 }
 
 #[test]
@@ -146,14 +146,14 @@ fn interrupt_is_recorded() {
     f.herdr.state().script.insert("build".into(), vec![interrupted].into());
     assert_eq!(f.workflow(RunSettings::default()).run(), Err(Stopped::Interrupted));
     let saved = f.saved();
-    assert_eq!((text(&saved, "error").as_deref(), saved.get("owner")), (Some("interrupted"), Some(&Json::Null)));
+    assert_eq!((text(&saved, "error").as_deref(), saved.get("owner")), (Some("interrupted"), Some(&Value::Null)));
 }
 
 #[test]
 fn failure_releases_the_run() {
     let f = Fixture::new(vec![("spec", vec![spec_turn()]), ("build", vec![idle()])]);
     failure(f.workflow(RunSettings { turn_timeout: 60, ..RunSettings::default() }).run());
-    assert_eq!(f.saved().get("owner"), Some(&Json::Null));
+    assert_eq!(f.saved().get("owner"), Some(&Value::Null));
 }
 
 /// What summary.md says of a run that failed: written by release, as for one that is done.

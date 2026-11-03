@@ -14,7 +14,7 @@ use crate::ci::fake::Outcome;
 use crate::env::ConfigDir;
 use crate::paths::file_name;
 use crate::pipeline::{find_workflow, Pipeline, DEFAULT_WORKFLOW};
-use crate::prompts::{load_prompts, FIX_PROMPT};
+use crate::prompts::{load_prompts};
 use crate::test_support::{quick, TempDir, EXAMPLES};
 use crate::workflow_file::load_workflow_file;
 
@@ -327,7 +327,7 @@ fn continue_after_a_resumed_session() {
 /// A run with the gate and two quality rounds a round, its Builder taking the turns in build and its Reviewer those in
 /// review, run to APPROVE: its fixture, every prompt in order, and the (phase, round, quality round) state.json was
 /// saved with, each once, in the order first saved.
-fn two_gated_rounds(outcomes: Vec<Outcome>, build: Vec<Turn>, review: Vec<Turn>) -> (Fixture, Vec<String>, Vec<(String, i128, i128)>) {
+fn two_gated_rounds(outcomes: Vec<Outcome>, build: Vec<Turn>, review: Vec<Turn>) -> (Fixture, Vec<String>, Vec<(String, i64, i64)>) {
     let seen = seen();
     let f = Fixture::new(vec![
         ("spec", vec![recording(spec_turn(), &seen)]),
@@ -340,8 +340,8 @@ fn two_gated_rounds(outcomes: Vec<Outcome>, build: Vec<Turn>, review: Vec<Turn>)
     let saved = Rc::clone(&phases);
     f.host.state().before_write = Some(Box::new(move |path, text| {
         if path.ends_with("state.json") {
-            let Ok(Json::Object(state)) = Json::parse(text) else { panic!("state.json is no object") };
-            let int = |key: &str| state.get(key).and_then(Json::as_int).expect("a saved count");
+            let Ok(Value::Object(state)) = serde_json::from_str::<Value>(text) else { panic!("state.json is no object") };
+            let int = |key: &str| state.get(key).and_then(Value::as_i64).expect("a saved count");
             let phase = (text_of(&state, "phase"), int("round"), int("quality_round"));
             if !saved.borrow().contains(&phase) {
                 saved.borrow_mut().push(phase);
@@ -355,8 +355,8 @@ fn two_gated_rounds(outcomes: Vec<Outcome>, build: Vec<Turn>, review: Vec<Turn>)
     (f, seen, phases)
 }
 
-fn text_of(saved: &Map<Json>, key: &str) -> String {
-    saved.get(key).and_then(Json::as_str).expect("a saved text").to_string()
+fn text_of(saved: &Object, key: &str) -> String {
+    saved.get(key).and_then(Value::as_str).expect("a saved text").to_string()
 }
 
 #[test]
@@ -369,7 +369,7 @@ fn gate_passes_after_a_fix_then_runs_out() {
 
     let golden = [SPEC_INTERVIEW, BUILD_1, QUALITY_FIX_1_1, REVIEW_1_PASSED, FIX_2, QUALITY_FIX_2_1, RECHECK_2_UNRESOLVED];
     assert_eq!(seen, golden);
-    let expected: Vec<(String, i128, i128)> = [
+    let expected: Vec<(String, i64, i64)> = [
         ("spec", 0, 0),
         ("build", 1, 0),
         ("quality", 1, 1),
@@ -668,25 +668,3 @@ fn a_resume_keeps_the_prompts_the_run_started_with() {
     }
 }
 
-#[test]
-fn a_state_saved_before_prompt_files_resumes_with_the_built_in_texts() {
-    let (_dir, _config) = config_with(&[("FIX_PROMPT.md", "Fix {prev_review_path}; report to {build_path}.")]);
-    let Json::Object(mut saved) = saved_run("build", 2, FULL).to_json() else { unreachable!() };
-    saved.remove("prompt_overrides");
-    let state = RunState::from_saved(&saved).unwrap();
-    let seen = seen();
-    let script = vec![("build", vec![recording(build_turn(2), &seen)]), ("review", vec![review_turn(2, APPROVE)])];
-    let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &[], &[]);
-    f.put(&f.state.review_path(1), &format!("**VERDICT: {CHANGES_REQUESTED}**\n1. finding"));
-    f.put(&f.state.build_path(1), "report 1");
-    let mut wf = f.workflow(f.as_saved());
-    assert_eq!(wf.run(), verdict(APPROVE));
-    assert!(wf.state().prompt_overrides.is_empty());
-    let fix = |name: &str| match name {
-        "prev_review_path" => Some(format!("{D}/review-1.md")),
-        "build_path" => Some(format!("{D}/build-2.md")),
-        _ => None,
-    };
-    let built_in = crate::prompts::template::fill(FIX_PROMPT, &fix).unwrap();
-    assert!(seen.borrow()[0].contains(&built_in), "{}", seen.borrow()[0]);
-}

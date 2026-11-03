@@ -8,7 +8,8 @@ use crate::constants::{EXIT_WAITING, RUNS_DIR, SUCCEEDED};
 use crate::error::OrchestratorError;
 use crate::pipeline::DONE;
 use crate::pull_request::without_conflict_warning;
-use crate::py::json::Json;
+use serde_json::Value;
+use crate::json::ValueExt;
 
 /// What gh says now of the pull request a run opened over conflicts with its base (has_conflict), and so what
 /// refresh_conflict does about it.
@@ -55,9 +56,9 @@ impl ConflictCheck {
 }
 
 /// Whether the run saved as saved is done, with a pull request it opened over conflicts it still records.
-pub fn has_conflict(saved: &Json) -> bool {
-    let truthy = |key: &str| saved.get(key).is_some_and(Json::truthy);
-    saved.get("phase").and_then(Json::as_str) == Some(DONE) && truthy("pr_url") && truthy("conflicts")
+pub fn has_conflict(saved: &Value) -> bool {
+    let truthy = |key: &str| saved.get(key).is_some_and(Value::is_set);
+    saved.get("phase").and_then(Value::as_str) == Some(DONE) && truthy("pr_url") && truthy("conflicts")
 }
 
 /// Ask gh about the pull request of the run saved as saved, which has_conflict, and, unless dry_run, act on what it
@@ -71,10 +72,10 @@ pub fn has_conflict(saved: &Json) -> bool {
 pub fn refresh_conflict(
     world: &Connected,
     cwd: &str,
-    saved: &Json,
+    saved: &Value,
     dry_run: bool,
 ) -> Result<ConflictCheck, OrchestratorError> {
-    let text = |key: &str| saved.get(key).map(Json::python_str).unwrap_or_default();
+    let text = |key: &str| saved.get(key).map(Value::text).unwrap_or_default();
     let run_id = text("run_id");
     let refreshed = || -> Result<ConflictCheck, OrchestratorError> {
         let host = world.with.host;
@@ -82,12 +83,12 @@ pub fn refresh_conflict(
         let pr = host.pull_request_merge(cwd, &url)?;
         let clean = pr.state == "OPEN" && pr.mergeable == "MERGEABLE";
         let body = clean.then(|| {
-            let base_branch = saved.get("base_branch").filter(|b| !b.is_null()).map(Json::python_str);
+            let base_branch = saved.get("base_branch").filter(|b| !b.is_null()).map(Value::text);
             let conflicts: Vec<String> =
-                saved.get("conflicts").and_then(Json::as_array).into_iter().flatten().map(Json::python_str).collect();
+                saved.get("conflicts").and_then(Value::as_array).into_iter().flatten().map(Value::text).collect();
             without_conflict_warning(&pr.body, base_branch.as_deref(), &conflicts)
         });
-        let succeeded = saved.get("verdict").and_then(Json::as_str).is_some_and(|v| SUCCEEDED.contains(&v));
+        let succeeded = saved.get("verdict").and_then(Value::as_str).is_some_and(|v| SUCCEEDED.contains(&v));
         let check = ConflictCheck {
             run_id: run_id.clone(),
             url: url.clone(),
@@ -106,7 +107,7 @@ pub fn refresh_conflict(
             host.mark_pr_ready(cwd, &url)?;
         }
         let path = format!("{cwd}/{RUNS_DIR}/{run_id}/state.json");
-        record_in_state(host, &path, saved, "conflicts", Json::Array(vec![]), "its pull request was refreshed")?;
+        record_in_state(host, &path, saved, "conflicts", Value::Array(vec![]), "its pull request was refreshed")?;
         Ok(check)
     };
     refreshed().map_err(|e| OrchestratorError(format!("run {run_id}: {e}")))
@@ -118,11 +119,11 @@ pub fn refresh_conflict(
 /// run_ref names no run, or one that is not done; and as refresh_conflict.
 pub fn refresh_command(world: &Connected, cwd: &str, run_ref: Option<&str>) -> Result<i32, OrchestratorError> {
     let states = world.with.host.run_states(cwd)?;
-    let mut runs: Vec<&Json> = states.iter().map(|(_, saved)| saved).collect();
+    let mut runs: Vec<&Value> = states.iter().map(|(_, saved)| saved).collect();
     if let Some(run_ref) = run_ref {
         let (_, saved) = find_run(&states, run_ref, cwd)?;
-        let run_id = saved.get("run_id").map(Json::python_str).unwrap_or_default();
-        if saved.get("phase").and_then(Json::as_str) != Some(DONE) {
+        let run_id = saved.get("run_id").map(Value::text).unwrap_or_default();
+        if saved.get("phase").and_then(Value::as_str) != Some(DONE) {
             return Err(OrchestratorError(format!(
                 "run {run_id} is not done; refresh only looks at a finished run's pull request"
             )));
@@ -134,7 +135,7 @@ pub fn refresh_command(world: &Connected, cwd: &str, run_ref: Option<&str>) -> R
         runs = vec![saved];
     }
     runs.retain(|saved| has_conflict(saved));
-    runs.sort_by_key(|saved| saved.get("run_id").map(Json::python_str).unwrap_or_default());
+    runs.sort_by_key(|saved| saved.get("run_id").map(Value::text).unwrap_or_default());
     let mut waiting = false;
     for saved in runs {
         let check = refresh_conflict(world, cwd, saved, false)?;

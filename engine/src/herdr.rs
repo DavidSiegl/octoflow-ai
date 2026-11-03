@@ -20,7 +20,8 @@ use crate::constants::AGENT_START_TIMEOUT_MS;
 use crate::error::OrchestratorError;
 use crate::host::{line_ends_as_lf, run_process, ProcessError};
 use crate::interrupt::Interrupt;
-use crate::py::json::Json;
+use serde_json::Value;
+use crate::json::ValueExt;
 
 #[cfg(test)]
 pub(crate) mod fake;
@@ -86,12 +87,15 @@ pub const HERDR_SESSION: &str = "HERDR_SESSION";
 
 /// Which of this machine's herdr servers the herdr CLI reaches, as the two variables of its environment that pick it,
 /// HERDR_SOCKET_PATH and HERDR_SESSION, each as it was set or unset. herdr's own `--session` flag, which wins over
-/// both, is never given.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// both, is never given. state.json holds it as {"HERDR_SOCKET_PATH": ..., "HERDR_SESSION": ...}, each a string, or
+/// null for a variable that was unset; one missing from the object is unset.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct HerdrServer {
     /// HERDR_SOCKET_PATH's value; None when it is unset.
+    #[serde(rename = "HERDR_SOCKET_PATH", default)]
     socket_path: Option<String>,
     /// HERDR_SESSION's value; None when it is unset.
+    #[serde(rename = "HERDR_SESSION", default)]
     session: Option<String>,
 }
 
@@ -118,24 +122,6 @@ impl HerdrServer {
             }
         }
         selected
-    }
-
-    /// The server as state.json holds it: {"HERDR_SOCKET_PATH": ..., "HERDR_SESSION": ...}, each a string, or null
-    /// for a variable that was unset.
-    pub fn to_json(&self) -> Json {
-        let pairs = [(HERDR_SOCKET_PATH, &self.socket_path), (HERDR_SESSION, &self.session)];
-        Json::Object(pairs.into_iter().map(|(name, value)| (name, Json::from(value.clone()))).collect())
-    }
-
-    /// The server to_json wrote, a variable missing from the object being unset; None for JSON of another shape.
-    pub fn from_json(json: &Json) -> Option<HerdrServer> {
-        let map = json.as_object()?;
-        let value = |name: &str| match map.get(name) {
-            None | Some(Json::Null) => Some(None),
-            Some(Json::Str(v)) => Some(Some(v.clone())),
-            Some(_) => None,
-        };
-        Some(HerdrServer { socket_path: value(HERDR_SOCKET_PATH)?, session: value(HERDR_SESSION)? })
     }
 }
 
@@ -331,26 +317,26 @@ impl ProcessHerdr {
     pub fn ssh_target(&self) -> Result<String, HerdrError> {
         let out = self.exec(&["machine", "list", "--json"], Some(Duration::from_secs(CALL_LIMIT_SECONDS)))?;
         let bad = |why: String| HerdrError::new("bad_response", format!("machine list: {why}"));
-        let profiles = Json::parse(&out).map_err(bad)?;
+        let profiles = serde_json::from_str::<Value>(&out).map_err(|e| bad(e.to_string()))?;
         let profiles = profiles.as_array().ok_or_else(|| bad("not a list of machines".to_string()))?;
         // A label or id that is missing or null is Python's None, which a run without a machine matches.
-        let names = |p: &Json, key: &str| match p.get(key) {
-            None | Some(Json::Null) => Some(None),
-            Some(Json::Str(s)) => Some(Some(s.clone())),
+        let names = |p: &Value, key: &str| match p.get(key) {
+            None | Some(Value::Null) => Some(None),
+            Some(Value::String(s)) => Some(Some(s.clone())),
             Some(_) => None,
         };
         let machine = self.machine.clone();
         for p in profiles {
             if p.as_object().is_none() {
-                return Err(bad(format!("a machine is not an object: {}", p.dumps())));
+                return Err(bad(format!("a machine is not an object: {}", p.to_string())));
             }
             if [names(p, "label"), names(p, "id")].contains(&Some(machine.clone())) {
                 let name = machine.as_deref().unwrap_or("None");
-                if !p.get("enabled").is_some_and(Json::truthy) {
+                if !p.get("enabled").is_some_and(Value::is_set) {
                     return Err(HerdrError::Failed(OrchestratorError(format!("herdr machine {name} is disabled"))));
                 }
                 return match p.get("target") {
-                    Some(Json::Str(target)) => Ok(target.clone()),
+                    Some(Value::String(target)) => Ok(target.clone()),
                     _ => Err(bad(format!("machine {name} has no target"))),
                 };
             }
@@ -365,19 +351,19 @@ impl ProcessHerdr {
     }
 
     /// call_within, its process given CALL_LIMIT_SECONDS: for a command that does not wait on an agent.
-    fn call(&self, args: &[&str]) -> Result<Json, HerdrError> {
+    fn call(&self, args: &[&str]) -> Result<Value, HerdrError> {
         self.call_within(args, Some(Duration::from_secs(CALL_LIMIT_SECONDS)))
     }
 
     /// Run one API-backed command, forwarded to the machine, its process given limit as exec takes it, and give its
     /// `result`. Errors: as exec's, and herdr answering with what is not a result (bad_response).
-    fn call_within(&self, args: &[&str], limit: Option<Duration>) -> Result<Json, HerdrError> {
+    fn call_within(&self, args: &[&str], limit: Option<Duration>) -> Result<Value, HerdrError> {
         let out = self.exec_forwarded(args, limit)?;
         let command = args[..args.len().min(2)].join(" ");
         let bad = |why: String| HerdrError::new("bad_response", format!("{command}: {why}"));
-        let mut answer = Json::parse(&out).map_err(bad)?;
+        let mut answer = serde_json::from_str::<Value>(&out).map_err(|e| bad(e.to_string()))?;
         match &mut answer {
-            Json::Object(map) => map.remove("result").ok_or_else(|| bad("\"result\"".to_string())),
+            Value::Object(map) => map.remove("result").ok_or_else(|| bad("\"result\"".to_string())),
             _ => Err(bad(format!("the answer is not an object: {}", out.trim()))),
         }
     }
@@ -440,10 +426,10 @@ fn unless_code<T>(code: &str, answer: Result<T, HerdrError>) -> Result<Option<T>
 /// "message"}}` on stderr or stdout, a syntax error (exit 2) as plain text.
 fn herdr_error(status: i32, stdout: &str, stderr: &str) -> HerdrError {
     // A code or message that is no string is written as JSON, so that it is still shown.
-    let text = |value: &Json| value.as_str().map_or_else(|| value.dumps(), String::from);
+    let text = |value: &Value| value.as_str().map_or_else(|| value.to_string(), String::from);
     for stream in [stderr, stdout] {
-        let Ok(answer) = Json::parse(stream) else { continue };
-        let Some(error) = answer.get("error").and_then(Json::as_object) else { continue };
+        let Ok(answer) = serde_json::from_str::<Value>(stream) else { continue };
+        let Some(error) = answer.get("error").and_then(Value::as_object) else { continue };
         if let (Some(code), Some(message)) = (error.get("code"), error.get("message")) {
             return HerdrError::new(&text(code), text(message));
         }
@@ -454,10 +440,10 @@ fn herdr_error(status: i32, stdout: &str, stderr: &str) -> HerdrError {
 
 /// A string field of an answer, at the path of keys; bad_response naming the command and the path when it is not
 /// there or not a string.
-fn field(answer: &Json, command: &str, path: &[&str]) -> Result<String, HerdrError> {
+fn field(answer: &Value, command: &str, path: &[&str]) -> Result<String, HerdrError> {
     let mut value = answer;
     for key in path {
-        value = value.get(key).unwrap_or(&Json::Null);
+        value = value.get(key).unwrap_or(&Value::Null);
     }
     value
         .as_str()
@@ -530,7 +516,7 @@ impl Herdr for ProcessHerdr {
         let Some(r) = unless_code("agent_not_found", self.call(&["agent", "get", name]))? else { return Ok(None) };
         let status = field(&r, "agent get", &["agent", "agent_status"])?;
         let session = r.get("agent").and_then(|a| a.get("agent_session")).and_then(|s| s.get("value"));
-        let session = session.and_then(Json::as_str).filter(|s| !s.is_empty()).map(String::from);
+        let session = session.and_then(Value::as_str).filter(|s| !s.is_empty()).map(String::from);
         Ok(Some(Agent { status, session }))
     }
 

@@ -345,10 +345,10 @@ fn run_states() {
     // A file stamped ahead of the clock is no younger than new.
     set_mtime(&format!("{runs}/b/state.json"), now + 1000);
     let mut states = host.run_states(&cwd).unwrap();
-    states.sort_by_key(|(_, s)| s.get("run_id").and_then(Json::as_str).map(String::from));
+    states.sort_by_key(|(_, s)| s.get("run_id").and_then(Value::as_str).map(String::from));
     assert!((12..15).contains(&states[0].0), "{states:?}");
-    assert_eq!(states[0].1.get("run_id").and_then(Json::as_str), Some("a"));
-    assert_eq!((states[1].0, states[1].1.get("run_id").and_then(Json::as_str)), (0, Some("b")));
+    assert_eq!(states[0].1.get("run_id").and_then(Value::as_str), Some("a"));
+    assert_eq!((states[1].0, states[1].1.get("run_id").and_then(Value::as_str)), (0, Some("b")));
     assert_eq!(states.len(), 2);
     assert_eq!(host.run_states(&d.join("nosuch")).unwrap(), vec![]);
 }
@@ -680,8 +680,8 @@ fn real_filesystem_state() {
     let names: Vec<String> =
         std::fs::read_dir(&run_dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
     assert_eq!(names, ["state.json"]);
-    let [(age, state)] = <[(u64, Json); 1]>::try_from(host.run_states(&d.path()).unwrap()).unwrap();
-    assert_eq!(state.get("phase").and_then(Json::as_str), Some("build"));
+    let [(age, state)] = <[(u64, Value); 1]>::try_from(host.run_states(&d.path()).unwrap()).unwrap();
+    assert_eq!(state.get("phase").and_then(Value::as_str), Some("build"));
     assert!(age < 5);
 }
 
@@ -780,7 +780,7 @@ fn run_metrics_reads_each_run_s_line() {
     put(&format!("{runs}/b/metrics.json"), "{\"run\": \"b\"}\n");
     put(&format!("{runs}/c/state.json"), "{}");
     let metrics = host.run_metrics(&d.path()).unwrap();
-    let runs_read: Vec<&str> = metrics.iter().filter_map(|m| m.get("run").and_then(Json::as_str)).collect();
+    let runs_read: Vec<&str> = metrics.iter().filter_map(|m| m.get("run").and_then(Value::as_str)).collect();
     assert_eq!(runs_read, ["a", "b"]);
     put(&format!("{runs}/c/metrics.json"), "{");
     let e = host.run_metrics(&d.path()).unwrap_err();
@@ -832,15 +832,15 @@ fn pull_request_unexpected_output() {
     };
     for (out, why) in [
         ("not json".to_string(), ": "),
-        ("[]".to_string(), ": list indices must be integers or slices, not str"),
-        ("\"x\"".to_string(), ": string indices must be integers, not 'str'"),
-        ("null".to_string(), ": 'NoneType' object is not subscriptable"),
-        ("{\"state\": \"MERGED\"}".to_string(), ": \"headRefOid\""),
+        ("[]".to_string(), ": array where an object with \"state\" belongs"),
+        ("\"x\"".to_string(), ": string where an object with \"state\" belongs"),
+        ("null".to_string(), ": null where an object with \"state\" belongs"),
+        ("{\"state\": \"MERGED\"}".to_string(), ": \"headRefOid\" is missing"),
         ("{\"state\": 5}".to_string(), ", not a pull request's state"),
         (open("headRefOid", "\"main\""), ", not a pull request's state"),
         // A head that is no commit is judged before closedAt is read.
         ("{\"state\": \"OPEN\", \"headRefOid\": \"main\"}".to_string(), ", not a pull request's state"),
-        (open("headRefOid", "7"), ": expected string or bytes-like object, got 'int'"),
+        (open("headRefOid", "7"), ": headRefOid is number, not a string"),
         (open("closedAt", "5"), ", not a pull request's state"),
         (open("state", "1"), ", not a pull request's state"),
     ] {
@@ -890,10 +890,10 @@ fn merge_view() {
         (pr.replace("\"MERGEABLE\"", "[\"MERGEABLE\"]"), not_a_state),
         (pr.replace("true", "\"yes\""), not_a_state),
         (pr.replace("\"text\"", "null"), not_a_state),
-        ("{\"state\": \"OPEN\"}".to_string(), ": \"isDraft\""),
+        ("{\"state\": \"OPEN\"}".to_string(), ": \"isDraft\" is missing"),
         ("{\"state\": 1}".to_string(), not_a_state),
-        ("{\"state\": \"OPEN\", \"isDraft\": false, \"mergeable\": \"UNKNOWN\"}".to_string(), ": \"body\""),
-        ("[1]".to_string(), ": list indices must be integers or slices, not str"),
+        ("{\"state\": \"OPEN\", \"isDraft\": false, \"mergeable\": \"UNKNOWN\"}".to_string(), ": \"body\" is missing"),
+        ("[1]".to_string(), ": array where an object with \"state\" belongs"),
     ] {
         let (host, _bin) = gh_host(&bad, "", 0);
         let e = OrchestratorError::from(host.pull_request_merge("/", URL).unwrap_err());
@@ -1435,17 +1435,17 @@ fn a_snapshot_git_cannot_make_raises() {
 fn host_s_constants_are_the_python_engine_s() {
     let recorded = oracle("host.json");
     let constants = recorded.get("constants").unwrap();
-    let int = |name: &str| constants.get(name).and_then(Json::as_int).unwrap();
-    assert_eq!(int("MISSING_FILE_STATUS"), i128::from(MISSING_FILE_STATUS));
-    let unusable = constants.get("GH_UNUSABLE_STATUS").and_then(Json::as_array).unwrap();
-    let unusable: Vec<i128> = unusable.iter().filter_map(Json::as_int).collect();
-    assert_eq!(unusable, GH_UNUSABLE_STATUS.map(i128::from));
-    assert_eq!(constants.get("IN_DIR").and_then(Json::as_str), Some(IN_DIR));
-    assert_eq!(int("SSH_CONTROL_PERSIST_SECONDS"), i128::from(process::SSH_CONTROL_PERSIST_SECONDS));
-    assert_eq!(int("SSH_ALIVE_INTERVAL_SECONDS"), i128::from(process::SSH_ALIVE_INTERVAL_SECONDS));
-    assert_eq!(int("SSH_ALIVE_COUNT"), i128::from(process::SSH_ALIVE_COUNT));
-    let logs = constants.get("SESSION_LOGS").and_then(Json::as_object).unwrap();
-    let ours: Vec<(&str, &str)> = logs.iter().map(|(k, v)| (k, v.as_str().unwrap())).collect();
+    let int = |name: &str| constants.get(name).and_then(Value::as_i64).unwrap();
+    assert_eq!(int("MISSING_FILE_STATUS"), i64::from(MISSING_FILE_STATUS));
+    let unusable = constants.get("GH_UNUSABLE_STATUS").and_then(Value::as_array).unwrap();
+    let unusable: Vec<i64> = unusable.iter().filter_map(Value::as_i64).collect();
+    assert_eq!(unusable, GH_UNUSABLE_STATUS.map(i64::from));
+    assert_eq!(constants.get("IN_DIR").and_then(Value::as_str), Some(IN_DIR));
+    assert_eq!(int("SSH_CONTROL_PERSIST_SECONDS"), process::SSH_CONTROL_PERSIST_SECONDS as i64);
+    assert_eq!(int("SSH_ALIVE_INTERVAL_SECONDS"), process::SSH_ALIVE_INTERVAL_SECONDS as i64);
+    assert_eq!(int("SSH_ALIVE_COUNT"), process::SSH_ALIVE_COUNT as i64);
+    let logs = constants.get("SESSION_LOGS").and_then(Value::as_object).unwrap();
+    let ours: Vec<(&str, &str)> = logs.iter().map(|(k, v)| (k.as_str(), v.as_str().unwrap())).collect();
     let harnesses: Vec<(&str, &str)> =
         crate::harness::HARNESSES.iter().filter_map(|h| h.session_log.map(|log| (h.kind, log.glob))).collect();
     assert_eq!(ours, harnesses);

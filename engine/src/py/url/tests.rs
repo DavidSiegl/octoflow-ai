@@ -1,5 +1,5 @@
 use super::*;
-use crate::py::json::Json;
+use serde_json::Value as JsonValue;
 
 #[test]
 fn quote_keeps_only_the_unreserved_characters() {
@@ -16,7 +16,7 @@ fn urlencode_writes_a_blank_as_a_plus() {
 }
 
 /// The strings of an oracle case's list.
-fn strings(v: &Json) -> Vec<String> {
+fn strings(v: &JsonValue) -> Vec<String> {
     v.as_array().expect("a list").iter().map(|p| p.as_str().expect("a string").to_string()).collect()
 }
 

@@ -12,7 +12,9 @@ use crate::env::{ci_credentials, ConfigDir};
 use crate::error::OrchestratorError;
 use crate::host::line_ends_as_lf;
 use crate::http::{Http, HttpClient, HttpError, Method, Request, Response};
-use crate::py::json::{Json, Map};
+use serde_json::Value;
+use crate::map::Map;
+use crate::json::{Object, ValueExt};
 use crate::py::url::{quote, urlencode};
 
 #[cfg(test)]
@@ -190,13 +192,13 @@ impl Jenkins {
             CIError::Refused(e) => e,
         })?;
         let mut defined = Vec::new();
-        for property in listed(job.get("property")).iter().filter_map(Json::as_object) {
+        for property in listed(job.get("property")).iter().filter_map(Value::as_object) {
             for definition in listed(property.get("parameterDefinitions")) {
                 defined.push(definition.get("name").cloned());
             }
         }
         let missing: Vec<&str> =
-            JOB_PARAMETERS.iter().copied().filter(|p| !defined.contains(&Some(Json::from(*p)))).collect();
+            JOB_PARAMETERS.iter().copied().filter(|p| !defined.contains(&Some(Value::from(*p)))).collect();
         if missing.is_empty() {
             return Ok(());
         }
@@ -234,16 +236,16 @@ impl Jenkins {
         let url = format!("{queue_url}api/json");
         let item = self.get_json(&url)?;
         let shape = || self.not_shaped("GET", &url, "a queue item");
-        let build = match item.get("executable").filter(|e| e.truthy()) {
+        let build = match item.get("executable").filter(|e| e.is_set()) {
             None => None,
-            Some(Json::Object(executable)) => match executable.get("number") {
-                None | Some(Json::Null) => None,
-                Some(Json::Int(n)) => Some(i64::try_from(*n).map_err(|_| shape())?),
+            Some(Value::Object(executable)) => match executable.get("number") {
+                None | Some(Value::Null) => None,
+                Some(n) if n.is_number() => Some(n.as_i64().ok_or_else(shape)?),
                 Some(_) => return Err(shape()),
             },
             Some(_) => return Err(shape()),
         };
-        Ok(QueueItem { cancelled: item.get("cancelled").is_some_and(Json::truthy), build })
+        Ok(QueueItem { cancelled: item.get("cancelled").is_some_and(Value::is_set), build })
     }
 
     /// The newest of the job's last 20 builds whose GIT_REF is git_ref, leaving out the numbers in skip; None when
@@ -259,8 +261,8 @@ impl Jenkins {
         for build in listed(job.get("builds")) {
             let build = build.as_object().ok_or_else(shape)?;
             let built = git_ref_parameter(build).ok_or_else(shape)?;
-            let number = build.get("number").and_then(Json::as_int).and_then(|n| i64::try_from(n).ok());
-            if let (Some(Json::Str(built)), Some(number)) = (built, number) {
+            let number = build.get("number").and_then(Value::as_i64).and_then(|n| i64::try_from(n).ok());
+            if let (Some(Value::String(built)), Some(number)) = (built, number) {
                 if built == git_ref && !skip.contains(&number) {
                     return Ok(Some(number));
                 }
@@ -280,12 +282,12 @@ impl Jenkins {
         let job = self.get_json(&url)?;
         let builds = job
             .get("builds")
-            .and_then(Json::as_array)
+            .and_then(Value::as_array)
             .ok_or_else(|| self.not_shaped("GET", &url, "the job's builds"))?;
         builds
             .iter()
             .map(|build| {
-                let number = build.get("number").and_then(Json::as_int).and_then(|n| i64::try_from(n).ok());
+                let number = build.get("number").and_then(Value::as_i64).and_then(|n| i64::try_from(n).ok());
                 let result = optional_text(build.get("result"));
                 let description = optional_text(build.get("description"));
                 match (number, result, description) {
@@ -300,7 +302,7 @@ impl Jenkins {
     pub fn build_result(&self, number: i64) -> Result<Option<String>, CIError> {
         let url = self.build_url(number, "api/json", Some("building,result"));
         let build = self.get_json(&url)?;
-        if build.get("building").is_some_and(Json::truthy) {
+        if build.get("building").is_some_and(Value::is_set) {
             return Ok(None);
         }
         optional_text(build.get("result")).ok_or_else(|| self.not_shaped("GET", &url, "the build's result"))
@@ -373,14 +375,14 @@ impl Jenkins {
     }
 
     /// The JSON object Jenkins answers a GET of url with. Errors: request's, and an answer that is not a JSON object.
-    fn get_json(&self, url: &str) -> Result<Json, CIError> {
+    fn get_json(&self, url: &str) -> Result<Value, CIError> {
         let answer = self.request(Method::Get, url, None)?;
         let not_json = |why: String| CIError::Request {
             message: self.mask(&format!("GET {url}: the answer is not JSON: {why}")),
             status: None,
         };
         let text = std::str::from_utf8(&answer.body).map_err(|e| not_json(e.to_string()))?;
-        let value = Json::parse(text).map_err(not_json)?;
+        let value = serde_json::from_str::<Value>(text).map_err(|e| not_json(e.to_string()))?;
         if value.as_object().is_none() {
             return Err(CIError::Request {
                 message: self.mask(&format!("GET {url}: the answer is not a JSON object")),
@@ -398,19 +400,19 @@ impl Jenkins {
 
 /// The items of a JSON list, as `value or []` iterates them: none for a missing or false value, the list's for a list.
 /// Any other true value has none either, where Python would fail on it.
-fn listed(value: Option<&Json>) -> &[Json] {
-    value.and_then(Json::as_array).map_or(&[], Vec::as_slice)
+fn listed(value: Option<&Value>) -> &[Value] {
+    value.and_then(Value::as_array).map_or(&[], Vec::as_slice)
 }
 
 /// The value of the last GIT_REF parameter among the actions of build, a build as the job's builds list it:
 /// Some(None) when it has none, or that one has no value; None when one of its parameters is not an object. An action
 /// that is not an object has no parameters.
-fn git_ref_parameter(build: &Map<Json>) -> Option<Option<&Json>> {
+fn git_ref_parameter(build: &Object) -> Option<Option<&Value>> {
     let mut value = None;
-    for action in listed(build.get("actions")).iter().filter_map(Json::as_object) {
+    for action in listed(build.get("actions")).iter().filter_map(Value::as_object) {
         for parameter in listed(action.get("parameters")) {
             let parameter = parameter.as_object()?;
-            if parameter.get("name").and_then(Json::as_str) == Some("GIT_REF") {
+            if parameter.get("name").and_then(Value::as_str) == Some("GIT_REF") {
                 value = parameter.get("value");
             }
         }
@@ -421,21 +423,21 @@ fn git_ref_parameter(build: &Map<Json>) -> Option<Option<&Json>> {
 /// (test, error) of case, a case of a test report, as failed_tests lists it when it failed (status FAILED or
 /// REGRESSION): its className and name joined by a dot, and its errorDetails, "" for none; None for a case that did
 /// not fail.
-fn failed_test(case: &Map<Json>) -> Option<(String, String)> {
-    if !matches!(case.get("status").and_then(Json::as_str), Some("FAILED" | "REGRESSION")) {
+fn failed_test(case: &Object) -> Option<(String, String)> {
+    if !matches!(case.get("status").and_then(Value::as_str), Some("FAILED" | "REGRESSION")) {
         return None;
     }
-    let field = |name: &str| case.get(name).cloned().unwrap_or(Json::Null);
+    let field = |name: &str| case.get(name).cloned().unwrap_or(Value::Null);
     let error = field("errorDetails");
-    let error = if error.truthy() { error.python_str() } else { String::new() };
-    Some((format!("{}.{}", field("className").python_str(), field("name").python_str()), error))
+    let error = if error.is_set() { error.text() } else { String::new() };
+    Some((format!("{}.{}", field("className").text(), field("name").text()), error))
 }
 
 /// A string or null field: Some(None) for null or missing, Some(Some(text)) for a string, None for anything else.
-fn optional_text(value: Option<&Json>) -> Option<Option<String>> {
+fn optional_text(value: Option<&Value>) -> Option<Option<String>> {
     match value {
-        None | Some(Json::Null) => Some(None),
-        Some(Json::Str(s)) => Some(Some(s.clone())),
+        None | Some(Value::Null) => Some(None),
+        Some(Value::String(s)) => Some(Some(s.clone())),
         Some(_) => None,
     }
 }

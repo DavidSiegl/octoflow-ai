@@ -11,7 +11,8 @@
 use clap::error::ErrorKind;
 
 use super::*;
-use crate::py::json::Json;
+use serde_json::Value;
+use crate::json::ValueExt;
 use crate::test_support::TempDir;
 
 fn parse(argv: &[&str]) -> Result<Command, clap::Error> {
@@ -306,10 +307,10 @@ fn flags_in(text: &str) -> std::collections::BTreeSet<String> {
 fn help_names_the_flags_python_names() {
     let oracle = crate::test_support::oracle("cli.json");
     let names = |key: &str| -> Vec<String> {
-        oracle.get(key).and_then(Json::as_array).expect("the oracle lists them").iter().map(Json::python_str).collect()
+        oracle.get(key).and_then(Value::as_array).expect("the oracle lists them").iter().map(Value::text).collect()
     };
     let commands = names("commands");
-    let flags = oracle.get("flags").and_then(Json::as_object).expect("the oracle has the flags");
+    let flags = oracle.get("flags").and_then(Value::as_object).expect("the oracle has the flags");
     let p = parser(&ConfigDir::at("/nowhere"));
     let ported: Vec<String> = p.get_subcommands().map(|c| c.get_name().to_string()).collect();
     // The program's own help, then each command's.
@@ -317,10 +318,10 @@ fn help_names_the_flags_python_names() {
         let help = parse(&argv).unwrap_err().to_string();
         let python: std::collections::BTreeSet<String> = flags
             .get(name)
-            .and_then(Json::as_array)
+            .and_then(Value::as_array)
             .unwrap_or_else(|| panic!("orchestrator.py has no command {name}"))
             .iter()
-            .map(Json::python_str)
+            .map(Value::text)
             .collect();
         assert_eq!(flags_in(&help), python, "{name:?}'s help:\n{help}");
     }

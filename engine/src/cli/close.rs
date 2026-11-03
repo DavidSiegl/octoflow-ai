@@ -5,9 +5,24 @@ use super::{record_in_state, Connected};
 use crate::constants::RUNS_DIR;
 use crate::error::OrchestratorError;
 use crate::herdr::Herdr;
-use crate::py::json::Json;
 use crate::runs::{run_health, RUNNING};
-use crate::state::RunState;
+use serde::Deserialize;
+use serde_json::Value;
+
+/// What close needs of a run's state.json: where its workspace, worktree and branch are, and whether it failed or was
+/// closed. Read from a state.json of any format, a field missing being empty, so that a run an earlier release saved
+/// is closed as any other (crate::state::format_problem).
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Closing {
+    run_id: String,
+    workspace_id: String,
+    worktree: Option<String>,
+    branch: Option<String>,
+    base: Option<String>,
+    error: Option<String>,
+    closed: Option<String>,
+}
 
 /// Clean up after the run of the project at cwd that run_ref names, by its id or key, on world's herdr and host,
 /// record what was done as the run's closed in its state.json, so that resume refuses it, and return that. Prints
@@ -26,7 +41,8 @@ pub fn close_run(world: &Connected, cwd: &str, run_ref: &str) -> Result<String, 
     let host = world.with.host;
     let runs = host.run_states(cwd)?;
     let (age, saved) = find_run(&runs, run_ref, cwd)?;
-    let state = RunState::from_saved(saved.as_object_or_empty())?;
+    let state: Closing = serde_json::from_value(saved.clone())
+        .map_err(|e| OrchestratorError(format!("run state under {cwd}/{RUNS_DIR} is invalid: {e}")))?;
     if let Some(closed) = state.closed.as_deref().filter(|c| !c.is_empty()) {
         world.say(&format!("run {} is already closed: {closed}", state.run_id));
         return Ok(closed.to_string());
@@ -47,7 +63,7 @@ pub fn close_run(world: &Connected, cwd: &str, run_ref: &str) -> Result<String, 
     }
     let closed = done.join("; ");
     let path = format!("{cwd}/{RUNS_DIR}/{}/state.json", state.run_id);
-    record_in_state(host, &path, saved, "closed", Json::from(closed.as_str()), "the run was closed")?;
+    record_in_state(host, &path, saved, "closed", Value::from(closed.as_str()), "the run was closed")?;
     world.say(&format!("closed run {}: {closed}", state.run_id));
     Ok(closed)
 }
@@ -65,7 +81,7 @@ fn close_run_workspace(world: &Connected, workspace: &str) -> Result<String, Orc
 
 /// Force-remove the worktree of cwd that the failed run of state built in, after listing the changes that go with
 /// it, then its branch (discard_run_branch); say what became of each.
-fn discard_run_worktree(world: &Connected, cwd: &str, state: &RunState) -> Result<Vec<String>, OrchestratorError> {
+fn discard_run_worktree(world: &Connected, cwd: &str, state: &Closing) -> Result<Vec<String>, OrchestratorError> {
     let host = world.with.host;
     let worktree = state.worktree.as_deref().unwrap_or_default();
     let mut done = vec![];
@@ -95,7 +111,7 @@ fn discard_run_worktree(world: &Connected, cwd: &str, state: &RunState) -> Resul
 
 /// Delete the run of state's branch of cwd unless it has commits beyond the run's base, or the run has no base to
 /// tell; say which.
-fn discard_run_branch(world: &Connected, cwd: &str, state: &RunState, branch: &str) -> Result<String, OrchestratorError> {
+fn discard_run_branch(world: &Connected, cwd: &str, state: &Closing, branch: &str) -> Result<String, OrchestratorError> {
     let host = world.with.host;
     let why = match state.base.as_deref() {
         None => "the run has no base to compare it with".to_string(),

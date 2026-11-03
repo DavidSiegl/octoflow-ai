@@ -20,13 +20,14 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::Path;
 use std::process::Command;
 
-use octoflow_engine::py::json::{Json, Map};
+use serde_json::Value;
+use octoflow_engine::json::{Object, ValueExt};
 
 use crate::ledger::{invocation, wait_until, Ledger};
 use crate::{array_at, holds, object, object_at, run_dir, str_at, strings};
 
 /// The URL of pull request n as gh prints it once it has opened it.
-fn pr_url(n: i128) -> String {
+fn pr_url(n: i64) -> String {
     format!("https://github.com/parity/project/pull/{n}")
 }
 /// herdr's version as `herdr --version` prints it; doctor needs 0.9 or later.
@@ -50,12 +51,12 @@ pub fn herdr(ledger: &Ledger, args: &[String]) -> i32 {
     let script = ledger.script();
     let pids = ledger.engine_pids();
     let answer = ledger.change(|state| {
-        ledger.log(state, Map::from_iter([("herdr", strings(args))]), &invocation(), &pids);
+        ledger.log(state, octoflow_engine::json::object([("herdr", strings(args))]), &invocation(), &pids);
         perform_released(ledger, state);
         let mut command = args;
         if args.first().map(String::as_str) == Some("--machine") {
-            let machines = script.get("machines").and_then(Json::as_array).cloned().unwrap_or_default();
-            let named = |m: &Json| [str_at(m, "label"), str_at(m, "id")].contains(&args[1].as_str());
+            let machines = script.get("machines").and_then(Value::as_array).cloned().unwrap_or_default();
+            let named = |m: &Value| [str_at(m, "label"), str_at(m, "id")].contains(&args[1].as_str());
             if !machines.iter().any(named) {
                 return Err(failure("machine_not_found", format!("no machine {}", args[1])));
             }
@@ -70,9 +71,9 @@ pub fn herdr(ledger: &Ledger, args: &[String]) -> i32 {
             return Ok(lines.join("\n"));
         }
         if words.starts_with(&["machine", "list", "--json"]) {
-            return Ok(script.get("machines").cloned().unwrap_or(Json::Array(Vec::new())).dumps());
+            return Ok(script.get("machines").cloned().unwrap_or(Value::Array(Vec::new())).to_string());
         }
-        herdr_command(ledger, state, &words).map(|reply| object([("result", reply)]).dumps())
+        herdr_command(ledger, state, &words).map(|reply| object([("result", reply)]).to_string())
     });
     match answer {
         Ok(out) => {
@@ -80,18 +81,18 @@ pub fn herdr(ledger: &Ledger, args: &[String]) -> i32 {
             0
         }
         Err(e) => {
-            let error = object([("code", Json::from(e.code)), ("message", Json::Str(e.message))]);
-            eprintln!("{}", object([("error", error)]).dumps());
+            let error = object([("code", Value::from(e.code)), ("message", Value::String(e.message))]);
+            eprintln!("{}", object([("error", error)]).to_string());
             1
         }
     }
 }
 
 /// The next number of kind, from 1.
-fn next_id(state: &mut Map<Json>, kind: &str) -> i128 {
+fn next_id(state: &mut Object, kind: &str) -> i64 {
     let counters = object_at(state, "next");
-    let n = counters.get(kind).and_then(Json::as_int).unwrap_or(0) + 1;
-    counters.insert(kind, Json::Int(n));
+    let n = counters.get(kind).and_then(Value::as_i64).unwrap_or(0) + 1;
+    counters.insert(kind.to_string(), Value::from(n));
     n
 }
 
@@ -102,7 +103,7 @@ fn flag<'a>(args: &[&'a str], flag: &str) -> &'a str {
 }
 
 /// The `result` of one API-backed herdr command, its effects made in state.
-fn herdr_command(ledger: &Ledger, state: &mut Map<Json>, args: &[&str]) -> Result<Json, HerdrFailure> {
+fn herdr_command(ledger: &Ledger, state: &mut Object, args: &[&str]) -> Result<Value, HerdrFailure> {
     match args.first().copied().unwrap_or_default() {
         "workspace" => workspace_command(state, args),
         "pane" => pane_command(state, args),
@@ -122,25 +123,25 @@ fn unknown(args: &[&str]) -> HerdrFailure {
 }
 
 /// herdr's `workspace VERB REST...`, args being the whole command.
-fn workspace_command(state: &mut Map<Json>, args: &[&str]) -> Result<Json, HerdrFailure> {
+fn workspace_command(state: &mut Object, args: &[&str]) -> Result<Value, HerdrFailure> {
     let (verb, rest) = verb_and_rest(args);
     let first = rest.first().copied().unwrap_or_default();
     match verb {
         "create" => {
             let w = format!("w{}", next_id(state, "workspace"));
             let pane = format!("p{}", next_id(state, "pane"));
-            let label = Json::from(flag(rest, "--label"));
-            let cwd = Json::from(flag(rest, "--cwd"));
+            let label = Value::from(flag(rest, "--label"));
+            let cwd = Value::from(flag(rest, "--cwd"));
             object_at(state, "workspaces").insert(w.clone(), object([("label", label), ("cwd", cwd)]));
-            let entry = object([("workspace", Json::Str(w.clone())), ("label", Json::from(""))]);
+            let entry = object([("workspace", Value::String(w.clone())), ("label", Value::from(""))]);
             object_at(state, "panes").insert(pane.clone(), entry);
             Ok(object([
-                ("workspace", object([("workspace_id", Json::Str(w))])),
-                ("root_pane", object([("pane_id", Json::Str(pane))])),
+                ("workspace", object([("workspace_id", Value::String(w))])),
+                ("root_pane", object([("pane_id", Value::String(pane))])),
             ]))
         }
         "get" if object_at(state, "workspaces").contains_key(first) => {
-            Ok(object([("workspace", object([("workspace_id", Json::from(first))]))]))
+            Ok(object([("workspace", object([("workspace_id", Value::from(first))]))]))
         }
         "close" if object_at(state, "workspaces").remove(first).is_some() => {
             close_panes(state, first);
@@ -152,17 +153,17 @@ fn workspace_command(state: &mut Map<Json>, args: &[&str]) -> Result<Json, Herdr
 }
 
 /// Remove workspace's panes, and the agents in them, which exit with their panes.
-fn close_panes(state: &mut Map<Json>, workspace: &str) {
+fn close_panes(state: &mut Object, workspace: &str) {
     let panes = object_at(state, "panes");
     let gone: Vec<String> = panes
         .iter()
-        .filter(|(_, p)| p.get("workspace").and_then(Json::as_str) == Some(workspace))
+        .filter(|(_, p)| p.get("workspace").and_then(Value::as_str) == Some(workspace))
         .map(|(k, _)| k.to_string())
         .collect();
     for p in &gone {
         panes.remove(p);
     }
-    let live: BTreeSet<String> = panes.keys().map(str::to_string).collect();
+    let live: BTreeSet<String> = panes.keys().cloned().collect();
     let agents = object_at(state, "agents");
     let exited: Vec<String> =
         agents.iter().filter(|(_, a)| !live.contains(str_at(a, "pane"))).map(|(k, _)| k.to_string()).collect();
@@ -172,34 +173,36 @@ fn close_panes(state: &mut Map<Json>, workspace: &str) {
 }
 
 /// herdr's `pane VERB REST...`, args being the whole command.
-fn pane_command(state: &mut Map<Json>, args: &[&str]) -> Result<Json, HerdrFailure> {
+fn pane_command(state: &mut Object, args: &[&str]) -> Result<Value, HerdrFailure> {
     let (verb, rest) = verb_and_rest(args);
     let first = rest.first().copied().unwrap_or_default();
     match verb {
         "split" => {
-            let workspace = pane(state, first)?.get("workspace").cloned().unwrap_or(Json::Null);
+            let workspace = pane(state, first)?.get("workspace").cloned().unwrap_or(Value::Null);
             let p = format!("p{}", next_id(state, "pane"));
-            object_at(state, "panes").insert(p.clone(), object([("workspace", workspace), ("label", Json::from(""))]));
-            Ok(object([("pane", object([("pane_id", Json::Str(p))]))]))
+            object_at(state, "panes").insert(p.clone(), object([("workspace", workspace), ("label", Value::from(""))]));
+            Ok(object([("pane", object([("pane_id", Value::String(p))]))]))
         }
         "rename" => {
-            let label = Json::from(rest.get(1).copied().unwrap_or_default());
+            let label = Value::from(rest.get(1).copied().unwrap_or_default());
             match pane(state, first)? {
-                Json::Object(p) => p.insert("label", label),
+                Value::Object(p) => {
+                    p.insert("label".into(), label);
+                }
                 other => panic!("pane {first} is {other:?}"),
             }
             Ok(object([]))
         }
         "get" => {
             pane(state, first)?;
-            Ok(object([("pane", object([("pane_id", Json::from(first))]))]))
+            Ok(object([("pane", object([("pane_id", Value::from(first))]))]))
         }
         _ => Err(unknown(args)),
     }
 }
 
 /// herdr's `agent VERB NAME REST...`, args being the whole command.
-fn agent_command(ledger: &Ledger, state: &mut Map<Json>, args: &[&str]) -> Result<Json, HerdrFailure> {
+fn agent_command(ledger: &Ledger, state: &mut Object, args: &[&str]) -> Result<Value, HerdrFailure> {
     let (verb, rest) = verb_and_rest(args);
     let name = rest.first().copied().unwrap_or_default();
     match verb {
@@ -208,13 +211,13 @@ fn agent_command(ledger: &Ledger, state: &mut Map<Json>, args: &[&str]) -> Resul
             pane(state, p)?;
             let session = format!("session-{}", next_id(state, "session"));
             let agent = object([
-                ("pane", Json::from(p)),
-                ("kind", Json::from(flag(rest, "--kind"))),
-                ("status", Json::from("idle")),
-                ("session", Json::Str(session)),
+                ("pane", Value::from(p)),
+                ("kind", Value::from(flag(rest, "--kind"))),
+                ("status", Value::from("idle")),
+                ("session", Value::String(session)),
             ]);
             let record = agent_record(name, &agent);
-            object_at(state, "agents").insert(name, agent);
+            object_at(state, "agents").insert(name.to_string(), agent);
             Ok(object([("agent", record)]))
         }
         "get" => {
@@ -245,7 +248,7 @@ fn agent_command(ledger: &Ledger, state: &mut Map<Json>, args: &[&str]) -> Resul
 
 /// Mark reached each hold an action of agent name waits on: the engine's first poll of the agent after prompting it,
 /// after which it does nothing but poll again until the hold is released.
-fn reach_holds_on(state: &mut Map<Json>, name: &str) {
+fn reach_holds_on(state: &mut Object, name: &str) {
     let holds_on_it: Vec<String> = object_at(state, "held")
         .iter()
         .filter(|(_, entry)| str_at(entry, "name") == name)
@@ -254,25 +257,25 @@ fn reach_holds_on(state: &mut Map<Json>, name: &str) {
     let reached = array_at(state, "reached");
     for hold in holds_on_it {
         if !reached.iter().any(|r| r.as_str() == Some(&hold)) {
-            reached.push(Json::Str(hold));
+            reached.push(Value::String(hold));
         }
     }
 }
 
-fn pane<'a>(state: &'a mut Map<Json>, name: &str) -> Result<&'a mut Json, HerdrFailure> {
+fn pane<'a>(state: &'a mut Object, name: &str) -> Result<&'a mut Value, HerdrFailure> {
     object_at(state, "panes").get_mut(name).ok_or_else(|| failure("pane_not_found", format!("no pane {name}")))
 }
 
-fn agent<'a>(state: &'a mut Map<Json>, name: &str) -> Result<&'a Json, HerdrFailure> {
+fn agent<'a>(state: &'a mut Object, name: &str) -> Result<&'a Value, HerdrFailure> {
     match object_at(state, "agents").get(name) {
         Some(a) => Ok(a),
         None => Err(failure("agent_not_found", format!("no agent {name}"))),
     }
 }
 
-fn agent_record(name: &str, agent: &Json) -> Json {
+fn agent_record(name: &str, agent: &Value) -> Value {
     object([
-        ("name", Json::from(name)),
+        ("name", Value::from(name)),
         ("pane_id", crate::at(agent, "pane").clone()),
         ("agent_status", crate::at(agent, "status").clone()),
         ("agent_session", object([("value", crate::at(agent, "session").clone())])),
@@ -287,21 +290,21 @@ fn role_of(name: &str) -> &str {
 /// Play the role's next scripted action for the prompt just sent to agent name: performed now, or held until the world
 /// releases its hold, the hold being reached at the engine's first `agent get` of the agent after it. A prompt the
 /// script has no action for makes the agent exit, which the engine reports, rather than leave the scenario waiting.
-fn prompted(ledger: &Ledger, state: &mut Map<Json>, name: &str) {
+fn prompted(ledger: &Ledger, state: &mut Object, name: &str) {
     let role = role_of(name);
     let script = ledger.script();
-    let actions = script.get("agents").and_then(|a| a.get(role)).and_then(Json::as_array).cloned().unwrap_or_default();
+    let actions = script.get("agents").and_then(|a| a.get(role)).and_then(Value::as_array).cloned().unwrap_or_default();
     let consumed = object_at(state, "consumed");
-    let k = consumed.get(role).and_then(Json::as_int).unwrap_or(0);
+    let k = consumed.get(role).and_then(Value::as_i64).unwrap_or(0);
     let Some(action) = usize::try_from(k).ok().and_then(|k| actions.get(k)).cloned() else {
         object_at(state, "agents").remove(name);
         return;
     };
-    consumed.insert(role, Json::Int(k + 1));
-    if let Some(hold) = action.get("hold").and_then(Json::as_str).filter(|h| !h.is_empty()) {
+    consumed.insert(role.to_string(), Value::from(k + 1));
+    if let Some(hold) = action.get("hold").and_then(Value::as_str).filter(|h| !h.is_empty()) {
         if !holds(state, "released", hold) {
-            mark_agent(state, name, Json::from("working"));
-            object_at(state, "held").insert(hold, object([("name", Json::from(name)), ("action", action.clone())]));
+            mark_agent(state, name, Value::from("working"));
+            object_at(state, "held").insert(hold.to_string(), object([("name", Value::from(name)), ("action", action.clone())]));
             return;
         }
     }
@@ -309,18 +312,18 @@ fn prompted(ledger: &Ledger, state: &mut Map<Json>, name: &str) {
 }
 
 /// Set agent name's status, as herdr reports it, to `to`; nothing for an agent that has exited.
-fn mark_agent(state: &mut Map<Json>, name: &str, to: Json) {
-    if let Some(Json::Object(a)) = object_at(state, "agents").get_mut(name) {
-        a.insert("status", to);
+fn mark_agent(state: &mut Object, name: &str, to: Value) {
+    if let Some(Value::Object(a)) = object_at(state, "agents").get_mut(name) {
+        a.insert("status".into(), to);
     }
 }
 
 /// Perform each held action whose hold has been released since.
-fn perform_released(ledger: &Ledger, state: &mut Map<Json>) {
-    let held: Vec<String> = object_at(state, "held").keys().map(str::to_string).collect();
+fn perform_released(ledger: &Ledger, state: &mut Object) {
+    let held: Vec<String> = object_at(state, "held").keys().cloned().collect();
     let released: Vec<String> = held.into_iter().filter(|h| holds(state, "released", h)).collect();
     for hold in released {
-        let entry = object_at(state, "held").remove(&hold).unwrap_or(Json::Null);
+        let entry = object_at(state, "held").remove(&hold).unwrap_or(Value::Null);
         let name = str_at(&entry, "name");
         if object_at(state, "agents").contains_key(name) {
             perform(ledger, state, name, crate::at(&entry, "action"));
@@ -334,31 +337,31 @@ fn perform_released(ledger: &Ledger, state: &mut Map<Json>) {
 /// project): text, or null to delete the file}; "write", {path relative to the run directory: text}, written after
 /// the edits, so that the handoff file, which ends the turn, comes last; "exit", true for an agent that exits
 /// afterwards; "status", the agent's status afterwards, default idle; and "hold", which the world releases.
-fn perform(ledger: &Ledger, state: &mut Map<Json>, name: &str, action: &Json) {
+fn perform(ledger: &Ledger, state: &mut Object, name: &str, action: &Value) {
     let script = ledger.script();
     let key = name.rsplit_once('-').map_or("", |(_, key)| key);
     let run_dir = run_dir(Path::new(str_at(&script, "project")), key);
     let state_path = run_dir.join("state.json");
     let text = fs::read_to_string(&state_path).unwrap_or_else(|e| panic!("reading {}: {e}", state_path.display()));
-    let saved = Json::parse(&text).unwrap_or_else(|e| panic!("{}: {e}", state_path.display()));
-    let work_dir = match saved.get("worktree").filter(|w| w.truthy()) {
+    let saved = serde_json::from_str::<Value>(&text).unwrap_or_else(|e| panic!("{}: {e}", state_path.display()));
+    let work_dir = match saved.get("worktree").filter(|w| w.is_set()) {
         Some(worktree) => worktree.as_str().unwrap_or_default().to_string(),
         None => str_at(&saved, "cwd").to_string(),
     };
-    for (path, text) in action.get("edit").map(Json::as_object_or_empty).into_iter().flat_map(Map::iter) {
+    for (path, text) in action.get("edit").and_then(Value::as_object).into_iter().flat_map(Object::iter) {
         put(&Path::new(&work_dir).join(path), text);
     }
-    for (path, text) in action.get("write").map(Json::as_object_or_empty).into_iter().flat_map(Map::iter) {
+    for (path, text) in action.get("write").and_then(Value::as_object).into_iter().flat_map(Object::iter) {
         put(&run_dir.join(path), text);
     }
-    mark_agent(state, name, action.get("status").cloned().unwrap_or(Json::from("idle")));
-    if action.get("exit").is_some_and(Json::truthy) {
+    mark_agent(state, name, action.get("status").cloned().unwrap_or(Value::from("idle")));
+    if action.get("exit").is_some_and(Value::is_set) {
         object_at(state, "agents").remove(name);
     }
 }
 
 /// Write text to path, making its directories; delete path for null.
-fn put(path: &Path, text: &Json) {
+fn put(path: &Path, text: &Value) {
     let Some(text) = text.as_str() else {
         fs::remove_file(path).unwrap_or_else(|e| panic!("removing {}: {e}", path.display()));
         return;
@@ -393,14 +396,18 @@ pub fn gh(ledger: &Ledger, args: &[String]) -> i32 {
         ["pr", "create", ..] => opened(state, &words, stdin),
         ["pr", verb @ ("view" | "edit" | "ready"), target, ..] => {
             let number = target.trim_end_matches('/').rsplit('/').next().unwrap_or_default();
-            let Some(Json::Object(pr)) = object_at(state, "prs").get_mut(number) else {
+            let Some(Value::Object(pr)) = object_at(state, "prs").get_mut(number) else {
                 eprintln!("no pull requests found for {target}");
                 return 1;
             };
             match *verb {
-                "edit" => pr.insert("body", Json::from(stdin)),
-                "ready" => pr.insert("isDraft", Json::Bool(false)),
-                _ => println!("{}", viewed(pr, flag(&words, "--json"), &origin).dumps()),
+                "edit" => {
+                    pr.insert("body".into(), Value::from(stdin));
+                }
+                "ready" => {
+                    pr.insert("isDraft".into(), Value::Bool(false));
+                }
+                _ => println!("{}", viewed(pr, flag(&words, "--json"), &origin)),
             }
             0
         }
@@ -416,33 +423,33 @@ pub fn gh(ledger: &Ledger, args: &[String]) -> i32 {
 fn logged(ledger: &Ledger, words: &[&str], stdin: Option<&str>) -> Option<String> {
     let pids = ledger.engine_pids();
     ledger.change(|state| {
-        let mut event = Map::from_iter([("gh", strings(words))]);
+        let mut event = octoflow_engine::json::object([("gh", strings(words))]);
         if let Some(stdin) = stdin {
-            event.insert("stdin", Json::from(stdin));
+            event.insert("stdin".into(), Value::from(stdin));
         }
         ledger.log(state, event, &invocation(), &pids);
         let script = ledger.script();
-        let hold = script.get("gh").and_then(|g| g.get("create_hold")).and_then(Json::as_str).map(str::to_string);
+        let hold = script.get("gh").and_then(|g| g.get("create_hold")).and_then(Value::as_str).map(str::to_string);
         let hold = hold.filter(|h| words.starts_with(&["pr", "create"]) && !h.is_empty());
         if let Some(hold) = &hold {
-            array_at(state, "reached").push(Json::Str(hold.clone()));
+            array_at(state, "reached").push(Value::String(hold.clone()));
         }
         hold
     })
 }
 
 /// Open the pull request `gh pr create` words asks for, with body, and print its URL; the exit status.
-fn opened(state: &mut Map<Json>, words: &[&str], body: Option<String>) -> i32 {
+fn opened(state: &mut Object, words: &[&str], body: Option<String>) -> i32 {
     let n = next_id(state, "pr");
     let pr = object([
-        ("base", Json::from(flag(words, "--base"))),
-        ("head", Json::from(flag(words, "--head"))),
-        ("title", Json::from(flag(words, "--title"))),
-        ("body", Json::from(body)),
-        ("isDraft", Json::Bool(words.contains(&"--draft"))),
-        ("state", Json::from("OPEN")),
-        ("closedAt", Json::Null),
-        ("mergeable", Json::from("MERGEABLE")),
+        ("base", Value::from(flag(words, "--base"))),
+        ("head", Value::from(flag(words, "--head"))),
+        ("title", Value::from(flag(words, "--title"))),
+        ("body", Value::from(body)),
+        ("isDraft", Value::Bool(words.contains(&"--draft"))),
+        ("state", Value::from("OPEN")),
+        ("closedAt", Value::Null),
+        ("mergeable", Value::from("MERGEABLE")),
     ]);
     object_at(state, "prs").insert(n.to_string(), pr);
     println!("{}", pr_url(n));
@@ -451,12 +458,12 @@ fn opened(state: &mut Map<Json>, words: &[&str], body: Option<String>) -> i32 {
 
 /// The fields of pr that `gh pr view --json fields` gives, fields comma-separated, its head commit read from origin.
 /// Panics on a field the fake does not hold.
-fn viewed(pr: &Map<Json>, fields: &str, origin: &str) -> Json {
-    let head = pr.get("head").and_then(Json::as_str).unwrap_or_default();
+fn viewed(pr: &Object, fields: &str, origin: &str) -> Value {
+    let head = pr.get("head").and_then(Value::as_str).unwrap_or_default();
     let mut view = pr.clone();
-    view.insert("headRefOid", Json::Str(origin_commit(origin, head)));
+    view.insert("headRefOid".into(), Value::String(origin_commit(origin, head)));
     let chosen = fields.split(',').map(|k| (k, view.get(k).cloned().unwrap_or_else(|| panic!("gh has no field {k}"))));
-    Json::Object(chosen.collect())
+    object(chosen)
 }
 
 /// The commit of branch in the origin repository, or 40 zeros when it has none: gh still names the head that the pull

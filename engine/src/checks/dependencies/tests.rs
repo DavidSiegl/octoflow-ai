@@ -10,10 +10,11 @@ use crate::crates_io::fake::{CrateJson, FakeCratesIo};
 use crate::crates_io::CratesIo;
 use crate::http::Http;
 use crate::package_index::PackageIndexes;
-use crate::py::json::Json;
+use serde_json::Value;
 use crate::pypi::fake::{FakePyPI, ProjectJson};
 use crate::pypi::PyPI;
 use crate::test_support::oracle;
+use crate::json::object;
 
 fn find(change: &Change, pypi: &Arc<FakePyPI>) -> CheckFindings {
     let indexes = PackageIndexes::with_pypi(Arc::clone(pypi) as Arc<dyn Http>);
@@ -598,28 +599,28 @@ fn kind_name(kind: SourceKind) -> &'static str {
     }
 }
 
-fn sources(map: &Map<Dependency>) -> Json {
-    Json::Array(
+fn sources(map: &Map<Dependency>) -> Value {
+    Value::Array(
         map.iter()
             .map(|(k, d)| {
                 let s = d
                     .source
                     .as_ref()
-                    .map_or(Json::Null, |s| Json::Array(vec![kind_name(s.kind).into(), s.place.as_str().into()]));
-                Json::Array(vec![k.into(), s])
+                    .map_or(Value::Null, |s| Value::Array(vec![kind_name(s.kind).into(), s.place.as_str().into()]));
+                Value::Array(vec![k.into(), s])
             })
             .collect(),
     )
 }
 
-fn cases(key: &str) -> Vec<Json> {
-    oracle("checks.json").get(key).and_then(Json::as_array).unwrap().clone()
+fn cases(key: &str) -> Vec<Value> {
+    oracle("checks.json").get(key).and_then(Value::as_array).unwrap().clone()
 }
 
 #[test]
 fn manifests_read_as_the_python_engine_reads_them() {
     for case in cases("dependencies") {
-        let file = |k: &str| case.get(k).and_then(Json::as_str).map(|t| t.as_bytes().to_vec());
+        let file = |k: &str| case.get(k).and_then(Value::as_str).map(|t| t.as_bytes().to_vec());
         let (pyproject, lock) = (file("pyproject"), file("lock"));
         let deps = python_dependencies(&|path: &str| {
             Ok(if path == "pyproject.toml" { pyproject.clone() } else { lock.clone() })
@@ -627,7 +628,7 @@ fn manifests_read_as_the_python_engine_reads_them() {
         .unwrap();
         assert_eq!(sources(&deps.direct), case.get("direct").cloned().unwrap(), "{case:?}");
         assert_eq!(sources(&deps.locked), case.get("locked").cloned().unwrap(), "{case:?}");
-        let expected = case.get("unreadable").and_then(Json::as_array).unwrap();
+        let expected = case.get("unreadable").and_then(Value::as_array).unwrap();
         assert_eq!(deps.unreadable.len(), expected.len(), "{case:?}");
         for ((path, why), want) in deps.unreadable.iter().zip(expected) {
             let want = want.as_array().unwrap();
@@ -646,9 +647,9 @@ fn manifests_read_as_the_python_engine_reads_them() {
 fn requirements_names_and_lines_read_as_the_python_engine_reads_them() {
     for case in cases("requirements") {
         let case = case.as_array().unwrap();
-        let got = match requirement_of(&Value::String(case[0].as_str().unwrap().to_string())) {
-            Ok((key, url)) => Json::Array(vec![key.into(), url.into()]),
-            Err(e) => Json::Object([("error", Json::from(e))].into_iter().collect()),
+        let got = match requirement_of(&::toml::Value::String(case[0].as_str().unwrap().to_string())) {
+            Ok((key, url)) => Value::Array(vec![key.into(), url.into()]),
+            Err(e) => Value::Object(object([("error", Value::from(e))])),
         };
         assert_eq!(got, case[1], "{:?}", case[0]);
     }
@@ -658,14 +659,14 @@ fn requirements_names_and_lines_read_as_the_python_engine_reads_them() {
     }
     for case in cases("spec_names") {
         let case = case.as_array().unwrap();
-        let got: Vec<Json> = spec_names(case[0].as_str().unwrap()).into_iter().map(Json::from).collect();
-        assert_eq!(Json::Array(got), case[1]);
+        let got: Vec<Value> = spec_names(case[0].as_str().unwrap()).into_iter().map(Value::from).collect();
+        assert_eq!(Value::Array(got), case[1]);
     }
     for case in cases("line_naming") {
         let case = case.as_array().unwrap();
-        let lines = case[1].as_array().unwrap().iter().map(|n| n.as_int().unwrap() as u64).collect();
+        let lines = case[1].as_array().unwrap().iter().map(|n| n.as_i64().unwrap() as u64).collect();
         let got = line_naming(case[0].as_str().unwrap(), &lines, case[2].as_str().unwrap());
-        assert_eq!(got.map(|n| Json::Int(n.into())).unwrap_or(Json::Null), case[3], "{case:?}");
+        assert_eq!(got.map(Value::from).unwrap_or(Value::Null), case[3], "{case:?}");
     }
 }
 

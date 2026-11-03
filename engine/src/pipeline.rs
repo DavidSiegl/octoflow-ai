@@ -10,7 +10,7 @@ use crate::error::OrchestratorError;
 use crate::paths::split_extension;
 use crate::prompts::{Prompt, Prompts};
 use crate::prompts::template::{fill, parse, placeholders, Piece};
-use crate::py::json::Map;
+use crate::map::Map;
 
 /// Run phases that are no step's: the quality loop after a quality-gated step's turn, and the run's last two.
 pub const QUALITY: &str = "quality";

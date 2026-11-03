@@ -7,7 +7,7 @@ fn built_in() -> Prompts {
     Prompts::default()
 }
 
-fn toml(text: &str) -> Json {
+fn toml(text: &str) -> Value {
     parse_toml(text).unwrap()
 }
 
@@ -43,21 +43,21 @@ fn every_workflow_parses_to_the_python_engines_definition() {
     let cases = cases.as_array().unwrap();
     assert!(cases.len() >= 12, "workflows.json holds {} workflows", cases.len());
     for case in cases {
-        let (name, from) = (case.get("name").and_then(Json::as_str).unwrap(), case.get("from").unwrap().dumps());
-        let text = case.get("toml").and_then(Json::as_str).unwrap();
+        let (name, from) = (case.get("name").and_then(Value::as_str).unwrap(), case.get("from").unwrap().to_string());
+        let text = case.get("toml").and_then(Value::as_str).unwrap();
         let outcome = case.get("outcome").unwrap();
         let parsed = parse_workflow(name, &toml(text), &built_in());
-        match outcome.get("error").and_then(Json::as_str) {
+        match outcome.get("error").and_then(Value::as_str) {
             Some(error) => assert_eq!(parsed.unwrap_err(), error, "{from}"),
             None => {
                 let p = parsed.unwrap_or_else(|e| panic!("{from}: {e}"));
-                let field = |key: &str| outcome.get(key).and_then(Json::as_str).unwrap();
-                assert_eq!(workflow_definition(&p).dumps(), field("definition"), "{from}");
+                let field = |key: &str| outcome.get(key).and_then(Value::as_str).unwrap();
+                assert_eq!(workflow_definition(&p).to_string(), field("definition"), "{from}");
                 assert_eq!(workflow_toml(&p), field("toml"), "{from}");
                 assert_eq!(workflow_shape(&p), field("shape"), "{from}");
-                assert_eq!(Some(crate::pipeline::is_built_in(&p, &built_in())), outcome.get("built_in").and_then(Json::as_bool), "{from}");
+                assert_eq!(Some(crate::pipeline::is_built_in(&p, &built_in())), outcome.get("built_in").and_then(Value::as_bool), "{from}");
                 // The definition as state.json saves it gives the workflow back too.
-                let saved = Json::parse(field("definition")).unwrap();
+                let saved = serde_json::from_str::<Value>(field("definition")).unwrap();
                 assert_eq!(run_pipeline(name, Some(&saved), &built_in()).unwrap(), p, "{from}");
             }
         }
@@ -119,7 +119,7 @@ fn the_change_budget_is_the_workflows() {
     let p = load_workflow_file(&config.file("small", &format!("max_files = 1\nmax_lines = 100\n[[steps]]\n{step}")), &built_in()).unwrap();
     assert_eq!((p.max_files(), p.max_lines()), (1, 100));
     assert_eq!(parse_workflow("small", &toml(&workflow_toml(&p)), &built_in()).unwrap(), p);
-    assert_eq!(workflow_definition(&p).get("max_lines"), Some(&Json::from(100)));
+    assert_eq!(workflow_definition(&p).get("max_lines"), Some(&Value::from(100)));
     assert!(workflow_definition(&DEFAULT_WORKFLOW).get("max_files").is_none());
     for (value, message) in [
         ("0", "workflow bad: max_lines must be at least 1"),
@@ -272,13 +272,13 @@ fn a_table_with_two_problems_names_the_first_in_the_file_as_python_does() {
 
 #[test]
 fn a_saved_definition_with_an_unreadable_template_or_corrupt_is_refused() {
-    let Json::Object(mut definition) = workflow_definition(&quick()) else { panic!("an object") };
-    let Some(Json::Array(steps)) = definition.get_mut("steps") else { panic!("steps") };
-    let Json::Object(first) = &mut steps[0] else { panic!("a step") };
-    first.insert("prompt", Json::from("{task:d}"));
-    let e = run_pipeline("quick", Some(&Json::Object(definition)), &built_in()).unwrap_err();
+    let Value::Object(mut definition) = workflow_definition(&quick()) else { panic!("an object") };
+    let Some(Value::Array(steps)) = definition.get_mut("steps") else { panic!("steps") };
+    let Value::Object(first) = &mut steps[0] else { panic!("a step") };
+    first.insert("prompt".into(), Value::from("{task:d}"));
+    let e = run_pipeline("quick", Some(&Value::Object(definition)), &built_in()).unwrap_err();
     assert!(e.0.starts_with("the definition of workflow quick saved with the run is invalid: step 1 (build): prompt: placeholder {task:d} at line 1, column 1 has a format spec"), "{e}");
-    let e = run_pipeline("quick", Some(&Json::parse(r#"{"steps": []}"#).unwrap()), &built_in()).unwrap_err();
+    let e = run_pipeline("quick", Some(&serde_json::from_str::<Value>(r#"{"steps": []}"#).unwrap()), &built_in()).unwrap_err();
     assert_eq!(e.0, "the definition of workflow quick saved with the run is invalid: it has no [[steps]]");
     assert!(run_pipeline("quick", None, &built_in()).unwrap_err().0.starts_with("unknown workflow quick"));
 }
@@ -338,8 +338,8 @@ fn agents_are_parsed_and_round_tripped() {
     assert_eq!(p.agents(), &roles(&[("review", "codex"), ("build", "pi")]));
     let definition = workflow_definition(&p);
     assert_eq!(
-        definition.get("roles").unwrap().dumps(),
-        r#"{"spec": {"label": "Spec Collector"}, "build": {"label": "Implementer", "agent": "pi"}, "review": {"label": "Reviewer", "model": "o3", "agent": "codex"}}"#
+        definition.get("roles").unwrap().to_string(),
+        r#"{"spec":{"label":"Spec Collector"},"build":{"label":"Implementer","agent":"pi"},"review":{"label":"Reviewer","model":"o3","agent":"codex"}}"#
     );
     let text = workflow_toml(&p);
     assert!(text.contains("[roles.review]\nlabel = \"Reviewer\"\nmodel = \"o3\"\nagent = \"codex\"\n"), "{text}");
@@ -396,9 +396,9 @@ again = "Again, with tests in {proofs_dir}; write {review_path}."
     assert!(text.contains("proof_command = \"sh {proofs}\""));
     assert_eq!(parse_workflow("quick", &toml(&text), &built_in()).unwrap(), proving);
     assert!(!workflow_toml(&quick()).contains("proof_command"));
-    let Json::Object(mut definition) = workflow_definition(&quick()) else { panic!("an object") };
-    definition.insert("proof_command", Json::from(1));
-    assert_eq!(parse_workflow("bad", &Json::Object(definition), &built_in()).unwrap_err(), "proof_command must be a string");
+    let Value::Object(mut definition) = workflow_definition(&quick()) else { panic!("an object") };
+    definition.insert("proof_command".into(), Value::from(1));
+    assert_eq!(parse_workflow("bad", &Value::Object(definition), &built_in()).unwrap_err(), "proof_command must be a string");
 }
 
 #[test]
@@ -416,10 +416,10 @@ fn a_workflow_files_own_prompt_is_not_replaced() {
 
 #[test]
 fn a_saved_state_names_its_workflow() {
-    let saved = |text: &str| Json::parse(text).unwrap().as_object().unwrap().clone();
+    let saved = |text: &str| serde_json::from_str::<Value>(text).unwrap().as_object().unwrap().clone();
     assert_eq!(saved_pipeline(&saved(r#"{"run_id": "r"}"#)), Some(DEFAULT_WORKFLOW.clone()));
     assert_eq!(saved_pipeline(&saved(r#"{"workflow": "quick"}"#)), None);
-    let definition = workflow_definition(&quick()).dumps();
+    let definition = workflow_definition(&quick()).to_string();
     let state = saved(&format!(r#"{{"workflow": "quick", "workflow_definition": {definition}, "prompt_overrides": null}}"#));
     assert_eq!(saved_pipeline(&state), Some(quick()));
     assert_eq!(saved_pipeline(&saved(r#"{"prompt_overrides": {"LATER_NOTE": "x"}}"#)), None);

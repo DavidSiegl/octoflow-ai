@@ -381,7 +381,7 @@ fn herdr_variables_of_console_commands(
 
 #[test]
 fn the_console_reaches_an_agent_in_the_server_its_run_saved() {
-    let saved = HerdrServer::from_json(&Json::parse(r#"{"HERDR_SESSION": "work"}"#).unwrap()).unwrap();
+    let saved: HerdrServer = serde_json::from_str(r#"{"HERDR_SESSION": "work"}"#).unwrap();
     let agent = AgentAddress { name: "build-x".to_string(), server: Some(saved) };
     // serve in another server's pane: its socket path is removed, and the run's session set.
     let pane = [("HERDR_SOCKET_PATH", "/other/herdr.sock"), ("HERDR_SESSION", "other")];
@@ -406,10 +406,11 @@ fn the_server_herdr_reaches_is_its_environment_s() {
         ProcessHerdr::in_environment(machine, vars(set).into_iter(), &Interrupt::new()).server()
     };
     let pane = [("HERDR_SOCKET_PATH", "/s/herdr.sock"), ("HERDR_ENV", "1"), ("HERDR_SESSION", "work")];
-    let json = r#"{"HERDR_SOCKET_PATH": "/s/herdr.sock", "HERDR_SESSION": "work"}"#;
-    assert_eq!(server(None, &pane).map(|s| s.to_json().dumps()).as_deref(), Some(json));
-    let json = r#"{"HERDR_SOCKET_PATH": null, "HERDR_SESSION": null}"#;
-    assert_eq!(server(None, &[("PATH", "/bin")]).map(|s| s.to_json().dumps()).as_deref(), Some(json));
+    let json = |s: HerdrServer| serde_json::to_string(&s).unwrap();
+    let saved = r#"{"HERDR_SOCKET_PATH":"/s/herdr.sock","HERDR_SESSION":"work"}"#;
+    assert_eq!(server(None, &pane).map(json).as_deref(), Some(saved));
+    let saved = r#"{"HERDR_SOCKET_PATH":null,"HERDR_SESSION":null}"#;
+    assert_eq!(server(None, &[("PATH", "/bin")]).map(json).as_deref(), Some(saved));
     // Forwarded to a machine, no server of this machine is reached.
     assert_eq!(server(Some("box"), &pane), None);
     // Nor one state.json could name.
@@ -515,9 +516,9 @@ fn replay(herdr: &ProcessHerdr, args: &[String]) -> Option<()> {
 fn every_recorded_herdr_command_is_the_one_processherdr_gives() {
     let mut replayed = 0;
     for (scenario, recording) in recordings() {
-        for events in recording.get("events").and_then(Json::as_object).unwrap().values() {
+        for events in recording.get("events").and_then(Value::as_object).unwrap().values() {
             for event in events.as_array().unwrap() {
-                let Some(args) = event.get("herdr").and_then(Json::as_array) else { continue };
+                let Some(args) = event.get("herdr").and_then(Value::as_array) else { continue };
                 let args: Vec<String> = args.iter().map(|a| a.as_str().unwrap().to_string()).collect();
                 let (machine, command) = match &args[..] {
                     [flag, machine, rest @ ..] if flag == "--machine" => (Some(machine.as_str()), rest.to_vec()),
@@ -542,15 +543,15 @@ fn every_recorded_agent_starts_with_the_launch_arguments_of_its_run() {
     for (scenario, recording) in recordings() {
         // The run's state as last saved before each command, across the scenario's invocations in order.
         let mut state: Option<RunState> = None;
-        let events = recording.get("events").and_then(Json::as_object).unwrap();
-        let mut invocations: Vec<(u32, &Json)> = events.iter().map(|(n, e)| (n.parse().unwrap(), e)).collect();
+        let events = recording.get("events").and_then(Value::as_object).unwrap();
+        let mut invocations: Vec<(u32, &Value)> = events.iter().map(|(n, e)| (n.parse().unwrap(), e)).collect();
         invocations.sort_by_key(|(n, _)| *n);
         for event in invocations.iter().flat_map(|(_, e)| e.as_array().unwrap()) {
-            if let Some(saved) = event.get("state").and_then(|s| s.get("saved")).and_then(Json::as_object) {
+            if let Some(saved) = event.get("state").and_then(|s| s.get("saved")).and_then(Value::as_object) {
                 state = Some(RunState::from_saved(saved).unwrap());
                 continue;
             }
-            let Some(args) = event.get("herdr").and_then(Json::as_array) else { continue };
+            let Some(args) = event.get("herdr").and_then(Value::as_array) else { continue };
             let args: Vec<&str> = args.iter().map(|a| a.as_str().unwrap()).collect();
             let args = if args[0] == "--machine" { &args[2..] } else { &args[..] };
             let ["agent", "start", name, "--kind", kind, "--pane", _, "--timeout", _, rest @ ..] = args else {

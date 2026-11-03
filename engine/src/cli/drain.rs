@@ -12,7 +12,8 @@ use crate::constants::{EXIT_ERROR, EXIT_WAITING, RUNS_DIR, SUCCEEDED};
 use crate::error::OrchestratorError;
 use crate::pipeline::DONE;
 use crate::prompts::load_prompts;
-use crate::py::json::Json;
+use serde_json::Value;
+use crate::json::ValueExt;
 use crate::runs::{run_health, RUNNING};
 use crate::workflow::Stopped;
 
@@ -280,7 +281,7 @@ impl PullRequestStates<'_, '_> {
 /// says. Errors: as those steps.
 fn settled_header(
     spec: &QueuedSpec,
-    runs: &[(u64, Json)],
+    runs: &[(u64, Value)],
     prs: &mut PullRequestStates,
     target: &[String],
     dry_run: bool,
@@ -308,8 +309,8 @@ fn settled_header(
 }
 
 /// The run of runs whose id is run_id, with its age; None when there is none.
-fn saved_run<'r>(runs: &'r [(u64, Json)], run_id: &str) -> Option<&'r (u64, Json)> {
-    runs.iter().find(|(_, s)| s.get("run_id").and_then(Json::as_str) == Some(run_id))
+fn saved_run<'r>(runs: &'r [(u64, Value)], run_id: &str) -> Option<&'r (u64, Value)> {
+    runs.iter().find(|(_, s)| s.get("run_id").and_then(Value::as_str) == Some(run_id))
 }
 
 /// Refresh the run on the spec's Run: line, if it has_conflict, as refreshed_headers says, telling prs the state gh
@@ -318,7 +319,7 @@ fn saved_run<'r>(runs: &'r [(u64, Json)], run_id: &str) -> Option<&'r (u64, Json
 /// run not among runs, Host::run_states's.
 fn conflict_header(
     spec: &QueuedSpec,
-    runs: &[(u64, Json)],
+    runs: &[(u64, Value)],
     prs: &mut PullRequestStates,
     dry_run: bool,
 ) -> Result<Entries, OrchestratorError> {
@@ -332,7 +333,7 @@ fn conflict_header(
     }
     prs.learn(&check.url, &check.pr_state);
     let cleared_open = check.pr_state == "OPEN" && check.clears();
-    let succeeded = saved.get("verdict").and_then(Json::as_str).is_some_and(|v| SUCCEEDED.contains(&v));
+    let succeeded = saved.get("verdict").and_then(Value::as_str).is_some_and(|v| SUCCEEDED.contains(&v));
     if spec.status().as_deref() == Some(SPEC_FOR_HUMAN) && cleared_open && succeeded {
         return Ok(vec![(STATUS_KEY, SPEC_IN_REVIEW.into()), (PR_KEY, check.url)]);
     }
@@ -357,18 +358,18 @@ fn pull_request_header(state: &str) -> Entries {
 fn finished_run_header(
     spec: &QueuedSpec,
     run_id: &str,
-    runs: &[(u64, Json)],
+    runs: &[(u64, Value)],
     prs: &PullRequestStates,
     target: &[String],
 ) -> Result<Entries, OrchestratorError> {
     let saved = saved_run(runs, run_id);
-    let Some((_, s)) = saved.filter(|(_, s)| s.get("phase").and_then(Json::as_str) == Some(DONE)) else {
+    let Some((_, s)) = saved.filter(|(_, s)| s.get("phase").and_then(Value::as_str) == Some(DONE)) else {
         let (why, remedy) = unfinished_run(spec, run_id, saved, prs, target);
         return Err(OrchestratorError(format!("spec {}: run {run_id}, on its {RUN_KEY}: line, {why}; {remedy}", spec.slug)));
     };
-    let pr = s.get("pr_url").filter(|p| p.truthy()).map(Json::python_str);
-    let succeeded = s.get("verdict").and_then(Json::as_str).is_some_and(|v| SUCCEEDED.contains(&v));
-    let conflicts = s.get("conflicts").is_some_and(Json::truthy);
+    let pr = s.get("pr_url").filter(|p| p.is_set()).map(Value::text);
+    let succeeded = s.get("verdict").and_then(Value::as_str).is_some_and(|v| SUCCEEDED.contains(&v));
+    let conflicts = s.get("conflicts").is_some_and(Value::is_set);
     match pr {
         Some(pr) if succeeded && !conflicts => Ok(vec![(STATUS_KEY, SPEC_IN_REVIEW.into()), (PR_KEY, pr)]),
         pr => Ok([(STATUS_KEY, SPEC_FOR_HUMAN.to_string())].into_iter().chain(pr.map(|pr| (PR_KEY, pr))).collect()),
@@ -381,7 +382,7 @@ fn finished_run_header(
 fn unfinished_run(
     spec: &QueuedSpec,
     run_id: &str,
-    saved: Option<&(u64, Json)>,
+    saved: Option<&(u64, Value)>,
     prs: &PullRequestStates,
     target: &[String],
 ) -> (String, String) {
@@ -389,14 +390,14 @@ fn unfinished_run(
     let Some((age, s)) = saved else {
         return (format!("is not under {}/{RUNS_DIR}", prs.cwd), start_over);
     };
-    if let Some(closed) = s.get("closed").filter(|c| c.truthy()) {
-        return (format!("was closed ({})", closed.python_str()), start_over);
+    if let Some(closed) = s.get("closed").filter(|c| c.is_set()) {
+        return (format!("was closed ({})", closed.text()), start_over);
     }
     let world = prs.world;
     let resume = format!("resume it with `{}`, or {start_over}", resume_command(run_id, target));
     match run_health(s, *age, world.local_host, world.with.pid_alive) {
         // None for a run that is not done: it failed.
-        None => (format!("failed: {}", s.get("error").map(Json::python_str).unwrap_or_default()), resume),
+        None => (format!("failed: {}", s.get("error").map(Value::text).unwrap_or_default()), resume),
         Some((RUNNING, why)) => (format!("is {RUNNING} ({why})"), format!("wait for it to finish, or {start_over}")),
         Some((health, why)) => (format!("is {health} ({why})"), resume),
     }

@@ -482,7 +482,7 @@ fn answers_of_another_shape_are_errors_that_may_pass() {
     );
     assert_eq!(
         answering(odd).failed_tests(1).unwrap().unwrap(),
-        [("None.3".to_string(), "[\"x\"]".to_string()), ("c.t".to_string(), String::new())]
+        [("null.3".to_string(), "[\"x\"]".to_string()), ("c.t".to_string(), String::new())]
     );
 }
 

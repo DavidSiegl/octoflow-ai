@@ -9,7 +9,9 @@
 use crate::constants::{NETWORK_TIMEOUT, REMOTE, RUNS_DIR};
 use crate::error::OrchestratorError;
 use crate::harness::{harness, SessionLog};
-use crate::py::json::{Json, Map};
+use serde_json::Value;
+use crate::map::Map;
+use crate::json::ValueExt;
 
 mod process;
 mod scan;
@@ -736,13 +738,12 @@ pub trait Host {
     /// when gh is missing or logged out, GhError::Failed when it fails otherwise or prints what is not that.
     fn pull_request(&self, cwd: &str, url: &str) -> Result<PullRequest, GhError> {
         let (pr, out) = pr_view(self, cwd, url, "state,headRefOid,closedAt")?;
-        // Each field read and judged in turn, as the Python engine's check reads them, so that the first one wrong is
-        // the one an error names.
+        // Each field read and judged in turn, so that the first one wrong is the one an error names.
         let parsed = (|| {
             let Some(state) = subscript(&pr, "state")?.as_str() else { return Ok(None) };
             let head = subscript(&pr, "headRefOid")?;
             let Some(head) = head.as_str() else {
-                return Err(format!("expected string or bytes-like object, got '{}'", py_type(head)));
+                return Err(format!("headRefOid is {}, not a string", head.kind()));
             };
             if !is_commit_id(head) {
                 return Ok(None);
@@ -814,24 +815,25 @@ pub trait Host {
     /// Each run's saved state under the project at cwd, with the seconds since its state.json was last written,
     /// measured by this host's own clock, the one that stamped the file, so clock skew between the machines involved
     /// cannot shift it. Errors: a state.json that is not JSON.
-    fn run_states(&self, cwd: &str) -> Result<Vec<(u64, Json)>, OrchestratorError> {
-        // stat -c is GNU, stat -f is BSD.
+    fn run_states(&self, cwd: &str) -> Result<Vec<(u64, Value)>, OrchestratorError> {
+        // stat -c is GNU, stat -f is BSD. Each state follows its age and a blank, and ends at a NUL, which no JSON text
+        // holds: a state.json spans several lines.
         let script = format!(
             "now=$(date +%s) || exit 1; for f in \"$1\"/{RUNS_DIR}/*/state.json; do [ -f \"$f\" ] || continue; \
              m=$(stat -c %Y -- \"$f\" 2>/dev/null || stat -f %m -- \"$f\") || exit 1; \
-             printf \"%s \" \"$((now - m))\"; cat -- \"$f\"; echo; done; true"
+             printf \"%s \" \"$((now - m))\"; cat -- \"$f\"; printf '\\000'; done; true"
         );
         let out = self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?;
         let mut runs = vec![];
-        for line in out.lines() {
-            if line.trim().is_empty() {
+        for entry in out.split('\0') {
+            if entry.trim().is_empty() {
                 continue;
             }
-            let (age, text) = line.split_once(' ').unwrap_or((line, ""));
+            let (age, text) = entry.split_once(' ').unwrap_or((entry, ""));
             let corrupt = |e: String| OrchestratorError(format!("corrupt run state under {cwd}/{RUNS_DIR}: {e}"));
             let not_int = || corrupt(format!("invalid literal for int() with base 10: {age:?}"));
             let age: i64 = python_int(age).ok_or_else(not_int)?;
-            runs.push((age.max(0).unsigned_abs(), Json::parse(text).map_err(corrupt)?));
+            runs.push((age.max(0).unsigned_abs(), serde_json::from_str::<Value>(text).map_err(|e| corrupt(e.to_string()))?));
         }
         Ok(runs)
     }
@@ -860,17 +862,17 @@ pub trait Host {
 
     /// The metrics.json of each run of the project at cwd that has one, oldest run first. Errors: one that is not
     /// JSON.
-    fn run_metrics(&self, cwd: &str) -> Result<Vec<Json>, OrchestratorError> {
-        // Each file is one line; echo ends one that lacks its line end.
+    fn run_metrics(&self, cwd: &str) -> Result<Vec<Value>, OrchestratorError> {
+        // Each file ends at a NUL, which no JSON text holds: a metrics.json spans several lines.
         let script = format!(
-            "for f in \"$1\"/{RUNS_DIR}/*/{METRICS_FILE}; do [ -f \"$f\" ] || continue; cat -- \"$f\" && echo; done; \
-             true"
+            "for f in \"$1\"/{RUNS_DIR}/*/{METRICS_FILE}; do [ -f \"$f\" ] || continue; cat -- \"$f\" && printf '\\000'; \
+             done; true"
         );
         let out = self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?;
-        out.lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(|line| {
-                Json::parse(line)
+        out.split('\0')
+            .filter(|text| !text.trim().is_empty())
+            .map(|text| {
+                serde_json::from_str::<Value>(text)
                     .map_err(|e| OrchestratorError(format!("corrupt {METRICS_FILE} under {cwd}/{RUNS_DIR}: {e}")))
             })
             .collect()
@@ -1041,7 +1043,7 @@ fn numstat(out: &[u8]) -> Result<Vec<ChangedFile>, OrchestratorError> {
 /// gh pr view's JSON of json_fields, comma-separated, for the pull request at url, and the text it came as. Errors:
 /// GhError::Unusable when gh is missing or logged out, GhError::Failed when it fails otherwise or prints what is no
 /// JSON.
-fn pr_view<H: Host + ?Sized>(host: &H, cwd: &str, url: &str, json_fields: &str) -> Result<(Json, String), GhError> {
+fn pr_view<H: Host + ?Sized>(host: &H, cwd: &str, url: &str, json_fields: &str) -> Result<(Value, String), GhError> {
     let args = ["pr", "view", url, "--json", json_fields];
     let proc = host.gh_run(cwd, &args).map_err(GhError::Failed)?;
     if GH_UNUSABLE_STATUS.contains(&proc.status) {
@@ -1056,7 +1058,7 @@ fn pr_view<H: Host + ?Sized>(host: &H, cwd: &str, url: &str, json_fields: &str) 
     let mut argv = vec!["gh"];
     argv.extend(args);
     let out = checked(host, &argv, proc).map_err(GhError::Failed)?;
-    match Json::parse(&out) {
+    match serde_json::from_str::<Value>(&out) {
         Ok(pr) => Ok((pr, out)),
         Err(e) => {
             Err(GhError::Failed(OrchestratorError(format!("gh pr view {url} printed {:?}: {e}", out.trim()))))
@@ -1077,27 +1079,12 @@ fn pr_fields<T>(url: &str, out: &str, parsed: Result<Option<T>, String>) -> Resu
     }
 }
 
-/// value[key], as Python's subscript reads a JSON value: an object's entry. Errors, as Python's KeyError and TypeError
-/// say them: an object without key, or a value of another type.
-fn subscript<'a>(value: &'a Json, key: &str) -> Result<&'a Json, String> {
+/// The entry key of value, a JSON object. Errors: an object without key, naming it, or a value that is no object,
+/// naming its type.
+fn subscript<'a>(value: &'a Value, key: &str) -> Result<&'a Value, String> {
     match value {
-        Json::Object(map) => map.get(key).ok_or_else(|| format!("{key:?}")),
-        Json::Array(_) => Err("list indices must be integers or slices, not str".to_string()),
-        Json::Str(_) => Err("string indices must be integers, not 'str'".to_string()),
-        other => Err(format!("'{}' object is not subscriptable", py_type(other))),
-    }
-}
-
-/// The name of the Python type json.loads reads value as.
-fn py_type(value: &Json) -> &'static str {
-    match value {
-        Json::Null => "NoneType",
-        Json::Bool(_) => "bool",
-        Json::Int(_) => "int",
-        Json::Float(_) => "float",
-        Json::Str(_) => "str",
-        Json::Array(_) => "list",
-        Json::Object(_) => "dict",
+        Value::Object(map) => map.get(key).ok_or_else(|| format!("{key:?} is missing")),
+        other => Err(format!("{} where an object with {key:?} belongs", other.kind())),
     }
 }
 

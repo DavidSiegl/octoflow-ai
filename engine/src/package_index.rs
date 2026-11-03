@@ -6,7 +6,6 @@ use std::sync::Arc;
 
 use crate::crates_io::CratesIo;
 use crate::http::{Http, HttpClient};
-use crate::py::datetime::IsoTime;
 use crate::pypi::PyPI;
 
 /// An index gave no answer the engine can use: none at all, an HTTP error other than 404, or something that is not
@@ -25,19 +24,19 @@ impl std::error::Error for IndexError {}
 /// When a release was published to an index.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Upload {
-    /// Seconds since the epoch, with their fraction; a time the index gave without an offset is the machine's local
-    /// time, as Python's timestamp() takes it (crate::py::datetime::IsoTime::timestamp).
+    /// Seconds since the epoch, with their fraction.
     pub at: f64,
     /// Its date, YYYY-MM-DD, in the offset the index gave the time in: UTC, as PyPI and crates.io give every time.
     pub date: String,
 }
 
 impl Upload {
-    /// The upload at the ISO 8601 time iso, as Python's datetime.fromisoformat reads it; why not, as Python words
-    /// it, for a time it does not read.
+    /// The upload at iso, a time with an offset as crate::summary::epoch_time reads it; why not, as jiff words it, for
+    /// one that is not such a time.
     pub fn from_iso(iso: &str) -> Result<Upload, String> {
-        let time = IsoTime::parse(iso)?;
-        Ok(Upload { at: time.timestamp()?, date: time.date() })
+        let pieces = jiff::fmt::temporal::Pieces::parse(iso).map_err(|e| e.to_string())?;
+        let date = pieces.date().strftime("%Y-%m-%d").to_string();
+        Ok(Upload { at: crate::summary::epoch_time(iso)?, date })
     }
 }
 

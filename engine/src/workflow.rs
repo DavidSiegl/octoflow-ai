@@ -29,7 +29,9 @@ use crate::prompts::{Prompt, Prompts};
 use crate::proofs::PROOF_TIMEOUT;
 use crate::pull_request::{branch_name, commit_note, pr_body, provenance, spec_title, GateEvidence, QualityFile};
 use crate::package_index::PackageIndexes;
-use crate::py::json::{Json, Map};
+use serde_json::Value;
+use crate::map::Map;
+use crate::json::{object, Object, ValueExt};
 use crate::quality::parse_gate;
 use crate::runs::{local_host, run_health, RUNNING};
 use crate::spec_file::SpecFile;
@@ -87,7 +89,7 @@ pub struct Collaborators<'a> {
     pub interrupt: &'a Interrupt,
     /// Whether a process of a pid exists on this machine, for judging the checkout's other runs (run_health):
     /// crate::runs::pid_alive, which a test replaces.
-    pub pid_alive: &'a dyn Fn(i128) -> bool,
+    pub pid_alive: &'a dyn Fn(i64) -> bool,
     /// The quality job that judges the change in the quality rounds: Some turns the run's quality gate on, None
     /// leaves it off. Python's ci.
     pub jenkins: Option<&'a Jenkins>,
@@ -206,7 +208,7 @@ pub struct Workflow<'a> {
     clocks: &'a dyn Clocks,
     human: &'a dyn Human,
     interrupt: &'a Interrupt,
-    pid_alive: &'a dyn Fn(i128) -> bool,
+    pid_alive: &'a dyn Fn(i64) -> bool,
     /// Collaborators::jenkins.
     jenkins: Option<&'a Jenkins>,
     /// Collaborators::indexes.
@@ -220,7 +222,7 @@ pub struct Workflow<'a> {
     spec: Option<SpecFile>,
     /// This orchestrator as state.json's owner records it, {"host", "pid", "started_at"}: the run is this one's
     /// while the saved owner equals it.
-    me: Map<Json>,
+    me: Object,
     /// When state.json was last written by this orchestrator, or a failed heartbeat last tried to, on the monotonic
     /// clock; 0 before.
     last_write: f64,
@@ -272,13 +274,11 @@ impl<'a> Workflow<'a> {
         state.pull_request = settings.pull_request;
         state.quality_job = with.jenkins.map(|j| j.job().to_string());
         state.max_quality_rounds = settings.max_quality_rounds;
-        let me = [
-            ("host", Json::from(local_host())),
-            ("pid", Json::from(i64::from(std::process::id()))),
-            ("started_at", Json::from(iso_utc(with.clocks.wall().floor() as i64))),
-        ]
-        .into_iter()
-        .collect();
+        let me = object([
+            ("host", Value::from(local_host())),
+            ("pid", Value::from(std::process::id())),
+            ("started_at", Value::from(iso_utc(with.clocks.wall().floor() as i64))),
+        ]);
         Ok(Workflow {
             host: with.host,
             herdr: with.herdr,
@@ -523,15 +523,15 @@ impl<'a> Workflow<'a> {
         if s.worktree.is_some() {
             return Ok(());
         }
-        let me = self.me.get("host").and_then(Json::as_str).unwrap_or_default();
+        let me = self.me.get("host").and_then(Value::as_str).unwrap_or_default();
         for (age, other) in self.host.run_states(&s.cwd)? {
-            if other.get("run_id").and_then(Json::as_str) == Some(&s.run_id)
-                || other.get("worktree").is_some_and(Json::truthy)
+            if other.get("run_id").and_then(Value::as_str) == Some(&s.run_id)
+                || other.get("worktree").is_some_and(Value::is_set)
             {
                 continue;
             }
             if let Some((RUNNING, why)) = run_health(&other, age, me, self.pid_alive) {
-                let id = other.get("run_id").map_or("None".to_string(), Json::python_str);
+                let id = other.get("run_id").map_or("None".to_string(), Value::text);
                 return Err(OrchestratorError(format!(
                     "run {id} is running in {} ({why}); one run at a time per checkout: wait for it, stop it, or \
                      use another clone",
@@ -621,7 +621,9 @@ impl<'a> Workflow<'a> {
     fn write_metrics(&self) {
         let s = &self.state;
         let written = self.host.now().and_then(|now| {
-            self.host.write(&format!("{}/{METRICS_FILE}", s.dir()), &(run_metrics(s, now).dumps() + "\n"), false)
+            // A Value serializes without fail.
+            let text = serde_json::to_string_pretty(&run_metrics(s, now)).expect("JSON serializes") + "\n";
+            self.host.write(&format!("{}/{METRICS_FILE}", s.dir()), &text, false)
         });
         if let Err(e) = written {
             self.human.log(&format!("could not write {METRICS_FILE}: {e}"));
@@ -634,8 +636,8 @@ impl<'a> Workflow<'a> {
         let mut usage = std::collections::HashMap::new();
         for i in 0..self.state.turns.len() {
             let t = &self.state.turns[i];
-            let Some(agent) = t.get("agent").filter(|a| a.truthy()).map(Json::python_str) else { continue };
-            let session = t.get("session").filter(|s| s.truthy()).map(Json::python_str).unwrap_or_default();
+            let Some(agent) = t.get("agent").filter(|a| a.is_set()).map(Value::text) else { continue };
+            let session = t.get("session").filter(|s| s.is_set()).map(Value::text).unwrap_or_default();
             let key = (agent, session);
             if !usage.contains_key(&key) {
                 let read = || -> Result<_, OrchestratorError> {
@@ -652,7 +654,7 @@ impl<'a> Workflow<'a> {
                 usage.insert(key.clone(), counted);
             }
             let tokens = turn_tokens(t, usage[&key].as_deref());
-            self.state.turns[i].insert("tokens", tokens);
+            self.state.turns[i].insert("tokens".into(), tokens);
         }
     }
 
@@ -1271,20 +1273,20 @@ impl<'a> Workflow<'a> {
     fn save(&mut self) -> Outcome<()> {
         let path = self.state_path();
         if let Some(saved) = self.host.read(&path)? {
-            let owner = match Json::parse(&saved) {
-                Ok(Json::Object(saved)) => saved.get("owner").cloned().unwrap_or(Json::Null),
+            let owner = match serde_json::from_str::<Value>(&saved) {
+                Ok(Value::Object(saved)) => saved.get("owner").cloned().unwrap_or(Value::Null),
                 Ok(other) => {
-                    let kind = other.python_type();
+                    let kind = other.kind();
                     return Err(Stopped::Failed(OrchestratorError(format!(
                         "corrupt {path}: '{kind}' object has no attribute 'get'"
                     ))));
                 }
                 Err(e) => return Err(Stopped::Failed(OrchestratorError(format!("corrupt {path}: {e}")))),
             };
-            if owner != Json::Object(self.me.clone()) {
+            if owner != Value::Object(self.me.clone()) {
                 let who = match &owner {
-                    o if o.truthy() => {
-                        let field = |key: &str| o.get(key).map_or("None".to_string(), Json::python_str);
+                    o if o.is_set() => {
+                        let field = |key: &str| o.get(key).map_or("None".to_string(), Value::text);
                         format!("pid {} on {}", field("pid"), field("host"))
                     }
                     _ => "another orchestrator".to_string(),

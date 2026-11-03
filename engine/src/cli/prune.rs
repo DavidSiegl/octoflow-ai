@@ -7,10 +7,9 @@ use super::{record_in_state, Connected};
 use crate::constants::{BRANCH_PREFIX, CLOSED_BRANCH_GRACE, RUNS_DIR};
 use crate::error::OrchestratorError;
 use crate::host::{GhError, Host, PullRequest};
-use crate::py::datetime::fromisoformat_timestamp;
-use crate::py::json::Json;
+use crate::json::ValueExt;
 use crate::runs::{run_health, RUNNING};
-use crate::state::RunState;
+use serde_json::Value;
 
 /// A run's branch_cleanup once both sides of its branch are gone.
 pub const BRANCH_DELETED: &str = "deleted";
@@ -66,7 +65,7 @@ pub fn prune_branches(
     revisit: bool,
 ) -> Result<Vec<PrunedRun>, OrchestratorError> {
     let host = world.with.host;
-    let runs: Vec<Json> = host
+    let runs: Vec<Value> = host
         .run_states(cwd)?
         .into_iter()
         .filter(|(age, s)| is_prune_candidate(s, *age, world, revisit))
@@ -78,7 +77,7 @@ pub fn prune_branches(
     let checked_out = host.checked_out_branches(cwd)?;
     let mut pruned = vec![];
     for saved in runs {
-        let text = |key: &str| saved.get(key).map_or(String::new(), Json::python_str);
+        let text = |key: &str| saved.get(key).map_or(String::new(), Value::text);
         let mut run = PrunedRun { run_id: text("run_id"), branch: text("branch"), ..PrunedRun::default() };
         match prune_run(world, cwd, &saved, &mut run, &checked_out, dry_run) {
             Ok(()) => {}
@@ -101,10 +100,10 @@ pub fn prune_branches(
 /// orchestrator made and opened a pull request for, and that no orchestrator drives now, as world tells (run_health).
 /// A run without a pull request may hold the Builder's uncommitted work. One with a branch_cleanup is done with, or
 /// with revisit, only one whose branch was kept.
-fn is_prune_candidate(s: &Json, age: u64, world: &Connected, revisit: bool) -> bool {
-    let branch = s.get("branch").and_then(Json::as_str);
-    let cleanup = s.get("branch_cleanup").filter(|c| c.truthy());
-    if !(branch.is_some_and(|b| b.starts_with(BRANCH_PREFIX)) && s.get("pr_url").is_some_and(Json::truthy)) {
+fn is_prune_candidate(s: &Value, age: u64, world: &Connected, revisit: bool) -> bool {
+    let branch = s.get("branch").and_then(Value::as_str);
+    let cleanup = s.get("branch_cleanup").filter(|c| c.is_set());
+    if !(branch.is_some_and(|b| b.starts_with(BRANCH_PREFIX)) && s.get("pr_url").is_some_and(Value::is_set)) {
         return false;
     }
     if let Some(cleanup) = cleanup {
@@ -123,18 +122,19 @@ fn is_prune_candidate(s: &Json, age: u64, world: &Connected, revisit: bool) -> b
 fn prune_run(
     world: &Connected,
     cwd: &str,
-    saved: &Json,
+    saved: &Value,
     run: &mut PrunedRun,
-    checked_out: &crate::py::json::Map<String>,
+    checked_out: &crate::map::Map<String>,
     dry_run: bool,
 ) -> Result<(), GhError> {
     let failed = GhError::Failed;
     let host = world.with.host;
     // Before gh pr view, as Python reads wall() for prune_run's call.
     let now = world.with.clocks.wall();
-    let state = RunState::from_saved(saved.as_object_or_empty()).map_err(failed)?;
+    // Read from the state.json as it is, of whatever format: a run an earlier release saved is pruned as any other.
+    let text = |key: &str| saved.get(key).and_then(Value::as_str);
     // is_prune_candidate takes only runs with both.
-    let (Some(url), Some(branch)) = (state.pr_url.as_deref(), state.branch.as_deref()) else {
+    let (Some(url), Some(branch)) = (text("pr_url"), text("branch")) else {
         return Err(failed(OrchestratorError::new("the run has no branch or no pull request")));
     };
     let number = url.trim_end_matches('/').rsplit('/').next().unwrap_or("");
@@ -152,16 +152,15 @@ fn prune_run(
     let cleanup = if kept.is_empty() { BRANCH_DELETED.to_string() } else { format!("{BRANCH_KEPT}{}", kept.join("; ")) };
     run.cleanup = Some(cleanup.clone());
     if !dry_run {
-        let path = format!("{cwd}/{RUNS_DIR}/{}/state.json", state.run_id);
-        record_in_state(host, &path, saved, "branch_cleanup", Json::from(cleanup), "its branch was pruned").map_err(failed)?;
+        let path = format!("{cwd}/{RUNS_DIR}/{}/state.json", text("run_id").unwrap_or_default());
+        record_in_state(host, &path, saved, "branch_cleanup", Value::from(cleanup), "its branch was pruned").map_err(failed)?;
     }
     Ok(())
 }
 
 /// Why the branch of pull request pr, number number, stays for now; None once it is merged, or closed for
-/// CLOSED_BRANCH_GRACE before now, in seconds since the epoch. Its closing time is read as Python's
-/// datetime.fromisoformat(...).timestamp() reads it, one without an offset in the machine's zone. Errors: it is
-/// closed at what is not such a time.
+/// CLOSED_BRANCH_GRACE before now, in seconds since the epoch. Its closing time is an RFC 3339 time, as gh gives it.
+/// Errors: it is closed at what is not such a time.
 pub fn pull_request_pending(pr: &PullRequest, number: &str, now: f64) -> Result<Option<String>, OrchestratorError> {
     if pr.state == "MERGED" {
         return Ok(None);
@@ -169,7 +168,7 @@ pub fn pull_request_pending(pr: &PullRequest, number: &str, now: f64) -> Result<
     if pr.state != "CLOSED" {
         return Ok(Some(format!("PR #{number} is {}", pr.state.to_lowercase())));
     }
-    let closed = pr.closed_at.as_deref().map(fromisoformat_timestamp);
+    let closed = pr.closed_at.as_deref().map(crate::summary::epoch_time);
     let Some(Ok(closed)) = closed else {
         let at = pr.closed_at.as_deref().map_or("None".to_string(), |at| format!("{at:?}"));
         return Err(OrchestratorError(format!("PR #{number} is closed at {at}, which is not a time")));
@@ -215,7 +214,7 @@ fn prune_local(
     branch: &str,
     head: &str,
     number: &str,
-    checked_out: &crate::py::json::Map<String>,
+    checked_out: &crate::map::Map<String>,
     dry_run: bool,
 ) -> Result<(String, Option<String>), OrchestratorError> {
     let kept = |why: String| Ok((format!("{BRANCH_KEPT}{why}"), Some(why)));

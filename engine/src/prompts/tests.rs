@@ -1,18 +1,18 @@
 use std::os::unix::fs::PermissionsExt;
 
 use super::*;
-use crate::py::json::Json;
+use serde_json::Value;
 use crate::test_support::{oracle, TempDir};
 use crate::env::ConfigDir;
 
 #[test]
 fn every_built_in_text_is_the_python_engines() {
     let texts = oracle("texts.json");
-    let python = texts.get("prompts").and_then(Json::as_object).unwrap();
+    let python = texts.get("prompts").and_then(Value::as_object).unwrap();
     let names: Vec<&str> = Prompt::ALL.iter().map(|p| p.name()).collect();
     assert_eq!(names, python.keys().collect::<Vec<_>>());
     for p in Prompt::ALL {
-        assert_eq!(Some(p.built_in()), python.get(p.name()).and_then(Json::as_str), "{}", p.name());
+        assert_eq!(Some(p.built_in()), python.get(p.name()).and_then(Value::as_str), "{}", p.name());
     }
 }
 

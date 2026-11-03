@@ -42,9 +42,9 @@ fn without_the_gate_no_request_is_made() {
     assert_eq!(wf.run(), verdict(APPROVE));
     assert!(f.ci.state().requests.is_empty());
     let saved = f.saved();
-    assert_eq!(saved.get("quality_job"), Some(&Json::Null));
-    assert_eq!(saved.get("quality_round"), Some(&Json::from(0)));
-    assert_eq!(saved.get("ci"), Some(&Json::Object(Map::new())));
+    assert_eq!(saved.get("quality_job"), Some(&Value::Null));
+    assert_eq!(saved.get("quality_round"), Some(&Value::from(0)));
+    assert_eq!(saved.get("ci"), Some(&Value::Object(Object::new())));
     assert!(f.host.state().snapshots.is_empty());
 }
 
@@ -87,7 +87,7 @@ fn gate_passes_first_time() {
     assert!(f.host.state().remote.is_empty());
     let saved = f.saved();
     assert_eq!(text(&saved, "phase").as_deref(), Some("done"));
-    assert_eq!(saved.get("ci"), Some(&Json::Object(Map::new())));
+    assert_eq!(saved.get("ci"), Some(&Value::Object(Object::new())));
 }
 
 #[test]
@@ -336,7 +336,7 @@ fn jenkins_unreachable_until_the_round_times_out() {
         ("sha", "snap1".into()),
         ("queue_url", format!("{JENKINS}/queue/item/941/").into()),
     ]);
-    assert_eq!(saved.get("ci"), Some(&Json::Object(ci)));
+    assert_eq!(saved.get("ci"), Some(&Value::Object(ci)));
     assert_eq!(text(&saved, "phase").as_deref(), Some("quality"));
     assert_no_token(&f);
     // A failed run keeps the ref in flight, for a resume.
@@ -495,8 +495,8 @@ fn aborted_build_without_a_quality_file_fails_the_run() {
 
     let e = failure(f.workflow(RunSettings::default()).run());
     assert!(e.contains(&format!("build #41 of {REF_1_1} was aborted before the quality gate")), "{e}");
-    let ci = ci_of(&[("ref", REF_1_1.into()), ("sha", "snap1".into()), ("rejected", Json::Array(vec![41.into()]))]);
-    assert_eq!(f.saved().get("ci"), Some(&Json::Object(ci)));
+    let ci = ci_of(&[("ref", REF_1_1.into()), ("sha", "snap1".into()), ("rejected", Value::Array(vec![41.into()]))]);
+    assert_eq!(f.saved().get("ci"), Some(&Value::Object(ci)));
     assert!(!f.host.state().files.contains_key(&f.state.quality_path(1, 1)));
     assert_eq!(prompts_to(&f, "build-a1b2c3"), 1);
 }
@@ -518,7 +518,7 @@ fn queue_item_cancelled_fails_the_run() {
     let e = failure(f.workflow(RunSettings::default()).run());
     assert!(e.contains("cancelled in Jenkins's queue"), "{e}");
     let ci = ci_of(&[("ref", REF_1_1.into()), ("sha", "snap1".into())]);
-    assert_eq!(f.saved().get("ci"), Some(&Json::Object(ci)));
+    assert_eq!(f.saved().get("ci"), Some(&Value::Object(ci)));
 }
 
 #[test]
@@ -544,7 +544,7 @@ fn refused_request_mid_round_fails_at_once_naming_the_step() {
     assert!(e.starts_with(&step) && e.ends_with("/41/artifact/quality.md: HTTP 403"), "{e}");
     assert!(f.clock.now() < 200.0);
     let saved = f.saved();
-    assert_eq!(saved.get("ci").and_then(|ci| ci.get("build")), Some(&Json::from(41)));
+    assert_eq!(saved.get("ci").and_then(|ci| ci.get("build")), Some(&Value::from(41)));
 }
 
 #[test]
@@ -604,7 +604,7 @@ const ARG_TYPE: &str = "`limiter.py:9` error mypy arg-type: Argument 1 has incom
 fn the_same_findings_again_go_to_review() {
     let (f, reviews) = stuck_loop(vec![red(), red()], 3);
     assert_eq!(prompts_to(&f, "build-a1b2c3"), 2);
-    assert_eq!(f.saved().get("quality_round"), Some(&Json::from(2)));
+    assert_eq!(f.saved().get("quality_round"), Some(&Value::from(2)));
     assert!(reviews.borrow()[0].contains(&quality_note(QUALITY_STUCK_NOTE, &f.state.quality_path(1, 2))));
     let unresolved: String = QUALITY_UNRESOLVED_NOTE.chars().take(40).collect();
     assert!(!reviews.borrow()[0].contains(&unresolved));

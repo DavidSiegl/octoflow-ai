@@ -10,7 +10,7 @@ use ::toml::{Table, Value};
 
 use super::{CheckFindings, Finding, RunChange};
 use crate::error::OrchestratorError;
-use crate::py::json::Map;
+use crate::map::Map;
 use crate::py::toml::{hashable, json_dumps, loads, python_type, repr, same_key, str as py_str, truthy};
 use crate::package_index::{IndexedPackage, PackageIndex, PackageIndexes};
 
