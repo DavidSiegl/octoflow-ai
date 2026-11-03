@@ -374,7 +374,7 @@ fn empty_table() -> &'static Table {
 
 /// (package_key, direct URL or None) of a PEP 508 requirement, `name[extras] @ url ; marker` or a version after the
 /// name, as the regular expression `\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)\s*(?:\[[^\]]*\]\s*)?(?:@\s*(\S+))?`
-/// matches its start; why not, for anything else.
+/// matches its start, a blank (`\s`) being what char::is_whitespace takes; why not, for anything else.
 fn requirement_of(requirement: &Value) -> Result<(String, Option<String>), String> {
     let refused = || format!("{} is not a requirement", repr(requirement));
     let Value::String(text) = requirement else { return Err(refused()) };

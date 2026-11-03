@@ -488,12 +488,13 @@ fn answers_of_another_shape_are_errors_that_may_pass() {
 
 #[test]
 fn the_console_s_tail_is_its_last_lines() {
-    // A line ends at "\n" or "\r\n", and at nothing else, U+2028 included.
-    let console: String = (0..70).map(|i| format!("line {i}\r\n")).collect::<String>() + "last\u{2028}end";
+    // A line ends at "\n", "\r\n" or a lone "\r", as a progress bar ends its updates, and at nothing else, U+2028
+    // included.
+    let console: String = (0..70).map(|i| format!("line {i}\r\n")).collect::<String>() + "10%\r20%\nlast\u{2028}end";
     let tail = answering(&console).console_tail(1).unwrap();
     let lines: Vec<&str> = tail.split('\n').collect();
     assert_eq!(lines.len(), CONSOLE_TAIL_LINES);
-    assert_eq!((lines[0], lines[58], lines[59]), ("line 11", "line 69", "last\u{2028}end"));
+    assert_eq!((lines[0], lines[57], lines[58], lines[59]), ("line 13", "10%", "20%", "last\u{2028}end"));
 }
 
 #[test]

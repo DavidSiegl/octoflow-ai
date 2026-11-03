@@ -372,7 +372,8 @@ impl<'h> IntegrationStatus<'h> {
 /// Each harness's integration state, by its kind, from `herdr integration status`, whose lines read
 /// `<kind>: current (vN) (<path>)`, `<kind>: not installed (<path>)` or the like for another state, and a kind may
 /// carry a note, as `letta (experimental): ...`. The state is what follows the colon, the path left out. A kind listed
-/// twice has its last state. Python's integration_states and its pattern `(\S+)[^:]*: (.*?)(?: \([^()]*\))?`.
+/// twice has its last state. Python's integration_states and its pattern `(\S+)[^:]*: (.*?)(?: \([^()]*\))?`, a blank
+/// (`\S`'s complement) being what char::is_whitespace takes.
 pub fn integration_states(listing: &str) -> Vec<(String, String)> {
     let mut states: Vec<(String, String)> = Vec::new();
     for line in listing.lines() {

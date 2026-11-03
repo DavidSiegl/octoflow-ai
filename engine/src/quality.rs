@@ -114,7 +114,7 @@ pub fn build_failed_report(intro: &str, tests: Option<&[(String, String)]>, cons
         Some(tests) => {
             for (name, detail) in tests.iter().take(QUALITY_FINDINGS_LIMIT) {
                 let detail = detail.trim();
-                let first = detail.lines().next().filter(|_| !detail.is_empty()).unwrap_or("failed");
+                let first = detail.lines().next().unwrap_or("failed");
                 out.push(one_line(&format!("- `{name}`: {first}")));
             }
             if tests.is_empty() {

@@ -908,6 +908,16 @@ pub fn checked<H: Host + ?Sized, T>(host: &H, argv: &[&str], proc: Completed<T>)
     Err(OrchestratorError(format!("{} failed{on}: {}", shlex_join(argv), proc.stderr.trim())))
 }
 
+/// text with each "\r\n" and each lone "\r" made "\n": how the engine reads what a program printed (Host::run,
+/// herdr, a Jenkins build's console) and a prompt file, so that what splits it into lines has one line end to split
+/// at, and a progress bar's updates, each ended by a lone "\r", are lines of their own.
+pub fn line_ends_as_lf(text: &str) -> String {
+    if !text.contains('\r') {
+        return text.to_string();
+    }
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
 /// argv as one line of sh that runs it, each word quoted by shlex_quote, between single spaces.
 pub fn shlex_join<S: AsRef<str>>(argv: &[S]) -> String {
     argv.iter().map(|word| shlex_quote(word.as_ref())).collect::<Vec<_>>().join(" ")
@@ -944,13 +954,13 @@ fn git_test<H: Host + ?Sized>(host: &H, cwd: &str, args: &[&str]) -> Result<bool
     }
 }
 
-/// exec's exit status and output as Host::run gives them: as text, each "\r\n" and each lone "\r" made "\n", as a
-/// line end, so that what reads the output has one kind to split at. Errors: the output is not UTF-8.
+/// exec's exit status and output as Host::run gives them: as text, its line ends made "\n" (line_ends_as_lf).
+/// Errors: the output is not UTF-8.
 pub fn decoded(exec: Exec) -> Result<Completed, OrchestratorError> {
     let Exec { command, status, stdout, stderr } = exec;
     let decode = |bytes: Vec<u8>| {
         String::from_utf8(bytes)
-            .map(|text| if text.contains('\r') { text.replace("\r\n", "\n").replace('\r', "\n") } else { text })
+            .map(|text| line_ends_as_lf(&text))
             .map_err(|e| OrchestratorError(format!("{command}: printed what is not UTF-8: {}", e.utf8_error())))
     };
     let stdout = decode(stdout)?;
@@ -1103,8 +1113,9 @@ fn seconds(out: &str, what: &str) -> Result<i64, OrchestratorError> {
     python_int(text).ok_or_else(|| OrchestratorError(format!("{what} printed {text:?}, not a time")))
 }
 
-/// text as Python's int() reads a whole number in base 10: blanks around it, an optional sign, and ASCII digits with
-/// single underscores between them; None for anything else, or a number beyond 64 bits.
+/// text as Python's int() reads a whole number in base 10, but for the blanks around it, which are what
+/// char::is_whitespace takes: an optional sign, and ASCII digits with single underscores between them; None for
+/// anything else, or a number beyond 64 bits.
 fn python_int(text: &str) -> Option<i64> {
     let text = text.trim();
     let digits = text.strip_prefix(['+', '-']).unwrap_or(text);

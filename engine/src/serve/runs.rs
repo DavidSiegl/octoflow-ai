@@ -13,6 +13,7 @@ use crate::constants::RUNS_DIR;
 use crate::error::OrchestratorError;
 use crate::herdr::{AgentAddress, AgentConsole, HerdrError, HerdrServer};
 use crate::host::Host;
+use crate::paths::file_name;
 use crate::py::json::{Json, Map};
 use crate::runs::{local_host, pid_alive};
 
@@ -120,7 +121,7 @@ impl ProjectRuns {
     pub fn files(&self, run_id: &str) -> Result<Json, RunReadError> {
         let files = self.host.run_files(&self.dir(run_id)?)?;
         let entry = |path: &str, mtime: i64| {
-            let name = path.rsplit('/').next().unwrap_or(path);
+            let name = file_name(path);
             Json::Object([("name", Json::from(name)), ("mtime", Json::from(mtime))].into_iter().collect())
         };
         Ok(Json::Array(files.iter().map(|f| entry(&f.path, f.mtime)).collect()))

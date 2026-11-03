@@ -10,6 +10,7 @@ use std::sync::Arc;
 use crate::constants::{CI_ENV, CI_TOKENS, CONSOLE_TAIL_LINES, HTTP_TIMEOUT, JOB_PARAMETERS};
 use crate::env::{ci_credentials, ConfigDir};
 use crate::error::OrchestratorError;
+use crate::host::line_ends_as_lf;
 use crate::http::{Http, HttpClient, HttpError, Method, Request, Response};
 use crate::py::json::{Json, Map};
 use crate::py::url::{quote, urlencode};
@@ -336,11 +337,11 @@ impl Jenkins {
         Ok(Some(failed))
     }
 
-    /// The last CONSOLE_TAIL_LINES lines of the build's console, each byte that is not UTF-8 replaced, joined by
-    /// "\n".
+    /// The last CONSOLE_TAIL_LINES lines of the build's console, each byte that is not UTF-8 replaced, a line ending
+    /// at "\n", "\r\n" or a lone "\r" (line_ends_as_lf), joined by "\n".
     pub fn console_tail(&self, number: i64) -> Result<String, CIError> {
         let answer = self.request(Method::Get, &self.build_url(number, "consoleText", None), None)?;
-        let text = String::from_utf8_lossy(&answer.body);
+        let text = line_ends_as_lf(&String::from_utf8_lossy(&answer.body));
         let lines: Vec<&str> = text.lines().collect();
         Ok(lines[lines.len().saturating_sub(CONSOLE_TAIL_LINES)..].join("\n"))
     }

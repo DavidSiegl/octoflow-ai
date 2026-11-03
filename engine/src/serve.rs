@@ -591,7 +591,7 @@ fn send_json(request: Request, code: u16, body: &Json) {
     send(request, response);
 }
 
-/// The 501 http.server's send_error gives a request of method, the method quoted as the caller gives it.
+/// The 501 http.server's send_error gives a request of method, which the caller passes already quoted.
 fn unsupported(method: &str) -> Response<io::Cursor<Vec<u8>>> {
     let escaped = method.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
     let page = format!(

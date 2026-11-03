@@ -173,7 +173,7 @@ fn named(name: &str, finding: Finding) -> Finding {
     Finding { rule, ..finding }
 }
 
-/// The largest number a line of quality starts with, followed by ". ", in any script's decimal digits; 0 for none.
+/// The largest number a line of quality starts with, in ASCII digits, followed by ". "; 0 for none.
 fn last_number(quality: &str) -> u128 {
     quality
         .split('\n')

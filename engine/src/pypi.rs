@@ -65,7 +65,7 @@ fn project_of(body: &[u8]) -> Result<IndexedPackage, String> {
     let text = std::str::from_utf8(body).map_err(|e| e.to_string())?;
     let answer = Json::parse(text)?;
     let info = match &answer {
-        Json::Object(map) => map.get("info").ok_or("'info'")?,
+        Json::Object(map) => map.get("info").ok_or("\"info\"")?,
         _ => return Err("it has no info.version".to_string()),
     };
     let version = match info.get("version") {
@@ -101,7 +101,7 @@ fn first_upload(files: &[&Json]) -> Result<Option<Upload>, String> {
     let mut first: Option<Upload> = None;
     for file in files {
         let time = match file {
-            Json::Object(file) => file.get("upload_time_iso_8601").ok_or("'upload_time_iso_8601'")?,
+            Json::Object(file) => file.get("upload_time_iso_8601").ok_or("\"upload_time_iso_8601\"")?,
             other => return Err(format!("'{}' object is not subscriptable", other.python_type())),
         };
         let Json::Str(time) = time else { return Err("fromisoformat: argument must be str".to_string()) };

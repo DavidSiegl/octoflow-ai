@@ -3,6 +3,7 @@
 
 use crate::env::ConfigDir;
 use crate::error::{closest_name, OrchestratorError};
+use crate::host::line_ends_as_lf;
 use crate::paths::split_extension;
 use crate::proof_copies_dir;
 use crate::py::json::Map;
@@ -369,9 +370,8 @@ pub fn load_prompts(config: &ConfigDir) -> Result<Prompts, OrchestratorError> {
         let bytes = std::fs::read(&path)
             .map_err(|e| OrchestratorError(format!("cannot read prompt file {path}: {}", strerror(&e))))?;
         let text = String::from_utf8(bytes)
-            .map_err(|e| OrchestratorError(format!("{path}: not UTF-8 text: {}", e.utf8_error())))?
-            .replace("\r\n", "\n")
-            .replace('\r', "\n");
+            .map(|text| line_ends_as_lf(&text))
+            .map_err(|e| OrchestratorError(format!("{path}: not UTF-8 text: {}", e.utf8_error())))?;
         let text = text.strip_suffix('\n').unwrap_or(&text).to_string();
         if let Some(problem) = prompt_problem(&name, &text) {
             return Err(OrchestratorError(format!("{path}: {problem}")));
