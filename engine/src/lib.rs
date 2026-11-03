@@ -17,6 +17,7 @@ pub mod http;
 pub mod interrupt;
 pub mod package_index;
 pub mod patch;
+pub mod paths;
 pub mod pipeline;
 pub mod proofs;
 pub mod prompts;

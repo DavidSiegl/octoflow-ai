@@ -24,12 +24,12 @@
 
 use crate::constants::{BUDGET_KEYS, DEFAULT_MAX_FILES, DEFAULT_MAX_LINES};
 use crate::env::ConfigDir;
-use crate::error::{strerror, OrchestratorError};
+use crate::error::{closest_name, strerror, OrchestratorError};
+use crate::paths::{file_name, split_extension};
 use crate::pipeline::{default_workflow, find_workflow, Pipeline, PipelineSettings, Step, DEFAULT_WORKFLOW, WORKFLOWS};
 use crate::prompts::template::{is_name, placeholders};
 use crate::prompts::{files_with_extension, saved_prompts, Prompts};
 use crate::py::json::{unicode_string, Json, Map};
-use crate::py::text::{basename, close_match, splitext, title_ascii};
 
 /// The keys a workflow definition's top table may have.
 pub const WORKFLOW_KEYS: [&str; 6] = ["description", "roles", "steps", "proof_command", "max_files", "max_lines"];
@@ -87,7 +87,7 @@ pub fn named_workflow(config: &ConfigDir, name: &str, prompts: &Prompts) -> Resu
 /// taking its texts from prompts. Errors, naming the file: it cannot be read, is not TOML, takes a built-in
 /// workflow's name or one that is not a name, or defines no valid workflow (parse_workflow).
 pub fn load_workflow_file(path: &str, prompts: &Prompts) -> Result<Pipeline, OrchestratorError> {
-    let name = splitext(basename(path)).0;
+    let name = split_extension(file_name(path)).0;
     let bytes = std::fs::read(path)
         .map_err(|e| OrchestratorError(format!("cannot read workflow file {path}: {}", strerror(&e))))?;
     let definition = String::from_utf8(bytes)
@@ -274,7 +274,7 @@ fn check_keys(table: &Map<Json>, known: &[&str], place: &str) -> Result<(), Stri
         if known.contains(&key) {
             continue;
         }
-        let hint = match close_match(key, known.iter().copied()) {
+        let hint = match closest_name(key, known.iter().copied()) {
             Some(close) => format!("did you mean {close}?"),
             None => {
                 let mut sorted = known.to_vec();
@@ -305,6 +305,23 @@ fn default_label(role: &str) -> String {
         separating = separator;
     }
     title_ascii(&spaced)
+}
+
+/// s with the first letter of each run of ASCII letters in upper case and the others in lower case: "test writer" as
+/// "Test Writer", "a1b2 XY" as "A1B2 Xy". Any other character is left as it is and ends the run.
+fn title_ascii(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_word = false;
+    for c in s.chars() {
+        if c.is_ascii_alphabetic() {
+            out.push(if in_word { c.to_ascii_lowercase() } else { c.to_ascii_uppercase() });
+            in_word = true;
+        } else {
+            out.push(c);
+            in_word = false;
+        }
+    }
+    out
 }
 
 /// The step's fields that differ from their defaults, in declaration order.

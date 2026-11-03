@@ -172,8 +172,9 @@ impl Json {
         }
     }
 
-    /// The value as Python's str() writes what json.loads read: a string as it is, anything else as repr writes it,
-    /// such as `None`, `True`, `2.5`, `[1, 'a']` or `{'k': None}`.
+    /// The value as Python's str() writes what json.loads read: a string as it is, anything else as repr writes it but
+    /// for the strings within, which are quoted as Rust's Debug quotes a str: `None`, `True`, `2.5`, `[1, "a"]` or
+    /// `{"k": None}`.
     pub fn python_str(&self) -> String {
         match self {
             Json::Str(s) => s.clone(),
@@ -191,7 +192,7 @@ impl Json {
             Json::Bool(b) => out.push_str(if *b { "True" } else { "False" }),
             Json::Int(n) => out.push_str(&n.to_string()),
             Json::Float(x) => out.push_str(&float_text(*x).replace("Infinity", "inf").replace("NaN", "nan")),
-            Json::Str(s) => out.push_str(&super::text::repr(s)),
+            Json::Str(s) => out.push_str(&format!("{s:?}")),
             Json::Array(items) => {
                 out.push('[');
                 for (i, item) in items.iter().enumerate() {
@@ -208,7 +209,7 @@ impl Json {
                     if i > 0 {
                         out.push_str(", ");
                     }
-                    out.push_str(&super::text::repr(k));
+                    out.push_str(&format!("{k:?}"));
                     out.push_str(": ");
                     v.write_repr(out);
                 }

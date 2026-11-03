@@ -2,8 +2,8 @@
 //! that starts at the step after it (Pipeline::seeded_start), as orchestrator.py's SpecFile and read_spec_file.
 
 use crate::error::{strerror, OrchestratorError};
+use crate::paths::{file_name, split_extension};
 use crate::pull_request::spec_title;
-use crate::py::text::{basename, splitext, strip, utf8_error};
 
 /// A spec as read_spec_file read it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -19,23 +19,21 @@ impl SpecFile {
     pub fn task(&self) -> String {
         match spec_title(&self.text).filter(|t| !t.is_empty()) {
             Some(title) => title,
-            None => splitext(basename(&self.path)).0.to_string(),
+            None => split_extension(file_name(&self.path)).0.to_string(),
         }
     }
 }
 
 /// The spec at path on this machine, its line ends kept, so the run gets it unchanged.
 ///
-/// Errors, naming the path: the file cannot be read (with the system's reason), is not UTF-8 (with what Python's
+/// Errors, naming the path: the file cannot be read (with the system's reason), is not UTF-8 (with what Rust's
 /// decoder says of it), or holds only blanks.
 pub fn read_spec_file(path: &str) -> Result<SpecFile, OrchestratorError> {
     let bytes =
         std::fs::read(path).map_err(|e| OrchestratorError(format!("cannot read spec file {path}: {}", strerror(&e))))?;
-    let text = String::from_utf8(bytes).map_err(|e| {
-        let why = utf8_error(e.as_bytes(), &e.utf8_error());
-        OrchestratorError(format!("spec file {path} is not UTF-8 text: {why}"))
-    })?;
-    if strip(&text).is_empty() {
+    let text = String::from_utf8(bytes)
+        .map_err(|e| OrchestratorError(format!("spec file {path} is not UTF-8 text: {}", e.utf8_error())))?;
+    if text.trim().is_empty() {
         return Err(OrchestratorError(format!("spec file {path} is empty")));
     }
     Ok(SpecFile { path: path.to_string(), text })

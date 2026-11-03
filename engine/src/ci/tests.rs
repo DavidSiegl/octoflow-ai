@@ -165,7 +165,7 @@ fn not_json_says_why() {
         .build_result(1)
         .unwrap_err()
         .to_string()
-        .ends_with(": the answer is not JSON: 'utf-8' codec can't decode byte 0xff in position 6: invalid start byte"));
+        .ends_with(": the answer is not JSON: invalid utf-8 sequence of 1 bytes from index 6"));
     assert!(jenkins
         .build_result(1)
         .unwrap_err()
@@ -482,23 +482,24 @@ fn answers_of_another_shape_are_errors_that_may_pass() {
     );
     assert_eq!(
         answering(odd).failed_tests(1).unwrap().unwrap(),
-        [("None.3".to_string(), "['x']".to_string()), ("c.t".to_string(), String::new())]
+        [("None.3".to_string(), "[\"x\"]".to_string()), ("c.t".to_string(), String::new())]
     );
 }
 
 #[test]
-fn the_console_s_tail_is_its_last_lines_as_python_splits_them() {
+fn the_console_s_tail_is_its_last_lines() {
+    // A line ends at "\n" or "\r\n", and at nothing else, U+2028 included.
     let console: String = (0..70).map(|i| format!("line {i}\r\n")).collect::<String>() + "last\u{2028}end";
     let tail = answering(&console).console_tail(1).unwrap();
     let lines: Vec<&str> = tail.split('\n').collect();
     assert_eq!(lines.len(), CONSOLE_TAIL_LINES);
-    assert_eq!((lines[0], lines[58], lines[59]), ("line 12", "last", "end"));
+    assert_eq!((lines[0], lines[58], lines[59]), ("line 11", "line 69", "last\u{2028}end"));
 }
 
 #[test]
 fn a_queue_item_is_named_by_its_digits() {
     assert_eq!(queue_item_number("http://x/queue/item/77/"), Some("77"));
-    assert_eq!(queue_item_number("/queue/item/٣"), Some("٣"));
+    assert_eq!(queue_item_number("/queue/item/٣"), None, "a digit beyond ASCII is none");
     assert_eq!(queue_item_number("/queue/item/"), None);
     assert_eq!(queue_item_number("/queue/item/7a/"), None);
 }

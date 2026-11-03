@@ -10,7 +10,6 @@ use crate::constants::{NETWORK_TIMEOUT, REMOTE, RUNS_DIR};
 use crate::error::OrchestratorError;
 use crate::harness::{harness, SessionLog};
 use crate::py::json::{Json, Map};
-use crate::py::text::{repr, shlex_join, strip, universal_newlines};
 
 mod process;
 mod scan;
@@ -234,7 +233,7 @@ pub trait Host {
         match proc.status {
             MISSING_FILE_STATUS => Ok(None),
             0 => Ok(Some(proc.stdout)),
-            _ => Err(OrchestratorError(format!("reading {path}: {}", strip(&proc.stderr)))),
+            _ => Err(OrchestratorError(format!("reading {path}: {}", proc.stderr.trim()))),
         }
     }
 
@@ -279,13 +278,13 @@ pub trait Host {
         } else {
             ("cd -- \"$1\" && pwd", path)
         };
-        Ok(strip(&self.check(&["sh", "-c", script, "_", arg], None, DEFAULT_TIMEOUT)?).to_string())
+        Ok(self.check(&["sh", "-c", script, "_", arg], None, DEFAULT_TIMEOUT)?.trim().to_string())
     }
 
     /// HEAD's commit, or None when cwd is not a git repository with a commit.
     fn git_head(&self, cwd: &str) -> Result<Option<String>, OrchestratorError> {
         let proc = self.git_run(cwd, &["rev-parse", "--verify", "HEAD"], DEFAULT_TIMEOUT)?;
-        Ok((proc.status == 0).then(|| strip(&proc.stdout).to_string()))
+        Ok((proc.status == 0).then(|| proc.stdout.trim().to_string()))
     }
 
     /// The standard output of git args in cwd, as run gives it. Errors: as run's, and git exiting with a status other
@@ -341,7 +340,7 @@ pub trait Host {
         Err(OrchestratorError(format!(
             "{why}; reconcile it first. git {} failed: {}",
             shlex_join(&args),
-            strip(&proc.stderr)
+            proc.stderr.trim()
         )))
     }
 
@@ -363,7 +362,7 @@ pub trait Host {
         if conflicts.is_empty() {
             return Err(OrchestratorError(format!(
                 "git merge {upstream} failed in {cwd}: {}",
-                strip(&merge.stderr)
+                merge.stderr.trim()
             )));
         }
         Ok(conflicts)
@@ -390,11 +389,10 @@ pub trait Host {
                       git commit-tree \"$tree\" -p \"$2\" -m \"$3\"";
         // The `else` above: a repository whose index was never written, from which git starts the copy afresh.
         let out = self.check(&["sh", "-c", script, "_", cwd, parent, message], None, DEFAULT_TIMEOUT)?;
-        let sha = strip(&out);
+        let sha = out.trim();
         if !is_commit_id(sha) {
             return Err(OrchestratorError(format!(
-                "snapshot of {cwd}: git commit-tree printed {}, not a commit",
-                repr(sha)
+                "snapshot of {cwd}: git commit-tree printed {sha:?}, not a commit"
             )));
         }
         Ok(sha.to_string())
@@ -528,7 +526,7 @@ pub trait Host {
     /// what its commit would publish; base and report_path are as scan_unpublished takes them. Errors: as push_ref's.
     fn push_branch(&self, cwd: &str, branch: &str, base: &str, report_path: &str) -> Result<(), PushError> {
         let commit = self.git(cwd, &["rev-parse", "--verify", &format!("refs/heads/{branch}")])?;
-        self.refuse_leaks(cwd, strip(&commit), base, report_path)?;
+        self.refuse_leaks(cwd, commit.trim(), base, report_path)?;
         git_timed(self, cwd, &["push", "--quiet", "--set-upstream", REMOTE, branch], NETWORK_TIMEOUT)?;
         Ok(())
     }
@@ -605,8 +603,8 @@ pub trait Host {
     fn remote_branches(&self, cwd: &str, prefix: &str) -> Result<Vec<String>, OrchestratorError> {
         let out = git_timed(self, cwd, &["ls-remote", "--heads", REMOTE], NETWORK_TIMEOUT)?;
         let wanted = format!("refs/heads/{prefix}");
-        Ok(crate::py::text::splitlines(&out)
-            .into_iter()
+        Ok(out
+            .lines()
             .filter_map(|line| line.split_once('\t').map(|(_, name)| name))
             .filter(|name| name.starts_with(&wanted))
             .map(|name| name["refs/heads/".len()..].to_string())
@@ -618,7 +616,7 @@ pub trait Host {
         let git_ref = format!("refs/heads/{branch}");
         let out = git_timed(self, cwd, &["ls-remote", REMOTE, &git_ref], NETWORK_TIMEOUT)?;
         // ls-remote matches its pattern against the end of each ref's name, so the exact name is picked out.
-        Ok(crate::py::text::splitlines(&out).into_iter().find_map(|line| {
+        Ok(out.lines().find_map(|line| {
             let (commit, name) = line.split_once('\t').unwrap_or((line, ""));
             (name == git_ref).then(|| commit.to_string())
         }))
@@ -644,7 +642,7 @@ pub trait Host {
         if proc.status == 1 {
             return Ok(None);
         }
-        Ok(Some(strip(&checked(self, &git_argv(cwd, &args), proc)?).to_string()))
+        Ok(Some(checked(self, &git_argv(cwd, &args), proc)?.trim().to_string()))
     }
 
     /// Whether this clone has commit.
@@ -661,10 +659,10 @@ pub trait Host {
     fn commits_beyond(&self, cwd: &str, commit: &str, branch: &str) -> Result<u64, OrchestratorError> {
         let range = format!("{commit}..refs/heads/{branch}");
         let out = self.git(cwd, &["rev-list", "--count", &range])?;
-        let count = strip(&out);
+        let count = out.trim();
         match count.parse() {
             Ok(n) if count.bytes().all(|b| b.is_ascii_digit()) => Ok(n),
-            _ => Err(OrchestratorError(format!("git rev-list --count {range} printed {}, not a count", repr(count)))),
+            _ => Err(OrchestratorError(format!("git rev-list --count {range} printed {count:?}, not a count"))),
         }
     }
 
@@ -692,11 +690,11 @@ pub trait Host {
         if proc.status != 0 {
             return Ok(false);
         }
-        let listed = format!("worktree {}", strip(&proc.stdout));
+        let listed = format!("worktree {}", proc.stdout.trim());
         let out = self.git(cwd, &["worktree", "list", "--porcelain"])?;
         // One record per worktree, separated by a blank line; "prunable" marks one whose directory is gone.
         Ok(out.split("\n\n").any(|record| {
-            let lines = crate::py::text::splitlines(record);
+            let lines: Vec<&str> = record.lines().collect();
             lines.first() == Some(&listed.as_str()) && !lines.iter().any(|l| l.starts_with("prunable"))
         }))
     }
@@ -716,7 +714,7 @@ pub trait Host {
     fn checked_out_branches(&self, cwd: &str) -> Result<Map<String>, OrchestratorError> {
         let mut branches = Map::new();
         let mut path = String::new();
-        for line in crate::py::text::splitlines(&self.git(cwd, &["worktree", "list", "--porcelain"])?) {
+        for line in self.git(cwd, &["worktree", "list", "--porcelain"])?.lines() {
             let (key, value) = line.split_once(' ').unwrap_or((line, ""));
             if key == "worktree" {
                 path = value.to_string();
@@ -825,13 +823,13 @@ pub trait Host {
         );
         let out = self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?;
         let mut runs = vec![];
-        for line in crate::py::text::splitlines(&out) {
-            if strip(line).is_empty() {
+        for line in out.lines() {
+            if line.trim().is_empty() {
                 continue;
             }
             let (age, text) = line.split_once(' ').unwrap_or((line, ""));
             let corrupt = |e: String| OrchestratorError(format!("corrupt run state under {cwd}/{RUNS_DIR}: {e}"));
-            let not_int = || corrupt(format!("invalid literal for int() with base 10: {}", repr(age)));
+            let not_int = || corrupt(format!("invalid literal for int() with base 10: {age:?}"));
             let age: i64 = python_int(age).ok_or_else(not_int)?;
             runs.push((age.max(0).unsigned_abs(), Json::parse(text).map_err(corrupt)?));
         }
@@ -869,9 +867,8 @@ pub trait Host {
              true"
         );
         let out = self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?;
-        crate::py::text::splitlines(&out)
-            .into_iter()
-            .filter(|line| !strip(line).is_empty())
+        out.lines()
+            .filter(|line| !line.trim().is_empty())
             .map(|line| {
                 Json::parse(line)
                     .map_err(|e| OrchestratorError(format!("corrupt {METRICS_FILE} under {cwd}/{RUNS_DIR}: {e}")))
@@ -892,7 +889,7 @@ pub trait Host {
         for entry in out.split('\0').filter(|e| !e.is_empty()) {
             let (mtime, path) = entry.split_once(' ').unwrap_or((entry, ""));
             let mtime = python_int(mtime).ok_or_else(|| {
-                OrchestratorError(format!("listing {run_dir}: stat printed {}, not a time", repr(mtime)))
+                OrchestratorError(format!("listing {run_dir}: stat printed {mtime:?}, not a time"))
             })?;
             files.push((mtime, path.to_string()));
         }
@@ -908,7 +905,21 @@ pub fn checked<H: Host + ?Sized, T>(host: &H, argv: &[&str], proc: Completed<T>)
         return Ok(proc.stdout);
     }
     let on = host.ssh_target().map(|t| format!(" on {t}")).unwrap_or_default();
-    Err(OrchestratorError(format!("{} failed{on}: {}", shlex_join(argv), strip(&proc.stderr))))
+    Err(OrchestratorError(format!("{} failed{on}: {}", shlex_join(argv), proc.stderr.trim())))
+}
+
+/// argv as one line of sh that runs it, each word quoted by shlex_quote, between single spaces.
+pub fn shlex_join<S: AsRef<str>>(argv: &[S]) -> String {
+    argv.iter().map(|word| shlex_quote(word.as_ref())).collect::<Vec<_>>().join(" ")
+}
+
+/// word as sh reads it back as one word, as Python's shlex.quote writes it: as it is when it is not empty and holds
+/// nothing but ASCII letters, digits and `_@%+=:,./-`, else in single quotes, a quote inside written `'"'"'`.
+pub fn shlex_quote(word: &str) -> String {
+    if !word.is_empty() && word.chars().all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c)) {
+        return word.to_string();
+    }
+    format!("'{}'", word.replace('\'', "'\"'\"'"))
 }
 
 /// `git -C cwd args`.
@@ -933,15 +944,14 @@ fn git_test<H: Host + ?Sized>(host: &H, cwd: &str, args: &[&str]) -> Result<bool
     }
 }
 
-/// exec's exit status and output as Host::run gives them: as text, each line end made "\n". Errors: the output is
-/// not UTF-8.
+/// exec's exit status and output as Host::run gives them: as text, each "\r\n" and each lone "\r" made "\n", as a
+/// line end, so that what reads the output has one kind to split at. Errors: the output is not UTF-8.
 pub fn decoded(exec: Exec) -> Result<Completed, OrchestratorError> {
     let Exec { command, status, stdout, stderr } = exec;
     let decode = |bytes: Vec<u8>| {
-        String::from_utf8(bytes).map(|text| universal_newlines(&text)).map_err(|e| {
-            let why = crate::py::text::utf8_error(e.as_bytes(), &e.utf8_error());
-            OrchestratorError(format!("{command}: printed what is not UTF-8: {why}"))
-        })
+        String::from_utf8(bytes)
+            .map(|text| if text.contains('\r') { text.replace("\r\n", "\n").replace('\r', "\n") } else { text })
+            .map_err(|e| OrchestratorError(format!("{command}: printed what is not UTF-8: {}", e.utf8_error())))
     };
     let stdout = decode(stdout)?;
     Ok(Completed { status, stdout, stderr: decode(stderr)? })
@@ -981,7 +991,7 @@ fn utf8_paths(out: &[u8]) -> Result<Vec<String>, OrchestratorError> {
 /// decodes it (TODO.md, "The Rust engine reads some input ... otherwise").
 fn utf8_path(bytes: &[u8]) -> Result<String, OrchestratorError> {
     String::from_utf8(bytes.to_vec()).map_err(|_| {
-        OrchestratorError(format!("git printed a path that is not UTF-8: {}", repr(&String::from_utf8_lossy(bytes))))
+        OrchestratorError(format!("git printed a path that is not UTF-8: {:?}", String::from_utf8_lossy(bytes)))
     })
 }
 
@@ -990,7 +1000,7 @@ fn utf8_path(bytes: &[u8]) -> Result<String, OrchestratorError> {
 /// ends with an empty field.
 fn numstat(out: &[u8]) -> Result<Vec<ChangedFile>, OrchestratorError> {
     let fields: Vec<&[u8]> = out.split(|&b| b == 0).collect();
-    let bad = || OrchestratorError(format!("git diff --numstat printed {}", repr(&String::from_utf8_lossy(out))));
+    let bad = || OrchestratorError(format!("git diff --numstat printed {:?}", String::from_utf8_lossy(out)));
     let count = |n: &[u8]| -> Result<u64, OrchestratorError> {
         if n == b"-" {
             return Ok(0);
@@ -1030,7 +1040,7 @@ fn pr_view<H: Host + ?Sized>(host: &H, cwd: &str, url: &str, json_fields: &str) 
             "gh {} failed with status {}: {}",
             shlex_join(&args),
             proc.status,
-            strip(said)
+            said.trim()
         ))));
     }
     let mut argv = vec!["gh"];
@@ -1039,7 +1049,7 @@ fn pr_view<H: Host + ?Sized>(host: &H, cwd: &str, url: &str, json_fields: &str) 
     match Json::parse(&out) {
         Ok(pr) => Ok((pr, out)),
         Err(e) => {
-            Err(GhError::Failed(OrchestratorError(format!("gh pr view {url} printed {}: {e}", repr(strip(&out))))))
+            Err(GhError::Failed(OrchestratorError(format!("gh pr view {url} printed {:?}: {e}", out.trim()))))
         }
     }
 }
@@ -1047,7 +1057,7 @@ fn pr_view<H: Host + ?Sized>(host: &H, cwd: &str, url: &str, json_fields: &str) 
 /// What a view of the pull request at url gave, out being what gh printed: the fields parsed found, or the error
 /// naming out when parsing it failed (Err, saying why) or found it not a pull request's (None).
 fn pr_fields<T>(url: &str, out: &str, parsed: Result<Option<T>, String>) -> Result<T, GhError> {
-    let printed = repr(strip(out));
+    let printed = format!("{:?}", out.trim());
     match parsed {
         Ok(Some(fields)) => Ok(fields),
         Ok(None) => Err(GhError::Failed(OrchestratorError(format!(
@@ -1061,7 +1071,7 @@ fn pr_fields<T>(url: &str, out: &str, parsed: Result<Option<T>, String>) -> Resu
 /// say them: an object without key, or a value of another type.
 fn subscript<'a>(value: &'a Json, key: &str) -> Result<&'a Json, String> {
     match value {
-        Json::Object(map) => map.get(key).ok_or_else(|| repr(key)),
+        Json::Object(map) => map.get(key).ok_or_else(|| format!("{key:?}")),
         Json::Array(_) => Err("list indices must be integers or slices, not str".to_string()),
         Json::Str(_) => Err("string indices must be integers, not 'str'".to_string()),
         other => Err(format!("'{}' object is not subscriptable", py_type(other))),
@@ -1089,14 +1099,14 @@ fn is_commit_id(text: &str) -> bool {
 /// The seconds a command printed, out, as int() reads them; what names what printed them. Errors: out is no whole
 /// number.
 fn seconds(out: &str, what: &str) -> Result<i64, OrchestratorError> {
-    let text = strip(out);
-    python_int(text).ok_or_else(|| OrchestratorError(format!("{what} printed {}, not a time", repr(text))))
+    let text = out.trim();
+    python_int(text).ok_or_else(|| OrchestratorError(format!("{what} printed {text:?}, not a time")))
 }
 
 /// text as Python's int() reads a whole number in base 10: blanks around it, an optional sign, and ASCII digits with
 /// single underscores between them; None for anything else, or a number beyond 64 bits.
 fn python_int(text: &str) -> Option<i64> {
-    let text = strip(text);
+    let text = text.trim();
     let digits = text.strip_prefix(['+', '-']).unwrap_or(text);
     let well_formed = !digits.is_empty()
         && !digits.starts_with('_')

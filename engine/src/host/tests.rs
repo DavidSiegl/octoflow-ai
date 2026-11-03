@@ -113,7 +113,7 @@ impl Repo {
         }
         self.git(&["add", "-A"]);
         self.git(&["commit", "--quiet", "-m", message]);
-        strip(&self.git(&["rev-parse", "HEAD"])).to_string()
+        self.git(&["rev-parse", "HEAD"]).trim().to_string()
     }
 
     pub fn base(&self) -> &str {
@@ -314,7 +314,7 @@ fn create_pr_runs_gh_in_the_project() {
     assert!(remote.contains(&format!("_ {cwd} gh pr create --base main --head orchestrator/x")), "{remote}");
     assert!(remote.ends_with("--body-file - --draft"), "{remote}");
     assert_eq!(read(&format!("{bin}/gh-input")), "body");
-    assert_eq!(strip(&read(&format!("{bin}/gh-cwd"))), std::fs::canonicalize(&cwd).unwrap().to_str().unwrap());
+    assert_eq!(read(&format!("{bin}/gh-cwd")).trim(), std::fs::canonicalize(&cwd).unwrap().to_str().unwrap());
     assert_eq!(gh_argv(&bin), ["pr", "create", "--base", "main", "--head", "orchestrator/x", "--title", "Title",
         "--body-file", "-", "--draft"]);
     // Printing nothing is no pull request.
@@ -370,7 +370,7 @@ fn real_filesystem_roundtrip() {
     host.write(&path, "hello", false).unwrap();
     assert_eq!(host.read(&path).unwrap().as_deref(), Some("hello"));
     let resolved = host.check(&["sh", "-c", "cd -- \"$1\" && pwd", "_", &d.path()], None, 60).unwrap();
-    assert_eq!(host.resolve_dir(&d.path()).unwrap(), strip(&resolved));
+    assert_eq!(host.resolve_dir(&d.path()).unwrap(), resolved.trim());
     host.rename(&path, &d.join("nested/file.rejected.md")).unwrap();
     assert_eq!(host.read(&path).unwrap(), None);
     assert_eq!(host.read(&d.join("nested/file.rejected.md")).unwrap().as_deref(), Some("hello"));
@@ -412,7 +412,7 @@ fn a_time_that_is_no_number_raises() {
     let bin = TempDir::new();
     tool(&bin.path(), "date", "#!/bin/sh\necho soon\n");
     let e = host_with_tools(&bin.path()).now().unwrap_err();
-    assert_eq!(e.0, "date +%s printed 'soon', not a time");
+    assert_eq!(e.0, "date +%s printed \"soon\", not a time");
     assert_eq!(seconds(" 1_000\n", "x"), Ok(1000));
     for bad in ["", "_1", "1_", "1__0", "1.5", "99999999999999999999"] {
         assert!(seconds(bad, "x").is_err(), "{bad}");
@@ -446,7 +446,7 @@ fn rename_failure_raises() {
 fn output_that_is_not_utf8_raises_naming_the_command() {
     let host = ProcessHost::local(&Interrupt::new());
     let e = host.run(&["printf", "\\351"], None, 60).unwrap_err();
-    assert!(e.0.starts_with("printf '\\351': printed what is not UTF-8: 'utf-8' codec can't decode byte 0xe9"), "{e}");
+    assert!(e.0.starts_with("printf '\\351': printed what is not UTF-8: incomplete utf-8 byte sequence from index 0"), "{e}");
     assert_eq!(host.run_verbatim(&["printf", "\\351"], None, 60).unwrap().stdout, b"\xe9");
     let e = host.run(&["sh", "-c", "printf '\\351' >&2"], None, 60).unwrap_err();
     assert!(e.0.contains("printed what is not UTF-8"), "{e}");
@@ -490,11 +490,11 @@ fn a_command_that_runs_out_of_time_is_killed_with_its_process_group() {
     assert_eq!(
         e.0,
         format!(
-            "sh -c 'sleep 30 & echo $! > \"$1\"; wait' _ {pid_file}: Command '['sh', '-c', 'sleep 30 & echo $! > \
-             \"$1\"; wait', '_', '{pid_file}']' timed out after 1 seconds"
+            "sh -c 'sleep 30 & echo $! > \"$1\"; wait' _ {pid_file}: Command '[\"sh\", \"-c\", \"sleep 30 & echo $! > \
+             \\\"$1\\\"; wait\", \"_\", {pid_file:?}]' timed out after 1 seconds"
         )
     );
-    let pid = strip(&read(&pid_file)).to_string();
+    let pid = read(&pid_file).trim().to_string();
     // The background sleep went with its group: no process has its pid any more, or only as a zombie being reaped.
     let gone = (0..100).any(|_| {
         let state = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
@@ -532,14 +532,14 @@ fn a_child_that_holds_the_output_open_ends_the_command_at_its_time() {
 #[test]
 fn a_command_that_cannot_be_started_names_it() {
     let e = ProcessHost::local(&Interrupt::new()).run(&["no-such-command-here", "x"], None, 60).unwrap_err();
-    assert_eq!(e.0, "no-such-command-here x: [Errno 2] No such file or directory: 'no-such-command-here'");
+    assert_eq!(e.0, "no-such-command-here x: [Errno 2] No such file or directory: \"no-such-command-here\"");
 }
 
 #[test]
 fn exec_tells_a_command_not_on_path_from_one_that_cannot_be_started_otherwise() {
     // As the doctor tells a tool missing here (cross-review 89, F9): Python's FileNotFoundError from subprocess.
     let host = ProcessHost::local(&Interrupt::new());
-    let message = "no-such-command-here x: [Errno 2] No such file or directory: 'no-such-command-here'";
+    let message = "no-such-command-here x: [Errno 2] No such file or directory: \"no-such-command-here\"";
     assert_eq!(host.exec(&["no-such-command-here", "x"], None, 60), Err(ExecError::NotFound(OrchestratorError::new(message))));
     let dir = TempDir::new();
     let path = dir.join("not-executable");
@@ -751,7 +751,7 @@ fn run_files_failure_and_a_time_that_is_not_one() {
     let d = TempDir::new();
     put(&d.join("a.md"), "a");
     let e = host_with_tools(&bin.path()).run_files(&d.path()).unwrap_err();
-    assert_eq!(e.0, format!("listing {}: stat printed 'soon', not a time", d.path()));
+    assert_eq!(e.0, format!("listing {}: stat printed \"soon\", not a time", d.path()));
     tool(&bin.path(), "stat", "#!/bin/sh\necho Permission denied >&2; exit 1\n");
     let e = host_with_tools(&bin.path()).run_files(&d.path()).unwrap_err();
     assert!(e.0.contains("Permission denied"), "{e}");
@@ -835,7 +835,7 @@ fn pull_request_unexpected_output() {
         ("[]".to_string(), ": list indices must be integers or slices, not str"),
         ("\"x\"".to_string(), ": string indices must be integers, not 'str'"),
         ("null".to_string(), ": 'NoneType' object is not subscriptable"),
-        ("{\"state\": \"MERGED\"}".to_string(), ": 'headRefOid'"),
+        ("{\"state\": \"MERGED\"}".to_string(), ": \"headRefOid\""),
         ("{\"state\": 5}".to_string(), ", not a pull request's state"),
         (open("headRefOid", "\"main\""), ", not a pull request's state"),
         // A head that is no commit is judged before closedAt is read.
@@ -847,7 +847,7 @@ fn pull_request_unexpected_output() {
         let (host, _bin) = gh_host(&out, "", 0);
         let e = host.pull_request("/", URL).unwrap_err();
         let GhError::Failed(e) = e else { panic!("{out}: {e:?}") };
-        let printed = format!("gh pr view {URL} printed {}", crate::py::text::repr(&out));
+        let printed = format!("gh pr view {URL} printed {out:?}");
         assert!(e.0.starts_with(&format!("{printed}{why}")), "{out}: {e}");
     }
 }
@@ -890,14 +890,14 @@ fn merge_view() {
         (pr.replace("\"MERGEABLE\"", "[\"MERGEABLE\"]"), not_a_state),
         (pr.replace("true", "\"yes\""), not_a_state),
         (pr.replace("\"text\"", "null"), not_a_state),
-        ("{\"state\": \"OPEN\"}".to_string(), ": 'isDraft'"),
+        ("{\"state\": \"OPEN\"}".to_string(), ": \"isDraft\""),
         ("{\"state\": 1}".to_string(), not_a_state),
-        ("{\"state\": \"OPEN\", \"isDraft\": false, \"mergeable\": \"UNKNOWN\"}".to_string(), ": 'body'"),
+        ("{\"state\": \"OPEN\", \"isDraft\": false, \"mergeable\": \"UNKNOWN\"}".to_string(), ": \"body\""),
         ("[1]".to_string(), ": list indices must be integers or slices, not str"),
     ] {
         let (host, _bin) = gh_host(&bad, "", 0);
         let e = OrchestratorError::from(host.pull_request_merge("/", URL).unwrap_err());
-        let printed = format!("gh pr view {URL} printed {}", crate::py::text::repr(&bad));
+        let printed = format!("gh pr view {URL} printed {bad:?}");
         assert!(e.0.starts_with(&format!("{printed}{why}")), "{bad}: {e}");
     }
     let (host, _bin) = gh_host("", "gh auth login\n", 4);
@@ -1218,7 +1218,7 @@ fn checked_out_branches_of_every_worktree() {
 fn local_branch_steps() {
     let c = Clones::new();
     let head = c.pushed_run_branch();
-    let older = strip(&c.sh(&["git", "-C", &c.a, "rev-parse", "main"])).to_string();
+    let older = c.sh(&["git", "-C", &c.a, "rev-parse", "main"]).trim().to_string();
     let branch = "orchestrator/x-a1b2c3";
     assert_eq!(c.host.branch_commit(&c.a, branch).unwrap(), Some(head.clone()));
     assert_eq!(c.host.branch_commit(&c.a, "orchestrator/none").unwrap(), None);
@@ -1241,7 +1241,7 @@ fn a_count_that_is_no_count_raises() {
     let bin = TempDir::new();
     tool(&bin.path(), "git", "#!/bin/sh\necho many\n");
     let e = host_with_tools(&bin.path()).commits_beyond("/r", "c0ffee", "b").unwrap_err();
-    assert_eq!(e.0, "git rev-list --count c0ffee..refs/heads/b printed 'many', not a count");
+    assert_eq!(e.0, "git rev-list --count c0ffee..refs/heads/b printed \"many\", not a count");
 }
 
 #[test]
@@ -1399,7 +1399,7 @@ fn snapshot_of_the_working_tree() {
     assert_eq!(tree.split_whitespace().collect::<Vec<_>>(), [".gitignore", "keep.py", "mod.py", "untracked.py"]);
     assert_eq!(r.git(&["show", &format!("{sha}:mod.py")]), "1\ntwo\n3\n");
     assert_eq!(r.git(&["rev-parse", &format!("{sha}^")]), r.git(&["rev-parse", &base]));
-    assert_eq!(strip(&r.git(&["log", "--format=%s", "-n", "1", &sha])), "snapshot");
+    assert_eq!(r.git(&["log", "--format=%s", "-n", "1", &sha]).trim(), "snapshot");
     assert_eq!(
         changed_lines(&r.host.change_diff(&r.path, &base, Some(&sha)).unwrap()),
         [("mod.py".to_string(), vec![2, 3]), ("untracked.py".to_string(), vec![1])]
@@ -1415,7 +1415,7 @@ fn snapshot_of_a_repository_without_an_index() {
     let base = r.host.git_head(&r.path).unwrap().unwrap();
     r.put("first.py", "x\n");
     let sha = r.host.snapshot(&r.path, &base, "snapshot").unwrap();
-    assert_eq!(strip(&r.git(&["ls-tree", "-r", "--name-only", &sha])), "first.py");
+    assert_eq!(r.git(&["ls-tree", "-r", "--name-only", &sha]).trim(), "first.py");
 }
 
 #[test]
@@ -1426,7 +1426,7 @@ fn a_snapshot_git_cannot_make_raises() {
     let bin = TempDir::new();
     tool(&bin.path(), "git", "#!/bin/sh\ncase $1 in commit-tree) echo notacommit;; esac\n");
     let e = host_with_tools(&bin.path()).snapshot(&r.path, r.base(), "s").unwrap_err();
-    assert_eq!(e.0, format!("snapshot of {}: git commit-tree printed 'notacommit', not a commit", r.path));
+    assert_eq!(e.0, format!("snapshot of {}: git commit-tree printed \"notacommit\", not a commit", r.path));
 }
 
 // -- What the Python engine's constants hold --------------------------------------------------------------------------
@@ -1459,4 +1459,12 @@ fn checked_names_the_command_and_the_target() {
     let remote = ProcessHost::local(&Interrupt::new()).over_ssh("box");
     assert_eq!(checked(&remote, &["x"], failed).unwrap_err().0, "x failed on box: oops");
     assert_eq!(checked(&remote, &["x"], Completed::new(0, "out", "")).unwrap(), "out");
+}
+
+#[test]
+fn shlex_join_quotes_each_word_that_sh_would_split_or_expand() {
+    let argv = ["git", "-C", "a/b", "commit", "-m", "it's \"done\"", "", "$HOME"];
+    assert_eq!(shlex_join(&argv), r#"git -C a/b commit -m 'it'"'"'s "done"' '' '$HOME'"#);
+    assert_eq!(shlex_quote("x=1,y@z:%+./-_"), "x=1,y@z:%+./-_");
+    assert_eq!(shlex_quote("é"), "'é'");
 }

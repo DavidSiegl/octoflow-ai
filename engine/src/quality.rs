@@ -11,7 +11,6 @@ use sha2::{Digest, Sha256};
 use crate::constants::CONSOLE_TAIL_LINES;
 use crate::handoff::first_line_word;
 use crate::py::json::Map;
-use crate::py::text::{decimal_value, is_space, splitlines, strip, LINE_BREAKS};
 
 /// The words of the gate line, the file's first non-blank one. Only the engine writes BUILD_FAILED, for a build that
 /// ended before its Gate stage (Workflow::quality_report).
@@ -31,10 +30,13 @@ pub const QUALITY_TO_WEIGH_NOTE: &str = "These do not fail the gate. Fix each, o
 /// The most findings a quality file lists, numbered as one list, and the most failing tests; the rest are counted.
 pub const QUALITY_FINDINGS_LIMIT: usize = 50;
 
-/// text as a quality file writes it within one of its lines, such as one item of a list: each character that ends a
-/// line in some reader (str.splitlines's LINE_BREAKS) written as an escape, `\x` and two hex digits up to U+00FF, `\u`
-/// and four beyond, as gate.py's _LINE_BREAK_ESCAPES writes it, so a list item the engine adds reads back as the one
-/// line the gate's would; anything else as it is.
+/// The characters that end a line in some reader of the quality file, a Markdown renderer or Python's str.splitlines:
+/// the set gate.py's _LINE_BREAK_ESCAPES escapes.
+const LINE_BREAKS: [char; 10] = ['\n', '\r', '\x0b', '\x0c', '\x1c', '\x1d', '\x1e', '\u{85}', '\u{2028}', '\u{2029}'];
+
+/// text as a quality file writes it within one of its lines, such as one item of a list: each of LINE_BREAKS written
+/// as an escape, `\x` and two hex digits up to U+00FF, `\u` and four beyond, as gate.py's _LINE_BREAK_ESCAPES writes
+/// it, so a list item the engine adds reads back as the one line the gate's would; anything else as it is.
 pub fn one_line(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
@@ -59,7 +61,7 @@ pub fn parse_gate(quality: &str) -> Option<&'static str> {
 /// its last line when it has none.
 pub fn under_gate_line(quality: &str, line: &str) -> String {
     let mut lines: Vec<&str> = quality.split('\n').collect();
-    let at = lines.iter().position(|x| !strip(x).is_empty()).unwrap_or(lines.len() - 1);
+    let at = lines.iter().position(|x| !x.trim().is_empty()).unwrap_or(lines.len() - 1);
     lines.splice(at + 1..at + 1, ["", line]);
     lines.join("\n")
 }
@@ -111,8 +113,8 @@ pub fn build_failed_report(intro: &str, tests: Option<&[(String, String)]>, cons
         None => out.push("Jenkins has no test report for this build.".into()),
         Some(tests) => {
             for (name, detail) in tests.iter().take(QUALITY_FINDINGS_LIMIT) {
-                let detail = strip(detail);
-                let first = splitlines(detail).first().copied().filter(|_| !detail.is_empty()).unwrap_or("failed");
+                let detail = detail.trim();
+                let first = detail.lines().next().filter(|_| !detail.is_empty()).unwrap_or("failed");
                 out.push(one_line(&format!("- `{name}`: {first}")));
             }
             if tests.is_empty() {
@@ -160,10 +162,10 @@ impl GateFailures {
 }
 
 /// A short hash that names a finding however its line moves: the first 16 hex digits of the SHA-256 of its path
-/// (empty for a finding about the whole change), its rule and its message without decimal digits, since a line
-/// number in it moves too, joined by NULs.
+/// (empty for a finding about the whole change), its rule and its message without ASCII digits, since a line number
+/// in it moves too, joined by NULs.
 pub fn finding_fingerprint(path: Option<&str>, rule: &str, message: &str) -> String {
-    let message: String = message.chars().filter(|c| decimal_value(*c).is_none()).collect();
+    let message: String = message.chars().filter(|c| !c.is_ascii_digit()).collect();
     let key = [path.unwrap_or(""), rule, &message].join("\0");
     let digest = Sha256::digest(key.as_bytes());
     digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
@@ -230,7 +232,7 @@ fn numbered_finding(line: &str) -> Option<NumberedFinding<'_>> {
         let closed = after
             .strip_prefix(':')
             .and_then(|digits| {
-                let n = digits.len() - digits.trim_start_matches(|c| decimal_value(c).is_some()).len();
+                let n = digits.len() - digits.trim_start_matches(|c: char| c.is_ascii_digit()).len();
                 (n > 0).then(|| &digits[n..])
             })
             .or_else(|| after.strip_prefix(" (the whole file)"))
@@ -242,9 +244,9 @@ fn numbered_finding(line: &str) -> Option<NumberedFinding<'_>> {
     None
 }
 
-/// The rest of line after `\d+\. `, the digits Python's decimal ones; None when it does not start so.
+/// The rest of line after `\d+\. `, the digits ASCII ones; None when it does not start so.
 fn number_and_dot(line: &str) -> Option<&str> {
-    let digits = line.len() - line.trim_start_matches(|c| decimal_value(c).is_some()).len();
+    let digits = line.len() - line.trim_start_matches(|c: char| c.is_ascii_digit()).len();
     (digits > 0).then(|| line[digits..].strip_prefix(". ")).flatten()
 }
 
@@ -252,7 +254,7 @@ fn number_and_dot(line: &str) -> Option<&str> {
 /// blank, then the rule up to the first ": " after its first character, and the message.
 fn severity_rule_message(text: &str) -> Option<(&str, &str)> {
     let text = text.strip_prefix(' ')?;
-    let severity = text.len() - text.trim_start_matches(|c: char| !is_space(c)).len();
+    let severity = text.len() - text.trim_start_matches(|c: char| !c.is_whitespace()).len();
     if severity == 0 {
         return None;
     }
@@ -283,11 +285,11 @@ fn secret_found(line: &str) -> Option<(&str, &str)> {
     let ends: Vec<usize> = quoted.match_indices(':').map(|(i, _)| i).filter(|&i| i > 0).collect();
     for &end in ends.iter().rev() {
         let digits = &quoted[end + 1..];
-        let n = digits.len() - digits.trim_start_matches(|c| decimal_value(c).is_some()).len();
+        let n = digits.len() - digits.trim_start_matches(|c: char| c.is_ascii_digit()).len();
         let Some(tail) = (n > 0).then(|| digits[n..].strip_prefix("` ")).flatten() else { continue };
-        let rule_len = tail.len() - tail.trim_start_matches(|c: char| !is_space(c)).len();
+        let rule_len = tail.len() - tail.trim_start_matches(|c: char| !c.is_whitespace()).len();
         let Some(commit) = (rule_len > 0).then(|| tail[rule_len..].strip_prefix(" in ")).flatten() else { continue };
-        let commit_len = commit.len() - commit.trim_start_matches(|c: char| !is_space(c)).len();
+        let commit_len = commit.len() - commit.trim_start_matches(|c: char| !c.is_whitespace()).len();
         let fingerprint = &commit[commit_len..];
         if commit_len > 0
             && fingerprint.len() >= " (fingerprint ``)".len()

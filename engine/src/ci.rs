@@ -12,7 +12,6 @@ use crate::env::{ci_credentials, ConfigDir};
 use crate::error::OrchestratorError;
 use crate::http::{Http, HttpClient, HttpError, Method, Request, Response};
 use crate::py::json::{Json, Map};
-use crate::py::text::{decimal_value, splitlines, utf8_error};
 use crate::py::url::{quote, urlencode};
 
 #[cfg(test)]
@@ -342,7 +341,7 @@ impl Jenkins {
     pub fn console_tail(&self, number: i64) -> Result<String, CIError> {
         let answer = self.request(Method::Get, &self.build_url(number, "consoleText", None), None)?;
         let text = String::from_utf8_lossy(&answer.body);
-        let lines = splitlines(&text);
+        let lines: Vec<&str> = text.lines().collect();
         Ok(lines[lines.len().saturating_sub(CONSOLE_TAIL_LINES)..].join("\n"))
     }
 
@@ -379,7 +378,7 @@ impl Jenkins {
             message: self.mask(&format!("GET {url}: the answer is not JSON: {why}")),
             status: None,
         };
-        let text = std::str::from_utf8(&answer.body).map_err(|e| not_json(utf8_error(&answer.body, &e)))?;
+        let text = std::str::from_utf8(&answer.body).map_err(|e| not_json(e.to_string()))?;
         let value = Json::parse(text).map_err(not_json)?;
         if value.as_object().is_none() {
             return Err(CIError::Request {
@@ -446,7 +445,7 @@ fn queue_item_number(location: &str) -> Option<&str> {
     let rest = location.strip_suffix('/').unwrap_or(location);
     let start = rest.rfind("/queue/item/")? + "/queue/item/".len();
     let digits = &rest[start..];
-    (!digits.is_empty() && digits.chars().all(|c| decimal_value(c).is_some())).then_some(digits)
+    (!digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())).then_some(digits)
 }
 
 /// The Authorization header of HTTP Basic authentication as user with password.

@@ -7,10 +7,10 @@ use std::sync::LazyLock;
 
 use crate::constants::{AGENT_KINDS, DEFAULT_MAX_FILES, DEFAULT_MAX_LINES, ROLE_LABELS};
 use crate::error::OrchestratorError;
+use crate::paths::split_extension;
 use crate::prompts::{Prompt, Prompts};
 use crate::prompts::template::{fill, parse, placeholders, Piece};
 use crate::py::json::Map;
-use crate::py::text::splitext;
 
 /// Run phases that are no step's: the quality loop after a quality-gated step's turn, and the run's last two.
 pub const QUALITY: &str = "quality";
@@ -129,7 +129,7 @@ impl Step {
         if q == 0 {
             return name;
         }
-        let (stem, ext) = splitext(&name);
+        let (stem, ext) = split_extension(&name);
         format!("{stem}-q{q}{ext}")
     }
 
@@ -139,7 +139,7 @@ impl Step {
         if self.quality_gated {
             // As name() does: -q<q> before the extension, where the template splits at the same dot as the filled-in
             // name, since a round number has none.
-            let (stem, ext) = splitext(&self.file);
+            let (stem, ext) = split_extension(&self.file);
             let mut tokens = name_tokens(stem);
             tokens.extend([Some('-'), Some('q'), None]);
             tokens.extend(name_tokens(ext));

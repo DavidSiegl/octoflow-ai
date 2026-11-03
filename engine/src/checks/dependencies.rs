@@ -11,7 +11,6 @@ use ::toml::{Table, Value};
 use super::{CheckFindings, Finding, RunChange};
 use crate::error::OrchestratorError;
 use crate::py::json::Map;
-use crate::py::text::{is_space, utf8_error};
 use crate::py::toml::{hashable, json_dumps, loads, python_type, repr, same_key, str as py_str, truthy};
 use crate::package_index::{IndexedPackage, PackageIndex, PackageIndexes};
 
@@ -186,7 +185,7 @@ fn add_named(packages: &mut Map<Dependency>, sources: Sources, path: &str) {
 fn toml_manifest(read: &ReadFile, path: &str) -> Result<Result<Table, String>, OrchestratorError> {
     let Some(bytes) = read(path)? else { return Ok(Ok(Table::new())) };
     Ok(match std::str::from_utf8(&bytes) {
-        Err(e) => Err(format!("it is not UTF-8: {}", utf8_error(&bytes, &e))),
+        Err(e) => Err(format!("it is not UTF-8: {e}")),
         Ok(text) => loads(text).map_err(|why| format!("it is not TOML: {why}")),
     })
 }
@@ -379,21 +378,21 @@ fn empty_table() -> &'static Table {
 fn requirement_of(requirement: &Value) -> Result<(String, Option<String>), String> {
     let refused = || format!("{} is not a requirement", repr(requirement));
     let Value::String(text) = requirement else { return Err(refused()) };
-    let rest = text.trim_start_matches(is_space);
+    let rest = text.trim_start();
     let name_class = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-');
     if !rest.starts_with(|c: char| c.is_ascii_alphanumeric()) {
         return Err(refused());
     }
     let run = &rest[..rest.find(|c| !name_class(c)).unwrap_or(rest.len())];
     let name = run.trim_end_matches(['.', '_', '-']);
-    let mut rest = rest[name.len()..].trim_start_matches(is_space);
+    let mut rest = rest[name.len()..].trim_start();
     if let Some(extras) = rest.strip_prefix('[') {
         if let Some(close) = extras.find(']') {
-            rest = extras[close + 1..].trim_start_matches(is_space);
+            rest = extras[close + 1..].trim_start();
         }
     }
-    let url = rest.strip_prefix('@').map(|after| after.trim_start_matches(is_space)).and_then(|after| {
-        let url = &after[..after.find(is_space).unwrap_or(after.len())];
+    let url = rest.strip_prefix('@').map(|after| after.trim_start()).and_then(|after| {
+        let url = &after[..after.find(char::is_whitespace).unwrap_or(after.len())];
         (!url.is_empty()).then(|| url.to_string())
     });
     Ok((package_key(name), url))

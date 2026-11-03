@@ -4,10 +4,10 @@
 use std::sync::Arc;
 
 use crate::constants::PYPI_TIMEOUT;
+use crate::error::shortened;
 use crate::http::{Http, HttpError, Method, Request};
 use crate::package_index::{IndexError, IndexedPackage, PackageIndex, Upload};
 use crate::py::json::Json;
-use crate::py::text::{shortened, splitlines, strip, utf8_error};
 use crate::py::url::quote;
 
 #[cfg(test)]
@@ -62,7 +62,7 @@ impl PackageIndex for PyPI {
 /// The project of PyPI's JSON answer; why not, as Python's error of the step that fails says it, for an answer of
 /// another shape.
 fn project_of(body: &[u8]) -> Result<IndexedPackage, String> {
-    let text = std::str::from_utf8(body).map_err(|e| utf8_error(body, &e))?;
+    let text = std::str::from_utf8(body).map_err(|e| e.to_string())?;
     let answer = Json::parse(text)?;
     let info = match &answer {
         Json::Object(map) => map.get("info").ok_or("'info'")?,
@@ -119,7 +119,7 @@ fn first_upload(files: &[&Json]) -> Result<Option<Upload>, String> {
 fn license(info: &Json) -> Result<Option<String>, String> {
     let text = |key: &str| -> Result<String, String> {
         match info.get(key) {
-            Some(Json::Str(s)) => Ok(strip(s).to_string()),
+            Some(Json::Str(s)) => Ok(s.trim().to_string()),
             Some(value) if value.truthy() => Err(format!("'{}' object has no attribute 'strip'", value.python_type())),
             _ => Ok(String::new()),
         }
@@ -130,7 +130,7 @@ fn license(info: &Json) -> Result<Option<String>, String> {
     }
     let field = text("license")?;
     if !field.is_empty() {
-        return Ok(Some(shortened(splitlines(&field)[0], 80)));
+        return Ok(Some(shortened(field.lines().next().unwrap_or_default(), 80)));
     }
     // Iterated as `info.get("classifiers") or []` iterates it: a string by its characters, an object by its keys.
     let classifiers: Vec<Json> = match info.get("classifiers") {

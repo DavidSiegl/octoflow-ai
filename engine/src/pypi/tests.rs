@@ -130,7 +130,7 @@ fn json_of_another_shape_is_worded_as_python_s_error() {
     assert!(project(Ok(Response::ok(b"\xff".to_vec())))
         .unwrap_err()
         .to_string()
-        .ends_with("'utf-8' codec can't decode byte 0xff in position 0: invalid start byte"));
+        .ends_with("invalid utf-8 sequence of 1 bytes from index 0"));
 }
 
 #[test]

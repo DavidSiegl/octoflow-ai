@@ -944,7 +944,7 @@
     ]
    ],
    "console": "x",
-   "text": "GATE: BUILD_FAILED\n\ntwo\nlines\n\n## Failing tests\n\n- `a\\x0ab`: detail\n- `c`: failed\n\n## The last 60 lines of the build's console\n\n````\nx\n````\n"
+   "text": "GATE: BUILD_FAILED\n\ntwo\nlines\n\n## Failing tests\n\n- `a\\x0ab`: detail\\u2028more\n- `c`: failed\n\n## The last 60 lines of the build's console\n\n````\nx\n````\n"
   }
  ],
  "one_line": [
@@ -982,7 +982,7 @@
    "\u00e9/\u00fc.py",
    "r",
    "\u0663 and 3 and \u00b2",
-   "bd01727f291b3ab7"
+   "d4b7b570d3ec0fc7"
   ],
   [
    "",

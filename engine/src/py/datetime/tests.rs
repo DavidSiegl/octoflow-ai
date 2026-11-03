@@ -30,7 +30,7 @@ fn every_time_reads_as_python_s_fromisoformat_reads_it() {
 
 #[test]
 fn an_error_names_the_string_or_the_field_out_of_range() {
-    assert_eq!(fromisoformat_timestamp("garbled"), Err("Invalid isoformat string: 'garbled'".to_string()));
+    assert_eq!(fromisoformat_timestamp("garbled"), Err("Invalid isoformat string: \"garbled\"".to_string()));
     assert_eq!(fromisoformat_timestamp("2026-10-28T12:00:60"), Err("second must be in 0..59, not 60".to_string()));
     assert_eq!(
         fromisoformat_timestamp("2026-10-28T24:00:01"),

@@ -27,7 +27,10 @@ fn blocked_questions() {
         ("**BLOCKED:** which database?", None),
         ("", None),
         ("\n \n", None),
-        ("\u{1c}\n\u{a0}BLOCKED: which database?\u{2028}more", question),
+        ("\n\u{a0}BLOCKED: which database?\u{3000}\nmore", question),
+        // \x1c is no blank, and U+2028 ends no line.
+        ("\u{1c}\nBLOCKED: which database?", None),
+        ("BLOCKED: which database?\u{2028}more", Some("which database?\u{2028}more".to_string())),
     ];
     for (text, expected) in cases {
         assert_eq!(parse_blocked(text), expected, "{text:?}");
@@ -103,7 +106,7 @@ fn ignore_every_line_below_the_first_non_blank_one() {
     let mut rng = Rng::new(13);
     for _ in 0..300 {
         let first = rng.text(20, LINE_BREAKS);
-        if strip(&first).is_empty() {
+        if first.trim().is_empty() {
             continue;
         }
         let (blanks, rest) = (blank_lines(&mut rng), format!("GATE: OK VERDICT: APPROVE {}", rng.text(20, "")));
