@@ -757,6 +757,43 @@ fn run_files_failure_and_a_time_that_is_not_one() {
     assert!(e.0.contains("Permission denied"), "{e}");
 }
 
+/// A stat on PATH that removes the file named gone and then runs the system's stat, as when gone goes away between
+/// a listing's `[ -f ]` and its stat (the secret scan's leaks-publish.json did so under serve's event stream).
+fn stat_that_loses(bin: &str, gone: &str) {
+    tool(
+        bin,
+        "stat",
+        &format!(
+            "#!/bin/sh\nfor a; do [ \"$a\" = '{gone}' ] && rm -f -- \"$a\"; done\n\
+             for s in /usr/bin/stat /bin/stat; do [ -x \"$s\" ] && exec \"$s\" \"$@\"; done\nexit 127\n"
+        ),
+    );
+}
+
+#[test]
+fn a_run_file_gone_while_it_is_listed_is_left_out() {
+    let d = TempDir::new();
+    put(&d.join("a.md"), "a");
+    put(&d.join("leaks-publish.json"), "[]");
+    let bin = TempDir::new();
+    stat_that_loses(&bin.path(), &d.join("leaks-publish.json"));
+    let files = host_with_tools(&bin.path()).run_files(&d.path()).unwrap();
+    assert_eq!(files.into_iter().map(|f| f.path).collect::<Vec<_>>(), [d.join("a.md")]);
+}
+
+#[test]
+fn a_run_gone_while_its_state_is_read_is_left_out() {
+    let d = TempDir::new();
+    let runs = d.join(RUNS_DIR);
+    put(&format!("{runs}/a/state.json"), "{\"run_id\": \"a\"}");
+    put(&format!("{runs}/b/state.json"), "{\"run_id\": \"b\"}");
+    let bin = TempDir::new();
+    stat_that_loses(&bin.path(), &format!("{runs}/b/state.json"));
+    let states = host_with_tools(&bin.path()).run_states(&d.path()).unwrap();
+    let ids: Vec<_> = states.iter().map(|(_, s)| s.get("run_id").and_then(Value::as_str)).collect();
+    assert_eq!(ids, [Some("a")]);
+}
+
 #[test]
 fn session_log_finds_the_file_under_home() {
     let home = TempDir::new();

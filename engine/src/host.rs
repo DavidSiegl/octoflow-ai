@@ -814,14 +814,18 @@ pub trait Host {
 
     /// Each run's saved state under the project at cwd, with the seconds since its state.json was last written,
     /// measured by this host's own clock, the one that stamped the file, so clock skew between the machines involved
-    /// cannot shift it. Errors: a state.json that is not JSON.
+    /// cannot shift it. A run whose directory is removed while the runs are read, as prune removes one, is among them
+    /// or not, never an error. Errors: a state.json that is still there cannot be stat'ed or read, or is not JSON.
     fn run_states(&self, cwd: &str) -> Result<Vec<(u64, Value)>, OrchestratorError> {
         // stat -c is GNU, stat -f is BSD. Each state follows its age and a blank, and ends at a NUL, which no JSON text
-        // holds, so a state.json a human pretty-printed reads as well as the engine's one line.
+        // holds, so a state.json a human pretty-printed reads as well as the engine's one line. A stat or cat that
+        // fails on a state.json gone since the glob skips it, as run_files does a file.
         let script = format!(
             "now=$(date +%s) || exit 1; for f in \"$1\"/{RUNS_DIR}/*/state.json; do [ -f \"$f\" ] || continue; \
-             m=$(stat -c %Y -- \"$f\" 2>/dev/null || stat -f %m -- \"$f\") || exit 1; \
-             printf \"%s \" \"$((now - m))\"; cat -- \"$f\"; printf '\\000'; done; true"
+             m=$(stat -c %Y -- \"$f\" 2>/dev/null || stat -f %m -- \"$f\") \
+             || {{ [ -f \"$f\" ] || continue; exit 1; }}; \
+             s=$(cat -- \"$f\") || {{ [ -f \"$f\" ] || continue; exit 1; }}; \
+             printf \"%s %s\\000\" \"$((now - m))\" \"$s\"; done; true"
         );
         let out = self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?;
         let mut runs = vec![];
@@ -879,12 +883,17 @@ pub trait Host {
     }
 
     /// The files in a run directory, oldest first, those of one time by name, except state.json and write's temporary
-    /// files; none for a directory that is not there. Errors: stat prints what is not a time.
+    /// files; none for a directory that is not there. A file removed while the directory is listed, as a running
+    /// run removes some, is in the list or not, never an error. Errors: stat fails on a file that is still there, or
+    /// prints what is not a time.
     fn run_files(&self, run_dir: &str) -> Result<Vec<RunFile>, OrchestratorError> {
-        // Each entry is "<mtime> <path>" ended by a NUL, which no path holds. stat -c is GNU, stat -f is BSD.
+        // Each entry is "<mtime> <path>" ended by a NUL, which no path holds. stat -c is GNU, stat -f is BSD. A stat
+        // that fails on a file gone since the glob is skipped (serve-run-files/03: the secret scan's
+        // leaks-publish.json went so, failing serve's event stream).
         let script = "for f in \"$1\"/*; do [ -f \"$f\" ] || continue; \
                       case \"${f##*/}\" in state.json|*.tmp.*) continue;; esac; \
-                      m=$(stat -c %Y -- \"$f\" 2>/dev/null || stat -f %m -- \"$f\") || exit 1; \
+                      m=$(stat -c %Y -- \"$f\" 2>/dev/null || stat -f %m -- \"$f\") \
+                      || { [ -f \"$f\" ] || continue; exit 1; }; \
                       printf \"%s %s\\0\" \"$m\" \"$f\"; done; true";
         let out = self.check(&["sh", "-c", script, "_", run_dir], None, DEFAULT_TIMEOUT)?;
         let mut files = vec![];
