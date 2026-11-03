@@ -768,6 +768,62 @@ fn run_files_failure_and_a_time_that_is_not_one() {
     assert!(e.0.contains("Permission denied"), "{e}");
 }
 
+/// A program called name on PATH that removes the file gone when given it, then runs the system's program of that
+/// name: gone goes away just before name reads it.
+fn tool_that_loses(bin: &str, name: &str, gone: &str) {
+    tool(
+        bin,
+        name,
+        &format!(
+            "#!/bin/sh\nfor a; do [ \"$a\" = '{gone}' ] && rm -f -- \"$a\"; done\n\
+             for s in /usr/bin/{name} /bin/{name}; do [ -x \"$s\" ] && exec \"$s\" \"$@\"; done\nexit 127\n"
+        ),
+    );
+}
+
+/// The run ids of the runs under project, as run_states reads them through a host with the tools in bin.
+fn run_ids(bin: &str, project: &str) -> Result<Vec<String>, OrchestratorError> {
+    let states = host_with_tools(bin).run_states(project)?;
+    Ok(states.iter().map(|(_, s)| s.get("run_id").and_then(Value::as_str).unwrap_or_default().to_string()).collect())
+}
+
+#[test]
+fn a_run_file_gone_while_it_is_listed_is_left_out() {
+    let d = TempDir::new();
+    put(&d.join("a.md"), "a");
+    put(&d.join("leaks-publish.json"), "[]");
+    let bin = TempDir::new();
+    tool_that_loses(&bin.path(), "stat", &d.join("leaks-publish.json"));
+    let files = host_with_tools(&bin.path()).run_files(&d.path()).unwrap();
+    assert_eq!(files.into_iter().map(|f| f.path).collect::<Vec<_>>(), [d.join("a.md")]);
+}
+
+#[test]
+fn a_run_gone_while_its_state_is_read_is_left_out() {
+    let d = TempDir::new();
+    let runs = d.join(RUNS_DIR);
+    put(&format!("{runs}/a/state.json"), "{\"run_id\": \"a\"}");
+    // b's state.json goes before its stat, then, put back, between its stat and its cat.
+    for program in ["stat", "cat"] {
+        put(&format!("{runs}/b/state.json"), "{\"run_id\": \"b\"}");
+        let bin = TempDir::new();
+        tool_that_loses(&bin.path(), program, &format!("{runs}/b/state.json"));
+        assert_eq!(run_ids(&bin.path(), &d.path()).unwrap(), ["a"], "{program}");
+    }
+}
+
+#[test]
+fn a_state_still_there_that_cannot_be_stat_ed_or_read_is_an_error() {
+    let d = TempDir::new();
+    put(&d.join(&format!("{RUNS_DIR}/a/state.json")), "{\"run_id\": \"a\"}");
+    for program in ["stat", "cat"] {
+        let bin = TempDir::new();
+        tool(&bin.path(), program, "#!/bin/sh\necho Permission denied >&2; exit 1\n");
+        let e = run_ids(&bin.path(), &d.path()).unwrap_err();
+        assert!(e.0.contains("Permission denied"), "{program}: {e}");
+    }
+}
+
 #[test]
 fn session_log_finds_the_file_under_home() {
     let home = TempDir::new();
