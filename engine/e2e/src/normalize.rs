@@ -66,8 +66,8 @@ impl Normalizer {
         }
     }
 
-    /// Number the runs and git objects in record in the order they appear in its json.dumps text, after those learnt
-    /// before.
+    /// Number the runs and git objects in record in the order they appear in its JSON text, keys in the record's
+    /// order, after those learnt before.
     pub fn learn(&mut self, record: &Value) {
         let text: Vec<char> = record.to_string().chars().collect();
         let mut i = 0;

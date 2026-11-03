@@ -845,6 +845,36 @@ fn an_unfinished_run_on_the_run_line_stops_the_drain_before_any_run() {
 }
 
 #[test]
+fn a_run_an_earlier_release_saved_is_waited_for_while_it_runs_and_never_resumed() {
+    let run_id = "20261024-100000-aaaaaa";
+    let stale = HEARTBEAT_SECONDS + STALE_SECONDS;
+    let owner = serde_json::from_str::<Value>(r#"{"host": "elsewhere", "pid": 1}"#).unwrap();
+    let cases: [(Option<Value>, u64, &str, &str); 2] = [
+        // Its own release is still driving it: removing its directory would pull the run out from under that process.
+        (Some(owner), 0, "is running (pid 1 on elsewhere, beat 0s ago)", "wait for it to finish, or remove the Run: line"),
+        (None, stale, "cannot be resumed: run 20261024-100000-aaaaaa was saved by an octoflow before", "; remove the Run: line from"),
+    ];
+    for (owner, age, why, remedy) in cases {
+        let d = Drain::new();
+        d.sweepable();
+        d.spec("a", &spec_text("First", Some(SPEC_READY), &[&format!("Run: {run_id}")]));
+        let mut saved = serde_json::from_str::<Value>(&RunState::new(run_id, "spec a", "/proj").to_text()).unwrap();
+        let fields = saved.as_object_mut().unwrap();
+        fields.remove("format");
+        fields.insert("phase".into(), Value::from("build"));
+        if let Some(owner) = owner {
+            fields.insert("owner".into(), owner);
+        }
+        d.cli.save(&saved, age);
+        let r = d.drain(vec![], &[]);
+        assert_eq!(r.status, EXIT_ERROR);
+        assert!(r.err.starts_with(&format!("error: spec a: run {run_id}, on its Run: line, {why}")), "{}", r.err);
+        assert!(r.err.contains(remedy), "{}", r.err);
+        assert!(!d.swept(), "{why}");
+    }
+}
+
+#[test]
 fn a_refresh_that_fails_changes_no_spec() {
     let d = Drain::new();
     d.spec("a", &spec_text("First", Some(SPEC_IN_REVIEW), &[&format!("PR: {PR_A}")]));

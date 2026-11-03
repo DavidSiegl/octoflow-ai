@@ -621,7 +621,8 @@ impl<'a> Workflow<'a> {
     fn write_metrics(&self) {
         let s = &self.state;
         let written = self.host.now().and_then(|now| {
-            // One line, which `metrics` of a release before crate::state::STATE_FORMAT_SINCE reads a file at a time.
+            // One line: `metrics` of a release before crate::state::STATE_FORMAT_SINCE reads the project's metrics.json
+            // files joined, a line at a time, so a file over several lines breaks it for every run in the project.
             self.host.write(&format!("{}/{METRICS_FILE}", s.dir()), &(run_metrics(s, now).to_string() + "\n"), false)
         });
         if let Err(e) = written {

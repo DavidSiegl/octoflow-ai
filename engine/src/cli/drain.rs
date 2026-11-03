@@ -393,16 +393,20 @@ fn unfinished_run(
     if let Some(closed) = s.get("closed").filter(|c| c.is_set()) {
         return (format!("was closed ({})", closed.text()), start_over);
     }
-    // resume refuses a run whose state.json it cannot read; the problem says what to do instead.
+    let world = prs.world;
+    let health = run_health(s, *age, world.local_host, world.with.pid_alive);
+    // A run still running is waited for whatever release drives it, since the remedy for a state this release cannot
+    // read is removing its directory; resume refuses any other such run, and the problem says what to do instead.
+    if let Some((RUNNING, why)) = health {
+        return (format!("is {RUNNING} ({why})"), format!("wait for it to finish, or {start_over}"));
+    }
     if let Some(problem) = s.as_object().and_then(crate::state::format_problem) {
         return (format!("cannot be resumed: {problem}"), start_over);
     }
-    let world = prs.world;
     let resume = format!("resume it with `{}`, or {start_over}", resume_command(run_id, target));
-    match run_health(s, *age, world.local_host, world.with.pid_alive) {
+    match health {
         // None for a run that is not done: it failed.
         None => (format!("failed: {}", s.get("error").map(Value::text).unwrap_or_default()), resume),
-        Some((RUNNING, why)) => (format!("is {RUNNING} ({why})"), format!("wait for it to finish, or {start_over}")),
         Some((health, why)) => (format!("is {health} ({why})"), resume),
     }
 }
