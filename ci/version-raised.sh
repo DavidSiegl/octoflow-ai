@@ -17,10 +17,15 @@ project_version() {
 }
 
 # The paths whose changes reach no user, as git pathspecs: docs, tests and CI. A change to any other path, or a diff
-# that fails, needs the version raised.
-NOT_RELEASED=":(exclude)docs :(exclude,glob)**/*.md :(exclude)tests :(exclude)engine/e2e :(exclude)engine/tests
-:(exclude,glob)**/tests.rs :(exclude,glob)ui/src/**/*.test.ts :(exclude,glob)ui/src/**/*.test.tsx :(exclude)ui/src/test
-:(exclude)ci :(exclude)Jenkinsfile :(exclude).github :(exclude)evals"
+# that fails, needs the version raised, so a path left off errs towards a raise. Markdown counts as docs only at the
+# top level and under docs/ and evals/: elsewhere it may be embedded in the engine. The engine's test-only Rust is every
+# module its parent declares under #[cfg(test)]: tests.rs and tests/, the fake and fixture modules, test_support.rs
+# and prompt_parity.rs. gate.py judges this repository's own changes in Jenkins and reaches no user.
+NOT_RELEASED=":(exclude)docs :(exclude,glob)*.md :(exclude)tests :(exclude)engine/e2e :(exclude)engine/tests
+:(exclude,glob)**/tests.rs :(exclude,glob)engine/src/**/tests/** :(exclude,glob)engine/src/**/fake.rs
+:(exclude,glob)engine/src/**/fixture.rs :(exclude)engine/src/test_support.rs :(exclude)engine/src/prompt_parity.rs
+:(exclude,glob)ui/src/**/*.test.ts :(exclude,glob)ui/src/**/*.test.tsx :(exclude)ui/src/test
+:(exclude)ci :(exclude)Jenkinsfile :(exclude).github :(exclude)evals :(exclude)gate.py"
 base=$(git merge-base HEAD "origin/$CHANGE_TARGET")
 # shellcheck disable=SC2086 # NOT_RELEASED is split into one pathspec per word on purpose.
 if git diff --quiet "$base" HEAD -- . $NOT_RELEASED; then

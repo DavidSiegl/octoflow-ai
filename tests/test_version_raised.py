@@ -53,16 +53,22 @@ class TestVersionRaised(RepositoryTest):
     def test_a_change_to_docs_tests_or_ci_alone_passes_at_main_s_version(self):
         only = {"docs/guide.md": "x", "README.md": "x", "TODO.md": "x", "tests/test_x.py": "x",
                 "engine/e2e/recorded/a.json": "x", "engine/tests/oracle/b.json": "x", "engine/src/cli/tests.rs": "x",
-                "ui/src/App.test.tsx": "x", "ui/src/test/fakes.ts": "x", "ci/build.sh": "x", "Jenkinsfile": "x",
-                ".github/workflows/w.yml": "x", "evals/tasks/t/task.md": "x"}
+                "engine/src/workflow/tests/resume.rs": "x", "engine/src/herdr/fake.rs": "x",
+                "engine/src/cli/fixture.rs": "x", "engine/src/test_support.rs": "x", "engine/src/prompt_parity.rs": "x",
+                "ui/src/App.test.tsx": "x", "ui/src/runs.test.ts": "x", "ui/src/test/fakes.ts": "x",
+                "ci/build.sh": "x", "Jenkinsfile": "x", "gate.py": "x", ".github/workflows/w.yml": "x",
+                "evals/tasks/t/task.md": "x"}
         self.commit(only, "docs, tests and CI")
         proc = self.run_script()
         self.assertEqual((proc.returncode, proc.stderr), (0, ""))
         self.assertIn("changes only docs, tests or CI", proc.stdout)
 
     def test_a_change_that_also_touches_released_code_still_needs_the_raise(self):
-        for path in ("engine/src/main.rs", "ui/src/App.tsx", "gate.py", "examples/workflows/q.toml", "uv.lock"):
+        for path in ("engine/src/main.rs", "engine/src/prompts/builder.md", "ui/src/App.tsx",
+                     "examples/workflows/q.toml", "uv.lock"):
             with self.subTest(path):
+                # From main each time, so that path is the only released one in the diff.
+                self.git("switch", "--quiet", "-C", "change", "main")
                 self.commit({"docs/guide.md": path, path: "x"}, path)
                 proc = self.run_script()
                 self.assertNotEqual(proc.returncode, 0)
