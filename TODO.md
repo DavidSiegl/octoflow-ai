@@ -889,7 +889,7 @@ is rewritten to say what is left.
 - **Four copies of a scratch directory removed on drop, each named its own way.** The `TempDir`s of
   `engine/src/test_support.rs` and `ui/src-tauri/src/lib.rs` name theirs by pid and a counter,
   `engine/src/serve/tests.rs`'s by the test's name and pid under a TMPDIR it reads itself, and `xtask/src/process.rs`'s
-  by a prefix, pid, time and counter, retried until new; each only reports a failed removal on standard error, which
-  libtest hides on a passing test. Raised by cross-review 117 (F3, 2026-11-03): "A fix to one,
-  such as making names unique, has to be repeated in each." Closes with one shared type: a `tempfile`
+  by a prefix, pid, time and counter, retried until new; serve's drops a failed removal silently, and the others only
+  report it on standard error, which libtest hides on a passing test. Raised by cross-review 117 (F3, 2026-11-03):
+  "A fix to one, such as making names unique, has to be repeated in each." Closes with one shared type: a `tempfile`
   dev-dependency, or a test-support crate the engine, the desktop shell and xtask all use.
