@@ -911,7 +911,6 @@ impl Host for FakeHost {
     }
 }
 
-/// A command that exited with status 0, having printed stdout.
 /// Whether a scripted failure happens now, given how many more are left (None: every one), counting this one off.
 fn fails(left: &mut Option<u32>) -> bool {
     match left {
@@ -924,6 +923,7 @@ fn fails(left: &mut Option<u32>) -> bool {
     }
 }
 
+/// A command that exited with status 0, having printed stdout.
 fn ok(stdout: &str) -> Completed {
     Completed::new(0, stdout, "")
 }
