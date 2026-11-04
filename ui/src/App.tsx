@@ -32,18 +32,30 @@ function saveProject(project: Project): void {
   }
 }
 
-/** The app: the project bar, and the project's runs or one run in detail. connect resolves to the sidecar's
- * server, or rejects with why it could not be started. */
+/** The app: the logo and name, then the project bar and the project's runs or one run in detail. connect resolves
+ * to the sidecar's server, or rejects with why it could not be started. */
 export function App({ connect }: { connect: () => Promise<Connection> }) {
   const [connection, setConnection] = useState<Connection | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   useEffect(() => {
     connect().then(setConnection, (error: unknown) => setFailure(String(error)));
   }, [connect]);
+  let body;
   if (failure) {
-    return <p className="problem">Could not start the orchestrator: {failure}</p>;
+    body = <p className="problem">Could not start the orchestrator: {failure}</p>;
+  } else {
+    body = connection ? <Connected connection={connection} /> : <p className="loading">Starting the orchestrator…</p>;
   }
-  return connection ? <Connected connection={connection} /> : <p className="loading">Starting the orchestrator…</p>;
+  return (
+    <>
+      <header className="app-header">
+        {/* public/logo.svg is docs/logo.svg, held equal by logo.test.tsx; alt is that file's <title>. */}
+        <img src="/logo.svg" alt="An octopus holding a terminal, a robot and a chat bubble" />
+        <span className="app-name">Octoflow AI</span>
+      </header>
+      {body}
+    </>
+  );
 }
 
 function Connected({ connection }: { connection: Connection }) {
