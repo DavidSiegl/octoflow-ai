@@ -119,15 +119,27 @@ describe("npmNotices on a made-up tree", () => {
     expect(sections(npmNotices(ui, accepted))).toEqual([{ license: "MIT", packages: ["dual 1.0.0"], text: "mit text" }]);
   });
 
-  it("gives a package offered under several licenses whose file names none of them the whole expression", () => {
+  it("takes the file named for a later accepted license of an OR when none is named for the first", () => {
     const ui = tree([
-      { name: "one-file", license: "MIT OR Apache-2.0", files: { LICENSE: "both texts" } },
-      { name: "other-file", license: "Apache-2.0 OR MIT", files: { "LICENSE-APACHE": "apache text" } },
+      { name: "apache-file", license: "Apache-2.0 OR MIT", files: { "LICENSE-APACHE": "apache text" } },
     ]);
     expect(sections(npmNotices(ui, accepted))).toEqual([
-      { license: "MIT OR Apache-2.0", packages: ["one-file 1.0.0"], text: "both texts" },
-      { license: "Apache-2.0 OR MIT", packages: ["other-file 1.0.0"], text: "apache text" },
+      { license: "Apache-2.0", packages: ["apache-file 1.0.0"], text: "apache text" },
     ]);
+  });
+
+  it("gives a package offered under accepted licenses only, whose file names none, the whole expression", () => {
+    const ui = tree([{ name: "one-file", license: "MIT OR Apache-2.0", files: { LICENSE: "both texts" } }]);
+    expect(sections(npmNotices(ui, accepted))).toEqual([
+      { license: "MIT OR Apache-2.0", packages: ["one-file 1.0.0"], text: "both texts" },
+    ]);
+  });
+
+  it("names a package also offered under a license about.toml does not accept whose file names none of them", () => {
+    // The one text may be GPL's alone, so it cannot stand for the MIT notice.
+    const ui = tree([{ name: "maybe-gpl", license: "MIT OR GPL-3.0-only", files: { COPYING: "gpl text" } }]);
+    const refused = /maybe-gpl 1\.0\.0: no one license text for MIT OR GPL-3\.0-only/;
+    expect(() => npmNotices(ui, accepted)).toThrow(refused);
   });
 
   it("names a package whose license files differ and none is named for its license", () => {

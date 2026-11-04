@@ -39,7 +39,9 @@ export function acceptedLicenses(aboutToml) {
  *
  * @param {string} ui the directory holding package-lock.json and the node_modules npm ci installed from it
  * @param {string[]} accepted the licenses a package may be under, first preferred, as acceptedLicenses gives them. A
- *   package offered under several ("A OR B") is shipped under the first of them this list holds.
+ *   package offered under several ("A OR B") is shipped under the first of them this list holds that one of its
+ *   license files is named for (LICENSE-MIT); with none so named, its one license text is shipped under the whole
+ *   expression when this list holds every license offered.
  * @returns {string} the page
  * @throws {Error} naming each package, one a line, that is under no accepted license, whose license is not an SPDX
  *   identifier or an OR of them, that has no one license text, or that is not installed although the lockfile
@@ -63,14 +65,14 @@ export function npmNotices(ui, accepted) {
     const pkg = readJson(join(dir, "package.json"));
     const name = `${pkg.name} ${pkg.version}`;
     const offered = typeof pkg.license === "string" ? offeredLicenses(pkg.license) : undefined;
-    const license = offered && accepted.find((id) => offered.includes(id));
-    if (!license) {
+    const usable = offered ? accepted.filter((id) => offered.includes(id)) : [];
+    if (usable.length === 0) {
       problems.push(`${name}: license ${JSON.stringify(pkg.license ?? pkg.licenses)} is none of about.toml's accepted`);
       continue;
     }
-    const notice = licenseNotice(dir, license, offered);
+    const notice = licenseNotice(dir, offered, usable);
     if (notice === undefined) {
-      problems.push(`${name}: no one license text for ${license} in ${path}`);
+      problems.push(`${name}: no one license text for ${offered.join(" OR ")} in ${path}`);
       continue;
     }
     const key = `${notice.license}\n${notice.text}`;
@@ -97,21 +99,33 @@ function offeredLicenses(expression) {
   return offered.every((id) => /^[A-Za-z0-9.+-]+$/.test(id)) ? offered : undefined;
 }
 
-// The notice of a package in dir offered under offered, shipped under license, one of them: the trimmed text of its
-// LICENSE*, LICENCE* or COPYING* files, SPDX tag files (LICENSE.spdx) aside, and the license it gives it under.
-// Where one file's name holds the license's name, as LICENSE-MIT does MIT and LICENSE-APACHE-2.0 Apache-2.0, that
-// file under license. Otherwise the files' one text (LICENSE and LICENSE.md may hold it twice) under license, or,
-// when the package offers several, under all of them, since nothing says which that text is. Undefined when the files
-// hold no text or differ.
-function licenseNotice(dir, license, offered) {
-  const files = readdirSync(dir, { withFileTypes: true })
-    .filter((f) => f.isFile() && /^(licen[cs]e|copying)/i.test(f.name) && !/\.spdx$/i.test(f.name))
-    .map((f) => ({ name: f.name, text: readFileSync(join(dir, f.name), "utf8").trim() }));
-  const family = license.split("-")[0].toLowerCase();
-  const named = files.filter((f) => f.name.toLowerCase().includes(family));
-  if (named.length === 1) return { license, text: named[0].text };
-  if (files.length === 0 || files.some((f) => f.text !== files[0].text)) return undefined;
+// The notice of a package in dir offered under the licenses offered, of which usable are those about.toml accepts, in
+// its order: a text from its LICENSE*, LICENCE* or COPYING* files and the license it is shipped under. The first of
+// usable that exactly one file's name holds, as LICENSE-MIT does MIT and LICENSE-APACHE-2.0 Apache-2.0, gives that
+// file under that license. Otherwise, when the files hold one text (LICENSE and LICENSE.md may hold it twice) and
+// about.toml accepts every license offered, that text under all of them, since nothing says which it is. Undefined
+// otherwise: no file, files that differ, or one text of a package also offered under a license about.toml does not
+// accept, which may be that license's text alone.
+function licenseNotice(dir, offered, usable) {
+  const files = noticeFiles(dir, /^(licen[cs]e|copying)/i);
+  for (const license of usable) {
+    const family = license.split("-")[0].toLowerCase();
+    const named = files.filter((f) => f.name.toLowerCase().includes(family));
+    if (named.length === 1) return { license, text: named[0].text };
+  }
+  if (usable.length < offered.length || files.length === 0) return undefined;
+  if (files.some((f) => f.text !== files[0].text)) return undefined;
   return { license: offered.join(" OR "), text: files[0].text };
+}
+
+// The regular files in dir whose names match pattern, SPDX tag files (LICENSE.spdx) aside, by name, each with its
+// trimmed text.
+function noticeFiles(dir, pattern) {
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((f) => f.isFile() && pattern.test(f.name) && !/\.spdx$/i.test(f.name))
+    .map((f) => f.name)
+    .sort()
+    .map((name) => ({ name, text: readFileSync(join(dir, name), "utf8").trim() }));
 }
 
 function escape(text) {
