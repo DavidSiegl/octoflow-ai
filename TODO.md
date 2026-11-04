@@ -542,25 +542,36 @@ is rewritten to say what is left.
   `Cli::exec` asking the kernel for a signal when its parent, the runtime, dies (`PR_SET_PDEATHSIG`) when the app
   runs extracted, checked on a built AppImage, or with a runtime that forwards signals.
   Ticket: `.scratch/desktop-packaging-gaps/issues/02-appimage-signal-reaches-the-cli.md` (#240).
-- **An AppImage run without FUSE leaves its extraction in `/tmp`.** Under `APPIMAGE_EXTRACT_AND_RUN` the
-  AppImage runtime that linuxdeploy-plugin-appimage bundles extracts into `$TMPDIR/appimage_extracted_<hash>` and
-  never removes it. `packaging/build-desktop.sh` sets the variable for the whole Tauri build, so linuxdeploy and
-  appimagetool leave two such directories on the build machine at every build (Jenkins's agent among them). Users
-  who run the desktop AppImage as the CLI without FUSE are left with one 336 MB directory per version. Its smoke
-  test already points `TMPDIR` into its own directory. Found in the second build round of run 20261025-081413-327fc2
-  (2026-10-25). Closes with a `TMPDIR` the build removes around `tauri build`, and with a README note, or a newer
-  runtime that cleans up, for users.
-  Ticket: `.scratch/desktop-packaging-gaps/issues/03-appimage-extraction-cleaned-up.md` (#241).
+- **Removing a tree of read-only directories is written out twice.** `chmod -R u+rwX "$dir" && rm -rf "$dir"`,
+  with a warning when it fails, is in the Jenkinsfile's Test stage (emptying `TMPDIR` before the tests) and in
+  `packaging/build-desktop.sh`'s `remove_temporaries`, for the AppImage extractions it removes; a fix to one does
+  not reach the other. `engine/src/proofs.rs`'s `REMOVE_TREE_SCRIPT` is a looser third (`rm` runs even when `chmod`
+  fails, with no warning). Raised by cross-review 132 (F6, nit, 2026-11-04): "Record or share it, as the implementer
+  judges". Closes with one script both call, should a third copy be needed or the idiom change.
+- **Ctrl-C during `packaging/build-desktop.sh`'s AppImage smoke test leaves `serve` running.** `smoke_appimage`
+  starts the AppImage's `serve` as a background job, which a non-interactive shell starts with SIGINT ignored, and
+  the INT trap kills no one, so the AppImage and the orchestrator it execs outlive the script; the trap has removed
+  the smoke test's directory they run from by then. A SIGTERM to the process group (a Jenkins abort) does reach
+  them, and Jenkins runs with SIGINT ignored, so this is interactive use only. Older than desktop-packaging-gaps/03,
+  whose traps kill no one either. Raised by cross-review 132 (round 2, not recorded there, 2026-11-04). Closes with
+  the traps killing `serve`'s processes, as `smoke_fail` does, before removing the directory.
+- **`packaging/build-desktop.sh`'s macOS smoke test leaves its directory when the script is killed by a signal.**
+  `smoke_dmg` removes its `mktemp -d` only in its `smoke_fail` and on success, not through `remove_temporaries`
+  as `smoke_appimage`'s since desktop-packaging-gaps/03, so Ctrl-C or SIGTERM leaves it, with the .dmg possibly
+  still attached at its `mnt`. It holds no AppImage extraction, so it is small. Raised by cross-review 132
+  (round 2, not recorded there, 2026-11-04). Closes with `smoke_dmg`'s directory, and the detach, in
+  `remove_temporaries`, checked on a Mac.
 - **The Package stage still runs programs it wrote to `/tmp`, kept out of agentbox0's Falco mail only by path
   exceptions that let any binary placed under those paths run unreported.** The Test and Gate stages set `TMPDIR` to
   `$WORKSPACE_TMP/tmp`, on the agent's volume, which the rule cannot see (the Jenkinsfile's Test stage says why),
-  but Package keeps `/tmp`. There the linuxdeploy and appimagetool that `packaging/build-desktop.sh` runs under
-  `APPIMAGE_EXTRACT_AND_RUN` extract themselves into `$TMPDIR/appimage_extracted_<hash>` (entry above) and run from
-  there. The homelab excepts those paths (falco/rules/homelab.yaml, `appimage_extracted`). Each stage now creates
-  its own TMPDIR, so a stage added later has to copy both lines. Raised by cross-review 71 (F1, F3: "set TMPDIR for
-  every stage that runs what it builds (one pipeline-level definition next to CARGO_HOME would do)"). Closes with
-  that pipeline-level `TMPDIR`, created before any stage that uses it, and a Package stage seen to pass with it on
-  agentbox0. The homelab can then drop `appimage_extracted`.
+  but Package keeps `/tmp`. There the desktop AppImage that `packaging/build-desktop.sh`'s smoke test runs under
+  `APPIMAGE_EXTRACT_AND_RUN` extracts itself into `$TMPDIR/appimage_extracted_<hash>`, below the test's `mktemp -d`,
+  and runs from there; linuxdeploy and appimagetool extract into the script's own `build/desktop/tmp` since
+  desktop-packaging-gaps/03. The homelab excepts those paths (falco/rules/homelab.yaml, `appimage_extracted`). Each
+  stage now creates its own TMPDIR, so a stage added later has to copy both lines. Raised by cross-review 71 (F1,
+  F3: "set TMPDIR for every stage that runs what it builds (one pipeline-level definition next to CARGO_HOME would
+  do)"). Closes with that pipeline-level `TMPDIR`, created before any stage that uses it, and a Package stage seen
+  to pass with it on agentbox0. The homelab can then drop `appimage_extracted`.
 - **No build has yet been seen waiting for `ci/cargo-lock.sh` on the Jenkins agent.** PR #88's builds ran both
   cargo steps through it on agentbox0 (builds 1-3, 2026-10-25), so the agent image has `flock` and the lock file's
   directory is writable, and a quality-style build (`GIT_REF` set) ran `--no-wait`; but the two run side by side
