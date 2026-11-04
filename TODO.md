@@ -69,6 +69,25 @@ is rewritten to say what is left.
 
 ## Open issues
 
+- **An npm package's NOTICE file ships only for a build tool.** `ui/scripts/npm-licenses.js` appends the
+  `THIRD-PARTY-LICEN[CS]E*` and `NOTICE*` files of the `BUILD_CODE` packages (Vite, Rolldown) to their notices, and
+  of no other; Apache-2.0 §4(d) wants a NOTICE redistributed with any work it comes with, so a production package
+  under Apache-2.0 that ships one would go out without it, silently. None does today (@tauri-apps/api has none).
+  Raised, not recorded, by cross-review 131 (round 4, 2026-11-04): "a production Apache package's NOTICE would be
+  dropped silently". Closes with every shipped package's `NOTICE*` appended to its notice, or the build failing on a
+  production package that has one.
+- **The npm notices miss a build tool's third-party notices under another file name.** `withThirdPartyNotices`
+  (`ui/scripts/npm-licenses.js`) takes `/^(third-party-licen[cs]e|notice)/i`, so `THIRD_PARTY_LICENSES` or
+  `ThirdPartyNotices.txt` in the next `BUILD_CODE` package is left out without a word, and a `LICENSE-THIRD-PARTY`
+  falls into the license pattern and fails the build. Vite and Rolldown name theirs as matched. Raised, not recorded,
+  by cross-review 131 (round 4, 2026-11-04). Closes with a pattern that takes `third[-_ ]?party` in any case and
+  position, or a test that lists each `BUILD_CODE` package's notice-like files and fails on one not shipped.
+- **The npm notices' refusal of a multi-licensed package says it has no license text.** A package offered under a
+  license `packaging/about.toml` does not accept, whose one license file names none of the licenses, fails
+  `npmNotices` with "no one license text for MIT OR GPL-3.0-only", which sends the reader looking for a missing file;
+  the refusal is that the text may be the unaccepted license's alone, and `npmNotices`'s `@throws` does not name the
+  case. Raised, not recorded, by cross-review 131 (round 4, 2026-11-04). Closes with a message of its own for that
+  case ("one license text for an offer not every license of which about.toml accepts") and the `@throws` naming it.
 - **The project bar's last button runs past a narrow window's edge.** At 560 px wide the bar's fields keep their
   minimum widths and "Check setup…" wraps onto two lines and ends past the page's right padding; origin/main at
   a357407 does the same, so the logo's header (gui-logo/01) did not cause it. Seen in a headless screenshot of
