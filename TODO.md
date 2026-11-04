@@ -523,9 +523,10 @@ is rewritten to say what is left.
   runs extracted, checked on a built AppImage, or with a runtime that forwards signals.
   Ticket: `.scratch/desktop-packaging-gaps/issues/02-appimage-signal-reaches-the-cli.md` (#240).
 - **Removing a tree of read-only directories is written out twice.** `chmod -R u+rwX "$dir" && rm -rf "$dir"`,
-  with a warning when it fails, is in the Jenkinsfile's stages (`TMPDIR`, emptied before each) and in
+  with a warning when it fails, is in the Jenkinsfile's Test stage (emptying `TMPDIR` before the tests) and in
   `packaging/build-desktop.sh`'s `remove_temporaries`, for the AppImage extractions it removes; a fix to one does
-  not reach the other. Raised by cross-review 132 (F6, nit, 2026-11-04): "Record or share it, as the implementer
+  not reach the other. `engine/src/proofs.rs`'s `REMOVE_TREE_SCRIPT` is a looser third (`rm` runs even when `chmod`
+  fails, with no warning). Raised by cross-review 132 (F6, nit, 2026-11-04): "Record or share it, as the implementer
   judges". Closes with one script both call, should a third copy be needed or the idiom change.
 - **The Package stage still runs programs it wrote to `/tmp`, kept out of agentbox0's Falco mail only by path
   exceptions that let any binary placed under those paths run unreported.** The Test and Gate stages set `TMPDIR` to
