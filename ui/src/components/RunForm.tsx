@@ -20,7 +20,7 @@ function defaultIfLoads(workflows: OfferedWorkflow[]): string | null {
 }
 
 /** What a role's row sets for it: an agent, one of the harnesses offered, and a model; each empty for not set, which
- * leaves the role to the run's agent and model, else to its workflow's own. */
+ * leaves the role to the run's agent and model, else to its default. */
 interface RoleChoice {
   agent: string;
   model: string;
