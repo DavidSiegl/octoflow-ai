@@ -157,6 +157,11 @@ order. Each finding reads the helper's JSON as Python's reads the syntax tree:
   read for attributes only where they start with `#`, so an attribute after other code on its line, or one written
   over several lines whose `ignore` is not on its first, is not seen there; a test's own attributes the helper gives
   whole;
+- `platform-only`: a `cfg` that would be a `skip` but names only platforms (`unix`, `windows`, `target_os = "…"`,
+  `target_family = "…"`, and `any`, `all` and `not` of them, `test` allowed beside them in an outermost `all`), on a
+  test, a test module or a file of tests. It leaves a test out only on platforms where what it tests is not built,
+  as a test of a Linux-only system call, so it is one to weigh: the Reviewer checks that the code under test is as
+  limited. On a line of its own inside a test's body it is still a `skip`, as is a line that also holds another;
 - `fewer-assertions`: a kept test with fewer of the assertion macros the helper lists (`asserts`: `assert!`,
   `assert_eq!`, `assert_ne!`, their `debug_` forms, and `panic!`) than at the base. It is one to weigh, as Python's;
 - `swallowed-error`: on an added line, a `#[should_panic]` without `expected` on a test, which any panic passes, a

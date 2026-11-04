@@ -1980,7 +1980,7 @@ class TestRustWeakenedTests(RepositoryTest):
         self.edit("crate/tests/it.rs", "use tiny::add;\n", "#![cfg(feature = \"slow\")]\nuse tiny::add;\n")  # 1
         self.edit("crate/tests/it.rs", "#[test]\nfn negative", "#[test]\n#[ignore]\nfn negative")        # 5
         self.edit("crate/tests/it.rs", "#[tokio::test]\n", "#[tokio::test] #[cfg_attr(miri, ignore)]\n")  # 10
-        self.edit("crate/src/lib.rs", "#[cfg(test)]\n", "#[cfg(test)]\n#[cfg(unix)]\n")                   # 6
+        self.edit("crate/src/lib.rs", "#[cfg(test)]\n", "#[cfg(test)]\n#[cfg(miri)]\n")                   # 6
         self.edit("crate/src/lib.rs", "        assert_eq!(add(10, 20), 30);\n",
                   "        #[cfg(any())]\n        assert_eq!(add(10, 20), 30);\n")                        # 18
         where, found = self.found()
@@ -1988,6 +1988,30 @@ class TestRustWeakenedTests(RepositoryTest):
                                  ("crate/tests/it.rs", 1, "skip"), ("crate/tests/it.rs", 5, "skip"),
                                  ("crate/tests/it.rs", 10, "skip")])
         self.assertEqual(found[4]["message"], "`#[cfg_attr(miri, ignore)]` added: it skips a test or turns it off.")
+
+    def test_a_platform_cfg_on_a_test_its_module_or_its_file_is_weighed_not_a_skip(self):
+        self.edit("crate/tests/it.rs", "use tiny::add;\n", "#![cfg(unix)]\nuse tiny::add;\n")             # 1
+        self.edit("crate/tests/it.rs", "#[test]\nfn negative", "#[test]\n#[cfg(target_os = \"linux\")]\nfn negative")  # 5
+        self.edit("crate/tests/it.rs", "#[tokio::test]\n",
+                  "#[tokio::test]\n#[cfg(all(test, any(target_os = \"linux\", target_os = \"macos\")))]\n")  # 11
+        self.edit("crate/src/lib.rs", "#[cfg(test)]\n", "#[cfg(test)]\n#[cfg(not(windows))]\n")           # 6
+        where, found = self.found()
+        self.assertEqual(where, [("crate/src/lib.rs", 6, "platform-only"), ("crate/tests/it.rs", 1, "platform-only"),
+                                 ("crate/tests/it.rs", 5, "platform-only"), ("crate/tests/it.rs", 11, "platform-only")])
+        self.assertEqual(found[2]["message"],
+                         "`#[cfg(target_os = \"linux\")]` added: it turns a test off on the other platforms.")
+
+    def test_a_platform_cfg_with_another_condition_or_inside_a_test_is_a_skip(self):
+        self.edit("crate/tests/it.rs", "#[test]\nfn negative",
+                  "#[test]\n#[cfg(all(unix, feature = \"x\"))]\nfn negative")                             # 4
+        self.edit("crate/tests/it.rs", "#[tokio::test]\n", "#[tokio::test]\n#[cfg(all(unix, not(test)))]\n")  # 10
+        self.edit("crate/src/lib.rs", "#[cfg(test)]\n", "#[cfg(test)]\n#[cfg(unix)] #[cfg(miri)]\n")      # 6
+        self.edit("crate/src/lib.rs", "        assert_eq!(add(10, 20), 30);\n",
+                  "        #[cfg(unix)]\n        assert_eq!(add(10, 20), 30);\n")                         # 18
+        where, found = self.found()
+        self.assertEqual(where, [("crate/src/lib.rs", 6, "skip"), ("crate/src/lib.rs", 18, "skip"),
+                                 ("crate/tests/it.rs", 4, "skip"), ("crate/tests/it.rs", 10, "skip")])
+        self.assertEqual(found[0]["message"], "`#[cfg(miri)]` added: it skips a test or turns it off.")
 
     def test_a_new_test_module_and_attributes_that_skip_nothing_are_not_skips(self):
         self.edit("crate/src/lib.rs", "}\n\n#[cfg(test)]", "}\n\n#[cfg(unix)]\npub fn unix() {}\n\n#[cfg(test)]")
@@ -3323,6 +3347,26 @@ class TestPassesAtBase(RepositoryTest):
             check.find("change")
         self.assertFalse(check.fails)
         find.assert_called_once_with("change", budget=42)
+
+
+class TestRustPlatformOnly(unittest.TestCase):
+    """_rust_platform_only: which cfg attributes name only the platforms a test runs on."""
+
+    def test_platforms_and_their_combinations_are_platform_only(self):
+        for attribute in ['#[cfg(unix)]', '#![cfg(windows)]', '#[cfg( target_os = "linux" )]',
+                          '#[cfg(target_family = "wasm")] fn f() {}', '#[cfg(not(target_os = "macos"))]',
+                          '#[cfg(any(target_os = "linux", all(unix, not(target_os = "macos"))))]',
+                          '#[cfg(all(test, unix))]', '#[cfg(all(unix, test, not(windows)))]']:
+            self.assertTrue(gate._rust_platform_only(attribute), attribute)
+
+    def test_anything_else_is_not(self):
+        for attribute in ['#[cfg(test)]', '#[cfg(miri)]', '#[cfg(feature = "slow")]', '#[cfg(any())]',
+                          '#[cfg(all())]', '#[cfg(not(test))]', '#[cfg(any(test, unix))]',
+                          '#[cfg(all(unix, feature = "x"))]', '#[cfg(not(unix, windows))]', '#[cfg(target_arch = "x86")]',
+                          '#[cfg(unix = "yes")]', '#[cfg(target_os)]', '#[cfg(all(test))]', '#[cfg(unix',
+                          '#[cfg(unix)', '#[ignore]', '#[cfg_attr(unix, ignore)]', '#[cfg(unix),]',
+                          '#[cfg(all(unix, all(test, windows)))]']:
+            self.assertFalse(gate._rust_platform_only(attribute), attribute)
 
 
 class TestRustPassesAtBase(RepositoryTest):
