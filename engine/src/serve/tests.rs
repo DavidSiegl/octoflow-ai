@@ -292,7 +292,7 @@ fn runs_are_list_json_records_on_a_machine() {
     // As list --json --machine remote --cwd ~/proj prints it.
     let target = ["--machine", "remote", "--cwd", "~/proj"].map(String::from);
     let listed: Vec<Value> = host
-        .run_states("/proj")
+        .run_states_inside("/proj")
         .unwrap()
         .iter()
         .map(|(age, s)| Value::Object(run_record(s, *age, &crate::runs::local_host(), &crate::runs::pid_alive, &target)))
@@ -417,21 +417,77 @@ fn files_of_a_run_outside_the_runs_directory_are_refused() {
 }
 
 #[test]
-fn a_link_in_the_run_directory_is_followed_as_python_follows_it() {
-    // Python's Host.read cats the path, so a symbolic link an agent left in the run directory is read through; the
-    // name is still a plain name (TODO.md, "serve reads a run's files through a symbolic link").
+fn a_link_that_leads_out_of_the_run_directory_is_refused() {
+    // An agent may leave a symbolic link in its run directory, and a run directory may itself be one; the name asked
+    // for is still a plain name (serve-run-files/02, #231).
     let d = TempDir::new("link");
     d.save(SERVE_ID, &[]);
     d.write("outside.txt", "outside");
-    std::os::unix::fs::symlink(format!("{}/outside.txt", d.0), format!("{}/{RUNS_DIR}/{SERVE_ID}/link.md", d.0)).unwrap();
+    d.write(&format!("{RUNS_DIR}/{SERVE_ID}/spec.md"), "spec");
+    let (runs, link) = (format!("{}/{RUNS_DIR}", d.0), |target: &str, at: &str| std::os::unix::fs::symlink(target, at).unwrap());
+    link(&format!("{}/outside.txt", d.0), &format!("{runs}/{SERVE_ID}/out.md"));
+    link("../../../outside.txt", &format!("{runs}/{SERVE_ID}/up.md"));
+    link("spec.md", &format!("{runs}/{SERVE_ID}/in.md"));
+    link(&d.0, &format!("{runs}/elsewhere"));
+    link(SERVE_ID, &format!("{runs}/alias"));
     let served = Served::real();
-    let reply = served.get(&format!("/file?{}", urlencode(&[("cwd", &d.0), ("run", SERVE_ID), ("name", "link.md")])), &[]);
-    assert_eq!((reply.status, reply.json().get("text")), (Some(200), Some(&Value::from("outside"))));
-    // A run directory that is a link is listed through it, as Python lists it.
-    std::os::unix::fs::symlink(&d.0, format!("{}/{RUNS_DIR}/linked", d.0)).unwrap();
-    let reply = served.get(&format!("/files?{}", urlencode(&[("cwd", &d.0), ("run", "linked")])), &[]);
-    let names: Vec<String> = reply.json().get("files").and_then(Value::as_array).unwrap().iter().map(|f| f.get("name").unwrap().text()).collect();
-    assert_eq!((reply.status, names), (Some(200), vec!["outside.txt".to_string()]));
+    let file = |run: &str, name: &str| served.get(&format!("/file?{}", urlencode(&[("cwd", &d.0), ("run", run), ("name", name)])), &[]);
+    let names = |run: &str| {
+        let reply = served.get(&format!("/files?{}", urlencode(&[("cwd", &d.0), ("run", run)])), &[]);
+        assert_eq!(reply.status, Some(200), "{reply:?}");
+        let mut names: Vec<String> = reply.json().get("files").and_then(Value::as_array).unwrap().iter().map(|f| f.get("name").unwrap().text()).collect();
+        names.sort();
+        names
+    };
+    // A link that leads out is neither read nor listed; one that stays inside is both.
+    for name in ["out.md", "up.md"] {
+        let reply = file(SERVE_ID, name);
+        assert_eq!((reply.status, reply.json().get("text")), (Some(403), None), "{name}");
+        assert_eq!(reply.error(), format!("{name:?} leads out of run {SERVE_ID}'s directory, or the directory out of the runs directory"));
+    }
+    assert_eq!((file(SERVE_ID, "in.md").status, file(SERVE_ID, "in.md").json().get("text")), (Some(200), Some(&Value::from("spec"))));
+    assert_eq!(names(SERVE_ID), ["in.md", "spec.md"]);
+    // A run directory that leads out of the runs directory lists nothing and reads nothing; one that is a link to
+    // another run directory is that run's.
+    assert_eq!(names("elsewhere"), Vec::<String>::new());
+    assert_eq!(file("elsewhere", "outside.txt").status, Some(403));
+    assert_eq!(file("alias", "spec.md").json().get("text"), Some(&Value::from("spec")));
+    assert_eq!(names("alias"), ["in.md", "spec.md"]);
+}
+
+#[test]
+fn a_run_whose_state_json_leads_out_of_its_run_directory_is_no_run() {
+    // serve-run-files/02's ruling (2026-11-04, the user): a run's state.json is refused as its files are, so a
+    // run that is a link out of the runs directory, or whose state.json is a link out of its run directory, is left
+    // out of /runs and the event stream, as a run without a state.json is.
+    let d = TempDir::new("state-link");
+    d.save(SERVE_ID, &[]);
+    let runs = format!("{}/{RUNS_DIR}", d.0);
+    let link = |target: &str, at: &str| std::os::unix::fs::symlink(target, at).unwrap();
+    d.write("elsewhere/state.json", &serve_state("x-away00", &[]));
+    link(&format!("{}/elsewhere", d.0), &format!("{runs}/x-away00"));
+    d.write("outside.json", &serve_state("x-out000", &[]));
+    std::fs::create_dir_all(format!("{runs}/x-out000")).unwrap();
+    link(&format!("{}/outside.json", d.0), &format!("{runs}/x-out000/state.json"));
+    // A state.json that is a link inside its own run directory is that run's.
+    d.write(&format!("{RUNS_DIR}/x-in0000/saved.json"), &serve_state("x-in0000", &[]));
+    link("saved.json", &format!("{runs}/x-in0000/state.json"));
+    let served = Served::real();
+    let reply = served.get(&d.query("/runs"), &[]);
+    let mut ids: Vec<String> = reply.json().get("runs").and_then(Value::as_array).unwrap().iter().map(|r| r.get("id").unwrap().text()).collect();
+    ids.sort();
+    assert_eq!((reply.status, ids), (Some(200), vec![SERVE_ID.to_string(), "x-in0000".to_string()]));
+    let agent = served.get(&format!("/agent?{}", urlencode(&[("cwd", &d.0), ("run", "x-out000"), ("role", "build")])), &[]);
+    assert_eq!((agent.status, agent.error()), (Some(404), "no run x-out000".to_string()));
+    // The stream gives a record and a files event for each run it lists, and none for the two refused.
+    let stream = EventStream::open(&served, &d.query("/events"), "");
+    let mut recorded: Vec<String> = (0..4)
+        .map(|_| stream.next(Duration::from_secs(2)))
+        .filter(|(kind, _)| kind == "record")
+        .map(|(_, payload)| payload.get("run").unwrap().text())
+        .collect();
+    recorded.sort();
+    assert_eq!(recorded, [SERVE_ID, "x-in0000"]);
 }
 
 #[test]
@@ -563,7 +619,7 @@ fn an_unreadable_project_is_a_bad_gateway() {
 #[test]
 fn runs_that_cannot_be_read_are_a_bad_gateway() {
     let host = Arc::new(ServeHost::on(None));
-    host.state().run_states_error = Some("ssh: connection refused".to_string());
+    host.state().run_states_inside_error = Some("ssh: connection refused".to_string());
     let served = Served::fake(&host, &[]);
     let reply = served.get(&Served::query("/runs", &[]), &[]);
     assert_eq!((reply.status, reply.error()), (Some(502), "ssh: connection refused".to_string()));
@@ -1300,9 +1356,9 @@ fn a_client_that_goes_ends_its_stream() {
     drop(stream);
     // A write or two may still succeed before the server sees the connection reset.
     std::thread::sleep(Duration::from_millis(500));
-    let polls = host.state().run_states_calls;
+    let polls = host.state().run_states_inside_calls;
     std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(host.state().run_states_calls, polls);
+    assert_eq!(host.state().run_states_inside_calls, polls);
 }
 
 #[test]

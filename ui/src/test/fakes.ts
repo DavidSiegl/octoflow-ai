@@ -83,11 +83,26 @@ export interface FakeSetup {
   marked?: number;
 }
 
-/** The workflows a stubbed server offers unless told otherwise: `default`, `tdd`, and `broken`, which does not load. */
+/** The workflows a stubbed server offers unless told otherwise: `default`, `tdd`, and `broken`, which does not load.
+ * `default` and `tdd` share the role `build`, each with its own model for it. */
 export const OPTIONS: RunOptions = {
   workflows: [
-    { name: "default", description: "Spec, build and review.", roles: [] },
-    { name: "tdd", description: "Tests first, then the code.", roles: [] },
+    {
+      name: "default",
+      description: "Spec, build and review.",
+      roles: [
+        { role: "build", label: "Builder", agent: "claude", model: null },
+        { role: "review", label: "Reviewer", agent: "codex", model: "o3" },
+      ],
+    },
+    {
+      name: "tdd",
+      description: "Tests first, then the code.",
+      roles: [
+        { role: "test", label: "Test Writer", agent: "claude", model: null },
+        { role: "build", label: "Builder", agent: "claude", model: "sonnet" },
+      ],
+    },
     { name: "broken", error: "workflow broken: no steps" },
   ],
   agents: ["claude", "codex", "gemini", "opencode", "pi"],

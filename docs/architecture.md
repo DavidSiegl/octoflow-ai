@@ -232,9 +232,9 @@ from a herdr pane.
 
   | Endpoint | Gives |
   |---|---|
-  | `/runs` | `{"version": 1, "runs": [...]}`, `list --json`'s document (`run_record` of each of `Host::run_states`) |
-  | `/files?run=ID` | the files in the run's directory (`Host::run_files`), oldest first, each `{"name", "mtime"}` |
-  | `/file?run=ID&name=NAME` | `{"run", "name", "text"}` for one of them, read through `Host::read` |
+  | `/runs` | `{"version": 1, "runs": [...]}`, `list --json`'s document (`run_record` of each of `Host::run_states_inside`, Security below) |
+  | `/files?run=ID` | the files in the run's directory that stay inside it (`Host::run_files_inside`, Security below), oldest first, each `{"name", "mtime"}` |
+  | `/file?run=ID&name=NAME` | `{"run", "name", "text"}` for one of them, read through `Host::read_inside` |
   | `/agent?run=ID&role=ROLE` | `{"run", "role", "text"}`: the last lines (`&lines=N`, 200 by default) of what the run's agent of the role shows, through `herdr agent read` |
   | `POST /agent/input?run=ID&role=ROLE` | types the JSON body's `{"text"}` into that agent as a prompt (`herdr agent prompt`), or presses its `{"keys"}` (`herdr agent send-keys`) |
   | `/events` | a `text/event-stream` of `record`, `files` and `problem` events; see Events below |
@@ -244,7 +244,7 @@ from a herdr pane.
   | `POST /run` | starts the run its JSON body asks for (task, workflow, agent, model, role_agents, role_models, no_pr, worktree) and answers `{"run"}`; see Starting a run above |
 
   `RunServer`'s doc comment is the authority on them.
-- **Events.** Each `/events` stream has its own `RunWatch`. It polls `run_states` every second, and every 5 for
+- **Events.** Each `/events` stream has its own `RunWatch`. It polls `run_states_inside` every second, and every 5 for
   a `--machine` project (`SERVE_POLL`), and compares what it reads with what the stream
   last sent. A run whose record changed, other than in `AGING_RECORD_KEYS`, gets a `record` event, and one whose
   files changed a `files` event; a run whose `state.json` is gone gets a `record` event with `null`. The first
@@ -263,7 +263,14 @@ from a herdr pane.
   (`OPTIONS`) carries no token, so it gets only the `Host` and `Origin` checks, and a 204 that allows `GET` and
   `POST` with `Authorization` and `Content-Type`. `Access-Control-Allow-Origin` echoes only an origin that passed. `ProjectRuns` lets a
   run id or file name be only a plain name (`plain_name`: no `/`, not `.` or `..`) and refuses `state.json`.
-  It refuses such a path before anything is read (`RunReadError::Refused`), which the server answers with 403. An
+  It refuses such a path before anything is read (`RunReadError::Refused`), which the server answers with 403. A
+  symbolic link is followed only as far as it stays inside: a file that, links resolved, is not in its run
+  directory, links resolved, and every file of a run directory that is not in the project's `.orchestrator/runs`,
+  are refused with 403 by `/file` and left out of `/files` and the event stream's `files` events. A run whose
+  `state.json` is refused so is no run: `/runs` and the stream's `record` events leave it out, as a run without a
+  `state.json`, and `/agent` answers 404. The links are resolved on the project's host, over SSH too
+  (`Host::run_states_inside`, `run_files_inside` and `read_inside`); the engine's own reads of a run's files and
+  states still follow them. An
   agent is named only by its run and role, which `ProjectRuns` looks up in the run's `state.json`, so a client can
   read or type into no other herdr agent; a POST body is read to at most 64 KiB (`MAX_BODY_BYTES`). `POST /run`
   runs a command a client chose only within `run`'s flags: the program is serve's own, each flag's value is joined
