@@ -283,7 +283,7 @@ impl Cli {
         }
         // A CLI that outlives the runtime is still better than none: say so and run it.
         #[cfg(target_os = "linux")]
-        if let Err(e) = stop_with_appimage_runtime() {
+        if let Err(e) = stop_with_appimage_runtime(std::env::var_os("APPIMAGE").map(PathBuf::from).as_deref()) {
             eprintln!("octoflow-ui: the CLI will not stop when the AppImage that started it does: {e}");
         }
         let e = self.command.exec();
@@ -298,21 +298,21 @@ impl Cli {
     }
 }
 
-/// When this process's parent is the AppImage's runtime that started it, ask the kernel to send this process SIGTERM
-/// when that parent dies, a request an exec keeps; when the parent died before the request, end this process now by
-/// SIGTERM, as the request would have. Elsewhere, nothing. The runtime stays the parent under
+/// When this process's parent is the AppImage's runtime that started it, appimage being the file `$APPIMAGE` names
+/// (None when it is unset), ask the kernel to send this process SIGTERM when that parent dies, a request an exec
+/// keeps; when the parent died before the request, end this process now by SIGTERM, as the request would have.
+/// Elsewhere, nothing. The runtime stays the parent under
 /// `APPIMAGE_EXTRACT_AND_RUN` (a machine without FUSE): it forks, runs the app in the child, waits, and passes on no
 /// signal sent to it. A mounted AppImage's runtime execs the app instead, so the app's parent is the caller's own,
 /// whose death must not stop the CLI. Errors when the kernel refuses the request or the signal.
 #[cfg(target_os = "linux")]
-fn stop_with_appimage_runtime() -> nix::Result<()> {
+fn stop_with_appimage_runtime(appimage: Option<&Path>) -> nix::Result<()> {
     use nix::sys::signal::{raise, Signal};
     use nix::unistd::getppid;
     let parent = getppid();
     // A parent whose executable cannot be read is taken for no runtime: the CLI then runs as it always has.
     let parent_exe = std::fs::read_link(format!("/proc/{parent}/exe")).ok();
-    let appimage = std::env::var_os("APPIMAGE").map(PathBuf::from);
-    if !is_appimage(appimage.as_deref(), parent_exe.as_deref()) {
+    if !is_appimage(appimage, parent_exe.as_deref()) {
         return Ok(());
     }
     nix::sys::prctl::set_pdeathsig(Signal::SIGTERM)?;
@@ -325,7 +325,7 @@ fn stop_with_appimage_runtime() -> nix::Result<()> {
 
 /// Whether exe, a process's executable as `/proc/<pid>/exe` names it, is the file appimage, `$APPIMAGE`, names: the
 /// AppImage, which is its own runtime. False when either is unknown.
-#[cfg(target_os = "linux")]
+#[cfg(any(test, target_os = "linux"))]
 fn is_appimage(appimage: Option<&Path>, exe: Option<&Path>) -> bool {
     match (appimage, exe) {
         (Some(appimage), Some(exe)) => canonical(appimage.to_path_buf()) == canonical(exe.to_path_buf()),
@@ -812,7 +812,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "linux")]
     fn only_the_appimage_file_itself_is_the_runtime() {
         let dir = TempDir::new();
         let appimage = dir.join("x.AppImage");
@@ -823,6 +822,29 @@ mod tests {
         assert!(!is_appimage(Some(&appimage), Some(Path::new("/bin/sh"))), "a parent that is a shell");
         assert!(!is_appimage(None, Some(&appimage)), "no APPIMAGE");
         assert!(!is_appimage(Some(&appimage), None), "a parent whose executable cannot be read");
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn the_death_signal_is_asked_for_only_under_the_appimage() {
+        use nix::sys::prctl::{get_pdeathsig, set_pdeathsig};
+        use nix::sys::signal::Signal;
+        // This process's parent, the test runner, stands in for the runtime. The request armed below only sends this
+        // process SIGTERM should the runner die first, and is withdrawn before the assertions.
+        let runner = std::fs::read_link(format!("/proc/{}/exe", nix::unistd::getppid())).expect("the runner's exe");
+        let dir = TempDir::new();
+        let other = dir.join("x.AppImage");
+        std::fs::write(&other, "").expect("a stand-in AppImage");
+        stop_with_appimage_runtime(None).expect("no APPIMAGE");
+        let without = get_pdeathsig();
+        stop_with_appimage_runtime(Some(&other)).expect("another AppImage");
+        let elsewhere = get_pdeathsig();
+        stop_with_appimage_runtime(Some(&runner)).expect("the death signal set");
+        let under = get_pdeathsig();
+        set_pdeathsig(None).expect("the death signal withdrawn");
+        assert_eq!(without.expect("the death signal read"), None, "no APPIMAGE");
+        assert_eq!(elsewhere.expect("the death signal read"), None, "a parent that is not the AppImage");
+        assert_eq!(under.expect("the death signal read"), Some(Signal::SIGTERM));
     }
 
     /// Set, to the path of a file to create, for the process `a_cli_gets_sigterm_when_its_appimage_runtime_dies`
@@ -846,7 +868,8 @@ mod tests {
         // The stand-in for the app: a run of this test with STAND_IN_READY set, whose parent is a shell named as the
         // AppImage. It asks for its signal, says so, and execs into sleep, which stands in for the CLI.
         if let Some(ready) = std::env::var_os(STAND_IN_READY) {
-            stop_with_appimage_runtime().expect("the death signal set");
+            let appimage = std::env::var_os("APPIMAGE").map(PathBuf::from);
+            stop_with_appimage_runtime(appimage.as_deref()).expect("the death signal set");
             std::fs::write(&ready, "").expect("the ready file written");
             let e = Command::new("sleep").arg("30").exec();
             panic!("cannot exec sleep: {e}");
