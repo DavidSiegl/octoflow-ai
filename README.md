@@ -142,6 +142,9 @@ Each download is the CLI too, with the same commands and flags; started without 
 window:
 
 - **AppImage:** the file itself, e.g. `./octoflow-desktop-linux-x86_64.AppImage run "..."` after `chmod +x`.
+  Without FUSE (`libfuse2`) it runs only with `APPIMAGE_EXTRACT_AND_RUN=1` set, and then extracts itself into
+  `$TMPDIR` (`/tmp` by default) and leaves it there, about 340 MB for each version. Install FUSE, or extract it
+  once with `--appimage-extract` and run the `squashfs-root/AppRun` that makes instead.
 - **`.deb`:** it installs the orchestrator as `/usr/bin/octoflow`.
 - **macOS:** link the orchestrator inside the app onto your `PATH`:
 

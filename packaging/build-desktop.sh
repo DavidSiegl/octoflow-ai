@@ -60,13 +60,29 @@ EOF
 
 # AppImage's tools are themselves AppImages; extracting them needs no FUSE on the build machine.
 export APPIMAGE_EXTRACT_AND_RUN=1
+# Extracted so, linuxdeploy and appimagetool each leave $TMPDIR/appimage_extracted_<hash> behind, never removed by
+# their runtime: tauri build gets a TMPDIR of its own, removed when this script exits, also on a failure, Ctrl-C or
+# SIGTERM. One a kill -9 leaves is removed by the next build. macOS builds no AppImage, and its build's temporary
+# files go the same way.
+build_tmp="$PWD/build/desktop/tmp"
+# The extractions hold read-only directories, which rm -rf alone cannot empty.
+remove_build_tmp() {
+    [ ! -e "$build_tmp" ] || { chmod -R u+rwX "$build_tmp" && rm -rf "$build_tmp"; } \
+        || echo "build-desktop.sh: could not remove $build_tmp" >&2
+}
+trap remove_build_tmp EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+remove_build_tmp
+mkdir "$build_tmp"
 (
     cd ui
     npm ci --no-audit --no-fund
     # Before the long build, so that a package under a license packaging/about.toml does not accept fails first.
     node scripts/npm-licenses.js "../$npm_notices"
     cp "../$npm_notices" src-tauri/THIRD-PARTY-LICENSES-NPM.html
-    npm run tauri -- build --ci --config "$config" --bundles "$bundles"
+    TMPDIR="$build_tmp" npm run tauri -- build --ci --config "$config" --bundles "$bundles"
 )
 
 # publish EXT FILE: copy FILE, the one bundle of this version Tauri made of a kind, to the name the release gives

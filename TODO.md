@@ -522,21 +522,13 @@ is rewritten to say what is left.
   `Cli::exec` asking the kernel for a signal when its parent, the runtime, dies (`PR_SET_PDEATHSIG`) when the app
   runs extracted, checked on a built AppImage, or with a runtime that forwards signals.
   Ticket: `.scratch/desktop-packaging-gaps/issues/02-appimage-signal-reaches-the-cli.md` (#240).
-- **An AppImage run without FUSE leaves its extraction in `/tmp`.** Under `APPIMAGE_EXTRACT_AND_RUN` the
-  AppImage runtime that linuxdeploy-plugin-appimage bundles extracts into `$TMPDIR/appimage_extracted_<hash>` and
-  never removes it. `packaging/build-desktop.sh` sets the variable for the whole Tauri build, so linuxdeploy and
-  appimagetool leave two such directories on the build machine at every build (Jenkins's agent among them). Users
-  who run the desktop AppImage as the CLI without FUSE are left with one 336 MB directory per version. Its smoke
-  test already points `TMPDIR` into its own directory. Found in the second build round of run 20261025-081413-327fc2
-  (2026-10-25). Closes with a `TMPDIR` the build removes around `tauri build`, and with a README note, or a newer
-  runtime that cleans up, for users.
-  Ticket: `.scratch/desktop-packaging-gaps/issues/03-appimage-extraction-cleaned-up.md` (#241).
 - **The Package stage still runs programs it wrote to `/tmp`, kept out of agentbox0's Falco mail only by path
   exceptions that let any binary placed under those paths run unreported.** The Test and Gate stages set `TMPDIR` to
   `$WORKSPACE_TMP/tmp`, on the agent's volume, which the rule cannot see (the Jenkinsfile's Test stage says why),
-  but Package keeps `/tmp`. There the linuxdeploy and appimagetool that `packaging/build-desktop.sh` runs under
-  `APPIMAGE_EXTRACT_AND_RUN` extract themselves into `$TMPDIR/appimage_extracted_<hash>` (entry above) and run from
-  there. The homelab excepts those paths (falco/rules/homelab.yaml, `appimage_extracted`). Each stage now creates
+  but Package keeps `/tmp`. There the desktop AppImage that `packaging/build-desktop.sh`'s smoke test runs under
+  `APPIMAGE_EXTRACT_AND_RUN` extracts itself into `$TMPDIR/appimage_extracted_<hash>`, below the test's `mktemp -d`,
+  and runs from there; linuxdeploy and appimagetool extract into the script's own `build/desktop/tmp` since
+  desktop-packaging-gaps/03. The homelab excepts those paths (falco/rules/homelab.yaml, `appimage_extracted`). Each stage now creates
   its own TMPDIR, so a stage added later has to copy both lines. Raised by cross-review 71 (F1, F3: "set TMPDIR for
   every stage that runs what it builds (one pipeline-level definition next to CARGO_HOME would do)"). Closes with
   that pipeline-level `TMPDIR`, created before any stage that uses it, and a Package stage seen to pass with it on
