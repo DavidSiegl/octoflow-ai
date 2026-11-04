@@ -2227,18 +2227,30 @@ def _rust_family_oses(family: str) -> frozenset[str]:
     return frozenset(os for os, families in _RUST_TARGET_OSES.items() if family in families)
 
 
-def _rust_attribute(first: str, following: list[str]) -> str:
-    """The attribute that first starts with, whole: first up to its closing `]`, or, when an attribute wraps as rustfmt
-    wraps a long one, joined by single spaces with the stripped lines of following up to the one holding it; the
-    rest of following when none does. Brackets inside a string literal are counted as any others."""
+def _rust_attribute(first: str, following: list[str]) -> tuple[str, int, str]:
+    """The attribute that first starts with, whole: first up to its closing `]`, or, when it wraps as rustfmt wraps a
+    long one, joined by single spaces with the stripped lines of following up to the one holding that `]`; how many
+    lines of following it wraps onto; and the text after its `]` on the line holding it. Never closed, it is first and
+    all of following, and that text is empty. Brackets inside a string literal are counted as any others."""
     depth, parts = 0, []
-    for text in [first] + [line.strip() for line in following]:
+    for used, text in enumerate([first] + [line.strip() for line in following]):
         for j, c in enumerate(text):
             depth += {"[": 1, "]": -1}.get(c, 0)
             if c == "]" and depth == 0:
-                return " ".join(parts + [text[:j + 1]])
+                return " ".join(parts + [text[:j + 1]]), used, text[j + 1:]
         parts.append(text)
-    return " ".join(parts)
+    return " ".join(parts), len(following), ""
+
+
+def _rust_line_attributes(text: str, following: list[str]) -> list[str]:
+    """Each attribute, whole (_rust_attribute), that starts on a line of text, followed in the file by the lines
+    following, and each that starts after it on the line where it ends, so that a wrapped attribute hides none."""
+    attributes = []
+    while (m := re.search(r"#!?\[", text)) is not None:
+        attribute, used, text = _rust_attribute(text[m.start():], following)
+        attributes.append(attribute)
+        following = following[used:]
+    return attributes
 
 
 def _rust_skips(f: ChangedTestFile, document: dict, tests: list[_RustTest]) -> list[dict]:
@@ -2264,14 +2276,14 @@ def _rust_skips(f: ChangedTestFile, document: dict, tests: list[_RustTest]) -> l
             judged = (path is not None and _rust_test_path(path)) or any(m["line"] <= n <= m["end"] for m in holding)
         else:
             judged = text.startswith("#") and (statement or any(m["attrs_line"] <= n < m["line"] for m in holding))
-        starts = [m.start() for m in re.finditer(r"#!?\[", text) if _RUST_SKIPPING.match(text, m.start())]
-        if judged and starts:
-            found[n] = ([_rust_attribute(text[s:], lines[n:]) for s in starts], not statement)
+        skipping = [a for a in _rust_line_attributes(text, lines[n:]) if _RUST_SKIPPING.match(a)] if judged else []
+        if skipping:
+            found[n] = (skipping, not statement)
     out = []
     for line, (attributes, weighed) in sorted(found.items()):
-        skipping = [a for a in attributes if not (weighed and _rust_platform_only(a))]
-        if skipping:
-            out.append(_finding(path, line, "skip", f"`{_first_line(skipping[0])}` added: it skips a test or turns it "
+        failing = [a for a in attributes if not (weighed and _rust_platform_only(a))]
+        if failing:
+            out.append(_finding(path, line, "skip", f"`{_first_line(failing[0])}` added: it skips a test or turns it "
                                                     f"off.", severity="error"))
         else:
             out.append(_finding(path, line, "platform-only", f"`{_first_line(attributes[0])}` added: it turns a test "

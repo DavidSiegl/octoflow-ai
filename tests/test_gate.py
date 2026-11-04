@@ -2007,18 +2007,21 @@ class TestRustWeakenedTests(RepositoryTest):
                          "`#[cfg(target_os = \"linux\")]` added: it turns a test off on the other platforms.")
 
     def test_a_platform_cfg_with_another_condition_or_inside_a_test_is_a_skip(self):
-        self.edit("crate/tests/it.rs", "#[test]\nfn negative", "#[test]\n#[cfg(feature = \"slow\")]\nfn negative")  # 4
-        self.edit("crate/tests/it.rs", "#[tokio::test]\n", "#[tokio::test]\n#[cfg(all(unix, not(test)))]\n")  # 10
-        self.edit("crate/src/lib.rs", "#[cfg(test)]\n", "#[cfg(test)]\n#[cfg(unix)] #[cfg(miri)]\n")      # 6
-        self.edit("crate/src/lib.rs", "    #[test]\n    fn adds_small", "    #[test] #[cfg(unix)] #[ignore]\n    fn adds_small")  # 10
+        self.edit("crate/tests/it.rs", "#[test]\nfn negative",
+                  "#[test]\n#[cfg(feature = \"slow\")]\n#[cfg(all(unix, feature = \"x\"))]\nfn negative")   # 4, 5
+        self.edit("crate/tests/it.rs", "#[tokio::test]\n", "#[tokio::test]\n#[cfg(all(unix, not(test)))]\n")  # 11
+        # A skip after a wrapped platform cfg's closing bracket, on a line that does not start with `#`.
+        self.edit("crate/src/lib.rs", "#[cfg(test)]\n", "#[cfg(test)]\n#[cfg(any(\n    unix,\n))] #[cfg(miri)]\n")  # 6
+        self.edit("crate/src/lib.rs", "    #[test]\n    fn adds_small", "    #[test] #[cfg(unix)] #[ignore]\n    fn adds_small")  # 12
         self.edit("crate/src/lib.rs", "    #[test]\n    fn adds_large",
-                  "    #[test]\n    #[cfg(all(test, feature = \"slow\"))]\n    fn adds_large")                 # 17
+                  "    #[test]\n    #[cfg(all(test, feature = \"slow\"))]\n    fn adds_large")                 # 19
         self.edit("crate/src/lib.rs", "        assert_eq!(add(10, 20), 30);\n",
-                  "        #[cfg(unix)]\n        assert_eq!(add(10, 20), 30);\n")                         # 19
+                  "        #[cfg(unix)]\n        assert_eq!(add(10, 20), 30);\n")                         # 21
         where, found = self.found()
-        self.assertEqual(where, [("crate/src/lib.rs", 6, "skip"), ("crate/src/lib.rs", 10, "skip"),
-                                 ("crate/src/lib.rs", 17, "skip"), ("crate/src/lib.rs", 19, "skip"),
-                                 ("crate/tests/it.rs", 4, "skip"), ("crate/tests/it.rs", 10, "skip")])
+        self.assertEqual(where, [("crate/src/lib.rs", 6, "skip"), ("crate/src/lib.rs", 12, "skip"),
+                                 ("crate/src/lib.rs", 19, "skip"), ("crate/src/lib.rs", 21, "skip"),
+                                 ("crate/tests/it.rs", 4, "skip"), ("crate/tests/it.rs", 5, "skip"),
+                                 ("crate/tests/it.rs", 11, "skip")])
         self.assertEqual(found[0]["message"], "`#[cfg(miri)]` added: it skips a test or turns it off.")
         self.assertEqual(found[1]["message"], "`#[ignore]` added: it skips a test or turns it off.")
 
@@ -3388,14 +3391,20 @@ class TestRustAttribute(unittest.TestCase):
     """_rust_attribute: an attribute's whole text from the line it starts on and those after it."""
 
     def test_it_ends_at_its_closing_bracket_on_its_line(self):
-        self.assertEqual(gate._rust_attribute("#[cfg(unix)] #[ignore] fn f() {}", ["fn g() {}"]), "#[cfg(unix)]")
+        self.assertEqual(gate._rust_attribute("#[cfg(unix)] #[ignore] fn f() {}", ["fn g() {}"]),
+                         ("#[cfg(unix)]", 0, " #[ignore] fn f() {}"))
 
     def test_a_wrapped_attribute_is_joined_by_spaces(self):
-        self.assertEqual(gate._rust_attribute("#[cfg(any(", ['    target_os = "linux",', "))]", "mod tests {"]),
-                         '#[cfg(any( target_os = "linux", ))]')
+        self.assertEqual(gate._rust_attribute("#[cfg(any(", ['    target_os = "linux",', "))] x", "mod tests {"]),
+                         ('#[cfg(any( target_os = "linux", ))]', 2, " x"))
 
     def test_one_never_closed_runs_to_the_end(self):
-        self.assertEqual(gate._rust_attribute("#[cfg(any(", ["unix"]), "#[cfg(any( unix")
+        self.assertEqual(gate._rust_attribute("#[cfg(any(", ["unix"]), ("#[cfg(any( unix", 1, ""))
+
+    def test_a_line_s_attributes_go_on_where_a_wrapped_one_ends(self):
+        self.assertEqual(gate._rust_line_attributes("#[test] #[cfg(any(", ["  unix,", "))] #[cfg(miri)] fn f()", "}"]),
+                         ["#[test]", "#[cfg(any( unix, ))]", "#[cfg(miri)]"])
+        self.assertEqual(gate._rust_line_attributes("let x = 1;", ["#[ignore]"]), [])
 
 
 class TestRustPassesAtBase(RepositoryTest):
