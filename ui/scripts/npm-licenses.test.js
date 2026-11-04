@@ -61,6 +61,13 @@ describe("the notices of the app's own npm packages", () => {
     expect(sectionOf(tauri)?.license).toBe("MIT");
     expect(sectionOf(tauri)?.text).toBe(readFileSync(join(ui, tauri, "LICENSE-MIT"), "utf8").trim());
   });
+
+  it("give Rolldown the notices of the code its runtime copies from others", () => {
+    const rolldown = "node_modules/rolldown";
+    const thirdParty = readFileSync(join(ui, rolldown, "THIRD-PARTY-LICENSE"), "utf8").trim();
+    expect(sectionOf(rolldown)?.text).toContain(licenseText(rolldown));
+    expect(sectionOf(rolldown)?.text).toContain(thirdParty);
+  });
 });
 
 describe("npmNotices on a made-up tree", () => {
@@ -150,6 +157,22 @@ describe("npmNotices on a made-up tree", () => {
   it("takes one text from several files that hold it", () => {
     const ui = tree([{ name: "twice", license: "MIT", files: { LICENSE: "same\n", "LICENSE.md": "same" } }]);
     expect(sections(npmNotices(ui, accepted))).toEqual([{ license: "MIT", packages: ["twice 1.0.0"], text: "same" }]);
+  });
+
+  it("adds a build-code package's third-party notices to its license text, and no other package's", () => {
+    const notices = { LICENSE: "own", "THIRD-PARTY-LICENSE": "theirs", NOTICE: "notice", "NOTICE.spdx": "tag" };
+    const ui = tree([
+      { name: BUILD_CODE[0], license: "MIT", files: notices, flags: { dev: true } },
+      { name: "plain", license: "ISC", files: notices },
+    ]);
+    expect(sections(npmNotices(ui, accepted))).toEqual([
+      {
+        license: "MIT",
+        packages: [`${BUILD_CODE[0]} 1.0.0`],
+        text: "own\n\nNOTICE:\n\nnotice\n\nTHIRD-PARTY-LICENSE:\n\ntheirs",
+      },
+      { license: "ISC", packages: ["plain 1.0.0"], text: "own" },
+    ]);
   });
 
   it("lists the packages sharing a license and its text under one section, and leaves dev packages out", () => {

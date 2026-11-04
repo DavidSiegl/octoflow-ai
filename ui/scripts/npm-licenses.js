@@ -15,7 +15,9 @@ import { fileURLToPath } from "node:url";
 /**
  * The dev packages that write code of their own into the bundle, so that it ships theirs too: Vite its module preload
  * polyfill, Rolldown, which Vite bundles with, its runtime (\0vite/... and \0rolldown/... modules in an unminified
- * build). A plugin that injects a runtime belongs here as well. Each is looked up at the top of node_modules.
+ * build). A plugin that injects a runtime belongs here as well. Each is looked up at the top of node_modules. Since
+ * such code may be copied from others, as Rolldown's runtime credits esbuild, each ships its THIRD-PARTY-LICENSE* and
+ * NOTICE* files too.
  */
 export const BUILD_CODE = ["vite", "rolldown"];
 
@@ -56,7 +58,8 @@ export function npmNotices(ui, accepted) {
   for (const [path, entry] of Object.entries(lock.packages)) {
     // "" is ui/package.json itself, under the project's own license.
     if (path === "") continue;
-    if (entry.dev && !BUILD_CODE.some((name) => path === `node_modules/${name}`)) continue;
+    const buildCode = BUILD_CODE.some((name) => path === `node_modules/${name}`);
+    if (entry.dev && !buildCode) continue;
     const dir = join(ui, path);
     if (!existsSync(join(dir, "package.json"))) {
       if (!entry.optional && !entry.devOptional) problems.push(`${path}: not installed`);
@@ -75,6 +78,7 @@ export function npmNotices(ui, accepted) {
       problems.push(`${name}: no one license text for ${offered.join(" OR ")} in ${path}`);
       continue;
     }
+    if (buildCode) notice.text = withThirdPartyNotices(dir, notice.text);
     const key = `${notice.license}\n${notice.text}`;
     const section = sections.get(key) ?? { ...notice, packages: [] };
     section.packages.push({ name: pkg.name, version: pkg.version });
@@ -116,6 +120,13 @@ function licenseNotice(dir, offered, usable) {
   if (usable.length < offered.length || files.length === 0) return undefined;
   if (files.some((f) => f.text !== files[0].text)) return undefined;
   return { license: offered.join(" OR "), text: files[0].text };
+}
+
+// text followed by each THIRD-PARTY-LICENSE*, THIRD-PARTY-LICENCE* or NOTICE* file in dir, by name, each headed by
+// the file's name.
+function withThirdPartyNotices(dir, text) {
+  const extra = noticeFiles(dir, /^(third-party-licen[cs]e|notice)/i);
+  return [text, ...extra.map((f) => `${f.name}:\n\n${f.text}`)].join("\n\n");
 }
 
 // The regular files in dir whose names match pattern, SPDX tag files (LICENSE.spdx) aside, by name, each with its
