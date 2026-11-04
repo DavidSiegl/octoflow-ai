@@ -918,18 +918,29 @@ fn compare_dependencies<'a>(
     let mut moved = Vec::new();
     for (was, now, has_lines) in [(&before.direct, &after.direct, true), (&before.locked, &lock_only, false)] {
         for (key, sources) in now.iter() {
-            let Some(old) = was.get(key) else { continue };
-            let Some(added) = sources.iter().find(|d| old.iter().all(|o| o.source != d.source)) else { continue };
-            let message = format!(
-                "`{key}`: at the base, {}; in the change, {}.",
-                sources_text(old, index),
-                sources_text(sources, index)
-            );
+            let Some((added, message)) = was.get(key).and_then(|old| source_change(key, old, sources, index)) else {
+                continue;
+            };
             let line = if has_lines { added_line(&added.manifest, key)? } else { None };
             moved.push(Finding::warning(Some(&added.manifest), line, "source-changed", message));
         }
     }
     Ok((new, moved))
+}
+
+/// How the change moved the package key, which came from was at the base and comes from now in the change: the first of
+/// now from a source was does not hold, where the source-changed finding goes, and that finding's message, naming the
+/// sources of both sides; None when now holds no new source, a source only dropped being no move.
+fn source_change<'d>(
+    key: &str,
+    was: &[Dependency],
+    now: &'d [Dependency],
+    index: &dyn PackageIndex,
+) -> Option<(&'d Dependency, String)> {
+    let added = now.iter().find(|d| was.iter().all(|o| o.source != d.source))?;
+    let message =
+        format!("`{key}`: at the base, {}; in the change, {}.", sources_text(was, index), sources_text(now, index));
+    Some((added, message))
 }
 
 /// Where a package comes from, as a finding says it, from each of sources in turn; of several, none is said not to
