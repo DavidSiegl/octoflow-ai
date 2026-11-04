@@ -244,7 +244,7 @@ from a herdr pane.
   | `POST /run` | starts the run its JSON body asks for (task, workflow, agent, model, role_agents, role_models, no_pr, worktree) and answers `{"run"}`; see Starting a run above |
 
   `RunServer`'s doc comment is the authority on them.
-- **Events.** Each `/events` stream has its own `RunWatch`. It polls `run_states` every second, and every 5 for
+- **Events.** Each `/events` stream has its own `RunWatch`. It polls `run_states_inside` every second, and every 5 for
   a `--machine` project (`SERVE_POLL`), and compares what it reads with what the stream
   last sent. A run whose record changed, other than in `AGING_RECORD_KEYS`, gets a `record` event, and one whose
   files changed a `files` event; a run whose `state.json` is gone gets a `record` event with `null`. The first

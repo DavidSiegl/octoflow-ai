@@ -418,8 +418,9 @@ is rewritten to say what is left.
   scope. Closes with a cat that fails on a file no longer there answering None, in both, and a test that removes the
   file between the two.
 - **serve's link checks race the agent.** `Host::read_inside` (`engine/src/host.rs`) resolves a run file's links in
-  sh, then cats the resolved path in another process, and `run_files_inside` lists a file it checked a moment
-  before; plain sh has no open that refuses to follow a link. Cross-review 125, F1: "an agent loops, swapping
+  sh, then cats the resolved path in another process, `run_states_inside` does the same with a run's state.json,
+  and `run_files_inside` lists a file it checked a moment before; plain sh has no open that refuses to follow a
+  link. Cross-review 125, F1: "an agent loops, swapping
   `runs/<id>/x.md` between a regular file and a link to `~/.ssh/id_rsa` … A `/file?name=x.md` that finds the
   regular file at the check and the link at the open returns the key with 200." Left open: an agent that can race
   the check can as well copy the file into its run directory, which serve shows as any other; the check is against
