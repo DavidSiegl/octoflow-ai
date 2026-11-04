@@ -194,3 +194,37 @@ fn a_run_saved_with_one_verdict_and_no_record_of_it_finishes() {
     assert_eq!(wf.run(), verdict(APPROVE));
     assert_eq!(verdicts(wf.state()), [(2, "review", APPROVE)]);
 }
+
+#[test]
+fn a_run_saved_without_records_keeps_its_earlier_rounds_once_it_goes_on() {
+    // Saved by a release before RunState::verdicts, in the review of round 3; resumed, it requests changes, and the
+    // review of round 4 is to name every earlier review, rounds 1 and 2 as well as the recorded round 3.
+    let default = crate::pipeline::DEFAULT_WORKFLOW.clone();
+    let mut steps = default.steps().to_vec();
+    steps[2].again = Some("Recheck against {earlier_review_paths}; write {review_path}.".into());
+    let p = Pipeline::new("rechecking", default.roles().clone(), steps).unwrap();
+    let mut state = saved_run("review", 3, FULL);
+    state.verdict = Some(CHANGES_REQUESTED.into());
+    let Value::Object(mut saved) = state.to_json() else { unreachable!("a state is an object") };
+    saved.shift_remove("verdicts");
+    let state = RunState::from_saved(&saved).unwrap();
+    let reviewed = seen();
+    let script = vec![
+        ("build", vec![build_turn(4)]),
+        ("review", vec![review_turn(3, CHANGES_REQUESTED), recording(review_turn(4, APPROVE), &reviewed)]),
+    ];
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &["build", "review"], &[]);
+    for n in 1..=3 {
+        f.put(&format!("{D}/build-{n}.md"), "report");
+    }
+    for n in 1..=2 {
+        f.put(&format!("{D}/review-{n}.md"), "VERDICT: CHANGES_REQUESTED\n1. finding");
+    }
+    let mut wf = f.workflow(RunSettings { pipeline: Some(p), pull_request: false, max_rounds: 4, ..f.as_saved() });
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert_eq!(verdicts(wf.state()), [(3, "review", CHANGES_REQUESTED), (4, "review", APPROVE)]);
+    assert_eq!(
+        *reviewed.borrow(),
+        [format!("Recheck against {D}/review-1.md, {D}/review-2.md, {D}/review-3.md; write {D}/review-4.md.")]
+    );
+}

@@ -920,8 +920,8 @@ impl<'a> Workflow<'a> {
         self.state.record_verdict(n, &step.id, verdict);
         // An approval is the run's only once the round's last verdict step gives it: until then a saved state keeps
         // the verdict of the round before.
-        let last = pipeline.verdict_steps().next_back().is_some_and(|last| last.id == step.id);
-        if verdict != APPROVE || last {
+        let last_verdict_step = pipeline.verdict_steps().next_back().map(|last| last.id.clone());
+        if verdict != APPROVE || last_verdict_step.as_deref() == Some(step.id.as_str()) {
             self.state.verdict = Some(verdict.to_string());
         }
         self.human.log(&format!("[{}] round {n}: {verdict}", step.role));
@@ -937,8 +937,7 @@ impl<'a> Workflow<'a> {
             self.goto(target, n + 1)?;
             return Ok(None);
         }
-        let last = pipeline.verdict_steps().next_back().map(|last| last.id.clone());
-        Ok(last)
+        Ok(last_verdict_step)
     }
 
     /// Make step the current one, in round n, and save that; the first editing step starts round 1.
@@ -1100,16 +1099,18 @@ impl<'a> Workflow<'a> {
         judge.or(self.pipeline.proof_step()).map_or(String::new(), |st| st.path(&s.dir(), n - 1, 0))
     }
 
-    /// The rounds before round n the step took a turn in, as far as the run knows: for a verdict step, those the
-    /// run's records (RunState::verdicts) give it a verdict in, as an earlier verdict step's request for changes may
-    /// have skipped it; None, every round before n, for any other step, and for a run saved without those records,
-    /// whose one verdict step judged every round.
+    /// The rounds before round n the verdict step judged, in order: those the run's records (RunState::verdicts) give
+    /// it a verdict in, as an earlier verdict step's request for changes may have skipped it, and for the first
+    /// verdict step every round before the run's first record too. A run saved before there were records, and resumed
+    /// since, has its records start at the resumed round, and its one verdict step judged every round before that.
+    /// None, every round before n, for a step that is not a verdict step.
     fn judged_rounds(&self, step: &Step, n: u32) -> Option<Vec<u32>> {
+        step.loop_to.as_ref()?;
         let s = &self.state;
-        if step.loop_to.is_none() || s.verdicts.is_empty() {
-            return None;
-        }
-        Some(s.verdicts.iter().filter(|v| v.step == step.id && v.round < n).map(|v| v.round).collect())
+        let first_recorded = s.verdicts.iter().map(|v| v.round).min().unwrap_or(n).min(n);
+        let unrecorded = if self.pipeline.proves(step) { 1..first_recorded } else { 0..0 };
+        let recorded = s.verdicts.iter().filter(|v| v.step == step.id && v.round < n).map(|v| v.round);
+        Some(unrecorded.chain(recorded).collect())
     }
 
     /// The step's files of round n, oldest first; for the gated step, its answers to quality rounds too.
