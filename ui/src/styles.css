@@ -27,6 +27,42 @@ main {
   padding: 12px 16px;
 }
 
+input,
+select,
+textarea,
+button {
+  font: inherit;
+  color: var(--pale-mint);
+  background: var(--navy-raised);
+  border: 1px solid var(--navy-hover);
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: var(--navy-hover);
+}
+
+button:disabled {
+  color: var(--muted-mint);
+  background: var(--navy-light);
+}
+
+input:focus,
+select:focus,
+textarea:focus,
+button:focus-visible {
+  outline: 2px solid var(--teal);
+}
+
+a {
+  color: var(--mint);
+}
+
 /* The logo and name, then the project bar; the bar wraps below them when the window is too narrow for one row. */
 .top-bar {
   display: flex;
