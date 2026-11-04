@@ -532,12 +532,9 @@ pub trait Host {
     }
 
     /// Delete every local ref of cwd's repository whose name starts with prefix, such as `refs/orchestrator/<key>/`,
-    /// and return whether there was any. None is no error, and a cwd outside any git repository has none. Errors: a
-    /// git command fails, some of the refs perhaps deleted already.
+    /// and return whether there was any; none is no error. Errors: a git command fails, cwd outside a repository git
+    /// will read included, some of the refs perhaps deleted already.
     fn delete_refs(&self, cwd: &str, prefix: &str) -> Result<bool, OrchestratorError> {
-        if self.git_run(cwd, &["rev-parse", "--git-dir"], DEFAULT_TIMEOUT)?.status != 0 {
-            return Ok(false);
-        }
         let listed = self.git(cwd, &["for-each-ref", "--format=%(refname)", prefix])?;
         for git_ref in listed.split_whitespace() {
             self.git(cwd, &["update-ref", "-d", git_ref])?;

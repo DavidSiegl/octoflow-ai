@@ -507,25 +507,45 @@ fn a_done_run_that_stopped_while_ending_closes_as_a_finished_one() {
     c.assert_closed(&format!("workspace closed; worktree kept: {}; refs deleted", worktree()));
 }
 
-#[test]
-fn a_run_outside_a_git_repository_closes_without_git() {
-    // A --no-pr run is how a directory that is no repository is run (Workflow's start check); it locked nothing.
+/// close_run of a1b2c3 on this machine's host, in a temporary directory that is no git repository, of a failed run
+/// that locked what locked says: what close gives, and the run's saved closed after it, null when not recorded.
+fn close_outside_a_repository(locked: &[(&str, Vec<String>)]) -> (Result<String, OrchestratorError>, Value) {
     let tmp = crate::test_support::TempDir::new();
     let host = crate::host::ProcessHost::local(&crate::interrupt::Interrupt::new());
     let mut state = RunState::new(CLOSE_ID, "x", &tmp.path());
     (state.phase, state.round, state.error) = ("build".into(), 1, Some("interrupted".into()));
+    for (step, paths) in locked {
+        state.locked.insert(*step, paths.clone());
+    }
     let path = format!("{}/state.json", state.dir());
     host.write(&path, &state.to_text(), false).unwrap();
     let mut cli = Cli::new();
     cli.f.pid_alive = Box::new(|_| false);
-    let closed = cli
-        .with(|world| {
-            let mut world = *world;
-            world.with.host = &host;
-            close_run(&world, &tmp.path(), "a1b2c3")
-        })
-        .unwrap();
-    assert_eq!(closed, "workspace already gone");
+    let closed = cli.with(|world| {
+        let mut world = *world;
+        world.with.host = &host;
+        close_run(&world, &tmp.path(), "a1b2c3")
+    });
+    let saved = serde_json::from_str::<Value>(&host.read(&path).unwrap().unwrap()).unwrap();
+    (closed, saved.get("closed").cloned().unwrap_or(Value::Null))
+}
+
+#[test]
+fn a_run_outside_a_git_repository_closes_without_git() {
+    // A --no-pr run is how a directory that is no repository is run (Workflow's start check); it locked nothing.
+    let (closed, saved) = close_outside_a_repository(&[]);
+    assert_eq!(closed.unwrap(), "workspace already gone");
+    assert_eq!(saved, Value::from("workspace already gone"));
+}
+
+#[test]
+fn a_run_that_locked_in_a_directory_git_now_refuses_is_not_closed() {
+    // Its refs are somewhere git cannot reach now, as in a checkout git calls of dubious ownership: closing it
+    // would record refs deleted while they stay. Fixing git and closing again finishes.
+    let (closed, saved) = close_outside_a_repository(&[("tests", vec!["tests/test_a.py".to_string()])]);
+    let error = closed.unwrap_err().0;
+    assert!(error.starts_with("could not delete the refs under refs/orchestrator/a1b2c3/: "), "{error}");
+    assert_eq!(saved, Value::Null);
 }
 
 #[test]

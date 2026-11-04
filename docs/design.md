@@ -270,8 +270,10 @@ loses its herdr workspace, and its local refs under `refs/orchestrator/<key>/`, 
 its locking steps locked: a run that ends `done` deletes them itself, but a closed run is never resumed, and without
 `close` nothing would delete them, so `git gc` would keep those commits for good. A ref can exist although
 `state.json`'s `locked` is empty, when the run's first lock failed after making it, so `close` looks for them
-whatever `locked` says. A `--no-pr` run in a directory that is not a git repository has none, and closes as any
-other. What happens to the files depends on whose they are:
+whatever `locked` says. A run that locked nothing in a directory that is not a git repository with a commit, such
+as a `--no-pr` run's, has none, and `close` runs no git command for them. A run that locked files where git now
+refuses the repository, such as a checkout of dubious ownership, is not closed: `close` fails, naming the refs, and
+closes it once git reads the repository again. What happens to the files depends on whose they are:
 
 - **A failed or stale `--worktree` run**: the worktree is the run's own, so it is removed with
   `git worktree remove --force` after `close` lists the files `git status --porcelain` shows, which go with it.

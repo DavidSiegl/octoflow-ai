@@ -25,7 +25,7 @@ struct Closing {
     error: Option<String>,
     closed: Option<String>,
     /// The paths each locking step locked, by step id: non-empty means the run had local refs, which a failed close
-    /// may have deleted already; empty means it may still have one, if its first lock failed after making its ref.
+    /// may have deleted already; empty means it may still have one, if its first lock failed after making it.
     locked: Map<Vec<String>>,
 }
 
@@ -71,9 +71,7 @@ pub fn close_run(world: &Connected, cwd: &str, run_ref: &str) -> Result<String, 
         Some(worktree) if host.is_worktree(cwd, worktree)? => done.push(format!("worktree kept: {worktree}")),
         _ => {}
     }
-    if delete_run_refs(world, cwd, &state.run_id)? || !state.locked.is_empty() {
-        done.push("refs deleted".to_string());
-    }
+    done.extend(delete_run_refs(world, cwd, &state)?);
     let closed = done.join("; ");
     let path = format!("{cwd}/{RUNS_DIR}/{}/state.json", state.run_id);
     record_in_state(host, &path, saved, "closed", Value::from(closed.as_str()), "the run was closed")?;
@@ -92,20 +90,25 @@ fn close_run_workspace(world: &Connected, workspace: &str) -> Result<String, Orc
     Ok("workspace already gone".to_string())
 }
 
-/// Delete the local refs of the run of run_id from cwd's repository, which its worktree shares, say so if there were
-/// any, and return whether there were; a cwd outside any git repository has none. Errors: a ref could not be deleted,
-/// the error naming the run's refs prefix.
-fn delete_run_refs(world: &Connected, cwd: &str, run_id: &str) -> Result<bool, OrchestratorError> {
-    let prefix = refs_prefix(run_id);
-    let deleted = world
-        .with
-        .host
+/// Delete the local refs of the run of state from cwd's repository, which its worktree shares, and say so if there
+/// were any. "refs deleted" when the run locked files, the refs a close that failed part way deleted counting, or
+/// when it had refs nonetheless (its first lock failed after making one); None for a run with none. A run that locked
+/// nothing in a cwd that is no git repository with a commit, such as a --no-pr run's, has none, and no git command
+/// runs. Errors: a ref could not be deleted, or the run locked files and git cannot read cwd's repository, the error
+/// naming the run's refs prefix.
+fn delete_run_refs(world: &Connected, cwd: &str, state: &Closing) -> Result<Option<String>, OrchestratorError> {
+    let host = world.with.host;
+    if state.locked.is_empty() && host.git_head(cwd)?.is_none() {
+        return Ok(None);
+    }
+    let prefix = refs_prefix(&state.run_id);
+    let deleted = host
         .delete_refs(cwd, &prefix)
         .map_err(|e| OrchestratorError(format!("could not delete the refs under {prefix}: {e}")))?;
     if deleted {
         world.say(&format!("deleted the refs under {prefix}"));
     }
-    Ok(deleted)
+    Ok((deleted || !state.locked.is_empty()).then(|| "refs deleted".to_string()))
 }
 
 /// Force-remove the worktree of cwd that the failed run of state built in, after listing the changes that go with
