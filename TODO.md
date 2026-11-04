@@ -416,22 +416,24 @@ is rewritten to say what is left.
   requests (`engine/src/serve.rs`); cross-review 105, F3: "A client that sends a partial request or idles holds it for
   good." Decided against for now (2026-10-29, the user's ruling): serve binds 127.0.0.1 only and every request needs
   the token. Reopen if serve listens beyond loopback.
-- **serve reads a run's files through a symbolic link.** A run's files are listed and read by `Host::run_files` and
-  `Host::read`, which follow a symbolic link (`[ -f ]`, `cat`), so a link an agent leaves in its run directory, or a
-  run directory that is a link, lets `/file` and the event stream show a file outside the run, `~/.ssh/id_rsa` say, to
-  the desktop app's window; the name a request gives is still only a plain name, and only the token's holder can ask.
-  `a_link_in_the_run_directory_is_followed_as_python_follows_it` (`engine/src/serve/tests.rs`) pins it. Ruled
-  (2026-10-29, the user): keep the Python engine's behaviour until the switch, then refuse a link whose target is
-  outside the run directory, as a fix on main once the Python engine is gone, which it is since rust-engine ticket 11.
-  Open until that fix.
-  Ticket: `.scratch/serve-run-files/issues/02-links-outside-run-refused.md` (#231).
-- **`Host::read` fails for a file removed between its test and its read.** `[ -f "$1" ] || exit MISSING; cat -- "$1"`
-  (`engine/src/host.rs`, `fn read`) answers a file that goes away between the two with an error, not with None, so
-  serve's `/file` for a file `run_files` just listed, such as the secret scan's `leaks-publish.json`, and
-  `ProjectRuns::agent` for a run being pruned report a failure where "missing" is the answer. Raised by cross-review
-  120 (F3, 2026-11-03), against serve-run-files/03, which made the two listings skip such a file and left `read` out
-  of its scope. Closes with a cat that fails on a file no longer there answering None, and a test that removes the file
-  between the two.
+- **`Host::read` and `Host::read_inside` fail for a file removed between their test and their read.**
+  `[ -f "$1" ] || exit MISSING; cat -- "$1"` (`engine/src/host.rs`, `fn read`) answers a file that goes away between
+  the two with an error, not with None; `fn read_inside`, which serve's `/file` and `ProjectRuns::agent` read by,
+  has the same test and cat, so `/file` for a file `run_files_inside` just listed, such as the secret scan's
+  `leaks-publish.json`, and `ProjectRuns::agent` for a run being pruned report a failure where "missing" is the
+  answer (one removed while its links are resolved is already Missing, cross-review 125 F3). Raised by cross-review 120 (F3,
+  2026-11-03), against serve-run-files/03, which made the two listings skip such a file and left `read` out of its
+  scope. Closes with a cat that fails on a file no longer there answering None, in both, and a test that removes the
+  file between the two.
+- **serve's link checks race the agent.** `Host::read_inside` (`engine/src/host.rs`) resolves a run file's links in
+  sh, then cats the resolved path in another process, `run_states_inside` does the same with a run's state.json,
+  and `run_files_inside` lists a file it checked a moment before; plain sh has no open that refuses to follow a
+  link. Cross-review 125, F1: "an agent loops, swapping
+  `runs/<id>/x.md` between a regular file and a link to `~/.ssh/id_rsa` … A `/file?name=x.md` that finds the
+  regular file at the check and the link at the open returns the key with 200." Left open: an agent that can race
+  the check can as well copy the file into its run directory, which serve shows as any other; the check is against
+  a link left there, not against an agent that means to show the app a file. Closes with an open that does not
+  follow links (a helper on the host with `O_NOFOLLOW` per component), if a reason is found to want it.
 - **The e2e scenarios compare serve's event stream at checkpoints, not event by event.** `serve_endpoints_and_events`
   keeps, at each point where the run waits on an agent and once it is done, the last `record` and `files` event of
   each run (`engine/e2e/tests/e2e/scenarios.rs`, `last_by_run`). Raised by cross-review 65 (F10, 2026-10-27), against the
