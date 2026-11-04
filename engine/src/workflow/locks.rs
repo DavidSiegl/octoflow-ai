@@ -8,6 +8,7 @@ use crate::error::OrchestratorError;
 use crate::paths::{file_name, split_extension};
 use crate::pipeline::Step;
 use crate::prompts::Prompt;
+use crate::state::refs_prefix;
 use serde_json::Value;
 use crate::map::Map;
 use crate::json::{object, Object};
@@ -151,7 +152,7 @@ impl Workflow<'_> {
         if s.locked.is_empty() {
             return;
         }
-        let prefix = s.refs_prefix();
+        let prefix = refs_prefix(&s.run_id);
         if let Err(e) = self.host.delete_refs(&s.cwd, &prefix) {
             self.human.log(&format!("could not delete the refs under {prefix}: {e}"));
         }

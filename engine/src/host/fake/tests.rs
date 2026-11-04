@@ -188,8 +188,9 @@ fn locked_files_play_on_the_snapshots() {
     host.write("/proj/new.py", "y", false).unwrap();
     host.restore("/proj", "refs/orchestrator/a1/locked/new", &again).unwrap();
     assert_eq!(host.read("/proj/new.py").unwrap().as_deref(), Some("x"));
-    host.delete_refs("/proj", "refs/orchestrator/a1/").unwrap();
+    assert!(host.delete_refs("/proj", "refs/orchestrator/a1/").unwrap());
     assert!(host.state().refs.is_empty());
+    assert!(!host.delete_refs("/proj", "refs/orchestrator/a1/").unwrap());
     assert_eq!(host.snapshot("/proj", "abc123", "s").unwrap(), "snap3");
 }
 

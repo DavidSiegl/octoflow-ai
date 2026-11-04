@@ -394,6 +394,160 @@ fn git_failure_records_nothing_and_a_second_close_finishes() {
     c.assert_closed("workspace already gone; worktree deleted; branch deleted");
 }
 
+const OTHER_REF: &str = "refs/orchestrator/d4e5f6/locked/tests";
+
+/// What a run whose steps tests and build locked a file each saves as its locked.
+fn locked() -> (&'static str, Value) {
+    ("locked", serde_json::json!({"tests": ["tests/test_a.py"], "build": ["a.py"]}))
+}
+
+impl Close {
+    /// Give the run two locked snapshots, and a run of another key one (OTHER_REF); the run's state must say it
+    /// locked (locked()).
+    fn add_refs(&self) {
+        let refs = &mut self.cli.f.host.state().refs;
+        for git_ref in ["refs/orchestrator/a1b2c3/locked/tests", "refs/orchestrator/a1b2c3/locked/build", OTHER_REF] {
+            refs.insert(git_ref, "snap1".to_string());
+        }
+    }
+
+    fn refs(&self) -> Vec<String> {
+        self.cli.f.host.state().refs.keys().map(String::from).collect()
+    }
+}
+
+#[test]
+fn every_closed_run_loses_its_refs_and_only_its() {
+    let wt = worktree();
+    let failed = [locked()];
+    let not_failed = [("error", Value::Null), locked()];
+    let finished =
+        [("phase", Value::from("done")), ("error", Value::Null), ("verdict", Value::from(APPROVE)), locked()];
+    let discarded = "workspace closed; worktree deleted; branch deleted; refs deleted";
+    let cases: [(u64, bool, Fields, String); 4] = [
+        (0, true, &failed, discarded.into()),
+        (0, false, &failed, "workspace closed; refs deleted".into()),
+        (STALE_SECONDS + 1, true, &not_failed, discarded.into()),
+        (0, true, &finished, format!("workspace closed; worktree kept: {wt}; refs deleted")),
+    ];
+    for (age, in_worktree, fields, line) in cases {
+        let c = Close::new();
+        c.add(age, in_worktree, fields);
+        c.add_refs();
+        let (status, out) = c.close(&[]);
+        assert_eq!(status, 0);
+        assert!(out.contains("deleted the refs under refs/orchestrator/a1b2c3/\n"), "{out}");
+        assert!(out.ends_with(&format!("closed run {CLOSE_ID}: {line}\n")), "{out}");
+        assert_eq!(c.refs(), [OTHER_REF]);
+        c.assert_closed(&line);
+    }
+}
+
+#[test]
+fn failing_to_delete_the_refs_records_nothing_and_a_second_close_finishes() {
+    let c = Close::new();
+    c.add(0, false, &[locked()]);
+    c.add_refs();
+    c.cli.f.host.state().delete_refs_error = Some("fatal: cannot lock ref".into());
+    assert_eq!(c.close(&[]).0, EXIT_ERROR);
+    assert_eq!(c.error(), "could not delete the refs under refs/orchestrator/a1b2c3/: fatal: cannot lock ref");
+    assert_eq!(c.closed(), Value::Null);
+    assert_eq!(c.refs().len(), 3);
+
+    c.cli.f.host.state().delete_refs_error = None;
+    assert_eq!(c.close(&[]).0, 0);
+    assert_eq!(c.refs(), [OTHER_REF]);
+    c.assert_closed("workspace already gone; refs deleted");
+}
+
+#[test]
+fn refs_a_failed_close_deleted_are_still_recorded_as_deleted() {
+    // As after a close that deleted some or all of them and then failed.
+    let c = Close::new();
+    c.add(0, false, &[locked()]);
+    assert_eq!(c.close(&[]).0, 0);
+    c.assert_closed("workspace closed; refs deleted");
+}
+
+#[test]
+fn refs_of_a_run_whose_first_lock_failed_are_deleted_too() {
+    // Host::lock makes the ref before it can fail, and the run saves locked only once it has not.
+    let c = Close::new();
+    c.add(0, false, &[]);
+    c.add_refs();
+    assert_eq!(c.close(&[]).0, 0);
+    assert_eq!(c.refs(), [OTHER_REF]);
+    c.assert_closed("workspace closed; refs deleted");
+}
+
+#[test]
+fn a_done_run_still_ending_is_refused_untouched() {
+    // Its orchestrator may be deleting its refs (Workflow::clean_up_locks) as close would.
+    let c = Close::new();
+    c.add(0, true, &[("phase", Value::from("done")), ("error", Value::Null), ("owner", me()), locked()]);
+    c.add_refs();
+    let before = c.project();
+    assert_eq!(c.close(&[]), (EXIT_ERROR, String::new()));
+    assert_eq!(
+        c.error(),
+        format!("run {CLOSE_ID} is still running (pid 4242 on here, beat 0s ago); stop it before closing it")
+    );
+    assert!(c.calls().is_empty());
+    assert_eq!((c.project(), c.refs().len()), (before, 3));
+}
+
+#[test]
+fn a_done_run_that_stopped_while_ending_closes_as_a_finished_one() {
+    // ending_health calls it stale; its worktree is still a --no-pr run's change.
+    let c = Close::new();
+    let ended = [("phase", Value::from("done")), ("error", Value::Null), ("owner", me()), locked()];
+    c.add(STALE_SECONDS + 1, true, &ended);
+    c.add_refs();
+    assert_eq!(c.close(&[]).0, 0);
+    c.assert_closed(&format!("workspace closed; worktree kept: {}; refs deleted", worktree()));
+}
+
+/// close_run of a1b2c3 on this machine's host, in a temporary directory that is no git repository, of a failed run
+/// that locked what locked says: what close gives, and the run's saved closed after it, null when not recorded.
+fn close_outside_a_repository(locked: &[(&str, Vec<String>)]) -> (Result<String, OrchestratorError>, Value) {
+    let tmp = crate::test_support::TempDir::new();
+    let host = crate::host::ProcessHost::local(&crate::interrupt::Interrupt::new());
+    let mut state = RunState::new(CLOSE_ID, "x", &tmp.path());
+    (state.phase, state.round, state.error) = ("build".into(), 1, Some("interrupted".into()));
+    for (step, paths) in locked {
+        state.locked.insert(*step, paths.clone());
+    }
+    let path = format!("{}/state.json", state.dir());
+    host.write(&path, &state.to_text(), false).unwrap();
+    let mut cli = Cli::new();
+    cli.f.pid_alive = Box::new(|_| false);
+    let closed = cli.with(|world| {
+        let mut world = *world;
+        world.with.host = &host;
+        close_run(&world, &tmp.path(), "a1b2c3")
+    });
+    let saved = serde_json::from_str::<Value>(&host.read(&path).unwrap().unwrap()).unwrap();
+    (closed, saved.get("closed").cloned().unwrap_or(Value::Null))
+}
+
+#[test]
+fn a_run_outside_a_git_repository_closes_without_git() {
+    // A --no-pr run is how a directory that is no repository is run (Workflow's start check); it locked nothing.
+    let (closed, saved) = close_outside_a_repository(&[]);
+    assert_eq!(closed.unwrap(), "workspace already gone");
+    assert_eq!(saved, Value::from("workspace already gone"));
+}
+
+#[test]
+fn a_run_that_locked_in_a_directory_git_now_refuses_is_not_closed() {
+    // Its refs are somewhere git cannot reach now, as in a checkout git calls of dubious ownership: closing it
+    // would record refs deleted while they stay. Fixing git and closing again finishes.
+    let (closed, saved) = close_outside_a_repository(&[("tests", vec!["tests/test_a.py".to_string()])]);
+    let error = closed.unwrap_err().0;
+    assert!(error.starts_with("could not delete the refs under refs/orchestrator/a1b2c3/: "), "{error}");
+    assert_eq!(saved, Value::Null);
+}
+
 #[test]
 fn on_a_machine() {
     let c = Close::new();
@@ -438,9 +592,14 @@ fn close_on_real_git() {
     state.branch = Some(CLOSE_BRANCH.into());
     state.error = Some("interrupted".into());
     state.worktree = Some(wt.clone());
+    state.locked.insert("tests", vec!["app.py".to_string()]);
     let path = format!("{}/state.json", state.dir());
     repo.host.write(&path, &state.to_text(), false).unwrap();
     crate::host::tests::set_mtime(&path, 1_000_000_000);
+    let other = "refs/orchestrator/d4e5f6/locked/tests";
+    for git_ref in [state.lock_ref("tests").as_str(), other] {
+        repo.git(&["update-ref", git_ref, state.base.as_deref().unwrap()]);
+    }
     let mut cli = Cli::new();
     cli.f.pid_alive = Box::new(|_| false);
     let closed = cli
@@ -450,7 +609,8 @@ fn close_on_real_git() {
             close_run(&world, &repo.path, "a1b2c3")
         })
         .unwrap();
-    assert_eq!(closed, "workspace already gone; worktree deleted; branch deleted");
+    assert_eq!(closed, "workspace already gone; worktree deleted; branch deleted; refs deleted");
+    assert_eq!(repo.git(&["for-each-ref", "--format=%(refname)", "refs/orchestrator/"]), format!("{other}\n"));
     let out = cli.take_out();
     assert!(out.contains(&format!("discarding in {wt}:\n     M app.py\n    ?? new.py\n")), "{out}");
     assert!(!std::path::Path::new(&wt).exists());

@@ -678,11 +678,13 @@ is rewritten to say what is left.
   (`[1] == [True]`). Raised by the cross-review of `test-integrity-constants` (F4, 2026-10-27): "`_literals`
   equality misses sign, type and structure changes"; the constant path compares `_tree_fingerprint`s instead.
   Closes with the inline path comparing typed literals and pairing a unary minus with its operand.
-- **A run that never reaches `done` keeps its local refs.** A locking step's commit stays under
-  `refs/orchestrator/<key>/locked/` (`RunState::lock_ref`) until the run ends `done` (`Workflow::clean_up_locks`);
-  `close` and `prune` do not delete them, so a failed run's locked snapshots are never collected by `git gc`. Closes
-  with `close` and `prune` deleting `RunState::refs_prefix` as they delete the run's branch.
-  Ticket: `.scratch/close-run-refs/issues/01-close-deletes-run-refs.md` (#232).
+- **A run that is never closed keeps its local refs.** A locking step's commit stays under
+  `refs/orchestrator/<key>/locked/` (`RunState::lock_ref`) until the run ends `done` (`Workflow::clean_up_locks`) or
+  is closed (`close_run`, `engine/src/cli/close.rs`). Left: the refs of a failed or stale run nobody closes, of one
+  closed by a release whose `close` left them, and of one whose run directory was deleted by hand, which `close`
+  cannot find; their locked snapshots are never collected by `git gc`. `git for-each-ref refs/orchestrator/` lists
+  them, and `git update-ref -d` deletes one. Decided against on 2026-10-25: `prune` deleting them, and a sweep of
+  `refs/orchestrator/<key>/` whose run directory is gone.
 - **An agent's pull request can reach `main` on rules it wrote itself, with no human.** Jenkins's App reports
   `continuous-integration/jenkins/pr-head`, which the agents' token cannot post, but a pull request build runs
   the pull request's own `Jenkinsfile` and gate (`docs/quality-gate.md`, What the Gate stage judges), and since
