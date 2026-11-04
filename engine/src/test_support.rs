@@ -184,6 +184,18 @@ pub fn quick() -> Pipeline {
     Pipeline::new("quick", roles(&[("build", "Builder"), ("review", "Reviewer")]), vec![build, review]).unwrap()
 }
 
+/// quick with a second verdict step after the review: the Product Manager accepts the change or sends it back to
+/// the Builder.
+pub fn accepting() -> Pipeline {
+    let mut accept = again(Step::new("accept", "accept", "accept-{n}.md", "Accept {build_path} against {task}; write {accept_path}."),
+        "Accept again; write {accept_path}.");
+    accept.loop_to = Some("build".into());
+    let mut steps = quick().steps().to_vec();
+    steps.push(accept);
+    let roles = roles(&[("build", "Builder"), ("review", "Reviewer"), ("accept", "Product Manager")]);
+    Pipeline::new("accepting", roles, steps).unwrap()
+}
+
 /// Four roles: the tests are written once, and the review loop goes back to the Builder only.
 pub fn four_steps() -> Vec<Step> {
     let mut spec = Step::new("spec", "spec", "spec.md", "Interview about {task}; write {spec_path}.");

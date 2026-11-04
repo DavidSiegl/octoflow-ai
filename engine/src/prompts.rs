@@ -161,9 +161,9 @@ pub const PROOFS_NOTE: &str = concat!(
     "your report instead.",
 );
 
-/// Appended to the verdict step's prompt, after the quality and locks notes, when proofs carried from an earlier round
-/// (Workflow._carried_proofs) were run again against the round's change (Workflow._rerun_proofs); proofs is a list item
-/// per proof, as proofs_section writes them.
+/// Appended to the proof step's prompt (Pipeline::proof_step), after the quality and locks notes, when proofs carried
+/// from an earlier round (Workflow._carried_proofs) were run again against the round's change
+/// (Workflow._rerun_proofs); proofs is a list item per proof, as proofs_section writes them.
 pub const CARRIED_PROOFS_NOTE: &str = concat!(
     "Proofs that failed against the change in an earlier round were run again against this round's change, with ",
     "`{command}` in {cwd}, each from a copy of its directory under `{cwd}/",
@@ -177,7 +177,7 @@ pub const CARRIED_PROOFS_NOTE: &str = concat!(
     "itself is wrong.",
 );
 
-/// Appended to the verdict step's prompt when a turn of the round changed files that an earlier step locked.
+/// Appended to each verdict step's prompt when a turn of the round changed files that an earlier step locked.
 pub const LOCKED_NOTE: &str = concat!(
     "This round changed files that step {steps} locked: {paths}. The orchestrator restored them, ",
     "so the change you review does not hold those edits; they are in {diff_paths}. ",

@@ -257,8 +257,8 @@ fn saved_quality_gate(saved: &Object) -> Option<String> {
 }
 
 /// Print one run of the project at cwd on world's standard output, by its id or its key run_ref: its list line and
-/// whole task, workflow, branch, agents, turns, files and last review. target is resume_command's. Errors: no run
-/// or several match run_ref, and what world's host gives reading the runs and the run's directory.
+/// whole task, workflow, branch, agents, turns, verdicts, files and last review. target is resume_command's. Errors:
+/// no run or several match run_ref, and what world's host gives reading the runs and the run's directory.
 pub fn show_run(world: &Connected, cwd: &str, run_ref: &str, target: &[String]) -> Result<(), OrchestratorError> {
     let host = world.with.host;
     let runs = host.run_states(cwd)?;
@@ -310,6 +310,7 @@ pub fn show_run(world: &Connected, cwd: &str, run_ref: &str, target: &[String]) 
         .map(|turns| turns.iter().filter_map(|t| t.as_object().cloned()).collect())
         .unwrap_or_default();
     print_section(world, "turns", turn_lines(&turns));
+    print_section(world, "verdicts", verdict_lines(truthy("verdicts")));
     print_section(world, "files", host.run_files(&run_dir)?.into_iter().map(|f| f.path).collect());
     let round = saved.get("round").and_then(Value::as_i64).unwrap_or(0);
     let review = match &pipeline {
@@ -337,18 +338,30 @@ fn print_section(world: &Connected, title: &str, lines: Vec<String>) {
     }
 }
 
-/// The path of the verdict file of the latest round, up to round, that exists in run_dir on world's host, and its text
-/// without the VERDICT line; None without one, or for a workflow without a verdict step. Errors: a file cannot be
-/// read.
+/// show's line per verdict a verdict step gave, of a saved state's verdicts (crate::state::StepVerdict), such as
+/// "round 1  review  CHANGES_REQUESTED"; none for a run saved before them. A record that is not an object of those
+/// fields shows "None" for each it lacks.
+fn verdict_lines(verdicts: Option<&Value>) -> Vec<String> {
+    let records = verdicts.and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+    let field = |v: &Value, key: &str| v.get(key).map_or("None".to_string(), Value::text);
+    let width = records.iter().map(|v| field(v, "step").chars().count()).max().unwrap_or(0);
+    records
+        .iter()
+        .map(|v| format!("round {}  {:<width$}  {}", field(v, "round"), field(v, "step"), field(v, "verdict")))
+        .collect()
+}
+
+/// The path of the last verdict file written in run_dir on world's host, up to round: of the latest round that has
+/// one, the file of its last verdict step that has one; and its text without the VERDICT line. None without one, or
+/// for a workflow without a verdict step. Errors: a file cannot be read.
 fn last_review(
     world: &Connected,
     run_dir: &str,
     pipeline: &Pipeline,
     round: i64,
 ) -> Result<Option<(String, String)>, OrchestratorError> {
-    let Some(step) = pipeline.verdict_step() else { return Ok(None) };
-    for n in (1..=round).rev() {
-        let path = step.path(run_dir, n, 0);
+    let newest_first = |n| pipeline.verdict_steps().rev().map(move |step| step.path(run_dir, n, 0));
+    for path in (1..=round).rev().flat_map(newest_first) {
         let Some(text) = world.with.host.read(&path)? else { continue };
         if parse_verdict(&text).is_none() {
             return Ok(Some((path, text)));

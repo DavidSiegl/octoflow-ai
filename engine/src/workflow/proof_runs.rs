@@ -1,6 +1,6 @@
-//! The verdict step's proofs (Pipeline::proof_command), run against the change: those of a review that requests
-//! changes, then again each round until they pass, with what the review, the verdict step and the step it loops back
-//! to are told of them.
+//! The proof step's proofs (Pipeline::proof_step, Pipeline::proof_command), run against the change: those of a
+//! review that requests changes, then again each round until they pass, with what the review, the proof step and the
+//! step it loops back to are told of them.
 
 use super::{prompt_error, Outcome, Workflow};
 use crate::constants::PROOF_COPIES_DIR;
@@ -114,7 +114,7 @@ impl Workflow<'_> {
         format!("{}/{}", self.state.proofs_dir(proof.written), proof.file)
     }
 
-    /// What the verdict step hears in round n of the proofs from earlier rounds run again before its turn:
+    /// What the proof step hears in round n of the proofs from earlier rounds run again before its turn:
     /// CARRIED_PROOFS_NOTE after a blank line; "" when none was. Errors: a saved run is malformed (ProofRun::read), or
     /// the prompt cannot be filled in.
     pub(super) fn carried_proofs_note(&self, n: u32) -> Result<String, OrchestratorError> {
@@ -210,9 +210,10 @@ impl Workflow<'_> {
     }
 
     /// What the step hears in round n of the proofs carried into it (carried_proofs): PROOFS_NOTE after a blank line;
-    /// "" when it is not the step the verdict step loops back to, or none is carried. Errors: as carried_proofs_note's.
+    /// "" when it is not the step the proof step (Pipeline::proof_step) loops back to, or none is carried. Errors: as
+    /// carried_proofs_note's.
     pub(super) fn proofs_note(&self, step: &Step, n: u32) -> Result<String, OrchestratorError> {
-        let loops_here = self.pipeline.verdict_step().is_some_and(|v| v.loop_to.as_deref() == Some(step.id.as_str()));
+        let loops_here = self.pipeline.proof_step().is_some_and(|v| v.loop_to.as_deref() == Some(step.id.as_str()));
         if !loops_here {
             return Ok(String::new());
         }

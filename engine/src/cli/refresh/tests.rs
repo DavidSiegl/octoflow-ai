@@ -49,7 +49,8 @@ fn pr(body: &str, fields: &[(&str, Value)]) -> FakePr {
 
 /// The body pr_body writes for state.
 fn body_of(state: &RunState) -> String {
-    pr_body(state, "spec", "report", "VERDICT: APPROVE", &GateEvidence::default())
+    let reviews = [("review-1.md".to_string(), "VERDICT: APPROVE".to_string())];
+    pr_body(state, "spec", "report", &reviews, &GateEvidence::default())
 }
 
 /// The body pr_body writes for the run once its conflicts are gone.

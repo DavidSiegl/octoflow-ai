@@ -2,10 +2,11 @@
 //! request's body, all from its RunState and handoff files.
 
 use crate::constants::{
-    APPROVE, BRANCH_PREFIX, DEFAULT_AGENT, FINISHED, PR_SECTION_LIMIT, QUALITY_GATE_FAILED, SUCCEEDED,
+    APPROVE, BRANCH_PREFIX, DEFAULT_AGENT, FINISHED, PR_SECTION_LIMIT, QUALITY_GATE_FAILED,
 };
+use crate::handoff::parse_verdict;
 use crate::quality::parse_gate;
-use crate::state::RunState;
+use crate::state::{RunState, StepVerdict};
 use crate::summary::turns_table;
 
 /// The `# ` heading on the spec's first non-blank line, without the blanks around it; None when that line is no
@@ -44,7 +45,9 @@ fn verdict_text(state: &RunState) -> &str {
     state.verdict.as_deref().unwrap_or("None")
 }
 
-/// How the run ended, for its pull request, and why it is a draft if it is one for that.
+/// How the run ended, for its pull request, and why it is a draft if it is one for that. A run whose verdicts
+/// (RunState::verdicts) came from more than one verdict step names each verdict of the last round, by step; any
+/// other names only the run's verdict.
 pub fn verdict_line(state: &RunState) -> String {
     match state.verdict.as_deref() {
         Some(FINISHED) => format!("**{FINISHED}**: its workflow has no review step, so no agent reviewed this change."),
@@ -54,13 +57,27 @@ pub fn verdict_line(state: &RunState) -> String {
         ),
         verdict => {
             let n = state.round;
-            let mut line = format!(
-                "Reviewer verdict after {n} round{}: **{}**.",
-                if n != 1 { "s" } else { "" },
-                verdict_text(state)
-            );
-            if verdict != Some(APPROVE) {
-                line.push_str("\n\nThe Reviewer still requested changes after the last round, so this is a draft.");
+            let rounds = format!("{n} round{}", if n != 1 { "s" } else { "" });
+            let several = state.verdicts.iter().any(|v| v.step != state.verdicts[0].step);
+            let last: Vec<&StepVerdict> = state.verdicts.iter().filter(|v| v.round == n).collect();
+            let mut line;
+            match last.last() {
+                Some(judge) if several => {
+                    let given: Vec<String> = last.iter().map(|v| format!("{} **{}**", v.step, v.verdict)).collect();
+                    line = format!("Verdicts after {rounds}: {}.", given.join(", "));
+                    if verdict != Some(APPROVE) {
+                        line += &format!(
+                            "\n\n{} still requested changes in the last round, so this is a draft.",
+                            judge.step
+                        );
+                    }
+                }
+                _ => {
+                    line = format!("Reviewer verdict after {rounds}: **{}**.", verdict_text(state));
+                    if verdict != Some(APPROVE) {
+                        line.push_str("\n\nThe Reviewer still requested changes after the last round, so this is a draft.");
+                    }
+                }
             }
             line
         }
@@ -236,11 +253,11 @@ fn details(summary: &str, text: &str, open: bool) -> String {
 }
 
 /// The pull request's body: the conflict warning and the note on a gate turned off where they apply, how the run
-/// ended, its provenance as a table, the spec, the last report, the last quality file, the review and the run's
-/// timings. quality is what the gate said of the change, as provenance takes it.
-pub fn pr_body(state: &RunState, spec: &str, report: &str, review: &str, quality: &GateEvidence) -> String {
+/// ended, its provenance as a table, the spec, the last report, the last quality file, the reviews and the run's
+/// timings. reviews are the verdict files of the last round, each as (its name, its text), in step order; each is
+/// open unless it approves. quality is what the gate said of the change, as provenance takes it.
+pub fn pr_body(state: &RunState, spec: &str, report: &str, reviews: &[(String, String)], quality: &GateEvidence) -> String {
     let s = state;
-    let approved = s.verdict.as_deref().is_some_and(|v| SUCCEEDED.contains(&v));
     let head = format!("Opened by Octoflow AI run `{}`. {}", s.run_id, verdict_line(s));
     let mut table = vec!["| Commit trailer | Value |".to_string(), "| --- | --- |".to_string()];
     table.extend(provenance(s, quality).into_iter().map(|(key, said)| format!("| {key} | `{said}` |")));
@@ -269,7 +286,11 @@ pub fn pr_body(state: &RunState, spec: &str, report: &str, review: &str, quality
         parts.push(details(&format!("Quality gate ({label})"), &last.text, false));
     }
     if !matches!(s.verdict.as_deref(), Some(FINISHED | QUALITY_GATE_FAILED)) {
-        parts.push(details(&format!("Review (round {})", s.round), review, !approved));
+        for (name, review) in reviews {
+            // One verdict file is the review of its round, as in a workflow with one verdict step.
+            let summary = if reviews.len() == 1 { format!("Review (round {})", s.round) } else { format!("Review ({name})") };
+            parts.push(details(&summary, review, parse_verdict(review) != Some(APPROVE)));
+        }
     }
     if !s.turns.is_empty() {
         parts.push(details("Run timings", &turns_table(&s.turns), false));

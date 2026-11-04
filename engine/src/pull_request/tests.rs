@@ -15,15 +15,58 @@ fn every_recorded_run_is_published_as_the_python_engine_does() {
         assert_eq!(Some(commit_note(s)), expected("commit_note"), "{place}");
         let trailers = Value::Array(provenance(s, &case.evidence).into_iter().map(|(k, v)| Value::Array(vec![Value::from(k), Value::from(v)])).collect());
         assert_eq!(Some(&trailers), case.expected.get("provenance"), "{place}");
-        let body = pr_body(s, &case.spec, &case.report, &case.review, &case.evidence);
+        let body = pr_body(s, &case.spec, &case.report, &one(&case.review), &case.evidence);
         assert_eq!(Some(body.clone()), expected("pr_body"), "{place}");
         if !s.conflicts.is_empty() {
             let mut clean = s.clone();
             clean.conflicts.clear();
             let without = without_conflict_warning(&body, s.base_branch.as_deref(), &s.conflicts);
-            assert_eq!(without, pr_body(&clean, &case.spec, &case.report, &case.review, &case.evidence), "{place}");
+            assert_eq!(without, pr_body(&clean, &case.spec, &case.report, &one(&case.review), &case.evidence), "{place}");
         }
     }
+}
+
+/// The reviews of a run whose last round has one verdict file, review-1.md, of text review.
+fn one(review: &str) -> Vec<(String, String)> {
+    vec![("review-1.md".to_string(), review.to_string())]
+}
+
+#[test]
+fn a_run_judged_by_several_verdict_steps_names_each_verdict_of_its_last_round() {
+    let mut s = state(|s| s.round = 2);
+    s.record_verdict(1, "review", APPROVE);
+    s.record_verdict(1, "accept", CHANGES);
+    s.record_verdict(2, "review", APPROVE);
+    s.record_verdict(2, "accept", APPROVE);
+    assert_eq!(verdict_line(&s), "Verdicts after 2 rounds: review **APPROVE**, accept **APPROVE**.");
+    let reviews = [("review-2.md", "VERDICT: APPROVE\nfine"), ("accept-2.md", "VERDICT: APPROVE\naccepted")]
+        .map(|(name, text)| (name.to_string(), text.to_string()));
+    let body = pr_body(&s, "spec", "r", &reviews, &GateEvidence::default());
+    assert!(body.contains("<details>\n<summary>Review (review-2.md)</summary>\n\nVERDICT: APPROVE\nfine"), "{body}");
+    assert!(body.contains("<details>\n<summary>Review (accept-2.md)</summary>\n\nVERDICT: APPROVE\naccepted"), "{body}");
+    // The second requests changes in the last round: its file opens, the first's stays closed.
+    s.record_verdict(2, "accept", CHANGES);
+    assert_eq!(
+        verdict_line(&s),
+        "Verdicts after 2 rounds: review **APPROVE**, accept **CHANGES_REQUESTED**.\n\naccept still requested changes in \
+         the last round, so this is a draft."
+    );
+    let reviews = [("review-2.md", "VERDICT: APPROVE\nfine"), ("accept-2.md", "VERDICT: CHANGES_REQUESTED\nno")]
+        .map(|(name, text)| (name.to_string(), text.to_string()));
+    let body = pr_body(&s, "spec", "r", &reviews, &GateEvidence::default());
+    assert!(body.contains("<details>\n<summary>Review (review-2.md)</summary>"), "{body}");
+    assert!(body.contains("<details open>\n<summary>Review (accept-2.md)</summary>"), "{body}");
+    assert_eq!(commit_note(&s), "Orchestrator run r: CHANGES_REQUESTED after 2 review round(s).");
+}
+
+#[test]
+fn a_run_judged_by_one_verdict_step_or_saved_without_the_record_names_the_runs_verdict() {
+    let mut s = state(|s| s.round = 2);
+    let expected = "Reviewer verdict after 2 rounds: **APPROVE**.";
+    assert_eq!(verdict_line(&s), expected);
+    s.record_verdict(1, "review", CHANGES);
+    s.record_verdict(2, "review", APPROVE);
+    assert_eq!(verdict_line(&s), expected);
 }
 
 fn state(change: impl FnOnce(&mut RunState)) -> RunState {
@@ -59,7 +102,7 @@ fn the_conflict_warning_comes_first() {
         s.base_branch = Some("main".into());
         s.conflicts = vec!["a.py".into(), "docs/b.md".into()];
     });
-    let body = pr_body(&s, "spec", "r", "VERDICT: APPROVE", &GateEvidence::default());
+    let body = pr_body(&s, "spec", "r", &one("VERDICT: APPROVE"), &GateEvidence::default());
     assert_eq!(
         body.split("\n\n").next().unwrap(),
         "> [!WARNING]\n> This branch conflicts with `main`, so this is a draft. Merge `main` into it and resolve the conflicts in:\n> - `a.py`\n> - `docs/b.md`"
@@ -91,8 +134,8 @@ fn the_conflict_warning_is_removed_and_nothing_else() {
 #[test]
 fn no_conflicts_no_warning_and_long_sections_are_truncated() {
     let s = state(|s| s.base_branch = Some("main".into()));
-    assert!(pr_body(&s, "spec", "r", "VERDICT: APPROVE", &GateEvidence::default()).starts_with("Opened by"));
-    let body = pr_body(&s, &"x".repeat(PR_SECTION_LIMIT * 2), "r", "VERDICT: APPROVE", &GateEvidence::default());
+    assert!(pr_body(&s, "spec", "r", &one("VERDICT: APPROVE"), &GateEvidence::default()).starts_with("Opened by"));
+    let body = pr_body(&s, &"x".repeat(PR_SECTION_LIMIT * 2), "r", &one("VERDICT: APPROVE"), &GateEvidence::default());
     assert!(body.chars().count() < 65536 && body.contains("truncated"));
 }
 
@@ -115,18 +158,18 @@ fn the_gate_trailer_says_how_the_last_quality_round_ended() {
 fn the_notes_of_a_run_without_a_review_or_a_gate_turned_off() {
     let finished = state(|s| s.verdict = Some(FINISHED.into()));
     assert_eq!(commit_note(&finished), "Orchestrator run r: FINISHED, unreviewed.");
-    let body = pr_body(&finished, "spec", "report", "never read", &GateEvidence { last: None, unjudged: true });
+    let body = pr_body(&finished, "spec", "report", &one("never read"), &GateEvidence { last: None, unjudged: true });
     assert!(body.starts_with("> [!NOTE]\n> The quality gate was turned off (`resume --no-quality-gate`) before any analysis finished"));
     assert!(!body.contains("never read"));
     let failed = state(|s| s.verdict = Some(QUALITY_GATE_FAILED.into()));
     assert!(verdict_line(&failed).ends_with("so this is a draft."));
-    let unjudged = pr_body(&finished, "spec", "report", "", &evidence(2, 1, "GATE: OK\n", true));
+    let unjudged = pr_body(&finished, "spec", "report", &one(""), &evidence(2, 1, "GATE: OK\n", true));
     assert!(unjudged.contains("after its last analysis, and the Builder changed the code since"));
     assert!(unjudged.contains("<summary>Quality gate (round 2, before the last change)</summary>"));
     let changes = state(|s| { s.verdict = Some(CHANGES.into()); s.round = 2; });
     assert_eq!(verdict_line(&changes), "Reviewer verdict after 2 rounds: **CHANGES_REQUESTED**.\n\nThe Reviewer still requested changes after the last round, so this is a draft.");
     assert_eq!(commit_note(&changes), "Orchestrator run r: CHANGES_REQUESTED after 2 review round(s).");
-    assert!(pr_body(&changes, "s", "r", "VERDICT: CHANGES_REQUESTED", &GateEvidence::default()).contains("<details open>\n<summary>Review (round 2)</summary>"));
+    assert!(pr_body(&changes, "s", "r", &one("VERDICT: CHANGES_REQUESTED"), &GateEvidence::default()).contains("<details open>\n<summary>Review (round 2)</summary>"));
     let unset = state(|s| s.verdict = None);
     assert_eq!(commit_note(&unset), "Orchestrator run r: None after 1 review round(s).");
     assert_eq!(conflict_warning(None, &["a".into()]).lines().nth(1), Some("> This branch conflicts with `None`, so this is a draft. Merge `None` into it and resolve the conflicts in:"));

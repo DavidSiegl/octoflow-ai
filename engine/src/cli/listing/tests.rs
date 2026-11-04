@@ -20,7 +20,7 @@ use crate::host::fake::{FakeHost, FakePr, HOST_EPOCH};
 use crate::host::{Completed, ProcessHost};
 use crate::interrupt::Interrupt;
 use crate::summary::iso_utc;
-use crate::test_support::{impl_, solo, TempDir};
+use crate::test_support::{accepting, impl_, solo, TempDir};
 use crate::workflow_file::workflow_definition;
 
 const RUN_ID: &str = "20260930-070000-c0ffee";
@@ -701,6 +701,40 @@ fn a_review_without_a_verdict_line_is_shown_whole() {
     put(&cli, "review-1.md", "half a review");
     let out = show(&cli, "a1b2c3").1;
     assert!(out.ends_with(&format!("\nlast review: {SHOW_DIR}/review-1.md\nhalf a review\n")), "{out}");
+}
+
+#[test]
+fn each_verdict_step_s_verdicts_and_the_last_verdict_file_written() {
+    let accepting = workflow_definition(&accepting());
+    let verdicts = json(
+        r#"[{"round": 1, "step": "review", "verdict": "APPROVE"}, {"round": 1, "step": "accept", "verdict": "CHANGES_REQUESTED"},
+            {"round": 2, "step": "review", "verdict": "CHANGES_REQUESTED"}]"#,
+    );
+    let saved = show_state(&[
+        ("workflow", Value::from("accepting")),
+        ("workflow_definition", accepting),
+        ("phase", Value::from("build")),
+        ("round", Value::from(3)),
+        ("verdict", Value::from(CHANGES_REQUESTED)),
+        ("verdicts", verdicts),
+    ]);
+    let cli = show_host(&[saved]);
+    put(&cli, "review-1.md", "VERDICT: APPROVE\nfine\n");
+    put(&cli, "accept-1.md", "VERDICT: CHANGES_REQUESTED\nnot what was asked\n");
+    put(&cli, "review-2.md", "VERDICT: CHANGES_REQUESTED\na bug\n");
+    let out = show(&cli, "a1b2c3").1;
+    assert!(out.contains(concat!(
+        "\nverdicts\n",
+        "    round 1  review  APPROVE\n",
+        "    round 1  accept  CHANGES_REQUESTED\n",
+        "    round 2  review  CHANGES_REQUESTED\n",
+    )), "{out}");
+    assert!(out.ends_with(&format!("\nlast review: {SHOW_DIR}/review-2.md\na bug\n")), "{out}");
+    // Round 2's acceptance, had it been written, is the later file of the round.
+    put(&cli, "accept-2.md", "VERDICT: APPROVE\nas asked\n");
+    assert!(show(&cli, "a1b2c3").1.ends_with(&format!("\nlast review: {SHOW_DIR}/accept-2.md\nas asked\n")));
+    // A run saved before there were verdicts shows none.
+    assert!(!shown(&[show_state(&[])]).lines().any(|line| line == "verdicts"));
 }
 
 #[test]

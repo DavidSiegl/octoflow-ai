@@ -1,5 +1,5 @@
 use super::*;
-use crate::test_support::{four, four_roles, four_steps, impl_, quick, replaced, roles, solo};
+use crate::test_support::{accepting, four, four_roles, four_steps, impl_, quick, replaced, roles, solo};
 
 fn step(id: &str, file: &str) -> Step {
     Step::new(id, id, file, "go")
@@ -47,10 +47,18 @@ fn invalid_definitions() {
             vec![with(step("build", "a-{n}.md"), |s| { s.edits = true; s.loop_to = Some("build".into()) }), review.clone()],
         ),
         (
-            "steps build, review each loop back; only one verdict loop is supported",
+            "step review loops back to review, which does not come before it",
             vec![
-                with(step("prep", "p-{n}.md"), |s| { s.role = "build".into(); s.edits = true }),
-                with(step("build", "a-{n}.md"), |s| s.loop_to = Some("prep".into())),
+                build.clone(),
+                with(step("check", "c-{n}.md"), |s| { s.role = "review".into(); s.loop_to = Some("build".into()) }),
+                with(step("review", "b-{n}.md"), |s| s.loop_to = Some("review".into())),
+            ],
+        ),
+        (
+            "step check is in the review loop, so its handoff file needs {n}",
+            vec![
+                build.clone(),
+                with(step("check", "c.md"), |s| s.role = "review".into()),
                 with(step("review", "b-{n}.md"), |s| s.loop_to = Some("build".into())),
             ],
         ),
@@ -206,7 +214,21 @@ fn only_an_editing_step_may_lock() {
             _ => st,
         })
         .collect();
-    assert!(Pipeline::new("bad", four_roles(), steps).unwrap_err().ends_with("step tests locks the files it changes, so the verdict loop must not run it again"));
+    assert!(Pipeline::new("bad", four_roles(), steps).unwrap_err().ends_with("step tests locks the files it changes, so the verdict loop of step review must not run it again"));
+    // Nor a second verdict step's loop: four's review goes back to the Builder, after the Test Writer, and an
+    // acceptance back to the tests.
+    let mut steps: Vec<Step> = four_steps()
+        .into_iter()
+        .map(|st| match st.id.as_str() {
+            "tests" => with(st, |s| { s.locks = true; s.file = "tests-{n}.md".into() }),
+            _ => st,
+        })
+        .collect();
+    steps.push(with(step("accept", "accept-{n}.md"), |s| s.loop_to = Some("tests".into())));
+    let mut roles = four_roles();
+    roles.insert("accept", "Product Manager".to_string());
+    let e = Pipeline::new("bad", roles, steps).unwrap_err();
+    assert!(e.ends_with("step tests locks the files it changes, so the verdict loop of step accept must not run it again"), "{e}");
 }
 
 #[test]
@@ -237,12 +259,14 @@ fn the_pipelines_parts() {
     assert_eq!(p.after("review"), None);
     assert_eq!(p.first_edit().map(|st| st.id.as_str()), Some("tests"));
     assert_eq!(p.last_edit().map(|st| st.id.as_str()), Some("build"));
-    assert_eq!(p.verdict_step().map(|st| st.id.as_str()), Some("review"));
+    assert_eq!(p.verdict_steps().map(|st| st.id.as_str()).collect::<Vec<_>>(), ["review"]);
+    assert_eq!(p.proof_step().map(|st| st.id.as_str()), Some("review"));
     assert_eq!(p.gated(), None);
     assert_eq!(p.contract().map(|st| st.id.as_str()), Some("spec"));
-    assert_eq!(p.result().id, "review");
+    assert_eq!(p.result(None).id, "review");
     assert_eq!(quick().contract(), None);
-    assert_eq!(solo().result().id, "build");
+    assert_eq!(solo().result(None).id, "build");
+    assert_eq!(solo().verdict_steps().count(), 0);
     assert!(!p.steps()[0].can_block() && p.steps()[1].can_block() && !p.steps()[3].can_block());
     let names: Vec<String> = p.path_placeholders().into_iter().take(3).map(|(name, _, _)| name).collect();
     assert_eq!(names, ["spec_path", "prev_spec_path", "earlier_spec_paths"]);
@@ -250,6 +274,24 @@ fn the_pipelines_parts() {
     assert_eq!(impl_().gated().map(|st| st.name(2, 1)), Some("impl-2-q1.md".to_string()));
     assert_eq!((p.max_files(), p.max_lines(), p.proof_command(), p.description()), (15, 600, None, ""));
     assert!(p.models().is_empty() && p.agents().is_empty());
+}
+
+#[test]
+fn several_verdict_steps_each_loop_back_to_an_earlier_step() {
+    let p = accepting();
+    assert_eq!(workflow_shape(&p), "build -> review (back to build) -> accept (back to build)");
+    assert_eq!(p.verdict_steps().map(|st| st.id.as_str()).collect::<Vec<_>>(), ["review", "accept"]);
+    // Acceptance is judged against the requirements, not backed by proofs.
+    assert_eq!(p.proof_step().map(|st| st.id.as_str()), Some("review"));
+    // The run ends on the file of the verdict step that gave its verdict; a run saved without that record had one.
+    assert_eq!(p.result(Some("accept")).id, "accept");
+    assert_eq!(p.result(Some("review")).id, "review");
+    assert_eq!(p.result(None).id, "review");
+    // The second loop may go back to an editing step of its own, after the first verdict step.
+    let mut steps = p.steps().to_vec();
+    steps.insert(2, with(step("polish", "polish-{n}.md"), |s| { s.role = "build".into(); s.edits = true }));
+    steps[3].loop_to = Some("polish".into());
+    assert!(Pipeline::new("polished", p.roles().clone(), steps).is_ok());
 }
 
 #[test]

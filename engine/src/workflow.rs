@@ -104,9 +104,9 @@ pub struct Collaborators<'a> {
 /// resume starts from them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RunSettings {
-    /// How many rounds the verdict step's loop takes at most: a verdict other than APPROVE in a round before round
-    /// max_rounds sends the run back to the loop's target in the next round, and from round max_rounds on the run
-    /// goes on past the verdict step whatever the verdict.
+    /// How many rounds the verdict steps' loops take at most, together: a verdict other than APPROVE in a round
+    /// before round max_rounds sends the run back to its step's loop target in the next round, and from round
+    /// max_rounds on the run goes on past the last verdict step whatever the verdict (Workflow::take_turn).
     pub max_rounds: u32,
     /// Seconds a turn of a step that is not human-paced may take.
     pub turn_timeout: u64,
@@ -306,11 +306,11 @@ impl<'a> Workflow<'a> {
         &self.state
     }
 
-    /// Run every phase not yet done and return the final verdict: the verdict step's, or for a workflow without one,
-    /// FINISHED, or QUALITY_GATE_FAILED when its quality gate still failed. A run already done returns its saved
-    /// verdict, after finishing what of its ending an orchestrator that stopped there left undone (ending_left): one
-    /// it had not released yet is taken over (claim) and ended again up to and with the release, the notice and the
-    /// closing; one whose ending is whole is left as it is, not even saved.
+    /// Run every phase not yet done and return the final verdict: the run's (RunState::verdict), for a workflow
+    /// without a verdict step FINISHED, or QUALITY_GATE_FAILED when its quality gate still failed. A run already done
+    /// returns its saved verdict, after finishing what of its ending an orchestrator that stopped there left undone
+    /// (ending_left): one it had not released yet is taken over (claim) and ended again up to and with the release,
+    /// the notice and the closing; one whose ending is whole is left as it is, not even saved.
     ///
     /// Errors: why the run stopped (Stopped); for a failure or an interrupt before the run was done, after recording
     /// it in state.json and writing summary.md, as far as saving still works. An interrupt once the run is done stops
@@ -430,7 +430,7 @@ impl<'a> Workflow<'a> {
             self.prepare()?;
         }
         self.walk()?;
-        if self.pipeline.verdict_step().is_none() {
+        if self.pipeline.verdict_steps().next().is_none() {
             let passed = self.gate_passed(self.state.round)?;
             self.state.verdict = Some(if passed { FINISHED } else { QUALITY_GATE_FAILED }.to_string());
         }
@@ -713,10 +713,9 @@ impl<'a> Workflow<'a> {
         }
     }
 
-    /// Per round, its quality gates and its verdict, as its handoff files say.
+    /// Per round, its quality gates and the verdict of each verdict step that judged it, as its handoff files say.
     fn round_results(&self) -> Result<Vec<String>, OrchestratorError> {
         let s = &self.state;
-        let verdict_step = self.pipeline.verdict_step();
         let mut lines = vec![];
         for n in 1..=s.round {
             let mut parts = vec![];
@@ -724,10 +723,8 @@ impl<'a> Workflow<'a> {
             if !gates.is_empty() {
                 parts.push(format!("quality gate {}", gates.join(", ")));
             }
-            if let Some(step) = verdict_step {
-                if let Some(text) = self.host.read(&step.path(&s.dir(), n, 0))? {
-                    parts.push(format!("{} {}", step.id, parse_verdict(&text).unwrap_or("?")));
-                }
+            for (step, text) in self.round_reviews(n)? {
+                parts.push(format!("{} {}", step.id, parse_verdict(&text).unwrap_or("?")));
             }
             let parts = if parts.is_empty() { "no verdict".to_string() } else { parts.join("; ") };
             lines.push(format!("Round {n}: {parts}"));
@@ -875,28 +872,31 @@ impl<'a> Workflow<'a> {
         let pipeline = Rc::clone(&self.pipeline);
         loop {
             let n = self.state.round;
-            let (step, finished) = if self.state.phase == QUALITY {
+            let done_with = if self.state.phase == QUALITY {
                 let gated = self.gated_step()?;
-                let finished = self.judge_quality(&gated, n)?;
-                (gated, finished)
+                self.judge_quality(&gated, n)?.then_some(gated.id)
             } else {
                 let step = self.current_step()?;
-                let finished = self.take_turn(&step, n)?;
-                (step, finished)
+                self.take_turn(&step, n)?
             };
-            if !finished {
-                continue;
-            }
-            match pipeline.after(&step.id) {
+            let Some(done_with) = done_with else { continue };
+            match pipeline.after(&done_with) {
                 None => return Ok(()),
                 Some(following) => self.goto(following, n)?,
             }
         }
     }
 
-    /// The step's turn in round n; false when the run goes on elsewhere than the next step.
-    fn take_turn(&mut self, step: &Step, n: u32) -> Outcome<bool> {
-        if step.loop_to.is_some() {
+    /// The step's turn in round n: the id of the step the run goes on after, the step's own or, for a verdict that
+    /// ends the last round early, the last verdict step's; None when the run goes on elsewhere, saved already.
+    ///
+    /// A round runs the verdict steps in order, and ends at the first that does not approve: in a round before
+    /// max_rounds back to its loop's target, in the next round, and in round max_rounds past the last verdict step.
+    /// So a later verdict step never judges a change an earlier one rejected.
+    fn take_turn(&mut self, step: &Step, n: u32) -> Outcome<Option<String>> {
+        let pipeline = Rc::clone(&self.pipeline);
+        let proves = pipeline.proof_step().is_some_and(|proof_step| proof_step.id == step.id);
+        if proves {
             self.rerun_proofs(step, n)?;
         }
         let out = self.step_turn(step, n)?;
@@ -911,25 +911,28 @@ impl<'a> Workflow<'a> {
             if self.jenkins.is_some() {
                 self.state.phase = QUALITY.to_string();
                 self.save()?;
-                return Ok(false);
+                return Ok(None);
             }
         }
-        let Some(loop_to) = &step.loop_to else { return Ok(true) };
+        let Some(loop_to) = &step.loop_to else { return Ok(Some(step.id.clone())) };
         // turn accepts no verdict file without one.
         let verdict = parse_verdict(&out).unwrap_or_default();
-        self.state.verdict = Some(verdict.to_string());
+        self.state.record_verdict(n, &step.id, verdict);
         self.human.log(&format!("[{}] round {n}: {verdict}", step.role));
-        if verdict == CHANGES_REQUESTED && self.pipeline.proof_command().is_some() {
+        if verdict == CHANGES_REQUESTED && proves && pipeline.proof_command().is_some() {
             self.judge_proofs(step, n, &out)?;
         }
-        if verdict != APPROVE && n < self.state.max_rounds {
+        if verdict == APPROVE {
+            return Ok(Some(step.id.clone()));
+        }
+        if n < self.state.max_rounds {
             self.state.quality_round = 0;
-            let pipeline = Rc::clone(&self.pipeline);
             let target = pipeline.step(loop_to).ok_or_else(|| OrchestratorError(format!("no step {loop_to}")))?;
             self.goto(target, n + 1)?;
-            return Ok(false);
+            return Ok(None);
         }
-        Ok(true)
+        let last = pipeline.verdict_steps().next_back().map(|last| last.id.clone());
+        Ok(last)
     }
 
     /// Make step the current one, in round n, and save that; the first editing step starts round 1.
@@ -1000,12 +1003,14 @@ impl<'a> Workflow<'a> {
             values.insert(name, value);
         }
         let template = |t: &str| fill(t, &|name| values.get(name).cloned()).map_err(|e| prompt_error(&step.id, &e));
-        // What the verdict step hears of its round besides its prompt: its last quality file, the locked files
-        // restored, and the proofs run again.
-        let notes = if step.loop_to.is_some() {
+        // What a verdict step hears of its round besides its prompt: its last quality file and the locked files
+        // restored, and the proof step the proofs run again.
+        let notes = if step.loop_to.is_none() {
+            String::new()
+        } else if self.pipeline.proof_step().is_some_and(|proof_step| proof_step.id == step.id) {
             self.quality_note(n)? + &self.locks_note(n)? + &self.carried_proofs_note(n)?
         } else {
-            String::new()
+            self.quality_note(n)? + &self.locks_note(n)?
         };
         let first = template(&step.prompt)? + &notes;
         let follow = if q > 0 {
@@ -1183,9 +1188,11 @@ impl<'a> Workflow<'a> {
             }
             self.rewrite_on_leak(|host, base, branch| host.push_branch(&wd, branch, base, &leaks))?;
             let report = self.last_text(pipeline.last_edit(), self.state.round)?;
-            let verdict = self.last_text(pipeline.verdict_step(), self.state.round)?;
+            let n = self.state.round;
+            let reviews: Vec<(String, String)> =
+                self.round_reviews(n)?.into_iter().map(|(step, text)| (step.name(n, 0), text)).collect();
             let s = &self.state;
-            let body = pr_body(s, &spec, &report, &verdict, &quality);
+            let body = pr_body(s, &spec, &report, &reviews, &quality);
             let draft = !SUCCEEDED.contains(&s.verdict.as_deref().unwrap_or_default()) || !s.conflicts.is_empty();
             let head = s.branch.clone().unwrap_or_default();
             let url = self.host.create_pr(&wd, &base_branch, &head, &title, &body, draft)?;
@@ -1252,6 +1259,18 @@ impl<'a> Workflow<'a> {
         let Some(step) = step else { return Ok(String::new()) };
         let s = &self.state;
         Ok(self.host.read(&step.last_path(&s.dir(), n, s.quality_round))?.unwrap_or_default())
+    }
+
+    /// Each verdict step that judged round n, with the text of its file of the round, in step order; empty for a
+    /// workflow without a verdict step. Errors: a file cannot be read.
+    fn round_reviews(&self, n: u32) -> Result<Vec<(&Step, String)>, OrchestratorError> {
+        let mut reviews = vec![];
+        for step in self.pipeline.verdict_steps() {
+            if let Some(text) = self.host.read(&step.path(&self.state.dir(), n, 0))? {
+                reviews.push((step, text));
+            }
+        }
+        Ok(reviews)
     }
 
     /// Close the run's workspace once the pull request carries the change; a failure leaves only clutter behind, so

@@ -1,0 +1,167 @@
+//! Workflows with several verdict steps (acceptance-verdict/01): a round runs them in order and ends at the first
+//! that does not approve, one round counter and max_rounds bound them all, and the run records each one's verdict
+//! per round.
+
+use super::*;
+use crate::pipeline::{Pipeline, Step};
+use crate::test_support::{accepting, roles};
+
+const D: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
+
+fn with_pipeline(p: &Pipeline, max_rounds: u32) -> RunSettings {
+    RunSettings { pipeline: Some(p.clone()), max_rounds, ..RunSettings::default() }
+}
+
+/// The Product Manager's turn of round n in test_support's accepting workflow, with verdict.
+fn accept_turn(n: u32, verdict: &str) -> Turn {
+    writes(move |s| format!("{}/accept-{n}.md", s.dir()), &format!("**VERDICT: {verdict}**\n1. criterion"), "done")
+}
+
+/// The verdicts the run recorded, as (round, step id, verdict), in order.
+fn verdicts(s: &RunState) -> Vec<(u32, &str, &str)> {
+    s.verdicts.iter().map(|v| (v.round, v.step.as_str(), v.verdict.as_str())).collect()
+}
+
+/// The run's summary.md.
+fn summary(f: &Fixture) -> String {
+    f.host.state().files.get(&format!("{D}/summary.md")).cloned().expect("the run wrote summary.md")
+}
+
+#[test]
+fn both_approve_in_one_round() {
+    let p = accepting();
+    let seen = seen();
+    let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&p), vec![
+        ("build", vec![build_turn(1)]),
+        ("review", vec![review_turn(1, APPROVE)]),
+        ("accept", vec![recording(accept_turn(1, APPROVE), &seen)]),
+    ]);
+    let mut wf = f.workflow(with_pipeline(&p, 3));
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert_eq!(*seen.borrow(), [format!("Accept {D}/build-1.md against add a rate limiter; write {D}/accept-1.md.")]);
+    assert_eq!(verdicts(wf.state()), [(1, "review", APPROVE), (1, "accept", APPROVE)]);
+    let pr = f.host.state().prs[0].clone();
+    assert!(!pr.draft);
+    assert!(pr.body.contains("Verdicts after 1 round: review **APPROVE**, accept **APPROVE**."), "{}", pr.body);
+    assert!(pr.body.contains("<details>\n<summary>Review (review-1.md)</summary>\n\n**VERDICT: APPROVE**\n1. finding"));
+    assert!(pr.body.contains("<details>\n<summary>Review (accept-1.md)</summary>\n\n**VERDICT: APPROVE**\n1. criterion"));
+    assert!(summary(&f).contains("- Round 1: review APPROVE; accept APPROVE\n"));
+}
+
+#[test]
+fn the_second_requests_changes_and_the_next_round_runs_both_again() {
+    let p = accepting();
+    let seen = seen();
+    let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&p), vec![
+        ("build", vec![build_turn(1), build_turn(2)]),
+        ("review", vec![review_turn(1, APPROVE), review_turn(2, APPROVE)]),
+        ("accept", vec![recording(accept_turn(1, CHANGES_REQUESTED), &seen), recording(accept_turn(2, APPROVE), &seen)]),
+    ]);
+    let mut wf = f.workflow(with_pipeline(&p, 3));
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert_eq!(seen.borrow()[1], format!("Accept again; write {D}/accept-2.md."));
+    assert_eq!(names(&f, "prompt"), ["build", "review", "accept", "build", "review", "accept"].map(|r| format!("{r}-a1b2c3")));
+    let s = wf.state();
+    assert_eq!((s.round, s.phase.as_str()), (2, "done"));
+    assert_eq!(
+        verdicts(s),
+        [(1, "review", APPROVE), (1, "accept", CHANGES_REQUESTED), (2, "review", APPROVE), (2, "accept", APPROVE)]
+    );
+    assert!(summary(&f).contains("- Round 1: review APPROVE; accept CHANGES_REQUESTED\n- Round 2: review APPROVE; accept APPROVE\n"));
+}
+
+#[test]
+fn the_first_requests_changes_and_the_second_does_not_run() {
+    let p = accepting();
+    let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&p), vec![
+        ("build", vec![build_turn(1), build_turn(2)]),
+        ("review", vec![review_turn(1, CHANGES_REQUESTED), review_turn(2, APPROVE)]),
+        ("accept", vec![accept_turn(2, APPROVE)]),
+    ]);
+    let mut wf = f.workflow(with_pipeline(&p, 3));
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert_eq!(names(&f, "prompt"), ["build", "review", "build", "review", "accept"].map(|r| format!("{r}-a1b2c3")));
+    assert_eq!(verdicts(wf.state()), [(1, "review", CHANGES_REQUESTED), (2, "review", APPROVE), (2, "accept", APPROVE)]);
+    assert!(!f.host.state().files.contains_key(&format!("{D}/accept-1.md")));
+    assert!(summary(&f).contains("- Round 1: review CHANGES_REQUESTED\n- Round 2: review APPROVE; accept APPROVE\n"));
+}
+
+#[test]
+fn max_rounds_bounds_both_and_the_last_round_ends_at_the_first_that_does_not_approve() {
+    let p = accepting();
+    let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&p), vec![
+        ("build", vec![build_turn(1), build_turn(2)]),
+        ("review", vec![review_turn(1, APPROVE), review_turn(2, CHANGES_REQUESTED)]),
+        ("accept", vec![accept_turn(1, CHANGES_REQUESTED)]),
+    ]);
+    let mut wf = f.workflow(with_pipeline(&p, 2));
+    assert_eq!(wf.run(), verdict(CHANGES_REQUESTED));
+    assert_eq!(names(&f, "prompt"), ["build", "review", "accept", "build", "review"].map(|r| format!("{r}-a1b2c3")));
+    let s = wf.state();
+    assert_eq!((s.round, s.phase.as_str()), (2, "done"));
+    assert_eq!(verdicts(s), [(1, "review", APPROVE), (1, "accept", CHANGES_REQUESTED), (2, "review", CHANGES_REQUESTED)]);
+    let pr = f.host.state().prs[0].clone();
+    assert!(pr.draft);
+    assert!(
+        pr.body.contains(
+            "Verdicts after 2 rounds: review **CHANGES_REQUESTED**.\n\nreview still requested changes in the last round, \
+             so this is a draft."
+        ),
+        "{}",
+        pr.body
+    );
+    // The last round's only verdict file, under the wording of a workflow with one.
+    assert!(pr.body.contains("<details open>\n<summary>Review (round 2)</summary>"), "{}", pr.body);
+}
+
+#[test]
+fn a_last_round_that_ends_early_goes_on_past_every_verdict_step() {
+    let mut steps = accepting().steps().to_vec();
+    steps.push(Step::new("notes", "notes", "notes.md", "Write release notes to {notes_path}."));
+    let roles = roles(&[("build", "Builder"), ("review", "Reviewer"), ("accept", "Product Manager"), ("notes", "Writer")]);
+    let p = Pipeline::new("noted", roles, steps).unwrap();
+    let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&p), vec![
+        ("build", vec![build_turn(1)]),
+        ("review", vec![review_turn(1, CHANGES_REQUESTED)]),
+        ("notes", vec![writes(|s| format!("{}/notes.md", s.dir()), "notes", "done")]),
+    ]);
+    let mut wf = f.workflow(with_pipeline(&p, 1));
+    assert_eq!(wf.run(), verdict(CHANGES_REQUESTED));
+    assert_eq!(names(&f, "prompt"), ["build", "review", "notes"].map(|r| format!("{r}-a1b2c3")));
+}
+
+#[test]
+fn a_resume_between_the_two_verdict_turns_takes_only_the_second() {
+    let p = accepting();
+    let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&p), vec![
+        ("build", vec![build_turn(1)]),
+        ("review", vec![review_turn(1, APPROVE)]),
+    ]);
+    f.play("accept", vec![then_interrupted(&f.interrupt, working())]);
+    assert_eq!(f.workflow(with_pipeline(&p, 3)).run(), Err(Stopped::Interrupted));
+    let saved = f.saved();
+    assert_eq!((text(&saved, "phase"), saved.get("round")), (Some("accept".into()), Some(&Value::from(1))));
+    let state = RunState::from_saved(&saved).unwrap();
+    assert_eq!(verdicts(&state), [(1, "review", APPROVE)]);
+    let f2 = Fixture::resume(Rc::clone(&f.host), state, vec![("accept", vec![accept_turn(1, APPROVE)])], &[], &[]);
+    let mut wf = f2.workflow(RunSettings { pipeline: Some(p), ..f2.as_saved() });
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert!(!names(&f2, "prompt").contains(&"review-a1b2c3".to_string()));
+    assert_eq!(verdicts(wf.state()), [(1, "review", APPROVE), (1, "accept", APPROVE)]);
+}
+
+#[test]
+fn a_run_saved_with_one_verdict_and_no_record_of_it_finishes() {
+    // Saved by a release before RunState::verdicts, in the review of round 2, after round 1's changes.
+    let mut state = saved_run("review", 2, FULL);
+    state.verdict = Some(CHANGES_REQUESTED.into());
+    let Value::Object(mut saved) = state.to_json() else { unreachable!("a state is an object") };
+    saved.shift_remove("verdicts");
+    let state = RunState::from_saved(&saved).unwrap();
+    assert!(state.verdicts.is_empty());
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![("review", vec![review_turn(2, APPROVE)])], &[], &[]);
+    f.put(&format!("{D}/build-2.md"), "report 2");
+    let mut wf = f.workflow(RunSettings { pull_request: false, ..f.as_saved() });
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert_eq!(verdicts(wf.state()), [(2, "review", APPROVE)]);
+}

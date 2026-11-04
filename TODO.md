@@ -69,6 +69,12 @@ is rewritten to say what is left.
 
 ## Open issues
 
+- **`list` does not say which verdict step gave a run's verdict.** `run_record` (`engine/src/cli/listing.rs`) copies
+  the saved `verdict`, the run's, and leaves `RunState.verdicts` out, so `list`, `list --json`, serve's `/runs` and
+  the desktop app show `CHANGES_REQUESTED` alike for a run the Tech Lead sent back and one the Product Manager did;
+  `show` prints each step's verdicts. Left out of acceptance-verdict ticket 01 (2026-11-04), which kept the run
+  record's keys as they were. Closes with a `verdicts` key in the run record (an added key, so `RUN_RECORD_VERSION`
+  stays) and the outcome naming the step when the workflow has more than one.
 - **Writes to origin are not tried again through an outage.** `reaching_origin` (`engine/src/workflow/origin.rs`)
   wraps the run's fetches and its `ls-remote` reads only; the pushes (`engine/src/host.rs`'s `push_ref`,
   `push_branch`), the remote branch deletions (`delete_remote_branch`, `delete_remote_branch_at`) and the `gh` calls

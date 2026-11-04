@@ -511,7 +511,8 @@ fn finish(verdict: &str, state: &RunState, pipeline: &Pipeline, print: &dyn Fn(&
     } else {
         format!(" (a draft: it conflicts with {})", state.base_branch.as_deref().unwrap_or("None"))
     };
-    let result = pipeline.result().last_path(&state.dir(), state.round, state.quality_round);
+    let judge = state.verdicts.last().map(|v| v.step.as_str());
+    let result = pipeline.result(judge).last_path(&state.dir(), state.round, state.quality_round);
     print(&format!("{verdict}: {}{conflict}\n", state.pr_url.as_deref().filter(|u| !u.is_empty()).unwrap_or(&result)));
     if !SUCCEEDED.contains(&verdict) {
         return EXIT_CHANGES_REQUESTED;

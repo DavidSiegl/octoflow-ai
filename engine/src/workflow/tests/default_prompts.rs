@@ -498,12 +498,12 @@ fn rendered(pipeline: &Pipeline) -> String {
     let mut wf = f.workflow(RunSettings { pipeline: Some(pipeline.clone()), ..RunSettings::default() });
     wf.state.base = Some("abc123".into());
     let steps = pipeline.steps();
-    let looped = match pipeline.verdict_step() {
-        Some(verdict) => {
-            let at = |id: &str| steps.iter().position(|st| st.id == id).unwrap();
-            &steps[at(verdict.loop_to.as_deref().unwrap())..=at(&verdict.id)]
-        }
-        None => &[],
+    // The steps a later round runs: from the earliest loop target to the last verdict step.
+    let at = |id: &str| steps.iter().position(|st| st.id == id).unwrap();
+    let first_target = pipeline.verdict_steps().filter_map(|v| v.loop_to.as_deref()).map(at).min();
+    let looped = match (first_target, pipeline.verdict_steps().next_back()) {
+        (Some(target), Some(last)) => &steps[target..=at(&last.id)],
+        _ => &[],
     };
     let mut parts = vec![];
     for step in steps {

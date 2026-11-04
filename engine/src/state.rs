@@ -14,8 +14,8 @@ use serde_json::Value;
 /// What a run has done so far, saved as state.json in its run directory.
 ///
 /// state.json is one line of JSON, an object: "format", STATE_FORMAT, then these fields in this order, then the fields
-/// of unknown. Every field that is not an Option must be there; a missing Option is None. The records a field holds
-/// as JSON are kept as they were read, key order included.
+/// of unknown. Every field that is not an Option must be there, but verdicts, which a state saved by an earlier
+/// release lacks; a missing Option is None. The records a field holds as JSON are kept as they were read, key order included.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RunState {
     pub run_id: String,
@@ -41,7 +41,15 @@ pub struct RunState {
     pub base_branch: Option<String>,
     pub branch: Option<String>,
     pub pr_url: Option<String>,
+    /// The run's verdict: the last a verdict step gave (record_verdict), which, as a round ends at the first verdict
+    /// step that does not approve, is APPROVE only when every verdict step that judged the last round approved it.
+    /// For a workflow without a verdict step, FINISHED or QUALITY_GATE_FAILED once its last step is done. None before
+    /// either.
     pub verdict: Option<String>,
+    /// Each verdict a verdict step gave, in the order given, a round's in the order of its verdict steps. Empty for a
+    /// run saved by a release before there were these records, whose one verdict step's last verdict is verdict.
+    #[serde(default)]
+    pub verdicts: Vec<StepVerdict>,
     /// The files that conflicted with the base branch when the pull request was opened, as a draft; empty again once
     /// refresh found the pull request merging cleanly, merged or closed (refresh_conflict).
     pub conflicts: Vec<String>,
@@ -128,6 +136,17 @@ pub struct RunState {
     pub unknown: Object,
 }
 
+/// One verdict a verdict step gave (RunState::verdicts).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StepVerdict {
+    /// The round it judged.
+    pub round: u32,
+    /// The verdict step's id.
+    pub step: String,
+    /// APPROVE or CHANGES_REQUESTED, as its file's VERDICT line says.
+    pub verdict: String,
+}
+
 /// The format of state.json this engine reads and writes, which its "format" field holds. A state.json written by a
 /// release before STATE_FORMAT_SINCE has no format, and is refused rather than read (RunState::from_saved): it was
 /// written in the Python engine's format.
@@ -159,6 +178,7 @@ impl RunState {
             branch: None,
             pr_url: None,
             verdict: None,
+            verdicts: Vec::new(),
             conflicts: Vec::new(),
             error: None,
             agents: Map::new(),
@@ -242,6 +262,17 @@ impl RunState {
     /// closed with it (format_problem) in a project where this engine has saved runs too.
     pub fn to_text(&self) -> String {
         self.to_json().to_string() + "\n"
+    }
+
+    /// Record that the verdict step of id step gave verdict in round, which makes it the run's verdict too. It
+    /// replaces a record of the same step and round, as a resume that takes that step's turn again gives.
+    pub fn record_verdict(&mut self, round: u32, step: &str, verdict: &str) {
+        self.verdict = Some(verdict.to_string());
+        let given = StepVerdict { round, step: step.to_string(), verdict: verdict.to_string() };
+        match self.verdicts.iter_mut().find(|v| v.round == round && v.step == step) {
+            Some(earlier) => *earlier = given,
+            None => self.verdicts.push(given),
+        }
     }
 
     /// The prompts the run sends: those it started with (saved_prompts). Errors: its prompt_overrides name a prompt
