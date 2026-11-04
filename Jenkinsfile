@@ -362,10 +362,10 @@ pipeline {
             }
         }
 
-        // A pull request into main must raise the release version over main's, unless it changes only docs, tests or
-        // CI: the Release stage releases a merge into main only when its version has no release yet, so a merge that
-        // kept it would go unreleased (ci/version-raised.sh, which lists those paths). After Gate, so that a build
-        // that fails it has reported its tests and gate first.
+        // A pull request into main must raise the release version over main's, unless it changes only docs, tests, CI
+        // or repository tooling: the Release stage releases a merge into main only when its version has no release
+        // yet, so a merge that kept it would go unreleased (ci/version-raised.sh, which lists those paths). After
+        // Gate, so that a build that fails it has reported its tests and gate first.
         stage('Version') {
             when { changeRequest target: 'main' }
             steps {

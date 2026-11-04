@@ -5,7 +5,7 @@
 # saying why on standard error, when it is not, or when either version cannot be read. Versions are compared as sort -V
 # orders them, number by number, so 0.10.0 is greater than 0.9.0. Jenkins's Version stage runs it on a pull request
 # build into main: the Release stage releases a merge into main only when its version has no release yet, so a merge
-# that kept main's version would go unreleased, which is what a change to those alone should do.
+# that kept main's version would go unreleased, which is what a change to exempt paths alone should do.
 # tests/test_invariants.py holds engine/Cargo.toml's version to pyproject.toml's.
 set -eu
 : "${CHANGE_TARGET:?is unset; only a pull request build has a target}"
