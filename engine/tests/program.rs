@@ -5,7 +5,6 @@
 //! Linux only, as the engine's other process tests: GNU env starts the program with SIGINT, SIGTERM and SIGHUP at
 //! their default, whatever the test's own process does with them (Jenkins runs the tests with SIGINT ignored).
 
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -29,11 +28,17 @@ impl Dir {
         Dir(dir)
     }
 
-    /// Put an executable script named name, whose text is script, in the directory's bin.
+    /// Put an executable script named name, whose text is script, in the directory's bin, by a child process; for
+    /// why a child process writes it: `tool` in engine/src/host/tests.rs.
     fn tool(&self, name: &str, script: &str) {
         let path = self.0.join("bin").join(name);
-        std::fs::write(&path, script).expect("the script is written");
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("the script is executable");
+        let written = Command::new("sh")
+            .args(["-c", "printf %s \"$2\" > \"$1\" && chmod 755 \"$1\"", "sh"])
+            .arg(&path)
+            .arg(script)
+            .status()
+            .unwrap_or_else(|e| panic!("writing the script {}: {e}", path.display()));
+        assert!(written.success(), "writing the script {}: {written}", path.display());
     }
 }
 
