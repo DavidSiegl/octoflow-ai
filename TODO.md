@@ -69,6 +69,12 @@ is rewritten to say what is left.
 
 ## Open issues
 
+- **The project bar's last button runs past a narrow window's edge.** At 560 px wide the bar's fields keep their
+  minimum widths and "Check setup…" wraps onto two lines and ends past the page's right padding; origin/main at
+  a357407 does the same, so the logo's header (gui-logo/01) did not cause it. Seen in a headless screenshot of
+  `vite preview` (2026-11-04). Closes with the bar's fields allowed to shrink or wrap (`flex: 1 1 <basis>` with a
+  smaller `min-width`) so that every control stays inside the window down to the narrowest width the app supports.
+
 - **The desktop app's dialogs do not keep keyboard focus.** `Dialog` (`ui/src/components/Dialog.tsx`), which the
   setup dialog and the run form are, sets `aria-modal` and covers the window with its backdrop, but Tab still reaches
   the project bar under it. Opening another project while the run form waits for `POST /run` remounts `ProjectRuns`
