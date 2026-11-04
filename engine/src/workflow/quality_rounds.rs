@@ -9,12 +9,14 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::{Human, Outcome, Stopped, Workflow};
+use super::origin::reaching_origin;
+use super::{Clocks, Human, Outcome, Stopped, Workflow};
 use crate::checks::{judge_run, orchestrator_checks, RunChange, SLOW_STEP_MARGIN};
 use crate::ci::{CIError, Jenkins};
 use crate::constants::{CI_POLL_SECONDS, CI_REF_PREFIX, QUALITY_TIMEOUT, REMOTE};
 use crate::error::OrchestratorError;
 use crate::host::{Host, LeaksFound, PushError};
+use crate::interrupt::Interrupt;
 use crate::patch::added_lines;
 use crate::paths::file_name;
 use crate::pipeline::{Step, QUALITY};
@@ -534,7 +536,7 @@ impl<'a> Workflow<'a> {
     pub(super) fn clean_up_quality(&mut self) -> Outcome<()> {
         if self.state.had_quality_gate() {
             let ci = self.state.ci.clone();
-            delete_ci_refs(self.host, self.human, &mut self.state);
+            delete_ci_refs(self.host, self.human, self.clocks, self.interrupt, &mut self.state);
             if self.interrupt.is_raised() {
                 self.state.ci = ci;
                 return Err(Stopped::Interrupted);
@@ -581,9 +583,18 @@ pub(super) fn require_origin(host: &dyn Host, cwd: &str) -> Result<(), Orchestra
 }
 
 /// Delete the run's quality snapshot refs on origin and forget its build in flight (RunState::ci); a failure is only
-/// logged, to human.
-pub(super) fn delete_ci_refs(host: &dyn Host, human: &dyn Human, state: &mut RunState) {
-    let refs = host.remote_branches(&state.cwd, &format!("{CI_REF_PREFIX}{}-", state.key())).unwrap_or_else(|e| {
+/// logged, to human. Listing the refs waits out a short outage of origin on clocks, as reaching_origin does, unless
+/// interrupt is raised.
+pub(super) fn delete_ci_refs(
+    host: &dyn Host,
+    human: &dyn Human,
+    clocks: &dyn Clocks,
+    interrupt: &Interrupt,
+    state: &mut RunState,
+) {
+    let prefix = format!("{CI_REF_PREFIX}{}-", state.key());
+    let listed = reaching_origin(clocks, human, interrupt, || host.remote_branches(&state.cwd, &prefix));
+    let refs = listed.unwrap_or_else(|e| {
         human.log(&format!("could not list the {CI_REF_PREFIX} branches on {REMOTE}: {e}"));
         Vec::new()
     });

@@ -214,6 +214,37 @@ fn fetch_failure_stops_before_the_interview() {
 }
 
 #[test]
+fn a_fetch_origin_refuses_twice_is_tried_again_and_the_run_goes_on() {
+    // As GitHub refused known keys during its incident of 2026-11-04 (origin-retry/01).
+    let host = FakeHost::default();
+    host.state().fetch_error = Some(
+        "git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.".into(),
+    );
+    host.state().fetch_failures_left = Some(2);
+    let f = Fixture::on(Rc::new(host), new_state(), approved());
+    assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
+    let retries: Vec<String> = f.told.lines().into_iter().filter(|l| l.contains("trying again")).collect();
+    assert_eq!(
+        retries,
+        ["origin unreachable, trying again in 5 s (1 of 3)", "origin unreachable, trying again in 20 s (2 of 3)"]
+    );
+    assert_eq!(f.host.state().prs.len(), 1);
+}
+
+#[test]
+fn a_ctrl_c_while_waiting_for_origin_stops_the_run_as_interrupted() {
+    let host = FakeHost::default();
+    host.state().fetch_error = Some("fatal: unable to access 'https://github.com/o/r/': Could not resolve host".into());
+    let f = Fixture::on(Rc::new(host), new_state(), vec![("spec", vec![])]);
+    let raised = f.interrupt.clone();
+    f.clock.hook(move |_| raised.raise());
+    assert_eq!(f.workflow(RunSettings::default()).run(), Err(Stopped::Interrupted));
+    // One try, one wait, which the Ctrl-C ended.
+    assert_eq!(f.host.state().git_calls.iter().filter(|c| c[0] == "fetch").count(), 1);
+    assert_eq!(text(&f.saved(), "error").as_deref(), Some("interrupted"));
+}
+
+#[test]
 fn diverged_base_stops_before_the_interview() {
     let host = FakeHost::default();
     host.state().diverged = true;

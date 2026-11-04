@@ -57,11 +57,11 @@ fn turn_on(state: &mut RunState, jenkins: &Jenkins, host: &FakeHost) -> Result<V
     Ok(told.lines())
 }
 
-/// turn_quality_gate_off of state on pipeline: the lines it logged, or its error.
-fn turn_off(state: &mut RunState, pipeline: &Pipeline, host: &FakeHost) -> Result<Vec<String>, OrchestratorError> {
-    let told = Told::default();
-    turn_quality_gate_off(state, pipeline, host, &told)?;
-    Ok(told.lines())
+/// turn_quality_gate_off of state on pipeline, on host and a fixture's other fakes: the lines it logged, or its error.
+fn turn_off(state: &mut RunState, pipeline: &Pipeline, host: &Rc<FakeHost>) -> Result<Vec<String>, OrchestratorError> {
+    let f = Fixture::on(Rc::clone(host), state.clone(), vec![]);
+    turn_quality_gate_off(state, pipeline, &f.collaborators())?;
+    Ok(f.told.lines())
 }
 
 /// f with the quality gate on fake's job, the Jenkins the gate was turned on with: Python's resume with ci.

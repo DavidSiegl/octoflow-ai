@@ -9,6 +9,7 @@ use crate::error::OrchestratorError;
 use crate::host::{GhError, Host, PullRequest};
 use crate::json::ValueExt;
 use crate::runs::{run_health, RUNNING};
+use crate::workflow::{reaching_origin, Collaborators};
 use serde_json::Value;
 
 /// A run's branch_cleanup once both sides of its branch are gone.
@@ -145,7 +146,7 @@ fn prune_run(
     }
     let head = &pr.head_ref_oid;
     // Each side is decided on its own, so keeping one does not keep the other.
-    let (remote, remote_kept) = prune_remote(host, cwd, branch, head, number, dry_run).map_err(failed)?;
+    let (remote, remote_kept) = prune_remote(&world.with, cwd, branch, head, number, dry_run).map_err(failed)?;
     let (local, local_kept) = prune_local(host, cwd, branch, head, number, checked_out, dry_run).map_err(failed)?;
     (run.remote, run.local) = (remote, local);
     let kept: Vec<String> = [local_kept, remote_kept].into_iter().flatten().collect();
@@ -180,16 +181,19 @@ pub fn pull_request_pending(pr: &PullRequest, number: &str, now: f64) -> Result<
 }
 
 /// What became of origin's branch, and why it was kept, if it was: gone already (its tracking ref then deleted),
-/// kept with commits beyond the pull request's head, or deleted at head.
+/// kept with commits beyond the pull request's head, or deleted at head; on with's host, origin's branch read through
+/// a short outage of origin (reaching_origin).
 fn prune_remote(
-    host: &dyn Host,
+    with: &Collaborators,
     cwd: &str,
     branch: &str,
     head: &str,
     number: &str,
     dry_run: bool,
 ) -> Result<(String, Option<String>), OrchestratorError> {
-    let Some(tip) = host.remote_branch_commit(cwd, branch)? else {
+    let host = with.host;
+    let tip = reaching_origin(with.clocks, with.human, with.interrupt, || host.remote_branch_commit(cwd, branch))?;
+    let Some(tip) = tip else {
         if !dry_run {
             host.delete_tracking_ref(cwd, branch)?;
         }

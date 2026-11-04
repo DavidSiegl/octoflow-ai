@@ -2,7 +2,7 @@
 //! resumes it, its state changed in memory for the Workflow to save. Python's turn_quality_gate_on and _off.
 
 use super::quality_rounds::{delete_ci_refs, require_origin};
-use super::Human;
+use super::{Collaborators, Human};
 use crate::ci::Jenkins;
 use crate::error::OrchestratorError;
 use crate::host::Host;
@@ -89,8 +89,8 @@ fn gate_can_start<'p>(state: &RunState, pipeline: &'p Pipeline, job: &str) -> Re
     Err(OrchestratorError(format!("run {} {why}, so its quality gate cannot be turned on", s.run_id)))
 }
 
-/// Turn the quality gate of the run in state, of workflow pipeline, off for good, as resume --no-quality-gate does.
-/// human hears what was done.
+/// Turn the quality gate of the run in state, of workflow pipeline, off for good, as resume --no-quality-gate does,
+/// on with's host; with's human hears what was done.
 ///
 /// The run's refs on origin are deleted, a failure only logged, and a build in progress is left to run. A run in
 /// phase quality goes on at the step after the gated one, dropping an analysis that has not finished; the verdict
@@ -100,15 +100,14 @@ fn gate_can_start<'p>(state: &RunState, pipeline: &'p Pipeline, job: &str) -> Re
 pub fn turn_quality_gate_off(
     state: &mut RunState,
     pipeline: &Pipeline,
-    host: &dyn Host,
-    human: &dyn Human,
+    with: &Collaborators,
 ) -> Result<(), OrchestratorError> {
     let s = state;
     if s.phase == DONE || s.quality_job.as_deref().is_none_or(str::is_empty) {
         let why = if s.phase == DONE { "is done" } else { "has no quality gate" };
         return Err(OrchestratorError(format!("run {} {why}, so --no-quality-gate does not apply", s.run_id)));
     }
-    delete_ci_refs(host, human, s);
+    delete_ci_refs(with.host, with.human, with.clocks, with.interrupt, s);
     s.quality_job = None;
     s.quality_gate_disabled = true;
     if s.phase == QUALITY {
@@ -120,6 +119,6 @@ pub fn turn_quality_gate_off(
             s.phase = pipeline.after(&gated.id).map_or(PUBLISH, |f| f.id.as_str()).to_string();
         }
     }
-    human.log(&format!("turned the quality gate of run {} off", s.run_id));
+    with.human.log(&format!("turned the quality gate of run {} off", s.run_id));
     Ok(())
 }

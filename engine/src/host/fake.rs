@@ -149,6 +149,8 @@ pub(crate) struct FakeState {
     pub upstream: Option<String>,
     /// The stderr of a failing fetch, e.g. offline or no such branch on origin.
     pub fetch_error: Option<String>,
+    /// How many more fetches fail with fetch_error, the ones after them succeeding; None: every one.
+    pub fetch_failures_left: Option<u32>,
     /// The local branch and origin's each have commits the other lacks.
     pub diverged: bool,
     /// The files a merge of upstream conflicts in.
@@ -260,6 +262,7 @@ impl FakeHost {
                 prs: vec![],
                 upstream: None,
                 fetch_error: None,
+                fetch_failures_left: None,
                 diverged: false,
                 conflicts: vec![],
                 merge_head: false,
@@ -392,7 +395,8 @@ impl FakeState {
                 self.commit_head();
             }
             ["worktree", rest @ ..] => return self.git_worktree(rest),
-            ["fetch", "--quiet", "origin", _] if self.fetch_error.is_some() => {
+            ["fetch", "--quiet", "origin", _] if self.fetch_error.is_some() && self.fetch_failures_left != Some(0) => {
+                self.fetch_failures_left = self.fetch_failures_left.map(|n| n - 1);
                 return Completed::new(128, "", self.fetch_error.as_deref().unwrap_or_default());
             }
             ["merge-base", "--is-ancestor", commit, of] => return self.git_is_ancestor(commit, of),

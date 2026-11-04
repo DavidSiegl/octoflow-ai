@@ -69,6 +69,19 @@ is rewritten to say what is left.
 
 ## Open issues
 
+- **Writes to origin are not tried again through an outage.** `reaching_origin` (`engine/src/workflow/origin.rs`)
+  wraps the run's fetches and its `ls-remote` reads only; the pushes (`engine/src/host.rs`'s `push_ref`,
+  `push_branch`), the remote branch deletions (`delete_remote_branch`, `delete_remote_branch_at`) and the `gh` calls
+  fail at the first refusal, as GitHub's incident of 2026-11-04 refused known keys. A write that reached origin but
+  reported failure needs its own handling first: a delete tried again finds no ref, and a push under a lease sees
+  the value it set. Left out of origin-retry ticket 01 (2026-11-04). Closes with each write's retry made safe to
+  repeat, then routed through `reaching_origin`.
+- **Workflow keeps its Collaborators field by field.** `Workflow::new` (`engine/src/workflow.rs`) takes a
+  `Collaborators` apart into eight fields, so code shared between a Workflow and a CLI command that holds the
+  `Collaborators` takes the pieces it needs one by one: `delete_ci_refs` (`workflow/quality_rounds.rs`) takes host,
+  human, clocks and interrupt, while `turn_quality_gate_off` (`workflow/gate_switch.rs`) takes the whole. Found in
+  origin-retry ticket 01 (2026-11-04). Closes with Workflow holding its `Collaborators`, the helpers taking it.
+
 - **The desktop app's dialogs do not keep keyboard focus.** `Dialog` (`ui/src/components/Dialog.tsx`), which the
   setup dialog and the run form are, sets `aria-modal` and covers the window with its backdrop, but Tab still reaches
   the project bar under it. Opening another project while the run form waits for `POST /run` remounts `ProjectRuns`

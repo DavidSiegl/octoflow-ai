@@ -41,12 +41,14 @@ use crate::workflow_file::{run_pipeline, workflow_definition};
 
 mod gate_switch;
 mod locks;
+mod origin;
 mod proof_runs;
 mod quality_rounds;
 mod system;
 mod turn;
 
 pub use gate_switch::{turn_quality_gate_off, turn_quality_gate_on};
+pub(crate) use origin::reaching_origin;
 pub use system::{LocalHuman, SystemClocks};
 
 #[cfg(test)]
@@ -546,7 +548,7 @@ impl<'a> Workflow<'a> {
             return Ok(());
         }
         let base_branch = self.base_branch()?;
-        let upstream = self.host.fetch(&cwd, &base_branch)?;
+        let upstream = self.reaching_origin(|| self.host.fetch(&cwd, &base_branch))?;
         self.host.add_worktree(&cwd, &worktree, &upstream)?;
         self.human.log(&format!("run {run_id} in worktree {worktree}, at {REMOTE}/{base_branch}"));
         self.save()
@@ -767,7 +769,7 @@ impl<'a> Workflow<'a> {
         // switch_to_branch.
         let base_branch = self.base_branch()?;
         if branch == base_branch {
-            self.host.fast_forward(&cwd, &base_branch)?;
+            self.reaching_origin(|| self.host.fast_forward(&cwd, &base_branch))?;
         }
         Ok(())
     }
@@ -804,6 +806,12 @@ impl<'a> Workflow<'a> {
             )));
         }
         Ok(())
+    }
+
+    /// reach, a call of the host's that reaches origin, tried again through a short outage of origin, as
+    /// origin::reaching_origin tries it.
+    fn reaching_origin<T>(&self, reach: impl FnMut() -> Result<T, OrchestratorError>) -> Result<T, OrchestratorError> {
+        origin::reaching_origin(self.clocks, self.human, self.interrupt, reach)
     }
 
     /// The branch the pull request targets, recorded before the interview. Errors: none is recorded.
@@ -1100,7 +1108,7 @@ impl<'a> Workflow<'a> {
             if self.state.worktree.is_some() {
                 // From origin's base itself: the worktree's detached HEAD is where it was before the interview, and
                 // the project's own base branch is the human's.
-                let upstream = self.host.fetch(&work_dir, &base_branch)?;
+                let upstream = self.reaching_origin(|| self.host.fetch(&work_dir, &base_branch))?;
                 self.host.git(&work_dir, &["switch", "-c", &branch, &upstream])?;
             } else {
                 if current != base_branch {
@@ -1109,7 +1117,7 @@ impl<'a> Workflow<'a> {
                          {base_branch} and resume"
                     ))));
                 }
-                self.host.fast_forward(&cwd, &base_branch)?;
+                self.reaching_origin(|| self.host.fast_forward(&cwd, &base_branch))?;
                 self.host.git(&cwd, &["switch", "-c", &branch])?;
             }
         }
@@ -1163,7 +1171,7 @@ impl<'a> Workflow<'a> {
             // The base moved on while the run built and reviewed. A conflict is left to the human: the branch is
             // pushed without the merge and the pull request says what conflicts.
             let base_branch = self.base_branch()?;
-            self.state.conflicts = self.host.merge_upstream(&wd, &base_branch)?;
+            self.state.conflicts = self.reaching_origin(|| self.host.merge_upstream(&wd, &base_branch))?;
             self.save()?;
             let s = &self.state;
             if !s.conflicts.is_empty() {
