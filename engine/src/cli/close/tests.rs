@@ -394,6 +394,64 @@ fn git_failure_records_nothing_and_a_second_close_finishes() {
     c.assert_closed("workspace already gone; worktree deleted; branch deleted");
 }
 
+const OTHER_REF: &str = "refs/orchestrator/d4e5f6/locked/tests";
+
+impl Close {
+    /// Give the run two locked snapshots, and a run of another key one (OTHER_REF).
+    fn add_refs(&self) {
+        let refs = &mut self.cli.f.host.state().refs;
+        for git_ref in ["refs/orchestrator/a1b2c3/locked/tests", "refs/orchestrator/a1b2c3/locked/build", OTHER_REF] {
+            refs.insert(git_ref, "snap1".to_string());
+        }
+    }
+
+    fn refs(&self) -> Vec<String> {
+        self.cli.f.host.state().refs.keys().map(String::from).collect()
+    }
+}
+
+#[test]
+fn every_closed_run_loses_its_refs_and_only_its() {
+    let wt = worktree();
+    let not_failed = [("error", Value::Null)];
+    let finished = [("phase", Value::from("done")), ("error", Value::Null), ("verdict", Value::from(APPROVE))];
+    let discarded = "workspace closed; worktree deleted; branch deleted; refs deleted";
+    let cases: [(u64, bool, Fields, String); 4] = [
+        (0, true, &[], discarded.into()),
+        (0, false, &[], "workspace closed; refs deleted".into()),
+        (STALE_SECONDS + 1, true, &not_failed, discarded.into()),
+        (0, true, &finished, format!("workspace closed; worktree kept: {wt}; refs deleted")),
+    ];
+    for (age, in_worktree, fields, line) in cases {
+        let c = Close::new();
+        c.add(age, in_worktree, fields);
+        c.add_refs();
+        let (status, out) = c.close(&[]);
+        assert_eq!(status, 0);
+        assert!(out.contains("deleted the refs under refs/orchestrator/a1b2c3/\n"), "{out}");
+        assert!(out.ends_with(&format!("closed run {CLOSE_ID}: {line}\n")), "{out}");
+        assert_eq!(c.refs(), [OTHER_REF]);
+        c.assert_closed(&line);
+    }
+}
+
+#[test]
+fn failing_to_delete_the_refs_records_nothing_and_a_second_close_finishes() {
+    let c = Close::new();
+    c.add(0, false, &[]);
+    c.add_refs();
+    c.cli.f.host.state().delete_refs_error = Some("fatal: cannot lock ref".into());
+    assert_eq!(c.close(&[]).0, EXIT_ERROR);
+    assert_eq!(c.error(), "could not delete the refs under refs/orchestrator/a1b2c3/: fatal: cannot lock ref");
+    assert_eq!(c.closed(), Value::Null);
+    assert_eq!(c.refs().len(), 3);
+
+    c.cli.f.host.state().delete_refs_error = None;
+    assert_eq!(c.close(&[]).0, 0);
+    assert_eq!(c.refs(), [OTHER_REF]);
+    c.assert_closed("workspace already gone; refs deleted");
+}
+
 #[test]
 fn on_a_machine() {
     let c = Close::new();
@@ -441,6 +499,10 @@ fn close_on_real_git() {
     let path = format!("{}/state.json", state.dir());
     repo.host.write(&path, &state.to_text(), false).unwrap();
     crate::host::tests::set_mtime(&path, 1_000_000_000);
+    let other = "refs/orchestrator/d4e5f6/locked/tests";
+    for git_ref in [state.lock_ref("tests").as_str(), other] {
+        repo.git(&["update-ref", git_ref, state.base.as_deref().unwrap()]);
+    }
     let mut cli = Cli::new();
     cli.f.pid_alive = Box::new(|_| false);
     let closed = cli
@@ -450,7 +512,8 @@ fn close_on_real_git() {
             close_run(&world, &repo.path, "a1b2c3")
         })
         .unwrap();
-    assert_eq!(closed, "workspace already gone; worktree deleted; branch deleted");
+    assert_eq!(closed, "workspace already gone; worktree deleted; branch deleted; refs deleted");
+    assert_eq!(repo.git(&["for-each-ref", "--format=%(refname)", "refs/orchestrator/"]), format!("{other}\n"));
     let out = cli.take_out();
     assert!(out.contains(&format!("discarding in {wt}:\n     M app.py\n    ?? new.py\n")), "{out}");
     assert!(!std::path::Path::new(&wt).exists());
