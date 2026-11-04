@@ -10,19 +10,16 @@ mod cli;
 mod markdown;
 mod names;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::LazyLock;
 
 use cli::GATE;
 use markdown::{code_spans, flags, word_char, Line};
 
 /// The repository's root.
-static ROOT: LazyLock<PathBuf> = LazyLock::new(|| {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    manifest.ancestors().nth(2).expect("engine/e2e lies two directories down").to_path_buf()
-});
+static ROOT: LazyLock<PathBuf> = LazyLock::new(octoflow_e2e::checkout);
 
 /// Commands and flags the docs give that the orchestrator does not have, as (document, command, flag); a flag of
 /// None stands for the command itself.
@@ -271,7 +268,11 @@ fn the_readme_flag_table_gives_each_flag_the_commands_that_take_it() {
     for row in &rows {
         let at = readme.at(&row.line);
         let scope = row_scope(&row.description);
-        let opening = code_spans(&row.description).first().copied().filter(|_| row.description.starts_with('`'));
+        // A command row_scope can read: lowercase letters and hyphens, so not gate.py.
+        let opening = code_spans(&row.description)
+            .first()
+            .copied()
+            .filter(|c| row.description.starts_with('`') && c.chars().all(|c| c.is_ascii_lowercase() || c == '-'));
         if let (None, Some(command)) = (&scope, opening.filter(|c| commands.contains_key(*c))) {
             errors.push(format!(
                 "{at}: the row opens with the command {command}, but not as a list of commands and a colon, which \
@@ -304,18 +305,22 @@ fn the_readme_flag_table_gives_each_flag_the_commands_that_take_it() {
 }
 
 // In the README or, for a command the README's table leaves out, such as gate.py, in docs/. A flag counts as named
-// wherever its name appears, said of any command or program.
+// wherever its name appears, said of any command or program. A missing flag has no line of its own, so the failure
+// names the line of the README's flag table, where a flag of the orchestrator's is documented.
 #[test]
 fn each_flag_is_documented() {
     let docs = docs();
     let documented: BTreeSet<&str> = docs.iter().flat_map(|d| flags(&d.text)).collect();
-    let missing: Vec<String> = cli::commands()
+    let readme = &docs[0];
+    let table = readme.lines().into_iter().find(|l| l.text.starts_with("| Flag | Description |"));
+    let at = table.map_or_else(|| readme.shown.clone(), |l| readme.at(&l));
+    let errors: Vec<String> = cli::commands()
         .iter()
         .flat_map(|(name, defined)| defined.iter().map(move |flag| (name, flag)))
         .filter(|(_, flag)| *flag != "--help" && !documented.contains(flag.as_str()))
-        .map(|(name, flag)| format!("{name} {flag}"))
+        .map(|(name, flag)| format!("{at}: {name} takes {flag}, which neither README.md nor docs/*.md names"))
         .collect();
-    assert!(missing.is_empty(), "flags that neither README.md nor docs/*.md name: {missing:?}");
+    assert_no_errors(&errors);
 }
 
 /// The parts of a code span that names a member, `Type.member`, `Type::member` and either with `()` after: the type
@@ -379,6 +384,8 @@ fn the_names_the_docs_give_exist_in_the_orchestrator() {
 #[test]
 fn each_relative_link_resolves_to_a_file_and_its_anchor_to_a_heading() {
     let mut errors = Vec::new();
+    // The anchors of each markdown file a link names, read once.
+    let mut anchors: HashMap<PathBuf, HashSet<String>> = HashMap::new();
     for doc in docs() {
         for line in doc.lines().into_iter().filter(|l| !l.fenced) {
             let prose = markdown::without_code(line.text);
@@ -391,7 +398,7 @@ fn each_relative_link_resolves_to_a_file_and_its_anchor_to_a_heading() {
                 let dest = if path.is_empty() {
                     doc.path.clone()
                 } else if let Some(from_root) = path.strip_prefix('/') {
-                    ROOT.join(unescape(from_root))
+                    ROOT.join(unescape(from_root.trim_start_matches('/')))
                 } else {
                     doc.path.parent().unwrap_or(&ROOT).join(unescape(path))
                 };
@@ -400,8 +407,11 @@ fn each_relative_link_resolves_to_a_file_and_its_anchor_to_a_heading() {
                     errors.push(format!("{at}: {target} names no file"));
                 } else if !anchor.is_empty() && dest.extension().is_some_and(|e| e == "md") {
                     // The anchor of a file other than markdown, such as #L10 of a source file, names a line.
-                    let text = fs::read_to_string(&dest).unwrap_or_else(|e| panic!("reading {}: {e}", dest.display()));
-                    if !markdown::anchors(&text).contains(anchor) {
+                    let headings = anchors.entry(dest.clone()).or_insert_with(|| {
+                        let text = fs::read_to_string(&dest).unwrap_or_else(|e| panic!("reading {}: {e}", dest.display()));
+                        markdown::anchors(&text)
+                    });
+                    if !headings.contains(anchor) {
                         let shown = dest.strip_prefix(&*ROOT).unwrap_or(&dest).display();
                         errors.push(format!("{at}: {target} names no heading of {shown}"));
                     }
@@ -426,7 +436,7 @@ fn unescape(path: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         let pair = bytes.get(i + 1..i + 3).and_then(|h| std::str::from_utf8(h).ok());
-        let hex = pair.and_then(|h| u8::from_str_radix(h, 16).ok());
+        let hex = pair.filter(|h| h.chars().all(|c| c.is_ascii_hexdigit())).and_then(|h| u8::from_str_radix(h, 16).ok());
         match (bytes[i], hex) {
             (b'%', Some(byte)) => {
                 out.push(byte);

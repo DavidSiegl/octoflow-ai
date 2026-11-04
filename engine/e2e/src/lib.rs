@@ -72,6 +72,13 @@ pub fn str_at<'a>(json: &'a Value, key: &str) -> &'a str {
     at(json, key).as_str().unwrap_or_else(|| panic!("{key} is not a string in {}", json))
 }
 
+/// The repository's top directory, two above this package's: where the example workflows a scenario runs are, and the
+/// docs the docs check reads.
+pub fn checkout() -> PathBuf {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    manifest.parent().and_then(Path::parent).expect("engine/e2e is two levels below the checkout").to_path_buf()
+}
+
 /// Where the engine keeps the runs of the project at project, a directory per run named `<run id>-<key>`.
 pub fn runs_dir(project: &Path) -> PathBuf {
     project.join(".orchestrator").join("runs")

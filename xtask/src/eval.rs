@@ -250,7 +250,7 @@ fn double_quoted(chars: &mut std::str::Chars, word: &mut String) -> Option<()> {
 /// The path of checkout's orchestrator binary, `cargo build --locked -p octoflow-engine --bin orchestrator` run there
 /// first, into checkout's target/xtask-engine. Errors: cargo is missing or fails, or reports no such binary.
 pub fn built_engine(checkout: &Path) -> Result<PathBuf, Error> {
-    // A target directory of its own, as engine/e2e/tests/e2e/engine.rs's build() has: the engine built alone resolves
+    // A target directory of its own, as engine/e2e/src/engine.rs's build() has: the engine built alone resolves
     // its dependencies' features without the other members', so in the workspace's target directory it would relink
     // the orchestrator the engine's own tests run meanwhile.
     let output = cargo()

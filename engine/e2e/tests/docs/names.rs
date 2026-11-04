@@ -7,6 +7,7 @@ use std::path::Path;
 
 use syn::visit::{self, Visit};
 
+use crate::markdown::word_char;
 use crate::ROOT;
 
 /// The names a program defines, as the docs give them.
@@ -66,10 +67,13 @@ fn is_test_file(path: &Path) -> bool {
         || path.components().any(|c| c.as_os_str() == "tests")
 }
 
-/// Whether attrs hold #[cfg(test)].
+/// Whether attrs hold a cfg that only a test build meets: #[cfg(test)] or #[cfg(all(test, ...))].
 fn cfg_test(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|a| {
-        a.path().is_ident("cfg") && matches!(&a.meta, syn::Meta::List(list) if list.tokens.to_string() == "test")
+        let syn::Meta::List(list) = &a.meta else { return false };
+        let predicate = list.tokens.to_string().replace(' ', "");
+        let all = predicate.strip_prefix("all(").and_then(|p| p.strip_suffix(')'));
+        a.path().is_ident("cfg") && (predicate == "test" || all.is_some_and(|p| p.split(',').any(|c| c == "test")))
     })
 }
 
@@ -119,6 +123,12 @@ impl<'ast> Visit<'ast> for Reader<'_> {
             syn::Item::Enum(i) => &i.attrs,
             syn::Item::Trait(i) => &i.attrs,
             syn::Item::Use(i) => &i.attrs,
+            syn::Item::Type(i) => &i.attrs,
+            syn::Item::Union(i) => &i.attrs,
+            syn::Item::Macro(i) => &i.attrs,
+            syn::Item::TraitAlias(i) => &i.attrs,
+            syn::Item::ExternCrate(i) => &i.attrs,
+            syn::Item::ForeignMod(i) => &i.attrs,
             _ => &[],
         };
         self.under(attrs, |r| visit::visit_item(r, item));
@@ -202,10 +212,20 @@ impl<'ast> Visit<'ast> for Reader<'_> {
         self.under(&f.attrs, |r| visit::visit_impl_item_fn(r, f));
     }
 
-    // A doc comment's text is no string the code uses.
+    // A doc comment's text is no string the code uses. The arguments of a list attribute, as #[serde(rename = "x")],
+    // are tokens to syn, read as expressions, as a macro's are.
     fn visit_attribute(&mut self, a: &'ast syn::Attribute) {
-        if !a.path().is_ident("doc") {
-            visit::visit_attribute(self, a);
+        use syn::punctuated::Punctuated;
+        match &a.meta {
+            syn::Meta::NameValue(_) if a.path().is_ident("doc") => {}
+            syn::Meta::List(list) => {
+                if let Ok(args) = list.parse_args_with(Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated) {
+                    for arg in &args {
+                        self.visit_expr(arg);
+                    }
+                }
+            }
+            _ => visit::visit_attribute(self, a),
         }
     }
 
@@ -228,14 +248,24 @@ impl<'ast> Visit<'ast> for Reader<'_> {
 }
 
 /// Add gate.py's names to names, read from its text, since it is Python: each def, class and assignment at the left
-/// margin as an item; as Class.member, each def and assignment of a class's body and each `self.name =` in it; and
-/// each one-line string literal. A name defined otherwise, such as in a for, a with or an import, is not read. Panics
-/// when gate.py cannot be read.
+/// margin as an item; as Class.member, each def and assignment of a class's body and each store to `self.name` in
+/// it, as `self.name =`, `self.name += ` or, opening a line, `self.name: T =`; and each one-line string literal. Lines
+/// inside a triple-quoted string are text, not code. A name defined otherwise, such as in a for, a with or an import,
+/// is not read. Panics when gate.py cannot be read.
 fn gate_names(names: &mut Names) {
     let path = ROOT.join("gate.py");
     let source = fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
     let mut class: Option<String> = None;
+    // The quotes of the triple-quoted string the line before ended inside, if it did.
+    let mut open_string: Option<&str> = None;
     for line in source.lines() {
+        if let Some(quotes) = open_string {
+            if line.contains(quotes) {
+                open_string = None;
+            }
+            continue;
+        }
+        open_string = ["\"\"\"", "'''"].into_iter().find(|q| line.matches(q).count() % 2 == 1);
         let body = line.trim_start();
         let indent = line.len() - body.len();
         if indent == 0 && !body.is_empty() && !body.starts_with('#') && !body.starts_with(')') {
@@ -252,20 +282,27 @@ fn gate_names(names: &mut Names) {
             }
         }
         if let Some(owner) = &class {
-            for (i, _) in body.match_indices("self.") {
-                let rest = &body[i + 5..];
-                let len = rest.find(|c: char| !crate::markdown::word_char(c)).unwrap_or(rest.len());
-                let after = rest[len..].trim_start();
-                let assigned = after.starts_with('=') && !after.starts_with("==")
-                    || after.starts_with(':')
-                    || ["+=", "-=", "|=", "*="].iter().any(|op| after.starts_with(op));
-                if len > 0 && assigned {
-                    names.members.insert(format!("{owner}.{}", &rest[..len]));
-                }
-            }
+            names.members.extend(self_stores(body).map(|name| format!("{owner}.{name}")));
         }
         names.strings.extend(one_line_strings(line));
     }
+}
+
+/// The names a line of Python, its indent taken off, stores to as `self.name`: `self.name = `, `self.name += ` and
+/// the like anywhere, and `self.name: T = `, an annotated store, opening the line; not a comparison, `self.name == `,
+/// nor `if self.name:` or a slice `[self.name:]`.
+fn self_stores(body: &str) -> impl Iterator<Item = &str> {
+    body.match_indices("self.").filter(|&(i, _)| !body[..i].ends_with(|c: char| word_char(c) || c == '.')).filter_map(
+        move |(i, _)| {
+            let rest = &body[i + "self.".len()..];
+            let len = rest.find(|c: char| !word_char(c)).unwrap_or(rest.len());
+            let after = rest[len..].trim_start();
+            let assigned = after.starts_with('=') && !after.starts_with("==")
+                || ["+=", "-=", "|=", "*="].iter().any(|op| after.starts_with(op))
+                || i == 0 && after.strip_prefix(':').is_some_and(|t| t.contains('=') && !t.starts_with('='));
+            (len > 0 && assigned).then(|| &rest[..len])
+        },
+    )
 }
 
 /// The name a line of Python defines at its start: `def name(`, `async def name(`, `class name`, `name =` or
@@ -273,7 +310,7 @@ fn gate_names(names: &mut Names) {
 fn defined_name(body: &str) -> Option<&str> {
     let rest = ["def ", "async def ", "class "].iter().find_map(|k| body.strip_prefix(k));
     let named = rest.unwrap_or(body);
-    let len = named.find(|c: char| !crate::markdown::word_char(c)).unwrap_or(named.len());
+    let len = named.find(|c: char| !word_char(c)).unwrap_or(named.len());
     if len == 0 || named.starts_with(|c: char| c.is_ascii_digit()) {
         return None;
     }

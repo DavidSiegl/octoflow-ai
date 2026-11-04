@@ -20,7 +20,7 @@ use octoflow_e2e::normalize::{facts, Normalizer};
 use octoflow_e2e::scratch::Scratch;
 
 use crate::servers::{ServerFailure, Servers, JENKINS_TOKEN, JENKINS_USER, PYPI_CA};
-use octoflow_e2e::{array_at, object, object_at, procs, str_at, strings};
+use octoflow_e2e::{array_at, checkout, object, object_at, procs, str_at, strings};
 use serde_json::Value;
 use octoflow_engine::map::Map;
 use octoflow_engine::json::Object;
@@ -43,12 +43,6 @@ const PROJECT_FILES: [(&str, &str); 4] = [
     ("src/calc.py", "def add(a, b):\n    \"\"\"The sum of a and b.\"\"\"\n    return a + b\n"),
     ("tests/test_calc.py", "from calc import add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n"),
 ];
-
-/// The repository's top directory, where the example workflows a scenario runs are.
-pub fn checkout() -> PathBuf {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    manifest.parent().and_then(Path::parent).expect("engine/e2e is two levels below the checkout").to_path_buf()
-}
 
 /// One run of the engine in a world: its arguments, its process and, once it ended, its exit status.
 pub struct Invocation {
