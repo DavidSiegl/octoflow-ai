@@ -48,8 +48,9 @@ fn workflows_lists_them() {
         format!("broken  {workflows}/broken.toml"),
         "    error: step 1: file is missing".into(),
         format!("product-team  {workflows}/product-team.toml"),
-        "    spec -> design -> tests -> build -> review (back to build)".into(),
-        "    Product Manager -> Architect -> QA Engineer -> Engineer <-> Tech Lead".into(),
+        "    spec -> design -> tests -> build -> review (back to build) -> accept (back to build)".into(),
+        "    Product Manager -> Architect -> QA Engineer -> Engineer <-> Tech Lead, then the Product Manager's acceptance"
+            .into(),
         String::new(),
         format!(
             "Add one as {workflows}/NAME.toml; `orchestrator workflows default` prints the default as a file to \

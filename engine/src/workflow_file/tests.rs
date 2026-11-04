@@ -72,13 +72,14 @@ fn examples_load() {
     assert_eq!(workflow_shape(&example("quick")), "build -> review (back to build)");
     let team = example("product-team");
     assert_eq!(team.name(), "product-team");
-    assert_eq!(workflow_shape(&team), "spec -> design -> tests -> build -> review (back to build)");
+    let shape = "spec -> design -> tests -> build -> review (back to build) -> accept (back to build)";
+    assert_eq!(workflow_shape(&team), shape);
     assert_eq!(
         team.roles(),
         &roles(&[("spec", "Product Manager"), ("design", "Architect"), ("tests", "QA Engineer"), ("build", "Engineer"), ("review", "Tech Lead")])
     );
     assert_eq!(team.models(), &roles(&[("tests", "sonnet")]));
-    let [spec, design, tests, build, review] = team.steps() else { panic!("five steps") };
+    let [spec, design, tests, build, review, accept] = team.steps() else { panic!("six steps") };
     // use keeps every field the file does not set: the interview stays human-paced, the Engineer quality-gated, the
     // Tech Lead the verdict step looping back to the Engineer.
     let mut as_default = spec.clone();
@@ -106,6 +107,14 @@ fn examples_load() {
         }
     }
     assert!(tests.prompt.contains("{design_path}"));
+    // The Product Manager who ran the interview accepts after the Tech Lead, sending the change back to the Engineer
+    // too, and judges it against the requirements alone.
+    let fields = (accept.role.as_str(), accept.file.as_str(), accept.loop_to.as_deref(), accept.edits, accept.human_paced);
+    assert_eq!(fields, ("spec", "acceptance-{n}.md", Some("build"), false, false));
+    for text in [Some(&accept.prompt), accept.again.as_ref(), accept.fresh_note.as_ref()] {
+        assert!(text.unwrap().contains("{spec_path}"));
+    }
+    assert!(!review.prompt.contains("summary a Product Manager can read"));
 }
 
 #[test]
