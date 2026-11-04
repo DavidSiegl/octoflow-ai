@@ -421,6 +421,11 @@ ul.checks {
   color: var(--muted-mint);
 }
 
+/* Some webviews give a select's options its colour: only the fallback shown is muted, not the harnesses listed. */
+.run-form select.unset option {
+  color: var(--pale-mint);
+}
+
 .run-form label.check {
   flex-direction: row;
   align-items: center;

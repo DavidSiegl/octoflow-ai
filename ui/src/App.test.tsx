@@ -619,12 +619,12 @@ describe("the run form", () => {
     expect(roleRows(form)).toEqual(["role Test Writer", "role Builder"]);
   });
 
-  it("shows the workflow's own agent and model for a role, unless the run's replace them", async () => {
+  it("shows a role's default agent and model, unless the run's replace them", async () => {
     const { form } = await openForm();
     const reviewerAgent = within(form).getByLabelText("Reviewer agent");
     expect(reviewerAgent).toHaveValue("");
-    expect(within(reviewerAgent).getByRole("option", { selected: true })).toHaveTextContent("codex (the workflow's)");
-    expect(within(form).getByLabelText("Reviewer model")).toHaveAttribute("placeholder", "o3 (the workflow's)");
+    expect(within(reviewerAgent).getByRole("option", { selected: true })).toHaveTextContent("codex (default)");
+    expect(within(form).getByLabelText("Reviewer model")).toHaveAttribute("placeholder", "o3 (default)");
     expect(within(form).getByLabelText("Builder model")).toHaveAttribute("placeholder", "the harness's own");
     fireEvent.change(within(form).getByLabelText("Agent"), { target: { value: "pi" } });
     fireEvent.change(within(form).getByLabelText("Model"), { target: { value: "m1" } });
@@ -643,6 +643,16 @@ describe("the run form", () => {
     expect(within(form).getByLabelText("Test Writer agent")).toHaveValue("");
     fireEvent.change(within(form).getByLabelText("Workflow"), { target: { value: "default" } });
     expect(within(form).getByLabelText("Reviewer agent")).toHaveValue("");
+  });
+
+  it("starts a workflow with a role keyed like a member every object has", async () => {
+    const roles = [{ role: "constructor", label: "Builder", agent: "claude", model: null }];
+    const start: FakeStart = { options: { ...OPTIONS, workflows: [{ name: "default", description: "", roles }] } };
+    const { form } = await openForm(start);
+    typeTask(form, "Add a rate limiter");
+    fireEvent.click(within(form).getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(start.requests).toHaveLength(1));
+    expect(start.requests?.[0]?.body).toEqual({ task: "Add a rate limiter", workflow: "default", no_pr: false, worktree: true });
   });
 
   it("sends the roles' agents and models that are set, and no others", async () => {
