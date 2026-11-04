@@ -9,6 +9,8 @@
 use std::cell::RefCell;
 
 use super::*;
+use crate::json::object;
+use crate::pipeline::{METRICS_FILE, SUMMARY_FILE};
 
 /// saved_run, its prompt for file counted as delivered.
 fn prompted(mut state: RunState, file: &str) -> RunState {
@@ -166,9 +168,98 @@ fn done_is_a_no_op() {
     let mut state = saved_run("done", 2, FULL);
     state.verdict = Some(CHANGES_REQUESTED.into());
     let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![], &[], &[]);
+    f.put(&format!("{}/{SUMMARY_FILE}", f.state.dir()), "# summary\n");
+    f.put(&format!("{}/{METRICS_FILE}", f.state.dir()), "{}\n");
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(CHANGES_REQUESTED));
     assert_eq!(f.herdr.state().calls, []);
     assert!(f.host.state().writes.is_empty());
+    assert_eq!(f.told.titles(), Vec::<String>::new());
+}
+
+/// A run of the default workflow that ended approved in round 1 with a pull request, as the first save of its ending
+/// (Workflow::end_done_run) leaves it: done, still owned by the orchestrator that ended it, its Builder's turn not
+/// yet given its tokens, and neither summary.md nor metrics.json written.
+fn stopped_after_saving_done() -> RunState {
+    let mut state = saved_run("done", 1, FULL);
+    state.verdict = Some(APPROVE.into());
+    state.pull_request = true;
+    state.owner = Some(object([("pid", Value::from(4242)), ("host", Value::from("gone"))]));
+    state.turns = vec![record("build", "build-1.md", Some(-100), Some(-50)).map()];
+    state
+}
+
+/// stopped_after_saving_done as the ending's second save leaves it: released, the Builder's turn given tokens.
+fn stopped_after_its_release() -> RunState {
+    let mut state = stopped_after_saving_done();
+    state.owner = None;
+    state.turns[0].insert("tokens".into(), Value::from(7));
+    state
+}
+
+/// The run's summary.md and metrics.json, as the host holds them now.
+fn ending_files(f: &Fixture) -> (Option<String>, Option<String>) {
+    let files = &f.host.state().files;
+    let at = |name: &str| files.get(&format!("{}/{name}", f.state.dir())).cloned();
+    (at(SUMMARY_FILE), at(METRICS_FILE))
+}
+
+/// The saved state.json's first turn's tokens.
+fn first_tokens(f: &Fixture) -> Option<Value> {
+    let saved = f.saved();
+    saved.get("turns").and_then(Value::as_array).and_then(|turns| turns[0].get("tokens").cloned())
+}
+
+fn closed_w1(f: &Fixture) -> bool {
+    called(f, &Call::Close { workspace: "w1".into() })
+}
+
+#[test]
+fn a_run_stopped_right_after_saving_done_finishes_its_whole_ending_on_resume() {
+    let f = Fixture::resume(Rc::new(FakeHost::default()), stopped_after_saving_done(), vec![], &[], &[]);
+    assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
+    assert_eq!(f.saved().get("owner"), Some(&Value::Null));
+    assert_eq!(first_tokens(&f), Some(Value::from("unknown")));
+    let (summary, metrics) = ending_files(&f);
+    assert!(summary.is_some_and(|s| s.contains(APPROVE)));
+    assert!(metrics.is_some());
+    assert_eq!(f.told.titles(), ["Run finished: APPROVE"]);
+    assert!(closed_w1(&f));
+}
+
+#[test]
+fn a_run_stopped_after_its_release_writes_its_files_tells_the_human_and_closes_its_workspace() {
+    let f = Fixture::resume(Rc::new(FakeHost::default()), stopped_after_its_release(), vec![], &[], &[]);
+    assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
+    assert_eq!(f.saved().get("owner"), Some(&Value::Null));
+    assert_eq!(first_tokens(&f), Some(Value::from(7)), "the tokens are not counted again");
+    let (summary, metrics) = ending_files(&f);
+    assert!(summary.is_some() && metrics.is_some());
+    assert_eq!(f.told.titles(), ["Run finished: APPROVE"]);
+    assert!(closed_w1(&f));
+}
+
+#[test]
+fn a_summary_an_earlier_stop_left_is_written_again_with_the_missing_metrics() {
+    let f = Fixture::resume(Rc::new(FakeHost::default()), stopped_after_its_release(), vec![], &[], &[]);
+    f.put(&format!("{}/{SUMMARY_FILE}", f.state.dir()), "stopped: the Reviewer's pane died\n");
+    assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
+    let (summary, metrics) = ending_files(&f);
+    assert!(summary.is_some_and(|s| s.contains(APPROVE)), "the earlier stop's summary is replaced");
+    assert!(metrics.is_some());
+}
+
+#[test]
+fn a_run_missing_only_its_summary_writes_it_and_tells_the_human() {
+    let mut state = stopped_after_its_release();
+    state.pull_request = false;
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![], &[], &[]);
+    f.put(&format!("{}/{METRICS_FILE}", f.state.dir()), "{\"kept\": true}\n");
+    assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
+    let (summary, metrics) = ending_files(&f);
+    assert!(summary.is_some());
+    assert_eq!(metrics.as_deref(), Some("{\"kept\": true}\n"));
+    assert_eq!(f.told.titles(), ["Run finished: APPROVE"]);
+    assert!(!closed_w1(&f), "a run without a pull request keeps its workspace");
 }
 
 #[test]

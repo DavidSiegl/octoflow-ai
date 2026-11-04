@@ -888,17 +888,6 @@ is rewritten to say what is left.
   exposure, but it is outside this range". Closes with `--no-relative` on both calls and a test that sets
   `diff.relative` and locks from a subdirectory. Ticket:
   `.scratch/git-diff-relative/issues/01-locks-ignore-diff-relative.md` (#233).
-- **A run that dies right after it saved phase `done` never finishes ending.** `end_done_run`
-  (`engine/src/workflow.rs`) saves `phase = DONE`, counts the turns' tokens (`count_tokens`), saves again with `owner`
-  cleared, and only then writes `summary.md` and `metrics.json`, notifies the human that the run finished and closes
-  the workspace. A crash after either of those two saves leaves a run that `resume` finds done: `Workflow::run`
-  returns the verdict at once, so neither file is ever written, the human is never told, the herdr workspace stays
-  open, and after the first save `owner` stays set and the turns have no token counts. Found in the Python engine by
-  orchestrator-test-methods/05 (2026-10-28), whose crash test went with that engine; the Rust engine was ported to
-  behave the same, with no test that crashes it after each save ("No test crashes the Rust engine after each save",
-  above). Closes with a resume of a `done` run that finishes whatever of that ending is missing (each step can tell:
-  the files exist, `owner` is cleared, the tokens are counted).
-  Ticket: `.scratch/run-crash-ending/issues/01-done-run-finishes-its-ending.md` (#227).
 - **A crash between an agent's start and its session being saved costs that turn its session.** `start`
   (`engine/src/workflow/turn.rs`) saves the agent's record, then asks herdr for it and `note_session` saves the
   session. A resume after the first save finds the agent alive (`agent` returns `How::Alive`) and prompts it without

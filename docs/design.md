@@ -80,7 +80,9 @@ When a run ends, done, failed or interrupted, it writes `summary.md` in its run 
 workflow, each role's harness and model, the outcome (verdict or error), the pull request and branch, the wall
 time from the first known start to the end, a Markdown table of the turns (`?` for what is not known, the
 interview marked as human-paced), and each round's quality gates and verdict, read from the handoff files. A
-resume that ends again rewrites it with every turn; a run that is already `done` is not rewritten. The pull
+resume that ends again rewrites it with every turn; a run that is already `done` is not rewritten, unless the
+orchestrator that ended it stopped before writing it or `metrics.json`: a resume then writes them, tells the human the
+run finished and closes a published run's workspace (`Workflow::run`). The pull
 request's body ends with the same table up to publishing, collapsed under "Run timings", and `show` prints a
 line per turn.
 
