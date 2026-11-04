@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Api, Project, SetupCheck, SetupReport } from "../api";
+import { Dialog } from "./Dialog";
 
 interface Props {
   api: Api;
@@ -50,30 +51,24 @@ export function SetupDialog({ api, project, onClose }: Props) {
     });
   };
   return (
-    <div className="dialog-backdrop">
-      <section className="setup" role="dialog" aria-modal="true" aria-label="setup">
-        <h2>Setup</h2>
-        <p className="where">
-          {project.cwd} {project.machine ? `on ${project.machine}` : "on this computer"}
-        </p>
-        {outcome === null && <p className="loading">Checking…</p>}
-        {outcome && "error" in outcome && <p className="problem">{outcome.error}</p>}
-        {outcome &&
-          "report" in outcome &&
-          LEVELS.map(({ level, heading }) => (
-            <CheckGroup key={level} heading={heading} checks={outcome.report.checks.filter((c) => c.level === level)} />
-          ))}
-        {markError !== null && <p className="problem">Could not record that setup was checked: {markError}</p>}
-        <footer>
-          <button type="button" onClick={() => setRound((r) => r + 1)} disabled={outcome === null || marking}>
-            Check again
-          </button>
-          <button type="button" onClick={close} disabled={marking}>
-            Close
-          </button>
-        </footer>
-      </section>
-    </div>
+    <Dialog label="setup" title="Setup" project={project} className="setup">
+      {outcome === null && <p className="loading">Checking…</p>}
+      {outcome && "error" in outcome && <p className="problem">{outcome.error}</p>}
+      {outcome &&
+        "report" in outcome &&
+        LEVELS.map(({ level, heading }) => (
+          <CheckGroup key={level} heading={heading} checks={outcome.report.checks.filter((c) => c.level === level)} />
+        ))}
+      {markError !== null && <p className="problem">Could not record that setup was checked: {markError}</p>}
+      <footer>
+        <button type="button" onClick={() => setRound((r) => r + 1)} disabled={outcome === null || marking}>
+          Check again
+        </button>
+        <button type="button" onClick={close} disabled={marking}>
+          Close
+        </button>
+      </footer>
+    </Dialog>
   );
 }
 

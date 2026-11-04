@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Api, type Connection, type Project } from "./api";
 import { ProjectBar } from "./components/ProjectBar";
 import { RunDetail } from "./components/RunDetail";
+import { RunForm } from "./components/RunForm";
 import { RunsOverview } from "./components/RunsOverview";
 import { SetupDialog } from "./components/SetupDialog";
 import { useNow, useRunStream } from "./hooks";
@@ -72,33 +73,63 @@ function Connected({ connection }: { connection: Connection }) {
   return (
     <main>
       <ProjectBar project={project} onOpen={open} onCheckSetup={() => setSettingUp(true)} />
-      {settingUp && project.cwd && (
-        // Keyed by the project, so opening another one while it is open checks that one.
-        <SetupDialog key={`setup:${project.machine}:${project.cwd}`} api={api} project={project} onClose={() => setSettingUp(false)} />
-      )}
       {project.cwd ? (
         // Keyed by the project, so opening another one starts from its overview.
         <ProjectRuns key={`${project.machine}:${project.cwd}`} api={api} project={project} />
       ) : (
         <p className="empty">Open a project folder to see its runs.</p>
       )}
+      {settingUp && project.cwd && (
+        // After the runs, so that it is in front of a run form open beside it. Keyed by the project, so opening
+        // another one while it is open checks that one.
+        <SetupDialog key={`setup:${project.machine}:${project.cwd}`} api={api} project={project} onClose={() => setSettingUp(false)} />
+      )}
     </main>
   );
 }
 
-/** One project's runs, live: the overview, or the run picked from it in detail. */
+/** One project's runs, live: the overview, with the form for a new run, or the run picked from it, or started, in
+ * detail. A selected run the stream has not listed shows as the overview until it does, with a word on it when it
+ * is the run just started. */
 function ProjectRuns({ api, project }: { api: Api; project: Project }) {
   const [selected, setSelected] = useState<string | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  // The id of the run last started from the form; null before one is.
+  const [started, setStarted] = useState<string | null>(null);
   const state = useRunStream(api, project);
   const now = useNow();
   const entry = selected ? state.runs[selected] : undefined;
+  const openStarted = (run: string) => {
+    setFormOpen(false);
+    setStarted(run);
+    setSelected(run);
+  };
   return (
     <>
       {state.problem && <p className="problem">{state.problem}</p>}
+      {formOpen && <RunForm api={api} project={project} onStarted={openStarted} onClose={() => setFormOpen(false)} />}
       {entry ? (
         <RunDetail key={entry.record.id} api={api} project={project} entry={entry} now={now} onClose={() => setSelected(null)} />
       ) : (
-        <RunsOverview runs={runsNewestFirst(state)} now={now} selected={selected} onSelect={setSelected} />
+        <>
+          <div className="runs-actions">
+            <button type="button" onClick={() => setFormOpen(true)}>
+              New run…
+            </button>
+            {selected !== null && selected === started && (
+              <>
+                <p className="loading">
+                  Run {selected} has started but is not listed yet; it opens once it is. If it never is, its herdr
+                  workspace shows why.
+                </p>
+                <button type="button" onClick={() => setSelected(null)}>
+                  Stop waiting
+                </button>
+              </>
+            )}
+          </div>
+          <RunsOverview runs={runsNewestFirst(state)} now={now} selected={selected} onSelect={setSelected} />
+        </>
       )}
     </>
   );

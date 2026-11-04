@@ -106,8 +106,8 @@ The tk window that `gui` opened went with the Python engine; the [desktop app](#
 
 ### Desktop app
 
-A desktop app shows your runs: one project's runs, their handoff files and their agents, live. It starts no runs,
-and changes nothing of them but what you type to an agent. It is a Tauri 2 app in [`ui/`](ui). Each release has it
+A desktop app shows your runs: one project's runs, their handoff files and their agents, live. It starts new
+ones, and of a run it changes nothing but what you type to its agents. It is a Tauri 2 app in [`ui/`](ui). Each release has it
 for Linux x86_64, as `octoflow-desktop-linux-x86_64.deb` and `.AppImage`, and for Apple Silicon macOS, as
 `octoflow-desktop-macos-arm64.dmg`, each with its `.sha256` and the orchestrator inside, so it needs no
 checkout. The macOS app is signed ad hoc only, not notarized, so macOS refuses to open it the
@@ -115,6 +115,15 @@ first time when a browser downloaded it, as it does the binary.
 
 - **Overview:** each run's task, its progress through the workflow, its round, the current role, whether it is
   running or stale, the question it is blocked on, its verdict and its pull request.
+- **New run:** "New run…" above the overview asks for the task, the workflow (`default` unless you pick another,
+  with its description), an agent and a model for the whole run (the workflow's own unless you pick them), one row
+  per role of the workflow for its own agent and model (each `--role-agent` and `--role-model`, with what an empty
+  one falls back to shown greyed; a role the next workflow you pick also has keeps its row's values), and two
+  boxes: "No pull request", off as on the CLI, and "Separate worktree", on, so that runs started side by side do
+  not share the checkout. Start runs `orchestrator run` with them in a new workspace of the herdr server on this
+  computer, where you can watch and interrupt it as one you started by hand; the app then opens the run. It needs
+  that herdr server running, also for a project on a machine, whose agents then run there. A run that fails before
+  it starts, such as one the checkout already holds, shows the last lines of its pane in the form.
 - **Run detail:** the files in a run's directory, the newest or the one you pick rendered as Markdown, updated
   as they are written.
 - **Agents:** a tab for each agent the run has started, showing the last lines of its herdr pane, read again every

@@ -100,6 +100,41 @@ export interface SetupReport {
   passed: boolean;
 }
 
+/** A role of a workflow as /workflows offers it: the harness it runs in unless the run names another, and its
+ * workflow's model for it, null for the harness's own. */
+export interface OfferedRole {
+  role: string;
+  label: string;
+  agent: string;
+  model: string | null;
+}
+
+/** A workflow a run can be started with, by the name `run --workflow` takes; one whose file does not load has the
+ * error `run --workflow` would give in place of its description and roles. description is empty when the workflow
+ * has none. */
+export type OfferedWorkflow = { name: string; description: string; roles: OfferedRole[] } | { name: string; error: string };
+
+/** What a run can be started with: the workflows, in the order `orchestrator workflows` lists them, and the
+ * harnesses an agent can run in. */
+export interface RunOptions {
+  workflows: OfferedWorkflow[];
+  agents: string[];
+}
+
+/** A run to start, as POST /run takes it, each field the `run` flag or argument of its name. A field left out is
+ * left to `run`, as a flag not given is: workflow `default`, and the workflow's agents and models. role_agents and
+ * role_models map a role of the workflow, by its key, to what its --role-agent and --role-model give it. */
+export interface RunRequest {
+  task: string;
+  workflow?: string;
+  agent?: string;
+  model?: string;
+  role_agents?: Record<string, string>;
+  role_models?: Record<string, string>;
+  no_pr: boolean;
+  worktree: boolean;
+}
+
 /** A request the server did not answer as asked, with the HTTP status it answered and its error message. */
 export class HttpError extends Error {
   constructor(
@@ -158,6 +193,31 @@ export class Api {
    * itself; rejects with why it could not be recorded. */
   async markSetupChecked(): Promise<void> {
     await this.json(`${this.connection.url}/setup/checked`, { method: "POST" });
+  }
+
+  /** What a run can be started with, from the configuration of this computer, where the server starts its runs, so
+   * the same for every project; rejects with the server's error when its workflows cannot be listed. */
+  async workflows(): Promise<RunOptions> {
+    return this.json(`${this.connection.url}/workflows`) as Promise<RunOptions>;
+  }
+
+  /** Start the run request asks for in project, in a new workspace of this computer's herdr server, and resolve to
+   * its id once it has saved its state or the server's 30 seconds of waiting for that have passed, whichever is
+   * first: the run may not be in the event stream yet, and one that exits after the wait never will be. Rejects with
+   * the server's error message: status 400 for a request it refuses, 413 for one too long, 422 for a run that exited
+   * before saving its state, the message ending with the last lines its pane showed, 500 when the server cannot tell
+   * its own program or make a run id, and 502 for a project it cannot reach or a run herdr cannot start, "no herdr
+   * server here; start herdr" without a herdr server on this computer. */
+  async startRun(project: Project, request: RunRequest): Promise<string> {
+    const body = (await this.json(this.url("/run", project, {}), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    })) as { run?: unknown };
+    if (typeof body.run !== "string") {
+      throw new HttpError(200, "the answer has no run");
+    }
+    return body.run;
   }
 
   /** The text field of a GET of url's JSON; rejects with the server's error message, or the status. */

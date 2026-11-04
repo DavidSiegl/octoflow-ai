@@ -69,6 +69,14 @@ is rewritten to say what is left.
 
 ## Open issues
 
+- **The desktop app's dialogs do not keep keyboard focus.** `Dialog` (`ui/src/components/Dialog.tsx`), which the
+  setup dialog and the run form are, sets `aria-modal` and covers the window with its backdrop, but Tab still reaches
+  the project bar under it. Opening another project while the run form waits for `POST /run` remounts `ProjectRuns`
+  (keyed by the project, `ui/src/App.tsx`): the run starts, but is not selected, and a failure's message is lost.
+  Deferred from cross-review 124 of app-start-runs-02 (F5, should-fix, 2026-11-04): "`api.startRun(...).then(onStarted,
+  ...)` is not tied to the component's lifetime … If ProjectRuns remounts while a start is pending … the run starts
+  but is never selected, and a failure's message is lost." Closes with the window behind a dialog made inert
+  (`inert`, or a `<dialog>` opened with `showModal()`, where the webviews and jsdom have it).
 - **serve starts a run through a shell it takes for POSIX or fish.** `Launcher::launch` (`ProcessHerdr`,
   `engine/src/herdr.rs`) gives the new pane's shell each word of the `run` command as an environment variable and
   types `"$OCTOFLOW_ARG_0" "$OCTOFLOW_ARG_1" …; echo '<marker>'`, since herdr 0.9.1's `pane run` types its
