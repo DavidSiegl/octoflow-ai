@@ -19,9 +19,28 @@ pub const STALE: &str = "stale";
 /// collide, so a dead pid counts only once a beat is late too; a live pid proves nothing, since pids are reused, so
 /// the age still applies to it. An owner's pid that is not a whole number is not checked.
 pub fn run_health(state: &Value, age: u64, local_host: &str, pid_alive: &dyn Fn(i64) -> bool) -> Option<(&'static str, String)> {
-    if state.get("phase").and_then(Value::as_str) == Some(DONE) || state.get("error").is_some_and(Value::is_set) {
+    if done(state) || state.get("error").is_some_and(Value::is_set) {
         return None;
     }
+    owner_health(state, age, local_host, pid_alive)
+}
+
+/// (RUNNING or STALE, why), as run_health judges an unfinished run, for a run saved as done whose orchestrator has
+/// not released it yet: one that may still be ending (Workflow::end_done_run), or that stopped while it was. None for
+/// any other run. The arguments are run_health's.
+pub fn ending_health(state: &Value, age: u64, local_host: &str, pid_alive: &dyn Fn(i64) -> bool) -> Option<(&'static str, String)> {
+    if !done(state) || !state.get("owner").is_some_and(Value::is_set) {
+        return None;
+    }
+    owner_health(state, age, local_host, pid_alive)
+}
+
+fn done(state: &Value) -> bool {
+    state.get("phase").and_then(Value::as_str) == Some(DONE)
+}
+
+/// run_health's judgement of state by its heartbeat and owner alone, whatever its phase.
+fn owner_health(state: &Value, age: u64, local_host: &str, pid_alive: &dyn Fn(i64) -> bool) -> Option<(&'static str, String)> {
     let owner = state.get("owner").filter(|o| o.is_set());
     let field = |key: &str| owner.and_then(|o| o.get(key)).map_or("None".to_string(), Value::text);
     let pid = owner.and_then(|o| o.get("pid")).and_then(Value::as_i64);

@@ -188,19 +188,29 @@ fn stopped_after_saving_done() -> RunState {
     state
 }
 
-/// stopped_after_saving_done as the ending's second save leaves it: released, the Builder's turn given tokens.
-fn stopped_after_its_release() -> RunState {
+/// stopped_after_saving_done with its tokens counted, as its ending leaves it from then until its release.
+fn counted() -> RunState {
     let mut state = stopped_after_saving_done();
-    state.owner = None;
     state.turns[0].insert("tokens".into(), Value::from(7));
     state
+}
+
+/// counted, released: as its ending leaves it once whole, or an older engine's, which released first, before its
+/// files.
+fn released() -> RunState {
+    let mut state = counted();
+    state.owner = None;
+    state
+}
+
+fn path(f: &Fixture, name: &str) -> String {
+    format!("{}/{name}", f.state.dir())
 }
 
 /// The run's summary.md and metrics.json, as the host holds them now.
 fn ending_files(f: &Fixture) -> (Option<String>, Option<String>) {
     let files = &f.host.state().files;
-    let at = |name: &str| files.get(&format!("{}/{name}", f.state.dir())).cloned();
-    (at(SUMMARY_FILE), at(METRICS_FILE))
+    (files.get(&path(f, SUMMARY_FILE)).cloned(), files.get(&path(f, METRICS_FILE)).cloned())
 }
 
 /// The saved state.json's first turn's tokens.
@@ -211,6 +221,17 @@ fn first_tokens(f: &Fixture) -> Option<Value> {
 
 fn closed_w1(f: &Fixture) -> bool {
     called(f, &Call::Close { workspace: "w1".into() })
+}
+
+#[test]
+fn an_ending_writes_the_files_before_it_releases_the_run() {
+    let f = Fixture::resume(Rc::new(FakeHost::default()), saved_run("review", 1, FULL), vec![("review", vec![review_turn(1, APPROVE)])], &[], &[]);
+    assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
+    let writes = f.host.state().writes.clone();
+    let last = |p: &str| writes.iter().rposition(|w| *w == p).unwrap_or_else(|| panic!("no write of {p}: {writes:?}"));
+    let release = last(&path(&f, "state.json"));
+    assert!(last(&path(&f, SUMMARY_FILE)) < release && last(&path(&f, METRICS_FILE)) < release, "{writes:?}");
+    assert_eq!(f.saved().get("owner"), Some(&Value::Null));
 }
 
 #[test]
@@ -227,39 +248,32 @@ fn a_run_stopped_right_after_saving_done_finishes_its_whole_ending_on_resume() {
 }
 
 #[test]
-fn a_run_stopped_after_its_release_writes_its_files_tells_the_human_and_closes_its_workspace() {
-    let f = Fixture::resume(Rc::new(FakeHost::default()), stopped_after_its_release(), vec![], &[], &[]);
+fn a_run_stopped_before_its_release_writes_its_files_again_and_tells_the_human() {
+    let f = Fixture::resume(Rc::new(FakeHost::default()), counted(), vec![], &[], &[]);
+    // Its summary.md may be an earlier stop's (Workflow::release), as its metrics.json may be half written.
+    f.put(&path(&f, SUMMARY_FILE), "stopped: the Reviewer's pane died\n");
+    f.put(&path(&f, METRICS_FILE), "{\"run\"");
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
     assert_eq!(f.saved().get("owner"), Some(&Value::Null));
     assert_eq!(first_tokens(&f), Some(Value::from(7)), "the tokens are not counted again");
     let (summary, metrics) = ending_files(&f);
-    assert!(summary.is_some() && metrics.is_some());
+    assert!(summary.is_some_and(|s| s.contains(APPROVE)), "the earlier stop's summary is replaced");
+    assert!(metrics.is_some_and(|m| serde_json::from_str::<Value>(&m).is_ok()));
     assert_eq!(f.told.titles(), ["Run finished: APPROVE"]);
     assert!(closed_w1(&f));
 }
 
 #[test]
-fn a_summary_an_earlier_stop_left_is_written_again_with_the_missing_metrics() {
-    let f = Fixture::resume(Rc::new(FakeHost::default()), stopped_after_its_release(), vec![], &[], &[]);
-    f.put(&format!("{}/{SUMMARY_FILE}", f.state.dir()), "stopped: the Reviewer's pane died\n");
+fn a_released_run_missing_a_file_has_it_written_and_nothing_else() {
+    let f = Fixture::resume(Rc::new(FakeHost::default()), released(), vec![], &[], &[]);
+    f.put(&path(&f, METRICS_FILE), "{\"kept\": true}\n");
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
     let (summary, metrics) = ending_files(&f);
-    assert!(summary.is_some_and(|s| s.contains(APPROVE)), "the earlier stop's summary is replaced");
-    assert!(metrics.is_some());
-}
-
-#[test]
-fn a_run_missing_only_its_summary_writes_it_and_tells_the_human() {
-    let mut state = stopped_after_its_release();
-    state.pull_request = false;
-    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![], &[], &[]);
-    f.put(&format!("{}/{METRICS_FILE}", f.state.dir()), "{\"kept\": true}\n");
-    assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
-    let (summary, metrics) = ending_files(&f);
-    assert!(summary.is_some());
+    assert!(summary.is_some_and(|s| s.contains(APPROVE)));
     assert_eq!(metrics.as_deref(), Some("{\"kept\": true}\n"));
-    assert_eq!(f.told.titles(), ["Run finished: APPROVE"]);
-    assert!(!closed_w1(&f), "a run without a pull request keeps its workspace");
+    assert_eq!(f.host.state().writes, [path(&f, SUMMARY_FILE)], "neither saved nor its metrics written");
+    assert_eq!(f.told.titles(), Vec::<String>::new(), "the human was told when it was released");
+    assert!(!closed_w1(&f));
 }
 
 #[test]

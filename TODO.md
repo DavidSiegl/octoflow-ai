@@ -129,7 +129,8 @@ is rewritten to say what is left.
   original symptom with a narrower window. On a remote project, `write_summary`'s `round_results` reads go over SSH,
   so this is not out of reach." Closes with a settle rule that does not depend on the interval, such as settling
   only once the finishing save is older than a bound (the record carries `heartbeat_age`), or with the engine
-  writing the files before that save where a takeover allows it (`end_done_run`; `release` saves first on purpose).
+  writing the files before that save where a takeover allows it (`end_done_run` writes them before its release
+  save since run-crash-ending/01, but after the save of phase `done`; `release` saves first on purpose).
 - **The desktop app ships its npm packages' code without their licenses.** `octoflow-third-party-licenses.html`
   (`packaging/about.toml`) lists the Rust crates only, as cargo-about reads Cargo's graph; the app's web view bundles
   `ui/package.json`'s runtime dependencies, React, react-markdown, remark-gfm and @tauri-apps/api with what they pull

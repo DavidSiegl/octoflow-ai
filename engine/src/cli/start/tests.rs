@@ -9,7 +9,7 @@ use std::rc::Rc;
 use super::*;
 use crate::ci::fake::JOB;
 use crate::cli::args::{parse_args, Command};
-use crate::constants::APPROVE;
+use crate::constants::{APPROVE, HEARTBEAT_SECONDS};
 use crate::env::ConfigDir;
 use crate::host::fake::FakeHost;
 use crate::herdr::HerdrServer;
@@ -150,6 +150,32 @@ fn live_run_needs_force() {
     );
     let forced = resumable_state(&[(30, saved)], &resume_args(&["a1b2c3", "--force"]), "/proj", "here", &alive);
     assert_eq!(forced.unwrap().0.run_id, "20260929-120000-a1b2c3");
+}
+
+#[test]
+fn a_done_run_still_ending_needs_force() {
+    let me = [("host", Value::from("here")), ("pid", Value::from(42)), ("started_at", Value::from("x"))];
+    let done = [("phase", Value::from("done")), ("owner", Value::Object(object(me)))];
+    let saved = Value::Object(saved_settings(&done));
+    let alive = |_: i64| true;
+    let e = resumable_state(&[(30, saved.clone())], &resume_args(&["a1b2c3"]), "/proj", "here", &alive).unwrap_err();
+    assert_eq!(
+        e.0,
+        "run 20260929-120000-a1b2c3 looks alive (pid 42 on here, beat 30s ago); pass --force to take it over"
+    );
+    // Once its orchestrator is gone, it is resumed so that its ending is finished.
+    let dead = |_: i64| false;
+    let late = HEARTBEAT_SECONDS + 1;
+    assert!(resumable_state(&[(late, saved)], &resume_args(&["a1b2c3"]), "/proj", "here", &dead).is_ok());
+}
+
+#[test]
+fn a_done_run_keeps_the_settings_it_ran_with() {
+    let done = saved_settings(&[("phase", Value::from("done")), ("machine", Value::from("box"))]);
+    let flags = ["--max-rounds", "9", "--review-model", "opus", "--machine", "remote", "--cwd", "~/p"];
+    let state = resumable(&flags, &done).unwrap();
+    let as_saved = RunState::from_saved(&done).unwrap();
+    assert_eq!((state.max_rounds, &state.models, &state.machine), (as_saved.max_rounds, &as_saved.models, &as_saved.machine));
 }
 
 #[test]

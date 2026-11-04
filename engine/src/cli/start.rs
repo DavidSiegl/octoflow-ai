@@ -10,7 +10,7 @@ use crate::prompts::{load_prompts, Prompts};
 use serde_json::Value;
 use crate::map::Map;
 use crate::json::ValueExt;
-use crate::runs::{run_health, RUNNING};
+use crate::runs::{ending_health, run_health, RUNNING};
 use crate::spec_file::SpecFile;
 use crate::state::RunState;
 use crate::workflow::{turn_quality_gate_off, turn_quality_gate_on};
@@ -99,7 +99,7 @@ pub(crate) fn new_run_id(wall: f64) -> Result<String, OrchestratorError> {
 /// The state of the run args.run_ref names among cwd's runs and its workflow, as resumable_state finds them, with the
 /// quality gate turned on or off as args asks (turn_quality_gate_on and _off: the job's preflight, and the run's
 /// refs on origin deleted), and its herdr server world's herdr's (Herdr::server), where it starts its agents from
-/// now on. Changes nothing on disk.
+/// now on; a done run's as resumable_state gives it. Changes nothing on disk.
 ///
 /// Errors: the run cannot be resumed (resumable_state), its gate cannot be switched, or the job's credentials
 /// cannot be read.
@@ -107,6 +107,9 @@ pub fn resumed_state(args: &ResumeArgs, cwd: &str, world: &Connected) -> Result<
     let w = &world.with;
     let runs = w.host.run_states(cwd)?;
     let (mut state, pipeline) = resumable_state(&runs, args, cwd, world.local_host, w.pid_alive)?;
+    if state.phase == DONE {
+        return Ok((state, pipeline));
+    }
     state.herdr_server = w.herdr.server();
     if let Some(job) = args.quality_gate.as_deref().filter(|j| !j.is_empty()) {
         turn_quality_gate_on(&mut state, &pipeline, w.host, w.human, &(world.jenkins)(job)?)?;
@@ -117,10 +120,11 @@ pub fn resumed_state(args: &ResumeArgs, cwd: &str, world: &Connected) -> Result<
 }
 
 /// The saved state of the run to resume among runs, each (seconds since its state.json was written, the state as
-/// saved), with resume's settings flags applied and its machine the one args names; and its workflow, from the
-/// definition and prompts it saved.
+/// saved), with resume's settings flags applied and its machine the one args names, but a done run's as it saved
+/// it; and its workflow, from the definition and prompts it saved.
 ///
-/// The run's health is judged from local_host by pid_alive (crate::runs::run_health). Errors: no run or several
+/// The run's health is judged from local_host by pid_alive (crate::runs::run_health, and for a done run that was
+/// not released, ending_health). Errors: no run or several
 /// match args.run_ref; its state cannot be read, or its saved workflow or prompts; it was closed; it looks alive and
 /// args.force is not given; it is past the round limit it would have; a --role-model or --role-agent names a role
 /// its workflow lacks; or its quality round limit does not hold (resume_quality_limit).
@@ -139,13 +143,18 @@ pub fn resumable_state(
         return Err(OrchestratorError(format!("run {} was closed; start a new run", state.run_id)));
     }
     let pipeline = run_pipeline(&state.workflow, state.workflow_definition.as_ref(), &state.prompts()?)?;
-    if let Some((RUNNING, why)) = run_health(saved, *age, local_host, pid_alive) {
+    let health = run_health(saved, *age, local_host, pid_alive).or_else(|| ending_health(saved, *age, local_host, pid_alive));
+    if let Some((RUNNING, why)) = health {
         if !args.force {
             return Err(OrchestratorError(format!(
                 "run {} looks alive ({why}); pass --force to take it over",
                 state.run_id
             )));
         }
+    }
+    // A done run's record keeps what it ran with: its resume only finishes its ending (Workflow::run).
+    if state.phase == DONE {
+        return Ok((state, pipeline));
     }
     let s = &args.settings;
     if let Some(n) = s.max_rounds {

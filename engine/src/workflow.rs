@@ -306,16 +306,21 @@ impl<'a> Workflow<'a> {
 
     /// Run every phase not yet done and return the final verdict: the verdict step's, or for a workflow without one,
     /// FINISHED, or QUALITY_GATE_FAILED when its quality gate still failed. A run already done returns its saved
-    /// verdict, after taking it over (claim) and finishing what of its ending an orchestrator that stopped there left
-    /// undone (ending_left); one whose ending is whole is left as it is, not even saved.
+    /// verdict, after finishing what of its ending an orchestrator that stopped there left undone (ending_left): one
+    /// it had not released yet is taken over (claim) and ended again up to and with the release, the notice and the
+    /// closing; one whose ending is whole is left as it is, not even saved.
     ///
     /// Errors: why the run stopped (Stopped); for a failure or an interrupt before the run was done, after recording
     /// it in state.json and writing summary.md, as far as saving still works. An interrupt once the run is done stops
     /// what is left of its ending, as Python's KeyboardInterrupt there does, and the run stays done.
     pub fn run(&mut self) -> Result<Option<String>, Stopped> {
         if self.state.phase == DONE {
-            let Some(left) = self.ending_left()? else { return Ok(self.state.verdict.clone()) };
-            let finished = self.claim().and_then(|()| self.end_done_run(left));
+            let finished = match self.ending_left() {
+                Ok(None) => Ok(()),
+                Ok(Some(left)) if left.release => self.claim().and_then(|()| self.end_done_run(left)),
+                Ok(Some(left)) => self.end_done_run(left),
+                Err(e) => Err(e.into()),
+            };
             return self.ended(finished);
         }
         self.check_phase()?;
@@ -349,38 +354,44 @@ impl<'a> Workflow<'a> {
         }
     }
 
-    /// What of the ending of this run, saved as done, an orchestrator that stopped after saving it so left undone;
-    /// None when nothing is. Each step is told by what it leaves behind: a turn of an agent without tokens, an owner,
-    /// a missing summary.md or metrics.json. Errors: a file's presence cannot be read.
+    /// What of the ending (end_done_run) of this run, saved as done, an orchestrator that stopped after saving it so
+    /// left undone; None when nothing is.
+    ///
+    /// A run still owned was stopped before its release: all of the ending is taken again, but for tokens already
+    /// counted, whose session logs may be gone since. A released run lacks at most a file whose write failed and was
+    /// only logged, or one an older engine, which released the run before writing the files, had not written yet:
+    /// that file is written, and the human is not told again. Errors: a file's presence cannot be read.
     fn ending_left(&self) -> Result<Option<Ending>, OrchestratorError> {
         let s = &self.state;
-        let set = |t: &Object, key: &str| t.get(key).is_some_and(Value::is_set);
-        let uncounted = |t: &Object| set(t, "agent") && !set(t, "tokens");
-        let count_tokens = s.turns.iter().any(uncounted);
-        let write_metrics = !self.host.exists(&format!("{}/{METRICS_FILE}", s.dir()))?;
-        // Written before the metrics, so a summary.md without them may be an earlier stop's (release), not the end's.
-        let write_summary = write_metrics || !self.host.exists(&format!("{}/{SUMMARY_FILE}", s.dir()))?;
-        if !(count_tokens || s.owner.is_some() || write_summary) {
-            return Ok(None);
+        if s.owner.is_some() {
+            let set = |t: &Object, key: &str| t.get(key).is_some_and(Value::is_set);
+            let count_tokens = s.turns.iter().any(|t| set(t, "agent") && !set(t, "tokens"));
+            return Ok(Some(Ending { count_tokens, ..Ending::WHOLE }));
         }
-        Ok(Some(Ending { count_tokens, write_summary, write_metrics }))
+        let missing = |name: &str| self.host.exists(&format!("{}/{name}", s.dir())).map(|there| !there);
+        let (write_summary, write_metrics) = (missing(SUMMARY_FILE)?, missing(METRICS_FILE)?);
+        Ok((write_summary || write_metrics).then_some(Ending {
+            count_tokens: false,
+            write_summary,
+            write_metrics,
+            release: false,
+        }))
     }
 
-    /// What follows the last phase, for a run saved as done and owned by this orchestrator, as far as left says: its
-    /// tokens counted, the run released, its summary and metrics written, the human told, and the workspace of a
-    /// published run closed. What only costs a file or a notice is logged when it fails, but none goes on past the
-    /// Ctrl-C.
+    /// What follows the last phase, for a run saved as done, as far as left says: its tokens counted, its summary and
+    /// metrics written, and then, for a run this orchestrator owns, the run released, the human told, and the
+    /// workspace of a published run closed. What only costs a file or a notice is logged when it fails, but none
+    /// goes on past the Ctrl-C.
     ///
-    /// The notice and the closing leave no trace to tell them by, so they come with writing summary.md: an
-    /// orchestrator that stopped between writing metrics.json and the notice costs the human that notice. Accepted,
-    /// as the alternative, notifying on every resume of a done run, tells them twice of each run that got further.
+    /// The files are written before the release, so that a run released is one whose files were written: a resume
+    /// (ending_left) tells an ending cut short by the owner alone. The notice and the closing
+    /// leave no trace, so they come once, after the release: an orchestrator that stopped between the release and
+    /// the notice costs the human the notice, which is accepted over telling them twice of every run ended whole.
     fn end_done_run(&mut self, left: Ending) -> Outcome<()> {
         if left.count_tokens {
             self.count_tokens();
             self.check_interrupt()?;
         }
-        self.state.owner = None;
-        self.save()?;
         if left.write_summary {
             self.write_summary();
             self.check_interrupt()?;
@@ -389,9 +400,11 @@ impl<'a> Workflow<'a> {
             self.write_metrics();
             self.check_interrupt()?;
         }
-        if !left.write_summary {
+        if !left.release {
             return Ok(());
         }
+        self.state.owner = None;
+        self.save()?;
         let s = &self.state;
         if let (Some(worktree), false) = (&s.worktree, s.pull_request) {
             self.human.log(&format!("the change is in worktree {worktree}"));
@@ -1387,21 +1400,23 @@ impl<'a> Workflow<'a> {
     }
 }
 
-/// Which of the steps of a done run's ending that can be skipped Workflow::end_done_run takes: all of them for a run
-/// that has just finished its last phase, those a stop after it was saved as done left undone for a resumed one
-/// (Workflow::ending_left). Releasing the run is no field: end_done_run always does it, as it owns the run.
-#[derive(Clone, Copy)]
+/// Which of the steps of a done run's ending Workflow::end_done_run takes: all of them for a run that has just
+/// finished its last phase (WHOLE), those a stop after it was saved as done left undone for a resumed one
+/// (Workflow::ending_left).
 struct Ending {
     /// Give each agent turn its tokens (Workflow::count_tokens).
     count_tokens: bool,
-    /// Write summary.md, and after both files tell the human the run finished and close a published run's workspace.
+    /// Write summary.md.
     write_summary: bool,
     /// Write metrics.json.
     write_metrics: bool,
+    /// Release the run this orchestrator owns, then tell the human the run finished and close a published run's
+    /// workspace.
+    release: bool,
 }
 
 impl Ending {
-    const WHOLE: Ending = Ending { count_tokens: true, write_summary: true, write_metrics: true };
+    const WHOLE: Ending = Ending { count_tokens: true, write_summary: true, write_metrics: true, release: true };
 }
 
 /// The label of the herdr workspace of the run run_id, for task: its key and its task, the first 40 characters, so
