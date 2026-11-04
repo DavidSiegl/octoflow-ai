@@ -137,13 +137,6 @@ is rewritten to say what is left.
   does not, and POST /run answers 422 with the shell's error, or 202 when the marker never shows. Found while
   implementing app-start-runs ticket 01 (2026-11-03). Closes with a launch that does not go through the pane's
   shell: herdr starting the command itself in the new pane, if a later herdr can.
-- **new-dependencies on Python: a package from several sources keeps its first.** In
-  `engine/src/checks/dependencies.rs`, `uv_sources` takes the first of a `[tool.uv.sources]` entry's list of sources,
-  each for some platforms, and `python_dependencies` gives a direct dependency without a source of its own the first
-  source `uv.lock` has it from; so `forked = [{ index = "pypi", marker = ".." }, { git = "..", marker = ".." }]`
-  never compares the git source with the spec. Cargo's reader takes every source a crate is named with since ticket
-  cargo-dependency-rules/01 (2026-11-04), which left Python's alone. Closes with the same rule for Python, each
-  source a `NewPackage` of its own, or the first-source rule kept and stated in docs/quality-gate.md.
 - **new-dependencies points a second source's finding at the package's first added line.** `compare_dependencies`
   (`engine/src/checks/dependencies.rs`) gives each `NewPackage` and source-changed finding the first line the change
   added to its manifest that names the package (`line_naming`), not the line of that source's entry: `foo = "1"` and

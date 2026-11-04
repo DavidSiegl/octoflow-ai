@@ -54,18 +54,25 @@ impl PackageSource {
 
     /// Where it comes from, as a finding says it, index being the name of the index it does not come from.
     pub fn describe(&self, index: &str) -> String {
+        self.phrase(Some(index))
+    }
+
+    /// describe's words, without saying that it does not come from the index when contrast is None: for a list of
+    /// sources that may hold the index itself.
+    fn phrase(&self, contrast: Option<&str>) -> String {
         let place = &self.place;
+        let unlike = |words: &str| contrast.map_or_else(String::new, |index| format!(", {words} {index}"));
         match self.kind {
-            SourceKind::Workspace => format!("a member of the project's workspace, not from {index}"),
-            SourceKind::Index => format!("from the index {place}, not checked against {index}"),
+            SourceKind::Workspace => format!("a member of the project's workspace{}", unlike("not from")),
+            SourceKind::Index => format!("from the index {place}{}", unlike("not checked against")),
             SourceKind::Unknown => {
                 format!(
                     "from the uv source {place}, which this check does not know, so where it comes from is not checked"
                 )
             }
-            SourceKind::Path => format!("from the path {place}, not from {index}"),
-            SourceKind::Git => format!("from the repository {place}, not from {index}"),
-            SourceKind::Url => format!("from {place}, not from {index}"),
+            SourceKind::Path => format!("from the path {place}{}", unlike("not from")),
+            SourceKind::Git => format!("from the repository {place}{}", unlike("not from")),
+            SourceKind::Url => format!("from {place}{}", unlike("not from")),
         }
     }
 }
@@ -149,8 +156,9 @@ pub fn package_key(name: &str) -> String {
 /// Its direct dependencies are pyproject.toml's `[project]` dependencies and optional-dependencies and its
 /// `[dependency-groups]`, an `{include-group}` entry and the project itself left out. A dependency's source is its
 /// `[tool.uv.sources]` entry, else its PEP 508 URL, else the `[[tool.uv.index]]` marked default, else the index
-/// uv.lock has it from (the first, of a package uv.lock has from several). The locked packages are uv.lock's, the
-/// project and its workspace members left out.
+/// uv.lock has it from. The locked packages are uv.lock's, the project and its workspace members left out. A package
+/// named from several sources is a dependency from each of them: one requirement with a URL and another without,
+/// each entry of a `[tool.uv.sources]` list (each for some platforms), and each index uv.lock has it from.
 pub fn python_dependencies(read: &ReadFile) -> Result<Dependencies, OrchestratorError> {
     let mut found = Dependencies::default();
     match toml_manifest(read, "uv.lock")?.and_then(|lock| uv_lock_packages(&lock)) {
@@ -161,10 +169,9 @@ pub fn python_dependencies(read: &ReadFile) -> Result<Dependencies, Orchestrator
         Ok(direct) => {
             let direct = direct
                 .into_iter()
-                .map(|(key, source)| {
-                    let locked = found.locked.get(&key).and_then(|sources| sources.first());
-                    let source = source.or_else(|| locked.and_then(|d| d.source.clone()));
-                    (key, source)
+                .flat_map(|(key, source)| match (source, found.locked.get(&key)) {
+                    (None, Some(locked)) => locked.iter().map(|d| (key.clone(), d.source.clone())).collect(),
+                    (source, _) => vec![(key, source)],
                 })
                 .collect();
             add_named(&mut found.direct, direct, "pyproject.toml");
@@ -217,11 +224,10 @@ fn pyproject_dependencies(pyproject: &Table) -> Result<Sources, String> {
         for requirement in requirements.iter().filter(|r| !r.is_table()) {
             let (key, url) = requirement_of(requirement)?;
             if key != own {
-                let source = match sources.get(&key).cloned().flatten() {
-                    Some(source) => Some(source),
-                    None => url.map(|url| PackageSource::new(SourceKind::Url, url)).or_else(|| default.clone()),
-                };
-                out.push((key, source));
+                let fallback = url.map(|url| PackageSource::new(SourceKind::Url, url)).or_else(|| default.clone());
+                for source in sources.get(&key).map_or(&[None][..], Vec::as_slice) {
+                    out.push((key.clone(), source.clone().or_else(|| fallback.clone())));
+                }
             }
         }
     }
@@ -256,19 +262,23 @@ fn uv_indexes(uv: &Table) -> Result<Vec<&Table>, String> {
     }
 }
 
-/// The PackageSource of each package `[tool.uv.sources]` names, by package_key; None for one from PyPI's index. Of a
-/// package with several sources, each for some platforms, the first.
-fn uv_sources(uv: &Table) -> Result<Map<Option<PackageSource>>, String> {
+/// The PackageSources of each package `[tool.uv.sources]` names, by package_key, one for each entry of a list of
+/// them (each for some platforms), in its order; None for one from PyPI's index. No package has an empty list.
+fn uv_sources(uv: &Table) -> Result<Map<Vec<Option<PackageSource>>>, String> {
     let indexes: Vec<(Option<&Value>, Option<&Value>)> =
         uv_indexes(uv)?.into_iter().map(|i| (i.get("name"), i.get("url"))).collect();
     let mut out = Map::new();
     for (name, entry) in toml_table(uv, "sources")? {
-        let first = match entry {
-            Value::Array(items) if !items.is_empty() => &items[0],
-            other => other,
+        let entries = match entry {
+            Value::Array(items) if !items.is_empty() => items.as_slice(),
+            other => std::slice::from_ref(other),
         };
-        let Value::Table(first) = first else { return Err(format!("[tool.uv.sources] {name} is not a table")) };
-        out.insert(package_key(name), uv_source(first, &indexes));
+        let mut sources = Vec::new();
+        for entry in entries {
+            let Value::Table(entry) = entry else { return Err(format!("[tool.uv.sources] {name} is not a table")) };
+            sources.push(uv_source(entry, &indexes));
+        }
+        out.insert(package_key(name), sources);
     }
     Ok(out)
 }
@@ -731,9 +741,12 @@ pub fn new_dependencies(change: &RunChange, indexes: &PackageIndexes) -> Result<
     Ok(found)
 }
 
-/// What known holds of package p: None when its index was not asked about it, Some(None) when the index does not know
-/// it.
+/// What known holds of package p: None when its index was not asked about it, which it never is for a package from
+/// elsewhere, whatever it says of the same name from the index; Some(None) when the index does not know it.
 fn known_of<'k>(known: &'k Known, p: &NewPackage) -> Option<&'k Option<IndexedPackage>> {
+    if p.source.is_some() {
+        return None;
+    }
     known.get(&(p.index.name(), p.key.clone()))
 }
 
@@ -919,12 +932,14 @@ fn compare_dependencies<'a>(
     Ok((new, moved))
 }
 
-/// Where a package comes from, as a finding says it, from each of sources in turn.
+/// Where a package comes from, as a finding says it, from each of sources in turn; of several, none is said not to
+/// come from index, which another of them may be.
 fn sources_text(sources: &[Dependency], index: &dyn PackageIndex) -> String {
     let name = index.name();
+    let contrast = (sources.len() == 1).then_some(name);
     let each: Vec<String> = sources
         .iter()
-        .map(|d| d.source.as_ref().map_or_else(|| format!("from {name}"), |s| s.describe(name)))
+        .map(|d| d.source.as_ref().map_or_else(|| format!("from {name}"), |s| s.phrase(contrast)))
         .collect();
     each.join(" and ")
 }

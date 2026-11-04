@@ -1084,7 +1084,9 @@ was agreed with the human, so naming a package there is the approval.
 Where a package comes from decides whether its index, PyPI for a Python package and crates.io for a crate, is asked
 about it. A direct dependency's source is its `[tool.uv.sources]` entry (`workspace`, `path`, `git`, `url` or
 `index`), else its PEP 508 URL (`name @ url`), else the `[[tool.uv.index]]` marked `default = true`, else the registry
-`uv.lock` has it from; a locked package's is its `source` in `uv.lock`. Only a package from PyPI's own index
+`uv.lock` has it from; a locked package's is its `source` in `uv.lock`. A package named from several sources is a
+dependency from each: a requirement with a URL beside one without, each entry of a `[tool.uv.sources]` list (each for
+some platforms), each registry `uv.lock` has it from. Only a package from PyPI's own index
 (`https://pypi.org/simple`) is looked up, at `https://pypi.org/pypi/<name>/json`, with a timeout of 15 seconds
 (`PYPI_TIMEOUT`). A package from another index is never looked up on pypi.org, so a name someone squatted there cannot
 lend it pypi.org's metadata: that is the dependency-confusion case, and the finding names the index instead. Such a
@@ -1122,8 +1124,9 @@ is neither yanked nor a pre-release.
   `other-index` instead for one from an index other than its ecosystem's, naming the index, and `unknown-source` for one whose
   `[tool.uv.sources]` entry has a shape this check does not know (none of `workspace`, `path`, `git`, `url` or
   `index`), quoting the entry: where it comes from is not checked, so it is reported rather than passed in silence;
-- `pulled-in` (reports): one finding per `uv.lock`, listing with the same facts the packages it alone adds, those the
-  new dependencies pull in. The spec cannot be expected to name them;
+- `pulled-in` (reports): one finding per `uv.lock` or `Cargo.lock`, listing with the same facts the packages it alone
+  adds, those the new dependencies pull in, a package from several sources once for each. The spec cannot be expected
+  to name them;
 - `source-changed` (reports): a dependency the project already had, direct or locked, that the change takes from
   a source it did not, instead or as well, naming the sources of both sides: `requests` moved from PyPI to
   `{ index = "evil" }` is the dependency-confusion move without a new name. A new default index moves every
