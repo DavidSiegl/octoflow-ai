@@ -256,7 +256,7 @@ impl Drain {
     fn refreshed(&self) -> Vec<(usize, Entries)> {
         let specs = read_queue(&self.dir()).unwrap();
         self.cli.f.host.state().gh_calls.clear();
-        self.cli.with(|world| refreshed_headers(&specs, world, "/proj", &[], false)).unwrap()
+        self.cli.with(|world| refreshed_headers(&specs, world, "/proj", &[], false)).unwrap().headers
     }
 
     /// The URL of each gh command, each a `gh pr view`.
@@ -880,19 +880,42 @@ fn a_dry_run_leaves_a_conflict_refresh_cleared_for_the_next_drain() {
 }
 
 #[test]
-fn a_conflict_refresh_cleared_is_asked_about_once_even_when_gh_fails() {
+fn a_conflict_refresh_cleared_whose_pull_request_gh_cannot_tell_is_logged_and_kept_for_the_next_drain() {
     let d = Drain::new();
     let run_id = conflicted_spec(&d, SPEC_FOR_HUMAN, APPROVE, &[]);
     d.cli.with(|world| crate::cli::refresh::refresh_command(world, "/proj", None)).unwrap();
     let unreachable = Completed { status: 1, stdout: String::new(), stderr: "Could not resolve to a PullRequest".into() };
     d.cli.f.host.state().pull_requests.insert(PR_A.into(), FakePr::Fails(unreachable));
+    // Each drain while gh cannot tell goes on, says why the spec stays, and keeps the record.
+    for _ in 0..2 {
+        let r = d.drain(vec![], &[]);
+        assert_eq!(r.status, 0, "{}", r.err);
+        assert!(r.err.contains(&format!("{run_id}: cannot ask gh about {PR_A}")), "{}", r.err);
+        assert_eq!(d.header("a"), (some(SPEC_FOR_HUMAN), Some(run_id.clone()), some(PR_A)));
+        assert_eq!(d.cli.saved(&run_id).get("conflict_cleared"), Some(&Value::from(PR_A)));
+    }
+    d.pull_request(PR_A, "OPEN", &[]);
+    let r = d.drain(vec![], &[]);
+    assert_eq!(d.header("a"), (some(SPEC_IN_REVIEW), Some(run_id.clone()), some(PR_A)), "{}", r.err);
+    assert_eq!(d.cli.saved(&run_id).get("conflict_cleared"), Some(&Value::Null));
+}
+
+#[test]
+fn a_drain_that_fails_later_in_its_pass_keeps_the_conflict_refresh_cleared() {
+    let d = Drain::new();
+    let run_id = conflicted_spec(&d, SPEC_FOR_HUMAN, APPROVE, &[]);
+    d.cli.with(|world| crate::cli::refresh::refresh_command(world, "/proj", None)).unwrap();
+    // Spec b, after a, fails the pass: its Run: line names no run.
+    d.spec("b", &spec_text("Second", Some(SPEC_READY), &["Run: 20261024-100000-bbbbbb"]));
+    let before = d.text("a");
     let r = d.drain(vec![], &[]);
     assert_eq!(r.status, EXIT_ERROR, "{}", r.err);
-    d.cli.f.host.state().gh_calls.clear();
+    assert_eq!(d.text("a"), before);
+    assert_eq!(d.cli.saved(&run_id).get("conflict_cleared"), Some(&Value::from(PR_A)));
+    std::fs::remove_dir_all(format!("{}/b", d.dir())).unwrap();
     let r = d.drain(vec![], &[]);
     assert_eq!(r.status, 0, "{}", r.err);
-    assert_eq!(d.header("a"), (some(SPEC_FOR_HUMAN), Some(run_id), some(PR_A)));
-    assert_eq!(d.gh_urls(), Vec::<String>::new());
+    assert_eq!(d.header("a"), (some(SPEC_IN_REVIEW), Some(run_id), some(PR_A)));
 }
 
 #[test]

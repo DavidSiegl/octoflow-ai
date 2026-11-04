@@ -47,8 +47,12 @@ pub(super) fn drain_command(args: &DrainArgs, world: &Connected, cwd: &str) -> R
     let mut specs = read_queue(&args.dir).map_err(stopped)?;
     let target = args.run.target.flags();
     let refreshed = refreshed_headers(&specs, world, cwd, &target, args.dry_run).map_err(stopped)?;
-    for (i, entries) in refreshed {
+    for (i, entries) in refreshed.headers {
         specs[i].update(&entries, !args.dry_run, world.with.human).map_err(stopped)?;
+    }
+    // Only once the headers that took them up are written, so a drain that fails before keeps them for the next.
+    if !args.dry_run {
+        forget_cleared(world, cwd, &refreshed.taken).map_err(stopped)?;
     }
     let by_slug: HashMap<String, usize> = specs.iter().enumerate().map(|(i, s)| (s.slug.clone(), i)).collect();
     if args.dry_run {
@@ -204,11 +208,11 @@ fn drain_end(specs: &[QueuedSpec], by_slug: &HashMap<String, usize>, world: &Con
     EXIT_WAITING
 }
 
-/// The header lines to set, by the index of their spec among specs, for what has become of the pull requests and runs
-/// that earlier drains left behind, one pair for each spec that has any, each followed to where it settles in this
-/// pass (settled_header), so that a pull request already merged or closed frees the spec's dependants in this drain.
-/// It refreshes a run's conflict and logs what refresh_conflict did; with dry_run, it does nothing of that, and gives
-/// the header lines as though it had.
+/// What has become of the pull requests and runs that earlier drains left behind (Refreshed): the header lines to set,
+/// each spec followed to where it settles in this pass (settled_header), so that a pull request already merged or
+/// closed frees the spec's dependants in this drain, and the runs whose cleared conflict this pass took up. It
+/// refreshes a run's conflict and logs what refresh_conflict did; with dry_run, it does nothing of that, and gives the
+/// header lines as though it had. It changes no run's conflict_cleared: the caller does, with forget_cleared.
 ///
 /// cwd is the project, where gh asks about pull requests and the runs are, on world's host; target is the --machine
 /// and --cwd flags as given, for a resume command. Errors: as Host::pull_request, refresh_conflict and
@@ -219,20 +223,41 @@ pub fn refreshed_headers(
     cwd: &str,
     target: &[String],
     dry_run: bool,
-) -> Result<Vec<(usize, Entries)>, OrchestratorError> {
+) -> Result<Refreshed, OrchestratorError> {
     let statuses = [SPEC_READY, SPEC_IN_REVIEW, SPEC_FOR_HUMAN];
     // Read once, and only when a spec's run is to be looked at.
     let looked_at = |s: &QueuedSpec| s.run().is_some_and(|r| !r.is_empty()) && s.status().is_some_and(|st| statuses.contains(&st.as_str()));
     let runs = if specs.iter().any(looked_at) { world.with.host.run_states(cwd)? } else { vec![] };
     let mut prs = PullRequestStates { world, cwd, states: HashMap::new() };
-    let mut refreshed = vec![];
+    let mut refreshed = Refreshed { headers: vec![], taken: vec![] };
     for (i, spec) in specs.iter().enumerate() {
-        let entries = settled_header(spec, &runs, &mut prs, target, dry_run)?;
+        let entries = settled_header(spec, &runs, &mut prs, &mut refreshed.taken, target, dry_run)?;
         if !entries.is_empty() {
-            refreshed.push((i, entries));
+            refreshed.headers.push((i, entries));
         }
     }
     Ok(refreshed)
+}
+
+/// What refreshed_headers found in one pass.
+pub struct Refreshed {
+    /// The header lines to set, by the index of their spec among the specs, one pair for each spec that has any.
+    pub headers: Vec<(usize, Entries)>,
+    /// The saved states, as read, of the runs whose conflict_cleared the pass took up (cleared_conflict).
+    pub taken: Vec<Value>,
+}
+
+/// Remove conflict_cleared from the state of each run of taken, as refreshed_headers read it, so that no later drain
+/// takes it up again (RunState::conflict_cleared); for the caller to do once the headers that took them up are
+/// written. cwd is the project, on world's host. Errors, naming the run: as record_in_state.
+pub fn forget_cleared(world: &Connected, cwd: &str, taken: &[Value]) -> Result<(), OrchestratorError> {
+    for saved in taken {
+        let run_id = saved.get("run_id").map(Value::text).unwrap_or_default();
+        let path = format!("{cwd}/{RUNS_DIR}/{run_id}/state.json");
+        record_in_state(world.with.host, &path, saved, &[("conflict_cleared", Value::Null)], "drain took up its cleared conflict")
+            .map_err(|e| OrchestratorError(format!("run {run_id}: {e}")))?;
+    }
+    Ok(())
 }
 
 /// The states gh gives pull requests in one refreshed_headers pass, OPEN, CLOSED or MERGED by URL: each asked of gh
@@ -273,18 +298,19 @@ impl PullRequestStates<'_, '_> {
 /// 1. a SPEC_IN_REVIEW or SPEC_FOR_HUMAN spec's run, its conflict refreshed, or found cleared by a refresh before
 ///    this drain (conflict_header), which can make a SPEC_FOR_HUMAN spec SPEC_IN_REVIEW with its pull request;
 /// 2. a SPEC_READY spec's finished run on its Run: line, which an interrupted drain leaves (finished_run_header):
-///    SPEC_IN_REVIEW with its pull request, or SPEC_FOR_HUMAN; a conflict a refresh cleared is taken up so
-///    (take_cleared);
+///    SPEC_IN_REVIEW with its pull request, or SPEC_FOR_HUMAN; a conflict a refresh cleared is taken up so, its run
+///    added to taken;
 /// 3. a spec now SPEC_IN_REVIEW with a pull request, or SPEC_FOR_HUMAN with one whose state step 1 heard, which it
 ///    hears only of a run whose conflict is refreshed or was cleared: SPEC_DONE once it is merged, SPEC_FOR_HUMAN
 ///    once it is closed (pull_request_header).
 ///
-/// gh hears of each pull request once a pass (prs). runs are Host::run_states's; the rest is as refreshed_headers
-/// says. Errors: as those steps.
+/// gh hears of each pull request once a pass (prs). runs are Host::run_states's; taken is Refreshed::taken, so far; the
+/// rest is as refreshed_headers says. Errors: as those steps.
 fn settled_header(
     spec: &QueuedSpec,
     runs: &[(u64, Value)],
     prs: &mut PullRequestStates,
+    taken: &mut Vec<Value>,
     target: &[String],
     dry_run: bool,
 ) -> Result<Entries, OrchestratorError> {
@@ -292,11 +318,11 @@ fn settled_header(
     let status = spec.status();
     let run = spec.run().filter(|r| !r.is_empty());
     match (status.as_deref(), run) {
-        (Some(SPEC_IN_REVIEW | SPEC_FOR_HUMAN), _) => merge(&mut entries, conflict_header(spec, runs, prs, dry_run)?),
+        (Some(SPEC_IN_REVIEW | SPEC_FOR_HUMAN), _) => merge(&mut entries, conflict_header(spec, runs, prs, taken, dry_run)?),
         (Some(SPEC_READY), Some(run)) => {
             merge(&mut entries, finished_run_header(spec, &run, runs, prs, target)?);
-            if let Some((_, saved)) = saved_run(runs, &run) {
-                take_cleared(prs, saved, dry_run)?;
+            if let Some((_, saved)) = saved_run(runs, &run).filter(|(_, s)| cleared_conflict(s).is_some()) {
+                taken.push(saved.clone());
             }
         }
         _ => {}
@@ -323,12 +349,16 @@ fn saved_run<'r>(runs: &'r [(u64, Value)], run_id: &str) -> Option<&'r (u64, Val
 /// Refresh the run on the spec's Run: line, if it has_conflict, as refreshed_headers says, telling prs the state gh
 /// gave its pull request, and return the header lines that sets: SPEC_IN_REVIEW and the pull request for a
 /// SPEC_FOR_HUMAN spec whose succeeded run's pull request is open and no longer conflicts; none otherwise, and for a
-/// run not among runs, Host::run_states's. A run whose conflict a refresh before this drain cleared counts as one this
-/// refresh cleared, once (take_cleared), its pull request's state asked of prs.
+/// run not among runs, Host::run_states's.
+///
+/// A run whose conflict a refresh before this drain cleared (cleared_conflict) counts as one this refresh cleared, its
+/// pull request's state asked of prs, and is added to taken once gh has answered. If gh cannot answer, that is logged
+/// and the spec left as it is, the record kept for the next drain: each drain asks again, and none fails for it.
 fn conflict_header(
     spec: &QueuedSpec,
     runs: &[(u64, Value)],
     prs: &mut PullRequestStates,
+    taken: &mut Vec<Value>,
     dry_run: bool,
 ) -> Result<Entries, OrchestratorError> {
     let Some((_, saved)) = spec.run().and_then(|run| saved_run(runs, &run)) else { return Ok(vec![]) };
@@ -340,8 +370,22 @@ fn conflict_header(
         }
         prs.learn(&check.url, &check.pr_state);
         (check.pr_state == "OPEN" && check.clears()).then_some(check.url)
-    } else if let Some(url) = take_cleared(prs, saved, dry_run)? {
-        (prs.state(&url)? == "OPEN").then_some(url)
+    } else if let Some(url) = cleared_conflict(saved) {
+        match prs.state(&url) {
+            Ok(state) => {
+                taken.push(saved.clone());
+                (state == "OPEN").then_some(url)
+            }
+            Err(e) => {
+                let run_id = saved.get("run_id").map(Value::text).unwrap_or_default();
+                prs.world.with.human.log(&format!(
+                    "{run_id}: cannot ask gh about {url}, whose conflict refresh cleared ({e}); {} is left as it is \
+                     until a drain can",
+                    spec.slug
+                ));
+                None
+            }
+        }
     } else {
         None
     };
@@ -354,22 +398,10 @@ fn conflict_header(
     }
 }
 
-/// The pull request whose conflict a refresh run by hand cleared for the run saved as saved
-/// (RunState::conflict_cleared), for drain to take up as though its own refresh had cleared it; None for a run without
-/// one.
-/// Unless dry_run, the record is removed from the run's state before the caller acts on it, so that drain takes each
-/// up in one pass only: a spec the human sets back afterwards stays as set, and a pull request gh cannot be asked
-/// about fails one drain, not every one. prs gives the project and host. Errors: as record_in_state.
-fn take_cleared(prs: &PullRequestStates, saved: &Value, dry_run: bool) -> Result<Option<String>, OrchestratorError> {
-    let Some(url) = saved.get("conflict_cleared").filter(|u| u.is_set()).map(Value::text) else { return Ok(None) };
-    if !dry_run {
-        let run_id = saved.get("run_id").map(Value::text).unwrap_or_default();
-        let path = format!("{}/{RUNS_DIR}/{run_id}/state.json", prs.cwd);
-        let taken = [("conflict_cleared", Value::Null)];
-        record_in_state(prs.world.with.host, &path, saved, &taken, "drain took up its cleared conflict")
-            .map_err(|e| OrchestratorError(format!("run {run_id}: {e}")))?;
-    }
-    Ok(Some(url))
+/// The pull request whose conflict a refresh run by hand cleared for the run saved as saved, which no drain has taken
+/// up yet (RunState::conflict_cleared); None for a run without one.
+fn cleared_conflict(saved: &Value) -> Option<String> {
+    saved.get("conflict_cleared").filter(|u| u.is_set()).map(Value::text)
 }
 
 /// The header lines to set for a spec whose pull request is in state, as gh gives it: SPEC_DONE for MERGED,

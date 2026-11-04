@@ -321,8 +321,10 @@ merged.
 `done`, closed `ready-for-human`. It refreshes the run on each `in-review` and `ready-for-human` spec's `Run:`
 line as `refresh` does, and a `ready-for-human` spec whose run approved or finished, with its pull request open,
 goes to `in-review` once its conflict is cleared, by this drain or by a `refresh` before it; drain takes up a
-`refresh`'s clearing once, so a spec you set back to `ready-for-human` afterwards stays so. A `ready-for-agent` spec with a `Run:` line is one an
-interrupted drain left; its run, if finished, sets the spec's status, and one that makes it `in-review` has its
+`refresh`'s clearing once, forgetting it only once the spec's header is written, so a spec you set back to
+`ready-for-human` afterwards stays so; while `gh` cannot say what became of the pull request, drain says so and leaves
+the spec for a later drain. A `ready-for-agent` spec with a `Run:` line is one an interrupted drain left; its run,
+if finished, sets the spec's status, and one that makes it `in-review` has its
 pull request asked about at once, so a pull request merged meanwhile makes it `done` in this drain; if not
 finished, drain stops and says what to do: wait for it, `resume` it, or delete the `Run:` line to start the spec
 over. Then drain sweeps the branches of earlier runs once, and runs each spec whose blockers are all `done`.
