@@ -183,11 +183,6 @@ pub trait Herdr {
     /// herdr's record of the agent; None once it has exited (herdr's agent_not_found).
     fn agent(&self, name: &str) -> Result<Option<Agent>, HerdrError>;
 
-    /// The agent's lifecycle status; None once it has exited.
-    fn status(&self, name: &str) -> Result<Option<String>, HerdrError> {
-        Ok(self.agent(name)?.map(|agent| agent.status))
-    }
-
     /// Whether the workspace is still there (herdr's workspace_not_found is false).
     fn workspace_exists(&self, workspace: &str) -> Result<bool, HerdrError>;
 

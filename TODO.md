@@ -69,6 +69,31 @@ is rewritten to say what is left.
 
 ## Open issues
 
+- **An npm package's NOTICE file ships only for a build tool.** `ui/scripts/npm-licenses.js` appends the
+  `THIRD-PARTY-LICEN[CS]E*` and `NOTICE*` files of the `BUILD_CODE` packages (Vite, Rolldown) to their notices, and
+  of no other; Apache-2.0 §4(d) wants a NOTICE redistributed with any work it comes with, so a production package
+  under Apache-2.0 that ships one would go out without it, silently. None does today (@tauri-apps/api has none).
+  Raised, not recorded, by cross-review 131 (round 4, 2026-11-04): "a production Apache package's NOTICE would be
+  dropped silently". Closes with every shipped package's `NOTICE*` appended to its notice, or the build failing on a
+  production package that has one.
+- **The npm notices miss a build tool's third-party notices under another file name.** `withThirdPartyNotices`
+  (`ui/scripts/npm-licenses.js`) takes `/^(third-party-licen[cs]e|notice)/i`, so `THIRD_PARTY_LICENSES` or
+  `ThirdPartyNotices.txt` in the next `BUILD_CODE` package is left out without a word, and a `LICENSE-THIRD-PARTY`
+  falls into the license pattern and fails the build. Vite and Rolldown name theirs as matched. Raised, not recorded,
+  by cross-review 131 (round 4, 2026-11-04). Closes with a pattern that takes `third[-_ ]?party` in any case and
+  position, or a test that lists each `BUILD_CODE` package's notice-like files and fails on one not shipped.
+- **The npm notices' refusal of a multi-licensed package says it has no license text.** A package offered under a
+  license `packaging/about.toml` does not accept, whose one license file names none of the licenses, fails
+  `npmNotices` with "no one license text for MIT OR GPL-3.0-only", which sends the reader looking for a missing file;
+  the refusal is that the text may be the unaccepted license's alone, and `npmNotices`'s `@throws` does not name the
+  case. Raised, not recorded, by cross-review 131 (round 4, 2026-11-04). Closes with a message of its own for that
+  case ("one license text for an offer not every license of which about.toml accepts") and the `@throws` naming it.
+- **The project bar's last button runs past a narrow window's edge.** At 560 px wide the bar's fields keep their
+  minimum widths and "Check setup…" wraps onto two lines and ends past the page's right padding; origin/main at
+  a357407 does the same, so the logo's header (gui-logo/01) did not cause it. Seen in a headless screenshot of
+  `vite preview` (2026-11-04). Closes with the bar's fields allowed to shrink or wrap (`flex: 1 1 <basis>` with a
+  smaller `min-width`) so that every control stays inside the window down to the narrowest width the app supports.
+
 - **The desktop app's dialogs do not keep keyboard focus.** `Dialog` (`ui/src/components/Dialog.tsx`), which the
   setup dialog and the run form are, sets `aria-modal` and covers the window with its backdrop, but Tab still reaches
   the project bar under it. Opening another project while the run form waits for `POST /run` remounts `ProjectRuns`
@@ -152,11 +177,6 @@ is rewritten to say what is left.
   minutes build #59 took (cross-review 73, F11, 2026-10-27). The engine aborts no build either, so its `Jenkins`
   (`engine/src/ci.rs`) has no call for it: a POST to `<job>/<number>/stop`, or the queue item's cancel, once the
   `agents` user is known to hold Jenkins's Cancel permission on the job.
-- **`tests/test_docs.py` reads the engine's names by pattern.** `rust_names` finds each `fn`, type, `const`,
-  `static`, `mod`, string literal, impl `fn` and struct field in `engine/src` by regular expression, not by parsing,
-  so a name in a comment or a `macro_rules!` counts as defined, and a doc's `Type::member` is not checked at all, only
-  `Type.member`. Found by rust-engine ticket 11 (2026-10-30). Closes, if a doc names a gone item unnoticed, with the
-  names read from rustdoc's JSON or syn, as the gate-rust helper reads Rust.
 - **Test code outside the places the spec names is judged as code.** The spec of the Rust checks (requirement 2)
   places Rust's tests in a `tests/` directory, a `tests.rs` and an inline `#[cfg(test)]` module; `_in_rust_tests` and
   `_rust_test_path` in `gate.py`, which both Rust checks read, follow it (test-integrity's side of this is the
@@ -685,12 +705,14 @@ is rewritten to say what is left.
   cargo-mutants, each from a cold target directory in the rerun's copy. A change that adds many such tests is not
   rerun; that one closes with a limit that grows with the tests rerun (a time budget shared with mutmut was decided
   against, "flaky-tests' reruns get one time limit a run", above).
-- **`tests/test_docs.py` gets `gate.py`'s parser by patching `argparse.ArgumentParser.parse_args`.**
-  `gate.parse_args` builds its parser inline and returns only the parsed arguments, so `built_parser` calls it with
-  `parse_args` patched class-wide to hand the parser back, and reads argparse's private `_actions`. Raised by
-  cross-review 56 (F8, 2026-10-27): "Breaks if `parse_args` switches to `parse_known_args` or parses twice". It
-  fails loudly then (`parse_args parsed without its parser's parse_args`). The engine's commands are read from its
-  `--help` (`cli_commands`). Closes with a `gate.build_parser()` that `parse_args` calls and the test reads.
+- **The docs check reads `gate.py` as text.** `engine/e2e/tests/docs/` takes `gate.py`'s flags from the
+  `add_argument("--…"` calls in its `parse_args` (`cli.rs`, `gate_flags`), not hiding any with `argparse.SUPPRESS`,
+  and its names from lines at the left margin and one indent into a class, its strings only from those that open and
+  close on a line (`names.rs`, `gate_names`): a flag added otherwise, or a name defined in a `for`, a `with` or an
+  `import`, is not seen. It replaced `tests/test_docs.py`, which built the argparse parser by patching
+  `parse_args` (octoflow-without-python ticket 07). The same reader takes no string of a Rust macro whose arguments
+  are not expressions, such as `json!`. Closes with gate.py leaving the repository (gate-repo-split/05), or a
+  `--help` the check runs once the gate is a program of its own.
 - **README and docs left over from the README rewrite (PR #90).** Raised by cross-review 50 (2026-10-26), in what
   PR #90 brought, not in code:
   - The Jenkins job path still uses the old folder name, as
@@ -882,24 +904,24 @@ is rewritten to say what is left.
   exposure, but it is outside this range". Closes with `--no-relative` on both calls and a test that sets
   `diff.relative` and locks from a subdirectory. Ticket:
   `.scratch/git-diff-relative/issues/01-locks-ignore-diff-relative.md` (#233).
-- **A crash between an agent's start and its session being saved costs that turn its session.** `start`
-  (`engine/src/workflow/turn.rs`) saves the agent's record, then asks herdr for it and `note_session` saves the
-  session. A resume after the first save finds the agent alive (`agent` returns `How::Alive`) and prompts it without
-  asking herdr, so the turn's record (`turn_record`) starts with no session; `note_session` saves it while the turn
-  runs, but `end_turn` keeps `session` only when it matches the one at the start, so the turn ends with none, and
-  `count_tokens` cannot count its tokens. Found in the Python engine by orchestrator-test-methods/05 (2026-10-28),
-  ported to the Rust engine unchanged, untested as above. Closes with `agent` noting the session of an agent it finds
-  alive.
-  Ticket: `.scratch/run-crash-ending/issues/02-alive-agent-session-noted.md` (#228).
-- **A resumed interview tells the human again that it waits for them.** `step_turn`'s `Announce::Interview`
-  (`engine/src/workflow.rs`) has `announce` (`engine/src/workflow/turn.rs`) focus the human-paced agent's pane and
-  notify "<label> is waiting for you" in every orchestrator that takes the turn (`turn` calls it from `written` on every
-  pass), so a resume while the interview is under way repeats both, once per resume. Raised by cross-review 81 (F1,
-  2026-10-28) against ticket orchestrator-test-methods/05, which allows only documented idempotent repeats: "Neither is
-  idempotent: the cited comment … says each orchestrator does it again, which is the repeat the ticket asks the test to
-  fail on." The user ruled it a bug (2026-10-28), not wanted. The Rust engine was ported to behave the same, untested as
-  above. Closes with an engine that announces a turn only where none did (for example, only when `prompted` is not the
-  turn's file). Ticket: `.scratch/run-crash-ending/issues/03-interview-announced-once.md` (#229).
+- **A resume finds an agent alive whose start never finished and only waits for it.** `start`
+  (`engine/src/workflow/turn.rs`) saves the agent's record, may wait without a deadline for a startup dialog the
+  human answers (`wait_for_startup`), and only then saves the session. An orchestrator stopped in between leaves an
+  agent that `agent` finds alive (`How::Alive`), so `prompt_for` treats it as one that took its prompt. Two cases,
+  raised by cross-review 128 (F1, 2026-11-04) against run-crash-ending/02: "If `start(role, pane, Some(session))`
+  relaunched a dead agent while `prompted == file` (the `How::Resumed` path, which is owed `ContinuePrompt`) and the
+  orchestrator stopped before [the session was saved], the resume gets `Alive`. `prompt_for` then returns `None`, so
+  the relaunched agent is never told to continue and sits idle until the stall notice"; and a fresh start stopped
+  during `wait_for_startup` has its step prompt typed into the startup dialog, which `taken` may count as taken if
+  herdr reports the dialog as `blocked` (unconfirmed). Answering `Resumed` for an alive agent without a session is not
+  the fix: a harness that reports no session would then be told to continue a prompt it is still working on. Closes
+  with `start` recording, before its first save, that the agent's start is unfinished, and `agent` restarting or
+  re-prompting such an agent; or with the first save moved after the startup wait.
+- **`agent`'s herdr failure on an alive agent is untested.** `agent` (`engine/src/workflow/turn.rs`) asks herdr for
+  an agent it knows and stops the run when herdr fails; the fake herdr (`engine/src/herdr/fake.rs`) cannot make
+  `agent` fail, so no test holds the `?` there against becoming a silent skip. Raised by cross-review 128 (F4,
+  2026-11-04): "The `?` could become a silent skip ... without any test failing." Closes with a failure the fake's
+  `agent` can be set to give, and a resume test that expects the run to stop with it.
 - **Four copies of a scratch directory removed on drop, each named its own way.** The `TempDir`s of
   `engine/src/test_support.rs` and `ui/src-tauri/src/lib.rs` name theirs by pid and a counter,
   `engine/src/serve/tests.rs`'s by the test's name and pid under a TMPDIR it reads itself, and `xtask/src/process.rs`'s
