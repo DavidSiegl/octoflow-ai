@@ -2160,12 +2160,13 @@ dependencies = [
  "rustls-pki-types",
  "serde",
  "serde_json",
+ "syn 2.0.119",
  "tiny_http",
 ]
 
 [[package]]
 name = "octoflow-engine"
-version = "0.57.4"
+version = "0.57.5"
 dependencies = [
  "clap",
  "jiff",

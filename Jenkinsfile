@@ -191,20 +191,22 @@ pipeline {
                 // pytest itself could not run.
                 //
                 // The Rust tests of every member of the top-level Cargo workspace (Cargo.toml), the engine's, its e2e
-                // scenarios', the desktop shell's and xtask's (which build the eval tasks' toy crates, and the engine
-                // into target/xtask-engine), with line coverage, for the Gate stage likewise: --ignore-run-fail
-                // writes the coverage report whatever tests fail and exits 0 for them, so a non-zero status is a build
-                // that did not compile or a tool that could not run. ci/nextest.toml has the ci profile write the JUnit
-                // report the Gate stage reads. Once the tests are built, --ignore-run-fail turns any failure of
-                // nextest's run into a warning (run_nextest in cargo-llvm-cov 0.9.1's src/main.rs), also one that runs
-                // no test, such as a test binary that cannot list its tests; so the JUnit report is removed first and
-                // must be there after. The lock as in the UI stage, which says why a quality build may skip it.
+                // scenarios' and docs check's, the desktop shell's and xtask's (which build the eval tasks' toy crates,
+                // and the engine into target/xtask-engine), with line coverage, for the Gate stage likewise:
+                // --ignore-run-fail writes the coverage report whatever tests fail and exits 0 for them, so a non-zero
+                // status is a build that did not compile or a tool that could not run. ci/nextest.toml has the ci
+                // profile write the JUnit report the Gate stage reads. Once the tests are built, --ignore-run-fail
+                // turns any failure of nextest's run into a warning (run_nextest in cargo-llvm-cov 0.9.1's
+                // src/main.rs), also one that runs no test, such as a test binary that cannot list its tests; so the
+                // JUnit report is removed first and must be there after. The lock as in the UI stage, which says why a
+                // quality build may skip it.
                 //
-                // The e2e scenarios (engine/e2e) run the orchestrator binary this same command builds, instrumented,
-                // through E2E_ENGINE, so that their runs of it count to its coverage and they build no engine of their
-                // own; they pass it this run's LLVM_PROFILE_FILE.
+                // The e2e scenarios and the docs check (engine/e2e) run the orchestrator binary this same command
+                // builds, instrumented, through E2E_ENGINE, so that their runs of it count to its coverage and they
+                // build no engine of their own; they pass it this run's LLVM_PROFILE_FILE.
                 //
-                // A quality build (GIT_REF set) leaves the e2e scenarios out, by a nextest filter, when its change,
+                // A quality build (GIT_REF set) leaves the e2e scenarios out, by a nextest filter on their test binary,
+                // e2e, so that the docs check beside them still runs, when its change,
                 // against HEAD^, the run's base, touches nothing they depend on: the engine and the e2e package under
                 // engine/, the Cargo workspace it builds in, the example workflows they run, and ci/, which pins the
                 // gitleaks they run; and tests/conftest.py, tests/guard_errors.py and the Python environment, which the
@@ -219,7 +221,7 @@ pipeline {
                     if [ -n "${GIT_REF:-}" ] && git diff --quiet HEAD^ HEAD -- engine Cargo.toml Cargo.lock \
                             rust-toolchain.toml tests/conftest.py tests/guard_errors.py examples pyproject.toml \
                             uv.lock .python-version ci; then
-                        set -- -E 'not package(octoflow-e2e)'
+                        set -- -E 'not (package(octoflow-e2e) and binary(e2e))'
                     fi
                     E2E_ENGINE="$WORKSPACE/target/llvm-cov-target/debug/orchestrator" \\
                     ci/cargo-lock.sh ${GIT_REF:+--no-wait} cargo llvm-cov nextest --locked --workspace \\
@@ -230,23 +232,13 @@ pipeline {
                         exit 1
                     fi
                 '''
-                // tests/test_docs.py reads the orchestrator's help: the binary the Rust tests above built,
-                // instrumented for coverage, through ORCHESTRATOR_BIN, so that pytest compiles no engine of its own.
-                // Run so, it would write its profile where it runs, so LLVM_PROFILE_FILE is /dev/null.
-                //
                 // --cov-context=test records which tests run each line, in COVERAGE_FILE, for the Gate stage's
                 // --test-contexts: mutmut then runs only the tests that reach the changed functions. It takes about 7 %
                 // longer, under the ctrace core pyproject.toml pins. COVERAGE_FILE stays relative, in the workspace:
                 // set to an absolute path, under TMPDIR or elsewhere, the file vanished during a run and over 2300
                 // tests errored.
                 sh '''
-                    engine="$WORKSPACE/target/llvm-cov-target/debug/orchestrator"
-                    if [ ! -x "$engine" ]; then
-                        echo "the Rust tests built no $engine" >&2
-                        exit 1
-                    fi
                     status=0
-                    LLVM_PROFILE_FILE=/dev/null ORCHESTRATOR_BIN="$engine" \\
                     uv run pytest --cov=gate --cov-branch --cov-context=test --cov-report=xml \\
                         --junitxml=test-results.xml || status=$?
                     [ "$status" -le 1 ] || exit "$status"
