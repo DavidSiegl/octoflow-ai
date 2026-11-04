@@ -2227,12 +2227,12 @@ def _rust_family_oses(family: str) -> frozenset[str]:
     return frozenset(os for os, families in _RUST_TARGET_OSES.items() if family in families)
 
 
-def _rust_attribute(first: str, following: list[str]) -> tuple[str, int, str]:
+def _rust_attribute(first: str, following: list[str]) -> tuple[str, int | None]:
     """The attribute that first starts with, whole: first up to its closing `]`, or, when it wraps as rustfmt wraps a
-    long one, joined by single spaces with the stripped lines of following up to the one holding that `]`; how many
-    lines of following it wraps onto; and the text after its `]` on the line holding it. Never closed, it is first and
-    all of following, and that text is empty. Brackets inside a string literal (`"..."`, its `\\"` escapes skipped)
-    are not counted; a raw string is read as a plain one."""
+    long one, joined by single spaces with the stripped lines of following up to the one holding that `]`; and how many
+    lines of following it wraps onto, None when it never closes, the attribute then being first and all of following.
+    Brackets inside a string literal (`"..."`, its `\\"` escapes skipped) are not counted; a char literal or a raw
+    string is read as a plain string, so one holding a `"` or a bracket may leave the attribute unclosed."""
     depth, quoted = 0, False
     parts: list[str] = []
     for used, text in enumerate([first] + [line.strip() for line in following]):
@@ -2244,19 +2244,27 @@ def _rust_attribute(first: str, following: list[str]) -> tuple[str, int, str]:
             quoted = c == '"'
             depth += {"[": 1, "]": -1}.get(c, 0)
             if c == "]" and depth == 0:
-                return " ".join(parts + [text[:j + 1]]), used, text[j + 1:]
+                return " ".join(parts + [text[:j + 1]]), used
         parts.append(text)
-    return " ".join(parts), len(following), ""
+    return " ".join(parts), None
 
 
 def _rust_line_attributes(text: str, following: list[str]) -> list[str]:
-    """Each attribute, whole (_rust_attribute), that starts on a line of text, followed in the file by the lines
-    following, and each that starts after it on the line where it ends, so that a wrapped attribute hides none."""
+    """Each attribute, whole (_rust_attribute), that starts at a `#[` or `#![` on a line of text, followed in the file
+    by the lines following, or on a line one of them wraps onto before it closes, so that a wrapped attribute hides
+    none. Every `#[` is read, also one inside another attribute's string, as in `#[doc = "#[ignore]"]`: a literal
+    _rust_attribute misreads then cannot hide a skip after it, at the cost of reporting such a string's text."""
     attributes = []
-    while (m := re.search(r"#!?\[", text)) is not None:
-        attribute, used, text = _rust_attribute(text[m.start():], following)
-        attributes.append(attribute)
-        following = following[used:]
+    # Each line to read, as its index in following (-1 for text), and how far into following the attributes read reach.
+    read, reached = [-1], -1
+    for i in read:
+        line = text if i < 0 else following[i].strip()
+        for m in re.finditer(r"#!?\[", line):
+            attribute, used = _rust_attribute(line[m.start():], following[i + 1:])
+            attributes.append(attribute)
+            if used is not None and i + used > reached:
+                read.extend(range(max(i, reached) + 1, i + used + 1))
+                reached = i + used
     return attributes
 
 

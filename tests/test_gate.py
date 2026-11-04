@@ -3392,14 +3392,14 @@ class TestRustAttribute(unittest.TestCase):
 
     def test_it_ends_at_its_closing_bracket_on_its_line(self):
         self.assertEqual(gate._rust_attribute("#[cfg(unix)] #[ignore] fn f() {}", ["fn g() {}"]),
-                         ("#[cfg(unix)]", 0, " #[ignore] fn f() {}"))
+                         ("#[cfg(unix)]", 0))
 
     def test_a_wrapped_attribute_is_joined_by_spaces(self):
         self.assertEqual(gate._rust_attribute("#[cfg(any(", ['    target_os = "linux",', "))] x", "mod tests {"]),
-                         ('#[cfg(any( target_os = "linux", ))]', 2, " x"))
+                         ('#[cfg(any( target_os = "linux", ))]', 2))
 
     def test_one_never_closed_runs_to_the_end(self):
-        self.assertEqual(gate._rust_attribute("#[cfg(any(", ["unix"]), ("#[cfg(any( unix", 1, ""))
+        self.assertEqual(gate._rust_attribute("#[cfg(any(", ["unix"]), ("#[cfg(any( unix", None))
 
     def test_a_line_s_attributes_go_on_where_a_wrapped_one_ends(self):
         self.assertEqual(gate._rust_line_attributes("#[test] #[cfg(any(", ["  unix,", "))] #[cfg(miri)] fn f()", "}"]),
@@ -3410,6 +3410,19 @@ class TestRustAttribute(unittest.TestCase):
         self.assertEqual(gate._rust_line_attributes('#[doc = "["] #[cfg(miri)]', ["mod tests {", "}"]),
                          ['#[doc = "["]', "#[cfg(miri)]"])
         self.assertEqual(gate._rust_line_attributes('#[doc = "\\"]["] #[ignore]', []), ['#[doc = "\\"]["]', "#[ignore]"])
+
+    def test_no_literal_hides_a_skip_after_it_on_the_line(self):
+        # _rust_attribute reads these literals as plain strings, so the first attribute on each never closes.
+        for line in ["#[cfg_attr(any(), foo = '\"')] #[cfg(miri)]", '#[doc = r"\\"] #[cfg(miri)]',
+                     "#[cfg_attr(any(), foo = '[')] #[cfg(miri)]", '#[doc = r#"a "["#] #[cfg(miri)]']:
+            with self.subTest(line=line):
+                self.assertIn("#[cfg(miri)]", gate._rust_line_attributes(line, ["mod tests {", "}"]))
+
+    def test_an_attribute_inside_a_string_is_read_as_one(self):
+        self.assertIn("#[ignore]", gate._rust_line_attributes('#[doc = "#[ignore]"]', []))
+
+    def test_the_lines_after_one_never_closed_are_not_read(self):
+        self.assertNotIn("#[ignore]", gate._rust_line_attributes('#[doc = r"\\"]', ["#[ignore]", "fn f() {}"]))
 
 
 class TestRustPassesAtBase(RepositoryTest):
