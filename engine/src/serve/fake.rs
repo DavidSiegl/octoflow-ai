@@ -7,12 +7,13 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use crate::constants::RUNS_DIR;
 use crate::error::OrchestratorError;
 use crate::herdr::{AgentAddress, AgentConsole, HerdrError, HerdrServer, Launcher};
-use crate::host::{Exec, ExecError, Host, RunFile};
+use crate::host::{Exec, ExecError, Host, RunFile, RunFileText};
 use crate::serve::Reached;
 use serde_json::Value;
 
-/// A Host whose files are `files`, whose run_files lists those under a run directory by their `mtimes`, as the real
-/// Host's does, and which records the path of every read in `reads`. It runs no command.
+/// A Host whose files are `files`, whose run_files_inside lists those under a run directory by their `mtimes`, as the
+/// real Host's does, and which records the path of every read, read_inside's included, in `reads`. It runs no command,
+/// and none of its files is a link, so every one stays inside its run directory.
 #[derive(Default)]
 pub struct ServeHost {
     /// The SSH target it stands for; None for this machine.
@@ -35,8 +36,8 @@ pub struct Files {
     pub run_states_error: Option<String>,
     /// How many times run_states was called: a poll of the project each.
     pub run_states_calls: usize,
-    /// How many times run_files was called: one listing of a run's directory each.
-    pub run_files_calls: usize,
+    /// How many times run_files_inside was called: one listing of a run's directory each.
+    pub run_files_inside_calls: usize,
     /// While set, what every read fails with (still recorded in reads).
     pub read_error: Option<String>,
 }
@@ -87,9 +88,13 @@ impl Host for ServeHost {
         Ok(states)
     }
 
-    fn run_files(&self, run_dir: &str) -> Result<Vec<RunFile>, OrchestratorError> {
+    fn read_inside(&self, run_dir: &str, name: &str) -> Result<RunFileText, OrchestratorError> {
+        Ok(self.read(&format!("{run_dir}/{name}"))?.map_or(RunFileText::Missing, RunFileText::Text))
+    }
+
+    fn run_files_inside(&self, run_dir: &str) -> Result<Vec<RunFile>, OrchestratorError> {
         let mut s = self.state();
-        s.run_files_calls += 1;
+        s.run_files_inside_calls += 1;
         let mut files: Vec<(i64, String)> = s
             .files
             .keys()

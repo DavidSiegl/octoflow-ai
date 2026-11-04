@@ -100,9 +100,9 @@ fn a_finished_runs_files_are_read_until_they_settle_and_then_only_when_it_change
     assert_eq!(events[0].payload.get("files").unwrap().to_string(), r#"[{"name":"summary.md","mtime":0}]"#);
     // A poll that reads the same list as the one before settles it, and from then on nothing lists the run's files.
     assert_eq!(watch.poll(), vec![]);
-    let listings = w.host.state().run_files_calls;
+    let listings = w.host.state().run_files_inside_calls;
     assert_eq!(watch.poll(), vec![]);
-    assert_eq!(w.host.state().run_files_calls, listings);
+    assert_eq!(w.host.state().run_files_inside_calls, listings);
     w.save(0, &[done[0].clone(), done[1].clone(), ("closed", Value::from("2026-10-24T12:00:00Z"))]);
     assert_eq!(kinds(&watch.poll()), ["record"]);
     w.host.state().files.insert(format!("{}/metrics.json", run_dir()), "{}".to_string());

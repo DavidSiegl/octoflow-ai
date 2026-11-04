@@ -417,21 +417,42 @@ fn files_of_a_run_outside_the_runs_directory_are_refused() {
 }
 
 #[test]
-fn a_link_in_the_run_directory_is_followed_as_python_follows_it() {
-    // Python's Host.read cats the path, so a symbolic link an agent left in the run directory is read through; the
-    // name is still a plain name (TODO.md, "serve reads a run's files through a symbolic link").
+fn a_link_that_leads_out_of_the_run_directory_is_refused() {
+    // An agent may leave a symbolic link in its run directory, and a run directory may itself be one; the name asked
+    // for is still a plain name (serve-run-files/02, #231).
     let d = TempDir::new("link");
     d.save(SERVE_ID, &[]);
     d.write("outside.txt", "outside");
-    std::os::unix::fs::symlink(format!("{}/outside.txt", d.0), format!("{}/{RUNS_DIR}/{SERVE_ID}/link.md", d.0)).unwrap();
+    d.write(&format!("{RUNS_DIR}/{SERVE_ID}/spec.md"), "spec");
+    let (runs, link) = (format!("{}/{RUNS_DIR}", d.0), |target: &str, at: &str| std::os::unix::fs::symlink(target, at).unwrap());
+    link(&format!("{}/outside.txt", d.0), &format!("{runs}/{SERVE_ID}/out.md"));
+    link("../../../outside.txt", &format!("{runs}/{SERVE_ID}/up.md"));
+    link("spec.md", &format!("{runs}/{SERVE_ID}/in.md"));
+    link(&d.0, &format!("{runs}/elsewhere"));
+    link(SERVE_ID, &format!("{runs}/alias"));
     let served = Served::real();
-    let reply = served.get(&format!("/file?{}", urlencode(&[("cwd", &d.0), ("run", SERVE_ID), ("name", "link.md")])), &[]);
-    assert_eq!((reply.status, reply.json().get("text")), (Some(200), Some(&Value::from("outside"))));
-    // A run directory that is a link is listed through it, as Python lists it.
-    std::os::unix::fs::symlink(&d.0, format!("{}/{RUNS_DIR}/linked", d.0)).unwrap();
-    let reply = served.get(&format!("/files?{}", urlencode(&[("cwd", &d.0), ("run", "linked")])), &[]);
-    let names: Vec<String> = reply.json().get("files").and_then(Value::as_array).unwrap().iter().map(|f| f.get("name").unwrap().text()).collect();
-    assert_eq!((reply.status, names), (Some(200), vec!["outside.txt".to_string()]));
+    let file = |run: &str, name: &str| served.get(&format!("/file?{}", urlencode(&[("cwd", &d.0), ("run", run), ("name", name)])), &[]);
+    let names = |run: &str| {
+        let reply = served.get(&format!("/files?{}", urlencode(&[("cwd", &d.0), ("run", run)])), &[]);
+        assert_eq!(reply.status, Some(200), "{reply:?}");
+        let mut names: Vec<String> = reply.json().get("files").and_then(Value::as_array).unwrap().iter().map(|f| f.get("name").unwrap().text()).collect();
+        names.sort();
+        names
+    };
+    // A link that leads out is neither read nor listed; one that stays inside is both.
+    for name in ["out.md", "up.md"] {
+        let reply = file(SERVE_ID, name);
+        assert_eq!((reply.status, reply.json().get("text")), (Some(403), None), "{name}");
+        assert_eq!(reply.error(), format!("{name:?} leads out of the run directory"));
+    }
+    assert_eq!((file(SERVE_ID, "in.md").status, file(SERVE_ID, "in.md").json().get("text")), (Some(200), Some(&Value::from("spec"))));
+    assert_eq!(names(SERVE_ID), ["in.md", "spec.md"]);
+    // A run directory that leads out of the runs directory lists nothing and reads nothing; one that is a link to
+    // another run directory is that run's.
+    assert_eq!(names("elsewhere"), Vec::<String>::new());
+    assert_eq!(file("elsewhere", "outside.txt").status, Some(403));
+    assert_eq!(file("alias", "spec.md").json().get("text"), Some(&Value::from("spec")));
+    assert_eq!(names("alias"), ["in.md", "spec.md"]);
 }
 
 #[test]

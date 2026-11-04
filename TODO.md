@@ -408,15 +408,6 @@ is rewritten to say what is left.
   requests (`engine/src/serve.rs`); cross-review 105, F3: "A client that sends a partial request or idles holds it for
   good." Decided against for now (2026-10-29, the user's ruling): serve binds 127.0.0.1 only and every request needs
   the token. Reopen if serve listens beyond loopback.
-- **serve reads a run's files through a symbolic link.** A run's files are listed and read by `Host::run_files` and
-  `Host::read`, which follow a symbolic link (`[ -f ]`, `cat`), so a link an agent leaves in its run directory, or a
-  run directory that is a link, lets `/file` and the event stream show a file outside the run, `~/.ssh/id_rsa` say, to
-  the desktop app's window; the name a request gives is still only a plain name, and only the token's holder can ask.
-  `a_link_in_the_run_directory_is_followed_as_python_follows_it` (`engine/src/serve/tests.rs`) pins it. Ruled
-  (2026-10-29, the user): keep the Python engine's behaviour until the switch, then refuse a link whose target is
-  outside the run directory, as a fix on main once the Python engine is gone, which it is since rust-engine ticket 11.
-  Open until that fix.
-  Ticket: `.scratch/serve-run-files/issues/02-links-outside-run-refused.md` (#231).
 - **`Host::read` fails for a file removed between its test and its read.** `[ -f "$1" ] || exit MISSING; cat -- "$1"`
   (`engine/src/host.rs`, `fn read`) answers a file that goes away between the two with an error, not with None, so
   serve's `/file` for a file `run_files` just listed, such as the secret scan's `leaks-publish.json`, and

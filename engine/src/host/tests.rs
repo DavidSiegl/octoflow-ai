@@ -777,6 +777,48 @@ fn run_files_failure_and_a_time_that_is_not_one() {
     assert!(e.0.contains("Permission denied"), "{e}");
 }
 
+#[test]
+fn what_leads_out_of_a_run_directory_is_neither_listed_nor_read_over_ssh() {
+    let d = TempDir::new();
+    // The project's .orchestrator is itself a link, which is no way out: the runs directory is taken links resolved.
+    let (orchestrator, runs) = (d.join("kept"), d.join("proj/.orchestrator/runs"));
+    std::fs::create_dir_all(format!("{orchestrator}/runs/r")).unwrap();
+    std::fs::create_dir_all(d.join("proj")).unwrap();
+    let link = |target: &str, at: &str| std::os::unix::fs::symlink(target, at).unwrap();
+    link(&orchestrator, &d.join("proj/.orchestrator"));
+    put(&d.join("outside.md"), "outside");
+    put(&format!("{runs}/r/a.md"), "a");
+    put(&format!("{runs}/other.md"), "beside the runs");
+    for (target, name) in [("a.md", "in.md"), ("in.md", "chain.md"), ("../../../outside.md", "up.md"),
+        (&d.join("outside.md"), "out.md"), ("../other.md", "beside.md"), ("loop.md", "loop.md")]
+    {
+        link(target, &format!("{runs}/r/{name}"));
+    }
+    link(&d.path(), &format!("{runs}/away"));
+    link("r", &format!("{runs}/alias"));
+    let ssh = FakeSsh::new(&[]);
+    let names = |run: &str| -> Vec<String> {
+        let files = ssh.host.run_files_inside(&format!("{runs}/{run}")).unwrap();
+        let mut names: Vec<String> = files.into_iter().map(|f| f.path.rsplit('/').next().unwrap().to_string()).collect();
+        names.sort();
+        names
+    };
+    assert_eq!(names("r"), ["a.md", "chain.md", "in.md"]);
+    assert_eq!(names("alias"), ["a.md", "chain.md", "in.md"]);
+    assert_eq!(names("away"), Vec::<String>::new());
+    assert_eq!(names("nosuch"), Vec::<String>::new());
+    let read = |run: &str, name: &str| ssh.host.read_inside(&format!("{runs}/{run}"), name).unwrap();
+    assert_eq!(read("r", "chain.md"), RunFileText::Text("a".to_string()));
+    assert_eq!(read("alias", "a.md"), RunFileText::Text("a".to_string()));
+    for name in ["up.md", "out.md", "beside.md"] {
+        assert_eq!(read("r", name), RunFileText::Outside, "{name}");
+    }
+    assert_eq!(read("away", "outside.md"), RunFileText::Outside);
+    assert_eq!((read("r", "loop.md"), read("r", "nosuch.md"), read("nosuch", "a.md")), (RunFileText::Missing, RunFileText::Missing, RunFileText::Missing));
+    // Each listing and each read is one command over ssh.
+    assert_eq!(ssh.calls().len(), 4 + 9);
+}
+
 /// A program called name on PATH that removes the file gone when given it, then runs the system's program of that
 /// name: gone goes away just before name reads it.
 fn tool_that_loses(bin: &str, name: &str, gone: &str) {
