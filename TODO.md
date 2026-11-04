@@ -889,15 +889,6 @@ is rewritten to say what is left.
   exposure, but it is outside this range". Closes with `--no-relative` on both calls and a test that sets
   `diff.relative` and locks from a subdirectory. Ticket:
   `.scratch/git-diff-relative/issues/01-locks-ignore-diff-relative.md` (#233).
-- **A crash between an agent's start and its session being saved costs that turn its session.** `start`
-  (`engine/src/workflow/turn.rs`) saves the agent's record, then asks herdr for it and `note_session` saves the
-  session. A resume after the first save finds the agent alive (`agent` returns `How::Alive`) and prompts it without
-  asking herdr, so the turn's record (`turn_record`) starts with no session; `note_session` saves it while the turn
-  runs, but `end_turn` keeps `session` only when it matches the one at the start, so the turn ends with none, and
-  `count_tokens` cannot count its tokens. Found in the Python engine by orchestrator-test-methods/05 (2026-10-28),
-  ported to the Rust engine unchanged, untested as above. Closes with `agent` noting the session of an agent it finds
-  alive.
-  Ticket: `.scratch/run-crash-ending/issues/02-alive-agent-session-noted.md` (#228).
 - **A resumed interview tells the human again that it waits for them.** `step_turn`'s `Announce::Interview`
   (`engine/src/workflow.rs`) has `announce` (`engine/src/workflow/turn.rs`) focus the human-paced agent's pane and
   notify "<label> is waiting for you" in every orchestrator that takes the turn (`turn` calls it from `written` on every
