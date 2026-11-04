@@ -89,7 +89,7 @@ Deleting such files is no fault.
 
 | Check | Fails? | Finds |
 |---|---|---|
-| `test-integrity` | yes, but for removed tests, fewer assertions and changed expected values | tests the change weakened, in test files (`tests/**`, `test_*.py`, `*_test.py`; Rust's below) |
+| `test-integrity` | yes, but for removed tests, fewer assertions, changed expected values and Rust tests left out on other platforms | tests the change weakened, in test files (`tests/**`, `test_*.py`, `*_test.py`; Rust's below) |
 | `cognitive-complexity` | yes | functions the change edits or adds that it takes over a cognitive complexity of 15 |
 | `flaky-tests` | no | tests the change adds or edits that pass in one order and fail in another |
 | `surviving-mutants` | no | changes to the functions the change edits that no test notices |
@@ -157,6 +157,14 @@ order. Each finding reads the helper's JSON as Python's reads the syntax tree:
   read for attributes only where they start with `#`, so an attribute after other code on its line, or one written
   over several lines whose `ignore` is not on its first, is not seen there; a test's own attributes the helper gives
   whole;
+- `platform-only`: a `cfg` that would be a `skip` but names only platforms (`unix`, `windows`, `target_os = "…"`,
+  `target_family = "…"`, and `any`, `all` and `not` of them, `test` allowed beside them in an outermost `all`) and
+  holds on at least one, on a test, a test module or a file of tests, read whole when rustfmt wraps it. It leaves a
+  test out only on platforms where what it tests is not built, as a test of a Linux-only system call, so it is one to
+  weigh: the Reviewer checks that the code under test is as limited. The platforms are a list of common `target_os`
+  values with their families (`_RUST_TARGET_OSES`); one it lacks, as a misspelt os, and a predicate that holds on
+  none of them, as `all(unix, windows)`, are still a `skip`. So is a platform `cfg` on a line of its own inside a
+  test's body, and a line that also holds another skip;
 - `fewer-assertions`: a kept test with fewer of the assertion macros the helper lists (`asserts`: `assert!`,
   `assert_eq!`, `assert_ne!`, their `debug_` forms, and `panic!`) than at the base. It is one to weigh, as Python's;
 - `swallowed-error`: on an added line, a `#[should_panic]` without `expected` on a test, which any panic passes, a

@@ -2141,30 +2141,184 @@ def _rust_removed_from(path: str | None, document: dict, tests: list[_RustTest],
 _RUST_SKIPPING = re.compile(r"#!?\[\s*(?:ignore\b|cfg\s*\((?!\s*test\s*\)\s*\])"
                             r"|cfg_attr\s*\([^\]]*,\s*ignore\s*[=,)])")
 
+# The platforms a platform-only cfg is judged over: the target_os values of common targets, each with its
+# target_family values (https://doc.rust-lang.org/reference/conditional-compilation.html). A cfg naming an os or a
+# family not here is not platform-only, so that a misspelt or invented one cannot turn a test off with only a warning.
+_RUST_TARGET_OSES = {
+    **{os: frozenset({"unix"}) for os in ("linux", "android", "macos", "ios", "freebsd", "netbsd", "openbsd",
+                                          "dragonfly", "illumos", "solaris")},
+    "windows": frozenset({"windows"}), "wasi": frozenset({"wasm"}), "unknown": frozenset({"wasm"}), "none": frozenset(),
+}
+
+# One token of an attribute, after any whitespace: a name, a string literal with its quotes, or any other character.
+_RUST_CFG_TOKEN = re.compile(r'\s*(?:([A-Za-z_]\w*)|("(?:[^"\\]|\\.)*")|(.))')
+
+
+def _rust_platform_only(attribute: str) -> bool:
+    """Whether attribute, an attribute's whole text from its `#` (`#[...]` or `#![...]`, anything after its `]`
+    ignored), is a `cfg` whose predicate names only platforms and holds on one: `unix`, `windows`,
+    `target_os = "..."` or `target_family = "..."` of an os or family _RUST_TARGET_OSES knows, alone or in `any(...)`,
+    `all(...)` and `not(...)` of them, with `test` also allowed as an argument of an outermost `all`. Such a cfg leaves
+    a test out only on platforms where what it tests is not built. False for any other attribute; for a predicate
+    naming no platform, holding on none of _RUST_TARGET_OSES (as `all(unix, windows)`), or with an empty `any()` or
+    `all()`; and for text this reads no closing `]` in."""
+    tokens = [m.group(1) or m.group(2) or m.group(3) for m in _RUST_CFG_TOKEN.finditer(attribute)]
+    opening = ["#", "!", "[", "cfg", "("] if attribute.startswith("#!") else ["#", "[", "cfg", "("]
+    if tokens[:len(opening)] != opening:
+        return False
+    try:
+        oses, i = _rust_cfg_oses(tokens, len(opening), outermost=True)
+    # RecursionError: a predicate nested deeper than Python's stack, which only a change written to break the gate has.
+    except (ValueError, RecursionError):
+        return False
+    return bool(oses) and tokens[i:i + 2] == [")", "]"]
+
+
+def _rust_cfg_oses(tokens: list[str], i: int, outermost: bool) -> tuple[frozenset[str], int]:
+    """The cfg predicate starting at tokens[i], read as _rust_platform_only says, outermost when it is the cfg's own
+    rather than an argument of another: the oses of _RUST_TARGET_OSES it holds on, and the index of the token after
+    it. Raises ValueError when it is anything but platforms, names an os or family _RUST_TARGET_OSES lacks, or the
+    tokens end inside it."""
+    name = tokens[i] if i < len(tokens) else None
+    if name in ("any", "all", "not") and tokens[i + 1:i + 2] == ["("]:
+        return _rust_cfg_combined_oses(tokens, i, outermost)
+    if name in ("unix", "windows"):
+        oses = _rust_family_oses(name)
+    elif name in ("target_os", "target_family") and tokens[i + 1:i + 2] == ["="] and tokens[i + 2:i + 3] \
+            and tokens[i + 2].startswith('"'):
+        named = tokens[i + 2][1:-1]
+        oses = frozenset({named} & _RUST_TARGET_OSES.keys()) if name == "target_os" else _rust_family_oses(named)
+        i += 2
+    else:
+        raise ValueError(name)
+    if not oses:
+        raise ValueError(tokens[i])
+    return oses, i + 1
+
+
+def _rust_cfg_combined_oses(tokens: list[str], i: int, outermost: bool) -> tuple[frozenset[str], int]:
+    """_rust_cfg_oses for the `any(...)`, `all(...)` or `not(...)` at tokens[i], its `(` at tokens[i + 1]: the
+    union, the intersection or the complement of its arguments' oses, a trailing comma allowed, and `test` skipped
+    as an argument of an outermost `all`. Raises ValueError as _rust_cfg_oses does, and for no argument but `test`, or
+    a `not` of other than one."""
+    name, arguments, i = tokens[i], [], i + 2
+    while i < len(tokens) and tokens[i] != ")":
+        if outermost and name == "all" and tokens[i] == "test":
+            i += 1
+        else:
+            oses, i = _rust_cfg_oses(tokens, i, outermost=False)
+            arguments.append(oses)
+        if tokens[i:i + 1] == [","]:
+            i += 1
+        elif tokens[i:i + 1] != [")"]:
+            raise ValueError(tokens[i:i + 1])
+    if i >= len(tokens) or not arguments or (name == "not" and len(arguments) != 1):
+        raise ValueError(name)
+    everywhere = frozenset(_RUST_TARGET_OSES)
+    if name == "any":
+        return frozenset().union(*arguments), i + 1
+    if name == "all":
+        return everywhere.intersection(*arguments), i + 1
+    return everywhere - arguments[0], i + 1
+
+
+def _rust_family_oses(family: str) -> frozenset[str]:
+    """The oses of _RUST_TARGET_OSES in target_family family; none for a family it does not know."""
+    return frozenset(os for os, families in _RUST_TARGET_OSES.items() if family in families)
+
+
+def _rust_attribute(first: str, following: list[str]) -> tuple[str, int | None]:
+    """The attribute that first starts with, whole: first up to its closing `]`, or, when it wraps as rustfmt wraps a
+    long one, joined by single spaces with the stripped lines of following up to the one holding that `]`; and how many
+    lines of following it wraps onto, None when it never closes, the attribute then being first and all of following.
+    Brackets inside a string literal (`"..."`, its `\\"` escapes skipped) are not counted; a char literal or a raw
+    string is read as a plain string, so one holding a `"` or a bracket may leave the attribute unclosed."""
+    depth, quoted = 0, False
+    parts: list[str] = []
+    for used, text in enumerate([first] + [line.strip() for line in following]):
+        escaped = False
+        for j, c in enumerate(text):
+            if quoted:
+                quoted, escaped = (escaped or c != '"'), (not escaped and c == "\\")
+                continue
+            quoted = c == '"'
+            depth += {"[": 1, "]": -1}.get(c, 0)
+            if c == "]" and depth == 0:
+                return " ".join(parts + [text[:j + 1]]), used
+        parts.append(text)
+    return " ".join(parts), None
+
+
+def _rust_line_attributes(text: str, following: list[str]) -> list[str]:
+    """Each attribute, whole (_rust_attribute), that starts at a `#[` or `#![` on a line of text, followed in the file
+    by the lines following, or on a line one of them wraps onto before it closes, so that a wrapped attribute hides
+    none. Every `#[` is read, also one inside another attribute's string, as in `#[doc = "#[ignore]"]`: a literal
+    _rust_attribute misreads then cannot hide a skip after it, at the cost of reporting such a string's text."""
+    attributes = []
+    # Each line to read, as its index in following (-1 for text), and how far into following the attributes read reach.
+    read, reached = [-1], -1
+    for i in read:
+        line = text if i < 0 else following[i].strip()
+        for m in re.finditer(r"#!?\[", line):
+            attribute, used = _rust_attribute(line[m.start():], following[i + 1:])
+            attributes.append(attribute)
+            if used is not None and i + used > reached:
+                read.extend(range(max(i, reached) + 1, i + used + 1))
+                reached = i + used
+    return attributes
+
 
 def _rust_skips(f: ChangedTestFile, document: dict, tests: list[_RustTest]) -> list[dict]:
     """The skips on the lines the change added to f, a Rust test file whose document in the working tree is document,
     and tests its tests there. A skip is an attribute _RUST_SKIPPING matches: of a test, as the helper gives them; on a
     line of its own inside a test's body, as a statement's; among the outer attributes of an inline module holding a
     test; or an inner attribute, `#![...]`, on a line of its own inside such a module, or anywhere in a file
-    _rust_test_path places among the tests."""
+    _rust_test_path places among the tests. A cfg naming only platforms (_rust_platform_only) is a platform-only
+    finding to weigh instead, but never a statement's: in a test's body it turns an assertion off on a platform where
+    the test still runs. A line with any other skip on it is a skip."""
     path = f.new_path
-    skips = {a["line"]: a["text"] for t in tests for a in t.fn["attrs"]
-             if a["line"] in f.added and _RUST_SKIPPING.match(a["text"])}
+    # Each added line's skipping attributes, whole, and whether a platform-only cfg among them is weighed there.
+    found: dict[int, tuple[list[str], bool]] = {}
+    for a in (a for t in tests for a in t.fn["attrs"]):
+        if a["line"] in f.added and _RUST_SKIPPING.match(a["text"]):
+            found.setdefault(a["line"], ([], True))[0].append(a["text"])
     holding = [m for m in document["mods"] if any(m["attrs_line"] <= t.fn["line"] <= m["end"] for t in tests)]
     lines = f.after.split("\n")
-    for n in sorted(f.added - skips.keys()):
+    for n in sorted(f.added - found.keys()):
         text = lines[n - 1].lstrip() if n <= len(lines) else ""
-        if text.startswith("#!"):
-            judged = (path is not None and _rust_test_path(path)) or any(m["line"] <= n <= m["end"] for m in holding)
-        else:
-            judged = text.startswith("#") and (any(t.fn["line"] < n <= t.fn["end"] for t in tests)
-                                               or any(m["attrs_line"] <= n < m["line"] for m in holding))
-        found = [m.start() for m in re.finditer(r"#!?\[", text) if _RUST_SKIPPING.match(text, m.start())]
-        if judged and found:
-            skips[n] = text[found[0]:]
-    return [_finding(path, n, "skip", f"`{_first_line(text)}` added: it skips a test or turns it off.",
-                     severity="error") for n, text in sorted(skips.items())]
+        place = _rust_attribute_place(path, n, text, tests, holding)
+        skipping = [a for a in _rust_line_attributes(text, lines[n:]) if _RUST_SKIPPING.match(a)] if place else []
+        if skipping:
+            found[n] = (skipping, place != "statement")
+    return [_rust_skip_finding(path, line, attributes, weighed) for line, (attributes, weighed) in sorted(found.items())]
+
+
+def _rust_attribute_place(path: str | None, n: int, text: str, tests: list[_RustTest], holding: list[dict]) -> str | None:
+    """Where _rust_skips judges the attributes on line n of the Rust file at path, text that line without its
+    indentation, tests the file's tests and holding the inline modules holding one: "statement" on a line of its own
+    in a test's body; "module" among a holding module's outer attributes, or as an inner attribute, `#![...]`, inside
+    one or anywhere in a file _rust_test_path places among the tests; None where it judges none, as on a line not
+    starting with `#`."""
+    if text.startswith("#!"):
+        inside = (path is not None and _rust_test_path(path)) or any(m["line"] <= n <= m["end"] for m in holding)
+        return "module" if inside else None
+    if not text.startswith("#"):
+        return None
+    if any(t.fn["line"] < n <= t.fn["end"] for t in tests):
+        return "statement"
+    return "module" if any(m["attrs_line"] <= n < m["line"] for m in holding) else None
+
+
+def _rust_skip_finding(path: str | None, line: int, attributes: list[str], weighed: bool) -> dict:
+    """The finding on line of path, whose skipping attributes the change added are attributes, each whole: a
+    platform-only finding to weigh when weighed and each is _rust_platform_only, else a skip naming the first that is
+    not."""
+    failing = [a for a in attributes if not (weighed and _rust_platform_only(a))]
+    if failing:
+        return _finding(path, line, "skip", f"`{_first_line(failing[0])}` added: it skips a test or turns it off.",
+                        severity="error")
+    return _finding(path, line, "platform-only",
+                    f"`{_first_line(attributes[0])}` added: it turns a test off on the other platforms.")
 
 
 def _rust_swallowed_errors(f: ChangedTestFile, document: dict, tests: list[_RustTest]) -> list[dict]:
@@ -5566,10 +5720,11 @@ def gate_checks(mutation_budget: float = MUTATION_BUDGET, base_run_budget: float
     for mutation_budget seconds, on the tests test_contexts says as surviving_mutants takes it, and the passes-at-base
     check letting pytest run for base_run_budget."""
     return (
-        # Removing, reshaping or re-expecting a test is what a spec can ask for; skipping one or swallowing its error
-        # only hides a failure.
+        # Removing, reshaping or re-expecting a test is what a spec can ask for, and leaving one out on platforms its
+        # code is not built for is what that code asks for; skipping one otherwise or swallowing its error only hides a
+        # failure.
         GateCheck("test-integrity", fails=True, find=weakened_tests,
-                  weighed=frozenset({"removed-test", "fewer-assertions", "expected-value-changed"})),
+                  weighed=frozenset({"removed-test", "fewer-assertions", "expected-value-changed", "platform-only"})),
         GateCheck("cognitive-complexity", fails=True, find=too_complex_functions),
         GateCheck("flaky-tests", fails=False, find=flaky_tests),
         GateCheck("surviving-mutants", fails=False, find=functools.partial(surviving_mutants, budget=mutation_budget,

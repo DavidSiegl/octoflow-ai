@@ -352,15 +352,30 @@ is rewritten to say what is left.
   desktop shell's are a `#[cfg(test)]` module in `ui/src-tauri/src/lib.rs`. That module also makes a change to the
   desktop shell's tests alone need a version raise, and a place in the one-bumping-PR-at-a-time queue:
   `ci/version-raised.sh` exempts `**/tests.rs`, not `lib.rs` (cross-review 117, F4, 2026-11-03). Moving it to
-  `ui/src-tauri/src/tests.rs` closes both, once the gate lets a moved test keep its `cfg` (next entry): tried by
-  ui-test-text-file-busy/01 (2026-11-03) and dropped for that, so that ticket's fix to one of these tests bumped.
-- **The gate takes a moved Rust test's own `cfg` for a skip the change added.** `_rust_skips` (`gate.py`) reports a
-  skipping attribute (`#[cfg(unix)]`, `#[ignore]`, …) on any line the change added, so a test moved to another file
-  with its attributes fails the gate with `test-integrity skip` errors, though nothing new is skipped; the
-  `removed-test` check follows the same move by the test's `body_digest` (docs/quality-gate.md, "Rust tests").
-  Found 2026-11-03 moving the desktop shell's 26 tests out of `ui/src-tauri/src/lib.rs` (ui-test-text-file-busy/01):
-  six errors, one for each `cfg` the tests carried. Closes with a skip attribute on a test matched to the base's test
-  of the same body digest counted only when that test did not carry it.
+  `ui/src-tauri/src/tests.rs` closes both: tried by ui-test-text-file-busy/01 (2026-11-03) and dropped then because
+  the gate failed the move on the tests' own `cfg`s (next entry). Their `cfg`s all name platforms, which the gate
+  now weighs rather than fails (`platform-only`, gate-platform-cfg/01), so the move is open again.
+- **The gate takes a moved Rust test's own skip for one the change added.** `_rust_skips` (`gate.py`) reports a
+  skipping attribute on any line the change added, so a test moved to another file with its attributes is reported
+  though nothing new is skipped: a platform `cfg` (`#[cfg(unix)]`) as a `platform-only` finding to weigh, any other
+  (`#[ignore]`, `#[cfg(feature = "slow")]`) as a `test-integrity skip` error; the `removed-test` check follows the
+  same move by the test's `body_digest` (docs/quality-gate.md, "Rust tests"). Found 2026-11-03 moving the desktop
+  shell's 26 tests out of `ui/src-tauri/src/lib.rs` (ui-test-text-file-busy/01): six errors, one for each `cfg` the
+  tests carried, which since gate-platform-cfg/01 (2026-11-04) are six findings to weigh. Closes with a skip
+  attribute on a test matched to the base's test of the same body digest counted only when that test did not carry
+  it.
+- **A misread literal on an added attribute line can report a test's existing skip as added.** `_rust_attribute`
+  (`gate.py`) lexes only plain strings, so a char literal (`'"'`) or a raw string ending in `\` (`r"C:\"`) can leave
+  an attribute open until a `]` inside a later string, many lines down; `_rust_line_attributes` then reads every `#[`
+  on the lines in between as the added line's. So a change that adds only `#[doc = r"C:\"]` above an existing
+  `mod tests` with an `#[ignore]`d test whose body holds `"a]b"` fails the build with a `test-integrity skip` error
+  naming that `#[ignore]`. It fails loudly and hides nothing. Separately, `_rust_line_attributes`'s "cannot hide a
+  skip after it" holds only on the line where an attribute starts: a misread literal on a wrapped attribute's
+  continuation line can still hide a skip later on that line, as `#[cfg(miri)]` in `doc = "x")] #[cfg(miri)]` after
+  `#[cfg_attr(any(), doc = ']',`. Raised by cross-review 136 (R5-F1, should-fix) and deferred by the user
+  (2026-11-04). Closes with either of the reviewer's fixes: read the lines in between only when the attribute's text
+  holds no `"` or `'`; or bound how far an attribute may span, to the lines before the next one that starts with `#[`
+  or an item keyword.
 - **No build runs the Rust doctests.** cargo-nextest does not run doctests, and since the Test stage's `cargo llvm-cov
   nextest` replaced the UI stage's `cargo test`, nothing does: `octoflow_ui_lib` is an `rlib` among its crate types
   (`ui/src-tauri/Cargo.toml`), so `cargo test` ran them. The crate has no doc example today. Raised by cross-review 72
