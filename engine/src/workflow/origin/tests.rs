@@ -48,8 +48,8 @@ fn an_origin_that_never_answers_fails_after_every_try_saying_what_to_check() {
     assert_eq!(
         e.0,
         format!(
-            "{REFUSED}\n(tried 4 times; check that origin can be reached: `ssh -T git@github.com`, and \
-             https://www.githubstatus.com)"
+            "{REFUSED}\n(origin still unreachable after 4 tries; check that it can be reached: \
+             `ssh -T git@github.com`, and https://www.githubstatus.com)"
         )
     );
 }
@@ -59,7 +59,7 @@ fn an_origin_elsewhere_gets_no_github_hint() {
     let (clock, told, interrupt, tries) = (FakeClock::default(), Told::default(), Interrupt::new(), Cell::new(0));
     let error = "fatal: unable to access 'https://git.example/r/': Could not resolve host: git.example";
     let e = reaching_origin(&clock, &told, &interrupt, failing(error, u32::MAX, &tries)).unwrap_err();
-    assert_eq!(e.0, format!("{error}\n(tried 4 times; check that origin can be reached)"));
+    assert_eq!(e.0, format!("{error}\n(origin still unreachable after 4 tries; check that it can be reached)"));
 }
 
 #[test]
@@ -71,6 +71,22 @@ fn a_failure_a_retry_cannot_change_is_tried_once() {
     assert_eq!((tries.get(), e.0.as_str()), (1, missing));
     assert_eq!(clock.now(), 0.0);
     assert!(told.lines().is_empty());
+}
+
+#[test]
+fn an_answer_origin_will_give_again_is_final() {
+    for error in [
+        "fatal: 'origin' does not appear to be a git repository\nfatal: Could not read from remote repository.",
+        "ERROR: Repository not found.\nfatal: Could not read from remote repository.",
+        "ERROR: Permission to o/r.git denied to someone.\nfatal: Could not read from remote repository.",
+        "fatal: unable to access 'https://github.com/o/r/': The requested URL returned error: 403",
+        "fatal: unable to access 'https://github.com/o/r/': The requested URL returned error: 404",
+    ] {
+        let (clock, told, interrupt, tries) = (FakeClock::default(), Told::default(), Interrupt::new(), Cell::new(0));
+        let e = reaching_origin(&clock, &told, &interrupt, failing(error, u32::MAX, &tries)).unwrap_err();
+        assert_eq!((tries.get(), e.0.as_str()), (1, error));
+        assert!(!origin_unreachable(&e), "{error}");
+    }
 }
 
 #[test]

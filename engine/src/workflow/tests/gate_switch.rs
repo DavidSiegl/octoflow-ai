@@ -572,6 +572,18 @@ fn a_failed_ref_deletion_is_only_logged() {
 }
 
 #[test]
+fn a_listing_of_the_refs_origin_refuses_once_is_tried_again() {
+    let mut state = gated_pr_run("review", 1);
+    let host = pr_host();
+    host.state().remote.insert(REF_1_1, "snap1".to_string());
+    host.state().list_remote_error = Some("fatal: Could not read from remote repository.".into());
+    host.state().list_remote_failures_left = Some(1);
+    let logged = turn_off(&mut state, &DEFAULT_WORKFLOW, &host).expect("the gate turns off");
+    assert!(logged.contains(&"origin unreachable, trying again in 5 s (1 of 3)".to_string()), "{logged:?}");
+    assert!(host.state().remote.is_empty());
+}
+
+#[test]
 fn refs_left_by_a_failed_deletion_are_deleted_at_the_end() {
     let mut state = gated_pr_run("review", 1);
     let host = pr_host();

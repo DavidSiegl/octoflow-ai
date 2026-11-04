@@ -9,7 +9,7 @@ use crate::error::OrchestratorError;
 use crate::host::{GhError, Host, PullRequest};
 use crate::json::ValueExt;
 use crate::runs::{run_health, RUNNING};
-use crate::workflow::{reaching_origin, Collaborators};
+use crate::workflow::{origin_unreachable, reaching_origin, Collaborators};
 use serde_json::Value;
 
 /// A run's branch_cleanup once both sides of its branch are gone.
@@ -56,7 +56,8 @@ impl PrunedRun {
 /// under a lease; a branch checked out in a worktree stays. Only runs with no branch_cleanup yet are candidates, and
 /// with revisit the runs whose branch was kept too; a run without a pull request, one whose branch the orchestrator
 /// did not make, and one an orchestrator drives now, are not. Returns each candidate, in run_states' order, but
-/// those after gh was found unusable, which ends the sweep. A failure on one run is logged and skips that run.
+/// those after gh was found unusable or origin unreachable, which ends the sweep. A failure on one run is logged and
+/// skips that run.
 ///
 /// Errors: the runs or the checked-out branches cannot be read, or a run's failure while world's interrupt is raised.
 pub fn prune_branches(
@@ -119,7 +120,8 @@ fn is_prune_candidate(s: &Value, age: u64, world: &Connected, revisit: bool) -> 
 
 /// Decide each side of the branch of the run saved as saved, delete what may go, unless dry_run, and record the
 /// result in its state.json, on world's host, filling run in; checked_out maps each branch checked out to its
-/// worktree. Errors: GhError::Unusable when gh is, else GhError::Failed with what failed.
+/// worktree. Errors: GhError::Unusable when gh is, or when origin is still unreachable after prune_remote's tries
+/// (origin_unreachable), either of which no other run can get past; else GhError::Failed with what failed.
 fn prune_run(
     world: &Connected,
     cwd: &str,
@@ -146,7 +148,9 @@ fn prune_run(
     }
     let head = &pr.head_ref_oid;
     // Each side is decided on its own, so keeping one does not keep the other.
-    let (remote, remote_kept) = prune_remote(&world.with, cwd, branch, head, number, dry_run).map_err(failed)?;
+    // An origin still unreachable after prune_remote's tries is so for the runs after this one too.
+    let unusable = |e| if origin_unreachable(&e) { GhError::Unusable(e) } else { GhError::Failed(e) };
+    let (remote, remote_kept) = prune_remote(&world.with, cwd, branch, head, number, dry_run).map_err(unusable)?;
     let (local, local_kept) = prune_local(host, cwd, branch, head, number, checked_out, dry_run).map_err(failed)?;
     (run.remote, run.local) = (remote, local);
     let kept: Vec<String> = [local_kept, remote_kept].into_iter().flatten().collect();

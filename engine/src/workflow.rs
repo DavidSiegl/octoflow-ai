@@ -48,7 +48,7 @@ mod system;
 mod turn;
 
 pub use gate_switch::{turn_quality_gate_off, turn_quality_gate_on};
-pub(crate) use origin::reaching_origin;
+pub(crate) use origin::{origin_unreachable, reaching_origin};
 pub use system::{LocalHuman, SystemClocks};
 
 #[cfg(test)]
