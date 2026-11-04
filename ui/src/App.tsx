@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { Api, type Connection, type Project } from "./api";
+import { Api, type Connection, type Project, type StartedRun } from "./api";
 import { ProjectBar } from "./components/ProjectBar";
 import { RunDetail } from "./components/RunDetail";
+import { RunForm } from "./components/RunForm";
 import { RunsOverview } from "./components/RunsOverview";
 import { SetupDialog } from "./components/SetupDialog";
 import { useNow, useRunStream } from "./hooks";
@@ -86,19 +87,40 @@ function Connected({ connection }: { connection: Connection }) {
   );
 }
 
-/** One project's runs, live: the overview, or the run picked from it in detail. */
+/** One project's runs, live: the overview, with the form for a new run, or the run picked from it, or started, in
+ * detail. A selected run the stream has not listed shows as the overview until it does. */
 function ProjectRuns({ api, project }: { api: Api; project: Project }) {
   const [selected, setSelected] = useState<string | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  // The run last started that the server answered was not yet listed: while it is selected and still unlisted, the
+  // overview says so.
+  const [unlisted, setUnlisted] = useState<string | null>(null);
   const state = useRunStream(api, project);
   const now = useNow();
   const entry = selected ? state.runs[selected] : undefined;
+  const started = ({ run, listed }: StartedRun) => {
+    setFormOpen(false);
+    setSelected(run);
+    setUnlisted(listed ? null : run);
+  };
   return (
     <>
       {state.problem && <p className="problem">{state.problem}</p>}
+      {formOpen && <RunForm api={api} project={project} onStarted={started} onClose={() => setFormOpen(false)} />}
       {entry ? (
         <RunDetail key={entry.record.id} api={api} project={project} entry={entry} now={now} onClose={() => setSelected(null)} />
       ) : (
-        <RunsOverview runs={runsNewestFirst(state)} now={now} selected={selected} onSelect={setSelected} />
+        <>
+          <div className="runs-actions">
+            <button type="button" onClick={() => setFormOpen(true)}>
+              New run…
+            </button>
+            {selected !== null && selected === unlisted && (
+              <p className="loading">Run {selected} has started but is not listed yet; it opens once it is.</p>
+            )}
+          </div>
+          <RunsOverview runs={runsNewestFirst(state)} now={now} selected={selected} onSelect={setSelected} />
+        </>
       )}
     </>
   );

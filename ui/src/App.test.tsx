@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { AGENT_POLL_MS } from "./components/AgentPanes";
-import { CONNECTION, FakeEventSource, RECORDED, stubServer, type FakeSetup } from "./test/fakes";
+import { CONNECTION, FakeEventSource, RECORDED, stubServer, type FakeSetup, type FakeStart } from "./test/fakes";
 
 const RUN = "20261024-140000-c0ffee";
 const DONE = "20261024-090000-beef00";
@@ -461,5 +461,119 @@ describe("the setup dialog", () => {
     expect(await within(dialog).findByText("herdr 0.9.1", { exact: false })).toBeInTheDocument();
     expect(within(dialog).queryByText("fix: install git 2.36 or later")).not.toBeInTheDocument();
     expect(setupCalls(fetch)).toHaveLength(2);
+  });
+});
+
+describe("the run form", () => {
+  async function openForm(start: FakeStart = {}) {
+    stubServer({}, {}, {}, start);
+    render(<App connect={connect} />);
+    await waitFor(() => expect(FakeEventSource.opened).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "New run…" }));
+    const form = await screen.findByRole("dialog", { name: "new run" });
+    // The workflows have been read once the default one is chosen.
+    await waitFor(() => expect(within(form).getByLabelText("Workflow")).toHaveValue("default"));
+    return { form, source: FakeEventSource.last };
+  }
+
+  const typeTask = (form: HTMLElement, task: string) =>
+    fireEvent.change(within(form).getByLabelText("Task"), { target: { value: task } });
+
+  it("sends the defaults, and selects the started run", async () => {
+    const start: FakeStart = {};
+    const { form, source } = await openForm(start);
+    expect(within(form).getByText("Spec, build and review.")).toBeInTheDocument();
+    expect(within(form).getByLabelText("No pull request")).not.toBeChecked();
+    expect(within(form).getByLabelText("Separate worktree")).toBeChecked();
+    typeTask(form, " Add a rate limiter ");
+    fireEvent.click(within(form).getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(start.requests).toEqual([
+      { cwd: "/home/me/proj", body: { task: "Add a rate limiter", workflow: "default", no_pr: false, worktree: true } },
+    ]);
+    act(() => source.replay("a run started its interview"));
+    expect(screen.getByRole("region", { name: "run c0ffee" })).toBeInTheDocument();
+  });
+
+  it("sends the workflow, agent and model chosen and the boxes as ticked", async () => {
+    const start: FakeStart = {};
+    const { form } = await openForm(start);
+    expect(within(form).getByRole("option", { name: "broken (does not load)" })).toBeDisabled();
+    typeTask(form, "Add a rate limiter");
+    fireEvent.change(within(form).getByLabelText("Workflow"), { target: { value: "tdd" } });
+    expect(within(form).getByText("Tests first, then the code.")).toBeInTheDocument();
+    fireEvent.change(within(form).getByLabelText("Agent"), { target: { value: "codex" } });
+    fireEvent.change(within(form).getByLabelText("Model"), { target: { value: "o3" } });
+    fireEvent.click(within(form).getByLabelText("No pull request"));
+    fireEvent.click(within(form).getByLabelText("Separate worktree"));
+    fireEvent.click(within(form).getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(start.requests).toHaveLength(1));
+    expect(start.requests?.[0]?.body).toEqual({
+      task: "Add a rate limiter",
+      workflow: "tdd",
+      agent: "codex",
+      model: "o3",
+      no_pr: true,
+      worktree: false,
+    });
+  });
+
+  it("disables Start without a task", async () => {
+    const { form } = await openForm();
+    const startButton = within(form).getByRole("button", { name: "Start" });
+    expect(startButton).toBeDisabled();
+    typeTask(form, "   ");
+    expect(startButton).toBeDisabled();
+    typeTask(form, "Add a rate limiter");
+    expect(startButton).toBeEnabled();
+  });
+
+  it("shows that the run is starting until the server answers", async () => {
+    let release = () => {};
+    const start: FakeStart = { held: new Promise<void>((resolve) => (release = resolve)) };
+    const { form } = await openForm(start);
+    typeTask(form, "Add a rate limiter");
+    fireEvent.click(within(form).getByRole("button", { name: "Start" }));
+    expect(await within(form).findByText("Starting the run…")).toBeInTheDocument();
+    expect(within(form).getByRole("button", { name: "Start" })).toBeDisabled();
+    expect(within(form).getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(within(form).getByLabelText("Task")).toBeDisabled();
+    await act(async () => release());
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("says a run is not listed yet, and opens it once it is", async () => {
+    const { form, source } = await openForm({ status: 202, body: { run: RUN, listed: false } });
+    typeTask(form, "Add a rate limiter");
+    fireEvent.click(within(form).getByRole("button", { name: "Start" }));
+    expect(await screen.findByText(`Run ${RUN} has started but is not listed yet; it opens once it is.`)).toBeInTheDocument();
+    act(() => source.replay("a run started its interview"));
+    expect(screen.getByRole("region", { name: "run c0ffee" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "‹ Runs" }));
+    expect(screen.queryByText(/is not listed yet/)).not.toBeInTheDocument();
+  });
+
+  it("keeps an error in the form, with the pane's lines and the values entered", async () => {
+    const error = `run ${RUN} exited before it saved its state; its pane showed:\nerror: no workflow nope\n$`;
+    const { form } = await openForm({ status: 422, body: { error, run: RUN } });
+    typeTask(form, "Add a rate limiter");
+    fireEvent.change(within(form).getByLabelText("Model"), { target: { value: "o3" } });
+    fireEvent.click(within(form).getByLabelText("No pull request"));
+    fireEvent.click(within(form).getByRole("button", { name: "Start" }));
+    const shown = await within(form).findByText(/exited before it saved its state/);
+    expect(shown.textContent).toBe(error);
+    expect(within(form).getByLabelText("Task")).toHaveValue("Add a rate limiter");
+    expect(within(form).getByLabelText("Model")).toHaveValue("o3");
+    expect(within(form).getByLabelText("No pull request")).toBeChecked();
+    expect(within(form).getByRole("button", { name: "Start" })).toBeEnabled();
+  });
+
+  it("closes on Cancel without starting a run", async () => {
+    const start: FakeStart = {};
+    const { form } = await openForm(start);
+    typeTask(form, "Add a rate limiter");
+    fireEvent.click(within(form).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(start.requests).toBeUndefined();
   });
 });

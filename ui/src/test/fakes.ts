@@ -1,5 +1,5 @@
 import { vi } from "vitest";
-import type { SetupReport } from "../api";
+import type { RunOptions, RunRequest, SetupReport } from "../api";
 import recorded from "./recorded-stream.json";
 
 /** The events `orchestrator.py serve` sent over a scripted run, recorded off a real server: each batch is what one
@@ -83,10 +83,37 @@ export interface FakeSetup {
   marked?: number;
 }
 
+/** The workflows a stubbed server offers unless told otherwise: `default`, `tdd`, and `broken`, which does not load. */
+export const OPTIONS: RunOptions = {
+  workflows: [
+    { name: "default", description: "Spec, build and review.", roles: [] },
+    { name: "tdd", description: "Tests first, then the code.", roles: [] },
+    { name: "broken", error: "workflow broken: no steps" },
+  ],
+  agents: ["claude", "codex", "gemini", "opencode", "pi"],
+};
+
+/** What a stubbed server's /workflows and POST /run answer: `options` (OPTIONS unless given), and the status and
+ * body of POST /run (201 {"run": "20261024-140000-c0ffee"} unless given), sent once `held`, if given, resolves.
+ * `requests` gets the body of each POST /run, in order. */
+export interface FakeStart {
+  options?: RunOptions;
+  status?: number;
+  body?: unknown;
+  held?: Promise<void>;
+  requests?: { cwd: string | null; body: RunRequest }[];
+}
+
 /** Stub EventSource, and fetch with a server whose /file answers the text of `files` by name, else 404; whose /agent
  * answers the screen of `agents` by role, else 404 as for an agent that has exited; whose POST /agent/input takes
- * any input; and whose /setup endpoints answer as `setup` says, a POST of /setup/checked setting its `checked`. */
-export function stubServer(files: Record<string, string>, agents: Record<string, string> = {}, setup: FakeSetup = {}) {
+ * any input; whose /setup endpoints answer as `setup` says, a POST of /setup/checked setting its `checked`; and
+ * whose /workflows and POST /run answer as `start` says. */
+export function stubServer(
+  files: Record<string, string>,
+  agents: Record<string, string> = {},
+  setup: FakeSetup = {},
+  start: FakeStart = {},
+) {
   FakeEventSource.opened = [];
   vi.stubGlobal("EventSource", FakeEventSource);
   const answer = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
@@ -109,6 +136,14 @@ export function stubServer(files: Record<string, string>, agents: Record<string,
     }
     if (pathname === "/setup/checked") {
       return answer(200, { checked: setup.checked ?? true });
+    }
+    if (pathname === "/workflows") {
+      return answer(200, start.options ?? OPTIONS);
+    }
+    if (pathname === "/run" && init?.method === "POST") {
+      start.requests = [...(start.requests ?? []), { cwd: searchParams.get("cwd"), body: JSON.parse(String(init.body)) as RunRequest }];
+      await start.held;
+      return answer(start.status ?? 201, start.body ?? { run: "20261024-140000-c0ffee" });
     }
     if (pathname === "/agent/input") {
       return init?.method === "POST" ? answer(200, { run: "r", role }) : answer(501, {});

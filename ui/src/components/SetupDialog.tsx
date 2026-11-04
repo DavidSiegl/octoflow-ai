@@ -51,7 +51,7 @@ export function SetupDialog({ api, project, onClose }: Props) {
   };
   return (
     <div className="dialog-backdrop">
-      <section className="setup" role="dialog" aria-modal="true" aria-label="setup">
+      <section className="dialog setup" role="dialog" aria-modal="true" aria-label="setup">
         <h2>Setup</h2>
         <p className="where">
           {project.cwd} {project.machine ? `on ${project.machine}` : "on this computer"}
