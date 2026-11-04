@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useState } from "react";
-import type { Api, OfferedWorkflow, Project, RunOptions } from "../api";
+import type { Api, OfferedRole, OfferedWorkflow, Project, RunOptions } from "../api";
 import { Dialog } from "./Dialog";
 
 interface Props {
@@ -19,8 +19,29 @@ function defaultIfLoads(workflows: OfferedWorkflow[]): string | null {
   return workflows.some((w) => w.name === DEFAULT_WORKFLOW && "roles" in w) ? DEFAULT_WORKFLOW : null;
 }
 
-/** A form for a new run in project: its task, workflow, agent and model, and whether it opens a pull request and
- * runs in a worktree of its own. Start starts it; an error the server answers stays in the form, with what was
+/** What a role's row sets for it: an agent, one of the harnesses offered, and a model; each empty for not set, which
+ * leaves the role to the run's agent and model, else to its workflow's own. */
+interface RoleChoice {
+  agent: string;
+  model: string;
+}
+
+/** The value of field each of roles has set in choices, by role, model trimmed; undefined where none has, so that the
+ * request leaves it out. */
+function setByRole(
+  roles: OfferedRole[],
+  choices: Record<string, RoleChoice>,
+  field: keyof RoleChoice,
+): Record<string, string> | undefined {
+  const set = roles.flatMap(({ role }) => {
+    const chosen = choices[role]?.[field].trim() ?? "";
+    return chosen ? [[role, chosen]] : [];
+  });
+  return set.length > 0 ? Object.fromEntries(set) : undefined;
+}
+
+/** A form for a new run in project: its task, workflow, agent and model, an agent and a model for each role of the
+ * workflow, and whether it opens a pull request and runs in a worktree of its own. Start starts it; an error the server answers stays in the form, with what was
  * entered, until the next Start. */
 export function RunForm({ api, project, onStarted, onClose }: Props) {
   // What /workflows gave, the error that kept it from giving it, or null until it answers.
@@ -31,6 +52,9 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
   // An agent and a model for every role; empty for the workflow's own.
   const [agent, setAgent] = useState("");
   const [model, setModel] = useState("");
+  // What each role's row sets, by role key; only roles of the workflow chosen have an entry, so that a change of
+  // workflow keeps the rows of the roles both share and empties the others.
+  const [choices, setChoices] = useState<Record<string, RoleChoice>>({});
   const [noPr, setNoPr] = useState(false);
   const [worktree, setWorktree] = useState(true);
   // True from Start until the server answers: the form can then be neither changed, sent again nor closed.
@@ -57,6 +81,23 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
     workflow = DEFAULT_WORKFLOW;
   }
   const chosen = options?.workflows.find((w) => w.name === workflow);
+  const roles = chosen && "roles" in chosen ? chosen.roles : [];
+  const pick = (name: string) => {
+    setPicked(name);
+    const next = options?.workflows.find((w) => w.name === name);
+    const shared = new Set(next && "roles" in next ? next.roles.map((r) => r.role) : []);
+    setChoices((old) => Object.fromEntries(Object.entries(old).filter(([role]) => shared.has(role))));
+  };
+  const choose = (role: string, change: Partial<RoleChoice>) =>
+    setChoices((old) => ({ ...old, [role]: { agent: "", model: "", ...old[role], ...change } }));
+  // What a role's row left empty falls back to, as `run` takes it: the run's agent and model, else the workflow's.
+  const agentFallback = (r: OfferedRole) => (agent ? `${agent} (the run's)` : `${r.agent} (the workflow's)`);
+  const modelFallback = (r: OfferedRole) => {
+    if (model.trim()) {
+      return `${model.trim()} (the run's)`;
+    }
+    return r.model ? `${r.model} (the workflow's)` : "the harness's own";
+  };
   const ready = task.trim() !== "" && workflow !== null && !starting;
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -71,6 +112,8 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
       workflow,
       agent: agent || undefined,
       model: model.trim() || undefined,
+      role_agents: setByRole(roles, choices, "agent"),
+      role_models: setByRole(roles, choices, "model"),
       no_pr: noPr,
       worktree,
     };
@@ -89,7 +132,7 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
           </label>
           <label>
             Workflow
-            <select value={workflow ?? ""} onChange={(e) => setPicked(e.target.value)} disabled={!options}>
+            <select value={workflow ?? ""} onChange={(e) => pick(e.target.value)} disabled={!options}>
               {workflow === null && (
                 <option value="" disabled>
                   {options ? "pick one" : ""}
@@ -127,6 +170,33 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
               <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="the workflow's" />
             </label>
           </div>
+          {roles.map((r) => {
+            const choice = choices[r.role];
+            return (
+              <div key={r.role} role="group" aria-label={`role ${r.label}`} className="row role">
+                <span className="role-label">{r.label}</span>
+                <select
+                  aria-label={`${r.label} agent`}
+                  className={choice?.agent ? undefined : "unset"}
+                  value={choice?.agent ?? ""}
+                  onChange={(e) => choose(r.role, { agent: e.target.value })}
+                >
+                  <option value="">{agentFallback(r)}</option>
+                  {options?.agents.map((kind) => (
+                    <option key={kind} value={kind}>
+                      {kind}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  aria-label={`${r.label} model`}
+                  value={choice?.model ?? ""}
+                  onChange={(e) => choose(r.role, { model: e.target.value })}
+                  placeholder={modelFallback(r)}
+                />
+              </div>
+            );
+          })}
           <label className="check">
             <input type="checkbox" checked={noPr} onChange={(e) => setNoPr(e.target.checked)} />
             No pull request

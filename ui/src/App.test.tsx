@@ -605,4 +605,62 @@ describe("the run form", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(start.requests).toBeUndefined();
   });
+
+  /** The labels of the rows of roles, in order. */
+  const roleRows = (form: HTMLElement) =>
+    within(form)
+      .queryAllByRole("group", { name: /^role / })
+      .map((row) => row.getAttribute("aria-label"));
+
+  it("has a row for each role of the workflow, in its order, that follows the workflow", async () => {
+    const { form } = await openForm();
+    expect(roleRows(form)).toEqual(["role Builder", "role Reviewer"]);
+    fireEvent.change(within(form).getByLabelText("Workflow"), { target: { value: "tdd" } });
+    expect(roleRows(form)).toEqual(["role Test Writer", "role Builder"]);
+  });
+
+  it("shows the workflow's own agent and model for a role, unless the run's replace them", async () => {
+    const { form } = await openForm();
+    const reviewerAgent = within(form).getByLabelText("Reviewer agent");
+    expect(reviewerAgent).toHaveValue("");
+    expect(within(reviewerAgent).getByRole("option", { selected: true })).toHaveTextContent("codex (the workflow's)");
+    expect(within(form).getByLabelText("Reviewer model")).toHaveAttribute("placeholder", "o3 (the workflow's)");
+    expect(within(form).getByLabelText("Builder model")).toHaveAttribute("placeholder", "the harness's own");
+    fireEvent.change(within(form).getByLabelText("Agent"), { target: { value: "pi" } });
+    fireEvent.change(within(form).getByLabelText("Model"), { target: { value: "m1" } });
+    expect(within(reviewerAgent).getByRole("option", { selected: true })).toHaveTextContent("pi (the run's)");
+    expect(within(form).getByLabelText("Reviewer model")).toHaveAttribute("placeholder", "m1 (the run's)");
+  });
+
+  it("keeps a role's values across a change of workflow that shares the role, and only that role's", async () => {
+    const { form } = await openForm();
+    fireEvent.change(within(form).getByLabelText("Builder agent"), { target: { value: "gemini" } });
+    fireEvent.change(within(form).getByLabelText("Builder model"), { target: { value: "g2" } });
+    fireEvent.change(within(form).getByLabelText("Reviewer agent"), { target: { value: "pi" } });
+    fireEvent.change(within(form).getByLabelText("Workflow"), { target: { value: "tdd" } });
+    expect(within(form).getByLabelText("Builder agent")).toHaveValue("gemini");
+    expect(within(form).getByLabelText("Builder model")).toHaveValue("g2");
+    expect(within(form).getByLabelText("Test Writer agent")).toHaveValue("");
+    fireEvent.change(within(form).getByLabelText("Workflow"), { target: { value: "default" } });
+    expect(within(form).getByLabelText("Reviewer agent")).toHaveValue("");
+  });
+
+  it("sends the roles' agents and models that are set, and no others", async () => {
+    const start: FakeStart = {};
+    const { form } = await openForm(start);
+    typeTask(form, "Add a rate limiter");
+    fireEvent.change(within(form).getByLabelText("Reviewer agent"), { target: { value: "codex" } });
+    fireEvent.change(within(form).getByLabelText("Builder model"), { target: { value: " g2 " } });
+    fireEvent.change(within(form).getByLabelText("Reviewer model"), { target: { value: "  " } });
+    fireEvent.click(within(form).getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(start.requests).toHaveLength(1));
+    expect(start.requests?.[0]?.body).toEqual({
+      task: "Add a rate limiter",
+      workflow: "default",
+      role_agents: { review: "codex" },
+      role_models: { build: "g2" },
+      no_pr: false,
+      worktree: true,
+    });
+  });
 });

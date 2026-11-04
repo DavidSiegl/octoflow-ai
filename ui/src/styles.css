@@ -404,6 +404,23 @@ ul.checks {
   flex: 1;
 }
 
+.run-form .role {
+  align-items: center;
+}
+
+.run-form .role > * {
+  flex: 1;
+}
+
+.run-form .role-label {
+  color: var(--muted-mint);
+}
+
+.run-form select.unset,
+.run-form input::placeholder {
+  color: var(--muted-mint);
+}
+
 .run-form label.check {
   flex-direction: row;
   align-items: center;
