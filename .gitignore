@@ -26,6 +26,7 @@ ui/dist/
 ui/src-tauri/gen/
 ui/src-tauri/binaries/
 ui/src-tauri/THIRD-PARTY-LICENSES.html
+ui/src-tauri/THIRD-PARTY-LICENSES-NPM.html
 
 # The Cargo workspace's build output
 /target/

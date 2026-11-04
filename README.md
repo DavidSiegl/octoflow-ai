@@ -482,4 +482,7 @@ The binaries and the desktop app contain Rust crates under their own licenses, w
 `octoflow-third-party-licenses.html`; the desktop app has the same file among its resources as
 `THIRD-PARTY-LICENSES.html`. `packaging/build-binary.sh` writes it with
 [cargo-about](https://github.com/EmbarkStudios/cargo-about), by `packaging/about.toml`, which lists the licenses a
-dependency may be under: a dependency under any other fails the build.
+dependency may be under: a dependency under any other fails the build. The desktop app's window also contains npm
+packages, whose license texts each release has as `octoflow-desktop-npm-licenses.html` and the app among its
+resources as `THIRD-PARTY-LICENSES-NPM.html`; `packaging/build-desktop.sh` writes it from `ui/package-lock.json`,
+under the same list.

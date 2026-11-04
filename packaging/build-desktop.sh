@@ -2,8 +2,10 @@
 # Build the desktop app in ui/ for release, with the orchestrator binary that build-binary.sh built for this
 # machine inside it as its sidecar, so the app needs no checkout. Writes to dist/, each with its
 # .sha256: on Linux octoflow-desktop-linux-<arch>.deb and .AppImage, on macOS
-# octoflow-desktop-macos-<arch>.dmg, signed ad hoc only. Each holds build-binary.sh's third-party licenses as
-# THIRD-PARTY-LICENSES.html among the app's resources. The app's version is pyproject.toml's. Run
+# octoflow-desktop-macos-<arch>.dmg, signed ad hoc only. Each holds build-binary.sh's third-party licenses, the
+# crates', as THIRD-PARTY-LICENSES.html among the app's resources, and beside it as THIRD-PARTY-LICENSES-NPM.html
+# those of the npm packages its window bundles, which ui/scripts/npm-licenses.js writes here to
+# dist/octoflow-desktop-npm-licenses.html, the release's copy. The app's version is pyproject.toml's. Run
 # build-binary.sh first. Jenkins's Package stage builds the Linux app with it, and
 # .github/workflows/macos-binary.yml the macOS one.
 set -eu
@@ -23,6 +25,7 @@ esac
 binary="dist/octoflow-$os-$arch"
 [ -x "$binary" ] || { echo "build-desktop.sh: no $binary; run packaging/build-binary.sh first" >&2; exit 1; }
 notices=dist/octoflow-third-party-licenses.html
+npm_notices=dist/octoflow-desktop-npm-licenses.html
 [ -f "$notices" ] || { echo "build-desktop.sh: no $notices; run packaging/build-binary.sh first" >&2; exit 1; }
 
 version=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -n 1)
@@ -49,7 +52,7 @@ cat > "$config" <<EOF
   "bundle": {
     "active": true,
     "externalBin": ["binaries/octoflow"],
-    "resources": ["THIRD-PARTY-LICENSES.html"],
+    "resources": ["THIRD-PARTY-LICENSES.html", "THIRD-PARTY-LICENSES-NPM.html"],
     "macOS": { "signingIdentity": "-" }
   }
 }
@@ -60,6 +63,10 @@ export APPIMAGE_EXTRACT_AND_RUN=1
 (
     cd ui
     npm ci --no-audit --no-fund
+    # Before the long build, so that a package under a license packaging/about.toml does not accept fails first.
+    rm -f "../$npm_notices"
+    node scripts/npm-licenses.js "../$npm_notices"
+    cp "../$npm_notices" src-tauri/THIRD-PARTY-LICENSES-NPM.html
     npm run tauri -- build --ci --config "$config" --bundles "$bundles"
 )
 
@@ -212,8 +219,10 @@ if [ "$os" = linux ]; then
             printf '%s\n' "$files" | grep -E '^(\./)?usr/bin/' >&2 || true
             exit 1
         fi
-        printf '%s\n' "$files" | grep -Eq '/THIRD-PARTY-LICENSES\.html$' \
-            || { echo "build-desktop.sh: $deb has no THIRD-PARTY-LICENSES.html" >&2; exit 1; }
+        for resource in THIRD-PARTY-LICENSES.html THIRD-PARTY-LICENSES-NPM.html; do
+            printf '%s\n' "$files" | grep -Eq "/${resource%.html}\\.html\$" \
+                || { echo "build-desktop.sh: $deb has no $resource" >&2; exit 1; }
+        done
     done
     publish deb "$out/deb/Octoflow_${version}_"*.deb
     publish AppImage "$out/appimage/Octoflow_${version}_"*.AppImage
@@ -221,8 +230,10 @@ if [ "$os" = linux ]; then
 else
     [ -x "$out/macos/Octoflow.app/Contents/MacOS/octoflow" ] \
         || { echo "build-desktop.sh: Octoflow.app has no Contents/MacOS/octoflow" >&2; exit 1; }
-    [ -f "$out/macos/Octoflow.app/Contents/Resources/THIRD-PARTY-LICENSES.html" ] \
-        || { echo "build-desktop.sh: Octoflow.app has no Contents/Resources/THIRD-PARTY-LICENSES.html" >&2; exit 1; }
+    for resource in THIRD-PARTY-LICENSES.html THIRD-PARTY-LICENSES-NPM.html; do
+        [ -f "$out/macos/Octoflow.app/Contents/Resources/$resource" ] \
+            || { echo "build-desktop.sh: Octoflow.app has no Contents/Resources/$resource" >&2; exit 1; }
+    done
     publish dmg "$out/dmg/Octoflow_${version}_"*.dmg
     smoke_dmg "$PWD/dist/octoflow-desktop-$os-$arch.dmg"
 fi
