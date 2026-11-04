@@ -69,6 +69,31 @@ is rewritten to say what is left.
 
 ## Open issues
 
+- **An npm package's NOTICE file ships only for a build tool.** `ui/scripts/npm-licenses.js` appends the
+  `THIRD-PARTY-LICEN[CS]E*` and `NOTICE*` files of the `BUILD_CODE` packages (Vite, Rolldown) to their notices, and
+  of no other; Apache-2.0 §4(d) wants a NOTICE redistributed with any work it comes with, so a production package
+  under Apache-2.0 that ships one would go out without it, silently. None does today (@tauri-apps/api has none).
+  Raised, not recorded, by cross-review 131 (round 4, 2026-11-04): "a production Apache package's NOTICE would be
+  dropped silently". Closes with every shipped package's `NOTICE*` appended to its notice, or the build failing on a
+  production package that has one.
+- **The npm notices miss a build tool's third-party notices under another file name.** `withThirdPartyNotices`
+  (`ui/scripts/npm-licenses.js`) takes `/^(third-party-licen[cs]e|notice)/i`, so `THIRD_PARTY_LICENSES` or
+  `ThirdPartyNotices.txt` in the next `BUILD_CODE` package is left out without a word, and a `LICENSE-THIRD-PARTY`
+  falls into the license pattern and fails the build. Vite and Rolldown name theirs as matched. Raised, not recorded,
+  by cross-review 131 (round 4, 2026-11-04). Closes with a pattern that takes `third[-_ ]?party` in any case and
+  position, or a test that lists each `BUILD_CODE` package's notice-like files and fails on one not shipped.
+- **The npm notices' refusal of a multi-licensed package says it has no license text.** A package offered under a
+  license `packaging/about.toml` does not accept, whose one license file names none of the licenses, fails
+  `npmNotices` with "no one license text for MIT OR GPL-3.0-only", which sends the reader looking for a missing file;
+  the refusal is that the text may be the unaccepted license's alone, and `npmNotices`'s `@throws` does not name the
+  case. Raised, not recorded, by cross-review 131 (round 4, 2026-11-04). Closes with a message of its own for that
+  case ("one license text for an offer not every license of which about.toml accepts") and the `@throws` naming it.
+- **The project bar's last button runs past a narrow window's edge.** At 560 px wide the bar's fields keep their
+  minimum widths and "Check setup…" wraps onto two lines and ends past the page's right padding; origin/main at
+  a357407 does the same, so the logo's header (gui-logo/01) did not cause it. Seen in a headless screenshot of
+  `vite preview` (2026-11-04). Closes with the bar's fields allowed to shrink or wrap (`flex: 1 1 <basis>` with a
+  smaller `min-width`) so that every control stays inside the window down to the narrowest width the app supports.
+
 - **The desktop app's dialogs do not keep keyboard focus.** `Dialog` (`ui/src/components/Dialog.tsx`), which the
   setup dialog and the run form are, sets `aria-modal` and covers the window with its backdrop, but Tab still reaches
   the project bar under it. Opening another project while the run form waits for `POST /run` remounts `ProjectRuns`
@@ -131,13 +156,6 @@ is rewritten to say what is left.
   only once the finishing save is older than a bound (the record carries `heartbeat_age`), or with the engine
   writing the files before that save where a takeover allows it (`end_done_run` writes them before its release
   save since run-crash-ending/01, but after the save of phase `done`; `release` saves first on purpose).
-- **The desktop app ships its npm packages' code without their licenses.** `octoflow-third-party-licenses.html`
-  (`packaging/about.toml`) lists the Rust crates only, as cargo-about reads Cargo's graph; the app's web view bundles
-  `ui/package.json`'s runtime dependencies, React, react-markdown, remark-gfm and @tauri-apps/api with what they pull
-  in, minified into `ui/dist/` without their notices. All were MIT when the project took its license (2026-10-30).
-  Closes with their license texts generated from `ui/package-lock.json` at build time, e.g. by a Vite license
-  plugin, and bundled with the app beside the crates'.
-  Ticket: `.scratch/desktop-packaging-gaps/issues/01-npm-licenses-shipped.md` (#239).
 - **A release that adds a placeholder to a built-in prompt would refuse every run that saved an override of it.**
   `saved_prompts` (`engine/src/prompts.rs`) holds a run's saved prompt overrides to `prompt_problem` on resume, whose
   rule that an override keep every placeholder of the built-in text never refused a resume before. No run can meet it
@@ -334,15 +352,30 @@ is rewritten to say what is left.
   desktop shell's are a `#[cfg(test)]` module in `ui/src-tauri/src/lib.rs`. That module also makes a change to the
   desktop shell's tests alone need a version raise, and a place in the one-bumping-PR-at-a-time queue:
   `ci/version-raised.sh` exempts `**/tests.rs`, not `lib.rs` (cross-review 117, F4, 2026-11-03). Moving it to
-  `ui/src-tauri/src/tests.rs` closes both, once the gate lets a moved test keep its `cfg` (next entry): tried by
-  ui-test-text-file-busy/01 (2026-11-03) and dropped for that, so that ticket's fix to one of these tests bumped.
-- **The gate takes a moved Rust test's own `cfg` for a skip the change added.** `_rust_skips` (`gate.py`) reports a
-  skipping attribute (`#[cfg(unix)]`, `#[ignore]`, …) on any line the change added, so a test moved to another file
-  with its attributes fails the gate with `test-integrity skip` errors, though nothing new is skipped; the
-  `removed-test` check follows the same move by the test's `body_digest` (docs/quality-gate.md, "Rust tests").
-  Found 2026-11-03 moving the desktop shell's 26 tests out of `ui/src-tauri/src/lib.rs` (ui-test-text-file-busy/01):
-  six errors, one for each `cfg` the tests carried. Closes with a skip attribute on a test matched to the base's test
-  of the same body digest counted only when that test did not carry it.
+  `ui/src-tauri/src/tests.rs` closes both: tried by ui-test-text-file-busy/01 (2026-11-03) and dropped then because
+  the gate failed the move on the tests' own `cfg`s (next entry). Their `cfg`s all name platforms, which the gate
+  now weighs rather than fails (`platform-only`, gate-platform-cfg/01), so the move is open again.
+- **The gate takes a moved Rust test's own skip for one the change added.** `_rust_skips` (`gate.py`) reports a
+  skipping attribute on any line the change added, so a test moved to another file with its attributes is reported
+  though nothing new is skipped: a platform `cfg` (`#[cfg(unix)]`) as a `platform-only` finding to weigh, any other
+  (`#[ignore]`, `#[cfg(feature = "slow")]`) as a `test-integrity skip` error; the `removed-test` check follows the
+  same move by the test's `body_digest` (docs/quality-gate.md, "Rust tests"). Found 2026-11-03 moving the desktop
+  shell's 26 tests out of `ui/src-tauri/src/lib.rs` (ui-test-text-file-busy/01): six errors, one for each `cfg` the
+  tests carried, which since gate-platform-cfg/01 (2026-11-04) are six findings to weigh. Closes with a skip
+  attribute on a test matched to the base's test of the same body digest counted only when that test did not carry
+  it.
+- **A misread literal on an added attribute line can report a test's existing skip as added.** `_rust_attribute`
+  (`gate.py`) lexes only plain strings, so a char literal (`'"'`) or a raw string ending in `\` (`r"C:\"`) can leave
+  an attribute open until a `]` inside a later string, many lines down; `_rust_line_attributes` then reads every `#[`
+  on the lines in between as the added line's. So a change that adds only `#[doc = r"C:\"]` above an existing
+  `mod tests` with an `#[ignore]`d test whose body holds `"a]b"` fails the build with a `test-integrity skip` error
+  naming that `#[ignore]`. It fails loudly and hides nothing. Separately, `_rust_line_attributes`'s "cannot hide a
+  skip after it" holds only on the line where an attribute starts: a misread literal on a wrapped attribute's
+  continuation line can still hide a skip later on that line, as `#[cfg(miri)]` in `doc = "x")] #[cfg(miri)]` after
+  `#[cfg_attr(any(), doc = ']',`. Raised by cross-review 136 (R5-F1, should-fix) and deferred by the user
+  (2026-11-04). Closes with either of the reviewer's fixes: read the lines in between only when the attribute's text
+  holds no `"` or `'`; or bound how far an attribute may span, to the lines before the next one that starts with `#[`
+  or an item keyword.
 - **No build runs the Rust doctests.** cargo-nextest does not run doctests, and since the Test stage's `cargo llvm-cov
   nextest` replaced the UI stage's `cargo test`, nothing does: `octoflow_ui_lib` is an `rlib` among its crate types
   (`ui/src-tauri/Cargo.toml`), so `cargo test` ran them. The crate has no doc example today. Raised by cross-review 72
@@ -514,25 +547,36 @@ is rewritten to say what is left.
   product-team-workflow (F4, 2026-10-25): "the gate reads file names from the spec and this spec is in business
   terms by design". The example's header says so. Closes with the check reading every non-editing step's file that
   precedes the first editing step, or with a workflow key naming the file that holds the paths.
-- **An AppImage run without FUSE leaves its extraction in `/tmp`.** Under `APPIMAGE_EXTRACT_AND_RUN` the
-  AppImage runtime that linuxdeploy-plugin-appimage bundles extracts into `$TMPDIR/appimage_extracted_<hash>` and
-  never removes it. `packaging/build-desktop.sh` sets the variable for the whole Tauri build, so linuxdeploy and
-  appimagetool leave two such directories on the build machine at every build (Jenkins's agent among them). Users
-  who run the desktop AppImage as the CLI without FUSE are left with one 336 MB directory per version. Its smoke
-  test already points `TMPDIR` into its own directory. Found in the second build round of run 20261025-081413-327fc2
-  (2026-10-25). Closes with a `TMPDIR` the build removes around `tauri build`, and with a README note, or a newer
-  runtime that cleans up, for users.
-  Ticket: `.scratch/desktop-packaging-gaps/issues/03-appimage-extraction-cleaned-up.md` (#241).
+- **Removing a tree of read-only directories is written out twice.** `chmod -R u+rwX "$dir" && rm -rf "$dir"`,
+  with a warning when it fails, is in the Jenkinsfile's Test stage (emptying `TMPDIR` before the tests) and in
+  `packaging/build-desktop.sh`'s `remove_temporaries`, for the AppImage extractions it removes; a fix to one does
+  not reach the other. `engine/src/proofs.rs`'s `REMOVE_TREE_SCRIPT` is a looser third (`rm` runs even when `chmod`
+  fails, with no warning). Raised by cross-review 132 (F6, nit, 2026-11-04): "Record or share it, as the implementer
+  judges". Closes with one script both call, should a third copy be needed or the idiom change.
+- **Ctrl-C during `packaging/build-desktop.sh`'s AppImage smoke test leaves `serve` running.** `smoke_appimage`
+  starts the AppImage's `serve` as a background job, which a non-interactive shell starts with SIGINT ignored, and
+  the INT trap kills no one, so the AppImage and the orchestrator it execs outlive the script; the trap has removed
+  the smoke test's directory they run from by then. A SIGTERM to the process group (a Jenkins abort) does reach
+  them, and Jenkins runs with SIGINT ignored, so this is interactive use only. Older than desktop-packaging-gaps/03,
+  whose traps kill no one either. Raised by cross-review 132 (round 2, not recorded there, 2026-11-04). Closes with
+  the traps killing `serve`'s processes, as `smoke_fail` does, before removing the directory.
+- **`packaging/build-desktop.sh`'s macOS smoke test leaves its directory when the script is killed by a signal.**
+  `smoke_dmg` removes its `mktemp -d` only in its `smoke_fail` and on success, not through `remove_temporaries`
+  as `smoke_appimage`'s since desktop-packaging-gaps/03, so Ctrl-C or SIGTERM leaves it, with the .dmg possibly
+  still attached at its `mnt`. It holds no AppImage extraction, so it is small. Raised by cross-review 132
+  (round 2, not recorded there, 2026-11-04). Closes with `smoke_dmg`'s directory, and the detach, in
+  `remove_temporaries`, checked on a Mac.
 - **The Package stage still runs programs it wrote to `/tmp`, kept out of agentbox0's Falco mail only by path
   exceptions that let any binary placed under those paths run unreported.** The Test and Gate stages set `TMPDIR` to
   `$WORKSPACE_TMP/tmp`, on the agent's volume, which the rule cannot see (the Jenkinsfile's Test stage says why),
-  but Package keeps `/tmp`. There the linuxdeploy and appimagetool that `packaging/build-desktop.sh` runs under
-  `APPIMAGE_EXTRACT_AND_RUN` extract themselves into `$TMPDIR/appimage_extracted_<hash>` (entry above) and run from
-  there. The homelab excepts those paths (falco/rules/homelab.yaml, `appimage_extracted`). Each stage now creates
-  its own TMPDIR, so a stage added later has to copy both lines. Raised by cross-review 71 (F1, F3: "set TMPDIR for
-  every stage that runs what it builds (one pipeline-level definition next to CARGO_HOME would do)"). Closes with
-  that pipeline-level `TMPDIR`, created before any stage that uses it, and a Package stage seen to pass with it on
-  agentbox0. The homelab can then drop `appimage_extracted`.
+  but Package keeps `/tmp`. There the desktop AppImage that `packaging/build-desktop.sh`'s smoke test runs under
+  `APPIMAGE_EXTRACT_AND_RUN` extracts itself into `$TMPDIR/appimage_extracted_<hash>`, below the test's `mktemp -d`,
+  and runs from there; linuxdeploy and appimagetool extract into the script's own `build/desktop/tmp` since
+  desktop-packaging-gaps/03. The homelab excepts those paths (falco/rules/homelab.yaml, `appimage_extracted`). Each
+  stage now creates its own TMPDIR, so a stage added later has to copy both lines. Raised by cross-review 71 (F1,
+  F3: "set TMPDIR for every stage that runs what it builds (one pipeline-level definition next to CARGO_HOME would
+  do)"). Closes with that pipeline-level `TMPDIR`, created before any stage that uses it, and a Package stage seen
+  to pass with it on agentbox0. The homelab can then drop `appimage_extracted`.
 - **No build has yet been seen waiting for `ci/cargo-lock.sh` on the Jenkins agent.** PR #88's builds ran both
   cargo steps through it on agentbox0 (builds 1-3, 2026-10-25), so the agent image has `flock` and the lock file's
   directory is writable, and a quality-style build (`GIT_REF` set) ran `--no-wait`; but the two run side by side

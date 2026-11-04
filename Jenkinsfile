@@ -362,10 +362,10 @@ pipeline {
             }
         }
 
-        // A pull request into main must raise the release version over main's, unless it changes only docs, tests or
-        // CI: the Release stage releases a merge into main only when its version has no release yet, so a merge that
-        // kept it would go unreleased (ci/version-raised.sh, which lists those paths). After Gate, so that a build
-        // that fails it has reported its tests and gate first.
+        // A pull request into main must raise the release version over main's, unless it changes only docs, tests, CI
+        // or repository tooling: the Release stage releases a merge into main only when its version has no release
+        // yet, so a merge that kept it would go unreleased (ci/version-raised.sh, which lists those paths). After
+        // Gate, so that a build that fails it has reported its tests and gate first.
         stage('Version') {
             when { changeRequest target: 'main' }
             steps {
@@ -417,9 +417,11 @@ pipeline {
                                  octoflow-desktop-linux-x86_64.AppImage; do
                             [ -f "dist/$f.sha256" ] || { echo "no dist/$f; run the whole build" >&2; exit 1; }
                         done
-                        # One file for every asset, the macOS ones too (packaging/about.toml).
-                        [ -f dist/octoflow-third-party-licenses.html ] \
-                            || { echo "no dist/octoflow-third-party-licenses.html; run the whole build" >&2; exit 1; }
+                        # The crates' licenses, one file for every asset, the macOS ones too (packaging/about.toml), and
+                        # the desktop app's npm packages' (packaging/build-desktop.sh), the same on every platform.
+                        for f in octoflow-third-party-licenses.html octoflow-desktop-npm-licenses.html; do
+                            [ -f "dist/$f" ] || { echo "no dist/$f; run the whole build" >&2; exit 1; }
+                        done
                         # A release's own words, docs/releases/v<version>.md, when there is such a file: GitHub puts
                         # them before the notes it generates from the pull requests.
                         notes=docs/releases/$tag.md
@@ -431,7 +433,7 @@ pipeline {
                             dist/octoflow-desktop-linux-x86_64.deb dist/octoflow-desktop-linux-x86_64.deb.sha256 \
                             dist/octoflow-desktop-linux-x86_64.AppImage \
                             dist/octoflow-desktop-linux-x86_64.AppImage.sha256 \
-                            dist/octoflow-third-party-licenses.html \
+                            dist/octoflow-third-party-licenses.html dist/octoflow-desktop-npm-licenses.html \
                             --target "$sha" --title "$tag" --generate-notes
                     '''
                 }

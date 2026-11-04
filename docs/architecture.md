@@ -394,7 +394,13 @@ in the suite.
   writes and merges over `tauri.conf.json`, which bundles nothing. It writes
   `dist/octoflow-desktop-<os>-<arch>` `.deb` and `.AppImage` on Linux, `.dmg` on macOS (signed ad hoc),
   each with its `.sha256`, and refuses a bundle without the sidecar or without `build-binary.sh`'s third-party
-  licenses, which it bundles as the resource `THIRD-PARTY-LICENSES.html`. On Linux it then runs the AppImage as the
+  licenses, which it bundles as the resource `THIRD-PARTY-LICENSES.html`. Beside it, as
+  `THIRD-PARTY-LICENSES-NPM.html`, go the licenses of the npm packages the app's window bundles, which
+  `ui/scripts/npm-licenses.js` writes after `npm ci` to `dist/octoflow-desktop-npm-licenses.html`, the release's
+  copy: every package of `ui/package-lock.json`'s production tree, and the build tools that add code of their own to
+  the bundle (the script's list of them: Vite and Rolldown), with the license text `node_modules` holds for it and,
+  for a build tool, its third-party notices,
+  and a package under no license `packaging/about.toml` accepts fails the build. On Linux it then runs the AppImage as the
   CLI from a temporary directory: `--help` and `workflows` exit 0, and the orchestrator `serve` execs starts in
   that directory with no `$APPDIR` entry in `LD_LIBRARY_PATH` and no `PYTHONHOME`, read from its `/proc` entry.
 - `packaging/build-binary.sh`: builds `dist/octoflow-<os>-<arch>` (`linux-x86_64`, `macos-arm64`), the engine's
@@ -412,7 +418,7 @@ in the suite.
   `.sha256`, and `octoflow-third-party-licenses.html`, in one `gh release create`, and `docs/releases/v<version>.md`, where there is one, before GitHub's
   generated notes. Its parameter `GIT_REF`
   builds another branch; such a build never releases. A pull request build into `main` fails its Version stage unless the pull request raises
-  `pyproject.toml`'s version over `main`'s or changes only docs, tests or CI (`ci/version-raised.sh` lists those
+  `pyproject.toml`'s version over `main`'s or changes only docs, tests, CI or repository tooling (`ci/version-raised.sh` lists those
   paths), so that every merge into `main` that reaches users is released.
 - `.github/workflows/automerge.yml`: keeps auto-merge on for a pull request into `main` from a branch of this
   repository, so it merges with a merge commit once Jenkins' required check passes; its header lists the pull

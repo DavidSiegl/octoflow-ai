@@ -2,8 +2,10 @@
 # Build the desktop app in ui/ for release, with the orchestrator binary that build-binary.sh built for this
 # machine inside it as its sidecar, so the app needs no checkout. Writes to dist/, each with its
 # .sha256: on Linux octoflow-desktop-linux-<arch>.deb and .AppImage, on macOS
-# octoflow-desktop-macos-<arch>.dmg, signed ad hoc only. Each holds build-binary.sh's third-party licenses as
-# THIRD-PARTY-LICENSES.html among the app's resources. The app's version is pyproject.toml's. Run
+# octoflow-desktop-macos-<arch>.dmg, signed ad hoc only. Each holds build-binary.sh's third-party licenses, the
+# crates', as THIRD-PARTY-LICENSES.html among the app's resources, and beside it as THIRD-PARTY-LICENSES-NPM.html
+# those of the npm packages its window bundles, which ui/scripts/npm-licenses.js writes here to
+# dist/octoflow-desktop-npm-licenses.html, the release's copy. The app's version is pyproject.toml's. Run
 # build-binary.sh first. Jenkins's Package stage builds the Linux app with it, and
 # .github/workflows/macos-binary.yml the macOS one.
 set -eu
@@ -23,6 +25,7 @@ esac
 binary="dist/octoflow-$os-$arch"
 [ -x "$binary" ] || { echo "build-desktop.sh: no $binary; run packaging/build-binary.sh first" >&2; exit 1; }
 notices=dist/octoflow-third-party-licenses.html
+npm_notices=dist/octoflow-desktop-npm-licenses.html
 [ -f "$notices" ] || { echo "build-desktop.sh: no $notices; run packaging/build-binary.sh first" >&2; exit 1; }
 
 version=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -n 1)
@@ -49,7 +52,7 @@ cat > "$config" <<EOF
   "bundle": {
     "active": true,
     "externalBin": ["binaries/octoflow"],
-    "resources": ["THIRD-PARTY-LICENSES.html"],
+    "resources": ["THIRD-PARTY-LICENSES.html", "THIRD-PARTY-LICENSES-NPM.html"],
     "macOS": { "signingIdentity": "-" }
   }
 }
@@ -57,11 +60,37 @@ EOF
 
 # AppImage's tools are themselves AppImages; extracting them needs no FUSE on the build machine.
 export APPIMAGE_EXTRACT_AND_RUN=1
+# Extracted so, an AppImage leaves $TMPDIR/appimage_extracted_<hash> behind, never removed by its runtime: linuxdeploy
+# and appimagetool one each a build, and the desktop AppImage one each smoke test. So each of them runs with a TMPDIR
+# of its own, build_tmp for tauri build and appimage_smoke for the smoke test, removed when done and, should the
+# script stop first, on its exit, a failure, Ctrl-C, SIGHUP or SIGTERM. One a kill -9 leaves in build_tmp is removed
+# by the next build. macOS builds no AppImage, and its build's temporary files go the same way.
+build_tmp="$PWD/build/desktop/tmp"
+appimage_smoke=''
+# The extractions hold read-only directories, which rm -rf alone cannot empty.
+remove_temporaries() {
+    for dir in "$build_tmp" ${appimage_smoke:+"$appimage_smoke"}; do
+        [ ! -e "$dir" ] || { chmod -R u+rwX "$dir" && rm -rf "$dir"; } \
+            || echo "build-desktop.sh: could not remove $dir" >&2
+    done
+}
+trap remove_temporaries EXIT
+# Dies of the signal after cleaning up, so that a caller sees how the script ended.
+trap 'remove_temporaries; trap - EXIT HUP; kill -HUP $$' HUP
+trap 'remove_temporaries; trap - EXIT INT; kill -INT $$' INT
+trap 'remove_temporaries; trap - EXIT TERM; kill -TERM $$' TERM
+remove_temporaries
+mkdir "$build_tmp"
 (
     cd ui
     npm ci --no-audit --no-fund
-    npm run tauri -- build --ci --config "$config" --bundles "$bundles"
+    # Before the long build, so that a package under a license packaging/about.toml does not accept fails first.
+    rm -f "../$npm_notices"
+    node scripts/npm-licenses.js "../$npm_notices"
+    cp "../$npm_notices" src-tauri/THIRD-PARTY-LICENSES-NPM.html
+    TMPDIR="$build_tmp" npm run tauri -- build --ci --config "$config" --bundles "$bundles"
 )
+remove_temporaries
 
 # publish EXT FILE: copy FILE, the one bundle of this version Tauri made of a kind, to the name the release gives
 # it, dist/octoflow-desktop-<os>-<arch>.EXT, and write its .sha256. FILE is a glob, so none or several of them
@@ -98,15 +127,15 @@ smoke_cli() {
 smoke_appimage() {
     smoke=$(mktemp -d)
     smoke=$(cd "$smoke" && pwd -P)
-    # APPIMAGE_EXTRACT_AND_RUN extracts the AppImage under $TMPDIR and never removes it, 336 MB a build: under
-    # $smoke it goes with the rest. Nothing after this function, the script's last step, makes temporary files.
+    appimage_smoke=$smoke
+    # For the AppImage's extraction (APPIMAGE_EXTRACT_AND_RUN, above). Nothing after this function, the script's last
+    # step, makes temporary files.
     export TMPDIR="$smoke"
     serve_pid='' orchestrator=''
     smoke_fail() {
         echo "build-desktop.sh: the AppImage as the CLI: $*" >&2
         # The orchestrator by its own pid too: the failed check may be that the runtime's death did not stop it.
         for pid in $orchestrator $serve_pid; do kill "$pid" 2>/dev/null || true; done
-        rm -rf "$smoke"
         exit 1
     }
     smoke_cli "$smoke" "$1"
@@ -162,7 +191,7 @@ smoke_appimage() {
     done
     # The runtime's status is its death by SIGTERM's; the orchestrator's, an orphan's, reaches no one.
     wait "$serve_pid" || true
-    rm -rf "$smoke"
+    remove_temporaries
     echo "smoke-tested dist/$(basename "$1") as the CLI"
 }
 
@@ -223,8 +252,10 @@ if [ "$os" = linux ]; then
             printf '%s\n' "$files" | grep -E '^(\./)?usr/bin/' >&2 || true
             exit 1
         fi
-        printf '%s\n' "$files" | grep -Eq '/THIRD-PARTY-LICENSES\.html$' \
-            || { echo "build-desktop.sh: $deb has no THIRD-PARTY-LICENSES.html" >&2; exit 1; }
+        for resource in THIRD-PARTY-LICENSES.html THIRD-PARTY-LICENSES-NPM.html; do
+            printf '%s\n' "$files" | grep -Eq "/${resource%.html}\\.html\$" \
+                || { echo "build-desktop.sh: $deb has no $resource" >&2; exit 1; }
+        done
     done
     publish deb "$out/deb/Octoflow_${version}_"*.deb
     publish AppImage "$out/appimage/Octoflow_${version}_"*.AppImage
@@ -232,8 +263,10 @@ if [ "$os" = linux ]; then
 else
     [ -x "$out/macos/Octoflow.app/Contents/MacOS/octoflow" ] \
         || { echo "build-desktop.sh: Octoflow.app has no Contents/MacOS/octoflow" >&2; exit 1; }
-    [ -f "$out/macos/Octoflow.app/Contents/Resources/THIRD-PARTY-LICENSES.html" ] \
-        || { echo "build-desktop.sh: Octoflow.app has no Contents/Resources/THIRD-PARTY-LICENSES.html" >&2; exit 1; }
+    for resource in THIRD-PARTY-LICENSES.html THIRD-PARTY-LICENSES-NPM.html; do
+        [ -f "$out/macos/Octoflow.app/Contents/Resources/$resource" ] \
+            || { echo "build-desktop.sh: Octoflow.app has no Contents/Resources/$resource" >&2; exit 1; }
+    done
     publish dmg "$out/dmg/Octoflow_${version}_"*.dmg
     smoke_dmg "$PWD/dist/octoflow-desktop-$os-$arch.dmg"
 fi
