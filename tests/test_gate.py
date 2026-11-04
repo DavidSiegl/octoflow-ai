@@ -1366,7 +1366,8 @@ class TestTestIntegrityCheck(unittest.TestCase):
     def test_it_fails_the_gate_but_weighs_what_a_spec_can_ask_for(self):
         [check] = [c for c in gate.gate_checks() if c.name == "test-integrity"]
         self.assertEqual((check.fails, check.find), (True, gate.weakened_tests))
-        self.assertEqual(check.weighed, {"removed-test", "fewer-assertions", "expected-value-changed"})
+        self.assertEqual(check.weighed, {"removed-test", "fewer-assertions", "expected-value-changed",
+                                         "platform-only"})
 
 
 class TestWeakenedTests(RepositoryTest):
@@ -1994,24 +1995,32 @@ class TestRustWeakenedTests(RepositoryTest):
         self.edit("crate/tests/it.rs", "#[test]\nfn negative", "#[test]\n#[cfg(target_os = \"linux\")]\nfn negative")  # 5
         self.edit("crate/tests/it.rs", "#[tokio::test]\n",
                   "#[tokio::test]\n#[cfg(all(test, any(target_os = \"linux\", target_os = \"macos\")))]\n")  # 11
-        self.edit("crate/src/lib.rs", "#[cfg(test)]\n", "#[cfg(test)]\n#[cfg(not(windows))]\n")           # 6
+        # As rustfmt wraps a long one.
+        self.edit("crate/src/lib.rs", "#[cfg(test)]\n",
+                  "#[cfg(test)]\n#[cfg(any(\n    target_os = \"linux\",\n    target_os = \"macos\"\n))]\n")   # 6-9
+        self.edit("crate/src/lib.rs", "    #[test]\n    fn adds_small", "    #[test]\n    #[cfg(unix)]\n    fn adds_small")  # 14
         where, found = self.found()
-        self.assertEqual(where, [("crate/src/lib.rs", 6, "platform-only"), ("crate/tests/it.rs", 1, "platform-only"),
-                                 ("crate/tests/it.rs", 5, "platform-only"), ("crate/tests/it.rs", 11, "platform-only")])
-        self.assertEqual(found[2]["message"],
+        self.assertEqual(where, [("crate/src/lib.rs", 6, "platform-only"), ("crate/src/lib.rs", 14, "platform-only"),
+                                 ("crate/tests/it.rs", 1, "platform-only"), ("crate/tests/it.rs", 5, "platform-only"),
+                                 ("crate/tests/it.rs", 11, "platform-only")])
+        self.assertEqual(found[3]["message"],
                          "`#[cfg(target_os = \"linux\")]` added: it turns a test off on the other platforms.")
 
     def test_a_platform_cfg_with_another_condition_or_inside_a_test_is_a_skip(self):
-        self.edit("crate/tests/it.rs", "#[test]\nfn negative",
-                  "#[test]\n#[cfg(all(unix, feature = \"x\"))]\nfn negative")                             # 4
+        self.edit("crate/tests/it.rs", "#[test]\nfn negative", "#[test]\n#[cfg(feature = \"slow\")]\nfn negative")  # 4
         self.edit("crate/tests/it.rs", "#[tokio::test]\n", "#[tokio::test]\n#[cfg(all(unix, not(test)))]\n")  # 10
         self.edit("crate/src/lib.rs", "#[cfg(test)]\n", "#[cfg(test)]\n#[cfg(unix)] #[cfg(miri)]\n")      # 6
+        self.edit("crate/src/lib.rs", "    #[test]\n    fn adds_small", "    #[test] #[cfg(unix)] #[ignore]\n    fn adds_small")  # 10
+        self.edit("crate/src/lib.rs", "    #[test]\n    fn adds_large",
+                  "    #[test]\n    #[cfg(all(test, feature = \"slow\"))]\n    fn adds_large")                 # 17
         self.edit("crate/src/lib.rs", "        assert_eq!(add(10, 20), 30);\n",
-                  "        #[cfg(unix)]\n        assert_eq!(add(10, 20), 30);\n")                         # 18
+                  "        #[cfg(unix)]\n        assert_eq!(add(10, 20), 30);\n")                         # 19
         where, found = self.found()
-        self.assertEqual(where, [("crate/src/lib.rs", 6, "skip"), ("crate/src/lib.rs", 18, "skip"),
+        self.assertEqual(where, [("crate/src/lib.rs", 6, "skip"), ("crate/src/lib.rs", 10, "skip"),
+                                 ("crate/src/lib.rs", 17, "skip"), ("crate/src/lib.rs", 19, "skip"),
                                  ("crate/tests/it.rs", 4, "skip"), ("crate/tests/it.rs", 10, "skip")])
         self.assertEqual(found[0]["message"], "`#[cfg(miri)]` added: it skips a test or turns it off.")
+        self.assertEqual(found[1]["message"], "`#[ignore]` added: it skips a test or turns it off.")
 
     def test_a_new_test_module_and_attributes_that_skip_nothing_are_not_skips(self):
         self.edit("crate/src/lib.rs", "}\n\n#[cfg(test)]", "}\n\n#[cfg(unix)]\npub fn unix() {}\n\n#[cfg(test)]")
@@ -3356,7 +3365,8 @@ class TestRustPlatformOnly(unittest.TestCase):
         for attribute in ['#[cfg(unix)]', '#![cfg(windows)]', '#[cfg( target_os = "linux" )]',
                           '#[cfg(target_family = "wasm")] fn f() {}', '#[cfg(not(target_os = "macos"))]',
                           '#[cfg(any(target_os = "linux", all(unix, not(target_os = "macos"))))]',
-                          '#[cfg(all(test, unix))]', '#[cfg(all(unix, test, not(windows)))]']:
+                          '#[cfg(all(test, unix))]', '#[cfg(all(unix, test, not(windows)))]', '#[cfg(target_family = "unix")]',
+                          '#[cfg(any( target_os = "linux", target_os = "macos" ))]', '#[cfg(all(unix,))]']:
             self.assertTrue(gate._rust_platform_only(attribute), attribute)
 
     def test_anything_else_is_not(self):
@@ -3365,8 +3375,27 @@ class TestRustPlatformOnly(unittest.TestCase):
                           '#[cfg(all(unix, feature = "x"))]', '#[cfg(not(unix, windows))]', '#[cfg(target_arch = "x86")]',
                           '#[cfg(unix = "yes")]', '#[cfg(target_os)]', '#[cfg(all(test))]', '#[cfg(unix',
                           '#[cfg(unix)', '#[ignore]', '#[cfg_attr(unix, ignore)]', '#[cfg(unix),]',
-                          '#[cfg(all(unix, all(test, windows)))]']:
+                          '#[cfg(all(unix, all(test, windows)))]', '#[cfg(all(unix, windows))]',
+                          '#[cfg(target_os = "nonexistent")]', '#[cfg(target_family = "beos")]',
+                          '#[cfg(not(any(unix, not(unix))))]', '#[cfg(not(target_os = "linux", unix))]']:
             self.assertFalse(gate._rust_platform_only(attribute), attribute)
+
+    def test_a_predicate_nested_deeper_than_the_stack_is_not(self):
+        self.assertFalse(gate._rust_platform_only("#[cfg(" + "not(" * 5000 + "unix" + ")" * 5000 + ")]"))
+
+
+class TestRustAttribute(unittest.TestCase):
+    """_rust_attribute: an attribute's whole text from the line it starts on and those after it."""
+
+    def test_it_ends_at_its_closing_bracket_on_its_line(self):
+        self.assertEqual(gate._rust_attribute("#[cfg(unix)] #[ignore] fn f() {}", ["fn g() {}"]), "#[cfg(unix)]")
+
+    def test_a_wrapped_attribute_is_joined_by_spaces(self):
+        self.assertEqual(gate._rust_attribute("#[cfg(any(", ['    target_os = "linux",', "))]", "mod tests {"]),
+                         '#[cfg(any( target_os = "linux", ))]')
+
+    def test_one_never_closed_runs_to_the_end(self):
+        self.assertEqual(gate._rust_attribute("#[cfg(any(", ["unix"]), "#[cfg(any( unix")
 
 
 class TestRustPassesAtBase(RepositoryTest):
