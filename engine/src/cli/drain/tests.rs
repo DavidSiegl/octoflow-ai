@@ -915,7 +915,34 @@ fn a_drain_that_fails_later_in_its_pass_keeps_the_conflict_refresh_cleared() {
     std::fs::remove_dir_all(format!("{}/b", d.dir())).unwrap();
     let r = d.drain(vec![], &[]);
     assert_eq!(r.status, 0, "{}", r.err);
-    assert_eq!(d.header("a"), (some(SPEC_IN_REVIEW), Some(run_id), some(PR_A)));
+    assert_eq!(d.header("a"), (some(SPEC_IN_REVIEW), Some(run_id.clone()), some(PR_A)));
+    assert_eq!(d.cli.saved(&run_id).get("conflict_cleared"), Some(&Value::Null));
+}
+
+#[test]
+fn a_spec_gone_before_its_move_is_written_keeps_its_runs_conflict_refresh_cleared() {
+    // Deleted, or emptied, while the pass asks gh about pull requests.
+    for emptied in [false, true] {
+        let d = Drain::new();
+        let run_id = conflicted_spec(&d, SPEC_FOR_HUMAN, APPROVE, &[]);
+        d.cli.with(|world| crate::cli::refresh::refresh_command(world, "/proj", None)).unwrap();
+        let (path, text) = (d.path("a"), d.text("a"));
+        let gone_path = path.clone();
+        d.cli.f.host.state().run_states_with = Some(Box::new(move |_: &str| {
+            if emptied { std::fs::write(&gone_path, "").unwrap() } else { let _ = std::fs::remove_file(&gone_path); }
+            None
+        }));
+        let r = d.drain(vec![], &[]);
+        assert_eq!(r.status, 0, "{}", r.err);
+        assert!(r.err.contains("a: ") && r.err.contains("not recording Status: in-review"), "{}", r.err);
+        assert_eq!(d.cli.saved(&run_id).get("conflict_cleared"), Some(&Value::from(PR_A)), "{emptied}");
+        // Back again, the spec is taken up by the next drain.
+        d.cli.f.host.state().run_states_with = None;
+        std::fs::write(&path, &text).unwrap();
+        let r = d.drain(vec![], &[]);
+        assert_eq!(d.header("a"), (some(SPEC_IN_REVIEW), Some(run_id.clone()), some(PR_A)), "{emptied} {}", r.err);
+        assert_eq!(d.cli.saved(&run_id).get("conflict_cleared"), Some(&Value::Null), "{emptied}");
+    }
 }
 
 #[test]

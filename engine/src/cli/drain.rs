@@ -37,8 +37,9 @@ pub const SPEC_FOR_HUMAN: &str = "ready-for-human";
 /// would change and run, and change nothing. Prints the spec changes it made, however it ended.
 ///
 /// Errors (Stop::Failed), before any run starts: the workflow cannot take a spec (Pipeline::seeded_start), and as
-/// read_queue and refreshed_headers fail; at any point, a spec header that cannot be written, or a run whose state
-/// cannot be made (new_state). A Ctrl-C ends it interrupted, with the run it stopped.
+/// read_queue and refreshed_headers fail, and a taken-up run's state that changed since the pass read it or cannot be
+/// written (forget_cleared); at any point, a spec header that cannot be written, or a run whose state cannot be made
+/// (new_state). A Ctrl-C ends it interrupted, with the run it stopped.
 pub(super) fn drain_command(args: &DrainArgs, world: &Connected, cwd: &str) -> Result<Ended, Stop> {
     let interrupt = world.with.interrupt;
     let stopped = |e: OrchestratorError| super::stop(e, interrupt, None);
@@ -47,12 +48,18 @@ pub(super) fn drain_command(args: &DrainArgs, world: &Connected, cwd: &str) -> R
     let mut specs = read_queue(&args.dir).map_err(stopped)?;
     let target = args.run.target.flags();
     let refreshed = refreshed_headers(&specs, world, cwd, &target, args.dry_run).map_err(stopped)?;
+    let mut unwritten = vec![];
     for (i, entries) in refreshed.headers {
-        specs[i].update(&entries, !args.dry_run, world.with.human).map_err(stopped)?;
+        if !specs[i].update(&entries, !args.dry_run, world.with.human).map_err(stopped)? {
+            unwritten.push(i);
+        }
     }
-    // Only once the headers that took them up are written, so a drain that fails before keeps them for the next.
+    // Only for a spec whose header took it up, or had nothing to change, so a drain that fails before, or a spec found
+    // gone, keeps the record for the next drain.
     if !args.dry_run {
-        forget_cleared(world, cwd, &refreshed.taken).map_err(stopped)?;
+        let taken: Vec<Value> =
+            refreshed.taken.into_iter().filter(|(i, _)| !unwritten.contains(i)).map(|(_, saved)| saved).collect();
+        forget_cleared(world, cwd, &taken).map_err(stopped)?;
     }
     let by_slug: HashMap<String, usize> = specs.iter().enumerate().map(|(i, s)| (s.slug.clone(), i)).collect();
     if args.dry_run {
@@ -231,7 +238,9 @@ pub fn refreshed_headers(
     let mut prs = PullRequestStates { world, cwd, states: HashMap::new() };
     let mut refreshed = Refreshed { headers: vec![], taken: vec![] };
     for (i, spec) in specs.iter().enumerate() {
-        let entries = settled_header(spec, &runs, &mut prs, &mut refreshed.taken, target, dry_run)?;
+        let mut taken = vec![];
+        let entries = settled_header(spec, &runs, &mut prs, &mut taken, target, dry_run)?;
+        refreshed.taken.extend(taken.into_iter().map(|saved| (i, saved)));
         if !entries.is_empty() {
             refreshed.headers.push((i, entries));
         }
@@ -243,13 +252,14 @@ pub fn refreshed_headers(
 pub struct Refreshed {
     /// The header lines to set, by the index of their spec among the specs, one pair for each spec that has any.
     pub headers: Vec<(usize, Entries)>,
-    /// The saved states, as read, of the runs whose conflict_cleared the pass took up (cleared_conflict).
-    pub taken: Vec<Value>,
+    /// The saved states, as read, of the runs whose conflict_cleared the pass took up (cleared_conflict), each by the
+    /// index of the spec that took it up, whose header lines, if any, are in headers.
+    pub taken: Vec<(usize, Value)>,
 }
 
 /// Remove conflict_cleared from the state of each run of taken, as refreshed_headers read it, so that no later drain
 /// takes it up again (RunState::conflict_cleared); for the caller to do once the headers that took them up are
-/// written. cwd is the project, on world's host. Errors, naming the run: as record_in_state.
+/// written, for the runs of specs whose header was written or had nothing to change. cwd is the project, on world's host. Errors, naming the run: as record_in_state.
 pub fn forget_cleared(world: &Connected, cwd: &str, taken: &[Value]) -> Result<(), OrchestratorError> {
     for saved in taken {
         let run_id = saved.get("run_id").map(Value::text).unwrap_or_default();
