@@ -421,7 +421,7 @@ pub trait Host {
             return Ok(vec![]);
         }
         // -z: paths with unusual characters come unquoted.
-        let conflicts = nul_separated(&self.git(cwd, &["diff", "--name-only", "-z", "--diff-filter=U"])?);
+        let conflicts = nul_separated(&self.git(cwd, &["diff", "--name-only", "-z", "--no-relative", "--diff-filter=U"])?);
         self.abort_merge(cwd)?;
         if conflicts.is_empty() {
             return Err(OrchestratorError(format!(
@@ -492,7 +492,7 @@ pub trait Host {
         if differ.is_empty() {
             return Ok((vec![], String::new()));
         }
-        let mut args = vec!["diff", "--no-color", "--no-ext-diff", "--no-renames", git_ref, &sha, "--"];
+        let mut args = vec!["diff", "--no-color", "--no-ext-diff", "--no-renames", "--no-relative", git_ref, &sha, "--"];
         let literal = top_literal(&differ);
         args.extend(literal.iter().map(String::as_str));
         let diff = self.git_verbatim(cwd, &args)?;
@@ -550,6 +550,7 @@ pub trait Host {
             "diff",
             "-U0",
             "-M",
+            "--no-relative",
             "--no-color",
             "--no-ext-diff",
             "--src-prefix=a/",
@@ -571,7 +572,7 @@ pub trait Host {
     /// Each file the change from base to commit touches, a rename paired as change_diff pairs it, with the lines it
     /// adds and removes, from `git diff --numstat`. Errors: git fails, or names a path that is not UTF-8.
     fn changed_line_counts(&self, cwd: &str, base: &str, commit: &str) -> Result<Vec<ChangedFile>, OrchestratorError> {
-        let out = self.git_verbatim(cwd, &["diff", "--numstat", "-z", "-M", "--no-ext-diff", base, commit])?;
+        let out = self.git_verbatim(cwd, &["diff", "--numstat", "-z", "-M", "--no-relative", "--no-ext-diff", base, commit])?;
         numstat(&out)
     }
 
@@ -1103,7 +1104,9 @@ pub fn decoded(exec: Exec) -> Result<Completed, OrchestratorError> {
 }
 
 /// git pathspecs that each match exactly one of paths, relative to the repository's top level, whatever directory git
-/// runs in, and with no glob in them.
+/// runs in, and with no glob in them. A git diff given them needs --no-relative as well, as every diff of the host's
+/// does: under the user's diff.relative, a diff run in a subdirectory lists only that subdirectory's files, named
+/// relative to it, and a pathspec for a file elsewhere matches nothing.
 pub(crate) fn top_literal<S: AsRef<str>>(paths: &[S]) -> Vec<String> {
     paths.iter().map(|p| format!(":(top,literal){}", p.as_ref())).collect()
 }
@@ -1116,7 +1119,7 @@ fn paths_between<H: Host + ?Sized>(
     b: &str,
     paths: &[String],
 ) -> Result<Vec<String>, OrchestratorError> {
-    let mut args = vec!["diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", a, b, "--"];
+    let mut args = vec!["diff", "--name-only", "-z", "--no-relative", "--no-renames", "--no-ext-diff", a, b, "--"];
     let literal = top_literal(paths);
     args.extend(literal.iter().map(String::as_str));
     utf8_paths(&host.git_verbatim(cwd, &args)?)

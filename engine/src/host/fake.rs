@@ -403,7 +403,7 @@ impl FakeState {
             }
             ["merge-base", "--is-ancestor", commit, of] => return self.git_is_ancestor(commit, of),
             ["merge", rest @ ..] => return self.git_merge(rest),
-            ["diff", "--name-only", "-z", "--diff-filter=U"] => {
+            ["diff", "--name-only", "-z", "--no-relative", "--diff-filter=U"] => {
                 if !self.merge_head {
                     return ok("");
                 }

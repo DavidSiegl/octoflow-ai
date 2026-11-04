@@ -927,16 +927,6 @@ is rewritten to say what is left.
   a new function under its old name (review round 6, R6-F1). Decided by the user in review round 4 of ticket 06.
   Closes with a way to tell a copy from a rename, such as git's copy detection (`git diff -C`) on the change's
   files.
-- **`paths_between` (`engine/src/host.rs`) follows the user's `diff.relative`.** Its `git diff --name-only` has no
-  `--no-relative`, so with `diff.relative=true` in the user's git config and a `cwd` that is a subdirectory of the
-  repository (not checked whether a run can pass one), it lists only the paths under that subdirectory, and its
-  `top_literal` pathspecs for files elsewhere match nothing. `Host::lock` then returns fewer locked paths and
-  `Host::locked_changes` misses edits to them; `locked_changes`'s own `git diff` has the same exposure. Raised by the
-  cross-review of `trust-quality-at-pr` (review 49, F7, 2026-10-26), which found it in what is now `judging_changes`
-  (`engine/src/cli/judged.rs`) and fixed it there with `--no-relative`; of `paths_between` it said: "has the same
-  exposure, but it is outside this range". Closes with `--no-relative` on both calls and a test that sets
-  `diff.relative` and locks from a subdirectory. Ticket:
-  `.scratch/git-diff-relative/issues/01-locks-ignore-diff-relative.md` (#233).
 - **A resume finds an agent alive whose start never finished and only waits for it.** `start`
   (`engine/src/workflow/turn.rs`) saves the agent's record, may wait without a deadline for a startup dialog the
   human answers (`wait_for_startup`), and only then saves the session. An orchestrator stopped in between leaves an
