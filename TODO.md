@@ -137,24 +137,18 @@ is rewritten to say what is left.
   does not, and POST /run answers 422 with the shell's error, or 202 when the marker never shows. Found while
   implementing app-start-runs ticket 01 (2026-11-03). Closes with a launch that does not go through the pane's
   shell: herdr starting the command itself in the new pane, if a later herdr can.
-- **new-dependencies on Cargo: two readings of a manifest that its doc does not state.** In
-  `engine/src/checks/dependencies.rs`, `cargo_manifest_dependencies` keeps the first entry of a crate across its tables,
-  as `add_named` does across manifests: `foo = "1"` in `[dependencies]` and `foo = { git = "..." }` under
-  `[target.'cfg(windows)'.dependencies]` record foo as from crates.io, and its git source is never compared with the
-  spec. And `cargo_member_entry` takes only boolean `true` as `workspace = true`: `workspace = "true"`, `1` or
-  `false` falls through to `cargo_entry` as a crates.io dependency, rather than being refused as an entry of another
-  shape. Raised, not recorded, by cross-review of 20aa212 (2026-10-30); both predate it. Closes with the rule chosen and
-  stated on `cargo_dependencies`'s doc: the first entry, or every source a crate is named with; and a non-boolean
-  `workspace` refused.
-  Ticket: `.scratch/cargo-dependency-rules/issues/01-one-rule-per-crate-entry.md` (#237).
-- **`Map` has no first-wins insert.** `cargo_manifest_dependencies` and `add_named`
-  (`engine/src/checks/dependencies.rs`) each spell out `if !out.contains_key(&key) { out.insert(..) }`, a branch that
-  put the first at 16 of the gate's cognitive-complexity limit of 15 (PR #214), which 20aa212 met by moving the
-  `workspace = true` resolution into `cargo_member_entry` instead. Deferred from cross-review of 20aa212 (F1, nit,
-  2026-10-30): "A method there used at both sites would remove that branch from `cargo_manifest_dependencies` and keep
-  inheritance inline." Ticket octoflow-without-python/04 kept that map as `crate::map::Map` (`engine/src/map.rs`), since
-  serde_json's map holds only JSON values and these hold `Dependency`s; closes with a first-wins insert there, both
-  sites taking it.
+- **new-dependencies on Python: a package from several sources keeps its first.** In
+  `engine/src/checks/dependencies.rs`, `uv_sources` takes the first of a `[tool.uv.sources]` entry's list of sources,
+  each for some platforms, and `python_dependencies` gives a direct dependency without a source of its own the first
+  source `uv.lock` has it from; so `forked = [{ index = "pypi", marker = ".." }, { git = "..", marker = ".." }]`
+  never compares the git source with the spec. Cargo's reader takes every source a crate is named with since ticket
+  cargo-dependency-rules/01 (2026-11-04), which left Python's alone. Closes with the same rule for Python, each
+  source a `NewPackage` of its own, or the first-source rule kept and stated in docs/quality-gate.md.
+- **new-dependencies points a second source's finding at the package's first added line.** `compare_dependencies`
+  (`engine/src/checks/dependencies.rs`) gives each `NewPackage` and source-changed finding the first line the change
+  added to its manifest that names the package (`line_naming`), not the line of that source's entry: `foo = "1"` and
+  `foo = { git = ".." }` added to one Cargo.toml both point at the first. Found while implementing ticket
+  cargo-dependency-rules/01 (2026-11-04). Closes with the readers giving each source the line of its entry.
 - **Readers of `state.json` still take records an earlier release wrote.** Since octoflow-without-python ticket 04
   (2026-11-03) a `state.json` without the format marker is refused (`crate::state::format_problem`), so no record an
   earlier release wrote reaches them, but `ProofRun::read` (`engine/src/proofs.rs`) still reads a `proofs` record

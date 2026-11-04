@@ -1091,8 +1091,11 @@ lend it pypi.org's metadata: that is the dependency-confusion case, and the find
 package is therefore never `not-on-pypi`; only the spec rule can fail it. A crate's source is its entry's: `path`, a
 member of the workspace, which the spec need not name; `git`; `registry` or `registry-index`, an index other than
 crates.io, whose crate is `other-index`; else crates.io. An entry with `workspace = true` has its
-`[workspace.dependencies]` entry's source, and a locked crate its `source` in `Cargo.lock`. Only a crate from
-crates.io is looked up, at `https://crates.io/api/v1/crates/<name>`, with a timeout of 15 seconds
+`[workspace.dependencies]` entry's source; one whose `workspace` is anything else, such as `"true"` or `false`,
+makes its manifest `unreadable`, as Cargo refuses it. A locked crate has its `source` in `Cargo.lock`. A crate named
+from several sources, such as `foo = "1"` in `[dependencies]` and `foo = { git = "..." }` under
+`[target.'cfg(windows)'.dependencies]`, is a dependency from each, and each source of a new crate is judged on its
+own. Only a crate from crates.io is looked up, at `https://crates.io/api/v1/crates/<name>`, with a timeout of 15 seconds
 (`CRATES_IO_TIMEOUT`) and a User-Agent that names the project, which crates.io requires; nothing of the user's goes
 with it. Its first release is the crate's creation, and its latest version crates.io's default one, the highest that
 is neither yanked nor a pre-release.
@@ -1122,8 +1125,9 @@ is neither yanked nor a pre-release.
 - `pulled-in` (reports): one finding per `uv.lock`, listing with the same facts the packages it alone adds, those the
   new dependencies pull in. The spec cannot be expected to name them;
 - `source-changed` (reports): a dependency the project already had, direct or locked, that the change takes from
-  another source, naming both: `requests` moved from PyPI to `{ index = "evil" }` is the dependency-confusion move
-  without a new name. A new default index moves every dependency without a source of its own.
+  a source it did not, instead or as well, naming the sources of both sides: `requests` moved from PyPI to
+  `{ index = "evil" }` is the dependency-confusion move without a new name. A new default index moves every
+  dependency without a source of its own.
 
 **Diff budget** counts the files the change touches and the lines it adds and removes, from `git diff --numstat -M`
 (`Host::changed_line_counts`); a rename counts as one file, with the lines it changes, and a binary file as a file of

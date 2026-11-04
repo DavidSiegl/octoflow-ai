@@ -162,7 +162,8 @@ fn dependency_lists_of_every_kind_are_read_without_the_project_itself() {
                 [tool.uv]\ndev-dependencies = [\"ignored\"]\n";
     let deps =
         python_dependencies(&|path: &str| Ok((path == "pyproject.toml").then(|| text.as_bytes().to_vec()))).unwrap();
-    let direct: Vec<(&str, Option<PackageSource>)> = deps.direct.iter().map(|(k, d)| (k, d.source.clone())).collect();
+    let direct: Vec<(&str, Option<PackageSource>)> =
+        sourced(&deps.direct).into_iter().map(|(k, _, source)| (k, source)).collect();
     assert_eq!(
         direct,
         [
@@ -600,12 +601,12 @@ fn kind_name(kind: SourceKind) -> &'static str {
     }
 }
 
-fn sources(map: &Map<Dependency>) -> Value {
+fn sources(map: &Map<Vec<Dependency>>) -> Value {
     Value::Array(
-        map.iter()
-            .map(|(k, d)| {
-                let s = d
-                    .source
+        sourced(map)
+            .into_iter()
+            .map(|(k, _, source)| {
+                let s = source
                     .as_ref()
                     .map_or(Value::Null, |s| Value::Array(vec![kind_name(s.kind).into(), s.place.as_str().into()]));
                 Value::Array(vec![k.into(), s])
@@ -729,8 +730,9 @@ fn cargo_read(files: &[(&str, &str)]) -> Dependencies {
     .unwrap()
 }
 
-fn sourced(deps: &Map<Dependency>) -> Vec<(&str, &str, Option<PackageSource>)> {
-    deps.iter().map(|(k, d)| (k, d.manifest.as_str(), d.source.clone())).collect()
+/// (package_key, manifest, source) of each package of deps from each of its sources, in deps's order.
+fn sourced(deps: &Map<Vec<Dependency>>) -> Vec<(&str, &str, Option<PackageSource>)> {
+    deps.iter().flat_map(|(k, ds)| ds.iter().map(move |d| (k, d.manifest.as_str(), d.source.clone()))).collect()
 }
 
 #[test]
@@ -769,6 +771,24 @@ fn every_dependency_table_of_the_workspace_and_its_members_is_direct() {
                 Some(PackageSource::new(SourceKind::Workspace, ""))
             ),
             ("tempfile", "engine/Cargo.toml", None),
+        ]
+    );
+}
+
+#[test]
+fn a_crate_is_a_direct_dependency_once_from_each_source_it_is_named_with() {
+    let root = "[workspace]\nmembers = [\"engine\"]\n\n[dependencies]\nfoo = \"1\"\n\n\
+        [dev-dependencies]\nfoo = \"1\"\n\n[target.'cfg(windows)'.dependencies]\n\
+        foo = { git = \"https://example.com/foo.git\" }\n";
+    let engine = "[package]\nname = \"engine\"\n\n[dependencies]\nfoo = \"1\"\n\n[build-dependencies]\n\
+        foo = { version = \"1\", registry = \"corp\" }\n";
+    let deps = cargo_read(&[("Cargo.toml", root), ("engine/Cargo.toml", engine)]);
+    assert_eq!(
+        sourced(&deps.direct),
+        [
+            ("foo", "Cargo.toml", None),
+            ("foo", "Cargo.toml", Some(PackageSource::new(SourceKind::Git, "https://example.com/foo.git"))),
+            ("foo", "engine/Cargo.toml", Some(PackageSource::new(SourceKind::Index, "corp"))),
         ]
     );
 }
@@ -830,6 +850,17 @@ fn a_workspace_this_check_cannot_follow_is_unreadable() {
             "[dependencies]\nserde = 1\n",
             "Cargo.toml",
             "`serde` in [dependencies] is neither a version nor a table",
+        ),
+        (
+            "[workspace.dependencies]\nserde = \"1\"\n\n[dependencies]\nserde = { workspace = \"true\" }\n",
+            "Cargo.toml",
+            "`serde` in [dependencies] takes `workspace = \"true\"`, where Cargo takes only `workspace = true`",
+        ),
+        (
+            "[target.'cfg(unix)'.dev-dependencies]\nserde = { workspace = false, version = \"1\" }\n",
+            "Cargo.toml",
+            "`serde` in [target.cfg(unix).dev-dependencies] takes `workspace = false`, where Cargo takes only \
+             `workspace = true`",
         ),
     ];
     for (root, path, why) in cases {
@@ -918,6 +949,69 @@ fn a_member_s_new_crate_is_found_in_its_own_manifest() {
         rules(&found.issues),
         [(Some("engine/Cargo.toml"), Some(6), "not-in-spec")]
     );
+}
+
+/// The workspace's files at base and new, engine's manifest new ending in lines from line 6 on.
+fn cargo_member_files(engine: &[&str]) -> Vec<(&'static str, &'static str, Option<String>)> {
+    let mut files = cargo_files(&[]);
+    files.retain(|(side, path, _)| !(*side == "new" && *path == "engine/Cargo.toml"));
+    let added: String = engine.iter().map(|l| format!("{l}\n")).collect();
+    files.push(("new", "engine/Cargo.toml", Some(format!("{ENGINE_MANIFEST}{added}"))));
+    files
+}
+
+#[test]
+fn a_new_crate_named_from_several_sources_is_judged_from_each() {
+    let added = [
+        "foo = \"1\"",
+        "",
+        "[target.'cfg(windows)'.dependencies]",
+        "foo = { git = \"https://example.com/foo.git\" }",
+    ];
+    let crates = FakeCratesIo::with(&[("foo", CrateJson::default())]);
+    let found = find_crates(
+        &Change::new(&adding("engine/Cargo.toml", 6, &added)).files(cargo_member_files(&added)),
+        &crates,
+    );
+    assert_eq!(
+        messages(&found.issues),
+        [
+            (
+                "not-in-spec",
+                "`foo` is a new dependency that the spec does not name; on crates.io since 2014-12-05, latest 1.0.228 \
+                 of 2026-09-01, license MIT OR Apache-2.0."
+            ),
+            (
+                "not-in-spec",
+                "`foo` is a new dependency that the spec does not name; from the repository \
+                 https://example.com/foo.git, not from crates.io."
+            ),
+        ]
+    );
+    assert_eq!(crates.state().asked, ["foo"]);
+}
+
+#[test]
+fn a_source_the_change_adds_to_a_crate_the_project_had_is_reported() {
+    let added = ["", "[target.'cfg(windows)'.dependencies]", "serde = { git = \"https://example.com/serde.git\" }"];
+    let crates = FakeCratesIo::with(&[]);
+    let found = find_crates(
+        &Change::new(&adding("engine/Cargo.toml", 6, &added)).files(cargo_member_files(&added)),
+        &crates,
+    );
+    assert_eq!(found.issues, []);
+    assert_eq!(
+        found.to_weigh,
+        [Finding::warning(
+            Some("engine/Cargo.toml"),
+            Some(8),
+            "source-changed",
+            "`serde`: at the base, from crates.io; in the change, from crates.io and from the repository \
+             https://example.com/serde.git, not from crates.io."
+                .to_string()
+        )]
+    );
+    assert!(crates.state().asked.is_empty());
 }
 
 #[test]
