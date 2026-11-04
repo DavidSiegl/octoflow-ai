@@ -9,7 +9,9 @@ doesn't exist yet (Jenkinsfile, Release stage). A change reaches users only if i
   existing flags, exit codes or saved run state.
 - While the version is 0.x, a breaking change bumps `minor`, not `major`: `major` would make it 1.0.0, which is a
   deliberate release decision, not a side effect of a change.
-- Changes only to docs, tests or CI don't bump the version; Jenkins's Version stage lets them through without a
-  raise (`ci/version-raised.sh` lists which paths count as such).
-- Bump with `uv version --bump <level>`, never by editing `pyproject.toml`: it also updates `uv.lock`.
+- Changes only to docs, tests, CI or repository tooling don't bump the version; Jenkins's Version stage lets them
+  through without a raise (`ci/version-raised.sh` lists which paths count as such).
+- Bump with `uv version --bump <level>`, never by editing `pyproject.toml`: it also updates `uv.lock`. Then set
+  `engine/Cargo.toml`'s `[package] version` to the same version and refresh `Cargo.lock` (`cargo check`):
+  `tests/test_invariants.py` fails a build where the two differ.
 - Don't create tags or releases by hand; Jenkins does that after the merge.

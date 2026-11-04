@@ -411,7 +411,7 @@ in the suite.
   `.sha256`, and `octoflow-third-party-licenses.html`, in one `gh release create`, and `docs/releases/v<version>.md`, where there is one, before GitHub's
   generated notes. Its parameter `GIT_REF`
   builds another branch; such a build never releases. A pull request build into `main` fails its Version stage unless the pull request raises
-  `pyproject.toml`'s version over `main`'s or changes only docs, tests or CI (`ci/version-raised.sh` lists those
+  `pyproject.toml`'s version over `main`'s or changes only docs, tests, CI or repository tooling (`ci/version-raised.sh` lists those
   paths), so that every merge into `main` that reaches users is released.
 - `.github/workflows/automerge.yml`: keeps auto-merge on for a pull request into `main` from a branch of this
   repository, so it merges with a merge commit once Jenkins' required check passes; its header lists the pull
