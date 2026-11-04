@@ -301,14 +301,15 @@ layout), with no Python of its own.
   the directory the AppImage was started from, `OWD`, or `PWD` where an extracted AppImage sets no `OWD`, so the
   orchestrator, and every process it starts through `child_env`, sees the user's. The app's own process keeps the
   bundle's, which its GTK needs.
-- **Frontend.** `api.ts` types the protocol: `RunRecord` mirrors `run_record`, and `Api` builds the URLs and
-  reads `/file`. `hooks.ts`'s `useRunStream` opens the `EventSource` and folds its events into a `RunsState`
-  with `runs.ts`'s `applyEvent`. Every opening starts from no runs, since the server sends every run again.
-  `runs.ts` also holds `progress` (the stages of a run's progress bar, with `quality` after the step it judges)
-  and the wording helpers, which follow `format_age` and `run_round`. A `RunEntry` keeps when its record arrived,
-  so `heartbeatAge` ticks with `useNow` between events. The components are `ProjectBar`, `RunsOverview`,
-  `RunDetail`, `StepProgress` and `HandoffFile`, which renders a file with `react-markdown` and `remark-gfm`,
-  raw HTML skipped, and fetches it again whenever its mtime changes.
+- **Frontend.** `api.ts` types the protocol: `RunRecord` mirrors `run_record`, `RunRequest` is `POST /run`'s body, and
+  `Api` builds the URLs and makes the requests. `hooks.ts`'s `useRunStream` opens the `EventSource` and folds its
+  events into a `RunsState` with `runs.ts`'s `applyEvent`. Every opening starts from no runs, since the server sends
+  every run again. `runs.ts` also holds `progress` (the stages of a run's progress bar, with `quality` after the step
+  it judges) and the wording helpers, which follow `format_age` and `run_round`. A `RunEntry` keeps when its record
+  arrived, so `heartbeatAge` ticks with `useNow` between events. The components are `ProjectBar`, `RunsOverview`,
+  `RunForm` (a new run, selected once `POST /run` answers) and `SetupDialog`, both a `Dialog`, `RunDetail`,
+  `AgentPanes`, `StepProgress` and `HandoffFile`, which renders a file with `react-markdown` and `remark-gfm`, raw
+  HTML skipped, and fetches it again whenever its mtime changes.
 - **Tests.** Vitest with React Testing Library in jsdom: `App.test.tsx` replays `test/recorded-stream.json`
   through `test/fakes.ts`'s `FakeEventSource`, with `fetch` stubbed. The recording is the events a real
   `serve` sent over a scripted run. `runs.test.ts` covers the pure helpers. `cargo test -p octoflow-ui` starts
