@@ -575,16 +575,6 @@ is rewritten to say what is left.
   product-team-workflow (F4, 2026-10-25): "the gate reads file names from the spec and this spec is in business
   terms by design". The example's header says so. Closes with the check reading every non-editing step's file that
   precedes the first editing step, or with a workflow key naming the file that holds the paths.
-- **An AppImage run without FUSE passes no signal on to the orchestrator.** Under `APPIMAGE_EXTRACT_AND_RUN` the
-  AppImage's runtime forks, runs `AppRun` in the child and waits, so the process a caller started is the runtime,
-  and `Cli::exec` (`ui/src-tauri/src/lib.rs`) only replaces the child. Raised by the cross-review of desktop-cli
-  (F3, 2026-10-25), reproduced with `dist/orchestrator-desktop-linux-x86_64.AppImage serve`: "`kill -TERM <runtime
-  pid>` → both orchestrator processes still running 2 s later, orphaned", so `timeout`, a systemd stop or `kill %1`
-  on an AppImage `run` on a machine without FUSE leaves the orchestrator and its agents running unsupervised.
-  Ctrl-C reaches the whole process group and is not affected; the mounted AppImage was not checked. Closes with
-  `Cli::exec` asking the kernel for a signal when its parent, the runtime, dies (`PR_SET_PDEATHSIG`) when the app
-  runs extracted, checked on a built AppImage, or with a runtime that forwards signals.
-  Ticket: `.scratch/desktop-packaging-gaps/issues/02-appimage-signal-reaches-the-cli.md` (#240).
 - **Removing a tree of read-only directories is written out twice.** `chmod -R u+rwX "$dir" && rm -rf "$dir"`,
   with a warning when it fails, is in the Jenkinsfile's Test stage (emptying `TMPDIR` before the tests) and in
   `packaging/build-desktop.sh`'s `remove_temporaries`, for the AppImage extractions it removes; a fix to one does
