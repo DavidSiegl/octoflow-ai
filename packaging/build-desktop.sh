@@ -64,6 +64,7 @@ export APPIMAGE_EXTRACT_AND_RUN=1
     cd ui
     npm ci --no-audit --no-fund
     # Before the long build, so that a package under a license packaging/about.toml does not accept fails first.
+    rm -f "../$npm_notices"
     node scripts/npm-licenses.js "../$npm_notices"
     cp "../$npm_notices" src-tauri/THIRD-PARTY-LICENSES-NPM.html
     npm run tauri -- build --ci --config "$config" --bundles "$bundles"
@@ -219,7 +220,7 @@ if [ "$os" = linux ]; then
             exit 1
         fi
         for resource in THIRD-PARTY-LICENSES.html THIRD-PARTY-LICENSES-NPM.html; do
-            printf '%s\n' "$files" | grep -Fq "/$resource" \
+            printf '%s\n' "$files" | grep -Eq "/${resource%.html}\\.html\$" \
                 || { echo "build-desktop.sh: $deb has no $resource" >&2; exit 1; }
         done
     done
