@@ -266,12 +266,12 @@ from its pull request: with the pull request's "Restore branch" button, or with
 A run that opens a pull request closes its workspace and removes its worktree itself. A failed or stale run, and
 a `--no-pr` one, leave them, and `close` cleans up after one of them. It refuses a run that is `running`, or saved
 as `done` while its orchestrator is still ending it, since an orchestrator still drives it. Every run it accepts
-loses its herdr workspace. One whose steps locked files, as `state.json`'s `locked` says, also loses its local refs
-under `refs/orchestrator/<key>/`, which hold the commits of those files: a run that ends `done` deletes them itself,
-but a closed run is never resumed, and without `close` nothing would delete them, so `git gc` would keep those
-commits for good. A run that locked nothing has no such refs, and `close` runs no git command for them, so a
-`--no-pr` run in a directory that is not a git repository closes too. What happens to the files depends on whose
-they are:
+loses its herdr workspace, and its local refs under `refs/orchestrator/<key>/`, which hold the commits of the files
+its locking steps locked: a run that ends `done` deletes them itself, but a closed run is never resumed, and without
+`close` nothing would delete them, so `git gc` would keep those commits for good. A ref can exist although
+`state.json`'s `locked` is empty, when the run's first lock failed after making it, so `close` looks for them
+whatever `locked` says. A `--no-pr` run in a directory that is not a git repository has none, and closes as any
+other. What happens to the files depends on whose they are:
 
 - **A failed or stale `--worktree` run**: the worktree is the run's own, so it is removed with
   `git worktree remove --force` after `close` lists the files `git status --porcelain` shows, which go with it.
@@ -284,7 +284,8 @@ they are:
 Each step passes over what is already gone, a workspace herdr no longer has included, and any herdr or git
 failure stops `close` with an error before anything is recorded. Once every step has succeeded, what was done is
 recorded as one line, the run's `closed`, such as `workspace closed; worktree deleted; branch deleted`, with
-`; refs deleted` at its end when the run locked files, the refs a failed `close` deleted counting too. As with
+`; refs deleted` at its end when `close` deleted any refs or `locked` says the run had some, so a retry after a
+`close` that deleted them and then failed still says so. As with
 `branch_cleanup`, it is added to `state.json` without changing its modification time, and only if the file has
 not changed since `close` read it. `list` and `show` print it, a second `close` only prints it again, and
 `resume` refuses a closed run, `--force` or not, since its worktree and branch may be gone. A closed run that was

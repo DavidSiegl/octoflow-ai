@@ -24,7 +24,8 @@ struct Closing {
     base: Option<String>,
     error: Option<String>,
     closed: Option<String>,
-    /// The paths each locking step locked, by step id: empty when the run never locked, and so has no local refs.
+    /// The paths each locking step locked, by step id: non-empty means the run had local refs, which a failed close
+    /// may have deleted already; empty means it may still have one, if its first lock failed after making its ref.
     locked: Map<Vec<String>>,
 }
 
@@ -32,13 +33,13 @@ struct Closing {
 /// record what was done as the run's closed in its state.json, so that resume refuses it, and return that. Prints
 /// each step on world's standard output.
 ///
-/// Every run loses its workspace, and one whose steps locked files its local refs (crate::state::refs_prefix), which
-/// hold those files and which nothing else deletes once it is closed. A failed or stale --worktree run also loses its
-/// worktree, changes and all (listed first), and its branch if that holds no commit beyond the run's base: the Builder
-/// never commits, so such a branch has nothing to lose. A finished run's worktree is a --no-pr run's change, and an
-/// in-place run's checkout and branch are the human's to sort out, so both stay. Each step skips what is already gone,
-/// so a close that failed part way can be run again; closed is recorded only once every step has succeeded. A run
-/// already closed is left as it is, and its closed returned.
+/// Every run loses its workspace and its local refs (crate::state::refs_prefix), which hold the files its steps locked
+/// and which nothing else deletes once it is closed. A failed or stale --worktree run also loses its worktree, changes
+/// and all (listed first), and its branch if that holds no commit beyond the run's base: the Builder never commits, so
+/// such a branch has nothing to lose. A finished run's worktree is a --no-pr run's change, and an in-place run's
+/// checkout and branch are the human's to sort out, so both stay. Each step skips what is already gone, so a close that
+/// failed part way can be run again; closed is recorded only once every step has succeeded. A run already closed is
+/// left as it is, and its closed returned.
 ///
 /// Errors: no run or several match run_ref; the run is still running, or done but still ending
 /// (crate::runs::ending_health); a step fails; or the state.json changed since it was read.
@@ -70,8 +71,8 @@ pub fn close_run(world: &Connected, cwd: &str, run_ref: &str) -> Result<String, 
         Some(worktree) if host.is_worktree(cwd, worktree)? => done.push(format!("worktree kept: {worktree}")),
         _ => {}
     }
-    if !state.locked.is_empty() {
-        done.push(delete_run_refs(world, cwd, &state.run_id)?);
+    if delete_run_refs(world, cwd, &state.run_id)? || !state.locked.is_empty() {
+        done.push("refs deleted".to_string());
     }
     let closed = done.join("; ");
     let path = format!("{cwd}/{RUNS_DIR}/{}/state.json", state.run_id);
@@ -91,18 +92,20 @@ fn close_run_workspace(world: &Connected, workspace: &str) -> Result<String, Orc
     Ok("workspace already gone".to_string())
 }
 
-/// Delete the local refs of the run of run_id from cwd's repository, which its worktree shares, and say so. Refs
-/// already gone, such as the ones a close that failed part way deleted, count as deleted. Errors: a ref could not be
-/// deleted, the error naming the run's refs prefix.
-fn delete_run_refs(world: &Connected, cwd: &str, run_id: &str) -> Result<String, OrchestratorError> {
+/// Delete the local refs of the run of run_id from cwd's repository, which its worktree shares, say so if there were
+/// any, and return whether there were; a cwd outside any git repository has none. Errors: a ref could not be deleted,
+/// the error naming the run's refs prefix.
+fn delete_run_refs(world: &Connected, cwd: &str, run_id: &str) -> Result<bool, OrchestratorError> {
     let prefix = refs_prefix(run_id);
-    world
+    let deleted = world
         .with
         .host
         .delete_refs(cwd, &prefix)
         .map_err(|e| OrchestratorError(format!("could not delete the refs under {prefix}: {e}")))?;
-    world.say(&format!("deleted the refs under {prefix}"));
-    Ok("refs deleted".to_string())
+    if deleted {
+        world.say(&format!("deleted the refs under {prefix}"));
+    }
+    Ok(deleted)
 }
 
 /// Force-remove the worktree of cwd that the failed run of state built in, after listing the changes that go with

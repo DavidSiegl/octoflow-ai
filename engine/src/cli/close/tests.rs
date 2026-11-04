@@ -470,12 +470,14 @@ fn refs_a_failed_close_deleted_are_still_recorded_as_deleted() {
 }
 
 #[test]
-fn a_run_that_locked_nothing_closes_with_today_s_line_and_leaves_refs_alone() {
+fn refs_of_a_run_whose_first_lock_failed_are_deleted_too() {
+    // Host::lock makes the ref before it can fail, and the run saves locked only once it has not.
     let c = Close::new();
     c.add(0, false, &[]);
     c.add_refs();
-    assert_eq!(c.close(&[]), (0, format!("closed workspace w1\nclosed run {CLOSE_ID}: workspace closed\n")));
-    assert_eq!(c.refs().len(), 3);
+    assert_eq!(c.close(&[]).0, 0);
+    assert_eq!(c.refs(), [OTHER_REF]);
+    c.assert_closed("workspace closed; refs deleted");
 }
 
 #[test]
