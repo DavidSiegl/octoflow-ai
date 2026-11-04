@@ -293,8 +293,8 @@ and asks `gh` whether it merges cleanly now. If it does, `refresh`:
 
 - removes the conflict warning from the description, leaving the rest of it, your edits included, as it is;
 - marks the pull request ready for review if the run approved or finished, and leaves it a draft otherwise;
-- forgets the conflict in `state.json`, so `show` no longer lists it, and records there that it cleared it, so a
-  later `drain` takes up the run's spec as though it had cleared the conflict itself
+- forgets the conflict in `state.json`, so `show` no longer lists it, and records there that it cleared it, so the
+  next `drain` takes up the run's spec once, as though it had cleared the conflict itself
   ([Draining specs](#draining-specs)).
 
 A pull request merged or closed meanwhile only has its conflict forgotten. One that still conflicts, or whose
@@ -320,7 +320,8 @@ merged.
 **What one drain does, in order.** It first asks `gh` about each `in-review` spec's pull request: merged makes it
 `done`, closed `ready-for-human`. It refreshes the run on each `in-review` and `ready-for-human` spec's `Run:`
 line as `refresh` does, and a `ready-for-human` spec whose run approved or finished, with its pull request open,
-goes to `in-review` once its conflict is cleared, by this drain or by a `refresh` before it. A `ready-for-agent` spec with a `Run:` line is one an
+goes to `in-review` once its conflict is cleared, by this drain or by a `refresh` before it; drain takes up a
+`refresh`'s clearing once, so a spec you set back to `ready-for-human` afterwards stays so. A `ready-for-agent` spec with a `Run:` line is one an
 interrupted drain left; its run, if finished, sets the spec's status, and one that makes it `in-review` has its
 pull request asked about at once, so a pull request merged meanwhile makes it `done` in this drain; if not
 finished, drain stops and says what to do: wait for it, `resume` it, or delete the `Run:` line to start the spec

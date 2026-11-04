@@ -808,7 +808,12 @@ fn a_spec_for_the_human_whose_conflict_refresh_cleared_first_goes_to_review_then
 #[test]
 fn a_spec_for_the_human_whose_conflict_refresh_cleared_stays_unless_its_run_succeeded_and_its_pr_is_open() {
     // The verdict, the pull request's state as gh gives it after the refresh, and the spec's status that leaves.
-    let cases = [(APPROVE, "CLOSED", SPEC_FOR_HUMAN), (APPROVE, "MERGED", SPEC_DONE), (CHANGES_REQUESTED, "OPEN", SPEC_FOR_HUMAN)];
+    let cases = [
+        (APPROVE, "CLOSED", SPEC_FOR_HUMAN),
+        (APPROVE, "MERGED", SPEC_DONE),
+        (CHANGES_REQUESTED, "OPEN", SPEC_FOR_HUMAN),
+        (CHANGES_REQUESTED, "MERGED", SPEC_DONE),
+    ];
     for (verdict, pr_state, spec_after) in cases {
         let d = Drain::new();
         let run_id = conflicted_spec(&d, SPEC_FOR_HUMAN, verdict, &[]);
@@ -818,6 +823,76 @@ fn a_spec_for_the_human_whose_conflict_refresh_cleared_stays_unless_its_run_succ
         assert_eq!(r.status, 0, "{}", r.err);
         assert_eq!(d.header("a"), (some(spec_after), Some(run_id), some(PR_A)), "{verdict} {pr_state}");
     }
+}
+
+/// Spec a set back to SPEC_FOR_HUMAN by the human, its Run: and PR: lines kept.
+fn set_back_for_human(d: &Drain, run_id: &str) {
+    d.spec("a", &spec_text("First", Some(SPEC_FOR_HUMAN), &[&format!("Run: {run_id}"), &format!("PR: {PR_A}")]));
+}
+
+#[test]
+fn a_spec_the_human_sets_back_after_drain_took_up_its_cleared_conflict_is_left() {
+    // Whether refresh cleared the conflict by hand before the first drain, or that drain's own refresh did.
+    for by_hand in [true, false] {
+        let d = Drain::new();
+        let run_id = conflicted_spec(&d, SPEC_FOR_HUMAN, APPROVE, &[]);
+        if by_hand {
+            d.cli.with(|world| crate::cli::refresh::refresh_command(world, "/proj", None)).unwrap();
+        }
+        let r = d.drain(vec![], &[]);
+        assert_eq!(d.header("a"), (some(SPEC_IN_REVIEW), Some(run_id.clone()), some(PR_A)), "{by_hand} {}", r.err);
+        set_back_for_human(&d, &run_id);
+        d.cli.f.host.state().gh_calls.clear();
+        let r = d.drain(vec![], &[]);
+        assert_eq!(r.status, 0, "{}", r.err);
+        assert_eq!(d.header("a"), (some(SPEC_FOR_HUMAN), Some(run_id), some(PR_A)), "{by_hand}");
+        assert_eq!(d.gh_urls(), Vec::<String>::new(), "{by_hand}");
+    }
+}
+
+#[test]
+fn a_ready_spec_whose_finished_run_refresh_cleared_is_left_once_the_human_sets_it_back() {
+    let d = Drain::new();
+    let run_id = conflicted_spec(&d, SPEC_FOR_HUMAN, APPROVE, &[]);
+    d.cli.with(|world| crate::cli::refresh::refresh_command(world, "/proj", None)).unwrap();
+    // As an interrupted drain leaves it: ready, with the Run: line of its finished run.
+    d.spec("a", &spec_text("First", Some(SPEC_READY), &[&format!("Run: {run_id}")]));
+    let r = d.drain(vec![], &[]);
+    assert_eq!(d.header("a"), (some(SPEC_IN_REVIEW), Some(run_id.clone()), some(PR_A)), "{}", r.err);
+    set_back_for_human(&d, &run_id);
+    let r = d.drain(vec![], &[]);
+    assert_eq!(r.status, 0, "{}", r.err);
+    assert_eq!(d.header("a"), (some(SPEC_FOR_HUMAN), Some(run_id), some(PR_A)));
+}
+
+#[test]
+fn a_dry_run_leaves_a_conflict_refresh_cleared_for_the_next_drain() {
+    let d = Drain::new();
+    let run_id = conflicted_spec(&d, SPEC_FOR_HUMAN, APPROVE, &[]);
+    d.cli.with(|world| crate::cli::refresh::refresh_command(world, "/proj", None)).unwrap();
+    let r = d.drain(vec![], &["--dry-run"]);
+    assert!(r.out.contains(&format!("a: ready-for-human -> in-review  {PR_A}\n")), "{}", r.out);
+    assert_eq!(d.cli.saved(&run_id).get("conflict_cleared"), Some(&Value::from(PR_A)));
+    let r = d.drain(vec![], &[]);
+    assert_eq!(r.status, 0, "{}", r.err);
+    assert_eq!(d.header("a"), (some(SPEC_IN_REVIEW), Some(run_id.clone()), some(PR_A)));
+    assert_eq!(d.cli.saved(&run_id).get("conflict_cleared"), Some(&Value::Null));
+}
+
+#[test]
+fn a_conflict_refresh_cleared_is_asked_about_once_even_when_gh_fails() {
+    let d = Drain::new();
+    let run_id = conflicted_spec(&d, SPEC_FOR_HUMAN, APPROVE, &[]);
+    d.cli.with(|world| crate::cli::refresh::refresh_command(world, "/proj", None)).unwrap();
+    let unreachable = Completed { status: 1, stdout: String::new(), stderr: "Could not resolve to a PullRequest".into() };
+    d.cli.f.host.state().pull_requests.insert(PR_A.into(), FakePr::Fails(unreachable));
+    let r = d.drain(vec![], &[]);
+    assert_eq!(r.status, EXIT_ERROR, "{}", r.err);
+    d.cli.f.host.state().gh_calls.clear();
+    let r = d.drain(vec![], &[]);
+    assert_eq!(r.status, 0, "{}", r.err);
+    assert_eq!(d.header("a"), (some(SPEC_FOR_HUMAN), Some(run_id), some(PR_A)));
+    assert_eq!(d.gh_urls(), Vec::<String>::new());
 }
 
 #[test]

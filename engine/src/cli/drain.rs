@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use super::args::DrainArgs;
 use super::refresh::{has_conflict, refresh_conflict};
 use super::start::{flagged_workflow, new_state};
-use super::{finish, prune, resume_command, Connected, Ended, Stop};
+use super::{finish, prune, record_in_state, resume_command, Connected, Ended, Stop};
 use crate::constants::{EXIT_ERROR, EXIT_WAITING, RUNS_DIR, SUCCEEDED};
 use crate::error::OrchestratorError;
 use crate::pipeline::DONE;
@@ -273,7 +273,8 @@ impl PullRequestStates<'_, '_> {
 /// 1. a SPEC_IN_REVIEW or SPEC_FOR_HUMAN spec's run, its conflict refreshed, or found cleared by a refresh before
 ///    this drain (conflict_header), which can make a SPEC_FOR_HUMAN spec SPEC_IN_REVIEW with its pull request;
 /// 2. a SPEC_READY spec's finished run on its Run: line, which an interrupted drain leaves (finished_run_header):
-///    SPEC_IN_REVIEW with its pull request, or SPEC_FOR_HUMAN;
+///    SPEC_IN_REVIEW with its pull request, or SPEC_FOR_HUMAN; a conflict a refresh cleared is taken up so
+///    (take_cleared);
 /// 3. a spec now SPEC_IN_REVIEW with a pull request, or SPEC_FOR_HUMAN with one whose state step 1 heard, which it
 ///    hears only of a run whose conflict is refreshed or was cleared: SPEC_DONE once it is merged, SPEC_FOR_HUMAN
 ///    once it is closed (pull_request_header).
@@ -292,7 +293,12 @@ fn settled_header(
     let run = spec.run().filter(|r| !r.is_empty());
     match (status.as_deref(), run) {
         (Some(SPEC_IN_REVIEW | SPEC_FOR_HUMAN), _) => merge(&mut entries, conflict_header(spec, runs, prs, dry_run)?),
-        (Some(SPEC_READY), Some(run)) => merge(&mut entries, finished_run_header(spec, &run, runs, prs, target)?),
+        (Some(SPEC_READY), Some(run)) => {
+            merge(&mut entries, finished_run_header(spec, &run, runs, prs, target)?);
+            if let Some((_, saved)) = saved_run(runs, &run) {
+                take_cleared(prs, saved, dry_run)?;
+            }
+        }
         _ => {}
     }
     let status = entry(&entries, STATUS_KEY).map(String::from).or(status);
@@ -317,10 +323,8 @@ fn saved_run<'r>(runs: &'r [(u64, Value)], run_id: &str) -> Option<&'r (u64, Val
 /// Refresh the run on the spec's Run: line, if it has_conflict, as refreshed_headers says, telling prs the state gh
 /// gave its pull request, and return the header lines that sets: SPEC_IN_REVIEW and the pull request for a
 /// SPEC_FOR_HUMAN spec whose succeeded run's pull request is open and no longer conflicts; none otherwise, and for a
-/// run not among runs, Host::run_states's. A run whose conflict a refresh before this drain cleared
-/// (RunState::conflict_cleared) counts as one this refresh cleared, its pull request's state asked of prs, and only
-/// for a SPEC_FOR_HUMAN spec whose run succeeded; a spec the human set SPEC_FOR_HUMAN for another reason has no such
-/// run, and is left as it is.
+/// run not among runs, Host::run_states's. A run whose conflict a refresh before this drain cleared counts as one this
+/// refresh cleared, once (take_cleared), its pull request's state asked of prs.
 fn conflict_header(
     spec: &QueuedSpec,
     runs: &[(u64, Value)],
@@ -328,26 +332,44 @@ fn conflict_header(
     dry_run: bool,
 ) -> Result<Entries, OrchestratorError> {
     let Some((_, saved)) = spec.run().and_then(|run| saved_run(runs, &run)) else { return Ok(vec![]) };
-    let for_human = spec.status().as_deref() == Some(SPEC_FOR_HUMAN);
-    let succeeded = saved.get("verdict").and_then(Value::as_str).is_some_and(|v| SUCCEEDED.contains(&v));
     // The pull request whose conflict is cleared now, while it is open; None when there is none.
     let cleared_open = if has_conflict(saved) {
-        let check = refresh_conflict(prs.world, prs.cwd, saved, dry_run)?;
+        let check = refresh_conflict(prs.world, prs.cwd, saved, dry_run, false)?;
         if !dry_run {
             prs.world.with.human.log(&check.line());
         }
         prs.learn(&check.url, &check.pr_state);
         (check.pr_state == "OPEN" && check.clears()).then_some(check.url)
+    } else if let Some(url) = take_cleared(prs, saved, dry_run)? {
+        (prs.state(&url)? == "OPEN").then_some(url)
     } else {
-        match saved.get("conflict_cleared").filter(|u| u.is_set()).map(Value::text) {
-            Some(url) if for_human && succeeded => (prs.state(&url)? == "OPEN").then_some(url),
-            _ => None,
-        }
+        None
     };
+    let succeeded = saved.get("verdict").and_then(Value::as_str).is_some_and(|v| SUCCEEDED.contains(&v));
     match cleared_open {
-        Some(url) if for_human && succeeded => Ok(vec![(STATUS_KEY, SPEC_IN_REVIEW.into()), (PR_KEY, url)]),
+        Some(url) if spec.status().as_deref() == Some(SPEC_FOR_HUMAN) && succeeded => {
+            Ok(vec![(STATUS_KEY, SPEC_IN_REVIEW.into()), (PR_KEY, url)])
+        }
         _ => Ok(vec![]),
     }
+}
+
+/// The pull request whose conflict a refresh run by hand cleared for the run saved as saved
+/// (RunState::conflict_cleared), for drain to take up as though its own refresh had cleared it; None for a run without
+/// one.
+/// Unless dry_run, the record is removed from the run's state before the caller acts on it, so that drain takes each
+/// up in one pass only: a spec the human sets back afterwards stays as set, and a pull request gh cannot be asked
+/// about fails one drain, not every one. prs gives the project and host. Errors: as record_in_state.
+fn take_cleared(prs: &PullRequestStates, saved: &Value, dry_run: bool) -> Result<Option<String>, OrchestratorError> {
+    let Some(url) = saved.get("conflict_cleared").filter(|u| u.is_set()).map(Value::text) else { return Ok(None) };
+    if !dry_run {
+        let run_id = saved.get("run_id").map(Value::text).unwrap_or_default();
+        let path = format!("{}/{RUNS_DIR}/{run_id}/state.json", prs.cwd);
+        let taken = [("conflict_cleared", Value::Null)];
+        record_in_state(prs.world.with.host, &path, saved, &taken, "drain took up its cleared conflict")
+            .map_err(|e| OrchestratorError(format!("run {run_id}: {e}")))?;
+    }
+    Ok(Some(url))
 }
 
 /// The header lines to set for a spec whose pull request is in state, as gh gives it: SPEC_DONE for MERGED,

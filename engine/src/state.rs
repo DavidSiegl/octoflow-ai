@@ -45,10 +45,10 @@ pub struct RunState {
     /// The files that conflicted with the base branch when the pull request was opened, as a draft; empty again once
     /// refresh found the pull request merging cleanly, merged or closed (refresh_conflict).
     pub conflicts: Vec<String>,
-    /// The pull request, by URL, that refresh found open and merging cleanly when it emptied conflicts: a draft
-    /// opened over conflicts whose spec drain may now move to review (crate::cli::drain), though conflicts no longer
-    /// shows it was held back. None for a run whose conflicts were never cleared while its pull request was open, and
-    /// for one saved by a release before this field.
+    /// The pull request, by URL, that refresh run by hand found open and merging cleanly when it emptied conflicts, and
+    /// that no drain has taken up since: its spec, held back by the conflict, may go to review, though conflicts no
+    /// longer shows why it was held (crate::cli::drain::take_cleared). None for a run whose conflicts no such refresh
+    /// cleared, whose clearing a drain has taken up, or that a release before this field saved.
     pub conflict_cleared: Option<String>,
     pub error: Option<String>,
     /// Per role: the agent's name, its pane, the harness it runs in (kind) and, once herdr reports it, its session id.
