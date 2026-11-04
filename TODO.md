@@ -522,17 +522,22 @@ is rewritten to say what is left.
   `Cli::exec` asking the kernel for a signal when its parent, the runtime, dies (`PR_SET_PDEATHSIG`) when the app
   runs extracted, checked on a built AppImage, or with a runtime that forwards signals.
   Ticket: `.scratch/desktop-packaging-gaps/issues/02-appimage-signal-reaches-the-cli.md` (#240).
+- **Removing a tree of read-only directories is written out twice.** `chmod -R u+rwX "$dir" && rm -rf "$dir"`,
+  with a warning when it fails, is in the Jenkinsfile's stages (`TMPDIR`, emptied before each) and in
+  `packaging/build-desktop.sh`'s `remove_temporaries`, for the AppImage extractions it removes; a fix to one does
+  not reach the other. Raised by cross-review 132 (F6, nit, 2026-11-04): "Record or share it, as the implementer
+  judges". Closes with one script both call, should a third copy be needed or the idiom change.
 - **The Package stage still runs programs it wrote to `/tmp`, kept out of agentbox0's Falco mail only by path
   exceptions that let any binary placed under those paths run unreported.** The Test and Gate stages set `TMPDIR` to
   `$WORKSPACE_TMP/tmp`, on the agent's volume, which the rule cannot see (the Jenkinsfile's Test stage says why),
   but Package keeps `/tmp`. There the desktop AppImage that `packaging/build-desktop.sh`'s smoke test runs under
   `APPIMAGE_EXTRACT_AND_RUN` extracts itself into `$TMPDIR/appimage_extracted_<hash>`, below the test's `mktemp -d`,
   and runs from there; linuxdeploy and appimagetool extract into the script's own `build/desktop/tmp` since
-  desktop-packaging-gaps/03. The homelab excepts those paths (falco/rules/homelab.yaml, `appimage_extracted`). Each stage now creates
-  its own TMPDIR, so a stage added later has to copy both lines. Raised by cross-review 71 (F1, F3: "set TMPDIR for
-  every stage that runs what it builds (one pipeline-level definition next to CARGO_HOME would do)"). Closes with
-  that pipeline-level `TMPDIR`, created before any stage that uses it, and a Package stage seen to pass with it on
-  agentbox0. The homelab can then drop `appimage_extracted`.
+  desktop-packaging-gaps/03. The homelab excepts those paths (falco/rules/homelab.yaml, `appimage_extracted`). Each
+  stage now creates its own TMPDIR, so a stage added later has to copy both lines. Raised by cross-review 71 (F1,
+  F3: "set TMPDIR for every stage that runs what it builds (one pipeline-level definition next to CARGO_HOME would
+  do)"). Closes with that pipeline-level `TMPDIR`, created before any stage that uses it, and a Package stage seen
+  to pass with it on agentbox0. The homelab can then drop `appimage_extracted`.
 - **No build has yet been seen waiting for `ci/cargo-lock.sh` on the Jenkins agent.** PR #88's builds ran both
   cargo steps through it on agentbox0 (builds 1-3, 2026-10-25), so the agent image has `flock` and the lock file's
   directory is writable, and a quality-style build (`GIT_REF` set) ran `--no-wait`; but the two run side by side

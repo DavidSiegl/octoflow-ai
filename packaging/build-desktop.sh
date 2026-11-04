@@ -60,21 +60,26 @@ EOF
 
 # AppImage's tools are themselves AppImages; extracting them needs no FUSE on the build machine.
 export APPIMAGE_EXTRACT_AND_RUN=1
-# Extracted so, linuxdeploy and appimagetool each leave $TMPDIR/appimage_extracted_<hash> behind, never removed by
-# their runtime: tauri build gets a TMPDIR of its own, removed when this script exits, also on a failure, Ctrl-C or
-# SIGTERM. One a kill -9 leaves is removed by the next build. macOS builds no AppImage, and its build's temporary
-# files go the same way.
+# Extracted so, an AppImage leaves $TMPDIR/appimage_extracted_<hash> behind, never removed by its runtime: linuxdeploy
+# and appimagetool one each a build, and the desktop AppImage one each smoke test. So each of them runs with a TMPDIR
+# of its own, build_tmp for tauri build and appimage_smoke for the smoke test, removed when done and, should the
+# script stop first, on its exit, a failure, Ctrl-C, SIGHUP or SIGTERM. One a kill -9 leaves in build_tmp is removed
+# by the next build. macOS builds no AppImage, and its build's temporary files go the same way.
 build_tmp="$PWD/build/desktop/tmp"
+appimage_smoke=''
 # The extractions hold read-only directories, which rm -rf alone cannot empty.
-remove_build_tmp() {
-    [ ! -e "$build_tmp" ] || { chmod -R u+rwX "$build_tmp" && rm -rf "$build_tmp"; } \
-        || echo "build-desktop.sh: could not remove $build_tmp" >&2
+remove_temporaries() {
+    for dir in "$build_tmp" ${appimage_smoke:+"$appimage_smoke"}; do
+        [ ! -e "$dir" ] || { chmod -R u+rwX "$dir" && rm -rf "$dir"; } \
+            || echo "build-desktop.sh: could not remove $dir" >&2
+    done
 }
-trap remove_build_tmp EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
-remove_build_tmp
+trap remove_temporaries EXIT
+# Dies of the signal after cleaning up, so that a caller sees how the script ended.
+trap 'remove_temporaries; trap - EXIT HUP; kill -HUP $$' HUP
+trap 'remove_temporaries; trap - EXIT INT; kill -INT $$' INT
+trap 'remove_temporaries; trap - EXIT TERM; kill -TERM $$' TERM
+remove_temporaries
 mkdir "$build_tmp"
 (
     cd ui
@@ -84,6 +89,7 @@ mkdir "$build_tmp"
     cp "../$npm_notices" src-tauri/THIRD-PARTY-LICENSES-NPM.html
     TMPDIR="$build_tmp" npm run tauri -- build --ci --config "$config" --bundles "$bundles"
 )
+remove_temporaries
 
 # publish EXT FILE: copy FILE, the one bundle of this version Tauri made of a kind, to the name the release gives
 # it, dist/octoflow-desktop-<os>-<arch>.EXT, and write its .sha256. FILE is a glob, so none or several of them
@@ -120,15 +126,15 @@ smoke_cli() {
 smoke_appimage() {
     smoke=$(mktemp -d)
     smoke=$(cd "$smoke" && pwd -P)
-    # APPIMAGE_EXTRACT_AND_RUN extracts the AppImage under $TMPDIR and never removes it, 336 MB a build: under
-    # $smoke it goes with the rest. Nothing after this function, the script's last step, makes temporary files.
+    appimage_smoke=$smoke
+    # For the AppImage's extraction (APPIMAGE_EXTRACT_AND_RUN, above). Nothing after this function, the script's last
+    # step, makes temporary files.
     export TMPDIR="$smoke"
     serve_pid='' orchestrator=''
     smoke_fail() {
         echo "build-desktop.sh: the AppImage as the CLI: $*" >&2
         # The orchestrator first: the AppImage's runtime does not pass a signal on to it.
         for pid in $orchestrator $serve_pid; do kill "$pid" 2>/dev/null || true; done
-        rm -rf "$smoke"
         exit 1
     }
     smoke_cli "$smoke" "$1"
@@ -173,7 +179,7 @@ smoke_appimage() {
 
     kill "$orchestrator"
     wait "$serve_pid" || smoke_fail "serve did not exit 0 on SIGTERM"
-    rm -rf "$smoke"
+    remove_temporaries
     echo "smoke-tested dist/$(basename "$1") as the CLI"
 }
 
