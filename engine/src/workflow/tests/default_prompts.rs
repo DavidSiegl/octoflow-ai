@@ -668,3 +668,24 @@ fn a_resume_keeps_the_prompts_the_run_started_with() {
     }
 }
 
+
+#[test]
+fn a_run_an_earlier_release_started_with_its_fix_prompt_file_resumes() {
+    // Started before 0.58.0 with a FIX_PROMPT.md that named {prev_review_path}, which a prompt file read today may
+    // not (crate::prompts' EARLIER_PLACEHOLDERS), and saved in round 1's review, before RunState::verdicts.
+    let mut state = saved_run("review", 1, &["spec", "build", "review"]);
+    state.prompt_overrides.insert("FIX_PROMPT", "Fix {prev_review_path}; report to {build_path}.".to_string());
+    let Value::Object(mut saved) = state.to_json() else { unreachable!("a state is saved as an object") };
+    saved.shift_remove("verdicts");
+    crate::test_support::resumable(&[], &saved).unwrap();
+    let seen = seen();
+    let f = Fixture::resume(Rc::new(FakeHost::default()), RunState::from_saved(&saved).unwrap(), vec![
+        ("review", vec![review_turn(1, CHANGES_REQUESTED), review_turn(2, APPROVE)]),
+        ("build", vec![recording(build_turn(2), &seen)]),
+    ], &[], &[]);
+    f.put(&format!("{D}/build-1.md"), "report 1");
+    assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
+    assert_eq!(seen.borrow().len(), 1);
+    let fix = &seen.borrow()[0];
+    assert!(fix.contains(&format!("Fix {D}/review-1.md; report to {D}/build-2.md.")), "{fix}");
+}

@@ -146,6 +146,24 @@ fn a_state_whose_prompt_an_earlier_release_could_fill_in_is_refused() {
 }
 
 #[test]
+fn a_state_keeps_the_fix_prompt_an_earlier_release_saved() {
+    // Saved before 0.58.0, whose FIX_PROMPT named {prev_review_path}: refused as a prompt file (see
+    // the_builders_fix_prompt_names_the_findings_that_sent_the_round_back), read as saved.
+    let earlier = "Fix {prev_review_path}; report to {build_path}.";
+    let overrides: Map<String> = [("FIX_PROMPT", earlier.to_string())].into_iter().collect();
+    assert_eq!(saved_prompts(&overrides, "r").unwrap().text(Prompt::FixPrompt), earlier);
+    // Only that prompt's earlier placeholders, and only all of them.
+    for (name, text) in [
+        ("FIX_PROMPT", "Fix {prev_review_path}."),
+        ("FIX_PROMPT", "Fix {prev_review_path} and {findings}; report to {build_path}."),
+        ("RECHECK_PROMPT", "Recheck {prev_review_path}, {build_path}, {change}, {spec_path}; write {review_path}."),
+    ] {
+        let overrides: Map<String> = [(name, text.to_string())].into_iter().collect();
+        assert!(saved_prompts(&overrides, "r").is_err(), "{name}: {text}");
+    }
+}
+
+#[test]
 fn a_problem_names_no_prompt_that_does_not_exist() {
     assert_eq!(prompt_problem("NO_SUCH_PROMPT", "x"), None);
 }

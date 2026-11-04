@@ -722,6 +722,41 @@ fn the_last_review_in_a_later_round() {
 }
 
 #[test]
+fn a_run_an_earlier_release_started_with_its_fix_prompt_file_lists_and_shows_whole() {
+    // Its saved FIX_PROMPT names {prev_review_path}, as a prompt file could before 0.58.0 (crate::prompts'
+    // EARLIER_PLACEHOLDERS).
+    let fields = [
+        ("prompt_overrides", json(r#"{"FIX_PROMPT": "Fix {prev_review_path}; report to {build_path}."}"#)),
+        ("agents", json(r#"{"build": {"name": "build-c0ffee", "pane": "w1:p2"}}"#)),
+    ];
+    let stale = with(mine(), &fields);
+    let record = record(&stale, STALE_SECONDS + 1, true, &[]);
+    let steps =
+        json(r#"[{"id": "spec", "role": "spec"}, {"id": "build", "role": "build"}, {"id": "review", "role": "review"}]"#);
+    assert_eq!(
+        [key(&record, "steps"), key(&record, "role"), key(&record, "pane"), key(&record, "resume_command")],
+        [steps.clone(), Value::from("build"), Value::from("w1:p2"), Value::from("orchestrator resume c0ffee")]
+    );
+    let cli = alive();
+    let doc = list_json(&cli, &[], &[(STALE_SECONDS + 1, stale)]);
+    let listed = &doc.get("runs").and_then(Value::as_array).unwrap()[0];
+    assert_eq!((listed.get("steps"), listed.get("role")), (Some(&steps), Some(&Value::from("build"))));
+    assert_eq!(cli.main(&["list", "--cwd", "/proj"]), 0);
+    assert_eq!(
+        cli.lines()[0],
+        "20260930-070000-c0ffee  build    round 1  stale: no heartbeat for 5m; resume: orchestrator resume c0ffee --cwd /proj"
+    );
+
+    let later =
+        [("phase", Value::from("build")), ("round", Value::from(2)), ("verdict", Value::from(CHANGES_REQUESTED))];
+    let cli = show_host(&[show_state(&[&later[..], &fields[..1]].concat())]);
+    put(&cli, "review-1.md", "VERDICT: CHANGES_REQUESTED\n\n1. a bug\n");
+    let out = show(&cli, "a1b2c3").1;
+    assert!(out.contains("\nworkflow   default: spec -> build -> review (back to build)\n"), "{out}");
+    assert!(out.ends_with(&format!("\nlast review: {SHOW_DIR}/review-1.md\n\n1. a bug\n")), "{out}");
+}
+
+#[test]
 fn a_review_without_a_verdict_line_is_shown_whole() {
     let cli = show_host(&[show_state(&[("phase", Value::from("review")), ("verdict", Value::Null)])]);
     put(&cli, "review-1.md", "half a review");

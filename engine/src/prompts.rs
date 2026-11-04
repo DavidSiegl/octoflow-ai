@@ -251,7 +251,8 @@ impl Prompt {
 
 /// The texts a run sends agents besides a workflow file's own prompts: the default workflow's steps, the follow-ups
 /// and the notes. Each is the built-in text of its Prompt unless a prompt file replaced it (load_prompts). Each is a
-/// template whose placeholders are the built-in text's; BLOCKED_NOTE has none.
+/// template whose placeholders are the built-in text's, or for a run an earlier release started, that release's
+/// (EARLIER_PLACEHOLDERS); BLOCKED_NOTE has none.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Prompts {
     /// By Prompt::ALL's order.
@@ -295,14 +296,33 @@ impl Prompts {
     }
 }
 
-/// The prompts a run started with, from the overrides saved with it (RunState::prompt_overrides); an error when they
-/// name a prompt this orchestrator lacks, or when one holds what a prompt file may not (prompt_problem), as an
-/// override saved by a release that took more of a placeholder than its name does.
+/// The placeholders an earlier release's built-in text of a prompt took, where they differ from today's: an override
+/// saved with a run that release started may use them (saved_prompts); a prompt file read today may not.
+///
+/// FIX_PROMPT took {build_path} and {prev_review_path} until 0.58.0 gave it {findings}. Its text words only the
+/// default workflow's build step's `again` (pipeline::default_workflow), where {prev_review_path} is still a
+/// placeholder, and a run started before 0.58.0 had one verdict step, so for that run both name the same file.
+const EARLIER_PLACEHOLDERS: &[(Prompt, &[&str])] = &[(Prompt::FixPrompt, &["build_path", "prev_review_path"])];
+
+/// The prompts a run started with, from the overrides saved with it (RunState::prompt_overrides). Each override is
+/// held to the placeholders of its built-in text, or to those an earlier release's text took (EARLIER_PLACEHOLDERS).
+///
+/// Errors, naming run_id: the overrides name a prompt this orchestrator lacks, or one holds what a prompt file may
+/// not (prompt_problem) and fits no earlier text either, as an override saved by a release that took more of a
+/// placeholder than its name does.
 pub fn saved_prompts(overrides: &Map<String>, run_id: &str) -> Result<Prompts, OrchestratorError> {
     let prompts = Prompts::from_overrides(overrides).map_err(|unknown| {
         OrchestratorError(format!("run state {run_id} replaces prompt {unknown}, which this orchestrator lacks"))
     })?;
-    match overrides.iter().find_map(|(name, text)| prompt_problem(name, text).map(|problem| (name, problem))) {
+    let fits_earlier_text = |name: &str, text: &str| {
+        EARLIER_PLACEHOLDERS
+            .iter()
+            .any(|(p, earlier)| p.name() == name && placeholder_problem(name, text, earlier).is_none())
+    };
+    let refused = overrides.iter().find_map(|(name, text)| {
+        prompt_problem(name, text).filter(|_| !fits_earlier_text(name, text)).map(|problem| (name, problem))
+    });
+    match refused {
         Some((name, problem)) => Err(OrchestratorError(format!(
             "run state {run_id} replaces prompt {name} with a text this orchestrator cannot fill in: {problem}; \
              finish the run with the release that started it"
@@ -384,12 +404,18 @@ pub fn load_prompts(config: &ConfigDir) -> Result<Prompts, OrchestratorError> {
 /// What stops text from replacing the built-in prompt of that name, a Prompt's, or None: a placeholder the built-in
 /// text lacks, naming where it is, or a missing one it has, or a template that cannot be read (template::parse).
 pub fn prompt_problem(name: &str, text: &str) -> Option<String> {
-    let built_in = Prompt::named(name)?.built_in();
+    let built_in = placeholders(Prompt::named(name)?.built_in()).expect("a built-in text parses");
+    placeholder_problem(name, text, &built_in.iter().map(String::as_str).collect::<Vec<_>>())
+}
+
+/// What stops text from being a template of just the placeholders wanted, worded as prompt_problem's for the prompt
+/// of that name, or None.
+fn placeholder_problem(name: &str, text: &str, wanted: &[&str]) -> Option<String> {
     let used = match placeholders(text) {
         Ok(names) => names,
         Err(e) => return Some(e.to_string()),
     };
-    let mut wanted = placeholders(built_in).expect("a built-in text parses");
+    let mut wanted = wanted.to_vec();
     wanted.sort();
     wanted.dedup();
     let takes = if wanted.is_empty() {
@@ -398,11 +424,11 @@ pub fn prompt_problem(name: &str, text: &str) -> Option<String> {
         let list: Vec<String> = wanted.iter().map(|p| format!("{{{p}}}")).collect();
         format!("{name} takes {}", list.join(", "))
     };
-    let empty = |p: &str| wanted.iter().any(|w| w == p).then(String::new);
+    let empty = |p: &str| wanted.contains(&p).then(String::new);
     if let Err(e) = fill(text, &empty) {
         return Some(format!("{e}; {takes}"));
     }
-    let missing = wanted.iter().filter(|p| !used.contains(p)).min()?;
+    let missing = wanted.iter().filter(|p| !used.iter().any(|u| u == *p)).min()?;
     Some(format!("placeholder {{{missing}}} is missing; {takes}"))
 }
 
