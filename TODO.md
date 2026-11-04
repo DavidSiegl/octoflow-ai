@@ -69,6 +69,15 @@ is rewritten to say what is left.
 
 ## Open issues
 
+- **The agents' prompts name a plain `git diff {base}`, which follows the user's `diff.relative`.**
+  `change_description` (`engine/src/workflow.rs`) tells every step's agent that the change is
+  `` `git diff {base}` in {work_dir} ``. Deferred from cross-review 142 (F1, should-fix, 2026-11-04): "With
+  `diff.relative=true` in the user's config and a `work_dir` that is a subdirectory (the case this branch's tests
+  cover, and the ticket notes that a run's `work_dir` is its `cwd` when it has no worktree), an agent that runs that
+  command sees only the subdirectory's files. A Reviewer can then approve a change without seeing an edit elsewhere,
+  such as a weakened test outside `sub/`." Closes with the prompt naming `git diff --no-relative {base}`, its golden
+  files and e2e recordings re-recorded. Ticket:
+  `.scratch/git-diff-relative/issues/02-prompt-diff-ignores-diff-relative.md`.
 - **Writes to origin are not tried again through an outage.** `reaching_origin` (`engine/src/workflow/origin.rs`)
   wraps the run's fetches and its `ls-remote` reads only; the pushes (`engine/src/host.rs`'s `push_ref`,
   `push_branch`), the remote branch deletions (`delete_remote_branch`, `delete_remote_branch_at`) and the `gh` calls

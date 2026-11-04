@@ -5,7 +5,7 @@
 use crate::ci::{Jenkins, QualityBuild};
 use crate::constants::REMOTE;
 use crate::error::{shortened, OrchestratorError};
-use crate::host::{top_literal, Host, DEFAULT_TIMEOUT};
+use crate::host::{names_between, nul_separated, Host, DEFAULT_TIMEOUT};
 
 /// The files that decide how a change is judged, a directory standing for every file under it: the stages, the gate,
 /// the helper it reads Rust through (which a quality build, like gate.py, takes from the main commit it judges by), its
@@ -154,14 +154,10 @@ fn build_trust(
 /// The files of JUDGING_FILES that differ between commits a and b, their mode included, or that only one of them has,
 /// in git's order: a file under a directory of JUDGING_FILES by its own path. Errors: git fails.
 fn judging_changes(host: &dyn Host, root: &str, a: &str, b: &str) -> Result<Vec<String>, OrchestratorError> {
-    // --no-relative: under the user's diff.relative, a diff run in a subdirectory lists none of the top's files.
-    let mut args = vec!["diff", "--name-only", "-z", "--no-relative", "--no-renames", "--no-ext-diff", a, b, "--"];
-    let literal = top_literal(&JUDGING_FILES);
-    args.extend(literal.iter().map(String::as_str));
-    let names = host.git_verbatim(root, &args)?;
+    let names = names_between(host, root, a, b, &JUDGING_FILES.map(String::from))?;
     // Only a file under a directory of JUDGING_FILES can have a name that is not UTF-8; such a name only says which
     // file a refusal is for, so it is given with U+FFFD in place of what is not.
-    Ok(names.split(|&c| c == 0).filter(|p| !p.is_empty()).map(|p| String::from_utf8_lossy(p).into_owned()).collect())
+    Ok(nul_separated(&names))
 }
 
 #[cfg(test)]

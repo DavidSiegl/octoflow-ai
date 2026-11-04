@@ -1138,6 +1138,13 @@ impl Clones {
         head
     }
 
+    /// Set diff.relative in checkout a, as a user's git config may, and return the path of a's directory sub, which
+    /// this does not create.
+    fn diff_relative_sub(&self) -> String {
+        self.sh(&["git", "-C", &self.a, "config", "diff.relative", "true"]);
+        format!("{}/sub", self.a)
+    }
+
     /// Write a file of checkout a, or delete it with no text.
     fn put(&self, name: &str, text: Option<&str>) {
         let path = format!("{}/{name}", self.a);
@@ -1519,11 +1526,10 @@ fn locked_files_are_restored_and_the_index_is_left_alone() {
 fn locks_take_every_path_from_a_subdirectory_under_diff_relative() {
     let c = Clones::new();
     let base = c.head(&c.a);
-    c.sh(&["git", "-C", &c.a, "config", "diff.relative", "true"]);
+    let sub = c.diff_relative_sub();
     let git_ref = "refs/orchestrator/a1b2c3/locked/tests";
     c.put("app.py", Some("one\ntested\n"));
     c.put("sub/test_app.py", Some("assert f()\n"));
-    let sub = format!("{}/sub", c.a);
     let locked = c.host.lock(&sub, &base, git_ref).unwrap();
     assert_eq!(locked, ["app.py", "sub/test_app.py"]);
 
@@ -1537,9 +1543,8 @@ fn locks_take_every_path_from_a_subdirectory_under_diff_relative() {
 fn a_change_is_read_whole_from_a_subdirectory_under_diff_relative() {
     let c = Clones::new();
     let base = c.commit(&c.a, "sub/lib.py", "lib\n");
-    c.sh(&["git", "-C", &c.a, "config", "diff.relative", "true"]);
+    let sub = c.diff_relative_sub();
     let head = c.commit(&c.a, "app.py", "one\ntwo\n");
-    let sub = format!("{}/sub", c.a);
     let diff = c.host.change_diff(&sub, &base, Some(&head)).unwrap();
     assert_eq!(changed_lines(&diff), [("app.py".to_string(), vec![2])]);
     let counts = c.host.changed_line_counts(&sub, &base, &head).unwrap();
@@ -1552,9 +1557,8 @@ fn a_conflict_outside_a_subdirectory_is_reported_under_diff_relative() {
     let c = Clones::new();
     c.feature_branch();
     let mine = c.commit(&c.a, "sub/lib.py", "lib\n");
-    c.sh(&["git", "-C", &c.a, "config", "diff.relative", "true"]);
+    let sub = c.diff_relative_sub();
     c.push_from_b("app.py", "one\ntheirs\n");
-    let sub = format!("{}/sub", c.a);
     assert_eq!(c.host.merge_upstream(&sub, "main").unwrap(), ["app.py"]);
     assert_eq!(c.head(&c.a), mine);
 }
