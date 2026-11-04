@@ -49,7 +49,7 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
   const [task, setTask] = useState("");
   // The workflow picked; null until one is.
   const [picked, setPicked] = useState<string | null>(null);
-  // An agent and a model for the run's roles that their rows leave empty; empty for each role's workflow's own.
+  // An agent and a model for the run's roles that their rows leave empty; empty for each role's default.
   const [agent, setAgent] = useState("");
   const [model, setModel] = useState("");
   // What each role's row sets, by role key; only roles of the workflow chosen have an entry, so that a change of
