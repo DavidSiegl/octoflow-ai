@@ -74,6 +74,17 @@ fn finished_and_failed_runs_are_never_stale() {
 }
 
 #[test]
+fn a_done_run_not_yet_released_is_judged_by_its_owner_as_ending() {
+    let ending = |record: &Value, age: u64, alive: bool| ending_health(record, age, "here", &|_| alive);
+    let owned = run_record("done", Some(owner("here")), None, Some(APPROVE));
+    assert_eq!(health(&owned, 40, true), None, "a done run is not running, as list shows it");
+    assert_eq!(ending(&owned, 40, true), Some((RUNNING, "pid 4242 on here, beat 40s ago".to_string())));
+    assert_eq!(ending(&owned, HEARTBEAT_SECONDS + 1, false).unwrap().0, STALE);
+    assert_eq!(ending(&run_record("done", None, None, Some(APPROVE)), 40, true), None);
+    assert_eq!(ending(&run_record("build", Some(owner("here")), None, None), 40, true), None);
+}
+
+#[test]
 fn own_process_is_alive() {
     assert!(pid_alive(i64::from(std::process::id())));
 }
