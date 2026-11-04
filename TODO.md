@@ -548,6 +548,19 @@ is rewritten to say what is left.
   not reach the other. `engine/src/proofs.rs`'s `REMOVE_TREE_SCRIPT` is a looser third (`rm` runs even when `chmod`
   fails, with no warning). Raised by cross-review 132 (F6, nit, 2026-11-04): "Record or share it, as the implementer
   judges". Closes with one script both call, should a third copy be needed or the idiom change.
+- **Ctrl-C during `packaging/build-desktop.sh`'s AppImage smoke test leaves `serve` running.** `smoke_appimage`
+  starts the AppImage's `serve` as a background job, which a non-interactive shell starts with SIGINT ignored, and
+  the INT trap kills no one, so the AppImage and the orchestrator it execs outlive the script; the trap has removed
+  the smoke test's directory they run from by then. A SIGTERM to the process group (a Jenkins abort) does reach
+  them, and Jenkins runs with SIGINT ignored, so this is interactive use only. Older than desktop-packaging-gaps/03,
+  whose traps kill no one either. Raised by cross-review 132 (round 2, not recorded there, 2026-11-04). Closes with
+  the traps killing `serve`'s processes, as `smoke_fail` does, before removing the directory.
+- **`packaging/build-desktop.sh`'s macOS smoke test leaves its directory when the script is killed by a signal.**
+  `smoke_dmg` removes its `mktemp -d` only in its `smoke_fail` and on success, not through `remove_temporaries`
+  as `smoke_appimage`'s since desktop-packaging-gaps/03, so Ctrl-C or SIGTERM leaves it, with the .dmg possibly
+  still attached at its `mnt`. It holds no AppImage extraction, so it is small. Raised by cross-review 132
+  (round 2, not recorded there, 2026-11-04). Closes with `smoke_dmg`'s directory, and the detach, in
+  `remove_temporaries`, checked on a Mac.
 - **The Package stage still runs programs it wrote to `/tmp`, kept out of agentbox0's Falco mail only by path
   exceptions that let any binary placed under those paths run unreported.** The Test and Gate stages set `TMPDIR` to
   `$WORKSPACE_TMP/tmp`, on the agent's volume, which the rule cannot see (the Jenkinsfile's Test stage says why),
