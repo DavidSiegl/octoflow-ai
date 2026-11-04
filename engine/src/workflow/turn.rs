@@ -182,8 +182,8 @@ impl Workflow<'_> {
         Ok(out)
     }
 
-    /// What the turn does once the role's agent is ready, as how says it came to be, prompting saying whether this
-    /// pass prompts it.
+    /// What the turn does once the role's agent is ready, as how says it came to be; prompting is true when this pass
+    /// sends the agent a prompt.
     ///
     /// An interview is announced only with a prompt: an agent only waited for (alive, and already prompted for the
     /// turn's file) was announced by the orchestrator that prompted it, and a resume does not tell the human again.
