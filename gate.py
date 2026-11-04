@@ -2186,8 +2186,8 @@ def _rust_cfg_oses(tokens: list[str], i: int, outermost: bool) -> tuple[frozense
         oses = _rust_family_oses(name)
     elif name in ("target_os", "target_family") and tokens[i + 1:i + 2] == ["="] and tokens[i + 2:i + 3] \
             and tokens[i + 2].startswith('"'):
-        value = tokens[i + 2][1:-1]
-        oses = frozenset({value} & _RUST_TARGET_OSES.keys()) if name == "target_os" else _rust_family_oses(value)
+        named = tokens[i + 2][1:-1]
+        oses = frozenset({named} & _RUST_TARGET_OSES.keys()) if name == "target_os" else _rust_family_oses(named)
         i += 2
     else:
         raise ValueError(name)
@@ -2233,7 +2233,8 @@ def _rust_attribute(first: str, following: list[str]) -> tuple[str, int, str]:
     lines of following it wraps onto; and the text after its `]` on the line holding it. Never closed, it is first and
     all of following, and that text is empty. Brackets inside a string literal (`"..."`, its `\\"` escapes skipped)
     are not counted; a raw string is read as a plain one."""
-    depth, parts, quoted = 0, [], False
+    depth, quoted = 0, False
+    parts: list[str] = []
     for used, text in enumerate([first] + [line.strip() for line in following]):
         escaped = False
         for j, c in enumerate(text):
@@ -2277,24 +2278,39 @@ def _rust_skips(f: ChangedTestFile, document: dict, tests: list[_RustTest]) -> l
     lines = f.after.split("\n")
     for n in sorted(f.added - found.keys()):
         text = lines[n - 1].lstrip() if n <= len(lines) else ""
-        statement = not text.startswith("#!") and any(t.fn["line"] < n <= t.fn["end"] for t in tests)
-        if text.startswith("#!"):
-            judged = (path is not None and _rust_test_path(path)) or any(m["line"] <= n <= m["end"] for m in holding)
-        else:
-            judged = text.startswith("#") and (statement or any(m["attrs_line"] <= n < m["line"] for m in holding))
-        skipping = [a for a in _rust_line_attributes(text, lines[n:]) if _RUST_SKIPPING.match(a)] if judged else []
+        place = _rust_attribute_place(path, n, text, tests, holding)
+        skipping = [a for a in _rust_line_attributes(text, lines[n:]) if _RUST_SKIPPING.match(a)] if place else []
         if skipping:
-            found[n] = (skipping, not statement)
-    out = []
-    for line, (attributes, weighed) in sorted(found.items()):
-        failing = [a for a in attributes if not (weighed and _rust_platform_only(a))]
-        if failing:
-            out.append(_finding(path, line, "skip", f"`{_first_line(failing[0])}` added: it skips a test or turns it "
-                                                    f"off.", severity="error"))
-        else:
-            out.append(_finding(path, line, "platform-only", f"`{_first_line(attributes[0])}` added: it turns a test "
-                                                             f"off on the other platforms."))
-    return out
+            found[n] = (skipping, place != "statement")
+    return [_rust_skip_finding(path, line, attributes, weighed) for line, (attributes, weighed) in sorted(found.items())]
+
+
+def _rust_attribute_place(path: str | None, n: int, text: str, tests: list[_RustTest], holding: list[dict]) -> str | None:
+    """Where _rust_skips judges the attributes on line n of the Rust file at path, text that line without its
+    indentation, tests the file's tests and holding the inline modules holding one: "statement" on a line of its own
+    in a test's body; "module" among a holding module's outer attributes, or as an inner attribute, `#![...]`, inside
+    one or anywhere in a file _rust_test_path places among the tests; None where it judges none, as on a line not
+    starting with `#`."""
+    if text.startswith("#!"):
+        inside = (path is not None and _rust_test_path(path)) or any(m["line"] <= n <= m["end"] for m in holding)
+        return "module" if inside else None
+    if not text.startswith("#"):
+        return None
+    if any(t.fn["line"] < n <= t.fn["end"] for t in tests):
+        return "statement"
+    return "module" if any(m["attrs_line"] <= n < m["line"] for m in holding) else None
+
+
+def _rust_skip_finding(path: str | None, line: int, attributes: list[str], weighed: bool) -> dict:
+    """The finding on line of path, whose skipping attributes the change added are attributes, each whole: a
+    platform-only finding to weigh when weighed and each is _rust_platform_only, else a skip naming the first that is
+    not."""
+    failing = [a for a in attributes if not (weighed and _rust_platform_only(a))]
+    if failing:
+        return _finding(path, line, "skip", f"`{_first_line(failing[0])}` added: it skips a test or turns it off.",
+                        severity="error")
+    return _finding(path, line, "platform-only",
+                    f"`{_first_line(attributes[0])}` added: it turns a test off on the other platforms.")
 
 
 def _rust_swallowed_errors(f: ChangedTestFile, document: dict, tests: list[_RustTest]) -> list[dict]:
