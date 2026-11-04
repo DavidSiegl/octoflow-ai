@@ -16,7 +16,7 @@ fn xtask(args: &[&str]) -> std::process::Output {
 
 #[test]
 fn usage_errors_exit_2() {
-    for args in [&[][..], &["nope"], &["bundles", "--nope"], &["eval", "--repeat", "0"]] {
+    for args in [&[][..], &["nope"], &["bundles", "--nope"], &["eval", "--repeat", "0"], &["contract", "--nope"]] {
         let output = xtask(args);
         assert_eq!(output.status.code(), Some(2), "{args:?}");
         assert!(String::from_utf8_lossy(&output.stderr).contains("usage: cargo xtask"), "{args:?}");
