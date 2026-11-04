@@ -298,9 +298,9 @@ layout), with no Python of its own.
   so the terminal, the exit status and the signals sent to the app are the CLI's; a user's directory that is gone,
   or an exec that fails, prints why and exits 1. So the AppImage is the CLI too. Run without FUSE, the process its
   caller started is the AppImage's runtime, which stays the CLI's parent and passes on no signal: the CLI asks for
-  SIGTERM when that parent dies (`PR_SET_PDEATHSIG`), so whatever stops the runtime stops it by SIGTERM. On
-  macOS, a lone `-psn_` argument, which a Finder launch may pass, opens the window. Windows, which builds no app and
-  no console, has no CLI.
+  SIGTERM when that parent dies (`stop_with_appimage_runtime`, prctl(2)'s parent-death signal), so whatever stops
+  the runtime stops it by SIGTERM. On macOS, a lone `-psn_` argument, which a Finder launch may pass, opens the
+  window. Windows, which builds no app and no console, has no CLI.
 - **The user's shell.** `Orchestrator::command`, which the sidecar and the CLI are both built from, starts the
   orchestrator in `UserShell`'s environment and directory, not the app's. Only an AppImage makes them differ: its
   `AppRun` points path lists, `PYTHONHOME` and GTK's variables into the bundle and starts the app in
