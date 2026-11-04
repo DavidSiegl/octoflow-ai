@@ -127,8 +127,8 @@ pub struct RunState {
     /// changes, {"round", "written", "file", "finding", "demonstrated", "said"}, in the order they ran: round is the
     /// round it ran in, written the round whose proof step wrote it, file its basename in proofs_dir(written),
     /// finding the first number in that name, demonstrated whether it failed against the change, and said how it
-    /// exited and the last PROOF_TAIL_LINES lines it printed. A proof first runs in the round that wrote it (Workflow::judge_proofs), then
-    /// again in every later round until it does not fail (Workflow::rerun_proofs).
+    /// exited and the last PROOF_TAIL_LINES lines it printed. A proof first runs in the round that wrote it
+    /// (Workflow::judge_proofs), then again in every later round until it does not fail (Workflow::rerun_proofs).
     pub proofs: Vec<Object>,
     /// The fields of a state.json that this engine does not know, as they were read, in their order, so that a state
     /// a later release of the same format wrote keeps them through a save. to_json writes them, never over a field of

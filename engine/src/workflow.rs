@@ -1107,7 +1107,7 @@ impl<'a> Workflow<'a> {
     fn judged_rounds(&self, step: &Step, n: u32) -> Option<Vec<u32>> {
         step.loop_to.as_ref()?;
         let s = &self.state;
-        let first_recorded = s.verdicts.iter().map(|v| v.round).min().unwrap_or(n).min(n);
+        let first_recorded = s.verdicts.iter().map(|v| v.round).min().unwrap_or(n);
         let unrecorded = if self.pipeline.proves(step) { 1..first_recorded } else { 0..0 };
         let recorded = s.verdicts.iter().filter(|v| v.step == step.id && v.round < n).map(|v| v.round);
         Some(unrecorded.chain(recorded).collect())

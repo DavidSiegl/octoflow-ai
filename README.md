@@ -434,10 +434,9 @@ several approves only if each of them approved the last round, and `--max-rounds
 together. A workflow's `proof_command`, such as `"python -m pytest -q {proofs}"`, runs the tests the first verdict
 step wrote to back its findings. Prompts fill in `{task}`, `{cwd}`, `{n}`, `{change}`, `{path}`, `{proofs_dir}`,
 `{findings}` (from round 2 on, the verdict file whose request for changes started the round, which the default
-Builder's `again` names), and for every step `X`, `{X_path}`,
-`{prev_X_path}` and `{earlier_X_paths}`; write a literal brace as `{{` or `}}`. A placeholder is its
-name alone, with no conversion, format spec, attribute or index. The file is checked when it loads, and a run saves
-its workflow, so editing the file does not change a run already started.
+Builder's `again` names), and for every step `X`, `{X_path}`, `{prev_X_path}` and `{earlier_X_paths}`; write a literal
+brace as `{{` or `}}`. A placeholder is its name alone, with no conversion, format spec, attribute or index. The
+file is checked when it loads, and a run saves its workflow, so editing the file does not change a run already started.
 [Workflows](docs/architecture.md#workflows) has the full rules.
 
 ## Prompt files
