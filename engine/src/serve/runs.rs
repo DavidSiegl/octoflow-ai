@@ -145,7 +145,9 @@ impl ProjectRuns {
         match self.host.read_inside(&self.dir(run_id)?, plain_name(name)?)? {
             RunFileText::Text(text) => Ok(Some(text)),
             RunFileText::Missing => Ok(None),
-            RunFileText::Outside => Err(RunReadError::Refused(format!("{name:?} leads out of the run directory"))),
+            RunFileText::Outside => Err(RunReadError::Refused(format!(
+                "{name:?} leads out of run {run_id}'s directory, or the directory out of the runs directory"
+            ))),
         }
     }
 

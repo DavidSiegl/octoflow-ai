@@ -27,7 +27,8 @@ pub(crate) mod fake;
 
 /// How long a command may take when its caller names no other time, in seconds.
 pub const DEFAULT_TIMEOUT: u64 = 60;
-/// The status the scripts of read and session_log exit with when the file they read is not there.
+/// The status the scripts of read, read_inside and session_log exit with when the file they read is not there, and
+/// run_dir_resolved's when the run directory is not.
 pub const MISSING_FILE_STATUS: i32 = 3;
 /// gh's exit status when it is not logged in, and sh's when gh is not installed: no gh call can succeed then.
 pub const GH_UNUSABLE_STATUS: [i32; 2] = [4, 127];
@@ -52,7 +53,8 @@ const OUTSIDE_STATUS: i32 = 5;
 
 /// sh, run before a script given a run directory as $1: sets d to that directory with every link resolved, and
 /// defines `inside F`, which succeeds when file F, every link resolved, is in d or below it, and then leaves that
-/// path in "${r%/}/${p##*/}". It exits with MISSING_FILE_STATUS when $1 is not a directory, and with OUTSIDE_STATUS
+/// path in "${r%/}/${p##*/}"; it returns 1 when F leads out of d, and 2 when F cannot be resolved, as when it, or a
+/// link on its way, was removed meanwhile, or the links loop. The script exits with MISSING_FILE_STATUS when $1 is not a directory, and with OUTSIDE_STATUS
 /// when d is not below $1's parent, the runs directory, links resolved too. It uses only what sh has on Linux and
 /// macOS alike: `cd -P` and `pwd -P` resolve a directory, and a file's links are followed one at a time with readlink
 /// without options (POSIX.1-2024, and in GNU, BSD and BusyBox readlink, unlike readlink -f or realpath), at most 40
@@ -63,9 +65,9 @@ fn run_dir_resolved() -> String {
          d=$(cd -P -- \"$1\" 2>/dev/null && pwd -P) || exit {MISSING_FILE_STATUS}; \
          case $d in \"${{runs%/}}\"/*) ;; *) exit {OUTSIDE_STATUS};; esac; \
          inside() {{ p=$1 n=0; \
-           while [ -L \"$p\" ]; do n=$((n + 1)); [ \"$n\" -le 40 ] || return 1; t=$(readlink -- \"$p\") || return 1; \
+           while [ -L \"$p\" ]; do n=$((n + 1)); [ \"$n\" -le 40 ] || return 2; t=$(readlink -- \"$p\") || return 2; \
              case $t in /*) p=$t;; *) p=${{p%/*}}/$t;; esac; done; \
-           r=$(cd -P -- \"${{p%/*}}/\" 2>/dev/null && pwd -P) || return 1; \
+           r=$(cd -P -- \"${{p%/*}}/\" 2>/dev/null && pwd -P) || return 2; \
            case ${{r%/}}/${{p##*/}} in \"${{d%/}}\"/*) ;; *) return 1;; esac; }}; "
     )
 }
@@ -940,7 +942,8 @@ pub trait Host {
     /// run removes some, is in the list or not, never an error. Errors: stat fails on a file that is still there, or
     /// prints what is not a time.
     fn run_files(&self, run_dir: &str) -> Result<Vec<RunFile>, OrchestratorError> {
-        listed_run_files(self, run_dir, "", "")
+        let out = self.check(&["sh", "-c", &run_files_loop("true"), "_", run_dir], None, DEFAULT_TIMEOUT)?;
+        parsed_run_files(run_dir, &out)
     }
 
     /// As run_files, but only what stays inside the run directory, as serve shows it to the desktop app: a file whose
@@ -948,16 +951,24 @@ pub trait Host {
     /// is not in its parent directory, the runs directory, links resolved, lists none. The links are resolved on this
     /// host, as run_dir_resolved says. Errors: as run_files'.
     fn run_files_inside(&self, run_dir: &str) -> Result<Vec<RunFile>, OrchestratorError> {
-        listed_run_files(self, run_dir, &run_dir_resolved(), "inside \"$f\" || continue; ")
+        let script = format!("{}{}", run_dir_resolved(), run_files_loop("inside \"$f\""));
+        let argv = ["sh", "-c", &script, "_", run_dir];
+        let proc = self.run(&argv, None, DEFAULT_TIMEOUT)?;
+        if proc.status == MISSING_FILE_STATUS || proc.status == OUTSIDE_STATUS {
+            return Ok(vec![]);
+        }
+        parsed_run_files(run_dir, &checked(self, &argv, proc)?)
     }
 
     /// The text of the file name, a plain name, in run_dir, if it stays inside the run directory as run_files_inside
-    /// lists only those that do: Outside, having read nothing, for a file that leads out or a run_dir that does.
-    /// Errors: the file cannot be read, or is not UTF-8.
+    /// lists only those that do: Outside, having read nothing, for a file that leads out or a run_dir that does;
+    /// Missing for a file not there, or removed while it is resolved. Errors: the file cannot be read, or is not UTF-8.
     fn read_inside(&self, run_dir: &str, name: &str) -> Result<RunFileText, OrchestratorError> {
-        // The resolved path is what is read, so that a link changed since it was resolved is not followed again.
+        // What is read is the path inside resolved, so the links it walked are not followed again; one put in its
+        // place after that is, a race TODO.md records ("serve's link checks race the agent").
         let script = format!(
-            "{}f=$1/$2; [ -f \"$f\" ] || exit {MISSING_FILE_STATUS}; inside \"$f\" || exit {OUTSIDE_STATUS}; \
+            "{}f=$1/$2; [ -f \"$f\" ] || exit {MISSING_FILE_STATUS}; inside \"$f\"; \
+             case $? in 0) ;; 1) exit {OUTSIDE_STATUS};; *) exit {MISSING_FILE_STATUS};; esac; \
              cat -- \"${{r%/}}/${{p##*/}}\"",
             run_dir_resolved()
         );
@@ -971,32 +982,25 @@ pub trait Host {
     }
 }
 
-/// The files of run_dir on host, as run_files gives them, of those the sh skip lets through: it runs for each file $f
-/// before $f is stat'ed, and may `continue` past it. before is sh run ahead of the listing, which lists none when it
-/// exits with MISSING_FILE_STATUS or OUTSIDE_STATUS. Errors: as run_files'.
-fn listed_run_files<H: Host + ?Sized>(
-    host: &H,
-    run_dir: &str,
-    before: &str,
-    skip: &str,
-) -> Result<Vec<RunFile>, OrchestratorError> {
-    // Each entry is "<mtime> <path>" ended by a NUL, which no path holds.
-    let script = format!(
-        "{before}for f in \"$1\"/*; do [ -f \"$f\" ] || continue; \
+/// sh printing, for each file $f in the directory $1 that run_files lists and for which the sh condition keep
+/// succeeds, "<mtime> <path>" ended by a NUL, which no path holds: what parsed_run_files reads.
+fn run_files_loop(keep: &str) -> String {
+    format!(
+        "for f in \"$1\"/*; do [ -f \"$f\" ] || continue; \
          case \"${{f##*/}}\" in state.json|*.tmp.*) continue;; esac; \
-         {skip}{MTIME_OF_F} || {SKIP_F_IF_GONE}; printf \"%s %s\\0\" \"$m\" \"$f\"; done; true"
-    );
-    let argv = ["sh", "-c", &script, "_", run_dir];
-    let proc = host.run(&argv, None, DEFAULT_TIMEOUT)?;
-    if proc.status == MISSING_FILE_STATUS || proc.status == OUTSIDE_STATUS {
-        return Ok(vec![]);
-    }
-    let out = checked(host, &argv, proc)?;
+         {keep} || continue; {MTIME_OF_F} || {SKIP_F_IF_GONE}; printf \"%s %s\\0\" \"$m\" \"$f\"; done; true"
+    )
+}
+
+/// The files run_files_loop printed as out, listing run_dir, oldest first, those of one time by name. Errors: an
+/// entry whose time is not one.
+fn parsed_run_files(run_dir: &str, out: &str) -> Result<Vec<RunFile>, OrchestratorError> {
     let mut files = vec![];
     for entry in out.split('\0').filter(|e| !e.is_empty()) {
         let (mtime, path) = entry.split_once(' ').unwrap_or((entry, ""));
-        let mtime =
-            python_int(mtime).ok_or_else(|| OrchestratorError(format!("listing {run_dir}: stat printed {mtime:?}, not a time")))?;
+        let mtime = python_int(mtime).ok_or_else(|| {
+            OrchestratorError(format!("listing {run_dir}: stat printed {mtime:?}, not a time"))
+        })?;
         files.push((mtime, path.to_string()));
     }
     files.sort();

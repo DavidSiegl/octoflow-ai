@@ -408,13 +408,30 @@ is rewritten to say what is left.
   requests (`engine/src/serve.rs`); cross-review 105, F3: "A client that sends a partial request or idles holds it for
   good." Decided against for now (2026-10-29, the user's ruling): serve binds 127.0.0.1 only and every request needs
   the token. Reopen if serve listens beyond loopback.
-- **`Host::read` fails for a file removed between its test and its read.** `[ -f "$1" ] || exit MISSING; cat -- "$1"`
-  (`engine/src/host.rs`, `fn read`) answers a file that goes away between the two with an error, not with None, so
-  serve's `/file` for a file `run_files` just listed, such as the secret scan's `leaks-publish.json`, and
-  `ProjectRuns::agent` for a run being pruned report a failure where "missing" is the answer. Raised by cross-review
-  120 (F3, 2026-11-03), against serve-run-files/03, which made the two listings skip such a file and left `read` out
-  of its scope. Closes with a cat that fails on a file no longer there answering None, and a test that removes the file
-  between the two.
+- **`Host::read` and `Host::read_inside` fail for a file removed between their test and their read.**
+  `[ -f "$1" ] || exit MISSING; cat -- "$1"` (`engine/src/host.rs`, `fn read`) answers a file that goes away between
+  the two with an error, not with None, so `ProjectRuns::agent` for a run being pruned reports a failure where
+  "missing" is the answer; `fn read_inside`, which serve's `/file` reads by, has the same test and cat, so `/file`
+  for a file `run_files_inside` just listed, such as the secret scan's `leaks-publish.json`, does too (one removed
+  while its links are resolved is already Missing, cross-review 125 F3). Raised by cross-review 120 (F3,
+  2026-11-03), against serve-run-files/03, which made the two listings skip such a file and left `read` out of its
+  scope. Closes with a cat that fails on a file no longer there answering None, in both, and a test that removes the
+  file between the two.
+- **serve's link checks race the agent.** `Host::read_inside` (`engine/src/host.rs`) resolves a run file's links in
+  sh, then cats the resolved path in another process, and `run_files_inside` lists a file it checked a moment
+  before; plain sh has no open that refuses to follow a link. Cross-review 125, F1: "an agent loops, swapping
+  `runs/<id>/x.md` between a regular file and a link to `~/.ssh/id_rsa` … A `/file?name=x.md` that finds the
+  regular file at the check and the link at the open returns the key with 200." Left open: an agent that can race
+  the check can as well copy the file into its run directory, which serve shows as any other; the check is against
+  a link left there, not against an agent that means to show the app a file. Closes with an open that does not
+  follow links (a helper on the host with `O_NOFOLLOW` per component), if a reason is found to want it.
+- **serve reads a run's state.json through a symbolic link.** `Host::run_states`
+  (`for f in "$1"/.orchestrator/runs/*/state.json; … cat`) and `ProjectRuns::agent`'s `Host::read` follow links,
+  so a run directory that is a link out of `.orchestrator/runs`, or a `state.json` that is one, gives `/runs` and
+  the event stream's `record` events an outside file shaped as a state, or fails `/runs` as corrupt when it is not
+  JSON. Cross-review 125, F2, against serve-run-files/02, whose ticket covered `/file`, `/files` and the stream's
+  files only. Closes with serve reading the states through the same check as `run_files_inside`, leaving the
+  engine's own `run_states` (`list`, `show`) as it is, and a test with such a run directory.
 - **The e2e scenarios compare serve's event stream at checkpoints, not event by event.** `serve_endpoints_and_events`
   keeps, at each point where the run waits on an agent and once it is done, the last `record` and `files` event of
   each run (`engine/e2e/tests/e2e/scenarios.rs`, `last_by_run`). Raised by cross-review 65 (F10, 2026-10-27), against the

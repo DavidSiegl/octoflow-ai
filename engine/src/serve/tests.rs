@@ -443,7 +443,7 @@ fn a_link_that_leads_out_of_the_run_directory_is_refused() {
     for name in ["out.md", "up.md"] {
         let reply = file(SERVE_ID, name);
         assert_eq!((reply.status, reply.json().get("text")), (Some(403), None), "{name}");
-        assert_eq!(reply.error(), format!("{name:?} leads out of the run directory"));
+        assert_eq!(reply.error(), format!("{name:?} leads out of run {SERVE_ID}'s directory, or the directory out of the runs directory"));
     }
     assert_eq!((file(SERVE_ID, "in.md").status, file(SERVE_ID, "in.md").json().get("text")), (Some(200), Some(&Value::from("spec"))));
     assert_eq!(names(SERVE_ID), ["in.md", "spec.md"]);

@@ -832,6 +832,18 @@ fn tool_that_loses(bin: &str, name: &str, gone: &str) {
     );
 }
 
+#[test]
+fn a_link_removed_while_it_is_resolved_is_missing_not_outside() {
+    let d = TempDir::new();
+    let run_dir = d.join(&format!("{RUNS_DIR}/r"));
+    put(&format!("{run_dir}/a.md"), "a");
+    std::os::unix::fs::symlink("a.md", format!("{run_dir}/in.md")).unwrap();
+    // readlink removes in.md just before it reads it, as a running run removes a file.
+    let bin = TempDir::new();
+    tool_that_loses(&bin.path(), "readlink", &format!("{run_dir}/in.md"));
+    assert_eq!(host_with_tools(&bin.path()).read_inside(&run_dir, "in.md").unwrap(), RunFileText::Missing);
+}
+
 /// The run ids of the runs under project, as run_states reads them through a host with the tools in bin.
 fn run_ids(bin: &str, project: &str) -> Result<Vec<String>, OrchestratorError> {
     let states = host_with_tools(bin).run_states(project)?;
