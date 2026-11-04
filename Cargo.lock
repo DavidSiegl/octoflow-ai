@@ -2160,6 +2160,7 @@ dependencies = [
  "rustls-pki-types",
  "serde",
  "serde_json",
+ "syn 2.0.119",
  "tiny_http",
 ]
 

@@ -158,11 +158,6 @@ is rewritten to say what is left.
   minutes build #59 took (cross-review 73, F11, 2026-10-27). The engine aborts no build either, so its `Jenkins`
   (`engine/src/ci.rs`) has no call for it: a POST to `<job>/<number>/stop`, or the queue item's cancel, once the
   `agents` user is known to hold Jenkins's Cancel permission on the job.
-- **`tests/test_docs.py` reads the engine's names by pattern.** `rust_names` finds each `fn`, type, `const`,
-  `static`, `mod`, string literal, impl `fn` and struct field in `engine/src` by regular expression, not by parsing,
-  so a name in a comment or a `macro_rules!` counts as defined, and a doc's `Type::member` is not checked at all, only
-  `Type.member`. Found by rust-engine ticket 11 (2026-10-30). Closes, if a doc names a gone item unnoticed, with the
-  names read from rustdoc's JSON or syn, as the gate-rust helper reads Rust.
 - **Test code outside the places the spec names is judged as code.** The spec of the Rust checks (requirement 2)
   places Rust's tests in a `tests/` directory, a `tests.rs` and an inline `#[cfg(test)]` module; `_in_rust_tests` and
   `_rust_test_path` in `gate.py`, which both Rust checks read, follow it (test-integrity's side of this is the
@@ -693,12 +688,14 @@ is rewritten to say what is left.
   cargo-mutants, each from a cold target directory in the rerun's copy. A change that adds many such tests is not
   rerun; that one closes with a limit that grows with the tests rerun (a time budget shared with mutmut was decided
   against, "flaky-tests' reruns get one time limit a run", above).
-- **`tests/test_docs.py` gets `gate.py`'s parser by patching `argparse.ArgumentParser.parse_args`.**
-  `gate.parse_args` builds its parser inline and returns only the parsed arguments, so `built_parser` calls it with
-  `parse_args` patched class-wide to hand the parser back, and reads argparse's private `_actions`. Raised by
-  cross-review 56 (F8, 2026-10-27): "Breaks if `parse_args` switches to `parse_known_args` or parses twice". It
-  fails loudly then (`parse_args parsed without its parser's parse_args`). The engine's commands are read from its
-  `--help` (`cli_commands`). Closes with a `gate.build_parser()` that `parse_args` calls and the test reads.
+- **The docs check reads `gate.py` as text.** `engine/e2e/tests/docs/` takes `gate.py`'s flags from the
+  `add_argument("--…"` calls in its `parse_args` (`cli.rs`, `gate_flags`), not hiding any with `argparse.SUPPRESS`,
+  and its names from lines at the left margin and one indent into a class, its strings only from those that open and
+  close on a line (`names.rs`, `gate_names`): a flag added otherwise, or a name defined in a `for`, a `with` or an
+  `import`, is not seen. It replaced `tests/test_docs.py`, which built the argparse parser by patching
+  `parse_args` (octoflow-without-python ticket 07). The same reader takes no string of a Rust macro whose arguments
+  are not expressions, such as `json!`. Closes with gate.py leaving the repository (gate-repo-split/05), or a
+  `--help` the check runs once the gate is a program of its own.
 - **README and docs left over from the README rewrite (PR #90).** Raised by cross-review 50 (2026-10-26), in what
   PR #90 brought, not in code:
   - The Jenkins job path still uses the old folder name, as

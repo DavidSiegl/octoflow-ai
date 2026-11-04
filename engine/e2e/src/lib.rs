@@ -1,14 +1,17 @@
 //! The engine's end-to-end scenarios: the orchestrator program run, as a human runs it, against fakes of herdr, gh,
 //! ssh, Jenkins and PyPI, each scenario's record compared with its recording in `recorded/`.
 //!
-//! The scenarios and the world they run in are this package's test, `tests/e2e/`. What the test shares with the
-//! fakes, which run as programs of their own (`src/bin/`), is here: the ledger they keep together (`ledger`), the
-//! fakes themselves (`fakes`), and the normalizer that makes two runs of a scenario compare equal (`normalize`).
+//! The scenarios and the world they run in are this package's test `tests/e2e/`; `tests/docs/` holds the README and
+//! docs/ to the engine they describe. What the tests share with each other and with the fakes, which run as programs
+//! of their own (`src/bin/`), is here: the orchestrator binary they run (`engine`), the ledger the scenarios and the
+//! fakes keep together (`ledger`), the fakes themselves (`fakes`), and the normalizer that makes two runs of a
+//! scenario compare equal (`normalize`).
 //!
 //! The recordings were made by the Python harness this replaced (tests/parity, removed by octoflow-without-python
 //! ticket 02); this harness compares a record with its recording as JSON values, not as text, and writes a recording
 //! as `recording_text` (tests/e2e/main.rs) formats it.
 
+pub mod engine;
 pub mod fakes;
 pub mod ledger;
 pub mod normalize;

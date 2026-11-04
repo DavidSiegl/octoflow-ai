@@ -26,6 +26,10 @@ tiny_http = "0.12"
 # octoflow-without-python ticket 02, 2026-10-31.
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std"] }
 rustls-pki-types = { version = "1.15.1", features = ["std"] }
+# The docs check (tests/docs/) reads the names the engine's Rust defines by parsing it: syn 2, the version Cargo.lock
+# had through tauri-build and ci/gate-rust, with full for items and visit to walk them. Decided with the user for
+# octoflow-without-python ticket 07, 2026-11-03.
+syn = { version = "2.0.119", features = ["full", "visit"] }
 
 # The programs a world puts on the engine's PATH as herdr, gh and ssh (src/fakes.rs). They are binaries of this
 # package so that its tests find them by CARGO_BIN_EXE_*, which Cargo sets only for a test's own package.
