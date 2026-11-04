@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { acceptedLicenses, npmNotices } from "./npm-licenses.js";
+import { acceptedLicenses, BUILD_CODE, npmNotices } from "./npm-licenses.js";
 
 const ui = dirname(dirname(fileURLToPath(import.meta.url)));
 const accepted = acceptedLicenses(readFileSync(join(ui, "..", "packaging", "about.toml"), "utf8"));
@@ -34,17 +34,20 @@ describe("the notices of the app's own npm packages", () => {
     return readFileSync(join(ui, path, file), "utf8").trim();
   };
 
-  it("name every package of the production tree, and Vite, whose code the build adds", () => {
+  const buildCode = BUILD_CODE.map((name) => `node_modules/${name}`);
+
+  it("name every package of the production tree, and those whose code the build adds", () => {
     const missing = entries.filter(([path, e]) => !e.dev && !names.has(named(path))).map(([path]) => path);
     expect(missing).toEqual([]);
-    for (const path of ["node_modules/react", "node_modules/react-markdown", "node_modules/vite"]) {
+    for (const path of ["node_modules/react", "node_modules/react-markdown", ...buildCode]) {
       expect(names).toContain(named(path));
     }
   });
 
   it("name no other dev package", () => {
-    const prod = new Set(entries.filter(([, e]) => !e.dev).map(([path]) => named(path)));
-    const dev = entries.map(([path]) => named(path)).filter((n) => !prod.has(n) && !n.startsWith("vite "));
+    const kept = entries.filter(([path, e]) => !e.dev || buildCode.includes(path));
+    const prod = new Set(kept.map(([path]) => named(path)));
+    const dev = entries.map(([path]) => named(path)).filter((n) => !prod.has(n));
     expect(dev.length).toBeGreaterThan(0);
     expect(dev.filter((n) => names.has(n))).toEqual([]);
   });
@@ -116,9 +119,20 @@ describe("npmNotices on a made-up tree", () => {
     expect(sections(npmNotices(ui, accepted))).toEqual([{ license: "MIT", packages: ["dual 1.0.0"], text: "mit text" }]);
   });
 
-  it("names a package offered under several licenses whose one file is not the chosen one's", () => {
-    const ui = tree([{ name: "dual", license: "Apache-2.0 OR MIT", files: { "LICENSE-APACHE": "apache text" } }]);
-    expect(() => npmNotices(ui, accepted)).toThrow(/dual 1\.0\.0: no one license text for MIT/);
+  it("gives a package offered under several licenses whose file names none of them the whole expression", () => {
+    const ui = tree([
+      { name: "one-file", license: "MIT OR Apache-2.0", files: { LICENSE: "both texts" } },
+      { name: "other-file", license: "Apache-2.0 OR MIT", files: { "LICENSE-APACHE": "apache text" } },
+    ]);
+    expect(sections(npmNotices(ui, accepted))).toEqual([
+      { license: "MIT OR Apache-2.0", packages: ["one-file 1.0.0"], text: "both texts" },
+      { license: "Apache-2.0 OR MIT", packages: ["other-file 1.0.0"], text: "apache text" },
+    ]);
+  });
+
+  it("names a package whose license files differ and none is named for its license", () => {
+    const ui = tree([{ name: "two", license: "MIT", files: { LICENSE: "one", "LICENSE-OTHER": "two" } }]);
+    expect(() => npmNotices(ui, accepted)).toThrow(/two 1\.0\.0: no one license text for MIT/);
   });
 
   it("takes one text from several files that hold it", () => {

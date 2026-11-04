@@ -5,15 +5,19 @@
 //
 // The packages are ui/package-lock.json's production tree, which is what ui/package.json's dependencies pull in, plus
 // BUILD_CODE's, read from node_modules as npm ci laid it out, never from the network. That covers what Vite's bundle
-// holds after tree shaking, and may name a package it shook out entirely.
+// held on 2026-11-04, which the module comments of an unminified `vite build` list, and may name a package it shook
+// out entirely.
 
 import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Dev packages that write code of their own into the bundle, so it ships theirs too: Vite adds its module preload
-// polyfill and its dynamic import helper. A plugin that injects a runtime belongs here as well.
-const BUILD_CODE = ["vite"];
+/**
+ * The dev packages that write code of their own into the bundle, so that it ships theirs too: Vite its module preload
+ * polyfill, Rolldown, which Vite bundles with, its runtime (\0vite/... and \0rolldown/... modules in an unminified
+ * build). A plugin that injects a runtime belongs here as well. Each is looked up at the top of node_modules.
+ */
+export const BUILD_CODE = ["vite", "rolldown"];
 
 /**
  * The licenses about.toml's `accepted` array lists, in its order: the licenses a dependency may be used under.
@@ -38,13 +42,13 @@ export function acceptedLicenses(aboutToml) {
  *   package offered under several ("A OR B") is shipped under the first of them this list holds.
  * @returns {string} the page
  * @throws {Error} naming each package, one a line, that is under no accepted license, whose license is not an SPDX
- *   identifier or an OR of them, that has no one license text for it, or that is not installed although the lockfile
+ *   identifier or an OR of them, that has no one license text, or that is not installed although the lockfile
  *   does not mark it optional (an optional one npm ci skipped on this platform is not in the bundle); and, naming the
  *   file, when the lockfile or a package.json cannot be read
  */
 export function npmNotices(ui, accepted) {
   const lock = readJson(join(ui, "package-lock.json"));
-  /** @type {Map<string, {license: string, text: string, packages: {name: string, version: string}[]}>} */
+  /** @type {Map<string, {license: string, text: string, packages: {name: string, version: string}[]}>} by heading and text */
   const sections = new Map();
   const problems = [];
   for (const [path, entry] of Object.entries(lock.packages)) {
@@ -64,13 +68,13 @@ export function npmNotices(ui, accepted) {
       problems.push(`${name}: license ${JSON.stringify(pkg.license ?? pkg.licenses)} is none of about.toml's accepted`);
       continue;
     }
-    const text = licenseText(dir, license, offered.length > 1);
-    if (text === undefined) {
+    const notice = licenseNotice(dir, license, offered);
+    if (notice === undefined) {
       problems.push(`${name}: no one license text for ${license} in ${path}`);
       continue;
     }
-    const key = `${license}\n${text}`;
-    const section = sections.get(key) ?? { license, text, packages: [] };
+    const key = `${notice.license}\n${notice.text}`;
+    const section = sections.get(key) ?? { ...notice, packages: [] };
     section.packages.push({ name: pkg.name, version: pkg.version });
     sections.set(key, section);
   }
@@ -93,18 +97,21 @@ function offeredLicenses(expression) {
   return offered.every((id) => /^[A-Za-z0-9.+-]+$/.test(id)) ? offered : undefined;
 }
 
-// The text, trimmed, of license in dir's LICENSE*, LICENCE* or COPYING* files, SPDX tag files (LICENSE.spdx) aside.
-// Several files with one text (LICENSE and LICENSE.md) count as one. Where the package offers several licenses, or
-// the files differ, it is the one file whose name holds the license's name, as LICENSE-MIT does MIT and
-// LICENSE-APACHE-2.0 Apache-2.0. Undefined when there is no such one text.
-function licenseText(dir, license, severalOffered) {
+// The notice of a package in dir offered under offered, shipped under license, one of them: the trimmed text of its
+// LICENSE*, LICENCE* or COPYING* files, SPDX tag files (LICENSE.spdx) aside, and the license it gives it under.
+// Where one file's name holds the license's name, as LICENSE-MIT does MIT and LICENSE-APACHE-2.0 Apache-2.0, that
+// file under license. Otherwise the files' one text (LICENSE and LICENSE.md may hold it twice) under license, or,
+// when the package offers several, under all of them, since nothing says which that text is. Undefined when the files
+// hold no text or differ.
+function licenseNotice(dir, license, offered) {
   const files = readdirSync(dir, { withFileTypes: true })
     .filter((f) => f.isFile() && /^(licen[cs]e|copying)/i.test(f.name) && !/\.spdx$/i.test(f.name))
     .map((f) => ({ name: f.name, text: readFileSync(join(dir, f.name), "utf8").trim() }));
-  if (!severalOffered && files.length > 0 && files.every((f) => f.text === files[0].text)) return files[0].text;
   const family = license.split("-")[0].toLowerCase();
   const named = files.filter((f) => f.name.toLowerCase().includes(family));
-  return named.length === 1 ? named[0].text : undefined;
+  if (named.length === 1) return { license, text: named[0].text };
+  if (files.length === 0 || files.some((f) => f.text !== files[0].text)) return undefined;
+  return { license: offered.join(" OR "), text: files[0].text };
 }
 
 function escape(text) {
