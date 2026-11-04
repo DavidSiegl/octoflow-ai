@@ -32,30 +32,18 @@ function saveProject(project: Project): void {
   }
 }
 
-/** The app: the logo and name, then the project bar and the project's runs or one run in detail. connect resolves
- * to the sidecar's server, or rejects with why it could not be started. */
+/** The app: the top bar (logo, name and project bar), and the project's runs or one run in detail. connect
+ * resolves to the sidecar's server, or rejects with why it could not be started. */
 export function App({ connect }: { connect: () => Promise<Connection> }) {
   const [connection, setConnection] = useState<Connection | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   useEffect(() => {
     connect().then(setConnection, (error: unknown) => setFailure(String(error)));
   }, [connect]);
-  let body;
   if (failure) {
-    body = <p className="problem">Could not start the orchestrator: {failure}</p>;
-  } else {
-    body = connection ? <Connected connection={connection} /> : <p className="loading">Starting the orchestrator…</p>;
+    return <p className="problem">Could not start the orchestrator: {failure}</p>;
   }
-  return (
-    <>
-      <header className="app-header">
-        {/* public/logo.svg is docs/logo.svg, held equal by logo.test.tsx; alt is that file's <title>. */}
-        <img src="/logo.svg" alt="An octopus holding a terminal, a robot and a chat bubble" />
-        <span className="app-name">Octoflow AI</span>
-      </header>
-      {body}
-    </>
-  );
+  return connection ? <Connected connection={connection} /> : <p className="loading">Starting the orchestrator…</p>;
 }
 
 function Connected({ connection }: { connection: Connection }) {
@@ -84,7 +72,12 @@ function Connected({ connection }: { connection: Connection }) {
   };
   return (
     <main>
-      <ProjectBar project={project} onOpen={open} onCheckSetup={() => setSettingUp(true)} />
+      <header className="top-bar">
+        {/* public/logo.svg is docs/logo.svg, held equal by logo.test.tsx; alt is that file's <title>. */}
+        <img src="/logo.svg" alt="An octopus holding a terminal, a robot and a chat bubble" />
+        <span className="app-name">Octoflow AI</span>
+        <ProjectBar project={project} onOpen={open} onCheckSetup={() => setSettingUp(true)} />
+      </header>
       {project.cwd ? (
         // Keyed by the project, so opening another one starts from its overview.
         <ProjectRuns key={`${project.machine}:${project.cwd}`} api={api} project={project} />

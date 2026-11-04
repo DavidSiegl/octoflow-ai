@@ -4,7 +4,8 @@ import { describe, expect, it } from "vitest";
 import { App } from "./App";
 import { CONNECTION, stubServer } from "./test/fakes";
 
-// Read from disk, not imported: Vite refuses files outside ui/, and docs/logo.svg is one.
+// Read from disk, not imported: Vite's dev server serves nothing outside ui/ by default (server.fs.allow), and
+// docs/logo.svg is outside it.
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 const original = read("../../docs/logo.svg");
 const served = read("../public/logo.svg");
@@ -22,12 +23,14 @@ describe("the logo", () => {
     expect(title).toBeTruthy();
   });
 
-  it("heads the window, beside the product's name", () => {
+  it("starts the top bar, beside the product's name and before the project folder", async () => {
     stubServer({}, {});
     render(<App connect={() => Promise.resolve(CONNECTION)} />);
-    const logo = screen.getByRole("img", { name: title });
+    const logo = await screen.findByRole("img", { name: title });
     expect(logo).toHaveAttribute("src", "/logo.svg");
-    expect(screen.getByRole("banner")).toHaveTextContent("Octoflow AI");
+    const bar = logo.closest(".top-bar");
+    expect(bar).toHaveTextContent(/^Octoflow AIProject folder/);
+    expect(bar).toContainElement(screen.getByLabelText("Project folder"));
   });
 
   it("is the page's icon", () => {
