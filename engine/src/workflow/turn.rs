@@ -158,9 +158,10 @@ impl Workflow<'_> {
             return Ok(out);
         }
         let how = self.agent(role)?;
-        self.announce(role, how, &t.announce)?;
+        let message = self.prompt_for(how, &file, &t.text, t.fresh_text.as_deref(), path)?;
+        self.announce(role, how, message.is_some(), &t.announce)?;
         self.human.log(&format!("[{role}] working in pane {}", self.agent_field(role, "pane")));
-        if let Some(message) = self.prompt_for(how, &file, &t.text, t.fresh_text.as_deref(), path)? {
+        if let Some(message) = message {
             // A resumed or restarted turn keeps its record and start. Read before the prompt goes out, so that no
             // agent can write its file before its turn started (its mtime still can: end_turn counts that as the
             // start).
@@ -181,10 +182,16 @@ impl Workflow<'_> {
         Ok(out)
     }
 
-    /// What the turn does once the role's agent is ready, as how says it came to be.
-    fn announce(&mut self, role: &str, how: How, announce: &Announce) -> Outcome<()> {
+    /// What the turn does once the role's agent is ready, as how says it came to be, prompting saying whether this
+    /// pass prompts it.
+    ///
+    /// An interview is announced only with a prompt: an agent only waited for (alive, and already prompted for the
+    /// turn's file) was announced by the orchestrator that prompted it, and a resume does not tell the human again.
+    /// A block's wait is announced on every pass.
+    fn announce(&mut self, role: &str, how: How, prompting: bool, announce: &Announce) -> Outcome<()> {
         match announce {
             Announce::Nothing => Ok(()),
+            Announce::Interview if !prompting => Ok(()),
             Announce::Interview => {
                 let (name, pane) = (self.agent_field(role, "name"), self.agent_field(role, "pane"));
                 self.herdr.focus(&name)?;

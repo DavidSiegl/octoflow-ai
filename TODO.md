@@ -907,15 +907,6 @@ is rewritten to say what is left.
   `agent` fail, so no test holds the `?` there against becoming a silent skip. Raised by cross-review 128 (F4,
   2026-11-04): "The `?` could become a silent skip ... without any test failing." Closes with a failure the fake's
   `agent` can be set to give, and a resume test that expects the run to stop with it.
-- **A resumed interview tells the human again that it waits for them.** `step_turn`'s `Announce::Interview`
-  (`engine/src/workflow.rs`) has `announce` (`engine/src/workflow/turn.rs`) focus the human-paced agent's pane and
-  notify "<label> is waiting for you" in every orchestrator that takes the turn (`turn` calls it from `written` on every
-  pass), so a resume while the interview is under way repeats both, once per resume. Raised by cross-review 81 (F1,
-  2026-10-28) against ticket orchestrator-test-methods/05, which allows only documented idempotent repeats: "Neither is
-  idempotent: the cited comment … says each orchestrator does it again, which is the repeat the ticket asks the test to
-  fail on." The user ruled it a bug (2026-10-28), not wanted. The Rust engine was ported to behave the same, untested as
-  above. Closes with an engine that announces a turn only where none did (for example, only when `prompted` is not the
-  turn's file). Ticket: `.scratch/run-crash-ending/issues/03-interview-announced-once.md` (#229).
 - **Four copies of a scratch directory removed on drop, each named its own way.** The `TempDir`s of
   `engine/src/test_support.rs` and `ui/src-tauri/src/lib.rs` name theirs by pid and a counter,
   `engine/src/serve/tests.rs`'s by the test's name and pid under a TMPDIR it reads itself, and `xtask/src/process.rs`'s
