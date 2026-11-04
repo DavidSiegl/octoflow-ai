@@ -54,8 +54,9 @@ fn live_prompted_collector_is_only_waited_on() {
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
     assert_eq!(prompts_to(&f, "spec-a1b2c3"), 0);
     assert!(!names(&f, "start").contains(&"spec-a1b2c3".to_string()));
-    assert!(called(&f, &Call::Focus { name: "spec-a1b2c3".into() }));
-    assert_eq!(f.told.titles()[0], "Spec Collector is waiting for you");
+    // The orchestrator that prompted it told the human already (run-crash-ending/03).
+    assert!(!called(&f, &Call::Focus { name: "spec-a1b2c3".into() }));
+    assert!(!f.told.titles().iter().any(|t| t.contains("is waiting for you")), "{:?}", f.told.titles());
 }
 
 #[test]
@@ -63,6 +64,8 @@ fn live_collector_never_prompted_is_prompted_once() {
     let f = Fixture::resume(Rc::new(FakeHost::default()), saved_run("spec", 0, &["spec"]), approved(), &["spec"], &[]);
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
     assert_eq!(prompts_to(&f, "spec-a1b2c3"), 1);
+    assert!(called(&f, &Call::Focus { name: "spec-a1b2c3".into() }));
+    assert_eq!(f.told.titles()[0], "Spec Collector is waiting for you");
 }
 
 #[test]
