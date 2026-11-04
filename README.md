@@ -299,8 +299,10 @@ for pi and opencode, and `codex resume <id>`. A role whose harness changed since
 1. **Workspace.** The run gets its own herdr workspace, with a pane per role. The project must be on a branch
    with a clean working tree; the pull request targets that branch. The branch is fetched from `origin` and
    fast-forwarded, and if that fails, for example offline or because it has diverged, the run stops before the
-   interview. A `--worktree` run checks `origin`'s version of the branch out in its own worktree instead. A run that
-   will open a pull request first deletes the branches of earlier runs whose pull request is done, as `prune` does.
+   interview. A fetch that could not reach `origin`, or that `origin` refused to let in, is tried three more times,
+   5, 20 and 60 s apart, each wait shown in the log, before the run stops. A `--worktree` run checks `origin`'s
+   version of the branch out in its own worktree instead. A run that will open a pull request first deletes the
+   branches of earlier runs whose pull request is done, as `prune` does.
 2. **Spec Collector.** A notification tells you it is waiting. Answer its questions in its pane; once you approve
    the spec, it writes `spec.md`. With `--spec`, there is no interview.
 3. **Builder.** The base branch is fast-forwarded again, and the branch `orchestrator/<spec title>-<id>` is

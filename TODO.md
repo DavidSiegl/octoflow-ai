@@ -69,6 +69,34 @@ is rewritten to say what is left.
 
 ## Open issues
 
+- **Writes to origin are not tried again through an outage.** `reaching_origin` (`engine/src/workflow/origin.rs`)
+  wraps the run's fetches and its `ls-remote` reads only; the pushes (`engine/src/host.rs`'s `push_ref`,
+  `push_branch`), the remote branch deletions (`delete_remote_branch`, `delete_remote_branch_at`) and the `gh` calls
+  fail at the first refusal, as GitHub's incident of 2026-11-04 refused known keys. A write that reached origin but
+  reported failure needs its own handling first: a delete tried again finds no ref, and a push under a lease sees
+  the value it set. Left out of origin-retry ticket 01 (2026-11-04). Closes with each write's retry made safe to
+  repeat, then routed through `reaching_origin`.
+- **Workflow keeps its Collaborators field by field.** `Workflow::new` (`engine/src/workflow.rs`) takes a
+  `Collaborators` apart into eight fields, so code shared between a Workflow and a CLI command that holds the
+  `Collaborators` takes the pieces it needs one by one: `delete_ci_refs` (`workflow/quality_rounds.rs`) takes host,
+  human, clocks and interrupt, while `turn_quality_gate_off` (`workflow/gate_switch.rs`) takes the whole. Found in
+  origin-retry ticket 01 (2026-11-04). The two halves of resume's gate switch differ the same way: deferred from
+  cross-review 135 (F8, nit): "turn_quality_gate_on takes `host, human` and turn_quality_gate_off takes
+  `&Collaborators`" (`engine/src/cli/start.rs`). Closes with Workflow holding its `Collaborators`, the helpers and
+  both gate switches taking it.
+- **A hang reaching origin is not tried again.** `reaching_origin` (`engine/src/workflow/origin.rs`) tries again only
+  on what git writes when it gives up; a fetch on a network that drops packets is killed at `NETWORK_TIMEOUT`
+  (300 s, `engine/src/host/process.rs`), whose error says none of that, and the run stops. Deferred from cross-review
+  135 (F4, should-fix, 2026-11-04): "When the network drops packets silently, or ssh hangs after connecting, git
+  does not fail on its own … That text matches no UNREACHABLE entry, so the run fails on the first try". Four tries
+  at 300 s would hold a run for 20 minutes. Closes with a shorter limit for each try of a read of origin (git's
+  `http.lowSpeedLimit`/`lowSpeedTime`, ssh's `ConnectTimeout` and `ServerAliveInterval`), its timeout then retried.
+- **Host::fetch does not wait out an outage by itself.** Each caller wraps it in `reaching_origin`
+  (`engine/src/workflow.rs`'s five, `quality_rounds.rs`'s `delete_ci_refs`, `cli/prune.rs`'s `prune_remote`), since a
+  `Host` (`engine/src/host.rs`) has no clock to wait on and no human to tell; a new caller gets no retry unless it
+  wraps too, and a wrapped `fast_forward` or `merge_upstream` would also retry a local merge whose error happened to
+  say a phrase of `UNREACHABLE`. Deferred from cross-review 135 (F7, nit, 2026-11-04). Closes with the waiting and
+  the telling reachable from `Host`, so that its origin reads retry themselves.
 - **An npm package's NOTICE file ships only for a build tool.** `ui/scripts/npm-licenses.js` appends the
   `THIRD-PARTY-LICEN[CS]E*` and `NOTICE*` files of the `BUILD_CODE` packages (Vite, Rolldown) to their notices, and
   of no other; Apache-2.0 §4(d) wants a NOTICE redistributed with any work it comes with, so a production package
