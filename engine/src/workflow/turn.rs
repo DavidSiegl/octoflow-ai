@@ -541,10 +541,16 @@ impl Workflow<'_> {
     }
 
     /// Make sure the role's agent is running, and say how.
+    ///
+    /// An agent found alive has the session herdr reports for it saved, when that is not the one its record holds,
+    /// so the turn recorded next is in it and its tokens can be counted. The record holds none when an orchestrator
+    /// stopped between `start`'s two saves, and an older one when the agent moved to a new session (a human's
+    /// `/clear` in its pane, say) while no orchestrator watched it, `await_handoff` noting sessions only while one does.
     fn agent(&mut self, role: &str) -> Outcome<How> {
         let known = self.state.agents.get(role).cloned();
         if let Some(known) = &known {
-            if self.herdr.status(known.get("name").map_or("", String::as_str))?.is_some() {
+            if let Some(record) = self.herdr.agent(known.get("name").map_or("", String::as_str))? {
+                self.note_session(role, &record)?;
                 return Ok(How::Alive);
             }
         }

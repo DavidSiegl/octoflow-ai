@@ -891,15 +891,24 @@ is rewritten to say what is left.
   exposure, but it is outside this range". Closes with `--no-relative` on both calls and a test that sets
   `diff.relative` and locks from a subdirectory. Ticket:
   `.scratch/git-diff-relative/issues/01-locks-ignore-diff-relative.md` (#233).
-- **A crash between an agent's start and its session being saved costs that turn its session.** `start`
-  (`engine/src/workflow/turn.rs`) saves the agent's record, then asks herdr for it and `note_session` saves the
-  session. A resume after the first save finds the agent alive (`agent` returns `How::Alive`) and prompts it without
-  asking herdr, so the turn's record (`turn_record`) starts with no session; `note_session` saves it while the turn
-  runs, but `end_turn` keeps `session` only when it matches the one at the start, so the turn ends with none, and
-  `count_tokens` cannot count its tokens. Found in the Python engine by orchestrator-test-methods/05 (2026-10-28),
-  ported to the Rust engine unchanged, untested as above. Closes with `agent` noting the session of an agent it finds
-  alive.
-  Ticket: `.scratch/run-crash-ending/issues/02-alive-agent-session-noted.md` (#228).
+- **A resume finds an agent alive whose start never finished and only waits for it.** `start`
+  (`engine/src/workflow/turn.rs`) saves the agent's record, may wait without a deadline for a startup dialog the
+  human answers (`wait_for_startup`), and only then saves the session. An orchestrator stopped in between leaves an
+  agent that `agent` finds alive (`How::Alive`), so `prompt_for` treats it as one that took its prompt. Two cases,
+  raised by cross-review 128 (F1, 2026-11-04) against run-crash-ending/02: "If `start(role, pane, Some(session))`
+  relaunched a dead agent while `prompted == file` (the `How::Resumed` path, which is owed `ContinuePrompt`) and the
+  orchestrator stopped before [the session was saved], the resume gets `Alive`. `prompt_for` then returns `None`, so
+  the relaunched agent is never told to continue and sits idle until the stall notice"; and a fresh start stopped
+  during `wait_for_startup` has its step prompt typed into the startup dialog, which `taken` may count as taken if
+  herdr reports the dialog as `blocked` (unconfirmed). Answering `Resumed` for an alive agent without a session is not
+  the fix: a harness that reports no session would then be told to continue a prompt it is still working on. Closes
+  with `start` recording, before its first save, that the agent's start is unfinished, and `agent` restarting or
+  re-prompting such an agent; or with the first save moved after the startup wait.
+- **`agent`'s herdr failure on an alive agent is untested.** `agent` (`engine/src/workflow/turn.rs`) asks herdr for
+  an agent it knows and stops the run when herdr fails; the fake herdr (`engine/src/herdr/fake.rs`) cannot make
+  `agent` fail, so no test holds the `?` there against becoming a silent skip. Raised by cross-review 128 (F4,
+  2026-11-04): "The `?` could become a silent skip ... without any test failing." Closes with a failure the fake's
+  `agent` can be set to give, and a resume test that expects the run to stop with it.
 - **A resumed interview tells the human again that it waits for them.** `step_turn`'s `Announce::Interview`
   (`engine/src/workflow.rs`) has `announce` (`engine/src/workflow/turn.rs`) focus the human-paced agent's pane and
   notify "<label> is waiting for you" in every orchestrator that takes the turn (`turn` calls it from `written` on every

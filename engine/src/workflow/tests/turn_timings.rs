@@ -315,22 +315,6 @@ fn a_summary_that_cannot_be_written_changes_no_outcome() {
 
 // -- TestRunMetrics ----------------------------------------------------------------------------------------------
 
-/// A Claude Code session log: for each (host clock reading, input, output) an answer of the model, written as
-/// Claude Code writes it, one line per content block, each with the whole answer's usage.
-fn claude_log(answers: &[(i64, i64, i64)]) -> String {
-    let mut lines = vec![format!(r#"{{"type": "user", "timestamp": "{}", "message": {{"role": "user"}}}}"#, at(0).replace("+00:00", "Z"))];
-    for (k, (seconds, tokens_in, tokens_out)) in answers.iter().enumerate() {
-        let usage = format!(
-            r#"{{"input_tokens": {tokens_in}, "output_tokens": {tokens_out}, "cache_read_input_tokens": 7, "cache_creation_input_tokens": 1}}"#
-        );
-        let time = at(*seconds).replace("+00:00", ".250Z");
-        for _ in 0..2 {
-            lines.push(format!(r#"{{"type": "assistant", "timestamp": "{time}", "message": {{"id": "msg_{k}", "usage": {usage}}}}}"#));
-        }
-    }
-    lines.join("\n") + "\n"
-}
-
 #[test]
 fn a_failed_run_writes_no_metrics() {
     let f = Fixture::new(vec![("spec", vec![spec_turn()]), ("build", vec![idle()])]);
