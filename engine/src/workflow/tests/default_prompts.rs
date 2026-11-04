@@ -22,7 +22,8 @@ const D: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
 
 // The default workflow's prompts as commit d6bb100 sent them, recorded by running the scenarios of
 // TestDefaultWorkflowPrompts on that commit's code, as Python's GOLDEN holds them: since then, SPEC_PROMPT's "Separate
-// Claude Code sessions" became "Separate agent sessions", and every prompt the Builder gets ends with BLOCKED_NOTE.
+// Claude Code sessions" became "Separate agent sessions", FIX_PROMPT's "The Reviewer requested changes" became "Changes
+// were requested", and every prompt the Builder gets ends with BLOCKED_NOTE.
 
 pub(super) const FRESH_BUILD_2: &str = concat!(
     "You are the Builder, the second of three roles (Spec Collector -> Builder -> Reviewer). The spec in ",
@@ -37,7 +38,7 @@ pub(super) const FRESH_BUILD_2: &str = concat!(
     "their results), and any acceptance criterion you did not meet, with the reason.\n\nThis is round 2, ",
     "and you are a fresh session. An earlier Builder session did the earlier turns; its changes are ",
     "already in the working tree, and its reports are ",
-    "/proj/.orchestrator/runs/20260929-120000-a1b2c3/build-1.md.\n\nThe Reviewer requested changes; the ",
+    "/proj/.orchestrator/runs/20260929-120000-a1b2c3/build-1.md.\n\nChanges were requested; the ",
     "findings are in /proj/.orchestrator/runs/20260929-120000-a1b2c3/review-1.md. Fix each finding, or ",
     "explain in your report why it is wrong. Re-run the verification. Do not commit, push or switch ",
     "branches. As your last step, write a new report to ",
@@ -130,7 +131,7 @@ const REVIEW_1_PASSED: &str = concat!(
 );
 
 const FIX_2: &str = concat!(
-    "The Reviewer requested changes; the findings are in ",
+    "Changes were requested; the findings are in ",
     "/proj/.orchestrator/runs/20260929-120000-a1b2c3/review-1.md. Fix each finding, or explain in ",
     "your report why it is wrong. Re-run the verification. Do not commit, push or switch branches. ",
     "As your last step, write a new report to ",
@@ -209,7 +210,7 @@ const FRESH_BUILD_2_AFTER_QUALITY_ROUNDS: &str = concat!(
     "its changes are already in the working tree, and its reports are ",
     "/proj/.orchestrator/runs/20260929-120000-a1b2c3/build-1.md, ",
     "/proj/.orchestrator/runs/20260929-120000-a1b2c3/build-1-q1.md, ",
-    "/proj/.orchestrator/runs/20260929-120000-a1b2c3/build-1-q2.md.\n\nThe Reviewer requested changes; ",
+    "/proj/.orchestrator/runs/20260929-120000-a1b2c3/build-1-q2.md.\n\nChanges were requested; ",
     "the findings are in /proj/.orchestrator/runs/20260929-120000-a1b2c3/review-1.md. Fix each ",
     "finding, or explain in your report why it is wrong. Re-run the verification. Do not commit, ",
     "push or switch branches. As your last step, write a new report to ",

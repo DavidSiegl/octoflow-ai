@@ -51,7 +51,7 @@ pub const BUILD_PROMPT: &str = concat!(
 );
 
 pub const FIX_PROMPT: &str = concat!(
-    "The Reviewer requested changes; the findings are in {findings}. ",
+    "Changes were requested; the findings are in {findings}. ",
     "Fix each finding, or explain in your report why it is wrong. Re-run the verification. ",
     "Do not commit, push or switch branches. As your last step, write a new report to {build_path} in a single write, in the same shape as before, ",
     "answering each finding by its number.",

@@ -30,7 +30,7 @@ As your last step, write your review to /proj/.orchestrator/runs/20260929-120000
 
 ## build, round 2
 
-The Reviewer requested changes; the findings are in /proj/.orchestrator/runs/20260929-120000-a1b2c3/review-1.md. Fix each finding, or explain in your report why it is wrong. Re-run the verification. Do not commit, push or switch branches. As your last step, write a new report to /proj/.orchestrator/runs/20260929-120000-a1b2c3/build-2.md in a single write, in the same shape as before, answering each finding by its number.
+Changes were requested; the findings are in /proj/.orchestrator/runs/20260929-120000-a1b2c3/review-1.md. Fix each finding, or explain in your report why it is wrong. Re-run the verification. Do not commit, push or switch branches. As your last step, write a new report to /proj/.orchestrator/runs/20260929-120000-a1b2c3/build-2.md in a single write, in the same shape as before, answering each finding by its number.
 
 If you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead.
 
@@ -44,7 +44,7 @@ As your last step, write a report to /proj/.orchestrator/runs/20260929-120000-a1
 
 This is round 2, and you are a fresh session. An earlier Builder session did the earlier turns; its changes are already in the working tree, and its reports are /proj/.orchestrator/runs/20260929-120000-a1b2c3/build-1.md.
 
-The Reviewer requested changes; the findings are in /proj/.orchestrator/runs/20260929-120000-a1b2c3/review-1.md. Fix each finding, or explain in your report why it is wrong. Re-run the verification. Do not commit, push or switch branches. As your last step, write a new report to /proj/.orchestrator/runs/20260929-120000-a1b2c3/build-2.md in a single write, in the same shape as before, answering each finding by its number.
+Changes were requested; the findings are in /proj/.orchestrator/runs/20260929-120000-a1b2c3/review-1.md. Fix each finding, or explain in your report why it is wrong. Re-run the verification. Do not commit, push or switch branches. As your last step, write a new report to /proj/.orchestrator/runs/20260929-120000-a1b2c3/build-2.md in a single write, in the same shape as before, answering each finding by its number.
 
 If you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead.
 
