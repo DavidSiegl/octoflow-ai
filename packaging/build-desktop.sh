@@ -104,7 +104,7 @@ smoke_appimage() {
     serve_pid='' orchestrator=''
     smoke_fail() {
         echo "build-desktop.sh: the AppImage as the CLI: $*" >&2
-        # The orchestrator first: the AppImage's runtime does not pass a signal on to it.
+        # The orchestrator by its own pid too: the failed check may be that the runtime's death did not stop it.
         for pid in $orchestrator $serve_pid; do kill "$pid" 2>/dev/null || true; done
         rm -rf "$smoke"
         exit 1
@@ -149,8 +149,19 @@ smoke_appimage() {
         smoke_fail "serve has PYTHONHOME set: $(printf '%s\n' "$env" | grep '^PYTHONHOME=')"
     fi
 
-    kill "$orchestrator"
-    wait "$serve_pid" || smoke_fail "serve did not exit 0 on SIGTERM"
+    # The runtime, as timeout or a service manager would stop it: under APPIMAGE_EXTRACT_AND_RUN it stays serve's
+    # parent and passes on no signal, so serve stops only by the SIGTERM it asked for at its parent's death
+    # (Cli::exec in ui/src-tauri/src/lib.rs). Gone means no /proc entry, or a zombie's, state Z after its "(comm) ".
+    kill "$serve_pid"
+    tries=0
+    while [ -e "/proc/$orchestrator" ] && [ "$(sed -n 's/.*) \(.\).*/\1/p' "/proc/$orchestrator/stat" 2>/dev/null)" != Z ]
+    do
+        tries=$((tries + 1))
+        [ "$tries" -le 20 ] || smoke_fail "serve still runs 2 s after the AppImage's runtime got SIGTERM"
+        sleep 0.1
+    done
+    # The runtime's status is its death by SIGTERM's; the orchestrator's, an orphan's, reaches no one.
+    wait "$serve_pid" || true
     rm -rf "$smoke"
     echo "smoke-tested dist/$(basename "$1") as the CLI"
 }

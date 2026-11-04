@@ -269,16 +269,22 @@ fn is_finder_launch(args: &[OsString]) -> bool {
 
 impl Cli {
     /// Replace this process with the CLI, so that the terminal, the exit status and the signals sent to the app are
-    /// the CLI's own. Not so under an AppImage run without FUSE: the process the caller started is the AppImage's
-    /// runtime, which stays this one's parent and passes on no signal sent to it (TODO.md). Returns never: when the
-    /// user's directory is gone or the exec fails, prints why on standard error and exits 1. Call it before anything
-    /// else starts a thread or opens a window, which an exec would discard.
+    /// the CLI's own. Under an AppImage run without FUSE the process the caller started is the AppImage's runtime,
+    /// which stays this one's parent and passes on no signal sent to it: the CLI gets SIGTERM when the runtime dies,
+    /// whatever signal stopped it (`stop_with_appimage_runtime`). Returns never: when the user's directory is gone
+    /// or the exec fails, prints why on standard error and exits 1. Call it before anything else starts a thread or
+    /// opens a window, which an exec would discard.
     #[cfg(unix)]
     pub fn exec(mut self) -> ! {
         use std::os::unix::process::CommandExt;
         if let Some(why) = self.why_not_started() {
             eprintln!("octoflow-ui: {why}");
             std::process::exit(1)
+        }
+        // A CLI that outlives the runtime is still better than none: say so and run it.
+        #[cfg(target_os = "linux")]
+        if let Err(e) = stop_with_appimage_runtime() {
+            eprintln!("octoflow-ui: the CLI will not stop when the AppImage that started it does: {e}");
         }
         let e = self.command.exec();
         eprintln!("octoflow-ui: cannot run {}: {e}", self.orchestrator);
@@ -289,6 +295,41 @@ impl Cli {
     fn why_not_started(&self) -> Option<String> {
         let dir = self.dir.as_ref().filter(|dir| !dir.is_dir())?;
         Some(format!("cannot start in {}: it is not a directory", dir.display()))
+    }
+}
+
+/// When this process's parent is the AppImage's runtime that started it, ask the kernel to send this process SIGTERM
+/// when that parent dies, a request an exec keeps; when the parent died before the request, end this process now by
+/// SIGTERM, as the request would have. Elsewhere, nothing. The runtime stays the parent under
+/// `APPIMAGE_EXTRACT_AND_RUN` (a machine without FUSE): it forks, runs the app in the child, waits, and passes on no
+/// signal sent to it. A mounted AppImage's runtime execs the app instead, so the app's parent is the caller's own,
+/// whose death must not stop the CLI. Errors when the kernel refuses the request or the signal.
+#[cfg(target_os = "linux")]
+fn stop_with_appimage_runtime() -> nix::Result<()> {
+    use nix::sys::signal::{raise, Signal};
+    use nix::unistd::getppid;
+    let parent = getppid();
+    // A parent whose executable cannot be read is taken for no runtime: the CLI then runs as it always has.
+    let parent_exe = std::fs::read_link(format!("/proc/{parent}/exe")).ok();
+    let appimage = std::env::var_os("APPIMAGE").map(PathBuf::from);
+    if !is_appimage(appimage.as_deref(), parent_exe.as_deref()) {
+        return Ok(());
+    }
+    nix::sys::prctl::set_pdeathsig(Signal::SIGTERM)?;
+    // prctl(2): a parent that died before the request sends nothing, and this process has another parent since.
+    if getppid() != parent {
+        raise(Signal::SIGTERM)?;
+    }
+    Ok(())
+}
+
+/// Whether exe, a process's executable as `/proc/<pid>/exe` names it, is the file appimage, `$APPIMAGE`, names: the
+/// AppImage, which is its own runtime. False when either is unknown.
+#[cfg(target_os = "linux")]
+fn is_appimage(appimage: Option<&Path>, exe: Option<&Path>) -> bool {
+    match (appimage, exe) {
+        (Some(appimage), Some(exe)) => canonical(appimage.to_path_buf()) == canonical(exe.to_path_buf()),
+        _ => false,
     }
 }
 
@@ -768,6 +809,85 @@ mod tests {
         assert_eq!(Cli { orchestrator, command, dir: Some("/".into()) }.why_not_started(), None);
         let Cli { orchestrator, command, .. } = cli(["list".into()]).expect("the CLI");
         assert_eq!(Cli { orchestrator, command, dir: None }.why_not_started(), None);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn only_the_appimage_file_itself_is_the_runtime() {
+        let dir = TempDir::new();
+        let appimage = dir.join("x.AppImage");
+        std::fs::write(&appimage, "").expect("a stand-in AppImage");
+        std::os::unix::fs::symlink(&appimage, dir.join("link.AppImage")).expect("a link to it");
+        assert!(is_appimage(Some(&appimage), Some(&appimage)));
+        assert!(is_appimage(Some(&dir.join("link.AppImage")), Some(&appimage)), "APPIMAGE through a link");
+        assert!(!is_appimage(Some(&appimage), Some(Path::new("/bin/sh"))), "a parent that is a shell");
+        assert!(!is_appimage(None, Some(&appimage)), "no APPIMAGE");
+        assert!(!is_appimage(Some(&appimage), None), "a parent whose executable cannot be read");
+    }
+
+    /// Set, to the path of a file to create, for the process `a_cli_gets_sigterm_when_its_appimage_runtime_dies`
+    /// starts: that process stands in for the app, and creates the file once it has asked for its signal.
+    #[cfg(target_os = "linux")]
+    const STAND_IN_READY: &str = "OCTOFLOW_UI_TEST_STAND_IN_READY";
+
+    /// Whether the process with this pid is running: it exists and is no zombie.
+    #[cfg(target_os = "linux")]
+    fn running(pid: u32) -> bool {
+        // /proc/<pid>/stat: pid (comm) state …, comm holding no ')' here.
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+        stat.rsplit_once(") ").is_some_and(|(_, rest)| !rest.starts_with('Z'))
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn a_cli_gets_sigterm_when_its_appimage_runtime_dies() {
+        use std::io::Read;
+        use std::os::unix::process::CommandExt;
+        // The stand-in for the app: a run of this test with STAND_IN_READY set, whose parent is a shell named as the
+        // AppImage. It asks for its signal, says so, and execs into sleep, which stands in for the CLI.
+        if let Some(ready) = std::env::var_os(STAND_IN_READY) {
+            stop_with_appimage_runtime().expect("the death signal set");
+            std::fs::write(&ready, "").expect("the ready file written");
+            let e = Command::new("sleep").arg("30").exec();
+            panic!("cannot exec sleep: {e}");
+        }
+        let dir = TempDir::new();
+        let ready = dir.join("ready");
+        let test = std::env::current_exe().expect("the test binary");
+        // The runtime: a shell that starts the stand-in, prints its pid, and waits for its standard input to close.
+        let mut runtime = Command::new("sh")
+            .args(["-c", "\"$0\" \"$1\" --exact >/dev/null 2>&1 & echo $!; read _"])
+            .arg(&test)
+            .arg("tests::a_cli_gets_sigterm_when_its_appimage_runtime_dies")
+            .env(STAND_IN_READY, &ready)
+            .env("APPIMAGE", "/bin/sh")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("sh runs");
+        let mut out = String::new();
+        let mut stdout = runtime.stdout.take().expect("the runtime's output");
+        let mut byte = [0u8];
+        while stdout.read(&mut byte).expect("the runtime's output read") == 1 && byte[0] != b'\n' {
+            out.push(byte[0] as char);
+        }
+        let cli: u32 = out.trim().parse().unwrap_or_else(|e| panic!("the stand-in's pid, not {out:?}: {e}"));
+        let started = std::time::Instant::now();
+        while !ready.exists() {
+            assert!(started.elapsed().as_secs() < 30, "the stand-in never asked for its signal");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        drop(runtime.stdin.take());
+        runtime.wait().expect("the runtime exits");
+        let died = std::time::Instant::now();
+        while running(cli) && died.elapsed().as_secs() < 2 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let left = running(cli);
+        if left {
+            Command::new("kill").arg(cli.to_string()).status().expect("kill runs");
+        }
+        assert!(!left, "the CLI still runs 2 s after its runtime died");
     }
 
     #[test]
