@@ -11,9 +11,10 @@ use crate::host::{Exec, ExecError, Host, RunFile, RunFileText};
 use crate::serve::Reached;
 use serde_json::Value;
 
-/// A Host whose files are `files`, whose run_files_inside lists those under a run directory by their `mtimes`, as the
-/// real Host's does, and which records the path of every read, read_inside's included, in `reads`. It runs no command,
-/// and none of its files is a link, so every one stays inside its run directory.
+/// A Host whose files are `files`, whose run_states_inside reads the state.json of each run among them, whose
+/// run_files_inside lists those under a run directory by their `mtimes`, as the real Host's does, and which records
+/// the path of every read, read_inside's included, in `reads`. It runs no command, and none of its files is a link,
+/// so every one stays inside its run directory.
 #[derive(Default)]
 pub struct ServeHost {
     /// The SSH target it stands for; None for this machine.
@@ -32,10 +33,10 @@ pub struct Files {
     pub ages: BTreeMap<String, u64>,
     /// The path of each read, in order.
     pub reads: Vec<String>,
-    /// While set, what run_states fails with.
-    pub run_states_error: Option<String>,
-    /// How many times run_states was called: a poll of the project each.
-    pub run_states_calls: usize,
+    /// While set, what run_states_inside fails with.
+    pub run_states_inside_error: Option<String>,
+    /// How many times run_states_inside was called: a poll of the project each.
+    pub run_states_inside_calls: usize,
     /// How many times run_files_inside was called: one listing of a run's directory each.
     pub run_files_inside_calls: usize,
     /// While set, what every read fails with (still recorded in reads).
@@ -72,10 +73,10 @@ impl Host for ServeHost {
         Ok(s.files.get(path).cloned())
     }
 
-    fn run_states(&self, cwd: &str) -> Result<Vec<(u64, Value)>, OrchestratorError> {
+    fn run_states_inside(&self, cwd: &str) -> Result<Vec<(u64, Value)>, OrchestratorError> {
         let mut s = self.state();
-        s.run_states_calls += 1;
-        if let Some(e) = &s.run_states_error {
+        s.run_states_inside_calls += 1;
+        if let Some(e) = &s.run_states_inside_error {
             return Err(OrchestratorError(e.clone()));
         }
         let runs = format!("{cwd}/{RUNS_DIR}/");

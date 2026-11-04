@@ -815,8 +815,17 @@ fn what_leads_out_of_a_run_directory_is_neither_listed_nor_read_over_ssh() {
     }
     assert_eq!(read("away", "outside.md"), RunFileText::Outside);
     assert_eq!((read("r", "loop.md"), read("r", "nosuch.md"), read("nosuch", "a.md")), (RunFileText::Missing, RunFileText::Missing, RunFileText::Missing));
+    // A run's state.json is read only from a run directory below the runs directory, alias being r's again, and
+    // only when it stays in its run directory.
+    put(&format!("{runs}/r/state.json"), "{\"run_id\": \"r\"}");
+    put(&d.join("state.json"), "{\"run_id\": \"away\"}");
+    std::fs::create_dir_all(format!("{runs}/s")).unwrap();
+    link(&d.join("state.json"), &format!("{runs}/s/state.json"));
+    let states = ssh.host.run_states_inside(&d.join("proj")).unwrap();
+    let ids: Vec<&str> = states.iter().map(|(_, s)| s.get("run_id").and_then(Value::as_str).unwrap()).collect();
+    assert_eq!(ids, ["r", "r"]);
     // Each listing and each read is one command over ssh.
-    assert_eq!(ssh.calls().len(), 4 + 9);
+    assert_eq!(ssh.calls().len(), 4 + 9 + 1);
 }
 
 /// A program called name on PATH that removes the file gone when given it, then runs the system's program of that

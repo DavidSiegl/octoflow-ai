@@ -136,13 +136,13 @@ fn a_run_of_this_host_whose_orchestrator_exited_is_stale() {
 #[test]
 fn a_problem_is_told_once_and_its_end_too() {
     let w = Watched::new();
-    w.host.state().run_states_error = Some("ssh: connection refused".to_string());
+    w.host.state().run_states_inside_error = Some("ssh: connection refused".to_string());
     let mut watch = RunWatch::new(&w.project);
     let problem = watch.poll();
     assert_eq!(kinds(&problem), ["problem"]);
     assert_eq!(problem[0].payload.to_string(), r#"{"error":"ssh: connection refused"}"#);
     assert_eq!(watch.poll(), vec![]);
-    w.host.state().run_states_error = None;
+    w.host.state().run_states_inside_error = None;
     w.save(0, &[]);
     let events = watch.poll();
     assert_eq!(kinds(&events), ["problem", "record", "files"]);

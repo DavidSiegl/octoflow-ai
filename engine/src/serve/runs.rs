@@ -108,13 +108,14 @@ impl ProjectRuns {
         self.host.ssh_target().is_some()
     }
 
-    /// Each run's record, as `list --json` prints them (run_record, this machine being the one serve runs on).
-    /// Errors: the runs cannot be read.
+    /// Each run's record, as `list --json` prints them (run_record, this machine being the one serve runs on), of the
+    /// runs whose state.json stays inside their run directory, and that inside the runs directory
+    /// (Host::run_states_inside): another is no run to serve. Errors: the runs cannot be read.
     pub fn records(&self) -> Result<Vec<Object>, OrchestratorError> {
         let here = local_host();
         Ok(self
             .host
-            .run_states(&self.cwd)?
+            .run_states_inside(&self.cwd)?
             .iter()
             .map(|(age, s)| run_record(s, *age, &here, &*self.pid_alive, &self.target))
             .collect())
@@ -172,11 +173,15 @@ impl ProjectRuns {
     }
 
     /// The run's agent of role as its state.json saves it: its herdr name and its run's herdr server. Errors:
-    /// Refused for a run id that is not a plain name; Missing for no such run, or no started agent of that role in
-    /// it; Failed when state.json cannot be read, is not JSON, or saves a herdr_server of another shape.
+    /// Refused for a run id that is not a plain name; Missing for no such run, one whose state.json leads out as
+    /// records leaves it out, or no started agent of that role in it; Failed when state.json cannot be read, is not
+    /// JSON, or saves a herdr_server of another shape.
     fn agent(&self, run_id: &str, role: &str) -> Result<AgentAddress, RunReadError> {
-        let path = format!("{}/state.json", self.dir(run_id)?);
-        let text = self.host.read(&path)?.ok_or_else(|| RunReadError::Missing(format!("no run {run_id}")))?;
+        let dir = self.dir(run_id)?;
+        let path = format!("{dir}/state.json");
+        let RunFileText::Text(text) = self.host.read_inside(&dir, "state.json")? else {
+            return Err(RunReadError::Missing(format!("no run {run_id}")));
+        };
         let state = serde_json::from_str::<Value>(&text).map_err(|e| OrchestratorError(format!("{path}: {e}")))?;
         let name = state.get("agents").and_then(|a| a.get(role)).and_then(|a| a.get("name")).and_then(Value::as_str);
         let Some(name) = name.filter(|n| !n.is_empty()) else {

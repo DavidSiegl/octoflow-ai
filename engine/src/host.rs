@@ -47,28 +47,32 @@ const SKIP_F_IF_GONE: &str = "{ [ -f \"$f\" ] || continue; exit 1; }";
 /// stat -f is BSD.
 const MTIME_OF_F: &str = "m=$(stat -c %Y -- \"$f\" 2>/dev/null || stat -f %m -- \"$f\")";
 
-/// The status run_dir_resolved's scripts exit with when the file, or the run directory, leads out of where it must
-/// stay (Host::read_inside).
+/// The status the scripts of run_files_inside and read_inside exit with when the file, or the run directory, leads
+/// out of where it must stay (run_dir_resolved).
 const OUTSIDE_STATUS: i32 = 5;
 
-/// sh, run before a script given a run directory as $1: sets d to that directory with every link resolved, and
-/// defines `inside F`, which succeeds when file F, every link resolved, is in d or below it, and then leaves that
-/// path in "${r%/}/${p##*/}"; it returns 1 when F leads out of d, and 2 when F cannot be resolved, as when it, or a
-/// link on its way, was removed meanwhile, or the links loop. The script exits with MISSING_FILE_STATUS when $1 is not a directory, and with OUTSIDE_STATUS
-/// when d is not below $1's parent, the runs directory, links resolved too. It uses only what sh has on Linux and
-/// macOS alike: `cd -P` and `pwd -P` resolve a directory, and a file's links are followed one at a time with readlink
-/// without options (POSIX.1-2024, and in GNU, BSD and BusyBox readlink, unlike readlink -f or realpath), at most 40
-/// deep, as Linux follows them.
+/// sh defining `below F D`, which succeeds when F, a file or directory, every link resolved, is below directory D, a
+/// path with its links resolved, and leaves F's resolved path in r; it returns 1 when F leads out of D, and 2 when F
+/// cannot be resolved, as when it, or a link on its way, was removed meanwhile, or its links loop. It uses only what
+/// sh has on Linux and macOS alike: `cd -P` and `pwd -P` resolve a directory, and links are followed one at a time
+/// with readlink without options (POSIX.1-2024, and GNU, BSD and BusyBox readlink alike, unlike readlink -f or
+/// realpath), at most 40 deep, as Linux follows them. serve's view of a run (Host::run_files_inside, read_inside and
+/// run_states_inside) is what stays below the run directory, and the run directory below the runs directory.
+const BELOW: &str = "below() { p=$1 n=0; \
+     while [ -L \"$p\" ]; do n=$((n + 1)); [ \"$n\" -le 40 ] || return 2; t=$(readlink -- \"$p\") || return 2; \
+       case $t in /*) p=$t;; *) p=${p%/*}/$t;; esac; done; \
+     if [ -d \"$p\" ]; then r=$(cd -P -- \"$p\" 2>/dev/null && pwd -P) || return 2; \
+     else r=$(cd -P -- \"${p%/*}/\" 2>/dev/null && pwd -P) || return 2; r=${r%/}/${p##*/}; fi; \
+     case $r in \"${2%/}\"/*) ;; *) return 1;; esac; }; ";
+
+/// sh, run before a script given a run directory as $1: defines BELOW's `below` and sets d to the run directory with
+/// every link resolved. It exits with MISSING_FILE_STATUS when $1 is not a directory, and with OUTSIDE_STATUS when it
+/// is not below its parent, the runs directory, links resolved too.
 fn run_dir_resolved() -> String {
     format!(
-        "runs=$(cd -P -- \"${{1%/*}}/\" 2>/dev/null && pwd -P) || exit {MISSING_FILE_STATUS}; \
-         d=$(cd -P -- \"$1\" 2>/dev/null && pwd -P) || exit {MISSING_FILE_STATUS}; \
-         case $d in \"${{runs%/}}\"/*) ;; *) exit {OUTSIDE_STATUS};; esac; \
-         inside() {{ p=$1 n=0; \
-           while [ -L \"$p\" ]; do n=$((n + 1)); [ \"$n\" -le 40 ] || return 2; t=$(readlink -- \"$p\") || return 2; \
-             case $t in /*) p=$t;; *) p=${{p%/*}}/$t;; esac; done; \
-           r=$(cd -P -- \"${{p%/*}}/\" 2>/dev/null && pwd -P) || return 2; \
-           case ${{r%/}}/${{p##*/}} in \"${{d%/}}\"/*) ;; *) return 1;; esac; }}; "
+        "{BELOW}[ -d \"$1\" ] || exit {MISSING_FILE_STATUS}; \
+         runs=$(cd -P -- \"${{1%/*}}/\" 2>/dev/null && pwd -P) || exit {MISSING_FILE_STATUS}; below \"$1\" \"$runs\"; \
+         case $? in 0) d=$r;; 1) exit {OUTSIDE_STATUS};; *) exit {MISSING_FILE_STATUS};; esac; "
     )
 }
 
@@ -875,26 +879,21 @@ pub trait Host {
     /// cannot shift it. A run whose directory is removed while the runs are read, as prune removes one, is among them
     /// or not, never an error. Errors: a state.json that is still there cannot be stat'ed or read, or is not JSON.
     fn run_states(&self, cwd: &str) -> Result<Vec<(u64, Value)>, OrchestratorError> {
-        // Each state follows its age and a blank, and ends at a NUL, which no JSON text holds, so a state.json a human
-        // pretty-printed reads as well as the engine's one line.
+        let script = format!("now=$(date +%s) || exit 1; {}", run_states_loop("true"));
+        parsed_run_states(cwd, &self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?)
+    }
+
+    /// As run_states, but serve's view of the runs: a run whose directory, every link resolved, is not below the
+    /// runs directory, links resolved, or whose state.json, links resolved, is not below its run directory, is left
+    /// out, as a run without a state.json is. The links are resolved on this host, as BELOW says. Errors: as
+    /// run_states'.
+    fn run_states_inside(&self, cwd: &str) -> Result<Vec<(u64, Value)>, OrchestratorError> {
+        // Without a runs directory there are no runs; f becomes the resolved path, which is what is stat'ed and read.
         let script = format!(
-            "now=$(date +%s) || exit 1; for f in \"$1\"/{RUNS_DIR}/*/state.json; do [ -f \"$f\" ] || continue; \
-             {MTIME_OF_F} || {SKIP_F_IF_GONE}; s=$(cat -- \"$f\") || {SKIP_F_IF_GONE}; \
-             printf \"%s %s\\000\" \"$((now - m))\" \"$s\"; done; true"
+            "{BELOW}now=$(date +%s) || exit 1; runs=$(cd -P -- \"$1/{RUNS_DIR}\" 2>/dev/null && pwd -P) || exit 0; {}",
+            run_states_loop("below \"${f%/*}\" \"$runs\" && below \"$f\" \"$r\" && f=$r")
         );
-        let out = self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?;
-        let mut runs = vec![];
-        for entry in out.split('\0') {
-            if entry.trim().is_empty() {
-                continue;
-            }
-            let (age, text) = entry.split_once(' ').unwrap_or((entry, ""));
-            let corrupt = |e: String| OrchestratorError(format!("corrupt run state under {cwd}/{RUNS_DIR}: {e}"));
-            let not_int = || corrupt(format!("invalid literal for int() with base 10: {age:?}"));
-            let age: i64 = python_int(age).ok_or_else(not_int)?;
-            runs.push((age.max(0).unsigned_abs(), serde_json::from_str::<Value>(text).map_err(|e| corrupt(e.to_string()))?));
-        }
-        Ok(runs)
+        parsed_run_states(cwd, &self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?)
     }
 
     /// The log in which the harness kind keeps a session's token usage (crate::harness::SessionLog), found in the
@@ -949,9 +948,9 @@ pub trait Host {
     /// As run_files, but only what stays inside the run directory, as serve shows it to the desktop app: a file whose
     /// path, every link resolved, is not in run_dir, links resolved, is left out, and a run_dir that, links resolved,
     /// is not in its parent directory, the runs directory, links resolved, lists none. The links are resolved on this
-    /// host, as run_dir_resolved says. Errors: as run_files'.
+    /// host, as BELOW says. Errors: as run_files'.
     fn run_files_inside(&self, run_dir: &str) -> Result<Vec<RunFile>, OrchestratorError> {
-        let script = format!("{}{}", run_dir_resolved(), run_files_loop("inside \"$f\""));
+        let script = format!("{}{}", run_dir_resolved(), run_files_loop("below \"$f\" \"$d\""));
         let argv = ["sh", "-c", &script, "_", run_dir];
         let proc = self.run(&argv, None, DEFAULT_TIMEOUT)?;
         if proc.status == MISSING_FILE_STATUS || proc.status == OUTSIDE_STATUS {
@@ -964,12 +963,11 @@ pub trait Host {
     /// lists only those that do: Outside, having read nothing, for a file that leads out or a run_dir that does;
     /// Missing for a file not there, or removed while it is resolved. Errors: the file cannot be read, or is not UTF-8.
     fn read_inside(&self, run_dir: &str, name: &str) -> Result<RunFileText, OrchestratorError> {
-        // What is read is the path inside resolved, so the links it walked are not followed again; one put in its
+        // What is read is the path below resolved, so the links it walked are not followed again; one put in its
         // place after that is, a race TODO.md records ("serve's link checks race the agent").
         let script = format!(
-            "{}f=$1/$2; [ -f \"$f\" ] || exit {MISSING_FILE_STATUS}; inside \"$f\"; \
-             case $? in 0) ;; 1) exit {OUTSIDE_STATUS};; *) exit {MISSING_FILE_STATUS};; esac; \
-             cat -- \"${{r%/}}/${{p##*/}}\"",
+            "{}f=$1/$2; [ -f \"$f\" ] || exit {MISSING_FILE_STATUS}; below \"$f\" \"$d\"; \
+             case $? in 0) ;; 1) exit {OUTSIDE_STATUS};; *) exit {MISSING_FILE_STATUS};; esac; cat -- \"$r\"",
             run_dir_resolved()
         );
         let proc = self.run(&["sh", "-c", &script, "_", run_dir, name], None, DEFAULT_TIMEOUT)?;
@@ -980,6 +978,34 @@ pub trait Host {
             _ => Err(OrchestratorError(format!("reading {run_dir}/{name}: {}", proc.stderr.trim()))),
         }
     }
+}
+
+/// sh printing, for each state.json $f of a run under the project $1 for which the sh condition keep succeeds, its
+/// age in seconds by $now, a blank and its text, ended by a NUL, which no JSON text holds: what parsed_run_states
+/// reads. A state.json a human pretty-printed reads as well as the engine's one line.
+fn run_states_loop(keep: &str) -> String {
+    format!(
+        "for f in \"$1\"/{RUNS_DIR}/*/state.json; do [ -f \"$f\" ] || continue; {keep} || continue; \
+         {MTIME_OF_F} || {SKIP_F_IF_GONE}; s=$(cat -- \"$f\") || {SKIP_F_IF_GONE}; \
+         printf \"%s %s\\000\" \"$((now - m))\" \"$s\"; done; true"
+    )
+}
+
+/// The runs run_states_loop printed as out, under the project at cwd, as run_states gives them. Errors: an age that
+/// is not a number, or a state that is not JSON.
+fn parsed_run_states(cwd: &str, out: &str) -> Result<Vec<(u64, Value)>, OrchestratorError> {
+    let mut runs = vec![];
+    for entry in out.split('\0') {
+        if entry.trim().is_empty() {
+            continue;
+        }
+        let (age, text) = entry.split_once(' ').unwrap_or((entry, ""));
+        let corrupt = |e: String| OrchestratorError(format!("corrupt run state under {cwd}/{RUNS_DIR}: {e}"));
+        let not_int = || corrupt(format!("invalid literal for int() with base 10: {age:?}"));
+        let age: i64 = python_int(age).ok_or_else(not_int)?;
+        runs.push((age.max(0).unsigned_abs(), serde_json::from_str::<Value>(text).map_err(|e| corrupt(e.to_string()))?));
+    }
+    Ok(runs)
 }
 
 /// sh printing, for each file $f in the directory $1 that run_files lists and for which the sh condition keep
