@@ -270,12 +270,13 @@ impl PullRequestStates<'_, '_> {
 /// The header lines to set for spec, empty for none, from these steps in this order, each on the status the one
 /// before it left:
 ///
-/// 1. a SPEC_IN_REVIEW or SPEC_FOR_HUMAN spec's run, its conflict refreshed (conflict_header), which can make a
-///    SPEC_FOR_HUMAN spec SPEC_IN_REVIEW with its pull request;
+/// 1. a SPEC_IN_REVIEW or SPEC_FOR_HUMAN spec's run, its conflict refreshed, or found cleared by a refresh before
+///    this drain (conflict_header), which can make a SPEC_FOR_HUMAN spec SPEC_IN_REVIEW with its pull request;
 /// 2. a SPEC_READY spec's finished run on its Run: line, which an interrupted drain leaves (finished_run_header):
 ///    SPEC_IN_REVIEW with its pull request, or SPEC_FOR_HUMAN;
-/// 3. a spec now SPEC_IN_REVIEW with a pull request, or SPEC_FOR_HUMAN with one whose state step 1 heard: SPEC_DONE
-///    once it is merged, SPEC_FOR_HUMAN once it is closed (pull_request_header).
+/// 3. a spec now SPEC_IN_REVIEW with a pull request, or SPEC_FOR_HUMAN with one whose state step 1 heard, which it
+///    hears only of a run whose conflict is refreshed or was cleared: SPEC_DONE once it is merged, SPEC_FOR_HUMAN
+///    once it is closed (pull_request_header).
 ///
 /// gh hears of each pull request once a pass (prs). runs are Host::run_states's; the rest is as refreshed_headers
 /// says. Errors: as those steps.
@@ -316,7 +317,10 @@ fn saved_run<'r>(runs: &'r [(u64, Value)], run_id: &str) -> Option<&'r (u64, Val
 /// Refresh the run on the spec's Run: line, if it has_conflict, as refreshed_headers says, telling prs the state gh
 /// gave its pull request, and return the header lines that sets: SPEC_IN_REVIEW and the pull request for a
 /// SPEC_FOR_HUMAN spec whose succeeded run's pull request is open and no longer conflicts; none otherwise, and for a
-/// run not among runs, Host::run_states's.
+/// run not among runs, Host::run_states's. A run whose conflict a refresh before this drain cleared
+/// (RunState::conflict_cleared) counts as one this refresh cleared, its pull request's state asked of prs, and only
+/// for a SPEC_FOR_HUMAN spec whose run succeeded; a spec the human set SPEC_FOR_HUMAN for another reason has no such
+/// run, and is left as it is.
 fn conflict_header(
     spec: &QueuedSpec,
     runs: &[(u64, Value)],
@@ -324,20 +328,26 @@ fn conflict_header(
     dry_run: bool,
 ) -> Result<Entries, OrchestratorError> {
     let Some((_, saved)) = spec.run().and_then(|run| saved_run(runs, &run)) else { return Ok(vec![]) };
-    if !has_conflict(saved) {
-        return Ok(vec![]);
-    }
-    let check = refresh_conflict(prs.world, prs.cwd, saved, dry_run)?;
-    if !dry_run {
-        prs.world.with.human.log(&check.line());
-    }
-    prs.learn(&check.url, &check.pr_state);
-    let cleared_open = check.pr_state == "OPEN" && check.clears();
+    let for_human = spec.status().as_deref() == Some(SPEC_FOR_HUMAN);
     let succeeded = saved.get("verdict").and_then(Value::as_str).is_some_and(|v| SUCCEEDED.contains(&v));
-    if spec.status().as_deref() == Some(SPEC_FOR_HUMAN) && cleared_open && succeeded {
-        return Ok(vec![(STATUS_KEY, SPEC_IN_REVIEW.into()), (PR_KEY, check.url)]);
+    // The pull request whose conflict is cleared now, while it is open; None when there is none.
+    let cleared_open = if has_conflict(saved) {
+        let check = refresh_conflict(prs.world, prs.cwd, saved, dry_run)?;
+        if !dry_run {
+            prs.world.with.human.log(&check.line());
+        }
+        prs.learn(&check.url, &check.pr_state);
+        (check.pr_state == "OPEN" && check.clears()).then_some(check.url)
+    } else {
+        match saved.get("conflict_cleared").filter(|u| u.is_set()).map(Value::text) {
+            Some(url) if for_human && succeeded => (prs.state(&url)? == "OPEN").then_some(url),
+            _ => None,
+        }
+    };
+    match cleared_open {
+        Some(url) if for_human && succeeded => Ok(vec![(STATUS_KEY, SPEC_IN_REVIEW.into()), (PR_KEY, url)]),
+        _ => Ok(vec![]),
     }
-    Ok(vec![])
 }
 
 /// The header lines to set for a spec whose pull request is in state, as gh gives it: SPEC_DONE for MERGED,

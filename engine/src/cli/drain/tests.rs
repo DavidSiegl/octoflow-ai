@@ -789,6 +789,50 @@ fn a_refresh_of_another_pull_request_than_the_spec_s_settles_nothing_by_it() {
 }
 
 #[test]
+fn a_spec_for_the_human_whose_conflict_refresh_cleared_first_goes_to_review_then_done() {
+    let d = Drain::new();
+    let run_id = conflicted_spec(&d, SPEC_FOR_HUMAN, APPROVE, &[]);
+    let refreshed = d.cli.with(|world| crate::cli::refresh::refresh_command(world, "/proj", None));
+    assert_eq!(refreshed.unwrap(), 0);
+    assert_eq!(d.run_conflicts(&run_id), Value::Array(vec![]));
+    let r = d.drain(vec![], &[]);
+    assert_eq!(r.status, 0, "{}", r.err);
+    assert_eq!(d.header("a"), (some(SPEC_IN_REVIEW), Some(run_id.clone()), some(PR_A)));
+    assert!(r.out.contains(&format!("a: ready-for-human -> in-review  {PR_A}\n")), "{}", r.out);
+    d.pull_request(PR_A, "MERGED", &[]);
+    let r = d.drain(vec![], &[]);
+    assert_eq!(r.status, 0, "{}", r.err);
+    assert_eq!(d.header("a"), (some(SPEC_DONE), Some(run_id), some(PR_A)));
+}
+
+#[test]
+fn a_spec_for_the_human_whose_conflict_refresh_cleared_stays_unless_its_run_succeeded_and_its_pr_is_open() {
+    // The verdict, the pull request's state as gh gives it after the refresh, and the spec's status that leaves.
+    let cases = [(APPROVE, "CLOSED", SPEC_FOR_HUMAN), (APPROVE, "MERGED", SPEC_DONE), (CHANGES_REQUESTED, "OPEN", SPEC_FOR_HUMAN)];
+    for (verdict, pr_state, spec_after) in cases {
+        let d = Drain::new();
+        let run_id = conflicted_spec(&d, SPEC_FOR_HUMAN, verdict, &[]);
+        d.cli.with(|world| crate::cli::refresh::refresh_command(world, "/proj", None)).unwrap();
+        d.pull_request(PR_A, pr_state, &[]);
+        let r = d.drain(vec![], &[]);
+        assert_eq!(r.status, 0, "{}", r.err);
+        assert_eq!(d.header("a"), (some(spec_after), Some(run_id), some(PR_A)), "{verdict} {pr_state}");
+    }
+}
+
+#[test]
+fn a_spec_for_the_human_whose_run_never_conflicted_stays_and_gh_is_not_asked() {
+    let d = Drain::new();
+    let run_id = "20261024-100000-aaaaaa";
+    d.spec("a", &spec_text("First", Some(SPEC_FOR_HUMAN), &[&format!("Run: {run_id}"), &format!("PR: {PR_A}")]));
+    let fields = [("phase", Value::from(DONE)), ("verdict", Value::from(APPROVE)), ("pr_url", Value::from(PR_A))];
+    d.saved_run("a", run_id, 10_000, &fields);
+    d.pull_request(PR_A, "OPEN", &[]);
+    assert_eq!(d.refreshed(), []);
+    assert_eq!(d.views(), Vec::<String>::new());
+}
+
+#[test]
 fn a_dry_run_shows_the_move_and_refreshes_nothing() {
     let d = Drain::new();
     let run_id = conflicted_spec(&d, SPEC_FOR_HUMAN, APPROVE, &[]);

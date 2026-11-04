@@ -659,14 +659,20 @@ is rewritten to say what is left.
   check reuses `Host.gitleaks_problem`, the run's pre-push check, which asks `gitleaks git --help` because a
   distribution's build may print no version number. So `doctor` shows no gitleaks version. Kept by choice
   (2026-10-24).
-- **A spec left `ready-for-human` by a conflict stays there when `refresh` clears the conflict before a drain does.**
-  drain moves such a spec to `in-review` only when its own refresh clears the run's conflict (`refreshed_headers`);
-  a run cleared by `orchestrator.py refresh` beforehand has no conflicts left, so drain cannot tell the spec held
-  back only by its conflict from one the human set `ready-for-human`, and leaves it, with an open pull request
-  ready for review that no drain marks `done` once merged. Kept so that drain never overrides a status the human
-  set. Raised while building the refresh command (2026-10-25). Closes with the run recording that a refresh cleared
-  its conflict, which drain then reads, or with refresh moving the spec itself.
-  Ticket: `.scratch/drain-refresh-cleared/issues/01-refresh-records-a-cleared-conflict.md` (#236).
+- **drain takes a refresh-cleared conflict's spec to `in-review` again each time the human sets it back.**
+  `refresh_conflict` (`engine/src/cli/refresh.rs`) records `conflict_cleared` in the run's state, and `conflict_header`
+  (`engine/src/cli/drain.rs`) moves a `ready-for-human` spec whose succeeded run records it, its pull request open, to
+  `in-review`; the record stays, so a human who then sets that spec `ready-for-human` again, for another reason, has
+  it moved back by every later drain while the pull request is open. A conflict drain's own refresh cleared has the
+  same record. Raised while implementing drain-refresh-cleared ticket 01 (2026-11-04). Closes with drain clearing
+  `conflict_cleared` once it has taken the spec up, so the record means a cleared conflict no drain has acted on yet.
+- **A spec left `ready-for-human` by a conflict stays there when `refresh` finds its pull request merged or closed.**
+  `refresh_conflict` records `conflict_cleared` only for an open pull request; one merged or closed meanwhile has only
+  its conflicts forgotten, so a later drain does not ask gh about it, and a `ready-for-human` spec whose pull request
+  `refresh` found merged is never marked `done`. drain's own refresh of the same run does mark it `done`
+  (`settled_header`, step 3). Raised while implementing drain-refresh-cleared ticket 01 (2026-11-04). Closes with
+  refresh recording the cleared conflict whatever the pull request's state, and drain following that record's pull
+  request for a `ready-for-human` spec.
 - **Proofs run after the last round's review too.** No Builder turn follows to read them; only the draft pull
   request's review shows them, and each may take `PROOF_TIMEOUT`. Kept: a demonstrated defect is what the human
   most needs to see in a draft. Raised by the same review.
