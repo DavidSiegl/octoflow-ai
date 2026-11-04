@@ -122,12 +122,15 @@ export interface RunOptions {
 }
 
 /** A run to start, as POST /run takes it, each field the `run` flag or argument of its name. A field left out is
- * left to `run`, as a flag not given is: workflow `default`, and the workflow's agents and models. */
+ * left to `run`, as a flag not given is: workflow `default`, and the workflow's agents and models. role_agents and
+ * role_models map a role of the workflow, by its key, to what its --role-agent and --role-model give it. */
 export interface RunRequest {
   task: string;
   workflow?: string;
   agent?: string;
   model?: string;
+  role_agents?: Record<string, string>;
+  role_models?: Record<string, string>;
   no_pr: boolean;
   worktree: boolean;
 }

@@ -12,7 +12,7 @@ use crate::cli::listing::run_record;
 use crate::constants::RUNS_DIR;
 use crate::error::OrchestratorError;
 use crate::herdr::{AgentAddress, AgentConsole, HerdrError, HerdrServer, Launcher};
-use crate::host::Host;
+use crate::host::{Host, RunFileText};
 use crate::paths::file_name;
 use serde::Deserialize;
 use serde_json::Value;
@@ -108,23 +108,26 @@ impl ProjectRuns {
         self.host.ssh_target().is_some()
     }
 
-    /// Each run's record, as `list --json` prints them (run_record, this machine being the one serve runs on).
-    /// Errors: the runs cannot be read.
+    /// Each run's record, as `list --json` prints them (run_record, this machine being the one serve runs on), of the
+    /// runs whose state.json stays inside their run directory, and that inside the runs directory
+    /// (Host::run_states_inside): another is no run to serve. Errors: the runs cannot be read.
     pub fn records(&self) -> Result<Vec<Object>, OrchestratorError> {
         let here = local_host();
         Ok(self
             .host
-            .run_states(&self.cwd)?
+            .run_states_inside(&self.cwd)?
             .iter()
             .map(|(age, s)| run_record(s, *age, &here, &*self.pid_alive, &self.target))
             .collect())
     }
 
     /// The run's files, oldest first, as a JSON list of {"name", "mtime"}, mtime in seconds since the epoch; [] for a
-    /// run without a directory. Errors: Refused for a run id that is not a plain name, Failed when the directory
+    /// run without a directory. Only the files read would give are listed: none that leads out of the run directory
+    /// through a symbolic link, and none of a run whose directory leads out of the runs directory
+    /// (Host::run_files_inside). Errors: Refused for a run id that is not a plain name, Failed when the directory
     /// cannot be listed.
     pub fn files(&self, run_id: &str) -> Result<Value, RunReadError> {
-        let files = self.host.run_files(&self.dir(run_id)?)?;
+        let files = self.host.run_files_inside(&self.dir(run_id)?)?;
         let entry = |path: &str, mtime: i64| {
             let name = file_name(path);
             Value::Object(object([("name", Value::from(name)), ("mtime", Value::from(mtime))]))
@@ -132,15 +135,21 @@ impl ProjectRuns {
         Ok(Value::Array(files.iter().map(|f| entry(&f.path, f.mtime)).collect()))
     }
 
-    /// The text of the run's file name; None when there is no such file. A symbolic link in the run directory is
-    /// followed, as Python's Host.read follows it. Errors: Refused, having read nothing, for state.json or a run id or
-    /// name that is not a plain name (the run id checked first); Failed when the file cannot be read.
+    /// The text of the run's file name; None when there is no such file. A symbolic link is followed only as far as
+    /// it stays inside the run directory, and the run directory only as far as it stays inside the runs directory
+    /// (Host::read_inside). Errors: Refused, having read nothing, for state.json, a run id or name that is not a
+    /// plain name (the run id checked first), or a file that leads out; Failed when the file cannot be read.
     pub fn read(&self, run_id: &str, name: &str) -> Result<Option<String>, RunReadError> {
         if name == "state.json" {
             return Err(RunReadError::Refused("state.json is not a handoff file".to_string()));
         }
-        let dir = self.dir(run_id)?;
-        Ok(self.host.read(&format!("{dir}/{}", plain_name(name)?))?)
+        match self.host.read_inside(&self.dir(run_id)?, plain_name(name)?)? {
+            RunFileText::Text(text) => Ok(Some(text)),
+            RunFileText::Missing => Ok(None),
+            RunFileText::Outside => Err(RunReadError::Refused(format!(
+                "{name:?} leads out of run {run_id}'s directory, or the directory out of the runs directory"
+            ))),
+        }
     }
 
     /// The last lines of what the run's agent of role shows, at most lines of them (AgentConsole::read). Errors:
@@ -164,11 +173,15 @@ impl ProjectRuns {
     }
 
     /// The run's agent of role as its state.json saves it: its herdr name and its run's herdr server. Errors:
-    /// Refused for a run id that is not a plain name; Missing for no such run, or no started agent of that role in
-    /// it; Failed when state.json cannot be read, is not JSON, or saves a herdr_server of another shape.
+    /// Refused for a run id that is not a plain name; Missing for no such run, one whose state.json leads out as
+    /// records leaves it out, or no started agent of that role in it; Failed when state.json cannot be read, is not
+    /// JSON, or saves a herdr_server of another shape.
     fn agent(&self, run_id: &str, role: &str) -> Result<AgentAddress, RunReadError> {
-        let path = format!("{}/state.json", self.dir(run_id)?);
-        let text = self.host.read(&path)?.ok_or_else(|| RunReadError::Missing(format!("no run {run_id}")))?;
+        let dir = self.dir(run_id)?;
+        let path = format!("{dir}/state.json");
+        let RunFileText::Text(text) = self.host.read_inside(&dir, "state.json")? else {
+            return Err(RunReadError::Missing(format!("no run {run_id}")));
+        };
         let state = serde_json::from_str::<Value>(&text).map_err(|e| OrchestratorError(format!("{path}: {e}")))?;
         let name = state.get("agents").and_then(|a| a.get(role)).and_then(|a| a.get("name")).and_then(Value::as_str);
         let Some(name) = name.filter(|n| !n.is_empty()) else {

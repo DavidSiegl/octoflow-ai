@@ -100,9 +100,9 @@ fn a_finished_runs_files_are_read_until_they_settle_and_then_only_when_it_change
     assert_eq!(events[0].payload.get("files").unwrap().to_string(), r#"[{"name":"summary.md","mtime":0}]"#);
     // A poll that reads the same list as the one before settles it, and from then on nothing lists the run's files.
     assert_eq!(watch.poll(), vec![]);
-    let listings = w.host.state().run_files_calls;
+    let listings = w.host.state().run_files_inside_calls;
     assert_eq!(watch.poll(), vec![]);
-    assert_eq!(w.host.state().run_files_calls, listings);
+    assert_eq!(w.host.state().run_files_inside_calls, listings);
     w.save(0, &[done[0].clone(), done[1].clone(), ("closed", Value::from("2026-10-24T12:00:00Z"))]);
     assert_eq!(kinds(&watch.poll()), ["record"]);
     w.host.state().files.insert(format!("{}/metrics.json", run_dir()), "{}".to_string());
@@ -136,13 +136,13 @@ fn a_run_of_this_host_whose_orchestrator_exited_is_stale() {
 #[test]
 fn a_problem_is_told_once_and_its_end_too() {
     let w = Watched::new();
-    w.host.state().run_states_error = Some("ssh: connection refused".to_string());
+    w.host.state().run_states_inside_error = Some("ssh: connection refused".to_string());
     let mut watch = RunWatch::new(&w.project);
     let problem = watch.poll();
     assert_eq!(kinds(&problem), ["problem"]);
     assert_eq!(problem[0].payload.to_string(), r#"{"error":"ssh: connection refused"}"#);
     assert_eq!(watch.poll(), vec![]);
-    w.host.state().run_states_error = None;
+    w.host.state().run_states_inside_error = None;
     w.save(0, &[]);
     let events = watch.poll();
     assert_eq!(kinds(&events), ["problem", "record", "files"]);
