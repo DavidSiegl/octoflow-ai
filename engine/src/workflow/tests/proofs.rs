@@ -589,11 +589,13 @@ impl Host for Unpublished<'_> {
     }
 }
 
-#[test]
-fn a_proof_runs_on_the_worktrees_code_and_the_commit_holds_no_copy_of_it() {
-    // The checkout and the run's worktree differ in the code the proof reads, and the proof finds that code where
-    // git finds the repository it lies in: a proof that ran in the checkout's run directory would read the checkout's.
-    const BRANCH: &str = "orchestrator/a1b2c3-rate";
+/// The branch of in_a_worktree's run.
+const BRANCH: &str = "orchestrator/a1b2c3-rate";
+
+/// Call body with the Workflow of a quick run, in review in round 1, whose worktree holds the change: limiter.sh
+/// reads `RATE=change` there and `RATE=base` in the checkout, repo's, whose origin has its main. Also the worktree's
+/// path. The run has claimed the checkout, as a run's start does.
+fn in_a_worktree(body: impl FnOnce(&mut crate::workflow::Workflow, &Repo, &str)) {
     let repo = Repo::new(&[("limiter.sh", "RATE=base\n")]);
     let origin = format!("{}/origin.git", repo.outside);
     repo.git(&["clone", "--quiet", "--bare", &repo.path, &origin]);
@@ -622,39 +624,88 @@ fn a_proof_runs_on_the_worktrees_code_and_the_commit_holds_no_copy_of_it() {
             Default::default(),
         )),
     };
-    let mut wf = crate::workflow::Workflow::new(with, state.clone(), settings(&proving(), 3)).unwrap();
-    // Ignores the checkout's .orchestrator directory and owns the run, as a run's start does.
+    let mut wf = crate::workflow::Workflow::new(with, state, settings(&proving(), 3)).unwrap();
     wf.claim().unwrap();
+    body(&mut wf, &repo, &worktree);
+}
 
-    // Writes beside itself too, which only the copy's directory may hold.
-    let dir = state.proofs_dir(1);
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(
-        format!("{dir}/test_1_rate.sh"),
-        "here=$(dirname \"$0\"); : > \"$here/beside.txt\"\ntop=$(git -C \"$here\" rev-parse --show-toplevel) || exit 2\n\
-         . \"$top/limiter.sh\"; echo \"$top/limiter.sh\"; echo \"RATE is $RATE\"; [ \"$RATE\" = base ] || exit 1\n",
-    )
-    .unwrap();
-    let copies = format!("{worktree}/{PROOF_COPIES_DIR}");
-    std::fs::create_dir_all(format!("{copies}/1")).unwrap();
-    std::fs::write(format!("{copies}/1/test_9_old.sh"), "").unwrap();
+/// The paths BRANCH's commit holds, and its limiter.sh.
+fn committed(repo: &Repo) -> (Vec<String>, String) {
+    let paths = repo.git(&["ls-tree", "-r", "--name-only", BRANCH]);
+    (paths.split_whitespace().map(String::from).collect(), repo.git(&["show", &format!("{BRANCH}:limiter.sh")]))
+}
 
-    let (failed, said) = wf.run_proof(COMMAND, 1, "test_1_rate.sh").unwrap();
+#[test]
+fn a_proof_runs_on_the_worktrees_code_and_the_commit_holds_no_copy_of_it() {
+    // The checkout and the run's worktree differ in the code the proof reads, and the proof finds that code where
+    // git finds the repository it lies in: a proof that ran in the checkout's run directory would read the checkout's.
+    in_a_worktree(|wf, repo, worktree| {
+        // Writes beside itself too, which only the copy's directory may hold.
+        let dir = wf.state().proofs_dir(1);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            format!("{dir}/test_1_rate.sh"),
+            "here=$(dirname \"$0\"); : > \"$here/beside.txt\"\ntop=$(git -C \"$here\" rev-parse --show-toplevel) || exit 2\n\
+             . \"$top/limiter.sh\"; echo \"$top/limiter.sh\"; echo \"RATE is $RATE\"; [ \"$RATE\" = base ] || exit 1\n",
+        )
+        .unwrap();
+        let copies = format!("{worktree}/{PROOF_COPIES_DIR}");
+        std::fs::create_dir_all(format!("{copies}/1")).unwrap();
+        std::fs::write(format!("{copies}/1/test_9_old.sh"), "").unwrap();
 
-    assert!(failed, "{said}");
-    let physical = std::fs::canonicalize(&worktree).unwrap();
-    assert!(said.contains(&format!("\n{}/limiter.sh\nRATE is change", physical.display())), "{said}");
-    assert!(!std::path::Path::new(&copies).exists());
-    assert_eq!(repo.host.read(&format!("{worktree}/.orchestrator/.gitignore")).unwrap().as_deref(), Some("*\n"));
-    let listed: Vec<String> =
-        std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
-    assert_eq!(listed, ["test_1_rate.sh"]);
-    assert_eq!(repo.host.git(&worktree, &["status", "--porcelain"]).unwrap(), " M limiter.sh\n");
+        let (failed, said) = wf.run_proof(COMMAND, 1, "test_1_rate.sh").unwrap();
 
-    wf.publish().unwrap();
-    let committed = repo.git(&["ls-tree", "-r", "--name-only", BRANCH]);
-    assert_eq!(committed.split_whitespace().collect::<Vec<_>>(), ["limiter.sh"]);
-    assert_eq!(repo.git(&["show", &format!("{BRANCH}:limiter.sh")]), "RATE=change\n");
+        assert!(failed, "{said}");
+        let physical = std::fs::canonicalize(worktree).unwrap();
+        assert!(said.contains(&format!("\n{}/limiter.sh\nRATE is change", physical.display())), "{said}");
+        assert!(!std::path::Path::new(&copies).exists());
+        assert_eq!(repo.host.read(&format!("{worktree}/.orchestrator/.gitignore")).unwrap().as_deref(), Some("*\n"));
+        let listed: Vec<String> =
+            std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        assert_eq!(listed, ["test_1_rate.sh"]);
+        assert_eq!(repo.host.git(worktree, &["status", "--porcelain"]).unwrap(), " M limiter.sh\n");
+
+        wf.publish().unwrap();
+        assert_eq!(committed(repo), (vec!["limiter.sh".to_string()], "RATE=change\n".to_string()));
+    });
+}
+
+#[test]
+fn what_a_proof_writes_in_the_tree_is_undone_and_stays_out_of_the_commit() {
+    // A file it adds at the tree's top and in a new directory, as a coverage file or a __pycache__ is, and a tracked
+    // file it edits.
+    in_a_worktree(|wf, repo, worktree| {
+        let dir = wf.state().proofs_dir(1);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            format!("{dir}/test_1_rate.sh"),
+            ": > stray.txt; mkdir -p out && : > out/report.txt; echo RATE=proof > limiter.sh; exit 1\n",
+        )
+        .unwrap();
+
+        assert_eq!(wf.run_proof(COMMAND, 1, "test_1_rate.sh"), Ok((true, "it fails".to_string())));
+
+        assert_eq!(repo.host.git(worktree, &["status", "--porcelain"]).unwrap(), " M limiter.sh\n");
+        assert_eq!(std::fs::read_to_string(format!("{worktree}/limiter.sh")).unwrap(), "RATE=change\n");
+        wf.publish().unwrap();
+        assert_eq!(committed(repo), (vec!["limiter.sh".to_string()], "RATE=change\n".to_string()));
+    });
+}
+
+#[test]
+fn a_proof_whose_writes_cannot_be_undone_did_not_run_cleanly() {
+    // It fails, but leaves a file in a directory it cannot be deleted from.
+    in_a_worktree(|wf, _, worktree| {
+        let dir = wf.state().proofs_dir(1);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(format!("{dir}/test_1_rate.sh"), "mkdir out && : > out/f && chmod 555 out; exit 1\n").unwrap();
+
+        let (failed, said) = wf.run_proof(COMMAND, 1, "test_1_rate.sh").unwrap();
+
+        assert!(!failed);
+        assert!(said.starts_with("it did not run cleanly: ") && said.contains("out/f"), "{said}");
+        std::fs::set_permissions(format!("{worktree}/out"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    });
 }
 
 #[test]

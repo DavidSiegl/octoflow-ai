@@ -743,6 +743,23 @@ impl Host for FakeHost {
         Ok(())
     }
 
+    /// As restore does on a lock's tree, over the files snapshot held and those changed now. The fake knows no
+    /// committed text, so a file changed since that snapshot does not hold is taken as one added since, and deleted.
+    fn restore_snapshot(&self, cwd: &str, snapshot: &str) -> Result<(), OrchestratorError> {
+        let mut s = self.state();
+        let tree = s.trees.get(snapshot).unwrap_or_else(|| panic!("FakeHost has no snapshot {snapshot}")).clone();
+        let paths: BTreeSet<String> = tree.keys().cloned().chain(s.changed_in(cwd)).collect();
+        for path in paths {
+            match tree.get(&path).cloned().flatten() {
+                None => {
+                    s.files.remove(&path);
+                }
+                Some(text) => s.files.insert(path, text),
+            }
+        }
+        Ok(())
+    }
+
     fn delete_refs(&self, _cwd: &str, prefix: &str) -> Result<(), OrchestratorError> {
         let mut s = self.state();
         s.refs = s.refs.iter().filter(|(r, _)| !r.starts_with(prefix)).map(|(r, sha)| (r, sha.clone())).collect();

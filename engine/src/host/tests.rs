@@ -1515,6 +1515,30 @@ fn locked_files_are_restored_and_the_index_is_left_alone() {
     c.host.delete_refs(&c.a, "refs/orchestrator/a1b2c3/").unwrap();
 }
 
+#[test]
+fn restore_snapshot_undoes_what_changed_since_but_ignored_files() {
+    let r = Repo::new(&[]);
+    let base = r.commit(&[("kept.py", "a\n"), ("gone.py", "x\n"), (".gitignore", "*.log\n")], "base");
+    r.put("kept.py", "changed before\n");
+    r.put("mine.py", "untracked before\n");
+    let before = r.host.snapshot(&r.path, &base, "before").unwrap();
+    let porcelain = r.host.git(&r.path, &["status", "--porcelain"]).unwrap();
+
+    r.put("kept.py", "changed after\n");
+    r.put("mine.py", "changed after\n");
+    std::fs::remove_file(format!("{}/gone.py", r.path)).unwrap();
+    r.put("new/stray.py", "added after\n");
+    r.put("run.log", "ignored\n");
+    r.host.restore_snapshot(&format!("{}/new", r.path), &before).unwrap();
+
+    let file = |name: &str| std::fs::read_to_string(format!("{}/{name}", r.path)).ok();
+    assert_eq!(
+        (file("kept.py"), file("mine.py"), file("gone.py"), file("new/stray.py"), file("run.log")),
+        (Some("changed before\n".into()), Some("untracked before\n".into()), Some("x\n".into()), None, Some("ignored\n".into()))
+    );
+    assert_eq!(r.host.git(&r.path, &["status", "--porcelain"]).unwrap(), porcelain);
+}
+
 // -- TestHostSnapshot ------------------------------------------------------------------------------------------------
 
 #[test]

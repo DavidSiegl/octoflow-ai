@@ -194,6 +194,20 @@ fn locked_files_play_on_the_snapshots() {
 }
 
 #[test]
+fn a_snapshot_is_restored_over_what_changed_since() {
+    let host = FakeHost::default();
+    host.write("/proj/app.py", "before\n", false).unwrap();
+    host.delete("/proj/gone.py");
+    let before = host.snapshot("/proj", "abc123", "s").unwrap();
+    host.write("/proj/app.py", "after\n", false).unwrap();
+    host.write("/proj/gone.py", "back\n", false).unwrap();
+    host.write("/proj/stray.txt", "added\n", false).unwrap();
+    host.restore_snapshot("/proj", &before).unwrap();
+    let read = |path: &str| host.read(path).unwrap();
+    assert_eq!((read("/proj/app.py").as_deref(), read("/proj/gone.py"), read("/proj/stray.txt")), (Some("before\n"), None, None));
+}
+
+#[test]
 fn the_change_s_files_and_counts() {
     let host = FakeHost::default();
     host.state().diff = "diff --git a/f.py b/f.py\n+++ b/f.py\n@@ -0,0 +1,2 @@\n+a\n+b\n".into();

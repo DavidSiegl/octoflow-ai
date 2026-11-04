@@ -531,6 +531,17 @@ pub trait Host {
         Ok(())
     }
 
+    /// Put the working tree back as snapshot, a commit Host::snapshot made of it, holds it: every file, untracked ones
+    /// included, that differs from snapshot's is written as snapshot has it, or deleted where snapshot has none, as
+    /// restore does. Ignored files are left as they are, since no snapshot holds them, and so is a directory a deleted
+    /// file leaves empty, which git does not see. The index stays as it is. Errors: git fails, or a file cannot be
+    /// written or deleted, which may leave the tree partly restored.
+    fn restore_snapshot(&self, cwd: &str, snapshot: &str) -> Result<(), OrchestratorError> {
+        let now = self.snapshot(cwd, snapshot, &format!("the working tree against {snapshot}"))?;
+        let differ = paths_between(self, cwd, snapshot, &now, &[])?;
+        self.restore(cwd, snapshot, &differ)
+    }
+
     /// Delete every local ref whose name starts with prefix, such as `refs/orchestrator/<key>/`; none is no error.
     fn delete_refs(&self, cwd: &str, prefix: &str) -> Result<(), OrchestratorError> {
         for git_ref in self.git(cwd, &["for-each-ref", "--format=%(refname)", prefix])?.split_whitespace() {

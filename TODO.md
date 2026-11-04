@@ -657,13 +657,6 @@ is rewritten to say what is left.
 - **Proofs run after the last round's review too.** No Builder turn follows to read them; only the draft pull
   request's review shows them, and each may take `PROOF_TIMEOUT`. Kept: a demonstrated defect is what the human
   most needs to see in a draft. Raised by the same review.
-- **What a proof writes outside its own directory can enter the commit.** A proof runs in the working tree
-  (`Workflow::run_proof`), and only its copy's directory is removed after it, so a file it writes elsewhere, such as the
-  `__pycache__` of a module it imports in a project that does not ignore those, stays for `Workflow::publish`'s `git add
-  --all`. In-place runs always had this; since proof-runs ticket 01 a worktree run has it too, its proofs importing the
-  worktree's code. Raised there (2026-10-27). Closes with `Workflow::publish` committing only what the turns changed, or
-  with proofs running in a throwaway copy of the tree. Ticket:
-  `.scratch/proof-runs/issues/03-proof-writes-stay-out-of-the-commit.md` (#234).
 - **A proof the Builder moves into the project stays carried as erroring.** `PROOFS_NOTE` lets the Builder move a proof
   into the project as a regression test; `Workflow::run_proof` then records it "it did not run: ... is gone", which is
   not a pass, so `Workflow::carried_proofs` keeps carrying it. Raised by the cross-review of proof-runs (review 64, F9,
