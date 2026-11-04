@@ -57,11 +57,11 @@ fn turn_on(state: &mut RunState, jenkins: &Jenkins, host: &FakeHost) -> Result<V
     Ok(told.lines())
 }
 
-/// turn_quality_gate_off of state on pipeline: the lines it logged, or its error.
-fn turn_off(state: &mut RunState, pipeline: &Pipeline, host: &FakeHost) -> Result<Vec<String>, OrchestratorError> {
-    let told = Told::default();
-    turn_quality_gate_off(state, pipeline, host, &told)?;
-    Ok(told.lines())
+/// turn_quality_gate_off of state on pipeline, on host and a fixture's other fakes: the lines it logged, or its error.
+fn turn_off(state: &mut RunState, pipeline: &Pipeline, host: &Rc<FakeHost>) -> Result<Vec<String>, OrchestratorError> {
+    let f = Fixture::on(Rc::clone(host), state.clone(), vec![]);
+    turn_quality_gate_off(state, pipeline, &f.collaborators())?;
+    Ok(f.told.lines())
 }
 
 /// f with the quality gate on fake's job, the Jenkins the gate was turned on with: Python's resume with ci.
@@ -569,6 +569,18 @@ fn a_failed_ref_deletion_is_only_logged() {
     let logged = turn_off(&mut state, &DEFAULT_WORKFLOW, &host).expect("a failed deletion is no error");
     assert!(logged.iter().any(|l| l.contains(&format!("could not delete {REF_1_1} on origin"))), "{logged:?}");
     assert!(state.quality_gate_disabled);
+}
+
+#[test]
+fn a_listing_of_the_refs_origin_refuses_once_is_tried_again() {
+    let mut state = gated_pr_run("review", 1);
+    let host = pr_host();
+    host.state().remote.insert(REF_1_1, "snap1".to_string());
+    host.state().list_remote_error = Some("fatal: Could not read from remote repository.".into());
+    host.state().list_remote_failures_left = Some(1);
+    let logged = turn_off(&mut state, &DEFAULT_WORKFLOW, &host).expect("the gate turns off");
+    assert!(logged.contains(&"origin unreachable, trying again in 5 s (1 of 3)".to_string()), "{logged:?}");
+    assert!(host.state().remote.is_empty());
 }
 
 #[test]

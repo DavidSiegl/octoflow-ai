@@ -149,6 +149,8 @@ pub(crate) struct FakeState {
     pub upstream: Option<String>,
     /// The stderr of a failing fetch, e.g. offline or no such branch on origin.
     pub fetch_error: Option<String>,
+    /// How many more fetches fail with fetch_error, the ones after them succeeding; None: every one.
+    pub fetch_failures_left: Option<u32>,
     /// The local branch and origin's each have commits the other lacks.
     pub diverged: bool,
     /// The files a merge of upstream conflicts in.
@@ -159,8 +161,10 @@ pub(crate) struct FakeState {
     pub snapshots: Vec<(String, String)>,
     /// origin's branches, by name, with their commit: those `push --force` created, which `ls-remote` lists.
     pub remote: Map<String>,
-    /// The stderr of a failing `ls-remote --heads origin`, which lists remote; None lists it.
+    /// The stderr of a failing `ls-remote` of origin, which lists remote; None lists it.
     pub list_remote_error: Option<String>,
+    /// How many more `ls-remote`s fail with list_remote_error, the ones after them succeeding; None: every one.
+    pub list_remote_failures_left: Option<u32>,
     /// What `git diff -U0` from the base to a snapshot prints.
     pub diff: String,
     /// The checkout has an origin at all.
@@ -260,12 +264,14 @@ impl FakeHost {
                 prs: vec![],
                 upstream: None,
                 fetch_error: None,
+                fetch_failures_left: None,
                 diverged: false,
                 conflicts: vec![],
                 merge_head: false,
                 snapshots: vec![],
                 remote: Map::new(),
                 list_remote_error: None,
+                list_remote_failures_left: None,
                 diff: String::new(),
                 has_origin: true,
                 ages: HashMap::new(),
@@ -392,7 +398,7 @@ impl FakeState {
                 self.commit_head();
             }
             ["worktree", rest @ ..] => return self.git_worktree(rest),
-            ["fetch", "--quiet", "origin", _] if self.fetch_error.is_some() => {
+            ["fetch", "--quiet", "origin", _] if self.fetch_error.is_some() && fails(&mut self.fetch_failures_left) => {
                 return Completed::new(128, "", self.fetch_error.as_deref().unwrap_or_default());
             }
             ["merge-base", "--is-ancestor", commit, of] => return self.git_is_ancestor(commit, of),
@@ -564,12 +570,14 @@ impl FakeState {
     /// `git ls-remote` of origin, given the arguments after `ls-remote`: every branch remote holds, which fails with
     /// list_remote_error when that is set; or the one branch a ref names, nothing when remote has none. Anything else
     /// prints nothing.
-    fn git_ls_remote(&self, args: &[&str]) -> Completed {
+    fn git_ls_remote(&mut self, args: &[&str]) -> Completed {
+        if let Some(error) = self.list_remote_error.as_deref().filter(|_| fails(&mut self.list_remote_failures_left)) {
+            return Completed::new(128, "", error);
+        }
         match args {
-            ["--heads", "origin"] => match &self.list_remote_error {
-                Some(error) => Completed::new(128, "", error),
-                None => ok(&self.remote.iter().map(|(b, c)| format!("{c}\trefs/heads/{b}\n")).collect::<String>()),
-            },
+            ["--heads", "origin"] => {
+                ok(&self.remote.iter().map(|(b, c)| format!("{c}\trefs/heads/{b}\n")).collect::<String>())
+            }
             ["origin", git_ref] => {
                 let b = git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref);
                 ok(&self.remote.get(b).map(|c| format!("{c}\t{git_ref}\n")).unwrap_or_default())
@@ -900,6 +908,18 @@ impl Host for FakeHost {
     fn session_log(&self, kind: &str, session: &str) -> Result<Option<Vec<u8>>, OrchestratorError> {
         let s = self.state();
         Ok(s.session_logs.get(&(kind.to_string(), session.to_string())).map(|log| log.clone().into_bytes()))
+    }
+}
+
+/// Whether a scripted failure happens now, given how many more are left (None: every one), counting this one off.
+fn fails(left: &mut Option<u32>) -> bool {
+    match left {
+        Some(0) => false,
+        Some(n) => {
+            *n -= 1;
+            true
+        }
+        None => true,
     }
 }
 

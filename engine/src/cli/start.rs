@@ -114,7 +114,7 @@ pub fn resumed_state(args: &ResumeArgs, cwd: &str, world: &Connected) -> Result<
     if let Some(job) = args.quality_gate.as_deref().filter(|j| !j.is_empty()) {
         turn_quality_gate_on(&mut state, &pipeline, w.host, w.human, &(world.jenkins)(job)?)?;
     } else if args.no_quality_gate {
-        turn_quality_gate_off(&mut state, &pipeline, w.host, w.human)?;
+        turn_quality_gate_off(&mut state, &pipeline, w)?;
     }
     Ok((state, pipeline))
 }

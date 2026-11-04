@@ -474,6 +474,34 @@ fn unusable_gh_stops_the_sweep_after_one_line() {
     }
 }
 
+/// ssh's error at a read of origin that origin refused, as GitHub refused known keys on 2026-11-04.
+const REFUSED: &str = "git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.";
+
+#[test]
+fn a_read_of_origin_refused_once_is_tried_again() {
+    let p = Prune::new();
+    let run_id = p.add(run("aaaaaa", merged()));
+    (p.host().list_remote_error, p.host().list_remote_failures_left) = (Some(REFUSED.into()), Some(1));
+    let r = p.pruned(&run_id);
+    assert_eq!((r.remote.as_str(), r.cleanup.as_deref()), ("deleted", Some("deleted")));
+    assert_eq!(p.log(), ["origin unreachable, trying again in 5 s (1 of 3)"]);
+}
+
+#[test]
+fn an_origin_still_unreachable_stops_the_sweep_after_one_run() {
+    let p = Prune::new();
+    p.add(run("aaaaaa", merged()));
+    p.add(run("bbbbbb", merged()).n(8));
+    p.host().list_remote_error = Some(REFUSED.into());
+    assert!(p.prune(false, false).is_empty());
+    assert_eq!(p.host().gh_calls.len(), 1);
+    let log = p.log();
+    assert_eq!(log.len(), 4, "{log:?}");
+    assert!(log[3].starts_with("stopped pruning run branches: "), "{log:?}");
+    assert!(log[3].contains("still unreachable after 4 tries"), "{log:?}");
+    assert!(p.deleting_calls().is_empty());
+}
+
 #[test]
 fn a_run_an_earlier_release_saved_is_pruned_as_any_other() {
     // Its state.json has no format (crate::state::format_problem), which prune does not need.
