@@ -15,7 +15,8 @@ use serde_json::Value;
 ///
 /// state.json is one line of JSON, an object: "format", STATE_FORMAT, then these fields in this order, then the fields
 /// of unknown. Every field that is not an Option must be there, but verdicts, which a state saved by an earlier
-/// release lacks; a missing Option is None. The records a field holds as JSON are kept as they were read, key order included.
+/// release lacks; a missing Option is None. The records a field holds as JSON are kept as they were read, key order
+/// included.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RunState {
     pub run_id: String,
@@ -41,10 +42,10 @@ pub struct RunState {
     pub base_branch: Option<String>,
     pub branch: Option<String>,
     pub pr_url: Option<String>,
-    /// The run's verdict: the last a verdict step gave (record_verdict), which, as a round ends at the first verdict
-    /// step that does not approve, is APPROVE only when every verdict step that judged the last round approved it.
-    /// For a workflow without a verdict step, FINISHED or QUALITY_GATE_FAILED once its last step is done. None before
-    /// either.
+    /// The run's verdict: CHANGES_REQUESTED from a verdict step's request for changes on, APPROVE once the last
+    /// verdict step approved a round, which every earlier verdict step approved before it (Workflow::take_turn); so
+    /// while a round is between verdict steps it is still the verdict of the round before. For a workflow without a
+    /// verdict step, FINISHED or QUALITY_GATE_FAILED once its last step is done. None before either.
     pub verdict: Option<String>,
     /// Each verdict a verdict step gave, in the order given, a round's in the order of its verdict steps. Empty for a
     /// run saved by a release before there were these records, whose one verdict step's last verdict is verdict.
@@ -122,9 +123,9 @@ pub struct RunState {
     /// file is the basename of the diff of what the turn changed in them, in the run directory, and paths are the
     /// files, by the id of the step that locked them. The files were restored once the record was saved.
     pub restored: Vec<Object>,
-    /// One record per run of a proof the verdict step wrote with a review that requested changes, {"round",
-    /// "written", "file", "finding", "demonstrated", "said"}, in the order they ran: round is the round it ran in,
-    /// written the round whose verdict step wrote it, file its basename in proofs_dir(written), finding the first
+    /// One record per run of a proof the proof step (Pipeline::proof_step) wrote with a review that requested
+    /// changes, {"round", "written", "file", "finding", "demonstrated", "said"}, in the order they ran: round is the round it ran in,
+    /// written the round whose proof step wrote it, file its basename in proofs_dir(written), finding the first
     /// number in that name, demonstrated whether it failed against the change, and said how it exited and the last
     /// PROOF_TAIL_LINES lines it printed. A proof first runs in the round that wrote it (Workflow::judge_proofs), then
     /// again in every later round until it does not fail (Workflow::rerun_proofs).
@@ -145,6 +146,13 @@ pub struct StepVerdict {
     pub step: String,
     /// APPROVE or CHANGES_REQUESTED, as its file's VERDICT line says.
     pub verdict: String,
+}
+
+/// Whether verdicts, a run's (RunState::verdicts), came from more than one verdict step: whether what the run
+/// publishes and lists names each verdict by its step (verdict_line, run_outcome), rather than giving the run's one
+/// verdict, as for a workflow with one verdict step or a run saved without the records.
+pub fn judged_by_several(verdicts: &[StepVerdict]) -> bool {
+    verdicts.iter().any(|v| v.step != verdicts[0].step)
 }
 
 /// The format of state.json this engine reads and writes, which its "format" field holds. A state.json written by a
@@ -264,10 +272,9 @@ impl RunState {
         self.to_json().to_string() + "\n"
     }
 
-    /// Record that the verdict step of id step gave verdict in round, which makes it the run's verdict too. It
-    /// replaces a record of the same step and round, as a resume that takes that step's turn again gives.
+    /// Record in verdicts that the verdict step of id step gave verdict in round, replacing a record of the same step
+    /// and round, as a resume that takes that step's turn again gives. The run's verdict is left to the caller.
     pub fn record_verdict(&mut self, round: u32, step: &str, verdict: &str) {
-        self.verdict = Some(verdict.to_string());
         let given = StepVerdict { round, step: step.to_string(), verdict: verdict.to_string() };
         match self.verdicts.iter_mut().find(|v| v.round == round && v.step == step) {
             Some(earlier) => *earlier = given,
@@ -301,7 +308,7 @@ impl RunState {
         format!("{LOCAL_REFS_PREFIX}{}/", self.key())
     }
 
-    /// Where the verdict step of round n writes its proofs (Pipeline::proof_command).
+    /// Where the proof step of round n writes its proofs (Pipeline::proof_step, Pipeline::proof_command).
     pub fn proofs_dir(&self, n: u32) -> String {
         format!("{}/proofs-{n}", self.dir())
     }

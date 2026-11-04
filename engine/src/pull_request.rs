@@ -6,7 +6,7 @@ use crate::constants::{
 };
 use crate::handoff::parse_verdict;
 use crate::quality::parse_gate;
-use crate::state::{RunState, StepVerdict};
+use crate::state::{judged_by_several, RunState, StepVerdict};
 use crate::summary::turns_table;
 
 /// The `# ` heading on the spec's first non-blank line, without the blanks around it; None when that line is no
@@ -58,26 +58,17 @@ pub fn verdict_line(state: &RunState) -> String {
         verdict => {
             let n = state.round;
             let rounds = format!("{n} round{}", if n != 1 { "s" } else { "" });
-            let several = state.verdicts.iter().any(|v| v.step != state.verdicts[0].step);
             let last: Vec<&StepVerdict> = state.verdicts.iter().filter(|v| v.round == n).collect();
-            let mut line;
-            match last.last() {
-                Some(judge) if several => {
+            // Who the draft sentence names: the step that ended the last round, or the one verdict step.
+            let (mut line, judge) = match last.last() {
+                Some(judge) if judged_by_several(&state.verdicts) => {
                     let given: Vec<String> = last.iter().map(|v| format!("{} **{}**", v.step, v.verdict)).collect();
-                    line = format!("Verdicts after {rounds}: {}.", given.join(", "));
-                    if verdict != Some(APPROVE) {
-                        line += &format!(
-                            "\n\n{} still requested changes in the last round, so this is a draft.",
-                            judge.step
-                        );
-                    }
+                    (format!("Verdicts after {rounds}: {}.", given.join(", ")), judge.step.as_str())
                 }
-                _ => {
-                    line = format!("Reviewer verdict after {rounds}: **{}**.", verdict_text(state));
-                    if verdict != Some(APPROVE) {
-                        line.push_str("\n\nThe Reviewer still requested changes after the last round, so this is a draft.");
-                    }
-                }
+                _ => (format!("Reviewer verdict after {rounds}: **{}**.", verdict_text(state)), "The Reviewer"),
+            };
+            if verdict != Some(APPROVE) {
+                line += &format!("\n\n{judge} still requested changes after the last round, so this is a draft.");
             }
             line
         }
@@ -286,9 +277,10 @@ pub fn pr_body(state: &RunState, spec: &str, report: &str, reviews: &[(String, S
         parts.push(details(&format!("Quality gate ({label})"), &last.text, false));
     }
     if !matches!(s.verdict.as_deref(), Some(FINISHED | QUALITY_GATE_FAILED)) {
+        let several = judged_by_several(&s.verdicts);
         for (name, review) in reviews {
-            // One verdict file is the review of its round, as in a workflow with one verdict step.
-            let summary = if reviews.len() == 1 { format!("Review (round {})", s.round) } else { format!("Review ({name})") };
+            // Named by its file when several steps judge, as verdict_line names them by step.
+            let summary = if several { format!("Review ({name})") } else { format!("Review (round {})", s.round) };
             parts.push(details(&summary, review, parse_verdict(review) != Some(APPROVE)));
         }
     }

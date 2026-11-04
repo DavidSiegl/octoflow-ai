@@ -4,13 +4,13 @@
 
 use super::start::find_run;
 use super::{resume_command, Connected};
-use crate::constants::{DEFAULT_AGENT, RUNS_DIR};
+use crate::constants::{APPROVE, DEFAULT_AGENT, RUNS_DIR};
 use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
 use crate::pipeline::{workflow_shape, Pipeline, QUALITY};
 use crate::json::{object, Object, ValueExt};
 use crate::runs::{run_health, RUNNING, STALE};
-use crate::state::format_problem;
+use crate::state::{format_problem, judged_by_several, StepVerdict};
 use crate::summary::turn_lines;
 use crate::workflow_file::saved_pipeline;
 use serde_json::Value;
@@ -40,8 +40,10 @@ pub const BLOCKED_STATUS: &str = "blocked";
 ///   "blocked" (detail: the question) while a running run's turn waits on a BLOCKED report; "interview" (detail: the
 ///   role) while a running run's current step is human-paced and its last turn has not ended; "stale" (detail: the
 ///   resume command) for a stale run that is not closed.
-/// - verdict, error, closed, branch, worktree: as saved, but error, for a state.json this engine does not read, why
-///   not (crate::state::format_problem), which tells what to do with the run.
+/// - verdict: the run's, as saved. verdicts: each verdict a verdict step gave, {"round", "step", "verdict"}, as
+///   saved (RunState::verdicts); [] for a run saved before them.
+/// - error, closed, branch, worktree: as saved, but error, for a state.json this engine does not read, why not
+///   (crate::state::format_problem), which tells what to do with the run.
 /// - pr: null without a pull request, else {"url", "state", "error"}; state and error are null here, and
 ///   fill_pr_states sets one of them.
 /// - turns: the turn records as saved, [] for a run saved before them.
@@ -110,7 +112,9 @@ pub fn run_record(s: &Value, age: u64, local_host: &str, pid_alive: &dyn Fn(i64)
         "waiting".into(),
         waiting.map_or(Value::Null, |(reason, detail)| Value::Object(object([("reason", Value::from(reason)), ("detail", detail)]))),
     );
-    for key in ["verdict", "error", "closed", "branch", "worktree"] {
+    record.insert("verdict".into(), field("verdict"));
+    record.insert("verdicts".into(), truthy("verdicts").cloned().unwrap_or(Value::Array(vec![])));
+    for key in ["error", "closed", "branch", "worktree"] {
         record.insert(key.into(), field(key));
     }
     if let Some(problem) = unreadable {
@@ -181,7 +185,9 @@ pub fn run_rows(
 }
 
 /// A run record's outcome as `list` words it: its error, verdict, waiting reason or health, then what it has besides,
-/// its closing, pull request and a workflow other than the default.
+/// its closing, pull request and a workflow other than the default. A verdict other than APPROVE, of a run whose
+/// verdicts came from several verdict steps (judged_by_several), names the step that gave it last, as in
+/// "CHANGES_REQUESTED by accept".
 pub fn run_outcome(record: &Object) -> String {
     let truthy = |key: &str| record.get(key).filter(|v| v.is_set());
     let text = |value: Option<&Value>| value.map_or("None".to_string(), Value::text);
@@ -190,7 +196,16 @@ pub fn run_outcome(record: &Object) -> String {
     let mut outcome = if let Some(error) = truthy("error") {
         format!("error: {}", error.text())
     } else if record.get("health").is_none_or(Value::is_null) {
-        truthy("verdict").map_or(String::new(), Value::text)
+        let verdict = truthy("verdict").map_or(String::new(), Value::text);
+        // A record that is not a list of verdicts reads as none, as a run saved before them.
+        let verdicts: Vec<StepVerdict> =
+            truthy("verdicts").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
+        match verdicts.last() {
+            Some(judge) if !verdict.is_empty() && verdict != APPROVE && judged_by_several(&verdicts) => {
+                format!("{verdict} by {}", judge.step)
+            }
+            _ => verdict,
+        }
     } else if truthy("closed").is_some() {
         // Stale by its heartbeat, but resume refuses it, so neither its staleness nor the command is worth showing.
         String::new()
@@ -360,7 +375,8 @@ fn last_review(
     pipeline: &Pipeline,
     round: i64,
 ) -> Result<Option<(String, String)>, OrchestratorError> {
-    let newest_first = |n| pipeline.verdict_steps().rev().map(move |step| step.path(run_dir, n, 0));
+    let round = u32::try_from(round).unwrap_or(0);
+    let newest_first = |n| pipeline.verdict_files(run_dir, n).into_iter().rev().map(|(_, path)| path);
     for path in (1..=round).rev().flat_map(newest_first) {
         let Some(text) = world.with.host.read(&path)? else { continue };
         if parse_verdict(&text).is_none() {

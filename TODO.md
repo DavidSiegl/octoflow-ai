@@ -69,12 +69,23 @@ is rewritten to say what is left.
 
 ## Open issues
 
-- **`list` does not say which verdict step gave a run's verdict.** `run_record` (`engine/src/cli/listing.rs`) copies
-  the saved `verdict`, the run's, and leaves `RunState.verdicts` out, so `list`, `list --json`, serve's `/runs` and
-  the desktop app show `CHANGES_REQUESTED` alike for a run the Tech Lead sent back and one the Product Manager did;
-  `show` prints each step's verdicts. Left out of acceptance-verdict ticket 01 (2026-11-04), which kept the run
-  record's keys as they were. Closes with a `verdicts` key in the run record (an added key, so `RUN_RECORD_VERSION`
-  stays) and the outcome naming the step when the workflow has more than one.
+- **The desktop app does not say which verdict step sent a run back.** `list` names it (`run_outcome`,
+  `engine/src/cli/listing.rs`) and serve's `/runs` carries `verdicts`, but the app's `outcome` (`ui/src/runs.ts`)
+  shows only `verdict`, and its `RunRecord` (`ui/src/api.ts`) has no `verdicts`. Left out of acceptance-verdict
+  ticket 01 (2026-11-04): this checkout had no `node_modules` to run the app's tests with. Closes with
+  `verdicts?` on `RunRecord` and `outcome` naming the last step as `run_outcome` does, with a `runs.test.ts` case.
+- **The built-in `FIX_PROMPT` names `{prev_review_path}`, not `{findings}`.** A workflow with several verdict steps
+  whose build step `use`s the default's (`engine/src/prompts.rs`) sends the Builder to the review even when the
+  acceptance sent the round back. Switching the built-in to `{findings}` (acceptance-verdict ticket 01's review 141,
+  F3) was held back on 2026-11-04 for the user: a prompt file must use exactly the built-in's placeholders
+  (`prompt_problem`), so every `FIX_PROMPT.md` and every saved run's `FIX_PROMPT` override would be refused, a resume
+  included, and the Python engine's oracles (`engine/tests/oracle/texts.json`, `workflows.json`) would need editing by
+  hand. Until then such a workflow words its build step's `again` with `{findings}` itself.
+- **A non-editing step between two verdict steps is treated as having run every round.** `loop_problem` allows one
+  (`engine/src/pipeline.rs`), and a round an earlier verdict step ends skips it, but `Workflow::judged_rounds`
+  (`engine/src/workflow.rs`) knows the skipped rounds only of verdict steps: such a step's first turn in a later
+  round gets its `again`, and its `{prev_X_path}` and `{earlier_X_paths}` name files of rounds it skipped. Closes with
+  turn records (`RunState.turns`) deciding which rounds any step took a turn in.
 - **Writes to origin are not tried again through an outage.** `reaching_origin` (`engine/src/workflow/origin.rs`)
   wraps the run's fetches and its `ls-remote` reads only; the pushes (`engine/src/host.rs`'s `push_ref`,
   `push_branch`), the remote branch deletions (`delete_remote_branch`, `delete_remote_branch_at`) and the `gh` calls

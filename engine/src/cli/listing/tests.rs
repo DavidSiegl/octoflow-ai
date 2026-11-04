@@ -31,10 +31,10 @@ const SHOW_DIR: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
 const JOB: &str = crate::ci::fake::JOB;
 
 /// The keys of a run record, in the order run_record gives them.
-const RUN_RECORD_KEYS: [&str; 23] = [
+const RUN_RECORD_KEYS: [&str; 24] = [
     "id", "key", "task", "workflow", "steps", "phase", "round", "quality_round", "role", "pane", "agents", "health",
-    "health_reason", "heartbeat_age", "waiting", "verdict", "error", "closed", "branch", "worktree", "pr", "turns",
-    "resume_command",
+    "health_reason", "heartbeat_age", "waiting", "verdict", "verdicts", "error", "closed", "branch", "worktree", "pr",
+    "turns", "resume_command",
 ];
 
 /// JSON text as a value.
@@ -202,6 +202,32 @@ fn the_agents_are_those_started_with_their_names_and_kinds() {
 fn the_task_is_whole() {
     let task = "x".repeat(300);
     assert_eq!(key(&record(&with(run("build"), &[("task", Value::from(task.as_str()))]), 40, true, &[]), "task"), Value::from(task));
+}
+
+#[test]
+fn a_run_sent_back_by_one_of_several_verdict_steps_lists_which() {
+    let given = |pairs: &[(u32, &str, &str)]| {
+        let records: Vec<Value> = pairs
+            .iter()
+            .map(|(round, step, verdict)| json(&format!(r#"{{"round": {round}, "step": "{step}", "verdict": "{verdict}"}}"#)))
+            .collect();
+        Value::Array(records)
+    };
+    let done = |verdict: &str, verdicts: Value| {
+        with(run("done"), &[("verdict", Value::from(verdict)), ("verdicts", verdicts), ("workflow", Value::from("default"))])
+    };
+    let outcome = |state: &Value| run_outcome(&record(state, 1_000_000, true, &[]));
+    let sent_back = given(&[(1, "review", APPROVE), (1, "accept", CHANGES_REQUESTED)]);
+    let state = done(CHANGES_REQUESTED, sent_back.clone());
+    assert_eq!(key(&record(&state, 1_000_000, true, &[]), "verdicts"), sent_back);
+    assert_eq!(outcome(&state), "CHANGES_REQUESTED by accept");
+    // Approved, judged by one verdict step only, or saved before the records: the run's verdict alone.
+    assert_eq!(outcome(&done(APPROVE, given(&[(1, "review", APPROVE), (1, "accept", APPROVE)]))), "APPROVE");
+    let reviewed = given(&[(1, "review", CHANGES_REQUESTED), (2, "review", CHANGES_REQUESTED)]);
+    assert_eq!(outcome(&done(CHANGES_REQUESTED, reviewed)), "CHANGES_REQUESTED");
+    let old = with(run("done"), &[("verdict", Value::from(CHANGES_REQUESTED))]);
+    assert_eq!(key(&record(&old, 1_000_000, true, &[]), "verdicts"), json("[]"));
+    assert_eq!(outcome(&old), "CHANGES_REQUESTED");
 }
 
 #[test]

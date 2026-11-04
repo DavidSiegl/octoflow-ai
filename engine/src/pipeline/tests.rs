@@ -81,7 +81,7 @@ fn invalid_definitions() {
             vec![with(step("build", "a.md"), |s| { s.edits = true; s.quality_gated = true }), review.clone()],
         ),
         (
-            "step review is quality-gated, so it cannot be the verdict step",
+            "step review is quality-gated, so it cannot be a verdict step",
             vec![
                 build.clone(),
                 with(step("review", "b-{n}.md"), |s| { s.edits = true; s.quality_gated = true; s.loop_to = Some("build".into()) }),
@@ -287,11 +287,39 @@ fn several_verdict_steps_each_loop_back_to_an_earlier_step() {
     assert_eq!(p.result(Some("accept")).id, "accept");
     assert_eq!(p.result(Some("review")).id, "review");
     assert_eq!(p.result(None).id, "review");
-    // The second loop may go back to an editing step of its own, after the first verdict step.
+    // The second loop may go back to an editing step of its own, as long as it runs the first verdict step again.
+    let polish = with(step("polish", "polish-{n}.md"), |s| { s.role = "build".into(); s.edits = true });
     let mut steps = p.steps().to_vec();
-    steps.insert(2, with(step("polish", "polish-{n}.md"), |s| { s.role = "build".into(); s.edits = true }));
+    steps.insert(1, polish.clone());
     steps[3].loop_to = Some("polish".into());
     assert!(Pipeline::new("polished", p.roles().clone(), steps).is_ok());
+    // A step between the verdict steps that does not edit leaves them judging the same change.
+    let mut steps = p.steps().to_vec();
+    steps.insert(2, with(step("notes", "notes-{n}.md"), |s| s.role = "review".into()));
+    assert!(Pipeline::new("noted", p.roles().clone(), steps).is_ok());
+}
+
+#[test]
+fn every_verdict_step_judges_the_change_each_round_ends_with() {
+    let p = accepting();
+    let polish = with(step("polish", "polish-{n}.md"), |s| { s.role = "build".into(); s.edits = true });
+    // Back to a step after the review: the review would not judge the round's edits.
+    let mut steps = p.steps().to_vec();
+    steps.insert(2, polish.clone());
+    steps[3].loop_to = Some("polish".into());
+    assert_eq!(
+        Pipeline::new("bad", p.roles().clone(), steps).unwrap_err(),
+        "workflow bad: step accept loops back to polish, which comes after verdict step review; a verdict step's loop \
+         must run every earlier verdict step again"
+    );
+    // An edit between the verdict steps, which the review would not have judged.
+    let mut steps = p.steps().to_vec();
+    steps.insert(2, polish);
+    assert_eq!(
+        Pipeline::new("bad", p.roles().clone(), steps).unwrap_err(),
+        "workflow bad: step polish edits between verdict steps review and accept, so review would not judge its \
+         change"
+    );
 }
 
 #[test]

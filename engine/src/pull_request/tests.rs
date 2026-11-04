@@ -46,9 +46,10 @@ fn a_run_judged_by_several_verdict_steps_names_each_verdict_of_its_last_round() 
     assert!(body.contains("<details>\n<summary>Review (accept-2.md)</summary>\n\nVERDICT: APPROVE\naccepted"), "{body}");
     // The second requests changes in the last round: its file opens, the first's stays closed.
     s.record_verdict(2, "accept", CHANGES);
+    s.verdict = Some(CHANGES.into());
     assert_eq!(
         verdict_line(&s),
-        "Verdicts after 2 rounds: review **APPROVE**, accept **CHANGES_REQUESTED**.\n\naccept still requested changes in \
+        "Verdicts after 2 rounds: review **APPROVE**, accept **CHANGES_REQUESTED**.\n\naccept still requested changes after \
          the last round, so this is a draft."
     );
     let reviews = [("review-2.md", "VERDICT: APPROVE\nfine"), ("accept-2.md", "VERDICT: CHANGES_REQUESTED\nno")]
@@ -57,6 +58,17 @@ fn a_run_judged_by_several_verdict_steps_names_each_verdict_of_its_last_round() 
     assert!(body.contains("<details>\n<summary>Review (review-2.md)</summary>"), "{body}");
     assert!(body.contains("<details open>\n<summary>Review (accept-2.md)</summary>"), "{body}");
     assert_eq!(commit_note(&s), "Orchestrator run r: CHANGES_REQUESTED after 2 review round(s).");
+    // A last round the review ended: its one verdict file is still named by its file, as the line names its step.
+    s.verdicts.retain(|v| (v.round, v.step.as_str()) != (2, "accept"));
+    s.record_verdict(2, "review", CHANGES);
+    assert_eq!(
+        verdict_line(&s),
+        "Verdicts after 2 rounds: review **CHANGES_REQUESTED**.\n\nreview still requested changes after the last round, \
+         so this is a draft."
+    );
+    let reviews = [("review-2.md".to_string(), "VERDICT: CHANGES_REQUESTED\nbug".to_string())];
+    let body = pr_body(&s, "spec", "r", &reviews, &GateEvidence::default());
+    assert!(body.contains("<details open>\n<summary>Review (review-2.md)</summary>"), "{body}");
 }
 
 #[test]

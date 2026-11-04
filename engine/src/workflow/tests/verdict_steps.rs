@@ -51,14 +51,16 @@ fn both_approve_in_one_round() {
 #[test]
 fn the_second_requests_changes_and_the_next_round_runs_both_again() {
     let p = accepting();
-    let seen = seen();
+    let (seen, built) = (seen(), seen());
     let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&p), vec![
-        ("build", vec![build_turn(1), build_turn(2)]),
+        ("build", vec![build_turn(1), recording(build_turn(2), &built)]),
         ("review", vec![review_turn(1, APPROVE), review_turn(2, APPROVE)]),
         ("accept", vec![recording(accept_turn(1, CHANGES_REQUESTED), &seen), recording(accept_turn(2, APPROVE), &seen)]),
     ]);
     let mut wf = f.workflow(with_pipeline(&p, 3));
     assert_eq!(wf.run(), verdict(APPROVE));
+    // The Builder is pointed at the acceptance that sent the round back, not at the review that approved.
+    assert_eq!(*built.borrow(), [format!("Fix {D}/accept-1.md; report to {D}/build-2.md.{}", note())]);
     assert_eq!(seen.borrow()[1], format!("Accept again; write {D}/accept-2.md."));
     assert_eq!(names(&f, "prompt"), ["build", "review", "accept", "build", "review", "accept"].map(|r| format!("{r}-a1b2c3")));
     let s = wf.state();
@@ -73,14 +75,18 @@ fn the_second_requests_changes_and_the_next_round_runs_both_again() {
 #[test]
 fn the_first_requests_changes_and_the_second_does_not_run() {
     let p = accepting();
+    let (accepted, built) = (seen(), seen());
     let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&p), vec![
-        ("build", vec![build_turn(1), build_turn(2)]),
+        ("build", vec![build_turn(1), recording(build_turn(2), &built)]),
         ("review", vec![review_turn(1, CHANGES_REQUESTED), review_turn(2, APPROVE)]),
-        ("accept", vec![accept_turn(2, APPROVE)]),
+        ("accept", vec![recording(accept_turn(2, APPROVE), &accepted)]),
     ]);
     let mut wf = f.workflow(with_pipeline(&p, 3));
     assert_eq!(wf.run(), verdict(APPROVE));
     assert_eq!(names(&f, "prompt"), ["build", "review", "build", "review", "accept"].map(|r| format!("{r}-a1b2c3")));
+    assert_eq!(*built.borrow(), [format!("Fix {D}/review-1.md; report to {D}/build-2.md.{}", note())]);
+    // The acceptance's first turn, in round 2, gets its first prompt, not the one for a step that has judged before.
+    assert_eq!(*accepted.borrow(), [format!("Accept {D}/build-2.md against add a rate limiter; write {D}/accept-2.md.")]);
     assert_eq!(verdicts(wf.state()), [(1, "review", CHANGES_REQUESTED), (2, "review", APPROVE), (2, "accept", APPROVE)]);
     assert!(!f.host.state().files.contains_key(&format!("{D}/accept-1.md")));
     assert!(summary(&f).contains("- Round 1: review CHANGES_REQUESTED\n- Round 2: review APPROVE; accept APPROVE\n"));
@@ -104,14 +110,35 @@ fn max_rounds_bounds_both_and_the_last_round_ends_at_the_first_that_does_not_app
     assert!(pr.draft);
     assert!(
         pr.body.contains(
-            "Verdicts after 2 rounds: review **CHANGES_REQUESTED**.\n\nreview still requested changes in the last round, \
+            "Verdicts after 2 rounds: review **CHANGES_REQUESTED**.\n\nreview still requested changes after the last round, \
              so this is a draft."
         ),
         "{}",
         pr.body
     );
-    // The last round's only verdict file, under the wording of a workflow with one.
-    assert!(pr.body.contains("<details open>\n<summary>Review (round 2)</summary>"), "{}", pr.body);
+    // The last round's only verdict file, named by its file as the line names its step.
+    assert!(pr.body.contains("<details open>\n<summary>Review (review-2.md)</summary>"), "{}", pr.body);
+}
+
+#[test]
+fn a_verdict_step_s_earlier_files_are_those_it_wrote() {
+    // Round 1: the acceptance requests changes; round 2: the review does, so the acceptance does not run; round 3:
+    // its earlier file is round 1's alone.
+    let mut steps = accepting().steps().to_vec();
+    steps[2].again = Some("Accept again after {prev_accept_path} ({earlier_accept_paths}); write {accept_path}.".into());
+    let p = Pipeline::new("accepting", accepting().roles().clone(), steps).unwrap();
+    let accepted = seen();
+    let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&p), vec![
+        ("build", vec![build_turn(1), build_turn(2), build_turn(3)]),
+        ("review", vec![review_turn(1, APPROVE), review_turn(2, CHANGES_REQUESTED), review_turn(3, APPROVE)]),
+        ("accept", vec![accept_turn(1, CHANGES_REQUESTED), recording(accept_turn(3, APPROVE), &accepted)]),
+    ]);
+    let mut wf = f.workflow(with_pipeline(&p, 3));
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert_eq!(
+        *accepted.borrow(),
+        [format!("Accept again after {D}/accept-1.md ({D}/accept-1.md); write {D}/accept-3.md.")]
+    );
 }
 
 #[test]
@@ -143,6 +170,8 @@ fn a_resume_between_the_two_verdict_turns_takes_only_the_second() {
     assert_eq!((text(&saved, "phase"), saved.get("round")), (Some("accept".into()), Some(&Value::from(1))));
     let state = RunState::from_saved(&saved).unwrap();
     assert_eq!(verdicts(&state), [(1, "review", APPROVE)]);
+    // The review's approval is not yet the run's: the acceptance has still to judge the round.
+    assert_eq!(state.verdict, None);
     let f2 = Fixture::resume(Rc::clone(&f.host), state, vec![("accept", vec![accept_turn(1, APPROVE)])], &[], &[]);
     let mut wf = f2.workflow(RunSettings { pipeline: Some(p), ..f2.as_saved() });
     assert_eq!(wf.run(), verdict(APPROVE));

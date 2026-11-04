@@ -32,7 +32,7 @@ fn copy_script() -> String {
 }
 
 impl Workflow<'_> {
-    /// Run each proof the verdict step wrote in round n with the workflow's proof_command, record which fail, and
+    /// Run each proof the proof step wrote in round n with the workflow's proof_command, record which fail, and
     /// append their outcomes to its review, whose text is review. A resume runs none that were recorded, and appends
     /// them once. Errors: the proofs cannot be listed, saving or the review's write fails, or the Ctrl-C.
     pub(super) fn judge_proofs(&mut self, step: &Step, n: u32, review: &str) -> Outcome<()> {
@@ -65,7 +65,7 @@ impl Workflow<'_> {
         Ok(())
     }
 
-    /// Before the verdict step's turn of round n, run each proof carried into it from an earlier round
+    /// Before the proof step's turn of round n, run each proof carried into it from an earlier round
     /// (carried_proofs) again against the change, and record the outcomes in RunState::proofs. A resume runs none
     /// once round n's reruns are recorded. Errors: as judge_proofs'.
     pub(super) fn rerun_proofs(&mut self, step: &Step, n: u32) -> Outcome<()> {
@@ -104,7 +104,7 @@ impl Workflow<'_> {
         Ok(latest.into_iter().filter(|p| p.demonstrated || (p.written < p.round && !p.passed())).collect())
     }
 
-    /// The runs of the proofs carried into round n, run again before its verdict step's turn.
+    /// The runs of the proofs carried into round n, run again before its proof step's turn.
     fn reruns(&self, n: u32) -> Result<Vec<ProofRun>, OrchestratorError> {
         Ok(self.proof_runs()?.into_iter().filter(|p| p.round == n && p.written < n).collect())
     }
@@ -152,7 +152,7 @@ impl Workflow<'_> {
         Ok(format!("\n\n{note}"))
     }
 
-    /// Whether the proof file that round written's verdict step wrote fails against the working tree, as command's
+    /// Whether the proof file that round written's proof step wrote fails against the working tree, as command's
     /// exit status 1 says, and what it printed last: its output's end, how else it exited, or why it could not run.
     ///
     /// The proof runs from a copy of proofs_dir(written), with the files beside it, at

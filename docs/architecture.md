@@ -131,20 +131,27 @@ A workflow is data: a `Pipeline` with a name, its roles in pane order (role key 
 like `spec.md`, or one per round like `build-{n}.md`), a first prompt, a later-round prompt (`again`) and a note for
 a fresh session in a later round (`fresh_note`), and the flags `human_paced`, `edits`, `loop_to` (which makes it a
 verdict step), `quality_gated` and `locks`. Prompts take `{task}`, `{cwd}`, `{n}`, `{change}`, `{path}`,
-`{proofs_dir}` and, for every step `X`, `{X_path}`, `{prev_X_path}` and `{earlier_X_paths}`. `Pipeline` validates
-itself when constructed and refuses the definition, naming the problem, such as a duplicate id, a loop target that does
-not come earlier, two gated steps or an unknown placeholder.
+`{proofs_dir}`, `{findings}` and, for every step `X`, `{X_path}`, `{prev_X_path}` and `{earlier_X_paths}`.
+`Pipeline` validates itself when constructed and refuses the definition, naming the problem, such as a duplicate id, a
+loop target that does not come earlier, two gated steps or an unknown placeholder.
 
-A workflow may have several verdict steps (`Pipeline::verdict_steps`), each looping back to an earlier step of its
-own, such as a Tech Lead's review back to the Builder and then a Product Manager's acceptance back to the Builder
-too. A round runs them in order and ends at the first that does not approve (`Workflow::take_turn`): before round
-`max_rounds` the run goes back to that step's loop target in the next round, and in round `max_rounds` it goes on
-past the last verdict step, so a later verdict step never judges a change an earlier one rejected. One round counter,
-and one `max_rounds`, serve them all, so `{n}`, `build-{n}.md` and the quality loop are as with one. `RunState.verdicts`
-records each verdict step's verdict per round (`RunState::record_verdict`), and `RunState.verdict`, the run's verdict,
-is the last given: `APPROVE` only if every verdict step that judged the last round approved it. A state saved before
-there were those records has none and loads all the same. The first verdict step is the proof step
-(`Pipeline::proof_step`), the only one whose proofs `proof_command` runs.
+A workflow may have several verdict steps (`Pipeline::verdict_steps`), such as a Tech Lead's review back to the
+Builder and then a Product Manager's acceptance back to the Builder too. A round runs them in order and ends at the
+first that does not approve (`Workflow::take_turn`): before round `max_rounds` the run goes back to that step's loop
+target in the next round, and in round `max_rounds` it goes on past the last verdict step, so a later verdict step
+never judges a change an earlier one rejected. Every verdict step judges the change a round ends with, because
+`loop_problem` refuses a loop target after the first verdict step, as a loop must run every earlier verdict step
+again, and an editing step between the first verdict step and the last, whose edits the earlier ones would not judge.
+One round counter, and one `max_rounds`, serve them all, so `{n}`, `build-{n}.md` and the quality loop are as with
+one. `RunState.verdicts` records each verdict step's verdict per round (`RunState::record_verdict`), and
+`RunState.verdict`, the run's verdict, turns to `CHANGES_REQUESTED` at a request for changes and to `APPROVE` only
+when the last verdict step approves, so a state saved mid-round keeps the round before's. A verdict step's first turn
+gets its first prompt even in a later round, and its `{prev_X_path}` and `{earlier_X_paths}` name only the rounds it
+judged; `{findings}` names the verdict file that sent the run into the round, for the loop target's `again`. A state
+saved before there were those records has none and loads all the same, its one verdict step taken to have judged
+every round. The first verdict step is the proof step (`Pipeline::proof_step`), the only one whose proofs
+`proof_command` runs. `list` names the step that sent a run back when several judged it (`run_outcome`), and
+`list --json` and serve's `/runs` carry the records as `verdicts`.
 
 The quality-gated step is the one the gate follows: its answer to quality round Q inserts `-qQ` before its file's
 extension, other steps' prompts name its last report of the round, and `QUALITY_PASSED_NOTE` or

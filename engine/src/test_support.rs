@@ -185,12 +185,13 @@ pub fn quick() -> Pipeline {
 }
 
 /// quick with a second verdict step after the review: the Product Manager accepts the change or sends it back to
-/// the Builder.
+/// the Builder, who is told the findings of whichever sent the round back.
 pub fn accepting() -> Pipeline {
     let mut accept = again(Step::new("accept", "accept", "accept-{n}.md", "Accept {build_path} against {task}; write {accept_path}."),
         "Accept again; write {accept_path}.");
     accept.loop_to = Some("build".into());
     let mut steps = quick().steps().to_vec();
+    steps[0].again = Some("Fix {findings}; report to {build_path}.".into());
     steps.push(accept);
     let roles = roles(&[("build", "Builder"), ("review", "Reviewer"), ("accept", "Product Manager")]);
     Pipeline::new("accepting", roles, steps).unwrap()

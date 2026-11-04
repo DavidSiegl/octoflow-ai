@@ -895,7 +895,7 @@ impl<'a> Workflow<'a> {
     /// So a later verdict step never judges a change an earlier one rejected.
     fn take_turn(&mut self, step: &Step, n: u32) -> Outcome<Option<String>> {
         let pipeline = Rc::clone(&self.pipeline);
-        let proves = pipeline.proof_step().is_some_and(|proof_step| proof_step.id == step.id);
+        let proves = pipeline.proves(step);
         if proves {
             self.rerun_proofs(step, n)?;
         }
@@ -918,6 +918,12 @@ impl<'a> Workflow<'a> {
         // turn accepts no verdict file without one.
         let verdict = parse_verdict(&out).unwrap_or_default();
         self.state.record_verdict(n, &step.id, verdict);
+        // An approval is the run's only once the round's last verdict step gives it: until then a saved state keeps
+        // the verdict of the round before.
+        let last = pipeline.verdict_steps().next_back().is_some_and(|last| last.id == step.id);
+        if verdict != APPROVE || last {
+            self.state.verdict = Some(verdict.to_string());
+        }
         self.human.log(&format!("[{}] round {n}: {verdict}", step.role));
         if verdict == CHANGES_REQUESTED && proves && pipeline.proof_command().is_some() {
             self.judge_proofs(step, n, &out)?;
@@ -1005,19 +1011,21 @@ impl<'a> Workflow<'a> {
         let template = |t: &str| fill(t, &|name| values.get(name).cloned()).map_err(|e| prompt_error(&step.id, &e));
         // What a verdict step hears of its round besides its prompt: its last quality file and the locked files
         // restored, and the proof step the proofs run again.
-        let notes = if step.loop_to.is_none() {
-            String::new()
-        } else if self.pipeline.proof_step().is_some_and(|proof_step| proof_step.id == step.id) {
-            self.quality_note(n)? + &self.locks_note(n)? + &self.carried_proofs_note(n)?
-        } else {
-            self.quality_note(n)? + &self.locks_note(n)?
-        };
+        let mut notes = String::new();
+        if step.loop_to.is_some() {
+            notes = self.quality_note(n)? + &self.locks_note(n)?;
+        }
+        if self.pipeline.proves(step) {
+            notes += &self.carried_proofs_note(n)?;
+        }
         let first = template(&step.prompt)? + &notes;
         let follow = if q > 0 {
             let report_path = self.own_path(step, n);
             let quality_path = s.quality_path(n, q);
             self.fill(Prompt::QualityFixPrompt, &[("quality_path", &quality_path), ("report_path", &report_path)])?
-        } else if n > 1 {
+        } else if n > 1 && self.judged_rounds(step, n).is_none_or(|rounds| !rounds.is_empty()) {
+            // A later round, for a step that has taken a turn before: a verdict step that earlier ones' requests for
+            // changes have skipped so far gets its first prompt.
             template(step.again.as_deref().filter(|a| !a.is_empty()).unwrap_or(&step.prompt))? + &notes
         } else {
             return Ok((first, None));
@@ -1047,6 +1055,7 @@ impl<'a> Workflow<'a> {
             "proofs_dir" => return Ok(s.proofs_dir(n)),
             "change" => return Ok(self.change_description()),
             "path" => return Ok(self.own_path(step, n)),
+            "findings" => return Ok(self.findings(n)),
             _ => {}
         }
         let placeholders = self.pipeline.path_placeholders();
@@ -1057,10 +1066,16 @@ impl<'a> Workflow<'a> {
         match *prefix {
             // Round 0's previous round is -1, as Python's n - 1 gives it, whose file no turn writes.
             "prev_" if n == 0 => Ok(other.path(&s.dir(), -1, 0)),
-            "prev_" => Ok(self.reports(other, n - 1)?.pop().unwrap_or_default()),
+            "prev_" => match self.judged_rounds(other, n) {
+                // A verdict step's last file before round n; round n-1's, which no turn wrote, before its first turn,
+                // as round 0's above.
+                Some(rounds) => Ok(other.path(&s.dir(), rounds.last().copied().unwrap_or(n - 1), 0)),
+                None => Ok(self.reports(other, n - 1)?.pop().unwrap_or_default()),
+            },
             "earlier_" => {
+                let rounds = self.judged_rounds(other, n).unwrap_or_else(|| (1..n).collect());
                 let mut reports = vec![];
-                for i in 1..n {
+                for i in rounds {
                     reports.extend(self.reports(other, i)?);
                 }
                 if other.id == step.id && step.quality_gated {
@@ -1071,6 +1086,30 @@ impl<'a> Workflow<'a> {
             _ if other.id == step.id => Ok(self.own_path(step, n)),
             _ => Ok(other.last_path(&s.dir(), n, s.quality_round)),
         }
+    }
+
+    /// The verdict file whose request for changes sent the run into round n: the file of round n-1's last verdict
+    /// (RunState::verdicts), or for a run saved without those records the proof step's file of round n-1. "" before
+    /// round 2, and in a workflow without a verdict step.
+    fn findings(&self, n: u32) -> String {
+        let s = &self.state;
+        if n < 2 {
+            return String::new();
+        }
+        let judge = s.verdicts.iter().rev().find(|v| v.round == n - 1).and_then(|v| self.pipeline.step(&v.step));
+        judge.or(self.pipeline.proof_step()).map_or(String::new(), |st| st.path(&s.dir(), n - 1, 0))
+    }
+
+    /// The rounds before round n the step took a turn in, as far as the run knows: for a verdict step, those the
+    /// run's records (RunState::verdicts) give it a verdict in, as an earlier verdict step's request for changes may
+    /// have skipped it; None, every round before n, for any other step, and for a run saved without those records,
+    /// whose one verdict step judged every round.
+    fn judged_rounds(&self, step: &Step, n: u32) -> Option<Vec<u32>> {
+        let s = &self.state;
+        if step.loop_to.is_none() || s.verdicts.is_empty() {
+            return None;
+        }
+        Some(s.verdicts.iter().filter(|v| v.step == step.id && v.round < n).map(|v| v.round).collect())
     }
 
     /// The step's files of round n, oldest first; for the gated step, its answers to quality rounds too.
@@ -1265,8 +1304,9 @@ impl<'a> Workflow<'a> {
     /// workflow without a verdict step. Errors: a file cannot be read.
     fn round_reviews(&self, n: u32) -> Result<Vec<(&Step, String)>, OrchestratorError> {
         let mut reviews = vec![];
-        for step in self.pipeline.verdict_steps() {
-            if let Some(text) = self.host.read(&step.path(&self.state.dir(), n, 0))? {
+        let dir = self.state.dir();
+        for (step, path) in self.pipeline.verdict_files(&dir, n) {
+            if let Some(text) = self.host.read(&path)? {
                 reviews.push((step, text));
             }
         }

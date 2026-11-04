@@ -136,8 +136,9 @@ fn a_state_saved_with_one_verdict_and_no_record_of_it_loads() {
 }
 
 #[test]
-fn each_verdict_is_recorded_once_per_step_and_round_and_becomes_the_runs() {
+fn each_verdict_is_recorded_once_per_step_and_round() {
     let mut state = RunState::new("r1", "t", "/p");
+    state.verdict = Some("CHANGES_REQUESTED".into());
     state.record_verdict(1, "review", "APPROVE");
     state.record_verdict(1, "accept", "CHANGES_REQUESTED");
     // A resume that took accept's turn of round 1 again.
@@ -146,9 +147,13 @@ fn each_verdict_is_recorded_once_per_step_and_round_and_becomes_the_runs() {
     let given: Vec<(u32, &str, &str)> =
         state.verdicts.iter().map(|v| (v.round, v.step.as_str(), v.verdict.as_str())).collect();
     assert_eq!(given, [(1, "review", "APPROVE"), (1, "accept", "CHANGES_REQUESTED"), (2, "review", "APPROVE")]);
-    assert_eq!(state.verdict.as_deref(), Some("APPROVE"));
+    // The run's verdict is the caller's to set.
+    assert_eq!(state.verdict.as_deref(), Some("CHANGES_REQUESTED"));
     let text = state.to_text();
-    assert!(text.contains(r#""verdict":"APPROVE","verdicts":[{"round":1,"step":"review","verdict":"APPROVE"},"#), "{text}");
+    assert!(
+        text.contains(r#""verdict":"CHANGES_REQUESTED","verdicts":[{"round":1,"step":"review","verdict":"APPROVE"},"#),
+        "{text}"
+    );
     assert_eq!(RunState::from_text(&text).unwrap(), state);
 }
 
