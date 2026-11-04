@@ -10,13 +10,13 @@
 
 mod client;
 mod compare;
-mod engine;
 mod scenarios;
 mod servers;
 mod world;
 
 use std::path::PathBuf;
 
+use octoflow_e2e::engine;
 use octoflow_e2e::scratch::Scratch;
 use serde::Serialize;
 use serde_json::Value;
