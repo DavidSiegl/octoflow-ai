@@ -54,8 +54,9 @@ fn live_prompted_collector_is_only_waited_on() {
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
     assert_eq!(prompts_to(&f, "spec-a1b2c3"), 0);
     assert!(!names(&f, "start").contains(&"spec-a1b2c3".to_string()));
-    assert!(called(&f, &Call::Focus { name: "spec-a1b2c3".into() }));
-    assert_eq!(f.told.titles()[0], "Spec Collector is waiting for you");
+    // The orchestrator that prompted it told the human already (run-crash-ending/03).
+    assert!(!called(&f, &Call::Focus { name: "spec-a1b2c3".into() }));
+    assert!(!f.told.titles().iter().any(|t| t.contains("is waiting for you")), "{:?}", f.told.titles());
 }
 
 #[test]
@@ -63,6 +64,38 @@ fn live_collector_never_prompted_is_prompted_once() {
     let f = Fixture::resume(Rc::new(FakeHost::default()), saved_run("spec", 0, &["spec"]), approved(), &["spec"], &[]);
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
     assert_eq!(prompts_to(&f, "spec-a1b2c3"), 1);
+    assert!(called(&f, &Call::Focus { name: "spec-a1b2c3".into() }));
+    assert_eq!(f.told.titles()[0], "Spec Collector is waiting for you");
+}
+
+#[test]
+fn a_live_agent_saved_without_its_session_has_it_noted_before_its_turn_is_recorded() {
+    // The orchestrator died between saving the Reviewer's agent and saving its session (Workflow::start).
+    let state = prompted(saved_run("review", 1, FULL), "build-1.md");
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![("review", vec![taking(100, review_turn(1, APPROVE))])], &[
+        "review",
+    ], &[]);
+    f.herdr.state().sessions.insert("review-a1b2c3".into(), "s-review".into());
+    f.host.state().session_logs.insert(("claude".into(), "s-review".into()), claude_log(&[(50, 10, 20)]));
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert!(!names(&f, "start").contains(&"review-a1b2c3".to_string()), "the live agent is not started again");
+    let review = wf.state().turns.iter().find(|t| t.get("role") == Some(&Value::from("review"))).expect("a review turn");
+    assert_eq!(review.get("session"), Some(&Value::from("s-review")));
+    assert_eq!(review.get("tokens"), Some(&serde_json::json!({"input": 10, "output": 20, "cache_read": 7, "cache_write": 1})));
+}
+
+#[test]
+fn a_live_agent_in_another_session_than_saved_has_its_turn_recorded_in_that_one() {
+    let state = prompted(saved_run("review", 1, FULL), "build-1.md");
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![("review", vec![review_turn(1, APPROVE)])], &["review"], &[(
+        "review", "s-old",
+    )]);
+    f.herdr.state().sessions.insert("review-a1b2c3".into(), "s-now".into());
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    let review = wf.state().turns.iter().find(|t| t.get("role") == Some(&Value::from("review"))).expect("a review turn");
+    assert_eq!(review.get("session"), Some(&Value::from("s-now")));
 }
 
 #[test]

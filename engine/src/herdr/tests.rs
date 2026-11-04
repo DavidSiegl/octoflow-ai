@@ -59,7 +59,7 @@ fn argv(words: &[&str]) -> Vec<String> {
 #[test]
 fn call_returns_result_and_forwards_machine() {
     let (herdr, ran) = answering(Some("remote"), 0, &result(r#"{"agent": {"agent_status": "idle"}}"#), "");
-    assert_eq!(herdr.status("build-x"), Ok(Some("idle".to_string())));
+    assert_eq!(herdr.agent("build-x").map(|a| a.map(|a| a.status)), Ok(Some("idle".to_string())));
     assert_eq!(last(&ran).0, argv(&["herdr", "--machine", "remote", "agent", "get", "build-x"]));
     assert_eq!(herdr.machine(), Some("remote"));
     // An empty machine is none, as Python takes it.
@@ -103,9 +103,8 @@ fn plain_text_error() {
 }
 
 #[test]
-fn status_is_none_after_exit() {
+fn agent_is_none_after_exit() {
     let (herdr, _) = answering(None, 1, "", &error("agent_not_found", "gone"));
-    assert_eq!(herdr.status("spec-x"), Ok(None));
     assert_eq!(herdr.agent("spec-x"), Ok(None));
 }
 
@@ -710,7 +709,7 @@ fn fakeherdr_plays_each_role_s_turns_as_python_s_does() {
     herdr.rename_pane(&pane, "Builder").unwrap();
 
     assert_eq!(herdr.start_agent("spec-a1b2c3", &root, "claude", &[]), Ok(true));
-    assert_eq!(herdr.status("spec-a1b2c3"), Ok(Some("idle".to_string())));
+    assert_eq!(herdr.agent("spec-a1b2c3").map(|a| a.map(|a| a.status)), Ok(Some("idle".to_string())));
     herdr.prompt("spec-a1b2c3", "You are the Spec Collector").unwrap();
     assert_eq!(host.read(&run.spec_path()).unwrap().as_deref(), Some("# Spec"));
     assert_eq!(herdr.wait("spec-a1b2c3", Some(5000), &["working", "blocked"]), Ok("working".to_string()));
@@ -730,7 +729,7 @@ fn fakeherdr_plays_each_role_s_turns_as_python_s_does() {
     assert_eq!(*prompts.borrow(), ["second"]);
     herdr.state().lost_sessions.insert("s-gone".to_string());
     assert_eq!(herdr.start_agent("review-a1b2c3", "w1:p3", "pi", &argv(&["--session", "s-gone"])), Ok(true));
-    assert_eq!(herdr.status("review-a1b2c3"), Ok(None));
+    assert_eq!(herdr.agent("review-a1b2c3").map(|a| a.map(|a| a.status)), Ok(None));
     let e = herdr.wait("review-a1b2c3", Some(1000), &["working"]).unwrap_err();
     assert_eq!(e.code(), Some("agent_not_found"));
 
@@ -742,7 +741,7 @@ fn fakeherdr_plays_each_role_s_turns_as_python_s_does() {
     herdr.state().script.insert("review".to_string(), [worktree].into());
     assert_eq!(herdr.start_agent("review-b", "w1:p4", "claude", &[]), Ok(true));
     herdr.prompt("review-b", "review").unwrap();
-    assert_eq!(herdr.status("review-b"), Ok(Some("/proj/.orchestrator/worktrees/a1b2c3".to_string())));
+    assert_eq!(herdr.agent("review-b").map(|a| a.map(|a| a.status)), Ok(Some("/proj/.orchestrator/worktrees/a1b2c3".to_string())));
 
     herdr.focus("build-a1b2c3").unwrap();
     herdr.close_workspace("w1").unwrap();

@@ -329,8 +329,7 @@ layout), with no Python of its own.
 `tests/test_gate.py` covers `gate.py`: each check on a real git repository in a temporary directory, the quality
 file `quality_report` writes, and `TestGate`, the program itself, with stub linters on `PATH`.
 `tests/test_properties.py` holds the gate's diff and path parsers to git, by Hypothesis; `tests/test_invariants.py`
-and `tests/test_docs.py` hold the rules the docs state, and the docs to the code: the commands and flags the engine's
-help lists, the names `engine/src` and `gate.py` define, and every link.
+holds the rules the docs state.
 
 `engine/e2e/` (package `octoflow-e2e`) holds the e2e scenarios, which run the engine as a program, with nothing of
 it imported; they are the only test of a run from start to verdict. Each scenario in `tests/e2e/scenarios.rs`
@@ -349,6 +348,12 @@ made by the Python harness this replaced (octoflow-without-python tickets 01 and
 removed that engine. `E2E_RECORD=1 cargo nextest run -p octoflow-e2e` writes recordings instead, from the Rust
 engine, for a scenario added since or a change to what the engine does, whose recording is then a review of it. A
 kill ends the engine's group and each process below it, since the engine runs each command in a group of its own.
+
+The package's other test, `tests/docs/`, holds the README and `docs/` to the code: each command the docs run takes the
+flags they give it, the README's flag table gives each flag the commands that take it, every flag is documented, the
+names they give in backticks exist, and every relative link and its anchor resolve. It reads the commands and flags
+from the help of the same binary the scenarios run (`src/engine.rs`) and from `gate.py`'s `parse_args`, and the names
+by parsing `engine/src` and `ui/src-tauri/src` with syn, and `gate.py` as text. Each failure names `file:line`.
 
 Golden files hold generated text to a reviewed copy of it under `tests/golden/`: `assert_golden` (`tests/golden.py`)
 fails with a unified diff naming the file when the text differs, and `UPDATE_GOLDEN=1 uv run pytest` rewrites the
