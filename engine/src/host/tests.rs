@@ -777,6 +777,57 @@ fn run_files_failure_and_a_time_that_is_not_one() {
     assert!(e.0.contains("Permission denied"), "{e}");
 }
 
+#[test]
+fn what_leads_out_of_a_run_directory_is_neither_listed_nor_read_over_ssh() {
+    let d = TempDir::new();
+    // The project's .orchestrator is itself a link, which is no way out: the runs directory is taken links resolved.
+    let (orchestrator, runs) = (d.join("kept"), d.join("proj/.orchestrator/runs"));
+    std::fs::create_dir_all(format!("{orchestrator}/runs/r")).unwrap();
+    std::fs::create_dir_all(d.join("proj")).unwrap();
+    let link = |target: &str, at: &str| std::os::unix::fs::symlink(target, at).unwrap();
+    link(&orchestrator, &d.join("proj/.orchestrator"));
+    put(&d.join("outside.md"), "outside");
+    put(&format!("{runs}/r/a.md"), "a");
+    put(&format!("{runs}/other.md"), "beside the runs");
+    for (target, name) in [("a.md", "in.md"), ("in.md", "chain.md"), ("../../../outside.md", "up.md"),
+        (&d.join("outside.md"), "out.md"), ("../other.md", "beside.md"), ("loop.md", "loop.md")]
+    {
+        link(target, &format!("{runs}/r/{name}"));
+    }
+    link(&d.path(), &format!("{runs}/away"));
+    link("r", &format!("{runs}/alias"));
+    let ssh = FakeSsh::new(&[]);
+    let names = |run: &str| -> Vec<String> {
+        let files = ssh.host.run_files_inside(&format!("{runs}/{run}")).unwrap();
+        let mut names: Vec<String> = files.into_iter().map(|f| f.path.rsplit('/').next().unwrap().to_string()).collect();
+        names.sort();
+        names
+    };
+    assert_eq!(names("r"), ["a.md", "chain.md", "in.md"]);
+    assert_eq!(names("alias"), ["a.md", "chain.md", "in.md"]);
+    assert_eq!(names("away"), Vec::<String>::new());
+    assert_eq!(names("nosuch"), Vec::<String>::new());
+    let read = |run: &str, name: &str| ssh.host.read_inside(&format!("{runs}/{run}"), name).unwrap();
+    assert_eq!(read("r", "chain.md"), RunFileText::Text("a".to_string()));
+    assert_eq!(read("alias", "a.md"), RunFileText::Text("a".to_string()));
+    for name in ["up.md", "out.md", "beside.md"] {
+        assert_eq!(read("r", name), RunFileText::Outside, "{name}");
+    }
+    assert_eq!(read("away", "outside.md"), RunFileText::Outside);
+    assert_eq!((read("r", "loop.md"), read("r", "nosuch.md"), read("nosuch", "a.md")), (RunFileText::Missing, RunFileText::Missing, RunFileText::Missing));
+    // A run's state.json is read only from a run directory below the runs directory, alias being r's again, and
+    // only when it stays in its run directory.
+    put(&format!("{runs}/r/state.json"), "{\"run_id\": \"r\"}");
+    put(&d.join("state.json"), "{\"run_id\": \"away\"}");
+    std::fs::create_dir_all(format!("{runs}/s")).unwrap();
+    link(&d.join("state.json"), &format!("{runs}/s/state.json"));
+    let states = ssh.host.run_states_inside(&d.join("proj")).unwrap();
+    let ids: Vec<&str> = states.iter().map(|(_, s)| s.get("run_id").and_then(Value::as_str).unwrap()).collect();
+    assert_eq!(ids, ["r", "r"]);
+    // Each listing and each read is one command over ssh.
+    assert_eq!(ssh.calls().len(), 4 + 9 + 1);
+}
+
 /// A program called name on PATH that removes the file gone when given it, then runs the system's program of that
 /// name: gone goes away just before name reads it.
 fn tool_that_loses(bin: &str, name: &str, gone: &str) {
@@ -788,6 +839,18 @@ fn tool_that_loses(bin: &str, name: &str, gone: &str) {
              for s in /usr/bin/{name} /bin/{name}; do [ -x \"$s\" ] && exec \"$s\" \"$@\"; done\nexit 127\n"
         ),
     );
+}
+
+#[test]
+fn a_link_removed_while_it_is_resolved_is_missing_not_outside() {
+    let d = TempDir::new();
+    let run_dir = d.join(&format!("{RUNS_DIR}/r"));
+    put(&format!("{run_dir}/a.md"), "a");
+    std::os::unix::fs::symlink("a.md", format!("{run_dir}/in.md")).unwrap();
+    // readlink removes in.md just before it reads it, as a running run removes a file.
+    let bin = TempDir::new();
+    tool_that_loses(&bin.path(), "readlink", &format!("{run_dir}/in.md"));
+    assert_eq!(host_with_tools(&bin.path()).read_inside(&run_dir, "in.md").unwrap(), RunFileText::Missing);
 }
 
 /// The run ids of the runs under project, as run_states reads them through a host with the tools in bin.
