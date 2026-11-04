@@ -1,6 +1,8 @@
 //! tests/test_orchestrator.py's TestNewDependencies, and the manifests, requirements, spec names and lines that name a
 //! package of checks.json, as the Python engine read them, but where a manifest holds a value Python read in its own
-//! terms: since octoflow-without-python ticket 06 such a value is compared and written as TOML.
+//! terms: since octoflow-without-python ticket 06 such a value is compared and written as TOML; and where a package
+//! is named from several sources: since cargo-dependency-rules ticket 01 it is a dependency from each, where Python
+//! kept one.
 
 use std::sync::Arc;
 
@@ -162,7 +164,8 @@ fn dependency_lists_of_every_kind_are_read_without_the_project_itself() {
                 [tool.uv]\ndev-dependencies = [\"ignored\"]\n";
     let deps =
         python_dependencies(&|path: &str| Ok((path == "pyproject.toml").then(|| text.as_bytes().to_vec()))).unwrap();
-    let direct: Vec<(&str, Option<PackageSource>)> = deps.direct.iter().map(|(k, d)| (k, d.source.clone())).collect();
+    let direct: Vec<(&str, Option<PackageSource>)> =
+        sourced(&deps.direct).into_iter().map(|(k, _, source)| (k, source)).collect();
     assert_eq!(
         direct,
         [
@@ -172,6 +175,41 @@ fn dependency_lists_of_every_kind_are_read_without_the_project_itself() {
             ("pytest", None),
             ("ruff", None),
         ]
+    );
+}
+
+#[test]
+fn a_python_package_is_a_dependency_from_each_source_it_is_named_with() {
+    let pyproject = "[project]\nname = \"limiter\"\ndependencies = [\"foo\", \"bar\", \"baz\"]\n\
+        [dependency-groups]\ndev = [\"foo @ https://example.com/foo.whl\"]\n\
+        [[tool.uv.index]]\nname = \"corp\"\nurl = \"https://corp.example/simple\"\nexplicit = true\n\
+        [tool.uv.sources]\nbaz = [{ index = \"corp\", marker = \"sys_platform == 'win32'\" }, \
+        { git = \"https://example.com/baz.git\", marker = \"sys_platform != 'win32'\" }]\n";
+    let (pypi, mirror) = ("https://pypi.org/simple", "https://mirror.example/simple");
+    let lock = lock(&[("foo", pypi), ("bar", pypi), ("bar", mirror)]);
+    let deps = python_dependencies(&|path: &str| {
+        Ok(match path {
+            "pyproject.toml" => Some(pyproject.as_bytes().to_vec()),
+            "uv.lock" => Some(lock.as_bytes().to_vec()),
+            _ => None,
+        })
+    })
+    .unwrap();
+    let index = |url: &str| Some(PackageSource::new(SourceKind::Index, url));
+    assert_eq!(
+        sourced(&deps.direct),
+        [
+            ("foo", "pyproject.toml", None),
+            ("foo", "pyproject.toml", Some(PackageSource::new(SourceKind::Url, "https://example.com/foo.whl"))),
+            ("bar", "pyproject.toml", None),
+            ("bar", "pyproject.toml", index(mirror)),
+            ("baz", "pyproject.toml", index("https://corp.example/simple")),
+            ("baz", "pyproject.toml", Some(PackageSource::new(SourceKind::Git, "https://example.com/baz.git"))),
+        ]
+    );
+    assert_eq!(
+        sourced(&deps.locked),
+        [("foo", "uv.lock", None), ("bar", "uv.lock", None), ("bar", "uv.lock", index(mirror))]
     );
 }
 
@@ -600,12 +638,12 @@ fn kind_name(kind: SourceKind) -> &'static str {
     }
 }
 
-fn sources(map: &Map<Dependency>) -> Value {
+fn sources(map: &Map<Vec<Dependency>>) -> Value {
     Value::Array(
-        map.iter()
-            .map(|(k, d)| {
-                let s = d
-                    .source
+        sourced(map)
+            .into_iter()
+            .map(|(k, _, source)| {
+                let s = source
                     .as_ref()
                     .map_or(Value::Null, |s| Value::Array(vec![kind_name(s.kind).into(), s.place.as_str().into()]));
                 Value::Array(vec![k.into(), s])
@@ -729,8 +767,9 @@ fn cargo_read(files: &[(&str, &str)]) -> Dependencies {
     .unwrap()
 }
 
-fn sourced(deps: &Map<Dependency>) -> Vec<(&str, &str, Option<PackageSource>)> {
-    deps.iter().map(|(k, d)| (k, d.manifest.as_str(), d.source.clone())).collect()
+/// (package_key, manifest, source) of each package of deps from each of its sources, in deps's order.
+fn sourced(deps: &Map<Vec<Dependency>>) -> Vec<(&str, &str, Option<PackageSource>)> {
+    deps.iter().flat_map(|(k, ds)| ds.iter().map(move |d| (k, d.manifest.as_str(), d.source.clone()))).collect()
 }
 
 #[test]
@@ -769,6 +808,24 @@ fn every_dependency_table_of_the_workspace_and_its_members_is_direct() {
                 Some(PackageSource::new(SourceKind::Workspace, ""))
             ),
             ("tempfile", "engine/Cargo.toml", None),
+        ]
+    );
+}
+
+#[test]
+fn a_crate_is_a_direct_dependency_once_from_each_source_it_is_named_with() {
+    let root = "[workspace]\nmembers = [\"engine\"]\n\n[dependencies]\nfoo = \"1\"\n\n\
+        [dev-dependencies]\nfoo = \"1\"\n\n[target.'cfg(windows)'.dependencies]\n\
+        foo = { git = \"https://example.com/foo.git\" }\n";
+    let engine = "[package]\nname = \"engine\"\n\n[dependencies]\nfoo = \"1\"\n\n[build-dependencies]\n\
+        foo = { version = \"1\", registry = \"corp\" }\n";
+    let deps = cargo_read(&[("Cargo.toml", root), ("engine/Cargo.toml", engine)]);
+    assert_eq!(
+        sourced(&deps.direct),
+        [
+            ("foo", "Cargo.toml", None),
+            ("foo", "Cargo.toml", Some(PackageSource::new(SourceKind::Git, "https://example.com/foo.git"))),
+            ("foo", "engine/Cargo.toml", Some(PackageSource::new(SourceKind::Index, "corp"))),
         ]
     );
 }
@@ -830,6 +887,22 @@ fn a_workspace_this_check_cannot_follow_is_unreadable() {
             "[dependencies]\nserde = 1\n",
             "Cargo.toml",
             "`serde` in [dependencies] is neither a version nor a table",
+        ),
+        (
+            "[workspace.dependencies]\nserde = \"1\"\n\n[dependencies]\nserde = { workspace = \"true\" }\n",
+            "Cargo.toml",
+            "`serde` in [dependencies] takes `workspace = \"true\"`, where Cargo takes only `workspace = true`",
+        ),
+        (
+            "[build-dependencies]\nserde = { workspace = 1 }\n",
+            "Cargo.toml",
+            "`serde` in [build-dependencies] takes `workspace = 1`, where Cargo takes only `workspace = true`",
+        ),
+        (
+            "[target.'cfg(unix)'.dev-dependencies]\nserde = { workspace = false, version = \"1\" }\n",
+            "Cargo.toml",
+            "`serde` in [target.cfg(unix).dev-dependencies] takes `workspace = false`, where Cargo takes only \
+             `workspace = true`",
         ),
     ];
     for (root, path, why) in cases {
@@ -918,6 +991,99 @@ fn a_member_s_new_crate_is_found_in_its_own_manifest() {
         rules(&found.issues),
         [(Some("engine/Cargo.toml"), Some(6), "not-in-spec")]
     );
+}
+
+/// The workspace's files at base and new, engine's manifest new ending in lines from line 6 on.
+fn cargo_member_files(engine: &[&str]) -> Vec<(&'static str, &'static str, Option<String>)> {
+    let mut files = cargo_files(&[]);
+    files.retain(|(side, path, _)| !(*side == "new" && *path == "engine/Cargo.toml"));
+    let added: String = engine.iter().map(|l| format!("{l}\n")).collect();
+    files.push(("new", "engine/Cargo.toml", Some(format!("{ENGINE_MANIFEST}{added}"))));
+    files
+}
+
+/// foo added to engine's manifest from line 6 on, from crates.io in [dependencies] and from a repository under a
+/// target table.
+const FOO_TWICE: [&str; 4] = [
+    "foo = \"1\"",
+    "",
+    "[target.'cfg(windows)'.dependencies]",
+    "foo = { git = \"https://example.com/foo.git\" }",
+];
+
+/// The findings on a change that adds FOO_TWICE, given crates.io and the spec.
+fn find_foo_twice(crates: &Arc<FakeCratesIo>, spec: &str) -> CheckFindings {
+    let change = Change::new(&adding("engine/Cargo.toml", 6, &FOO_TWICE)).files(cargo_member_files(&FOO_TWICE));
+    find_crates(&change.spec(spec), crates)
+}
+
+const FOO_FROM_GIT: &str = "`foo`, which the spec names: from the repository https://example.com/foo.git, not from \
+                            crates.io.";
+
+#[test]
+fn a_new_crate_named_from_several_sources_is_judged_from_each() {
+    let crates = FakeCratesIo::with(&[("foo", CrateJson::default())]);
+    let found = find_foo_twice(&crates, "");
+    assert_eq!(
+        messages(&found.issues),
+        [
+            (
+                "not-in-spec",
+                "`foo` is a new dependency that the spec does not name; on crates.io since 2014-12-05, latest 1.0.228 \
+                 of 2026-09-01, license MIT OR Apache-2.0."
+            ),
+            (
+                "not-in-spec",
+                "`foo` is a new dependency that the spec does not name; from the repository \
+                 https://example.com/foo.git, not from crates.io."
+            ),
+        ]
+    );
+    assert_eq!(crates.state().asked, ["foo"]);
+}
+
+#[test]
+fn a_source_beside_one_crates_io_does_not_know_is_not_judged_by_crates_io() {
+    let crates = FakeCratesIo::with(&[]);
+    let found = find_foo_twice(&crates, "foo");
+    assert_eq!(rules(&found.issues), [(Some("engine/Cargo.toml"), Some(6), "not-on-crates-io")]);
+    assert_eq!(messages(&found.to_weigh), [("added", FOO_FROM_GIT)]);
+}
+
+#[test]
+fn a_source_beside_a_young_crate_is_not_young() {
+    let young = CrateJson { created: "2026-10-20", latest: "2026-10-21", version: "0.1.0", license: None };
+    let crates = FakeCratesIo::with(&[("foo", young)]);
+    let found = find_foo_twice(&crates, "foo");
+    assert_eq!(found.issues, []);
+    assert_eq!(
+        found.to_weigh.iter().map(|f| f.rule.as_str()).collect::<Vec<_>>(),
+        ["young", "added"]
+    );
+    assert_eq!(found.to_weigh[1].message, FOO_FROM_GIT);
+}
+
+#[test]
+fn a_source_the_change_adds_to_a_crate_the_project_had_is_reported() {
+    let added = ["", "[target.'cfg(windows)'.dependencies]", "serde = { git = \"https://example.com/serde.git\" }"];
+    let crates = FakeCratesIo::with(&[]);
+    let found = find_crates(
+        &Change::new(&adding("engine/Cargo.toml", 6, &added)).files(cargo_member_files(&added)),
+        &crates,
+    );
+    assert_eq!(found.issues, []);
+    assert_eq!(
+        found.to_weigh,
+        [Finding::warning(
+            Some("engine/Cargo.toml"),
+            Some(8),
+            "source-changed",
+            "`serde`: at the base, from crates.io; in the change, from crates.io and from the repository \
+             https://example.com/serde.git."
+                .to_string()
+        )]
+    );
+    assert!(crates.state().asked.is_empty());
 }
 
 #[test]
@@ -1013,6 +1179,47 @@ fn the_crates_the_lock_file_alone_adds_are_pulled_in() {
         found.to_weigh[1].message,
         "1 new packages that the change's dependencies pull in: `mio` (on crates.io since 2014-12-05, latest 1.0.228 \
          of 2026-09-01, license MIT OR Apache-2.0)."
+    );
+}
+
+#[test]
+fn a_locked_crate_from_several_sources_is_pulled_in_and_moved_from_each() {
+    let lock = |crates: &[(&str, &str)]| -> String {
+        crates
+            .iter()
+            .map(|(c, source)| format!("[[package]]\nname = \"{c}\"\nversion = \"1.0.0\"\nsource = \"{source}\"\n\n"))
+            .collect()
+    };
+    let (crates_io, bar_git, mio_git) = (
+        "sparse+https://index.crates.io/",
+        "git+https://example.com/bar.git#0123abc",
+        "git+https://example.com/mio.git#4567def",
+    );
+    let mut files = cargo_files(&[]);
+    files.push(("base", "Cargo.lock", Some(lock(&[("bar", crates_io)]))));
+    files.push((
+        "new",
+        "Cargo.lock",
+        Some(lock(&[("bar", crates_io), ("bar", bar_git), ("mio", crates_io), ("mio", mio_git)])),
+    ));
+    let crates = FakeCratesIo::with(&[("mio", CrateJson::default())]);
+    let found = find_crates(&Change::new(&adding("Cargo.lock", 6, &["[[package]]"])).files(files), &crates);
+    assert_eq!(found.issues, []);
+    assert_eq!(
+        messages(&found.to_weigh),
+        [
+            (
+                "source-changed",
+                "`bar`: at the base, from crates.io; in the change, from crates.io and from the repository \
+                 https://example.com/bar.git."
+            ),
+            (
+                "pulled-in",
+                "2 new packages that the change's dependencies pull in: `mio` (on crates.io since 2014-12-05, latest \
+                 1.0.228 of 2026-09-01, license MIT OR Apache-2.0), `mio` (from the repository \
+                 https://example.com/mio.git, not from crates.io)."
+            ),
+        ]
     );
 }
 
