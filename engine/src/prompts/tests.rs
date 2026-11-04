@@ -17,6 +17,23 @@ fn every_built_in_text_is_the_python_engines() {
 }
 
 #[test]
+fn the_builders_fix_prompt_names_the_findings_that_sent_the_round_back() {
+    let names = placeholders(FIX_PROMPT).unwrap();
+    assert!(names.iter().any(|n| n == "findings"), "{names:?}");
+    assert!(!names.iter().any(|n| n == "prev_review_path"), "{names:?}");
+    // A prompt file written for an earlier release is refused, naming the placeholder it may no longer use and the
+    // ones it must.
+    assert_eq!(
+        prompt_problem("FIX_PROMPT", "Fix {prev_review_path}; report to {build_path}."),
+        Some(
+            "placeholder {prev_review_path} at line 1, column 5 is not one this template takes; FIX_PROMPT takes \
+             {build_path}, {findings}"
+                .into()
+        )
+    );
+}
+
+#[test]
 fn every_built_in_prompt_is_overridable() {
     for p in Prompt::ALL {
         assert_eq!(Prompt::named(p.name()), Some(*p));

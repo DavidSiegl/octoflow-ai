@@ -74,13 +74,6 @@ is rewritten to say what is left.
   shows only `verdict`, and its `RunRecord` (`ui/src/api.ts`) has no `verdicts`. Left out of acceptance-verdict
   ticket 01 (2026-11-04): this checkout had no `node_modules` to run the app's tests with. Closes with
   `verdicts?` on `RunRecord` and `outcome` naming the last step as `run_outcome` does, with a `runs.test.ts` case.
-- **The built-in `FIX_PROMPT` names `{prev_review_path}`, not `{findings}`.** A workflow with several verdict steps
-  whose build step `use`s the default's (`engine/src/prompts.rs`) sends the Builder to the review even when the
-  acceptance sent the round back. Switching the built-in to `{findings}` (acceptance-verdict ticket 01's review 141,
-  F3) was held back on 2026-11-04 for the user: a prompt file must use exactly the built-in's placeholders
-  (`prompt_problem`), so every `FIX_PROMPT.md` and every saved run's `FIX_PROMPT` override would be refused, a resume
-  included, and the Python engine's oracles (`engine/tests/oracle/texts.json`, `workflows.json`) would need editing by
-  hand. Until then such a workflow words its build step's `again` with `{findings}` itself.
 - **A non-editing step between two verdict steps is treated as having run every round.** `loop_problem` allows one
   (`engine/src/pipeline.rs`), and a round an earlier verdict step ends skips it, but `Workflow::judged_rounds`
   (`engine/src/workflow.rs`) knows the skipped rounds only of verdict steps: such a step's first turn in a later

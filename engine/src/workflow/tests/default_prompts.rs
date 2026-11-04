@@ -594,7 +594,7 @@ fn a_build_prompt_file_words_the_builders_first_turn() {
 
 #[test]
 fn a_follow_up_file_reaches_the_turn_that_uses_it() {
-    let (_dir, config) = config_with(&[("FIX_PROMPT.md", "Fix {prev_review_path}; report to {build_path}.")]);
+    let (_dir, config) = config_with(&[("FIX_PROMPT.md", "Fix {findings}; report to {build_path}.")]);
     let (state, pipeline) = started(&config);
     let seen = seen();
     let f = Fixture::on(Rc::new(FakeHost::default()), state, vec![
@@ -641,7 +641,7 @@ fn a_note_file_reaches_every_workflow() {
 #[test]
 fn a_resume_keeps_the_prompts_the_run_started_with() {
     for edit in ["edited", "deleted"] {
-        let (_dir, config) = config_with(&[("FIX_PROMPT.md", "Fix {prev_review_path}; report to {build_path}.")]);
+        let (_dir, config) = config_with(&[("FIX_PROMPT.md", "Fix {findings}; report to {build_path}.")]);
         let path = format!("{}/FIX_PROMPT.md", config.prompts_dir());
         let (state, pipeline) = started(&config);
         let f = Fixture::on(Rc::new(FakeHost::default()), state, vec![
@@ -651,7 +651,7 @@ fn a_resume_keeps_the_prompts_the_run_started_with() {
         f.play("review", vec![then_interrupted(&f.interrupt, idle())]);
         assert_eq!(f.workflow(no_pr_of(pipeline)).run(), Err(Stopped::Interrupted));
         if edit == "edited" {
-            std::fs::write(&path, "Changed {prev_review_path}; report to {build_path}.\n").unwrap();
+            std::fs::write(&path, "Changed {findings}; report to {build_path}.\n").unwrap();
         } else {
             std::fs::remove_file(&path).unwrap();
         }
