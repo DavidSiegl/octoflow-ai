@@ -6,13 +6,13 @@
 
 use std::time::Instant;
 
-use octoflow_e2e::{array_at, object, object_at};
+use octoflow_e2e::{array_at, checkout, object, object_at};
 use serde_json::Value;
 use octoflow_engine::json::Object;
 
 use crate::client;
 use crate::servers::JOB;
-use crate::world::{checkout, World};
+use crate::world::World;
 
 // -- What the agents write ------------------------------------------------------
 

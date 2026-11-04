@@ -97,6 +97,30 @@ is rewritten to say what is left.
   wraps too, and a wrapped `fast_forward` or `merge_upstream` would also retry a local merge whose error happened to
   say a phrase of `UNREACHABLE`. Deferred from cross-review 135 (F7, nit, 2026-11-04). Closes with the waiting and
   the telling reachable from `Host`, so that its origin reads retry themselves.
+- **An npm package's NOTICE file ships only for a build tool.** `ui/scripts/npm-licenses.js` appends the
+  `THIRD-PARTY-LICEN[CS]E*` and `NOTICE*` files of the `BUILD_CODE` packages (Vite, Rolldown) to their notices, and
+  of no other; Apache-2.0 §4(d) wants a NOTICE redistributed with any work it comes with, so a production package
+  under Apache-2.0 that ships one would go out without it, silently. None does today (@tauri-apps/api has none).
+  Raised, not recorded, by cross-review 131 (round 4, 2026-11-04): "a production Apache package's NOTICE would be
+  dropped silently". Closes with every shipped package's `NOTICE*` appended to its notice, or the build failing on a
+  production package that has one.
+- **The npm notices miss a build tool's third-party notices under another file name.** `withThirdPartyNotices`
+  (`ui/scripts/npm-licenses.js`) takes `/^(third-party-licen[cs]e|notice)/i`, so `THIRD_PARTY_LICENSES` or
+  `ThirdPartyNotices.txt` in the next `BUILD_CODE` package is left out without a word, and a `LICENSE-THIRD-PARTY`
+  falls into the license pattern and fails the build. Vite and Rolldown name theirs as matched. Raised, not recorded,
+  by cross-review 131 (round 4, 2026-11-04). Closes with a pattern that takes `third[-_ ]?party` in any case and
+  position, or a test that lists each `BUILD_CODE` package's notice-like files and fails on one not shipped.
+- **The npm notices' refusal of a multi-licensed package says it has no license text.** A package offered under a
+  license `packaging/about.toml` does not accept, whose one license file names none of the licenses, fails
+  `npmNotices` with "no one license text for MIT OR GPL-3.0-only", which sends the reader looking for a missing file;
+  the refusal is that the text may be the unaccepted license's alone, and `npmNotices`'s `@throws` does not name the
+  case. Raised, not recorded, by cross-review 131 (round 4, 2026-11-04). Closes with a message of its own for that
+  case ("one license text for an offer not every license of which about.toml accepts") and the `@throws` naming it.
+- **The project bar's last button runs past a narrow window's edge.** At 560 px wide the bar's fields keep their
+  minimum widths and "Check setup…" wraps onto two lines and ends past the page's right padding; origin/main at
+  a357407 does the same, so the logo's header (gui-logo/01) did not cause it. Seen in a headless screenshot of
+  `vite preview` (2026-11-04). Closes with the bar's fields allowed to shrink or wrap (`flex: 1 1 <basis>` with a
+  smaller `min-width`) so that every control stays inside the window down to the narrowest width the app supports.
 
 - **The desktop app's dialogs do not keep keyboard focus.** `Dialog` (`ui/src/components/Dialog.tsx`), which the
   setup dialog and the run form are, sets `aria-modal` and covers the window with its backdrop, but Tab still reaches
@@ -160,13 +184,6 @@ is rewritten to say what is left.
   only once the finishing save is older than a bound (the record carries `heartbeat_age`), or with the engine
   writing the files before that save where a takeover allows it (`end_done_run` writes them before its release
   save since run-crash-ending/01, but after the save of phase `done`; `release` saves first on purpose).
-- **The desktop app ships its npm packages' code without their licenses.** `octoflow-third-party-licenses.html`
-  (`packaging/about.toml`) lists the Rust crates only, as cargo-about reads Cargo's graph; the app's web view bundles
-  `ui/package.json`'s runtime dependencies, React, react-markdown, remark-gfm and @tauri-apps/api with what they pull
-  in, minified into `ui/dist/` without their notices. All were MIT when the project took its license (2026-10-30).
-  Closes with their license texts generated from `ui/package-lock.json` at build time, e.g. by a Vite license
-  plugin, and bundled with the app beside the crates'.
-  Ticket: `.scratch/desktop-packaging-gaps/issues/01-npm-licenses-shipped.md` (#239).
 - **A release that adds a placeholder to a built-in prompt would refuse every run that saved an override of it.**
   `saved_prompts` (`engine/src/prompts.rs`) holds a run's saved prompt overrides to `prompt_problem` on resume, whose
   rule that an override keep every placeholder of the built-in text never refused a resume before. No run can meet it
@@ -188,11 +205,6 @@ is rewritten to say what is left.
   minutes build #59 took (cross-review 73, F11, 2026-10-27). The engine aborts no build either, so its `Jenkins`
   (`engine/src/ci.rs`) has no call for it: a POST to `<job>/<number>/stop`, or the queue item's cancel, once the
   `agents` user is known to hold Jenkins's Cancel permission on the job.
-- **`tests/test_docs.py` reads the engine's names by pattern.** `rust_names` finds each `fn`, type, `const`,
-  `static`, `mod`, string literal, impl `fn` and struct field in `engine/src` by regular expression, not by parsing,
-  so a name in a comment or a `macro_rules!` counts as defined, and a doc's `Type::member` is not checked at all, only
-  `Type.member`. Found by rust-engine ticket 11 (2026-10-30). Closes, if a doc names a gone item unnoticed, with the
-  names read from rustdoc's JSON or syn, as the gate-rust helper reads Rust.
 - **Test code outside the places the spec names is judged as code.** The spec of the Rust checks (requirement 2)
   places Rust's tests in a `tests/` directory, a `tests.rs` and an inline `#[cfg(test)]` module; `_in_rust_tests` and
   `_rust_test_path` in `gate.py`, which both Rust checks read, follow it (test-integrity's side of this is the
@@ -558,25 +570,36 @@ is rewritten to say what is left.
   `Cli::exec` asking the kernel for a signal when its parent, the runtime, dies (`PR_SET_PDEATHSIG`) when the app
   runs extracted, checked on a built AppImage, or with a runtime that forwards signals.
   Ticket: `.scratch/desktop-packaging-gaps/issues/02-appimage-signal-reaches-the-cli.md` (#240).
-- **An AppImage run without FUSE leaves its extraction in `/tmp`.** Under `APPIMAGE_EXTRACT_AND_RUN` the
-  AppImage runtime that linuxdeploy-plugin-appimage bundles extracts into `$TMPDIR/appimage_extracted_<hash>` and
-  never removes it. `packaging/build-desktop.sh` sets the variable for the whole Tauri build, so linuxdeploy and
-  appimagetool leave two such directories on the build machine at every build (Jenkins's agent among them). Users
-  who run the desktop AppImage as the CLI without FUSE are left with one 336 MB directory per version. Its smoke
-  test already points `TMPDIR` into its own directory. Found in the second build round of run 20261025-081413-327fc2
-  (2026-10-25). Closes with a `TMPDIR` the build removes around `tauri build`, and with a README note, or a newer
-  runtime that cleans up, for users.
-  Ticket: `.scratch/desktop-packaging-gaps/issues/03-appimage-extraction-cleaned-up.md` (#241).
+- **Removing a tree of read-only directories is written out twice.** `chmod -R u+rwX "$dir" && rm -rf "$dir"`,
+  with a warning when it fails, is in the Jenkinsfile's Test stage (emptying `TMPDIR` before the tests) and in
+  `packaging/build-desktop.sh`'s `remove_temporaries`, for the AppImage extractions it removes; a fix to one does
+  not reach the other. `engine/src/proofs.rs`'s `REMOVE_TREE_SCRIPT` is a looser third (`rm` runs even when `chmod`
+  fails, with no warning). Raised by cross-review 132 (F6, nit, 2026-11-04): "Record or share it, as the implementer
+  judges". Closes with one script both call, should a third copy be needed or the idiom change.
+- **Ctrl-C during `packaging/build-desktop.sh`'s AppImage smoke test leaves `serve` running.** `smoke_appimage`
+  starts the AppImage's `serve` as a background job, which a non-interactive shell starts with SIGINT ignored, and
+  the INT trap kills no one, so the AppImage and the orchestrator it execs outlive the script; the trap has removed
+  the smoke test's directory they run from by then. A SIGTERM to the process group (a Jenkins abort) does reach
+  them, and Jenkins runs with SIGINT ignored, so this is interactive use only. Older than desktop-packaging-gaps/03,
+  whose traps kill no one either. Raised by cross-review 132 (round 2, not recorded there, 2026-11-04). Closes with
+  the traps killing `serve`'s processes, as `smoke_fail` does, before removing the directory.
+- **`packaging/build-desktop.sh`'s macOS smoke test leaves its directory when the script is killed by a signal.**
+  `smoke_dmg` removes its `mktemp -d` only in its `smoke_fail` and on success, not through `remove_temporaries`
+  as `smoke_appimage`'s since desktop-packaging-gaps/03, so Ctrl-C or SIGTERM leaves it, with the .dmg possibly
+  still attached at its `mnt`. It holds no AppImage extraction, so it is small. Raised by cross-review 132
+  (round 2, not recorded there, 2026-11-04). Closes with `smoke_dmg`'s directory, and the detach, in
+  `remove_temporaries`, checked on a Mac.
 - **The Package stage still runs programs it wrote to `/tmp`, kept out of agentbox0's Falco mail only by path
   exceptions that let any binary placed under those paths run unreported.** The Test and Gate stages set `TMPDIR` to
   `$WORKSPACE_TMP/tmp`, on the agent's volume, which the rule cannot see (the Jenkinsfile's Test stage says why),
-  but Package keeps `/tmp`. There the linuxdeploy and appimagetool that `packaging/build-desktop.sh` runs under
-  `APPIMAGE_EXTRACT_AND_RUN` extract themselves into `$TMPDIR/appimage_extracted_<hash>` (entry above) and run from
-  there. The homelab excepts those paths (falco/rules/homelab.yaml, `appimage_extracted`). Each stage now creates
-  its own TMPDIR, so a stage added later has to copy both lines. Raised by cross-review 71 (F1, F3: "set TMPDIR for
-  every stage that runs what it builds (one pipeline-level definition next to CARGO_HOME would do)"). Closes with
-  that pipeline-level `TMPDIR`, created before any stage that uses it, and a Package stage seen to pass with it on
-  agentbox0. The homelab can then drop `appimage_extracted`.
+  but Package keeps `/tmp`. There the desktop AppImage that `packaging/build-desktop.sh`'s smoke test runs under
+  `APPIMAGE_EXTRACT_AND_RUN` extracts itself into `$TMPDIR/appimage_extracted_<hash>`, below the test's `mktemp -d`,
+  and runs from there; linuxdeploy and appimagetool extract into the script's own `build/desktop/tmp` since
+  desktop-packaging-gaps/03. The homelab excepts those paths (falco/rules/homelab.yaml, `appimage_extracted`). Each
+  stage now creates its own TMPDIR, so a stage added later has to copy both lines. Raised by cross-review 71 (F1,
+  F3: "set TMPDIR for every stage that runs what it builds (one pipeline-level definition next to CARGO_HOME would
+  do)"). Closes with that pipeline-level `TMPDIR`, created before any stage that uses it, and a Package stage seen
+  to pass with it on agentbox0. The homelab can then drop `appimage_extracted`.
 - **No build has yet been seen waiting for `ci/cargo-lock.sh` on the Jenkins agent.** PR #88's builds ran both
   cargo steps through it on agentbox0 (builds 1-3, 2026-10-25), so the agent image has `flock` and the lock file's
   directory is writable, and a quality-style build (`GIT_REF` set) ran `--no-wait`; but the two run side by side
@@ -723,12 +746,14 @@ is rewritten to say what is left.
   cargo-mutants, each from a cold target directory in the rerun's copy. A change that adds many such tests is not
   rerun; that one closes with a limit that grows with the tests rerun (a time budget shared with mutmut was decided
   against, "flaky-tests' reruns get one time limit a run", above).
-- **`tests/test_docs.py` gets `gate.py`'s parser by patching `argparse.ArgumentParser.parse_args`.**
-  `gate.parse_args` builds its parser inline and returns only the parsed arguments, so `built_parser` calls it with
-  `parse_args` patched class-wide to hand the parser back, and reads argparse's private `_actions`. Raised by
-  cross-review 56 (F8, 2026-10-27): "Breaks if `parse_args` switches to `parse_known_args` or parses twice". It
-  fails loudly then (`parse_args parsed without its parser's parse_args`). The engine's commands are read from its
-  `--help` (`cli_commands`). Closes with a `gate.build_parser()` that `parse_args` calls and the test reads.
+- **The docs check reads `gate.py` as text.** `engine/e2e/tests/docs/` takes `gate.py`'s flags from the
+  `add_argument("--…"` calls in its `parse_args` (`cli.rs`, `gate_flags`), not hiding any with `argparse.SUPPRESS`,
+  and its names from lines at the left margin and one indent into a class, its strings only from those that open and
+  close on a line (`names.rs`, `gate_names`): a flag added otherwise, or a name defined in a `for`, a `with` or an
+  `import`, is not seen. It replaced `tests/test_docs.py`, which built the argparse parser by patching
+  `parse_args` (octoflow-without-python ticket 07). The same reader takes no string of a Rust macro whose arguments
+  are not expressions, such as `json!`. Closes with gate.py leaving the repository (gate-repo-split/05), or a
+  `--help` the check runs once the gate is a program of its own.
 - **README and docs left over from the README rewrite (PR #90).** Raised by cross-review 50 (2026-10-26), in what
   PR #90 brought, not in code:
   - The Jenkins job path still uses the old folder name, as
@@ -938,15 +963,6 @@ is rewritten to say what is left.
   `agent` fail, so no test holds the `?` there against becoming a silent skip. Raised by cross-review 128 (F4,
   2026-11-04): "The `?` could become a silent skip ... without any test failing." Closes with a failure the fake's
   `agent` can be set to give, and a resume test that expects the run to stop with it.
-- **A resumed interview tells the human again that it waits for them.** `step_turn`'s `Announce::Interview`
-  (`engine/src/workflow.rs`) has `announce` (`engine/src/workflow/turn.rs`) focus the human-paced agent's pane and
-  notify "<label> is waiting for you" in every orchestrator that takes the turn (`turn` calls it from `written` on every
-  pass), so a resume while the interview is under way repeats both, once per resume. Raised by cross-review 81 (F1,
-  2026-10-28) against ticket orchestrator-test-methods/05, which allows only documented idempotent repeats: "Neither is
-  idempotent: the cited comment … says each orchestrator does it again, which is the repeat the ticket asks the test to
-  fail on." The user ruled it a bug (2026-10-28), not wanted. The Rust engine was ported to behave the same, untested as
-  above. Closes with an engine that announces a turn only where none did (for example, only when `prompted` is not the
-  turn's file). Ticket: `.scratch/run-crash-ending/issues/03-interview-announced-once.md` (#229).
 - **Four copies of a scratch directory removed on drop, each named its own way.** The `TempDir`s of
   `engine/src/test_support.rs` and `ui/src-tauri/src/lib.rs` name theirs by pid and a counter,
   `engine/src/serve/tests.rs`'s by the test's name and pid under a TMPDIR it reads itself, and `xtask/src/process.rs`'s

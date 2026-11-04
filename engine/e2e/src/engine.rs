@@ -1,4 +1,4 @@
-//! The engine the scenarios run.
+//! The engine the package's tests run: the scenarios, and the docs check, which reads its help.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -6,11 +6,11 @@ use std::sync::OnceLock;
 
 use serde_json::Value;
 
-/// The orchestrator binary the scenarios run: E2E_ENGINE's, when it is set; else this checkout's, `cargo build --locked
+/// The orchestrator binary the tests run: E2E_ENGINE's, when it is set; else this checkout's, `cargo build --locked
 /// -p octoflow-engine --bin orchestrator` run once per test process, in `e2e-engine/` beside this test's `deps/`. It is
 /// built rather than found beside this test, since `cargo nextest run -p octoflow-e2e` builds no binary of another
 /// package, and a stale one would be tested in its place. Panics when cargo is missing or the build fails, so that a
-/// machine without cargo fails the scenarios rather than skipping them.
+/// machine without cargo fails the tests rather than skipping them.
 pub fn binary() -> PathBuf {
     static BINARY: OnceLock<PathBuf> = OnceLock::new();
     BINARY.get_or_init(|| match std::env::var_os("E2E_ENGINE") {

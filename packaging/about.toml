@@ -1,11 +1,13 @@
 # cargo-about's configuration, with which packaging/build-binary.sh writes dist/octoflow-third-party-licenses.html:
 # the licenses of the crates compiled into the orchestrator binary and the desktop app, whose texts MIT, Apache-2.0 and
-# the rest require every copy of those programs to come with.
+# the rest require every copy of those programs to come with. Its accepted list also holds for the npm packages the
+# desktop app's window bundles, whose licenses ui/scripts/npm-licenses.js writes (packaging/build-desktop.sh).
 
-# The licenses a dependency may be used under. A crate offered under none of them fails the build, so a dependency
-# under a license nobody has looked at, a copyleft one above all, cannot reach a release unnoticed. For a crate
-# offered under several, the notices give the first one here that it offers. Before adding one, check that it lets
-# the project stay MIT OR Apache-2.0 (README.md, "License").
+# The licenses a dependency, a crate or an npm package, may be used under. One offered under none of them fails the
+# build, so a dependency under a license nobody has looked at, a copyleft one above all, cannot reach a release
+# unnoticed. For a crate offered under several, the notices give the first one here that it offers; how an npm
+# package's is chosen, npmNotices in ui/scripts/npm-licenses.js says. Before adding one, check that it lets the project
+# stay MIT OR Apache-2.0 (README.md, "License").
 accepted = [
     "MIT",
     "Apache-2.0",

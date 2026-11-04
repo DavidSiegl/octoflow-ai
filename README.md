@@ -142,6 +142,10 @@ Each download is the CLI too, with the same commands and flags; started without 
 window:
 
 - **AppImage:** the file itself, e.g. `./octoflow-desktop-linux-x86_64.AppImage run "..."` after `chmod +x`.
+  Without FUSE (`libfuse2`) it runs only with `APPIMAGE_EXTRACT_AND_RUN=1` set or `--appimage-extract-and-run` as
+  its first argument, and then extracts itself into `$TMPDIR` (`/tmp` by default) and leaves it there, about 340 MB
+  for each version. Install FUSE, or extract it once with `--appimage-extract` and run the `squashfs-root/AppRun`
+  that makes instead.
 - **`.deb`:** it installs the orchestrator as `/usr/bin/octoflow`.
 - **macOS:** link the orchestrator inside the app onto your `PATH`:
 
@@ -484,4 +488,7 @@ The binaries and the desktop app contain Rust crates under their own licenses, w
 `octoflow-third-party-licenses.html`; the desktop app has the same file among its resources as
 `THIRD-PARTY-LICENSES.html`. `packaging/build-binary.sh` writes it with
 [cargo-about](https://github.com/EmbarkStudios/cargo-about), by `packaging/about.toml`, which lists the licenses a
-dependency may be under: a dependency under any other fails the build.
+dependency may be under: a dependency under any other fails the build. The desktop app's window also contains npm
+packages, whose license texts each release has as `octoflow-desktop-npm-licenses.html` and the app among its
+resources as `THIRD-PARTY-LICENSES-NPM.html`; `packaging/build-desktop.sh` writes it from `ui/package-lock.json`,
+under the same list.
