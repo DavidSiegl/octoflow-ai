@@ -1,11 +1,12 @@
 import { type FormEvent, useEffect, useState } from "react";
-import type { Api, OfferedWorkflow, Project, RunOptions, StartedRun } from "../api";
+import type { Api, OfferedWorkflow, Project, RunOptions } from "../api";
+import { Dialog } from "./Dialog";
 
 interface Props {
   api: Api;
   project: Project;
-  /** Gets the run once the server has started it. */
-  onStarted: (started: StartedRun) => void;
+  /** Gets the id of the run once the server has started it. */
+  onStarted: (run: string) => void;
   /** Called by Cancel, which is disabled while the run is being started. */
   onClose: () => void;
 }
@@ -13,10 +14,9 @@ interface Props {
 /** The workflow a run takes unless another is chosen, as `run` takes it without --workflow. */
 const DEFAULT_WORKFLOW = "default";
 
-/** The workflow the form starts with: DEFAULT_WORKFLOW where it loads, else the first one that does; null for none. */
-function firstChoice(workflows: OfferedWorkflow[]): string | null {
-  const loadable = workflows.filter((w) => "roles" in w);
-  return (loadable.find((w) => w.name === DEFAULT_WORKFLOW) ?? loadable[0])?.name ?? null;
+/** DEFAULT_WORKFLOW where it is among workflows and loads; null, for one to be picked, where not. */
+function defaultIfLoads(workflows: OfferedWorkflow[]): string | null {
+  return workflows.some((w) => w.name === DEFAULT_WORKFLOW && "roles" in w) ? DEFAULT_WORKFLOW : null;
 }
 
 /** A form for a new run in project: its task, workflow, agent and model, and whether it opens a pull request and
@@ -26,7 +26,7 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
   // What /workflows gave, the error that kept it from giving it, or null until it answers.
   const [offered, setOffered] = useState<{ options: RunOptions } | { error: string } | null>(null);
   const [task, setTask] = useState("");
-  // The workflow picked; null until one is, the form then taking firstChoice's.
+  // The workflow picked; null until one is.
   const [picked, setPicked] = useState<string | null>(null);
   // An agent and a model for every role; empty for the workflow's own.
   const [agent, setAgent] = useState("");
@@ -47,11 +47,21 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
     };
   }, [api]);
   const options = offered && "options" in offered ? offered.options : null;
-  const workflow = picked ?? (options && firstChoice(options.workflows));
+  // The workflow Start sends: the one picked, else DEFAULT_WORKFLOW where it loads. When /workflows failed, which a
+  // workflows directory that cannot be listed makes it do, DEFAULT_WORKFLOW, as `run`, which still offers the built-in
+  // ones then, takes it. null while the workflows are read, and while one is to be picked.
+  let workflow: string | null = null;
+  if (options) {
+    workflow = picked ?? defaultIfLoads(options.workflows);
+  } else if (offered) {
+    workflow = DEFAULT_WORKFLOW;
+  }
   const chosen = options?.workflows.find((w) => w.name === workflow);
+  const ready = task.trim() !== "" && workflow !== null && !starting;
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (!task.trim() || !workflow || starting) {
+    // workflow's test narrows it for the request; ready holds it too.
+    if (!ready || workflow === null) {
       return;
     }
     setStarting(true);
@@ -70,12 +80,8 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
     });
   };
   return (
-    <div className="dialog-backdrop">
-      <form className="dialog run-form" role="dialog" aria-modal="true" aria-label="new run" onSubmit={submit}>
-        <h2>New run</h2>
-        <p className="where">
-          {project.cwd} {project.machine ? `on ${project.machine}` : "on this computer"}
-        </p>
+    <Dialog label="new run" title="New run" project={project} className="run-form">
+      <form onSubmit={submit}>
         <fieldset disabled={starting}>
           <label>
             Task
@@ -84,6 +90,12 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
           <label>
             Workflow
             <select value={workflow ?? ""} onChange={(e) => setPicked(e.target.value)} disabled={!options}>
+              {workflow === null && (
+                <option value="" disabled>
+                  {options ? "pick one" : ""}
+                </option>
+              )}
+              {!options && workflow !== null && <option value={workflow}>{workflow}</option>}
               {options?.workflows.map((w) => (
                 <option key={w.name} value={w.name} disabled={!("roles" in w)} title={"error" in w ? w.error : undefined}>
                   {"error" in w ? `${w.name} (does not load)` : w.name}
@@ -92,7 +104,11 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
             </select>
           </label>
           {offered === null && <p className="loading">Reading the workflows…</p>}
-          {offered && "error" in offered && <p className="problem">{offered.error}</p>}
+          {offered && "error" in offered && (
+            <p className="problem">
+              {offered.error}; the run takes the {DEFAULT_WORKFLOW} workflow
+            </p>
+          )}
           {chosen && "description" in chosen && chosen.description && <p className="description">{chosen.description}</p>}
           <div className="row">
             <label>
@@ -126,11 +142,11 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
           <button type="button" onClick={onClose} disabled={starting}>
             Cancel
           </button>
-          <button type="submit" disabled={!task.trim() || !workflow || starting}>
+          <button type="submit" disabled={!ready}>
             Start
           </button>
         </footer>
       </form>
-    </div>
+    </Dialog>
   );
 }

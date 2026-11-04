@@ -132,13 +132,6 @@ export interface RunRequest {
   worktree: boolean;
 }
 
-/** A run POST /run started: its id, and whether it had saved its state, and so is or soon will be in the event
- * stream, when the server stopped waiting for it. */
-export interface StartedRun {
-  run: string;
-  listed: boolean;
-}
-
 /** A request the server did not answer as asked, with the HTTP status it answered and its error message. */
 export class HttpError extends Error {
   constructor(
@@ -205,17 +198,23 @@ export class Api {
     return this.json(`${this.connection.url}/workflows`) as Promise<RunOptions>;
   }
 
-  /** Start the run request asks for in project, in a new workspace of this computer's herdr server, and wait until
-   * it has saved its state, for at most the server's 30 seconds. Rejects with the server's error message: status 400
-   * for a request it refuses, 422 for a run that exited before saving its state, the message ending with the last
-   * lines its pane showed, and 502 when herdr cannot start it, "no herdr server here; start herdr" without one. */
-  async startRun(project: Project, request: RunRequest): Promise<StartedRun> {
+  /** Start the run request asks for in project, in a new workspace of this computer's herdr server, and resolve to
+   * its id once it has saved its state or the server's 30 seconds of waiting for that have passed, whichever is
+   * first: the run may not be in the event stream yet, and one that exits after the wait never will be. Rejects with
+   * the server's error message: status 400 for a request it refuses, 413 for one too long, 422 for a run that exited
+   * before saving its state, the message ending with the last lines its pane showed, 500 when the server cannot tell
+   * its own program or make a run id, and 502 for a project it cannot reach or a run herdr cannot start, "no herdr
+   * server here; start herdr" without a herdr server on this computer. */
+  async startRun(project: Project, request: RunRequest): Promise<string> {
     const body = (await this.json(this.url("/run", project, {}), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
-    })) as { run: string; listed?: boolean };
-    return { run: body.run, listed: body.listed !== false };
+    })) as { run?: unknown };
+    if (typeof body.run !== "string") {
+      throw new HttpError(200, "the answer has no run");
+    }
+    return body.run;
   }
 
   /** The text field of a GET of url's JSON; rejects with the server's error message, or the status. */

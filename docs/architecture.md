@@ -307,9 +307,9 @@ layout), with no Python of its own.
   every run again. `runs.ts` also holds `progress` (the stages of a run's progress bar, with `quality` after the step
   it judges) and the wording helpers, which follow `format_age` and `run_round`. A `RunEntry` keeps when its record
   arrived, so `heartbeatAge` ticks with `useNow` between events. The components are `ProjectBar`, `RunsOverview`,
-  `RunForm` (a new run, selected once `POST /run` answers), `SetupDialog`, `RunDetail`, `AgentPanes`, `StepProgress`
-  and `HandoffFile`, which renders a file with `react-markdown` and `remark-gfm`, raw HTML skipped, and fetches it
-  again whenever its mtime changes.
+  `RunForm` (a new run, selected once `POST /run` answers) and `SetupDialog`, both a `Dialog`, `RunDetail`,
+  `AgentPanes`, `StepProgress` and `HandoffFile`, which renders a file with `react-markdown` and `remark-gfm`, raw
+  HTML skipped, and fetches it again whenever its mtime changes.
 - **Tests.** Vitest with React Testing Library in jsdom: `App.test.tsx` replays `test/recorded-stream.json`
   through `test/fakes.ts`'s `FakeEventSource`, with `fetch` stubbed. The recording is the events a real
   `serve` sent over a scripted run. `runs.test.ts` covers the pure helpers. `cargo test -p octoflow-ui` starts

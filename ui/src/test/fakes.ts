@@ -93,13 +93,14 @@ export const OPTIONS: RunOptions = {
   agents: ["claude", "codex", "gemini", "opencode", "pi"],
 };
 
-/** What a stubbed server's /workflows and POST /run answer: `options` (OPTIONS unless given), and the status and
- * body of POST /run (201 {"run": "20261024-140000-c0ffee"} unless given), sent once `held`, if given, resolves.
- * `requests` gets the body of each POST /run, in order. */
+/** What a stubbed server's /workflows and POST /run answer: `options` (OPTIONS unless given), or a 500 with
+ * `optionsError`; and the status and body of POST /run (201 {"run": "20261024-140000-c0ffee"} unless given), sent
+ * once `held`, if given, resolves. `requests` gets the query's cwd and the body of each POST /run, in order. */
 export interface FakeStart {
   options?: RunOptions;
-  status?: number;
-  body?: unknown;
+  optionsError?: string;
+  runStatus?: number;
+  runBody?: unknown;
   held?: Promise<void>;
   requests?: { cwd: string | null; body: RunRequest }[];
 }
@@ -138,12 +139,12 @@ export function stubServer(
       return answer(200, { checked: setup.checked ?? true });
     }
     if (pathname === "/workflows") {
-      return answer(200, start.options ?? OPTIONS);
+      return start.optionsError === undefined ? answer(200, start.options ?? OPTIONS) : answer(500, { error: start.optionsError });
     }
     if (pathname === "/run" && init?.method === "POST") {
       start.requests = [...(start.requests ?? []), { cwd: searchParams.get("cwd"), body: JSON.parse(String(init.body)) as RunRequest }];
       await start.held;
-      return answer(start.status ?? 201, start.body ?? { run: "20261024-140000-c0ffee" });
+      return answer(start.runStatus ?? 201, start.runBody ?? { run: "20261024-140000-c0ffee" });
     }
     if (pathname === "/agent/input") {
       return init?.method === "POST" ? answer(200, { run: "r", role }) : answer(501, {});
