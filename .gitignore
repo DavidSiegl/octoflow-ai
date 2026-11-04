@@ -9,8 +9,7 @@ wheels/
 # Virtual environments
 .venv
 
-# Notes for coding agents, kept on disk but out of the repository
-CLAUDE.md
+# The testing notes for coding agents, kept on disk but out of the repository
 TESTING.md
 
 # What `uv run pytest --cov ...`, `cargo llvm-cov ... --output-path coverage-rust.xml` and `gate.py --out` write
