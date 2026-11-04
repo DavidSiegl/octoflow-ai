@@ -542,18 +542,14 @@ impl Workflow<'_> {
 
     /// Make sure the role's agent is running, and say how.
     ///
-    /// An agent found alive whose record has no session (its orchestrator stopped between `start`'s two saves) has
-    /// the session herdr reports for it saved now, so the turn recorded next is in it and its tokens can be counted.
+    /// An agent found alive has the session herdr reports for it saved, when that is not the one its record holds,
+    /// so the turn recorded next is in it and its tokens can be counted: a record without one is what an
+    /// orchestrator that stopped between `start`'s two saves leaves.
     fn agent(&mut self, role: &str) -> Outcome<How> {
         let known = self.state.agents.get(role).cloned();
         if let Some(known) = &known {
-            let name = known.get("name").map_or("", String::as_str);
-            if self.herdr.status(name)?.is_some() {
-                if known.get("session").is_none_or(String::is_empty) {
-                    if let Some(record) = self.herdr.agent(name)? {
-                        self.note_session(role, &record)?;
-                    }
-                }
+            if let Some(record) = self.herdr.agent(known.get("name").map_or("", String::as_str))? {
+                self.note_session(role, &record)?;
                 return Ok(How::Alive);
             }
         }
