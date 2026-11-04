@@ -3406,6 +3406,11 @@ class TestRustAttribute(unittest.TestCase):
                          ["#[test]", "#[cfg(any( unix, ))]", "#[cfg(miri)]"])
         self.assertEqual(gate._rust_line_attributes("let x = 1;", ["#[ignore]"]), [])
 
+    def test_brackets_in_a_string_literal_are_not_counted(self):
+        self.assertEqual(gate._rust_line_attributes('#[doc = "["] #[cfg(miri)]', ["mod tests {", "}"]),
+                         ['#[doc = "["]', "#[cfg(miri)]"])
+        self.assertEqual(gate._rust_line_attributes('#[doc = "\\"]["] #[ignore]', []), ['#[doc = "\\"]["]', "#[ignore]"])
+
 
 class TestRustPassesAtBase(RepositoryTest):
     """The passes-at-base check over a real git repository's Cargo package, its tests run with cargo-nextest and read

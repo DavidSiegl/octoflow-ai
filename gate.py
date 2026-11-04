@@ -2231,10 +2231,16 @@ def _rust_attribute(first: str, following: list[str]) -> tuple[str, int, str]:
     """The attribute that first starts with, whole: first up to its closing `]`, or, when it wraps as rustfmt wraps a
     long one, joined by single spaces with the stripped lines of following up to the one holding that `]`; how many
     lines of following it wraps onto; and the text after its `]` on the line holding it. Never closed, it is first and
-    all of following, and that text is empty. Brackets inside a string literal are counted as any others."""
-    depth, parts = 0, []
+    all of following, and that text is empty. Brackets inside a string literal (`"..."`, its `\\"` escapes skipped)
+    are not counted; a raw string is read as a plain one."""
+    depth, parts, quoted = 0, [], False
     for used, text in enumerate([first] + [line.strip() for line in following]):
+        escaped = False
         for j, c in enumerate(text):
+            if quoted:
+                quoted, escaped = (escaped or c != '"'), (not escaped and c == "\\")
+                continue
+            quoted = c == '"'
             depth += {"[": 1, "]": -1}.get(c, 0)
             if c == "]" and depth == 0:
                 return " ".join(parts + [text[:j + 1]]), used, text[j + 1:]
