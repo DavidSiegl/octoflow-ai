@@ -2166,7 +2166,7 @@ dependencies = [
 
 [[package]]
 name = "octoflow-engine"
-version = "0.57.11"
+version = "0.57.12"
 dependencies = [
  "clap",
  "jiff",
