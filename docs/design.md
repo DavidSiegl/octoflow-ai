@@ -80,7 +80,10 @@ When a run ends, done, failed or interrupted, it writes `summary.md` in its run 
 workflow, each role's harness and model, the outcome (verdict or error), the pull request and branch, the wall
 time from the first known start to the end, a Markdown table of the turns (`?` for what is not known, the
 interview marked as human-paced), and each round's quality gates and verdict, read from the handoff files. A
-resume that ends again rewrites it with every turn; a run that is already `done` is not rewritten. The pull
+resume that ends again rewrites it with every turn; a run that is already `done` is not rewritten, unless the
+orchestrator that ended it stopped before releasing it, which it does once both files are written: a resume then
+writes them again, releases the run, tells the human it finished and closes a published run's workspace
+(`Workflow::run`). The pull
 request's body ends with the same table up to publishing, collapsed under "Run timings", and `show` prints a
 line per turn.
 
@@ -449,7 +452,10 @@ or conflicts (`.github/workflows/automerge.yml` says which wait).
   goes to, so finishing the move cannot count it twice.
 - **An invalid handoff file stops the resume and is named.** Resume does not judge a role's output. Stopping
   also clears `prompted`, so once you delete the file the role is prompted again instead of waited on.
-- **`done` is a no-op.** Resume is idempotent, so a script can call it without checking the phase first. A run
+- **`done` finishes only the ending.** Resume is idempotent, so a script can call it without checking the phase
+  first: a `done` run whose ending is whole is left as it is, and one whose orchestrator stopped before releasing
+  it, or before writing a file, has that much finished, with its settings as it ran and no flag applied. While its
+  orchestrator may still be ending it (owner set, heartbeat fresh), it looks alive and needs `--force`. A run
   in the `publish` phase opens no workspace and skips the commit and the pull request that `state.json` shows
   are already made.
 - **Run settings are saved and `resume` flags override them.** Whoever resumes rarely remembers the original

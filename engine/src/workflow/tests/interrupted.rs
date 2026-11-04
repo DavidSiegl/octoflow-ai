@@ -61,7 +61,8 @@ fn a_ctrl_c_during_a_prompt_herdr_delivered_records_no_prompt() {
 
 #[test]
 fn a_ctrl_c_once_the_run_is_done_stops_what_is_left_of_its_end() {
-    // As Python's KeyboardInterrupt after the run's last save: the run stays done, and is not released again.
+    // As Python's KeyboardInterrupt after the run's last save: the run stays done. It is not released either, as its
+    // files come before its release (Workflow::end_done_run), so a resume finishes its ending.
     let f = Fixture::new(approved());
     let (interrupt, summary) = (f.interrupt.clone(), format!("{}/summary.md", f.state.dir()));
     f.host.state().before_write = Some(Box::new(move |path, _| {
@@ -72,7 +73,8 @@ fn a_ctrl_c_once_the_run_is_done_stops_what_is_left_of_its_end() {
     }));
     assert_eq!(f.workflow(RunSettings::default()).run(), Err(Stopped::Interrupted));
     let saved = RunState::from_saved(&f.saved()).unwrap();
-    assert_eq!((saved.phase.as_str(), saved.error, saved.owner), ("done", None, None));
+    assert_eq!((saved.phase.as_str(), saved.error), ("done", None));
+    assert!(saved.owner.is_some(), "released before its ending was whole");
     assert!(!f.host.state().files.contains_key(&format!("{}/metrics.json", f.state.dir())));
     assert!(!f.told.titles().iter().any(|t| t.starts_with("Run finished")), "{:?}", f.told.titles());
     assert!(!f.herdr.state().calls.iter().any(|c| matches!(c, Call::Close { .. })));

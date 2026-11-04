@@ -9,6 +9,8 @@
 use std::cell::RefCell;
 
 use super::*;
+use crate::json::object;
+use crate::pipeline::{METRICS_FILE, SUMMARY_FILE};
 
 /// saved_run, its prompt for file counted as delivered.
 fn prompted(mut state: RunState, file: &str) -> RunState {
@@ -52,8 +54,9 @@ fn live_prompted_collector_is_only_waited_on() {
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
     assert_eq!(prompts_to(&f, "spec-a1b2c3"), 0);
     assert!(!names(&f, "start").contains(&"spec-a1b2c3".to_string()));
-    assert!(called(&f, &Call::Focus { name: "spec-a1b2c3".into() }));
-    assert_eq!(f.told.titles()[0], "Spec Collector is waiting for you");
+    // The orchestrator that prompted it told the human already (run-crash-ending/03).
+    assert!(!called(&f, &Call::Focus { name: "spec-a1b2c3".into() }));
+    assert!(!f.told.titles().iter().any(|t| t.contains("is waiting for you")), "{:?}", f.told.titles());
 }
 
 #[test]
@@ -61,6 +64,38 @@ fn live_collector_never_prompted_is_prompted_once() {
     let f = Fixture::resume(Rc::new(FakeHost::default()), saved_run("spec", 0, &["spec"]), approved(), &["spec"], &[]);
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
     assert_eq!(prompts_to(&f, "spec-a1b2c3"), 1);
+    assert!(called(&f, &Call::Focus { name: "spec-a1b2c3".into() }));
+    assert_eq!(f.told.titles()[0], "Spec Collector is waiting for you");
+}
+
+#[test]
+fn a_live_agent_saved_without_its_session_has_it_noted_before_its_turn_is_recorded() {
+    // The orchestrator died between saving the Reviewer's agent and saving its session (Workflow::start).
+    let state = prompted(saved_run("review", 1, FULL), "build-1.md");
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![("review", vec![taking(100, review_turn(1, APPROVE))])], &[
+        "review",
+    ], &[]);
+    f.herdr.state().sessions.insert("review-a1b2c3".into(), "s-review".into());
+    f.host.state().session_logs.insert(("claude".into(), "s-review".into()), claude_log(&[(50, 10, 20)]));
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert!(!names(&f, "start").contains(&"review-a1b2c3".to_string()), "the live agent is not started again");
+    let review = wf.state().turns.iter().find(|t| t.get("role") == Some(&Value::from("review"))).expect("a review turn");
+    assert_eq!(review.get("session"), Some(&Value::from("s-review")));
+    assert_eq!(review.get("tokens"), Some(&serde_json::json!({"input": 10, "output": 20, "cache_read": 7, "cache_write": 1})));
+}
+
+#[test]
+fn a_live_agent_in_another_session_than_saved_has_its_turn_recorded_in_that_one() {
+    let state = prompted(saved_run("review", 1, FULL), "build-1.md");
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![("review", vec![review_turn(1, APPROVE)])], &["review"], &[(
+        "review", "s-old",
+    )]);
+    f.herdr.state().sessions.insert("review-a1b2c3".into(), "s-now".into());
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    let review = wf.state().turns.iter().find(|t| t.get("role") == Some(&Value::from("review"))).expect("a review turn");
+    assert_eq!(review.get("session"), Some(&Value::from("s-now")));
 }
 
 #[test]
@@ -166,9 +201,112 @@ fn done_is_a_no_op() {
     let mut state = saved_run("done", 2, FULL);
     state.verdict = Some(CHANGES_REQUESTED.into());
     let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![], &[], &[]);
+    f.put(&format!("{}/{SUMMARY_FILE}", f.state.dir()), "# summary\n");
+    f.put(&format!("{}/{METRICS_FILE}", f.state.dir()), "{}\n");
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(CHANGES_REQUESTED));
     assert_eq!(f.herdr.state().calls, []);
     assert!(f.host.state().writes.is_empty());
+    assert_eq!(f.told.titles(), Vec::<String>::new());
+}
+
+/// A run of the default workflow that ended approved in round 1 with a pull request, as the first save of its ending
+/// (Workflow::end_done_run) leaves it: done, still owned by the orchestrator that ended it, its Builder's turn not
+/// yet given its tokens, and neither summary.md nor metrics.json written.
+fn stopped_after_saving_done() -> RunState {
+    let mut state = saved_run("done", 1, FULL);
+    state.verdict = Some(APPROVE.into());
+    state.pull_request = true;
+    state.owner = Some(object([("pid", Value::from(4242)), ("host", Value::from("gone"))]));
+    state.turns = vec![record("build", "build-1.md", Some(-100), Some(-50)).map()];
+    state
+}
+
+/// stopped_after_saving_done with its tokens counted, as its ending leaves it from then until its release.
+fn counted() -> RunState {
+    let mut state = stopped_after_saving_done();
+    state.turns[0].insert("tokens".into(), Value::from(7));
+    state
+}
+
+/// counted, released: as its ending leaves it once whole, or an older engine's, which released first, before its
+/// files.
+fn released() -> RunState {
+    let mut state = counted();
+    state.owner = None;
+    state
+}
+
+fn path(f: &Fixture, name: &str) -> String {
+    format!("{}/{name}", f.state.dir())
+}
+
+/// The run's summary.md and metrics.json, as the host holds them now.
+fn ending_files(f: &Fixture) -> (Option<String>, Option<String>) {
+    let files = &f.host.state().files;
+    (files.get(&path(f, SUMMARY_FILE)).cloned(), files.get(&path(f, METRICS_FILE)).cloned())
+}
+
+/// The saved state.json's first turn's tokens.
+fn first_tokens(f: &Fixture) -> Option<Value> {
+    let saved = f.saved();
+    saved.get("turns").and_then(Value::as_array).and_then(|turns| turns[0].get("tokens").cloned())
+}
+
+fn closed_w1(f: &Fixture) -> bool {
+    called(f, &Call::Close { workspace: "w1".into() })
+}
+
+#[test]
+fn an_ending_writes_the_files_before_it_releases_the_run() {
+    let f = Fixture::resume(Rc::new(FakeHost::default()), saved_run("review", 1, FULL), vec![("review", vec![review_turn(1, APPROVE)])], &[], &[]);
+    assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
+    let writes = f.host.state().writes.clone();
+    let last = |p: &str| writes.iter().rposition(|w| *w == p).unwrap_or_else(|| panic!("no write of {p}: {writes:?}"));
+    let release = last(&path(&f, "state.json"));
+    assert!(last(&path(&f, SUMMARY_FILE)) < release && last(&path(&f, METRICS_FILE)) < release, "{writes:?}");
+    assert_eq!(f.saved().get("owner"), Some(&Value::Null));
+}
+
+#[test]
+fn a_run_stopped_right_after_saving_done_finishes_its_whole_ending_on_resume() {
+    let f = Fixture::resume(Rc::new(FakeHost::default()), stopped_after_saving_done(), vec![], &[], &[]);
+    assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
+    assert_eq!(f.saved().get("owner"), Some(&Value::Null));
+    assert_eq!(first_tokens(&f), Some(Value::from("unknown")));
+    let (summary, metrics) = ending_files(&f);
+    assert!(summary.is_some_and(|s| s.contains(APPROVE)));
+    assert!(metrics.is_some());
+    assert_eq!(f.told.titles(), ["Run finished: APPROVE"]);
+    assert!(closed_w1(&f));
+}
+
+#[test]
+fn a_run_stopped_before_its_release_writes_its_files_again_and_tells_the_human() {
+    let f = Fixture::resume(Rc::new(FakeHost::default()), counted(), vec![], &[], &[]);
+    // Its summary.md may be an earlier stop's (Workflow::release), as its metrics.json may be half written.
+    f.put(&path(&f, SUMMARY_FILE), "stopped: the Reviewer's pane died\n");
+    f.put(&path(&f, METRICS_FILE), "{\"run\"");
+    assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
+    assert_eq!(f.saved().get("owner"), Some(&Value::Null));
+    assert_eq!(first_tokens(&f), Some(Value::from(7)), "the tokens are not counted again");
+    let (summary, metrics) = ending_files(&f);
+    assert!(summary.is_some_and(|s| s.contains(APPROVE)), "the earlier stop's summary is replaced");
+    assert!(metrics.is_some_and(|m| serde_json::from_str::<Value>(&m).is_ok()));
+    assert_eq!(f.told.titles(), ["Run finished: APPROVE"]);
+    assert!(closed_w1(&f));
+}
+
+#[test]
+fn a_released_run_missing_a_file_has_it_written_and_nothing_else() {
+    let f = Fixture::resume(Rc::new(FakeHost::default()), released(), vec![], &[], &[]);
+    f.put(&path(&f, METRICS_FILE), "{\"kept\": true}\n");
+    assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
+    let (summary, metrics) = ending_files(&f);
+    assert!(summary.is_some_and(|s| s.contains(APPROVE)));
+    assert_eq!(metrics.as_deref(), Some("{\"kept\": true}\n"));
+    assert_eq!(f.host.state().writes, [path(&f, SUMMARY_FILE)], "neither saved nor its metrics written");
+    assert_eq!(f.told.titles(), Vec::<String>::new(), "the human was told when it was released");
+    assert!(!closed_w1(&f));
 }
 
 #[test]

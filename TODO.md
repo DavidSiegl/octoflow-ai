@@ -129,7 +129,8 @@ is rewritten to say what is left.
   original symptom with a narrower window. On a remote project, `write_summary`'s `round_results` reads go over SSH,
   so this is not out of reach." Closes with a settle rule that does not depend on the interval, such as settling
   only once the finishing save is older than a bound (the record carries `heartbeat_age`), or with the engine
-  writing the files before that save where a takeover allows it (`end_done_run`; `release` saves first on purpose).
+  writing the files before that save where a takeover allows it (`end_done_run` writes them before its release
+  save since run-crash-ending/01, but after the save of phase `done`; `release` saves first on purpose).
 - **The desktop app ships its npm packages' code without their licenses.** `octoflow-third-party-licenses.html`
   (`packaging/about.toml`) lists the Rust crates only, as cargo-about reads Cargo's graph; the app's web view bundles
   `ui/package.json`'s runtime dependencies, React, react-markdown, remark-gfm and @tauri-apps/api with what they pull
@@ -887,35 +888,24 @@ is rewritten to say what is left.
   exposure, but it is outside this range". Closes with `--no-relative` on both calls and a test that sets
   `diff.relative` and locks from a subdirectory. Ticket:
   `.scratch/git-diff-relative/issues/01-locks-ignore-diff-relative.md` (#233).
-- **A run that dies right after it saved phase `done` never finishes ending.** `end_done_run`
-  (`engine/src/workflow.rs`) saves `phase = DONE`, counts the turns' tokens (`count_tokens`), saves again with `owner`
-  cleared, and only then writes `summary.md` and `metrics.json`, notifies the human that the run finished and closes
-  the workspace. A crash after either of those two saves leaves a run that `resume` finds done: `Workflow::run`
-  returns the verdict at once, so neither file is ever written, the human is never told, the herdr workspace stays
-  open, and after the first save `owner` stays set and the turns have no token counts. Found in the Python engine by
-  orchestrator-test-methods/05 (2026-10-28), whose crash test went with that engine; the Rust engine was ported to
-  behave the same, with no test that crashes it after each save ("No test crashes the Rust engine after each save",
-  above). Closes with a resume of a `done` run that finishes whatever of that ending is missing (each step can tell:
-  the files exist, `owner` is cleared, the tokens are counted).
-  Ticket: `.scratch/run-crash-ending/issues/01-done-run-finishes-its-ending.md` (#227).
-- **A crash between an agent's start and its session being saved costs that turn its session.** `start`
-  (`engine/src/workflow/turn.rs`) saves the agent's record, then asks herdr for it and `note_session` saves the
-  session. A resume after the first save finds the agent alive (`agent` returns `How::Alive`) and prompts it without
-  asking herdr, so the turn's record (`turn_record`) starts with no session; `note_session` saves it while the turn
-  runs, but `end_turn` keeps `session` only when it matches the one at the start, so the turn ends with none, and
-  `count_tokens` cannot count its tokens. Found in the Python engine by orchestrator-test-methods/05 (2026-10-28),
-  ported to the Rust engine unchanged, untested as above. Closes with `agent` noting the session of an agent it finds
-  alive.
-  Ticket: `.scratch/run-crash-ending/issues/02-alive-agent-session-noted.md` (#228).
-- **A resumed interview tells the human again that it waits for them.** `step_turn`'s `Announce::Interview`
-  (`engine/src/workflow.rs`) has `announce` (`engine/src/workflow/turn.rs`) focus the human-paced agent's pane and
-  notify "<label> is waiting for you" in every orchestrator that takes the turn (`turn` calls it from `written` on every
-  pass), so a resume while the interview is under way repeats both, once per resume. Raised by cross-review 81 (F1,
-  2026-10-28) against ticket orchestrator-test-methods/05, which allows only documented idempotent repeats: "Neither is
-  idempotent: the cited comment … says each orchestrator does it again, which is the repeat the ticket asks the test to
-  fail on." The user ruled it a bug (2026-10-28), not wanted. The Rust engine was ported to behave the same, untested as
-  above. Closes with an engine that announces a turn only where none did (for example, only when `prompted` is not the
-  turn's file). Ticket: `.scratch/run-crash-ending/issues/03-interview-announced-once.md` (#229).
+- **A resume finds an agent alive whose start never finished and only waits for it.** `start`
+  (`engine/src/workflow/turn.rs`) saves the agent's record, may wait without a deadline for a startup dialog the
+  human answers (`wait_for_startup`), and only then saves the session. An orchestrator stopped in between leaves an
+  agent that `agent` finds alive (`How::Alive`), so `prompt_for` treats it as one that took its prompt. Two cases,
+  raised by cross-review 128 (F1, 2026-11-04) against run-crash-ending/02: "If `start(role, pane, Some(session))`
+  relaunched a dead agent while `prompted == file` (the `How::Resumed` path, which is owed `ContinuePrompt`) and the
+  orchestrator stopped before [the session was saved], the resume gets `Alive`. `prompt_for` then returns `None`, so
+  the relaunched agent is never told to continue and sits idle until the stall notice"; and a fresh start stopped
+  during `wait_for_startup` has its step prompt typed into the startup dialog, which `taken` may count as taken if
+  herdr reports the dialog as `blocked` (unconfirmed). Answering `Resumed` for an alive agent without a session is not
+  the fix: a harness that reports no session would then be told to continue a prompt it is still working on. Closes
+  with `start` recording, before its first save, that the agent's start is unfinished, and `agent` restarting or
+  re-prompting such an agent; or with the first save moved after the startup wait.
+- **`agent`'s herdr failure on an alive agent is untested.** `agent` (`engine/src/workflow/turn.rs`) asks herdr for
+  an agent it knows and stops the run when herdr fails; the fake herdr (`engine/src/herdr/fake.rs`) cannot make
+  `agent` fail, so no test holds the `?` there against becoming a silent skip. Raised by cross-review 128 (F4,
+  2026-11-04): "The `?` could become a silent skip ... without any test failing." Closes with a failure the fake's
+  `agent` can be set to give, and a resume test that expects the run to stop with it.
 - **Four copies of a scratch directory removed on drop, each named its own way.** The `TempDir`s of
   `engine/src/test_support.rs` and `ui/src-tauri/src/lib.rs` name theirs by pid and a counter,
   `engine/src/serve/tests.rs`'s by the test's name and pid under a TMPDIR it reads itself, and `xtask/src/process.rs`'s
