@@ -131,13 +131,6 @@ is rewritten to say what is left.
   only once the finishing save is older than a bound (the record carries `heartbeat_age`), or with the engine
   writing the files before that save where a takeover allows it (`end_done_run` writes them before its release
   save since run-crash-ending/01, but after the save of phase `done`; `release` saves first on purpose).
-- **The desktop app ships its npm packages' code without their licenses.** `octoflow-third-party-licenses.html`
-  (`packaging/about.toml`) lists the Rust crates only, as cargo-about reads Cargo's graph; the app's web view bundles
-  `ui/package.json`'s runtime dependencies, React, react-markdown, remark-gfm and @tauri-apps/api with what they pull
-  in, minified into `ui/dist/` without their notices. All were MIT when the project took its license (2026-10-30).
-  Closes with their license texts generated from `ui/package-lock.json` at build time, e.g. by a Vite license
-  plugin, and bundled with the app beside the crates'.
-  Ticket: `.scratch/desktop-packaging-gaps/issues/01-npm-licenses-shipped.md` (#239).
 - **A release that adds a placeholder to a built-in prompt would refuse every run that saved an override of it.**
   `saved_prompts` (`engine/src/prompts.rs`) holds a run's saved prompt overrides to `prompt_problem` on resume, whose
   rule that an override keep every placeholder of the built-in text never refused a resume before. No run can meet it

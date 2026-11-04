@@ -388,7 +388,11 @@ in the suite.
   writes and merges over `tauri.conf.json`, which bundles nothing. It writes
   `dist/octoflow-desktop-<os>-<arch>` `.deb` and `.AppImage` on Linux, `.dmg` on macOS (signed ad hoc),
   each with its `.sha256`, and refuses a bundle without the sidecar or without `build-binary.sh`'s third-party
-  licenses, which it bundles as the resource `THIRD-PARTY-LICENSES.html`. On Linux it then runs the AppImage as the
+  licenses, which it bundles as the resource `THIRD-PARTY-LICENSES.html`. Beside it, as
+  `THIRD-PARTY-LICENSES-NPM.html`, go the licenses of the npm packages the app's window bundles, which
+  `ui/scripts/npm-licenses.js` writes after `npm ci` to `dist/octoflow-desktop-npm-licenses.html`, the release's
+  copy: every package of `ui/package-lock.json`'s production tree with the license text `node_modules` holds for it,
+  and a package under no license `packaging/about.toml` accepts fails the build. On Linux it then runs the AppImage as the
   CLI from a temporary directory: `--help` and `workflows` exit 0, and the orchestrator `serve` execs starts in
   that directory with no `$APPDIR` entry in `LD_LIBRARY_PATH` and no `PYTHONHOME`, read from its `/proc` entry.
 - `packaging/build-binary.sh`: builds `dist/octoflow-<os>-<arch>` (`linux-x86_64`, `macos-arm64`), the engine's
