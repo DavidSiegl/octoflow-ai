@@ -1509,10 +1509,10 @@ fn locked_files_are_restored_and_the_index_is_left_alone() {
 
     let other = "refs/orchestrator/d4e5f6/locked/tests";
     c.sh(&["git", "-C", &c.a, "update-ref", other, &base]);
-    assert!(c.host.delete_refs(&c.a, "refs/orchestrator/a1b2c3/").unwrap());
+    c.host.delete_refs(&c.a, "refs/orchestrator/a1b2c3/").unwrap();
     let refs = c.sh(&["git", "-C", &c.a, "for-each-ref", "--format=%(refname)", "refs/orchestrator/"]);
     assert_eq!(refs, format!("{other}\n"));
-    assert!(!c.host.delete_refs(&c.a, "refs/orchestrator/a1b2c3/").unwrap());
+    c.host.delete_refs(&c.a, "refs/orchestrator/a1b2c3/").unwrap();
 }
 
 // -- TestHostSnapshot ------------------------------------------------------------------------------------------------

@@ -746,14 +746,13 @@ impl Host for FakeHost {
         Ok(())
     }
 
-    fn delete_refs(&self, _cwd: &str, prefix: &str) -> Result<bool, OrchestratorError> {
+    fn delete_refs(&self, _cwd: &str, prefix: &str) -> Result<(), OrchestratorError> {
         let mut s = self.state();
         if let Some(error) = &s.delete_refs_error {
             return Err(OrchestratorError(error.clone()));
         }
-        let before = s.refs.len();
         s.refs = s.refs.iter().filter(|(r, _)| !r.starts_with(prefix)).map(|(r, sha)| (r, sha.clone())).collect();
-        Ok(s.refs.len() < before)
+        Ok(())
     }
 
     fn file_at(&self, _cwd: &str, commit: &str, path: &str) -> Result<Option<Vec<u8>>, OrchestratorError> {

@@ -396,8 +396,14 @@ fn git_failure_records_nothing_and_a_second_close_finishes() {
 
 const OTHER_REF: &str = "refs/orchestrator/d4e5f6/locked/tests";
 
+/// What a run whose steps tests and build locked a file each saves as its locked.
+fn locked() -> (&'static str, Value) {
+    ("locked", serde_json::json!({"tests": ["tests/test_a.py"], "build": ["a.py"]}))
+}
+
 impl Close {
-    /// Give the run two locked snapshots, and a run of another key one (OTHER_REF).
+    /// Give the run two locked snapshots, and a run of another key one (OTHER_REF); the run's state must say it
+    /// locked (locked()).
     fn add_refs(&self) {
         let refs = &mut self.cli.f.host.state().refs;
         for git_ref in ["refs/orchestrator/a1b2c3/locked/tests", "refs/orchestrator/a1b2c3/locked/build", OTHER_REF] {
@@ -413,12 +419,14 @@ impl Close {
 #[test]
 fn every_closed_run_loses_its_refs_and_only_its() {
     let wt = worktree();
-    let not_failed = [("error", Value::Null)];
-    let finished = [("phase", Value::from("done")), ("error", Value::Null), ("verdict", Value::from(APPROVE))];
+    let failed = [locked()];
+    let not_failed = [("error", Value::Null), locked()];
+    let finished =
+        [("phase", Value::from("done")), ("error", Value::Null), ("verdict", Value::from(APPROVE)), locked()];
     let discarded = "workspace closed; worktree deleted; branch deleted; refs deleted";
     let cases: [(u64, bool, Fields, String); 4] = [
-        (0, true, &[], discarded.into()),
-        (0, false, &[], "workspace closed; refs deleted".into()),
+        (0, true, &failed, discarded.into()),
+        (0, false, &failed, "workspace closed; refs deleted".into()),
         (STALE_SECONDS + 1, true, &not_failed, discarded.into()),
         (0, true, &finished, format!("workspace closed; worktree kept: {wt}; refs deleted")),
     ];
@@ -438,7 +446,7 @@ fn every_closed_run_loses_its_refs_and_only_its() {
 #[test]
 fn failing_to_delete_the_refs_records_nothing_and_a_second_close_finishes() {
     let c = Close::new();
-    c.add(0, false, &[]);
+    c.add(0, false, &[locked()]);
     c.add_refs();
     c.cli.f.host.state().delete_refs_error = Some("fatal: cannot lock ref".into());
     assert_eq!(c.close(&[]).0, EXIT_ERROR);
@@ -450,6 +458,72 @@ fn failing_to_delete_the_refs_records_nothing_and_a_second_close_finishes() {
     assert_eq!(c.close(&[]).0, 0);
     assert_eq!(c.refs(), [OTHER_REF]);
     c.assert_closed("workspace already gone; refs deleted");
+}
+
+#[test]
+fn refs_a_failed_close_deleted_are_still_recorded_as_deleted() {
+    // As after a close that deleted some or all of them and then failed.
+    let c = Close::new();
+    c.add(0, false, &[locked()]);
+    assert_eq!(c.close(&[]).0, 0);
+    c.assert_closed("workspace closed; refs deleted");
+}
+
+#[test]
+fn a_run_that_locked_nothing_closes_with_today_s_line_and_leaves_refs_alone() {
+    let c = Close::new();
+    c.add(0, false, &[]);
+    c.add_refs();
+    assert_eq!(c.close(&[]), (0, format!("closed workspace w1\nclosed run {CLOSE_ID}: workspace closed\n")));
+    assert_eq!(c.refs().len(), 3);
+}
+
+#[test]
+fn a_done_run_still_ending_is_refused_untouched() {
+    // Its orchestrator may be deleting its refs (Workflow::clean_up_locks) as close would.
+    let c = Close::new();
+    c.add(0, true, &[("phase", Value::from("done")), ("error", Value::Null), ("owner", me()), locked()]);
+    c.add_refs();
+    let before = c.project();
+    assert_eq!(c.close(&[]), (EXIT_ERROR, String::new()));
+    assert_eq!(
+        c.error(),
+        format!("run {CLOSE_ID} is still running (pid 4242 on here, beat 0s ago); stop it before closing it")
+    );
+    assert!(c.calls().is_empty());
+    assert_eq!((c.project(), c.refs().len()), (before, 3));
+}
+
+#[test]
+fn a_done_run_that_stopped_while_ending_closes_as_a_finished_one() {
+    // ending_health calls it stale; its worktree is still a --no-pr run's change.
+    let c = Close::new();
+    let ended = [("phase", Value::from("done")), ("error", Value::Null), ("owner", me()), locked()];
+    c.add(STALE_SECONDS + 1, true, &ended);
+    c.add_refs();
+    assert_eq!(c.close(&[]).0, 0);
+    c.assert_closed(&format!("workspace closed; worktree kept: {}; refs deleted", worktree()));
+}
+
+#[test]
+fn a_run_outside_a_git_repository_closes_without_git() {
+    // A --no-pr run is how a directory that is no repository is run (Workflow's start check); it locked nothing.
+    let tmp = crate::test_support::TempDir::new();
+    let host = crate::host::ProcessHost::local(&crate::interrupt::Interrupt::new());
+    let mut state = RunState::new(CLOSE_ID, "x", &tmp.path());
+    (state.phase, state.round, state.error) = ("build".into(), 1, Some("interrupted".into()));
+    let path = format!("{}/state.json", state.dir());
+    host.write(&path, &state.to_text(), false).unwrap();
+    let mut cli = Cli::new();
+    cli.f.pid_alive = Box::new(|_| false);
+    let closed = cli
+        .with(|world| {
+            let mut world = *world;
+            world.with.host = &host;
+            close_run(&world, &tmp.path(), "a1b2c3")
+        })
+        .unwrap();
+    assert_eq!(closed, "workspace already gone");
 }
 
 #[test]
@@ -496,6 +570,7 @@ fn close_on_real_git() {
     state.branch = Some(CLOSE_BRANCH.into());
     state.error = Some("interrupted".into());
     state.worktree = Some(wt.clone());
+    state.locked.insert("tests", vec!["app.py".to_string()]);
     let path = format!("{}/state.json", state.dir());
     repo.host.write(&path, &state.to_text(), false).unwrap();
     crate::host::tests::set_mtime(&path, 1_000_000_000);
