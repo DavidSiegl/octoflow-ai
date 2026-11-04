@@ -162,8 +162,9 @@ and appends the section only where the review lacks it. A proof runs from a copy
 it judges, `<work_dir>/.orchestrator/proofs/<round that wrote it>/`, so that pytest, looking upwards from it for its
 configuration, meets the working tree's first (`run_proof` has the details); the review and the notes name the proof
 where the verdict step wrote it, and say where it ran. The tree is left as the proof found it, ignored files aside:
-`run_proof` snapshots it before the proof and afterwards puts back every file that differs (`Host::restore_snapshot`),
-so nothing a proof writes elsewhere in the tree, such as a coverage file or a `__pycache__`, reaches the commit. A
+`run_proof` snapshots it before the proof (`Host::tree_snapshot`) and afterwards puts back every file that differs
+(`Host::restore_tree`), so nothing a proof writes elsewhere in the tree, such as a coverage file or a `__pycache__`,
+reaches the commit; outside a git repository, or where git cannot snapshot the tree, nothing is put back. A
 proof runs under GNU `timeout` where there is one, which stops its whole process group. A demonstrated proof is run again in every later round until it passes:
 `Workflow::rerun_proofs`, right before the verdict step's turn and so after the editing steps' turns and the quality
 loop, runs each carried proof (`carried_proofs`: its last run failed, or a rerun found it erroring) from the proofs

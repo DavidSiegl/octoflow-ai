@@ -592,11 +592,50 @@ impl Host for Unpublished<'_> {
 /// The branch of in_a_worktree's run.
 const BRANCH: &str = "orchestrator/a1b2c3-rate";
 
+/// Call body with the Workflow of a quick run of state, put in review in round 1, on host, and with what the run told
+/// the human; interrupt is the run's Ctrl-C.
+fn proving_on(
+    host: &dyn Host,
+    interrupt: &Interrupt,
+    mut state: RunState,
+    body: impl FnOnce(&mut crate::workflow::Workflow, &Told),
+) {
+    (state.phase, state.round, state.workflow) = ("review".into(), 1, "quick".into());
+    let herdr = FakeHerdr::new(Rc::new(FakeHost::default()), state.clone(), vec![]);
+    let (clock, told) = (FakeClock::default(), Told::default());
+    let with = Collaborators {
+        host,
+        herdr: &herdr,
+        clocks: &clock,
+        human: &told,
+        interrupt,
+        pid_alive: &crate::runs::pid_alive,
+        jenkins: None,
+        indexes: &crate::package_index::PackageIndexes::with_pypi(crate::pypi::fake::FakePyPI::from_json(
+            Default::default(),
+        )),
+    };
+    let mut wf = crate::workflow::Workflow::new(with, state, settings(&proving(), 3)).unwrap();
+    body(&mut wf, &told);
+}
+
+/// A run in_a_worktree hands its body, besides its Workflow.
+struct InAWorktree<'a> {
+    /// The checkout.
+    repo: &'a Repo,
+    /// The run's worktree.
+    path: &'a str,
+    told: &'a Told,
+    /// The run's Ctrl-C, which stops repo's host's commands.
+    interrupt: &'a Interrupt,
+}
+
 /// Call body with the Workflow of a quick run, in review in round 1, whose worktree holds the change: limiter.sh
-/// reads `RATE=change` there and `RATE=base` in the checkout, repo's, whose origin has its main. Also the worktree's
-/// path. The run has claimed the checkout, as a run's start does.
-fn in_a_worktree(body: impl FnOnce(&mut crate::workflow::Workflow, &Repo, &str)) {
-    let repo = Repo::new(&[("limiter.sh", "RATE=base\n")]);
+/// reads `RATE=change` there and `RATE=base` in the checkout, whose origin has its main. The run has claimed the
+/// checkout, as a run's start does.
+fn in_a_worktree(body: impl FnOnce(&mut crate::workflow::Workflow, &InAWorktree)) {
+    let interrupt = Interrupt::new();
+    let repo = Repo::with_host(&[("limiter.sh", "RATE=base\n")], ProcessHost::local(&interrupt));
     let origin = format!("{}/origin.git", repo.outside);
     repo.git(&["clone", "--quiet", "--bare", &repo.path, &origin]);
     repo.git(&["remote", "add", "origin", &origin]);
@@ -606,27 +645,28 @@ fn in_a_worktree(body: impl FnOnce(&mut crate::workflow::Workflow, &Repo, &str))
     std::fs::write(format!("{worktree}/limiter.sh"), "RATE=change\n").unwrap();
 
     let mut state = RunState::new(RUN_ID, TASK, &repo.path);
-    (state.phase, state.round, state.workflow) = ("review".into(), 1, "quick".into());
     (state.base, state.base_branch, state.branch) = (repo.base.clone(), Some("main".into()), Some(BRANCH.into()));
     (state.pull_request, state.worktree) = (true, Some(worktree.clone()));
-    let host = Unpublished(&repo.host);
-    let herdr = FakeHerdr::new(Rc::new(FakeHost::default()), state.clone(), vec![]);
-    let (clock, told, interrupt) = (FakeClock::default(), Told::default(), Interrupt::new());
-    let with = Collaborators {
-        host: &host,
-        herdr: &herdr,
-        clocks: &clock,
-        human: &told,
-        interrupt: &interrupt,
-        pid_alive: &crate::runs::pid_alive,
-        jenkins: None,
-        indexes: &crate::package_index::PackageIndexes::with_pypi(crate::pypi::fake::FakePyPI::from_json(
-            Default::default(),
-        )),
-    };
-    let mut wf = crate::workflow::Workflow::new(with, state, settings(&proving(), 3)).unwrap();
-    wf.claim().unwrap();
-    body(&mut wf, &repo, &worktree);
+    proving_on(&Unpublished(&repo.host), &interrupt, state, |wf, told| {
+        wf.claim().unwrap();
+        body(wf, &InAWorktree { repo: &repo, path: &worktree, told, interrupt: &interrupt });
+    });
+}
+
+/// Call body with the Workflow of a quick --no-pr run in proj itself, in review in round 1, with what it told the
+/// human.
+fn in_place(proj: &TempDir, body: impl FnOnce(&mut crate::workflow::Workflow, &Told)) {
+    let interrupt = Interrupt::new();
+    let mut state = RunState::new(RUN_ID, TASK, &proj.path());
+    state.pull_request = false;
+    proving_on(&ProcessHost::local(&interrupt), &interrupt, state, body);
+}
+
+/// Write the proof test_1_rate.sh, whose text is script, for wf's round 1.
+fn write_script(wf: &crate::workflow::Workflow, script: &str) {
+    let dir = wf.state().proofs_dir(1);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(format!("{dir}/test_1_rate.sh"), script).unwrap();
 }
 
 /// The paths BRANCH's commit holds, and its limiter.sh.
@@ -639,7 +679,8 @@ fn committed(repo: &Repo) -> (Vec<String>, String) {
 fn a_proof_runs_on_the_worktrees_code_and_the_commit_holds_no_copy_of_it() {
     // The checkout and the run's worktree differ in the code the proof reads, and the proof finds that code where
     // git finds the repository it lies in: a proof that ran in the checkout's run directory would read the checkout's.
-    in_a_worktree(|wf, repo, worktree| {
+    in_a_worktree(|wf, run| {
+        let (repo, worktree) = (run.repo, run.path);
         // Writes beside itself too, which only the copy's directory may hold.
         let dir = wf.state().proofs_dir(1);
         std::fs::create_dir_all(&dir).unwrap();
@@ -674,37 +715,91 @@ fn a_proof_runs_on_the_worktrees_code_and_the_commit_holds_no_copy_of_it() {
 fn what_a_proof_writes_in_the_tree_is_undone_and_stays_out_of_the_commit() {
     // A file it adds at the tree's top and in a new directory, as a coverage file or a __pycache__ is, and a tracked
     // file it edits.
-    in_a_worktree(|wf, repo, worktree| {
-        let dir = wf.state().proofs_dir(1);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            format!("{dir}/test_1_rate.sh"),
-            ": > stray.txt; mkdir -p out && : > out/report.txt; echo RATE=proof > limiter.sh; exit 1\n",
-        )
-        .unwrap();
+    in_a_worktree(|wf, run| {
+        write_script(wf, ": > stray.txt; mkdir -p out && : > out/report.txt; echo RATE=proof > limiter.sh; exit 1\n");
 
         assert_eq!(wf.run_proof(COMMAND, 1, "test_1_rate.sh"), Ok((true, "it fails".to_string())));
 
-        assert_eq!(repo.host.git(worktree, &["status", "--porcelain"]).unwrap(), " M limiter.sh\n");
-        assert_eq!(std::fs::read_to_string(format!("{worktree}/limiter.sh")).unwrap(), "RATE=change\n");
+        assert_eq!(run.repo.host.git(run.path, &["status", "--porcelain"]).unwrap(), " M limiter.sh\n");
+        assert_eq!(std::fs::read_to_string(format!("{}/limiter.sh", run.path)).unwrap(), "RATE=change\n");
         wf.publish().unwrap();
-        assert_eq!(committed(repo), (vec!["limiter.sh".to_string()], "RATE=change\n".to_string()));
+        assert_eq!(committed(run.repo), (vec!["limiter.sh".to_string()], "RATE=change\n".to_string()));
+    });
+}
+
+#[test]
+fn what_a_proof_that_errors_writes_is_undone() {
+    in_a_worktree(|wf, run| {
+        write_script(wf, ": > stray.txt; exit 2\n");
+        assert_eq!(wf.run_proof(COMMAND, 1, "test_1_rate.sh"), Ok((false, "it errors, with exit status 2".to_string())));
+        assert_eq!(run.repo.host.git(run.path, &["status", "--porcelain"]).unwrap(), " M limiter.sh\n");
+    });
+}
+
+#[test]
+fn what_an_interrupted_proof_writes_is_undone() {
+    in_a_worktree(|wf, run| {
+        let pid = format!("{}/pid", run.repo.outside);
+        write_script(wf, &format!(": > stray.txt; echo $$ > '{pid}'; sleep 600\n"));
+        let raising = raise_once_written(&pid, run.interrupt);
+        assert_eq!(wf.run_proof(COMMAND, 1, "test_1_rate.sh"), Err(Stopped::Interrupted));
+        raising.join().unwrap();
+        // The host's commands stay interrupted; git runs on another.
+        let git = ProcessHost::local(&Interrupt::new());
+        assert_eq!(git.git(run.path, &["status", "--porcelain"]).unwrap(), " M limiter.sh\n");
     });
 }
 
 #[test]
 fn a_proof_whose_writes_cannot_be_undone_did_not_run_cleanly() {
-    // It fails, but leaves a file in a directory it cannot be deleted from.
-    in_a_worktree(|wf, _, worktree| {
-        let dir = wf.state().proofs_dir(1);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(format!("{dir}/test_1_rate.sh"), "mkdir out && : > out/f && chmod 555 out; exit 1\n").unwrap();
+    // It fails, but adds a nested repository without a commit, which git add -A refuses.
+    in_a_worktree(|wf, run| {
+        write_script(wf, "git init --quiet fixture; exit 1\n");
 
         let (failed, said) = wf.run_proof(COMMAND, 1, "test_1_rate.sh").unwrap();
 
         assert!(!failed);
-        assert!(said.starts_with("it did not run cleanly: ") && said.contains("out/f"), "{said}");
-        std::fs::set_permissions(format!("{worktree}/out"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        assert!(said.starts_with("it did not run cleanly: ") && said.contains("fixture"), "{said}");
+        assert!(run.told.lines().iter().any(|l| l.starts_with("could not undo what a proof wrote in ")), "{:?}", run.told.lines());
+    });
+}
+
+#[test]
+fn a_tree_that_cannot_be_snapshotted_is_left_to_the_proof() {
+    // A nested repository without a commit, which git add -A refuses, was there before the proof.
+    in_a_worktree(|wf, run| {
+        run.repo.git(&["init", "--quiet", &format!("{}/fixture", run.path)]);
+        write_script(wf, ": > stray.txt; exit 1\n");
+
+        assert_eq!(wf.run_proof(COMMAND, 1, "test_1_rate.sh"), Ok((true, "it fails".to_string())));
+
+        assert!(std::path::Path::new(&format!("{}/stray.txt", run.path)).exists());
+        assert!(run.told.lines().iter().any(|l| l.starts_with("cannot snapshot ")), "{:?}", run.told.lines());
+    });
+}
+
+#[test]
+fn what_a_proof_writes_in_a_repository_without_a_commit_is_undone() {
+    let proj = TempDir::new();
+    ProcessHost::local(&Interrupt::new()).git(&proj.path(), &["init", "--quiet"]).unwrap();
+    std::fs::write(proj.join("mine.txt"), "mine\n").unwrap();
+    in_place(&proj, |wf, told| {
+        write_script(wf, "echo edited > mine.txt; : > stray.txt; exit 1\n");
+        assert_eq!(wf.run_proof(COMMAND, 1, "test_1_rate.sh"), Ok((true, "it fails".to_string())));
+        assert_eq!(std::fs::read_to_string(proj.join("mine.txt")).unwrap(), "mine\n");
+        assert!(!std::path::Path::new(&proj.join("stray.txt")).exists());
+        assert_eq!(told.lines(), Vec::<String>::new());
+    });
+}
+
+#[test]
+fn a_proof_outside_git_runs_and_nothing_is_put_back() {
+    let proj = TempDir::new();
+    in_place(&proj, |wf, told| {
+        write_script(wf, ": > stray.txt; exit 1\n");
+        assert_eq!(wf.run_proof(COMMAND, 1, "test_1_rate.sh"), Ok((true, "it fails".to_string())));
+        assert!(std::path::Path::new(&proj.join("stray.txt")).exists());
+        assert_eq!(told.lines(), Vec::<String>::new());
     });
 }
 

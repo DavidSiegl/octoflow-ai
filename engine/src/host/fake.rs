@@ -219,6 +219,9 @@ pub(crate) struct FakeState {
     pub refs: Map<String>,
     /// (ref, paths) of each restore.
     pub restores: Vec<(String, Vec<String>)>,
+    /// The files each tree_snapshot held, by path, its tree tree<n> the nth: those under its directory outside
+    /// .orchestrator/, the one directory the fake plays as ignored.
+    pub tree_snapshots: Vec<BTreeMap<String, String>>,
     /// What session_log reads, by (harness, session).
     pub session_logs: HashMap<(String, String), String>,
     /// Run before each write, given its path and text, when set: an error fails the write, as a Python test's own
@@ -297,6 +300,7 @@ impl FakeHost {
                 trees: HashMap::new(),
                 refs: Map::new(),
                 restores: vec![],
+                tree_snapshots: vec![],
                 session_logs: HashMap::new(),
                 before_write: None,
                 before_rename: None,
@@ -347,6 +351,13 @@ impl FakeState {
         let tree = self.changed_in(cwd).into_iter().map(|p| (p.clone(), self.files.get(&p).cloned())).collect();
         self.trees.insert(sha.clone(), tree);
         sha
+    }
+
+    /// The files under cwd but its .orchestrator directory, by path: what tree_snapshot holds.
+    fn files_in(&self, cwd: &str) -> BTreeMap<String, String> {
+        let (inside, ignored) = (format!("{cwd}/"), format!("{cwd}/.orchestrator/"));
+        let held = |p: &str| p.starts_with(&inside) && !p.starts_with(&ignored);
+        self.files.iter().filter(|(p, _)| held(p)).map(|(p, text)| (p.to_string(), text.clone())).collect()
     }
 
     /// The tree a lock stored under git_ref.
@@ -743,19 +754,23 @@ impl Host for FakeHost {
         Ok(())
     }
 
-    /// As restore does on a lock's tree, over the files snapshot held and those changed now. The fake knows no
-    /// committed text, so a file changed since that snapshot does not hold is taken as one added since, and deleted.
-    fn restore_snapshot(&self, cwd: &str, snapshot: &str) -> Result<(), OrchestratorError> {
+    /// tree<n>, which tree_snapshots then holds; Some always, the fake playing every directory as in a repository.
+    fn tree_snapshot(&self, cwd: &str) -> Result<Option<String>, OrchestratorError> {
         let mut s = self.state();
-        let tree = s.trees.get(snapshot).unwrap_or_else(|| panic!("FakeHost has no snapshot {snapshot}")).clone();
-        let paths: BTreeSet<String> = tree.keys().cloned().chain(s.changed_in(cwd)).collect();
-        for path in paths {
-            match tree.get(&path).cloned().flatten() {
-                None => {
-                    s.files.remove(&path);
-                }
-                Some(text) => s.files.insert(path, text),
-            }
+        let files = s.files_in(cwd);
+        s.tree_snapshots.push(files);
+        Ok(Some(format!("tree{}", s.tree_snapshots.len())))
+    }
+
+    fn restore_tree(&self, cwd: &str, tree: &str) -> Result<(), OrchestratorError> {
+        let mut s = self.state();
+        let n: usize = tree.strip_prefix("tree").and_then(|n| n.parse().ok()).unwrap_or(0);
+        let held = s.tree_snapshots.get(n.wrapping_sub(1)).unwrap_or_else(|| panic!("FakeHost has no tree {tree}")).clone();
+        for path in s.files_in(cwd).into_keys().filter(|p| !held.contains_key(p)) {
+            s.files.remove(&path);
+        }
+        for (path, text) in held {
+            s.files.insert(path, text);
         }
         Ok(())
     }

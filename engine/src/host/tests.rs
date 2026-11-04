@@ -1515,13 +1515,18 @@ fn locked_files_are_restored_and_the_index_is_left_alone() {
     c.host.delete_refs(&c.a, "refs/orchestrator/a1b2c3/").unwrap();
 }
 
+/// The text of name in the repository at path, None for no file.
+fn text(path: &str, name: &str) -> Option<String> {
+    std::fs::read_to_string(format!("{path}/{name}")).ok()
+}
+
 #[test]
-fn restore_snapshot_undoes_what_changed_since_but_ignored_files() {
+fn restore_tree_undoes_what_changed_since_but_ignored_files() {
     let r = Repo::new(&[]);
-    let base = r.commit(&[("kept.py", "a\n"), ("gone.py", "x\n"), (".gitignore", "*.log\n")], "base");
+    r.commit(&[("kept.py", "a\n"), ("gone.py", "x\n"), (".gitignore", "*.log\n")], "base");
     r.put("kept.py", "changed before\n");
     r.put("mine.py", "untracked before\n");
-    let before = r.host.snapshot(&r.path, &base, "before").unwrap();
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
     let porcelain = r.host.git(&r.path, &["status", "--porcelain"]).unwrap();
 
     r.put("kept.py", "changed after\n");
@@ -1529,14 +1534,74 @@ fn restore_snapshot_undoes_what_changed_since_but_ignored_files() {
     std::fs::remove_file(format!("{}/gone.py", r.path)).unwrap();
     r.put("new/stray.py", "added after\n");
     r.put("run.log", "ignored\n");
-    r.host.restore_snapshot(&format!("{}/new", r.path), &before).unwrap();
+    r.host.restore_tree(&format!("{}/new", r.path), &tree).unwrap();
 
-    let file = |name: &str| std::fs::read_to_string(format!("{}/{name}", r.path)).ok();
+    let file = |name: &str| text(&r.path, name);
     assert_eq!(
         (file("kept.py"), file("mine.py"), file("gone.py"), file("new/stray.py"), file("run.log")),
         (Some("changed before\n".into()), Some("untracked before\n".into()), Some("x\n".into()), None, Some("ignored\n".into()))
     );
     assert_eq!(r.host.git(&r.path, &["status", "--porcelain"]).unwrap(), porcelain);
+}
+
+#[test]
+fn a_tree_snapshot_needs_no_commit_and_none_is_taken_outside_git() {
+    let r = Repo::new(&[]);
+    r.put("mine.py", "before\n");
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    r.put("mine.py", "after\n");
+    r.put("stray.py", "added\n");
+    r.host.restore_tree(&r.path, &tree).unwrap();
+    assert_eq!((text(&r.path, "mine.py"), text(&r.path, "stray.py")), (Some("before\n".into()), None));
+    assert_eq!(r.host.tree_snapshot(&r.outside).unwrap(), None);
+}
+
+#[test]
+fn a_gitignore_changed_since_hides_nothing_added_since() {
+    // The added rule would hide run.cov from the snapshot after; the removed one would show old.tmp in it.
+    let r = Repo::new(&[(".gitignore", "*.tmp\n"), ("sub/.gitignore", "")]);
+    r.put("old.tmp", "ignored before\n");
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    r.put(".gitignore", "*.cov\n");
+    r.put("sub/.gitignore", "*.out\n");
+    r.put("run.cov", "added\n");
+    r.put("sub/run.out", "added\n");
+    r.host.restore_tree(&r.path, &tree).unwrap();
+    assert_eq!(r.host.git(&r.path, &["status", "--porcelain", "--ignored"]).unwrap(), "!! old.tmp\n");
+}
+
+#[test]
+fn a_tree_is_restored_over_a_directory_and_a_file_swapped_and_a_nested_repository() {
+    let r = Repo::new(&[("x/y", "in x\n"), ("a", "a file\n")]);
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    std::fs::remove_dir_all(format!("{}/x", r.path)).unwrap();
+    r.put("x", "now a file\n");
+    std::fs::remove_file(format!("{}/a", r.path)).unwrap();
+    r.put("a/b", "now in a directory\n");
+    // With a commit, which git add -A takes as one path, a gitlink.
+    let nested = format!("{}/fixture", r.path);
+    r.git(&["init", "--quiet", &nested]);
+    r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "--allow-empty", "-m", "fixture"]);
+    r.host.restore_tree(&r.path, &tree).unwrap();
+    assert_eq!((text(&r.path, "x/y"), text(&r.path, "a")), (Some("in x\n".into()), Some("a file\n".into())));
+    assert!(!std::path::Path::new(&nested).exists());
+    assert_eq!(r.host.git(&r.path, &["status", "--porcelain"]).unwrap(), "");
+}
+
+#[test]
+fn a_tree_is_restored_over_more_paths_than_an_argv_holds() {
+    // 2 x 12000 paths of over 200 bytes each: some 5 MB, where Linux takes 2 MB of arguments.
+    let long = "p".repeat(200);
+    let names: Vec<String> = (0..12000).map(|i| format!("d/{long}{i}")).collect();
+    let committed: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), "committed\n")).collect();
+    let r = Repo::new(&committed);
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    for n in &names {
+        r.put(n, "edited\n");
+        r.put(&format!("{n}.new"), "added\n");
+    }
+    r.host.restore_tree(&r.path, &tree).unwrap();
+    assert_eq!(r.host.git(&r.path, &["status", "--porcelain"]).unwrap(), "");
 }
 
 // -- TestHostSnapshot ------------------------------------------------------------------------------------------------
@@ -1587,7 +1652,7 @@ fn a_snapshot_git_cannot_make_raises() {
     let e = r.host.snapshot(&r.path, &"0".repeat(40), "snapshot").unwrap_err();
     assert!(e.0.contains(" failed: "), "{e}");
     let bin = TempDir::new();
-    tool(&bin.path(), "git", "#!/bin/sh\ncase $1 in commit-tree) echo notacommit;; esac\n");
+    tool(&bin.path(), "git", "#!/bin/sh\ncase \" $* \" in *\" commit-tree \"*) echo notacommit;; esac\n");
     let e = host_with_tools(&bin.path()).snapshot(&r.path, r.base(), "s").unwrap_err();
     assert_eq!(e.0, format!("snapshot of {}: git commit-tree printed \"notacommit\", not a commit", r.path));
 }

@@ -12,6 +12,8 @@ use crate::harness::{harness, SessionLog};
 use serde_json::Value;
 use crate::map::Map;
 use crate::json::ValueExt;
+use crate::paths::file_name;
+use std::collections::HashSet;
 
 mod process;
 mod scan;
@@ -445,14 +447,8 @@ pub trait Host {
     /// commit. No ref moves and the index stays as it was. `.gitignore` is honoured, which keeps `.orchestrator/` out,
     /// so the snapshot holds what committing the change would. Errors: git fails, or prints what is no commit.
     fn snapshot(&self, cwd: &str, parent: &str, message: &str) -> Result<String, OrchestratorError> {
-        // Through a copy of the index, in one sh -c script, because git -C cannot pass GIT_INDEX_FILE.
-        let script = "cd -- \"$1\" || exit 1; i=$(git rev-parse --git-path index) || exit 1; t=$(mktemp) || exit 1; \
-                      trap 'rm -f -- \"$t\"' EXIT; \
-                      if [ -f \"$i\" ]; then cp -- \"$i\" \"$t\" || exit 1; else rm -f -- \"$t\"; fi; \
-                      GIT_INDEX_FILE=$t git add -A && tree=$(GIT_INDEX_FILE=$t git write-tree) && \
-                      git commit-tree \"$tree\" -p \"$2\" -m \"$3\"";
-        // The `else` above: a repository whose index was never written, from which git starts the copy afresh.
-        let out = self.check(&["sh", "-c", script, "_", cwd, parent, message], None, DEFAULT_TIMEOUT)?;
+        let tree = working_tree(self, cwd)?;
+        let out = self.git(cwd, &["commit-tree", &tree, "-p", parent, "-m", message])?;
         let sha = out.trim();
         if !is_commit_id(sha) {
             return Err(OrchestratorError(format!(
@@ -460,6 +456,35 @@ pub trait Host {
             )));
         }
         Ok(sha.to_string())
+    }
+
+    /// The working tree as committing it would hold it, untracked files included and ignored ones not, as a git tree
+    /// object, which restore_tree takes; None when cwd is in no git repository. Needs no commit. No ref moves and the
+    /// index stays as it was; nothing keeps the tree from git gc, which prunes no object younger than two weeks.
+    /// Errors: git fails, as `git add -A` does on a nested repository without a commit.
+    fn tree_snapshot(&self, cwd: &str) -> Result<Option<String>, OrchestratorError> {
+        // git exits 128 outside a repository, and gives this question no other answer with that status.
+        if self.git_run(cwd, &["rev-parse", "--is-inside-work-tree"], DEFAULT_TIMEOUT)?.status == 128 {
+            return Ok(None);
+        }
+        working_tree(self, cwd).map(Some)
+    }
+
+    /// Put the working tree back as tree, which tree_snapshot made of it, holds it: every file, untracked ones
+    /// included, that differs from tree's is written as tree has it, or deleted where tree has none, as restore does.
+    /// Ignored files are left as they are, by the ignore rules tree holds: changed `.gitignore` files are put back
+    /// first, so a rule added since hides nothing added since. A directory a deleted file leaves empty stays, which
+    /// git does not see. The index stays as it is. Errors: as tree_snapshot's and restore's, as for a nested
+    /// repository without a commit added since; the tree may then be partly restored.
+    fn restore_tree(&self, cwd: &str, tree: &str) -> Result<(), OrchestratorError> {
+        let differ = paths_between(self, cwd, tree, &working_tree(self, cwd)?, &[])?;
+        let ignores: Vec<String> = differ.iter().filter(|p| file_name(p) == ".gitignore").cloned().collect();
+        if ignores.is_empty() {
+            return self.restore(cwd, tree, &differ);
+        }
+        self.restore(cwd, tree, &ignores)?;
+        let differ = paths_between(self, cwd, tree, &working_tree(self, cwd)?, &[])?;
+        self.restore(cwd, tree, &differ)
     }
 
     // Locked files (Step.locks). Their paths are relative to the repository's top level, whatever directory of the
@@ -499,47 +524,34 @@ pub trait Host {
         Ok((differ, String::from_utf8_lossy(&diff).into_owned()))
     }
 
-    /// Make each of paths in the working tree what it is in ref: written as ref has it, or deleted where ref has none.
+    /// Make each of paths in the working tree what it is in ref, a commit or a tree: written as ref has it, or deleted
+    /// where ref has none, a directory there, such as a nested repository, with all it holds. Any number of paths.
     /// The index stays as it is.
     fn restore(&self, cwd: &str, git_ref: &str, paths: &[String]) -> Result<(), OrchestratorError> {
-        let held: Vec<String> = if paths.is_empty() {
-            vec![]
-        } else {
-            let mut args = vec!["ls-tree", "-r", "--name-only", "-z", "--full-tree", git_ref, "--"];
-            let literal = top_literal(paths);
-            args.extend(literal.iter().map(String::as_str));
-            utf8_paths(&self.git_verbatim(cwd, &args)?)?
-        };
-        let kept: Vec<&String> = paths.iter().filter(|p| held.contains(p)).collect();
-        if !kept.is_empty() {
-            let source = format!("--source={git_ref}");
-            let mut args = vec!["restore", source.as_str(), "--worktree", "--"];
-            let literal = top_literal(&kept);
-            args.extend(literal.iter().map(String::as_str));
-            self.git(cwd, &args)?;
+        if paths.is_empty() {
+            return Ok(());
         }
-        // git restore refuses a path that neither ref nor the index has, so a file ref lacks is removed here.
-        let gone: Vec<&String> = paths.iter().filter(|p| !held.contains(p)).collect();
+        // The whole of ref is listed, and the paths go over stdin below, since an argv has a limit.
+        let listing = self.git_verbatim(cwd, &["ls-tree", "-r", "--name-only", "-z", "--full-tree", git_ref])?;
+        let held: HashSet<String> = utf8_paths(&listing)?.into_iter().collect();
+        let (kept, gone): (Vec<&String>, Vec<&String>) = paths.iter().partition(|p| held.contains(*p));
+        // Deleted first: where ref has a directory and the tree a file in its place, git restore makes the directory
+        // again, and the file's path then names it.
         if !gone.is_empty() {
             let top = utf8_path(&self.git_verbatim(cwd, &["rev-parse", "--show-toplevel"])?)?;
             let top = top.strip_suffix('\n').unwrap_or(&top);
-            let files: Vec<String> = gone.iter().map(|p| format!("{top}/{p}")).collect();
-            let mut argv = vec!["rm", "-f", "--"];
-            argv.extend(files.iter().map(String::as_str));
-            self.check(&argv, None, DEFAULT_TIMEOUT)?;
+            let listed: String = gone.iter().map(|p| format!("{p}\0")).collect();
+            let script = r#"cd -- "$1" && xargs -0 rm -rf --"#;
+            self.check(&["sh", "-c", script, "_", top], Some(&listed), DEFAULT_TIMEOUT)?;
+        }
+        // git restore refuses a path that neither ref nor the index has, so only these.
+        if !kept.is_empty() {
+            let source = format!("--source={git_ref}");
+            let listed: String = top_literal(&kept).iter().map(|p| format!("{p}\0")).collect();
+            let args = ["restore", source.as_str(), "--worktree", "--pathspec-from-file=-", "--pathspec-file-nul"];
+            self.check(&git_argv(cwd, &args), Some(&listed), DEFAULT_TIMEOUT)?;
         }
         Ok(())
-    }
-
-    /// Put the working tree back as snapshot, a commit Host::snapshot made of it, holds it: every file, untracked ones
-    /// included, that differs from snapshot's is written as snapshot has it, or deleted where snapshot has none, as
-    /// restore does. Ignored files are left as they are, since no snapshot holds them, and so is a directory a deleted
-    /// file leaves empty, which git does not see. The index stays as it is. Errors: git fails, or a file cannot be
-    /// written or deleted, which may leave the tree partly restored.
-    fn restore_snapshot(&self, cwd: &str, snapshot: &str) -> Result<(), OrchestratorError> {
-        let now = self.snapshot(cwd, snapshot, &format!("the working tree against {snapshot}"))?;
-        let differ = paths_between(self, cwd, snapshot, &now, &[])?;
-        self.restore(cwd, snapshot, &differ)
     }
 
     /// Delete every local ref whose name starts with prefix, such as `refs/orchestrator/<key>/`; none is no error.
@@ -1119,7 +1131,19 @@ pub(crate) fn top_literal<S: AsRef<str>>(paths: &[S]) -> Vec<String> {
     paths.iter().map(|p| format!(":(top,literal){}", p.as_ref())).collect()
 }
 
-/// The paths whose files differ between commits a and b, a rename as its two paths; with paths, only those.
+/// The working tree in cwd as `git add -A` would stage it, as a tree object; the index stays as it was. Errors: git
+/// fails.
+fn working_tree<H: Host + ?Sized>(host: &H, cwd: &str) -> Result<String, OrchestratorError> {
+    // Through a copy of the index, in one sh -c script, because git -C cannot pass GIT_INDEX_FILE.
+    let script = "cd -- \"$1\" || exit 1; i=$(git rev-parse --git-path index) || exit 1; t=$(mktemp) || exit 1; \
+                  trap 'rm -f -- \"$t\"' EXIT; \
+                  if [ -f \"$i\" ]; then cp -- \"$i\" \"$t\" || exit 1; else rm -f -- \"$t\"; fi; \
+                  GIT_INDEX_FILE=$t git add -A && GIT_INDEX_FILE=$t git write-tree";
+    // The `else` above: a repository whose index was never written, from which git starts the copy afresh.
+    Ok(host.check(&["sh", "-c", script, "_", cwd], None, DEFAULT_TIMEOUT)?.trim().to_string())
+}
+
+/// The paths whose files differ between commits or trees a and b, a rename as its two paths; with paths, only those.
 fn paths_between<H: Host + ?Sized>(
     host: &H,
     cwd: &str,

@@ -194,17 +194,23 @@ fn locked_files_play_on_the_snapshots() {
 }
 
 #[test]
-fn a_snapshot_is_restored_over_what_changed_since() {
+fn a_tree_snapshot_is_restored_over_what_changed_since() {
     let host = FakeHost::default();
     host.write("/proj/app.py", "before\n", false).unwrap();
-    host.delete("/proj/gone.py");
-    let before = host.snapshot("/proj", "abc123", "s").unwrap();
+    host.write("/proj/gone.py", "kept\n", false).unwrap();
+    let tree = host.tree_snapshot("/proj").unwrap().unwrap();
     host.write("/proj/app.py", "after\n", false).unwrap();
-    host.write("/proj/gone.py", "back\n", false).unwrap();
+    host.delete("/proj/gone.py");
     host.write("/proj/stray.txt", "added\n", false).unwrap();
-    host.restore_snapshot("/proj", &before).unwrap();
+    host.write("/proj/.orchestrator/runs/r/state.json", "{}\n", false).unwrap();
+    host.write("/elsewhere.txt", "outside\n", false).unwrap();
+    host.restore_tree("/proj", &tree).unwrap();
     let read = |path: &str| host.read(path).unwrap();
-    assert_eq!((read("/proj/app.py").as_deref(), read("/proj/gone.py"), read("/proj/stray.txt")), (Some("before\n"), None, None));
+    assert_eq!(
+        [read("/proj/app.py"), read("/proj/gone.py"), read("/proj/stray.txt")],
+        [Some("before\n".into()), Some("kept\n".into()), None]
+    );
+    assert_eq!([read("/proj/.orchestrator/runs/r/state.json"), read("/elsewhere.txt")], [Some("{}\n".into()), Some("outside\n".into())]);
 }
 
 #[test]
