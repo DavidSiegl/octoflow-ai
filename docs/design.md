@@ -266,7 +266,8 @@ ancestor of it. What it holds that git tracks can then be restored from the pull
 worktree, as `close` discards them too, so a hand-made `.env` there is lost. (Counting them would keep every worktree
 with build output, such as `target/` or `node_modules/`, for good.) A worktree with uncommitted changes, another
 branch checked out, or commits that head lacks, or one git refuses to remove (locked, say), is kept, with its reason
-recorded in `branch_cleanup` beside the branch's own (the branch stays checked out there). Worktrees no run names, or
+recorded in `branch_cleanup` beside the branch's own (a kept worktree keeps its branch checked out, unless it now holds
+another one). Worktrees no run names, or
 outside `.orchestrator/worktrees/`, are never touched, nor are a finished `--no-pr` run's (it holds the change) or a
 failed run's (`close`). Before reading which branches are checked out, `prune` runs `git worktree prune` (not in a
 `--dry-run`), which forgets every worktree of the repository whose directory is gone, not only the runs'. A worktree

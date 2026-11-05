@@ -770,7 +770,7 @@ fn one_line_when_it_deleted_or_kept() {
     p.add(run("aaaaaa", merged()));
     p.add(run("bbbbbb", merged()).n(8));
     p.add(run("cccccc", merged()).n(9).remote(Some(LATER)));
-    assert_eq!(p.sweep(), ["deleted 2 branches of earlier runs; kept 1, see prune"]);
+    assert_eq!(p.sweep(), ["deleted 2 branches of earlier runs; kept 1 branch, see prune"]);
 }
 
 #[test]
@@ -782,7 +782,7 @@ fn the_summary_counts_worktrees_removed() {
     let p = Prune::new();
     p.add(run("aaaaaa", merged()).with("worktree", WORKTREE).remote(Some(LATER)));
     p.host().worktrees.insert(WORKTREE, "orchestrator/task-aaaaaa".into());
-    assert_eq!(p.sweep(), ["deleted 1 worktree of earlier runs; kept 1, see prune"]);
+    assert_eq!(p.sweep(), ["deleted 1 worktree of earlier runs; kept 1 branch, see prune"]);
 }
 
 #[test]

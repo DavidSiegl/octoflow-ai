@@ -360,10 +360,11 @@ pub fn sweep_summary(pruned: &[PrunedRun]) -> Option<String> {
         parts.push(format!("deleted {} of earlier runs", gone.join(" and ")));
     }
     if kept > 0 {
-        parts.push(if !gone.is_empty() {
-            format!("kept {kept}, see prune")
-        } else {
+        // Names "branches" even after "deleted ... worktree", where a bare count would read as a kept worktree.
+        parts.push(if gone.is_empty() {
             format!("kept {} of earlier runs, see prune", branches(kept))
+        } else {
+            format!("kept {}, see prune", branches(kept))
         });
     }
     (!parts.is_empty()).then(|| parts.join("; "))
