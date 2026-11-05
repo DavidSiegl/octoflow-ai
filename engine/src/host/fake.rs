@@ -178,6 +178,9 @@ pub(crate) struct FakeState {
     /// The linked worktrees' branches, by path, "HEAD" for a detached one; /proj has `branch` checked out. git in a
     /// worktree sees its own branch, and the changed files under its path as its own changes.
     pub worktrees: Map<String>,
+    /// The linked worktrees in worktrees whose directory was deleted by hand: git still lists them, as prunable, and
+    /// `git worktree prune` forgets them.
+    pub vanished_worktrees: BTreeSet<String>,
     /// (commit, of) pairs where commit is an ancestor of of.
     pub ancestors: HashSet<(String, String)>,
     /// By branch, the commits it has beyond the commit rev-list --count compares it to.
@@ -190,6 +193,8 @@ pub(crate) struct FakeState {
     pub pr_edits: Vec<PrEdit>,
     /// The stderr of a failing `git worktree remove`.
     pub remove_error: Option<String>,
+    /// The error of a `git worktree remove` that cannot be run to its end, as an interrupt or a timeout gives.
+    pub remove_unrun: Option<String>,
     /// The arguments of each gh command, in order.
     pub gh_calls: Vec<Vec<String>>,
     /// Every path written with keep_mtime.
@@ -283,12 +288,14 @@ impl FakeHost {
                 branches: Map::new(),
                 tracking: BTreeSet::new(),
                 worktrees: Map::new(),
+                vanished_worktrees: BTreeSet::new(),
                 ancestors: HashSet::new(),
                 ahead: HashMap::new(),
                 missing_commits: HashSet::new(),
                 pull_requests: HashMap::new(),
                 pr_edits: vec![],
                 remove_error: None,
+                remove_unrun: None,
                 gh_calls: vec![],
                 mtime_kept: vec![],
                 clock: None,
@@ -373,6 +380,10 @@ impl FakeState {
     fn git_in_worktree(&mut self, cwd: &str, args: &[&str]) -> Option<Completed> {
         match args {
             ["rev-parse", "--abbrev-ref", "HEAD"] => Some(ok(&format!("{}\n", self.worktrees.get(cwd)?))),
+            ["symbolic-ref", "--quiet", "HEAD"] => {
+                let branch = self.worktrees.get(cwd)?;
+                Some(if branch == "HEAD" { status(1) } else { ok(&format!("refs/heads/{branch}\n")) })
+            }
             ["switch", "-c", name, _] => {
                 self.worktrees.insert(cwd, name.to_string());
                 Some(ok(""))
@@ -522,8 +533,9 @@ impl FakeState {
     }
 
     /// `git worktree`, given the arguments after `worktree`: a detached worktree added; one removed, with the
-    /// changes under it, which fails with remove_error when that is set; or the porcelain list of the checkout and
-    /// each linked worktree. Anything else prints nothing.
+    /// changes under it, which fails with remove_error when that is set; the vanished ones forgotten; or the
+    /// porcelain list of the checkout and each linked worktree, a vanished one marked prunable. Anything else prints
+    /// nothing.
     fn git_worktree(&mut self, args: &[&str]) -> Completed {
         match args {
             ["add", "--detach", path, _] => self.worktrees.insert(*path, "HEAD".to_string()),
@@ -534,6 +546,12 @@ impl FakeState {
                 self.worktrees.remove(path);
                 self.changed.retain(|p| !p.starts_with(&format!("{path}/")));
             }
+            ["prune"] => {
+                let vanished = std::mem::take(&mut self.vanished_worktrees);
+                for path in &vanished {
+                    self.worktrees.remove(path);
+                }
+            }
             ["list", "--porcelain"] => {
                 let mut trees = vec![("/proj".to_string(), self.branch.clone())];
                 trees.extend(self.worktrees.iter().map(|(p, b)| (p.to_string(), b.clone())));
@@ -541,7 +559,8 @@ impl FakeState {
                     .iter()
                     .map(|(path, b)| {
                         let head = if b == "HEAD" { "detached".to_string() } else { format!("branch refs/heads/{b}") };
-                        format!("worktree {path}\nHEAD {}\n{head}\n\n", "0".repeat(40))
+                        let prunable = if self.vanished_worktrees.contains(path) { "prunable gone\n" } else { "" };
+                        format!("worktree {path}\nHEAD {}\n{head}\n{prunable}\n", "0".repeat(40))
                     })
                     .collect();
                 return ok(&listed);
@@ -692,6 +711,9 @@ impl Host for FakeHost {
         }
         let mut s = self.state();
         let owned: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+        if let (Some(error), ["worktree", "remove", ..]) = (&s.remove_unrun, args) {
+            return Err(OrchestratorError::new(error));
+        }
         s.git_calls.push(owned.clone());
         s.git_log.push((cwd.to_string(), owned));
         Ok(s.git(cwd, args))
@@ -857,7 +879,8 @@ impl Host for FakeHost {
     }
 
     fn is_worktree(&self, _cwd: &str, path: &str) -> Result<bool, OrchestratorError> {
-        Ok(self.state().worktrees.contains_key(path))
+        let s = self.state();
+        Ok(s.worktrees.contains_key(path) && !s.vanished_worktrees.contains(path))
     }
 
     fn gh_run(&self, _cwd: &str, args: &[&str]) -> Result<Completed, OrchestratorError> {

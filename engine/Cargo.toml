@@ -1,6 +1,6 @@
 [package]
 name = "octoflow-engine"
-version = "0.59.6"
+version = "0.60.0"
 description = "The orchestrator's engine, ported from orchestrator.py (the rust-engine spec)"
 edition = "2021"
 license = "MIT OR Apache-2.0"

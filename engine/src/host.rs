@@ -801,20 +801,54 @@ pub trait Host {
         self.git(cwd, &args).map(drop)
     }
 
+    /// Remove the worktree at path without force, as remove_worktree, but with git's refusal (a locked worktree, a
+    /// submodule, changes it would lose) an answer: Ok(Some(git's message)), the worktree still there; Ok(None) once
+    /// removed. Errors: git cannot be run to its end (it does not start, runs out of time, or is interrupted).
+    fn try_remove_worktree(&self, cwd: &str, path: &str) -> Result<Option<String>, OrchestratorError> {
+        let proc = self.git_run(cwd, &["worktree", "remove", path], DEFAULT_TIMEOUT)?;
+        Ok((proc.status != 0).then(|| proc.stderr.trim().to_string()))
+    }
+
+    /// Forget the worktrees of cwd's repository whose directory is gone, as `git worktree prune`: git then no longer
+    /// counts their branches as checked out. Errors: as Host::git's.
+    fn prune_worktrees(&self, cwd: &str) -> Result<(), OrchestratorError> {
+        self.git(cwd, &["worktree", "prune"]).map(drop)
+    }
+
     /// The branches checked out in the repository's worktrees, the main checkout's included, each with its path, in
-    /// the order git lists them.
+    /// the order git lists them. A worktree whose directory is gone (git marks it prunable) holds nothing, as
+    /// is_worktree has it.
     fn checked_out_branches(&self, cwd: &str) -> Result<Map<String>, OrchestratorError> {
         let mut branches = Map::new();
-        let mut path = String::new();
-        for line in self.git(cwd, &["worktree", "list", "--porcelain"])?.lines() {
-            let (key, value) = line.split_once(' ').unwrap_or((line, ""));
-            if key == "worktree" {
-                path = value.to_string();
-            } else if key == "branch" {
-                branches.insert(value.strip_prefix("refs/heads/").unwrap_or(value), path.clone());
+        // One record per worktree, separated by a blank line.
+        for record in self.git(cwd, &["worktree", "list", "--porcelain"])?.split("\n\n") {
+            if record.lines().any(|line| line.starts_with("prunable")) {
+                continue;
+            }
+            let mut path = "";
+            for line in record.lines() {
+                let (key, rest) = line.split_once(' ').unwrap_or((line, ""));
+                if key == "worktree" {
+                    path = rest;
+                } else if key == "branch" {
+                    branches.insert(rest.strip_prefix("refs/heads/").unwrap_or(rest), path.to_string());
+                }
             }
         }
         Ok(branches)
+    }
+
+    /// The branch checked out in the worktree at cwd, or the checkout there; None on a detached HEAD. Errors: git
+    /// fails otherwise, as when cwd is no worktree.
+    fn checked_out_branch(&self, cwd: &str) -> Result<Option<String>, OrchestratorError> {
+        let args = ["symbolic-ref", "--quiet", "HEAD"];
+        let proc = self.git_run(cwd, &args, DEFAULT_TIMEOUT)?;
+        if proc.status == 1 {
+            return Ok(None);
+        }
+        let git_ref = checked(self, &git_argv(cwd, &args), proc)?;
+        let git_ref = git_ref.trim();
+        Ok(Some(git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref).to_string()))
     }
 
     /// A gh command in cwd whose failure the caller interprets.

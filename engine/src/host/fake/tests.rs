@@ -277,3 +277,15 @@ fn a_real_process_fails_the_test() {
 fn an_unscripted_gh_command_fails_the_test() {
     let _ = FakeHost::default().gh_run("/proj", &["pr", "list"]);
 }
+
+#[test]
+fn pruning_forgets_a_worktree_whose_directory_is_gone() {
+    let host = FakeHost::new(Some("abc123"), "main");
+    let wt = proj(&format!("{WORKTREES_DIR}/a1b2c3"));
+    host.add_worktree("/proj", &wt, "abc123").unwrap();
+    host.state().vanished_worktrees.insert(wt.clone());
+    assert!(!host.is_worktree("/proj", &wt).unwrap());
+    assert!(host.git("/proj", &["worktree", "list", "--porcelain"]).unwrap().contains("prunable"));
+    host.prune_worktrees("/proj").unwrap();
+    assert!(host.state().worktrees.is_empty());
+}
