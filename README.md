@@ -68,8 +68,9 @@ is missing.
   a finding. A change git shows as "Binary files ... differ" is not scanned, and no rule in `.gitleaks.toml`
   reaches it: a secret in it, a `.p12` keystore say, or a `gitleaks:allow` in it, is pushed unreported. git shows a
   file's change so when either side holds a NUL in its first 8000 bytes or is over your `core.bigFileThreshold`
-  (512 MiB unless set), or your attribute files call the file binary; so a text file replacing a binary one is not
-  scanned either
+  (512 MiB unless set), or the repository's `.git/info/attributes` or your `core.attributesFile` marks the file
+  `binary` or `-diff` (the repository's own `.gitattributes` do not count); so a text file replacing a binary one is
+  not scanned either
 - Nothing for the orchestrator itself, a single [binary](#install); to build it from a checkout, Rust by
   `rust-toolchain.toml`; [uv](https://github.com/astral-sh/uv) and Python 3.13+ only for `gate.py` and the tests
 - For `--machine`: the machine saved in herdr and non-interactive SSH to it, which the orchestrator's

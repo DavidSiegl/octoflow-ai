@@ -736,7 +736,7 @@ is rewritten to say what is left.
   and unchecked", "In (b) that run still races GitHub's immediate merge. A conflict cleared by a change to the base
   rather than the head raises no pull-request event at all." Closes with a ruleset that requires the check on
   every branch, or one that restricts merges outside `main`.
-- **The secret scan does not look inside a file git takes for binary.** Neither gitleaks nor `allow_comments`
+- **The secret scan does not look inside a change git diffs as binary.** Neither gitleaks nor `allow_comments`
   (`engine/src/host/scan.rs`) reads a change `git log -p` shows as "Binary files ... differ"; which changes those are
   is in `Host::scan_unpublished`'s doc. gitleaks skips one before any rule runs, path rules and its own `pkcs12-file`
   included (tested with gitleaks 8.30.1, cross-review 147), so a secret in it is pushed unreported. That includes a
