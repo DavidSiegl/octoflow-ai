@@ -195,6 +195,26 @@ fn locked_files_play_on_the_snapshots() {
 }
 
 #[test]
+fn a_tree_snapshot_is_restored_over_what_changed_since() {
+    let host = FakeHost::default();
+    host.write("/proj/app.py", "before\n", false).unwrap();
+    host.write("/proj/gone.py", "kept\n", false).unwrap();
+    let tree = host.tree_snapshot("/proj").unwrap().unwrap();
+    host.write("/proj/app.py", "after\n", false).unwrap();
+    host.delete("/proj/gone.py");
+    host.write("/proj/stray.txt", "added\n", false).unwrap();
+    host.write("/proj/.orchestrator/runs/r/state.json", "{}\n", false).unwrap();
+    host.write("/elsewhere.txt", "outside\n", false).unwrap();
+    host.restore_tree("/proj", &tree).unwrap();
+    let read = |path: &str| host.read(path).unwrap();
+    assert_eq!(
+        [read("/proj/app.py"), read("/proj/gone.py"), read("/proj/stray.txt")],
+        [Some("before\n".into()), Some("kept\n".into()), None]
+    );
+    assert_eq!([read("/proj/.orchestrator/runs/r/state.json"), read("/elsewhere.txt")], [Some("{}\n".into()), Some("outside\n".into())]);
+}
+
+#[test]
 fn the_change_s_files_and_counts() {
     let host = FakeHost::default();
     host.state().diff = "diff --git a/f.py b/f.py\n+++ b/f.py\n@@ -0,0 +1,2 @@\n+a\n+b\n".into();

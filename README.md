@@ -394,8 +394,10 @@ file in `~/.config/ai-agents-orchestrator/workflows/`, named after the workflow,
 `--workflow-file`. `orchestrator workflows` lists them and says why one does not load, and
 `workflows default` prints the default's full definition to start from. [`examples/workflows/`](examples/workflows)
 has three more: `spec-build-review` (the default as a file), `quick` (Builder ⇄ Reviewer, the task as the
-contract) and `product-team` (Product Manager → Architect → QA Engineer → Engineer ⇄ Tech Lead: requirements in
-business terms, a design against the code, and acceptance tests written and locked before the code).
+contract) and `product-team` (Product Manager → Architect → QA Engineer → Engineer ⇄ Tech Lead, then the Product
+Manager's acceptance: requirements in business terms, a design against the code, acceptance tests written and locked
+before the code, and the Product Manager judging the change the Tech Lead approved against the requirements, or
+sending it back to the Engineer).
 
 ```toml
 # An abridged product-team.toml: the Architect's design before the default Builder and Reviewer.
