@@ -184,10 +184,8 @@ pub fn run_rows(
         .collect()
 }
 
-/// A run record's outcome as `list` words it: its error, verdict, waiting reason or health, then what it has besides,
-/// its closing, pull request and a workflow other than the default. A verdict other than APPROVE, of a run whose
-/// verdicts came from several verdict steps (judged_by_several), names the step that gave it last, as in
-/// "CHANGES_REQUESTED by accept".
+/// A run record's outcome as `list` words it: its error, verdict (as outcome_verdict words it), waiting reason or
+/// health, then what it has besides, its closing, pull request and a workflow other than the default.
 pub fn run_outcome(record: &Object) -> String {
     let truthy = |key: &str| record.get(key).filter(|v| v.is_set());
     let text = |value: Option<&Value>| value.map_or("None".to_string(), Value::text);
@@ -196,16 +194,7 @@ pub fn run_outcome(record: &Object) -> String {
     let mut outcome = if let Some(error) = truthy("error") {
         format!("error: {}", error.text())
     } else if record.get("health").is_none_or(Value::is_null) {
-        let verdict = truthy("verdict").map_or(String::new(), Value::text);
-        // A record that is not a list of verdicts reads as none, as a run saved before them.
-        let verdicts: Vec<StepVerdict> =
-            truthy("verdicts").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
-        match verdicts.last() {
-            Some(judge) if !verdict.is_empty() && verdict != APPROVE && judged_by_several(&verdicts) => {
-                format!("{verdict} by {}", judge.step)
-            }
-            _ => verdict,
-        }
+        outcome_verdict(record)
     } else if truthy("closed").is_some() {
         // Stale by its heartbeat, but resume refuses it, so neither its staleness nor the command is worth showing.
         String::new()
@@ -233,6 +222,23 @@ pub fn run_outcome(record: &Object) -> String {
         outcome += &format!("  [{} workflow]", text(record.get("workflow")));
     }
     outcome
+}
+
+/// A run record's verdict as its outcome words it: "" without one. A verdict other than APPROVE, of a run whose
+/// verdicts came from several verdict steps (judged_by_several), names the step that gave it last, as in
+/// "CHANGES_REQUESTED by accept".
+fn outcome_verdict(record: &Object) -> String {
+    let truthy = |key: &str| record.get(key).filter(|v| v.is_set());
+    let verdict = truthy("verdict").map_or(String::new(), Value::text);
+    // A record that is not a list of verdicts reads as none, as a run saved before them.
+    let verdicts: Vec<StepVerdict> =
+        truthy("verdicts").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
+    match verdicts.last() {
+        Some(judge) if !verdict.is_empty() && verdict != APPROVE && judged_by_several(&verdicts) => {
+            format!("{verdict} by {}", judge.step)
+        }
+        _ => verdict,
+    }
 }
 
 /// A run record's round, and its quality round when it has one.

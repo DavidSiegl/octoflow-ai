@@ -243,10 +243,25 @@ fn details(summary: &str, text: &str, open: bool) -> String {
     )
 }
 
+/// The pull request body's section per review of state's last round, in reviews's order, each open unless it
+/// approves. reviews are verdict files, each as (its name, its text), in step order. Each section is named by its
+/// file when several verdict steps judge the run (judged_by_several), as verdict_line names them by step, else by
+/// the round.
+fn review_details(state: &RunState, reviews: &[(String, String)]) -> Vec<String> {
+    let several = judged_by_several(&state.verdicts);
+    reviews
+        .iter()
+        .map(|(name, review)| {
+            let summary = if several { format!("Review ({name})") } else { format!("Review (round {})", state.round) };
+            details(&summary, review, parse_verdict(review) != Some(APPROVE))
+        })
+        .collect()
+}
+
 /// The pull request's body: the conflict warning and the note on a gate turned off where they apply, how the run
 /// ended, its provenance as a table, the spec, the last report, the last quality file, the reviews and the run's
-/// timings. reviews are the verdict files of the last round, each as (its name, its text), in step order; each is
-/// open unless it approves. quality is what the gate said of the change, as provenance takes it.
+/// timings. reviews are the verdict files of the last round, as review_details takes them. quality is what the gate
+/// said of the change, as provenance takes it.
 pub fn pr_body(state: &RunState, spec: &str, report: &str, reviews: &[(String, String)], quality: &GateEvidence) -> String {
     let s = state;
     let head = format!("Opened by Octoflow AI run `{}`. {}", s.run_id, verdict_line(s));
@@ -277,12 +292,7 @@ pub fn pr_body(state: &RunState, spec: &str, report: &str, reviews: &[(String, S
         parts.push(details(&format!("Quality gate ({label})"), &last.text, false));
     }
     if !matches!(s.verdict.as_deref(), Some(FINISHED | QUALITY_GATE_FAILED)) {
-        let several = judged_by_several(&s.verdicts);
-        for (name, review) in reviews {
-            // Named by its file when several steps judge, as verdict_line names them by step.
-            let summary = if several { format!("Review ({name})") } else { format!("Review (round {})", s.round) };
-            parts.push(details(&summary, review, parse_verdict(review) != Some(APPROVE)));
-        }
+        parts.extend(review_details(s, reviews));
     }
     if !s.turns.is_empty() {
         parts.push(details("Run timings", &turns_table(&s.turns), false));
