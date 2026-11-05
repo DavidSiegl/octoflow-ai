@@ -1374,12 +1374,13 @@ impl<'a> Workflow<'a> {
     }
 
     /// What the step's prompt tells the agent the change is: the diff against the base, or for a project that is not
-    /// a git repository, the Builder's report.
+    /// a git repository, the Builder's report. The diff names `--no-relative` so that an agent working in a subdirectory
+    /// still sees every path, whatever the user's `diff.relative` (as `git_diff` does for the engine's own diffs).
     fn change_description(&self) -> String {
         let s = &self.state;
         match s.base.as_deref().filter(|b| !b.is_empty()) {
             Some(base) => format!(
-                "`git diff {base}` in {}, plus the untracked files `git status --porcelain` lists",
+                "`git diff --no-relative {base}` in {}, plus the untracked files `git status --porcelain` lists",
                 s.work_dir()
             ),
             None => format!("the files the Builder's report lists, in {} (not a git repository)", s.work_dir()),

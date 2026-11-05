@@ -921,7 +921,7 @@
      "agent",
      "prompt",
      "review-<key:1>",
-     "Review `git diff <sha:1>` in <world>/project, plus the untracked files `git status --porcelain` lists against the task, Add a subtract function. Back each finding with a proof in <world>/project/.orchestrator/runs/<run:1>/proofs-1. As your last step, write <world>/project/.orchestrator/runs/<run:1>/review-1.md, its first line VERDICT: APPROVE or VERDICT: CHANGES_REQUESTED."
+     "Review `git diff --no-relative <sha:1>` in <world>/project, plus the untracked files `git status --porcelain` lists against the task, Add a subtract function. Back each finding with a proof in <world>/project/.orchestrator/runs/<run:1>/proofs-1. As your last step, write <world>/project/.orchestrator/runs/<run:1>/review-1.md, its first line VERDICT: APPROVE or VERDICT: CHANGES_REQUESTED."
     ]
    },
    {

@@ -52,7 +52,7 @@ If you cannot continue without a decision from the human, write the report with 
 
 You are the Tech Lead, the last of five roles. You did not write this change. Judge it against the requirements in /proj/.orchestrator/runs/20260929-120000-a1b2c3/spec.md, the design in /proj/.orchestrator/runs/20260929-120000-a1b2c3/design.md, the acceptance tests described in /proj/.orchestrator/runs/20260929-120000-a1b2c3/tests.md, and the code itself.
 
-The change: `git diff abc123` in /proj, plus the untracked files `git status --porcelain` lists
+The change: `git diff --no-relative abc123` in /proj, plus the untracked files `git status --porcelain` lists
 The Engineer's report is in /proj/.orchestrator/runs/20260929-120000-a1b2c3/build-1.md. Treat its claims as unverified: check them, and run the tests yourself. Do not modify any file of the project.
 
 Check, in this order: every acceptance criterion is met and its tests pass; each departure from the design is justified, and an unjustified one is a defect; nothing the requirements put out of scope was built; the change is safe to ship and to roll back as the design says.
@@ -85,7 +85,7 @@ If you cannot continue without a decision from the human, write the report with 
 
 ## review, round 2
 
-The Engineer has answered your review; the new report is in /proj/.orchestrator/runs/20260929-120000-a1b2c3/build-2.md. Review the change again (`git diff abc123` in /proj, plus the untracked files `git status --porcelain` lists) against the requirements in /proj/.orchestrator/runs/20260929-120000-a1b2c3/spec.md, the design in /proj/.orchestrator/runs/20260929-120000-a1b2c3/design.md, the acceptance tests described in /proj/.orchestrator/runs/20260929-120000-a1b2c3/tests.md and your previous findings, checking the Engineer's claims rather than trusting them: each finding answered, each new departure from the design justified, the acceptance tests passing.
+The Engineer has answered your review; the new report is in /proj/.orchestrator/runs/20260929-120000-a1b2c3/build-2.md. Review the change again (`git diff --no-relative abc123` in /proj, plus the untracked files `git status --porcelain` lists) against the requirements in /proj/.orchestrator/runs/20260929-120000-a1b2c3/spec.md, the design in /proj/.orchestrator/runs/20260929-120000-a1b2c3/design.md, the acceptance tests described in /proj/.orchestrator/runs/20260929-120000-a1b2c3/tests.md and your previous findings, checking the Engineer's claims rather than trusting them: each finding answered, each new departure from the design justified, the acceptance tests passing.
 
 As your last step, write the review to /proj/.orchestrator/runs/20260929-120000-a1b2c3/review-2.md in a single write, with the same first-line verdict, summary and numbered findings as before.
 
@@ -93,7 +93,7 @@ As your last step, write the review to /proj/.orchestrator/runs/20260929-120000-
 
 You are the Tech Lead, the last of five roles. You did not write this change. Judge it against the requirements in /proj/.orchestrator/runs/20260929-120000-a1b2c3/spec.md, the design in /proj/.orchestrator/runs/20260929-120000-a1b2c3/design.md, the acceptance tests described in /proj/.orchestrator/runs/20260929-120000-a1b2c3/tests.md, and the code itself.
 
-The change: `git diff abc123` in /proj, plus the untracked files `git status --porcelain` lists
+The change: `git diff --no-relative abc123` in /proj, plus the untracked files `git status --porcelain` lists
 The Engineer's report is in /proj/.orchestrator/runs/20260929-120000-a1b2c3/build-2.md. Treat its claims as unverified: check them, and run the tests yourself. Do not modify any file of the project.
 
 Check, in this order: every acceptance criterion is met and its tests pass; each departure from the design is justified, and an unjustified one is a defect; nothing the requirements put out of scope was built; the change is safe to ship and to roll back as the design says.

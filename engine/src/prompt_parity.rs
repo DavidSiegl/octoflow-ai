@@ -105,7 +105,7 @@ fn placeholder(name: &str, s: &RunState, p: &Pipeline, step: &Step, n: u32, file
         "proofs_dir" => s.proofs_dir(n),
         "path" => own,
         "change" => match &s.base {
-            Some(base) => format!("`git diff {base}` in {}, plus the untracked files `git status --porcelain` lists", s.work_dir()),
+            Some(base) => format!("`git diff --no-relative {base}` in {}, plus the untracked files `git status --porcelain` lists", s.work_dir()),
             None => format!("the files the Builder's report lists, in {} (not a git repository)", s.work_dir()),
         },
         _ => {
