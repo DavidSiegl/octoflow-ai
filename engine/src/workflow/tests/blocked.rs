@@ -331,7 +331,13 @@ fn a_step_from_a_workflow_file_can_block() {
     let tests_md = |s: &RunState| format!("{}/tests.md", s.dir());
     let (blocks, specs) = (seen(), seen());
     let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&team), vec![
-        ("spec", vec![recording(spec_turn(), &specs)]),
+        (
+            "spec",
+            vec![
+                recording(spec_turn(), &specs),
+                recording(writes(|s| format!("{}/acceptance-1.md", s.dir()), "VERDICT: APPROVE", "done"), &specs),
+            ],
+        ),
         ("design", vec![writes(|s| format!("{}/design.md", s.dir()), "the design", "done")]),
         (
             "tests",
@@ -351,7 +357,8 @@ fn a_step_from_a_workflow_file_can_block() {
     assert_eq!(blocks.borrow()[1], blocked_prompt(&format!("{D}/tests.md"), 1));
     let note = ("QA Engineer is blocked: which test runner?".to_string(), "pane w1:p3".to_string());
     assert!(f.told.notes.borrow().contains(&note));
-    assert!(!specs.borrow()[0].contains("BLOCKED"));
+    // The Product Manager's acceptance is a verdict step, which cannot block.
+    assert!(specs.borrow().iter().all(|prompt| !prompt.contains("BLOCKED")));
 }
 
 #[test]
