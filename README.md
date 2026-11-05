@@ -65,8 +65,9 @@ is missing.
   logged in; with `--worktree`, a branch checked out and an `origin` even with `--no-pr`
 - For any run that pushes: [gitleaks](https://github.com/gitleaks/gitleaks#installing) 8.19+ and git 2.36+.
   Every push is scanned for secrets first, by the base's `.gitleaks.toml` and `.gitleaksignore`, and refused on
-  a finding. A file git takes for binary (a NUL in its first 8000 bytes) is not scanned; a path rule in the base's
-  `.gitleaks.toml` covers such files, a `.p12` keystore say
+  a finding. A file git takes for binary (a NUL in its first 8000 bytes, or over 512 MiB) is not scanned, and no
+  rule in `.gitleaks.toml` reaches it: a secret in it, a `.p12` keystore say, or a `gitleaks:allow` in it, is pushed
+  unreported
 - Nothing for the orchestrator itself, a single [binary](#install); to build it from a checkout, Rust by
   `rust-toolchain.toml`; [uv](https://github.com/astral-sh/uv) and Python 3.13+ only for `gate.py` and the tests
 - For `--machine`: the machine saved in herdr and non-interactive SSH to it, which the orchestrator's
