@@ -181,12 +181,6 @@ is rewritten to say what is left.
   `paths` as restoring nothing, and the turn and agent readers a record without `kind` as `DEFAULT_AGENT`'s. Each is
   a branch no format-2 run takes. Closes with those branches removed and the records' fields required, as
   `RunState`'s are.
-- **`a_server_that_stops_accepting_is_started_again_on_the_port` fails about one run in four.** The engine's lib tests
-  (`engine/src/serve/tests.rs`) got an empty-bodied 500 from the port in 3 of 10 runs on main at 6bc3bb3 and 1 of 4
-  on ticket octoflow-without-python/04's branch, both under `cargo test`'s parallel threads; alone it passed every time.
-  serve answers every error with a JSON body, so the 500 is likely another test's server that took the port the
-  stopped one freed. Found 2026-11-03 while verifying ticket 04. Closes with the test holding its port, or another
-  check that the new server answers, and a run of the suite repeated without failure.
 - **`crate::map::Map` hand-writes an insertion-ordered map.** `engine/src/map.rs`, moved out of `py::json` by ticket
   octoflow-without-python/04 for the engine's maps of values that are not JSON (`Map<Dependency>`, `Map<String>`).
   Raised by cross-review 114 (F9, nit, 2026-11-03): "`indexmap::IndexMap` is already in the build through

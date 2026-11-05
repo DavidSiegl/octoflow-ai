@@ -4,7 +4,7 @@
 
 use std::io::{BufRead, BufReader};
 use std::net::TcpStream;
-use std::sync::mpsc;
+use std::sync::{mpsc, Weak};
 use std::time::Instant;
 
 use super::*;
@@ -1509,16 +1509,17 @@ fn a_wait_for_the_signals_that_fails_ends_it() {
 fn a_server_that_stops_accepting_is_started_again_on_the_port() {
     // As tiny_http's server ends at the first error accept gives: its recv fails while the RunServer is not stopping.
     let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
-    let first = lock(&served.server.listening).clone().expect("it listens");
-    first.unblock();
+    // Weak: a strong reference here would keep the first server alive, and its accept thread with it, past the restart.
+    let first = Arc::downgrade(&lock(&served.server.listening).clone().expect("it listens"));
+    first.upgrade().expect("it is alive").unblock();
     let started = Instant::now();
-    while lock(&served.server.listening).as_ref().is_some_and(|http| Arc::ptr_eq(http, &first)) {
+    while lock(&served.server.listening).as_ref().is_none_or(|http| Weak::ptr_eq(&first, &Arc::downgrade(http))) {
         assert!(started.elapsed() < Duration::from_secs(5), "no server was started again");
         std::thread::sleep(Duration::from_millis(10));
     }
     // Not at once: a lasting accept error would make each new server stop at once, and the restarts spin.
     assert!(started.elapsed() >= Duration::from_millis(100), "started again after {:?}", started.elapsed());
-    drop(first);
+    assert!(first.upgrade().is_none(), "the first server is still alive, its accept thread taking connections");
     assert_eq!(served.get(&Served::query("/runs", &[]), &[]).status, Some(200));
     let port = served.port;
     drop(served);
