@@ -264,9 +264,16 @@ from its pull request: with the pull request's "Restore branch" button, or with
 ## Closing a run
 
 A run that opens a pull request closes its workspace and removes its worktree itself. A failed or stale run, and
-a `--no-pr` one, leave them, and `close` cleans up after one of them. It refuses a run that is `running`, since an
-orchestrator still drives it. Every run it accepts loses its herdr workspace. What happens to the files depends on
-whose they are:
+a `--no-pr` one, leave them, and `close` cleans up after one of them. It refuses a run that is `running`, or saved
+as `done` while its orchestrator is still ending it, since an orchestrator still drives it. Every run it accepts
+loses its herdr workspace, and its local refs under `refs/orchestrator/<key>/`, which hold the commits of the files
+its locking steps locked: a run that ends `done` deletes them itself, but a closed run is never resumed, and without
+`close` nothing would delete them, so `git gc` would keep those commits for good. A ref can exist although
+`state.json`'s `locked` is empty, when the run's first lock failed after making it, so `close` looks for them
+whatever `locked` says. A run that locked nothing in a directory that is not a git repository with a commit, such
+as a `--no-pr` run's, has none, and `close` runs no git command for them. A run that locked files where git now
+refuses the repository, such as a checkout of dubious ownership, is not closed: `close` fails, naming the refs, and
+closes it once git reads the repository again. What happens to the files depends on whose they are:
 
 - **A failed or stale `--worktree` run**: the worktree is the run's own, so it is removed with
   `git worktree remove --force` after `close` lists the files `git status --porcelain` shows, which go with it.
@@ -278,7 +285,9 @@ whose they are:
 
 Each step passes over what is already gone, a workspace herdr no longer has included, and any herdr or git
 failure stops `close` with an error before anything is recorded. Once every step has succeeded, what was done is
-recorded as one line, the run's `closed`, such as `workspace closed; worktree deleted; branch deleted`. As with
+recorded as one line, the run's `closed`, such as `workspace closed; worktree deleted; branch deleted`, with
+`; refs deleted` at its end when `close` deleted any refs or `locked` says the run had some, so a retry after a
+`close` that deleted them and then failed still says so. As with
 `branch_cleanup`, it is added to `state.json` without changing its modification time, and only if the file has
 not changed since `close` read it. `list` and `show` print it, a second `close` only prints it again, and
 `resume` refuses a closed run, `--force` or not, since its worktree and branch may be gone. A closed run that was
@@ -293,7 +302,9 @@ and asks `gh` whether it merges cleanly now. If it does, `refresh`:
 
 - removes the conflict warning from the description, leaving the rest of it, your edits included, as it is;
 - marks the pull request ready for review if the run approved or finished, and leaves it a draft otherwise;
-- forgets the conflict in `state.json`, so `show` no longer lists it.
+- forgets the conflict in `state.json`, so `show` no longer lists it, and records there that it cleared it, so the
+  next `drain` takes up the run's spec once, as though it had cleared the conflict itself
+  ([Draining specs](#draining-specs)).
 
 A pull request merged or closed meanwhile only has its conflict forgotten. One that still conflicts, or whose
 mergeability GitHub is still computing, is left as it is, and `refresh` exits `5`; run it again later. It prints
@@ -318,8 +329,11 @@ merged.
 **What one drain does, in order.** It first asks `gh` about each `in-review` spec's pull request: merged makes it
 `done`, closed `ready-for-human`. It refreshes the run on each `in-review` and `ready-for-human` spec's `Run:`
 line as `refresh` does, and a `ready-for-human` spec whose run approved or finished, with its pull request open,
-goes to `in-review` once its conflict is cleared. A `ready-for-agent` spec with a `Run:` line is one an
-interrupted drain left; its run, if finished, sets the spec's status, and one that makes it `in-review` has its
+goes to `in-review` once its conflict is cleared, by this drain or by a `refresh` before it; drain takes up a
+`refresh`'s clearing once, forgetting it only once the spec's header is written, so a spec you set back to
+`ready-for-human` afterwards stays so; while `gh` cannot say what became of the pull request, drain says so and leaves
+the spec for a later drain. A `ready-for-agent` spec with a `Run:` line is one an interrupted drain left; its run,
+if finished, sets the spec's status, and one that makes it `in-review` has its
 pull request asked about at once, so a pull request merged meanwhile makes it `done` in this drain; if not
 finished, drain stops and says what to do: wait for it, `resume` it, or delete the `Run:` line to start the spec
 over. Then drain sweeps the branches of earlier runs once, and runs each spec whose blockers are all `done`.

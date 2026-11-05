@@ -216,7 +216,8 @@ orchestrator show e292fb
 # Continue a stopped run
 orchestrator resume e292fb
 
-# Done with a failed or finished run: close its workspace, and a failed --worktree run's worktree and branch
+# Done with a failed or finished run: close its workspace, delete its local refs, and a failed --worktree run's
+# worktree and branch
 orchestrator close e292fb
 
 # After you resolved a pull request's conflict and pushed: drop its warning, and its draft if it was approved
@@ -332,7 +333,8 @@ share its working tree, so a run refuses to start or resume while another run th
 
 A failed run keeps its workspace open and stays on its branch, and so does a `--no-pr` run. `resume` continues a
 stopped run where `state.json` says ([Resuming a run](docs/design.md#resuming-a-run)), and `close` cleans up after
-one you are done with ([Closing a run](docs/design.md#closing-a-run)). `list` marks a run `stale` after five
+one you are done with, the local refs that keep its locked files included
+([Closing a run](docs/design.md#closing-a-run)). `list` marks a run `stale` after five
 minutes without a heartbeat ([Stale runs](docs/design.md#stale-runs)).
 
 See also [design decisions](docs/design.md), [architecture](docs/architecture.md), [roadmap](docs/roadmap.md)

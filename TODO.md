@@ -147,24 +147,11 @@ is rewritten to say what is left.
   does not, and POST /run answers 422 with the shell's error, or 202 when the marker never shows. Found while
   implementing app-start-runs ticket 01 (2026-11-03). Closes with a launch that does not go through the pane's
   shell: herdr starting the command itself in the new pane, if a later herdr can.
-- **new-dependencies on Cargo: two readings of a manifest that its doc does not state.** In
-  `engine/src/checks/dependencies.rs`, `cargo_manifest_dependencies` keeps the first entry of a crate across its tables,
-  as `add_named` does across manifests: `foo = "1"` in `[dependencies]` and `foo = { git = "..." }` under
-  `[target.'cfg(windows)'.dependencies]` record foo as from crates.io, and its git source is never compared with the
-  spec. And `cargo_member_entry` takes only boolean `true` as `workspace = true`: `workspace = "true"`, `1` or
-  `false` falls through to `cargo_entry` as a crates.io dependency, rather than being refused as an entry of another
-  shape. Raised, not recorded, by cross-review of 20aa212 (2026-10-30); both predate it. Closes with the rule chosen and
-  stated on `cargo_dependencies`'s doc: the first entry, or every source a crate is named with; and a non-boolean
-  `workspace` refused.
-  Ticket: `.scratch/cargo-dependency-rules/issues/01-one-rule-per-crate-entry.md` (#237).
-- **`Map` has no first-wins insert.** `cargo_manifest_dependencies` and `add_named`
-  (`engine/src/checks/dependencies.rs`) each spell out `if !out.contains_key(&key) { out.insert(..) }`, a branch that
-  put the first at 16 of the gate's cognitive-complexity limit of 15 (PR #214), which 20aa212 met by moving the
-  `workspace = true` resolution into `cargo_member_entry` instead. Deferred from cross-review of 20aa212 (F1, nit,
-  2026-10-30): "A method there used at both sites would remove that branch from `cargo_manifest_dependencies` and keep
-  inheritance inline." Ticket octoflow-without-python/04 kept that map as `crate::map::Map` (`engine/src/map.rs`), since
-  serde_json's map holds only JSON values and these hold `Dependency`s; closes with a first-wins insert there, both
-  sites taking it.
+- **new-dependencies points a second source's finding at the package's first added line.** `compare_dependencies`
+  (`engine/src/checks/dependencies.rs`) gives each `NewPackage` and source-changed finding the first line the change
+  added to its manifest that names the package (`line_naming`), not the line of that source's entry: `foo = "1"` and
+  `foo = { git = ".." }` added to one Cargo.toml both point at the first. Found while implementing ticket
+  cargo-dependency-rules/01 (2026-11-04). Closes with the readers giving each source the line of its entry.
 - **Readers of `state.json` still take records an earlier release wrote.** Since octoflow-without-python ticket 04
   (2026-11-03) a `state.json` without the format marker is refused (`crate::state::format_problem`), so no record an
   earlier release wrote reaches them, but `ProofRun::read` (`engine/src/proofs.rs`) still reads a `proofs` record
@@ -669,14 +656,13 @@ is rewritten to say what is left.
   check reuses `Host.gitleaks_problem`, the run's pre-push check, which asks `gitleaks git --help` because a
   distribution's build may print no version number. So `doctor` shows no gitleaks version. Kept by choice
   (2026-10-24).
-- **A spec left `ready-for-human` by a conflict stays there when `refresh` clears the conflict before a drain does.**
-  drain moves such a spec to `in-review` only when its own refresh clears the run's conflict (`refreshed_headers`);
-  a run cleared by `orchestrator.py refresh` beforehand has no conflicts left, so drain cannot tell the spec held
-  back only by its conflict from one the human set `ready-for-human`, and leaves it, with an open pull request
-  ready for review that no drain marks `done` once merged. Kept so that drain never overrides a status the human
-  set. Raised while building the refresh command (2026-10-25). Closes with the run recording that a refresh cleared
-  its conflict, which drain then reads, or with refresh moving the spec itself.
-  Ticket: `.scratch/drain-refresh-cleared/issues/01-refresh-records-a-cleared-conflict.md` (#236).
+- **A spec left `ready-for-human` by a conflict stays there when `refresh` finds its pull request merged or closed.**
+  `refresh_conflict` records `conflict_cleared` only for an open pull request; one merged or closed meanwhile has only
+  its conflicts forgotten, so a later drain does not ask gh about it, and a `ready-for-human` spec whose pull request
+  `refresh` found merged is never marked `done`. drain's own refresh of the same run does mark it `done`
+  (`settled_header`, step 3). Raised while implementing drain-refresh-cleared ticket 01 (2026-11-04). Closes with
+  refresh recording the cleared conflict whatever the pull request's state, and drain following that record's pull
+  request for a `ready-for-human` spec.
 - **Proofs run after the last round's review too.** No Builder turn follows to read them; only the draft pull
   request's review shows them, and each may take `PROOF_TIMEOUT`. Kept: a demonstrated defect is what the human
   most needs to see in a draft. Raised by the same review.
@@ -701,11 +687,13 @@ is rewritten to say what is left.
   (`[1] == [True]`). Raised by the cross-review of `test-integrity-constants` (F4, 2026-10-27): "`_literals`
   equality misses sign, type and structure changes"; the constant path compares `_tree_fingerprint`s instead.
   Closes with the inline path comparing typed literals and pairing a unary minus with its operand.
-- **A run that never reaches `done` keeps its local refs.** A locking step's commit stays under
-  `refs/orchestrator/<key>/locked/` (`RunState::lock_ref`) until the run ends `done` (`Workflow::clean_up_locks`);
-  `close` and `prune` do not delete them, so a failed run's locked snapshots are never collected by `git gc`. Closes
-  with `close` and `prune` deleting `RunState::refs_prefix` as they delete the run's branch.
-  Ticket: `.scratch/close-run-refs/issues/01-close-deletes-run-refs.md` (#232).
+- **A run that is never closed keeps its local refs.** A locking step's commit stays under
+  `refs/orchestrator/<key>/locked/` (`RunState::lock_ref`) until the run ends `done` (`Workflow::clean_up_locks`) or
+  is closed (`close_run`, `engine/src/cli/close.rs`). Left: the refs of a failed or stale run nobody closes, of one
+  closed by a release whose `close` left them, and of one whose run directory was deleted by hand, which `close`
+  cannot find; their locked snapshots are never collected by `git gc`. `git for-each-ref refs/orchestrator/` lists
+  them, and `git update-ref -d` deletes one. Decided against on 2026-10-25: `prune` deleting them, and a sweep of
+  `refs/orchestrator/<key>/` whose run directory is gone.
 - **An agent's pull request can reach `main` on rules it wrote itself, with no human.** Jenkins's App reports
   `continuous-integration/jenkins/pr-head`, which the agents' token cannot post, but a pull request build runs
   the pull request's own `Jenkinsfile` and gate (`docs/quality-gate.md`, What the Gate stage judges), and since

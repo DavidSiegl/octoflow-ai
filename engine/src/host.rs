@@ -531,12 +531,15 @@ pub trait Host {
         Ok(())
     }
 
-    /// Delete every local ref whose name starts with prefix, such as `refs/orchestrator/<key>/`; none is no error.
-    fn delete_refs(&self, cwd: &str, prefix: &str) -> Result<(), OrchestratorError> {
-        for git_ref in self.git(cwd, &["for-each-ref", "--format=%(refname)", prefix])?.split_whitespace() {
+    /// Delete every local ref of cwd's repository whose name starts with prefix, such as `refs/orchestrator/<key>/`,
+    /// and return whether there was any; none is no error. Errors: a git command fails, cwd outside a repository git
+    /// will read included, some of the refs perhaps deleted already.
+    fn delete_refs(&self, cwd: &str, prefix: &str) -> Result<bool, OrchestratorError> {
+        let listed = self.git(cwd, &["for-each-ref", "--format=%(refname)", prefix])?;
+        for git_ref in listed.split_whitespace() {
             self.git(cwd, &["update-ref", "-d", git_ref])?;
         }
-        Ok(())
+        Ok(!listed.is_empty())
     }
 
     /// `git diff -U0` from base to commit, or to the working tree's tracked files without one, in the one shape
