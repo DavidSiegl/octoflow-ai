@@ -16,3 +16,5 @@ doesn't exist yet (Jenkinsfile, Release stage). A change reaches users only if i
   `cargo update --workspace`: `tests/test_invariants.py` fails a build whose engine version differs from
   `pyproject.toml`'s, and Jenkins's `--locked` cargo steps fail one whose `Cargo.lock` is stale.
 - Don't create tags or releases by hand; Jenkins does that after the merge.
+
+@docs/agents/README.md

@@ -35,3 +35,9 @@ ci/gate-rust/target/
 
 # What Hypothesis keeps of the examples it tried
 .hypothesis/
+
+# Claude Code's personal instructions for this repo
+CLAUDE.local.md
+
+# The tracker's specs, tickets and review records
+.scratch/
