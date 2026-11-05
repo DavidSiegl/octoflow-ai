@@ -1563,6 +1563,46 @@ fn a_conflict_outside_a_subdirectory_is_reported_under_diff_relative() {
     assert_eq!(c.head(&c.a), mine);
 }
 
+#[test]
+fn a_new_file_is_listed_whatever_the_users_show_untracked_files() {
+    let c = Clones::new();
+    c.sh(&["git", "-C", &c.a, "config", "status.showUntrackedFiles", "no"]);
+    c.put("app.py", Some("one\nedited\n"));
+    c.put("sub/new.py", Some("new\n"));
+    assert_eq!(git_status(&c.host, &c.a).unwrap(), " M app.py\n?? sub/new.py\n");
+}
+
+#[test]
+fn a_submodule_moved_to_another_commit_is_listed_whatever_the_users_ignore_settings() {
+    let c = Clones::new();
+    let lib = format!("{}/lib", c.dir());
+    let ident = ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"];
+    let in_lib = |rest: &[&str]| {
+        let argv: Vec<&str> = ["git", "-C", lib.as_str()].into_iter().chain(ident).chain(rest.iter().copied()).collect();
+        c.sh(&argv)
+    };
+    c.sh(&["git", "init", "--quiet", "-b", "main", &lib]);
+    in_lib(&["commit", "--quiet", "--allow-empty", "-m", "one"]);
+    c.sh(&["git", "-C", &c.a, "-c", "protocol.file.allow=always", "submodule", "--quiet", "add", &lib, "mod"]);
+    c.sh(&["git", "-C", &c.a, "commit", "--quiet", "-m", "add mod"]);
+    c.sh(&["git", "-C", &c.a, "config", "diff.ignoreSubmodules", "all"]);
+    c.sh(&["git", "-C", &c.a, "config", "submodule.mod.ignore", "all"]);
+    let mut moved: Vec<&str> = vec!["git", "-C"];
+    let checkout = format!("{}/mod", c.a);
+    moved.push(&checkout);
+    moved.extend(ident);
+    moved.extend(["commit", "--quiet", "--allow-empty", "-m", "two"]);
+    c.sh(&moved);
+    assert_eq!(git_status(&c.host, &c.a).unwrap(), " M mod\n");
+}
+
+#[test]
+fn a_file_with_a_non_ascii_name_is_listed_as_it_is_named() {
+    let c = Clones::new();
+    c.put("über.py", Some("new\n"));
+    assert_eq!(git_status(&c.host, &c.a).unwrap(), "?? über.py\n");
+}
+
 /// The text of name in the repository at path, None for no file.
 fn text(path: &str, name: &str) -> Option<String> {
     std::fs::read_to_string(format!("{path}/{name}")).ok()

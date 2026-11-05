@@ -44,6 +44,18 @@ fn a_proofs_section_names_each_proof_and_the_findings_left_unproven() {
 }
 
 #[test]
+fn a_moved_proof_is_saved_with_moved_and_one_saved_without_it_is_not_moved() {
+    let moved = run(r#"{"round": 2, "written": 1, "file": "t", "finding": null, "demonstrated": false, "said": "it did not run", "moved": true}"#);
+    assert!(moved.moved);
+    assert_eq!(Value::Object(moved.record()).get("moved"), Some(&Value::Bool(true)));
+    let older = run(r#"{"round": 2, "written": 1, "file": "t", "finding": null, "demonstrated": false, "said": "it errors"}"#);
+    assert!(!older.moved);
+    assert!(!older.record().contains_key("moved"));
+    let refused = ProofRun::read(&record(r#"{"round": 2, "file": "t", "finding": null, "demonstrated": false, "said": "", "moved": "yes"}"#));
+    assert_eq!(refused.unwrap_err().0, "a proof run saved in state.json has moved \"yes\", not true or false");
+}
+
+#[test]
 fn a_proof_run_is_read_and_written_as_the_python_engine_saves_it() {
     // Written last: a record saved before there was one reads as a first run, and is written with it.
     let old = r#"{"round": 2, "file": "test_3.sh", "finding": 3, "demonstrated": true, "said": "it fails"}"#;
