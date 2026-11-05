@@ -103,9 +103,10 @@ Everywhere else, build it from a checkout with cargo, by the toolchain `rust-too
 cargo build --release --locked -p octoflow-engine   # target/release/orchestrator
 ```
 
-The examples below call it `orchestrator`: put the binary on your `PATH` under that name. Releases before 0.49.0
-were the Python engine, `orchestrator.py`, which also came as `octoflow.pyz`; the Rust engine takes the same
-commands and flags. A run a release before 0.54.0 started is not resumed: finish or close it with that release.
+The examples below call it `orchestrator`: put the binary on your `PATH` under that name. `orchestrator --version`
+says which release it is. Releases before 0.49.0 were the Python engine, `orchestrator.py`, which also came as
+`octoflow.pyz`; the Rust engine takes the same commands and flags. A run a release before 0.54.0 started is not
+resumed: finish or close it with that release.
 
 The tk window that `gui` opened went with the Python engine; the [desktop app](#desktop-app) is the window now.
 

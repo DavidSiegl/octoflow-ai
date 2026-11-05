@@ -165,6 +165,15 @@ fn help_exits_0_and_no_arguments_print_it() {
     assert!(e.to_string().contains("resume"));
 }
 
+#[test]
+fn version_exits_0_with_the_engines_version() {
+    for argv in [&["--version"][..], &["-V"]] {
+        let e = parse(argv).unwrap_err();
+        assert_eq!((e.kind(), e.exit_code()), (ErrorKind::DisplayVersion, 0), "{argv:?}");
+        assert_eq!(e.to_string(), format!("orchestrator {}\n", env!("CARGO_PKG_VERSION")), "{argv:?}");
+    }
+}
+
 // -- Python's cases of parse_args ------------------------------------------------------------------------------------
 
 #[test]
@@ -329,13 +338,17 @@ fn help_names_the_flags_python_names() {
     // The program's own help, then each command's.
     for (name, argv) in std::iter::once(("", vec!["--help"])).chain(ported.iter().map(|c| (c.as_str(), vec![c.as_str(), "--help"]))) {
         let help = parse(&argv).unwrap_err().to_string();
-        let python: std::collections::BTreeSet<String> = flags
+        let mut python: std::collections::BTreeSet<String> = flags
             .get(name)
             .and_then(Value::as_array)
             .unwrap_or_else(|| panic!("cli.json has no command {name}"))
             .iter()
             .map(Value::text)
             .collect();
+        // The Rust engine's own: orchestrator.py had no --version (run-usability/01).
+        if name.is_empty() {
+            python.insert("--version".into());
+        }
         assert_eq!(flags_in(&help), python, "{name:?}'s help:\n{help}");
     }
     let missing: Vec<&str> =

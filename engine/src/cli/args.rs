@@ -471,6 +471,8 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
             "Role-based handoff between agent sessions in herdr, each role in the harness of its choice; by default \
              Spec Collector -> Builder -> Reviewer, all in Claude Code.",
         )
+        // The engine's version is the release's: tests/test_invariants.py holds it to pyproject.toml's.
+        .version(env!("CARGO_PKG_VERSION"))
         .subcommand_required(true)
         .arg_required_else_help(true)
         // argparse takes an unambiguous abbreviation of a long flag.
