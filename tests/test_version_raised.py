@@ -58,7 +58,7 @@ class TestVersionRaised(RepositoryTest):
                 "ui/src/App.test.tsx": "x", "ui/src/runs.test.ts": "x", "ui/src/test/fakes.ts": "x",
                 "ci/build.sh": "x", "Jenkinsfile": "x", "gate.py": "x", ".github/workflows/w.yml": "x",
                 "evals/tasks/t/task.md": "x", "xtask/tests/cli.rs": "x", "xtask/src/main.rs": "x",
-                ".gitignore": "x"}
+                ".gitignore": "x", ".copier-answers.yml": "x"}
         self.commit(only, "docs, tests, CI and repository tooling")
         proc = self.run_script()
         self.assertEqual((proc.returncode, proc.stderr), (0, ""))
