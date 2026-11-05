@@ -627,15 +627,16 @@ pub trait Host {
     /// The rules come from base, a commit before the change: its .gitleaks.toml (else gitleaks' defaults), each file
     /// it extends with `[extend] path`, in turn, and its .gitleaksignore (else none), and nothing the change holds, so
     /// that the change cannot allowlist itself. Every file git takes for text by its content is diffed as text, with
-    /// no textconv, whatever any .gitattributes says. A file git takes for binary (a NUL in its first 8000 bytes, or
-    /// a size over core.bigFileThreshold, 512 MiB by default, with no attribute saying otherwise) is left out on
-    /// purpose, and nothing catches a secret in it: gitleaks skips such a file before any rule runs, path rules and
-    /// its own `pkcs12-file` rule included, and the comment check never reads it, so a `.p12` keystore or a
-    /// `gitleaks:allow` comment in one goes unreported (TODO.md, "The secret scan does not look inside a file git
-    /// takes for binary"). gitleaks honours a `gitleaks:allow` comment
-    /// silently, so each one an added line holds is a Leak of its own. gitleaks runs with --redact and writes its JSON
-    /// report to report_path, a path in the run's directory, beside the .gitleaksignore copy, the rules directory and
-    /// the empty directory it scans from.
+    /// no textconv, whatever any .gitattributes says. A change git diffs as binary is left out on purpose, and nothing
+    /// catches a secret in it. git does so when either side of a file's change is binary to git: a NUL in its first
+    /// 8000 bytes, or a size over core.bigFileThreshold, both as the user's git configuration and attribute files
+    /// (not base's) set them. So a text file replacing a binary one goes unread too. gitleaks skips such a change
+    /// before any rule runs, path rules and its own `pkcs12-file` rule included, and the comment check never reads
+    /// it, so a `.p12` keystore, or a key or `gitleaks:allow` comment in such a change, goes unreported (TODO.md,
+    /// "The secret scan does not look inside a file git takes for binary"). gitleaks honours a `gitleaks:allow`
+    /// comment silently, so each one an added line holds is a Leak of its own. gitleaks runs with --redact and writes
+    /// its JSON report to report_path, a path in the run's directory, beside the .gitleaksignore copy, the rules
+    /// directory and the empty directory it scans from.
     ///
     /// Errors, failing closed: git cannot read base or the range; base's rules cannot be taken whole from base (a
     /// file in the chain is no TOML, extends what base lacks or what leaves the repository, or is a symbolic link) or
