@@ -304,12 +304,14 @@ impl Prompts {
 /// placeholder, and a run started before 0.58.0 had one verdict step, so for that run both name the same file.
 const EARLIER_PLACEHOLDERS: &[(Prompt, &[&str])] = &[(Prompt::FixPrompt, &["build_path", "prev_review_path"])];
 
-/// The prompts a run started with, from the overrides saved with it (RunState::prompt_overrides). Each override is
-/// held to the placeholders of its built-in text, or to those an earlier release's text took (EARLIER_PLACEHOLDERS).
+/// The prompts a run started with, from the overrides saved with it (RunState::prompt_overrides). This is the rule
+/// for a saved override, which prompt_problem's is not: the run goes on with the text it chose, so an override is
+/// refused only for what cannot be filled in (unfillable_problem), against the placeholders of its built-in text or
+/// all of those an earlier release's text took (EARLIER_PLACEHOLDERS). One that leaves a placeholder out is kept, as
+/// is one a release since gave a new placeholder.
 ///
-/// Errors, naming run_id: the overrides name a prompt this orchestrator lacks, or one holds what a prompt file may
-/// not (prompt_problem) and fits no earlier text either, as an override saved by a release that took more of a
-/// placeholder than its name does.
+/// Errors, naming run_id: the overrides name a prompt this orchestrator lacks, or one is not a template, or names a
+/// placeholder neither text offers.
 pub fn saved_prompts(overrides: &Map<String>, run_id: &str) -> Result<Prompts, OrchestratorError> {
     let prompts = Prompts::from_overrides(overrides).map_err(|unknown| {
         OrchestratorError(format!("run state {run_id} replaces prompt {unknown}, which this orchestrator lacks"))
@@ -317,10 +319,12 @@ pub fn saved_prompts(overrides: &Map<String>, run_id: &str) -> Result<Prompts, O
     let fits_earlier_text = |name: &str, text: &str| {
         EARLIER_PLACEHOLDERS
             .iter()
-            .any(|(p, earlier)| p.name() == name && placeholder_problem(name, text, earlier).is_none())
+            .any(|(p, earlier)| p.name() == name && unfillable_problem(name, text, earlier).is_none())
     };
     let refused = overrides.iter().find_map(|(name, text)| {
-        prompt_problem(name, text).filter(|_| !fits_earlier_text(name, text)).map(|problem| (name, problem))
+        built_in_unfillable_problem(name, text)
+            .filter(|_| !fits_earlier_text(name, text))
+            .map(|problem| (name, problem))
     });
     match refused {
         Some((name, problem)) => Err(OrchestratorError(format!(
@@ -401,35 +405,52 @@ pub fn load_prompts(config: &ConfigDir) -> Result<Prompts, OrchestratorError> {
     Ok(Prompts::from_overrides(&overrides).expect("each name was checked"))
 }
 
-/// What stops text from replacing the built-in prompt of that name, a Prompt's, or None: a placeholder the built-in
-/// text lacks, naming where it is, or a missing one it has, or a template that cannot be read (template::parse).
+/// What stops text from replacing the built-in prompt of that name in a prompt file, a Prompt's, or None: what
+/// built_in_unfillable_problem finds, or a placeholder the built-in text has and the text lacks. The rule for a file
+/// read now; saved_prompts' is the narrower one for an override saved with a run.
 pub fn prompt_problem(name: &str, text: &str) -> Option<String> {
-    let built_in = placeholders(Prompt::named(name)?.built_in()).expect("a built-in text parses");
-    placeholder_problem(name, text, &built_in.iter().map(String::as_str).collect::<Vec<_>>())
+    let owned = built_in_placeholders(name)?;
+    let built_in: Vec<&str> = owned.iter().map(String::as_str).collect();
+    unfillable_problem(name, text, &built_in).or_else(|| {
+        let used = placeholders(text).expect("unfillable_problem parsed the text");
+        let missing = built_in.iter().filter(|p| !used.iter().any(|u| u == *p)).min()?;
+        Some(format!("placeholder {{{missing}}} is missing; {}", takes(name, &built_in)))
+    })
 }
 
-/// What stops text from being a template of just the placeholders wanted, worded as prompt_problem's for the prompt
-/// of that name, or None.
-fn placeholder_problem(name: &str, text: &str, wanted: &[&str]) -> Option<String> {
-    let used = match placeholders(text) {
-        Ok(names) => names,
-        Err(e) => return Some(e.to_string()),
-    };
-    let mut wanted = wanted.to_vec();
-    wanted.sort();
-    wanted.dedup();
-    let takes = if wanted.is_empty() {
-        format!("{name} takes none")
-    } else {
-        let list: Vec<String> = wanted.iter().map(|p| format!("{{{p}}}")).collect();
-        format!("{name} takes {}", list.join(", "))
-    };
-    let empty = |p: &str| wanted.contains(&p).then(String::new);
-    if let Err(e) = fill(text, &empty) {
-        return Some(format!("{e}; {takes}"));
+/// The placeholders of the built-in prompt of that name, or None for a name that is no prompt's.
+fn built_in_placeholders(name: &str) -> Option<Vec<String>> {
+    Some(placeholders(Prompt::named(name)?.built_in()).expect("a built-in text parses"))
+}
+
+/// What stops text from being a template of the built-in prompt of that name, using only its placeholders, or None
+/// (also for a name that is no prompt's): the unfillable_problem against the built-in text.
+fn built_in_unfillable_problem(name: &str, text: &str) -> Option<String> {
+    let built_in = built_in_placeholders(name)?;
+    unfillable_problem(name, text, &built_in.iter().map(String::as_str).collect::<Vec<_>>())
+}
+
+/// What stops text from being filled in with the placeholders offered, worded as prompt_problem's for the prompt of
+/// that name: a template that cannot be read, or a placeholder not offered; None otherwise, however few of those
+/// offered it uses.
+fn unfillable_problem(name: &str, text: &str, offered: &[&str]) -> Option<String> {
+    if let Err(e) = placeholders(text) {
+        return Some(e.to_string());
     }
-    let missing = wanted.iter().filter(|p| !used.iter().any(|u| u == *p)).min()?;
-    Some(format!("placeholder {{{missing}}} is missing; {takes}"))
+    let empty = |p: &str| offered.contains(&p).then(String::new);
+    fill(text, &empty).err().map(|e| format!("{e}; {}", takes(name, offered)))
+}
+
+/// "NAME takes {a}, {b}" (sorted, once each), or "NAME takes none".
+fn takes(name: &str, placeholders: &[&str]) -> String {
+    let mut sorted = placeholders.to_vec();
+    sorted.sort();
+    sorted.dedup();
+    if sorted.is_empty() {
+        return format!("{name} takes none");
+    }
+    let list: Vec<String> = sorted.iter().map(|p| format!("{{{p}}}")).collect();
+    format!("{name} takes {}", list.join(", "))
 }
 
 #[cfg(test)]
