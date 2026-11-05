@@ -54,42 +54,51 @@ impl PackageSource {
 
     /// Where it comes from, as a finding says it, index being the name of the index it does not come from.
     pub fn describe(&self, index: &str) -> String {
+        self.phrase(Some(index))
+    }
+
+    /// describe's words, without saying that it does not come from the index when contrast is None: for a list of
+    /// sources that may hold the index itself.
+    fn phrase(&self, contrast: Option<&str>) -> String {
         let place = &self.place;
+        let unlike = |words: &str| contrast.map_or_else(String::new, |index| format!(", {words} {index}"));
         match self.kind {
-            SourceKind::Workspace => format!("a member of the project's workspace, not from {index}"),
-            SourceKind::Index => format!("from the index {place}, not checked against {index}"),
+            SourceKind::Workspace => format!("a member of the project's workspace{}", unlike("not from")),
+            SourceKind::Index => format!("from the index {place}{}", unlike("not checked against")),
             SourceKind::Unknown => {
                 format!(
                     "from the uv source {place}, which this check does not know, so where it comes from is not checked"
                 )
             }
-            SourceKind::Path => format!("from the path {place}, not from {index}"),
-            SourceKind::Git => format!("from the repository {place}, not from {index}"),
-            SourceKind::Url => format!("from {place}, not from {index}"),
+            SourceKind::Path => format!("from the path {place}{}", unlike("not from")),
+            SourceKind::Git => format!("from the repository {place}{}", unlike("not from")),
+            SourceKind::Url => format!("from {place}{}", unlike("not from")),
         }
     }
 }
 
-/// Packages by package_key, each with where it comes from, None for the ecosystem's index: what one manifest names.
-pub type Sources = Map<Option<PackageSource>>;
+/// What one manifest names: (package_key, where it comes from, None for the ecosystem's index), in the manifest's
+/// order. A package it names from several sources is in it once for each, and may be in it more than once for one.
+pub type Sources = Vec<(String, Option<PackageSource>)>;
 
-/// A package a project depends on.
+/// A package a project depends on, from one source.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Dependency {
     /// Where it comes from; None for the ecosystem's index.
     pub source: Option<PackageSource>,
     /// The manifest that names it, by its path from the top level; for a locked package, the lock file. Of a package
-    /// several manifests name, the first the ecosystem reads.
+    /// several manifests name from this source, the first the ecosystem reads.
     pub manifest: String,
 }
 
-/// What a project's manifests say it depends on, each package by package_key.
+/// What a project's manifests say it depends on, each package by package_key with one Dependency for each source it
+/// is named with, in the order the ecosystem reads them; no package has an empty list.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Dependencies {
     /// The project's own choice, which the spec must name.
-    pub direct: Map<Dependency>,
+    pub direct: Map<Vec<Dependency>>,
     /// Every package its lock file pins, the project and its workspace aside.
-    pub locked: Map<Dependency>,
+    pub locked: Map<Vec<Dependency>>,
     /// Why, by path, for each manifest that cannot be read; direct and locked then come from the others only.
     pub unreadable: Map<String>,
 }
@@ -147,7 +156,9 @@ pub fn package_key(name: &str) -> String {
 /// Its direct dependencies are pyproject.toml's `[project]` dependencies and optional-dependencies and its
 /// `[dependency-groups]`, an `{include-group}` entry and the project itself left out. A dependency's source is its
 /// `[tool.uv.sources]` entry, else its PEP 508 URL, else the `[[tool.uv.index]]` marked default, else the index
-/// uv.lock has it from. The locked packages are uv.lock's, the project and its workspace members left out.
+/// uv.lock has it from. The locked packages are uv.lock's, the project and its workspace members left out. A package
+/// named from several sources is a dependency from each of them: one requirement with a URL and another without,
+/// each entry of a `[tool.uv.sources]` list (each for some platforms), and each index uv.lock has it from.
 pub fn python_dependencies(read: &ReadFile) -> Result<Dependencies, OrchestratorError> {
     let mut found = Dependencies::default();
     match toml_manifest(read, "uv.lock")?.and_then(|lock| uv_lock_packages(&lock)) {
@@ -158,9 +169,9 @@ pub fn python_dependencies(read: &ReadFile) -> Result<Dependencies, Orchestrator
         Ok(direct) => {
             let direct = direct
                 .into_iter()
-                .map(|(key, source)| {
-                    let source = source.or_else(|| found.locked.get(&key).and_then(|d| d.source.clone()));
-                    (key, source)
+                .flat_map(|(key, source)| match (source, found.locked.get(&key)) {
+                    (None, Some(locked)) => locked.iter().map(|d| (key.clone(), d.source.clone())).collect(),
+                    (source, _) => vec![(key, source)],
                 })
                 .collect();
             add_named(&mut found.direct, direct, "pyproject.toml");
@@ -170,11 +181,15 @@ pub fn python_dependencies(read: &ReadFile) -> Result<Dependencies, Orchestrator
     Ok(found)
 }
 
-/// Adds to packages each of sources that it does not hold yet, as named by the manifest at path.
-fn add_named(packages: &mut Map<Dependency>, sources: Sources, path: &str) {
+/// Adds to packages each package of sources from each source that packages does not hold it from yet, as named by
+/// the manifest at path.
+fn add_named(packages: &mut Map<Vec<Dependency>>, sources: Sources, path: &str) {
     for (key, source) in sources {
-        if !packages.contains_key(&key) {
-            packages.insert(key, Dependency { source, manifest: path.to_string() });
+        let dependency = Dependency { source, manifest: path.to_string() };
+        match packages.get_mut(&key) {
+            None => packages.insert(key, vec![dependency]),
+            Some(held) if held.iter().all(|d| d.source != dependency.source) => held.push(dependency),
+            Some(_) => {}
         }
     }
 }
@@ -203,17 +218,16 @@ fn pyproject_dependencies(pyproject: &Table) -> Result<Sources, String> {
         Some(Value::String(name)) => package_key(name),
         Some(_) => return Err("[project] name is not a string".to_string()),
     };
-    let mut out = Map::new();
+    let mut out = Vec::new();
     for (place, requirements) in requirement_lists(project, pyproject)? {
         let Value::Array(requirements) = requirements else { return Err(format!("{place} is not a list")) };
         for requirement in requirements.iter().filter(|r| !r.is_table()) {
             let (key, url) = requirement_of(requirement)?;
             if key != own {
-                let source = match sources.get(&key).cloned().flatten() {
-                    Some(source) => Some(source),
-                    None => url.map(|url| PackageSource::new(SourceKind::Url, url)).or_else(|| default.clone()),
-                };
-                out.insert(key, source);
+                let fallback = url.map(|url| PackageSource::new(SourceKind::Url, url)).or_else(|| default.clone());
+                for source in sources.get(&key).map_or(&[None][..], Vec::as_slice) {
+                    out.push((key.clone(), source.clone().or_else(|| fallback.clone())));
+                }
             }
         }
     }
@@ -248,19 +262,23 @@ fn uv_indexes(uv: &Table) -> Result<Vec<&Table>, String> {
     }
 }
 
-/// The PackageSource of each package `[tool.uv.sources]` names, by package_key; None for one from PyPI's index. Of a
-/// package with several sources, each for some platforms, the first.
-fn uv_sources(uv: &Table) -> Result<Sources, String> {
+/// The PackageSources of each package `[tool.uv.sources]` names, by package_key, one for each entry of a list of
+/// them (each for some platforms), in its order; None for one from PyPI's index. No package has an empty list.
+fn uv_sources(uv: &Table) -> Result<Map<Vec<Option<PackageSource>>>, String> {
     let indexes: Vec<(Option<&Value>, Option<&Value>)> =
         uv_indexes(uv)?.into_iter().map(|i| (i.get("name"), i.get("url"))).collect();
     let mut out = Map::new();
     for (name, entry) in toml_table(uv, "sources")? {
-        let first = match entry {
-            Value::Array(items) if !items.is_empty() => &items[0],
-            other => other,
+        let entries = match entry {
+            Value::Array(items) if !items.is_empty() => items.as_slice(),
+            other => std::slice::from_ref(other),
         };
-        let Value::Table(first) = first else { return Err(format!("[tool.uv.sources] {name} is not a table")) };
-        out.insert(package_key(name), uv_source(first, &indexes));
+        let mut sources = Vec::new();
+        for entry in entries {
+            let Value::Table(entry) = entry else { return Err(format!("[tool.uv.sources] {name} is not a table")) };
+            sources.push(uv_source(entry, &indexes));
+        }
+        out.insert(package_key(name), sources);
     }
     Ok(out)
 }
@@ -375,14 +393,12 @@ fn uv_lock_packages(lock: &Table) -> Result<Sources, String> {
             .ok_or("[[package]] is not a list of tables with a name")?,
         Some(_) => return Err("[[package]] is not a list of tables with a name".to_string()),
     };
-    let mut out = Map::new();
     // editable and virtual: the project itself and its workspace members.
-    for (name, source) in
-        packages.into_iter().filter(|(_, s)| !s.contains_key("editable") && !s.contains_key("virtual"))
-    {
-        out.insert(package_key(&name), lock_source(source));
-    }
-    Ok(out)
+    Ok(packages
+        .into_iter()
+        .filter(|(_, s)| !s.contains_key("editable") && !s.contains_key("virtual"))
+        .map(|(name, source)| (package_key(&name), lock_source(source)))
+        .collect())
 }
 
 /// The name and the source table, an empty one when it has none, of a uv.lock `[[package]]` entry; None for one of
@@ -470,8 +486,12 @@ const CARGO_DEPENDENCY_TABLES: [&str; 5] =
 /// `[target.<cfg>]` forms, and its `[workspace.dependencies]`, each by its crate's name (its `package` when it renames
 /// the crate). A dependency's source is its entry's: `path`, a member of the workspace; `git`; `registry` or
 /// `registry-index`, an index other than crates.io; else crates.io. One that takes `workspace = true` has the
-/// `[workspace.dependencies]` entry's. The locked packages are Cargo.lock's that come from a registry or a repository,
-/// the workspace's own crates and the others it has from a path left out.
+/// `[workspace.dependencies]` entry's; one whose `workspace` is anything but boolean `true` makes its manifest
+/// unreadable, as Cargo refuses it. A crate named from several sources, in one manifest's tables or in several
+/// manifests, is a dependency from each of them: `foo = "1"` in `[dependencies]` and `foo = { git = .. }` under
+/// `[target.'cfg(windows)'.dependencies]` is foo from crates.io and from the repository. The locked packages are
+/// Cargo.lock's that come from a registry or a repository, each from every source it lists it with, the workspace's
+/// own crates and the others it has from a path left out.
 pub fn cargo_dependencies(read: &ReadFile) -> Result<Dependencies, OrchestratorError> {
     let mut found = Dependencies::default();
     match toml_manifest(read, "Cargo.lock")?.and_then(|lock| cargo_lock_packages(&lock)) {
@@ -571,13 +591,10 @@ fn cargo_manifest_dependencies(
             tables.push((format!("[target.{cfg}.{table}]"), toml_table(target, table)?));
         }
     }
-    let mut out = Map::new();
+    let mut out = Vec::new();
     for (place, table) in tables {
         for (name, entry) in table {
-            let (key, source) = cargo_member_entry(name, entry, &place, shared)?;
-            if !out.contains_key(&key) {
-                out.insert(key, source);
-            }
+            out.push(cargo_member_entry(name, entry, &place, shared)?);
         }
     }
     Ok(out)
@@ -585,20 +602,25 @@ fn cargo_manifest_dependencies(
 
 /// The package_key of the crate that the dependency entry, under name in the table at place (its header, as an error
 /// names it), names, and where it comes from, None being crates.io: shared's entry of the same name for an entry that
-/// takes `workspace = true`, else what cargo_entry reads from it. Errors: why not, for an entry cargo_entry refuses or
-/// one that takes `workspace = true` when shared has no such name.
+/// takes `workspace = true`, else what cargo_entry reads from it. Errors: why not, for an entry cargo_entry refuses,
+/// one whose `workspace` is anything but boolean `true`, or one that takes `workspace = true` when shared has no such
+/// name.
 fn cargo_member_entry(
     name: &str,
     entry: &Value,
     place: &str,
     shared: &Map<(String, Option<PackageSource>)>,
 ) -> Result<(String, Option<PackageSource>), String> {
-    if entry.as_table().and_then(|t| t.get("workspace")) != Some(&Value::Boolean(true)) {
-        return cargo_entry(name, entry, place);
+    match entry.as_table().and_then(|t| t.get("workspace")) {
+        None => cargo_entry(name, entry, place),
+        Some(Value::Boolean(true)) => shared.get(name).cloned().ok_or_else(|| {
+            format!("`{name}` in {place} takes `workspace = true`, but [workspace.dependencies] has no `{name}`")
+        }),
+        Some(other) => Err(format!(
+            "`{name}` in {place} takes `workspace = {}`, where Cargo takes only `workspace = true`",
+            toml_text(other)
+        )),
     }
-    shared.get(name).cloned().ok_or_else(|| {
-        format!("`{name}` in {place} takes `workspace = true`, but [workspace.dependencies] has no `{name}`")
-    })
 }
 
 /// The package_key of the crate that the dependency entry, under name in the table at place, names, and where it
@@ -631,18 +653,18 @@ fn cargo_entry(name: &str, entry: &Value, place: &str) -> Result<(String, Option
 fn cargo_lock_packages(lock: &Table) -> Result<Sources, String> {
     let refused = || "[[package]] is not a list of tables with a name".to_string();
     let packages = match lock.get("package") {
-        None => return Ok(Map::new()),
+        None => return Ok(Vec::new()),
         Some(Value::Array(packages)) => packages,
         Some(_) => return Err(refused()),
     };
-    let mut out = Map::new();
+    let mut out = Vec::new();
     for package in packages {
         let package = package.as_table().ok_or_else(refused)?;
         let name = package.get("name").and_then(Value::as_str).ok_or_else(refused)?;
         // A package without a source is one of the workspace's own crates, or one it has from a path.
         let Some(source) = package.get("source") else { continue };
         let Some(source) = source.as_str() else { return Err(format!("the source of `{name}` is not a string")) };
-        out.insert(package_key(name), cargo_lock_source(source));
+        out.push((package_key(name), cargo_lock_source(source)));
     }
     Ok(out)
 }
@@ -681,15 +703,16 @@ type Known = BTreeMap<(&'static str, String), Option<IndexedPackage>>;
 /// The packages that the change adds to a DEPENDENCY_ECOSYSTEMS project, each from its ecosystem's index asked of
 /// indexes.
 ///
-/// Fails a direct dependency the spec does not name (spec_names), unless it is a member of the project's workspace;
-/// a package its index does not know (PackageIndex::unknown_rule); those an index could not be asked about, in one
-/// unchecked finding per index; and a manifest in the change that cannot be read. Reports a direct dependency the
-/// spec names, or a workspace member, with where it comes from: what its index knows of it, flagged when its first
-/// release is under YOUNG_PACKAGE_DAYS days old, or its source, other-index for another index; the packages a lock
-/// file alone adds, those the direct ones pull in, in one finding per lock file; a dependency of the base's that the
-/// change takes from another source (source-changed); and a manifest that cannot be read at the base, which leaves its
-/// ecosystem unchecked. An index is asked only while change.in_time(), and no more after the first request it gives
-/// no usable answer to. Errors: change.file_at's.
+/// A package named from several sources is judged from each (Dependencies). Fails a direct dependency the spec does
+/// not name (spec_names), unless it is a member of the project's workspace; a package its index does not know
+/// (PackageIndex::unknown_rule); those an index could not be asked about, in one unchecked finding per index; and a
+/// manifest in the change that cannot be read. Reports a direct dependency the spec names, or a workspace member, with
+/// where it comes from: what its index knows of it, flagged when its first release is under YOUNG_PACKAGE_DAYS days
+/// old, or its source, other-index for another index; the packages a lock file alone adds, those the direct ones pull
+/// in, in one finding per lock file; a dependency of the base's that the change takes from a source the base did not
+/// (source-changed); and a manifest that cannot be read at the base, which leaves its ecosystem unchecked. An index
+/// is asked only while change.in_time(), and no more after the first request it gives no usable answer to. Errors:
+/// change.file_at's.
 pub fn new_dependencies(change: &RunChange, indexes: &PackageIndexes) -> Result<CheckFindings, OrchestratorError> {
     let (packages, mut found) = new_packages(change, indexes)?;
     let (known, failures) = ask_indexes(&packages, change.in_time);
@@ -718,9 +741,12 @@ pub fn new_dependencies(change: &RunChange, indexes: &PackageIndexes) -> Result<
     Ok(found)
 }
 
-/// What known holds of package p: None when its index was not asked about it, Some(None) when the index does not know
-/// it.
+/// What known holds of package p: None when its index was not asked about it, which it never is for a package from
+/// elsewhere, whatever it says of the same name from the index; Some(None) when the index does not know it.
 fn known_of<'k>(known: &'k Known, p: &NewPackage) -> Option<&'k Option<IndexedPackage>> {
+    if p.source.is_some() {
+        return None;
+    }
     known.get(&(p.index.name(), p.key.clone()))
 }
 
@@ -854,57 +880,79 @@ fn new_packages<'a>(
 /// none does. Errors: RunChange::file_at's.
 type AddedLine<'a> = dyn FnMut(&str, &str) -> Result<Option<u64>, OrchestratorError> + 'a;
 
-/// The packages the project depends on after and not before, a package of its direct dependencies counted as one of
-/// them only, each from index unless its source says otherwise; and a source-changed finding to weigh for each that
-/// it depended on before from another source. Errors: added_line's.
+/// The packages the project depends on after and not before, one for each source it is named with, a package of its
+/// direct dependencies counted as one of them only, each from index unless its source says otherwise; and a
+/// source-changed finding to weigh for each that it depended on before but not from each of its sources now, at the
+/// first such source's manifest. Errors: added_line's.
 fn compare_dependencies<'a>(
     index: &'a dyn PackageIndex,
     before: &Dependencies,
     after: &Dependencies,
     added_line: &mut AddedLine,
 ) -> Result<(Vec<NewPackage<'a>>, Vec<Finding>), OrchestratorError> {
-    let lock_only: Map<Dependency> =
+    let lock_only: Map<Vec<Dependency>> =
         after.locked.iter().filter(|(key, _)| !after.direct.contains_key(key)).map(|(k, v)| (k, v.clone())).collect();
     let mut new = Vec::new();
-    for (key, dependency) in after.direct.iter().filter(|(key, _)| !before.direct.contains_key(key)) {
-        new.push(NewPackage {
-            key: key.to_string(),
-            path: dependency.manifest.clone(),
-            line: added_line(&dependency.manifest, key)?,
-            direct: true,
-            source: dependency.source.clone(),
-            index,
-        });
+    for (key, sources) in after.direct.iter().filter(|(key, _)| !before.direct.contains_key(key)) {
+        for dependency in sources {
+            new.push(NewPackage {
+                key: key.to_string(),
+                path: dependency.manifest.clone(),
+                line: added_line(&dependency.manifest, key)?,
+                direct: true,
+                source: dependency.source.clone(),
+                index,
+            });
+        }
     }
-    new.extend(lock_only.iter().filter(|(key, _)| !before.locked.contains_key(key)).map(|(key, dependency)| {
-        NewPackage {
+    for (key, sources) in lock_only.iter().filter(|(key, _)| !before.locked.contains_key(key)) {
+        new.extend(sources.iter().map(|dependency| NewPackage {
             key: key.to_string(),
             path: dependency.manifest.clone(),
             line: None,
             direct: false,
             source: dependency.source.clone(),
             index,
-        }
-    }));
+        }));
+    }
     let mut moved = Vec::new();
     for (was, now, has_lines) in [(&before.direct, &after.direct, true), (&before.locked, &lock_only, false)] {
-        for (key, dependency) in now.iter() {
-            if let Some(old) = was.get(key).filter(|old| old.source != dependency.source) {
-                let message = format!(
-                    "`{key}`: at the base, {}; in the change, {}.",
-                    source_text(&old.source, index),
-                    source_text(&dependency.source, index)
-                );
-                let line = if has_lines { added_line(&dependency.manifest, key)? } else { None };
-                moved.push(Finding::warning(Some(&dependency.manifest), line, "source-changed", message));
-            }
+        for (key, sources) in now.iter() {
+            let Some((added, message)) = was.get(key).and_then(|old| source_change(key, old, sources, index)) else {
+                continue;
+            };
+            let line = if has_lines { added_line(&added.manifest, key)? } else { None };
+            moved.push(Finding::warning(Some(&added.manifest), line, "source-changed", message));
         }
     }
     Ok((new, moved))
 }
 
-fn source_text(source: &Option<PackageSource>, index: &dyn PackageIndex) -> String {
-    source.as_ref().map_or_else(|| format!("from {}", index.name()), |s| s.describe(index.name()))
+/// How the change moved the package key, which came from was at the base and comes from now in the change: the first of
+/// now from a source was does not hold, where the source-changed finding goes, and that finding's message, naming the
+/// sources of both sides; None when now holds no new source, a source only dropped being no move.
+fn source_change<'d>(
+    key: &str,
+    was: &[Dependency],
+    now: &'d [Dependency],
+    index: &dyn PackageIndex,
+) -> Option<(&'d Dependency, String)> {
+    let added = now.iter().find(|d| was.iter().all(|o| o.source != d.source))?;
+    let message =
+        format!("`{key}`: at the base, {}; in the change, {}.", sources_text(was, index), sources_text(now, index));
+    Some((added, message))
+}
+
+/// Where a package comes from, as a finding says it, from each of sources in turn; of several, none is said not to
+/// come from index, which another of them may be.
+fn sources_text(sources: &[Dependency], index: &dyn PackageIndex) -> String {
+    let name = index.name();
+    let contrast = (sources.len() == 1).then_some(name);
+    let each: Vec<String> = sources
+        .iter()
+        .map(|d| d.source.as_ref().map_or_else(|| format!("from {name}"), |s| s.phrase(contrast)))
+        .collect();
+    each.join(" and ")
 }
 
 fn unreadable(path: &str, why: &str, place: &str, fails: bool) -> Finding {

@@ -146,6 +146,12 @@ pub fn run_key(run_id: &str) -> &str {
     run_id.rsplit('-').next().unwrap_or(run_id)
 }
 
+/// Where the run of run_id keeps its local refs, `refs/orchestrator/<key>/`, in the project's repository. Nothing
+/// pushes them; the run's end in done (Workflow::clean_up_locks) and its close (cli::close::close_run) delete them.
+pub fn refs_prefix(run_id: &str) -> String {
+    format!("{LOCAL_REFS_PREFIX}{}/", run_key(run_id))
+}
+
 impl RunState {
     /// A new run's state: every field but these at its default.
     pub fn new(run_id: &str, task: &str, cwd: &str) -> RunState {
@@ -271,11 +277,6 @@ impl RunState {
         self.worktree.as_deref().unwrap_or(&self.cwd)
     }
 
-    /// Where the run keeps its local refs, which nothing pushes and done deletes.
-    pub fn refs_prefix(&self) -> String {
-        format!("{LOCAL_REFS_PREFIX}{}/", self.key())
-    }
-
     /// Where the verdict step of round n writes its proofs (Pipeline::proof_command).
     pub fn proofs_dir(&self, n: u32) -> String {
         format!("{}/proofs-{n}", self.dir())
@@ -283,7 +284,7 @@ impl RunState {
 
     /// The local ref of the commit that holds the files the step locked.
     pub fn lock_ref(&self, step_id: &str) -> String {
-        format!("{}locked/{step_id}", self.refs_prefix())
+        format!("{}locked/{step_id}", refs_prefix(&self.run_id))
     }
 
     /// The default workflow's spec; the quality files below are every workflow's.

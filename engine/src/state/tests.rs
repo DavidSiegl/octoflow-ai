@@ -147,7 +147,7 @@ fn the_runs_paths() {
     assert_eq!(s.key(), "a1b2c3");
     assert_eq!(s.dir(), d);
     assert_eq!(s.work_dir(), "/proj");
-    assert_eq!(s.refs_prefix(), "refs/orchestrator/a1b2c3/");
+    assert_eq!(refs_prefix(&s.run_id), "refs/orchestrator/a1b2c3/");
     assert_eq!(s.lock_ref("tests"), "refs/orchestrator/a1b2c3/locked/tests");
     assert_eq!(s.proofs_dir(2), format!("{d}/proofs-2"));
     assert_eq!(s.spec_path(), format!("{d}/spec.md"));
