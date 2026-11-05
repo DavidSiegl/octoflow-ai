@@ -129,30 +129,49 @@ the `metrics` command prints every run's (`Host::run_metrics`).
 A workflow is data: a `Pipeline` with a name, its roles in pane order (role key to pane label) and a tuple of
 `Step`s, and optionally a `proof_command`. A step names its id (also its phase), its role, its handoff file (fixed
 like `spec.md`, or one per round like `build-{n}.md`), a first prompt, a later-round prompt (`again`) and a note for
-a fresh session in a later round (`fresh_note`), and the flags `human_paced`, `edits`, `loop_to` (which makes it the
+a fresh session in a later round (`fresh_note`), and the flags `human_paced`, `edits`, `loop_to` (which makes it a
 verdict step), `quality_gated` and `locks`. Prompts take `{task}`, `{cwd}`, `{n}`, `{change}`, `{path}`,
-`{proofs_dir}` and, for every step `X`, `{X_path}`, `{prev_X_path}` and `{earlier_X_paths}`. `Pipeline` validates
-itself when constructed and refuses the definition, naming the problem, such as a duplicate id, a loop target that does
-not come earlier, two verdict loops, two gated steps or an unknown placeholder.
+`{proofs_dir}`, `{findings}` and, for every step `X`, `{X_path}`, `{prev_X_path}` and `{earlier_X_paths}`.
+`Pipeline` validates itself when constructed and refuses the definition, naming the problem, such as a duplicate id, a
+loop target that does not come earlier, two gated steps or an unknown placeholder.
+
+A workflow may have several verdict steps (`Pipeline::verdict_steps`), such as a Tech Lead's review back to the
+Builder and then a Product Manager's acceptance back to the Builder too. A round runs them in order and ends at the
+first that does not approve (`Workflow::take_turn`): before round `max_rounds` the run goes back to that step's loop
+target in the next round, and in round `max_rounds` it goes on past the last verdict step, so a later verdict step
+never judges a change an earlier one rejected. Every verdict step judges the change a round ends with, because
+`loop_problem` refuses a loop target after the first verdict step, as a loop must run every earlier verdict step
+again, and an editing step between the first verdict step and the last, whose edits the earlier ones would not judge.
+One round counter, and one `max_rounds`, serve them all, so `{n}`, `build-{n}.md` and the quality loop are as with
+one. `RunState.verdicts` records each verdict step's verdict per round (`RunState::record_verdict`), and
+`RunState.verdict`, the run's verdict, turns to `CHANGES_REQUESTED` at a request for changes and to `APPROVE` only
+when the last verdict step approves, so a state saved mid-round keeps the round before's. A verdict step's first turn
+gets its first prompt even in a later round, and its `{prev_X_path}` and `{earlier_X_paths}` name only the rounds it
+judged; `{findings}` names the verdict file that sent the run into the round, for the loop target's `again`. A state
+saved before there were those records has none and loads all the same, its one verdict step taken to have judged
+every round. The first verdict step is the proof step (`Pipeline::proof_step`), the only one whose proofs
+`proof_command` runs. `list` names the step that sent a run back when several judged it (`run_outcome`), and
+`list --json` and serve's `/runs` carry the records as `verdicts`.
 
 The quality-gated step is the one the gate follows: its answer to quality round Q inserts `-qQ` before its file's
 extension, other steps' prompts name its last report of the round, and `QUALITY_PASSED_NOTE` or
-`QUALITY_UNRESOLVED_NOTE` ends the verdict step's prompt. The contract step, a first step with a fixed file that
+`QUALITY_UNRESOLVED_NOTE` ends each verdict step's prompt. The contract step, a first step with a fixed file that
 does not edit, titles the branch and the pull request; without one the task does. The pull request body holds the
 commit's provenance trailers as a table (`provenance`), the contract, the last editing step's last report, the
-last quality file and the verdict file.
+last quality file and the last round's verdict files, one per verdict step that judged it; with more than one
+verdict step, its verdict line (`verdict_line`) names each verdict of the last round.
 
-A locking step (`locks`: the first editing step, which the verdict loop does not run again, so that what it locks is
+A locking step (`locks`: the first editing step, which no verdict loop runs again, so that what it locks is
 its own work) locks the change as it stands when each of its turns ends: `Host::lock` snapshots the tree into the
 local ref `refs/orchestrator/<key>/locked/<step>`, which nothing pushes and `done` deletes, and `RunState.locked`
 saves the paths that differ from the base. After every other editing turn, `Workflow::hold_locks` writes the turn's
 changes to those paths to `locked-<turn's file>.diff` in the run directory, saves a record of them in
 `RunState::restored`, and then restores the paths from the ref (`Host::restore`, the working tree only, a path the ref
 lacks deleted); a resume restores a saved record again. That happens before the quality round, so the gate judges
-the locked files, and `LOCKED_NOTE` tells the verdict step which files of its round were restored and where the
+the locked files, and `LOCKED_NOTE` tells each verdict step which files of its round were restored and where the
 diffs are.
 
-A workflow with a `proof_command`, such as `python -m pytest -q {proofs}`, has its verdict step back findings with
+A workflow with a `proof_command`, such as `python -m pytest -q {proofs}`, has its proof step back findings with
 tests in `{proofs_dir}`, `RunState.proofs_dir(n)` in the run directory, so they never enter the snapshot or the
 commit. After a review that requests changes, `Workflow::judge_proofs` runs each proof file with the command in the
 working tree (`run_proof`: exit status 1 is a failing proof, which demonstrates the finding its name's first number

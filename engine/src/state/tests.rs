@@ -126,6 +126,38 @@ fn a_missing_option_is_none() {
 }
 
 #[test]
+fn a_state_saved_with_one_verdict_and_no_record_of_it_loads() {
+    let old = saved_with(&[("verdicts", None), ("verdict", Some("\"CHANGES_REQUESTED\""))]);
+    let state = RunState::from_text(&old).unwrap();
+    assert_eq!((state.verdict.as_deref(), state.verdicts.len()), (Some("CHANGES_REQUESTED"), 0));
+    assert!(state.unknown.is_empty());
+    let e = RunState::from_text(&saved_with(&[("verdicts", Some("[{\"round\": 1}]"))])).unwrap_err();
+    assert!(e.0.starts_with("run state r1 is invalid: "), "{e}");
+}
+
+#[test]
+fn each_verdict_is_recorded_once_per_step_and_round() {
+    let mut state = RunState::new("r1", "t", "/p");
+    state.verdict = Some("CHANGES_REQUESTED".into());
+    state.record_verdict(1, "review", "APPROVE");
+    state.record_verdict(1, "accept", "CHANGES_REQUESTED");
+    // A resume that took accept's turn of round 1 again.
+    state.record_verdict(1, "accept", "CHANGES_REQUESTED");
+    state.record_verdict(2, "review", "APPROVE");
+    let given: Vec<(u32, &str, &str)> =
+        state.verdicts.iter().map(|v| (v.round, v.step.as_str(), v.verdict.as_str())).collect();
+    assert_eq!(given, [(1, "review", "APPROVE"), (1, "accept", "CHANGES_REQUESTED"), (2, "review", "APPROVE")]);
+    // The run's verdict is the caller's to set.
+    assert_eq!(state.verdict.as_deref(), Some("CHANGES_REQUESTED"));
+    let text = state.to_text();
+    assert!(
+        text.contains(r#""verdict":"CHANGES_REQUESTED","verdicts":[{"round":1,"step":"review","verdict":"APPROVE"},"#),
+        "{text}"
+    );
+    assert_eq!(RunState::from_text(&text).unwrap(), state);
+}
+
+#[test]
 fn a_state_with_a_field_missing_or_of_the_wrong_type_is_refused_naming_the_run() {
     for (field, value) in [
         ("cwd", None), ("phase", None), ("round", Some("\"1\"")), ("round", Some("-1")), ("phase", Some("1")),

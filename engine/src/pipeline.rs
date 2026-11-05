@@ -18,7 +18,8 @@ pub const PUBLISH: &str = "publish";
 pub const DONE: &str = "done";
 
 /// The placeholders a step's prompts may use besides the per-step paths (see Step).
-pub const PROMPT_FIELDS: [&str; 8] = ["task", "cwd", "n", "change", "approve", "changes", "path", "proofs_dir"];
+pub const PROMPT_FIELDS: [&str; 9] =
+    ["task", "cwd", "n", "change", "approve", "changes", "path", "proofs_dir", "findings"];
 /// The per-step paths: (prefix, suffix) around a step's id.
 pub const PATH_FIELDS: [(&str, &str); 3] = [("", "_path"), ("prev_", "_path"), ("earlier_", "_paths")];
 
@@ -40,10 +41,12 @@ pub fn is_run_file(name: &str) -> bool {
 
 /// One role's turn in a workflow, which ends when the role writes its handoff file.
 ///
-/// A prompt is filled in with PROMPT_FIELDS, where n is the round, path the turn's own file and proofs_dir the
-/// round's directory for the verdict step's proofs (Pipeline::proof_command), and with three paths for every step X
-/// of the workflow: X_path in round n, prev_X_path in round n-1, and earlier_X_paths, rounds 1 to n-1 joined with
-/// commas.
+/// A prompt is filled in with PROMPT_FIELDS, where n is the round, path the turn's own file, proofs_dir the round's
+/// directory for the proof step's proofs (Pipeline::proof_step) and findings the verdict file whose request for
+/// changes sent the run into round n ("" before round 2), and with three paths for every step X of the workflow:
+/// X_path in round n, prev_X_path in round n-1, and earlier_X_paths, rounds 1 to n-1 joined with commas. For a
+/// verdict step X, which an earlier verdict step's request for changes may skip in a round, those two hold only the
+/// rounds it judged: prev_X_path is its file of the latest, or round n-1's, which no turn wrote, before its first.
 ///
 /// A quality-gated step writes more than one file a round: the answer to quality round q inserts -q<q> before the
 /// extension. So for such an X, X_path is the file its current turn writes in its own prompts and its last one of
@@ -69,14 +72,14 @@ pub struct Step {
     pub human_paced: bool,
     /// Changes the working tree; the run's base commit and branch are fixed just before the first such step.
     pub edits: bool,
-    /// Makes this the verdict step: its file starts with a VERDICT line, and CHANGES_REQUESTED goes back to the step
-    /// with this id in round n+1, until max_rounds.
+    /// Makes this a verdict step: its file starts with a VERDICT line, and CHANGES_REQUESTED goes back to the step
+    /// with this id in round n+1, until max_rounds (Workflow::take_turn).
     pub loop_to: Option<String>,
     /// With --quality-gate, each turn is followed by the quality loop, which sends a gate that does not pass back to
-    /// this step with QUALITY_FIX_PROMPT, and the verdict step hears how it ended.
+    /// this step with QUALITY_FIX_PROMPT, and each verdict step hears how it ended.
     pub quality_gated: bool,
     /// Locks the change as it stands when each of this editing step's turns ends: every file it then changes from
-    /// the base. A later turn of another editing step that changes one has it restored, and the verdict step hears
+    /// the base. A later turn of another editing step that changes one has it restored, and each verdict step hears
     /// of it (Workflow::hold_locks).
     pub locks: bool,
 }
@@ -109,7 +112,7 @@ impl Step {
     }
 
     /// Whether a BLOCKED report pauses the turn for the human. A human-paced step has the human at hand already,
-    /// and the verdict step's file must start with its verdict.
+    /// and a verdict step's file must start with its verdict.
     pub fn can_block(&self) -> bool {
         !self.human_paced && self.loop_to.is_none()
     }
@@ -197,8 +200,8 @@ pub struct PipelineSettings {
     pub max_lines: i64,
     /// A shell command, with {proofs} for the path of a copy of one proof file inside the working tree
     /// (Workflow::run_proof), that runs the proof in the working tree and exits 1 when the proof fails, as pytest
-    /// does. With it, each proof the verdict step writes in proofs_dir with a review that requests changes is run, and
-    /// the review gains the outcomes (Workflow::judge_proofs). None runs none.
+    /// does. With it, each proof the proof step (Pipeline::proof_step) writes in proofs_dir with a review that
+    /// requests changes is run, and the review gains the outcomes (Workflow::judge_proofs). None runs none.
     pub proof_command: Option<String>,
 }
 
@@ -217,7 +220,7 @@ impl Default for PipelineSettings {
 
 /// A named workflow: roles that hand off through files, one step after another.
 ///
-/// A run is in round 0 until its first editing step, round 1 from there, and one round more each time the verdict
+/// A run is in round 0 until its first editing step, round 1 from there, and one round more each time a verdict
 /// step loops back. Two pipelines are equal when every part is, their role maps compared as Python's dicts are, in
 /// any order.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -290,7 +293,7 @@ impl Pipeline {
 
     fn proof_problem(&self) -> Option<String> {
         let command = self.settings.proof_command.as_ref()?;
-        if self.verdict_step().is_none() {
+        if self.proof_step().is_none() {
             return Some("proof_command runs the verdict step's proofs, and the workflow has no verdict step".into());
         }
         match placeholders(command) {
@@ -302,7 +305,7 @@ impl Pipeline {
         }
     }
 
-    /// A locking step that is not the first editing step, or that the verdict loop runs again. Host::lock locks what
+    /// A locking step that is not the first editing step, or that a verdict loop runs again. Host::lock locks what
     /// the change holds when the step's turn ends, which is only the step's own work when no editing turn came
     /// before it.
     fn lock_problem(&self) -> Option<String> {
@@ -314,12 +317,13 @@ impl Pipeline {
             if Some(st.id.as_str()) != first_edit {
                 return Some(format!("step {} locks the files it changes, so it must be the first editing step", st.id));
             }
-            if let Some(target) = self.verdict_step().and_then(|v| v.loop_to.as_deref()) {
-                if let (Some(t), Some(i)) = (self.index_of(target), self.index_of(&st.id)) {
+            for verdict in self.verdict_steps() {
+                let target = verdict.loop_to.as_deref().and_then(|target| self.index_of(target));
+                if let (Some(t), Some(i)) = (target, self.index_of(&st.id)) {
                     if t <= i {
                         return Some(format!(
-                            "step {} locks the files it changes, so the verdict loop must not run it again",
-                            st.id
+                            "step {} locks the files it changes, so the verdict loop of step {} must not run it again",
+                            st.id, verdict.id
                         ));
                     }
                 }
@@ -368,13 +372,9 @@ impl Pipeline {
         None
     }
 
-    /// More than one verdict loop or quality-gated step, or a gated step that cannot be one.
+    /// More than one quality-gated step, or a gated step that cannot be one.
     fn uniqueness_problem(&self) -> Option<String> {
         let ids = |steps: Vec<&Step>| steps.iter().map(|st| st.id.as_str()).collect::<Vec<_>>().join(", ");
-        let loops: Vec<&Step> = self.steps.iter().filter(|st| st.loop_to.is_some()).collect();
-        if loops.len() > 1 {
-            return Some(format!("steps {} each loop back; only one verdict loop is supported", ids(loops)));
-        }
         let gated: Vec<&Step> = self.steps.iter().filter(|st| st.quality_gated).collect();
         if gated.len() > 1 {
             return Some(format!("steps {} are each quality-gated; only one may be", ids(gated)));
@@ -387,7 +387,7 @@ impl Pipeline {
             return Some(format!("step {} is quality-gated, so its handoff file needs {{n}}", st.id));
         }
         if st.loop_to.is_some() {
-            return Some(format!("step {} is quality-gated, so it cannot be the verdict step", st.id));
+            return Some(format!("step {} is quality-gated, so it cannot be a verdict step", st.id));
         }
         None
     }
@@ -429,21 +429,49 @@ impl Pipeline {
         None
     }
 
+    /// The first verdict step, in step order, whose loop does not go back to an earlier step, skips an earlier
+    /// verdict step, or runs a step with a fixed file again; else an editing step between two verdict steps.
+    ///
+    /// The last two keep every verdict step judging the change a round ends with: a loop that went back past an
+    /// earlier verdict step would have the next round's edits judged by the later steps alone, and an edit between
+    /// verdict steps would be judged by the later ones alone.
     fn loop_problem(&self) -> Option<String> {
-        let verdict = self.verdict_step()?;
-        let loop_to = verdict.loop_to.as_deref().unwrap_or_default();
-        let Some(target) = self.index_of(loop_to) else {
-            return Some(format!("step {} loops back to {loop_to}, which is not a step", verdict.id));
-        };
-        let end = self.index_of(&verdict.id).unwrap_or_default();
-        if target >= end {
-            return Some(format!("step {} loops back to {loop_to}, which does not come before it", verdict.id));
+        let first = self.proof_step()?;
+        let first_at = self.index_of(&first.id).unwrap_or_default();
+        let problem = self.verdict_steps().find_map(|verdict| {
+            let loop_to = verdict.loop_to.as_deref().unwrap_or_default();
+            let Some(target) = self.index_of(loop_to) else {
+                return Some(format!("step {} loops back to {loop_to}, which is not a step", verdict.id));
+            };
+            let end = self.index_of(&verdict.id).unwrap_or_default();
+            if target >= end {
+                return Some(format!("step {} loops back to {loop_to}, which does not come before it", verdict.id));
+            }
+            if target > first_at {
+                return Some(format!(
+                    "step {} loops back to {loop_to}, which comes after verdict step {}; a verdict step's loop must \
+                     run every earlier verdict step again",
+                    verdict.id, first.id
+                ));
+            }
+            // A later round finds a fixed file already written and would skip the step.
+            self.steps[target..=end]
+                .iter()
+                .find(|st| !st.per_round())
+                .map(|fixed| format!("step {} is in the review loop, so its handoff file needs {{n}}", fixed.id))
+        });
+        if problem.is_some() {
+            return problem;
         }
-        // A later round finds a fixed file already written and would skip the step.
-        self.steps[target..=end]
-            .iter()
-            .find(|st| !st.per_round())
-            .map(|fixed| format!("step {} is in the review loop, so its handoff file needs {{n}}", fixed.id))
+        let last_at = self.verdict_steps().next_back().and_then(|last| self.index_of(&last.id)).unwrap_or_default();
+        let edit = self.steps[first_at..last_at].iter().find(|st| st.edits)?;
+        let at = self.index_of(&edit.id).unwrap_or_default();
+        let next = self.steps[at..].iter().find(|st| st.loop_to.is_some()).unwrap_or(first);
+        let before = self.steps[..at].iter().rev().find(|st| st.loop_to.is_some()).unwrap_or(first);
+        Some(format!(
+            "step {} edits between verdict steps {} and {}, so {} would not judge its change",
+            edit.id, before.id, next.id, before.id
+        ))
     }
 
     fn index_of(&self, step_id: &str) -> Option<usize> {
@@ -476,8 +504,27 @@ impl Pipeline {
         self.steps.iter().rev().find(|st| st.edits)
     }
 
-    pub fn verdict_step(&self) -> Option<&Step> {
-        self.steps.iter().find(|st| st.loop_to.is_some())
+    /// Every verdict step, a step with loop_to, in the order a round runs them: the first that does not approve ends
+    /// the round (Workflow::take_turn). Empty for a workflow without one.
+    pub fn verdict_steps(&self) -> impl DoubleEndedIterator<Item = &Step> {
+        self.steps.iter().filter(|st| st.loop_to.is_some())
+    }
+
+    /// Each verdict step with the path of its file of round n in run_dir, written or not, in the order a round runs
+    /// them. A verdict step's file is never quality-gated, so round n has just this one of it.
+    pub fn verdict_files(&self, run_dir: &str, n: u32) -> Vec<(&Step, String)> {
+        self.verdict_steps().map(|st| (st, st.path(run_dir, n, 0))).collect()
+    }
+
+    /// The verdict step whose findings proof_command's proofs back: the first, the code's reviewer, as acceptance
+    /// is judged against the requirements, not proven with tests. None for a workflow without a verdict step.
+    pub fn proof_step(&self) -> Option<&Step> {
+        self.verdict_steps().next()
+    }
+
+    /// Whether step is the proof step (proof_step).
+    pub fn proves(&self, step: &Step) -> bool {
+        self.proof_step().is_some_and(|proof_step| proof_step.id == step.id)
     }
 
     pub fn gated(&self) -> Option<&Step> {
@@ -509,9 +556,15 @@ impl Pipeline {
         })
     }
 
-    /// The step whose file the run ends on.
-    pub fn result(&self) -> &Step {
-        self.verdict_step().unwrap_or(&self.steps[self.steps.len() - 1])
+    /// The step whose file the run ends on: the verdict step of id judge, the one that gave the run's verdict
+    /// (RunState::verdicts' last); for judge None, the first verdict step, the only one of a run saved before that
+    /// record, or the last step of a workflow without a verdict step. A judge the workflow has no step of reads as
+    /// None.
+    pub fn result(&self, judge: Option<&str>) -> &Step {
+        judge
+            .and_then(|id| self.verdict_steps().find(|st| st.id == id))
+            .or_else(|| self.verdict_steps().next())
+            .unwrap_or(&self.steps[self.steps.len() - 1])
     }
 
     pub fn models(&self) -> &Map<String> {

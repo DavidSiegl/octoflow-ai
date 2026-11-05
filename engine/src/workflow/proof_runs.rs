@@ -1,6 +1,6 @@
-//! The verdict step's proofs (Pipeline::proof_command), run against the change: those of a review that requests
-//! changes, then again each round until they pass, with what the review, the verdict step and the step it loops back
-//! to are told of them.
+//! The proof step's proofs (Pipeline::proof_step, Pipeline::proof_command), run against the change: those of a
+//! review that requests changes, then again each round until they pass, with what the review, the proof step and the
+//! step it loops back to are told of them.
 
 use super::{prompt_error, Outcome, Workflow};
 use crate::constants::PROOF_COPIES_DIR;
@@ -32,7 +32,7 @@ fn copy_script() -> String {
 }
 
 impl Workflow<'_> {
-    /// Run each proof the verdict step wrote in round n with the workflow's proof_command, record which fail, and
+    /// Run each proof the proof step wrote in round n with the workflow's proof_command, record which fail, and
     /// append their outcomes to its review, whose text is review. A resume runs none that were recorded, and appends
     /// them once. Errors: the proofs cannot be listed, saving or the review's write fails, or the Ctrl-C.
     pub(super) fn judge_proofs(&mut self, step: &Step, n: u32, review: &str) -> Outcome<()> {
@@ -65,7 +65,7 @@ impl Workflow<'_> {
         Ok(())
     }
 
-    /// Before the verdict step's turn of round n, run each proof carried into it from an earlier round
+    /// Before the proof step's turn of round n, run each proof carried into it from an earlier round
     /// (carried_proofs) again against the change, and record the outcomes in RunState::proofs. A resume runs none
     /// once round n's reruns are recorded. Errors: as judge_proofs'.
     pub(super) fn rerun_proofs(&mut self, step: &Step, n: u32) -> Outcome<()> {
@@ -104,7 +104,7 @@ impl Workflow<'_> {
         Ok(latest.into_iter().filter(|p| p.demonstrated || (p.written < p.round && !p.passed())).collect())
     }
 
-    /// The runs of the proofs carried into round n, run again before its verdict step's turn.
+    /// The runs of the proofs carried into round n, run again before its proof step's turn.
     fn reruns(&self, n: u32) -> Result<Vec<ProofRun>, OrchestratorError> {
         Ok(self.proof_runs()?.into_iter().filter(|p| p.round == n && p.written < n).collect())
     }
@@ -114,7 +114,7 @@ impl Workflow<'_> {
         format!("{}/{}", self.state.proofs_dir(proof.written), proof.file)
     }
 
-    /// What the verdict step hears in round n of the proofs from earlier rounds run again before its turn:
+    /// What the proof step hears in round n of the proofs from earlier rounds run again before its turn:
     /// CARRIED_PROOFS_NOTE after a blank line; "" when none was. Errors: a saved run is malformed (ProofRun::read), or
     /// the prompt cannot be filled in.
     pub(super) fn carried_proofs_note(&self, n: u32) -> Result<String, OrchestratorError> {
@@ -152,7 +152,7 @@ impl Workflow<'_> {
         Ok(format!("\n\n{note}"))
     }
 
-    /// Whether the proof file that round written's verdict step wrote fails against the working tree, as command's
+    /// Whether the proof file that round written's proof step wrote fails against the working tree, as command's
     /// exit status 1 says, and what it printed last: its output's end, how else it exited, or why it could not run.
     ///
     /// The proof runs from a copy of proofs_dir(written), with the files beside it, at
@@ -210,9 +210,10 @@ impl Workflow<'_> {
     }
 
     /// What the step hears in round n of the proofs carried into it (carried_proofs): PROOFS_NOTE after a blank line;
-    /// "" when it is not the step the verdict step loops back to, or none is carried. Errors: as carried_proofs_note's.
+    /// "" when it is not the step the proof step (Pipeline::proof_step) loops back to, or none is carried. Errors: as
+    /// carried_proofs_note's.
     pub(super) fn proofs_note(&self, step: &Step, n: u32) -> Result<String, OrchestratorError> {
-        let loops_here = self.pipeline.verdict_step().is_some_and(|v| v.loop_to.as_deref() == Some(step.id.as_str()));
+        let loops_here = self.pipeline.proof_step().is_some_and(|v| v.loop_to.as_deref() == Some(step.id.as_str()));
         if !loops_here {
             return Ok(String::new());
         }

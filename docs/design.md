@@ -79,11 +79,11 @@ and model of its agent (none for a quality analysis, whose role is `quality`), w
 When a run ends, done, failed or interrupted, it writes `summary.md` in its run directory: the task, run id and
 workflow, each role's harness and model, the outcome (verdict or error), the pull request and branch, the wall
 time from the first known start to the end, a Markdown table of the turns (`?` for what is not known, the
-interview marked as human-paced), and each round's quality gates and verdict, read from the handoff files. A
-resume that ends again rewrites it with every turn; a run that is already `done` is not rewritten, unless the
-orchestrator that ended it stopped before releasing it, which it does once both files are written: a resume then
-writes them again, releases the run, tells the human it finished and closes a published run's workspace
-(`Workflow::run`). The pull
+interview marked as human-paced), and each round's quality gates and the verdict of each verdict step that judged
+it, read from the handoff files. A resume that ends again rewrites it with every turn; a run that is already `done`
+is not rewritten, unless the orchestrator that ended it stopped before releasing it, which it does once both files
+are written: a resume then writes them again, releases the run, tells the human it finished and closes a published
+run's workspace (`Workflow::run`). The pull
 request's body ends with the same table up to publishing, collapsed under "Run timings", and `show` prints a
 line per turn.
 
@@ -312,7 +312,7 @@ a line per run.
 
 ## Draining specs
 
-`drain` is a command of its own, not a workflow. A workflow is the steps of one run, with one verdict loop, and a
+`drain` is a command of its own, not a workflow. A workflow is the steps of one run, with its verdict loops, and a
 run ends in one pull request; looping over specs is a level above that. Each spec drain starts is an ordinary
 `run --spec` run, built by the same `new_state` and driven by the same `run_workflow`, so it can be listed, shown,
 resumed and closed like any other.

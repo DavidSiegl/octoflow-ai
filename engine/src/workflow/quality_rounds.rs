@@ -1,6 +1,6 @@
 //! The quality gate's rounds (docs/quality-gate.md): after each turn of the quality-gated step, a quality round has
 //! Jenkins judge a snapshot of the change, adds what the orchestrator's own checks find, and sends a change the gate
-//! does not pass back to that step, up to max_quality_rounds analyses per round; what the verdict step hears of them;
+//! does not pass back to that step, up to max_quality_rounds analyses per round; what each verdict step hears of them;
 //! and the snapshots' refs on origin, deleted once they are of no more use.
 //!
 //! Every link of a round's chain (the snapshot pushed, the build triggered, its number) is saved in RunState::ci as
@@ -82,7 +82,7 @@ impl<'a> Workflow<'a> {
         })
     }
 
-    /// What the verdict step hears of round n's last quality file, after a blank line: QUALITY_PASSED_NOTE, or the
+    /// What a verdict step hears of round n's last quality file, after a blank line: QUALITY_PASSED_NOTE, or the
     /// findings left (QUALITY_STUCK_NOTE when the last quality round was stuck, else QUALITY_UNRESOLVED_NOTE), or for
     /// an unjudged change (unjudged) QUALITY_OFF_NOTE naming each of the round's quality files; "" without one.
     /// Errors: a file cannot be read, or the prompt cannot be filled in.
