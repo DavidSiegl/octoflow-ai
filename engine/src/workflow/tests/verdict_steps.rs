@@ -263,8 +263,30 @@ fn the_product_team_s_product_manager_sends_the_change_back_once() {
     let rejected = format!("{D}/acceptance-1.md");
     let fix = format!("The Tech Lead or the Product Manager requested changes; the findings are in {rejected}.");
     assert!(built.borrow()[0].starts_with(&fix));
-    assert!(reviewed.borrow()[0].starts_with(&format!("The Engineer has answered the findings in {rejected};")));
-    assert!(reviewed.borrow()[0].contains(&format!("your previous review in {D}/review-1.md")));
+    let recheck = format!("The Engineer has answered the findings in {rejected}, yours or the Product Manager's;");
+    assert!(reviewed.borrow()[0].starts_with(&recheck));
+
     assert!(pm.borrow()[0].contains(&format!("({D}/review-1.md)")));
     assert!(pm.borrow()[1].contains(&format!("your previous acceptance in {rejected}")));
+}
+
+#[test]
+fn a_fresh_tech_lead_hears_of_the_product_manager_s_findings() {
+    // Resumed in round 2's review after the Product Manager sent round 1 back, the Tech Lead's session gone.
+    let team = load_workflow_file(&format!("{EXAMPLES}/product-team.toml"), &Default::default()).unwrap();
+    let mut state = saved_run("review", 2, &["spec", "design", "tests", "build", "review"]);
+    state.record_verdict(1, "review", APPROVE);
+    state.record_verdict(1, "accept", CHANGES_REQUESTED);
+    let reviewed = seen();
+    let script = vec![
+        ("review", vec![recording(review_turn(2, APPROVE), &reviewed)]),
+        ("spec", vec![writes(|s| format!("{}/acceptance-2.md", s.dir()), "VERDICT: APPROVE\n1. criterion", "done")]),
+    ];
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &[], &[]);
+    f.put(&format!("{D}/build-2.md"), "report 2");
+    let mut wf = f.workflow(RunSettings { pipeline: Some(team), pull_request: false, ..f.as_saved() });
+    assert_eq!(wf.run(), verdict(APPROVE));
+    let first = &reviewed.borrow()[0];
+    assert!(first.contains("This is round 2, and you are a fresh session"), "{first}");
+    assert!(first.contains(&format!("the findings that sent this round back are in {D}/acceptance-1.md")), "{first}");
 }

@@ -114,7 +114,10 @@ fn examples_load() {
     for text in [Some(&accept.prompt), accept.again.as_ref(), accept.fresh_note.as_ref()] {
         assert!(text.unwrap().contains("{spec_path}"));
     }
-    assert!(!review.prompt.contains("summary a Product Manager can read"));
+    // The summary for the Product Manager, which stood in for the acceptance, is gone from every text of the review.
+    for text in [Some(&review.prompt), review.again.as_ref(), review.fresh_note.as_ref()] {
+        assert!(!text.unwrap().contains("summary"));
+    }
 }
 
 #[test]

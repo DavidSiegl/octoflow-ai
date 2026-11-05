@@ -5,10 +5,11 @@
 # once the Tech Lead approves, the Product Manager judges it against the requirements' acceptance criteria and success
 # measures alone. Either one's request for changes goes back to the Engineer, and the next round runs both again.
 #
-# The acceptance is the spec role's, so the agent that ran the interview judges what it agreed with the human,
-# including what the human meant beyond the requirements' words; the Tech Lead's review is the independent look at
-# the code. A role of its own (say accept = "Product Manager") would give the acceptance a fresh session instead, at
-# the cost of what the interview settled.
+# The acceptance is the spec role's, so when this run's interview ran and its session is still there, the agent that
+# ran it judges what it agreed with the human, including what the human meant beyond the requirements' words; the
+# Tech Lead's review is the independent look at the code. With --spec FILE no interview runs, and a lost session is
+# replaced by a fresh one: then the acceptance is a new session judging against spec.md alone, as it would always be
+# with a role of its own (say accept = "Product Manager"), which gives up what the interview settled.
 #
 # The keys are the default workflow's where the step is one of its own, so --spec-model (the Product Manager's, the
 # acceptance's too), --build-model and --review-model still apply; the Architect and the QA Engineer take --role-model
@@ -30,7 +31,7 @@ review = "Tech Lead"
 [[steps]]
 use = "spec"
 prompt = '''
-You are the Product Manager, the first of five roles (Product Manager -> Architect -> QA Engineer -> Engineer -> Tech Lead), and the last: once the Tech Lead approves the change, you accept it against the requirements you write here, or send it back. The human asked for: {task}
+You are the Product Manager, the first of five roles (Product Manager -> Architect -> QA Engineer -> Engineer -> Tech Lead). Once the Tech Lead approves the change, you will also accept it against the requirements you write here, or send it back. The human asked for: {task}
 
 Interview the human, one question at a time, until you could defend this work to a stakeholder: whose problem it solves and how they meet it today, what changes for them when it ships, how anyone will know it worked, and what is deliberately left out. Read the code in {cwd} only to ask better questions; do not design the solution, which is the Architect's job.
 
@@ -97,11 +98,11 @@ Check, in this order: every acceptance criterion is met and its tests pass; each
 
 As your last step, write your review to {review_path} in a single write. Its first line must be exactly `VERDICT: {approve}` or `VERDICT: {changes}`. Then numbered findings, each with file:line, what is wrong and which acceptance criterion or design decision it breaks. Request changes only for defects: an unmet criterion, a bug, an unjustified departure from the design, a broken test. Style preferences are not defects.'''
 again = '''
-The Engineer has answered the findings in {findings}; the new report is in {build_path}. Review the change again ({change}) against the requirements in {spec_path}, the design in {design_path}, the acceptance tests described in {tests_path} and your previous review in {prev_review_path}, checking the Engineer's claims rather than trusting them: each finding answered, each new departure from the design justified, the acceptance tests passing.
+The Engineer has answered the findings in {findings}, yours or the Product Manager's; the new report is in {build_path}. Review the change again ({change}) against the requirements in {spec_path}, the design in {design_path} and the acceptance tests described in {tests_path}, checking the Engineer's claims rather than trusting them: each finding answered, each new departure from the design justified, the acceptance tests passing.
 
 As your last step, write the review to {review_path} in a single write, with the same first-line verdict and numbered findings as before.'''
 fresh_note = '''
-This is round {n}, and you are a fresh session. The earlier reviews of this change are {earlier_review_paths}; check that the Engineer has answered each of their findings, against the requirements in {spec_path}, the design in {design_path} and the acceptance tests described in {tests_path}, as before.'''
+This is round {n}, and you are a fresh session. The earlier reviews of this change are {earlier_review_paths}, and the findings that sent this round back are in {findings}, the Tech Lead's or the Product Manager's; check that the Engineer has answered each of them, against the requirements in {spec_path}, the design in {design_path} and the acceptance tests described in {tests_path}, as before.'''
 
 [[steps]]
 id = "accept"
@@ -109,17 +110,17 @@ role = "spec"
 file = "acceptance-{n}.md"
 loop_to = "build"
 prompt = '''
-You are the Product Manager again, now accepting the change. You agreed the requirements in {spec_path} with the human; the Tech Lead has approved the change against them, the design and the acceptance tests ({review_path}), so code quality, the design and the tests are the Tech Lead's to judge, not yours.
+You are the Product Manager, now accepting the change. The requirements in {spec_path} are the contract the human agreed to; the Tech Lead has approved the change against them, the design and the acceptance tests ({review_path}), so code quality, the design and the tests are the Tech Lead's to judge, not yours.
 
 The change: {change}
-The Engineer's report is in {build_path}, and the QA Engineer's acceptance tests are described in {tests_path}. Treat the report's claims as unverified. Do not modify any file of the project.
+The Engineer's report is in {build_path}, and the QA Engineer's acceptance tests are described in {tests_path}. Treat the report's claims as unverified. Do not modify any file of the project. Any note the orchestrator adds at the end of this prompt, on the quality gate's findings or on restored locked files, is about the code: read it for context only, and request no change for it.
 
-Judge the change only against the requirements, in business terms: for each acceptance criterion, whether the change does what it says for the people it serves, trying it as they would where you can; for each success measure, whether the human will be able to observe it once this ships; and whether anything the requirements put out of scope was built.
+Judge the change only against the requirements' acceptance criteria and success measures, in business terms: for each acceptance criterion, whether the change does what it says for the people it serves, trying it as they would where you can; for each success measure, whether the human will be able to observe it once this ships.
 
-As your last step, write your acceptance to {accept_path} in a single write. Its first line must be exactly `VERDICT: {approve}` or `VERDICT: {changes}`. Then numbered findings, each naming the acceptance criterion or success measure it concerns, what its users would meet, and what the requirements promise instead. Request changes only for an unmet acceptance criterion or success measure, or for something built that the requirements put out of scope: how the code does it is not yours to judge.'''
+As your last step, write your acceptance to {accept_path} in a single write. Its first line must be exactly `VERDICT: {approve}` or `VERDICT: {changes}`. Then numbered findings, each naming the acceptance criterion or success measure it concerns, what its users would meet, and what the requirements promise instead. Request changes only for an unmet acceptance criterion or success measure: how the code does it is not yours to judge.'''
 again = '''
-The Engineer has answered the findings in {findings}, and the Tech Lead has approved the change again ({review_path}); the Engineer's new report is in {build_path}. Accept the change again ({change}) against the acceptance criteria and success measures in {spec_path} and your previous acceptance in {prev_accept_path}, checking the Engineer's claims rather than trusting them.
+The Engineer has answered the findings in {findings}, and the Tech Lead has approved the change again ({review_path}); the Engineer's new report is in {build_path}. Accept the change again ({change}) against the acceptance criteria and success measures in {spec_path} and your previous acceptance in {prev_accept_path}, checking the Engineer's claims rather than trusting them. The code, and any note the orchestrator adds on it, remain the Tech Lead's to judge.
 
 As your last step, write the acceptance to {accept_path} in a single write, with the same first-line verdict and numbered findings as before.'''
 fresh_note = '''
-This is round {n}, and you are a fresh session: the one that agreed the requirements with the human is gone, and the requirements in {spec_path} are what it agreed. Your earlier acceptances of this change are {earlier_accept_paths}; check that each of their findings has been answered, against the requirements, as before.'''
+This is round {n}, and you are a fresh session; an earlier Product Manager session judged the earlier rounds. Your earlier acceptances of this change are {earlier_accept_paths}; check that each of their findings has been answered, against the requirements in {spec_path}, as before.'''
