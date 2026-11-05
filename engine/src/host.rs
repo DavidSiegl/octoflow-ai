@@ -525,8 +525,9 @@ pub trait Host {
     }
 
     /// Make each of paths in the working tree what it is in ref, a commit or a tree: written as ref has it, or deleted
-    /// where ref has none, a directory there, such as a nested repository, with all it holds. Any number of paths.
-    /// The index stays as it is.
+    /// where ref has none. A directory there, such as a nested repository, loses its own `.git` and every file in it
+    /// git does not ignore; its ignored files stay, and so does the directory while it holds any. Any number of
+    /// paths. The index stays as it is.
     fn restore(&self, cwd: &str, git_ref: &str, paths: &[String]) -> Result<(), OrchestratorError> {
         if paths.is_empty() {
             return Ok(());
@@ -540,9 +541,25 @@ pub trait Host {
         if !gone.is_empty() {
             let top = utf8_path(&self.git_verbatim(cwd, &["rev-parse", "--show-toplevel"])?)?;
             let top = top.strip_suffix('\n').unwrap_or(&top);
-            let listed: String = gone.iter().map(|p| format!("{p}\0")).collect();
-            let script = r#"cd -- "$1" && xargs -0 rm -rf --"#;
-            self.check(&["sh", "-c", script, "_", top], Some(&listed), DEFAULT_TIMEOUT)?;
+            let over = |script: &str, paths: &[&String]| {
+                let listed: String = paths.iter().map(|p| format!("{p}\0")).collect();
+                self.check(&["sh", "-c", script, "_", top], Some(&listed), DEFAULT_TIMEOUT)
+            };
+            // A directory, such as a nested repository, is cleaned rather than removed: its ignored files are the
+            // human's, and no ref holds them.
+            let printed = over(r#"cd -- "$1" && xargs -0 sh -c 'for p; do
+                if [ -d "$p" ] && [ ! -L "$p" ]; then printf "%s\0" "$p"; fi
+            done' _"#, &gone)?;
+            let dirs: HashSet<String> = nul_separated(&printed).into_iter().collect();
+            let (dirs, files): (Vec<&String>, Vec<&String>) = gone.into_iter().partition(|p| dirs.contains(*p));
+            if !files.is_empty() {
+                over(r#"cd -- "$1" && xargs -0 rm -f --"#, &files)?;
+            }
+            if !dirs.is_empty() {
+                over(r#"cd -- "$1" && xargs -0 sh -c 'for p; do
+                    rm -rf -- "$p/.git" && git clean -fdq -- ":(top,literal)$p" || exit 1
+                done' _"#, &dirs)?;
+            }
         }
         // git restore refuses a path that neither ref nor the index has, so only these.
         if !kept.is_empty() {

@@ -1589,6 +1589,23 @@ fn a_tree_is_restored_over_a_directory_and_a_file_swapped_and_a_nested_repositor
 }
 
 #[test]
+fn a_nested_repository_made_since_goes_but_the_ignored_files_it_holds() {
+    // d held only an ignored file, so the tree before has no d, and the one after has d as a gitlink.
+    let r = Repo::new(&[(".gitignore", "*.env\n")]);
+    r.put("d/my.env", "secret\n");
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    let nested = format!("{}/d", r.path);
+    r.git(&["init", "--quiet", &nested]);
+    r.put("d/fixture.txt", "made by the proof\n");
+    r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "add", "fixture.txt"]);
+    r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "fixture"]);
+    r.host.restore_tree(&r.path, &tree).unwrap();
+    assert_eq!((text(&r.path, "d/my.env"), text(&r.path, "d/fixture.txt")), (Some("secret\n".into()), None));
+    assert!(!std::path::Path::new(&format!("{nested}/.git")).exists());
+    assert_eq!(r.host.git(&r.path, &["status", "--porcelain"]).unwrap(), "");
+}
+
+#[test]
 fn a_tree_is_restored_over_more_paths_than_an_argv_holds() {
     // 2 x 12000 paths of over 200 bytes each: some 5 MB, where Linux takes 2 MB of arguments.
     let long = "p".repeat(200);
