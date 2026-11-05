@@ -85,6 +85,22 @@ is rewritten to say what is left.
   (`engine/src/workflow.rs`) knows the skipped rounds only of verdict steps: such a step's first turn in a later
   round gets its `again`, and its `{prev_X_path}` and `{earlier_X_paths}` name files of rounds it skipped. Closes with
   turn records (`RunState.turns`) deciding which rounds any step took a turn in.
+- **No check that a verdict step's loop runs an editing step.** `Pipeline::loop_problem` (`engine/src/pipeline.rs`)
+  lets a verdict step loop back to a step at or before the first verdict step, including the first verdict step itself
+  or a non-editing per-round step. A round sent back that way judges the same code again. The Builder never sees
+  `{findings}`, `pr_body`'s Builder report for the last round reads a `build-{n}.md` nobody wrote, and the verdict
+  step's `again` names that missing file. Raised and not recorded in cross-review 141's round 6 (2026-11-05). Closes
+  with `loop_problem` refusing a loop whose steps edit nothing, or with the prompts and the pull request handling a
+  round without a build.
+- **The agents' prompts name a plain `git diff {base}`, which follows the user's `diff.relative`.**
+  `change_description` (`engine/src/workflow.rs`) tells every step's agent that the change is
+  `` `git diff {base}` in {work_dir} ``. Deferred from cross-review 142 (F1, should-fix, 2026-11-04): "With
+  `diff.relative=true` in the user's config and a `work_dir` that is a subdirectory (the case this branch's tests
+  cover, and the ticket notes that a run's `work_dir` is its `cwd` when it has no worktree), an agent that runs that
+  command sees only the subdirectory's files. A Reviewer can then approve a change without seeing an edit elsewhere,
+  such as a weakened test outside `sub/`." Closes with the prompt naming `git diff --no-relative {base}`, its golden
+  files and e2e recordings re-recorded. Ticket:
+  `.scratch/git-diff-relative/issues/02-prompt-diff-ignores-diff-relative.md`.
 - **Writes to origin are not tried again through an outage.** `reaching_origin` (`engine/src/workflow/origin.rs`)
   wraps the run's fetches and its `ls-remote` reads only; the pushes (`engine/src/host.rs`'s `push_ref`,
   `push_branch`), the remote branch deletions (`delete_remote_branch`, `delete_remote_branch_at`) and the `gh` calls
@@ -944,16 +960,6 @@ is rewritten to say what is left.
   a new function under its old name (review round 6, R6-F1). Decided by the user in review round 4 of ticket 06.
   Closes with a way to tell a copy from a rename, such as git's copy detection (`git diff -C`) on the change's
   files.
-- **`paths_between` (`engine/src/host.rs`) follows the user's `diff.relative`.** Its `git diff --name-only` has no
-  `--no-relative`, so with `diff.relative=true` in the user's git config and a `cwd` that is a subdirectory of the
-  repository (not checked whether a run can pass one), it lists only the paths under that subdirectory, and its
-  `top_literal` pathspecs for files elsewhere match nothing. `Host::lock` then returns fewer locked paths and
-  `Host::locked_changes` misses edits to them; `locked_changes`'s own `git diff` has the same exposure. Raised by the
-  cross-review of `trust-quality-at-pr` (review 49, F7, 2026-10-26), which found it in what is now `judging_changes`
-  (`engine/src/cli/judged.rs`) and fixed it there with `--no-relative`; of `paths_between` it said: "has the same
-  exposure, but it is outside this range". Closes with `--no-relative` on both calls and a test that sets
-  `diff.relative` and locks from a subdirectory. Ticket:
-  `.scratch/git-diff-relative/issues/01-locks-ignore-diff-relative.md` (#233).
 - **A resume finds an agent alive whose start never finished and only waits for it.** `start`
   (`engine/src/workflow/turn.rs`) saves the agent's record, may wait without a deadline for a startup dialog the
   human answers (`wait_for_startup`), and only then saves the session. An orchestrator stopped in between leaves an

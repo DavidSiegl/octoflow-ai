@@ -406,7 +406,7 @@ impl FakeState {
             }
             ["merge-base", "--is-ancestor", commit, of] => return self.git_is_ancestor(commit, of),
             ["merge", rest @ ..] => return self.git_merge(rest),
-            ["diff", "--name-only", "-z", "--diff-filter=U"] => {
+            ["-c", "core.quotePath=false", "diff", "--no-relative", "--name-only", "-z", "--diff-filter=U"] => {
                 if !self.merge_head {
                     return ok("");
                 }
@@ -414,7 +414,7 @@ impl FakeState {
             }
             ["push", rest @ ..] => return self.git_push(rest),
             ["ls-remote", rest @ ..] => return self.git_ls_remote(rest),
-            ["-c", "core.quotePath=false", "diff", ..] => return ok(&self.diff),
+            ["-c", "core.quotePath=false", "diff", "--no-relative", "-U0", ..] => return ok(&self.diff),
             ["remote", "get-url", "origin"] => {
                 if !self.has_origin {
                     return Completed::new(2, "", "error: No such remote 'origin'");

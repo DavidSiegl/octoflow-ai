@@ -420,8 +420,7 @@ pub trait Host {
         if merge.status == 0 {
             return Ok(vec![]);
         }
-        // -z: paths with unusual characters come unquoted.
-        let conflicts = nul_separated(&self.git(cwd, &["diff", "--name-only", "-z", "--diff-filter=U"])?);
+        let conflicts = nul_separated(&git_diff(self, cwd, &["--name-only", "-z", "--diff-filter=U"])?);
         self.abort_merge(cwd)?;
         if conflicts.is_empty() {
             return Err(OrchestratorError(format!(
@@ -471,7 +470,7 @@ pub trait Host {
     fn lock(&self, cwd: &str, base: &str, git_ref: &str) -> Result<Vec<String>, OrchestratorError> {
         let sha = self.snapshot(cwd, base, &format!("locked files, {git_ref}"))?;
         self.git(cwd, &["update-ref", git_ref, &sha])?;
-        paths_between(self, cwd, base, &sha, &[])
+        utf8_paths(&names_between(self, cwd, base, &sha, &[])?)
     }
 
     /// Of paths, the ones whose file in the working tree, untracked files included, differs from ref's, a file
@@ -488,14 +487,14 @@ pub trait Host {
             return Ok((vec![], String::new()));
         }
         let sha = self.snapshot(cwd, git_ref, &format!("the working tree against {git_ref}"))?;
-        let differ = paths_between(self, cwd, git_ref, &sha, paths)?;
+        let differ = utf8_paths(&names_between(self, cwd, git_ref, &sha, paths)?)?;
         if differ.is_empty() {
             return Ok((vec![], String::new()));
         }
-        let mut args = vec!["diff", "--no-color", "--no-ext-diff", "--no-renames", git_ref, &sha, "--"];
+        let mut args = vec!["--no-color", "--no-ext-diff", "--no-renames", git_ref, &sha, "--"];
         let literal = top_literal(&differ);
         args.extend(literal.iter().map(String::as_str));
-        let diff = self.git_verbatim(cwd, &args)?;
+        let diff = git_diff(self, cwd, &args)?;
         Ok((differ, String::from_utf8_lossy(&diff).into_owned()))
     }
 
@@ -543,25 +542,14 @@ pub trait Host {
     }
 
     /// `git diff -U0` from base to commit, or to the working tree's tracked files without one, in the one shape
-    /// crate::patch::added_lines parses, whatever the user's git config. Verbatim: a line that is not UTF-8, such as
-    /// Latin-1 text or a binary file git diffs as text, is kept, so a change to such a file is judged like any other,
-    /// and only git's "\n" ends a line, so nothing inside an added line can pass for a header.
+    /// crate::patch::added_lines parses, whatever the user's git config (git_diff). Verbatim: a line that is not
+    /// UTF-8, such as Latin-1 text or a binary file git diffs as text, is kept, so a change to such a file is judged
+    /// like any other, and only git's "\n" ends a line, so nothing inside an added line can pass for a header.
     fn change_diff(&self, cwd: &str, base: &str, commit: Option<&str>) -> Result<Vec<u8>, OrchestratorError> {
-        let mut args = vec![
-            "-c",
-            "core.quotePath=false",
-            "diff",
-            "-U0",
-            "-M",
-            "--no-color",
-            "--no-ext-diff",
-            "--src-prefix=a/",
-            "--dst-prefix=b/",
-            base,
-        ];
+        let mut args = vec!["-U0", "-M", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", base];
         args.extend(commit);
         args.push("--");
-        self.git_verbatim(cwd, &args)
+        git_diff(self, cwd, &args)
     }
 
     /// The file at path, relative to the repository's top level and taken literally, as commit has it, its bytes as
@@ -574,7 +562,7 @@ pub trait Host {
     /// Each file the change from base to commit touches, a rename paired as change_diff pairs it, with the lines it
     /// adds and removes, from `git diff --numstat`. Errors: git fails, or names a path that is not UTF-8.
     fn changed_line_counts(&self, cwd: &str, base: &str, commit: &str) -> Result<Vec<ChangedFile>, OrchestratorError> {
-        let out = self.git_verbatim(cwd, &["diff", "--numstat", "-z", "-M", "--no-ext-diff", base, commit])?;
+        let out = git_diff(self, cwd, &["--numstat", "-z", "-M", "--no-ext-diff", base, commit])?;
         numstat(&out)
     }
 
@@ -1107,27 +1095,41 @@ pub fn decoded(exec: Exec) -> Result<Completed, OrchestratorError> {
 
 /// git pathspecs that each match exactly one of paths, relative to the repository's top level, whatever directory git
 /// runs in, and with no glob in them.
-pub(crate) fn top_literal<S: AsRef<str>>(paths: &[S]) -> Vec<String> {
+fn top_literal<S: AsRef<str>>(paths: &[S]) -> Vec<String> {
     paths.iter().map(|p| format!(":(top,literal){}", p.as_ref())).collect()
 }
 
-/// The paths whose files differ between commits a and b, a rename as its two paths; with paths, only those.
-fn paths_between<H: Host + ?Sized>(
+/// `git diff args` in cwd, its output verbatim as git_verbatim gives it, whatever the user's git config and whatever
+/// directory of the repository cwd is: every path is relative to the repository's top level, a diff covers the whole
+/// repository, and a path that is not ASCII comes as its bytes rather than quoted in octal. Every `git diff` of the
+/// engine's runs through it; args are what follows `diff`. Errors: as git_verbatim's.
+pub(crate) fn git_diff<H: Host + ?Sized>(host: &H, cwd: &str, args: &[&str]) -> Result<Vec<u8>, OrchestratorError> {
+    // --no-relative: under the user's diff.relative, a diff run in a subdirectory lists only that subdirectory's
+    // files, named relative to it, so that a top_literal pathspec for a file elsewhere matches nothing.
+    let mut argv = vec!["-c", "core.quotePath=false", "diff", "--no-relative"];
+    argv.extend(args);
+    host.git_verbatim(cwd, &argv)
+}
+
+/// The paths whose files differ between commits a and b, their mode included, a rename as its two paths, each ended
+/// by a NUL, as git prints them; with paths, which are relative to the repository's top level, only those. Errors:
+/// git fails.
+pub(crate) fn names_between<H: Host + ?Sized>(
     host: &H,
     cwd: &str,
     a: &str,
     b: &str,
     paths: &[String],
-) -> Result<Vec<String>, OrchestratorError> {
-    let mut args = vec!["diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", a, b, "--"];
+) -> Result<Vec<u8>, OrchestratorError> {
+    let mut args = vec!["--name-only", "-z", "--no-renames", "--no-ext-diff", a, b, "--"];
     let literal = top_literal(paths);
     args.extend(literal.iter().map(String::as_str));
-    utf8_paths(&host.git_verbatim(cwd, &args)?)
+    git_diff(host, cwd, &args)
 }
 
-/// The NUL-separated names of out, the empty ones left out.
-fn nul_separated(out: &str) -> Vec<String> {
-    out.split('\0').filter(|p| !p.is_empty()).map(String::from).collect()
+/// The NUL-separated names in out, the empty ones left out, a byte that is not UTF-8 replaced by U+FFFD.
+pub(crate) fn nul_separated(out: &[u8]) -> Vec<String> {
+    out.split(|&b| b == 0).filter(|p| !p.is_empty()).map(|p| String::from_utf8_lossy(p).into_owned()).collect()
 }
 
 /// The NUL-separated paths git printed in out, verbatim, the empty ones left out. Errors: one that is not UTF-8.
