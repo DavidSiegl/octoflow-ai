@@ -276,7 +276,7 @@ fn startup_dialog_waits_for_the_human() {
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
     // Told apart from a question within a turn, with the likeliest one named (run-usability/02).
     assert_eq!(f.told.titles()[0], "Spec Collector needs your answer before it starts");
-    assert!(f.told.lines().iter().any(|l| l.starts_with("[spec] ") && l.contains("trust the folder")), "{:?}", f.told.lines());
+    assert!(f.told.lines().iter().any(|l| l.starts_with("[spec] ") && l.contains("whether to trust a folder")), "{:?}", f.told.lines());
     assert_eq!(f.herdr.state().waits, [["idle", "done"]]);
 }
 

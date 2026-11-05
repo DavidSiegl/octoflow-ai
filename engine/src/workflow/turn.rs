@@ -663,8 +663,8 @@ impl Workflow<'_> {
         if !ready {
             self.ask_human(role, "needs your answer before it starts");
             self.human.log(&format!(
-                "[{role}] a harness asks once per folder it has not run in, e.g. Claude Code whether to trust the \
-                 folder; answer in the pane, and the run goes on"
+                "[{role}] a harness may ask something before it starts, such as Claude Code whether to trust a \
+                 folder it has not run in; answer in the pane, and the run goes on"
             ));
             self.wait_for_startup(&name)?;
         }

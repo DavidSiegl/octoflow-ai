@@ -295,8 +295,9 @@ for pi and opencode, and `codex resume <id>`. A role whose harness changed since
 #### Unattended runs
 
 Without `--permission-mode`, each agent starts in its harness's configured default. Claude Code's `default` and
-`acceptEdits` both stop for a shell command, so a Builder that runs the tests, or a Reviewer that checks them,
-waits until someone answers in its pane; the run says the role "needs your answer" and goes on once answered.
+`acceptEdits` both stop for a shell command that is not read-only and not allowed in its settings, so a Builder that
+runs the tests, or a Reviewer that checks them, waits until someone answers in its pane; the run says the role
+"needs your answer" and goes on once answered.
 For a run nobody watches, give claude `--permission-mode auto`, which lets Claude Code's classifier approve each
 action, or `bypassPermissions`, which approves everything and belongs on a sandbox or a throwaway machine. The
 table above shows what each other harness gets for these modes; pi and opencode get none, so set their own

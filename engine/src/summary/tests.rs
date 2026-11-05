@@ -66,6 +66,16 @@ fn turn(step: &str, file: &str, start: Option<i64>, end: Option<i64>, change: im
 }
 
 #[test]
+fn turn_lines_shows_starts_in_the_zone_given() {
+    // run-usability/04's case: 20:30:37 UTC is 21:30:37 at +01:00; turns_table stays UTC.
+    let mut t = turn("build", "build-1.md", Some(0), Some(5), |_| {});
+    t.insert("started_at".into(), Value::from("2026-11-05T20:30:37+00:00"));
+    let zone = jiff::tz::TimeZone::fixed(jiff::tz::offset(1));
+    assert!(turn_lines(std::slice::from_ref(&t), &zone)[0].contains("2026-11-05 21:30:37"));
+    assert!(turns_table(&[t]).contains("| 2026-11-05 20:30:37 |"));
+}
+
+#[test]
 fn a_pipe_in_a_cell_does_not_split_it() {
     let table = turns_table(&[turn("build", "a|b.md", Some(0), Some(5), |t| {
         t.insert("model".into(), Value::from("x|y"));

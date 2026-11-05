@@ -42,7 +42,7 @@ pub fn new_state(
     };
     let run_id = match &args.run_id {
         Some(id) => given_run_id(id, cwd, world)?,
-        None => new_run_id(world.with.clocks.wall())?,
+        None => new_run_id(world.with.clocks.wall(), &world.with.clocks.zone())?,
     };
     let mut state = RunState::new(&run_id, &task, cwd);
     state.machine = args.target.machine.clone();
@@ -82,16 +82,16 @@ fn given_run_id(id: &str, cwd: &str, world: &Connected) -> Result<String, Orches
     Ok(id.to_string())
 }
 
-/// A new run's id: the time wall (seconds since the epoch) names in the machine's zone (jiff's TimeZone::system: TZ,
-/// else /etc/localtime, else UTC), and six random hex digits, as 20261029-142233-a1b2c3. Errors: the
-/// system's random bytes cannot be read, or wall is beyond the year 9999. serve's POST /run makes its runs' ids so
-/// too, and run --run-id takes only ids of this format (args::run_id_arg).
-pub(crate) fn new_run_id(wall: f64) -> Result<String, OrchestratorError> {
+/// A new run's id: the time wall (seconds since the epoch) names in zone, the machine's (Clocks::zone), and six random
+/// hex digits, as 20261029-142233-a1b2c3. Errors: the system's random bytes cannot be read, or wall is beyond the
+/// year 9999. serve's POST /run makes its runs' ids so too, and run --run-id takes only ids of this format
+/// (args::run_id_arg).
+pub(crate) fn new_run_id(wall: f64, zone: &jiff::tz::TimeZone) -> Result<String, OrchestratorError> {
     let bytes: [u8; 3] = crate::env::random_bytes()
         .map_err(|e| OrchestratorError(format!("cannot read /dev/urandom for a run id: {e}")))?;
     let at = jiff::Timestamp::from_second(wall.floor() as i64)
         .map_err(|e| OrchestratorError(format!("cannot name a run by the time {wall}: {e}")))?;
-    let time = at.to_zoned(jiff::tz::TimeZone::system()).strftime("%Y%m%d-%H%M%S").to_string();
+    let time = at.to_zoned(zone.clone()).strftime("%Y%m%d-%H%M%S").to_string();
     let key: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     Ok(format!("{time}-{key}"))
 }

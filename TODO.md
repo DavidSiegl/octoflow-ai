@@ -69,16 +69,11 @@ is rewritten to say what is left.
 
 ## Open issues
 
-- **Two sources of the machine's zone.** `show` takes it from `Clocks::zone` (`engine/src/workflow.rs`), so a test
-  can pin it, but `new_run_id` (`engine/src/cli/start.rs`), which serve's POST /run uses too, reads
-  `jiff::tz::TimeZone::system()` itself. They agree on a real machine; a test cannot set a run id's zone. Left out of run-usability/04
-  (2026-11-05) to keep it to `show`. Closes with `new_run_id` taking the zone from its caller's `Clocks`.
 - **No `doctor` check that a harness can start in the project without asking.** Claude Code's folder-trust dialog
   stops a run before its first turn; run-usability/02 made the run say so and the README list it, but `doctor` does
   not check it. Decided against reading Claude Code's trust record (`~/.claude.json`, `projects.<path>`) on
   2026-11-05: an undocumented file of another tool, which would break silently when it changes. Closes if Claude
   Code documents a way to ask whether a folder is trusted.
-
 - **The desktop app does not say which verdict step sent a run back.** `list` names it (`run_outcome`,
   `engine/src/cli/listing.rs`) and serve's `/runs` carries `verdicts`, but the app's `outcome` (`ui/src/runs.ts`)
   shows only `verdict`, and its `RunRecord` (`ui/src/api.ts`) has no `verdicts`. Left out of acceptance-verdict

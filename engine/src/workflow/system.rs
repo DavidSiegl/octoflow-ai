@@ -10,6 +10,12 @@ use crate::error::OrchestratorError;
 use crate::herdr::ProcessHerdr;
 use crate::interrupt::Interrupt;
 
+/// This machine's zone, as jiff's TimeZone::try_system finds it from TZ, else /etc/localtime; UTC when neither
+/// names one it can read (where TimeZone::system would give Etc/Unknown).
+pub fn machine_zone() -> jiff::tz::TimeZone {
+    jiff::tz::TimeZone::try_system().unwrap_or(jiff::tz::TimeZone::UTC)
+}
+
 /// The system's clocks, whose sleep the Ctrl-C cuts short.
 #[derive(Clone, Debug)]
 pub struct SystemClocks {
@@ -43,9 +49,9 @@ impl Clocks for SystemClocks {
         self.made.1 + self.made.0.elapsed().as_secs_f64()
     }
 
-    /// jiff's TimeZone::system: TZ, else /etc/localtime, else UTC; the zone new run ids are named in.
+    /// machine_zone.
     fn zone(&self) -> jiff::tz::TimeZone {
-        jiff::tz::TimeZone::system()
+        machine_zone()
     }
 
     fn wall(&self) -> f64 {

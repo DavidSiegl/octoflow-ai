@@ -97,8 +97,11 @@ impl TurnCells {
         let start = match truthy("started_at") {
             Some(at) => match cell(Some(at)).parse::<Timestamp>() {
                 Ok(at) => at.to_zoned(zone.clone()).strftime("%Y-%m-%d %H:%M:%S").to_string(),
-                // Not a time: shown as it was saved.
-                Err(_) => cell(Some(at)),
+                // Not a time with an offset, which the engine never writes (iso_utc): shown as saved, as UTC was.
+                Err(_) => {
+                    let at = cell(Some(at)).replace('T', " ");
+                    at.strip_suffix("+00:00").unwrap_or(&at).to_string()
+                }
             },
             None => "?".into(),
         };

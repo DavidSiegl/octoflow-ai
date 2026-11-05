@@ -207,7 +207,7 @@ impl Target {
 /// What the human wrote after the program's name, read: the Command, or the clap error that ends the program instead.
 ///
 /// The error is a usage error (exit status 2, its text naming the problem, for clap's print), or the help a --help
-/// asked for (exit status 0); both name the program as super::program_name does. config is where the workflow files
+/// or the version a --version asked for (exit status 0); both name the program as super::program_name does. config is where the workflow files
 /// that --workflow offers are.
 pub fn parse_args(argv: impl IntoIterator<Item = OsString>, config: &ConfigDir) -> Result<Command, clap::Error> {
     let mut p = parser(config);

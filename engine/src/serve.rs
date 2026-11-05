@@ -651,7 +651,7 @@ fn start_answer(shared: &Shared, project: &ProjectRuns, run: &RunRequest) -> Ans
         Err(why) => return (500, error(&why)),
     };
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
-    let run_id = match crate::cli::new_run_id(now) {
+    let run_id = match crate::cli::new_run_id(now, &crate::workflow::machine_zone()) {
         Ok(id) => id,
         Err(e) => return (500, error(&e.0)),
     };

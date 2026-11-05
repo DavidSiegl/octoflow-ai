@@ -691,6 +691,10 @@ fn turns_once_recorded() {
     cli.f.clock.set_zone(jiff::tz::TimeZone::fixed(jiff::tz::offset(1)));
     let out = show(&cli, "a1b2c3").1;
     assert!(out.contains("\nturns, started in UTC+01:00\n    spec     0     claude  2026-10-03 05:00:00  1h 06m   spec.md\n"), "{out}");
+    // A zone without a name is named by the offsets its starts had, not today's: October is summer time.
+    cli.f.clock.set_zone(jiff::tz::TimeZone::posix("CET-1CEST,M3.5.0,M10.5.0/3").unwrap());
+    let out = show(&cli, "a1b2c3").1;
+    assert!(out.contains("\nturns, started in UTC+02:00\n    spec     0     claude  2026-10-03 06:00:00"), "{out}");
 }
 
 #[test]
