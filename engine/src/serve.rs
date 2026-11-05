@@ -195,7 +195,8 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 pub struct RunServer {
     /// What its request threads share.
     shared: Arc<Shared>,
-    /// tiny_http's server on the port, which the dispatcher takes requests from; None once the server has stopped.
+    /// tiny_http's server on the port, which the dispatcher takes requests from; None once the server has stopped, and
+    /// while the dispatcher waits to start another.
     /// The dispatcher starts another on the same port when tiny_http's stops accepting connections, which it does
     /// at the first error accept gives (tiny_http 0.12's lib.rs, `Err(e) => ... break`), so that a passing EMFILE does
     /// not leave a server that answers nothing, as Python's socketserver goes on after it.
@@ -312,6 +313,13 @@ fn on(listener: &std::net::TcpListener) -> io::Result<tiny_http::Server> {
 /// stops (shared.stopping); when tiny_http's server stops accepting connections meanwhile, start another on listener,
 /// 100 ms after the last one stopped or failed to start: a lasting EMFILE fails each new server's first accept, which
 /// shows only as its recv failing at once, so without the pause the restarts would spin.
+///
+/// The old server is dropped (and listening emptied) before the pause, not after its successor starts. Dropping it
+/// queues a connection on listener to wake its accept thread, which is expected to take it during the pause and end;
+/// under a scheduling delay longer than the pause the successor could take it instead, leaving the old thread blocked.
+/// Such a thread takes the next real connection into a queue nobody reads, and tiny_http answers it with an empty 500.
+/// tiny_http's own accept error ends its thread, so this arises only when recv was ended by `unblock` while the thread
+/// still accepts, which serve itself does only at the stop.
 fn dispatch(listener: &std::net::TcpListener, listening: &Mutex<Option<Arc<tiny_http::Server>>>, shared: &Arc<Shared>) {
     loop {
         // None once RunServer's drop has taken it, at the stop.
@@ -322,11 +330,17 @@ fn dispatch(listener: &std::net::TcpListener, listening: &Mutex<Option<Arc<tiny_
             // A request that gets no thread is dropped, which tiny_http answers with 500.
             let _ = std::thread::Builder::new().name("serve-request".to_string()).spawn(move || answer(&shared, request));
         }
+        // Before the pause and the successor: see the doc comment.
+        drop(lock(listening).take());
+        drop(http);
         loop {
             // Ends at once at the stop, which the check below then sees.
             shared.stopping.sleep(Duration::from_millis(100));
+            // Under the lock RunServer's drop takes the server by, so that no server is started after the stop, and a
+            // stop after this one finds the new server there to take. Relies on shared.stopping never being caught or
+            // finally-run (Interrupt::catch and finally clear is_raised), which nothing under serve does.
             let mut current = lock(listening);
-            if current.is_none() {
+            if shared.stopping.is_raised() {
                 return;
             }
             if let Ok(http) = on(listener) {
