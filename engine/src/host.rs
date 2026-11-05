@@ -1152,8 +1152,8 @@ fn working_tree<H: Host + ?Sized>(host: &H, cwd: &str) -> Result<String, Orchest
     Ok(host.check(&["sh", "-c", script, "_", cwd], None, DEFAULT_TIMEOUT)?.trim().to_string())
 }
 
-/// Run script with `sh -c`, its `$1` top, and paths on its stdin, each ended by a NUL; what it printed. Errors: the
-/// script exits non-zero, or outlasts DEFAULT_TIMEOUT.
+/// Run script with `sh -c`, its `$1` top, and paths on its stdin, each ended by a NUL; what it printed. Errors: `sh`
+/// cannot be started, the script exits non-zero, or it outlasts DEFAULT_TIMEOUT.
 fn sh_over_paths<H: Host + ?Sized, S: AsRef<str>>(
     host: &H,
     top: &str,
@@ -1164,9 +1164,8 @@ fn sh_over_paths<H: Host + ?Sized, S: AsRef<str>>(
     host.check(&["sh", "-c", script, "_", top], Some(&listed), DEFAULT_TIMEOUT)
 }
 
-/// Empty each of dirs, directories under top that ref lacks, as Host::restore says of such a directory: of all but
-/// what the rules ref holds ignore and the repositories ref holds. held is every path ref holds. Errors: a command
-/// fails, as `rm` on a file it may not remove.
+/// Clean each of dirs, directories under top that ref lacks, as Host::restore's doc says of such a directory. held is
+/// every file and gitlink ref holds. Errors: a command fails, as `rm` on a file it may not remove.
 fn clean_directories<H: Host + ?Sized>(
     host: &H,
     top: &str,
