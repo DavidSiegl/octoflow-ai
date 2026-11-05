@@ -251,8 +251,8 @@ impl Prompt {
 
 /// The texts a run sends agents besides a workflow file's own prompts: the default workflow's steps, the follow-ups
 /// and the notes. Each is the built-in text of its Prompt unless a prompt file replaced it (load_prompts). Each is a
-/// template whose placeholders are the built-in text's, or for a run an earlier release started, that release's
-/// (EARLIER_PLACEHOLDERS); BLOCKED_NOTE has none.
+/// template whose placeholders are drawn from the built-in text's, or for a run an earlier release started, from
+/// that release's (EARLIER_PLACEHOLDERS); it need not use them all. BLOCKED_NOTE has none.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Prompts {
     /// By Prompt::ALL's order.
@@ -409,12 +409,12 @@ pub fn load_prompts(config: &ConfigDir) -> Result<Prompts, OrchestratorError> {
 /// built_in_unfillable_problem finds, or a placeholder the built-in text has and the text lacks. The rule for a file
 /// read now; saved_prompts' is the narrower one for an override saved with a run.
 pub fn prompt_problem(name: &str, text: &str) -> Option<String> {
-    let owned = built_in_placeholders(name)?;
-    let built_in: Vec<&str> = owned.iter().map(String::as_str).collect();
-    unfillable_problem(name, text, &built_in).or_else(|| {
-        let used = placeholders(text).expect("unfillable_problem parsed the text");
-        let missing = built_in.iter().filter(|p| !used.iter().any(|u| u == *p)).min()?;
-        Some(format!("placeholder {{{missing}}} is missing; {}", takes(name, &built_in)))
+    built_in_unfillable_problem(name, text).or_else(|| {
+        let built_in = built_in_placeholders(name)?;
+        let used = placeholders(text).expect("built_in_unfillable_problem parsed the text");
+        let missing = built_in.iter().filter(|p| !used.contains(p)).min()?;
+        let offered: Vec<&str> = built_in.iter().map(String::as_str).collect();
+        Some(format!("placeholder {{{missing}}} is missing; {}", takes(name, &offered)))
     })
 }
 
