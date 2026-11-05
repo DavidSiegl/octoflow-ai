@@ -92,15 +92,6 @@ is rewritten to say what is left.
   step's `again` names that missing file. Raised and not recorded in cross-review 141's round 6 (2026-11-05). Closes
   with `loop_problem` refusing a loop whose steps edit nothing, or with the prompts and the pull request handling a
   round without a build.
-- **The agents' prompts name a plain `git diff {base}`, which follows the user's `diff.relative`.**
-  `change_description` (`engine/src/workflow.rs`) tells every step's agent that the change is
-  `` `git diff {base}` in {work_dir} ``. Deferred from cross-review 142 (F1, should-fix, 2026-11-04): "With
-  `diff.relative=true` in the user's config and a `work_dir` that is a subdirectory (the case this branch's tests
-  cover, and the ticket notes that a run's `work_dir` is its `cwd` when it has no worktree), an agent that runs that
-  command sees only the subdirectory's files. A Reviewer can then approve a change without seeing an edit elsewhere,
-  such as a weakened test outside `sub/`." Closes with the prompt naming `git diff --no-relative {base}`, its golden
-  files and e2e recordings re-recorded. Ticket:
-  `.scratch/git-diff-relative/issues/02-prompt-diff-ignores-diff-relative.md`.
 - **Writes to origin are not tried again through an outage.** `reaching_origin` (`engine/src/workflow/origin.rs`)
   wraps the run's fetches and its `ls-remote` reads only; the pushes (`engine/src/host.rs`'s `push_ref`,
   `push_branch`), the remote branch deletions (`delete_remote_branch`, `delete_remote_branch_at`) and the `gh` calls
@@ -197,15 +188,6 @@ is rewritten to say what is left.
   only once the finishing save is older than a bound (the record carries `heartbeat_age`), or with the engine
   writing the files before that save where a takeover allows it (`end_done_run` writes them before its release
   save since run-crash-ending/01, but after the save of phase `done`; `release` saves first on purpose).
-- **A release that adds a placeholder to a built-in prompt would refuse every run that saved an override of it.**
-  `saved_prompts` (`engine/src/prompts.rs`) holds a run's saved prompt overrides to `prompt_problem` on resume, whose
-  rule that an override keep every placeholder of the built-in text never refused a resume before. No run can meet it
-  today, since overrides came with that rule (fb87a8f) and every built-in placeholder is older. Raised by cross-review
-  111, round 2 (2026-11-03): "if a later release adds a placeholder to a built-in text, every run that saved an
-  override of that text will be refused on resume, where it could still have been filled." Closes with the resume
-  check limited to what cannot be filled in, the template's form and unknown names, or with the release that adds
-  such a placeholder saying so in its notes.
-  Ticket: `.scratch/prompt-override-resume/issues/01-resume-refuses-only-unfillable-overrides.md` (#238).
 - **No test crashes the Rust engine after each save.** `tests/test_crash_resume.py` crashed the Python engine
   in-process right after every write of `state.json` and resumed it, and went with that engine (rust-engine ticket 11,
   2026-10-30). The e2e scenarios still kill the Rust engine as a program, once per phase. Closes with a crash

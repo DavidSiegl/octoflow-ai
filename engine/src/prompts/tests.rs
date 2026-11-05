@@ -152,14 +152,34 @@ fn a_state_keeps_the_fix_prompt_an_earlier_release_saved() {
     let earlier = "Fix {prev_review_path}; report to {build_path}.";
     let overrides: Map<String> = [("FIX_PROMPT", earlier.to_string())].into_iter().collect();
     assert_eq!(saved_prompts(&overrides, "r").unwrap().text(Prompt::FixPrompt), earlier);
-    // Only that prompt's earlier placeholders, and only all of them.
+    // Only one text's placeholders, not a mix of the earlier and today's.
     for (name, text) in [
-        ("FIX_PROMPT", "Fix {prev_review_path}."),
         ("FIX_PROMPT", "Fix {prev_review_path} and {findings}; report to {build_path}."),
         ("RECHECK_PROMPT", "Recheck {prev_review_path}, {build_path}, {change}, {spec_path}; write {review_path}."),
     ] {
         let overrides: Map<String> = [(name, text.to_string())].into_iter().collect();
         assert!(saved_prompts(&overrides, "r").is_err(), "{name}: {text}");
+    }
+}
+
+#[test]
+fn a_state_keeps_an_override_that_leaves_out_a_placeholder_its_built_in_text_has() {
+    // A release that adds a placeholder to a built-in text must not refuse the runs that saved an override without it.
+    let text = "Recheck {change}.";
+    let overrides: Map<String> = [("RECHECK_PROMPT", text.to_string())].into_iter().collect();
+    assert_eq!(saved_prompts(&overrides, "r").unwrap().text(Prompt::RecheckPrompt), text);
+    assert!(prompt_problem("RECHECK_PROMPT", text).unwrap().contains("is missing"));
+    // An earlier text's placeholders may be left out too.
+    let overrides: Map<String> = [("FIX_PROMPT", "Fix {prev_review_path}.".to_string())].into_iter().collect();
+    assert!(saved_prompts(&overrides, "r").is_ok());
+}
+
+#[test]
+fn a_state_and_a_file_both_refuse_an_unknown_placeholder_and_a_template_that_does_not_parse() {
+    for text in ["Recheck {change} {nothing}.", "Recheck {change"] {
+        let overrides: Map<String> = [("RECHECK_PROMPT", text.to_string())].into_iter().collect();
+        assert!(saved_prompts(&overrides, "r").is_err(), "{text}");
+        assert!(prompt_problem("RECHECK_PROMPT", text).is_some(), "{text}");
     }
 }
 
