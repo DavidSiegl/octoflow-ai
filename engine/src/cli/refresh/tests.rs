@@ -141,6 +141,7 @@ fn a_cleanly_merging_approved_draft_loses_its_warning_and_is_marked_ready() {
     assert_eq!(out, format!("{REFRESH_ID}: conflict cleared, ready for review  {REFRESH_URL}\n"));
     assert_eq!(t.pr_edits(), [body_edit(REFRESH_URL, &clean_body(APPROVE)), ready(REFRESH_URL)]);
     assert_eq!(t.saved().get("conflicts"), Some(&Value::Array(vec![])));
+    assert_eq!(t.saved().get("conflict_cleared"), Some(&Value::from(REFRESH_URL)));
     assert_eq!(t.cli.f.host.state().mtime_kept, [state_path(REFRESH_ID)]);
 }
 
@@ -153,6 +154,7 @@ fn a_run_that_did_not_succeed_keeps_its_draft() {
     assert_eq!(out, format!("{REFRESH_ID}: conflict cleared  {REFRESH_URL}\n"));
     assert_eq!(t.pr_edits(), [body_edit(REFRESH_URL, &clean_body(CHANGES_REQUESTED))]);
     assert_eq!(t.saved().get("conflicts"), Some(&Value::Array(vec![])));
+    assert_eq!(t.saved().get("conflict_cleared"), Some(&Value::from(REFRESH_URL)));
 }
 
 #[test]
@@ -186,6 +188,7 @@ fn a_merged_or_closed_pull_request_only_forgets_the_conflict() {
         assert_eq!(t.refresh(&[REFRESH_ID]), (0, line));
         assert_eq!(t.pr_edits(), []);
         assert_eq!(t.saved().get("conflicts"), Some(&Value::Array(vec![])));
+        assert_eq!(t.saved().get("conflict_cleared"), Some(&Value::Null), "{state}");
     }
 }
 
@@ -279,7 +282,8 @@ fn a_state_saved_meanwhile_is_not_overwritten() {
     t.resave(REFRESH_ID, &saved, &[("round", Value::from(2))]);
     t.cli.f.host.state().run_states_with = Some(Box::new(move |_: &str| Some(Ok(vec![(0, saved.clone())]))));
     let error = t.error(&[REFRESH_ID]);
-    assert!(error.contains(&format!("run {REFRESH_ID}: {path} changed while its pull request was refreshed")), "{error}");
+    let changed = format!("run {REFRESH_ID}: {path} changed while its pull request was refreshed; conflicts and conflict_cleared are not recorded");
+    assert!(error.contains(&changed), "{error}");
     assert_eq!(t.saved().get("conflicts"), Some(&Value::Array(vec![Value::from("a.py")])));
     assert_eq!(t.saved().get("round"), Some(&Value::from(2)));
 }

@@ -74,7 +74,7 @@ pub fn close_run(world: &Connected, cwd: &str, run_ref: &str) -> Result<String, 
     done.extend(delete_run_refs(world, cwd, &state)?);
     let closed = done.join("; ");
     let path = format!("{cwd}/{RUNS_DIR}/{}/state.json", state.run_id);
-    record_in_state(host, &path, saved, "closed", Value::from(closed.as_str()), "the run was closed")?;
+    record_in_state(host, &path, saved, &[("closed", Value::from(closed.as_str()))], "the run was closed")?;
     world.say(&format!("closed run {}: {closed}", state.run_id));
     Ok(closed)
 }
