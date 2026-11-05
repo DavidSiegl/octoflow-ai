@@ -575,8 +575,10 @@ fn args() {
 
 #[test]
 fn close_on_real_git() {
-    // A failed --worktree run: its dirty worktree is removed by force, and its branch, at base, deleted.
+    // A failed --worktree run: its dirty worktree is removed by force, and its branch, at base, deleted. The user's
+    // status.showUntrackedFiles=no does not hide the new file from the list of what goes with the worktree.
     let repo = Repo::new(&[("app.py", "one\n"), (".orchestrator/.gitignore", "*\n")]);
+    repo.git(&["config", "status.showUntrackedFiles", "no"]);
     let base = repo.base().to_string();
     let wt = format!("{}/{WORKTREES_DIR}/a1b2c3", repo.path);
     repo.host.add_worktree(&repo.path, &wt, &base).unwrap();

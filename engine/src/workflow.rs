@@ -20,7 +20,7 @@ use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
 use crate::harness::{harness, AgentSettings};
 use crate::herdr::{Herdr, HerdrError};
-use crate::host::{Host, PushError};
+use crate::host::{git_status, Host, PushError};
 use crate::interrupt::Interrupt;
 use crate::paths::file_name;
 use crate::pipeline::{is_built_in, Pipeline, Step, DONE, METRICS_FILE, PUBLISH, QUALITY, SUMMARY_FILE};
@@ -795,7 +795,7 @@ impl<'a> Workflow<'a> {
     /// the Builder's.
     fn require_clean(&self) -> Result<(), OrchestratorError> {
         let work_dir = self.state.work_dir();
-        let dirty = self.host.git(work_dir, &["status", "--porcelain"])?;
+        let dirty = git_status(self.host, work_dir)?;
         if !dirty.trim().is_empty() {
             return Err(OrchestratorError(format!(
                 "{work_dir} has uncommitted changes; commit or stash them first:\n{}",
@@ -1192,7 +1192,7 @@ impl<'a> Workflow<'a> {
             let title = spec_title(&spec).filter(|t| !t.is_empty()).unwrap_or(first_line);
             let title: String = if title.is_empty() { s.run_id.clone() } else { title }.chars().take(72).collect();
             let quality = self.gate_evidence(s.round)?;
-            if !self.host.git(&wd, &["status", "--porcelain"])?.trim().is_empty() {
+            if !git_status(self.host, &wd)?.trim().is_empty() {
                 self.host.git(&wd, &["add", "--all"])?;
                 let trailers: Vec<String> = provenance(s, &quality)
                     .into_iter()

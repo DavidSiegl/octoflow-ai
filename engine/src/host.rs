@@ -1220,6 +1220,21 @@ pub(crate) fn git_diff<H: Host + ?Sized>(host: &H, cwd: &str, args: &[&str]) -> 
     host.git_verbatim(cwd, &argv)
 }
 
+/// The arguments of the one `git status` the engine runs, which `git_status` sends and a fake host answers. They
+/// override every user setting that hides part of a change from `git status`: `status.showUntrackedFiles` (new files
+/// are listed one by one, also those in a new directory), `diff.ignoreSubmodules` and `submodule.<name>.ignore` (a
+/// submodule at another commit is listed), and `core.quotePath` (a name that is not ASCII comes as its bytes, not
+/// quoted in octal).
+pub(crate) const GIT_STATUS_ARGS: &[&str] =
+    &["-c", "core.quotePath=false", "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"];
+
+/// What `git status --porcelain` lists in cwd, one change or untracked file to a line, under the user's settings that
+/// GIT_STATUS_ARGS names overridden. Empty means a clean working tree. Every `git status` of the engine's runs through
+/// it. Errors: as Host::git's.
+pub(crate) fn git_status<H: Host + ?Sized>(host: &H, cwd: &str) -> Result<String, OrchestratorError> {
+    host.git(cwd, GIT_STATUS_ARGS)
+}
+
 /// The paths whose files differ between commits a and b, their mode included, a rename as its two paths, each ended
 /// by a NUL, as git prints them; with paths, which are relative to the repository's top level, only those. Errors:
 /// git fails.
