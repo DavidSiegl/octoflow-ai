@@ -1674,6 +1674,63 @@ fn a_repository_made_since_whose_name_starts_with_a_dash_goes() {
 }
 
 #[test]
+fn a_repository_nested_in_one_made_since_goes_but_the_ignored_files_it_holds() {
+    let r = Repo::new(&[(".gitignore", "*.env\n")]);
+    r.put("d/e/my.env", "secret\n");
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    for (dir, file) in [("d/e", "e.txt"), ("d", "d.txt")] {
+        let nested = format!("{}/{dir}", r.path);
+        r.git(&["init", "--quiet", &nested]);
+        r.put(&format!("{dir}/{file}"), "made by the proof\n");
+        r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "add", file]);
+        r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "f"]);
+    }
+    r.host.restore_tree(&r.path, &tree).unwrap();
+    assert_eq!(text(&r.path, "d/e/my.env"), Some("secret\n".into()));
+    assert_eq!(r.host.git(&r.path, &["status", "--porcelain", "-uall"]).unwrap(), "");
+}
+
+#[test]
+fn a_repository_of_the_tree_before_in_one_made_since_keeps_its_history() {
+    let r = Repo::new(&[]);
+    let lib = format!("{}/d/e", r.path);
+    r.git(&["init", "--quiet", &lib]);
+    r.put("d/e/lib.c", "int x;\n");
+    r.git(&["-C", &lib, "-c", "user.name=t", "-c", "user.email=t@example.com", "add", "."]);
+    r.git(&["-C", &lib, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "lib"]);
+    let status = r.host.git(&r.path, &["status", "--porcelain", "-uall"]).unwrap();
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    let nested = format!("{}/d", r.path);
+    r.git(&["init", "--quiet", &nested]);
+    r.put("d/fixture.txt", "made by the proof\n");
+    r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "add", "fixture.txt"]);
+    r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "fixture"]);
+    r.host.restore_tree(&r.path, &tree).unwrap();
+    assert_eq!(text(&r.path, "d/fixture.txt"), None);
+    assert_eq!(text(&r.path, "d/e/lib.c"), Some("int x;\n".into()));
+    assert_eq!(r.host.git(&lib, &["log", "--format=%s"]).unwrap().trim(), "lib");
+    assert_eq!(r.host.git(&r.path, &["status", "--porcelain", "-uall"]).unwrap(), status);
+}
+
+#[test]
+fn a_gitignore_of_the_tree_before_in_one_made_since_keeps_what_it_ignores() {
+    let r = Repo::new(&[]);
+    r.put("d/.gitignore", "*.log\n");
+    r.put("d/x.log", "the human's\n");
+    let status = r.host.git(&r.path, &["status", "--porcelain", "-uall"]).unwrap();
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    let nested = format!("{}/d", r.path);
+    r.git(&["init", "--quiet", &nested]);
+    r.put("d/fixture.txt", "made by the proof\n");
+    r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "add", "fixture.txt"]);
+    r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "fixture"]);
+    r.host.restore_tree(&r.path, &tree).unwrap();
+    assert_eq!((text(&r.path, "d/x.log"), text(&r.path, "d/fixture.txt")), (Some("the human's\n".into()), None));
+    assert_eq!(text(&r.path, "d/.gitignore"), Some("*.log\n".into()));
+    assert_eq!(r.host.git(&r.path, &["status", "--porcelain", "-uall"]).unwrap(), status);
+}
+
+#[test]
 fn a_tree_is_restored_over_more_paths_than_an_argv_holds() {
     // 2 x 12000 paths of over 200 bytes each: some 5 MB, where Linux takes 2 MB of arguments.
     let long = "p".repeat(200);

@@ -525,10 +525,11 @@ pub trait Host {
     }
 
     /// Make each of paths in the working tree what it is in ref, a commit or a tree: written as ref has it, or deleted
-    /// where ref has none. A directory there, such as a nested repository, keeps only what the rules from outside it
-    /// ignore: an ignored file, or an ignored subdirectory whole, a repository's included; it loses everything else,
-    /// its own `.git`, a repository nested in it and every `.gitignore` among them. The directory itself stays while
-    /// it holds anything. Any number of paths. The index stays as it is.
+    /// where ref has none. A directory there, such as a nested repository, keeps what the rules ref holds ignore (its
+    /// `.gitignore` files, those outside it, `.git/info/exclude` and `core.excludesFile`), an ignored subdirectory
+    /// whole, a repository's included, and a repository ref holds as a gitlink, whole; it loses everything else,
+    /// every `.git` and every `.gitignore` ref lacks among it included, so a file only such a `.gitignore` ignored
+    /// goes. The directory itself stays while it holds anything. Any number of paths. The index stays as it is.
     fn restore(&self, cwd: &str, git_ref: &str, paths: &[String]) -> Result<(), OrchestratorError> {
         if paths.is_empty() {
             return Ok(());
@@ -557,20 +558,27 @@ pub trait Host {
                 over(r#"cd -- "$1" && xargs -0 rm -f --"#, &files)?;
             }
             if !dirs.is_empty() {
-                // Its own .git first, so that git sees what is under it as the outer repository's.
-                over(r#"cd -- "$1" && xargs -0 sh -c 'for p; do rm -rf -- "./$p/.git" || exit 1; done' _"#, &dirs)?;
-                // Then the .gitignore files under it, which ref has none of, outside what the outer rules ignore. A
-                // level at a time, each level's going before git judges the next level's subdirectories, so that only
-                // the outer rules judge them.
+                // Walked a level at a time, each level losing its .git, so that git sees what is in it as the outer
+                // repository's, and its .gitignore unless ref holds it, before git judges the next level's
+                // subdirectories, so that only the rules ref holds judge them. Not entered: a subdirectory those rules
+                // ignore, or one ref holds, a repository of the tree before.
                 let mut level: Vec<String> = dirs.iter().map(|p| p.to_string()).collect();
                 while !level.is_empty() {
+                    let unheld: Vec<String> =
+                        level.iter().map(|p| format!("{p}/.gitignore")).filter(|g| !held.contains(g)).collect();
+                    if !unheld.is_empty() {
+                        over(r#"cd -- "$1" && xargs -0 sh -c 'for g; do
+                            [ -d "./$g" ] || rm -f -- "./$g" || exit 1
+                        done' _"#, &unheld.iter().collect::<Vec<_>>())?;
+                    }
                     let found = over(r#"cd -- "$1" && xargs -0 sh -c 'for p; do
-                        [ -d "./$p/.gitignore" ] || rm -f -- "./$p/.gitignore" || exit 1
+                        rm -rf -- "./$p/.git" || exit 1
                         find "./$p" -mindepth 1 -maxdepth 1 -type d ! -name .git -print0 || exit 1
                     done' _"#, &level.iter().collect::<Vec<_>>())?;
                     let below: Vec<String> = nul_separated(&found)
                         .into_iter()
                         .map(|c| c.strip_prefix("./").unwrap_or(&c).to_string())
+                        .filter(|c| !held.contains(c))
                         .collect();
                     if below.is_empty() {
                         break;
@@ -581,9 +589,9 @@ pub trait Host {
                     let ignored: HashSet<String> = nul_separated(&ignored).into_iter().collect();
                     level = below.into_iter().filter(|c| !ignored.contains(c)).collect();
                 }
-                // Two -f, or git clean skips a nested repository; without -x, it leaves what the outer rules ignore.
+                // Without -x, it leaves what the outer rules ignore; with one -f, a repository the walk did not enter.
                 over(r#"cd -- "$1" && xargs -0 sh -c 'for p; do
-                    git clean -ffdq -- ":(top,literal)$p" || exit 1
+                    git clean -fdq -- ":(top,literal)$p" || exit 1
                 done' _"#, &dirs)?;
             }
         }
