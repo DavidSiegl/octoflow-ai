@@ -82,6 +82,11 @@ fn approved(n: u32) -> Action {
     reviewed(n, "APPROVE", "None.")
 }
 
+/// The product team's Product Manager accepting the change of round n.
+fn accepted(n: u32) -> Action {
+    writes(&format!("acceptance-{n}.md"), "VERDICT: APPROVE\n\nNone.\n")
+}
+
 /// The path of the example workflow name in this checkout.
 fn example(name: &str) -> String {
     checkout().join("examples/workflows").join(name).to_string_lossy().into_owned()
@@ -172,9 +177,10 @@ pub fn workflow_spec_build_review(w: &mut World) {
 
 const TESTS_WEAKENED: &str = "from calc import add, subtract\n\n\ndef test_add():\n    assert add(1, 2) == 3\n";
 
-/// examples/workflows/product-team.toml, approved in round 1, its Engineer making engineer_edits.
+/// examples/workflows/product-team.toml, approved in round 1 by the Tech Lead and accepted by the Product Manager, its
+/// Engineer making engineer_edits.
 fn product_team(w: &mut World, engineer_edits: &[(&str, &str)]) {
-    w.agent("spec", [spec_written()]);
+    w.agent("spec", [spec_written(), accepted(1)]);
     w.agent("design", [writes("design.md", "# Design\n\nAdd subtract beside add in src/calc.py.\n")]);
     w.agent(
         "tests",
@@ -482,7 +488,7 @@ pub fn kill_in_quality(w: &mut World) {
 /// examples/workflows/product-team.toml killed in step hold, design or tests, and resumed.
 fn product_team_killed(w: &mut World, hold: &str) {
     let held = |action: Action, step: &str| if hold == step { action.hold(step) } else { action };
-    w.agent("spec", [spec_written()]);
+    w.agent("spec", [spec_written(), accepted(1)]);
     w.agent("design", [held(writes("design.md", "# Design\n\nAdd subtract beside add in src/calc.py.\n"), "design")]);
     let tests = writes("tests.md", "Acceptance test: tests/test_calc.py::test_subtract.\n")
         .edit(&[("tests/test_calc.py", TEST_WITH_SUBTRACT)]);

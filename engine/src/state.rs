@@ -317,6 +317,22 @@ impl RunState {
         self.worktree.as_deref().unwrap_or(&self.cwd)
     }
 
+    /// What a step's prompt tells the agent the change is: the diff against the base plus the untracked files, or for
+    /// a project that is not a git repository (no base), the Builder's report. Both git commands carry the flag that
+    /// stops the user's git config from hiding something from the agent, as `git_diff` (host.rs) does for the engine's
+    /// own diffs: `--no-relative` against `diff.relative` in a work_dir below the top level, and
+    /// `--untracked-files=all` against `status.showUntrackedFiles = no` (with `all`, the files in a new directory are
+    /// listed one by one).
+    pub fn change_description(&self) -> String {
+        match self.base.as_deref().filter(|b| !b.is_empty()) {
+            Some(base) => format!(
+                "`git diff --no-relative {base}` in {}, plus the untracked files `git status --porcelain --untracked-files=all` lists",
+                self.work_dir()
+            ),
+            None => format!("the files the Builder's report lists, in {} (not a git repository)", self.work_dir()),
+        }
+    }
+
     /// Where the proof step of round n writes its proofs (Pipeline::proof_step, Pipeline::proof_command).
     pub fn proofs_dir(&self, n: u32) -> String {
         format!("{}/proofs-{n}", self.dir())

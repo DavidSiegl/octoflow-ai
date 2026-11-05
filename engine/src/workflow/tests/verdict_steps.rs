@@ -4,7 +4,8 @@
 
 use super::*;
 use crate::pipeline::{Pipeline, Step};
-use crate::test_support::{accepting, roles};
+use crate::test_support::{accepting, roles, EXAMPLES};
+use crate::workflow_file::load_workflow_file;
 
 const D: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
 
@@ -227,4 +228,65 @@ fn a_run_saved_without_records_keeps_its_earlier_rounds_once_it_goes_on() {
         *reviewed.borrow(),
         [format!("Recheck against {D}/review-1.md, {D}/review-2.md, {D}/review-3.md; write {D}/review-4.md.")]
     );
+}
+
+#[test]
+fn the_product_team_s_product_manager_sends_the_change_back_once() {
+    let team = load_workflow_file(&format!("{EXAMPLES}/product-team.toml"), &Default::default()).unwrap();
+    let acceptance = |n: u32, verdict: &str| {
+        writes(move |s| format!("{}/acceptance-{n}.md", s.dir()), &format!("VERDICT: {verdict}\n1. criterion"), "done")
+    };
+    let (pm, built, reviewed) = (seen(), seen(), seen());
+    let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&team), vec![
+        (
+            "spec",
+            vec![
+                spec_turn(),
+                recording(acceptance(1, CHANGES_REQUESTED), &pm),
+                recording(acceptance(2, APPROVE), &pm),
+            ],
+        ),
+        ("design", vec![writes(|s| format!("{}/design.md", s.dir()), "the design", "done")]),
+        ("tests", vec![writes(|s| format!("{}/tests.md", s.dir()), "tests written", "done")]),
+        ("build", vec![build_turn(1), recording(build_turn(2), &built)]),
+        ("review", vec![review_turn(1, APPROVE), recording(review_turn(2, APPROVE), &reviewed)]),
+    ]);
+    let mut wf = f.workflow(with_pipeline(&team, 3));
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert_eq!(
+        verdicts(wf.state()),
+        [(1, "review", APPROVE), (1, "accept", CHANGES_REQUESTED), (2, "review", APPROVE), (2, "accept", APPROVE)]
+    );
+    // The Product Manager who ran the interview accepts, in the same session.
+    assert_eq!(names(&f, "start").iter().filter(|n| n.starts_with("spec-")).count(), 1);
+    // The Engineer and the Tech Lead are pointed at the acceptance that sent the round back.
+    let rejected = format!("{D}/acceptance-1.md");
+    let fix = format!("The Tech Lead or the Product Manager requested changes; the findings are in {rejected}.");
+    assert!(built.borrow()[0].starts_with(&fix));
+    let recheck = format!("The Engineer has answered the findings in {rejected}, yours or the Product Manager's;");
+    assert!(reviewed.borrow()[0].starts_with(&recheck));
+
+    assert!(pm.borrow()[0].contains(&format!("({D}/review-1.md)")));
+    assert!(pm.borrow()[1].contains(&format!("your previous acceptance in {rejected}")));
+}
+
+#[test]
+fn a_fresh_tech_lead_hears_of_the_product_manager_s_findings() {
+    // Resumed in round 2's review after the Product Manager sent round 1 back, the Tech Lead's session gone.
+    let team = load_workflow_file(&format!("{EXAMPLES}/product-team.toml"), &Default::default()).unwrap();
+    let mut state = saved_run("review", 2, &["spec", "design", "tests", "build", "review"]);
+    state.record_verdict(1, "review", APPROVE);
+    state.record_verdict(1, "accept", CHANGES_REQUESTED);
+    let reviewed = seen();
+    let script = vec![
+        ("review", vec![recording(review_turn(2, APPROVE), &reviewed)]),
+        ("spec", vec![writes(|s| format!("{}/acceptance-2.md", s.dir()), "VERDICT: APPROVE\n1. criterion", "done")]),
+    ];
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &[], &[]);
+    f.put(&format!("{D}/build-2.md"), "report 2");
+    let mut wf = f.workflow(RunSettings { pipeline: Some(team), pull_request: false, ..f.as_saved() });
+    assert_eq!(wf.run(), verdict(APPROVE));
+    let first = &reviewed.borrow()[0];
+    assert!(first.contains("This is round 2, and you are a fresh session"), "{first}");
+    assert!(first.contains(&format!("the findings that sent this round back are in {D}/acceptance-1.md")), "{first}");
 }
