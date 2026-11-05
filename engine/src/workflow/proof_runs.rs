@@ -5,7 +5,7 @@
 use super::{prompt_error, Outcome, Workflow};
 use crate::constants::PROOF_COPIES_DIR;
 use crate::error::OrchestratorError;
-use crate::host::{checked, shlex_quote, DEFAULT_TIMEOUT};
+use crate::host::{checked, shlex_quote, DEFAULT_TIMEOUT, MISSING_FILE_STATUS};
 use crate::paths::file_name;
 use crate::pipeline::Step;
 use crate::proofs::{
@@ -22,16 +22,13 @@ use crate::prompts::Prompt;
 const PROOF_SCRIPT: &str =
     r#"cd -- "$1" || exit 125; command -v timeout >/dev/null 2>&1 && exec timeout -k 10 "$3" sh -c "$2"; eval "$2""#;
 
-/// The exit status of copy_script for a proof file that is gone.
-const PROOF_FILE_GONE_STATUS: i32 = 3;
-
 /// Empties the directory "$1" names (REMOVE_TREE_SCRIPT) and copies the directory "$3" into it as "$2". It exits with
-/// PROOF_FILE_GONE_STATUS, copying nothing, when "$3" holds no file "$4": a proof file that is gone, as one the Builder moved into
-/// the project is, is not run on a missing path. Emptied first: an orchestrator stopped during a proof leaves its copy
-/// behind.
+/// MISSING_FILE_STATUS, copying nothing, when "$3" holds no file "$4": a proof file that is gone, as one the Builder
+/// moved into the project is, is not run on a missing path. Emptied first: an orchestrator stopped during a proof
+/// leaves its copy behind.
 fn copy_script() -> String {
     format!(
-        r#"[ -f "$3/$4" ] || exit {PROOF_FILE_GONE_STATUS}; {REMOVE_TREE_SCRIPT} && mkdir -p -- "$2" && cp -R -- "$3/." "$2""#
+        r#"[ -f "$3/$4" ] || exit {MISSING_FILE_STATUS}; {REMOVE_TREE_SCRIPT} && mkdir -p -- "$2" && cp -R -- "$3/." "$2""#
     )
 }
 
@@ -119,9 +116,9 @@ impl Workflow<'_> {
         format!("{}/{}", self.state.proofs_dir(proof.written), proof.file)
     }
 
-    /// What the proof step hears in round n of the proofs from earlier rounds run again before its turn, one that was
-    /// found gone as moved into the project:
-    /// CARRIED_PROOFS_NOTE after a blank line; "" when none was. Errors: a saved run is malformed (ProofRun::read), or
+    /// What the proof step hears in round n of the proofs from earlier rounds run again before its turn:
+    /// CARRIED_PROOFS_NOTE after a blank line; "" when none was. A proof found gone in round n (ProofRun::moved) is
+    /// listed as moved into the project, and only in round n, since carried_proofs carries it no further. Errors: a saved run is malformed (ProofRun::read), or
     /// the prompt cannot be filled in.
     pub(super) fn carried_proofs_note(&self, n: u32) -> Result<String, OrchestratorError> {
         let Some(command) = self.pipeline.proof_command() else { return Ok(String::new()) };
@@ -134,7 +131,8 @@ impl Workflow<'_> {
             .map(|p| {
                 if p.moved {
                     return format!(
-                        "- `{}`: gone from its directory, taken as moved into the project, and was not run.",
+                        "- `{}`: not run, as its file is gone from its directory, taken as moved into the project. Check that the \
+                         change holds it as a test that passes; if it does not, the proof's finding stands.",
                         self.proof_path(p)
                     );
                 }
@@ -206,7 +204,7 @@ impl Workflow<'_> {
             let proofs_dir = self.state.proofs_dir(written);
             let argv = ["sh", "-c", &copy_script(), "_", &copies, &copy, &proofs_dir, file];
             let copied = self.host.run(&argv, None, DEFAULT_TIMEOUT)?;
-            if copied.status == PROOF_FILE_GONE_STATUS {
+            if copied.status == MISSING_FILE_STATUS {
                 return Ok(None);
             }
             checked(&*self.host, &argv, copied)?;
