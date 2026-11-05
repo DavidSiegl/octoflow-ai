@@ -118,8 +118,8 @@ impl Workflow<'_> {
 
     /// What the proof step hears in round n of the proofs from earlier rounds run again before its turn:
     /// CARRIED_PROOFS_NOTE after a blank line; "" when none was. A proof found gone in round n (ProofRun::moved) is
-    /// listed as moved into the project, and only in round n, since carried_proofs carries it no further. Errors: a saved run is malformed (ProofRun::read), or
-    /// the prompt cannot be filled in.
+    /// listed as moved into the project, and only in round n, since carried_proofs carries it no further. Errors: a
+    /// saved run is malformed (ProofRun::read), or the prompt cannot be filled in.
     pub(super) fn carried_proofs_note(&self, n: u32) -> Result<String, OrchestratorError> {
         let Some(command) = self.pipeline.proof_command() else { return Ok(String::new()) };
         let records = self.reruns(n)?;
@@ -131,8 +131,9 @@ impl Workflow<'_> {
             .map(|p| {
                 if p.moved {
                     return format!(
-                        "- `{}`: not run, as its file is gone from its directory, taken as moved into the project. Check that the \
-                         change holds it as a test that passes; if it does not, the proof's finding stands.",
+                        "- `{}`: not run, as its file is gone from its directory, taken as moved into the project. \
+                         Check that the change holds it as a test that passes; \
+                         if it does not, the proof's finding stands.",
                         self.proof_path(p)
                     );
                 }

@@ -517,8 +517,8 @@ fn a_proof_the_builder_moves_into_the_project_is_told_once_as_moved_and_carried_
     assert_eq!(wf.run(), verdict(APPROVE));
 
     // Round 2's builder still hears it fails; its verdict step hears it moved, not erroring.
-    let item = format!("- `{path}`: not run, as its file is gone from its directory, taken as moved into the project. Check that the \
-         change holds it as a test that passes; if it does not, the proof's finding stands.");
+    let item = format!("- `{path}`: not run, as its file is gone from its directory, taken as moved into the project. \
+         Check that the change holds it as a test that passes; if it does not, the proof's finding stands.");
     assert!(seen.borrow()[0].contains(&proofs_note(&path)));
     assert!(reviewed.borrow()[0].ends_with(&carried_note(&proj.path(), &[&item])), "{}", reviewed.borrow()[0]);
 
