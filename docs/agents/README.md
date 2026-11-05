@@ -1,7 +1,7 @@
 # Agent setup
 
-Generated from the agent-estate template; `copier update` rewrites this file, so change the template or its answers
-in `.copier-answers.yml`, not the text here. CLAUDE.md imports it.
+Generated from the agent-estate template; `copier update` rewrites this file, so change the template, or an answer
+with `copier update -d <key>=<value>` (the `init-repo` skill), not the text here. CLAUDE.md imports it.
 
 ## Issue tracker
 
