@@ -690,13 +690,21 @@ is rewritten to say what is left.
 - **Proofs run after the last round's review too.** No Builder turn follows to read them; only the draft pull
   request's review shows them, and each may take `PROOF_TIMEOUT`. Kept: a demonstrated defect is what the human
   most needs to see in a draft. Raised by the same review.
-- **What a proof writes outside its own directory can enter the commit.** A proof runs in the working tree
-  (`Workflow::run_proof`), and only its copy's directory is removed after it, so a file it writes elsewhere, such as the
-  `__pycache__` of a module it imports in a project that does not ignore those, stays for `Workflow::publish`'s `git add
-  --all`. In-place runs always had this; since proof-runs ticket 01 a worktree run has it too, its proofs importing the
-  worktree's code. Raised there (2026-10-27). Closes with `Workflow::publish` committing only what the turns changed, or
-  with proofs running in a throwaway copy of the tree. Ticket:
-  `.scratch/proof-runs/issues/03-proof-writes-stay-out-of-the-commit.md` (#234).
+- **An in-place run puts back what the human changes in the checkout while a proof runs.** `Workflow::run_proof`
+  snapshots the working tree before each proof and `Host::restore_tree` puts back every path that differs afterwards,
+  whoever changed it. Raised by cross-review 143 (F2, 2026-11-04) against proof-runs/03: "In an in-place run the
+  working tree is the user's checkout. A file the human saves during a proof is overwritten. A non-ignored file they
+  create is `rm -f`'d. Neither gets a warning." The cost of the close the user chose for proof-runs/03 (undo the
+  proof's writes); a worktree run is not exposed, since nobody else edits its tree. Closes with proofs running in a
+  scratch worktree of the tree under test, or with the run warning, and keeping the human's version, when a file it
+  would put back changed after the proof had ended.
+- **Each proof snapshots the whole working tree twice.** `Workflow::run_proof` takes `Host::tree_snapshot` before the
+  proof and `Host::restore_tree` another after it, each a `git add -A` of every untracked, non-ignored file under
+  `DEFAULT_TIMEOUT` (60 s): on a tree with large untracked files a snapshot over the limit makes every proof "did not
+  run" or "did not run cleanly". Raised by cross-review 143 (F9, nit). Kept: one snapshot before a batch of proofs
+  (`judge_proofs`, `rerun_proofs`) would save one of the two, but changes `run_proof`'s interface and every test that
+  calls it, and leaves the limit in place. Closes with that, and with a snapshot timeout that scales, or the snapshot
+  taking only the paths `git status` reports changed.
 - **A proof the Builder moves into the project stays carried as erroring.** `PROOFS_NOTE` lets the Builder move a proof
   into the project as a regression test; `Workflow::run_proof` then records it "it did not run: ... is gone", which is
   not a pass, so `Workflow::carried_proofs` keeps carrying it. Raised by the cross-review of proof-runs (review 64, F9,
