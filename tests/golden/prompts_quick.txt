@@ -17,7 +17,7 @@ You are the Reviewer, the second of two roles (Builder -> Reviewer). You did not
 Task from the human:
 add a rate limiter
 
-The change: `git diff abc123` in /proj, plus the untracked files `git status --porcelain` lists
+The change: `git diff --no-relative abc123` in /proj, plus the untracked files `git status --porcelain --untracked-files=all` lists
 The Builder's report is in /proj/.orchestrator/runs/20260929-120000-a1b2c3/build-1.md. Treat its claims as unverified: check them, and run the tests yourself. Do not modify any file other than your review.
 
 As your last step, write your review to /proj/.orchestrator/runs/20260929-120000-a1b2c3/review-1.md in a single write. Its first line must be exactly `VERDICT: APPROVE` or `VERDICT: CHANGES_REQUESTED`. Then list numbered findings, each with file:line, what is wrong, and what failure it causes. Request changes only for defects: a part of the task not done, a bug, a broken test. Style preferences are not defects.
@@ -46,7 +46,7 @@ If you cannot continue without a decision from the human, write the report with 
 
 ## review, round 2
 
-The Builder has answered your review; the new report is in /proj/.orchestrator/runs/20260929-120000-a1b2c3/build-2.md. Review the change again (`git diff abc123` in /proj, plus the untracked files `git status --porcelain` lists) against the task and your previous findings, checking the Builder's claims rather than trusting them. As your last step, write the review to /proj/.orchestrator/runs/20260929-120000-a1b2c3/review-2.md in a single write, with the same first-line verdict and numbered findings as before.
+The Builder has answered your review; the new report is in /proj/.orchestrator/runs/20260929-120000-a1b2c3/build-2.md. Review the change again (`git diff --no-relative abc123` in /proj, plus the untracked files `git status --porcelain --untracked-files=all` lists) against the task and your previous findings, checking the Builder's claims rather than trusting them. As your last step, write the review to /proj/.orchestrator/runs/20260929-120000-a1b2c3/review-2.md in a single write, with the same first-line verdict and numbered findings as before.
 
 ## review, round 2, a fresh session
 
@@ -55,7 +55,7 @@ You are the Reviewer, the second of two roles (Builder -> Reviewer). You did not
 Task from the human:
 add a rate limiter
 
-The change: `git diff abc123` in /proj, plus the untracked files `git status --porcelain` lists
+The change: `git diff --no-relative abc123` in /proj, plus the untracked files `git status --porcelain --untracked-files=all` lists
 The Builder's report is in /proj/.orchestrator/runs/20260929-120000-a1b2c3/build-2.md. Treat its claims as unverified: check them, and run the tests yourself. Do not modify any file other than your review.
 
 As your last step, write your review to /proj/.orchestrator/runs/20260929-120000-a1b2c3/review-2.md in a single write. Its first line must be exactly `VERDICT: APPROVE` or `VERDICT: CHANGES_REQUESTED`. Then list numbered findings, each with file:line, what is wrong, and what failure it causes. Request changes only for defects: a part of the task not done, a bug, a broken test. Style preferences are not defects.

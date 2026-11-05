@@ -191,7 +191,7 @@ fn base_comes_from_the_saved_state() {
         ("review", vec![recording(review_turn(1, APPROVE), &seen)]),
     ], &[], &[]);
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
-    assert!(seen.borrow()[0].contains("git diff abc123"));
+    assert!(seen.borrow()[0].contains("git diff --no-relative abc123"));
     // A crash before the Builder was recorded: it is started in a split of the root pane.
     assert!(called(&f, &Call::Split { pane: "w1:p1".into(), direction: Direction::Right }));
 }
