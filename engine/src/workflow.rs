@@ -49,7 +49,7 @@ mod turn;
 
 pub use gate_switch::{turn_quality_gate_off, turn_quality_gate_on};
 pub(crate) use origin::{origin_unreachable, reaching_origin};
-pub use system::{LocalHuman, SystemClocks};
+pub use system::{machine_zone, LocalHuman, SystemClocks};
 
 #[cfg(test)]
 pub(crate) mod fixture;
@@ -64,6 +64,8 @@ pub trait Clocks {
     fn monotonic(&self) -> f64;
     /// Seconds since the epoch, for the times state.json records.
     fn wall(&self) -> f64;
+    /// The zone this machine shows its local times in, such as show's turn starts.
+    fn zone(&self) -> jiff::tz::TimeZone;
 }
 
 /// The human watching the run: told what needs them in a notification, and everything else in log lines, as

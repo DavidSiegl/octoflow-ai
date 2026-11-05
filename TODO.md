@@ -69,6 +69,11 @@ is rewritten to say what is left.
 
 ## Open issues
 
+- **No `doctor` check that a harness can start in the project without asking.** Claude Code's folder-trust dialog
+  stops a run before its first turn; run-usability/02 made the run say so and the README list it, but `doctor` does
+  not check it. Decided against reading Claude Code's trust record (`~/.claude.json`, `projects.<path>`) on
+  2026-11-05: an undocumented file of another tool, which would break silently when it changes. Closes if Claude
+  Code documents a way to ask whether a folder is trusted.
 - **The desktop app does not say which verdict step sent a run back.** `list` names it (`run_outcome`,
   `engine/src/cli/listing.rs`) and serve's `/runs` carries `verdicts`, but the app's `outcome` (`ui/src/runs.ts`)
   shows only `verdict`, and its `RunRecord` (`ui/src/api.ts`) has no `verdicts`. Left out of acceptance-verdict

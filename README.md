@@ -61,6 +61,10 @@ is missing.
 - herdr 0.9+ where the agents run, with the integration of each harness a run uses
   (`herdr integration install <kind>`, e.g. `herdr integration install claude`)
 - The CLI of each harness a run uses on `PATH` where the agents run: `claude` by default
+- Each harness able to start in the project directory without asking first. Claude Code, for one, asks once per
+  folder whether to trust it: open `claude` there once, or answer in the pane when the run says the role
+  "needs your answer before it starts". A `--worktree` run starts its agents in a new directory under the
+  project, `.orchestrator/worktrees/<key>`, which a harness may ask about again
 - Unless you use `--no-pr`: a git checkout with an `origin` it can push to, and [`gh`](https://cli.github.com)
   logged in; with `--worktree`, a branch checked out and an `origin` even with `--no-pr`
 - For any run that pushes: [gitleaks](https://github.com/gitleaks/gitleaks#installing) 8.19+ and git 2.36+.
@@ -103,9 +107,10 @@ Everywhere else, build it from a checkout with cargo, by the toolchain `rust-too
 cargo build --release --locked -p octoflow-engine   # target/release/orchestrator
 ```
 
-The examples below call it `orchestrator`: put the binary on your `PATH` under that name. Releases before 0.49.0
-were the Python engine, `orchestrator.py`, which also came as `octoflow.pyz`; the Rust engine takes the same
-commands and flags. A run a release before 0.54.0 started is not resumed: finish or close it with that release.
+The examples below call it `orchestrator`: put the binary on your `PATH` under that name. `orchestrator --version`
+says which release it is. Releases before 0.49.0 were the Python engine, `orchestrator.py`, which also came as
+`octoflow.pyz`; the Rust engine takes the same commands and flags. A run a release before 0.54.0 started is not
+resumed: finish or close it with that release.
 
 The tk window that `gui` opened went with the Python engine; the [desktop app](#desktop-app) is the window now.
 
@@ -249,7 +254,7 @@ uv run python gate.py --base main --coverage coverage.xml --out quality.md
 | `--timeout SECONDS` | How long one Builder or Reviewer turn may take (default 1800). The interview has no limit. |
 | `--agent KIND` | The [harness](#harnesses) every role runs in. Overrides a role's `agent` in the workflow file. |
 | `--role-agent ROLE=KIND` | The harness of one role, by its key, e.g. `review=codex`. Overrides `--agent`; repeatable. |
-| `--permission-mode MODE` | Permission mode for every role, by Claude Code's names; each other harness gets its [equivalent](#harnesses). |
+| `--permission-mode MODE` | Permission mode for every role, by Claude Code's names; each other harness gets its [equivalent](#harnesses). Which to choose for a run nobody watches: [unattended runs](#unattended-runs). |
 | `--model MODEL` | Model for every role, passed to its harness unchanged. Default: the workflow file's model for the role, else the harness's own. |
 | `--spec-model`, `--build-model`, `--review-model MODEL` | Model for the Spec Collector, Builder or Reviewer. Overrides `--model`. |
 | `--role-model ROLE=MODEL` | Model for one role, by its key, e.g. `tests=sonnet`. Overrides `--model`; repeatable. |
@@ -286,6 +291,17 @@ each role a model its harness knows.
 A dropped mode is not passed, so the agent starts with its own default, and the log says so once per role. An
 agent that exited is relaunched into its saved session: `--resume <id>` for claude and gemini, `--session <id>`
 for pi and opencode, and `codex resume <id>`. A role whose harness changed since starts a fresh session.
+
+#### Unattended runs
+
+Without `--permission-mode`, each agent starts in its harness's configured default. Claude Code's `default` and
+`acceptEdits` both stop for a shell command that is not read-only and not allowed in its settings, so a Builder that
+runs the tests, or a Reviewer that checks them, waits until someone answers in its pane; the run says the role
+"needs your answer" and goes on once answered.
+For a run nobody watches, give claude `--permission-mode auto`, which lets Claude Code's classifier approve each
+action, or `bypassPermissions`, which approves everything and belongs on a sandbox or a throwaway machine. The
+table above shows what each other harness gets for these modes; pi and opencode get none, so set their own
+configuration instead.
 
 ### Exit status
 

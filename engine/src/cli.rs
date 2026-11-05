@@ -137,7 +137,7 @@ pub(super) enum Stop {
 }
 
 /// The program: argv is its command line, the name it was invoked by first, which the hints that name a command give
-/// from then on (program_name), then its arguments. Returns its exit status: a usage error's 2 (help's 0),
+/// from then on (program_name), then its arguments. Returns its exit status: a usage error's 2 (help's and --version's 0),
 /// EXIT_ERROR for an error, EXIT_INTERRUPTED once the Interrupt is raised (crate::interrupt::exit then ends a process
 /// that got a SIGTERM or SIGHUP by that signal), serve's (crate::serve::serve_command), or how the run ended
 /// (finish). Prints what the command prints and the run's last line on stdout, and its log, errors and the usage on

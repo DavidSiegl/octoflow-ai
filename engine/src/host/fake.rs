@@ -30,6 +30,8 @@ type ClockHook = Box<dyn FnMut(f64)>;
 pub(crate) struct FakeClock {
     now: FakeTime,
     hooks: RefCell<Vec<ClockHook>>,
+    /// The machine's zone as the Clocks give it, as a test set it; None is UTC.
+    zone: RefCell<Option<jiff::tz::TimeZone>>,
 }
 
 /// A FakeClock's time, shared with what moves it on from another thread's side of a seam, such as a fake server
@@ -60,6 +62,16 @@ impl FakeClock {
     /// The time, in seconds.
     pub fn now(&self) -> f64 {
         self.now.get()
+    }
+
+    /// The machine's zone, UTC until set_zone.
+    pub fn zone(&self) -> jiff::tz::TimeZone {
+        self.zone.borrow().clone().unwrap_or(jiff::tz::TimeZone::UTC)
+    }
+
+    /// Make zone the machine's.
+    pub fn set_zone(&self, zone: jiff::tz::TimeZone) {
+        *self.zone.borrow_mut() = Some(zone);
     }
 
     /// The clock's time, for a fake that lets time pass without the workflow sleeping.

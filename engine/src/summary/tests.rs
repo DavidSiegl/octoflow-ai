@@ -17,7 +17,7 @@ fn every_recorded_run_is_summed_up_as_the_python_engine_does() {
         // The keys and values the Python engine wrote, its spacing aside.
         let recorded = expected("run_metrics").map(|text| serde_json::from_str::<Value>(&text).unwrap());
         assert_eq!(Some(run_metrics(&case.state, case.now)), recorded, "{place}");
-        let lines = Value::Array(turn_lines(&case.state.turns).into_iter().map(Value::from).collect());
+        let lines = Value::Array(turn_lines(&case.state.turns, &jiff::tz::TimeZone::UTC).into_iter().map(Value::from).collect());
         assert_eq!(Some(&lines), case.expected.get("turn_lines"), "{place}");
     }
 }
@@ -63,6 +63,16 @@ fn turn(step: &str, file: &str, start: Option<i64>, end: Option<i64>, change: im
     ]);
     change(&mut t);
     t
+}
+
+#[test]
+fn turn_lines_shows_starts_in_the_zone_given() {
+    // run-usability/04's case: 20:30:37 UTC is 21:30:37 at +01:00; turns_table stays UTC.
+    let mut t = turn("build", "build-1.md", Some(0), Some(5), |_| {});
+    t.insert("started_at".into(), Value::from("2026-11-05T20:30:37+00:00"));
+    let zone = jiff::tz::TimeZone::fixed(jiff::tz::offset(1));
+    assert!(turn_lines(std::slice::from_ref(&t), &zone)[0].contains("2026-11-05 21:30:37"));
+    assert!(turns_table(&[t]).contains("| 2026-11-05 20:30:37 |"));
 }
 
 #[test]
@@ -122,7 +132,7 @@ fn turns_with_unknown_starts_and_ends_and_quality_rounds() {
         t.insert("agent".into(), Value::Null);
         t.insert("quality_round".into(), Value::from(1));
     });
-    let lines = turn_lines(&[open, analysis.clone()]);
+    let lines = turn_lines(&[open, analysis.clone()], &jiff::tz::TimeZone::UTC);
     assert_eq!(lines, ["build    1     claude  ?                    ?       build-1.md", "quality  1 q1  -       2026-10-03 04:00:00  1m 05s  quality-1-1.md"]);
     let mut s = approved_run();
     s.turns = vec![analysis];

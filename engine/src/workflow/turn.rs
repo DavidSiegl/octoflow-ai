@@ -661,7 +661,11 @@ impl Workflow<'_> {
         self.state.agents.insert(role, record);
         self.save()?;
         if !ready {
-            self.ask_human(role, "needs your answer");
+            self.ask_human(role, "needs your answer before it starts");
+            self.human.log(&format!(
+                "[{role}] a harness may ask something before it starts, such as Claude Code whether to trust a \
+                 folder it has not run in; answer in the pane, and the run goes on"
+            ));
             self.wait_for_startup(&name)?;
         }
         let Some(record) = self.herdr.agent(&name)? else { return Ok(false) };

@@ -330,7 +330,8 @@ pub fn show_run(world: &Connected, cwd: &str, run_ref: &str, target: &[String]) 
         .and_then(Value::as_array)
         .map(|turns| turns.iter().filter_map(|t| t.as_object().cloned()).collect())
         .unwrap_or_default();
-    print_section(world, "turns", turn_lines(&turns));
+    let zone = world.with.clocks.zone();
+    print_section(world, &format!("turns, started in {}", zone_name(&zone, &turns)), turn_lines(&turns, &zone));
     print_section(world, "verdicts", verdict_lines(truthy("verdicts")));
     print_section(world, "files", host.run_files(&run_dir)?.into_iter().map(|f| f.path).collect());
     let round = saved.get("round").and_then(Value::as_i64).unwrap_or(0);
@@ -357,6 +358,24 @@ fn print_section(world: &Connected, title: &str, lines: Vec<String>) {
     for line in lines {
         world.say(&format!("    {line}"));
     }
+}
+
+/// zone as show's turns heading names it: its IANA name, such as Europe/Vienna; for a zone without one (a POSIX TZ
+/// string, a copied /etc/localtime), the offsets from UTC it had at the starts of turns, each once in their order,
+/// such as UTC+02:00 and UTC+01:00, since the offset may change between turns; "local time" when no start is known.
+fn zone_name(zone: &jiff::tz::TimeZone, turns: &[Object]) -> String {
+    if let Some(name) = zone.iana_name() {
+        return name.to_string();
+    }
+    let mut offsets: Vec<String> = Vec::new();
+    let starts = turns.iter().filter_map(|t| t.get("started_at")?.as_str()?.parse::<jiff::Timestamp>().ok());
+    for at in starts {
+        let offset = format!("UTC{}", at.to_zoned(zone.clone()).strftime("%:z"));
+        if !offsets.contains(&offset) {
+            offsets.push(offset);
+        }
+    }
+    if offsets.is_empty() { "local time".into() } else { offsets.join(" and ") }
 }
 
 /// show's line per verdict a verdict step gave, of a saved state's verdicts (crate::state::StepVerdict), such as

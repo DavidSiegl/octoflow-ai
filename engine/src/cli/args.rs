@@ -207,7 +207,7 @@ impl Target {
 /// What the human wrote after the program's name, read: the Command, or the clap error that ends the program instead.
 ///
 /// The error is a usage error (exit status 2, its text naming the problem, for clap's print), or the help a --help
-/// asked for (exit status 0); both name the program as super::program_name does. config is where the workflow files
+/// or the version a --version asked for (exit status 0); both name the program as super::program_name does. config is where the workflow files
 /// that --workflow offers are.
 pub fn parse_args(argv: impl IntoIterator<Item = OsString>, config: &ConfigDir) -> Result<Command, clap::Error> {
     let mut p = parser(config);
@@ -471,6 +471,8 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
             "Role-based handoff between agent sessions in herdr, each role in the harness of its choice; by default \
              Spec Collector -> Builder -> Reviewer, all in Claude Code.",
         )
+        // The engine's version is the release's: tests/test_invariants.py holds it to pyproject.toml's.
+        .version(env!("CARGO_PKG_VERSION"))
         .subcommand_required(true)
         .arg_required_else_help(true)
         // argparse takes an unambiguous abbreviation of a long flag.
