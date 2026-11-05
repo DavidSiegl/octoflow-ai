@@ -1698,7 +1698,7 @@ fn a_repository_of_the_tree_before_in_one_made_since_keeps_its_history() {
     r.put("d/e/lib.c", "int x;\n");
     r.git(&["-C", &lib, "-c", "user.name=t", "-c", "user.email=t@example.com", "add", "."]);
     r.git(&["-C", &lib, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "lib"]);
-    let status = r.host.git(&r.path, &["status", "--porcelain", "-uall"]).unwrap();
+    let porcelain_before = r.host.git(&r.path, &["status", "--porcelain", "-uall"]).unwrap();
     let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
     let nested = format!("{}/d", r.path);
     r.git(&["init", "--quiet", &nested]);
@@ -1709,7 +1709,7 @@ fn a_repository_of_the_tree_before_in_one_made_since_keeps_its_history() {
     assert_eq!(text(&r.path, "d/fixture.txt"), None);
     assert_eq!(text(&r.path, "d/e/lib.c"), Some("int x;\n".into()));
     assert_eq!(r.host.git(&lib, &["log", "--format=%s"]).unwrap().trim(), "lib");
-    assert_eq!(r.host.git(&r.path, &["status", "--porcelain", "-uall"]).unwrap(), status);
+    assert_eq!(r.host.git(&r.path, &["status", "--porcelain", "-uall"]).unwrap(), porcelain_before);
 }
 
 #[test]
@@ -1717,7 +1717,7 @@ fn a_gitignore_of_the_tree_before_in_one_made_since_keeps_what_it_ignores() {
     let r = Repo::new(&[]);
     r.put("d/.gitignore", "*.log\n");
     r.put("d/x.log", "the human's\n");
-    let status = r.host.git(&r.path, &["status", "--porcelain", "-uall"]).unwrap();
+    let porcelain_before = r.host.git(&r.path, &["status", "--porcelain", "-uall"]).unwrap();
     let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
     let nested = format!("{}/d", r.path);
     r.git(&["init", "--quiet", &nested]);
@@ -1727,7 +1727,7 @@ fn a_gitignore_of_the_tree_before_in_one_made_since_keeps_what_it_ignores() {
     r.host.restore_tree(&r.path, &tree).unwrap();
     assert_eq!((text(&r.path, "d/x.log"), text(&r.path, "d/fixture.txt")), (Some("the human's\n".into()), None));
     assert_eq!(text(&r.path, "d/.gitignore"), Some("*.log\n".into()));
-    assert_eq!(r.host.git(&r.path, &["status", "--porcelain", "-uall"]).unwrap(), status);
+    assert_eq!(r.host.git(&r.path, &["status", "--porcelain", "-uall"]).unwrap(), porcelain_before);
 }
 
 #[test]

@@ -543,57 +543,15 @@ pub trait Host {
         if !gone.is_empty() {
             let top = utf8_path(&self.git_verbatim(cwd, &["rev-parse", "--show-toplevel"])?)?;
             let top = top.strip_suffix('\n').unwrap_or(&top);
-            let over = |script: &str, paths: &[&String]| {
-                let listed: String = paths.iter().map(|p| format!("{p}\0")).collect();
-                self.check(&["sh", "-c", script, "_", top], Some(&listed), DEFAULT_TIMEOUT)
-            };
-            // A directory, such as a nested repository, is cleaned rather than removed: its ignored files are the
-            // human's, and no ref holds them.
-            let printed = over(r#"cd -- "$1" && xargs -0 sh -c 'for p; do
+            let printed = sh_over_paths(self, top, r#"cd -- "$1" && xargs -0 sh -c 'for p; do
                 if [ -d "$p" ] && [ ! -L "$p" ]; then printf "%s\0" "$p"; fi
             done' _"#, &gone)?;
             let dirs: HashSet<String> = nul_separated(&printed).into_iter().collect();
             let (dirs, files): (Vec<&String>, Vec<&String>) = gone.into_iter().partition(|p| dirs.contains(*p));
             if !files.is_empty() {
-                over(r#"cd -- "$1" && xargs -0 rm -f --"#, &files)?;
+                sh_over_paths(self, top, r#"cd -- "$1" && xargs -0 rm -f --"#, &files)?;
             }
-            if !dirs.is_empty() {
-                // Walked a level at a time, each level losing its .git, so that git sees what is in it as the outer
-                // repository's, and its .gitignore unless ref holds it, before git judges the next level's
-                // subdirectories, so that only the rules ref holds judge them. Not entered: a subdirectory those rules
-                // ignore, or one ref holds, a repository of the tree before.
-                let mut level: Vec<String> = dirs.iter().map(|p| p.to_string()).collect();
-                while !level.is_empty() {
-                    let unheld: Vec<String> =
-                        level.iter().map(|p| format!("{p}/.gitignore")).filter(|g| !held.contains(g)).collect();
-                    if !unheld.is_empty() {
-                        over(r#"cd -- "$1" && xargs -0 sh -c 'for g; do
-                            [ -d "./$g" ] || rm -f -- "./$g" || exit 1
-                        done' _"#, &unheld.iter().collect::<Vec<_>>())?;
-                    }
-                    let found = over(r#"cd -- "$1" && xargs -0 sh -c 'for p; do
-                        rm -rf -- "./$p/.git" || exit 1
-                        find "./$p" -mindepth 1 -maxdepth 1 -type d ! -name .git -print0 || exit 1
-                    done' _"#, &level.iter().collect::<Vec<_>>())?;
-                    let below: Vec<String> = nul_separated(&found)
-                        .into_iter()
-                        .map(|c| c.strip_prefix("./").unwrap_or(&c).to_string())
-                        .filter(|c| !held.contains(c))
-                        .collect();
-                    if below.is_empty() {
-                        break;
-                    }
-                    // check-ignore prints the ignored ones and exits 1 when there are none.
-                    let ignored = over(r#"cd -- "$1" && { git check-ignore --no-index -z --stdin; [ $? -le 1 ]; }"#,
-                        &below.iter().collect::<Vec<_>>())?;
-                    let ignored: HashSet<String> = nul_separated(&ignored).into_iter().collect();
-                    level = below.into_iter().filter(|c| !ignored.contains(c)).collect();
-                }
-                // Without -x, it leaves what the outer rules ignore; with one -f, a repository the walk did not enter.
-                over(r#"cd -- "$1" && xargs -0 sh -c 'for p; do
-                    git clean -fdq -- ":(top,literal)$p" || exit 1
-                done' _"#, &dirs)?;
-            }
+            clean_directories(self, top, &dirs, &held)?;
         }
         // git restore refuses a path that neither ref nor the index has, so only these.
         if !kept.is_empty() {
@@ -1192,6 +1150,67 @@ fn working_tree<H: Host + ?Sized>(host: &H, cwd: &str) -> Result<String, Orchest
                   GIT_INDEX_FILE=$t git add -A && GIT_INDEX_FILE=$t git write-tree";
     // The `else` above: a repository whose index was never written, from which git starts the copy afresh.
     Ok(host.check(&["sh", "-c", script, "_", cwd], None, DEFAULT_TIMEOUT)?.trim().to_string())
+}
+
+/// Run script with `sh -c`, its `$1` top, and paths on its stdin, each ended by a NUL; what it printed. Errors: the
+/// script exits non-zero, or outlasts DEFAULT_TIMEOUT.
+fn sh_over_paths<H: Host + ?Sized, S: AsRef<str>>(
+    host: &H,
+    top: &str,
+    script: &str,
+    paths: &[S],
+) -> Result<String, OrchestratorError> {
+    let listed: String = paths.iter().map(|p| format!("{}\0", p.as_ref())).collect();
+    host.check(&["sh", "-c", script, "_", top], Some(&listed), DEFAULT_TIMEOUT)
+}
+
+/// Empty each of dirs, directories under top that ref lacks, as Host::restore says of such a directory: of all but
+/// what the rules ref holds ignore and the repositories ref holds. held is every path ref holds. Errors: a command
+/// fails, as `rm` on a file it may not remove.
+fn clean_directories<H: Host + ?Sized>(
+    host: &H,
+    top: &str,
+    dirs: &[&String],
+    held: &HashSet<String>,
+) -> Result<(), OrchestratorError> {
+    if dirs.is_empty() {
+        return Ok(());
+    }
+    // Cleaned rather than removed: their ignored files are the human's, and no ref holds them. Walked a level at a
+    // time, each level losing its .git, so that git sees what is in it as the outer repository's, and its .gitignore
+    // unless ref holds it, before git judges the next level's subdirectories, so that only the rules ref holds judge
+    // them. Not entered: a subdirectory those rules ignore, or one ref holds, a repository of the tree before.
+    let mut level: Vec<String> = dirs.iter().map(|p| p.to_string()).collect();
+    while !level.is_empty() {
+        let unheld: Vec<String> =
+            level.iter().map(|p| format!("{p}/.gitignore")).filter(|g| !held.contains(g)).collect();
+        if !unheld.is_empty() {
+            sh_over_paths(host, top, r#"cd -- "$1" && xargs -0 sh -c 'for g; do
+                [ -d "./$g" ] || rm -f -- "./$g" || exit 1
+            done' _"#, &unheld)?;
+        }
+        let found = sh_over_paths(host, top, r#"cd -- "$1" && xargs -0 sh -c 'for p; do
+            rm -rf -- "./$p/.git" || exit 1
+            find "./$p" -mindepth 1 -maxdepth 1 -type d ! -name .git -print0 || exit 1
+        done' _"#, &level)?;
+        let below: Vec<String> = nul_separated(&found)
+            .into_iter()
+            .map(|c| c.strip_prefix("./").unwrap_or(&c).to_string())
+            .filter(|c| !held.contains(c))
+            .collect();
+        if below.is_empty() {
+            break;
+        }
+        // check-ignore prints the ignored ones and exits 1 when there are none.
+        let script = r#"cd -- "$1" && { git check-ignore --no-index -z --stdin; [ $? -le 1 ]; }"#;
+        let ignored: HashSet<String> = nul_separated(&sh_over_paths(host, top, script, &below)?).into_iter().collect();
+        level = below.into_iter().filter(|c| !ignored.contains(c)).collect();
+    }
+    // Without -x, it leaves what the outer rules ignore; with one -f, a repository the walk did not enter.
+    sh_over_paths(host, top, r#"cd -- "$1" && xargs -0 sh -c 'for p; do
+        git clean -fdq -- ":(top,literal)$p" || exit 1
+    done' _"#, dirs)?;
+    Ok(())
 }
 
 /// The paths whose files differ between commits or trees a and b, a rename as its two paths; with paths, only those.
