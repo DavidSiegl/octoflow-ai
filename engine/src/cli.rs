@@ -423,17 +423,18 @@ fn runs_command(runs: &RunsCommand, world: &Connected, cwd: &str, target: &[Stri
     Ok(())
 }
 
-/// Set key to recorded in the run's state.json at path on host, unless the run has saved since it was read as saved;
-/// for what prune and close write about a run they do not drive. The file keeps its modification time, which is the
-/// run's heartbeat: a stale run must not look live. meanwhile says what was being done, for the error.
+/// Set each key of recorded to its value in the run's state.json at path on host, in one write, unless the run has
+/// saved since it was read as saved; for what prune, close and refresh write about a run they do not drive. The file
+/// keeps its modification time, which is the run's heartbeat: a stale run must not look live. meanwhile says what was
+/// being done, for the error.
 ///
-/// Errors: the file is gone or changed (naming key and meanwhile), is not JSON, or cannot be read or written.
+/// Errors: the file is gone or changed (naming the keys and meanwhile; nothing is recorded), is not JSON, or cannot be
+/// read or written.
 pub fn record_in_state(
     host: &dyn Host,
     path: &str,
     saved: &Value,
-    key: &str,
-    recorded: Value,
+    recorded: &[(&str, Value)],
     meanwhile: &str,
 ) -> Result<(), OrchestratorError> {
     let text = host.read(path)?;
@@ -442,12 +443,14 @@ pub fn record_in_state(
         Some(text) => serde_json::from_str::<Value>(text).map_err(|e| OrchestratorError(format!("corrupt {path}: {e}")))? == *saved,
     };
     if !unchanged {
-        return Err(OrchestratorError(format!("{path} changed while {meanwhile}; {key} is not recorded")));
+        let keys: Vec<&str> = recorded.iter().map(|(key, _)| *key).collect();
+        let verb = if keys.len() == 1 { "is" } else { "are" };
+        return Err(OrchestratorError(format!("{path} changed while {meanwhile}; {} {verb} not recorded", keys.join(" and "))));
     }
     let Value::Object(mut updated) = saved.clone() else {
         return Err(OrchestratorError(format!("corrupt {path}: not a JSON object")));
     };
-    updated.insert(key.to_string(), recorded);
+    updated.extend(recorded.iter().map(|(key, value)| (key.to_string(), value.clone())));
     // One line, as RunState::to_text writes a state, whatever format saved is of.
     host.write(path, &format!("{}\n", Value::Object(updated)), true)
 }
@@ -511,7 +514,8 @@ fn finish(verdict: &str, state: &RunState, pipeline: &Pipeline, print: &dyn Fn(&
     } else {
         format!(" (a draft: it conflicts with {})", state.base_branch.as_deref().unwrap_or("None"))
     };
-    let result = pipeline.result().last_path(&state.dir(), state.round, state.quality_round);
+    let judge = state.verdicts.last().map(|v| v.step.as_str());
+    let result = pipeline.result(judge).last_path(&state.dir(), state.round, state.quality_round);
     print(&format!("{verdict}: {}{conflict}\n", state.pr_url.as_deref().filter(|u| !u.is_empty()).unwrap_or(&result)));
     if !SUCCEEDED.contains(&verdict) {
         return EXIT_CHANGES_REQUESTED;

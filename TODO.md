@@ -69,6 +69,38 @@ is rewritten to say what is left.
 
 ## Open issues
 
+- **The desktop app does not say which verdict step sent a run back.** `list` names it (`run_outcome`,
+  `engine/src/cli/listing.rs`) and serve's `/runs` carries `verdicts`, but the app's `outcome` (`ui/src/runs.ts`)
+  shows only `verdict`, and its `RunRecord` (`ui/src/api.ts`) has no `verdicts`. Left out of acceptance-verdict
+  ticket 01 (2026-11-04): this checkout had no `node_modules` to run the app's tests with. Closes with
+  `verdicts?` on `RunRecord` and `outcome` naming the last step as `run_outcome` does, with a `runs.test.ts` case.
+- **The proofs note names the Reviewer whatever step wrote the proofs.** `PROOFS_NOTE` (`engine/src/prompts.rs`)
+  tells the step a round loops back to "The Reviewer backed findings with tests". In a workflow whose proofs come
+  from a verdict step of another role, that names a role the run does not have, the mismatch acceptance-verdict
+  ticket 01 fixed in `FIX_PROMPT` (cross-review 141, F15). Raised and not recorded in cross-review 141's round 4
+  (2026-11-05). Closes with a role-neutral wording, mirrored in the golden prompts, the recordings and the test in
+  `engine/src/workflow/tests/proofs.rs`.
+- **A non-editing step between two verdict steps is treated as having run every round.** `loop_problem` allows one
+  (`engine/src/pipeline.rs`), and a round an earlier verdict step ends skips it, but `Workflow::judged_rounds`
+  (`engine/src/workflow.rs`) knows the skipped rounds only of verdict steps: such a step's first turn in a later
+  round gets its `again`, and its `{prev_X_path}` and `{earlier_X_paths}` name files of rounds it skipped. Closes with
+  turn records (`RunState.turns`) deciding which rounds any step took a turn in.
+- **No check that a verdict step's loop runs an editing step.** `Pipeline::loop_problem` (`engine/src/pipeline.rs`)
+  lets a verdict step loop back to a step at or before the first verdict step, including the first verdict step itself
+  or a non-editing per-round step. A round sent back that way judges the same code again. The Builder never sees
+  `{findings}`, `pr_body`'s Builder report for the last round reads a `build-{n}.md` nobody wrote, and the verdict
+  step's `again` names that missing file. Raised and not recorded in cross-review 141's round 6 (2026-11-05). Closes
+  with `loop_problem` refusing a loop whose steps edit nothing, or with the prompts and the pull request handling a
+  round without a build.
+- **The agents' prompts name a plain `git diff {base}`, which follows the user's `diff.relative`.**
+  `change_description` (`engine/src/workflow.rs`) tells every step's agent that the change is
+  `` `git diff {base}` in {work_dir} ``. Deferred from cross-review 142 (F1, should-fix, 2026-11-04): "With
+  `diff.relative=true` in the user's config and a `work_dir` that is a subdirectory (the case this branch's tests
+  cover, and the ticket notes that a run's `work_dir` is its `cwd` when it has no worktree), an agent that runs that
+  command sees only the subdirectory's files. A Reviewer can then approve a change without seeing an edit elsewhere,
+  such as a weakened test outside `sub/`." Closes with the prompt naming `git diff --no-relative {base}`, its golden
+  files and e2e recordings re-recorded. Ticket:
+  `.scratch/git-diff-relative/issues/02-prompt-diff-ignores-diff-relative.md`.
 - **Writes to origin are not tried again through an outage.** `reaching_origin` (`engine/src/workflow/origin.rs`)
   wraps the run's fetches and its `ls-remote` reads only; the pushes (`engine/src/host.rs`'s `push_ref`,
   `push_branch`), the remote branch deletions (`delete_remote_branch`, `delete_remote_branch_at`) and the `gh` calls
@@ -244,8 +276,10 @@ is rewritten to say what is left.
   `engine/Cargo.toml` and `Cargo.lock`, so its build still runs them, and so does the contract test's build of main
   whenever main's last commit was a releasing merge (build #59, before #162, ran them in any case); Gate's mutmut time
   is narrowed by `gate.py --test-contexts` (gate-open-decisions ticket 06), which costs the Test stage about 7 % more.
-  Closes when a quality build that runs the scenarios fits in `QUALITY_TIMEOUT`, shown by live-checks/01's contract test
-  green against one, or with a larger `QUALITY_TIMEOUT` in the Rust engine.
+  `cargo xtask contract` (live-checks/01's Rust port, docs/quality-gate.md, "The calls") measures it again: its step 9
+  says whether a quality round could have taken its build of main within `QUALITY_TIMEOUT`. It triggers a real build,
+  so it is the user's to run. Closes when a quality build that runs the scenarios fits in `QUALITY_TIMEOUT`, shown by
+  that step green against one, or with a larger `QUALITY_TIMEOUT` in the Rust engine.
 - **The Rust engine reads some input no run writes otherwise than the Python engine.** Each is a difference only for a
   file a human edited, or a case no test of the Python engine pins (rust-engine ticket 04, 2026-10-28): a time is read
   only with its offset, as jiff's `Timestamp` reads an ISO 8601 time (`crate::summary::epoch_time`, since
@@ -646,14 +680,13 @@ is rewritten to say what is left.
   check reuses `Host.gitleaks_problem`, the run's pre-push check, which asks `gitleaks git --help` because a
   distribution's build may print no version number. So `doctor` shows no gitleaks version. Kept by choice
   (2026-10-24).
-- **A spec left `ready-for-human` by a conflict stays there when `refresh` clears the conflict before a drain does.**
-  drain moves such a spec to `in-review` only when its own refresh clears the run's conflict (`refreshed_headers`);
-  a run cleared by `orchestrator.py refresh` beforehand has no conflicts left, so drain cannot tell the spec held
-  back only by its conflict from one the human set `ready-for-human`, and leaves it, with an open pull request
-  ready for review that no drain marks `done` once merged. Kept so that drain never overrides a status the human
-  set. Raised while building the refresh command (2026-10-25). Closes with the run recording that a refresh cleared
-  its conflict, which drain then reads, or with refresh moving the spec itself.
-  Ticket: `.scratch/drain-refresh-cleared/issues/01-refresh-records-a-cleared-conflict.md` (#236).
+- **A spec left `ready-for-human` by a conflict stays there when `refresh` finds its pull request merged or closed.**
+  `refresh_conflict` records `conflict_cleared` only for an open pull request; one merged or closed meanwhile has only
+  its conflicts forgotten, so a later drain does not ask gh about it, and a `ready-for-human` spec whose pull request
+  `refresh` found merged is never marked `done`. drain's own refresh of the same run does mark it `done`
+  (`settled_header`, step 3). Raised while implementing drain-refresh-cleared ticket 01 (2026-11-04). Closes with
+  refresh recording the cleared conflict whatever the pull request's state, and drain following that record's pull
+  request for a `ready-for-human` spec.
 - **Proofs run after the last round's review too.** No Builder turn follows to read them; only the draft pull
   request's review shows them, and each may take `PROOF_TIMEOUT`. Kept: a demonstrated defect is what the human
   most needs to see in a draft. Raised by the same review.
@@ -686,11 +719,13 @@ is rewritten to say what is left.
   (`[1] == [True]`). Raised by the cross-review of `test-integrity-constants` (F4, 2026-10-27): "`_literals`
   equality misses sign, type and structure changes"; the constant path compares `_tree_fingerprint`s instead.
   Closes with the inline path comparing typed literals and pairing a unary minus with its operand.
-- **A run that never reaches `done` keeps its local refs.** A locking step's commit stays under
-  `refs/orchestrator/<key>/locked/` (`RunState::lock_ref`) until the run ends `done` (`Workflow::clean_up_locks`);
-  `close` and `prune` do not delete them, so a failed run's locked snapshots are never collected by `git gc`. Closes
-  with `close` and `prune` deleting `RunState::refs_prefix` as they delete the run's branch.
-  Ticket: `.scratch/close-run-refs/issues/01-close-deletes-run-refs.md` (#232).
+- **A run that is never closed keeps its local refs.** A locking step's commit stays under
+  `refs/orchestrator/<key>/locked/` (`RunState::lock_ref`) until the run ends `done` (`Workflow::clean_up_locks`) or
+  is closed (`close_run`, `engine/src/cli/close.rs`). Left: the refs of a failed or stale run nobody closes, of one
+  closed by a release whose `close` left them, and of one whose run directory was deleted by hand, which `close`
+  cannot find; their locked snapshots are never collected by `git gc`. `git for-each-ref refs/orchestrator/` lists
+  them, and `git update-ref -d` deletes one. Decided against on 2026-10-25: `prune` deleting them, and a sweep of
+  `refs/orchestrator/<key>/` whose run directory is gone.
 - **An agent's pull request can reach `main` on rules it wrote itself, with no human.** Jenkins's App reports
   `continuous-integration/jenkins/pr-head`, which the agents' token cannot post, but a pull request build runs
   the pull request's own `Jenkinsfile` and gate (`docs/quality-gate.md`, What the Gate stage judges), and since
@@ -935,16 +970,6 @@ is rewritten to say what is left.
   a new function under its old name (review round 6, R6-F1). Decided by the user in review round 4 of ticket 06.
   Closes with a way to tell a copy from a rename, such as git's copy detection (`git diff -C`) on the change's
   files.
-- **`paths_between` (`engine/src/host.rs`) follows the user's `diff.relative`.** Its `git diff --name-only` has no
-  `--no-relative`, so with `diff.relative=true` in the user's git config and a `cwd` that is a subdirectory of the
-  repository (not checked whether a run can pass one), it lists only the paths under that subdirectory, and its
-  `top_literal` pathspecs for files elsewhere match nothing. `Host::lock` then returns fewer locked paths and
-  `Host::locked_changes` misses edits to them; `locked_changes`'s own `git diff` has the same exposure. Raised by the
-  cross-review of `trust-quality-at-pr` (review 49, F7, 2026-10-26), which found it in what is now `judging_changes`
-  (`engine/src/cli/judged.rs`) and fixed it there with `--no-relative`; of `paths_between` it said: "has the same
-  exposure, but it is outside this range". Closes with `--no-relative` on both calls and a test that sets
-  `diff.relative` and locks from a subdirectory. Ticket:
-  `.scratch/git-diff-relative/issues/01-locks-ignore-diff-relative.md` (#233).
 - **A resume finds an agent alive whose start never finished and only waits for it.** `start`
   (`engine/src/workflow/turn.rs`) saves the agent's record, may wait without a deadline for a startup dialog the
   human answers (`wait_for_startup`), and only then saves the session. An orchestrator stopped in between leaves an
@@ -970,6 +995,14 @@ is rewritten to say what is left.
   report it on standard error, which libtest hides on a passing test. Raised by cross-review 117 (F3, 2026-11-03):
   "A fix to one, such as making names unique, has to be repeated in each." Closes with one shared type: a `tempfile`
   dev-dependency, or a test-support crate the engine, the desktop shell and xtask all use.
+- **The e2e scenarios' scratch directories collide between test runs that share `/tmp`.** `Scratch::new`
+  (`engine/e2e/src/scratch.rs`) names a scenario's directory `octoflow-e2e-<name>-<pid>` and first removes whatever is
+  there, so two runs whose test processes have the same pid, as processes in different PID namespaces over one `/tmp`
+  can, delete and overwrite each other's worlds. Seen 2026-11-04 (live-checks/01): with several agents testing their
+  worktrees at once, `kill_in_design` and `kill_in_tests` failed on an exit status and `workflows_listed` printed
+  another worktree's `examples/workflows/product-team.toml`; with a TMPDIR of its own the same build passed all 50.
+  Closes with a name no other process can take (made with `create_dir` and retried until new, as xtask's
+  `make_temp_dir` does), or with the shared type the entry above would make.
 - **Four copies of the test writer of an executable script.** A test's script is written by a child process, so that
   no test thread's fork holds it open for writing when it runs (ETXTBSY; ui-test-text-file-busy/01, 2026-11-03). The
   same `sh` line is in `tool` (`engine/src/host/tests.rs`, which says why), `Dir::tool` (`engine/tests/program.rs`),

@@ -17,6 +17,23 @@ fn every_built_in_text_is_the_python_engines() {
 }
 
 #[test]
+fn the_builders_fix_prompt_names_the_findings_that_sent_the_round_back() {
+    let names = placeholders(FIX_PROMPT).unwrap();
+    assert!(names.iter().any(|n| n == "findings"), "{names:?}");
+    assert!(!names.iter().any(|n| n == "prev_review_path"), "{names:?}");
+    // A prompt file written for an earlier release is refused, naming the placeholder it may no longer use and the
+    // ones it must.
+    assert_eq!(
+        prompt_problem("FIX_PROMPT", "Fix {prev_review_path}; report to {build_path}."),
+        Some(
+            "placeholder {prev_review_path} at line 1, column 5 is not one this template takes; FIX_PROMPT takes \
+             {build_path}, {findings}"
+                .into()
+        )
+    );
+}
+
+#[test]
 fn every_built_in_prompt_is_overridable() {
     for p in Prompt::ALL {
         assert_eq!(Prompt::named(p.name()), Some(*p));
@@ -126,6 +143,24 @@ fn a_state_whose_prompt_an_earlier_release_could_fill_in_is_refused() {
         "run state r replaces prompt CONTINUE_PROMPT with a text this orchestrator cannot fill in: placeholder {path!s} \
          at line 1, column 10 has a conversion; a placeholder takes none; finish the run with the release that started it"
     );
+}
+
+#[test]
+fn a_state_keeps_the_fix_prompt_an_earlier_release_saved() {
+    // Saved before 0.58.0, whose FIX_PROMPT named {prev_review_path}: refused as a prompt file (see
+    // the_builders_fix_prompt_names_the_findings_that_sent_the_round_back), read as saved.
+    let earlier = "Fix {prev_review_path}; report to {build_path}.";
+    let overrides: Map<String> = [("FIX_PROMPT", earlier.to_string())].into_iter().collect();
+    assert_eq!(saved_prompts(&overrides, "r").unwrap().text(Prompt::FixPrompt), earlier);
+    // Only that prompt's earlier placeholders, and only all of them.
+    for (name, text) in [
+        ("FIX_PROMPT", "Fix {prev_review_path}."),
+        ("FIX_PROMPT", "Fix {prev_review_path} and {findings}; report to {build_path}."),
+        ("RECHECK_PROMPT", "Recheck {prev_review_path}, {build_path}, {change}, {spec_path}; write {review_path}."),
+    ] {
+        let overrides: Map<String> = [(name, text.to_string())].into_iter().collect();
+        assert!(saved_prompts(&overrides, "r").is_err(), "{name}: {text}");
+    }
 }
 
 #[test]

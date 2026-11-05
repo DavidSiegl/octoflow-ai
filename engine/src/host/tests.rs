@@ -1138,6 +1138,13 @@ impl Clones {
         head
     }
 
+    /// Set diff.relative in checkout a, as a user's git config may, and return the path of a's directory sub, which
+    /// this does not create.
+    fn diff_relative_sub(&self) -> String {
+        self.sh(&["git", "-C", &self.a, "config", "diff.relative", "true"]);
+        format!("{}/sub", self.a)
+    }
+
     /// Write a file of checkout a, or delete it with no text.
     fn put(&self, name: &str, text: Option<&str>) {
         let path = format!("{}/{name}", self.a);
@@ -1509,10 +1516,51 @@ fn locked_files_are_restored_and_the_index_is_left_alone() {
 
     let other = "refs/orchestrator/d4e5f6/locked/tests";
     c.sh(&["git", "-C", &c.a, "update-ref", other, &base]);
-    c.host.delete_refs(&c.a, "refs/orchestrator/a1b2c3/").unwrap();
+    assert!(c.host.delete_refs(&c.a, "refs/orchestrator/a1b2c3/").unwrap());
     let refs = c.sh(&["git", "-C", &c.a, "for-each-ref", "--format=%(refname)", "refs/orchestrator/"]);
     assert_eq!(refs, format!("{other}\n"));
-    c.host.delete_refs(&c.a, "refs/orchestrator/a1b2c3/").unwrap();
+    assert!(!c.host.delete_refs(&c.a, "refs/orchestrator/a1b2c3/").unwrap());
+}
+
+#[test]
+fn locks_take_every_path_from_a_subdirectory_under_diff_relative() {
+    let c = Clones::new();
+    let base = c.head(&c.a);
+    let sub = c.diff_relative_sub();
+    let git_ref = "refs/orchestrator/a1b2c3/locked/tests";
+    c.put("app.py", Some("one\ntested\n"));
+    c.put("sub/test_app.py", Some("assert f()\n"));
+    let locked = c.host.lock(&sub, &base, git_ref).unwrap();
+    assert_eq!(locked, ["app.py", "sub/test_app.py"]);
+
+    c.put("app.py", Some("one\nweakened\n"));
+    let (differ, diff) = c.host.locked_changes(&sub, git_ref, &locked).unwrap();
+    assert_eq!(differ, ["app.py"]);
+    assert!(diff.contains("+++ b/app.py\n") && diff.contains("-tested\n+weakened\n"), "{diff}");
+}
+
+#[test]
+fn a_change_is_read_whole_from_a_subdirectory_under_diff_relative() {
+    let c = Clones::new();
+    let base = c.commit(&c.a, "sub/lib.py", "lib\n");
+    let sub = c.diff_relative_sub();
+    let head = c.commit(&c.a, "app.py", "one\ntwo\n");
+    let diff = c.host.change_diff(&sub, &base, Some(&head)).unwrap();
+    assert_eq!(changed_lines(&diff), [("app.py".to_string(), vec![2])]);
+    let counts = c.host.changed_line_counts(&sub, &base, &head).unwrap();
+    let paths: Vec<&str> = counts.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(paths, ["app.py"]);
+}
+
+#[test]
+fn a_conflict_outside_a_subdirectory_is_reported_under_diff_relative() {
+    let c = Clones::new();
+    c.feature_branch();
+    let mine = c.commit(&c.a, "sub/lib.py", "lib\n");
+    let sub = c.diff_relative_sub();
+    c.push_from_b("app.py", "one\ntheirs\n");
+    assert_eq!(c.host.merge_upstream(&sub, "main").unwrap(), ["app.py"]);
+    assert_eq!(c.head(&c.a), mine);
 }
 
 /// The text of name in the repository at path, None for no file.

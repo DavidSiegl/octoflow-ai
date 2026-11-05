@@ -22,7 +22,8 @@ const D: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
 
 // The default workflow's prompts as commit d6bb100 sent them, recorded by running the scenarios of
 // TestDefaultWorkflowPrompts on that commit's code, as Python's GOLDEN holds them: since then, SPEC_PROMPT's "Separate
-// Claude Code sessions" became "Separate agent sessions", and every prompt the Builder gets ends with BLOCKED_NOTE.
+// Claude Code sessions" became "Separate agent sessions", FIX_PROMPT's "The Reviewer requested changes" became "Changes
+// were requested", and every prompt the Builder gets ends with BLOCKED_NOTE.
 
 pub(super) const FRESH_BUILD_2: &str = concat!(
     "You are the Builder, the second of three roles (Spec Collector -> Builder -> Reviewer). The spec in ",
@@ -37,7 +38,7 @@ pub(super) const FRESH_BUILD_2: &str = concat!(
     "their results), and any acceptance criterion you did not meet, with the reason.\n\nThis is round 2, ",
     "and you are a fresh session. An earlier Builder session did the earlier turns; its changes are ",
     "already in the working tree, and its reports are ",
-    "/proj/.orchestrator/runs/20260929-120000-a1b2c3/build-1.md.\n\nThe Reviewer requested changes; the ",
+    "/proj/.orchestrator/runs/20260929-120000-a1b2c3/build-1.md.\n\nChanges were requested; the ",
     "findings are in /proj/.orchestrator/runs/20260929-120000-a1b2c3/review-1.md. Fix each finding, or ",
     "explain in your report why it is wrong. Re-run the verification. Do not commit, push or switch ",
     "branches. As your last step, write a new report to ",
@@ -130,7 +131,7 @@ const REVIEW_1_PASSED: &str = concat!(
 );
 
 const FIX_2: &str = concat!(
-    "The Reviewer requested changes; the findings are in ",
+    "Changes were requested; the findings are in ",
     "/proj/.orchestrator/runs/20260929-120000-a1b2c3/review-1.md. Fix each finding, or explain in ",
     "your report why it is wrong. Re-run the verification. Do not commit, push or switch branches. ",
     "As your last step, write a new report to ",
@@ -209,7 +210,7 @@ const FRESH_BUILD_2_AFTER_QUALITY_ROUNDS: &str = concat!(
     "its changes are already in the working tree, and its reports are ",
     "/proj/.orchestrator/runs/20260929-120000-a1b2c3/build-1.md, ",
     "/proj/.orchestrator/runs/20260929-120000-a1b2c3/build-1-q1.md, ",
-    "/proj/.orchestrator/runs/20260929-120000-a1b2c3/build-1-q2.md.\n\nThe Reviewer requested changes; ",
+    "/proj/.orchestrator/runs/20260929-120000-a1b2c3/build-1-q2.md.\n\nChanges were requested; ",
     "the findings are in /proj/.orchestrator/runs/20260929-120000-a1b2c3/review-1.md. Fix each ",
     "finding, or explain in your report why it is wrong. Re-run the verification. Do not commit, ",
     "push or switch branches. As your last step, write a new report to ",
@@ -498,12 +499,12 @@ fn rendered(pipeline: &Pipeline) -> String {
     let mut wf = f.workflow(RunSettings { pipeline: Some(pipeline.clone()), ..RunSettings::default() });
     wf.state.base = Some("abc123".into());
     let steps = pipeline.steps();
-    let looped = match pipeline.verdict_step() {
-        Some(verdict) => {
-            let at = |id: &str| steps.iter().position(|st| st.id == id).unwrap();
-            &steps[at(verdict.loop_to.as_deref().unwrap())..=at(&verdict.id)]
-        }
-        None => &[],
+    // The steps a later round runs: from the earliest loop target to the last verdict step.
+    let at = |id: &str| steps.iter().position(|st| st.id == id).unwrap();
+    let first_target = pipeline.verdict_steps().filter_map(|v| v.loop_to.as_deref()).map(at).min();
+    let looped = match (first_target, pipeline.verdict_steps().next_back()) {
+        (Some(target), Some(last)) => &steps[target..=at(&last.id)],
+        _ => &[],
     };
     let mut parts = vec![];
     for step in steps {
@@ -594,7 +595,7 @@ fn a_build_prompt_file_words_the_builders_first_turn() {
 
 #[test]
 fn a_follow_up_file_reaches_the_turn_that_uses_it() {
-    let (_dir, config) = config_with(&[("FIX_PROMPT.md", "Fix {prev_review_path}; report to {build_path}.")]);
+    let (_dir, config) = config_with(&[("FIX_PROMPT.md", "Fix {findings}; report to {build_path}.")]);
     let (state, pipeline) = started(&config);
     let seen = seen();
     let f = Fixture::on(Rc::new(FakeHost::default()), state, vec![
@@ -641,7 +642,7 @@ fn a_note_file_reaches_every_workflow() {
 #[test]
 fn a_resume_keeps_the_prompts_the_run_started_with() {
     for edit in ["edited", "deleted"] {
-        let (_dir, config) = config_with(&[("FIX_PROMPT.md", "Fix {prev_review_path}; report to {build_path}.")]);
+        let (_dir, config) = config_with(&[("FIX_PROMPT.md", "Fix {findings}; report to {build_path}.")]);
         let path = format!("{}/FIX_PROMPT.md", config.prompts_dir());
         let (state, pipeline) = started(&config);
         let f = Fixture::on(Rc::new(FakeHost::default()), state, vec![
@@ -651,7 +652,7 @@ fn a_resume_keeps_the_prompts_the_run_started_with() {
         f.play("review", vec![then_interrupted(&f.interrupt, idle())]);
         assert_eq!(f.workflow(no_pr_of(pipeline)).run(), Err(Stopped::Interrupted));
         if edit == "edited" {
-            std::fs::write(&path, "Changed {prev_review_path}; report to {build_path}.\n").unwrap();
+            std::fs::write(&path, "Changed {findings}; report to {build_path}.\n").unwrap();
         } else {
             std::fs::remove_file(&path).unwrap();
         }
@@ -668,3 +669,24 @@ fn a_resume_keeps_the_prompts_the_run_started_with() {
     }
 }
 
+
+#[test]
+fn a_run_an_earlier_release_started_with_its_fix_prompt_file_resumes() {
+    // Started before 0.58.0 with a FIX_PROMPT.md that named {prev_review_path}, which a prompt file read today may
+    // not (crate::prompts' EARLIER_PLACEHOLDERS), and saved in round 1's review, before RunState::verdicts.
+    let mut state = saved_run("review", 1, &["spec", "build", "review"]);
+    state.prompt_overrides.insert("FIX_PROMPT", "Fix {prev_review_path}; report to {build_path}.".to_string());
+    let Value::Object(mut saved) = state.to_json() else { unreachable!("a state is saved as an object") };
+    saved.shift_remove("verdicts");
+    crate::test_support::resumable(&[], &saved).unwrap();
+    let seen = seen();
+    let f = Fixture::resume(Rc::new(FakeHost::default()), RunState::from_saved(&saved).unwrap(), vec![
+        ("review", vec![review_turn(1, CHANGES_REQUESTED), review_turn(2, APPROVE)]),
+        ("build", vec![recording(build_turn(2), &seen)]),
+    ], &[], &[]);
+    f.put(&format!("{D}/build-1.md"), "report 1");
+    assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
+    assert_eq!(seen.borrow().len(), 1);
+    let fix = &seen.borrow()[0];
+    assert!(fix.contains(&format!("Fix {D}/review-1.md; report to {D}/build-2.md.")), "{fix}");
+}

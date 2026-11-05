@@ -1025,9 +1025,26 @@ becomes `/job/` in its URL, so `AI-Agents-Orchestrator/py-ai-agents-orchestrator
   `<job>/<number>/testReport/api/json`, and (5) the last 60 lines of `<job>/<number>/consoleText` when no test
   failed.
 
-The tests answer these calls with `FakeCI`. `tests/contract/test_jenkins.py` makes them against the live quality job
-instead, with one build of `main`, and checks that each answer has the shape the fake gives it; it runs only when
-asked for, as its docstring says, and a field it finds shaped otherwise is fixed in the fake.
+The engine's tests answer these calls with `FakeJenkins` (`engine/src/ci/fake.rs`), and the e2e scenarios with their
+world's Jenkins (`engine/e2e/tests/e2e/servers.rs`). `cargo xtask contract` makes them against the live quality job
+instead, through the engine's own `Jenkins`, and checks each raw answer has the fields and types the fakes give it; a
+field it finds shaped otherwise is fixed in the fakes in the same pull request. **It triggers one real build of the
+quality job**, with `GIT_REF=main`: nothing is pushed, and the Release stage does not run for a non-empty `GIT_REF`.
+Run it by hand, never in CI, before a release that changes `engine/src/ci.rs` or `engine/src/http.rs`, and after a
+Jenkins upgrade:
+
+```sh
+CONTRACT_JENKINS_URL=http://cicdbox0.lan:8084/ CONTRACT_JENKINS_USER=agents CONTRACT_JENKINS_TOKEN=... \
+    CONTRACT_JOB=Octoflow-AI/octoflow-ai-quality cargo xtask contract
+```
+
+Its variables are named apart from `JENKINS_URL` and the others of `ci.env`, so that one set for the engine never
+starts it by accident. It prints a line per step, `ok` or what differed, and exits 0 when steps 1 to 8 pass. The
+ninth, reported apart, says whether a quality round could have taken the build within `QUALITY_TIMEOUT` of the start:
+the build is waited for twice that, so that a slow build still has every answer checked, and it counts as taken when a
+round would take it. Two runs must not overlap, nor may another build of `main` be triggered during one: step 4 takes
+the newest build of `main` to be the one it triggered. `xtask/src/contract.rs`'s module comment gives the steps and the
+exit status.
 
 **Once the Gate stage has archived `quality.md`**, live or resumed, the round takes it without waiting for the stages
 after Gate, which cannot change its verdict: on a build that has ended, at the first read; on one still running, once
