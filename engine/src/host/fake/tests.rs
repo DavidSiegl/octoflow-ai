@@ -2,7 +2,7 @@
 //! with Host's own steps running on its git.
 
 use super::*;
-use crate::host::{GhError, PullRequest, PushError};
+use crate::host::{git_status, GhError, PullRequest, PushError};
 
 fn proj(name: &str) -> String {
     format!("/proj/{name}")
@@ -20,7 +20,7 @@ fn files_written_outside_the_run_directory_are_changes() {
     let changed: Vec<&String> = s.changed.iter().collect();
     assert_eq!(changed, [&proj(&format!("{WORKTREES_DIR}/a1/f.py")), &proj("app.py")]);
     drop(s);
-    assert_eq!(host.git(&proj(""), &["status", "--porcelain", "--untracked-files=all"]).unwrap().lines().count(), 2);
+    assert_eq!(git_status(&host, &proj("")).unwrap().lines().count(), 2);
     host.git("/proj", &["commit", "--quiet", "-m", "x"]).unwrap();
     assert!(host.state().changed.is_empty());
     assert_eq!(host.git_head("/proj").unwrap().as_deref(), Some("abc123+commit"));
@@ -147,8 +147,8 @@ fn worktrees_see_their_own_branch_and_changes() {
     assert_eq!(host.git(&wt, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap(), "orchestrator/x\n");
     host.write(&format!("{wt}/f.py"), "x", false).unwrap();
     host.write("/proj/mine.py", "x", false).unwrap();
-    assert_eq!(host.git(&wt, &["status", "--porcelain", "--untracked-files=all"]).unwrap(), format!("?? {wt}/f.py\n"));
-    assert_eq!(host.git("/proj", &["status", "--porcelain", "--untracked-files=all"]).unwrap(), "?? /proj/mine.py\n");
+    assert_eq!(git_status(&host, &wt).unwrap(), format!("?? {wt}/f.py\n"));
+    assert_eq!(git_status(&host, "/proj").unwrap(), "?? /proj/mine.py\n");
     host.git(&wt, &["commit", "-m", "x"]).unwrap();
     assert_eq!(host.state().changed.len(), 1);
     host.state().remove_error = Some("fatal: contains modified or untracked files".into());

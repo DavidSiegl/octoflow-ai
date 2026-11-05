@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use super::{ChangedFile, Completed, Exec, ExecError, Host};
+use super::{ChangedFile, Completed, Exec, ExecError, Host, GIT_STATUS_ARGS};
 use crate::quality::Leak;
 use crate::constants::WORKTREES_DIR;
 use crate::error::OrchestratorError;
@@ -377,7 +377,7 @@ impl FakeState {
                 self.worktrees.insert(cwd, name.to_string());
                 Some(ok(""))
             }
-            ["status", "--porcelain", "--untracked-files=all"] => Some(ok(&porcelain(&self.changed_in(cwd)))),
+            args if args == GIT_STATUS_ARGS => Some(ok(&porcelain(&self.changed_in(cwd)))),
             ["commit", ..] => {
                 let changed = self.changed_in(cwd);
                 self.changed.retain(|p| !changed.contains(p));
@@ -404,7 +404,7 @@ impl FakeState {
         }
         match args {
             ["rev-parse", rest @ ..] => return self.git_rev_parse(rest),
-            ["status", "--porcelain", "--untracked-files=all"] => return ok(&porcelain(&self.changed_in(cwd))),
+            args if args == GIT_STATUS_ARGS => return ok(&porcelain(&self.changed_in(cwd))),
             ["switch", "-c", name] | ["switch", "--quiet", name] => self.branch = name.to_string(),
             ["commit", ..] => {
                 let changed = self.changed_in(cwd);
@@ -972,7 +972,7 @@ fn status(status: i32) -> Completed {
     Completed::new(status, "", "")
 }
 
-/// `git status --porcelain --untracked-files=all` of changed, each an untracked file.
+/// `git status` (GIT_STATUS_ARGS) of changed, each an untracked file.
 fn porcelain(changed: &BTreeSet<String>) -> String {
     changed.iter().map(|p| format!("?? {p}\n")).collect()
 }

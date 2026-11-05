@@ -9,6 +9,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeSet, VecDeque};
 
 use super::*;
+use crate::host::GIT_STATUS_ARGS;
 use crate::pull_request::commit_note;
 
 /// The worktree of a run --worktree run of the default run: Python's WORKTREE.
@@ -67,7 +68,9 @@ fn dirty_checkout_on_another_branch_is_left_alone() {
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
     let in_checkout = git_in(&f.host, "/proj");
     let touches = |a: &Vec<String>| {
-        ["switch", "status", "add", "commit", "push"].contains(&a[0].as_str()) || a.starts_with(&strings(&["merge", "--ff-only"]))
+        ["switch", "add", "commit", "push"].contains(&a[0].as_str())
+            || *a == strings(GIT_STATUS_ARGS)
+            || a.starts_with(&strings(&["merge", "--ff-only"]))
     };
     assert!(!in_checkout.iter().any(touches), "{in_checkout:?}");
     let in_worktree = git_in(&f.host, WORKTREE);
@@ -75,7 +78,8 @@ fn dirty_checkout_on_another_branch_is_left_alone() {
     assert!(in_worktree.contains(&strings(&["merge", "--no-edit", "--quiet", "origin/feature"])));
     assert!(in_worktree.contains(&strings(&["push", "--quiet", "--set-upstream", "origin", RUN_BRANCH])));
     let first: BTreeSet<&str> = in_worktree.iter().map(|a| a[0].as_str()).collect();
-    assert!(["status", "add", "commit"].iter().all(|word| first.contains(word)), "{first:?}");
+    assert!(["add", "commit"].iter().all(|word| first.contains(word)), "{first:?}");
+    assert!(in_worktree.contains(&strings(GIT_STATUS_ARGS)));
     let s = f.host.state();
     assert_eq!((s.branch.as_str(), s.changed.iter().map(String::as_str).collect::<Vec<_>>()), ("feature", vec!["/proj/wip.py"]));
     assert_eq!((s.prs[0].base.as_str(), s.prs[0].head.as_str()), ("feature", RUN_BRANCH));
