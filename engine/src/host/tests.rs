@@ -1637,6 +1637,43 @@ fn a_repository_nested_in_one_made_since_goes_too() {
 }
 
 #[test]
+fn an_ignored_repository_in_one_made_since_keeps_its_history() {
+    let r = Repo::new(&[(".gitignore", "vendor/\n")]);
+    let lib = format!("{}/d/vendor/lib", r.path);
+    r.git(&["init", "--quiet", &lib]);
+    r.put("d/vendor/lib/.gitignore", "*.o\n");
+    r.put("d/vendor/lib/lib.c", "int x;\n");
+    r.git(&["-C", &lib, "-c", "user.name=t", "-c", "user.email=t@example.com", "add", "."]);
+    r.git(&["-C", &lib, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "lib"]);
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    let nested = format!("{}/d", r.path);
+    r.git(&["init", "--quiet", &nested]);
+    r.put("d/fixture.txt", "made by the proof\n");
+    r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "add", "fixture.txt"]);
+    r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "fixture"]);
+    r.host.restore_tree(&r.path, &tree).unwrap();
+    assert_eq!(text(&r.path, "d/fixture.txt"), None);
+    assert_eq!(text(&r.path, "d/vendor/lib/.gitignore"), Some("*.o\n".into()));
+    assert_eq!(r.host.git(&lib, &["log", "--format=%s"]).unwrap().trim(), "lib");
+    assert_eq!(r.host.git(&r.path, &["status", "--porcelain", "-uall"]).unwrap(), "");
+}
+
+#[test]
+fn a_repository_made_since_whose_name_starts_with_a_dash_goes() {
+    let r = Repo::new(&[]);
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    let nested = format!("{}/-d", r.path);
+    r.git(&["init", "--quiet", &nested]);
+    r.put("-d/.gitignore", "*.log\n");
+    r.put("-d/run.log", "made by the proof\n");
+    r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "add", ".gitignore"]);
+    r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "f"]);
+    r.host.restore_tree(&r.path, &tree).unwrap();
+    assert!(!std::path::Path::new(&nested).exists());
+    assert_eq!(r.host.git(&r.path, &["status", "--porcelain", "-uall"]).unwrap(), "");
+}
+
+#[test]
 fn a_tree_is_restored_over_more_paths_than_an_argv_holds() {
     // 2 x 12000 paths of over 200 bytes each: some 5 MB, where Linux takes 2 MB of arguments.
     let long = "p".repeat(200);
