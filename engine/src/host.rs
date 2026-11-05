@@ -627,8 +627,10 @@ pub trait Host {
     /// The rules come from base, a commit before the change: its .gitleaks.toml (else gitleaks' defaults), each file
     /// it extends with `[extend] path`, in turn, and its .gitleaksignore (else none), and nothing the change holds, so
     /// that the change cannot allowlist itself. Every file git takes for text by its content is diffed as text, with
-    /// no textconv, whatever any .gitattributes says; one whose first 8000 bytes hold a NUL is binary to git and
-    /// scanned by neither gitleaks nor the comment check (TODO.md). gitleaks honours a `gitleaks:allow` comment
+    /// no textconv, whatever any .gitattributes says. A file git takes for binary, by a NUL in its first 8000 bytes
+    /// with no attribute saying otherwise, is left out on purpose: neither gitleaks nor the comment check reads it,
+    /// so a secret in it, or a `gitleaks:allow` comment, goes unreported. Such a secret, a `.p12` keystore say, is
+    /// caught only by a path rule in base's .gitleaks.toml. gitleaks honours a `gitleaks:allow` comment
     /// silently, so each one an added line holds is a Leak of its own. gitleaks runs with --redact and writes its JSON
     /// report to report_path, a path in the run's directory, beside the .gitleaksignore copy, the rules directory and
     /// the empty directory it scans from.

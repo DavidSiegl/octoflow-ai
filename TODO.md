@@ -736,12 +736,6 @@ is rewritten to say what is left.
   and unchecked", "In (b) that run still races GitHub's immediate merge. A conflict cleared by a change to the base
   rather than the head raises no pull-request event at all." Closes with a ruleset that requires the check on
   every branch, or one that restricts merges outside `main`.
-- **The secret scan does not look inside a file git takes for binary.** With no attributes, git still calls a file
-  binary when its first 8000 bytes hold a NUL, and `git log -p` prints "Binary files ... differ" for it, to gitleaks and
-  to `allow_comments` (`engine/src/host/scan.rs`) alike, so a secret or a `gitleaks:allow` in such a file is pushed
-  unscanned. gitleaks' own `git` mode has the same blind spot. Raised by the cross-review of `push-secret-scan` (F15,
-  2026-10-24). Closes with a decision in the spec whether binary content is in scope, and, if it is, a `--text` diff or
-  a scan of the blobs themselves (`gitleaks dir` over the pushed files).
 - **The quality file's intro still says `orchestrator.py gate` judged the tree.** `judge_change` writes that intro,
   though since the split the program is `gate.py`. Left as it was on purpose (2026-10-27): `judge_change` scores 24,
   over the cognitive-complexity limit of 15, and the check pairs a function moved into a new file with its base only
