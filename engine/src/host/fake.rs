@@ -377,7 +377,7 @@ impl FakeState {
                 self.worktrees.insert(cwd, name.to_string());
                 Some(ok(""))
             }
-            ["status", "--porcelain"] => Some(ok(&porcelain(&self.changed_in(cwd)))),
+            ["status", "--porcelain", "--untracked-files=all"] => Some(ok(&porcelain(&self.changed_in(cwd)))),
             ["commit", ..] => {
                 let changed = self.changed_in(cwd);
                 self.changed.retain(|p| !changed.contains(p));
@@ -404,7 +404,7 @@ impl FakeState {
         }
         match args {
             ["rev-parse", rest @ ..] => return self.git_rev_parse(rest),
-            ["status", "--porcelain"] => return ok(&porcelain(&self.changed_in(cwd))),
+            ["status", "--porcelain", "--untracked-files=all"] => return ok(&porcelain(&self.changed_in(cwd))),
             ["switch", "-c", name] | ["switch", "--quiet", name] => self.branch = name.to_string(),
             ["commit", ..] => {
                 let changed = self.changed_in(cwd);
@@ -972,7 +972,7 @@ fn status(status: i32) -> Completed {
     Completed::new(status, "", "")
 }
 
-/// `git status --porcelain` of changed, each an untracked file.
+/// `git status --porcelain --untracked-files=all` of changed, each an untracked file.
 fn porcelain(changed: &BTreeSet<String>) -> String {
     changed.iter().map(|p| format!("?? {p}\n")).collect()
 }

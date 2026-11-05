@@ -1220,6 +1220,16 @@ pub(crate) fn git_diff<H: Host + ?Sized>(host: &H, cwd: &str, args: &[&str]) -> 
     host.git_verbatim(cwd, &argv)
 }
 
+/// What `git status --porcelain` lists in cwd: every changed file and every untracked file, each one on a line of its
+/// own, whatever the user's git config. Empty means a clean working tree. Every `git status` of the engine's runs
+/// through it. Errors: as Host::git's.
+pub(crate) fn git_status<H: Host + ?Sized>(host: &H, cwd: &str) -> Result<String, OrchestratorError> {
+    // --untracked-files=all: under the user's status.showUntrackedFiles=no, status lists no untracked file at all,
+    // and a Builder that only created files would read as having changed nothing; =normal would list a new directory
+    // as one line, not the files in it.
+    host.git(cwd, &["status", "--porcelain", "--untracked-files=all"])
+}
+
 /// The paths whose files differ between commits a and b, their mode included, a rename as its two paths, each ended
 /// by a NUL, as git prints them; with paths, which are relative to the repository's top level, only those. Errors:
 /// git fails.

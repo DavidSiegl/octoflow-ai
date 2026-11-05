@@ -5,6 +5,7 @@ use super::{record_in_state, Connected};
 use crate::constants::RUNS_DIR;
 use crate::error::OrchestratorError;
 use crate::herdr::Herdr;
+use crate::host::git_status;
 use crate::map::Map;
 use crate::runs::{ending_health, run_health, RUNNING};
 use crate::state::refs_prefix;
@@ -118,7 +119,7 @@ fn discard_run_worktree(world: &Connected, cwd: &str, state: &Closing) -> Result
     let worktree = state.worktree.as_deref().unwrap_or_default();
     let mut done = vec![];
     if host.is_worktree(cwd, worktree)? {
-        let status = host.git(worktree, &["status", "--porcelain"])?;
+        let status = git_status(host, worktree)?;
         let changes: Vec<&str> = status.lines().collect();
         if !changes.is_empty() {
             world.say(&format!("discarding in {worktree}:"));

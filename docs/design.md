@@ -276,10 +276,11 @@ refuses the repository, such as a checkout of dubious ownership, is not closed: 
 closes it once git reads the repository again. What happens to the files depends on whose they are:
 
 - **A failed or stale `--worktree` run**: the worktree is the run's own, so it is removed with
-  `git worktree remove --force` after `close` lists the files `git status --porcelain` shows, which go with it.
-  The branch is deleted only when it has no commit beyond the run's `base`. The Builder never commits, so such a
-  branch holds nothing; one with commits is kept, and the reason recorded. The branch is looked at even when the
-  worktree is already gone, so a `close` that failed after removing the worktree finishes the job the next time.
+  `git worktree remove --force` after `close` lists the files `git status --porcelain --untracked-files=all` shows,
+  which go with it. The branch is deleted only when it has no commit beyond the run's `base`. The Builder never
+  commits, so such a branch holds nothing; one with commits is kept, and the reason recorded. The branch is looked at
+  even when the worktree is already gone, so a `close` that failed after removing the worktree finishes the job the
+  next time.
 - **A failed or stale in-place run**: the checkout and its branch are the human's, so they stay as they are.
 - **A finished run**: a `--no-pr` run's worktree holds the change, so it stays, and `close` prints its path.
 

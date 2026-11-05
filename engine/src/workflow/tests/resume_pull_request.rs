@@ -125,7 +125,7 @@ fn publish_resumed_mid_merge_aborts_it_before_committing() {
         strings(ON_BRANCH),
         strings(&["rev-parse", "-q", "--verify", "MERGE_HEAD"]),
         strings(&["merge", "--abort"]),
-        strings(&["status", "--porcelain"]),
+        strings(&["status", "--porcelain", "--untracked-files=all"]),
     ]);
     assert!(!calls.iter().any(|c| c[0] == "add" || c[0] == "commit"));
     // The merge is tried again, conflicts again, and is aborted again.

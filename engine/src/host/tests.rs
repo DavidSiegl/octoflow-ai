@@ -1563,6 +1563,15 @@ fn a_conflict_outside_a_subdirectory_is_reported_under_diff_relative() {
     assert_eq!(c.head(&c.a), mine);
 }
 
+#[test]
+fn a_new_file_is_listed_whatever_the_users_show_untracked_files() {
+    let c = Clones::new();
+    c.sh(&["git", "-C", &c.a, "config", "status.showUntrackedFiles", "no"]);
+    c.put("app.py", Some("one\nedited\n"));
+    c.put("sub/new.py", Some("new\n"));
+    assert_eq!(git_status(&c.host, &c.a).unwrap(), " M app.py\n?? sub/new.py\n");
+}
+
 /// The text of name in the repository at path, None for no file.
 fn text(path: &str, name: &str) -> Option<String> {
     std::fs::read_to_string(format!("{path}/{name}")).ok()
