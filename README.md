@@ -360,8 +360,9 @@ request is already open.
 
 If removing the worktree failed because it had changes, it stays, and so does its branch, which it keeps checked out.
 Once the pull request is merged, or closed for 14 days, `prune` removes such a worktree under
-`.orchestrator/worktrees/` when it has no uncommitted changes and everything in it is on the pull request's head
-commit, and then deletes the branch. Otherwise it keeps both and says why. `prune` also forgets a worktree whose
+`.orchestrator/worktrees/` when it has no uncommitted changes, still has the run's branch checked out, and is on the
+pull request's head commit or behind it, and then deletes the branch. Files git ignores, such as a hand-made `.env`,
+go with the worktree, as with `close`. Otherwise `prune` keeps both and says why. It also forgets a worktree whose
 directory you deleted by hand (`git worktree prune`), which would otherwise keep its branch.
 
 ## Draining specs

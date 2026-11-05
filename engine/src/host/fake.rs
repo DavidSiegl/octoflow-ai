@@ -377,6 +377,10 @@ impl FakeState {
     fn git_in_worktree(&mut self, cwd: &str, args: &[&str]) -> Option<Completed> {
         match args {
             ["rev-parse", "--abbrev-ref", "HEAD"] => Some(ok(&format!("{}\n", self.worktrees.get(cwd)?))),
+            ["symbolic-ref", "--quiet", "HEAD"] => {
+                let branch = self.worktrees.get(cwd)?;
+                Some(if branch == "HEAD" { status(1) } else { ok(&format!("refs/heads/{branch}\n")) })
+            }
             ["switch", "-c", name, _] => {
                 self.worktrees.insert(cwd, name.to_string());
                 Some(ok(""))

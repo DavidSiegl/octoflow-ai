@@ -1361,15 +1361,28 @@ fn checked_out_branches_of_every_worktree() {
 }
 
 #[test]
-fn pruning_worktrees_frees_the_branch_of_one_whose_directory_is_gone() {
+fn a_worktree_whose_directory_is_gone_holds_no_branch_until_pruned() {
     let c = Clones::new();
     let wt = format!("{}/wt", c.dir());
     c.sh(&["git", "-C", &c.a, "worktree", "add", "--quiet", "-b", "orchestrator/y-a1b2c3", &wt]);
     std::fs::remove_dir_all(&wt).unwrap();
     assert!(!c.host.is_worktree(&c.a, &wt).unwrap());
-    assert!(c.host.checked_out_branches(&c.a).unwrap().contains_key("orchestrator/y-a1b2c3"));
-    c.host.prune_worktrees(&c.a).unwrap();
     assert!(!c.host.checked_out_branches(&c.a).unwrap().contains_key("orchestrator/y-a1b2c3"));
+    assert!(c.host.git(&c.a, &["worktree", "list", "--porcelain"]).unwrap().contains("prunable"));
+    c.host.prune_worktrees(&c.a).unwrap();
+    assert!(!c.host.git(&c.a, &["worktree", "list", "--porcelain"]).unwrap().contains(&wt));
+}
+
+#[test]
+fn checked_out_branch_of_a_worktree_is_its_branch_whatever_tags_say() {
+    let c = Clones::new();
+    let wt = format!("{}/wt", c.dir());
+    c.sh(&["git", "-C", &c.a, "worktree", "add", "--quiet", "-b", "orchestrator/y-a1b2c3", &wt]);
+    c.sh(&["git", "-C", &c.a, "tag", "orchestrator/y-a1b2c3"]);
+    assert_eq!(c.host.checked_out_branch(&wt).unwrap(), Some("orchestrator/y-a1b2c3".to_string()));
+    c.sh(&["git", "-C", &wt, "switch", "--quiet", "--detach"]);
+    assert_eq!(c.host.checked_out_branch(&wt).unwrap(), None);
+    assert!(c.host.checked_out_branch(&format!("{}/nowhere", c.dir())).is_err());
 }
 
 #[test]
