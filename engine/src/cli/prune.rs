@@ -159,7 +159,7 @@ fn prune_run(
     run.cleanup = Some(cleanup.clone());
     if !dry_run {
         let path = format!("{cwd}/{RUNS_DIR}/{}/state.json", text("run_id").unwrap_or_default());
-        record_in_state(host, &path, saved, "branch_cleanup", Value::from(cleanup), "its branch was pruned").map_err(failed)?;
+        record_in_state(host, &path, saved, &[("branch_cleanup", Value::from(cleanup))], "its branch was pruned").map_err(failed)?;
     }
     Ok(())
 }

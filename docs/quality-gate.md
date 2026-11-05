@@ -1025,9 +1025,26 @@ becomes `/job/` in its URL, so `AI-Agents-Orchestrator/py-ai-agents-orchestrator
   `<job>/<number>/testReport/api/json`, and (5) the last 60 lines of `<job>/<number>/consoleText` when no test
   failed.
 
-The tests answer these calls with `FakeCI`. `tests/contract/test_jenkins.py` makes them against the live quality job
-instead, with one build of `main`, and checks that each answer has the shape the fake gives it; it runs only when
-asked for, as its docstring says, and a field it finds shaped otherwise is fixed in the fake.
+The engine's tests answer these calls with `FakeJenkins` (`engine/src/ci/fake.rs`), and the e2e scenarios with their
+world's Jenkins (`engine/e2e/tests/e2e/servers.rs`). `cargo xtask contract` makes them against the live quality job
+instead, through the engine's own `Jenkins`, and checks each raw answer has the fields and types the fakes give it; a
+field it finds shaped otherwise is fixed in the fakes in the same pull request. **It triggers one real build of the
+quality job**, with `GIT_REF=main`: nothing is pushed, and the Release stage does not run for a non-empty `GIT_REF`.
+Run it by hand, never in CI, before a release that changes `engine/src/ci.rs` or `engine/src/http.rs`, and after a
+Jenkins upgrade:
+
+```sh
+CONTRACT_JENKINS_URL=http://cicdbox0.lan:8084/ CONTRACT_JENKINS_USER=agents CONTRACT_JENKINS_TOKEN=... \
+    CONTRACT_JOB=Octoflow-AI/octoflow-ai-quality cargo xtask contract
+```
+
+Its variables are named apart from `JENKINS_URL` and the others of `ci.env`, so that one set for the engine never
+starts it by accident. It prints a line per step, `ok` or what differed, and exits 0 when steps 1 to 8 pass. The
+ninth, reported apart, says whether a quality round could have taken the build within `QUALITY_TIMEOUT` of the start:
+the build is waited for twice that, so that a slow build still has every answer checked, and it counts as taken when a
+round would take it. Two runs must not overlap, nor may another build of `main` be triggered during one: step 4 takes
+the newest build of `main` to be the one it triggered. `xtask/src/contract.rs`'s module comment gives the steps and the
+exit status.
 
 **Once the Gate stage has archived `quality.md`**, live or resumed, the round takes it without waiting for the stages
 after Gate, which cannot change its verdict: on a build that has ended, at the first read; on one still running, once
@@ -1084,15 +1101,20 @@ was agreed with the human, so naming a package there is the approval.
 Where a package comes from decides whether its index, PyPI for a Python package and crates.io for a crate, is asked
 about it. A direct dependency's source is its `[tool.uv.sources]` entry (`workspace`, `path`, `git`, `url` or
 `index`), else its PEP 508 URL (`name @ url`), else the `[[tool.uv.index]]` marked `default = true`, else the registry
-`uv.lock` has it from; a locked package's is its `source` in `uv.lock`. Only a package from PyPI's own index
+`uv.lock` has it from; a locked package's is its `source` in `uv.lock`. A package named from several sources is a
+dependency from each: a requirement with a URL beside one without, each entry of a `[tool.uv.sources]` list (each for
+some platforms), each registry `uv.lock` has it from. Only a package from PyPI's own index
 (`https://pypi.org/simple`) is looked up, at `https://pypi.org/pypi/<name>/json`, with a timeout of 15 seconds
 (`PYPI_TIMEOUT`). A package from another index is never looked up on pypi.org, so a name someone squatted there cannot
 lend it pypi.org's metadata: that is the dependency-confusion case, and the finding names the index instead. Such a
 package is therefore never `not-on-pypi`; only the spec rule can fail it. A crate's source is its entry's: `path`, a
 member of the workspace, which the spec need not name; `git`; `registry` or `registry-index`, an index other than
 crates.io, whose crate is `other-index`; else crates.io. An entry with `workspace = true` has its
-`[workspace.dependencies]` entry's source, and a locked crate its `source` in `Cargo.lock`. Only a crate from
-crates.io is looked up, at `https://crates.io/api/v1/crates/<name>`, with a timeout of 15 seconds
+`[workspace.dependencies]` entry's source; one whose `workspace` is anything else, such as `"true"` or `false`,
+makes its manifest `unreadable`, as Cargo refuses it. A locked crate has its `source` in `Cargo.lock`. A crate named
+from several sources, such as `foo = "1"` in `[dependencies]` and `foo = { git = "..." }` under
+`[target.'cfg(windows)'.dependencies]`, is a dependency from each, and each source of a new crate is judged on its
+own. Only a crate from crates.io is looked up, at `https://crates.io/api/v1/crates/<name>`, with a timeout of 15 seconds
 (`CRATES_IO_TIMEOUT`) and a User-Agent that names the project, which crates.io requires; nothing of the user's goes
 with it. Its first release is the crate's creation, and its latest version crates.io's default one, the highest that
 is neither yanked nor a pre-release.
@@ -1119,11 +1141,13 @@ is neither yanked nor a pre-release.
   `other-index` instead for one from an index other than its ecosystem's, naming the index, and `unknown-source` for one whose
   `[tool.uv.sources]` entry has a shape this check does not know (none of `workspace`, `path`, `git`, `url` or
   `index`), quoting the entry: where it comes from is not checked, so it is reported rather than passed in silence;
-- `pulled-in` (reports): one finding per `uv.lock`, listing with the same facts the packages it alone adds, those the
-  new dependencies pull in. The spec cannot be expected to name them;
+- `pulled-in` (reports): one finding per `uv.lock` or `Cargo.lock`, listing with the same facts the packages it alone
+  adds, those the new dependencies pull in, a package from several sources once for each. The spec cannot be expected
+  to name them;
 - `source-changed` (reports): a dependency the project already had, direct or locked, that the change takes from
-  another source, naming both: `requests` moved from PyPI to `{ index = "evil" }` is the dependency-confusion move
-  without a new name. A new default index moves every dependency without a source of its own.
+  a source it did not, instead or as well, naming the sources of both sides: `requests` moved from PyPI to
+  `{ index = "evil" }` is the dependency-confusion move without a new name. A new default index moves every
+  dependency without a source of its own.
 
 **Diff budget** counts the files the change touches and the lines it adds and removes, from `git diff --numstat -M`
 (`Host::changed_line_counts`); a rename counts as one file, with the lines it changes, and a binary file as a file of

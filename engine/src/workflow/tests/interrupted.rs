@@ -108,7 +108,7 @@ fn interrupted_at_the_end(had_gate: bool, git_command: &'static str) -> Fixture 
     state.ci = object([("build", Value::from(41))]);
     state.locked = [("build", vec!["tests/test_x.py".to_string()])].into_iter().collect();
     let host = Rc::new(FakeHost::new(Some("def456"), "orchestrator/x-a1b2c3"));
-    host.state().refs.insert(format!("{}build/1", state.refs_prefix()), "abc123".to_string());
+    host.state().refs.insert(format!("{}build/1", crate::state::refs_prefix(&state.run_id)), "abc123".to_string());
     let f = Fixture::resume(Rc::clone(&host), state, vec![], &[], &[]);
     let interrupt = f.interrupt.clone();
     host.state().before_git = Some(Box::new(move |_, args| {

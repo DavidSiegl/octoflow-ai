@@ -163,6 +163,15 @@ impl Workflow<'_> {
     /// working tree's .orchestrator directory is made ignored first, so no commit holds the copy; PROOF_COPIES_DIR is
     /// emptied before the copy is made and removed after the proof, so what a proof writes beside itself goes with it.
     ///
+    /// The working tree is left as the proof found it, ignored files aside (Host::tree_snapshot, Host::restore_tree),
+    /// also when the proof fails, errors or is interrupted: what it writes elsewhere in the tree, such as a coverage
+    /// file or the __pycache__ of a module it imports, never reaches the commit, and a file it edits is put back as it
+    /// was. So is what anyone else changes in the tree while the proof runs, as a human may in an in-place run's
+    /// checkout (TODO.md). When the proof ran and its tree cannot be put back, that is logged and the outcome says the
+    /// proof did not run cleanly; when it did not run, or was interrupted, it is only logged. Nothing is put back
+    /// outside a git repository, which no run commits; nor where the tree cannot be snapshotted, as with a nested
+    /// repository without a commit, which `git add -A` and so publishing refuse too: that is logged, and the proof runs.
+    ///
     /// Errors: the Ctrl-C, raised before the proof, which then does not run, or during it; command cannot be filled
     /// in, which Pipeline rules out. A proof that cannot run is no error, but its outcome.
     pub(super) fn run_proof(&self, command: &str, written: u32, file: &str) -> Outcome<(bool, String)> {
@@ -174,20 +183,37 @@ impl Workflow<'_> {
         let cmd = fill(command, &|name| (name == "proofs").then(|| proof.clone()))
             .map_err(|e| prompt_error("proof_command", &e))?;
         let limit = self.proof_timeout.to_string();
+        // The tree as the proof finds it, put back after it; None puts nothing back.
+        let mut before = None;
         let ran = self.ignore_orchestrator_dir(work_dir).and_then(|()| {
+            before = self.host.tree_snapshot(work_dir).unwrap_or_else(|e| {
+                self.human.log(&format!("cannot snapshot {work_dir}, so what the proof writes there stays: {e}"));
+                None
+            });
             let proofs_dir = self.state.proofs_dir(written);
             self.host.check(&["sh", "-c", &copy_script(), "_", &copies, &copy, &proofs_dir, file], None, DEFAULT_TIMEOUT)?;
             let argv = ["sh", "-c", PROOF_SCRIPT, "_", work_dir, &cmd, &limit];
             self.host.run_verbatim(&argv, None, self.proof_timeout + 30)
         });
-        // As Python's finally, which removes them also when the proof's run raises KeyboardInterrupt.
-        self.interrupt.finally(|| self.remove_proof_copies(&copies));
+        // As Python's finally, which removed the copies also when the proof's run raised KeyboardInterrupt; the tree
+        // is put back likewise.
+        let put_back = self.interrupt.finally(|| {
+            self.remove_proof_copies(&copies);
+            let restored = before.as_deref().map_or(Ok(()), |before| self.host.restore_tree(work_dir, before));
+            if let Err(e) = &restored {
+                self.human.log(&format!("could not undo what a proof wrote in {work_dir}: {e}"));
+            }
+            restored
+        });
         // As Python's KeyboardInterrupt, which the proof's run raises: nothing of an interrupted proof is recorded.
         self.check_interrupt()?;
         let proc = match ran {
             Ok(proc) => proc,
             Err(e) => return Ok((false, format!("it did not run: {e}"))),
         };
+        if let Err(e) = put_back {
+            return Ok((false, format!("it did not run cleanly: {e}")));
+        }
         let output = String::from_utf8_lossy(&proc.stdout).into_owned() + &proc.stderr;
         let lines: Vec<&str> = output.trim_end().split('\n').collect();
         let tail = lines[lines.len().saturating_sub(PROOF_TAIL_LINES)..].join("\n");

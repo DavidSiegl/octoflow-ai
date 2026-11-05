@@ -12,6 +12,8 @@ use crate::harness::{harness, SessionLog};
 use serde_json::Value;
 use crate::map::Map;
 use crate::json::ValueExt;
+use crate::paths::file_name;
+use std::collections::HashSet;
 
 mod process;
 mod scan;
@@ -420,8 +422,7 @@ pub trait Host {
         if merge.status == 0 {
             return Ok(vec![]);
         }
-        // -z: paths with unusual characters come unquoted.
-        let conflicts = nul_separated(&self.git(cwd, &["diff", "--name-only", "-z", "--diff-filter=U"])?);
+        let conflicts = nul_separated(&git_diff(self, cwd, &["--name-only", "-z", "--diff-filter=U"])?);
         self.abort_merge(cwd)?;
         if conflicts.is_empty() {
             return Err(OrchestratorError(format!(
@@ -445,14 +446,8 @@ pub trait Host {
     /// commit. No ref moves and the index stays as it was. `.gitignore` is honoured, which keeps `.orchestrator/` out,
     /// so the snapshot holds what committing the change would. Errors: git fails, or prints what is no commit.
     fn snapshot(&self, cwd: &str, parent: &str, message: &str) -> Result<String, OrchestratorError> {
-        // Through a copy of the index, in one sh -c script, because git -C cannot pass GIT_INDEX_FILE.
-        let script = "cd -- \"$1\" || exit 1; i=$(git rev-parse --git-path index) || exit 1; t=$(mktemp) || exit 1; \
-                      trap 'rm -f -- \"$t\"' EXIT; \
-                      if [ -f \"$i\" ]; then cp -- \"$i\" \"$t\" || exit 1; else rm -f -- \"$t\"; fi; \
-                      GIT_INDEX_FILE=$t git add -A && tree=$(GIT_INDEX_FILE=$t git write-tree) && \
-                      git commit-tree \"$tree\" -p \"$2\" -m \"$3\"";
-        // The `else` above: a repository whose index was never written, from which git starts the copy afresh.
-        let out = self.check(&["sh", "-c", script, "_", cwd, parent, message], None, DEFAULT_TIMEOUT)?;
+        let tree = working_tree(self, cwd)?;
+        let out = self.git(cwd, &["commit-tree", &tree, "-p", parent, "-m", message])?;
         let sha = out.trim();
         if !is_commit_id(sha) {
             return Err(OrchestratorError(format!(
@@ -460,6 +455,35 @@ pub trait Host {
             )));
         }
         Ok(sha.to_string())
+    }
+
+    /// The working tree as committing it would hold it, untracked files included and ignored ones not, as a git tree
+    /// object, which restore_tree takes; None when cwd is in no git repository. Needs no commit. No ref moves and the
+    /// index stays as it was; nothing keeps the tree from git gc, which prunes no object younger than two weeks.
+    /// Errors: git fails, as `git add -A` does on a nested repository without a commit.
+    fn tree_snapshot(&self, cwd: &str) -> Result<Option<String>, OrchestratorError> {
+        // git exits 128 outside a repository, and gives this question no other answer with that status.
+        if self.git_run(cwd, &["rev-parse", "--is-inside-work-tree"], DEFAULT_TIMEOUT)?.status == 128 {
+            return Ok(None);
+        }
+        working_tree(self, cwd).map(Some)
+    }
+
+    /// Put the working tree back as tree, which tree_snapshot made of it, holds it: every file, untracked ones
+    /// included, that differs from tree's is written as tree has it, or deleted where tree has none, as restore does.
+    /// Ignored files are left as they are, by the ignore rules tree holds: changed `.gitignore` files are put back
+    /// first, so a rule added since hides nothing added since. A directory a deleted file leaves empty stays, which
+    /// git does not see. The index stays as it is. Errors: as tree_snapshot's and restore's, as for a nested
+    /// repository without a commit added since; the tree may then be partly restored.
+    fn restore_tree(&self, cwd: &str, tree: &str) -> Result<(), OrchestratorError> {
+        let differ = utf8_paths(&names_between(self, cwd, tree, &working_tree(self, cwd)?, &[])?)?;
+        let ignores: Vec<String> = differ.iter().filter(|p| file_name(p) == ".gitignore").cloned().collect();
+        if ignores.is_empty() {
+            return self.restore(cwd, tree, &differ);
+        }
+        self.restore(cwd, tree, &ignores)?;
+        let differ = utf8_paths(&names_between(self, cwd, tree, &working_tree(self, cwd)?, &[])?)?;
+        self.restore(cwd, tree, &differ)
     }
 
     // Locked files (Step.locks). Their paths are relative to the repository's top level, whatever directory of the
@@ -471,7 +495,7 @@ pub trait Host {
     fn lock(&self, cwd: &str, base: &str, git_ref: &str) -> Result<Vec<String>, OrchestratorError> {
         let sha = self.snapshot(cwd, base, &format!("locked files, {git_ref}"))?;
         self.git(cwd, &["update-ref", git_ref, &sha])?;
-        paths_between(self, cwd, base, &sha, &[])
+        utf8_paths(&names_between(self, cwd, base, &sha, &[])?)
     }
 
     /// Of paths, the ones whose file in the working tree, untracked files included, differs from ref's, a file
@@ -488,77 +512,76 @@ pub trait Host {
             return Ok((vec![], String::new()));
         }
         let sha = self.snapshot(cwd, git_ref, &format!("the working tree against {git_ref}"))?;
-        let differ = paths_between(self, cwd, git_ref, &sha, paths)?;
+        let differ = utf8_paths(&names_between(self, cwd, git_ref, &sha, paths)?)?;
         if differ.is_empty() {
             return Ok((vec![], String::new()));
         }
-        let mut args = vec!["diff", "--no-color", "--no-ext-diff", "--no-renames", git_ref, &sha, "--"];
+        let mut args = vec!["--no-color", "--no-ext-diff", "--no-renames", git_ref, &sha, "--"];
         let literal = top_literal(&differ);
         args.extend(literal.iter().map(String::as_str));
-        let diff = self.git_verbatim(cwd, &args)?;
+        let diff = git_diff(self, cwd, &args)?;
         Ok((differ, String::from_utf8_lossy(&diff).into_owned()))
     }
 
-    /// Make each of paths in the working tree what it is in ref: written as ref has it, or deleted where ref has none.
-    /// The index stays as it is.
+    /// Make each of paths in the working tree what it is in ref, a commit or a tree: written as ref has it, or deleted
+    /// where ref has none. A directory there, such as a nested repository, keeps what the rules ref holds ignore (its
+    /// `.gitignore` files, those outside it, `.git/info/exclude` and `core.excludesFile`), an ignored subdirectory
+    /// whole, a repository's included, and a repository ref holds as a gitlink, whole; it loses everything else,
+    /// every `.git` and every `.gitignore` ref lacks among it included, so a file only such a `.gitignore` ignored
+    /// goes. The directory itself stays while it holds anything. Any number of paths. The index stays as it is.
     fn restore(&self, cwd: &str, git_ref: &str, paths: &[String]) -> Result<(), OrchestratorError> {
-        let held: Vec<String> = if paths.is_empty() {
-            vec![]
-        } else {
-            let mut args = vec!["ls-tree", "-r", "--name-only", "-z", "--full-tree", git_ref, "--"];
-            let literal = top_literal(paths);
-            args.extend(literal.iter().map(String::as_str));
-            utf8_paths(&self.git_verbatim(cwd, &args)?)?
-        };
-        let kept: Vec<&String> = paths.iter().filter(|p| held.contains(p)).collect();
-        if !kept.is_empty() {
-            let source = format!("--source={git_ref}");
-            let mut args = vec!["restore", source.as_str(), "--worktree", "--"];
-            let literal = top_literal(&kept);
-            args.extend(literal.iter().map(String::as_str));
-            self.git(cwd, &args)?;
+        if paths.is_empty() {
+            return Ok(());
         }
-        // git restore refuses a path that neither ref nor the index has, so a file ref lacks is removed here.
-        let gone: Vec<&String> = paths.iter().filter(|p| !held.contains(p)).collect();
+        // The whole of ref is listed, and the paths go over stdin below, since an argv has a limit.
+        let listing = self.git_verbatim(cwd, &["ls-tree", "-r", "--name-only", "-z", "--full-tree", git_ref])?;
+        let held: HashSet<String> = utf8_paths(&listing)?.into_iter().collect();
+        let (kept, gone): (Vec<&String>, Vec<&String>) = paths.iter().partition(|p| held.contains(*p));
+        // Deleted first: where ref has a directory and the tree a file in its place, git restore makes the directory
+        // again, and the file's path then names it.
         if !gone.is_empty() {
             let top = utf8_path(&self.git_verbatim(cwd, &["rev-parse", "--show-toplevel"])?)?;
             let top = top.strip_suffix('\n').unwrap_or(&top);
-            let files: Vec<String> = gone.iter().map(|p| format!("{top}/{p}")).collect();
-            let mut argv = vec!["rm", "-f", "--"];
-            argv.extend(files.iter().map(String::as_str));
-            self.check(&argv, None, DEFAULT_TIMEOUT)?;
+            let printed = sh_over_paths(self, top, r#"cd -- "$1" && xargs -0 sh -c 'for p; do
+                if [ -d "$p" ] && [ ! -L "$p" ]; then printf "%s\0" "$p"; fi
+            done' _"#, &gone)?;
+            let dirs: HashSet<String> = nul_separated(printed.as_bytes()).into_iter().collect();
+            let (dirs, files): (Vec<&String>, Vec<&String>) = gone.into_iter().partition(|p| dirs.contains(*p));
+            if !files.is_empty() {
+                sh_over_paths(self, top, r#"cd -- "$1" && xargs -0 rm -f --"#, &files)?;
+            }
+            clean_directories(self, top, &dirs, &held)?;
+        }
+        // git restore refuses a path that neither ref nor the index has, so only these.
+        if !kept.is_empty() {
+            let source = format!("--source={git_ref}");
+            let listed: String = top_literal(&kept).iter().map(|p| format!("{p}\0")).collect();
+            let args = ["restore", source.as_str(), "--worktree", "--pathspec-from-file=-", "--pathspec-file-nul"];
+            self.check(&git_argv(cwd, &args), Some(&listed), DEFAULT_TIMEOUT)?;
         }
         Ok(())
     }
 
-    /// Delete every local ref whose name starts with prefix, such as `refs/orchestrator/<key>/`; none is no error.
-    fn delete_refs(&self, cwd: &str, prefix: &str) -> Result<(), OrchestratorError> {
-        for git_ref in self.git(cwd, &["for-each-ref", "--format=%(refname)", prefix])?.split_whitespace() {
+    /// Delete every local ref of cwd's repository whose name starts with prefix, such as `refs/orchestrator/<key>/`,
+    /// and return whether there was any; none is no error. Errors: a git command fails, cwd outside a repository git
+    /// will read included, some of the refs perhaps deleted already.
+    fn delete_refs(&self, cwd: &str, prefix: &str) -> Result<bool, OrchestratorError> {
+        let listed = self.git(cwd, &["for-each-ref", "--format=%(refname)", prefix])?;
+        for git_ref in listed.split_whitespace() {
             self.git(cwd, &["update-ref", "-d", git_ref])?;
         }
-        Ok(())
+        Ok(!listed.is_empty())
     }
 
     /// `git diff -U0` from base to commit, or to the working tree's tracked files without one, in the one shape
-    /// crate::patch::added_lines parses, whatever the user's git config. Verbatim: a line that is not UTF-8, such as
-    /// Latin-1 text or a binary file git diffs as text, is kept, so a change to such a file is judged like any other,
-    /// and only git's "\n" ends a line, so nothing inside an added line can pass for a header.
+    /// crate::patch::added_lines parses, whatever the user's git config (git_diff). Verbatim: a line that is not
+    /// UTF-8, such as Latin-1 text or a binary file git diffs as text, is kept, so a change to such a file is judged
+    /// like any other, and only git's "\n" ends a line, so nothing inside an added line can pass for a header.
     fn change_diff(&self, cwd: &str, base: &str, commit: Option<&str>) -> Result<Vec<u8>, OrchestratorError> {
-        let mut args = vec![
-            "-c",
-            "core.quotePath=false",
-            "diff",
-            "-U0",
-            "-M",
-            "--no-color",
-            "--no-ext-diff",
-            "--src-prefix=a/",
-            "--dst-prefix=b/",
-            base,
-        ];
+        let mut args = vec!["-U0", "-M", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", base];
         args.extend(commit);
         args.push("--");
-        self.git_verbatim(cwd, &args)
+        git_diff(self, cwd, &args)
     }
 
     /// The file at path, relative to the repository's top level and taken literally, as commit has it, its bytes as
@@ -571,7 +594,7 @@ pub trait Host {
     /// Each file the change from base to commit touches, a rename paired as change_diff pairs it, with the lines it
     /// adds and removes, from `git diff --numstat`. Errors: git fails, or names a path that is not UTF-8.
     fn changed_line_counts(&self, cwd: &str, base: &str, commit: &str) -> Result<Vec<ChangedFile>, OrchestratorError> {
-        let out = self.git_verbatim(cwd, &["diff", "--numstat", "-z", "-M", "--no-ext-diff", base, commit])?;
+        let out = git_diff(self, cwd, &["--numstat", "-z", "-M", "--no-ext-diff", base, commit])?;
         numstat(&out)
     }
 
@@ -1104,27 +1127,113 @@ pub fn decoded(exec: Exec) -> Result<Completed, OrchestratorError> {
 
 /// git pathspecs that each match exactly one of paths, relative to the repository's top level, whatever directory git
 /// runs in, and with no glob in them.
-pub(crate) fn top_literal<S: AsRef<str>>(paths: &[S]) -> Vec<String> {
+fn top_literal<S: AsRef<str>>(paths: &[S]) -> Vec<String> {
     paths.iter().map(|p| format!(":(top,literal){}", p.as_ref())).collect()
 }
 
-/// The paths whose files differ between commits a and b, a rename as its two paths; with paths, only those.
-fn paths_between<H: Host + ?Sized>(
+/// The working tree in cwd as `git add -A` would stage it, as a tree object; the index stays as it was. Errors: git
+/// fails.
+fn working_tree<H: Host + ?Sized>(host: &H, cwd: &str) -> Result<String, OrchestratorError> {
+    // Through a copy of the index, in one sh -c script, because git -C cannot pass GIT_INDEX_FILE.
+    let script = "cd -- \"$1\" || exit 1; i=$(git rev-parse --git-path index) || exit 1; t=$(mktemp) || exit 1; \
+                  trap 'rm -f -- \"$t\"' EXIT; \
+                  if [ -f \"$i\" ]; then cp -- \"$i\" \"$t\" || exit 1; else rm -f -- \"$t\"; fi; \
+                  GIT_INDEX_FILE=$t git add -A && GIT_INDEX_FILE=$t git write-tree";
+    // The `else` above: a repository whose index was never written, from which git starts the copy afresh.
+    Ok(host.check(&["sh", "-c", script, "_", cwd], None, DEFAULT_TIMEOUT)?.trim().to_string())
+}
+
+/// Run script with `sh -c`, its `$1` top, and paths on its stdin, each ended by a NUL; what it printed. Errors: `sh`
+/// cannot be started, the script exits non-zero, or it outlasts DEFAULT_TIMEOUT.
+fn sh_over_paths<H: Host + ?Sized, S: AsRef<str>>(
+    host: &H,
+    top: &str,
+    script: &str,
+    paths: &[S],
+) -> Result<String, OrchestratorError> {
+    let listed: String = paths.iter().map(|p| format!("{}\0", p.as_ref())).collect();
+    host.check(&["sh", "-c", script, "_", top], Some(&listed), DEFAULT_TIMEOUT)
+}
+
+/// Clean each of dirs, directories under top that ref lacks, as Host::restore's doc says of such a directory. held is
+/// every file and gitlink ref holds. Errors: a command fails, as `rm` on a file it may not remove.
+fn clean_directories<H: Host + ?Sized>(
+    host: &H,
+    top: &str,
+    dirs: &[&String],
+    held: &HashSet<String>,
+) -> Result<(), OrchestratorError> {
+    if dirs.is_empty() {
+        return Ok(());
+    }
+    // Cleaned rather than removed: their ignored files are the human's, and no ref holds them. Walked a level at a
+    // time, each level losing its .git, so that git sees what is in it as the outer repository's, and its .gitignore
+    // unless ref holds it, before git judges the next level's subdirectories, so that only the rules ref holds judge
+    // them. Not entered: a subdirectory those rules ignore, or one ref holds, a repository of the tree before.
+    let mut level: Vec<String> = dirs.iter().map(|p| p.to_string()).collect();
+    while !level.is_empty() {
+        let unheld: Vec<String> =
+            level.iter().map(|p| format!("{p}/.gitignore")).filter(|g| !held.contains(g)).collect();
+        if !unheld.is_empty() {
+            sh_over_paths(host, top, r#"cd -- "$1" && xargs -0 sh -c 'for g; do
+                [ -d "./$g" ] || rm -f -- "./$g" || exit 1
+            done' _"#, &unheld)?;
+        }
+        let found = sh_over_paths(host, top, r#"cd -- "$1" && xargs -0 sh -c 'for p; do
+            rm -rf -- "./$p/.git" || exit 1
+            find "./$p" -mindepth 1 -maxdepth 1 -type d ! -name .git -print0 || exit 1
+        done' _"#, &level)?;
+        let below: Vec<String> = nul_separated(found.as_bytes())
+            .into_iter()
+            .map(|c| c.strip_prefix("./").unwrap_or(&c).to_string())
+            .filter(|c| !held.contains(c))
+            .collect();
+        if below.is_empty() {
+            break;
+        }
+        // check-ignore prints the ignored ones and exits 1 when there are none.
+        let script = r#"cd -- "$1" && { git check-ignore --no-index -z --stdin; [ $? -le 1 ]; }"#;
+        let ignored: HashSet<String> = nul_separated(sh_over_paths(host, top, script, &below)?.as_bytes()).into_iter().collect();
+        level = below.into_iter().filter(|c| !ignored.contains(c)).collect();
+    }
+    // Without -x, it leaves what the outer rules ignore; with one -f, a repository the walk did not enter.
+    sh_over_paths(host, top, r#"cd -- "$1" && xargs -0 sh -c 'for p; do
+        git clean -fdq -- ":(top,literal)$p" || exit 1
+    done' _"#, dirs)?;
+    Ok(())
+}
+
+/// `git diff args` in cwd, its output verbatim as git_verbatim gives it, whatever the user's git config and whatever
+/// directory of the repository cwd is: every path is relative to the repository's top level, a diff covers the whole
+/// repository, and a path that is not ASCII comes as its bytes rather than quoted in octal. Every `git diff` of the
+/// engine's runs through it; args are what follows `diff`. Errors: as git_verbatim's.
+pub(crate) fn git_diff<H: Host + ?Sized>(host: &H, cwd: &str, args: &[&str]) -> Result<Vec<u8>, OrchestratorError> {
+    // --no-relative: under the user's diff.relative, a diff run in a subdirectory lists only that subdirectory's
+    // files, named relative to it, so that a top_literal pathspec for a file elsewhere matches nothing.
+    let mut argv = vec!["-c", "core.quotePath=false", "diff", "--no-relative"];
+    argv.extend(args);
+    host.git_verbatim(cwd, &argv)
+}
+
+/// The paths whose files differ between commits a and b, their mode included, a rename as its two paths, each ended
+/// by a NUL, as git prints them; with paths, which are relative to the repository's top level, only those. Errors:
+/// git fails.
+pub(crate) fn names_between<H: Host + ?Sized>(
     host: &H,
     cwd: &str,
     a: &str,
     b: &str,
     paths: &[String],
-) -> Result<Vec<String>, OrchestratorError> {
-    let mut args = vec!["diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", a, b, "--"];
+) -> Result<Vec<u8>, OrchestratorError> {
+    let mut args = vec!["--name-only", "-z", "--no-renames", "--no-ext-diff", a, b, "--"];
     let literal = top_literal(paths);
     args.extend(literal.iter().map(String::as_str));
-    utf8_paths(&host.git_verbatim(cwd, &args)?)
+    git_diff(host, cwd, &args)
 }
 
-/// The NUL-separated names of out, the empty ones left out.
-fn nul_separated(out: &str) -> Vec<String> {
-    out.split('\0').filter(|p| !p.is_empty()).map(String::from).collect()
+/// The NUL-separated names in out, the empty ones left out, a byte that is not UTF-8 replaced by U+FFFD.
+pub(crate) fn nul_separated(out: &[u8]) -> Vec<String> {
+    out.split(|&b| b == 0).filter(|p| !p.is_empty()).map(|p| String::from_utf8_lossy(p).into_owned()).collect()
 }
 
 /// The NUL-separated paths git printed in out, verbatim, the empty ones left out. Errors: one that is not UTF-8.

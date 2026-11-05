@@ -63,17 +63,20 @@ pub fn has_conflict(saved: &Value) -> bool {
 
 /// Ask gh about the pull request of the run saved as saved, which has_conflict, and, unless dry_run, act on what it
 /// says: for one that merges cleanly now, remove the conflict warning from its body, every other edit to the body
-/// kept, take it out of draft if the run succeeded, and record no conflicts in the run's state; for one merged or
-/// closed, only that record. One that still conflicts, or whose mergeability GitHub has not computed yet, is left as
-/// it is. Returns what gh said, and so what was done.
+/// kept, take it out of draft if the run succeeded, and record no conflicts in the run's state, and with
+/// for_later_drain the pull request as conflict_cleared too (RunState::conflict_cleared); for one merged or closed, only
+/// no conflicts. One that still conflicts, or whose mergeability GitHub has not computed yet, is left as it is. Returns
+/// what gh said, and so what was done.
 ///
-/// cwd is the project, where gh runs and the run's state is, on world's host. Errors, naming the run: gh fails, or the
-/// state changed since it was read as saved (record_in_state).
+/// for_later_drain is true for refresh run by hand, whose clearing a later drain is to take up, and false for drain's
+/// own refresh, which takes it up in the same pass. cwd is the project, where gh runs and the run's state is, on
+/// world's host. Errors, naming the run: gh fails, or the state changed since it was read as saved (record_in_state).
 pub fn refresh_conflict(
     world: &Connected,
     cwd: &str,
     saved: &Value,
     dry_run: bool,
+    for_later_drain: bool,
 ) -> Result<ConflictCheck, OrchestratorError> {
     let text = |key: &str| saved.get(key).map(Value::text).unwrap_or_default();
     let run_id = text("run_id");
@@ -107,7 +110,11 @@ pub fn refresh_conflict(
             host.mark_pr_ready(cwd, &url)?;
         }
         let path = format!("{cwd}/{RUNS_DIR}/{run_id}/state.json");
-        record_in_state(host, &path, saved, "conflicts", Value::Array(vec![]), "its pull request was refreshed")?;
+        let mut recorded = vec![("conflicts", Value::Array(vec![]))];
+        if for_later_drain && check.pr_state == "OPEN" {
+            recorded.push(("conflict_cleared", Value::from(url.as_str())));
+        }
+        record_in_state(host, &path, saved, &recorded, "its pull request was refreshed")?;
         Ok(check)
     };
     refreshed().map_err(|e| OrchestratorError(format!("run {run_id}: {e}")))
@@ -138,7 +145,7 @@ pub fn refresh_command(world: &Connected, cwd: &str, run_ref: Option<&str>) -> R
     runs.sort_by_key(|saved| saved.get("run_id").map(Value::text).unwrap_or_default());
     let mut waiting = false;
     for saved in runs {
-        let check = refresh_conflict(world, cwd, saved, false)?;
+        let check = refresh_conflict(world, cwd, saved, false, true)?;
         world.say(&check.line());
         waiting = waiting || !check.clears();
     }

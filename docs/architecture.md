@@ -180,8 +180,11 @@ appends `proofs_section` under `PROOFS_HEADING` to the review; a resume runs no 
 and appends the section only where the review lacks it. A proof runs from a copy of its directory inside the tree
 it judges, `<work_dir>/.orchestrator/proofs/<round that wrote it>/`, so that pytest, looking upwards from it for its
 configuration, meets the working tree's first (`run_proof` has the details); the review and the notes name the proof
-where the verdict step wrote it, and say where it ran. A proof runs under GNU `timeout` where there is one, which
-stops its whole process group. A demonstrated proof is run again in every later round until it passes:
+where the verdict step wrote it, and say where it ran. The tree is left as the proof found it, ignored files aside:
+`run_proof` snapshots it before the proof (`Host::tree_snapshot`) and afterwards puts back every file that differs
+(`Host::restore_tree`), so nothing a proof writes elsewhere in the tree, such as a coverage file or a `__pycache__`,
+reaches the commit; outside a git repository, or where git cannot snapshot the tree, nothing is put back. A
+proof runs under GNU `timeout` where there is one, which stops its whole process group. A demonstrated proof is run again in every later round until it passes:
 `Workflow::rerun_proofs`, right before the verdict step's turn and so after the editing steps' turns and the quality
 loop, runs each carried proof (`carried_proofs`: its last run failed, or a rerun found it erroring) from the proofs
 directory of the round that wrote it, and records the outcome in `RunState.proofs` with the round it ran in and, as
@@ -394,8 +397,9 @@ scenarios record them as sent, where one reaches them. TODO.md lists the texts n
 
 xtask's tests (`xtask/tests/`) cover the eval runner, `cargo xtask eval` ([Evals](design.md#evals)), with the
 `fake-engine` binary as its engine, a program that plays a scripted run in the clone, and the eval tasks: each bundle
-is of its source, and each hidden test rejects its task's starting point and accepts a solution of it. No agent runs
-in the suite.
+is of its source, and each hidden test rejects its task's starting point and accepts a solution of it. They run the
+Jenkins contract check, `cargo xtask contract` ([The calls](quality-gate.md#the-calls)), over a scripted Jenkins. No
+agent runs in the suite, and no request leaves the machine.
 
 ## Tooling
 
@@ -407,7 +411,8 @@ in the suite.
 - `Cargo.toml`: the Cargo workspace, whose members are the engine (`engine/`, `octoflow-engine`, whose version is
   `pyproject.toml`'s), its e2e scenarios (`engine/e2e/`), the desktop shell (`ui/src-tauri/`) and the repository's
   chores (`xtask/`, run as `cargo xtask <command>` through `.cargo/config.toml`'s alias: `eval`, the eval set's runner,
-  and `bundles`, which builds its tasks' bundles), with one `Cargo.lock`, the lints every member takes
+  `bundles`, which builds its tasks' bundles, and `contract`, which checks the engine's Jenkins client against the real
+  Jenkins), with one `Cargo.lock`, the lints every member takes
   (`[workspace.lints]`), and `rust-toolchain.toml`, the toolchain and components the Jenkins agent's image has.
 - `packaging/build-desktop.sh`: builds the desktop app with `tauri build`, the binary `build-binary.sh` built
   copied in as its `externalBin` sidecar and `pyproject.toml`'s version, through a release config the script
