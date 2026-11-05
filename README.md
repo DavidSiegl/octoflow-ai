@@ -461,26 +461,6 @@ place, with exactly the placeholders of the text it replaces.
 `workflows` lists the prompt files in effect. A bad file stops `run` or `drain` before any agent starts; see
 [Prompt files](docs/design.md#prompt-files).
 
-## Running tests
-
-```bash
-cargo test --workspace    # the engine's, its e2e scenarios' and the desktop shell's
-uv run pytest             # gate.py's and the docs'
-uv run pytest --cov=gate --cov-branch --cov-report=xml && \
-    uv run python gate.py --base main --coverage coverage.xml
-```
-
-The e2e scenarios (`engine/e2e`) run the engine as a program against fakes of herdr, gh, ssh, Jenkins and PyPI, and
-compare what it did with their recordings, which the Python engine made before it was removed. `tests/test_properties.py` holds property-based tests of
-the gate: 25 inputs per test by default, 250 with `HYPOTHESIS_PROFILE=ci`, as Jenkins runs them. A change to a
-workflow step's prompt or to the quality file's wording fails a test against its golden file in `tests/golden/`; `UPDATE_GOLDEN=1 uv run pytest` rewrites them, and the
-change is reviewed as their diff (see [Tests](docs/architecture.md#tests)). `packaging/build-binary.sh` builds and
-smoke-tests the binary for the machine it runs on; see [Tooling](docs/architecture.md#tooling).
-
-Before a release that changes a prompt, a workflow or how a harness is run, run the eval set by hand, from a herdr
-pane: `cargo xtask eval` gives real agents five small tasks and judges each by a test they never see
-([Evals](docs/design.md#evals)).
-
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT), at your
