@@ -375,6 +375,37 @@ fn worktree_git_refuses_to_remove_is_kept_not_a_failure() {
 }
 
 #[test]
+fn a_detached_worktree_that_goes_leaves_a_branch_checked_out_elsewhere_kept() {
+    for dry_run in [false, true] {
+        let p = Prune::new();
+        let run_id = add_worktree_run(&p);
+        p.host().worktrees.insert(WORKTREE, "HEAD".into());
+        p.host().worktrees.insert("/other", "orchestrator/task-aaaaaa".into());
+        let pruned = p.prune(dry_run, false);
+        let [(id, r)] = &pruned[..] else { panic!("{pruned:?}") };
+        assert_eq!(id, &run_id);
+        assert_eq!(r.skipped, None, "dry_run {dry_run}");
+        assert_eq!(r.worktree, if dry_run { "would be deleted" } else { "deleted" });
+        assert_eq!(r.local, "kept: checked out in /other", "dry_run {dry_run}");
+        assert_eq!(p.host().worktrees.contains_key(WORKTREE), dry_run);
+        assert!(p.host().branches.contains_key("orchestrator/task-aaaaaa"));
+    }
+}
+
+#[test]
+fn a_removal_that_cannot_be_run_to_its_end_is_a_failure_not_a_kept_worktree() {
+    let p = Prune::new();
+    let run_id = add_worktree_run(&p);
+    p.host().remove_unrun = Some("interrupted".into());
+    let pruned = p.prune(false, false);
+    let [(_, r)] = &pruned[..] else { panic!("{pruned:?}") };
+    assert_eq!(r.skipped.as_deref(), Some("failed: interrupted"));
+    assert_eq!(r.cleanup, None);
+    assert_eq!(p.cleanup(&run_id), Value::Null);
+    assert!(p.host().worktrees.contains_key(WORKTREE));
+}
+
+#[test]
 fn worktree_with_the_pull_requests_head_missing_is_kept() {
     let p = Prune::new();
     let run_id = add_worktree_run(&p);

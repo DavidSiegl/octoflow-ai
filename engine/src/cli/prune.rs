@@ -165,13 +165,14 @@ fn prune_run(
     let unusable = |e| if origin_unreachable(&e) { GhError::Unusable(e) } else { GhError::Failed(e) };
     let (remote, remote_kept) = prune_remote(&world.with, cwd, branch, head, number, dry_run).map_err(unusable)?;
     // Before the local branch, which a worktree that goes no longer pins.
-    let worktree = text("worktree").filter(|w| is_run_worktree(cwd, w));
-    let (worktree, worktree_kept) = match worktree {
+    let path = text("worktree").filter(|w| is_run_worktree(cwd, w));
+    let (worktree, worktree_kept) = match path {
         Some(path) => prune_worktree(host, cwd, path, branch, head, number, dry_run).map_err(failed)?,
         None => (String::new(), None),
     };
-    // A worktree that went no longer holds the branch.
-    if !worktree.is_empty() && worktree_kept.is_none() {
+    // A worktree that went frees the branch it held, not one checked out elsewhere (a detached worktree).
+    let went = !worktree.is_empty() && worktree_kept.is_none();
+    if went && path.is_some_and(|path| checked_out.get(branch).is_some_and(|at| at == path)) {
         checked_out.remove(branch);
     }
     let (local, local_kept) = prune_local(host, cwd, branch, head, number, checked_out, dry_run).map_err(failed)?;
@@ -246,7 +247,7 @@ fn is_run_worktree(cwd: &str, path: &str) -> bool {
 /// What became of the run's worktree at path, and why it was kept, if it was: not there any more (empty), kept with
 /// uncommitted changes, with another branch than the run's branch checked out, with commits the pull request's head
 /// lacks or that cannot be told without that head, or that git refuses to remove (locked, say), or removed, without
-/// force. Errors: git fails in any other step.
+/// force. Errors: git cannot be run, or fails in any other step.
 fn prune_worktree(
     host: &dyn Host,
     cwd: &str,
@@ -276,8 +277,8 @@ fn prune_worktree(
     }
     if !dry_run {
         // Git's refusal (a locked worktree, a submodule) is an answer, not a failure of the run.
-        if let Err(e) = host.remove_worktree(cwd, path, false) {
-            return kept(format!("worktree {path} could not be removed: {e}"));
+        if let Some(why) = host.try_remove_worktree(cwd, path)? {
+            return kept(format!("worktree {path} could not be removed: {why}"));
         }
     }
     Ok((deletion(dry_run), None))

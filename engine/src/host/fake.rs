@@ -193,6 +193,8 @@ pub(crate) struct FakeState {
     pub pr_edits: Vec<PrEdit>,
     /// The stderr of a failing `git worktree remove`.
     pub remove_error: Option<String>,
+    /// The error of a `git worktree remove` that cannot be run to its end, as an interrupt or a timeout gives.
+    pub remove_unrun: Option<String>,
     /// The arguments of each gh command, in order.
     pub gh_calls: Vec<Vec<String>>,
     /// Every path written with keep_mtime.
@@ -293,6 +295,7 @@ impl FakeHost {
                 pull_requests: HashMap::new(),
                 pr_edits: vec![],
                 remove_error: None,
+                remove_unrun: None,
                 gh_calls: vec![],
                 mtime_kept: vec![],
                 clock: None,
@@ -708,6 +711,9 @@ impl Host for FakeHost {
         }
         let mut s = self.state();
         let owned: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+        if let (Some(error), ["worktree", "remove", ..]) = (&s.remove_unrun, args) {
+            return Err(OrchestratorError::new(error));
+        }
         s.git_calls.push(owned.clone());
         s.git_log.push((cwd.to_string(), owned));
         Ok(s.git(cwd, args))

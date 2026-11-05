@@ -801,6 +801,14 @@ pub trait Host {
         self.git(cwd, &args).map(drop)
     }
 
+    /// Remove the worktree at path without force, as remove_worktree, but with git's refusal (a locked worktree, a
+    /// submodule, changes it would lose) an answer: Ok(Some(git's message)), the worktree still there; Ok(None) once
+    /// removed. Errors: git cannot be run to its end (it does not start, runs out of time, or is interrupted).
+    fn try_remove_worktree(&self, cwd: &str, path: &str) -> Result<Option<String>, OrchestratorError> {
+        let proc = self.git_run(cwd, &["worktree", "remove", path], DEFAULT_TIMEOUT)?;
+        Ok((proc.status != 0).then(|| proc.stderr.trim().to_string()))
+    }
+
     /// Forget the worktrees of cwd's repository whose directory is gone, as `git worktree prune`: git then no longer
     /// counts their branches as checked out. Errors: as Host::git's.
     fn prune_worktrees(&self, cwd: &str) -> Result<(), OrchestratorError> {
