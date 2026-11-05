@@ -293,6 +293,10 @@ fn several_verdict_steps_each_loop_back_to_an_earlier_step() {
     steps.insert(1, polish.clone());
     steps[3].loop_to = Some("polish".into());
     assert!(Pipeline::new("polished", p.roles().clone(), steps).is_ok());
+    // Back to the first verdict step itself, which so runs again.
+    let mut steps = p.steps().to_vec();
+    steps[2].loop_to = Some("review".into());
+    assert!(Pipeline::new("rejudged", p.roles().clone(), steps).is_ok());
     // A step between the verdict steps that does not edit leaves them judging the same change.
     let mut steps = p.steps().to_vec();
     steps.insert(2, with(step("notes", "notes-{n}.md"), |s| s.role = "review".into()));
