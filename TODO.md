@@ -74,6 +74,12 @@ is rewritten to say what is left.
   shows only `verdict`, and its `RunRecord` (`ui/src/api.ts`) has no `verdicts`. Left out of acceptance-verdict
   ticket 01 (2026-11-04): this checkout had no `node_modules` to run the app's tests with. Closes with
   `verdicts?` on `RunRecord` and `outcome` naming the last step as `run_outcome` does, with a `runs.test.ts` case.
+- **The proofs note names the Reviewer whatever step wrote the proofs.** `PROOFS_NOTE` (`engine/src/prompts.rs`)
+  tells the step a round loops back to "The Reviewer backed findings with tests". In a workflow whose proofs come
+  from a verdict step of another role, that names a role the run does not have, the mismatch acceptance-verdict
+  ticket 01 fixed in `FIX_PROMPT` (cross-review 141, F15). Raised and not recorded in cross-review 141's round 4
+  (2026-11-05). Closes with a role-neutral wording, mirrored in the golden prompts, the recordings and the test in
+  `engine/src/workflow/tests/proofs.rs`.
 - **A non-editing step between two verdict steps is treated as having run every round.** `loop_problem` allows one
   (`engine/src/pipeline.rs`), and a round an earlier verdict step ends skips it, but `Workflow::judged_rounds`
   (`engine/src/workflow.rs`) knows the skipped rounds only of verdict steps: such a step's first turn in a later
