@@ -525,9 +525,9 @@ pub trait Host {
     }
 
     /// Make each of paths in the working tree what it is in ref, a commit or a tree: written as ref has it, or deleted
-    /// where ref has none. A directory there, such as a nested repository, loses its own `.git` and every file in it
-    /// git does not ignore; its ignored files stay, and so does the directory while it holds any. Any number of
-    /// paths. The index stays as it is.
+    /// where ref has none. A directory there, such as a nested repository, loses every `.git` and `.gitignore` under
+    /// it, and then every file the rules from outside it do not ignore; the files those rules ignore stay, and so does
+    /// the directory while it holds any. Any number of paths. The index stays as it is.
     fn restore(&self, cwd: &str, git_ref: &str, paths: &[String]) -> Result<(), OrchestratorError> {
         if paths.is_empty() {
             return Ok(());
@@ -546,7 +546,8 @@ pub trait Host {
                 self.check(&["sh", "-c", script, "_", top], Some(&listed), DEFAULT_TIMEOUT)
             };
             // A directory, such as a nested repository, is cleaned rather than removed: its ignored files are the
-            // human's, and no ref holds them.
+            // human's, and no ref holds them. Ignored by the rules from outside it only, since ref has none of the
+            // .gitignore files under it, and git clean skips a directory holding a .git, at any depth.
             let printed = over(r#"cd -- "$1" && xargs -0 sh -c 'for p; do
                 if [ -d "$p" ] && [ ! -L "$p" ]; then printf "%s\0" "$p"; fi
             done' _"#, &gone)?;
@@ -557,7 +558,9 @@ pub trait Host {
             }
             if !dirs.is_empty() {
                 over(r#"cd -- "$1" && xargs -0 sh -c 'for p; do
-                    rm -rf -- "$p/.git" && git clean -fdq -- ":(top,literal)$p" || exit 1
+                    find "$p" -name .git -prune -exec rm -rf -- {} + &&
+                    find "$p" -name .gitignore ! -type d -exec rm -f -- {} + &&
+                    git clean -fdq -- ":(top,literal)$p" || exit 1
                 done' _"#, &dirs)?;
             }
         }

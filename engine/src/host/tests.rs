@@ -1606,6 +1606,37 @@ fn a_nested_repository_made_since_goes_but_the_ignored_files_it_holds() {
 }
 
 #[test]
+fn a_gitignore_in_a_repository_made_since_hides_nothing_the_proof_wrote() {
+    let r = Repo::new(&[]);
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    let nested = format!("{}/d", r.path);
+    r.git(&["init", "--quiet", &nested]);
+    r.put("d/.gitignore", "*.log\n");
+    r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "add", ".gitignore"]);
+    r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "fixture"]);
+    r.put("d/run.log", "made by the proof\n");
+    r.host.restore_tree(&r.path, &tree).unwrap();
+    assert!(!std::path::Path::new(&nested).exists());
+    assert_eq!(r.host.git(&r.path, &["status", "--porcelain", "-uall"]).unwrap(), "");
+}
+
+#[test]
+fn a_repository_nested_in_one_made_since_goes_too() {
+    let r = Repo::new(&[]);
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    for (dir, file) in [("d", "d.txt"), ("d/e", "e.txt")] {
+        let nested = format!("{}/{dir}", r.path);
+        r.git(&["init", "--quiet", &nested]);
+        r.put(&format!("{dir}/{file}"), "made by the proof\n");
+        r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "add", file]);
+        r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "f"]);
+    }
+    r.host.restore_tree(&r.path, &tree).unwrap();
+    assert!(!std::path::Path::new(&format!("{}/d", r.path)).exists());
+    assert_eq!(r.host.git(&r.path, &["status", "--porcelain", "-uall"]).unwrap(), "");
+}
+
+#[test]
 fn a_tree_is_restored_over_more_paths_than_an_argv_holds() {
     // 2 x 12000 paths of over 200 bytes each: some 5 MB, where Linux takes 2 MB of arguments.
     let long = "p".repeat(200);
