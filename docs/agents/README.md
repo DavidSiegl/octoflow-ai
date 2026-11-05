@@ -1,7 +1,8 @@
 # Agent setup
 
 Generated from the agent-estate template; `copier update` rewrites this file, so change the template, or an answer
-with `copier update -d <key>=<value>` (the `init-repo` skill), not the text here. CLAUDE.md imports it.
+with `uvx copier update --trust --defaults -d <key>=<value>` (the `agent-estate:init-repo` skill), not the text
+here. CLAUDE.md imports it.
 
 ## Issue tracker
 
@@ -15,7 +16,8 @@ Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 
 ## Domain docs
 
-Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root, created lazily. See `docs/agents/domain.md`.
+Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root, created lazily, unless the repo already records
+its decisions elsewhere. See `docs/agents/domain.md`.
 
 ## Review gate
 

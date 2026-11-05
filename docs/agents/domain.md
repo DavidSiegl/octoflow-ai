@@ -11,7 +11,8 @@ How the engineering skills should consume this repo's domain documentation when 
   `src/<context>/docs/adr/` for context-scoped decisions.
 
 If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront.
-The `mattpocock-skills:domain-modeling` skill creates them lazily when terms or decisions actually get resolved.
+The `mattpocock-skills:domain-modeling` skill creates them lazily when terms or decisions actually get resolved; the
+`/grill-with-docs` and `/improve-codebase-architecture` commands, which only the user runs, use it too.
 
 Where the repo already records its decisions somewhere else (a design document, `TODO.md`'s decided-against entries),
 that stays their home: read it as you would the ADRs, and don't start a `docs/adr/` beside it.
@@ -54,6 +55,7 @@ doesn't use (reconsider) or there's a real gap (note it for `mattpocock-skills:d
 
 ## Flag ADR conflicts
 
-If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:
+If your output contradicts an existing ADR, or a decision recorded in the repo's own home for them, surface it
+explicitly rather than silently overriding:
 
 > Contradicts ADR-0007 (event-sourced orders), but worth reopening because…
