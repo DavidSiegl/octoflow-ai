@@ -169,7 +169,7 @@ fn review_prompt_names_the_base_commit() {
     ];
     let f = Fixture::new(script);
     f.workflow(RunSettings::default()).run().unwrap();
-    assert!(seen.borrow()[0].contains("git diff abc123"));
+    assert!(seen.borrow()[0].contains("git diff --no-relative abc123"));
 }
 
 #[test]

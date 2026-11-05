@@ -124,7 +124,7 @@ fn agents_work_in_the_worktree() {
         ["workspace", "split", "split"].iter().map(|kind| (kind.to_string(), WORKTREE.to_string())).collect();
     assert_eq!(f.herdr.state().cwds, cwds);
     assert!(seen.borrow()[0].contains(&format!("Read the code in {WORKTREE} first")));
-    assert!(seen.borrow()[1].contains(&format!("`git diff abc123` in {WORKTREE},")));
+    assert!(seen.borrow()[1].contains(&format!("`git diff --no-relative abc123` in {WORKTREE},")));
 }
 
 #[test]

@@ -270,7 +270,7 @@ fn base_is_fast_forwarded_again_before_branching() {
     let switch = position(&calls, &["switch", "-c", BRANCH]);
     assert_eq!(calls[switch - 2..switch], [strings(FETCH), strings(FAST_FORWARD)]);
     assert_eq!(wf.state().base.as_deref(), Some("u2"));
-    assert!(seen.borrow()[0].contains("git diff u2"));
+    assert!(seen.borrow()[0].contains("git diff --no-relative u2"));
 }
 
 #[test]
