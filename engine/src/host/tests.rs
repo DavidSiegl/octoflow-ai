@@ -1361,6 +1361,18 @@ fn checked_out_branches_of_every_worktree() {
 }
 
 #[test]
+fn pruning_worktrees_frees_the_branch_of_one_whose_directory_is_gone() {
+    let c = Clones::new();
+    let wt = format!("{}/wt", c.dir());
+    c.sh(&["git", "-C", &c.a, "worktree", "add", "--quiet", "-b", "orchestrator/y-a1b2c3", &wt]);
+    std::fs::remove_dir_all(&wt).unwrap();
+    assert!(!c.host.is_worktree(&c.a, &wt).unwrap());
+    assert!(c.host.checked_out_branches(&c.a).unwrap().contains_key("orchestrator/y-a1b2c3"));
+    c.host.prune_worktrees(&c.a).unwrap();
+    assert!(!c.host.checked_out_branches(&c.a).unwrap().contains_key("orchestrator/y-a1b2c3"));
+}
+
+#[test]
 fn local_branch_steps() {
     let c = Clones::new();
     let head = c.pushed_run_branch();

@@ -69,6 +69,10 @@ is rewritten to say what is left.
 
 ## Open issues
 
+- **`prune --dry-run` still reads a worktree whose directory is gone as holding its branch.** The `git worktree prune`
+  that frees such a branch (`Host::prune_worktrees`, `engine/src/cli/prune.rs`) is skipped in a dry run, so the run
+  prints "kept: checked out in …" where the real prune deletes the branch. Left as is by worktree-runs ticket 04
+  (2026-11-05). Closes with `checked_out_branches` skipping records git marks `prunable`, then no dry-run exception.
 - **The desktop app does not say which verdict step sent a run back.** `list` names it (`run_outcome`,
   `engine/src/cli/listing.rs`) and serve's `/runs` carries `verdicts`, but the app's `outcome` (`ui/src/runs.ts`)
   shows only `verdict`, and its `RunRecord` (`ui/src/api.ts`) has no `verdicts`. Left out of acceptance-verdict

@@ -15,7 +15,7 @@ use super::*;
 use crate::cli::fixture::Cli;
 use crate::cli::{parse_args, Command, RunsCommand, Target};
 use crate::cli::Stop;
-use crate::constants::{APPROVE, STALE_SECONDS};
+use crate::constants::{APPROVE, STALE_SECONDS, WORKTREES_DIR};
 use crate::host::fake::{FakeHost, FakePr};
 use crate::host::Completed;
 use crate::map::Map;
@@ -288,6 +288,97 @@ fn checked_out_branch_is_kept() {
         assert!(p.host().branches.contains_key("orchestrator/task-aaaaaa"));
         assert_eq!(p.cleanup(&run_id), Value::from(kept));
     }
+}
+
+const WORKTREE: &str = "/proj/.orchestrator/worktrees/aaaaaa";
+
+/// A merged run with a --worktree, holding its branch; its run id.
+fn add_worktree_run(p: &Prune) -> String {
+    let run_id = p.add(run("aaaaaa", merged()).with("worktree", WORKTREE));
+    p.host().worktrees.insert(WORKTREE, "orchestrator/task-aaaaaa".into());
+    run_id
+}
+
+#[test]
+fn clean_worktree_at_the_pull_requests_head_goes_with_its_branch() {
+    let p = Prune::new();
+    let run_id = add_worktree_run(&p);
+    let r = p.pruned(&run_id);
+    assert_eq!((r.worktree.as_str(), r.local.as_str(), r.remote.as_str()), ("deleted", "deleted", "deleted"));
+    assert_eq!(p.cleanup(&run_id), Value::from("deleted"));
+    assert!(p.host().worktrees.is_empty());
+    assert!(!p.host().branches.contains_key("orchestrator/task-aaaaaa"));
+    assert!(p.host().git_calls.contains(&strings(&["worktree", "remove", WORKTREE])));
+}
+
+#[test]
+fn worktree_with_uncommitted_changes_is_kept_with_its_branch() {
+    let p = Prune::new();
+    let run_id = add_worktree_run(&p);
+    p.host().changed.insert(format!("{WORKTREE}/x.py"));
+    let r = p.pruned(&run_id);
+    let why = format!("worktree {WORKTREE} has uncommitted changes");
+    assert_eq!(r.worktree, format!("kept: {why}"));
+    assert_eq!(r.local, format!("kept: checked out in {WORKTREE}"));
+    assert_eq!(p.cleanup(&run_id), Value::from(format!("kept: {why}; checked out in {WORKTREE}")));
+    assert!(p.host().worktrees.contains_key(WORKTREE));
+    assert!(p.host().branches.contains_key("orchestrator/task-aaaaaa"));
+}
+
+#[test]
+fn worktree_with_commits_the_pull_request_lacks_is_kept() {
+    let p = Prune::new();
+    let run_id = add_worktree_run(&p);
+    p.host().diverged = true;
+    let r = p.pruned(&run_id);
+    assert_eq!(r.worktree, format!("kept: worktree {WORKTREE} has commits PR #7's head lacks"));
+    assert!(p.host().worktrees.contains_key(WORKTREE));
+}
+
+#[test]
+fn worktree_directory_deleted_by_hand_no_longer_pins_its_branch() {
+    let p = Prune::new();
+    let run_id = add_worktree_run(&p);
+    p.host().vanished_worktrees.insert(WORKTREE.to_string());
+    let r = p.pruned(&run_id);
+    assert_eq!((r.worktree.as_str(), r.local.as_str()), ("", "deleted"));
+    assert!(p.host().worktrees.is_empty());
+    assert_eq!(p.cleanup(&run_id), Value::from("deleted"));
+}
+
+#[test]
+fn dry_run_leaves_the_worktree_and_says_it_would_go() {
+    let p = Prune::new();
+    let run_id = add_worktree_run(&p);
+    let pruned = p.prune(true, false);
+    let [(_, r)] = &pruned[..] else { panic!("{pruned:?}") };
+    assert_eq!((r.worktree.as_str(), r.local.as_str()), ("would be deleted", "would be deleted"));
+    assert!(p.host().worktrees.contains_key(WORKTREE));
+    assert!(!p.host().git_calls.iter().any(|c| c[..2] == ["worktree", "remove"] || c[..2] == ["worktree", "prune"]));
+    assert_eq!(p.cleanup(&run_id), Value::Null);
+}
+
+#[test]
+fn worktrees_no_run_names_are_untouched() {
+    let p = Prune::new();
+    let run_id = p.add(run("aaaaaa", merged()));
+    // The user's, holding the run's branch, and one under the run's directory that its state does not name.
+    p.host().worktrees.insert("/elsewhere/mine", "orchestrator/task-aaaaaa".into());
+    p.host().worktrees.insert("/proj/.orchestrator/worktrees/bbbbbb", "other".into());
+    let r = p.pruned(&run_id);
+    assert_eq!(r.worktree, "");
+    assert_eq!(r.local, "kept: checked out in /elsewhere/mine");
+    assert_eq!(p.host().worktrees.len(), 2);
+}
+
+#[test]
+fn a_worktree_a_run_names_outside_the_worktrees_directory_is_untouched() {
+    let p = Prune::new();
+    let run_id = p.add(run("aaaaaa", merged()).with("worktree", "/elsewhere/mine"));
+    p.host().worktrees.insert("/elsewhere/mine", "orchestrator/task-aaaaaa".into());
+    let r = p.pruned(&run_id);
+    assert_eq!(r.worktree, "");
+    assert!(p.host().worktrees.contains_key("/elsewhere/mine"));
 }
 
 #[test]
@@ -808,6 +899,21 @@ fn a_run_whose_sweep_a_ctrl_c_stopped_is_interrupted_before_its_state() {
 
 #[test]
 fn prune_on_real_git() {
+    let r = prune_on_real_git_with_worktree(false);
+    assert_eq!((r.local.as_str(), r.remote.as_str(), r.cleanup.as_deref()), ("deleted", "deleted", Some("deleted")));
+    assert_eq!(r.worktree, "");
+}
+
+/// The same, with the branch checked out, clean and behind the pull request's head, in the run's own worktree.
+#[test]
+fn prune_on_real_git_removes_the_runs_worktree() {
+    let r = prune_on_real_git_with_worktree(true);
+    assert_eq!((r.worktree.as_str(), r.local.as_str(), r.cleanup.as_deref()), ("deleted", "deleted", Some("deleted")));
+}
+
+/// Prune a squash-merged run on real git, with its branch in a worktree of its own if in_worktree; the run as pruned,
+/// after checking that its worktree, its branches and origin's are gone.
+fn prune_on_real_git_with_worktree(in_worktree: bool) -> PrunedRun {
     use crate::host::tests::{host_with_tools, tool, Repo};
     use crate::test_support::TempDir;
     // A squash-merged run branch: local behind the PR head, origin at it. gh, a script, says it merged at head.
@@ -825,7 +931,12 @@ fn prune_on_real_git() {
     repo.git(&["switch", "--quiet", "main"]);
     let gh = format!("{{\"state\": \"MERGED\", \"headRefOid\": \"{head}\", \"closedAt\": \"2026-10-01T12:00:00Z\"}}");
     tool(&bin.path(), "gh", &format!("#!/bin/sh\necho '{gh}'\n"));
+    let worktree = format!("{}/{WORKTREES_DIR}/a1b2c3", repo.path);
+    if in_worktree {
+        repo.git(&["worktree", "add", "--quiet", &worktree, "orchestrator/x-a1b2c3"]);
+    }
     let mut state = RunState::new("20261001-120000-a1b2c3", "x", &repo.path);
+    state.worktree = in_worktree.then(|| worktree.clone());
     state.phase = "done".into();
     state.verdict = Some(APPROVE.into());
     state.branch = Some("orchestrator/x-a1b2c3".into());
@@ -842,9 +953,11 @@ fn prune_on_real_git() {
         })
         .unwrap();
     let [r] = &pruned[..] else { panic!("{pruned:?}") };
-    assert_eq!((r.local.as_str(), r.remote.as_str(), r.cleanup.as_deref()), ("deleted", "deleted", Some("deleted")));
+    assert_eq!(repo.git(&["worktree", "list", "--porcelain"]).matches("worktree ").count(), 1);
+    assert!(!std::path::Path::new(&worktree).exists());
     assert_eq!(repo.git(&["for-each-ref", "refs/heads/orchestrator/", "refs/remotes/origin/orchestrator/"]), "");
     assert_eq!(repo.host.remote_branch_commit(&repo.path, "orchestrator/x-a1b2c3").unwrap(), None);
     let saved = serde_json::from_str::<Value>(&repo.host.read(&path).unwrap().unwrap()).unwrap();
     assert_eq!(saved.get("branch_cleanup"), Some(&Value::from("deleted")));
+    r.clone()
 }

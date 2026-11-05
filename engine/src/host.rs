@@ -801,6 +801,12 @@ pub trait Host {
         self.git(cwd, &args).map(drop)
     }
 
+    /// Forget the worktrees of cwd's repository whose directory is gone, as `git worktree prune`: git then no longer
+    /// counts their branches as checked out. Errors: as Host::git's.
+    fn prune_worktrees(&self, cwd: &str) -> Result<(), OrchestratorError> {
+        self.git(cwd, &["worktree", "prune"]).map(drop)
+    }
+
     /// The branches checked out in the repository's worktrees, the main checkout's included, each with its path, in
     /// the order git lists them.
     fn checked_out_branches(&self, cwd: &str) -> Result<Map<String>, OrchestratorError> {

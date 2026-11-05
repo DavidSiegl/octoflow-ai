@@ -228,7 +228,7 @@ orchestrator close e292fb
 # After you resolved a pull request's conflict and pushed: drop its warning, and its draft if it was approved
 orchestrator refresh e292fb
 
-# Delete the branches of runs whose pull request is merged, or closed 14 days ago
+# Delete the branches of runs whose pull request is merged, or closed 14 days ago, and a leftover clean worktree
 orchestrator prune --dry-run
 
 # Every finished run's metrics.json, one JSON line each: outcome, roles, turns with times and tokens
@@ -357,6 +357,12 @@ The worktree is removed once the pull request is open. A failed or `--no-pr` run
 `show` prints. `close` removes a failed run's worktree, discarding its changes, but keeps a finished `--no-pr`
 run's, which holds the change. A `--worktree` run whose worktree is gone cannot be resumed, unless its pull
 request is already open.
+
+If removing the worktree failed because it had changes, it stays, and so does its branch, which it keeps checked out.
+Once the pull request is merged, or closed for 14 days, `prune` removes such a worktree under
+`.orchestrator/worktrees/` when it has no uncommitted changes and everything in it is on the pull request's head
+commit, and then deletes the branch. Otherwise it keeps both and says why. `prune` also forgets a worktree whose
+directory you deleted by hand (`git worktree prune`), which would otherwise keep its branch.
 
 ## Draining specs
 
