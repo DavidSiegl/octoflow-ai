@@ -394,8 +394,9 @@ scenarios record them as sent, where one reaches them. TODO.md lists the texts n
 
 xtask's tests (`xtask/tests/`) cover the eval runner, `cargo xtask eval` ([Evals](design.md#evals)), with the
 `fake-engine` binary as its engine, a program that plays a scripted run in the clone, and the eval tasks: each bundle
-is of its source, and each hidden test rejects its task's starting point and accepts a solution of it. No agent runs
-in the suite.
+is of its source, and each hidden test rejects its task's starting point and accepts a solution of it. They run the
+Jenkins contract check, `cargo xtask contract` ([The calls](quality-gate.md#the-calls)), over a scripted Jenkins. No
+agent runs in the suite, and no request leaves the machine.
 
 ## Tooling
 
@@ -407,7 +408,8 @@ in the suite.
 - `Cargo.toml`: the Cargo workspace, whose members are the engine (`engine/`, `octoflow-engine`, whose version is
   `pyproject.toml`'s), its e2e scenarios (`engine/e2e/`), the desktop shell (`ui/src-tauri/`) and the repository's
   chores (`xtask/`, run as `cargo xtask <command>` through `.cargo/config.toml`'s alias: `eval`, the eval set's runner,
-  and `bundles`, which builds its tasks' bundles), with one `Cargo.lock`, the lints every member takes
+  `bundles`, which builds its tasks' bundles, and `contract`, which checks the engine's Jenkins client against the real
+  Jenkins), with one `Cargo.lock`, the lints every member takes
   (`[workspace.lints]`), and `rust-toolchain.toml`, the toolchain and components the Jenkins agent's image has.
 - `packaging/build-desktop.sh`: builds the desktop app with `tauri build`, the binary `build-binary.sh` built
   copied in as its `externalBin` sidecar and `pyproject.toml`'s version, through a release config the script

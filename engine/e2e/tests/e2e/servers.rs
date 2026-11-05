@@ -144,7 +144,8 @@ fn log_request(ledger: &Ledger, event: Object) {
 ///
 /// The retained builds keep their numbers; the triggered ones follow the highest of them, in the order they were
 /// triggered, from 1 where there are none. Queue item k is build k's. The JSON answers have the fields and types of
-/// the live Jenkins's; the texts, such as a console, are each scenario's own.
+/// the live Jenkins's, which `cargo xtask contract` (xtask/src/contract.rs) checks against the real job; the texts,
+/// such as a console, are each scenario's own.
 fn jenkins_answer(world: &Path, base_url: &str, mut request: tiny_http::Request) {
     let method = request.method().as_str().to_string();
     let target = request.url().to_string();

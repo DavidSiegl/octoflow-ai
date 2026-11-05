@@ -276,8 +276,10 @@ is rewritten to say what is left.
   `engine/Cargo.toml` and `Cargo.lock`, so its build still runs them, and so does the contract test's build of main
   whenever main's last commit was a releasing merge (build #59, before #162, ran them in any case); Gate's mutmut time
   is narrowed by `gate.py --test-contexts` (gate-open-decisions ticket 06), which costs the Test stage about 7 % more.
-  Closes when a quality build that runs the scenarios fits in `QUALITY_TIMEOUT`, shown by live-checks/01's contract test
-  green against one, or with a larger `QUALITY_TIMEOUT` in the Rust engine.
+  `cargo xtask contract` (live-checks/01's Rust port, docs/quality-gate.md, "The calls") measures it again: its step 9
+  says whether a quality round could have taken its build of main within `QUALITY_TIMEOUT`. It triggers a real build,
+  so it is the user's to run. Closes when a quality build that runs the scenarios fits in `QUALITY_TIMEOUT`, shown by
+  that step green against one, or with a larger `QUALITY_TIMEOUT` in the Rust engine.
 - **The Rust engine reads some input no run writes otherwise than the Python engine.** Each is a difference only for a
   file a human edited, or a case no test of the Python engine pins (rust-engine ticket 04, 2026-10-28): a time is read
   only with its offset, as jiff's `Timestamp` reads an ISO 8601 time (`crate::summary::epoch_time`, since
@@ -985,6 +987,14 @@ is rewritten to say what is left.
   report it on standard error, which libtest hides on a passing test. Raised by cross-review 117 (F3, 2026-11-03):
   "A fix to one, such as making names unique, has to be repeated in each." Closes with one shared type: a `tempfile`
   dev-dependency, or a test-support crate the engine, the desktop shell and xtask all use.
+- **The e2e scenarios' scratch directories collide between test runs that share `/tmp`.** `Scratch::new`
+  (`engine/e2e/src/scratch.rs`) names a scenario's directory `octoflow-e2e-<name>-<pid>` and first removes whatever is
+  there, so two runs whose test processes have the same pid, as processes in different PID namespaces over one `/tmp`
+  can, delete and overwrite each other's worlds. Seen 2026-11-04 (live-checks/01): with several agents testing their
+  worktrees at once, `kill_in_design` and `kill_in_tests` failed on an exit status and `workflows_listed` printed
+  another worktree's `examples/workflows/product-team.toml`; with a TMPDIR of its own the same build passed all 50.
+  Closes with a name no other process can take (made with `create_dir` and retried until new, as xtask's
+  `make_temp_dir` does), or with the shared type the entry above would make.
 - **Four copies of the test writer of an executable script.** A test's script is written by a child process, so that
   no test thread's fork holds it open for writing when it runs (ETXTBSY; ui-test-text-file-busy/01, 2026-11-03). The
   same `sh` line is in `tool` (`engine/src/host/tests.rs`, which says why), `Dir::tool` (`engine/tests/program.rs`),

@@ -149,8 +149,8 @@ pub(crate) struct FakeJenkinsState {
 }
 
 /// Jenkins behind an Http; each triggered build plays the next of its outcomes. Its JSON answers have the fields and
-/// types of the live Jenkins's, which tests/contract/test_jenkins.py checks against the real job; the texts, such as
-/// a console, and how many cases a test report holds are each test's own.
+/// types of the live Jenkins's, which `cargo xtask contract` (xtask/src/contract.rs) checks against the real job; the
+/// texts, such as a console, and how many cases a test report holds are each test's own.
 pub(crate) struct FakeJenkins {
     state: Mutex<FakeJenkinsState>,
 }
