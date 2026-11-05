@@ -22,7 +22,7 @@ use crate::workflow_file::{load_workflow_file, workflow_definition};
 
 const D: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
 /// What a step's {change} is in a run in /proj based on abc123.
-const CHANGE: &str = "`git diff --no-relative abc123` in /proj, plus the untracked files `git status --porcelain` lists";
+const CHANGE: &str = "`git diff --no-relative abc123` in /proj, plus the untracked files `git status --porcelain --untracked-files=all` lists";
 
 fn with_pipeline(p: &Pipeline) -> RunSettings {
     RunSettings { pipeline: Some(p.clone()), ..RunSettings::default() }
