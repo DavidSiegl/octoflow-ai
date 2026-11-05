@@ -705,14 +705,6 @@ is rewritten to say what is left.
   (`judge_proofs`, `rerun_proofs`) would save one of the two, but changes `run_proof`'s interface and every test that
   calls it, and leaves the limit in place. Closes with that, and with a snapshot timeout that scales, or the snapshot
   taking only the paths `git status` reports changed.
-- **A proof the Builder moves into the project stays carried as erroring.** `PROOFS_NOTE` lets the Builder move a proof
-  into the project as a regression test; `Workflow::run_proof` then records it "it did not run: ... is gone", which is
-  not a pass, so `Workflow::carried_proofs` keeps carrying it. Raised by the cross-review of proof-runs (review 64, F9,
-  2026-10-27): "is carried and told as a standing finding in every later round": the Builder hears it does not pass, and
-  the verdict step hears it "no longer fails but errors", even when the moved test passes in the project. Predates that
-  branch, where the same move gave pytest's exit status 4, an error carried the same way. Closes with
-  `Workflow::carried_proofs` treating a missing proof as moved and dropping it, and the notes saying so. Ticket:
-  `.scratch/proof-runs/issues/04-moved-proof-not-carried.md` (#235).
 - **`expected-value-changed` misses an inline literal's sign, type or structure.** `_changed_literals` pairs
   assertions by `_shape` and compares `_literals`, which drops types and operators: `assert f() == -5` becoming
   `== 5` changes the shape (no pair, no finding), and `== 1` becoming `== True` gives equal literal lists

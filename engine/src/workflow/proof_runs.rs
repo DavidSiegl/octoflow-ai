@@ -5,11 +5,11 @@
 use super::{prompt_error, Outcome, Workflow};
 use crate::constants::PROOF_COPIES_DIR;
 use crate::error::OrchestratorError;
-use crate::host::{shlex_quote, DEFAULT_TIMEOUT};
+use crate::host::{checked, shlex_quote, DEFAULT_TIMEOUT};
 use crate::paths::file_name;
 use crate::pipeline::Step;
 use crate::proofs::{
-    proof_finding, proof_outcome, proof_output, proofs_section, ProofRun, PROOFS_HEADING, PROOF_TAIL_LINES,
+    proof_finding, proof_outcome, proof_output, proofs_section, ProofOutcome, ProofRun, PROOFS_HEADING, PROOF_TAIL_LINES,
     REMOVE_TREE_SCRIPT,
 };
 use crate::prompts::template::fill;
@@ -22,12 +22,16 @@ use crate::prompts::Prompt;
 const PROOF_SCRIPT: &str =
     r#"cd -- "$1" || exit 125; command -v timeout >/dev/null 2>&1 && exec timeout -k 10 "$3" sh -c "$2"; eval "$2""#;
 
-/// Empties the directory "$1" names (REMOVE_TREE_SCRIPT) and copies the directory "$3" into it as "$2", failing, and
-/// copying nothing, when "$3" holds no file "$4": a proof file that is gone, as one the Builder moved into the project
-/// is, is not run on a missing path. Emptied first: an orchestrator stopped during a proof leaves its copy behind.
+/// The exit status of copy_script for a proof file that is gone.
+const PROOF_FILE_GONE_STATUS: i32 = 3;
+
+/// Empties the directory "$1" names (REMOVE_TREE_SCRIPT) and copies the directory "$3" into it as "$2". It exits with
+/// PROOF_FILE_GONE_STATUS, copying nothing, when "$3" holds no file "$4": a proof file that is gone, as one the Builder moved into
+/// the project is, is not run on a missing path. Emptied first: an orchestrator stopped during a proof leaves its copy
+/// behind.
 fn copy_script() -> String {
     format!(
-        r#"[ -f "$3/$4" ] || {{ echo "$3/$4 is gone" >&2; exit 1; }}; {REMOVE_TREE_SCRIPT} && mkdir -p -- "$2" && cp -R -- "$3/." "$2""#
+        r#"[ -f "$3/$4" ] || exit {PROOF_FILE_GONE_STATUS}; {REMOVE_TREE_SCRIPT} && mkdir -p -- "$2" && cp -R -- "$3/." "$2""#
     )
 }
 
@@ -48,8 +52,8 @@ impl Workflow<'_> {
                 .collect();
             files.sort();
             for file in files {
-                let (demonstrated, said) = self.run_proof(&command, n, &file)?;
-                records.push(ProofRun { round: n, written: n, finding: proof_finding(&file), file, demonstrated, said });
+                let ProofOutcome { demonstrated, said, moved } = self.run_proof(&command, n, &file)?;
+                records.push(ProofRun { round: n, written: n, finding: proof_finding(&file), file, demonstrated, said, moved });
             }
             if records.is_empty() {
                 return Ok(());
@@ -75,8 +79,8 @@ impl Workflow<'_> {
         }
         let mut records = vec![];
         for p in self.carried_proofs(n)? {
-            let (demonstrated, said) = self.run_proof(&command, p.written, &p.file)?;
-            records.push(ProofRun { round: n, demonstrated, said, ..p });
+            let ProofOutcome { demonstrated, said, moved } = self.run_proof(&command, p.written, &p.file)?;
+            records.push(ProofRun { round: n, demonstrated, said, moved, ..p });
         }
         if records.is_empty() {
             return Ok(());
@@ -92,7 +96,8 @@ impl Workflow<'_> {
 
     /// The latest run before round n of each proof carried into it, in the order the proofs first ran: one that
     /// failed when last run, or that a rerun found erroring rather than passing. A proof whose first run, in the round
-    /// that wrote it, errored is not carried: it never demonstrated its finding.
+    /// that wrote it, errored is not carried: it never demonstrated its finding. Nor is one whose last run found its
+    /// file gone (ProofRun::moved): the Builder moved it into the project, which ends its carrying.
     fn carried_proofs(&self, n: u32) -> Result<Vec<ProofRun>, OrchestratorError> {
         let mut latest: Vec<ProofRun> = vec![];
         for p in self.proof_runs()?.into_iter().filter(|p| p.round < n) {
@@ -101,7 +106,7 @@ impl Workflow<'_> {
                 None => latest.push(p),
             }
         }
-        Ok(latest.into_iter().filter(|p| p.demonstrated || (p.written < p.round && !p.passed())).collect())
+        Ok(latest.into_iter().filter(|p| !p.moved && (p.demonstrated || (p.written < p.round && !p.passed()))).collect())
     }
 
     /// The runs of the proofs carried into round n, run again before its proof step's turn.
@@ -114,7 +119,8 @@ impl Workflow<'_> {
         format!("{}/{}", self.state.proofs_dir(proof.written), proof.file)
     }
 
-    /// What the proof step hears in round n of the proofs from earlier rounds run again before its turn:
+    /// What the proof step hears in round n of the proofs from earlier rounds run again before its turn, one that was
+    /// found gone as moved into the project:
     /// CARRIED_PROOFS_NOTE after a blank line; "" when none was. Errors: a saved run is malformed (ProofRun::read), or
     /// the prompt cannot be filled in.
     pub(super) fn carried_proofs_note(&self, n: u32) -> Result<String, OrchestratorError> {
@@ -126,6 +132,12 @@ impl Workflow<'_> {
         let items: Vec<String> = records
             .iter()
             .map(|p| {
+                if p.moved {
+                    return format!(
+                        "- `{}`: gone from its directory, taken as moved into the project, and was not run.",
+                        self.proof_path(p)
+                    );
+                }
                 let passed = p.passed();
                 let how = if p.demonstrated {
                     "still fails"
@@ -154,6 +166,7 @@ impl Workflow<'_> {
 
     /// Whether the proof file that round written's proof step wrote fails against the working tree, as command's
     /// exit status 1 says, and what it printed last: its output's end, how else it exited, or why it could not run.
+    /// A file gone from proofs_dir(written) is not run, and its outcome is moved (ProofRun::moved).
     ///
     /// The proof runs from a copy of proofs_dir(written), with the files beside it, at
     /// <work_dir>/PROOF_COPIES_DIR/<written>: command gets the copy's path, and runs in the working tree's top
@@ -174,7 +187,7 @@ impl Workflow<'_> {
     ///
     /// Errors: the Ctrl-C, raised before the proof, which then does not run, or during it; command cannot be filled
     /// in, which Pipeline rules out. A proof that cannot run is no error, but its outcome.
-    pub(super) fn run_proof(&self, command: &str, written: u32, file: &str) -> Outcome<(bool, String)> {
+    pub(super) fn run_proof(&self, command: &str, written: u32, file: &str) -> Outcome<ProofOutcome> {
         self.check_interrupt()?;
         let work_dir = self.state.work_dir();
         let copies = format!("{work_dir}/{PROOF_COPIES_DIR}");
@@ -191,9 +204,14 @@ impl Workflow<'_> {
                 None
             });
             let proofs_dir = self.state.proofs_dir(written);
-            self.host.check(&["sh", "-c", &copy_script(), "_", &copies, &copy, &proofs_dir, file], None, DEFAULT_TIMEOUT)?;
+            let argv = ["sh", "-c", &copy_script(), "_", &copies, &copy, &proofs_dir, file];
+            let copied = self.host.run(&argv, None, DEFAULT_TIMEOUT)?;
+            if copied.status == PROOF_FILE_GONE_STATUS {
+                return Ok(None);
+            }
+            checked(&*self.host, &argv, copied)?;
             let argv = ["sh", "-c", PROOF_SCRIPT, "_", work_dir, &cmd, &limit];
-            self.host.run_verbatim(&argv, None, self.proof_timeout + 30)
+            self.host.run_verbatim(&argv, None, self.proof_timeout + 30).map(Some)
         });
         // As Python's finally, which removed the copies also when the proof's run raised KeyboardInterrupt; the tree
         // is put back likewise.
@@ -207,12 +225,14 @@ impl Workflow<'_> {
         });
         // As Python's KeyboardInterrupt, which the proof's run raises: nothing of an interrupted proof is recorded.
         self.check_interrupt()?;
+        let did_not_run = |said: String| ProofOutcome { demonstrated: false, said, moved: false };
         let proc = match ran {
-            Ok(proc) => proc,
-            Err(e) => return Ok((false, format!("it did not run: {e}"))),
+            Ok(Some(proc)) => proc,
+            Ok(None) => return Ok(ProofOutcome { moved: true, ..did_not_run("it did not run: its file is gone".into()) }),
+            Err(e) => return Ok(did_not_run(format!("it did not run: {e}"))),
         };
         if let Err(e) = put_back {
-            return Ok((false, format!("it did not run cleanly: {e}")));
+            return Ok(did_not_run(format!("it did not run cleanly: {e}")));
         }
         let output = String::from_utf8_lossy(&proc.stdout).into_owned() + &proc.stderr;
         let lines: Vec<&str> = output.trim_end().split('\n').collect();
@@ -224,7 +244,7 @@ impl Workflow<'_> {
             status => format!("it errors, with exit status {status}"),
         };
         let said = if tail.is_empty() { how } else { format!("{how}:\n{tail}") };
-        Ok((proc.status == 1, said))
+        Ok(ProofOutcome { demonstrated: proc.status == 1, said, moved: false })
     }
 
     /// Remove the directory copies and everything under it; a failure is only logged, since the next proof's run
