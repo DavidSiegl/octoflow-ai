@@ -1041,8 +1041,10 @@ CONTRACT_JENKINS_URL=http://cicdbox0.lan:8084/ CONTRACT_JENKINS_USER=agents CONT
 Its variables are named apart from `JENKINS_URL` and the others of `ci.env`, so that one set for the engine never
 starts it by accident. It prints a line per step, `ok` or what differed, and exits 0 when steps 1 to 8 pass. The
 ninth, reported apart, says whether a quality round could have taken the build within `QUALITY_TIMEOUT` of the start:
-the build is waited for twice that, so that a slow build still has every answer checked. `xtask/src/contract.rs`'s
-module comment gives the steps and the exit status.
+the build is waited for twice that, so that a slow build still has every answer checked, and it counts as taken when a
+round would take it. Two runs must not overlap, nor may another build of `main` be triggered during one: step 4 takes
+the newest build of `main` to be the one it triggered. `xtask/src/contract.rs`'s module comment gives the steps and the
+exit status.
 
 **Once the Gate stage has archived `quality.md`**, live or resumed, the round takes it without waiting for the stages
 after Gate, which cannot change its verdict: on a build that has ended, at the first read; on one still running, once

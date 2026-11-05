@@ -14,7 +14,8 @@
 //! one is the last step, reported apart from the contract ([`Timing`]).
 //!
 //! Exit status: 0 when steps 1 to 8 pass, whatever the timing; 1 when one does not; 2 for an argument, or a variable
-//! of INPUTS that is missing or empty; 130 on Ctrl-C.
+//! of INPUTS that is missing or empty; 130 on Ctrl-C, which stops the check once the request it came during is
+//! answered, so that one during step 1 triggers no build.
 
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -102,7 +103,10 @@ pub fn run(env: &dyn Fn(&str) -> Option<String>, http: Arc<dyn Http>, timing: Ti
     let mut check = Check { jenkins, recorder, timing, start: Instant::now(), out };
     match check.steps() {
         Ok(passed) => i32::from(!passed),
-        Err(Halt::Interrupted) => EXIT_INTERRUPTED,
+        Err(Halt::Interrupted) => {
+            eprintln!("interrupted: no further step was made; a build already triggered runs on in Jenkins");
+            EXIT_INTERRUPTED
+        }
         Err(Halt::Output(e)) => {
             eprintln!("error: could not write the check's lines: {e}");
             1
@@ -128,8 +132,8 @@ struct Exchange {
     answer: Result<Response, HttpError>,
 }
 
-/// An Http that sends each request through another and keeps the exchange, so that the check reads every field of
-/// every answer, not only what Jenkins returns of it.
+/// An Http that sends each request through another and keeps the exchange, so that a step can read the fields of a
+/// JSON answer that Jenkins does not return, such as a queue item's `cancelled` beside its `executable`.
 struct Recorder {
     http: Arc<dyn Http>,
     /// The exchanges since the check last took them, oldest first.
@@ -168,8 +172,8 @@ struct Check<'a> {
 struct Ended {
     /// The build's result.
     result: String,
-    /// How long after the check's start a quality round could have taken the build: quality.md first read, or the
-    /// build's end, whichever came first.
+    /// How long after the check's start a quality round could have taken the build: its quality.md, by the round's
+    /// rule (Check::ended), or its end, whichever came first.
     taken_after: Duration,
 }
 
@@ -216,7 +220,12 @@ impl Check<'_> {
     }
 
     /// Writes step's line for outcome, `ok` or the finding; what the step found when it passed, None when it did not.
+    /// Every step ends here, so this is where a Ctrl-C that came during it stops the check, before the next step and
+    /// above all before step 2 triggers a build. Errors: the Ctrl-C, with no line written; a line out cannot take.
     fn passed<T>(&mut self, step: &str, outcome: Result<T, Finding>) -> Result<Option<T>, Halt> {
+        if interrupted() {
+            return Err(Halt::Interrupted);
+        }
         match outcome {
             Ok(found) => {
                 writeln!(self.out, "{step}: ok")?;
@@ -275,10 +284,21 @@ impl Check<'_> {
     }
 
     /// Step 3: the number of the build the queue item at queue_url started, polled for until it has one; a started
-    /// item says `cancelled: false` beside `executable.number`. A cancelled item fails at once.
+    /// item says `cancelled: false` beside `executable.number`. A cancelled item fails at once; one Jenkins has
+    /// forgotten (404) gives the newest build of GIT_REF, as a quality round takes it.
     fn queued_build(&mut self, queue_url: &str) -> Result<Result<i64, Finding>, Halt> {
         let polled = self.poll("the queue item to start a build", |check| {
-            match check.jenkins.queue_item(queue_url)? {
+            let item = match check.jenkins.queue_item(queue_url) {
+                // Jenkins forgets a queue item some minutes after its build started; a quality round then takes the
+                // newest build of its ref (quality_rounds.rs, queued_build), and so does this.
+                Err(e) if e.status() == Some(404) => {
+                    let found = check.jenkins.find_build(GIT_REF, &[])?;
+                    let forgotten = || format!("Jenkins forgot the queue item, and no recent build is of {GIT_REF}");
+                    return Ok(Some(found.ok_or_else(forgotten)));
+                }
+                item => item?,
+            };
+            match item {
                 QueueItem { cancelled: true, .. } => Ok(Some(Err("Jenkins cancelled the queue item".to_string()))),
                 QueueItem { build: None, .. } => Ok(None),
                 QueueItem { build: Some(number), .. } => Ok(Some(check.started_item(number))),
@@ -323,16 +343,25 @@ impl Check<'_> {
 
     /// Step 5: the build polled, as a quality round polls it, for its result and its quality.md, until it has ended;
     /// each answer about it has `building` a boolean and `result` null or a string, a string once it is not building.
+    /// The build is taken, for step 9, when a quality round would take it: at its end, or once two reads of a running
+    /// build's quality.md, a poll apart, agree and hold a whole non-blank line (`analyse`'s rule, in
+    /// engine/src/workflow/quality_rounds.rs); quality.md is not read again after that.
     fn ended(&mut self, number: i64) -> Result<Result<Ended, Finding>, Halt> {
         let mut taken_after = None;
+        // The last read of quality.md while the build ran; None before one found it.
+        let mut earlier: Option<String> = None;
         let polled = self.poll(&format!("build #{number} to end"), |check| {
             let result = check.jenkins.build_result(number)?;
             if let Err(finding) = check.build_answer(result.is_some()) {
                 return Ok(Some(Err(finding)));
             }
-            let quality = check.jenkins.quality_file(number)?;
-            if (quality.is_some() || result.is_some()) && taken_after.is_none() {
-                taken_after = Some(check.start.elapsed());
+            if taken_after.is_none() {
+                let quality = if result.is_none() { check.jenkins.quality_file(number)? } else { None };
+                let whole = quality.as_deref().is_some_and(|text| whole_and_again(text, earlier.as_deref()));
+                if result.is_some() || whole {
+                    taken_after = Some(check.start.elapsed());
+                }
+                earlier = quality;
             }
             Ok(result.map(|result| Ok(Ended { result, taken_after: taken_after.unwrap_or_default() })))
         })?;
@@ -449,6 +478,14 @@ fn list<'v>(value: &'v Value, key: &str, what: &str) -> Result<&'v Vec<Value>, F
 fn text<'v>(value: &'v Value, key: &str, what: &str) -> Result<&'v str, Finding> {
     let found = value.get(key);
     found.and_then(Value::as_str).ok_or_else(|| format!("{what}'s `{key}` is {}, not a string", shown(found)))
+}
+
+/// Whether a quality round takes text, a read of a running build's quality.md, as whole: earlier, the read a poll
+/// before, is the same, and text holds a whole non-blank line, as a GATE line is.
+fn whole_and_again(text: &str, earlier: Option<&str>) -> bool {
+    let mut lines: Vec<&str> = text.split('\n').collect();
+    lines.pop();
+    earlier == Some(text) && lines.iter().any(|line| !line.trim().is_empty())
 }
 
 /// A field's value as a finding shows it: `missing` when there is none, else its JSON type.

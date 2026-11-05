@@ -31,6 +31,10 @@ struct Script {
     build_polls: u32,
     /// Whether Jenkins cancelled the queue item.
     cancelled: bool,
+    /// Whether Jenkins forgot the queue item: it answers 404 for it.
+    forgotten: bool,
+    /// What each read of quality.md while the build runs gets, in order; 404 once they run out.
+    quality_while_building: Vec<&'static str>,
     /// How many more polls of the build Jenkins answers with 503.
     unavailable: u32,
     /// The change made to an answer before it is sent; None for none.
@@ -43,8 +47,16 @@ impl ScriptedJenkins {
     }
 
     fn with(script: impl FnOnce(&mut Script)) -> Arc<ScriptedJenkins> {
-        let mut state =
-            Script { urls: vec![], queue_waits: 1, build_polls: 2, cancelled: false, unavailable: 0, edit: None };
+        let mut state = Script {
+            urls: vec![],
+            queue_waits: 1,
+            build_polls: 2,
+            cancelled: false,
+            forgotten: false,
+            quality_while_building: vec![],
+            unavailable: 0,
+            edit: None,
+        };
         script(&mut state);
         Arc::new(ScriptedJenkins { state: Mutex::new(state) })
     }
@@ -60,6 +72,9 @@ impl Script {
         let job = "/job/Octoflow-AI/job/octoflow-ai-quality/";
         let path = url.strip_prefix(JENKINS).unwrap_or(url);
         if path.starts_with("/queue/item/5/") {
+            if self.forgotten {
+                return Err(404);
+            }
             if self.cancelled {
                 return Ok((json!({"_class": "hudson.model.Queue$CancelledItem", "cancelled": true}), None));
             }
@@ -100,7 +115,8 @@ impl Script {
                 }
             }
             "7/artifact/quality.md" if ended => json!("GATE: OK\n\nNo issues.\n"),
-            "7/artifact/quality.md" => return Err(404),
+            "7/artifact/quality.md" if self.quality_while_building.is_empty() => return Err(404),
+            "7/artifact/quality.md" => json!(self.quality_while_building.remove(0)),
             _ if rest.starts_with("7/testReport/api/json") => json!({"suites": [{"cases": [
                 {"className": "t.T", "name": "a", "status": "PASSED", "errorDetails": null},
                 {"className": "t.T", "name": "b", "status": "FAILED", "errorDetails": "boom"},
@@ -227,4 +243,37 @@ fn a_cancelled_queue_item_fails_at_once() {
     assert_eq!(status, 1, "{lines}");
     assert!(lines.contains("3 queue_item: Jenkins cancelled the queue item"), "{lines}");
     assert_eq!(jenkins.urls().iter().filter(|u| u.contains("/queue/item/")).count(), 1, "asked once");
+}
+
+#[test]
+fn a_forgotten_queue_item_is_found_among_the_builds() {
+    let jenkins = ScriptedJenkins::with(|s| s.forgotten = true);
+    let (status, lines) = check(&jenkins, &[]);
+    assert_eq!(status, 0, "{lines}");
+    assert!(lines.contains("3 queue_item: ok"), "{lines}");
+}
+
+#[test]
+fn a_running_build_is_taken_when_two_reads_of_its_quality_file_agree() {
+    // The first read is cut short inside the GATE line, the second is whole, the third agrees with it: a quality
+    // round takes the build there, and quality.md is read once more only by step 6.
+    let jenkins = ScriptedJenkins::with(|s| {
+        s.build_polls = 5;
+        s.quality_while_building = vec!["GATE", "GATE: OK\n", "GATE: OK\n"];
+    });
+    let (status, lines) = check(&jenkins, &[]);
+    assert_eq!(status, 0, "{lines}");
+    let reads = jenkins.urls().iter().filter(|u| u.ends_with("artifact/quality.md")).count();
+    assert_eq!(reads, 4, "{lines}");
+}
+
+#[test]
+fn a_poll_past_twice_the_quality_timeout_fails_its_step() {
+    let jenkins = ScriptedJenkins::new();
+    let mut out = Vec::new();
+    let timing = Timing { poll: Duration::ZERO, quality_timeout: Duration::ZERO };
+    let status = run(&env(&[]), Arc::clone(&jenkins) as Arc<dyn Http>, timing, &mut out);
+    let lines = String::from_utf8(out).expect("the lines are UTF-8");
+    assert_eq!(status, 1, "{lines}");
+    assert!(lines.contains("3 queue_item: waited 0s for the queue item to start a build"), "{lines}");
 }
