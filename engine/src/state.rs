@@ -14,8 +14,9 @@ use serde_json::Value;
 /// What a run has done so far, saved as state.json in its run directory.
 ///
 /// state.json is one line of JSON, an object: "format", STATE_FORMAT, then these fields in this order, then the fields
-/// of unknown. Every field that is not an Option must be there; a missing Option is None. The records a field holds
-/// as JSON are kept as they were read, key order included.
+/// of unknown. Every field that is not an Option must be there, but verdicts, which a state saved by an earlier
+/// release lacks; a missing Option is None. The records a field holds as JSON are kept as they were read, key order
+/// included.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RunState {
     pub run_id: String,
@@ -41,10 +42,23 @@ pub struct RunState {
     pub base_branch: Option<String>,
     pub branch: Option<String>,
     pub pr_url: Option<String>,
+    /// The run's verdict: CHANGES_REQUESTED from a verdict step's request for changes on, APPROVE once the last
+    /// verdict step approved a round, which every earlier verdict step approved before it (Workflow::take_turn); so
+    /// while a round is between verdict steps it is still the verdict of the round before. For a workflow without a
+    /// verdict step, FINISHED or QUALITY_GATE_FAILED once its last step is done. None before either.
     pub verdict: Option<String>,
+    /// Each verdict a verdict step gave, in the order given, a round's in the order of its verdict steps. Empty for a
+    /// run saved by a release before there were these records, whose one verdict step's last verdict is verdict.
+    #[serde(default)]
+    pub verdicts: Vec<StepVerdict>,
     /// The files that conflicted with the base branch when the pull request was opened, as a draft; empty again once
     /// refresh found the pull request merging cleanly, merged or closed (refresh_conflict).
     pub conflicts: Vec<String>,
+    /// The pull request, by URL, that refresh run by hand found open and merging cleanly when it emptied conflicts, and
+    /// that no drain has taken up since: its spec, held back by the conflict, may go to review, though conflicts no
+    /// longer shows why it was held (crate::cli::drain::forget_cleared). None for a run whose conflicts no such refresh
+    /// cleared, whose clearing a drain has taken up, or that a release before this field saved.
+    pub conflict_cleared: Option<String>,
     pub error: Option<String>,
     /// Per role: the agent's name, its pane, the harness it runs in (kind) and, once herdr reports it, its session id.
     /// A record without a kind is a DEFAULT_AGENT agent's.
@@ -114,18 +128,36 @@ pub struct RunState {
     /// file is the basename of the diff of what the turn changed in them, in the run directory, and paths are the
     /// files, by the id of the step that locked them. The files were restored once the record was saved.
     pub restored: Vec<Object>,
-    /// One record per run of a proof the verdict step wrote with a review that requested changes, {"round",
-    /// "written", "file", "finding", "demonstrated", "said"}, in the order they ran: round is the round it ran in,
-    /// written the round whose verdict step wrote it, file its basename in proofs_dir(written), finding the first
-    /// number in that name, demonstrated whether it failed against the change, and said how it exited and the last
-    /// PROOF_TAIL_LINES lines it printed. A proof first runs in the round that wrote it (Workflow::judge_proofs), then
-    /// again in every later round until it does not fail (Workflow::rerun_proofs).
+    /// One record per run of a proof the proof step (Pipeline::proof_step) wrote with a review that requested
+    /// changes, {"round", "written", "file", "finding", "demonstrated", "said"}, in the order they ran: round is the
+    /// round it ran in, written the round whose proof step wrote it, file its basename in proofs_dir(written),
+    /// finding the first number in that name, demonstrated whether it failed against the change, and said how it
+    /// exited and the last PROOF_TAIL_LINES lines it printed. A proof first runs in the round that wrote it
+    /// (Workflow::judge_proofs), then again in every later round until it does not fail (Workflow::rerun_proofs).
     pub proofs: Vec<Object>,
     /// The fields of a state.json that this engine does not know, as they were read, in their order, so that a state
     /// a later release of the same format wrote keeps them through a save. to_json writes them, never over a field of
     /// the state's own.
     #[serde(skip)]
     pub unknown: Object,
+}
+
+/// One verdict a verdict step gave (RunState::verdicts).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StepVerdict {
+    /// The round it judged.
+    pub round: u32,
+    /// The verdict step's id.
+    pub step: String,
+    /// APPROVE or CHANGES_REQUESTED, as its file's VERDICT line says.
+    pub verdict: String,
+}
+
+/// Whether verdicts, a run's (RunState::verdicts), came from more than one verdict step: whether what the run
+/// publishes and lists names each verdict by its step (verdict_line, run_outcome), rather than giving the run's one
+/// verdict, as for a workflow with one verdict step or a run saved without the records.
+pub fn judged_by_several(verdicts: &[StepVerdict]) -> bool {
+    verdicts.iter().any(|v| v.step != verdicts[0].step)
 }
 
 /// The format of state.json this engine reads and writes, which its "format" field holds. A state.json written by a
@@ -139,6 +171,12 @@ pub const STATE_FORMAT_SINCE: &str = "0.54.0";
 /// A run id's key: its random suffix, the part after its last `-` (all of it without one).
 pub fn run_key(run_id: &str) -> &str {
     run_id.rsplit('-').next().unwrap_or(run_id)
+}
+
+/// Where the run of run_id keeps its local refs, `refs/orchestrator/<key>/`, in the project's repository. Nothing
+/// pushes them; the run's end in done (Workflow::clean_up_locks) and its close (cli::close::close_run) delete them.
+pub fn refs_prefix(run_id: &str) -> String {
+    format!("{LOCAL_REFS_PREFIX}{}/", run_key(run_id))
 }
 
 impl RunState {
@@ -159,7 +197,9 @@ impl RunState {
             branch: None,
             pr_url: None,
             verdict: None,
+            verdicts: Vec::new(),
             conflicts: Vec::new(),
+            conflict_cleared: None,
             error: None,
             agents: Map::new(),
             max_rounds: DEFAULT_MAX_ROUNDS,
@@ -244,8 +284,18 @@ impl RunState {
         self.to_json().to_string() + "\n"
     }
 
-    /// The prompts the run sends: those it started with (saved_prompts). Errors: its prompt_overrides name a prompt
-    /// this orchestrator lacks, or replace one with a text a prompt file could not hold (prompt_problem).
+    /// Record in verdicts that the verdict step of id step gave verdict in round, replacing a record of the same step
+    /// and round, as a resume that takes that step's turn again gives. The run's verdict is left to the caller.
+    pub fn record_verdict(&mut self, round: u32, step: &str, verdict: &str) {
+        let given = StepVerdict { round, step: step.to_string(), verdict: verdict.to_string() };
+        match self.verdicts.iter_mut().find(|v| v.round == round && v.step == step) {
+            Some(earlier) => *earlier = given,
+            None => self.verdicts.push(given),
+        }
+    }
+
+    /// The prompts the run sends: those it started with (saved_prompts). Errors: saved_prompts', its prompt_overrides
+    /// naming a prompt this orchestrator lacks or replacing one with a text it cannot fill in.
     pub fn prompts(&self) -> Result<Prompts, OrchestratorError> {
         saved_prompts(&self.prompt_overrides, &self.run_id)
     }
@@ -265,19 +315,14 @@ impl RunState {
         self.worktree.as_deref().unwrap_or(&self.cwd)
     }
 
-    /// Where the run keeps its local refs, which nothing pushes and done deletes.
-    pub fn refs_prefix(&self) -> String {
-        format!("{LOCAL_REFS_PREFIX}{}/", self.key())
-    }
-
-    /// Where the verdict step of round n writes its proofs (Pipeline::proof_command).
+    /// Where the proof step of round n writes its proofs (Pipeline::proof_step, Pipeline::proof_command).
     pub fn proofs_dir(&self, n: u32) -> String {
         format!("{}/proofs-{n}", self.dir())
     }
 
     /// The local ref of the commit that holds the files the step locked.
     pub fn lock_ref(&self, step_id: &str) -> String {
-        format!("{}locked/{step_id}", self.refs_prefix())
+        format!("{}locked/{step_id}", refs_prefix(&self.run_id))
     }
 
     /// The default workflow's spec; the quality files below are every workflow's.

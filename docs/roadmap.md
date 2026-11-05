@@ -20,8 +20,9 @@ between the engine and the candidates below:
   on.
 - **B. Human approval gates** between steps: stop until the human approves a step's file, or sends it back.
 - **C. Parallel steps**, and a step that waits for all of them.
-- **D. Richer verdicts**: more than one verdict loop, a verdict that picks the step to go back to or ends the run
-  early, other verdict words.
+- **D. Richer verdicts**: several verdict steps ship, run in order each round, the round ending at the first that
+  requests changes ([Workflows](architecture.md#workflows)); to come: a verdict that picks the step to go back to or
+  ends the run early, other verdict words.
 - **E. Aggregated verdicts**: one decision from several verdict files.
 - **F. Other endings** than a pull request or `--no-pr`: a document as the result, comments on an existing pull
   request.

@@ -20,7 +20,7 @@ use crate::host::fake::{FakeHost, FakePr, HOST_EPOCH};
 use crate::host::{Completed, ProcessHost};
 use crate::interrupt::Interrupt;
 use crate::summary::iso_utc;
-use crate::test_support::{impl_, solo, TempDir};
+use crate::test_support::{accepting, impl_, solo, TempDir};
 use crate::workflow_file::workflow_definition;
 
 const RUN_ID: &str = "20260930-070000-c0ffee";
@@ -31,10 +31,10 @@ const SHOW_DIR: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
 const JOB: &str = crate::ci::fake::JOB;
 
 /// The keys of a run record, in the order run_record gives them.
-const RUN_RECORD_KEYS: [&str; 23] = [
+const RUN_RECORD_KEYS: [&str; 24] = [
     "id", "key", "task", "workflow", "steps", "phase", "round", "quality_round", "role", "pane", "agents", "health",
-    "health_reason", "heartbeat_age", "waiting", "verdict", "error", "closed", "branch", "worktree", "pr", "turns",
-    "resume_command",
+    "health_reason", "heartbeat_age", "waiting", "verdict", "verdicts", "error", "closed", "branch", "worktree", "pr",
+    "turns", "resume_command",
 ];
 
 /// JSON text as a value.
@@ -202,6 +202,32 @@ fn the_agents_are_those_started_with_their_names_and_kinds() {
 fn the_task_is_whole() {
     let task = "x".repeat(300);
     assert_eq!(key(&record(&with(run("build"), &[("task", Value::from(task.as_str()))]), 40, true, &[]), "task"), Value::from(task));
+}
+
+#[test]
+fn a_run_sent_back_by_one_of_several_verdict_steps_lists_which() {
+    let given = |pairs: &[(u32, &str, &str)]| {
+        let records: Vec<Value> = pairs
+            .iter()
+            .map(|(round, step, verdict)| json(&format!(r#"{{"round": {round}, "step": "{step}", "verdict": "{verdict}"}}"#)))
+            .collect();
+        Value::Array(records)
+    };
+    let done = |verdict: &str, verdicts: Value| {
+        with(run("done"), &[("verdict", Value::from(verdict)), ("verdicts", verdicts), ("workflow", Value::from("default"))])
+    };
+    let outcome = |state: &Value| run_outcome(&record(state, 1_000_000, true, &[]));
+    let sent_back = given(&[(1, "review", APPROVE), (1, "accept", CHANGES_REQUESTED)]);
+    let state = done(CHANGES_REQUESTED, sent_back.clone());
+    assert_eq!(key(&record(&state, 1_000_000, true, &[]), "verdicts"), sent_back);
+    assert_eq!(outcome(&state), "CHANGES_REQUESTED by accept");
+    // Approved, judged by one verdict step only, or saved before the records: the run's verdict alone.
+    assert_eq!(outcome(&done(APPROVE, given(&[(1, "review", APPROVE), (1, "accept", APPROVE)]))), "APPROVE");
+    let reviewed = given(&[(1, "review", CHANGES_REQUESTED), (2, "review", CHANGES_REQUESTED)]);
+    assert_eq!(outcome(&done(CHANGES_REQUESTED, reviewed)), "CHANGES_REQUESTED");
+    let old = with(run("done"), &[("verdict", Value::from(CHANGES_REQUESTED))]);
+    assert_eq!(key(&record(&old, 1_000_000, true, &[]), "verdicts"), json("[]"));
+    assert_eq!(outcome(&old), "CHANGES_REQUESTED");
 }
 
 #[test]
@@ -696,11 +722,80 @@ fn the_last_review_in_a_later_round() {
 }
 
 #[test]
+fn a_run_an_earlier_release_started_with_its_fix_prompt_file_lists_and_shows_whole() {
+    // Its saved FIX_PROMPT names {prev_review_path}, as a prompt file could before 0.58.0 (crate::prompts'
+    // EARLIER_PLACEHOLDERS).
+    let fields = [
+        ("prompt_overrides", json(r#"{"FIX_PROMPT": "Fix {prev_review_path}; report to {build_path}."}"#)),
+        ("agents", json(r#"{"build": {"name": "build-c0ffee", "pane": "w1:p2"}}"#)),
+    ];
+    let stale = with(mine(), &fields);
+    let record = record(&stale, STALE_SECONDS + 1, true, &[]);
+    let steps =
+        json(r#"[{"id": "spec", "role": "spec"}, {"id": "build", "role": "build"}, {"id": "review", "role": "review"}]"#);
+    assert_eq!(
+        [key(&record, "steps"), key(&record, "role"), key(&record, "pane"), key(&record, "resume_command")],
+        [steps.clone(), Value::from("build"), Value::from("w1:p2"), Value::from("orchestrator resume c0ffee")]
+    );
+    let cli = alive();
+    let doc = list_json(&cli, &[], &[(STALE_SECONDS + 1, stale)]);
+    let listed = &doc.get("runs").and_then(Value::as_array).unwrap()[0];
+    assert_eq!((listed.get("steps"), listed.get("role")), (Some(&steps), Some(&Value::from("build"))));
+    assert_eq!(cli.main(&["list", "--cwd", "/proj"]), 0);
+    assert_eq!(
+        cli.lines()[0],
+        "20260930-070000-c0ffee  build    round 1  stale: no heartbeat for 5m; resume: orchestrator resume c0ffee --cwd /proj"
+    );
+
+    let later =
+        [("phase", Value::from("build")), ("round", Value::from(2)), ("verdict", Value::from(CHANGES_REQUESTED))];
+    let cli = show_host(&[show_state(&[&later[..], &fields[..1]].concat())]);
+    put(&cli, "review-1.md", "VERDICT: CHANGES_REQUESTED\n\n1. a bug\n");
+    let out = show(&cli, "a1b2c3").1;
+    assert!(out.contains("\nworkflow   default: spec -> build -> review (back to build)\n"), "{out}");
+    assert!(out.ends_with(&format!("\nlast review: {SHOW_DIR}/review-1.md\n\n1. a bug\n")), "{out}");
+}
+
+#[test]
 fn a_review_without_a_verdict_line_is_shown_whole() {
     let cli = show_host(&[show_state(&[("phase", Value::from("review")), ("verdict", Value::Null)])]);
     put(&cli, "review-1.md", "half a review");
     let out = show(&cli, "a1b2c3").1;
     assert!(out.ends_with(&format!("\nlast review: {SHOW_DIR}/review-1.md\nhalf a review\n")), "{out}");
+}
+
+#[test]
+fn each_verdict_step_s_verdicts_and_the_last_verdict_file_written() {
+    let accepting = workflow_definition(&accepting());
+    let verdicts = json(
+        r#"[{"round": 1, "step": "review", "verdict": "APPROVE"}, {"round": 1, "step": "accept", "verdict": "CHANGES_REQUESTED"},
+            {"round": 2, "step": "review", "verdict": "CHANGES_REQUESTED"}]"#,
+    );
+    let saved = show_state(&[
+        ("workflow", Value::from("accepting")),
+        ("workflow_definition", accepting),
+        ("phase", Value::from("build")),
+        ("round", Value::from(3)),
+        ("verdict", Value::from(CHANGES_REQUESTED)),
+        ("verdicts", verdicts),
+    ]);
+    let cli = show_host(&[saved]);
+    put(&cli, "review-1.md", "VERDICT: APPROVE\nfine\n");
+    put(&cli, "accept-1.md", "VERDICT: CHANGES_REQUESTED\nnot what was asked\n");
+    put(&cli, "review-2.md", "VERDICT: CHANGES_REQUESTED\na bug\n");
+    let out = show(&cli, "a1b2c3").1;
+    assert!(out.contains(concat!(
+        "\nverdicts\n",
+        "    round 1  review  APPROVE\n",
+        "    round 1  accept  CHANGES_REQUESTED\n",
+        "    round 2  review  CHANGES_REQUESTED\n",
+    )), "{out}");
+    assert!(out.ends_with(&format!("\nlast review: {SHOW_DIR}/review-2.md\na bug\n")), "{out}");
+    // Round 2's acceptance, had it been written, is the later file of the round.
+    put(&cli, "accept-2.md", "VERDICT: APPROVE\nas asked\n");
+    assert!(show(&cli, "a1b2c3").1.ends_with(&format!("\nlast review: {SHOW_DIR}/accept-2.md\nas asked\n")));
+    // A run saved before there were verdicts shows none.
+    assert!(!shown(&[show_state(&[])]).lines().any(|line| line == "verdicts"));
 }
 
 #[test]

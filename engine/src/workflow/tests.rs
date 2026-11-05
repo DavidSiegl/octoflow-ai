@@ -38,6 +38,7 @@ mod resume_pull_request;
 mod secret_scan;
 mod seeded_spec;
 mod turn_timings;
+mod verdict_steps;
 mod worktree;
 
 type Script = Vec<(&'static str, Vec<Turn>)>;

@@ -1,5 +1,5 @@
-//! The verdict step's proofs (Pipeline::proof_command): the records of their runs (RunState::proofs) and the section
-//! of a review that says what they showed.
+//! The proof step's proofs (Pipeline::proof_step, Pipeline::proof_command): the records of their runs
+//! (RunState::proofs) and the section of a review that says what they showed.
 
 use crate::constants::PROOF_COPIES_DIR;
 use crate::error::OrchestratorError;
@@ -35,7 +35,7 @@ pub fn proof_finding(file: &str) -> Option<u64> {
 pub struct ProofRun {
     /// The round it ran in.
     pub round: u32,
-    /// The round whose verdict step wrote the proof; equal to round for the proof's first run.
+    /// The round whose proof step wrote the proof; equal to round for the proof's first run.
     pub written: u32,
     /// The proof's basename in RunState::proofs_dir(written).
     pub file: String,

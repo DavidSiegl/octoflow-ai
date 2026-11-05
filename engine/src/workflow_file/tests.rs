@@ -407,7 +407,7 @@ again = "Again, with tests in {proofs_dir}; write {review_path}."
 fn a_workflow_files_own_prompt_is_not_replaced() {
     let mut overrides = Map::new();
     overrides.insert("BUILD_PROMPT", "Build {spec_path} in {cwd}; report to {build_path}.".to_string());
-    overrides.insert("FIX_PROMPT", "Fix {prev_review_path}; report to {build_path}.".to_string());
+    overrides.insert("FIX_PROMPT", "Fix {findings}; report to {build_path}.".to_string());
     let prompts = Prompts::from_overrides(&overrides).unwrap();
     let p = load_workflow_file(&format!("{EXAMPLES}/quick.toml"), &prompts).unwrap();
     let build = p.step("build").unwrap();
@@ -426,6 +426,6 @@ fn a_saved_state_names_its_workflow() {
     assert_eq!(saved_pipeline(&state), Some(quick()));
     assert_eq!(saved_pipeline(&saved(r#"{"prompt_overrides": {"LATER_NOTE": "x"}}"#)), None);
     assert_eq!(saved_pipeline(&saved(r#"{"workflow": 5}"#)), None);
-    let worded = saved_pipeline(&saved(r#"{"prompt_overrides": {"FIX_PROMPT": "Fix {prev_review_path}; report to {build_path}."}}"#)).unwrap();
-    assert_eq!(worded.step("build").unwrap().again.as_deref(), Some("Fix {prev_review_path}; report to {build_path}."));
+    let worded = saved_pipeline(&saved(r#"{"prompt_overrides": {"FIX_PROMPT": "Fix {findings}; report to {build_path}."}}"#)).unwrap();
+    assert_eq!(worded.step("build").unwrap().again.as_deref(), Some("Fix {findings}; report to {build_path}."));
 }

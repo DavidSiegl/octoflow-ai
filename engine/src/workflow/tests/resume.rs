@@ -128,7 +128,7 @@ fn resumed_builder_not_yet_prompted_gets_its_normal_prompt() {
         "build", "s-build",
     )]);
     f.workflow(f.as_saved()).run().unwrap();
-    assert!(seen.borrow()[0].starts_with("The Reviewer requested changes"), "{}", seen.borrow()[0]);
+    assert!(seen.borrow()[0].starts_with("Changes were requested"), "{}", seen.borrow()[0]);
 }
 
 #[test]
