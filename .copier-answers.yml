@@ -1,0 +1,8 @@
+# Changes here will be overwritten by Copier; NEVER EDIT MANUALLY
+_commit: 1b2febc
+_src_path: /home/agent/GitHub/agent-estate
+gate: none
+repo: DavidSiegl/octoflow-ai
+review_gate: true
+ticket_sync: true
+tracker: scratch
