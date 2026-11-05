@@ -216,7 +216,8 @@ orchestrator show e292fb
 # Continue a stopped run
 orchestrator resume e292fb
 
-# Done with a failed or finished run: close its workspace, and a failed --worktree run's worktree and branch
+# Done with a failed or finished run: close its workspace, delete its local refs, and a failed --worktree run's
+# worktree and branch
 orchestrator close e292fb
 
 # After you resolved a pull request's conflict and pushed: drop its warning, and its draft if it was approved
@@ -332,7 +333,8 @@ share its working tree, so a run refuses to start or resume while another run th
 
 A failed run keeps its workspace open and stays on its branch, and so does a `--no-pr` run. `resume` continues a
 stopped run where `state.json` says ([Resuming a run](docs/design.md#resuming-a-run)), and `close` cleans up after
-one you are done with ([Closing a run](docs/design.md#closing-a-run)). `list` marks a run `stale` after five
+one you are done with, the local refs that keep its locked files included
+([Closing a run](docs/design.md#closing-a-run)). `list` marks a run `stale` after five
 minutes without a heartbeat ([Stale runs](docs/design.md#stale-runs)).
 
 See also [design decisions](docs/design.md), [architecture](docs/architecture.md), [roadmap](docs/roadmap.md)
@@ -424,17 +426,19 @@ use = "review"
 | `file` | The handoff file in the run directory that ends the turn; `{n}` in it makes one per round. |
 | `prompt`, `again`, `fresh_note` | The first prompt, the prompt in a later round, and the note for a fresh session in a later round. |
 | `use` | `"spec"`, `"build"` or `"review"`: start from that default step and override only the keys given. |
-| `loop_to` | Makes this the verdict step, which sends `CHANGES_REQUESTED` back to the step it names. |
+| `loop_to` | Makes this a verdict step, which sends `CHANGES_REQUESTED` back to the earlier step it names. A workflow may have several: each round runs them in order and ends at the first that requests changes. Each must loop back to a step at or before the first verdict step, and no step between the first and the last may edit, so that every verdict step judges the change the round ends with. |
 | `edits`, `human_paced`, `quality_gated` | The step edits the code, waits on you, or is the one the quality gate follows. |
 | `locks` | The first editing step locks the files it changes, as `product-team`'s QA Engineer does; later turns' changes to them are undone. |
 | `fresh_repeats_again` | A fresh session in a later round gets `again` too. |
 
-A workflow without a verdict step ends `FINISHED`, and its pull request says no agent reviewed the change. A
-workflow's `proof_command`, such as `"python -m pytest -q {proofs}"`, runs the tests the verdict step wrote to back
-its findings. Prompts fill in `{task}`, `{cwd}`, `{n}`, `{change}`, `{path}`, `{proofs_dir}`, and for every step
-`X`, `{X_path}`, `{prev_X_path}` and `{earlier_X_paths}`; write a literal brace as `{{` or `}}`. A placeholder is its
-name alone, with no conversion, format spec, attribute or index. The file is checked when it loads, and a run saves
-its workflow, so editing the file does not change a run already started.
+A workflow without a verdict step ends `FINISHED`, and its pull request says no agent reviewed the change. One with
+several approves only if each of them approved the last round, and `--max-rounds` bounds the rounds of all of them
+together. A workflow's `proof_command`, such as `"python -m pytest -q {proofs}"`, runs the tests the first verdict
+step wrote to back its findings. Prompts fill in `{task}`, `{cwd}`, `{n}`, `{change}`, `{path}`, `{proofs_dir}`,
+`{findings}` (from round 2 on, the verdict file whose request for changes started the round, which the default
+Builder's `again` names), and for every step `X`, `{X_path}`, `{prev_X_path}` and `{earlier_X_paths}`; write a literal
+brace as `{{` or `}}`. A placeholder is its name alone, with no conversion, format spec, attribute or index. The
+file is checked when it loads, and a run saves its workflow, so editing the file does not change a run already started.
 [Workflows](docs/architecture.md#workflows) has the full rules.
 
 ## Prompt files

@@ -105,7 +105,7 @@ pub const GIT_PATHSPEC_ENV: [&str; 4] =
 pub const JOB_PARAMETERS: [&str; 1] = ["GIT_REF"];
 /// Snapshots are pushed to orchestrator-ci/<key>-<round>-q<quality round>.
 pub const CI_REF_PREFIX: &str = "orchestrator-ci/";
-/// A run's local refs are under refs/orchestrator/<key>/ (RunState::refs_prefix).
+/// A run's local refs are under refs/orchestrator/<key>/ (crate::state::refs_prefix).
 pub const LOCAL_REFS_PREFIX: &str = "refs/orchestrator/";
 /// How much of a build's console the quality file of a build that failed before its Gate stage shows, in lines.
 pub const CONSOLE_TAIL_LINES: usize = 60;

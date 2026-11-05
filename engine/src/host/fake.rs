@@ -217,6 +217,8 @@ pub(crate) struct FakeState {
     pub trees: HashMap<String, BTreeMap<String, Option<String>>>,
     /// The local refs lock made, with their snapshot.
     pub refs: Map<String>,
+    /// The error of a failing delete_refs, which then deletes nothing; None deletes.
+    pub delete_refs_error: Option<String>,
     /// (ref, paths) of each restore.
     pub restores: Vec<(String, Vec<String>)>,
     /// What session_log reads, by (harness, session).
@@ -296,6 +298,7 @@ impl FakeHost {
                 line_counts: None,
                 trees: HashMap::new(),
                 refs: Map::new(),
+                delete_refs_error: None,
                 restores: vec![],
                 session_logs: HashMap::new(),
                 before_write: None,
@@ -403,7 +406,7 @@ impl FakeState {
             }
             ["merge-base", "--is-ancestor", commit, of] => return self.git_is_ancestor(commit, of),
             ["merge", rest @ ..] => return self.git_merge(rest),
-            ["diff", "--name-only", "-z", "--diff-filter=U"] => {
+            ["-c", "core.quotePath=false", "diff", "--no-relative", "--name-only", "-z", "--diff-filter=U"] => {
                 if !self.merge_head {
                     return ok("");
                 }
@@ -411,7 +414,7 @@ impl FakeState {
             }
             ["push", rest @ ..] => return self.git_push(rest),
             ["ls-remote", rest @ ..] => return self.git_ls_remote(rest),
-            ["-c", "core.quotePath=false", "diff", ..] => return ok(&self.diff),
+            ["-c", "core.quotePath=false", "diff", "--no-relative", "-U0", ..] => return ok(&self.diff),
             ["remote", "get-url", "origin"] => {
                 if !self.has_origin {
                     return Completed::new(2, "", "error: No such remote 'origin'");
@@ -743,10 +746,14 @@ impl Host for FakeHost {
         Ok(())
     }
 
-    fn delete_refs(&self, _cwd: &str, prefix: &str) -> Result<(), OrchestratorError> {
+    fn delete_refs(&self, _cwd: &str, prefix: &str) -> Result<bool, OrchestratorError> {
         let mut s = self.state();
+        if let Some(error) = &s.delete_refs_error {
+            return Err(OrchestratorError(error.clone()));
+        }
+        let before = s.refs.len();
         s.refs = s.refs.iter().filter(|(r, _)| !r.starts_with(prefix)).map(|(r, sha)| (r, sha.clone())).collect();
-        Ok(())
+        Ok(s.refs.len() < before)
     }
 
     fn file_at(&self, _cwd: &str, commit: &str, path: &str) -> Result<Option<Vec<u8>>, OrchestratorError> {

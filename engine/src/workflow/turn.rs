@@ -48,7 +48,7 @@ pub(super) struct Turn {
 pub(super) enum Judged {
     /// Taken as written.
     AsWritten,
-    /// The verdict step's: a file without a VERDICT first line is asked for once more (retry) before it ends the run.
+    /// A verdict step's: a file without a VERDICT first line is asked for once more (retry) before it ends the run.
     Verdict,
     /// A step that can block's (Step::can_block): a BLOCKED report waits for the human (block), as often as it
     /// comes.
@@ -125,7 +125,7 @@ impl Workflow<'_> {
         Ok(out)
     }
 
-    /// turn for the verdict step: its file, once it starts with a VERDICT line.
+    /// turn for a verdict step: its file, once it starts with a VERDICT line.
     fn verdict_turn(&mut self, mut t: Turn) -> Outcome<String> {
         let file = file_name(&t.path).to_string();
         if self.state.retrying.as_deref() == Some(&file) {

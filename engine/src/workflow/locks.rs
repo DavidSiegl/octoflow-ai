@@ -1,5 +1,5 @@
 //! Locked files (Step::locks): the locking step's files held as it left them, restored after every other editing
-//! turn that changes them, and the verdict step told what was restored.
+//! turn that changes them, and each verdict step told what was restored.
 
 use std::collections::BTreeSet;
 
@@ -8,6 +8,7 @@ use crate::error::OrchestratorError;
 use crate::paths::{file_name, split_extension};
 use crate::pipeline::Step;
 use crate::prompts::Prompt;
+use crate::state::refs_prefix;
 use serde_json::Value;
 use crate::map::Map;
 use crate::json::{object, Object};
@@ -123,7 +124,7 @@ impl Workflow<'_> {
         Ok(Some(record))
     }
 
-    /// What the verdict step hears of the locked files restored in round n: LOCKED_NOTE after a blank line; "" when
+    /// What a verdict step hears of the locked files restored in round n: LOCKED_NOTE after a blank line; "" when
     /// none was. Errors: a restored record is malformed (Restored::read), or the prompt cannot be filled in.
     pub(super) fn locks_note(&self, n: u32) -> Result<String, OrchestratorError> {
         let records: Vec<Restored> = self.restored()?.into_iter().filter(|r| r.round == n).collect();
@@ -151,7 +152,7 @@ impl Workflow<'_> {
         if s.locked.is_empty() {
             return;
         }
-        let prefix = s.refs_prefix();
+        let prefix = refs_prefix(&s.run_id);
         if let Err(e) = self.host.delete_refs(&s.cwd, &prefix) {
             self.human.log(&format!("could not delete the refs under {prefix}: {e}"));
         }

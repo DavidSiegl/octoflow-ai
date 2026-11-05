@@ -29,7 +29,7 @@ use crate::host::{ProcessHost, PushError};
 use crate::interrupt::Interrupt;
 use crate::pipeline::{Pipeline, DEFAULT_WORKFLOW};
 use crate::proofs::PROOFS_HEADING;
-use crate::test_support::{ended, object as record, quick, raise_once_written, replaced, TempDir};
+use crate::test_support::{accepting, ended, object as record, quick, raise_once_written, replaced, TempDir};
 use crate::workflow::Collaborators;
 
 const COMMAND: &str = "sh {proofs}";
@@ -242,6 +242,67 @@ fn an_approval_runs_no_proof() {
     assert_eq!(wf.run(), verdict(APPROVE));
     assert!(!review(&p.f, wf.state(), 1).contains(PROOFS_HEADING));
     assert!(wf.state().proofs.is_empty());
+}
+
+#[test]
+fn only_the_first_of_several_verdict_steps_has_its_proofs_run() {
+    // build -> review (back to build) -> accept (back to build): the review backs a finding with a proof the Builder
+    // fixes in round 2; the acceptance writes a failing proof with its request for changes in round 2, which nothing
+    // runs, and hears of no proof run again.
+    let proj = TempDir::new();
+    let pipeline = replaced(&accepting(), |s| s.proof_command = Some(COMMAND.into())).unwrap();
+    let accepted = seen();
+    let dir = proj.path();
+    let builds: Vec<Turn> = (1..=3)
+        .map(|n| {
+            let (dir, mut build) = (dir.clone(), build_turn(n));
+            Box::new(move |prompt: &str, state: &RunState, host: &Rc<FakeHost>| {
+                if n == 2 {
+                    std::fs::write(format!("{dir}/fixed-test_1_bug.sh"), "").unwrap();
+                }
+                build(prompt, state, host)
+            }) as Turn
+        })
+        .collect();
+    let review = |n: u32, verdict: &'static str| -> Turn {
+        Box::new(move |_, state, host| {
+            if n == 1 {
+                write_proof(&state.proofs_dir(1), "test_1_bug.sh", Exit::Fixable);
+            }
+            host.write(&state.review_path(n), &format!("VERDICT: {verdict}\n1. a bug\n"), false).unwrap();
+            "done".to_string()
+        })
+    };
+    let accept = |n: u32, verdict: &'static str| -> Turn {
+        Box::new(move |_, state, host| {
+            if n == 2 {
+                write_proof(&state.proofs_dir(2), "test_1_unmet.sh", Exit::Status(1));
+            }
+            let path = format!("{}/accept-{n}.md", state.dir());
+            host.write(&path, &format!("VERDICT: {verdict}\n1. unmet\n"), false).unwrap();
+            "done".to_string()
+        })
+    };
+    let mut state = RunState::new(RUN_ID, TASK, &dir);
+    (state.phase, state.workflow) = ("build".to_string(), pipeline.name().to_string());
+    let f = on_real_processes(state, vec![
+        ("build", builds),
+        ("review", vec![review(1, CHANGES_REQUESTED), review(2, APPROVE), review(3, APPROVE)]),
+        (
+            "accept",
+            vec![recording(accept(2, CHANGES_REQUESTED), &accepted), recording(accept(3, APPROVE), &accepted)],
+        ),
+    ]);
+    let mut wf = f.workflow(settings(&pipeline, 3));
+    assert_eq!(wf.run(), verdict(APPROVE));
+    let state = wf.state();
+    // The review's proof, run in round 1 and again before round 2's review; the acceptance's never.
+    assert_eq!(runs(state), [(1, 1, "test_1_bug.sh".to_string(), true), (2, 1, "test_1_bug.sh".to_string(), false)]);
+    let acceptance = f.host.state().files.get(&format!("{}/accept-2.md", state.dir())).cloned().unwrap();
+    assert_eq!(acceptance, "VERDICT: CHANGES_REQUESTED\n1. unmet\n");
+    for prompt in accepted.borrow().iter() {
+        assert!(!prompt.contains("test_1_bug.sh"), "{prompt}");
+    }
 }
 
 #[test]
