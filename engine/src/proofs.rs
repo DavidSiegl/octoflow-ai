@@ -46,10 +46,26 @@ pub struct ProofRun {
     /// How it exited (proof_outcome) and, a line each below that, the last PROOF_TAIL_LINES lines it printed; or why it
     /// did not run.
     pub said: String,
+    /// True means its file was gone from its directory when a rerun came to it, which is taken as the Builder having
+    /// moved it into the project (PROOFS_NOTE): it was not run, and is carried no further. A record saved without the
+    /// field, as every one was before v0.58.4, is false.
+    pub moved: bool,
+}
+
+/// What one run of a proof found, before it is recorded as a ProofRun.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProofOutcome {
+    /// As ProofRun::demonstrated.
+    pub demonstrated: bool,
+    /// As ProofRun::said.
+    pub said: String,
+    /// As ProofRun::moved.
+    pub moved: bool,
 }
 
 impl ProofRun {
-    /// The run record holds; a record saved before there was a written is the proof's first run.
+    /// The run record holds; a record saved before there was a written is the proof's first run, and one saved
+    /// before there was a moved is not moved.
     ///
     /// Errors: a field missing or of another type than the engines write, as no released engine's state.json has
     /// (since v0.24.0, the first with proofs, every record has each field but written), where the Python engine fails
@@ -77,19 +93,30 @@ impl ProofRun {
         };
         let demonstrated = field("demonstrated")?;
         let demonstrated = demonstrated.as_bool().ok_or_else(|| invalid("demonstrated", demonstrated, "true or false"))?;
-        Ok(ProofRun { round, written, file: text_of("file")?, finding, demonstrated, said: text_of("said")? })
+        let moved = match record.get("moved") {
+            None => false,
+            Some(flag) => flag.as_bool().ok_or_else(|| invalid("moved", flag, "true or false"))?,
+        };
+        Ok(ProofRun { round, written, file: text_of("file")?, finding, demonstrated, said: text_of("said")?, moved })
     }
 
     /// The run as a RunState::proofs record.
+    ///
+    /// moved is written only when true, so a record of a proof that is not moved is as a release without the field
+    /// writes it, and such a release reads one that is moved, taking it for an erroring proof.
     pub fn record(&self) -> Object {
-        object([
+        let mut record = object([
             ("round", Value::from(self.round)),
             ("written", Value::from(self.written)),
             ("file", Value::from(self.file.as_str())),
             ("finding", Value::from(self.finding)),
             ("demonstrated", Value::Bool(self.demonstrated)),
             ("said", Value::from(self.said.as_str())),
-        ])
+        ]);
+        if self.moved {
+            record.insert("moved".to_string(), Value::Bool(true));
+        }
+        record
     }
 
     /// Whether the run passed: exited 0, neither failing nor erroring.

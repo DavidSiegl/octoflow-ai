@@ -28,7 +28,7 @@ use crate::host::tests::Repo;
 use crate::host::{ProcessHost, PushError};
 use crate::interrupt::Interrupt;
 use crate::pipeline::{Pipeline, DEFAULT_WORKFLOW};
-use crate::proofs::PROOFS_HEADING;
+use crate::proofs::{ProofOutcome, PROOFS_HEADING};
 use crate::test_support::{accepting, ended, object as record, quick, raise_once_written, replaced, TempDir};
 use crate::workflow::Collaborators;
 
@@ -56,6 +56,11 @@ fn write_proof(dir: &str, name: &str, exit: Exit) {
         Exit::Status(status) => format!("exit {status}\n"),
     };
     std::fs::write(format!("{dir}/{name}"), format!("echo checking {name}\n{check}")).unwrap();
+}
+
+/// The outcome of a proof that ran.
+fn ran(demonstrated: bool, said: impl Into<String>) -> ProofOutcome {
+    ProofOutcome { demonstrated, said: said.into(), moved: false }
 }
 
 /// The fixture of state played by script on a FakeHost whose commands but git run for real.
@@ -486,6 +491,45 @@ fn a_proof_that_errors_when_run_again_stays_carried() {
 }
 
 #[test]
+fn a_proof_the_builder_moves_into_the_project_is_told_once_as_moved_and_carried_no_further() {
+    // The Builder moves a demonstrated proof out of its directory in round 2, as PROOFS_NOTE lets it.
+    let proj = TempDir::new();
+    let first = r#"{"round": 1, "written": 1, "file": "test_1.sh", "finding": 1, "demonstrated": true, "said": "it fails"}"#;
+    let (seen, reviewed) = (seen(), seen());
+    let dir = RunState::new(RUN_ID, TASK, &proj.path()).proofs_dir(1);
+    let path = format!("{dir}/test_1.sh");
+    write_proof(&dir, "test_1.sh", Exit::Status(1));
+    let moves_it: Turn = {
+        let (path, mut build) = (path.clone(), build_turn(2));
+        Box::new(move |prompt, state, host| {
+            std::fs::remove_file(&path).unwrap();
+            build(prompt, state, host)
+        })
+    };
+    let f = saved_with_proofs(&proj, "build", 2, vec![record(first)], vec![
+        ("build", vec![recording(moves_it, &seen), recording(build_turn(3), &seen)]),
+        ("review", vec![
+            recording(review_turn(2, CHANGES_REQUESTED), &reviewed),
+            recording(review_turn(3, APPROVE), &reviewed),
+        ]),
+    ]);
+    let mut wf = f.workflow(settings(&proving(), 3));
+    assert_eq!(wf.run(), verdict(APPROVE));
+
+    // Round 2's builder still hears it fails; its verdict step hears it moved, not erroring.
+    let item = format!("- `{path}`: not run, as its file is gone from its directory, taken as moved into the project. \
+         Check that the change holds it as a test that passes; if it does not, the proof's finding stands.");
+    assert!(seen.borrow()[0].contains(&proofs_note(&path)));
+    assert!(reviewed.borrow()[0].ends_with(&carried_note(&proj.path(), &[&item])), "{}", reviewed.borrow()[0]);
+
+    // Round 3 neither reruns it nor names it.
+    assert!(!seen.borrow()[1].contains("test_1.sh"), "{}", seen.borrow()[1]);
+    assert!(!reviewed.borrow()[1].contains("test_1.sh"), "{}", reviewed.borrow()[1]);
+    let rounds: Vec<i64> = runs(wf.state()).into_iter().map(|(round, ..)| round).collect();
+    assert_eq!(rounds, [1, 2]);
+}
+
+#[test]
 fn the_reviewers_own_proofs_heading_does_not_stop_the_run() {
     let proj = TempDir::new();
     let p = Proving {
@@ -518,7 +562,7 @@ fn a_proof_that_runs_too_long_is_stopped_with_what_it_started() {
     std::fs::create_dir_all(&dir).unwrap();
     let leaked = proj.join("leaked");
     std::fs::write(format!("{dir}/test_1.sh"), format!("(sleep 3; echo leaked > {leaked}) &\nsleep 30\n")).unwrap();
-    assert_eq!(wf.run_proof(COMMAND, 1, "test_1.sh"), Ok((false, "it errors, running out of its 1 s".to_string())));
+    assert_eq!(wf.run_proof(COMMAND, 1, "test_1.sh"), Ok(ran(false, "it errors, running out of its 1 s")));
     std::thread::sleep(std::time::Duration::from_secs(4));
     assert!(!std::path::Path::new(&leaked).exists());
 }
@@ -541,7 +585,7 @@ fn a_proof_runs_from_a_copy_of_its_directory_in_the_checkout_which_goes_after_it
     let copies = format!("{}/{PROOF_COPIES_DIR}", proj.path());
     assert_eq!(
         wf.run_proof(COMMAND, 1, "test_1.sh"),
-        Ok((true, format!("it fails:\n{copies}/1/test_1.sh\nbeside the proof")))
+        Ok(ran(true, format!("it fails:\n{copies}/1/test_1.sh\nbeside the proof")))
     );
     assert!(!std::path::Path::new(&copies).exists());
     let mut listed: Vec<String> =
@@ -551,7 +595,7 @@ fn a_proof_runs_from_a_copy_of_its_directory_in_the_checkout_which_goes_after_it
 }
 
 #[test]
-fn a_proof_whose_file_or_directory_is_gone_did_not_run() {
+fn a_proof_whose_file_or_directory_is_gone_is_moved_and_not_run() {
     let proj = TempDir::new();
     let p = unrun(&proj);
     let wf = p.f.workflow(p.settings.clone());
@@ -561,9 +605,8 @@ fn a_proof_whose_file_or_directory_is_gone_did_not_run() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(format!("{dir}/test_2.sh"), "").unwrap();
     let did_not_run = || {
-        let (failed, said) = wf.run_proof("test -f {proofs} || exit 1", 1, "test_1.sh").unwrap();
-        assert!(!failed);
-        assert!(said.starts_with("it did not run: ") && said.contains("proofs-1/test_1.sh is gone"), "{said}");
+        let outcome = wf.run_proof("test -f {proofs} || exit 1", 1, "test_1.sh").unwrap();
+        assert_eq!(outcome, ProofOutcome { demonstrated: false, said: "it did not run: its file is gone".into(), moved: true });
         assert!(!std::path::Path::new(&format!("{}/{PROOF_COPIES_DIR}", proj.path())).exists());
     };
     did_not_run();
@@ -755,7 +798,7 @@ fn a_proof_runs_on_the_worktrees_code_and_the_commit_holds_no_copy_of_it() {
         std::fs::create_dir_all(format!("{copies}/1")).unwrap();
         std::fs::write(format!("{copies}/1/test_9_old.sh"), "").unwrap();
 
-        let (failed, said) = wf.run_proof(COMMAND, 1, "test_1_rate.sh").unwrap();
+        let ProofOutcome { demonstrated: failed, said, .. } = wf.run_proof(COMMAND, 1, "test_1_rate.sh").unwrap();
 
         assert!(failed, "{said}");
         let physical = std::fs::canonicalize(worktree).unwrap();
@@ -779,7 +822,7 @@ fn what_a_proof_writes_in_the_tree_is_undone_and_stays_out_of_the_commit() {
     in_a_worktree(|wf, run| {
         write_script(wf, ": > stray.txt; mkdir -p out && : > out/report.txt; echo RATE=proof > limiter.sh; exit 1\n");
 
-        assert_eq!(wf.run_proof(COMMAND, 1, "test_1_rate.sh"), Ok((true, "it fails".to_string())));
+        assert_eq!(wf.run_proof(COMMAND, 1, "test_1_rate.sh"), Ok(ran(true, "it fails")));
 
         assert_eq!(run.repo.host.git(run.path, &["status", "--porcelain"]).unwrap(), " M limiter.sh\n");
         assert_eq!(std::fs::read_to_string(format!("{}/limiter.sh", run.path)).unwrap(), "RATE=change\n");
@@ -792,7 +835,7 @@ fn what_a_proof_writes_in_the_tree_is_undone_and_stays_out_of_the_commit() {
 fn what_a_proof_that_errors_writes_is_undone() {
     in_a_worktree(|wf, run| {
         write_script(wf, ": > stray.txt; exit 2\n");
-        assert_eq!(wf.run_proof(COMMAND, 1, "test_1_rate.sh"), Ok((false, "it errors, with exit status 2".to_string())));
+        assert_eq!(wf.run_proof(COMMAND, 1, "test_1_rate.sh"), Ok(ran(false, "it errors, with exit status 2")));
         assert_eq!(run.repo.host.git(run.path, &["status", "--porcelain"]).unwrap(), " M limiter.sh\n");
     });
 }
@@ -817,7 +860,7 @@ fn a_proof_whose_writes_cannot_be_undone_did_not_run_cleanly() {
     in_a_worktree(|wf, run| {
         write_script(wf, "git init --quiet fixture; exit 1\n");
 
-        let (failed, said) = wf.run_proof(COMMAND, 1, "test_1_rate.sh").unwrap();
+        let ProofOutcome { demonstrated: failed, said, .. } = wf.run_proof(COMMAND, 1, "test_1_rate.sh").unwrap();
 
         assert!(!failed);
         assert!(said.starts_with("it did not run cleanly: ") && said.contains("fixture"), "{said}");
@@ -832,7 +875,7 @@ fn a_tree_that_cannot_be_snapshotted_is_left_to_the_proof() {
         run.repo.git(&["init", "--quiet", &format!("{}/fixture", run.path)]);
         write_script(wf, ": > stray.txt; exit 1\n");
 
-        assert_eq!(wf.run_proof(COMMAND, 1, "test_1_rate.sh"), Ok((true, "it fails".to_string())));
+        assert_eq!(wf.run_proof(COMMAND, 1, "test_1_rate.sh"), Ok(ran(true, "it fails")));
 
         assert!(std::path::Path::new(&format!("{}/stray.txt", run.path)).exists());
         assert!(run.told.lines().iter().any(|l| l.starts_with("cannot snapshot ")), "{:?}", run.told.lines());
@@ -846,7 +889,7 @@ fn what_a_proof_writes_in_a_repository_without_a_commit_is_undone() {
     std::fs::write(proj.join("mine.txt"), "mine\n").unwrap();
     in_place(&proj, |wf, told| {
         write_script(wf, "echo edited > mine.txt; : > stray.txt; exit 1\n");
-        assert_eq!(wf.run_proof(COMMAND, 1, "test_1_rate.sh"), Ok((true, "it fails".to_string())));
+        assert_eq!(wf.run_proof(COMMAND, 1, "test_1_rate.sh"), Ok(ran(true, "it fails")));
         assert_eq!(std::fs::read_to_string(proj.join("mine.txt")).unwrap(), "mine\n");
         assert!(!std::path::Path::new(&proj.join("stray.txt")).exists());
         assert_eq!(told.lines(), Vec::<String>::new());
@@ -858,7 +901,7 @@ fn a_proof_outside_git_runs_and_nothing_is_put_back() {
     let proj = TempDir::new();
     in_place(&proj, |wf, told| {
         write_script(wf, ": > stray.txt; exit 1\n");
-        assert_eq!(wf.run_proof(COMMAND, 1, "test_1_rate.sh"), Ok((true, "it fails".to_string())));
+        assert_eq!(wf.run_proof(COMMAND, 1, "test_1_rate.sh"), Ok(ran(true, "it fails")));
         assert!(std::path::Path::new(&proj.join("stray.txt")).exists());
         assert_eq!(told.lines(), Vec::<String>::new());
     });
