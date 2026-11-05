@@ -674,9 +674,9 @@ fn turns_once_recorded() {
         turn("review", "review-1.md", None, Some(4700), &[]),
         turn("build", "build-2.md", Some(4800), None, &[("round", Value::from(2)), ("agent", Value::from("codex"))]),
     ]);
-    let out = shown(&[show_state(&[("turns", turns)])]);
+    let out = shown(&[show_state(&[("turns", turns.clone())])]);
     assert!(out.contains(concat!(
-        "\nturns\n",
+        "\nturns, started in UTC\n",
         "    spec     0     claude  2026-10-03 04:00:00  1h 06m   spec.md\n",
         "    build    1     codex   2026-10-03 05:06:40  10m 00s  build-1.md\n",
         "    quality  1 q1  -       2026-10-03 05:16:40  50s      quality-1-1.md\n",
@@ -686,6 +686,11 @@ fn turns_once_recorded() {
     for saved in [show_state(&[]), show_state(&[("turns", json("[]"))])] {
         assert!(!shown(&[saved]).lines().any(|l| l.starts_with("turns")));
     }
+    // In the machine's zone, as a run id names its start (run-usability/04).
+    let cli = show_host(&[show_state(&[("turns", turns)])]);
+    cli.f.clock.set_zone(jiff::tz::TimeZone::fixed(jiff::tz::offset(1)));
+    let out = show(&cli, "a1b2c3").1;
+    assert!(out.contains("\nturns, started in UTC+01:00\n    spec     0     claude  2026-10-03 05:00:00  1h 06m   spec.md\n"), "{out}");
 }
 
 #[test]

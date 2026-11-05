@@ -17,7 +17,7 @@ fn every_recorded_run_is_summed_up_as_the_python_engine_does() {
         // The keys and values the Python engine wrote, its spacing aside.
         let recorded = expected("run_metrics").map(|text| serde_json::from_str::<Value>(&text).unwrap());
         assert_eq!(Some(run_metrics(&case.state, case.now)), recorded, "{place}");
-        let lines = Value::Array(turn_lines(&case.state.turns).into_iter().map(Value::from).collect());
+        let lines = Value::Array(turn_lines(&case.state.turns, &jiff::tz::TimeZone::UTC).into_iter().map(Value::from).collect());
         assert_eq!(Some(&lines), case.expected.get("turn_lines"), "{place}");
     }
 }
@@ -122,7 +122,7 @@ fn turns_with_unknown_starts_and_ends_and_quality_rounds() {
         t.insert("agent".into(), Value::Null);
         t.insert("quality_round".into(), Value::from(1));
     });
-    let lines = turn_lines(&[open, analysis.clone()]);
+    let lines = turn_lines(&[open, analysis.clone()], &jiff::tz::TimeZone::UTC);
     assert_eq!(lines, ["build    1     claude  ?                    ?       build-1.md", "quality  1 q1  -       2026-10-03 04:00:00  1m 05s  quality-1-1.md"]);
     let mut s = approved_run();
     s.turns = vec![analysis];

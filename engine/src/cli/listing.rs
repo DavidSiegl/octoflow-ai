@@ -330,7 +330,8 @@ pub fn show_run(world: &Connected, cwd: &str, run_ref: &str, target: &[String]) 
         .and_then(Value::as_array)
         .map(|turns| turns.iter().filter_map(|t| t.as_object().cloned()).collect())
         .unwrap_or_default();
-    print_section(world, "turns", turn_lines(&turns));
+    let zone = world.with.clocks.zone();
+    print_section(world, &format!("turns, started in {}", zone_name(&zone, world.with.clocks.wall())), turn_lines(&turns, &zone));
     print_section(world, "verdicts", verdict_lines(truthy("verdicts")));
     print_section(world, "files", host.run_files(&run_dir)?.into_iter().map(|f| f.path).collect());
     let round = saved.get("round").and_then(Value::as_i64).unwrap_or(0);
@@ -357,6 +358,16 @@ fn print_section(world: &Connected, title: &str, lines: Vec<String>) {
     for line in lines {
         world.say(&format!("    {line}"));
     }
+}
+
+/// zone as show names it: its IANA name, such as Europe/Vienna, or for a zone without one, its offset from UTC at
+/// wall (seconds since the epoch), such as UTC+01:00.
+fn zone_name(zone: &jiff::tz::TimeZone, wall: f64) -> String {
+    if let Some(name) = zone.iana_name() {
+        return name.to_string();
+    }
+    let at = jiff::Timestamp::from_second(wall as i64).unwrap_or(jiff::Timestamp::UNIX_EPOCH);
+    format!("UTC{}", at.to_zoned(zone.clone()).strftime("%:z"))
 }
 
 /// show's line per verdict a verdict step gave, of a saved state's verdicts (crate::state::StepVerdict), such as

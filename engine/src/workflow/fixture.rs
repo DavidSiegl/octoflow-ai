@@ -39,6 +39,10 @@ impl Clocks for FakeClock {
     fn wall(&self) -> f64 {
         self.now()
     }
+
+    fn zone(&self) -> jiff::tz::TimeZone {
+        FakeClock::zone(self)
+    }
 }
 
 /// The human as the tests see them: every notification and log line, in order.

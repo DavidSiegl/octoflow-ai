@@ -43,6 +43,11 @@ impl Clocks for SystemClocks {
         self.made.1 + self.made.0.elapsed().as_secs_f64()
     }
 
+    /// jiff's TimeZone::system: TZ, else /etc/localtime, else UTC; the zone new run ids are named in.
+    fn zone(&self) -> jiff::tz::TimeZone {
+        jiff::tz::TimeZone::system()
+    }
+
     fn wall(&self) -> f64 {
         match SystemTime::now().duration_since(UNIX_EPOCH) {
             Ok(since) => since.as_secs_f64(),

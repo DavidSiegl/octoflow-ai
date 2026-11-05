@@ -7,6 +7,7 @@ use crate::pipeline::Pipeline;
 use serde_json::Value;
 use crate::json::{Object, ValueExt};
 use crate::state::RunState;
+use jiff::tz::TimeZone;
 use jiff::Timestamp;
 use serde_json::json;
 
@@ -78,9 +79,10 @@ struct TurnCells {
 }
 
 impl TurnCells {
-    /// A turn record's values as the tables show them. A start or duration that is not known shows as ?: a file
-    /// written before turns were recorded, or a turn still open. A quality analysis runs in no harness.
-    fn of(t: &Object) -> TurnCells {
+    /// A turn record's values as the tables show them, its start in zone. A start or duration that is not known
+    /// shows as ?: a file written before turns were recorded, or a turn still open. A quality analysis runs in no
+    /// harness.
+    fn of(t: &Object, zone: &TimeZone) -> TurnCells {
         let truthy = |key: &str| t.get(key).filter(|v| v.is_set());
         let harness = truthy("agent");
         let round = match truthy("quality_round") {
@@ -93,10 +95,11 @@ impl TurnCells {
             (None, None) => "-".into(),
         };
         let start = match truthy("started_at") {
-            Some(at) => {
-                let at = cell(Some(at)).replace('T', " ");
-                at.strip_suffix("+00:00").unwrap_or(&at).to_string()
-            }
+            Some(at) => match cell(Some(at)).parse::<Timestamp>() {
+                Ok(at) => at.to_zoned(zone.clone()).strftime("%Y-%m-%d %H:%M:%S").to_string(),
+                // Not a time: shown as it was saved.
+                Err(_) => cell(Some(at)),
+            },
             None => "?".into(),
         };
         let duration = match t.get("seconds") {
@@ -122,7 +125,7 @@ pub fn turns_table(turns: &[Object]) -> String {
     let head = ["step", "role", "round", "harness", "model", "start (UTC)", "duration", "file"].map(String::from);
     let mut rows = vec![head.to_vec(), vec!["---".to_string(); head.len()]];
     for t in turns {
-        let mut c = TurnCells::of(t);
+        let mut c = TurnCells::of(t, &TimeZone::UTC);
         if t.get("human_paced").is_some_and(Value::is_set) {
             c.step.push_str(" (human-paced)");
         }
@@ -134,13 +137,13 @@ pub fn turns_table(turns: &[Object]) -> String {
         .join("\n")
 }
 
-/// The turns as show prints them, a line each, in columns of step, round, harness, start, duration and file, each as
-/// wide as its widest cell, in characters.
-pub fn turn_lines(turns: &[Object]) -> Vec<String> {
+/// The turns as show prints them, a line each, in columns of step, round, harness, start in zone, duration and file,
+/// each as wide as its widest cell, in characters.
+pub fn turn_lines(turns: &[Object], zone: &TimeZone) -> Vec<String> {
     let rows: Vec<[String; 6]> = turns
         .iter()
         .map(|t| {
-            let c = TurnCells::of(t);
+            let c = TurnCells::of(t, zone);
             [c.step, c.round, c.harness, c.start, c.duration, c.file]
         })
         .collect();
