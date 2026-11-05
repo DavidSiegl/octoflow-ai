@@ -626,12 +626,12 @@ pub trait Host {
     ///
     /// The rules come from base, a commit before the change: its .gitleaks.toml (else gitleaks' defaults), each file
     /// it extends with `[extend] path`, in turn, and its .gitleaksignore (else none), and nothing the change holds, so
-    /// that the change cannot allowlist itself. Every file git takes for text by its content is diffed as text, with
-    /// no textconv, whatever any .gitattributes says. A change git diffs as binary is left out on purpose, and nothing
-    /// catches a secret in it. git does so when either side of a file's change is binary to git: a NUL in its first
-    /// 8000 bytes, a size over the user's core.bigFileThreshold, or an attribute `binary` or `-diff` on the path in
-    /// $GIT_DIR/info/attributes or core.attributesFile, whatever the content. So a text file replacing a binary one
-    /// goes unread too. gitleaks skips such a change before any rule runs, path rules and its own `pkcs12-file` rule
+    /// that the change cannot allowlist itself. Every file git diffs as text is diffed with no textconv, whatever
+    /// any tree's .gitattributes says. A change git diffs as binary is left out on purpose, and nothing catches a
+    /// secret in it. git does so when either side of a file's change is binary to git: most often a NUL in its first
+    /// 8000 bytes or a size over core.bigFileThreshold, and also whatever the user's git configuration or attribute
+    /// files ($GIT_DIR/info/attributes, core.attributesFile) say makes a path binary, as `-diff` does. So a text
+    /// file replacing a binary one goes unread too. gitleaks skips such a change before any rule runs, path rules and its own `pkcs12-file` rule
     /// included, and the comment check never reads it, so a `.p12` keystore, or a key or `gitleaks:allow` comment in
     /// such a change, goes unreported (TODO.md, "The secret scan does not look inside a change git diffs as binary").
     /// gitleaks honours a `gitleaks:allow` comment silently, so each one an added line holds is a Leak of its own.
