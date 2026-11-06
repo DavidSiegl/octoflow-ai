@@ -88,7 +88,7 @@ is missing.
 - For `--quality-gate JOB`: a Jenkins quality job set up as in [quality gate](docs/quality-gate.md), its
   credentials in `~/.config/ai-agents-orchestrator/ci.env` or the environment, and a git checkout with an
   `origin`, also with `--no-pr`
-- For `--quality-gate local`, on the machine the project is on: `python3` 3.11 or later, curl, tar, sha256sum (or
+- For `--quality-gate local`, on the machine the project is on: `python3` 3.11 or later, curl, tar, ps, sha256sum (or
   shasum) and gitleaks, and the tools the project's `gate.toml` has the gate run, its test commands and linters, all
   on `PATH`; the release's Rust helper runs on Linux x86_64 alone
   ([the local gate](docs/quality-gate.md#the-local-gate))

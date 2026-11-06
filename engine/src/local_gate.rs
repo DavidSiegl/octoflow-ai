@@ -32,8 +32,8 @@ const PIN_PATH: &str = "ci/gate.pin";
 const PYTHON_MIN: (u32, u32) = (3, 11);
 
 /// What the preflight needs besides python3: the job's fetch on PATH (curl, tar, and sha256sum or macOS's shasum),
-/// and a cache it can write.
-const PREFLIGHT: &str = r#"for c in curl tar; do command -v "$c" >/dev/null || { echo "$c is not on PATH" >&2; exit 1; }; done
+/// ps for STOP, and a cache it can write.
+const PREFLIGHT: &str = r#"for c in curl tar ps; do command -v "$c" >/dev/null || { echo "$c is not on PATH" >&2; exit 1; }; done
 command -v sha256sum >/dev/null || command -v shasum >/dev/null || { echo "neither sha256sum nor shasum is on PATH" >&2; exit 1; }
 d=${XDG_CACHE_HOME:-$HOME/.cache}/octoflow/gate
 mkdir -p -- "$d" && [ -w "$d" ] || { echo "cannot write the cache $d" >&2; exit 1; }"#;
@@ -74,10 +74,12 @@ cd -- "$out/tree" || setup_failed "cannot enter $out/tree"
 "$@" 2> "$out/gate.err"
 ended "$?""#;
 
-/// Stops the process group $1 as a Ctrl-C would, SIGINT first so the gate kills its tests' groups itself, then
-/// SIGKILL to what is left after 5 s. A group is named `-"$g"` after the signal, without `--`, which dash's kill
-/// refuses.
-const STOP: &str = r#"g=$1
+/// Stops the process group $1, the job of the round's directory $2, as a Ctrl-C would, SIGINT first so the gate kills
+/// its tests' groups itself, then SIGKILL to what is left after 5 s. It signals nothing unless the group's leader is
+/// still that job, its command line naming $2: a job file a crash left behind may name a pid the system has since
+/// given to another session. A group is named `-"$g"` after the signal, without `--`, which dash's kill refuses.
+const STOP: &str = r#"g=$1 out=$2
+ps -ww -o args= -p "$g" 2>/dev/null | grep -qF -- "$out" || exit 0
 kill -INT -"$g" 2>/dev/null || exit 0
 for _ in 1 2 3 4 5; do kill -0 -"$g" 2>/dev/null || exit 0; sleep 1; done
 kill -KILL -"$g" 2>/dev/null; exit 0"#;
@@ -99,7 +101,9 @@ pub enum LocalVerdict {
     CouldNotJudge(String),
 }
 
-/// A judgement by the local gate, running on the host as a job of its own (start).
+/// A judgement by the local gate, running on the host as a job of its own (start). Its round's directory is its own
+/// while the directory's job file names its group: a later start for the same round, as by an engine that took the
+/// run over, replaces the job, and this one then neither stops nor reads nor removes anything there.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Judging {
     /// The repository whose worktree the snapshot's checkout is.
@@ -113,7 +117,7 @@ pub struct Judging {
 }
 
 /// Fails, before a run's interview, if host could not run the local gate: python3 does not start from PATH or is
-/// older than 3.11; curl, tar, or both sha256sum and shasum, are not on PATH; or the gate cache cannot be made or
+/// older than 3.11; curl, tar, ps, or both sha256sum and shasum, are not on PATH; or the gate cache cannot be made or
 /// written to.
 pub fn preflight(host: &dyn Host) -> Result<(), OrchestratorError> {
     let (major, minor) = PYTHON_MIN;
@@ -139,16 +143,17 @@ pub fn preflight(host: &dyn Host) -> Result<(), OrchestratorError> {
     Ok(())
 }
 
-/// Start the gate judging snapshot, a commit of cwd's repository whose only parent is base, and return the job,
-/// which runs on, detached from the engine, until it ends or is stopped. Its files go in out_dir, emptied first, a job
-/// an earlier start left there stopped: judge/ (base's pyproject.toml, an empty one for a base without, and base's
-/// gate.toml when it has one), job.log, gate.err and exit, and, once the gate has judged, quality.md and
-/// quality.json; while it runs, also job (its process group), tree/ (a checkout of snapshot, a worktree of cwd's
-/// repository) and release/ (the release, unpacked), which go when it ends or is stopped. The release and the settings are
-/// base's (the module's comment). The gate runs the project's tests itself, with gate.toml's [[test]] commands, as
-/// the user running the engine, with no sandbox.
+/// Start the gate judging snapshot, a commit of cwd's repository whose only parent is base, and return the job, which
+/// runs on, detached from the engine, until it ends or is stopped. Its files go in out_dir, emptied first, a job an
+/// earlier start left there stopped while its process is still that job (STOP): judge/ (base's pyproject.toml, an empty
+/// one for a base without, and base's gate.toml when it has one), job.log, gate.err and exit, and, once the gate has
+/// judged, quality.md and quality.json; while it runs, also job (its process group), tree/ (a checkout of snapshot, a
+/// worktree of cwd's repository) and release/ (the release, unpacked), which go when it ends or is stopped. The release
+/// and the settings are base's (the module's comment). The gate runs the project's tests itself, with gate.toml's
+/// [[test]] commands, as the user running the engine, with no sandbox.
 ///
-/// Errors: base's ci/gate.pin has no `<version> <sha256>` line; git, python3 or a file fails.
+/// Errors: base's ci/gate.pin has no `<version> <sha256>` line; git, python3 or a file fails, as git does when
+/// out_dir/tree was deleted while still registered as a worktree, which only `git worktree remove` or `prune` clears.
 pub fn start(host: &dyn Host, cwd: &str, snapshot: &str, base: &str, out_dir: &str) -> Result<Judging, OrchestratorError> {
     let text = |path: &str| -> Result<Option<String>, OrchestratorError> {
         Ok(host.file_at(cwd, base, path)?.map(|bytes| String::from_utf8_lossy(&bytes).into_owned()))
@@ -159,10 +164,10 @@ pub fn start(host: &dyn Host, cwd: &str, snapshot: &str, base: &str, out_dir: &s
     };
     // What a judgement cut short with the engine, as by a crash, left: its job, its checkout, its files.
     if let Some(group) = host.read(&format!("{out_dir}/job"))? {
-        stop_group(host, group.trim())?;
+        stop_group(host, group.trim(), out_dir)?;
     }
+    remove_checkout(host, cwd, out_dir)?;
     host.check(&["rm", "-rf", "--", out_dir], None, DEFAULT_TIMEOUT)?;
-    host.prune_worktrees(cwd)?;
     let judge = format!("{out_dir}/judge");
     host.write(&format!("{judge}/pyproject.toml"), &text("pyproject.toml")?.unwrap_or_default(), false)?;
     if let Some(settings) = text("gate.toml")? {
@@ -180,12 +185,18 @@ pub fn start(host: &dyn Host, cwd: &str, snapshot: &str, base: &str, out_dir: &s
 impl Judging {
     /// What the gate came to; None while it runs. Once it has ended, what only a running job needs is removed.
     ///
-    /// Errors: the job could not fetch or unpack the release, as for a download that fails or does not match the
-    /// pin's sha256; it ended without saying how, as when killed; the gate exits other than 0, 1 or 2, or 2 without
-    /// an error of its own, as python3 does for a gate.py it cannot open and argparse for arguments the release does
-    /// not take, or exits 0 or 1 without both reports; git or a file fails.
+    /// Errors: the round's directory is no longer this judgement's (Judging); the job could not fetch or unpack the
+    /// release, as for a download that fails or does not match the pin's sha256; it ended without saying how, as when
+    /// killed; the gate exits other than 0, 1 or 2, or 2 without an error of its own, as python3 does for a gate.py it
+    /// cannot open and argparse for arguments the release does not take, or exits 0 or 1 without both reports; git or
+    /// a file fails.
     pub fn verdict(&self, host: &dyn Host) -> Result<Option<LocalVerdict>, OrchestratorError> {
         let out = &self.out_dir;
+        if !self.owned(host)? {
+            return Err(OrchestratorError(format!(
+                "the local gate's job in {out} is no longer this engine's: a later start replaced it"
+            )));
+        }
         let ended = match host.read(&format!("{out}/exit"))? {
             Some(ended) => ended,
             None if self.running(host)? => return Ok(None),
@@ -219,11 +230,21 @@ impl Judging {
         }
     }
 
-    /// Stop the job, its tests included, as a Ctrl-C would, and remove what only a running job needs. Errors: a
-    /// command or git fails.
+    /// Stop the job, its tests included, as a Ctrl-C would, and remove what only a running job needs; nothing once
+    /// the round's directory is no longer this judgement's (Judging), or the job has ended and been asked after.
+    /// Errors: a command or git fails.
     pub fn stop(&self, host: &dyn Host) -> Result<(), OrchestratorError> {
-        stop_group(host, &self.group)?;
+        if !self.owned(host)? {
+            return Ok(());
+        }
+        stop_group(host, &self.group, &self.out_dir)?;
         self.clean_up(host)
+    }
+
+    /// Whether the round's directory is still this judgement's (Judging). False too once verdict has seen the job
+    /// end, which removes the job file.
+    fn owned(&self, host: &dyn Host) -> Result<bool, OrchestratorError> {
+        Ok(host.read(&format!("{}/job", self.out_dir))?.is_some_and(|group| group.trim() == self.group))
     }
 
     /// Whether any process of the job's group is left.
@@ -236,10 +257,7 @@ impl Judging {
     /// download, and the job's process group, which is no longer its.
     fn clean_up(&self, host: &dyn Host) -> Result<(), OrchestratorError> {
         let out = &self.out_dir;
-        let tree = format!("{out}/tree");
-        if host.is_worktree(&self.cwd, &tree)? {
-            host.remove_worktree(&self.cwd, &tree, true)?;
-        }
+        remove_checkout(host, &self.cwd, out)?;
         let (release, download, job) = (format!("{out}/release"), format!("{out}/download.tar.gz"), format!("{out}/job"));
         host.check(&["rm", "-rf", "--", &release, &download, &job], None, DEFAULT_TIMEOUT).map(drop)
     }
@@ -250,9 +268,19 @@ fn could_not_judge(said: &str) -> bool {
     said.lines().any(|line| line.starts_with("error: ")) && !said.lines().any(|line| line.starts_with("usage: "))
 }
 
-/// Stop process group, as STOP does.
-fn stop_group(host: &dyn Host, group: &str) -> Result<(), OrchestratorError> {
-    host.check(&["sh", "-c", STOP, "_", group], None, DEFAULT_TIMEOUT).map(drop)
+/// Stop process group, the job of out_dir, as STOP does.
+fn stop_group(host: &dyn Host, group: &str, out_dir: &str) -> Result<(), OrchestratorError> {
+    host.check(&["sh", "-c", STOP, "_", group, out_dir], None, DEFAULT_TIMEOUT).map(drop)
+}
+
+/// Remove out_dir/tree, the snapshot's checkout, as a worktree of cwd's repository, when it is one: git alone, not
+/// rm, so the repository forgets it and no other worktree's registration is touched.
+fn remove_checkout(host: &dyn Host, cwd: &str, out_dir: &str) -> Result<(), OrchestratorError> {
+    let tree = format!("{out_dir}/tree");
+    if host.is_worktree(cwd, &tree)? {
+        host.remove_worktree(cwd, &tree, true)?;
+    }
+    Ok(())
 }
 
 /// The release version and sha256 a pin names, read as ci/fetch-gate.sh reads one: the first line not starting with

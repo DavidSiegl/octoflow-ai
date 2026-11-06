@@ -80,7 +80,7 @@ fn plays(f: &Fixture, runs: Vec<GateRun>) -> Rc<RefCell<GateCalls>> {
                 exits(0, "4242\n")
             }
             ["sh", "-c", script, "_", "4242"] if script.starts_with("kill -0") => exits(i32::from(!*hanging.borrow()), ""),
-            ["sh", "-c", _, "_", "4242"] => {
+            ["sh", "-c", _, "_", "4242", _out] => {
                 assert!(!interrupt.is_raised(), "a stop started with a Ctrl-C pending, which ProcessHost refuses");
                 recorded.borrow_mut().stops += 1;
                 *hanging.borrow_mut() = false;

@@ -87,16 +87,17 @@ Each round, the orchestrator:
    match the pin.
 
 What it needs on that machine, which the preflight checks before the interview: `python3` 3.11 or later on `PATH`,
-curl, tar, sha256sum (or macOS's shasum), a writable cache, and gitleaks; and, unchecked, whatever the project's
+curl, tar, ps, sha256sum (or macOS's shasum), a writable cache, and gitleaks; and, unchecked, whatever the project's
 `gate.toml` has the gate run: its `[[test]]` commands and the linters its files call for, such as pymarkdown,
 shellcheck or clippy, all from `PATH`. A linter the project runs through uv, as this repository runs pymarkdown, is
 there when the orchestrator itself runs under `uv run`.
 
 The gate runs the project's tests as you, with no sandbox: the same trust as running them by hand, and more than a
 Jenkins agent's container gives them. A local round keeps nothing in `state.json`'s `ci`: a resume in the middle of
-one stops the job the interrupted round left and runs the round again, and turning the gate off deletes no branch,
-as there is none. A run saved by a release before 0.63.0 with a build of a Jenkins job named `local` in flight is
-not resumed, as this release would take it for the local gate.
+one stops the job the interrupted round left, if its process is still that job, and runs the round again. An
+orchestrator that `resume --force` took the run over from leaves the job to the new one. Turning the gate off
+deletes no branch, as there is none. A run saved by a release before 0.63.0 with a build of a Jenkins job named
+`local` in flight is not resumed, as this release would take it for the local gate.
 
 ## The report as a contract
 

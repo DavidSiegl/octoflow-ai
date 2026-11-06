@@ -345,6 +345,58 @@ fn a_start_stops_the_job_an_earlier_one_left_and_judges_afresh() {
 }
 
 #[test]
+fn a_judgement_whose_round_a_later_start_took_over_leaves_the_new_job_alone() {
+    let bench = Bench::pinned();
+    put(&bench.dir.join("hang"), "");
+    let replaced = bench.start().unwrap();
+    bench.until_the_gate_runs();
+    let taking_over = bench.start().unwrap();
+
+    let e = replaced.verdict(&bench.repo.host).unwrap_err().to_string();
+    replaced.stop(&bench.repo.host).unwrap();
+
+    assert!(e.contains("is no longer this engine's"), "{e}");
+    assert!(bench.running(&taking_over));
+    assert!(std::path::Path::new(&format!("{}/tree", bench.out())).exists());
+    taking_over.stop(&bench.repo.host).unwrap();
+}
+
+#[test]
+fn a_start_signals_no_group_the_job_a_crash_left_no_longer_is() {
+    use std::os::unix::process::CommandExt;
+    let bench = Bench::pinned();
+    // The crashed job's pid, since given to a session leader of something else.
+    let mut other = std::process::Command::new("sleep").arg("30").process_group(0).spawn().expect("sleep");
+    put(&format!("{}/job", bench.out()), &other.id().to_string());
+
+    let verdict = bench.judge();
+    let alive = other.try_wait().unwrap().is_none();
+    other.kill().unwrap();
+    other.wait().unwrap();
+
+    assert!(matches!(verdict.unwrap(), LocalVerdict::Judged { .. }));
+    assert!(alive, "the other process group was signalled");
+}
+
+#[test]
+fn a_judgement_leaves_the_repositorys_other_worktrees_registered() {
+    let bench = Bench::pinned();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git").arg("-C").arg(&bench.repo.path).args(args).output().expect("git");
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8(out.stdout).unwrap()
+    };
+    // A worktree on a disk that is not mounted now, which only a prune would forget.
+    let elsewhere = bench.dir.join("elsewhere");
+    git(&["worktree", "add", "--detach", &elsewhere, "HEAD"]);
+    std::fs::rename(&elsewhere, bench.dir.join("unmounted")).unwrap();
+
+    bench.judge().unwrap();
+
+    assert!(git(&["worktree", "list", "--porcelain"]).contains("/elsewhere\n"));
+}
+
+#[test]
 fn the_preflight_needs_python3_3_11_the_fetchs_tools_and_a_writable_cache() {
     let bench = Bench::pinned();
     preflight(&bench.repo.host).unwrap();
