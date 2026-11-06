@@ -2,7 +2,6 @@
 
 <p align="center">
   <a href="https://github.com/DavidSiegl/octoflow-ai/releases/latest"><img src="https://img.shields.io/github/v/release/DavidSiegl/octoflow-ai" alt="Latest release"></a>
-  <a href="pyproject.toml"><img src="https://img.shields.io/python/required-version-toml?tomlFilePath=https://raw.githubusercontent.com/DavidSiegl/octoflow-ai/main/pyproject.toml" alt="Python version"></a>
   <a href="https://github.com/DavidSiegl/octoflow-ai/actions/workflows/macos-binary.yml"><img src="https://img.shields.io/github/actions/workflow/status/DavidSiegl/octoflow-ai/macos-binary.yml?label=macOS%20binary" alt="macOS binary build"></a>
   <a href="https://github.com/DavidSiegl/octoflow-ai/commits/main"><img src="https://img.shields.io/github/last-commit/DavidSiegl/octoflow-ai" alt="Last commit"></a>
   <a href="https://ko-fi.com/davidsiegl"><img src="https://img.shields.io/badge/Ko--fi-support%20me-FF5E5B?logo=kofi&logoColor=white" alt="Support me on Ko-fi"></a>
