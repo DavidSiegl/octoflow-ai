@@ -80,7 +80,7 @@ is missing.
   `.git/info/attributes` or your `core.attributesFile` makes the file binary, as `-diff` does (the repository's own
   `.gitattributes` do not count). So a text file replacing a binary one is not scanned either
 - Nothing for the orchestrator itself, a single [binary](#install); to build it from a checkout, Rust by
-  `rust-toolchain.toml`; [uv](https://github.com/astral-sh/uv) and Python 3.13+ only for the tests and
+  `rust-toolchain.toml`; [uv](https://github.com/astral-sh/uv), with the Python it brings, only for
   [running the gate by hand](docs/quality-gate.md#the-gate)
 - For `--machine`: the machine saved in herdr and non-interactive SSH to it, which the orchestrator's
   commands share one connection to (OpenSSH's `ControlMaster`); see

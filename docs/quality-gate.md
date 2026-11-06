@@ -22,9 +22,9 @@ What this repository gives it:
 - **`ci/gate.pin`**, the release that judges this repository's changes: one line, its version and the sha256 of its
   tarball. `ci/fetch-gate.sh` downloads that release from GitHub, checks it against the sha256 and unpacks it;
   the Jenkinsfile's Gate stage runs what it unpacked ([what the Gate stage judges](#what-the-gate-stage-judges)).
-- **The rules**: `pyproject.toml`'s ruff, mypy and pymarkdown tables, and the top-level `Cargo.toml`'s lints for
-  clippy. The only Python is the tests under `tests/`, so mypy is given `tests` to check and there is no Python to
-  measure the coverage of or mutation-test.
+- **The rules**: `pyproject.toml`'s pymarkdown table, and the top-level `Cargo.toml`'s lints for clippy. No Python
+  file is tracked, so the gate runs neither ruff nor mypy, and has no Python to measure the coverage of or
+  mutation-test; `pyproject.toml` and `uv.lock` hold only the gate's toolchain.
 - **`gate.toml`**, the gate's settings: the files whose edits a quality build judges without (`[build-config]`), the
   commands that run the tests outside Jenkins (`[[test]]`) and the time budgets.
 
@@ -89,8 +89,7 @@ and the Reviewer to read; the orchestrator passes it on as it is.
 
 ## Jenkins setup
 
-One `Jenkinsfile` serves two jobs. Every build installs, runs the Python tests and the Rust tests with line coverage
-of the Rust, checks the desktop app's frontend, runs the gate and archives `quality.md`; a pull request or
+One `Jenkinsfile` serves two jobs. Every build installs, runs the Rust tests with line coverage of the Rust, checks the desktop app's frontend, runs the gate and archives `quality.md`; a pull request or
 `main` build then builds the Linux binary and desktop app, which a quality build skips (the `Jenkinsfile`'s Package
 stage says why), and a build of `main` that gets that far also releases. A build of `main` whose tree a pull request
 build already judged skips the tests, the desktop app's checks and the gate (see [A build of main judged at its pull
@@ -106,7 +105,7 @@ request](#a-build-of-main-judged-at-its-pull-request)).
   does not enforce that - a pushed branch's `Jenkinsfile` can ask for any label - so the restriction sits on
   the nodes, with the Job Restrictions plugin.
 - **`uv`, `git`, `shellcheck`, `actionlint` and clippy on the agent**: the Install stage runs `uv sync --frozen`,
-  and `uv` brings the Python of `.python-version`; clippy and llvm-tools (which cargo-llvm-cov reads its coverage
+  and `uv` brings the Python of `.python-version`, which the gate runs on; clippy and llvm-tools (which cargo-llvm-cov reads its coverage
   data with) are rustup components of the Rust below, which the agent image must add: its rustup home is root's, so
   a build cannot, and the Install stage fails naming a missing one. The gate fails a build that lacks a linter, and
   the tests that run the real clippy fail without it.
@@ -219,7 +218,7 @@ with this commit's `Jenkinsfile`, passed.
 ### What each kind of build reports
 
 The Test stage does not stop at a failing test, so the gate reports failing tests together with the findings; it
-stops only when pytest itself could not run. The gate's exit status then decides:
+stops only when the tests could not be built or run. The gate's exit status then decides:
 
 - **A quality build** ends UNSTABLE on `GATE: ERROR`, SUCCESS on `GATE: OK`. FAILURE means the change never got
   as far as the gate, and its quality file is `GATE: BUILD_FAILED`.
@@ -229,11 +228,11 @@ stops only when pytest itself could not run. The gate's exit status then decides
 The multibranch job mails a failed build of `main` or a pull request, with the log attached, and the first build
 that passes after one. The quality job mails nothing: its result goes to the orchestrator run that asked for it.
 
-A build of `main` that passes then releases the version in `pyproject.toml`: if GitHub has no release
+A build of `main` that passes then releases the version in `engine/Cargo.toml` (`ci/release-version.sh`): if GitHub has no release
 `v<version>` yet, `gh release create` makes one, with the tag at the commit built, notes generated from the pull
 requests merged since the last release, after the words of `docs/releases/v<version>.md` where there is one, and
 the Linux binary and desktop app with their `.sha256` attached. To release, raise
-`version` in the pull request; a merge that leaves it alone releases nothing. A release that already exists is
+that `version` in the pull request; a merge that leaves it alone releases nothing. A release that already exists is
 skipped whole, so its files are never replaced.
 
 ## Credentials and permissions

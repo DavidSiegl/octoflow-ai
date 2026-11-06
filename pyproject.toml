@@ -1,59 +1,16 @@
-[tool.pytest.ini_options]
-pythonpath = ["."]
-testpaths = ["tests"]
-# Leaves out the contract tests, as their marker says (tests/conftest.py).
-addopts = ["-m", "not contract"]
-
-[project]
-name = "octoflow"
-version = "0.62.1"
-description = "Octoflow AI: coding agents in relay, spec to build to review, each role judged by another, in herdr"
-readme = "README.md"
-# Only the tests under tests/ and the dev tools are Python: the engine is Rust's (engine/), and the quality gate is
-# the octoflow-gate release ci/gate.pin names.
-requires-python = ">=3.13"
-license = "MIT OR Apache-2.0"
-license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
-dependencies = []
+# Not a Python project: octoflow has no Python of its own. This file and uv.lock hold the quality gate's toolchain,
+# with .python-version: the Python that runs the gate, the octoflow-gate release ci/gate.pin names, and the Markdown
+# linter it runs, pymarkdown; and pymarkdown's rules. They go when the gate no longer needs Python (octoflow-gate's
+# ticket gate-standalone/18). The release version is engine/Cargo.toml's (ci/release-version.sh).
 
 [dependency-groups]
 dev = [
-    "mypy>=2.4.0",
     "pymarkdownlnt>=0.9.41",
-    "pytest>=9.0.3",
-    "pytest-randomly>=5.0.0",
-    "ruff>=0.17.2",
 ]
 
-# The rules the quality gate, the octoflow-gate release ci/gate.pin names, judges a change by. In a quality build the
-# gate reads them from main's copy of this file (--config), so a change cannot loosen the rules it is judged by. Only
-# findings on lines a change adds count, so the findings already on main do not block.
-
-[tool.ruff.lint]
-# The defaults, plus bugbear, simplifications, pyupgrade, bandit's security checks, complexity and pylint's errors
-# and warnings, and W505 for comments and docstrings. No E501: code wraps at 120 by eye, since breaking a long
-# expression can read worse than leaving it; a line of prose never does.
-# Then the coding rules the agents are given that a linter can apply: a docstring on every public module, class,
-# method and function, presence only; the tests are exempt (below), so they bind only Python added outside tests/. Not
-# D105 or D107: a class's docstring documents its magic methods and __init__. No blind except Exception (BLE001) is
-# in ruff's defaults, which extend-select keeps; a select would drop it.
-extend-select = ["B", "SIM", "UP", "S", "C90", "PLE", "PLW", "W505", "D100", "D101", "D102", "D103", "D104", "D106"]
-
-[tool.ruff.lint.pycodestyle]
-max-doc-length = 120
-
-[tool.ruff.lint.mccabe]
-max-complexity = 15
-
-[tool.ruff.lint.per-file-ignores]
-# assert is how pytest checks; the tokens and /tmp paths are fakes; unused unpacked fixtures, dict() calls, class-level
-# fake data and the size of the fake servers are how the tests read best; a test documents itself by its name.
-"tests/**" = ["S101", "S105", "S106", "S108", "RUF059", "RUF012", "C408", "C901", "D1"]
-
-[tool.mypy]
-# The tests are all the Python there is. They are untyped by design, so mypy checks little more than that they parse
-# and import; the gate needs a target here to run it on (octoflow-gate's docs/quality-gate.md).
-files = ["tests"]
+# The rules the quality gate judges a change by. In a quality build the gate reads them from main's copy of this file
+# (--config), so a change cannot loosen the rules it is judged by. Only findings on lines a change adds count, so the
+# findings already on main do not block.
 
 [tool.pymarkdown]
 # The docs wrap at 120, by eye. README.md opens with its logo in HTML, which also keeps a heading off its first line.

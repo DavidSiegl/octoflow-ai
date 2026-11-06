@@ -93,6 +93,8 @@ pipeline {
 
         stage('Install') {
             steps {
+                // The Gate stage's Python and its Markdown linter, pyproject.toml's dev group: octoflow has no Python
+                // of its own.
                 sh 'uv sync --frozen'
                 // The Test stage's TestClippy and the Gate stage's gate run the real clippy, and the Test stage's
                 // cargo-llvm-cov reads its coverage data with llvm-tools' llvm-profdata and llvm-cov, which must be the
@@ -114,9 +116,7 @@ pipeline {
                 sh 'ci/install-tools.sh "$WORKSPACE/.tools/bin"'
                 script {
                     // The version a release on main is tagged with.
-                    env.PROJECT_VERSION = sh(returnStdout: true, script: '''
-                        uv run --frozen python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])'
-                    ''').trim()
+                    env.PROJECT_VERSION = sh(returnStdout: true, script: 'ci/release-version.sh').trim()
                 }
             }
         }
@@ -147,8 +147,7 @@ pipeline {
                     mkdir -p "$TMPDIR"
                 '''
                 // A failing test does not stop the build here: the Gate stage judges it with everything else, so a
-                // quality build's report lists failing tests and findings together. Any other exit status means
-                // pytest itself could not run.
+                // quality build's report lists failing tests and findings together.
                 //
                 // The Rust tests of every member of the top-level Cargo workspace (Cargo.toml), the engine's, its e2e
                 // scenarios' and docs check's, the desktop shell's and xtask's (which build the eval tasks' toy crates,
@@ -166,12 +165,10 @@ pipeline {
                 // build no engine of their own; they pass it this run's LLVM_PROFILE_FILE.
                 //
                 // A quality build (GIT_REF set) leaves the e2e scenarios out, by a nextest filter on their test binary,
-                // e2e, so that the docs check beside them still runs, when its change,
-                // against HEAD^, the run's base, touches nothing they depend on: the engine and the e2e package under
-                // engine/, the Cargo workspace it builds in, the example workflows they run, and ci/, which pins the
-                // gitleaks they run; and tests/conftest.py and the Python environment, which the Python harness ran
-                // them under: kept from its list (octoflow-without-python ticket 02), at the cost of a quality build
-                // that runs them when only those change. Their Python forerunner took quality build #59 past the
+                // e2e, so that the docs check beside them still runs, when its change, against HEAD^, the run's base,
+                // touches nothing they depend on: the engine and the e2e package under engine/, the Cargo workspace it
+                // builds in, the example workflows they run, and ci/, which pins the gitleaks they run. Their Python
+                // forerunner took quality build #59 past the
                 // orchestrator's QUALITY_TIMEOUT (1299 s of 1200). A git diff that fails counts as a change, so they
                 // run. Pull request builds always run them.
                 sh '''
@@ -179,8 +176,7 @@ pipeline {
                     rm -f "$junit"
                     set --
                     if [ -n "${GIT_REF:-}" ] && git diff --quiet HEAD^ HEAD -- engine Cargo.toml Cargo.lock \
-                            rust-toolchain.toml tests/conftest.py examples pyproject.toml \
-                            uv.lock .python-version ci; then
+                            rust-toolchain.toml examples ci; then
                         set -- -E 'not (package(octoflow-e2e) and binary(e2e))'
                     fi
                     E2E_ENGINE="$WORKSPACE/target/llvm-cov-target/debug/orchestrator" \\
@@ -192,17 +188,10 @@ pipeline {
                         exit 1
                     fi
                 '''
-                // The Python tests, which test the scripts under ci/; with no Python outside tests/, there is no
-                // coverage to measure.
-                sh '''
-                    status=0
-                    uv run pytest --junitxml=test-results.xml || status=$?
-                    [ "$status" -le 1 ] || exit "$status"
-                '''
             }
             post {
                 always {
-                    junit 'test-results.xml, target/nextest/ci/junit.xml'
+                    junit 'target/nextest/ci/junit.xml'
                 }
             }
         }
@@ -231,7 +220,7 @@ pipeline {
             }
         }
 
-        // The quality gate (docs/quality-gate.md): ruff, mypy, pymarkdown, shellcheck, actionlint and clippy, the tests
+        // The quality gate (docs/quality-gate.md): pymarkdown, shellcheck, actionlint and clippy, the tests
         // and coverage of new code, judged on the lines the change adds. The judge is the tree whose ci/gate.pin,
         // pyproject.toml and gate.toml decide how the change is judged: a quality build's is the main commit Checkout
         // named, so a change cannot loosen how it is itself judged, but for clippy's rules, which are the tree's own
@@ -288,7 +277,7 @@ pipeline {
                             # The Test stage ran the tests; their reports replace gate.toml's [[test]] commands.
                             uv run --frozen python "$release/gate.py" --base "$GATE_BASE" \\
                                 --config "$judge/pyproject.toml" \\
-                                --tests target/nextest/ci/junit.xml --tests test-results.xml \\
+                                --tests target/nextest/ci/junit.xml \\
                                 --coverage coverage-rust.xml \\
                                 --rust-syntax "$release/gate-rust-linux-x86_64" --out quality.md
                         ''')
@@ -335,7 +324,7 @@ pipeline {
             }
         }
 
-        // A merge into main that raises the version in pyproject.toml releases it; any other merge finds that
+        // A merge into main that raises the version (ci/release-version.sh) releases it; any other merge finds that
         // release already there. gh creates the tag v<version> on GitHub at the commit built, so Jenkins needs
         // no git push credentials.
         stage('Release') {

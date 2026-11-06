@@ -3,9 +3,9 @@
 # this file, beside main's pyproject.toml; any other build by its own (the Jenkinsfile's Gate stage). The release
 # ci/gate.pin names must read it: it refuses a key it does not know.
 #
-# Its tests are where the defaults look: Python's under tests/, Rust's under engine/tests/, in tests.rs files and in
-# #[cfg(test)] modules, its golden files under tests/golden/. There is no Python outside tests/, so the gate has no
-# Python to measure the coverage of or mutation-test, and pytest writes no coverage report.
+# Its tests are where the defaults look: Rust's under engine/tests/, in tests.rs files and in #[cfg(test)] modules,
+# its golden files under tests/golden/. No Python file is tracked, so the gate runs neither ruff nor mypy, and has no
+# Python to measure the coverage of or mutation-test; the Python left is the gate's own toolchain (pyproject.toml).
 
 [build-config]
 Jenkinsfile = "The quality job reads it from `main`, so this analysis ran without the edit."
@@ -17,11 +17,6 @@ Jenkinsfile = "The quality job reads it from `main`, so this analysis ran withou
 # --coverage, which replace these. Run from here they lack the Test stage's environment: without E2E_ENGINE the e2e
 # scenarios cover none of the engine, so engine code only they reach counts as uncovered (ticket gate-standalone/09
 # settles this).
-[[test]]
-name = "pytest"
-command = ["uv", "run", "pytest", "--junitxml=test-results.xml"]
-junit = ["test-results.xml"]
-
 [[test]]
 name = "cargo-nextest"
 command = ["cargo", "llvm-cov", "nextest", "--locked", "--workspace", "--ignore-run-fail", "--profile", "ci",

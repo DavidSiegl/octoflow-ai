@@ -85,14 +85,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
-- **A quality build of a snapshot based on gate-standalone/10 before it merges fails its Test stage.** Raised by
-  cross-review 162 (F2): "A quality build loads `main`'s Jenkinsfile, and main's Test stage runs
-  `uv run pytest --cov=gate --cov-branch --cov-context=test ...`. ... Its `uv sync --frozen` installs no pytest-cov,
-  so pytest exits 4 (unrecognized arguments), ... and the round ends `GATE: BUILD_FAILED`. Main's
-  `[tool.mypy] files = ["gate.py"]` would also fail on that tree." Affects only a run whose base holds the branch's
-  commits while main does not; none is started. Closes by itself when gate-standalone/10 merges: delete this entry
-  then.
-
 - **A stuck loop can compare a round read from `quality.json` with one read from `quality.md`.** Raised by
   cross-review 160 (F3): "A round judged from quality.json records every failing finding's fingerprint; one judged
   from quality.md (gate_failures) records at most QUALITY_FINDINGS_LIMIT." A round of a build that has
@@ -516,7 +508,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `mem_limit: 3g` (Homelab `jenkins/agentbox0.yaml`), which this repo cannot change. Since `ci/cargo-lock.sh`, two of
   this repository's builds compile Rust at once only when a quality build starts its `cargo llvm-cov nextest` or
   `cargo check` beside another build's cargo step, or when the Gate stage's clippy, outside the lock, checks the desktop
-  shell's own crate, the one crate the UI stage's `cargo check` leaves it; but everything else they run (pytest,
+  shell's own crate, the one crate the UI stage's `cargo check` leaves it; but everything else they run (the gate's
   cargo-mutants, npm) still shares the 3 GB beside a locked rustc, as do other jobs' builds on the node. Open in
   `.scratch/ci-cargo-memory/issues/02-agent-container-memory.md`; closes with the Homelab keeping or raising it.
 - **A quality build judges Rust by the snapshot's own clippy rules.** The gate's `Clippy` chooses no lints (it caps
