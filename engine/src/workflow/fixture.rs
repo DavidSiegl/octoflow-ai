@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use super::{Clocks, Collaborators, Human, RunSettings, Workflow};
 use crate::ci::fake::{jenkins_on, jenkins_with, FakeJenkins, Outcome};
-use crate::ci::Jenkins;
+use crate::ci::QualityGate;
 use crate::herdr::fake::{FakeHerdr, Turn};
 use crate::http::Http;
 use crate::pypi::fake::FakePyPI;
@@ -86,11 +86,11 @@ pub(crate) struct Fixture {
     pub pid_alive: Box<dyn Fn(i64) -> bool>,
     /// The state the Workflow starts from.
     pub state: RunState,
-    /// The Jenkins behind jenkins, Python's FakeCI: there for every fixture, so that a run without the quality gate
+    /// The Jenkins behind a Jenkins quality_gate, Python's FakeCI: there for every fixture, so that a run without the quality gate
     /// can be shown to ask it nothing.
     pub ci: Arc<FakeJenkins>,
-    /// The quality job the Workflow is given: None for a run without the quality gate, until gated gives it one.
-    pub jenkins: Option<Jenkins>,
+    /// The quality gate the Workflow is given: None for a run without one, until gated or gated_locally gives it one.
+    pub quality_gate: Option<QualityGate>,
     /// The PyPI behind the Workflow's indexes, with no project unless a test adds them.
     pub pypi: Arc<FakePyPI>,
     /// The indexes the Workflow is given: pypi, and a crates.io that knows no crate.
@@ -137,7 +137,7 @@ impl Fixture {
             pid_alive: Box::new(pid_alive),
             state,
             ci: FakeJenkins::new(),
-            jenkins: None,
+            quality_gate: None,
             pypi,
             indexes,
         }
@@ -151,14 +151,20 @@ impl Fixture {
     /// The fixture with the quality gate on: the Workflow is given the quality job on ci, with every credential, as
     /// Python's gated gives it.
     pub fn gated(mut self) -> Fixture {
-        self.jenkins = Some(jenkins_on(&self.ci));
+        self.quality_gate = Some(QualityGate::Jenkins(jenkins_on(&self.ci)));
+        self
+    }
+
+    /// The fixture with the local quality gate on (crate::local_gate), whose commands the host's run_command answers.
+    pub fn gated_locally(mut self) -> Fixture {
+        self.quality_gate = Some(QualityGate::Local);
         self
     }
 
     /// The fixture with the quality gate on, asked with these credentials of CI_ENV, by name: Python's gated with
     /// env.
     pub fn gated_with(mut self, credentials: &Map<String>) -> Fixture {
-        self.jenkins = Some(jenkins_with(&self.ci, credentials));
+        self.quality_gate = Some(QualityGate::Jenkins(jenkins_with(&self.ci, credentials)));
         self
     }
 
@@ -214,7 +220,7 @@ impl Fixture {
             human: &self.told,
             interrupt: &self.interrupt,
             pid_alive: &*self.pid_alive,
-            jenkins: self.jenkins.as_ref(),
+            quality_gate: self.quality_gate.as_ref(),
             indexes: &self.indexes,
         }
     }

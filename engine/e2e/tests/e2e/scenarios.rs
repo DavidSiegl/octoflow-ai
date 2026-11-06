@@ -353,6 +353,50 @@ pub fn quality_fails_then_passes(w: &mut World) {
     w.run(&gated(&["--", TASK]));
 }
 
+/// --quality-gate local: the run's base pins a stub octoflow-gate release, which curl serves from the world and
+/// python3 runs with sh. Its first run fails as QUALITY_FAILED, the Builder answers it, and its second passes; nothing
+/// is pushed for either, and Jenkins is asked nothing.
+pub fn quality_local_fails_then_passes(w: &mut World) {
+    let root = w.root().to_string_lossy().into_owned();
+    w.write("reports/failed.md", QUALITY_FAILED);
+    w.write("reports/failed.json", &quality_failed_json());
+    w.write("reports/ok.md", "GATE: OK\n\nEvery condition holds.\n");
+    w.write("reports/ok.json", &report_json("OK", &[], &[]));
+    w.write(
+        "gate-release/gate.py",
+        &format!(
+            "n=$(cat '{root}/gate-runs' 2>/dev/null || echo 0); n=$((n + 1)); echo \"$n\" > '{root}/gate-runs'\n\
+             while [ $# -gt 0 ]; do [ \"$1\" = --out ] && out=$2; shift; done\n\
+             report=ok; [ \"$n\" = 1 ] && report=failed\n\
+             cp -- '{root}/reports/'\"$report.md\" \"$out\" && cp -- '{root}/reports/'\"$report.json\" \"${{out%.md}}.json\"\n\
+             [ \"$report\" = ok ]\n"
+        ),
+    );
+    w.write("gate-release/gate-rust-linux-x86_64", "");
+    let served = format!("{root}/gate.tar.gz");
+    let packed = std::process::Command::new("tar")
+        .args(["-czf", &served, "-C", &format!("{root}/gate-release"), "."])
+        .status()
+        .expect("tar");
+    assert!(packed.success(), "packing the stub release");
+    let sum = std::process::Command::new("sha256sum").arg(&served).output().expect("sha256sum");
+    let sha256 = String::from_utf8_lossy(&sum.stdout).split(' ').next().expect("a sha256").to_string();
+    w.tool(
+        "curl",
+        &format!("while [ $# -gt 0 ]; do case $1 in -o) out=$2; shift ;; esac; shift; done\ncp -- '{served}' \"$out\""),
+    );
+    w.tool("python3", "[ \"$1\" = --version ] && { echo 'Python 3.12.0'; exit 0; }\nexec sh \"$@\"");
+    w.write("project/ci/gate.pin", &format!("0.0.1 {sha256}\n"));
+    let project = w.project.clone();
+    w.git(&project, &["add", "ci/gate.pin"]);
+    w.git(&project, &["commit", "--quiet", "-m", "Pin the gate"]);
+    w.git(&project, &["push", "--quiet", "origin", "main"]);
+    w.agent("spec", [spec_written()]);
+    w.agent("build", [built(1, 0), built(1, 1)]);
+    w.agent("review", [approved(1)]);
+    w.run(&["run", "--quality-gate", "local", "--", TASK]);
+}
+
 /// Quality rounds 1 and 2 fail on the same finding: the loop stops and the Reviewer is told it is stuck.
 pub fn quality_stuck(w: &mut World) {
     w.jenkins_build(build("UNSTABLE", Some(QUALITY_FAILED)).reporting(&quality_failed_json()).into());

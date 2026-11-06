@@ -57,7 +57,7 @@ fn run_on(f: &Fixture, argv: &[&str], ci: &Arc<FakeJenkins>, jobs: &RefCell<Vec<
         Ok(jenkins_on(ci))
     };
     let mut with = f.collaborators();
-    with.jenkins = None;
+    with.quality_gate = None;
     let world = Connected {
         with,
         jenkins: &jenkins,

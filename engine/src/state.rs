@@ -3,6 +3,7 @@
 use crate::constants::{
     DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT, LOCAL_REFS_PREFIX, RUNS_DIR,
 };
+use crate::ci::LOCAL_GATE;
 use crate::error::OrchestratorError;
 use crate::herdr::HerdrServer;
 use crate::prompts::{saved_prompts, Prompts};
@@ -366,6 +367,12 @@ impl RunState {
         format!("{}/quality-{n}-{q}.md", self.dir())
     }
 
+    /// The directory the local gate writes quality round q of round n's reports and judging settings in
+    /// (crate::local_gate::judge), beside its quality file.
+    pub fn gate_dir(&self, n: u32, q: u32) -> String {
+        format!("{}/gate-{n}-{q}", self.dir())
+    }
+
     /// The Builder's answer to quality-<n>-<q>.md.
     pub fn quality_build_path(&self, n: u32, q: u32) -> String {
         format!("{}/build-{n}-q{q}.md", self.dir())
@@ -384,6 +391,13 @@ impl RunState {
     /// files.
     pub fn had_quality_gate(&self) -> bool {
         self.quality_job.is_some() || self.quality_gate_disabled
+    }
+
+    /// Whether the run may have quality snapshot refs on origin: it has or had the quality gate, and the gate is not
+    /// the local one, which pushes none. A run whose local gate resume turned off counts, as its state no longer names
+    /// the gate; deleting its refs then finds none.
+    pub fn may_have_ci_refs(&self) -> bool {
+        self.had_quality_gate() && self.quality_job.as_deref() != Some(LOCAL_GATE)
     }
 
     /// The Builder's last report in round n, once its quality rounds are over: the one the Reviewer reads.

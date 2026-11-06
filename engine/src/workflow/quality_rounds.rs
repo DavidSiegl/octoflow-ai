@@ -1,10 +1,12 @@
 //! The quality gate's rounds (docs/quality-gate.md): after each turn of the quality-gated step, a quality round has
-//! Jenkins judge a snapshot of the change, adds what the orchestrator's own checks find, and sends a change the gate
-//! does not pass back to that step, up to max_quality_rounds analyses per round; what each verdict step hears of them;
-//! and the snapshots' refs on origin, deleted once they are of no more use.
+//! the run's QualityGate judge a snapshot of the change, a Jenkins job or the local gate (crate::local_gate), adds what
+//! the orchestrator's own checks find, and sends a change the gate does not pass back to that step, up to
+//! max_quality_rounds analyses per round; what each verdict step hears of them; and the snapshots' refs on origin,
+//! deleted once they are of no more use.
 //!
-//! Every link of a round's chain (the snapshot pushed, the build triggered, its number) is saved in RunState::ci as
-//! soon as it is known, so that a resume picks the round up from the furthest one.
+//! With Jenkins, every link of a round's chain (the snapshot pushed, the build triggered, its number) is saved in
+//! RunState::ci as soon as it is known, so that a resume picks the round up from the furthest one. The local gate
+//! keeps no chain: a resume runs a round that wrote no quality file again from its start.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -12,10 +14,11 @@ use std::rc::Rc;
 use super::origin::reaching_origin;
 use super::{Clocks, Human, Outcome, Stopped, Workflow};
 use crate::checks::{judge_run, orchestrator_checks, RunChange, RunFindings, SLOW_STEP_MARGIN};
-use crate::ci::{CIError, Jenkins};
+use crate::ci::{CIError, Jenkins, QualityGate};
 use crate::constants::{CI_POLL_SECONDS, CI_REF_PREFIX, QUALITY_TIMEOUT, REMOTE};
 use crate::error::OrchestratorError;
 use crate::host::{Host, LeaksFound, PushError};
+use crate::local_gate::{self, LocalVerdict};
 use crate::interrupt::Interrupt;
 use crate::patch::added_lines;
 use crate::paths::file_name;
@@ -24,8 +27,8 @@ use crate::prompts::Prompt;
 use serde_json::Value;
 use crate::json::{object, Object, ValueExt};
 use crate::quality::{
-    build_failed_report, gate_failures, leak_report, parse_gate, read_report, under_gate_line, GateFailures, Judgement,
-    QUALITY_OK,
+    build_failed_report, could_not_judge_report, gate_failures, leak_report, parse_gate, read_report, under_gate_line,
+    GateFailures, Judgement, QUALITY_OK,
 };
 use crate::state::RunState;
 
@@ -137,7 +140,7 @@ impl<'a> Workflow<'a> {
     /// quality round.
     pub(super) fn gate_passed(&self, n: u32) -> Result<bool, OrchestratorError> {
         let s = &self.state;
-        if self.jenkins.is_none() || s.quality_round == 0 {
+        if self.quality_gate.is_none() || s.quality_round == 0 {
             return Ok(true);
         }
         // With the gate on, the quality loop has written the current quality round's file by now; one missing fails.
@@ -145,16 +148,24 @@ impl<'a> Workflow<'a> {
         Ok(last.is_some_and(|(q, text)| q == s.quality_round && parse_gate(&text) == Some(QUALITY_OK)))
     }
 
-    /// The run's quality job. Errors: the run has no quality gate, which only a quality round asks it for.
-    fn jenkins(&self) -> Result<&'a Jenkins, OrchestratorError> {
-        self.jenkins.ok_or_else(|| OrchestratorError("a quality round in a run without the quality gate".into()))
+    /// The run's quality gate. Errors: the run has none, which only a quality round asks it for.
+    fn gate(&self) -> Result<&'a QualityGate, OrchestratorError> {
+        self.quality_gate.ok_or_else(|| OrchestratorError("a quality round in a run without the quality gate".into()))
     }
 
-    /// Quality round q of round n: have Jenkins judge the change, write quality-<n>-<q>.md, record what failed it in
-    /// RunState::quality_rounds, and return its gate. A snapshot gitleaks finds a secret in is not pushed, and its
-    /// quality file is QUALITY_LEAK.
+    /// The run's quality job. Errors: the run's quality gate is not a Jenkins job, which only its rounds ask for.
+    fn jenkins(&self) -> Result<&'a Jenkins, OrchestratorError> {
+        match self.gate()? {
+            QualityGate::Jenkins(jenkins) => Ok(jenkins),
+            QualityGate::Local => Err(OrchestratorError("a Jenkins quality round in a run with the local gate".into())),
+        }
+    }
+
+    /// Quality round q of round n: have the run's gate judge the change, Jenkins (jenkins_round) or the local gate
+    /// (local_round), write quality-<n>-<q>.md, record what failed it in RunState::quality_rounds, and return its gate.
+    /// A snapshot gitleaks finds a secret in is not judged, nor pushed, and its quality file is QUALITY_LEAK.
     ///
-    /// The gate and its failures are read from the build's quality.json, with the orchestrator's checks added
+    /// The gate and its failures are read from the gate's quality.json, with the orchestrator's checks added
     /// (RunFindings::added_to), and recorded in RunState::quality_rounds, replacing the record of a quality file
     /// deleted to be judged again. They are read from the quality file instead (parse_gate, gate_failures) for a round
     /// with no quality.json: one whose build archived none, the fallback for a quality job that writes only quality.md
@@ -162,7 +173,7 @@ impl<'a> Workflow<'a> {
     /// only the engine writes; and one whose file an earlier orchestrator wrote but did not record.
     ///
     /// Each step first looks for what an earlier orchestrator already did, furthest first: the quality file; then, in
-    /// analyse, the chain in RunState::ci. Errors: Jenkins fails in a way that does not pass, or not within
+    /// analyse, the chain in RunState::ci. Errors: as local_round's for the local gate; Jenkins fails in a way that does not pass, or not within
     /// QUALITY_TIMEOUT seconds of the round's start; the build was aborted, cancelled or discarded; quality.json is
     /// of a schema_version the engine does not know, or not of its schema (read_report), or its gate is not its
     /// quality.md's, which leaves the build to be built again on a resume, as an aborted one; the quality file does
@@ -188,11 +199,9 @@ impl<'a> Workflow<'a> {
                 let base = self.state.base.clone().ok_or_else(|| {
                     Stopped::Failed(OrchestratorError("a quality round before the run has a base".into()))
                 })?;
-                let (text, judged) = match self.analyse(&git_ref, deadline, &base, &message)? {
-                    Analysis::Leaked(found) => (self.leak_report(n, q, &found), None),
-                    Analysis::Built(built) => {
-                        let (report, judged) = self.quality_report(n, q, &built, deadline)?;
-                        let jenkins = self.jenkins()?;
+                let (text, judged) = match self.gate()? {
+                    QualityGate::Jenkins(jenkins) => {
+                        let (report, judged) = self.jenkins_round(n, q, &git_ref, deadline, &base, &message)?;
                         (jenkins.mask(&report), judged.map(|mut judged| {
                             // The conditions go into state.json, which the quality file's masking does not reach.
                             let conditions = &mut judged.failures.conditions;
@@ -200,6 +209,7 @@ impl<'a> Workflow<'a> {
                             judged
                         }))
                     }
+                    QualityGate::Local => self.local_round(n, q, deadline, &base, &message)?,
                 };
                 self.host.write(&path, &text, false)?;
                 (text, judged, true)
@@ -216,6 +226,69 @@ impl<'a> Workflow<'a> {
         self.human.log(&format!("[quality] round {n}, quality round {q}: {gate}"));
         self.finish_analysis(&git_ref)?;
         Ok(gate)
+    }
+
+    /// The quality file of quality round q of round n judged by Jenkins, not yet masked, and the judgement of its
+    /// quality.json (quality_report), or a QUALITY_LEAK file for a snapshot not pushed. Errors: as analyse's.
+    fn jenkins_round(
+        &mut self,
+        n: u32,
+        q: u32,
+        git_ref: &str,
+        deadline: f64,
+        base: &str,
+        message: &str,
+    ) -> Outcome<(String, Option<Judgement>)> {
+        match self.analyse(git_ref, deadline, base, message)? {
+            Analysis::Leaked(found) => Ok((self.leak_report(n, q, &found, "it was not pushed and Jenkins did not judge the change"), None)),
+            Analysis::Built(built) => self.quality_report(n, q, &built, deadline),
+        }
+    }
+
+    /// The quality file of quality round q of round n judged by the local gate, and the judgement of its quality.json:
+    /// a snapshot of the change, a commit with message whose only parent is base, is scanned by gitleaks as a push of
+    /// it would be, then the gate judges the working tree (local_gate::judge) within the round's deadline and the
+    /// orchestrator's checks judge the snapshot. Nothing is pushed. A QUALITY_LEAK file, and no gate run, for a secret
+    /// in the snapshot; for a gate that could not judge, a BUILD_FAILED file with what it said, as a Jenkins build whose
+    /// gate could not judge has, and no judgement.
+    ///
+    /// Errors: as local_gate::judge's; its quality.json is unreadable or disagrees with its quality.md (judgement); the
+    /// deadline has passed; a secret in base or below it; git, gitleaks or a check fails.
+    fn local_round(&mut self, n: u32, q: u32, deadline: f64, base: &str, message: &str) -> Outcome<(String, Option<Judgement>)> {
+        let work_dir = self.state.work_dir().to_string();
+        let sha = self.host.snapshot(&work_dir, base, message)?;
+        match self.host.refuse_leaks(&work_dir, &sha, base, &self.state.leaks_path("snapshot")) {
+            Ok(()) => {}
+            Err(PushError::Failed(e)) => return Err(e.into()),
+            Err(PushError::Leaks(found)) => {
+                let found = leaks_in_snapshot(found, &sha, base)?;
+                return Ok((self.leak_report(n, q, &found, "the local gate did not judge the change"), None));
+            }
+        }
+        let left = (deadline - self.clocks.monotonic()).floor();
+        if left < 1.0 {
+            return Err(Stopped::Failed(OrchestratorError(format!(
+                "quality gate: no time left of the {QUALITY_TIMEOUT}s a quality round may take; resume to go on"
+            ))));
+        }
+        let out_dir = self.state.gate_dir(n, q);
+        let place = self.place(n, q);
+        match local_gate::judge(self.host, &work_dir, base, &out_dir, left as u64)? {
+            LocalVerdict::Judged { release, quality, json } => {
+                let judged = judgement(&quality, &json)
+                    .map_err(|why| OrchestratorError(format!("octoflow-gate {release} in {work_dir}: {why}")))?;
+                let found = self.orchestrator_findings(&sha, deadline)?;
+                let line = format!("octoflow-gate {release}, run locally, judged snapshot `{sha}` ({place}).");
+                Ok((under_gate_line(&found.added_to_file(&quality), &line), Some(found.added_to(judged))))
+            }
+            LocalVerdict::CouldNotJudge(said) => {
+                let intro = format!(
+                    "octoflow-gate, run locally, could not judge snapshot `{sha}` ({place}), so nothing judged the \
+                     change. Make it judgeable first: what the gate said is below."
+                );
+                Ok((could_not_judge_report(&intro, &said), None))
+            }
+        }
     }
 
     /// Have Jenkins judge a snapshot of the change, a commit with message whose only parent is base, pushed to the
@@ -242,17 +315,7 @@ impl<'a> Workflow<'a> {
             match self.host.push_ref(&work_dir, &sha, git_ref, base, &report_path) {
                 Ok(()) => {}
                 Err(PushError::Failed(e)) => return Err(e.into()),
-                // The snapshot's only parent is base, so a secret in any other commit is in base or below it: the
-                // human's history, which the Builder cannot rewrite.
-                Err(PushError::Leaks(found)) if found.leaks.iter().any(|leak| leak.commit != sha) => {
-                    let (snapshot, base): (String, String) = (sha.chars().take(12).collect(), base.chars().take(12).collect());
-                    return Err(Stopped::Failed(OrchestratorError(format!(
-                        "{found}\nThose not in snapshot {snapshot} are in the run's base {base} or below it, which \
-                         {REMOTE} does not have: the human's commits, not the Builder's to fix. Rewrite them without \
-                         the secret, or list a finding that is not one in .gitleaksignore there, and start a new run."
-                    ))));
-                }
-                Err(PushError::Leaks(found)) => return Ok(Analysis::Leaked(found)),
+                Err(PushError::Leaks(found)) => return Ok(Analysis::Leaked(leaks_in_snapshot(found, &sha, base)?)),
             }
             self.state.ci = object([("ref", Value::from(git_ref)), ("sha", Value::from(sha))]);
             self.save()?;
@@ -442,10 +505,11 @@ impl<'a> Workflow<'a> {
         format!("round {n}, quality round {q} of {}", self.state.max_quality_rounds)
     }
 
-    /// The quality file of quality round q of round n, whose snapshot was not pushed for the secrets found.
-    fn leak_report(&self, n: u32, q: u32, found: &LeaksFound) -> String {
+    /// The quality file of quality round q of round n, whose snapshot was not judged for the secrets found; so_what
+    /// says what then did not happen, as a clause: "the gate did not judge the change".
+    fn leak_report(&self, n: u32, q: u32, found: &LeaksFound, so_what: &str) -> String {
         let intro = format!(
-            "{} in the snapshot of {}, so it was not pushed and Jenkins did not judge the change. Take each secret \
+            "{} in the snapshot of {}, so {so_what}. Take each secret \
              below out of the change; a comment telling gitleaks to allow its line counts as one too. If one is not a \
              secret, say so in your report: only the human can let it through, and not in this run, which keeps the \
              rules of its base: listed as `file:rule:line` in .gitleaksignore on the base branch, it passes in a run \
@@ -563,13 +627,13 @@ impl<'a> Workflow<'a> {
         self.save()
     }
 
-    /// At the end of a run that has or had the quality gate, delete its refs on origin, again for one whose gate
-    /// resume turned off, in case deleting them then failed; a failure is only logged.
+    /// At the end of a run that may have refs on origin (RunState::may_have_ci_refs), delete them, again for one whose
+    /// gate resume turned off, in case deleting them then failed; a failure is only logged.
     ///
     /// Errors: the Ctrl-C, raised meanwhile, which keeps RunState::ci, as Python's KeyboardInterrupt in
     /// delete_ci_refs does, for a resume to find the build.
     pub(super) fn clean_up_quality(&mut self) -> Outcome<()> {
-        if self.state.had_quality_gate() {
+        if self.state.may_have_ci_refs() {
             let ci = self.state.ci.clone();
             delete_ci_refs(self.host, self.human, self.clocks, self.interrupt, &mut self.state);
             if self.interrupt.is_raised() {
@@ -600,6 +664,21 @@ impl<'a> Workflow<'a> {
         let rejected = self.state.ci.get("rejected").and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
         rejected.iter().filter_map(|number| number.as_i64()).collect()
     }
+}
+
+/// found, the secrets gitleaks found in snapshot sha and the commits a push of it would publish, when all are in sha
+/// itself, for the Builder to take out. Errors: one is in another commit, so in base or below it, as sha's only
+/// parent is base: the human's history, which the Builder cannot rewrite.
+fn leaks_in_snapshot(found: LeaksFound, sha: &str, base: &str) -> Result<LeaksFound, Stopped> {
+    if found.leaks.iter().all(|leak| leak.commit == sha) {
+        return Ok(found);
+    }
+    let (snapshot, base): (String, String) = (sha.chars().take(12).collect(), base.chars().take(12).collect());
+    Err(Stopped::Failed(OrchestratorError(format!(
+        "{found}\nThose not in snapshot {snapshot} are in the run's base {base} or below it, which {REMOTE} does not \
+         have: the human's commits, not the Builder's to fix. Rewrite them without the secret, or list a finding that \
+         is not one in .gitleaksignore there, and start a new run."
+    ))))
 }
 
 /// The judgement of a build's quality.json, json, whose quality.md is quality. Errors: as read_report's, or quality.md

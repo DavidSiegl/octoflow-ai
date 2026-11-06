@@ -28,12 +28,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   machines and in CI. Decided against: one file on every platform, by embedding the orchestrator's bytes in the
   Rust executable and unpacking them at start (PyInstaller's onefile done twice), or by Python hosting the window,
   which [ui-options.md](docs/ui-options.md) chose against. Agreed 2026-10-24.
-- **The quality gate in a repository of its own: what is left.** The gate moved to
-  [octoflow-gate](https://github.com/DavidSiegl/octoflow-gate) (decided 2026-11-05: the agent-estate template's
-  `scripts/gate` is the second project that uses it), where the test-file patterns and the rest are `gate.toml`
-  settings, and Jenkins judges this repository's changes with the release `ci/gate.pin` names
-  (`.scratch/gate-standalone/`, ticket 07), whose `quality.json` the engine reads (08); `gate.py`, `ci/gate-rust/` and
-  their tests left this repository (10). Left: `--quality-gate local` (09).
 - **The e2e scenarios: what they do not record.** `engine/e2e/` runs 43 scenarios against the engine as a program and
   compares each with its recording (docs/architecture.md, Tests). The recordings are the Python engine's, made before
   rust-engine ticket 11 removed it, by the Python harness octoflow-without-python ticket 02 removed; a scenario added

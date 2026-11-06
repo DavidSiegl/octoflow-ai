@@ -7,6 +7,7 @@ use super::fake::{
     credentials, jenkins_on, parse_qsl, split_url, FakeJenkins, Outcome, JENKINS, JENKINS_TOKEN, JOB, JOB_PATH,
 };
 use super::*;
+use crate::constants::CONSOLE_TAIL_LINES;
 use crate::interrupt::Interrupt;
 use crate::http::tests::{direct, Answer, LocalServer};
 use crate::http::Response;

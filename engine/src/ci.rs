@@ -7,10 +7,10 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::constants::{CI_ENV, CI_TOKENS, CONSOLE_TAIL_LINES, HTTP_TIMEOUT, JOB_PARAMETERS};
+use crate::constants::{CI_ENV, CI_TOKENS, HTTP_TIMEOUT, JOB_PARAMETERS};
 use crate::env::{ci_credentials, ConfigDir};
 use crate::error::OrchestratorError;
-use crate::host::line_ends_as_lf;
+use crate::quality::last_lines;
 use crate::http::{quote, urlencode, Http, HttpClient, HttpError, Method, Request, Response};
 use serde_json::Value;
 use crate::map::Map;
@@ -98,6 +98,45 @@ pub struct QueueItem {
     pub build: Option<i64>,
 }
 
+/// What --quality-gate gives a run's quality rounds to: who judges each snapshot of the change.
+pub enum QualityGate {
+    /// A Jenkins quality job, which judges a snapshot pushed to origin.
+    Jenkins(Jenkins),
+    /// The engine runs the gate itself (crate::local_gate): --quality-gate LOCAL_GATE.
+    Local,
+}
+
+/// The --quality-gate name of the local gate, a reserved word rather than a job's name; a top-level Jenkins job of
+/// that name is given as `/local` (Jenkins::job_url).
+pub const LOCAL_GATE: &str = "local";
+
+impl QualityGate {
+    /// The gate --quality-gate's name names: Local for LOCAL_GATE, else the Jenkins job jenkins makes of it. Errors:
+    /// jenkins's.
+    pub fn named(name: &str, jenkins: &dyn Fn(&str) -> Result<Jenkins, OrchestratorError>) -> Result<QualityGate, OrchestratorError> {
+        if name == LOCAL_GATE {
+            return Ok(QualityGate::Local);
+        }
+        Ok(QualityGate::Jenkins(jenkins(name)?))
+    }
+
+    /// Its name as --quality-gate takes it and state.json's quality_job keeps it.
+    pub fn name(&self) -> &str {
+        match self {
+            QualityGate::Jenkins(jenkins) => jenkins.job(),
+            QualityGate::Local => LOCAL_GATE,
+        }
+    }
+
+    /// text with the gate's secrets masked (Jenkins::mask); the local gate has none.
+    pub fn mask(&self, text: &str) -> String {
+        match self {
+            QualityGate::Jenkins(jenkins) => jenkins.mask(text),
+            QualityGate::Local => text.to_string(),
+        }
+    }
+}
+
 /// Jenkins's quality job, reached through an [`Http`].
 pub struct Jenkins {
     /// The job's full name, folders included, as `--quality-gate` takes it: `folder/job`.
@@ -140,9 +179,11 @@ impl Jenkins {
         &self.job
     }
 
-    /// The job's URL, with a slash at the end: each folder of its name a `/job/<name>` under JENKINS_URL.
+    /// The job's URL, with a slash at the end: each folder of its name a `/job/<name>` under JENKINS_URL. A name may
+    /// start with one `/`, which names no folder: `/local` is the top-level job that `local` (LOCAL_GATE) cannot name.
     pub fn job_url(&self) -> String {
-        let path: String = self.job.split('/').map(|part| format!("/job/{}", quote(part))).collect();
+        let job = self.job.strip_prefix('/').unwrap_or(&self.job);
+        let path: String = job.split('/').map(|part| format!("/job/{}", quote(part))).collect();
         format!("{}{path}/", self.base())
     }
 
@@ -349,13 +390,10 @@ impl Jenkins {
         Ok(Some(failed))
     }
 
-    /// The last CONSOLE_TAIL_LINES lines of the build's console, each byte that is not UTF-8 replaced, a line ending
-    /// at "\n", "\r\n" or a lone "\r" (line_ends_as_lf), joined by "\n".
+    /// The end of the build's console (crate::quality::last_lines), each byte that is not UTF-8 replaced.
     pub fn console_tail(&self, number: i64) -> Result<String, CIError> {
         let answer = self.request(Method::Get, &self.build_url(number, "consoleText", None), None)?;
-        let text = line_ends_as_lf(&String::from_utf8_lossy(&answer.body));
-        let lines: Vec<&str> = text.lines().collect();
-        Ok(lines[lines.len().saturating_sub(CONSOLE_TAIL_LINES)..].join("\n"))
+        Ok(last_lines(&String::from_utf8_lossy(&answer.body)))
     }
 
     fn build_url(&self, number: i64, path: &str, tree: Option<&str>) -> String {

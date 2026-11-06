@@ -17,6 +17,7 @@ use sha2::{Digest, Sha256};
 use crate::constants::CONSOLE_TAIL_LINES;
 use crate::error::OrchestratorError;
 use crate::handoff::first_line_word;
+use crate::host::line_ends_as_lf;
 use crate::map::Map;
 
 /// The words of the gate line, the file's first non-blank one. Only the engine writes BUILD_FAILED, for a build that
@@ -140,6 +141,25 @@ pub fn build_failed_report(intro: &str, tests: Option<&[(String, String)]>, cons
         out.extend(["", "````", console, "````"].map(String::from));
     }
     out.join("\n") + "\n"
+}
+
+/// The quality file of a local gate that could not judge the change (crate::local_gate::LocalVerdict::CouldNotJudge):
+/// GATE: BUILD_FAILED, as for a Jenkins build whose gate could not judge, then intro, then said, the end of what the
+/// gate wrote on standard error, unless it is empty.
+pub fn could_not_judge_report(intro: &str, said: &str) -> String {
+    let mut out: Vec<String> = [&format!("GATE: {QUALITY_BUILD_FAILED}"), "", intro].map(|s| s.to_string()).to_vec();
+    if !said.is_empty() {
+        out.extend(["", "## What the gate said on standard error", "", "````", said, "````"].map(String::from));
+    }
+    out.join("\n") + "\n"
+}
+
+/// The last CONSOLE_TAIL_LINES lines of text, each line ending at "\n", "\r\n" or a lone "\r" (line_ends_as_lf),
+/// joined by "\n": the end of a log that is shown.
+pub fn last_lines(text: &str) -> String {
+    let text = line_ends_as_lf(text);
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(CONSOLE_TAIL_LINES)..].join("\n")
 }
 
 /// What a quality file says failed the gate, in a form two quality rounds can be compared by.

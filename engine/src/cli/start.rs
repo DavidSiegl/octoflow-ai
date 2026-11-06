@@ -3,6 +3,7 @@
 
 use super::args::{ResumeArgs, RunArgs, Settings};
 use super::Connected;
+use crate::ci::QualityGate;
 use crate::constants::{DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT, RUNS_DIR, WORKTREES_DIR};
 use crate::error::OrchestratorError;
 use crate::pipeline::{Pipeline, DONE, QUALITY};
@@ -97,7 +98,7 @@ pub(crate) fn new_run_id(wall: f64, zone: &jiff::tz::TimeZone) -> Result<String,
 }
 
 /// The state of the run args.run_ref names among cwd's runs and its workflow, as resumable_state finds them, with the
-/// quality gate turned on or off as args asks (turn_quality_gate_on and _off: the job's preflight, and the run's
+/// quality gate turned on or off as args asks (turn_quality_gate_on and _off: the gate's preflight, and the run's
 /// refs on origin deleted), and its herdr server world's herdr's (Herdr::server), where it starts its agents from
 /// now on; a done run's as resumable_state gives it. Changes nothing on disk.
 ///
@@ -111,8 +112,8 @@ pub fn resumed_state(args: &ResumeArgs, cwd: &str, world: &Connected) -> Result<
         return Ok((state, pipeline));
     }
     state.herdr_server = w.herdr.server();
-    if let Some(job) = args.quality_gate.as_deref().filter(|j| !j.is_empty()) {
-        turn_quality_gate_on(&mut state, &pipeline, w.host, w.human, &(world.jenkins)(job)?)?;
+    if let Some(name) = args.quality_gate.as_deref().filter(|j| !j.is_empty()) {
+        turn_quality_gate_on(&mut state, &pipeline, w.host, w.human, &QualityGate::named(name, world.jenkins)?)?;
     } else if args.no_quality_gate {
         turn_quality_gate_off(&mut state, &pipeline, w)?;
     }

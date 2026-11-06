@@ -13,7 +13,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 use std::io::Write;
 
-use crate::ci::Jenkins;
+use crate::ci::{Jenkins, QualityGate};
 use crate::constants::{EXIT_CHANGES_REQUESTED, EXIT_CONFLICT, EXIT_ERROR, EXIT_INTERRUPTED, SUCCEEDED};
 use crate::env::ConfigDir;
 use crate::error::OrchestratorError;
@@ -48,7 +48,8 @@ pub(crate) use start::new_run_id;
 /// its own job, and where the orchestrator's configuration is.
 #[derive(Clone, Copy)]
 pub struct Connected<'a> {
-    /// Every collaborator a Workflow is given; its jenkins is None, and a run's own is made by jenkins.
+    /// Every collaborator a Workflow is given; its quality_gate is None, and a run's own is made with jenkins
+    /// (QualityGate::named).
     pub with: Collaborators<'a>,
     /// The quality job of a name, with its credentials (crate::ci::Jenkins::from_env for a real run). Errors: its
     /// credentials cannot be read.
@@ -306,7 +307,7 @@ fn connect(command: &Command, local: &Local, human: &LocalHuman) -> Result<Ended
             human,
             interrupt,
             pid_alive: &pid_alive,
-            jenkins: None,
+            quality_gate: None,
             indexes: &indexes,
         },
         jenkins: &jenkins,
@@ -457,15 +458,15 @@ pub fn record_in_state(
 
 /// Drive the run state describes through pipeline, by the settings saved in state, to its verdict. spec is the file
 /// a new run --spec run starts from; None for any other run. Errors: as Workflow::new and Workflow::run, and
-/// Stopped::Failed when the run's quality job cannot be made.
+/// Stopped::Failed when the run's quality gate cannot be made.
 pub fn run_workflow(
     world: &Connected,
     state: RunState,
     pipeline: Pipeline,
     spec: Option<SpecFile>,
 ) -> Result<Ran, Stopped> {
-    let jenkins = match state.quality_job.as_deref().filter(|j| !j.is_empty()) {
-        Some(job) => Some((world.jenkins)(job).map_err(Stopped::Failed)?),
+    let gate = match state.quality_job.as_deref().filter(|j| !j.is_empty()) {
+        Some(name) => Some(QualityGate::named(name, world.jenkins).map_err(Stopped::Failed)?),
         None => None,
     };
     let settings = RunSettings {
@@ -481,7 +482,7 @@ pub fn run_workflow(
         pipeline: Some(pipeline.clone()),
         spec,
     };
-    let with = Collaborators { jenkins: jenkins.as_ref(), ..world.with };
+    let with = Collaborators { quality_gate: gate.as_ref(), ..world.with };
     let mut workflow = Workflow::new(with, state, settings).map_err(Stopped::Failed)?;
     let verdict = workflow.run()?;
     Ok(Ran { verdict, state: workflow.state().clone(), pipeline })

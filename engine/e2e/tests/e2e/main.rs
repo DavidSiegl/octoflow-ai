@@ -164,6 +164,7 @@ scenarios!(
     publish_with_conflict,
     quality_build_failed,
     quality_fails_then_passes,
+    quality_local_fails_then_passes,
     quality_passes,
     quality_stuck,
     quality_workflow_without_review,
