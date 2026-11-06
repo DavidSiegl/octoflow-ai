@@ -68,6 +68,19 @@ is rewritten to say what is left.
   toy repositories have no quality job and their origin is a bundle no snapshot can be pushed to, so `quality rounds`
   stays 0; a `--worktree` or `--machine` run, which the runner refuses; and an interview, which `--spec` skips.
   Decided 2026-10-28. The verification run it still lacks is under Open issues.
+- **Idea, for later: fuzz the engine's parsers of text it does not write, once, for panics.** The targets:
+  `handoff::first_line_word` (`engine/src/handoff.rs`), beneath `parse_verdict`, which reads a review an agent
+  wrote, and `parse_gate`, which reads the quality file; `parse_blocked`, beside it, which reads an agent's report;
+  and `parse_env_file` (`engine/src/env.rs`), which reads a file the user wrote. A coverage-guided fuzzer
+  (cargo-fuzz) reaches branches the seeded generator (`test_support::Rng`) does not, and in Rust a slice off a
+  character boundary or past the end panics. The proposal is an hour or so of fuzzing by hand, all four in scope,
+  looking only for panics. Not a standing job: a panic-only fuzzer checks no result, while the tests compare with an
+  oracle, `parse_env_file`'s being `sh` started once per input, too slow to run per fuzz case; and a job would need
+  nightly Rust, a `fuzz/` crate, kept corpora and Jenkins time, against a toolchain Jenkins pins and builds
+  `--locked`. Generated-input tests already reach all but `parse_blocked`: `engine/src/handoff/tests.rs` and
+  `engine/src/quality/tests.rs` the word parsers, `engine/src/env/tests.rs` `parse_env_file` against `sh`, each a
+  bounded number of cases from fixed seeds, which `.scratch/rust-test-seeds/` would vary per build. A panic found
+  would argue for the standing job. Raised 2026-11-06.
 
 ## Open issues
 
