@@ -45,7 +45,8 @@ const LAUNCH: &str = "import subprocess, sys
 with open(sys.argv[1], 'ab') as log:
     print(subprocess.Popen(sys.argv[2:], stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True).pid)";
 
-/// The job, run by sh with the round's directory, the release's version and sha256, its URL and the base as $1..$5.
+/// The job, run by sh as $0 job_name(<the round's directory>), with the round's directory, the release's version and
+/// sha256, its URL and the base as $1..$5.
 /// The round's directory holds judge/ and tree/, the checkout, when it starts. It ends by writing `exit`, renamed into
 /// place: the gate's exit status, or `setup` when it failed before the gate ran, having said why on standard error,
 /// which goes to job.log. The gate's own standard error goes to gate.err.
@@ -74,12 +75,12 @@ cd -- "$out/tree" || setup_failed "cannot enter $out/tree"
 "$@" 2> "$out/gate.err"
 ended "$?""#;
 
-/// Stops the process group $1, the job of the round's directory $2, as a Ctrl-C would, SIGINT first so the gate kills
-/// its tests' groups itself, then SIGKILL to what is left after 5 s. It signals nothing unless the group's leader is
-/// still that job, its command line naming $2: a job file a crash left behind may name a pid the system has since
-/// given to another session. A group is named `-"$g"` after the signal, without `--`, which dash's kill refuses.
-const STOP: &str = r#"g=$1 out=$2
-ps -ww -o args= -p "$g" 2>/dev/null | grep -qF -- "$out" || exit 0
+/// Stops the process group $1, the job named $2 (job_name), as a Ctrl-C would, SIGINT first so the gate kills its
+/// tests' groups itself, then SIGKILL to what is left after 5 s. It signals nothing unless the group's leader is still
+/// that job, its command line holding $2: a job file a crash left behind may name a pid the system has since given to
+/// another session. A group is named `-"$g"` after the signal, without `--`, which dash's kill refuses.
+const STOP: &str = r#"g=$1 name=$2
+ps -ww -o args= -p "$g" 2>/dev/null | grep -qF -- "$name" || exit 0
 kill -INT -"$g" 2>/dev/null || exit 0
 for _ in 1 2 3 4 5; do kill -0 -"$g" 2>/dev/null || exit 0; sleep 1; done
 kill -KILL -"$g" 2>/dev/null; exit 0"#;
@@ -176,7 +177,8 @@ pub fn start(host: &dyn Host, cwd: &str, snapshot: &str, base: &str, out_dir: &s
     host.add_worktree(cwd, &format!("{out_dir}/tree"), snapshot)?;
     let url = RELEASE_URL.replace("{v}", &release);
     let log = format!("{out_dir}/job.log");
-    let argv = ["python3", "-c", LAUNCH, &log, "sh", "-c", JOB, "_", out_dir, &release, &sha256, &url, base];
+    let name = job_name(out_dir);
+    let argv = ["python3", "-c", LAUNCH, &log, "sh", "-c", JOB, &name, out_dir, &release, &sha256, &url, base];
     let group = host.check(&argv, None, DEFAULT_TIMEOUT)?.trim().to_string();
     host.write(&format!("{out_dir}/job"), &group, false)?;
     Ok(Judging { cwd: cwd.to_string(), out_dir: out_dir.to_string(), release, group })
@@ -270,7 +272,14 @@ fn could_not_judge(said: &str) -> bool {
 
 /// Stop process group, the job of out_dir, as STOP does.
 fn stop_group(host: &dyn Host, group: &str, out_dir: &str) -> Result<(), OrchestratorError> {
-    host.check(&["sh", "-c", STOP, "_", group, out_dir], None, DEFAULT_TIMEOUT).map(drop)
+    host.check(&["sh", "-c", STOP, "_", group, &job_name(out_dir)], None, DEFAULT_TIMEOUT).map(drop)
+}
+
+/// The name the job of the round's directory out_dir runs under, its $0: out_dir's bytes in hex, so that ps shows it
+/// as it is in any locale, where it shows out_dir itself with `?` for each byte outside ASCII under LC_ALL=C.
+fn job_name(out_dir: &str) -> String {
+    let hex: String = out_dir.bytes().map(|b| format!("{b:02x}")).collect();
+    format!("octoflow-gate-job-{hex}")
 }
 
 /// Remove out_dir/tree, the snapshot's checkout, as a worktree of cwd's repository, when it is one: git alone, not

@@ -61,7 +61,7 @@ fn plays(f: &Fixture, runs: Vec<GateRun>) -> Rc<RefCell<GateCalls>> {
                 drop(state);
                 exits(0, "")
             }
-            ["python3", "-c", _, _log, "sh", "-c", _, "_", job @ ..] => {
+            ["python3", "-c", _, _log, "sh", "-c", _, _name, job @ ..] => {
                 recorded.borrow_mut().jobs.push(job.iter().map(|a| a.to_string()).collect());
                 let out = job[0];
                 let write = |name: &str, text: &str| host.write(&format!("{out}/{name}"), text, false).expect("written");
@@ -80,7 +80,7 @@ fn plays(f: &Fixture, runs: Vec<GateRun>) -> Rc<RefCell<GateCalls>> {
                 exits(0, "4242\n")
             }
             ["sh", "-c", script, "_", "4242"] if script.starts_with("kill -0") => exits(i32::from(!*hanging.borrow()), ""),
-            ["sh", "-c", _, "_", "4242", _out] => {
+            ["sh", "-c", _, "_", "4242", _name] => {
                 assert!(!interrupt.is_raised(), "a stop started with a Ctrl-C pending, which ProcessHost refuses");
                 recorded.borrow_mut().stops += 1;
                 *hanging.borrow_mut() = false;

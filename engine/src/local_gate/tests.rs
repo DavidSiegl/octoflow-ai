@@ -77,7 +77,8 @@ impl Bench {
         let sum = std::process::Command::new("sha256sum").arg(&served).output().expect("sha256sum");
         let sha256 = String::from_utf8(sum.stdout).unwrap().split(' ').next().unwrap().to_string();
         let cache = dir.join("cache");
-        let vars = environment(Some(&bin), &[("XDG_CACHE_HOME", &cache)]);
+        // ps under the C locale shows a byte outside ASCII as `?`, as over an SSH connection that sets no locale.
+        let vars = environment(Some(&bin), &[("XDG_CACHE_HOME", &cache), ("LC_ALL", "C")]);
         let repo = Repo::with_host(base_files, ProcessHost::in_environment(vars.into_iter(), &Interrupt::new()));
         Bench { dir, repo, sha256 }
     }
@@ -359,6 +360,20 @@ fn a_judgement_whose_round_a_later_start_took_over_leaves_the_new_job_alone() {
     assert!(bench.running(&taking_over));
     assert!(std::path::Path::new(&format!("{}/tree", bench.out())).exists());
     taking_over.stop(&bench.repo.host).unwrap();
+}
+
+#[test]
+fn a_gate_whose_directorys_path_is_not_ascii_is_stopped() {
+    let bench = Bench::pinned();
+    put(&bench.dir.join("hang"), "");
+    let (host, cwd, base) = (&bench.repo.host, &bench.repo.path, bench.repo.base());
+    let out = bench.dir.join("jürgen/out");
+    let judging = start(host, cwd, &host.snapshot(cwd, base, "snapshot").unwrap(), base, &out).unwrap();
+    bench.until_the_gate_runs();
+
+    judging.stop(host).unwrap();
+
+    assert!(!bench.running(&judging));
 }
 
 #[test]
