@@ -732,6 +732,13 @@ fn an_unknown_schema_version_stops_the_round_naming_it() {
     let e = failure(f.workflow(RunSettings::default()).run());
     assert!(e.contains("quality.json has schema_version 2, and this engine reads only schema_version 1"), "{e}");
     assert!(f.host.state().files.get(&f.state.quality_path(1, 1)).is_none(), "no quality file is written");
+    assert_build_is_left_to_build_again(&f);
+}
+
+/// The run saved its round's build 41 as rejected, so that a resume builds the snapshot again.
+fn assert_build_is_left_to_build_again(f: &Fixture) {
+    let ci = ci_of(&[("ref", REF_1_1.into()), ("sha", "snap1".into()), ("rejected", Value::Array(vec![41.into()]))]);
+    assert_eq!(f.saved().get("ci"), Some(&Value::Object(ci)));
 }
 
 #[test]
@@ -740,7 +747,9 @@ fn a_quality_json_whose_gate_is_not_its_quality_file_s_is_rejected() {
         r.insert("gate".into(), Value::from("ERROR"));
     })]);
     let e = failure(f.workflow(RunSettings::default()).run());
-    assert!(e.contains("says GATE: OK, but its build's quality.json says ERROR"), "{e}");
+    assert!(e.contains("its quality.md says GATE: OK, but its quality.json says ERROR"), "{e}");
+    assert!(f.host.state().files.get(&f.state.quality_path(1, 1)).is_none(), "no quality file is written");
+    assert_build_is_left_to_build_again(&f);
 }
 
 #[test]

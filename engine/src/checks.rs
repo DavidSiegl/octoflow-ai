@@ -172,9 +172,9 @@ pub fn judge_run(checks: &[OrchestratorCheck], change: &RunChange) -> Result<Run
 pub struct RunFindings {
     /// One failed condition per check with failing findings, in the checks' order.
     conditions: Vec<String>,
-    /// The findings that fail the gate, then those that do not, each in the checks' order, their rules prefixed by
-    /// their check's name.
+    /// The findings that fail the gate, in the checks' order, their rules prefixed by their check's name.
     issues: Vec<Finding>,
+    /// The findings that do not fail the gate, ordered and named as issues.
     to_weigh: Vec<Finding>,
 }
 

@@ -117,7 +117,8 @@ pub struct RunState {
     /// One record per quality round judged, in order: {"round", "quality_round", "gate", "conditions",
     /// "fingerprints_by_check"}, the last two the round's GateFailures, as read_report reads them from its build's
     /// quality.json, or gate_failures from its quality file where there is none (Workflow::quality), with the
-    /// orchestrator's checks' added. Fingerprints, never the findings' text, so that state.json stays small.
+    /// orchestrator's checks' added. Fingerprints, never the findings' text, so that state.json stays far smaller
+    /// than the quality files, though a round records one fingerprint per failing finding, without their limit.
     pub quality_rounds: Vec<Object>,
     /// The BLOCKED report the current turn waits on the human for, {"file", "question", "k"}: file is the handoff
     /// file's basename, and the report was moved to its k-th blocked name (Workflow::blocked_path). None otherwise.

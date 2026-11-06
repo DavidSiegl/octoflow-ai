@@ -71,6 +71,15 @@ is rewritten to say what is left.
 
 ## Open issues
 
+- **A stuck loop can compare a round read from `quality.json` with one read from `quality.md`.** Raised by
+  cross-review 160 (F3): "A round judged from quality.json records every failing finding's fingerprint; one judged
+  from quality.md (gate_failures) records at most QUALITY_FINDINGS_LIMIT." A round of a build that has
+  `quality.json` is still read from its `quality.md` when the orchestrator stopped between writing the quality file
+  and saving the round, or when two reads of a running build agreed before `quality.json` was copied; with more than
+  50 identical failing findings in rounds Q-1 and Q from different sources, `GateFailures.repeats` is false and the
+  stuck rule misses that loop, so the Builder gets one more turn. Closes with recording the round before the quality
+  file is written, or comparing only the first `QUALITY_FINDINGS_LIMIT` of a JSON-read round against a Markdown-read
+  one; goes with the fallback below.
 - **The engine still reads a build's `quality.md` where it archived no `quality.json`.** `Workflow::quality`
   (`engine/src/workflow/quality_rounds.rs`) falls back to `parse_gate` and `gate_failures` for a build without
   `quality.json`: a quality job whose judged `main` predates gate-standalone/07, or another project's job running a

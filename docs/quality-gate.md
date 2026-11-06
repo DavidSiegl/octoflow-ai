@@ -1004,10 +1004,13 @@ last quality file as unresolved findings. Three rounds are at most three builds 
 review round has its own budget. Without `--quality-gate`, a run behaves as it did before.
 
 The loop also stops early when it is stuck: when quality round Q fails on just what round Q-1 failed on, the
-Builder's turn between them fixed none of it, and another turn is unlikely to. `gate_failures` reads what failed
-from the quality file: its failed conditions, by their words; its failing tests; and each numbered finding before
-the findings to weigh, by `finding_fingerprint`, a hash of its path, rule and message with the digits taken out, so
-a finding whose line moved is the same finding. When round Q's failures are not empty and are round Q-1's, no more
+Builder's turn between them fixed none of it, and another turn is unlikely to. Each round's failures are those
+its record in `state.json` holds, as read from the build's `quality.json` (`read_report`): its failed conditions,
+by their words; its failing tests; and every finding that fails the gate, by the fingerprint the gate gives it, a
+hash of its path, rule and message with the digits taken out, so a finding whose line moved is the same finding.
+The orchestrator's own findings are added by `finding_fingerprint`, the same hash. Where there is no `quality.json`
+([the report as a contract](#the-report-as-a-contract)), `gate_failures` reads the same from the quality file, which
+lists at most `QUALITY_FINDINGS_LIMIT` findings. When round Q's failures are not empty and are round Q-1's, no more
 and no fewer (`GateFailures.repeats`), the change goes to the Reviewer, whose prompt ends with `QUALITY_STUCK_NOTE`,
 and the log says why. A build that failed with nothing listed has no failures to compare, so it is never stuck by
 this rule; a coverage condition is, while its percentage stays the same.
