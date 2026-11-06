@@ -31,8 +31,8 @@ is rewritten to say what is left.
   `scripts/gate` is the second project that uses it), where the test-file patterns and the rest are `gate.toml`
   settings, and Jenkins judges this repository's changes with the release `ci/gate.pin` names
   (`.scratch/gate-standalone/`, ticket 07). Left: the engine reading `quality.json` rather than `quality.md` (ticket
-  08), `--quality-gate local` (09), and removing `gate.py`, `ci/gate-rust/` and the Jenkinsfile's cutover fallback
-  for a main without the pin from this repository (10).
+  08), `--quality-gate local` (09), and removing `gate.py`, `ci/gate-rust/` and their tests, which Jenkins no
+  longer runs to judge, from this repository (10).
 - **The e2e scenarios: what they do not record.** `engine/e2e/` runs 43 scenarios against the engine as a program and
   compares each with its recording (docs/architecture.md, Tests). The recordings are the Python engine's, made before
   rust-engine ticket 11 removed it, by the Python harness octoflow-without-python ticket 02 removed; a scenario added

@@ -11,7 +11,8 @@
 # <pin> is a file like ci/gate.pin: lines starting with # are comments, and the first other line is the release's
 # version and the sha256 of its tarball. The Jenkinsfile's Gate stage fetches the release that judges this
 # repository's changes with it, by the steps that README section gives a project, as install-tools.sh's fetch_tool
-# fetches a tool. Needs curl, sha256sum and tar.
+# fetches a tool. Needs curl, sha256sum and tar. A copy of octoflow-gate's ci/fetch-gate.sh, as
+# tests/test_fetch_gate.py is of its test: a fix to either goes to both repositories.
 set -eu
 
 [ $# -eq 2 ] || { echo "usage: fetch-gate.sh <pin> <dir>" >&2; exit 2; }

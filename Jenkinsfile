@@ -114,43 +114,13 @@ pipeline {
                 '''
                 sh 'ci/install-tools.sh "$WORKSPACE/.tools/bin"'
                 script {
-                    // The gate reads Rust through the gate-rust helper (docs/quality-gate.md, "Reading Rust: the
-                    // gate-rust helper"). A judge that pins a gate release (the Gate stage says which tree judges)
-                    // gets the release's helper with it, so nothing is built here. The cutover fallback, a judge
-                    // without ci/gate.pin, has the helper built here from the tree the Gate stage takes gate.py from:
-                    // a quality build's from the judged main, as Checkout named it, any other build's from its own;
-                    // ticket gate-standalone/10 removes it with ci/gate-rust. A main from before the helper has no
-                    // ci/gate-rust, and its gate.py no --rust-syntax, so nothing is built. The target directory is in
-                    // the workspace, which cleanWs empties, so no build runs what an earlier one compiled; the lock as
-                    // in the UI stage, which says why a quality build may skip it. The Gate stage's clippy lints the
-                    // tree's own ci/gate-rust as a workspace of its own, so that is checked here whatever the judge,
-                    // for the reason the UI stage checks the shell: with syn checked, clippy checks only the helper,
-                    // in under a second rather than 5 on the development host. Neither stops the build when it fails:
-                    // a helper that did not build is one the gate cannot run, which each check that reads Rust reports
-                    // as not run on a change to Rust (so a failing check fails the gate), while a change to no Rust is
-                    // judged as before; and a check that failed leaves the error to the Gate stage's clippy.
+                    // The Gate stage's clippy lints the tree's own ci/gate-rust as a workspace of its own, so that is
+                    // checked here, for the reason the UI stage checks the shell: with syn checked, clippy checks only
+                    // the helper, in under a second rather than 5 on the development host; the lock as in the UI stage,
+                    // which says why a quality build may skip it. A check that failed does not stop the build: it leaves
+                    // the error to the Gate stage's clippy. Ticket gate-standalone/10 removes it with ci/gate-rust.
                     if (env.JUDGED_AT_PR != 'true') {
                         sh '''
-                            src=
-                            if [ -n "${GIT_REF:-}" ]; then
-                                : "${JUDGED_MAIN:?is unset; run the whole build, not a restart from a later stage}"
-                                if ! git cat-file -e "$JUDGED_MAIN:ci/gate.pin" 2>/dev/null; then
-                                    src="$WORKSPACE_TMP/main/ci/gate-rust"
-                                    rm -rf "$src"
-                                    mkdir -p "$WORKSPACE_TMP/main"
-                                    if git cat-file -e "$JUDGED_MAIN:ci/gate-rust/Cargo.toml" 2>/dev/null; then
-                                        git archive -o "$WORKSPACE_TMP/main/gate-rust.tar" "$JUDGED_MAIN" ci/gate-rust
-                                        tar -x -f "$WORKSPACE_TMP/main/gate-rust.tar" -C "$WORKSPACE_TMP/main"
-                                    fi
-                                fi
-                            elif [ ! -f ci/gate.pin ]; then
-                                src=ci/gate-rust
-                            fi
-                            if [ -n "$src" ] && [ -f "$src/Cargo.toml" ]; then
-                                "$WORKSPACE/ci/cargo-lock.sh" ${GIT_REF:+--no-wait} cargo build --release --locked \\
-                                    --manifest-path "$src/Cargo.toml" --target-dir "$WORKSPACE/.gate-rust-target" \\
-                                    || echo "the gate-rust helper did not build; gate.py reports Rust as not run" >&2
-                            fi
                             if [ -f ci/gate-rust/Cargo.toml ]; then
                                 "$WORKSPACE/ci/cargo-lock.sh" ${GIT_REF:+--no-wait} cargo check --locked --all-targets \\
                                     --manifest-path ci/gate-rust/Cargo.toml \\
@@ -319,53 +289,29 @@ pipeline {
                     def status
                     withEnv(["GATE_BASE=${base}"]) {
                         status = sh(returnStatus: true, script: '''
-                            # The judge's files, a quality build's copied out of the main commit Checkout named, each
-                            # one main has; gate.toml beside pyproject.toml, where --config makes the gate read it.
+                            # The judge's files, a quality build's copied out of the main commit Checkout named;
+                            # gate.toml beside pyproject.toml, where --config makes the gate read it. Exit status 2 for
+                            # whatever fails before the gate runs: a setup that failed is a gate that could not judge,
+                            # never one that did not pass.
                             judge=.
                             if [ -n "${GIT_REF:-}" ]; then
                                 : "${JUDGED_MAIN:?is unset; run the whole build, not a restart from a later stage}"
                                 judge="$WORKSPACE_TMP/judge"
-                                rm -rf "$judge"
-                                mkdir -p "$judge/ci"
-                                for f in pyproject.toml gate.toml gate.py ci/gate.pin ci/fetch-gate.sh; do
-                                    if git cat-file -e "$JUDGED_MAIN:$f" 2>/dev/null; then
-                                        git show "$JUDGED_MAIN:$f" > "$judge/$f" || exit 2
-                                    fi
+                                rm -rf "$judge" && mkdir -p "$judge/ci" || exit 2
+                                for f in pyproject.toml gate.toml ci/gate.pin ci/fetch-gate.sh; do
+                                    git show "$JUDGED_MAIN:$f" > "$judge/$f" || exit 2
                                 done
                             fi
-                            if [ -f "$judge/ci/gate.pin" ]; then
-                                release="$WORKSPACE_TMP/gate"
-                                rm -rf "$release"
-                                version=$(sh "$judge/ci/fetch-gate.sh" "$judge/ci/gate.pin" "$release") || exit 2
-                                echo "Gate: octoflow-gate $version, its tarball checked against ci/gate.pin's sha256"
-                                gate="$release/gate.py"
-                                set -- --test-contexts "$COVERAGE_FILE" --rust-syntax "$release/gate-rust-linux-x86_64"
-                            else
-                                # The cutover fallback, for a quality build of a snapshot whose main is from before
-                                # ci/gate.pin: main's own gate.py, with the helper the Install stage built from main's
-                                # ci/gate-rust. Ticket gate-standalone/10 removes it. A main without gate.py, from
-                                # before the gate split, cannot judge. --test-contexts and --rust-syntax go only to a
-                                # gate.py that defines them, so a main from before either is judged as it was then.
-                                if [ ! -f "$judge/gate.py" ]; then
-                                    echo "${JUDGED_MAIN:-HEAD} has neither ci/gate.pin nor gate.py:" \\
-                                        "nothing can judge this change" >&2
-                                    exit 2
-                                fi
-                                gate="$judge/gate.py"
-                                set --
-                                if grep -q -- '"--test-contexts"' "$gate"; then
-                                    set -- --test-contexts "$COVERAGE_FILE"
-                                fi
-                                if grep -q -- '"--rust-syntax"' "$gate"; then
-                                    set -- "$@" --rust-syntax "$WORKSPACE/.gate-rust-target/release/gate-rust"
-                                fi
-                            fi
-                            # The Test stage ran the tests; their reports replace gate.toml's [[test]] commands. Each
-                            # of the Rust's before the Python's: a gate.py that takes --tests and --coverage only once,
-                            # as main's did before the commit that brought this order, keeps the last of each.
-                            uv run --frozen python "$gate" --base "$GATE_BASE" --config "$judge/pyproject.toml" \\
+                            release="$WORKSPACE_TMP/gate"
+                            rm -rf "$release" || exit 2
+                            version=$(sh "$judge/ci/fetch-gate.sh" "$judge/ci/gate.pin" "$release") || exit 2
+                            echo "Gate: octoflow-gate $version, its tarball checked against ci/gate.pin's sha256"
+                            # The Test stage ran the tests; their reports replace gate.toml's [[test]] commands.
+                            uv run --frozen python "$release/gate.py" --base "$GATE_BASE" \\
+                                --config "$judge/pyproject.toml" \\
                                 --tests target/nextest/ci/junit.xml --tests test-results.xml \\
-                                --coverage coverage-rust.xml --coverage coverage.xml "$@" --out quality.md
+                                --coverage coverage-rust.xml --coverage coverage.xml --test-contexts "$COVERAGE_FILE" \\
+                                --rust-syntax "$release/gate-rust-linux-x86_64" --out quality.md
                         ''')
                     }
                     if (status == 1 && params.GIT_REF) {
@@ -379,7 +325,7 @@ pipeline {
             }
             post {
                 always {
-                    // quality.json only from a release; the fallback's gate.py writes none.
+                    // Neither file when the gate could not judge.
                     archiveArtifacts artifacts: 'quality.md, quality.json', allowEmptyArchive: true
                 }
             }

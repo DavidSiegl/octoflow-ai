@@ -8,10 +8,14 @@
 
 [build-config]
 Jenkinsfile = "The quality job reads it from `main`, so this analysis ran without the edit."
+"ci/gate.pin" = "A quality build takes the gate release from `main`'s pin, so this analysis ran without the edit."
+"ci/fetch-gate.sh" = "A quality build fetches the gate with `main`'s copy, so this analysis ran without the edit."
 
 # The commands a gate run outside Jenkins runs the tests with. The Jenkinsfile's Test stage runs them itself, as the
 # quality round's time and the e2e scenarios' filter need, and its Gate stage passes their reports with --tests and
-# --coverage, which replace these.
+# --coverage, which replace these. Run from here they lack the Test stage's environment: without E2E_ENGINE the e2e
+# scenarios cover none of the engine, so engine code only they reach counts as uncovered, and without
+# HYPOTHESIS_PROFILE=ci the property tests try the local profile's examples (ticket gate-standalone/09 settles this).
 [[test]]
 name = "pytest"
 command = ["uv", "run", "pytest", "--cov=gate", "--cov-branch", "--cov-context=test", "--cov-report=xml",

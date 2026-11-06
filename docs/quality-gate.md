@@ -825,14 +825,10 @@ request](#a-build-of-main-judged-at-its-pull-request)).
   the development host's CPUs; `CARGO_HOME` is kept in the workspace, so nothing is cached between builds. The UI stage
   runs `cargo check` under the same lock, since the Test stage's build of the dependencies is not the check clippy
   needs: with them checked, the Gate stage's clippy checks only the workspace's own crates, in about 2 s for the shell
-  alone, against 77 s for a clean one on the development host's 6 CPUs. Only where the Gate stage's judge
-  has no `ci/gate.pin` (the table below) does the Install stage build the
-  [gate-rust helper](#reading-rust-the-gate-rust-helper) with `cargo build --release --locked`, from the judged
-  `main`'s `ci/gate-rust/` in a quality build, fetching syn, proc-macro2 and serde_json from crates.io, in about 35 s
-  on those 6 CPUs; a pinned release brings its own. It always checks the tree's own `ci/gate-rust/`, a package outside the top-level workspace, for the Gate
-  stage's clippy as the UI stage checks the workspace, in about 4 s, which leaves clippy under a second for it. A
-  helper that does not build, as when crates.io cannot be reached, does not stop the build: the gate then reports a
-  change to Rust as not run by each check that reads it. Package bundles the `.deb` with `dpkg-deb`, and the `.AppImage` with `linuxdeploy`,
+  alone, against 77 s for a clean one on the development host's 6 CPUs. The gate release brings its own
+  [gate-rust helper](#reading-rust-the-gate-rust-helper), built; the Install stage checks the tree's own
+  `ci/gate-rust/`, a package outside the top-level workspace, for the Gate stage's clippy as the UI stage checks the
+  workspace, in about 4 s, which leaves clippy under a second for it. Package bundles the `.deb` with `dpkg-deb`, and the `.AppImage` with `linuxdeploy`,
   which `tauri build` downloads from GitHub each build.
 - **`gh` on the agent, and a GitHub token** for the Release stage: a Secret text credential with the ID
   `GitHub-Agents`, holding a token with *Contents: read and write* on this repository. It is the agents' own
@@ -872,7 +868,7 @@ empty `GIT_REF`, before it accepts `buildWithParameters`.
 
 | Build | `--base` | Gate and rules |
 |---|---|---|
-| Quality build (`GIT_REF` set) | `HEAD^`: the snapshot's only parent is the run's base | `main`'s: the gate release its `ci/gate.pin` names, its `pyproject.toml` and `gate.toml`, from the `origin/main` commit its description names (below); a commit without `ci/gate.pin` is judged by its own `gate.py` and gate-rust helper, and one without either fails the stage, unjudged |
+| Quality build (`GIT_REF` set) | `HEAD^`: the snapshot's only parent is the run's base | `main`'s: the gate release its `ci/gate.pin` names, its `pyproject.toml` and `gate.toml`, from the `origin/main` commit its description names (below); a commit without `ci/gate.pin` fails the stage, unjudged |
 | Pull request (`CHANGE_TARGET` set) | the merge base with the target branch, fetched first | its own, `Jenkinsfile` included (below) |
 | `main` | the last successful build's commit, else `HEAD^1`, as also when a force-push took that commit out of the history | its own; none when judged at its pull request (below) |
 
@@ -883,7 +879,8 @@ downloaded, or does not match, fails the build as one the gate could not judge, 
 reads `gate.toml` beside the `pyproject.toml` it is given, so a quality build's settings are `main`'s too, and it
 writes `quality.json` beside `quality.md`, which the stage archives with it. A change to `ci/gate.pin` therefore
 judges the changes after it reaches `main`, not itself, in a quality build; the pull request that raises it is judged
-by the release it raises it to.
+by the release it raises it to. `gate.toml`'s `[build-config]` names the pin and `ci/fetch-gate.sh`, so a quality
+build's `quality.md` says so of a snapshot that edits either.
 
 Before Install runs any code of the change, a quality build's Checkout stage sets its build description to
 `judged tree=<sha> parent=<sha> main=<sha>`, exactly: full lowercase shas, one space apart. `tree` is the
@@ -1232,9 +1229,8 @@ q ≥ 1, where the Builder is answering quality round q. `resume` also takes `--
 `judged-in-quality --quality-gate JOB --target BRANCH` exits 0 when a quality build of `JOB` already judged
 `HEAD` as a pull request's build into `BRANCH` would: among the builds Jenkins keeps, it ended SUCCESS, and its
 description (above) names `HEAD`'s tree, the merge base of `HEAD` and `origin/BRANCH` as its parent, and a `main`
-commit at which `Jenkinsfile`, `ci/gate.pin`, `ci/fetch-gate.sh`, `gate.toml`, `gate.py`, `ci/gate-rust/`,
-`pyproject.toml`, `uv.lock`, `.python-version`, `rust-toolchain.toml` and `Cargo.lock` are as in `HEAD` and at that
-merge base. Such a build runs the e2e scenarios (`engine/e2e`) only if the change
+commit at which `Jenkinsfile`, `ci/gate.pin`, `ci/fetch-gate.sh`, `gate.toml`, `pyproject.toml`, `uv.lock`,
+`.python-version`, `rust-toolchain.toml` and `Cargo.lock` are as in `HEAD` and at that merge base. Such a build runs the e2e scenarios (`engine/e2e`) only if the change
 touches what they depend on, where a pull request build always runs them; every path that could make the two differ
 makes the quality build run them too (the Jenkinsfile's Test stage lists them). Otherwise, and on any error, such as
 Jenkins unreachable, an HTTP error or a commit it cannot fetch, it exits 1 with one line on standard error naming the condition the closest build fails, or
