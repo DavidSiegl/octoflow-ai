@@ -108,7 +108,10 @@ fn stderr(output: &Output) -> String {
 fn a_matching_release_is_unpacked_and_its_version_printed() {
     let fetch = Fetch::new();
     let output = fetch.fetch(&format!("# a comment\n0.5.0 {}\n", fetch.sha256));
-    assert_eq!((output.status.code(), String::from_utf8_lossy(&output.stdout).into_owned()), (Some(0), "0.5.0\n".into()));
+    assert_eq!(
+        (output.status.code(), String::from_utf8_lossy(&output.stdout).into_owned()),
+        (Some(0), "0.5.0\n".into())
+    );
     let release = "https://github.com/DavidSiegl/octoflow-gate/releases/download/v0.5.0";
     assert_eq!(fetch.urls(), [format!("{release}/octoflow-gate-0.5.0.tar.gz")]);
     assert_eq!(fs::read_to_string(fetch.out().join("gate.py")).expect("unpacked"), GATE);

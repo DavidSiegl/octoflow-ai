@@ -89,10 +89,11 @@ and the Reviewer to read; the orchestrator passes it on as it is.
 
 ## Jenkins setup
 
-One `Jenkinsfile` serves two jobs. Every build installs, runs the Rust tests with line coverage of the Rust, checks the desktop app's frontend, runs the gate and archives `quality.md`; a pull request or
-`main` build then builds the Linux binary and desktop app, which a quality build skips (the `Jenkinsfile`'s Package
-stage says why), and a build of `main` that gets that far also releases. A build of `main` whose tree a pull request
-build already judged skips the tests, the desktop app's checks and the gate (see [A build of main judged at its pull
+One `Jenkinsfile` serves two jobs. Every build installs, runs the Rust tests with line coverage of the Rust, checks the
+desktop app's frontend, runs the gate and archives `quality.md`; a pull request or `main` build then builds the Linux
+binary and desktop app, which a quality build skips (the `Jenkinsfile`'s Package stage says why), and a build of `main`
+that gets that far also releases. A build of `main` whose tree a pull request build already judged skips the tests, the
+desktop app's checks and the gate (see [A build of main judged at its pull
 request](#a-build-of-main-judged-at-its-pull-request)).
 
 ### What Jenkins needs
@@ -104,11 +105,11 @@ request](#a-build-of-main-judged-at-its-pull-request)).
   restricted to this folder's jobs, while the agents that deploy accept no job from this folder. A label alone
   does not enforce that - a pushed branch's `Jenkinsfile` can ask for any label - so the restriction sits on
   the nodes, with the Job Restrictions plugin.
-- **`uv`, `git`, `shellcheck`, `actionlint` and clippy on the agent**: the Install stage runs `uv sync --frozen`,
-  and `uv` brings the Python of `.python-version`, which the gate runs on; clippy and llvm-tools (which cargo-llvm-cov reads its coverage
-  data with) are rustup components of the Rust below, which the agent image must add: its rustup home is root's, so
-  a build cannot, and the Install stage fails naming a missing one. The gate fails a build that lacks a linter, and
-  the tests that run the real clippy fail without it.
+- **`uv`, `git`, `shellcheck`, `actionlint` and clippy on the agent**: the Install stage runs `uv sync --frozen`, and
+  `uv` brings the Python of `.python-version`, which the gate runs on; clippy and llvm-tools (which cargo-llvm-cov reads
+  its coverage data with) are rustup components of the Rust below, which the agent image must add: its rustup home is
+  root's, so a build cannot, and the Install stage fails naming a missing one. The gate fails a build that lacks a
+  linter, and the tests that run the real clippy fail without it.
 - **`curl`, `sha256sum`, `tar` and `openssl` on the agent**: the Install stage downloads, with `ci/install-tools.sh`,
   pinned releases of the gitleaks the e2e scenarios (`engine/e2e`) run, of cargo-llvm-cov and cargo-nextest,
   for the Rust tests and their coverage and the passes-at-base check's run of the changed Rust
@@ -228,12 +229,12 @@ stops only when the tests could not be built or run. The gate's exit status then
 The multibranch job mails a failed build of `main` or a pull request, with the log attached, and the first build
 that passes after one. The quality job mails nothing: its result goes to the orchestrator run that asked for it.
 
-A build of `main` that passes then releases the version in `engine/Cargo.toml` (`ci/release-version.sh`): if GitHub has no release
-`v<version>` yet, `gh release create` makes one, with the tag at the commit built, notes generated from the pull
-requests merged since the last release, after the words of `docs/releases/v<version>.md` where there is one, and
-the Linux binary and desktop app with their `.sha256` attached. To release, raise
-that `version` in the pull request; a merge that leaves it alone releases nothing. A release that already exists is
-skipped whole, so its files are never replaced.
+A build of `main` that passes then releases the version in `engine/Cargo.toml` (`ci/release-version.sh`): if GitHub has
+no release `v<version>` yet, `gh release create` makes one, with the tag at the commit built, notes generated from the
+pull requests merged since the last release, after the words of `docs/releases/v<version>.md` where there is one, and
+the Linux binary and desktop app with their `.sha256` attached. To release, raise that `version` in the pull request; a
+merge that leaves it alone releases nothing. A release that already exists is skipped whole, so its files are never
+replaced.
 
 ## Credentials and permissions
 

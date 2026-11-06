@@ -114,10 +114,6 @@ pipeline {
                     done
                 '''
                 sh 'ci/install-tools.sh "$WORKSPACE/.tools/bin"'
-                script {
-                    // The version a release on main is tagged with.
-                    env.PROJECT_VERSION = sh(returnStdout: true, script: 'ci/release-version.sh').trim()
-                }
             }
         }
 
@@ -168,9 +164,8 @@ pipeline {
                 // e2e, so that the docs check beside them still runs, when its change, against HEAD^, the run's base,
                 // touches nothing they depend on: the engine and the e2e package under engine/, the Cargo workspace it
                 // builds in, the example workflows they run, and ci/, which pins the gitleaks they run. Their Python
-                // forerunner took quality build #59 past the
-                // orchestrator's QUALITY_TIMEOUT (1299 s of 1200). A git diff that fails counts as a change, so they
-                // run. Pull request builds always run them.
+                // forerunner took quality build #59 past the orchestrator's QUALITY_TIMEOUT (1299 s of 1200). A git
+                // diff that fails counts as a change, so they run. Pull request builds always run them.
                 sh '''
                     junit=target/nextest/ci/junit.xml
                     rm -f "$junit"
@@ -336,9 +331,8 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'GitHub-Agents', variable: 'GH_TOKEN')]) {
                     sh '''
-                        # Install sets it, so a restart from this stage, which skips Install, has none and must not release "v".
-                        : "${PROJECT_VERSION:?is unset; run the whole build, not a restart from the Release stage}"
-                        tag="v$PROJECT_VERSION"
+                        version=$(ci/release-version.sh)
+                        tag="v$version"
                         sha=$(git rev-parse HEAD)
                         if gh release view "$tag" >/dev/null 2>gh-release-view.err; then
                             echo "$tag is already released"

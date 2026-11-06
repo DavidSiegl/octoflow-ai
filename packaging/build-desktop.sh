@@ -1,13 +1,12 @@
 #!/bin/sh
-# Build the desktop app in ui/ for release, with the orchestrator binary that build-binary.sh built for this
-# machine inside it as its sidecar, so the app needs no checkout. Writes to dist/, each with its
-# .sha256: on Linux octoflow-desktop-linux-<arch>.deb and .AppImage, on macOS
-# octoflow-desktop-macos-<arch>.dmg, signed ad hoc only. Each holds build-binary.sh's third-party licenses, the
-# crates', as THIRD-PARTY-LICENSES.html among the app's resources, and beside it as THIRD-PARTY-LICENSES-NPM.html
-# those of the npm packages its window bundles, which ui/scripts/npm-licenses.js writes here to
-# dist/octoflow-desktop-npm-licenses.html, the release's copy. The app's version is the release's, as ci/release-version.sh reads it. Run
-# build-binary.sh first. Jenkins's Package stage builds the Linux app with it, and
-# .github/workflows/macos-binary.yml the macOS one.
+# Build the desktop app in ui/ for release, with the orchestrator binary that build-binary.sh built for this machine
+# inside it as its sidecar, so the app needs no checkout. Writes to dist/, each with its .sha256: on Linux
+# octoflow-desktop-linux-<arch>.deb and .AppImage, on macOS octoflow-desktop-macos-<arch>.dmg, signed ad hoc only. Each
+# holds build-binary.sh's third-party licenses, the crates', as THIRD-PARTY-LICENSES.html among the app's resources, and
+# beside it as THIRD-PARTY-LICENSES-NPM.html those of the npm packages its window bundles, which
+# ui/scripts/npm-licenses.js writes here to dist/octoflow-desktop-npm-licenses.html, the release's copy. The app's
+# version is the release's, as ci/release-version.sh reads it. Run build-binary.sh first. Jenkins's Package stage builds
+# the Linux app with it, and .github/workflows/macos-binary.yml the macOS one.
 set -eu
 
 cd "$(dirname "$0")/.."

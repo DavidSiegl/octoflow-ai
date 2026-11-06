@@ -16,9 +16,9 @@ git fetch --quiet origin "+refs/heads/$CHANGE_TARGET:refs/remotes/origin/$CHANGE
 # Rust is every module its parent declares under #[cfg(test)]: tests.rs and tests/, the fake and fixture modules,
 # test_support.rs and prompt_parity.rs. gate.toml, pyproject.toml, uv.lock and .python-version, which judge this
 # repository's own changes in Jenkins (pyproject.toml holds no release's metadata, only the gate's Markdown linter and
-# its rules), xtask, its chores (the eval runner and its bundles), .gitignore, which only tells git what to leave untracked, and
-# .copier-answers.yml, the agent-estate template's answers that `copier update` renders docs/agents/ from, are in no
-# release asset.
+# its rules), xtask, its chores (the eval runner and its bundles), .gitignore, which only tells git what to leave
+# untracked, and .copier-answers.yml, the agent-estate template's answers that `copier update` renders docs/agents/
+# from, are in no release asset.
 NOT_RELEASED=":(exclude)docs :(exclude,glob)*.md :(exclude)tests :(exclude)engine/e2e :(exclude)engine/tests
 :(exclude,glob)**/tests.rs :(exclude,glob)engine/src/**/tests/** :(exclude,glob)engine/src/**/fake.rs
 :(exclude,glob)engine/src/**/fixture.rs :(exclude)engine/src/test_support.rs :(exclude)engine/src/prompt_parity.rs
@@ -36,7 +36,7 @@ fi
 
 here=$(dirname "$0")
 target=$(sh "$here/release-version.sh" "origin/$CHANGE_TARGET")
-head=$(sh "$here/release-version.sh")
+head=$(sh "$here/release-version.sh" HEAD)
 greater=$(printf '%s\n%s\n' "$target" "$head" | sort -V | tail -n 1)
 if [ "$head" = "$target" ] || [ "$greater" != "$head" ]; then
     echo "version-raised.sh: engine/Cargo.toml's version is $head, not greater than $CHANGE_TARGET's $target; raise" \

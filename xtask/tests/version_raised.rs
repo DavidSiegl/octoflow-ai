@@ -166,8 +166,23 @@ fn a_change_that_also_touches_released_code_still_needs_the_raise() {
 #[test]
 fn a_manifest_without_a_package_version_fails() {
     let repo = Repo::new();
-    repo.commit(&[("engine/Cargo.toml", "[workspace]\nversion = \"9.9.9\"\n\n[package]\nname = \"p\"\n")], "no version");
+    repo.commit(
+        &[("engine/Cargo.toml", "[workspace]\nversion = \"9.9.9\"\n\n[package]\nname = \"p\"\n")],
+        "no version",
+    );
     let output = repo.run_script();
     assert!(!output.status.success());
-    assert!(stderr(&output).contains("no [package] version in engine/Cargo.toml"), "{}", stderr(&output));
+    assert!(stderr(&output).contains("no [package] version in HEAD's engine/Cargo.toml"), "{}", stderr(&output));
+}
+
+#[test]
+fn a_target_without_a_package_version_fails() {
+    let repo = Repo::new();
+    repo.git(&["switch", "--quiet", "main"]);
+    repo.commit(&[("engine/Cargo.toml", "[package]\nname = \"p\"\n")], "no version on main");
+    repo.git(&["push", "--quiet", "origin", "main"]);
+    repo.git(&["switch", "--quiet", "-C", "change", "main"]);
+    let output = repo.check("0.9.1");
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("no [package] version in origin/main's engine/Cargo.toml"), "{}", stderr(&output));
 }

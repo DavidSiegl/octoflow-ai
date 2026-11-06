@@ -85,6 +85,14 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **A quality build of a snapshot based on octoflow-without-python/09 before it merges fails.** Raised by cross-review
+  163 (F1): "A quality build loads main's Jenkinsfile; on a snapshot based on no-python-09 before it merges, main's
+  Install stage runs `uv run --frozen python -c '... tomllib.load(open("pyproject.toml","rb"))["project"]["version"]'`,
+  which raises KeyError because pyproject.toml has no `[project]` table any more, and main's Test stage runs
+  `uv run pytest`, which cannot spawn (pytest left the dev group) ... The round ends `GATE: BUILD_FAILED`." Affects
+  only a run whose base holds the branch's commits while main does not; none is started. Closes by itself when
+  octoflow-without-python/09 merges: delete this entry then.
+
 - **A stuck loop can compare a round read from `quality.json` with one read from `quality.md`.** Raised by
   cross-review 160 (F3): "A round judged from quality.json records every failing finding's fingerprint; one judged
   from quality.md (gate_failures) records at most QUALITY_FINDINGS_LIMIT." A round of a build that has
