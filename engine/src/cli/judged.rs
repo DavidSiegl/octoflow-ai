@@ -7,14 +7,15 @@ use crate::constants::REMOTE;
 use crate::error::{shortened, OrchestratorError};
 use crate::host::{names_between, nul_separated, Host, DEFAULT_TIMEOUT};
 
-/// The files that decide how a change is judged, a directory standing for every file under it: the stages, the gate,
-/// the helper it reads Rust through (which a quality build, like gate.py, takes from the main commit it judges by), its
-/// rules, the versions of its tools and the Python and the Rust they run on. judged_in_quality trusts a quality build
-/// only when none of them differs.
-pub const JUDGING_FILES: [&str; 8] = [
+/// The files that decide how a change is judged: the stages; the gate release the pin names and the script that
+/// fetches it; the gate's settings; its rules, the versions of its tools and the Python and the Rust they run on. A
+/// quality build takes the pin, the script and the settings, like the rules, from the main commit it judges by.
+/// judged_in_quality trusts a quality build only when none of them differs.
+pub const JUDGING_FILES: [&str; 9] = [
     "Jenkinsfile",
-    "gate.py",
-    "ci/gate-rust",
+    "ci/gate.pin",
+    "ci/fetch-gate.sh",
+    "gate.toml",
     "pyproject.toml",
     "uv.lock",
     ".python-version",
@@ -152,11 +153,9 @@ fn build_trust(
 }
 
 /// The files of JUDGING_FILES that differ between commits a and b, their mode included, or that only one of them has,
-/// in git's order: a file under a directory of JUDGING_FILES by its own path. Errors: git fails.
+/// in git's order. Errors: git fails.
 fn judging_changes(host: &dyn Host, root: &str, a: &str, b: &str) -> Result<Vec<String>, OrchestratorError> {
     let names = names_between(host, root, a, b, &JUDGING_FILES.map(String::from))?;
-    // Only a file under a directory of JUDGING_FILES can have a name that is not UTF-8; such a name only says which
-    // file a refusal is for, so it is given with U+FFFD in place of what is not.
     Ok(nul_separated(&names))
 }
 

@@ -26,11 +26,13 @@ is rewritten to say what is left.
   machines and in CI. Decided against: one file on every platform, by embedding the orchestrator's bytes in the
   Rust executable and unpacking them at start (PyInstaller's onefile done twice), or by Python hosting the window,
   which [ui-options.md](docs/ui-options.md) chose against. Agreed 2026-10-24.
-- **The quality gate in a `gate.py` of its own: what is left.** The cut is made (gate-split ticket 01), and the
-  Jenkinsfile's cutover fallback is gone. Left: making the test-file patterns a setting,
-  for the gate's use in other projects (`.scratch/gate-split/issues/04-configurable-test-files.md`). Decided 2026-10-24
-  that the gate moves to its own repository only once a second project uses it; `.scratch/gate-repo-split/` plans
-  that move.
+- **The quality gate in a repository of its own: what is left.** The gate moved to
+  [octoflow-gate](https://github.com/DavidSiegl/octoflow-gate) (decided 2026-11-05: the agent-estate template's
+  `scripts/gate` is the second project that uses it), where the test-file patterns and the rest are `gate.toml`
+  settings, and Jenkins judges this repository's changes with the release `ci/gate.pin` names
+  (`.scratch/gate-standalone/`, ticket 07). Left: the engine reading `quality.json` rather than `quality.md` (ticket
+  08), `--quality-gate local` (09), and removing `gate.py`, `ci/gate-rust/` and their tests, which Jenkins no
+  longer runs to judge, from this repository (10).
 - **The e2e scenarios: what they do not record.** `engine/e2e/` runs 43 scenarios against the engine as a program and
   compares each with its recording (docs/architecture.md, Tests). The recordings are the Python engine's, made before
   rust-engine ticket 11 removed it, by the Python harness octoflow-without-python ticket 02 removed; a scenario added

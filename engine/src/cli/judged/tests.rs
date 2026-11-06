@@ -19,11 +19,12 @@ use crate::http::{Http, HttpError, Request, Response};
 use crate::interrupt::Interrupt;
 use crate::map::Map;
 
-/// The files whose change decides the judging, as the test knows them: for ci/gate-rust, a file under it.
-const JUDGING: [&str; 8] = [
+/// The files whose change decides the judging, as the test knows them.
+const JUDGING: [&str; 9] = [
     "Jenkinsfile",
-    "gate.py",
-    "ci/gate-rust/src/main.rs",
+    "ci/gate.pin",
+    "ci/fetch-gate.sh",
+    "gate.toml",
     "pyproject.toml",
     "uv.lock",
     ".python-version",

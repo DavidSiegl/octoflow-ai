@@ -56,7 +56,8 @@ class TestVersionRaised(RepositoryTest):
                 "engine/src/workflow/tests/resume.rs": "x", "engine/src/herdr/fake.rs": "x",
                 "engine/src/cli/fixture.rs": "x", "engine/src/test_support.rs": "x", "engine/src/prompt_parity.rs": "x",
                 "ui/src/App.test.tsx": "x", "ui/src/runs.test.ts": "x", "ui/src/test/fakes.ts": "x",
-                "ci/build.sh": "x", "Jenkinsfile": "x", "gate.py": "x", ".github/workflows/w.yml": "x",
+                "ci/build.sh": "x", "Jenkinsfile": "x", "gate.py": "x", "gate.toml": "x",
+                ".github/workflows/w.yml": "x",
                 "evals/tasks/t/task.md": "x", "xtask/tests/cli.rs": "x", "xtask/src/main.rs": "x",
                 ".gitignore": "x", ".copier-answers.yml": "x"}
         self.commit(only, "docs, tests, CI and repository tooling")
