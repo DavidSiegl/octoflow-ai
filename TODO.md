@@ -68,6 +68,16 @@ is rewritten to say what is left.
   toy repositories have no quality job and their origin is a bundle no snapshot can be pushed to, so `quality rounds`
   stays 0; a `--worktree` or `--machine` run, which the runner refuses; and an interview, which `--spec` skips.
   Decided 2026-10-28. The verification run it still lacks is under Open issues.
+- **Idea, for later: fuzz the engine's parsers of text it does not write, once, for panics.** `parse_gate`
+  (`engine/src/quality.rs`) and `parse_verdict` (`engine/src/handoff.rs`) read what an agent wrote, and `parse_env_file` (`engine/src/env.rs`) a file
+  the user wrote; a coverage-guided fuzzer (cargo-fuzz) reaches branches the seeded generator (`test_support::Rng`)
+  does not, and in Rust a slice off a character boundary or past the end panics. The proposal is an hour or so of
+  fuzzing by hand, looking only for panics, not a standing job: fuzzing checks no result where the tests need an
+  oracle, and `parse_env_file`'s is `sh`, a process an input, far too slow to fuzz against; a standing job would
+  need nightly Rust, a `fuzz/` crate, kept corpora and Jenkins time, against a toolchain Jenkins pins and builds
+  `--locked`. What the generated-input tests already cover: `never_panic_and_return_only_their_words`
+  (`engine/src/handoff/tests.rs`), and new inputs on every build once the seed varies (`.scratch/rust-test-seeds/`).
+  A panic found would argue for the standing job. Raised 2026-11-06.
 
 ## Open issues
 
