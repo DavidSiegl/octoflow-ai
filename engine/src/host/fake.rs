@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use super::{ChangedFile, Completed, Exec, ExecError, Host, GIT_STATUS_ARGS};
+use super::{ChangedFile, Completed, Exec, ExecError, Host, Scanned, GIT_STATUS_ARGS};
 use crate::quality::Leak;
 use crate::constants::WORKTREES_DIR;
 use crate::error::OrchestratorError;
@@ -20,6 +20,15 @@ use crate::map::Map;
 pub(crate) const HOST_EPOCH: i64 = 1_791_000_000;
 /// FakeState::leaks' stand-in for the commit a scan is of.
 pub(crate) const SCANNED: &str = "scanned";
+
+/// One call of FakeHost::scan_secrets: its arguments but cwd.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Scan {
+    pub commit: String,
+    pub base: String,
+    pub scanned: Scanned,
+    pub report_path: String,
+}
 
 /// What a test plays after each sleep of a FakeClock, given the time then.
 type ClockHook = Box<dyn FnMut(f64)>;
@@ -217,10 +226,10 @@ pub(crate) struct FakeState {
     pub clock: Option<Rc<FakeClock>>,
     /// Each file's modification time, by path; a file put straight into files has none, so mtime() gives now.
     pub mtimes: HashMap<String, i64>,
-    /// What scan_unpublished finds: every scan finds them all, a Leak whose commit is SCANNED in the commit scanned.
+    /// What scan_secrets finds: every scan finds them all, a Leak whose commit is SCANNED in the commit scanned.
     pub leaks: Vec<Leak>,
-    /// (commit, base, report path) of each scan.
-    pub scans: Vec<(String, String, String)>,
+    /// Each scan, in order.
+    pub scans: Vec<Scan>,
     /// check_gitleaks fails as on a machine without gitleaks.
     pub gitleaks_missing: bool,
     /// The text of each file in a commit, by (commit, path); file_at reads it, and records each read in file_reads.
@@ -878,15 +887,16 @@ impl Host for FakeHost {
         Ok(())
     }
 
-    fn scan_unpublished(
+    fn scan_secrets(
         &self,
         _cwd: &str,
         commit: &str,
         base: &str,
+        scanned: Scanned,
         report_path: &str,
     ) -> Result<Vec<Leak>, OrchestratorError> {
         let mut s = self.state();
-        s.scans.push((commit.to_string(), base.to_string(), report_path.to_string()));
+        s.scans.push(Scan { commit: commit.to_string(), base: base.to_string(), scanned, report_path: report_path.to_string() });
         if !s.leaks.is_empty() {
             // As a gitleaks run without --redact would write it: the report is the one place the secret may be.
             let report: Vec<String> = s

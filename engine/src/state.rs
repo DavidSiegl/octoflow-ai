@@ -367,8 +367,8 @@ impl RunState {
         format!("{}/quality-{n}-{q}.md", self.dir())
     }
 
-    /// The directory the local gate writes quality round q of round n's reports and judging settings in
-    /// (crate::local_gate::judge), beside its quality file.
+    /// The directory the local gate keeps quality round q of round n's job in, its reports and judging settings
+    /// among its files (crate::local_gate::start), beside its quality file.
     pub fn gate_dir(&self, n: u32, q: u32) -> String {
         format!("{}/gate-{n}-{q}", self.dir())
     }
@@ -395,9 +395,10 @@ impl RunState {
 
     /// Whether the run may have quality snapshot refs on origin: it has or had the quality gate, and the gate is not
     /// the local one, which pushes none. A run whose local gate resume turned off counts, as its state no longer names
-    /// the gate; deleting its refs then finds none.
+    /// the gate; deleting its refs then finds none. So does a run whose gate a release before 0.63.0 saved as `local`
+    /// with a build in ci: that was a Jenkins job of the name (cli::start::resumable_state).
     pub fn may_have_ci_refs(&self) -> bool {
-        self.had_quality_gate() && self.quality_job.as_deref() != Some(LOCAL_GATE)
+        self.had_quality_gate() && (self.quality_job.as_deref() != Some(LOCAL_GATE) || !self.ci.is_empty())
     }
 
     /// The Builder's last report in round n, once its quality rounds are over: the one the Reviewer reads.

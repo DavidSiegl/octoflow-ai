@@ -90,7 +90,7 @@ fn a_secret_in_a_snapshot_goes_back_to_the_builder() {
     assert_eq!(pushes, [strings(&["push", "--quiet", "--force", "origin", "snap2:refs/heads/orchestrator-ci/a1b2c3-1-q2"])]);
     assert_eq!(f.ci.state().triggered(), ["orchestrator-ci/a1b2c3-1-q2"]);
     assert!(f.quality_file(1, 2).starts_with("GATE: OK"));
-    let scanned: Vec<String> = f.host.state().scans.iter().take(2).map(|s| s.0.clone()).collect();
+    let scanned: Vec<String> = f.host.state().scans.iter().take(2).map(|s| s.commit.clone()).collect();
     assert_eq!(scanned, ["snap1", "snap2"]);
     // The report gitleaks wrote is the only place the secret is.
     assert!(!log_holds_the_secret(&f));
@@ -204,7 +204,7 @@ fn a_secret_on_the_branch_stops_publish_until_it_is_rewritten() {
     let calls = host.state().git_calls.clone();
     assert!(!calls.iter().any(|c| c[0] == "push"));
     assert!(!calls.contains(&strings(MERGE)));
-    let scanned: Vec<String> = host.state().scans.iter().map(|s| s.0.clone()).collect();
+    let scanned: Vec<String> = host.state().scans.iter().map(|s| s.commit.clone()).collect();
     assert_eq!(scanned, [format!("refs/heads/{}", s.branch.as_deref().unwrap())]);
     // The report gitleaks wrote is the only place the secret is.
     assert!(!log_holds_the_secret(&f) && !e.contains(FAKE_TOKEN));

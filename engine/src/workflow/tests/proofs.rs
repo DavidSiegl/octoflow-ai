@@ -25,7 +25,7 @@ use crate::constants::PROOF_COPIES_DIR;
 use crate::herdr::fake::FakeHerdr;
 use crate::host::fake::FakeClock;
 use crate::host::tests::Repo;
-use crate::host::{ProcessHost, PushError};
+use crate::host::{ProcessHost, PushError, Scanned};
 use crate::interrupt::Interrupt;
 use crate::pipeline::{Pipeline, DEFAULT_WORKFLOW};
 use crate::proofs::{ProofOutcome, PROOFS_HEADING};
@@ -672,7 +672,7 @@ impl Host for Unpublished<'_> {
         self.0.exec(argv, stdin, timeout)
     }
 
-    fn refuse_leaks(&self, _cwd: &str, _commit: &str, _base: &str, _report_path: &str) -> Result<(), PushError> {
+    fn refuse_leaks(&self, _cwd: &str, _commit: &str, _base: &str, _: Scanned, _report_path: &str) -> Result<(), PushError> {
         Ok(())
     }
 

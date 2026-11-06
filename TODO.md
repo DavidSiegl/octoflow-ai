@@ -586,7 +586,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   every branch, or one that restricts merges outside `main`.
 - **The secret scan does not look inside a change git diffs as binary.** Neither gitleaks nor `allow_comments`
   (`engine/src/host/scan.rs`) reads a change `git log -p` shows as "Binary files ... differ"; which changes those are
-  is in `Host::scan_unpublished`'s doc. gitleaks skips one before any rule runs, path rules and its own `pkcs12-file`
+  is in `Host::scan_secrets`'s doc. gitleaks skips one before any rule runs, path rules and its own `pkcs12-file`
   included (tested with gitleaks 8.30.1, cross-review 147), so a secret in it is pushed unreported. That includes a
   text file replacing a binary one. Decided against (2026-11-03, kept 2026-11-05 after the path-rule fallback was
   found not to work, secret-scan-gaps/02): scanning such changes as text with `--text`. Reopen it if such a secret is

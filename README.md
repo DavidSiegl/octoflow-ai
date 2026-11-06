@@ -88,8 +88,9 @@ is missing.
 - For `--quality-gate JOB`: a Jenkins quality job set up as in [quality gate](docs/quality-gate.md), its
   credentials in `~/.config/ai-agents-orchestrator/ci.env` or the environment, and a git checkout with an
   `origin`, also with `--no-pr`
-- For `--quality-gate local`, on the machine the project is on: `python3`, curl, sha256sum, tar and gitleaks, and
-  the tools the project's `gate.toml` has the gate run, its test commands and linters, all on `PATH`
+- For `--quality-gate local`, on the machine the project is on: `python3` 3.11 or later, curl, tar, sha256sum (or
+  shasum) and gitleaks, and the tools the project's `gate.toml` has the gate run, its test commands and linters, all
+  on `PATH`; the release's Rust helper runs on Linux x86_64 alone
   ([the local gate](docs/quality-gate.md#the-local-gate))
 
 ## Install
@@ -265,7 +266,7 @@ orchestrator metrics | jq -s 'map(.rounds) | add / length'
 | `--spec FILE` | `run` only: skip the interview. `FILE` is read on this machine, a relative path from the current directory, not `--cwd`. It becomes the first step's handoff file, and the run starts at the step after it. Without a task, the task is the spec's first line, when that is a level-one heading, or else `FILE`'s name. Needs a workflow whose first step writes the spec, such as `default` or `product-team`. |
 | `--no-pr` | `run` only: leave the change uncommitted and the workspace open instead of opening a pull request. Works outside git. |
 | `--worktree` | `run` and `drain`: work in a git worktree of the run's own; see [Worktree runs](#worktree-runs). |
-| `--quality-gate JOB` | `run`, `drain` and `resume`: after each Builder turn, have this Jenkins job, by its full name with folders, judge the change. Needs `JENKINS_URL`, `JENKINS_USER` and `JENKINS_TOKEN`, from the environment or `~/.config/ai-agents-orchestrator/ci.env`. `local` instead runs the octoflow-gate release the run's base pins in `ci/gate.pin`, cached in `~/.cache/octoflow/gate/<version>`, in the run's worktree, with the project's tests run as you and with no sandbox; a top-level job named local is `/local`. |
+| `--quality-gate JOB` | `run`, `drain` and `resume`: after each Builder turn, have this Jenkins job, by its full name with folders, judge the change. Needs `JENKINS_URL`, `JENKINS_USER` and `JENKINS_TOKEN`, from the environment or `~/.config/ai-agents-orchestrator/ci.env`. `local` instead runs the octoflow-gate release the run's base pins in `ci/gate.pin`, cached in `~/.cache/octoflow/gate/`, on a checkout of the change, with the project's tests run as you and with no sandbox; a top-level job named local is `/local`. |
 | `--no-quality-gate` | `resume` only: turn the run's quality gate off for good. |
 | `--max-quality-rounds N` | With the gate: quality builds per review round before the Reviewer gets the change anyway (default 3). |
 | `--force` | `resume` only: take over a run that still looks alive. |

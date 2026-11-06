@@ -385,7 +385,11 @@ pub fn quality_local_fails_then_passes(w: &mut World) {
         "curl",
         &format!("while [ $# -gt 0 ]; do case $1 in -o) out=$2; shift ;; esac; shift; done\ncp -- '{served}' \"$out\""),
     );
-    w.tool("python3", "[ \"$1\" = --version ] && { echo 'Python 3.12.0'; exit 0; }\nexec sh \"$@\"");
+    // python3 runs the engine's own `-c` scripts, the preflight's and the job's launcher, and the stub's gate.py with sh.
+    let real = std::process::Command::new("sh").args(["-c", "command -v python3"]).output().expect("python3");
+    let real = String::from_utf8_lossy(&real.stdout).trim().to_string();
+    assert!(!real.is_empty(), "python3 is on PATH");
+    w.tool("python3", &format!("[ \"$1\" = -c ] && exec '{real}' \"$@\"\nexec sh \"$@\""));
     w.write("project/ci/gate.pin", &format!("0.0.1 {sha256}\n"));
     let project = w.project.clone();
     w.git(&project, &["add", "ci/gate.pin"]);

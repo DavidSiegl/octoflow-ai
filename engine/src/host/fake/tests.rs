@@ -85,7 +85,13 @@ fn pushes_scan_first_and_land_on_its_origin() {
     let host = FakeHost::default();
     host.push_ref("/proj", "snap1", "orchestrator-ci/a1-1-q1", "abc123", "/r/leaks.json").unwrap();
     assert_eq!(host.remote_branches("/proj", "orchestrator-ci/").unwrap(), ["orchestrator-ci/a1-1-q1"]);
-    assert_eq!(host.state().scans, [("snap1".to_string(), "abc123".to_string(), "/r/leaks.json".to_string())]);
+    let scan = Scan {
+        commit: "snap1".into(),
+        base: "abc123".into(),
+        scanned: Scanned::Unpublished,
+        report_path: "/r/leaks.json".into(),
+    };
+    assert_eq!(host.state().scans, [scan]);
     assert_eq!(host.remote_branch_commit("/proj", "orchestrator-ci/a1-1-q1").unwrap().as_deref(), Some("snap1"));
     host.delete_remote_branch("/proj", "orchestrator-ci/a1-1-q1").unwrap();
     assert!(host.delete_remote_branch("/proj", "orchestrator-ci/a1-1-q1").is_err());

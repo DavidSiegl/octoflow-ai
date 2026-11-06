@@ -17,7 +17,7 @@ use crate::checks::{judge_run, orchestrator_checks, RunChange, RunFindings, SLOW
 use crate::ci::{CIError, Jenkins, QualityGate};
 use crate::constants::{CI_POLL_SECONDS, CI_REF_PREFIX, QUALITY_TIMEOUT, REMOTE};
 use crate::error::OrchestratorError;
-use crate::host::{Host, LeaksFound, PushError};
+use crate::host::{Host, LeaksFound, PushError, Scanned};
 use crate::local_gate::{self, LocalVerdict};
 use crate::interrupt::Interrupt;
 use crate::patch::added_lines;
@@ -246,18 +246,19 @@ impl<'a> Workflow<'a> {
     }
 
     /// The quality file of quality round q of round n judged by the local gate, and the judgement of its quality.json:
-    /// a snapshot of the change, a commit with message whose only parent is base, is scanned by gitleaks as a push of
-    /// it would be, then the gate judges the working tree (local_gate::judge) within the round's deadline and the
-    /// orchestrator's checks judge the snapshot. Nothing is pushed. A QUALITY_LEAK file, and no gate run, for a secret
-    /// in the snapshot; for a gate that could not judge, a BUILD_FAILED file with what it said, as a Jenkins build whose
-    /// gate could not judge has, and no judgement.
+    /// a snapshot of the change, a commit with message whose only parent is base, is scanned by gitleaks, the change
+    /// alone, then the gate judges a checkout of it (local_gate::start), asked after every CI_POLL_SECONDS with the
+    /// heartbeat kept, and the orchestrator's checks judge it too. Nothing is pushed. A QUALITY_LEAK file, and no gate
+    /// run, for a secret in the snapshot; for a gate that could not judge, a BUILD_FAILED file with what it said, as a
+    /// Jenkins build whose gate could not judge has, and no judgement. The gate is stopped when the round's deadline
+    /// passes or the run is interrupted first.
     ///
-    /// Errors: as local_gate::judge's; its quality.json is unreadable or disagrees with its quality.md (judgement); the
-    /// deadline has passed; a secret in base or below it; git, gitleaks or a check fails.
+    /// Errors: as local_gate::start's and Judging::verdict's; its quality.json is unreadable or disagrees with its
+    /// quality.md (judgement); the deadline passes; git, gitleaks or a check fails; a takeover or the Ctrl-C.
     fn local_round(&mut self, n: u32, q: u32, deadline: f64, base: &str, message: &str) -> Outcome<(String, Option<Judgement>)> {
         let work_dir = self.state.work_dir().to_string();
         let sha = self.host.snapshot(&work_dir, base, message)?;
-        match self.host.refuse_leaks(&work_dir, &sha, base, &self.state.leaks_path("snapshot")) {
+        match self.host.refuse_leaks(&work_dir, &sha, base, Scanned::SinceBase, &self.state.leaks_path("snapshot")) {
             Ok(()) => {}
             Err(PushError::Failed(e)) => return Err(e.into()),
             Err(PushError::Leaks(found)) => {
@@ -265,18 +266,20 @@ impl<'a> Workflow<'a> {
                 return Ok((self.leak_report(n, q, &found, "the local gate did not judge the change"), None));
             }
         }
-        let left = (deadline - self.clocks.monotonic()).floor();
-        if left < 1.0 {
-            return Err(Stopped::Failed(OrchestratorError(format!(
-                "quality gate: no time left of the {QUALITY_TIMEOUT}s a quality round may take; resume to go on"
-            ))));
-        }
-        let out_dir = self.state.gate_dir(n, q);
         let place = self.place(n, q);
-        match local_gate::judge(self.host, &work_dir, base, &out_dir, left as u64)? {
+        let judging = local_gate::start(self.host, &work_dir, &sha, base, &self.state.gate_dir(n, q))?;
+        let host = self.host;
+        let waited = self.poll("the local gate", deadline, |_| judging.verdict(host).map_err(CIError::Refused));
+        if waited.is_err() {
+            // Run as a finally block, so that a Ctrl-C still pending lets the stop start.
+            if let Err(e) = self.interrupt.finally(|| judging.stop(host)) {
+                self.human.log(&format!("[quality] could not stop the local gate: {e}"));
+            }
+        }
+        match waited? {
             LocalVerdict::Judged { release, quality, json } => {
                 let judged = judgement(&quality, &json)
-                    .map_err(|why| OrchestratorError(format!("octoflow-gate {release} in {work_dir}: {why}")))?;
+                    .map_err(|why| OrchestratorError(format!("octoflow-gate {release} on snapshot {sha}: {why}")))?;
                 let found = self.orchestrator_findings(&sha, deadline)?;
                 let line = format!("octoflow-gate {release}, run locally, judged snapshot `{sha}` ({place}).");
                 Ok((under_gate_line(&found.added_to_file(&quality), &line), Some(found.added_to(judged))))

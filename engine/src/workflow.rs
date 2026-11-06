@@ -21,7 +21,7 @@ use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
 use crate::harness::{harness, AgentSettings};
 use crate::herdr::{Herdr, HerdrError};
-use crate::host::{git_status, Host, PushError};
+use crate::host::{git_status, Host, PushError, Scanned};
 use crate::interrupt::Interrupt;
 use crate::paths::file_name;
 use crate::pipeline::{is_built_in, Pipeline, Step, DONE, METRICS_FILE, PUBLISH, QUALITY, SUMMARY_FILE};
@@ -1221,7 +1221,7 @@ impl<'a> Workflow<'a> {
             let leaks = self.state.leaks_path("publish");
             // Scanned before the merge too, so that rewriting the run's commits never has to undo a merge.
             self.rewrite_on_leak(|host, base, branch| {
-                host.refuse_leaks(&wd, &format!("refs/heads/{branch}"), base, &leaks)
+                host.refuse_leaks(&wd, &format!("refs/heads/{branch}"), base, Scanned::Unpublished, &leaks)
             })?;
             // The base moved on while the run built and reviewed. A conflict is left to the human: the branch is
             // pushed without the merge and the pull request says what conflicts.
