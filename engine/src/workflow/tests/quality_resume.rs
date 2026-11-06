@@ -54,7 +54,8 @@ fn resume_with_a_build_only_polls_it() {
     assert_eq!(f.workflow(f.as_saved_gated()).run(), verdict(APPROVE));
     assert!(f.host.state().snapshots.is_empty());
     assert!(!snapshot_pushed(&f));
-    assert_eq!(collapsed(&f.ci.state().names), strings(&["build", "quality", "build", "quality", "build", "quality"]));
+    let names = ["build", "quality", "build", "quality", "quality.json", "build", "quality", "quality.json"];
+    assert_eq!(collapsed(&f.ci.state().names), strings(&names));
     assert!(f.quality_file(1, 1).contains("`snap9`"));
 }
 
@@ -66,7 +67,7 @@ fn resume_with_the_quality_file_archived_and_the_build_running_takes_the_file() 
 
     assert_eq!(f.workflow(f.as_saved_gated()).run(), verdict(APPROVE));
 
-    assert_eq!(f.ci.state().names, strings(&["build", "quality", "build", "quality"]));
+    assert_eq!(f.ci.state().names, strings(&["build", "quality", "quality.json", "build", "quality", "quality.json"]));
     assert!(f.quality_file(1, 1).contains(
         "Jenkins build #41 judged snapshot `snap9` (round 1, quality round 1 of 3) and was still running when its \
          quality.md was read.\n"
@@ -332,4 +333,20 @@ fn a_change_the_gate_was_turned_off_before_judging_is_said_to_be_unjudged() {
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
     let off = filled(crate::prompts::QUALITY_OFF_NOTE, &[("quality_paths", &f.state.quality_path(1, 1))]);
     assert!(reviews.borrow()[0].ends_with(&format!("\n\n{off}")), "{}", reviews.borrow()[0]);
+}
+
+#[test]
+fn a_quality_file_judged_again_replaces_its_round_s_record() {
+    let mut state = quality_in(1, in_flight(&[queue_url(), ("build", FIRST_BUILD.into())]));
+    let stale = serde_json::json!({
+        "round": 1, "quality_round": 1, "gate": "ERROR", "conditions": ["old"], "fingerprints_by_check": {}
+    });
+    state.quality_rounds.push(stale.as_object().cloned().unwrap());
+    let f = resumed(state);
+    add_build(&f, REF_1_1, green(), FIRST_BUILD);
+
+    assert_eq!(f.workflow(f.as_saved_gated()).run(), verdict(APPROVE));
+    let rounds = f.saved().get("quality_rounds").cloned().unwrap();
+    assert_eq!(rounds.as_array().map(Vec::len), Some(1), "{rounds}");
+    assert_eq!(rounds[0].get("gate"), Some(&Value::from("OK")), "{rounds}");
 }

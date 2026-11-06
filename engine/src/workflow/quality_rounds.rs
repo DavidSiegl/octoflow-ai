@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 use super::origin::reaching_origin;
 use super::{Clocks, Human, Outcome, Stopped, Workflow};
-use crate::checks::{judge_run, orchestrator_checks, RunChange, SLOW_STEP_MARGIN};
+use crate::checks::{judge_run, orchestrator_checks, RunChange, RunFindings, SLOW_STEP_MARGIN};
 use crate::ci::{CIError, Jenkins};
 use crate::constants::{CI_POLL_SECONDS, CI_REF_PREFIX, QUALITY_TIMEOUT, REMOTE};
 use crate::error::OrchestratorError;
@@ -23,22 +23,38 @@ use crate::pipeline::{Step, QUALITY};
 use crate::prompts::Prompt;
 use serde_json::Value;
 use crate::json::{object, Object, ValueExt};
-use crate::quality::{build_failed_report, gate_failures, leak_report, parse_gate, under_gate_line, QUALITY_OK};
+use crate::quality::{
+    build_failed_report, gate_failures, leak_report, parse_gate, read_report, under_gate_line, GateFailures, Judgement,
+    QUALITY_OK,
+};
 use crate::state::RunState;
 
 /// What a quality round's analysis of its snapshot came to (Workflow::analyse).
 enum Analysis {
-    /// Jenkins built the snapshot, as build number build. result is None for a build still running the stages after
-    /// its Gate stage, which cannot change the verdict its quality file holds; quality, the quality file it archived,
-    /// is None for a build that ended before its Gate stage. result is never None without a quality file.
-    Built { build: i64, result: Option<String>, quality: Option<String> },
+    /// Jenkins built the snapshot.
+    Built(Built),
     /// gitleaks found secrets in the snapshot itself, and in nothing below it, so nothing was pushed or triggered.
     Leaked(LeaksFound),
+}
+
+/// A build of a quality round's snapshot, as far as analyse waits for it.
+struct Built {
+    /// Its number.
+    build: i64,
+    /// None for a build still running the stages after its Gate stage, which cannot change the verdict its quality
+    /// file holds; never None without a quality file.
+    result: Option<String>,
+    /// The reports it archived; None for a build that ended before its Gate stage. Their quality.json is None for a
+    /// build whose job archives none (Workflow::quality says what then).
+    reports: Option<Reports>,
 }
 
 /// What a poll of Jenkins (Workflow::poll) gives on each call: the answer it waits for, None while it still waits,
 /// or why the call failed. A CIError::Request that may pass is retried; any other error stops the poll.
 type Polled<T> = Result<Option<T>, CIError>;
+
+/// One read of a build's reports: its quality.md, and its quality.json, None when Jenkins served none.
+type Reports = (String, Option<String>);
 
 impl<'a> Workflow<'a> {
     /// The current quality round of round n, of the quality-gated step gated; false when its gate sends the change
@@ -68,18 +84,30 @@ impl<'a> Workflow<'a> {
 
     /// Whether quality round q of round n failed on the failures of quality round q-1 again (GateFailures::repeats):
     /// the gated step's turn between them fixed none of them. False for the first quality round, and when either
-    /// file is missing.
+    /// round's failures are unknown (failures_of).
     fn stuck(&self, n: u32, q: u32) -> Result<bool, OrchestratorError> {
         if q < 2 {
             return Ok(false);
         }
-        let s = &self.state;
-        let before = self.host.read(&s.quality_path(n, q - 1))?;
-        let after = self.host.read(&s.quality_path(n, q))?;
-        Ok(match (before, after) {
-            (Some(before), Some(after)) => gate_failures(&after).repeats(&gate_failures(&before)),
+        Ok(match (self.failures_of(n, q - 1)?, self.failures_of(n, q)?) {
+            (Some(before), Some(after)) => after.repeats(&before),
             _ => false,
         })
+    }
+
+    /// What quality round q of round n failed on: its record in RunState::quality_rounds, or what its quality file
+    /// says (gate_failures) for a round judged by an engine that kept no such records; None when it has neither.
+    /// Errors: the record is not of the shape quality_record writes, or the file cannot be read.
+    fn failures_of(&self, n: u32, q: u32) -> Result<Option<GateFailures>, OrchestratorError> {
+        if let Some(record) = self.quality_record(n, q) {
+            return recorded_failures(record).map(Some);
+        }
+        Ok(self.host.read(&self.state.quality_path(n, q))?.map(|text| gate_failures(&text)))
+    }
+
+    /// The record of quality round q of round n in RunState::quality_rounds; None before that round is judged.
+    fn quality_record(&self, n: u32, q: u32) -> Option<&Object> {
+        self.state.quality_rounds.iter().find(|r| is_record_of(r, n, q))
     }
 
     /// What a verdict step hears of round n's last quality file, after a blank line: QUALITY_PASSED_NOTE, or the
@@ -122,21 +150,31 @@ impl<'a> Workflow<'a> {
         self.jenkins.ok_or_else(|| OrchestratorError("a quality round in a run without the quality gate".into()))
     }
 
-    /// Quality round q of round n: have Jenkins judge the change, write quality-<n>-<q>.md, and return its gate. A
-    /// snapshot gitleaks finds a secret in is not pushed, and its quality file is QUALITY_LEAK.
+    /// Quality round q of round n: have Jenkins judge the change, write quality-<n>-<q>.md, record what failed it in
+    /// RunState::quality_rounds, and return its gate. A snapshot gitleaks finds a secret in is not pushed, and its
+    /// quality file is QUALITY_LEAK.
+    ///
+    /// The gate and its failures are read from the build's quality.json, with the orchestrator's checks added
+    /// (RunFindings::added_to), and recorded in RunState::quality_rounds, replacing the record of a quality file
+    /// deleted to be judged again. They are read from the quality file instead (parse_gate, gate_failures) for a round
+    /// with no quality.json: one whose build archived none, the fallback for a quality job that writes only quality.md
+    /// (TODO.md says when it goes); one that ended before its Gate stage or whose snapshot held a secret, whose file
+    /// only the engine writes; and one whose file an earlier orchestrator wrote but did not record.
     ///
     /// Each step first looks for what an earlier orchestrator already did, furthest first: the quality file; then, in
     /// analyse, the chain in RunState::ci. Errors: Jenkins fails in a way that does not pass, or not within
-    /// QUALITY_TIMEOUT seconds of the round's start; the build was aborted, cancelled or discarded; the quality file
-    /// does not start with a GATE line; a secret is in the run's base; git, a file or saving fails; the Ctrl-C.
+    /// QUALITY_TIMEOUT seconds of the round's start; the build was aborted, cancelled or discarded; quality.json is
+    /// of a schema_version the engine does not know, or not of its schema (read_report), or its gate is not its
+    /// quality.md's, which leaves the build to be built again on a resume, as an aborted one; the quality file does
+    /// not start with a GATE line; a secret is in the run's base; git, a file or saving fails; the Ctrl-C.
     fn quality(&mut self, n: u32, q: u32) -> Outcome<&'static str> {
         let path = self.state.quality_path(n, q);
         let file = file_name(&path).to_string();
         let git_ref = format!("{CI_REF_PREFIX}{}-{n}-q{q}", self.state.key());
-        let text = match self.host.read(&path)? {
+        let (text, judged, written) = match self.host.read(&path)? {
             Some(text) => {
                 self.human.log(&format!("[quality] {file} is already written"));
-                text
+                (text, None, false)
             }
             None => {
                 if self.open_turn(&file).is_none() {
@@ -150,38 +188,30 @@ impl<'a> Workflow<'a> {
                 let base = self.state.base.clone().ok_or_else(|| {
                     Stopped::Failed(OrchestratorError("a quality round before the run has a base".into()))
                 })?;
-                let text = match self.analyse(&git_ref, deadline, &base, &message)? {
-                    Analysis::Leaked(found) => self.leak_report(n, q, &found),
-                    Analysis::Built { build, result, quality } => {
-                        let report =
-                            self.quality_report(n, q, build, result.as_deref(), quality.as_deref(), deadline)?;
-                        self.jenkins()?.mask(&report)
+                let (text, judged) = match self.analyse(&git_ref, deadline, &base, &message)? {
+                    Analysis::Leaked(found) => (self.leak_report(n, q, &found), None),
+                    Analysis::Built(built) => {
+                        let (report, judged) = self.quality_report(n, q, &built, deadline)?;
+                        let jenkins = self.jenkins()?;
+                        (jenkins.mask(&report), judged.map(|mut judged| {
+                            // The conditions go into state.json, which the quality file's masking does not reach.
+                            let conditions = &mut judged.failures.conditions;
+                            conditions.iter_mut().for_each(|c| *c = jenkins.mask(c));
+                            judged
+                        }))
                     }
                 };
                 self.host.write(&path, &text, false)?;
-                text
+                (text, judged, true)
             }
         };
         self.end_turn(QUALITY, &path)?;
         let Some(gate) = parse_gate(&text) else { return Err(self.reject(&path, "does not start with a GATE line")) };
-        let (round, quality_round) = (Value::from(i64::from(n)), Value::from(i64::from(q)));
-        let recorded = self
-            .state
-            .quality_rounds
-            .iter()
-            .any(|r| r.get("round") == Some(&round) && r.get("quality_round") == Some(&quality_round));
-        if !recorded {
-            let failures = gate_failures(&text);
-            let strings = |items: &[String]| Value::Array(items.iter().map(|i| Value::from(i.as_str())).collect());
-            let fingerprints = failures.fingerprints.iter().map(|(check, found)| (check.to_string(), strings(found))).collect();
-            let record = [
-                ("round", round),
-                ("quality_round", quality_round),
-                ("gate", Value::from(gate)),
-                ("conditions", strings(&failures.conditions)),
-                ("fingerprints_by_check", Value::Object(fingerprints)),
-            ];
-            self.state.quality_rounds.push(object(record));
+        let judged = judged.unwrap_or_else(|| Judgement { gate, failures: gate_failures(&text) });
+        // A record of a file deleted to be judged again is the old build's.
+        self.state.quality_rounds.retain(|r| !(written && is_record_of(r, n, q)));
+        if self.quality_record(n, q).is_none() {
+            self.state.quality_rounds.push(quality_record(n, q, &judged));
         }
         self.human.log(&format!("[quality] round {n}, quality round {q}: {gate}"));
         self.finish_analysis(&git_ref)?;
@@ -231,26 +261,27 @@ impl<'a> Workflow<'a> {
             self.start_build(git_ref, deadline, !fresh)?;
         }
         let number = self.ci_build()?;
-        // The last read of the file while the build ran; None before one found it.
-        let mut earlier: Option<String> = None;
-        let gate_or_end = |wf: &mut Self| -> Polled<(Option<String>, Option<String>)> {
+        // The last reads of quality.md and quality.json while the build ran; None before one found quality.md.
+        let mut earlier: Option<Reports> = None;
+        let gate_or_end = |wf: &mut Self| -> Polled<(Option<String>, Option<Reports>)> {
             let result = wf.build_result(git_ref, number)?;
-            let quality = wf.jenkins()?.quality_file(number)?;
+            let jenkins = wf.jenkins()?;
+            let quality = match jenkins.quality_file(number)? {
+                Some(text) => Some((text, jenkins.quality_json(number)?)),
+                None => None,
+            };
             if result.is_some() {
                 return Ok(Some((result, quality)));
             }
             // Jenkins serves an artifact while archiveArtifacts is still copying it into place, so one read of a
-            // running build's file may be cut short. Two reads that agree, at least a poll interval apart, and hold
-            // a whole non-blank line, as the GATE line is, are taken as whole: so an empty copy or one cut inside its
-            // first line is not, while a whole first line that is no GATE line is, for quality to report. A
-            // heuristic, which a copy stalled that long past its first line and then resumed defeats (TODO.md). A
-            // build that has ended has finished archiving, so one read then is enough.
-            if let Some(text) = quality.as_deref().filter(|text| earlier.as_deref() == Some(*text)) {
-                let mut lines: Vec<&str> = text.split('\n').collect();
-                lines.pop();
-                if lines.iter().any(|line| !line.trim().is_empty()) {
-                    return Ok(Some((None, quality)));
-                }
+            // running build's file may be cut short, or find quality.json not yet copied. Two reads of both that
+            // agree, at least a poll interval apart, with a quality.md that holds a whole non-blank line, as the GATE
+            // line is, are taken as whole: so an empty copy or one cut inside its first line is not, while a whole
+            // first line that is no GATE line is, for quality to report. A heuristic, which a copy stalled that long
+            // and then resumed defeats (TODO.md). A build that has ended has finished archiving, so one read then is
+            // enough.
+            if quality.as_ref().is_some_and(|both| earlier.as_ref() == Some(both) && holds_a_whole_line(&both.0)) {
+                return Ok(Some((None, quality)));
             }
             earlier = quality;
             Ok(None)
@@ -264,7 +295,7 @@ impl<'a> Workflow<'a> {
                  change; resume to build it again"
             ))));
         }
-        Ok(Analysis::Built { build: number, result, quality })
+        Ok(Analysis::Built(Built { build: number, result, reports: quality }))
     }
 
     /// Record in RunState::ci the build of git_ref: one triggered now, or with adopt one an earlier orchestrator
@@ -362,29 +393,33 @@ impl<'a> Workflow<'a> {
         self.state.ci = cut;
     }
 
-    /// The quality file of quality round q of round n, built as build and having the result and quality file
-    /// analyse gives: the build's own file with the orchestrator's checks added (judged_by_orchestrator), naming the
-    /// build under its GATE line; or, for a build that ended before its Gate stage, a BUILD_FAILED one with the
-    /// failing tests or the console's end. Not yet masked.
-    fn quality_report(
-        &mut self,
-        n: u32,
-        q: u32,
-        build: i64,
-        result: Option<&str>,
-        quality: Option<&str>,
-        deadline: f64,
-    ) -> Outcome<String> {
+    /// The quality file of quality round q of round n, of the build analyse gives, and the judgement of its
+    /// quality.json: the build's own file and judgement with what the orchestrator's checks find added (RunFindings),
+    /// the file naming the build under its GATE line, and no judgement for a build that archived no quality.json; or,
+    /// for a build that ended before its Gate stage, a BUILD_FAILED file with the failing tests or the console's end,
+    /// and no judgement. Neither is masked yet. Errors: as quality's.
+    fn quality_report(&mut self, n: u32, q: u32, built: &Built, deadline: f64) -> Outcome<(String, Option<Judgement>)> {
+        let (build, result) = (built.build, built.result.as_deref());
         let sha = self.ci_text("sha")?;
         let place = self.place(n, q);
-        if let Some(quality) = quality {
+        if let Some((quality, json)) = &built.reports {
+            let judged = match json.as_deref().map(|json| judgement(quality, json)).transpose() {
+                Ok(judged) => judged,
+                Err(why) => {
+                    // A build of the same snapshot again is the resume's to make, once the job is fixed.
+                    self.cut_back(Some(build));
+                    let git_ref = self.ci_text("ref")?;
+                    let why = format!("Jenkins build #{build} of {git_ref}: {why}; resume to build it again");
+                    return Err(Stopped::Failed(OrchestratorError(why)));
+                }
+            };
             let how_it_stood = match result {
                 None => "was still running when its quality.md was read".to_string(),
                 Some(result) => format!("ended {result}"),
             };
-            let judged = self.judged_by_orchestrator(quality, &sha, deadline)?;
+            let found = self.orchestrator_findings(&sha, deadline)?;
             let line = format!("Jenkins build #{build} judged snapshot `{sha}` ({place}) and {how_it_stood}.");
-            return Ok(under_gate_line(&judged, &line));
+            return Ok((under_gate_line(&found.added_to_file(quality), &line), judged.map(|j| found.added_to(j))));
         }
         let waiting = format!("reading the test report of Jenkins build #{build}");
         let tests = self.once(&waiting, deadline, |wf| wf.jenkins()?.failed_tests(build))?;
@@ -399,7 +434,7 @@ impl<'a> Workflow<'a> {
              judged the change. Make it build first.",
             result.unwrap_or("None")
         );
-        Ok(build_failed_report(&intro, tests.as_deref(), &console))
+        Ok((build_failed_report(&intro, tests.as_deref(), &console), None))
     }
 
     /// Quality round q of round n, as a quality file's intro names it.
@@ -421,13 +456,13 @@ impl<'a> Workflow<'a> {
         leak_report(&found.leaks, &intro)
     }
 
-    /// The build's quality file with what the orchestrator's checks find in snapshot sha added (judge_run), their
-    /// slow steps kept to the round's deadline, a monotonic time.
+    /// What the orchestrator's checks find in snapshot sha (judge_run), their slow steps kept to the round's deadline,
+    /// a monotonic time.
     ///
     /// The checks' in_time keeps the run's heartbeat going between their slow steps. A stop the heartbeat meets (a
     /// takeover, the Ctrl-C) lets the checks start no more slow steps, and is the error once they are done. Errors:
     /// that stop; git or a check fails.
-    fn judged_by_orchestrator(&mut self, quality: &str, sha: &str, deadline: f64) -> Outcome<String> {
+    fn orchestrator_findings(&mut self, sha: &str, deadline: f64) -> Outcome<RunFindings> {
         let base = self
             .state
             .base
@@ -461,11 +496,11 @@ impl<'a> Workflow<'a> {
         };
         let change =
             RunChange { spec, base, commit: sha.to_string(), changed, files, file_at: &file_at, now, in_time: &in_time };
-        let judged = judge_run(quality, &checks, &change);
+        let found = judge_run(&checks, &change);
         if let Some(stop) = stopped.take() {
             return Err(stop);
         }
-        Ok(judged?)
+        Ok(found?)
     }
 
     /// Call poll every CI_POLL_SECONDS until it gives an answer, and return that, keeping the heartbeat between the
@@ -565,6 +600,67 @@ impl<'a> Workflow<'a> {
         let rejected = self.state.ci.get("rejected").and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
         rejected.iter().filter_map(|number| number.as_i64()).collect()
     }
+}
+
+/// The judgement of a build's quality.json, json, whose quality.md is quality. Errors: as read_report's, or quality.md
+/// has a GATE line other than quality.json's gate; the run's other readers of the round's gate (gate_passed,
+/// quality_note, the pull request) read the quality file, so the two must agree.
+fn judgement(quality: &str, json: &str) -> Result<Judgement, OrchestratorError> {
+    let judged = read_report(json)?;
+    match parse_gate(quality) {
+        Some(gate) if gate != judged.gate => Err(OrchestratorError(format!(
+            "its quality.md says GATE: {gate}, but its quality.json says {}: the gate wrote two reports that disagree",
+            judged.gate
+        ))),
+        _ => Ok(judged),
+    }
+}
+
+/// Whether text holds a whole non-blank line: one that a newline ends.
+fn holds_a_whole_line(text: &str) -> bool {
+    let mut lines: Vec<&str> = text.split('\n').collect();
+    lines.pop();
+    lines.iter().any(|line| !line.trim().is_empty())
+}
+
+/// Whether record, one of RunState::quality_rounds, is quality round q of round n's.
+fn is_record_of(record: &Object, n: u32, q: u32) -> bool {
+    let is = |key: &str, number: u32| record.get(key) == Some(&Value::from(i64::from(number)));
+    is("round", n) && is("quality_round", q)
+}
+
+/// The record of quality round q of round n, judged as judged, as RunState::quality_rounds keeps it.
+fn quality_record(n: u32, q: u32, judged: &Judgement) -> Object {
+    let strings = |items: &[String]| Value::Array(items.iter().map(|i| Value::from(i.as_str())).collect());
+    let failures = &judged.failures;
+    let fingerprints = failures.fingerprints.iter().map(|(check, found)| (check.to_string(), strings(found))).collect();
+    object([
+        ("round", Value::from(i64::from(n))),
+        ("quality_round", Value::from(i64::from(q))),
+        ("gate", Value::from(judged.gate)),
+        ("conditions", strings(&failures.conditions)),
+        ("fingerprints_by_check", Value::Object(fingerprints)),
+    ])
+}
+
+/// The failures a quality_record holds. Errors: its conditions or fingerprints are not of the shape quality_record
+/// writes, as no engine saves them.
+fn recorded_failures(record: &Object) -> Result<GateFailures, OrchestratorError> {
+    let shape = || {
+        let record = Value::Object(record.clone());
+        OrchestratorError(format!("state.json's quality_rounds holds {record}, which no orchestrator saves"))
+    };
+    let strings = |value: Option<&Value>| -> Option<Vec<String>> {
+        value?.as_array()?.iter().map(|s| s.as_str().map(str::to_string)).collect()
+    };
+    let mut failures = GateFailures { conditions: strings(record.get("conditions")).ok_or_else(shape)?, ..GateFailures::default() };
+    let by_check = record.get("fingerprints_by_check").and_then(Value::as_object).ok_or_else(shape)?;
+    for (check, found) in by_check {
+        for fingerprint in strings(Some(found)).ok_or_else(shape)? {
+            failures.add(check, fingerprint);
+        }
+    }
+    Ok(failures)
 }
 
 /// The error of a RunState::ci field, key, that is missing or of another type than the engines save.

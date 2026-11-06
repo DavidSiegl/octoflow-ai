@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "gate": "OK",
+  "gate_version": "<version>",
+  "base": "<base>",
+  "head": "<head>",
+  "failed_conditions": [],
+  "findings": [],
+  "findings_total": 0,
+  "failing_tests": null,
+  "coverage": null,
+  "suppressions": [],
+  "build_config": []
+}

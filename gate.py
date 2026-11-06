@@ -18,7 +18,7 @@ linters from PATH, and pytest, pytest-randomly and mutmut through the Python tha
 So run it with that project's Python, in which its dev tools are installed, such as `uv run python gate.py`. Rust it
 reads through a helper of its own, built from ci/gate-rust, which --rust-syntax names (GateChange.rust_files).
 
-docs/quality-gate.md says what the gate judges and why, and, under "The quality file as a contract", which parts
+docs/quality-gate.md says what the gate judges and why, and, under "The report as a contract", which parts
 of the file's format the orchestrator reads back. The orchestrator imports nothing from this module: it keeps its
 own copy of those parts, and TestQualityFileContract checks that the two agree.
 """

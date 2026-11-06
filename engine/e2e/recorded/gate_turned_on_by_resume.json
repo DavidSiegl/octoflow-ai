@@ -1384,6 +1384,9 @@
     "jenkins": "GET /job/parity/job/quality/1/artifact/quality.md"
    },
    {
+    "jenkins": "GET /job/parity/job/quality/1/artifact/quality.json"
+   },
+   {
     "state": {
      "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
      "saved": {

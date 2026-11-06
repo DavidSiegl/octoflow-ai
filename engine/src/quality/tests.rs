@@ -194,17 +194,27 @@ fn lines_that_only_look_like_findings_are_not_read_as_them() {
     }
 }
 
-/// The quality file gate.py writes in one case of tests/test_gate.py, as that test holds it to its golden file in
-/// tests/golden/: the one contract between the gate and the engine (docs/quality-gate.md, "The quality file as a
-/// contract"), read here as the engine reads a build's quality.md.
-fn gate_golden(name: &str) -> String {
-    let path = format!("{}/../tests/golden/{name}.txt", env!("CARGO_MANIFEST_DIR"));
+/// The vendored golden file name.ext of the gate release ci/gate.pin names (engine/tests/data/quality/README.md):
+/// the quality file (txt) or quality.json (json) gate.py writes in one case of its tests.
+fn gate_golden(name: &str, ext: &str) -> String {
+    let path = format!("{}/tests/data/quality/{name}.{ext}", env!("CARGO_MANIFEST_DIR"));
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
+/// The cases of the vendored golden files, each a quality file and its quality.json.
+const GOLDEN_REPORTS: [&str; 7] = [
+    "gate_error",
+    "gate_ok",
+    "quality_report_error",
+    "quality_report_error_over_limit",
+    "quality_report_error_to_weigh_cut",
+    "quality_report_ok",
+    "quality_report_ok_to_weigh",
+];
+
 #[test]
 fn the_engine_reads_what_the_gate_writes() {
-    let error = gate_golden("gate_error");
+    let error = gate_golden("gate_error", "txt");
     assert_eq!(parse_gate(&error), Some(QUALITY_ERROR));
     let failures = gate_failures(&error);
     assert_eq!(
@@ -229,8 +239,9 @@ fn the_engine_reads_what_the_gate_writes() {
     );
     want.insert("tests", vec![finding_fingerprint(Some("tests.T.test_limit"), "tests", "")]);
     assert_eq!(failures.fingerprints, want);
+    assert_eq!(read_report(&gate_golden("gate_error", "json")).unwrap(), Judgement { gate: QUALITY_ERROR, failures });
 
-    let ok = gate_golden("gate_ok");
+    let ok = gate_golden("gate_ok", "txt");
     assert_eq!(parse_gate(&ok), Some(QUALITY_OK));
     assert_eq!(gate_failures(&ok), GateFailures::default());
 }
@@ -238,8 +249,84 @@ fn the_engine_reads_what_the_gate_writes() {
 #[test]
 fn the_engine_reads_a_cut_list_as_the_gate_cuts_it() {
     // quality_report lists QUALITY_ISSUE_LIMIT issues, here all of them `f.py:<n>` with rule r, and counts the rest.
-    let failures = gate_failures(&gate_golden("quality_report_error_over_limit"));
+    let failures = gate_failures(&gate_golden("quality_report_error_over_limit", "txt"));
     let issues = failures.fingerprints.get("r").expect("the issues, under their rule");
     assert_eq!(issues.len(), QUALITY_FINDINGS_LIMIT);
     assert_eq!(issues[0], finding_fingerprint(Some("f.py"), "r", "m1"));
+}
+
+#[test]
+fn quality_json_reads_as_its_quality_file_but_for_what_the_file_cuts() {
+    for name in GOLDEN_REPORTS {
+        let markdown = gate_golden(name, "txt");
+        let (from_file, judged) = (gate_failures(&markdown), read_report(&gate_golden(name, "json")).unwrap());
+        assert_eq!(Some(judged.gate), parse_gate(&markdown), "{name}");
+        assert_eq!(judged.failures.conditions, from_file.conditions, "{name}");
+        // The file lists at most QUALITY_FINDINGS_LIMIT findings and as many failing tests; quality.json all of them,
+        // in the same order.
+        let checks: Vec<&str> = judged.failures.fingerprints.keys().collect();
+        assert_eq!(checks, from_file.fingerprints.keys().collect::<Vec<_>>(), "{name}");
+        for (check, listed) in from_file.fingerprints.iter() {
+            let all = judged.failures.fingerprints.get(check).unwrap();
+            assert!(all.starts_with(listed), "{name}: {check}");
+            if all.len() != listed.len() {
+                assert_eq!(listed.len(), QUALITY_FINDINGS_LIMIT, "{name}: {check}");
+            }
+        }
+    }
+    let cut = read_report(&gate_golden("quality_report_error_over_limit", "json")).unwrap();
+    assert!(cut.failures.fingerprints.get("r").unwrap().len() > QUALITY_FINDINGS_LIMIT);
+}
+
+/// The golden quality.json of name, as a JSON object with change applied.
+fn golden_json(name: &str, change: impl FnOnce(&mut Object)) -> String {
+    let mut report: Object = serde_json::from_str(&gate_golden(name, "json")).unwrap();
+    change(&mut report);
+    serde_json::to_string(&report).unwrap()
+}
+
+#[test]
+fn an_unknown_schema_version_is_an_error_that_names_it() {
+    let newer = golden_json("gate_ok", |r| {
+        r.insert("schema_version".into(), Value::from(2));
+    });
+    let e = read_report(&newer).unwrap_err().0;
+    assert!(e.contains("schema_version 2"), "{e}");
+    let none = golden_json("gate_ok", |r| {
+        r.remove("schema_version");
+    });
+    let e = read_report(&none).unwrap_err().0;
+    assert!(e.contains("schema_version"), "{e}");
+}
+
+#[test]
+fn a_report_not_of_the_schema_is_an_error() {
+    assert!(read_report("GATE: OK\n").is_err());
+    let gate = golden_json("gate_ok", |r| {
+        r.insert("gate".into(), Value::from("BUILD_FAILED"));
+    });
+    assert!(read_report(&gate).unwrap_err().0.contains("BUILD_FAILED"));
+    let finding = golden_json("quality_report_error", |r| {
+        r["findings"][0].as_object_mut().unwrap().remove("fails");
+    });
+    assert!(read_report(&finding).is_err());
+}
+
+#[test]
+fn takes_each_finding_s_fingerprint_as_the_report_gives_it() {
+    let report = golden_json("quality_report_error", |r| {
+        r["findings"][0]["fingerprint"] = Value::from("0123456789abcdef");
+    });
+    let judged = read_report(&report).unwrap();
+    assert_eq!(judged.failures.fingerprints.get("r").unwrap()[0], "0123456789abcdef");
+}
+
+#[test]
+fn a_failing_test_is_fingerprinted_by_its_name_as_the_quality_file_writes_it() {
+    let report = golden_json("gate_error", |r| {
+        r["failing_tests"] = serde_json::json!([{"name": "t.T.test_a\nb", "detail": "x"}]);
+    });
+    let judged = read_report(&report).unwrap();
+    let want = finding_fingerprint(Some("t.T.test_a\\x0ab"), "tests", "");
+    assert_eq!(judged.failures.fingerprints.get("tests").unwrap(), &vec![want]);
 }

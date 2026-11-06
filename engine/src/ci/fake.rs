@@ -8,8 +8,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use super::Jenkins;
 use crate::constants::{HTTP_TIMEOUT, JOB_PARAMETERS};
 use crate::http::{Http, HttpError, Request, Response};
-use serde_json::Value;
+use serde_json::{json, Value};
 use crate::map::Map;
+use crate::quality::{gate_failures, parse_gate};
 
 /// The Jenkins of the tests: JENKINS_URL, without its slash.
 pub(crate) const JENKINS: &str = "https://jenkins.example";
@@ -47,6 +48,8 @@ pub(crate) struct Outcome {
     pub result: String,
     /// The quality.md its Gate stage archives; None for a build that ended before that stage.
     pub quality: Option<String>,
+    /// The quality.json its Gate stage archives with quality.md; None for a build that archives none.
+    pub quality_json: Option<String>,
     /// (className, name, errorDetails) of each failing test in its test report.
     pub tests: Vec<(String, String, String)>,
     /// Whether it has a test report.
@@ -61,17 +64,19 @@ pub(crate) struct Outcome {
 }
 
 impl Outcome {
-    /// A build whose Gate stage archives a quality.md of gate and the numbered findings, and that ends with what
-    /// the Jenkinsfile ends such a build with: SUCCESS for OK, else UNSTABLE.
+    /// A build whose Gate stage archives a quality.md of gate and the numbered findings, and a quality.json that
+    /// says the same (report_json), and that ends with what the Jenkinsfile ends such a build with: SUCCESS for OK,
+    /// else UNSTABLE.
     pub fn gate(gate: &str, findings: &[&str]) -> Outcome {
         let numbered: Vec<String> = findings.iter().enumerate().map(|(k, f)| format!("{}. {f}", k + 1)).collect();
         let numbered = if numbered.is_empty() { "None.".to_string() } else { numbered.join("\n") };
+        let quality = format!(
+            "GATE: {gate}\n\n`orchestrator.py gate` judged the working tree.\n\n## Issues on changed lines\n\n{numbered}\n"
+        );
         Outcome {
             result: if gate == "OK" { "SUCCESS" } else { "UNSTABLE" }.to_string(),
-            quality: Some(format!(
-                "GATE: {gate}\n\n`orchestrator.py gate` judged the working tree.\n\n## Issues on changed \
-                    lines\n\n{numbered}\n"
-            )),
+            quality_json: Some(report_json(&quality)),
+            quality: Some(quality),
             tests: Vec::new(),
             test_report: true,
             console: String::new(),
@@ -83,8 +88,30 @@ impl Outcome {
 
     /// A build that ends FAILURE before its Gate stage, archiving nothing.
     pub fn unarchived() -> Outcome {
-        Outcome { result: "FAILURE".to_string(), quality: None, ..Outcome::gate("OK", &[]) }
+        Outcome { result: "FAILURE".to_string(), quality: None, quality_json: None, ..Outcome::gate("OK", &[]) }
     }
+
+    /// The outcome with quality.md alone archived, as by a quality job older than the gate's quality.json.
+    pub fn markdown_only(self) -> Outcome {
+        Outcome { quality_json: None, ..self }
+    }
+}
+
+/// A quality.json that says what quality, a quality file, says as the engine reads it (parse_gate, gate_failures):
+/// its gate, its failed conditions, and a finding that fails it per fingerprint, a failing test's too, with only the
+/// fields the engine reads.
+pub(crate) fn report_json(quality: &str) -> String {
+    let failures = gate_failures(quality);
+    let findings: Vec<Value> = failures
+        .fingerprints
+        .iter()
+        .flat_map(|(check, found)| found.iter().map(move |f| json!({"check": check, "fails": true, "fingerprint": f})))
+        .collect();
+    let report = json!({
+        "schema_version": 1, "gate": parse_gate(quality), "failed_conditions": failures.conditions,
+        "findings": findings, "failing_tests": null,
+    });
+    report.to_string()
 }
 
 /// A request as FakeJenkins received it.
@@ -118,7 +145,8 @@ pub(crate) struct Waiting {
 pub(crate) struct FakeJenkinsState {
     /// Every request, in order.
     pub requests: Vec<Received>,
-    /// Each request by a short name: parameters, builds, find, trigger, queue, build, quality, tests, console, or
+    /// Each request by a short name: parameters, builds, find, trigger, queue, build, quality, quality.json, tests,
+    /// console, or
     /// `<method> <path>` for one it does not know, `<method> <path> failing` for one in fail, `jenkins down`.
     pub names: Vec<String>,
     /// Each request's Authorization header.
@@ -142,6 +170,11 @@ pub(crate) struct FakeJenkinsState {
     /// What the k-th read of an archived quality.md, from 1, is answered with instead of the file, by k: a copy that
     /// archiveArtifacts has not finished.
     pub quality_replies: BTreeMap<usize, String>,
+    /// How many reads of an archived quality.json there were.
+    pub quality_json_reads: usize,
+    /// How many of the first reads of an archived quality.json are answered 404, as while archiveArtifacts has copied
+    /// quality.md but not yet quality.json.
+    pub quality_json_late: usize,
     pub builds: BTreeMap<i64, Build>,
     pub queue: BTreeMap<i64, Waiting>,
     /// The number of the newest build.
@@ -184,6 +217,8 @@ impl FakeJenkins {
                 cancelled: false,
                 quality_reads: Vec::new(),
                 quality_replies: BTreeMap::new(),
+                quality_json_reads: 0,
+                quality_json_late: 0,
                 builds: BTreeMap::new(),
                 queue: BTreeMap::new(),
                 number: 40,
@@ -307,6 +342,18 @@ impl FakeJenkinsState {
                 "build",
                 Answer::json(object(&[("building", false.into()), ("result", build.outcome.result.as_str().into())])),
             ),
+            "artifact/quality.json" => match &build.outcome.quality_json {
+                Some(json) if build.left <= build.outcome.after_gate => {
+                    let json = json.clone();
+                    self.quality_json_reads += 1;
+                    if self.quality_json_reads <= self.quality_json_late {
+                        ("quality.json", Answer::Status(404))
+                    } else {
+                        ("quality.json", Answer::Body(json, None))
+                    }
+                }
+                _ => ("quality.json", Answer::Status(404)),
+            },
             "artifact/quality.md" => match &build.outcome.quality {
                 Some(quality) if build.left <= build.outcome.after_gate => {
                     let quality = quality.clone();

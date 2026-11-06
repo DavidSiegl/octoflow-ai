@@ -1,0 +1,763 @@
+{
+  "schema_version": 1,
+  "gate": "ERROR",
+  "gate_version": "<version>",
+  "base": "<base>",
+  "head": "<head>",
+  "failed_conditions": [
+    "52 findings on lines the change added; each is listed below.",
+    "51 tests fail; each is listed below."
+  ],
+  "findings": [
+    {
+      "path": "f.py",
+      "line": 1,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m1",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 2,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m2",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 3,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m3",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 4,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m4",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 5,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m5",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 6,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m6",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 7,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m7",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 8,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m8",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 9,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m9",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 10,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m10",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 11,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m11",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 12,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m12",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 13,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m13",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 14,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m14",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 15,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m15",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 16,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m16",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 17,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m17",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 18,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m18",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 19,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m19",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 20,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m20",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 21,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m21",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 22,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m22",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 23,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m23",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 24,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m24",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 25,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m25",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 26,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m26",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 27,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m27",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 28,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m28",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 29,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m29",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 30,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m30",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 31,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m31",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 32,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m32",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 33,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m33",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 34,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m34",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 35,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m35",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 36,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m36",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 37,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m37",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 38,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m38",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 39,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m39",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 40,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m40",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 41,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m41",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 42,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m42",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 43,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m43",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 44,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m44",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 45,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m45",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 46,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m46",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 47,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m47",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 48,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m48",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 49,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m49",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 50,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m50",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 51,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m51",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 52,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m52",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "t.py",
+      "line": 1,
+      "severity": "warning",
+      "rule": "flaky test_x",
+      "check": "flaky",
+      "message": "m",
+      "fails": false,
+      "fingerprint": "a8818ff423701954"
+    },
+    {
+      "path": "t.py",
+      "line": 2,
+      "severity": "warning",
+      "rule": "flaky test_x",
+      "check": "flaky",
+      "message": "m",
+      "fails": false,
+      "fingerprint": "a8818ff423701954"
+    }
+  ],
+  "findings_total": 54,
+  "failing_tests": [
+    {
+      "name": "t.T.test_0",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_1",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_2",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_3",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_4",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_5",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_6",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_7",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_8",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_9",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_10",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_11",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_12",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_13",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_14",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_15",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_16",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_17",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_18",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_19",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_20",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_21",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_22",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_23",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_24",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_25",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_26",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_27",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_28",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_29",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_30",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_31",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_32",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_33",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_34",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_35",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_36",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_37",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_38",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_39",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_40",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_41",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_42",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_43",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_44",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_45",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_46",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_47",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_48",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_49",
+      "detail": ""
+    },
+    {
+      "name": "t.T.test_50",
+      "detail": ""
+    }
+  ],
+  "coverage": null,
+  "suppressions": [],
+  "build_config": []
+}

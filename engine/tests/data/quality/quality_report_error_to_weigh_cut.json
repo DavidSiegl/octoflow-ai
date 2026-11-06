@@ -1,0 +1,545 @@
+{
+  "schema_version": 1,
+  "gate": "ERROR",
+  "gate_version": "<version>",
+  "base": "<base>",
+  "head": "<head>",
+  "failed_conditions": [
+    "49 findings on lines the change added; each is listed below."
+  ],
+  "findings": [
+    {
+      "path": "f.py",
+      "line": 1,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m1",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 2,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m2",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 3,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m3",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 4,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m4",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 5,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m5",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 6,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m6",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 7,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m7",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 8,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m8",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 9,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m9",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 10,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m10",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 11,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m11",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 12,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m12",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 13,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m13",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 14,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m14",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 15,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m15",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 16,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m16",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 17,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m17",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 18,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m18",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 19,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m19",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 20,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m20",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 21,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m21",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 22,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m22",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 23,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m23",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 24,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m24",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 25,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m25",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 26,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m26",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 27,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m27",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 28,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m28",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 29,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m29",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 30,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m30",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 31,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m31",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 32,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m32",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 33,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m33",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 34,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m34",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 35,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m35",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 36,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m36",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 37,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m37",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 38,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m38",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 39,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m39",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 40,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m40",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 41,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m41",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 42,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m42",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 43,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m43",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 44,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m44",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 45,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m45",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 46,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m46",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 47,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m47",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 48,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m48",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 49,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m49",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "t.py",
+      "line": 1,
+      "severity": "warning",
+      "rule": "flaky test_x",
+      "check": "flaky",
+      "message": "m",
+      "fails": false,
+      "fingerprint": "a8818ff423701954"
+    },
+    {
+      "path": "t.py",
+      "line": 2,
+      "severity": "warning",
+      "rule": "flaky test_x",
+      "check": "flaky",
+      "message": "m",
+      "fails": false,
+      "fingerprint": "a8818ff423701954"
+    },
+    {
+      "path": "t.py",
+      "line": 3,
+      "severity": "warning",
+      "rule": "flaky test_x",
+      "check": "flaky",
+      "message": "m",
+      "fails": false,
+      "fingerprint": "a8818ff423701954"
+    }
+  ],
+  "findings_total": 52,
+  "failing_tests": null,
+  "coverage": null,
+  "suppressions": [],
+  "build_config": [
+    {
+      "files": [
+        "clippy.toml",
+        "ui/Cargo.toml"
+      ],
+      "text": "The change edits `clippy.toml` and `ui/Cargo.toml`, which clippy takes its rules or its toolchain from; it judged the change by the edited ones."
+    }
+  ]
+}

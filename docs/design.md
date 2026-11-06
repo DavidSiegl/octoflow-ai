@@ -101,9 +101,11 @@ until a resume finishes it. Its keys:
   analysis), `round`, `quality_round`, `human_paced`, `started_at`, `ended_at`, `seconds` and `tokens`.
 - `quality_rounds`: per quality round, `round`, `quality_round`, `gate`, the failed `conditions` and
   `fingerprints_by_check`: for each check or linter, the first word of a finding's rule, and `tests` for failing
-  tests, the fingerprints of the findings that failed the gate (`finding_fingerprint`, the one stuck-loop
-  detection compares). Fingerprints, never the findings' text, so `state.json`, which keeps the same records and
-  is rewritten on every heartbeat, stays small. The quality file of each round is still in the run directory.
+  tests, the fingerprints of the findings that failed the gate (the gate's own from `quality.json`, else
+  `finding_fingerprint`; what stuck-loop detection compares). Every failing finding has one, 16 hex digits, so a
+  round with thousands of findings records thousands; fingerprints, never the findings' text, keep `state.json`,
+  which keeps the same records and is rewritten on every heartbeat, far smaller than the quality files. The quality
+  file of each round is still in the run directory.
 
 So `jq` answers "which check fails most" and "how many rounds does a run take":
 
