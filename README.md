@@ -1,5 +1,7 @@
 <p align="center"><img src="docs/logo.svg" alt="An octopus holding a terminal, a robot and a chat bubble" width="200"></p>
 
+<!-- The platforms badge repeats the platforms a release ships for, as "Install" and "Desktop app" list them:
+     a change to one changes all three. -->
 <p align="center">
   <a href="https://github.com/DavidSiegl/octoflow-ai/releases/latest"><img src="https://img.shields.io/github/v/release/DavidSiegl/octoflow-ai" alt="Latest release"></a>
   <a href="https://github.com/DavidSiegl/octoflow-ai/releases"><img src="https://img.shields.io/github/downloads/DavidSiegl/octoflow-ai/total" alt="Downloads of all releases"></a>
