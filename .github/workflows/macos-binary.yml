@@ -23,7 +23,7 @@ on:
       - Cargo.lock
       - rust-toolchain.toml
       - engine/**
-      - pyproject.toml
+      - ci/release-version.sh
       - .github/workflows/macos-binary.yml
 
 # Each job asks for what it needs: only upload, which runs no code of the change, may write to releases.

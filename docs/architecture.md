@@ -345,9 +345,9 @@ layout), with no Python of its own.
 
 ## Tests
 
-`cargo test --workspace` runs the engine's tests (above) and the desktop shell's. `uv run pytest` runs the rest:
-`tests/test_fetch_gate.py` and `tests/test_version_raised.py` cover the scripts of `ci/` they are named for, and
-`tests/test_invariants.py` holds the rules the docs state.
+`cargo test --workspace` runs every test but the desktop app's frontend's (`npm test` in `ui/`, Tooling below): the
+engine's (above), the desktop shell's and xtask's, among them `xtask/tests/fetch_gate.rs` and
+`xtask/tests/version_raised.rs`, which cover the scripts of `ci/` they are named for.
 
 `engine/e2e/` (package `octoflow-e2e`) holds the e2e scenarios, which run the engine as a program, with nothing of
 it imported; they are the only test of a run from start to verdict. Each scenario in `tests/e2e/scenarios.rs`
@@ -392,20 +392,19 @@ agent runs in the suite, and no request leaves the machine.
 
 ## Tooling
 
-- `pyproject.toml`: the tests' project, with no runtime dependencies, Python 3.13+; pytest, pytest-randomly, which
-  the gate's flaky-tests check runs, and the linters in the `dev` group, and the rules the gate judges by. Its version
-  is the release's.
+- `pyproject.toml`, with `uv.lock` and `.python-version`: not a Python project, but the quality gate's toolchain, the
+  Python the gate runs on and its Markdown linter, pymarkdown, in the `dev` group, and pymarkdown's rules.
 - `ui/package.json`: the desktop app's npm scripts, `dev`, `build`, `test`, `typecheck`, `lint` and `tauri`. Its
   `.npmrc` sets `legacy-peer-deps`, because npm 9.2 as Debian ships it cannot resolve Vitest's optional peers.
   Jenkins runs the frontend's `typecheck`, `lint` and `test`, and the shell's tests under cargo-llvm-cov.
-- `Cargo.toml`: the Cargo workspace, whose members are the engine (`engine/`, `octoflow-engine`, whose version is
-  `pyproject.toml`'s), its e2e scenarios (`engine/e2e/`), the desktop shell (`ui/src-tauri/`) and the repository's
-  chores (`xtask/`, run as `cargo xtask <command>` through `.cargo/config.toml`'s alias: `eval`, the eval set's runner,
-  `bundles`, which builds its tasks' bundles, and `contract`, which checks the engine's Jenkins client against the real
-  Jenkins), with one `Cargo.lock`, the lints every member takes
+- `Cargo.toml`: the Cargo workspace, whose members are the engine (`engine/`, `octoflow-engine`, whose version is the
+  release's, as `ci/release-version.sh` reads it), its e2e scenarios (`engine/e2e/`), the desktop shell
+  (`ui/src-tauri/`) and the repository's chores (`xtask/`, run as `cargo xtask <command>` through `.cargo/config.toml`'s
+  alias: `eval`, the eval set's runner, `bundles`, which builds its tasks' bundles, and `contract`, which checks the
+  engine's Jenkins client against the real Jenkins), with one `Cargo.lock`, the lints every member takes
   (`[workspace.lints]`), and `rust-toolchain.toml`, the toolchain and components the Jenkins agent's image has.
 - `packaging/build-desktop.sh`: builds the desktop app with `tauri build`, the binary `build-binary.sh` built
-  copied in as its `externalBin` sidecar and `pyproject.toml`'s version, through a release config the script
+  copied in as its `externalBin` sidecar and the release's version, through a release config the script
   writes and merges over `tauri.conf.json`, which bundles nothing. It writes
   `dist/octoflow-desktop-<os>-<arch>` `.deb` and `.AppImage` on Linux, `.dmg` on macOS (signed ad hoc),
   each with its `.sha256`, and refuses a bundle without the sidecar or without `build-binary.sh`'s third-party
@@ -423,18 +422,18 @@ agent runs in the suite, and no request leaves the machine.
   `workflows` lists `default`. Before the build, cargo-about writes `dist/octoflow-third-party-licenses.html`, the
   license texts of the crates in the binary and the desktop app, by `packaging/about.toml` and `about.hbs`; a crate
   under a license `about.toml` does not accept fails the script.
-- `Jenkinsfile`: `uv sync --frozen`, `uv run pytest`, and the Cargo workspace's
-  tests with line coverage (`cargo llvm-cov nextest`), without the e2e scenarios in a quality build whose change
-  touches nothing they judge (the Test stage lists what), a UI stage that runs `ui/`'s `npm ci`,
-  `typecheck`, `lint` and `test`, failing the build before the gate, a Gate stage that runs the octoflow-gate release
-  `ci/gate.pin` names and archives `quality.md` and `quality.json` (see [quality gate](quality-gate.md)), and a Package stage that runs `packaging/build-binary.sh` and
+- `Jenkinsfile`: `uv sync --frozen` for the gate, the Cargo workspace's tests with line coverage (`cargo llvm-cov
+  nextest`), without the e2e scenarios in a quality build whose change touches nothing they judge (the Test stage lists
+  what), a UI stage that runs `ui/`'s `npm ci`, `typecheck`, `lint` and `test`, failing the build before the gate, a
+  Gate stage that runs the octoflow-gate release `ci/gate.pin` names and archives `quality.md` and `quality.json` (see
+  [quality gate](quality-gate.md)), and a Package stage that runs `packaging/build-binary.sh` and
   `packaging/build-desktop.sh` on every build but a quality build (`GIT_REF` set). On `main` a Release stage publishes a
-  new `pyproject.toml` version as a GitHub release, with the Linux binary and the Linux desktop app, each with its
-  `.sha256`, and `octoflow-third-party-licenses.html`, in one `gh release create`, and `docs/releases/v<version>.md`, where there is one, before GitHub's
-  generated notes. Its parameter `GIT_REF`
-  builds another branch; such a build never releases. A pull request build into `main` fails its Version stage unless the pull request raises
-  `pyproject.toml`'s version over `main`'s or changes only docs, tests, CI or repository tooling (`ci/version-raised.sh` lists those
-  paths), so that every merge into `main` that reaches users is released.
+  new version (`ci/release-version.sh`) as a GitHub release, with the Linux binary and the Linux desktop app, each with
+  its `.sha256`, and `octoflow-third-party-licenses.html`, in one `gh release create`, and
+  `docs/releases/v<version>.md`, where there is one, before GitHub's generated notes. Its parameter `GIT_REF` builds
+  another branch; such a build never releases. A pull request build into `main` fails its Version stage unless the pull
+  request raises the version over `main`'s or changes only docs, tests, CI or repository tooling (`ci/version-raised.sh`
+  lists those paths), so that every merge into `main` that reaches users is released.
 - `.github/workflows/automerge.yml`: keeps auto-merge on for a pull request into `main` from a branch of this
   repository, so it merges with a merge commit once Jenkins' required check passes; its header lists the pull
   requests it leaves to a human.

@@ -471,7 +471,7 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
             "Role-based handoff between agent sessions in herdr, each role in the harness of its choice; by default \
              Spec Collector -> Builder -> Reviewer, all in Claude Code.",
         )
-        // The engine's version is the release's: tests/test_invariants.py holds it to pyproject.toml's.
+        // The engine's version is the release's: ci/release-version.sh reads it from engine/Cargo.toml.
         .version(env!("CARGO_PKG_VERSION"))
         .subcommand_required(true)
         .arg_required_else_help(true)
