@@ -602,8 +602,8 @@ fn starts_args(config: &ConfigDir) -> Vec<Arg> {
         ),
         Arg::new("quality-gate").long("quality-gate").value_name("JOB").help(
             "after each Builder turn, have this Jenkins job (its full name, folders included) judge the change with \
-             `gate.py`, and send the findings back to the Builder; needs JENKINS_URL, JENKINS_USER and \
-             JENKINS_TOKEN, from the environment or ~/.config/ai-agents-orchestrator/ci.env",
+             the quality gate, octoflow-gate, and send the findings back to the Builder; needs JENKINS_URL, \
+             JENKINS_USER and JENKINS_TOKEN, from the environment or ~/.config/ai-agents-orchestrator/ci.env",
         ),
     ]
 }

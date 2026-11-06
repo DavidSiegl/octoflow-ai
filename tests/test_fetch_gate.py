@@ -13,7 +13,6 @@ import unittest
 
 import conftest
 
-# conftest.REPO, not this file's directory: under mutmut the tests run from mutants/, which has no ci/.
 SCRIPT = os.path.join(conftest.REPO, "ci", "fetch-gate.sh")
 
 # Copies FAKE_TARBALL to the file after -o and appends the URL, its last argument, to CURL_LOG; exits 22, as curl -f

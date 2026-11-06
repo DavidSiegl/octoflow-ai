@@ -14,7 +14,8 @@ pub type AddedLines = BTreeMap<u64, Vec<u8>>;
 /// are read inside a hunk, since an added line can itself start with `+++ `. Only "\n" ends a line, as in git's
 /// output: an added line can hold a carriage return, a form feed or U+2028, and bytes that are not UTF-8.
 ///
-/// The gate's changed_lines (gate.py) reads the same shape and is the home of how, so a fix to one belongs in both.
+/// The gate's changed_lines (octoflow-gate, the release ci/gate.pin names) reads the same shape and is the home of
+/// how, so a fix to one belongs in both.
 /// Errors: a path, as git writes it or once its quoting is undone, that is not UTF-8, which Python reads.
 pub fn added_lines(diff: &[u8]) -> Result<Map<AddedLines>, OrchestratorError> {
     let mut out: Map<AddedLines> = Map::new();

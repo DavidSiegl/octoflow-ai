@@ -80,7 +80,7 @@ is missing.
   `.git/info/attributes` or your `core.attributesFile` makes the file binary, as `-diff` does (the repository's own
   `.gitattributes` do not count). So a text file replacing a binary one is not scanned either
 - Nothing for the orchestrator itself, a single [binary](#install); to build it from a checkout, Rust by
-  `rust-toolchain.toml`; [uv](https://github.com/astral-sh/uv) and Python 3.13+ only for `gate.py` and the tests
+  `rust-toolchain.toml`; [uv](https://github.com/astral-sh/uv) and Python 3.13+ only for the tests
 - For `--machine`: the machine saved in herdr and non-interactive SSH to it, which the orchestrator's
   commands share one connection to (OpenSSH's `ControlMaster`); see
   [Running the agents on another machine](docs/design.md#running-the-agents-on-another-machine)
@@ -242,9 +242,6 @@ orchestrator prune --dry-run
 
 # Every finished run's metrics.json, one JSON line each: outcome, roles, turns with times and tokens
 orchestrator metrics | jq -s 'map(.rounds) | add / length'
-
-# Judge the change since a commit as the quality gate does; exit status 0 for GATE: OK, 1 for GATE: ERROR
-uv run python gate.py --base main --coverage coverage.xml --out quality.md
 ```
 
 `--machine` and `--cwd` work the same way for every command, and `doctor` checks a project only when given

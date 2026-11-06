@@ -7,7 +7,7 @@
 #   one their recordings were made with.
 # - cargo-llvm-cov and cargo-nextest, with which the Test stage runs the Rust tests and measures their coverage
 #   (docs/quality-gate.md). cargo-llvm-cov also needs rustup's llvm-tools component, which the agent image provides.
-# - cargo-mutants, with which gate.py's surviving-mutants check mutation-tests the Rust a change edits.
+# - cargo-mutants, with which the quality gate's surviving-mutants check mutation-tests the Rust a change edits.
 # - cargo-about, with which the Package stage's packaging/build-binary.sh writes the third-party licenses a release
 #   ships.
 #

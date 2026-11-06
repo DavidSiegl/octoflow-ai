@@ -100,8 +100,9 @@ The successor must offer four capabilities:
 Under these constraints:
 
 - **C1.** The Python stays stdlib-only, with no runtime dependencies (`dependencies = []` in `pyproject.toml`):
-  since 0.49.0 that Python is `gate.py` alone. The engine is Rust, and its rule is the rust-engine spec's list of
-  crates: each crate in `engine/Cargo.toml` is one the user approved, as the comment above it says.
+  since 0.62.1 that Python is the tests alone, the gate being the octoflow-gate release `ci/gate.pin` names. The
+  engine is Rust, and its rule is the rust-engine spec's list of crates: each crate in `engine/Cargo.toml` is one the
+  user approved, as the comment above it says.
 - **C2.** A JavaScript (or similar) frontend build step is allowed.
 - **C3.** `orchestrator.py` may be split into a package.
 - **C4.** The Tk GUI is removed once the successor reaches parity.

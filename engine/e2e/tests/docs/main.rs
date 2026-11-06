@@ -1,8 +1,8 @@
 //! The README and docs/ against the code they describe: the commands and flags they give, the names and the links.
 //!
 //! The commands are the orchestrator's, read from its help (cli.rs), the binary E2E_ENGINE names or else the
-//! checkout's, built with cargo (octoflow_e2e::engine); and gate.py's. The names are those the engine's and the desktop
-//! shell's Rust define, read by parsing it, and gate.py's (names.rs).
+//! checkout's, built with cargo (octoflow_e2e::engine). The names are those the engine's and the desktop shell's Rust
+//! define, read by parsing it (names.rs).
 //!
 //! Each failure names the document and line that is wrong, as `file:line: what`.
 
@@ -15,7 +15,6 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::LazyLock;
 
-use cli::GATE;
 use markdown::{code_spans, flags, word_char, Line};
 
 /// The repository's root.
@@ -28,7 +27,7 @@ const NOT_IN_THE_PARSER: &[(&str, &str, Option<&str>, &str)] = &[
     ("architecture.md", "run", Some("--run-id"), "hidden from run's help: serve's, for the runs POST /run starts"),
 ];
 
-/// Backticked ALL_CAPS names the docs give that are neither the Rust's nor gate.py's, with where they come from.
+/// Backticked ALL_CAPS names the docs give that are not the Rust's, with where they come from.
 const OTHER_PROGRAMS_NAMES: &[(&str, &str)] = &[
     ("PATH", "an environment variable"),
     ("PWD", "an environment variable"),
@@ -43,7 +42,6 @@ const OTHER_PROGRAMS_NAMES: &[(&str, &str)] = &[
     ("E2E_ENGINE", "the e2e package's environment variable, engine/e2e/src/engine.rs"),
     ("E2E_RECORD", "the e2e scenarios' environment variable, engine/e2e/tests/e2e/main.rs"),
     ("EVAL_ENGINE", "the eval runner's environment variable, xtask/src/eval.rs"),
-    ("UPDATE_GOLDEN", "the golden-file helper's environment variable, tests/golden.py"),
     ("HARNESSES", "the Rust engine's table of the agent harnesses, engine/src/harness.rs"),
     ("CI", "the Python engine's Jenkins client, which engine/src/ci.rs ports as Jenkins"),
     ("PR_STATUS_CREATOR", "the Jenkinsfile's"),
@@ -111,9 +109,8 @@ fn assert_no_errors(errors: &[String]) {
 }
 
 /// (line, command, the text of its arguments) for each command the document shows being run, in a code span or a
-/// fenced line: after `orchestrator` or the Python engine's `orchestrator.py`; gate.py wherever a flag follows it;
-/// and, in a code span, a command opening it with a flag after, as in `run --spec`. Shell comments, and what follows
-/// a pipe, `&&` or `;`, are left out.
+/// fenced line: after `orchestrator` or the Python engine's `orchestrator.py`; and, in a code span, a command opening
+/// it with a flag after, as in `run --spec`. Shell comments, and what follows a pipe, `&&` or `;`, are left out.
 fn invocations<'a>(doc: &'a Doc, commands: &BTreeMap<String, BTreeSet<String>>) -> Vec<(Line<'a>, String, String)> {
     let mut found = Vec::new();
     for line in doc.lines() {
@@ -128,17 +125,9 @@ fn invocations<'a>(doc: &'a Doc, commands: &BTreeMap<String, BTreeSet<String>>) 
             if let Some((command, rest)) = orchestrator_command(text) {
                 found.push((line, command.to_string(), rest.to_string()));
             }
-            let gate = text
-                .match_indices(GATE)
-                .filter(|&(i, _)| starts_word(text, i))
-                .map(|(i, _)| &text[i + GATE.len()..])
-                .find(|rest| rest.starts_with(char::is_whitespace) && rest.trim_start().starts_with("--"));
-            if let Some(rest) = gate {
-                found.push((line, GATE.to_string(), rest.to_string()));
-            }
             let mut words = text.split_whitespace();
             if let (false, Some(first), Some(second)) = (line.fenced, words.next(), words.next()) {
-                if first != GATE && commands.contains_key(first) && second.starts_with("--") {
+                if commands.contains_key(first) && second.starts_with("--") {
                     found.push((line, first.to_string(), text.trim_start()[first.len()..].to_string()));
                 }
             }
@@ -268,7 +257,7 @@ fn the_readme_flag_table_gives_each_flag_the_commands_that_take_it() {
     for row in &rows {
         let at = readme.at(&row.line);
         let scope = row_scope(&row.description);
-        // A command row_scope can read: lowercase letters and hyphens, so not gate.py.
+        // A command row_scope can read: lowercase letters and hyphens.
         let opening = code_spans(&row.description)
             .first()
             .copied()
@@ -304,7 +293,7 @@ fn the_readme_flag_table_gives_each_flag_the_commands_that_take_it() {
     assert_no_errors(&errors);
 }
 
-// In the README or, for a command the README's table leaves out, such as gate.py, in docs/. A flag counts as named
+// In the README or, for a command the README's table leaves out, in docs/. A flag counts as named
 // wherever its name appears, said of any command or program. A missing flag has no line of its own, so the failure
 // names the line of the README's flag table, where a flag of the orchestrator's is documented.
 #[test]
@@ -358,13 +347,13 @@ fn the_names_the_docs_give_exist_in_the_orchestrator() {
                 if constant_name(code) {
                     let other = OTHER_PROGRAMS_NAMES.iter().any(|(name, _)| *name == code);
                     if !names.items.contains(code) && !names.strings.contains(code) && !other {
-                        errors.push(format!("{at}: neither the Rust nor gate.py has {code}"));
+                        errors.push(format!("{at}: the Rust has no {code}"));
                     }
                 } else if let Some(function) =
                     code.strip_suffix("()").filter(|f| !f.is_empty() && f.chars().all(word_char))
                 {
                     if !names.items.contains(function) && !methods.contains(function) {
-                        errors.push(format!("{at}: neither the Rust nor gate.py has a function or method {code}"));
+                        errors.push(format!("{at}: the Rust has no function or method {code}"));
                     }
                 // A member of a type the code defines, or of a name with a lowercase letter: not CONSTANT.md, a
                 // prompt's file, nor one of FILE_NAMES, nor Self's.
@@ -372,7 +361,7 @@ fn the_names_the_docs_give_exist_in_the_orchestrator() {
                     let file = FILE_NAMES.iter().any(|(name, _)| *name == code);
                     let typed = types.contains(owner) || owner.chars().any(|c| c.is_lowercase());
                     if !file && owner != "Self" && typed && !names.members.contains(&format!("{owner}.{member}")) {
-                        errors.push(format!("{at}: neither the Rust nor gate.py has {owner}.{member}"));
+                        errors.push(format!("{at}: the Rust has no {owner}.{member}"));
                     }
                 }
             }

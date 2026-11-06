@@ -5,8 +5,9 @@
 //! gate's: the schema/quality-v1.json of the octoflow-gate release ci/gate.pin names, as docs/quality-gate.md's "The
 //! report as a contract" says. From a quality file it reads them only where there is no quality.json (parse_gate,
 //! gate_failures): the files the engine writes itself, a build that archived none, and a quality file written before
-//! its round was recorded (Workflow::quality). That reading is the engine's copy of the quality file's format, gate.py's QualityReport.markdown
-//! and its sections; engine/tests/oracle/quality.py holds it to the Python engine's reading of the gate's files.
+//! its round was recorded (Workflow::quality). That reading is the engine's copy of the quality file's format, the
+//! gate's QualityReport.markdown and its sections; engine/tests/oracle/quality.py holds it to the Python engine's
+//! reading of the gate's files.
 
 use std::fmt;
 
@@ -39,12 +40,12 @@ pub const QUALITY_TO_WEIGH_NOTE: &str = "These do not fail the gate. Fix each, o
 pub const QUALITY_FINDINGS_LIMIT: usize = 50;
 
 /// The characters that end a line in some reader of the quality file, a Markdown renderer or Python's str.splitlines:
-/// the set gate.py's _LINE_BREAK_ESCAPES escapes.
+/// the set the gate's _LINE_BREAK_ESCAPES escapes.
 const LINE_BREAKS: [char; 10] = ['\n', '\r', '\x0b', '\x0c', '\x1c', '\x1d', '\x1e', '\u{85}', '\u{2028}', '\u{2029}'];
 
 /// text as a quality file writes it within one of its lines, such as one item of a list: each of LINE_BREAKS written
-/// as an escape, `\x` and two hex digits up to U+00FF, `\u` and four beyond, as gate.py's _LINE_BREAK_ESCAPES writes
-/// it, so a list item the engine adds reads back as the one line the gate's would; anything else as it is.
+/// as an escape, `\x` and two hex digits up to U+00FF, `\u` and four beyond, as the gate's _LINE_BREAK_ESCAPES
+/// writes it, so a list item the engine adds reads back as the one line the gate's would; anything else as it is.
 pub fn one_line(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
@@ -295,7 +296,7 @@ struct ReportTest {
     name: String,
 }
 
-/// A numbered finding of a quality file, as gate.py's _numbered writes it.
+/// A numbered finding of a quality file, as the gate's _numbered writes it.
 struct NumberedFinding<'a> {
     path: Option<&'a str>,
     rule: &'a str,

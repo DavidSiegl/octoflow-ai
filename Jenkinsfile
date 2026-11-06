@@ -18,7 +18,6 @@ pipeline {
 
     environment {
         UV_NO_PROGRESS = '1'
-        COVERAGE_FILE  = '.coverage'
         // For the Test, UI, Gate and Package stages: crates are fetched into the workspace, which cleanWs empties, so
         // no build compiles sources an earlier build left behind.
         CARGO_HOME     = "${env.WORKSPACE}/.cargo-home"
@@ -27,7 +26,7 @@ pipeline {
         // The dev profile, which the Test stage's test build and clippy's checks inherit, without debug info. Debug
         // info for the GTK and Tauri crates took enough memory that rustc was OOM-killed with two builds on
         // agentbox0. ci/cargo-lock.sh now keeps two builds' cargo steps apart, except a quality build's, which never
-        // waits for the lock, and the Gate stage's clippy, which gate.py runs outside it; building without debug info
+        // waits for the lock, and the Gate stage's clippy, which the gate runs outside it; building without debug info
         // keeps each build's own peak lower. A failing test still prints its panic's file:line, which comes from
         // core::panic::Location, not from debug info. Set for the whole build, not the UI stage alone, so that the
         // Gate stage's clippy finds the dependencies the UI stage's cargo check checked fresh, and checks only the
@@ -95,7 +94,7 @@ pipeline {
         stage('Install') {
             steps {
                 sh 'uv sync --frozen'
-                // The Test stage's TestClippy and the Gate stage's gate.py run the real clippy, and the Test stage's
+                // The Test stage's TestClippy and the Gate stage's gate run the real clippy, and the Test stage's
                 // cargo-llvm-cov reads its coverage data with llvm-tools' llvm-profdata and llvm-cov, which must be the
                 // toolchain's own LLVM. Both are rustup components the agent image provides: its rustup home,
                 // /usr/local/rustup, is root's, so a build cannot add to it (PR-163's builds 1-3 failed adding
@@ -114,20 +113,6 @@ pipeline {
                 '''
                 sh 'ci/install-tools.sh "$WORKSPACE/.tools/bin"'
                 script {
-                    // The Gate stage's clippy lints the tree's own ci/gate-rust as a workspace of its own, so that is
-                    // checked here, for the reason the UI stage checks the shell: with syn checked, clippy checks only
-                    // the helper, in under a second rather than 5 on the development host; the lock as in the UI stage,
-                    // which says why a quality build may skip it. A check that failed does not stop the build: it leaves
-                    // the error to the Gate stage's clippy. Ticket gate-standalone/10 removes it with ci/gate-rust.
-                    if (env.JUDGED_AT_PR != 'true') {
-                        sh '''
-                            if [ -f ci/gate-rust/Cargo.toml ]; then
-                                "$WORKSPACE/ci/cargo-lock.sh" ${GIT_REF:+--no-wait} cargo check --locked --all-targets \\
-                                    --manifest-path ci/gate-rust/Cargo.toml \\
-                                    || echo "cargo check of ci/gate-rust failed; the Gate stage's clippy judges it" >&2
-                            fi
-                        '''
-                    }
                     // The version a release on main is tagged with.
                     env.PROJECT_VERSION = sh(returnStdout: true, script: '''
                         uv run --frozen python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])'
@@ -139,8 +124,6 @@ pipeline {
         stage('Test') {
             when { expression { return env.JUDGED_AT_PR != 'true' } }
             environment {
-                // tests/conftest.py's larger profile: a build tries ten times the examples a local run does.
-                HYPOTHESIS_PROFILE = 'ci'
                 // Temporary files on the agent's mounted volume, beside the workspace, rather than in /tmp, for this
                 // stage and the Gate stage. The tests and the gate build Rust in temporary directories and run what
                 // they build: the test fixtures' build scripts and test binaries, and cargo-mutants on the gate's copy
@@ -209,15 +192,11 @@ pipeline {
                         exit 1
                     fi
                 '''
-                // --cov-context=test records which tests run each line, in COVERAGE_FILE, for the Gate stage's
-                // --test-contexts: mutmut then runs only the tests that reach the changed functions. It takes about 7 %
-                // longer, under the ctrace core pyproject.toml pins. COVERAGE_FILE stays relative, in the workspace:
-                // set to an absolute path, under TMPDIR or elsewhere, the file vanished during a run and over 2300
-                // tests errored.
+                // The Python tests, which test the scripts under ci/; with no Python outside tests/, there is no
+                // coverage to measure.
                 sh '''
                     status=0
-                    uv run pytest --cov=gate --cov-branch --cov-context=test --cov-report=xml \\
-                        --junitxml=test-results.xml || status=$?
+                    uv run pytest --junitxml=test-results.xml || status=$?
                     [ "$status" -le 1 ] || exit "$status"
                 '''
             }
@@ -277,7 +256,7 @@ pipeline {
                         base = sh(returnStdout: true, script: 'ci/pr-base.sh').trim()
                     } else {
                         // A history rewritten since the last successful build, by a force-push, leaves that build's
-                        // commit out of this checkout, where gate.py cannot judge from it ("names no commit", exit
+                        // commit out of this checkout, where the gate cannot judge from it ("names no commit", exit
                         // status 2) in this and every later build; such a build measures from HEAD^1, as one with no
                         // successful build before it does.
                         def previous = env.PREVIOUS_SUCCESSFUL_COMMIT
@@ -310,7 +289,7 @@ pipeline {
                             uv run --frozen python "$release/gate.py" --base "$GATE_BASE" \\
                                 --config "$judge/pyproject.toml" \\
                                 --tests target/nextest/ci/junit.xml --tests test-results.xml \\
-                                --coverage coverage-rust.xml --coverage coverage.xml --test-contexts "$COVERAGE_FILE" \\
+                                --coverage coverage-rust.xml \\
                                 --rust-syntax "$release/gate-rust-linux-x86_64" --out quality.md
                         ''')
                     }

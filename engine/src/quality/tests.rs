@@ -195,7 +195,7 @@ fn lines_that_only_look_like_findings_are_not_read_as_them() {
 }
 
 /// The vendored golden file name.ext of the gate release ci/gate.pin names (engine/tests/data/quality/README.md):
-/// the quality file (txt) or quality.json (json) gate.py writes in one case of its tests.
+/// the quality file (txt) or quality.json (json) the gate writes in one case of its tests.
 fn gate_golden(name: &str, ext: &str) -> String {
     let path = format!("{}/tests/data/quality/{name}.{ext}", env!("CARGO_MANIFEST_DIR"));
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"))

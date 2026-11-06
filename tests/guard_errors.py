@@ -1,7 +1,7 @@
 """The errors the guards in conftest.py raise, for a test to catch.
 
 They live here, not in conftest.py, so that a test module sees the class the guard raises however many times pytest
-runs in one process, as mutmut runs it: pytest imports conftest.py afresh for each run
+runs in one process, as a tool that runs pytest in-process may: pytest imports conftest.py afresh for each run
 (`PytestPluginManager._importconftest` drops the old one from sys.modules), while it imports this module, like a test
 module, once.
 """

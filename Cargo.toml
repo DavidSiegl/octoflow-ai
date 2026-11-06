@@ -1,17 +1,14 @@
 # The repository's one Cargo workspace: the Rust engine (engine/, the rust-engine spec's Lane), its e2e scenarios
 # (engine/e2e/), the desktop app's Tauri shell (ui/src-tauri/) and the repository's chores (xtask/), with one
 # Cargo.lock, one toolchain (rust-toolchain.toml) and one set of lints. Jenkins's Test stage runs every member's tests
-# here, and gate.py's clippy lints the workspace as a whole.
+# here, and the quality gate's clippy lints the workspace as a whole.
 [workspace]
 members = ["engine", "engine/e2e", "ui/src-tauri", "xtask"]
-# gate.py's Rust reader is a package of its own, with its own Cargo.lock: the Install stage builds it from the judged
-# main's tree, apart from this workspace (Jenkinsfile, and docs/quality-gate.md, "Reading Rust: the gate-rust helper").
-exclude = ["ci/gate-rust"]
 resolver = "2"
 
-# clippy's rules for every member, by which gate.py judges a change to its Rust (docs/quality-gate.md): clippy's
-# defaults, and these, which main passed when they were set. Each at warn, since gate.py caps every level at warn
-# anyway; and rustc's unsafe_code at deny would stop cargo test at the first crate that has unsafe code. A member
+# clippy's rules for every member, by which the quality gate judges a change to its Rust (docs/quality-gate.md):
+# clippy's defaults, and these, which main passed when they were set. Each at warn, since the gate caps every level at
+# warn anyway; and rustc's unsafe_code at deny would stop cargo test at the first crate that has unsafe code. A member
 # takes them with `[lints] workspace = true`.
 [workspace.lints.rust]
 unsafe_code = "warn"

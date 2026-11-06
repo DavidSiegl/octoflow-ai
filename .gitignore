@@ -12,9 +12,7 @@ wheels/
 # The testing notes for coding agents, kept on disk but out of the repository
 TESTING.md
 
-# What `uv run pytest --cov ...`, `cargo llvm-cov ... --output-path coverage-rust.xml` and `gate.py --out` write
-.coverage
-coverage.xml
+# What `cargo llvm-cov ... --output-path coverage-rust.xml` and the quality gate's --out write
 coverage-rust.xml
 quality.md
 
@@ -29,12 +27,6 @@ ui/src-tauri/THIRD-PARTY-LICENSES-NPM.html
 
 # The Cargo workspace's build output
 /target/
-
-# The build output of gate.py's Rust reader
-ci/gate-rust/target/
-
-# What Hypothesis keeps of the examples it tried
-.hypothesis/
 
 # Claude Code's personal instructions for this repo
 CLAUDE.local.md
