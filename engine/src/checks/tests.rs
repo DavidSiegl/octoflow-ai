@@ -1,4 +1,4 @@
-//! tests/test_orchestrator.py's TestJudgeRun (its quality files written by gate.py, in checks.json), TestDiffBudget,
+//! tests/test_orchestrator.py's TestJudgeRun (its quality files written by the gate, in checks.json), TestDiffBudget,
 //! and TestOrchestratorChecks without the Workflow that runs them in a quality round; and judge_run on every quality
 //! file the e2e recordings hold.
 

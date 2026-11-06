@@ -1,4 +1,4 @@
-"""RepositoryTest, the base of the test cases that run the gate on a git repository of their own, and git, which
+"""RepositoryTest, the base of the test cases that run a script on a git repository of their own, and git, which
 runs git for them."""
 
 import os

@@ -520,7 +520,7 @@ fn rendered(pipeline: &Pipeline) -> String {
     parts.join("\n\n") + "\n"
 }
 
-/// Fail unless text is tests/golden/<name>.txt, byte for byte: Python's assert_golden, which rewrites the file.
+/// Fail unless text is tests/golden/<name>.txt, byte for byte.
 fn assert_golden(name: &str, text: &str) {
     let path = format!("{}/../tests/golden/{name}.txt", env!("CARGO_MANIFEST_DIR"));
     let want = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("no golden file {path}: {e}"));

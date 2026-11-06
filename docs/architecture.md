@@ -4,16 +4,11 @@ A map of the code for someone about to change it. Usage is in the [README](../RE
 resume and stale-run detection are in [design.md](design.md). Code is named by symbol, not line, so this stays
 true as lines move.
 
-## `gate.py`
+## The quality gate
 
-The quality gate, a standard-library program of its own: `python gate.py --base REV` judges the change in the
-working tree it runs in and writes the quality file ([quality gate](quality-gate.md)). It is the one Python left:
-the engine is Rust, and never runs it; Jenkins runs it, and the engine reads the report it writes
-([the report as a contract](quality-gate.md#the-report-as-a-contract)). In order:
-the tunables (`QUALITY_ISSUE_LIMIT`, `GATE_MIN_COVERAGE`, `MUTATION_BUDGET`, ...); its own git helpers (`_git`,
-`_git_run`) and `GateError`; `quality_report`, which writes the file; the linters (`GATE_TOOLS`), `GateChange`,
-`GateCheck` and `judge_change`, which runs them; the checks `gate_checks` lists, from `weakened_tests` to
-`vague_names`; and `gate_command`, `parse_args` and `main`.
+The quality gate is not here: it is [octoflow-gate](https://github.com/DavidSiegl/octoflow-gate), a project of its own,
+whose release `ci/gate.pin` names. Jenkins runs it ([quality gate](quality-gate.md)); the engine never does, and reads
+the report it writes ([the report as a contract](quality-gate.md#the-report-as-a-contract)).
 
 ## `engine/`: the engine
 
@@ -351,11 +346,8 @@ layout), with no Python of its own.
 ## Tests
 
 `cargo test --workspace` runs the engine's tests (above) and the desktop shell's. `uv run pytest` runs the rest:
-
-`tests/test_gate.py` covers `gate.py`: each check on a real git repository in a temporary directory, the quality
-file `quality_report` writes, and `TestGate`, the program itself, with stub linters on `PATH`.
-`tests/test_properties.py` holds the gate's diff and path parsers to git, by Hypothesis; `tests/test_invariants.py`
-holds the rules the docs state.
+`tests/test_fetch_gate.py` and `tests/test_version_raised.py` cover the scripts of `ci/` they are named for, and
+`tests/test_invariants.py` holds the rules the docs state.
 
 `engine/e2e/` (package `octoflow-e2e`) holds the e2e scenarios, which run the engine as a program, with nothing of
 it imported; they are the only test of a run from start to verdict. Each scenario in `tests/e2e/scenarios.rs`
@@ -378,16 +370,11 @@ kill ends the engine's group and each process below it, since the engine runs ea
 The package's other test, `tests/docs/`, holds the README and `docs/` to the code: each command the docs run takes the
 flags they give it, the README's flag table gives each flag the commands that take it, every flag is documented, the
 names they give in backticks exist, and every relative link and its anchor resolve. It reads the commands and flags
-from the help of the same binary the scenarios run (`src/engine.rs`) and from `gate.py`'s `parse_args`, and the names
-by parsing `engine/src` and `ui/src-tauri/src` with syn, and `gate.py` as text. Each failure names `file:line`.
+from the help of the same binary the scenarios run (`src/engine.rs`), and the names by parsing `engine/src` and
+`ui/src-tauri/src` with syn. Each failure names `file:line`.
 
-Golden files hold generated text to a reviewed copy of it under `tests/golden/`: `assert_golden` (`tests/golden.py`)
-fails with a unified diff naming the file when the text differs, and `UPDATE_GOLDEN=1 uv run pytest` rewrites the
-files instead. A change to that text is reviewed as the diff of its golden files. They hold two texts. `gate.py`'s
-quality file, which the Builder and the Reviewer read and which no e2e scenario writes, since their Jenkins serves
-hand-written ones: `TestQualityReport` holds `quality_report` to a file per gate word and per way it words a section,
-and `TestGate` the whole file the gate writes for a passing and a failing change, `judge_change`'s intro, conditions
-and coverage sentence included. And the engine's prompts: each step's prompts in
+Golden files hold generated text to a reviewed copy of it under `tests/golden/`, so a change to that text is reviewed
+as the diff of its golden files. They hold the engine's prompts: each step's prompts in
 the built-in workflow and each example workflow, as `Workflow` renders them, to a file per workflow, round 1 and,
 for the steps the review loops over, round 2 as the running session and a fresh one hear it; the Python engine's
 tests wrote them, and the engine's `workflow/tests/default_prompts.rs` holds the Rust engine to them. The e2e scenarios
@@ -405,8 +392,9 @@ agent runs in the suite, and no request leaves the machine.
 
 ## Tooling
 
-- `pyproject.toml`: `gate.py`'s project, with no runtime dependencies, Python 3.13+; pytest, pytest-cov, Hypothesis,
-  mutmut and the linters in the `dev` group. Its version is the release's.
+- `pyproject.toml`: the tests' project, with no runtime dependencies, Python 3.13+; pytest, pytest-randomly, which
+  the gate's flaky-tests check runs, and the linters in the `dev` group, and the rules the gate judges by. Its version
+  is the release's.
 - `ui/package.json`: the desktop app's npm scripts, `dev`, `build`, `test`, `typecheck`, `lint` and `tauri`. Its
   `.npmrc` sets `legacy-peer-deps`, because npm 9.2 as Debian ships it cannot resolve Vitest's optional peers.
   Jenkins runs the frontend's `typecheck`, `lint` and `test`, and the shell's tests under cargo-llvm-cov.
@@ -435,7 +423,7 @@ agent runs in the suite, and no request leaves the machine.
   `workflows` lists `default`. Before the build, cargo-about writes `dist/octoflow-third-party-licenses.html`, the
   license texts of the crates in the binary and the desktop app, by `packaging/about.toml` and `about.hbs`; a crate
   under a license `about.toml` does not accept fails the script.
-- `Jenkinsfile`: `uv sync --frozen`, `uv run pytest` with branch coverage of `gate`, and the Cargo workspace's
+- `Jenkinsfile`: `uv sync --frozen`, `uv run pytest`, and the Cargo workspace's
   tests with line coverage (`cargo llvm-cov nextest`), without the e2e scenarios in a quality build whose change
   touches nothing they judge (the Test stage lists what), a UI stage that runs `ui/`'s `npm ci`,
   `typecheck`, `lint` and `test`, failing the build before the gate, a Gate stage that runs the octoflow-gate release

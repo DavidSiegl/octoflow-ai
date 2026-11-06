@@ -68,7 +68,8 @@ impl Severity {
     }
 }
 
-/// A finding of an orchestrator check, of the shape of the gate's checks' findings (gate.py's _finding).
+/// A finding of an orchestrator check, of the shape of the gate's checks' findings (_finding in octoflow-gate, the
+/// release ci/gate.pin names).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Finding {
     /// The file it is about; None for one about the change as a whole.
@@ -99,7 +100,7 @@ impl Finding {
         finding_fingerprint(path.as_deref(), &one_line(&self.rule), &one_line(&self.message))
     }
 
-    /// The finding as the k-th of the quality file's numbered list, as gate.py's _numbered writes it and
+    /// The finding as the k-th of the quality file's numbered list, as the gate's _numbered writes it and
     /// crate::quality::gate_failures reads it.
     fn numbered(&self, k: u128) -> String {
         let place = match (&self.path, self.line) {

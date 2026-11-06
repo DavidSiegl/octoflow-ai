@@ -1,5 +1,4 @@
-//! The names the docs may give: those the Rust defines, the engine's and the desktop shell's, read by parsing it, and
-//! gate.py's, read as text.
+//! The names the docs may give: those the Rust defines, the engine's and the desktop shell's, read by parsing it.
 
 use std::collections::HashSet;
 use std::fs;
@@ -7,7 +6,6 @@ use std::path::Path;
 
 use syn::visit::{self, Visit};
 
-use crate::markdown::word_char;
 use crate::ROOT;
 
 /// The names a program defines, as the docs give them.
@@ -28,7 +26,7 @@ pub struct Names {
 /// shell's.
 const RUST_SOURCES: [&str; 2] = ["engine/src", "ui/src-tauri/src"];
 
-/// The names the Rust of RUST_SOURCES and gate.py define. Panics when a file cannot be read, or a .rs file parsed.
+/// The names the Rust of RUST_SOURCES defines. Panics when a file cannot be read, or a .rs file parsed.
 pub fn defined() -> Names {
     let mut names = Names::default();
     for src in RUST_SOURCES.map(|dir| ROOT.join(dir)) {
@@ -40,7 +38,6 @@ pub fn defined() -> Names {
             reader.visit_file(&file);
         }
     }
-    gate_names(&mut names);
     names
 }
 
@@ -245,117 +242,4 @@ impl<'ast> Visit<'ast> for Reader<'_> {
             self.names.strings.insert(s.value());
         }
     }
-}
-
-/// Add gate.py's names to names, read from its text, since it is Python: each def, class and assignment at the left
-/// margin as an item; as Class.member, each def and assignment of a class's body and each store to `self.name` in
-/// it, as `self.name =`, `self.name += ` or, opening a line, `self.name: T =`; and each one-line string literal. Lines
-/// inside a triple-quoted string are text, not code. A name defined otherwise, such as in a for, a with or an import,
-/// is not read. Panics when gate.py cannot be read.
-fn gate_names(names: &mut Names) {
-    let path = ROOT.join("gate.py");
-    let source = fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
-    let mut class: Option<String> = None;
-    // The quotes of the triple-quoted string the line before ended inside, if it did.
-    let mut open_string: Option<&str> = None;
-    for line in source.lines() {
-        if let Some(quotes) = open_string {
-            if line.contains(quotes) {
-                open_string = None;
-            }
-            continue;
-        }
-        open_string = ["\"\"\"", "'''"].into_iter().find(|q| line.matches(q).count() % 2 == 1);
-        let body = line.trim_start();
-        let indent = line.len() - body.len();
-        if indent == 0 && !body.is_empty() && !body.starts_with('#') && !body.starts_with(')') {
-            class = None;
-        }
-        if let Some(name) = defined_name(body) {
-            if indent == 0 {
-                if body.starts_with("class ") {
-                    class = Some(name.to_string());
-                }
-                names.items.insert(name.to_string());
-            } else if let Some(owner) = class.as_ref().filter(|_| indent == 4) {
-                names.members.insert(format!("{owner}.{name}"));
-            }
-        }
-        if let Some(owner) = &class {
-            names.members.extend(self_stores(body).map(|name| format!("{owner}.{name}")));
-        }
-        names.strings.extend(one_line_strings(line));
-    }
-}
-
-/// The names a line of Python, its indent taken off, stores to as `self.name`: `self.name = `, `self.name += ` and
-/// the like anywhere, and `self.name: T = `, an annotated store, opening the line; not a comparison, `self.name == `,
-/// nor `if self.name:` or a slice `[self.name:]`.
-fn self_stores(body: &str) -> impl Iterator<Item = &str> {
-    body.match_indices("self.").filter(|&(i, _)| !body[..i].ends_with(|c: char| word_char(c) || c == '.')).filter_map(
-        move |(i, _)| {
-            let rest = &body[i + "self.".len()..];
-            let len = rest.find(|c: char| !word_char(c)).unwrap_or(rest.len());
-            let after = rest[len..].trim_start();
-            let assigned = after.starts_with('=') && !after.starts_with("==")
-                || ["+=", "-=", "|=", "*="].iter().any(|op| after.starts_with(op))
-                || i == 0 && after.strip_prefix(':').is_some_and(|t| t.contains('=') && !t.starts_with('='));
-            (len > 0 && assigned).then(|| &rest[..len])
-        },
-    )
-}
-
-/// The name a line of Python defines at its start: `def name(`, `async def name(`, `class name`, `name =` or
-/// `name: type`; None for any other line.
-fn defined_name(body: &str) -> Option<&str> {
-    let rest = ["def ", "async def ", "class "].iter().find_map(|k| body.strip_prefix(k));
-    let named = rest.unwrap_or(body);
-    let len = named.find(|c: char| !word_char(c)).unwrap_or(named.len());
-    if len == 0 || named.starts_with(|c: char| c.is_ascii_digit()) {
-        return None;
-    }
-    let after = named[len..].trim_start();
-    let defines = if rest.is_some() {
-        true
-    } else {
-        after.starts_with('=') && !after.starts_with("==") || after.starts_with(':') && !after.starts_with(":=")
-    };
-    defines.then(|| &named[..len])
-}
-
-/// The texts of a line's string literals that open and close on it, quoted '...' or "...", backslash escapes left as
-/// written; a triple-quoted string's text is not one.
-fn one_line_strings(line: &str) -> Vec<String> {
-    let mut found = Vec::new();
-    let mut chars = line.char_indices().peekable();
-    while let Some((i, c)) = chars.next() {
-        if c == '#' {
-            break;
-        }
-        if c != '"' && c != '\'' {
-            continue;
-        }
-        if line[i..].starts_with(&c.to_string().repeat(3)) {
-            break;
-        }
-        let mut text = String::new();
-        let mut closed = false;
-        while let Some((_, d)) = chars.next() {
-            if d == '\\' {
-                if let Some((_, e)) = chars.next() {
-                    text.push(d);
-                    text.push(e);
-                }
-            } else if d == c {
-                closed = true;
-                break;
-            } else {
-                text.push(d);
-            }
-        }
-        if closed {
-            found.push(text);
-        }
-    }
-    found
 }

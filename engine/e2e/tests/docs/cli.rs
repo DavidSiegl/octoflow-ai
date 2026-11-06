@@ -1,32 +1,23 @@
-//! The commands the docs may run and the long flags each takes: the orchestrator's, as its help lists them, and
-//! gate.py's, a program of its own.
+//! The commands the docs may run and the long flags each takes: the orchestrator's, as its help lists them.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::process::Command;
 use std::sync::OnceLock;
 
 use octoflow_e2e::engine;
 
-use crate::ROOT;
-
-/// The command name the docs check gives gate.py.
-pub const GATE: &str = "gate.py";
-
-/// Each command of the orchestrator, by name, with the long flags its help lists, and gate.py's as the command
-/// [`GATE`]. Read once per test process; panics when the orchestrator cannot be run or gate.py read.
+/// Each command of the orchestrator, by name, with the long flags its help lists. Read once per test process; panics
+/// when the orchestrator cannot be run.
 pub fn commands() -> &'static BTreeMap<String, BTreeSet<String>> {
     static COMMANDS: OnceLock<BTreeMap<String, BTreeSet<String>>> = OnceLock::new();
     COMMANDS.get_or_init(|| {
         let top = help(&[]);
-        let mut commands: BTreeMap<String, BTreeSet<String>> = section(&top, "Commands:")
+        section(&top, "Commands:")
             .iter()
             .filter_map(|line| line.split_whitespace().next())
             .filter(|&name| name != "help")
             .map(|name| (name.to_string(), option_flags(&help(&[name]))))
-            .collect();
-        commands.insert(GATE.to_string(), gate_flags());
-        commands
+            .collect()
     })
 }
 
@@ -70,24 +61,4 @@ fn option_flags(help: &str) -> BTreeSet<String> {
             crate::markdown::flags(body).first().filter(|flag| body.starts_with(*flag)).map(|f| f.to_string())
         })
         .collect()
-}
-
-/// The long flags gate.py takes: each `--` string of an `add_argument` call in its `parse_args`, and argparse's
-/// `--help`. Read as text, since gate.py is Python: its calls each name their flags first, and none hides one with
-/// `help=argparse.SUPPRESS`, which this does not look for. Panics when gate.py cannot be read or has no `parse_args`.
-fn gate_flags() -> BTreeSet<String> {
-    let path = ROOT.join("gate.py");
-    let source = fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
-    let start = source.find("\ndef parse_args(").unwrap_or_else(|| panic!("no def parse_args in {}", path.display()));
-    let body = &source[start + 1..];
-    let body = &body[..body[1..].find("\ndef ").map_or(body.len(), |end| end + 1)];
-    let mut flags: BTreeSet<String> = body
-        .match_indices("add_argument(\"--")
-        .filter_map(|(i, call)| {
-            let flag = &body[i + call.len() - 2..];
-            flag.find('"').map(|end| flag[..end].to_string())
-        })
-        .collect();
-    flags.insert("--help".to_string());
-    flags
 }

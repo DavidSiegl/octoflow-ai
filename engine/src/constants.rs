@@ -98,7 +98,8 @@ pub const CI_TOKENS: [&str; 1] = ["JENKINS_TOKEN"];
 /// git's switches for how it reads every pathspec, which no process the orchestrator starts inherits: its pathspecs
 /// are written in git's default syntax, and each switch changes what one matches without an error, as under ICASE a
 /// `:(literal)` path such as _top_literal's matches a file whose name differs in case. The gate leaves them out of
-/// its own processes' environment for its own pathspecs, as gate.py's tool_env says.
+/// its own processes' environment for its own pathspecs, as tool_env says in octoflow-gate, the release ci/gate.pin
+/// names.
 pub const GIT_PATHSPEC_ENV: [&str; 4] =
     ["GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS"];
 /// The parameters of the Jenkins quality job.

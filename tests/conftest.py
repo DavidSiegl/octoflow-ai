@@ -1,5 +1,4 @@
-"""Settings and guards every test file shares: Hypothesis's profiles, the repository's top directory, no network,
-and no real sleeping.
+"""Settings and guards every test file shares: the repository's top directory, no network, and no real sleeping.
 
 The guards, each a fixture every test runs under, and each for this process only, not for a child process a test
 starts:
@@ -8,32 +7,30 @@ starts:
   `NetworkUsed`, naming the address. The contract marker is the exception, for a test that exists to talk to a live
   server.
 - No test may wait in time.sleep: a real sleep makes the suite slow, and a test that depends on how long one takes
-  flaky. The test code is guarded; gate.py and the standard library are not: subprocess sleeps while it waits for a
-  child with a timeout, which is how the gate runs its tools.
+  flaky. The test code is guarded; the standard library is not: subprocess sleeps while it waits for a child with a
+  timeout.
 """
 
 import ipaddress
-import os
 import pathlib
 import socket
 import sys
 import time
 
 import pytest
-from guard_errors import NetworkUsed, RealSleep
-from hypothesis import HealthCheck, settings
 
-# How many examples each property test tries. `default` keeps a local `uv run pytest` fast; the Jenkinsfile's Test
-# stage sets HYPOTHESIS_PROFILE=ci for ten times as many. No deadline: the tests that run git or sh for each example
-# take tens of milliseconds an example, and their speed is not what they test.
-# differing_executors is off because the gate's mutmut runs the tests more than once in one process, and unittest
-# makes a new TestCase for each run, so the second calls each @given method on another self. The check guards against
-# state kept on self from one example to the next, and the @given methods of tests/test_properties.py keep none: they
-# read self only to assert.
-_UNCHECKED = [HealthCheck.differing_executors]
-settings.register_profile("default", max_examples=25, deadline=None, suppress_health_check=_UNCHECKED)
-settings.register_profile("ci", max_examples=250, deadline=None, suppress_health_check=_UNCHECKED)
-settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "default"))
+
+class NetworkUsed(RuntimeError):
+    """A test opened a network connection the guard does not allow.
+
+    Not an OSError, so that code under test which takes an OSError for an unreachable server cannot turn it into an
+    ordinary failure and let the test pass.
+    """
+
+
+class RealSleep(RuntimeError):
+    """A test called time.sleep without the real_sleep marker."""
+
 
 # The real calls, taken before any test can replace them, which a guarded call hands on to when it is allowed.
 _connect = socket.socket.connect
@@ -41,20 +38,11 @@ _connect_ex = socket.socket.connect_ex
 _create_connection = socket.create_connection
 _sleep = time.sleep
 
-# The top directory of the tree the tests run in, and import gate.py from: the repository, or
-# under mutmut its copy of it, mutants/ at the repository's top (mutmut's fixed name; gate.py's _MUTMUT_STATE).
-_ROOT = pathlib.Path(__file__).resolve().parent.parent
-
-# The repository's top directory, whose files the tests read as text: the docs, and gate.py unmutated. Under mutmut,
-# which runs the tests in _ROOT = mutants/, that is the directory above, the one mutmut copied this file from:
-# mutmut's copy of the code holds every mutant beside each function it mutates, and mutants/ holds only what
-# [tool.mutmut]'s source_paths and also_copy (pyproject.toml) and mutmut's own defaults (tests/, pyproject.toml, the
-# lock files) name, so not README.md. A checkout that is itself named mutants has no tests/conftest.py above it.
-_IN_MUTMUT_COPY = _ROOT.name == "mutants" and (_ROOT.parent / "tests" / "conftest.py").is_file()
-REPO = _ROOT.parent if _IN_MUTMUT_COPY else _ROOT
+# The repository's top directory, whose files the tests read.
+REPO = pathlib.Path(__file__).resolve().parent.parent
 
 # The code whose time.sleep calls the sleep guard refuses: the tests.
-_GUARDED_TESTS = _ROOT / "tests"
+_GUARDED_TESTS = REPO / "tests"
 
 
 def pytest_configure(config):
@@ -125,7 +113,7 @@ def no_network(request, monkeypatch):
 @pytest.fixture(autouse=True)
 def no_real_sleep(request, monkeypatch):
     """For the length of each test not marked real_sleep, make time.sleep raise RealSleep when called from a test
-    file; called from anywhere else, such as gate.py or the standard library, it sleeps."""
+    file; called from anywhere else, such as the standard library, it sleeps."""
     if request.node.get_closest_marker("real_sleep") is not None:
         return
 

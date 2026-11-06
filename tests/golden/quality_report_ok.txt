@@ -1,7 +1,0 @@
-GATE: OK
-
-The intro.
-
-## Issues on changed lines
-
-None.
