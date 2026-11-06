@@ -6,8 +6,8 @@
 //! report as a contract" says. From a quality file it reads them only where there is no quality.json (parse_gate,
 //! gate_failures): the files the engine writes itself, a build that archived none, and a quality file written before
 //! its round was recorded (Workflow::quality). That reading is the engine's copy of the quality file's format, the
-//! gate's QualityReport.markdown and its sections; engine/tests/oracle/quality.py holds it to the Python engine's
-//! reading of the gate's files.
+//! gate's QualityReport.markdown and its sections; engine/tests/oracle/quality.json, the Python engine's reading of
+//! the gate's files as recorded, holds it to that reading.
 
 use std::fmt;
 

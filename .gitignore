@@ -28,6 +28,13 @@ ui/src-tauri/THIRD-PARTY-LICENSES-NPM.html
 # The Cargo workspace's build output
 /target/
 
+# What the tools this repository ran before 0.62.1 left, which a checkout from then still holds: pytest-cov's data,
+# gate.py's Rust helper's build output and Hypothesis's examples
+.coverage
+coverage.xml
+ci/gate-rust/target/
+.hypothesis/
+
 # Claude Code's personal instructions for this repo
 CLAUDE.local.md
 

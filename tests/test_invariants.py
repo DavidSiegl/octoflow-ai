@@ -8,7 +8,7 @@ import tomllib
 import unittest
 
 import conftest
-from guard_errors import RealSleep
+from conftest import RealSleep
 
 ROOT = conftest.REPO
 
@@ -21,6 +21,12 @@ class TestInvariants(unittest.TestCase):
             engine = tomllib.load(f)["package"]["version"]
         self.assertEqual(engine, release, "the engine's version is the release's, which the Jenkinsfile's Release "
                                           "stage reads from pyproject.toml (docs/architecture.md, Tooling)")
+
+    def test_the_project_has_no_runtime_dependencies(self):
+        with open(ROOT / "pyproject.toml", "rb") as f:
+            project = tomllib.load(f)["project"]
+        self.assertEqual(project["dependencies"], [], "the Python has no runtime dependencies "
+                                                      "(pyproject.toml, [project]; docs/ui-options.md, C1)")
 
     def test_no_test_sleeps_for_real(self):
         with self.assertRaises(RealSleep, msg="a test that must wait on a real process is marked real_sleep "

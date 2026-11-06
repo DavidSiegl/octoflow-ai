@@ -169,17 +169,17 @@ pipeline {
                 // e2e, so that the docs check beside them still runs, when its change,
                 // against HEAD^, the run's base, touches nothing they depend on: the engine and the e2e package under
                 // engine/, the Cargo workspace it builds in, the example workflows they run, and ci/, which pins the
-                // gitleaks they run; and tests/conftest.py, tests/guard_errors.py and the Python environment, which the
-                // Python harness ran them under: kept from its list (octoflow-without-python ticket 02), at the cost of
-                // a quality build that runs them when only those change. Their Python forerunner took quality build #59
-                // past the orchestrator's QUALITY_TIMEOUT (1299 s of 1200). A git diff that fails counts as a change,
-                // so they run. Pull request builds always run them.
+                // gitleaks they run; and tests/conftest.py and the Python environment, which the Python harness ran
+                // them under: kept from its list (octoflow-without-python ticket 02), at the cost of a quality build
+                // that runs them when only those change. Their Python forerunner took quality build #59 past the
+                // orchestrator's QUALITY_TIMEOUT (1299 s of 1200). A git diff that fails counts as a change, so they
+                // run. Pull request builds always run them.
                 sh '''
                     junit=target/nextest/ci/junit.xml
                     rm -f "$junit"
                     set --
                     if [ -n "${GIT_REF:-}" ] && git diff --quiet HEAD^ HEAD -- engine Cargo.toml Cargo.lock \
-                            rust-toolchain.toml tests/conftest.py tests/guard_errors.py examples pyproject.toml \
+                            rust-toolchain.toml tests/conftest.py examples pyproject.toml \
                             uv.lock .python-version ci; then
                         set -- -E 'not (package(octoflow-e2e) and binary(e2e))'
                     fi

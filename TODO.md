@@ -85,6 +85,14 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **A quality build of a snapshot based on gate-standalone/10 before it merges fails its Test stage.** Raised by
+  cross-review 162 (F2): "A quality build loads `main`'s Jenkinsfile, and main's Test stage runs
+  `uv run pytest --cov=gate --cov-branch --cov-context=test ...`. ... Its `uv sync --frozen` installs no pytest-cov,
+  so pytest exits 4 (unrecognized arguments), ... and the round ends `GATE: BUILD_FAILED`. Main's
+  `[tool.mypy] files = ["gate.py"]` would also fail on that tree." Affects only a run whose base holds the branch's
+  commits while main does not; none is started. Closes by itself when gate-standalone/10 merges: delete this entry
+  then.
+
 - **A stuck loop can compare a round read from `quality.json` with one read from `quality.md`.** Raised by
   cross-review 160 (F3): "A round judged from quality.json records every failing finding's fingerprint; one judged
   from quality.md (gate_failures) records at most QUALITY_FINDINGS_LIMIT." A round of a build that has

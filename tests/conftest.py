@@ -18,7 +18,19 @@ import sys
 import time
 
 import pytest
-from guard_errors import NetworkUsed, RealSleep
+
+
+class NetworkUsed(RuntimeError):
+    """A test opened a network connection the guard does not allow.
+
+    Not an OSError, so that code under test which takes an OSError for an unreachable server cannot turn it into an
+    ordinary failure and let the test pass.
+    """
+
+
+class RealSleep(RuntimeError):
+    """A test called time.sleep without the real_sleep marker."""
+
 
 # The real calls, taken before any test can replace them, which a guarded call hands on to when it is allowed.
 _connect = socket.socket.connect
