@@ -131,6 +131,14 @@ fn quality_file_is_the_archived_quality_md() {
 }
 
 #[test]
+fn quality_json_is_the_archived_quality_json_and_none_when_the_build_archived_none() {
+    let (server, jenkins) = scripted(vec![Answer::new(200, "{}"), Answer::new(404, "")]);
+    assert_eq!(jenkins.quality_json(3).unwrap().as_deref(), Some("{}"));
+    assert_eq!(server.seen()[0].url, format!("{JOB_PATH}3/artifact/quality.json"));
+    assert_eq!(jenkins.quality_json(3), Ok(None));
+}
+
+#[test]
 fn missing_artifact_and_test_report() {
     let (_server, jenkins) = scripted(vec![Answer::new(404, ""), Answer::new(404, "")]);
     assert_eq!(jenkins.quality_file(3), Ok(None));
@@ -239,6 +247,9 @@ const CALLS: &[(&str, Call)] = &[
     }),
     ("quality_file", |j| {
         let _ = j.quality_file(41).unwrap();
+    }),
+    ("quality_json", |j| {
+        let _ = j.quality_json(41).unwrap();
     }),
     ("failed_tests", |j| {
         let _ = j.failed_tests(41).unwrap();

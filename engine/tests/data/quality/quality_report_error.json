@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "gate": "ERROR",
+  "gate_version": "<version>",
+  "base": "<base>",
+  "head": "<head>",
+  "failed_conditions": [
+    "2 findings on lines the change added; each is listed below.",
+    "`ruff` is not installed."
+  ],
+  "findings": [
+    {
+      "path": "f.py",
+      "line": 1,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m1",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "f.py",
+      "line": 2,
+      "severity": "HIGH",
+      "rule": "r",
+      "check": "r",
+      "message": "m2",
+      "fails": true,
+      "fingerprint": "b2b06463a79229ef"
+    },
+    {
+      "path": "t.py",
+      "line": 9,
+      "severity": "warning",
+      "rule": "flaky test_x",
+      "check": "flaky",
+      "message": "m",
+      "fails": false,
+      "fingerprint": "a8818ff423701954"
+    }
+  ],
+  "findings_total": 3,
+  "failing_tests": [
+    {
+      "name": "t.T.test_x",
+      "detail": "AssertionError: 3 != 2\ntraceback"
+    },
+    {
+      "name": "t.T.test_y",
+      "detail": ""
+    }
+  ],
+  "coverage": {
+    "lines": 20,
+    "covered_lines": 10,
+    "conditions": 4,
+    "covered_conditions": 1,
+    "percent": 45.833333333333336,
+    "unmeasured": [
+      "m\\xff.py"
+    ]
+  },
+  "suppressions": [
+    {
+      "path": "f.py",
+      "line": 3,
+      "text": "x = 1  # noqa: F401"
+    },
+    {
+      "path": "g\rh.py",
+      "line": 1,
+      "text": "# noqa"
+    }
+  ],
+  "build_config": [
+    {
+      "files": [
+        "pyproject.toml"
+      ],
+      "text": "The change edits `pyproject.toml`, which holds the gate's rules; the change was judged by the edited rules."
+    },
+    {
+      "files": [
+        "uv.lock"
+      ],
+      "text": "The change edits `uv.lock`, which pins the versions of the linters the gate ran."
+    },
+    {
+      "files": [
+        "gate.toml"
+      ],
+      "text": "The change edits `gate.toml`. The gate took its settings from `main.toml`, so the edit did not change how the change was judged."
+    },
+    {
+      "files": [
+        "Jenkinsfile"
+      ],
+      "text": "The change edits `Jenkinsfile`. The quality job reads it from `main`."
+    },
+    {
+      "files": [
+        "c0/Cargo.toml",
+        "c1/Cargo.toml",
+        "c2/Cargo.toml",
+        "c3/Cargo.toml",
+        "c4/Cargo.toml",
+        "c5/Cargo.toml",
+        "c6/Cargo.toml"
+      ],
+      "text": "The change edits `c0/Cargo.toml`, `c1/Cargo.toml`, `c2/Cargo.toml`, `c3/Cargo.toml`, `c4/Cargo.toml` and 2 more, which clippy takes its rules or its toolchain from; it judged the change by the edited ones."
+    }
+  ]
+}

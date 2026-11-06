@@ -1,14 +1,20 @@
-//! The engine's copy of what it needs of the quality file's format: reading the gate's word and what failed it, and
-//! writing the quality files only the engine writes (a build that failed, a snapshot that holds secrets). The gate,
-//! which writes the file, is the home of that format: gate.py's quality_report and its sections, which
-//! docs/quality-gate.md's "The quality file as a contract" describes. engine/tests/oracle/quality.py holds this copy to
-//! the Python engine's reading of the gate's files.
+//! What the engine reads of the gate's report, and the quality files only the engine writes (a build that failed, a
+//! snapshot that holds secrets).
+//!
+//! A quality round reads the gate's word and what failed it from quality.json (read_report), whose format is the
+//! gate's: the schema/quality-v1.json of the octoflow-gate release ci/gate.pin names, as docs/quality-gate.md's "The
+//! report as a contract" says. From a quality file it reads them only where there is no quality.json (parse_gate,
+//! gate_failures): the files the engine writes itself, a build that archived none, and a quality file written before
+//! its round was recorded (Workflow::quality). That reading is the engine's copy of the quality file's format, gate.py's QualityReport.markdown
+//! and its sections; engine/tests/oracle/quality.py holds it to the Python engine's reading of the gate's files.
 
 use std::fmt;
 
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use crate::constants::CONSOLE_TAIL_LINES;
+use crate::error::OrchestratorError;
 use crate::handoff::first_line_word;
 use crate::map::Map;
 
@@ -20,6 +26,8 @@ pub const QUALITY_BUILD_FAILED: &str = "BUILD_FAILED";
 /// Only the engine writes LEAK too: gitleaks found a secret in the quality round's snapshot, so it was not pushed and
 /// Jenkins did not judge it (leak_report).
 pub const QUALITY_LEAK: &str = "LEAK";
+/// The quality.json schema_version read_report reads: the gate's schema/quality-v1.json.
+pub const QUALITY_SCHEMA_VERSION: u64 = 1;
 /// The headings of the sections gate_failures reads, besides its numbered findings.
 pub const QUALITY_FAILED_CONDITIONS: &str = "## Failed conditions";
 pub const QUALITY_FAILING_TESTS: &str = "## Failing tests";
@@ -155,6 +163,14 @@ impl GateFailures {
         !now.is_empty() && now == earlier.all()
     }
 
+    /// Count fingerprint as a failure of check, after the ones it has.
+    pub fn add(&mut self, check: &str, fingerprint: String) {
+        match self.fingerprints.get_mut(check) {
+            Some(list) => list.push(fingerprint),
+            None => self.fingerprints.insert(check, vec![fingerprint]),
+        }
+    }
+
     fn all(&self) -> std::collections::BTreeSet<&str> {
         let findings = self.fingerprints.values().flatten();
         self.conditions.iter().chain(findings).map(String::as_str).collect()
@@ -171,7 +187,7 @@ pub fn finding_fingerprint(path: Option<&str>, rule: &str, message: &str) -> Str
     digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
 }
 
-/// What the quality file, as the gate, judge_run and leak_report write it, says failed the gate: its failed
+/// What the quality file, as the gate, RunFindings::added_to_file and leak_report write it, says failed the gate: its failed
 /// conditions, the numbered findings before a QUALITY_TO_WEIGH_NOTE in each section, its failing tests, and its
 /// secrets under the check "gitleaks", each as the k-th secret of its rule in its file, wherever its line moved and
 /// whichever snapshot held it, so that a round which removes one of a file's two keys of a kind is not the same
@@ -180,10 +196,6 @@ pub fn gate_failures(quality: &str) -> GateFailures {
     let mut failures = GateFailures::default();
     let mut secrets: Map<usize> = Map::new();
     let (mut section, mut weighing) = ("", false);
-    let add = |failures: &mut GateFailures, check: &str, fingerprint: String| match failures.fingerprints.get_mut(check) {
-        Some(list) => list.push(fingerprint),
-        None => failures.fingerprints.insert(check, vec![fingerprint]),
-    };
     for line in quality.split('\n') {
         if line.starts_with("## ") {
             (section, weighing) = (line, false);
@@ -192,19 +204,95 @@ pub fn gate_failures(quality: &str) -> GateFailures {
         } else if section == QUALITY_FAILED_CONDITIONS && line.starts_with("- ") {
             failures.conditions.push(line[2..].to_string());
         } else if let (true, Some(name)) = (section == QUALITY_FAILING_TESTS, failing_test(line)) {
-            add(&mut failures, "tests", finding_fingerprint(Some(name), "tests", ""));
+            failures.add("tests", test_fingerprint(name));
         } else if let (true, Some((path, rule))) = (section == QUALITY_SECRETS_FOUND, secret_found(line)) {
             let rule = format!("gitleaks {rule}");
             let key = format!("{path}\0{rule}");
             let count = secrets.get(&key).copied().unwrap_or(0) + 1;
             secrets.insert(key, count);
-            add(&mut failures, "gitleaks", format!("{}-{count}", finding_fingerprint(Some(path), &rule, "")));
+            failures.add("gitleaks", format!("{}-{count}", finding_fingerprint(Some(path), &rule, "")));
         } else if let (false, Some(finding)) = (weighing, numbered_finding(line)) {
             let check = finding.rule.split(' ').next().unwrap_or_default();
-            add(&mut failures, check, finding_fingerprint(finding.path, finding.rule, finding.message));
+            failures.add(check, finding_fingerprint(finding.path, finding.rule, finding.message));
         }
     }
     failures
+}
+
+/// The fingerprint GateFailures counts a failing test by: finding_fingerprint of its name, as the quality file writes
+/// it within its line (one_line), under the check "tests".
+fn test_fingerprint(name: &str) -> String {
+    finding_fingerprint(Some(name), "tests", "")
+}
+
+/// What a report of the gate says of a change: its gate, QUALITY_OK or QUALITY_ERROR, or one of the words only the
+/// engine writes, and what failed it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Judgement {
+    /// The gate word, as a quality file's GATE line holds it.
+    pub gate: &'static str,
+    /// What failed the gate.
+    pub failures: GateFailures,
+}
+
+/// The judgement of quality.json, as the gate's schema/quality-v1.json describes it: its gate, its failed conditions,
+/// the fingerprint quality.json gives each finding that fails the gate, under its check, and each failing test, as
+/// gate_failures reads them from the quality file. Unlike the quality file, quality.json lists every finding and
+/// test, so a report over QUALITY_FINDINGS_LIMIT yields more fingerprints than its quality file. Fields the engine
+/// does not read are not checked.
+///
+/// Errors: json is not a JSON object; its schema_version is missing or another than QUALITY_SCHEMA_VERSION, which
+/// the error names, for the engine never guesses at a format it does not know; a field it reads is missing or of
+/// another type, or its gate is not OK or ERROR.
+pub fn read_report(json: &str) -> Result<Judgement, OrchestratorError> {
+    let malformed = |e: serde_json::Error| OrchestratorError(format!("quality.json does not follow its schema: {e}"));
+    let report: serde_json::Value = serde_json::from_str(json).map_err(malformed)?;
+    match report.get("schema_version") {
+        Some(v) if v.as_u64() == Some(QUALITY_SCHEMA_VERSION) => {}
+        found => {
+            let found = found.map_or("no schema_version".to_string(), |v| format!("schema_version {v}"));
+            return Err(OrchestratorError(format!(
+                "quality.json has {found}, and this engine reads only schema_version {QUALITY_SCHEMA_VERSION}: the \
+                 quality job ran a gate release whose report it cannot read; have the job run one that writes \
+                 schema_version {QUALITY_SCHEMA_VERSION}, or an octoflow that reads {found}"
+            )));
+        }
+    }
+    let report: Report = serde_json::from_value(report).map_err(malformed)?;
+    let gate = match report.gate.as_str() {
+        QUALITY_OK => QUALITY_OK,
+        QUALITY_ERROR => QUALITY_ERROR,
+        other => return Err(OrchestratorError(format!("quality.json's gate is {other}, neither OK nor ERROR"))),
+    };
+    let mut failures = GateFailures { conditions: report.failed_conditions, ..GateFailures::default() };
+    for finding in report.findings.into_iter().filter(|f| f.fails) {
+        failures.add(&finding.check, finding.fingerprint);
+    }
+    for test in report.failing_tests.unwrap_or_default() {
+        failures.add("tests", test_fingerprint(&one_line(&test.name)));
+    }
+    Ok(Judgement { gate, failures })
+}
+
+/// What read_report reads of quality.json; serde leaves out the fields it does not name.
+#[derive(Deserialize)]
+struct Report {
+    gate: String,
+    failed_conditions: Vec<String>,
+    findings: Vec<ReportFinding>,
+    failing_tests: Option<Vec<ReportTest>>,
+}
+
+#[derive(Deserialize)]
+struct ReportFinding {
+    check: String,
+    fails: bool,
+    fingerprint: String,
+}
+
+#[derive(Deserialize)]
+struct ReportTest {
+    name: String,
 }
 
 /// A numbered finding of a quality file, as gate.py's _numbered writes it.

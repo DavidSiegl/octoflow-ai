@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "gate": "ERROR",
+  "gate_version": "<version>",
+  "base": "<base>",
+  "head": "<head>",
+  "failed_conditions": [
+    "1 findings on lines the change added; each is listed below.",
+    "1 findings of the `test-integrity` check; each is listed below.",
+    "1 tests fail; each is listed below.",
+    "Coverage of new code is 50.0%; the gate wants at least 80% once a change has 20 or more new lines to cover."
+  ],
+  "findings": [
+    {
+      "path": "f.py",
+      "line": 4,
+      "severity": "error",
+      "rule": "ruff B023",
+      "check": "ruff",
+      "message": "Function definition does not bind loop variable `x`",
+      "fails": true,
+      "fingerprint": "54bd947dfb7aa9b3"
+    },
+    {
+      "path": "tests/test_f.py",
+      "line": 4,
+      "severity": "error",
+      "rule": "test-integrity skip",
+      "check": "test-integrity",
+      "message": "`pytest.mark.skip` added: it skips a test or expects it to fail.",
+      "fails": true,
+      "fingerprint": "f25a43cb5f933480"
+    },
+    {
+      "path": "tests/test_f.py",
+      "line": 5,
+      "severity": "warning",
+      "rule": "test-integrity removed-test",
+      "check": "test-integrity",
+      "message": "`test_two` is gone; this was line 5 at the base.",
+      "fails": false,
+      "fingerprint": "7633f520f61e8c9c"
+    }
+  ],
+  "findings_total": 3,
+  "failing_tests": [
+    {
+      "name": "tests.T.test_limit",
+      "detail": "AssertionError: 3 != 2"
+    }
+  ],
+  "coverage": {
+    "lines": 20,
+    "covered_lines": 10,
+    "conditions": 0,
+    "covered_conditions": 0,
+    "percent": 50.0,
+    "unmeasured": []
+  },
+  "suppressions": [
+    {
+      "path": "f.py",
+      "line": 23,
+      "text": "import os  # noqa: F401"
+    }
+  ],
+  "build_config": [
+    {
+      "files": [
+        "uv.lock"
+      ],
+      "text": "The change edits `uv.lock`, which pins the versions of the linters the gate ran."
+    }
+  ]
+}

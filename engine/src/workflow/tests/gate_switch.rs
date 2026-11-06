@@ -227,7 +227,8 @@ fn on_in_round_0_is_run_quality_gate() {
     let f = on_jenkins(Fixture::on(Rc::new(FakeHost::default()), state.clone(), script), &fake);
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
     let mut expected = strings(&["parameters", "trigger", "queue"]);
-    expected.extend(strings(&["build", "quality", "build", "quality", "build", "quality"]));
+    // Once quality.md is archived, each read of it is followed by one of quality.json.
+    expected.extend(strings(&["build", "quality", "build", "quality", "quality.json", "build", "quality", "quality.json"]));
     assert_eq!(collapsed(&fake.state().names), expected);
 
     // And its preflight, before the interview.

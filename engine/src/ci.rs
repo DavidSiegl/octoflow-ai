@@ -310,7 +310,18 @@ impl Jenkins {
     /// The quality file the build's Gate stage archived, quality.md, each byte that is not UTF-8 replaced; None when
     /// the build archived none.
     pub fn quality_file(&self, number: i64) -> Result<Option<String>, CIError> {
-        match self.request(Method::Get, &self.build_url(number, "artifact/quality.md", None), None) {
+        self.artifact(number, "quality.md")
+    }
+
+    /// The gate's report the build's Gate stage archived beside its quality file, quality.json, each byte that is not
+    /// UTF-8 replaced; None when the build archived none.
+    pub fn quality_json(&self, number: i64) -> Result<Option<String>, CIError> {
+        self.artifact(number, "quality.json")
+    }
+
+    /// The build's archived artifact name as text, each byte that is not UTF-8 replaced; None when it has none.
+    fn artifact(&self, number: i64, name: &str) -> Result<Option<String>, CIError> {
+        match self.request(Method::Get, &self.build_url(number, &format!("artifact/{name}"), None), None) {
             Ok(answer) => Ok(Some(String::from_utf8_lossy(&answer.body).into_owned())),
             Err(e) if e.status() == Some(404) => Ok(None),
             Err(e) => Err(e),

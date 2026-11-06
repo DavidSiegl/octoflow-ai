@@ -1120,6 +1120,9 @@
     "jenkins": "GET /job/parity/job/quality/1/artifact/quality.md"
    },
    {
+    "jenkins": "GET /job/parity/job/quality/1/artifact/quality.json"
+   },
+   {
     "pypi": "GET /pypi/attrs/json"
    },
    {

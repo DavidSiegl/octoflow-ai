@@ -216,12 +216,14 @@ fn jenkins_route(ledger: &Ledger, base_url: &str, method: &str, target: &str, fo
     };
     let (_, what) = rest.split_once('/').unwrap_or((rest, ""));
     let quality = build.get("quality").and_then(Value::as_str);
+    let quality_json = build.get("quality_json").and_then(Value::as_str);
     match what {
         "api/json" => {
             let result = if held { Value::Null } else { build.get("result").cloned().unwrap_or(Value::Null) };
             Answer::json(&object([("building", Value::Bool(held)), ("result", result)]))
         }
         "artifact/quality.md" if quality.is_some() && !held => Answer::text(200, quality.unwrap_or_default()),
+        "artifact/quality.json" if quality_json.is_some() && !held => Answer::text(200, quality_json.unwrap_or_default()),
         "testReport/api/json" if build.get("tests").is_some_and(|t| *t != Value::Null) => Answer::json(&test_report(&build)),
         "consoleText" => Answer::text(200, build.get("console").and_then(Value::as_str).unwrap_or_default()),
         _ => Answer::text(404, "not found"),

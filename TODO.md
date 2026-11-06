@@ -30,8 +30,8 @@ is rewritten to say what is left.
   [octoflow-gate](https://github.com/DavidSiegl/octoflow-gate) (decided 2026-11-05: the agent-estate template's
   `scripts/gate` is the second project that uses it), where the test-file patterns and the rest are `gate.toml`
   settings, and Jenkins judges this repository's changes with the release `ci/gate.pin` names
-  (`.scratch/gate-standalone/`, ticket 07). Left: the engine reading `quality.json` rather than `quality.md` (ticket
-  08), `--quality-gate local` (09), and removing `gate.py`, `ci/gate-rust/` and their tests, which Jenkins no
+  (`.scratch/gate-standalone/`, ticket 07), whose `quality.json` the engine reads (08). Left: `--quality-gate local`
+  (09), and removing `gate.py`, `ci/gate-rust/` and their tests, which Jenkins no
   longer runs to judge, from this repository (10).
 - **The e2e scenarios: what they do not record.** `engine/e2e/` runs 43 scenarios against the engine as a program and
   compares each with its recording (docs/architecture.md, Tests). The recordings are the Python engine's, made before
@@ -70,6 +70,13 @@ is rewritten to say what is left.
   Decided 2026-10-28. The verification run it still lacks is under Open issues.
 
 ## Open issues
+
+- **The engine still reads a build's `quality.md` where it archived no `quality.json`.** `Workflow::quality`
+  (`engine/src/workflow/quality_rounds.rs`) falls back to `parse_gate` and `gate_failures` for a build without
+  `quality.json`: a quality job whose judged `main` predates gate-standalone/07, or another project's job running a
+  gate release before 0.5.0. Delete the fallback for builds once no supported quality job lacks `quality.json`;
+  `parse_gate` and `gate_failures` stay for the files the engine writes itself (`GATE: BUILD_FAILED`, `GATE: LEAK`)
+  until those are judgements of their own, and with them `TestQualityFileContract`.
 
 - **No `doctor` check that a harness can start in the project without asking.** Claude Code's folder-trust dialog
   stops a run before its first turn; run-usability/02 made the run say so and the README list it, but `doctor` does
@@ -878,14 +885,16 @@ is rewritten to say what is left.
   build past `QUALITY_TIMEOUT` beside the mutation budget, so the user kept 30 s (2026-10-24). `not-rerun` is a finding
   to weigh, never a wrong verdict. Closes with lighter tests for the gate's own checks; one time budget the reruns and
   mutmut share was decided against ("flaky-tests' reruns get one time limit a run", above).
-- **A running build's quality.md is taken as whole once two reads agree.** The quality round's `gate_or_end`
-  (`engine/src/workflow/quality_rounds.rs`) reads a still running build's `quality.md` each poll and takes it when two
-  reads at least `CI_POLL_SECONDS` apart are equal, because Jenkins serves an artifact while `archiveArtifacts` is still
+- **A running build's reports are taken as whole once two reads agree.** The quality round's `gate_or_end`
+  (`engine/src/workflow/quality_rounds.rs`) reads a still running build's `quality.md`, and its `quality.json` with it,
+  each poll and takes the pair when two reads at least `CI_POLL_SECONDS` apart are equal, because Jenkins serves an artifact while `archiveArtifacts` is still
   copying it. Raised by the cross-review of `quality-round-early-read` (F1, 2026-10-27): "Equal reads show only that the
   copy made no progress between them, not that it finished." Two such reads are taken only once they hold a whole
   non-blank line (review 58, F1), so a copy stalled that long past its first line and then resumed still hands the round
   a cut file, which shortens the Builder's findings and `quality_rounds`' fingerprints. Before 2026-10-27 the file was
   read only once the build ended; a copy that failed partway, ending the build, was taken cut then too, and still is.
+  Since gate-standalone/08 the same holds for the pair: a `quality.json` cut that way stops the round as not following
+  its schema, and one not yet copied when two reads agree leaves the round on the fallback below, reading `quality.md`.
   Closes with a fixed last line that `gate.py` writes and the round checks before taking the file (older gates, which
   the quality build of another project may run, write none), or with asking Jenkins whether the Gate stage has
   completed.

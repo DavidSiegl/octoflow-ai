@@ -243,6 +243,31 @@ pub fn proofs_run(w: &mut World) {
 const GATED: [&str; 3] = ["run", "--quality-gate", JOB];
 const QUALITY_FAILED: &str = "GATE: ERROR\n\n## Failed conditions\n\n- 1 findings of the `ruff` check; each is listed below.\n\n\
                               ## Findings\n\n1. `src/calc.py:7` error ruff F821: undefined name `c`\n";
+/// QUALITY_FAILED's quality.json.
+fn quality_failed_json() -> String {
+    let finding = ("src/calc.py", 7, "ruff F821", "undefined name `c`");
+    report_json("ERROR", &["1 findings of the `ruff` check; each is listed below."], &[finding])
+}
+
+/// A quality.json of the gate's schema/quality-v1.json, of gate, its failed conditions and the findings that fail
+/// it, (path, line, rule, message) each, with no failing tests; of the fields the engine does not read, only those
+/// that say what was judged.
+fn report_json(gate: &str, conditions: &[&str], findings: &[(&str, u64, &str, &str)]) -> String {
+    let findings: Vec<Value> = findings
+        .iter()
+        .map(|&(path, line, rule, message)| {
+            let fingerprint = octoflow_engine::quality::finding_fingerprint(Some(path), rule, message);
+            serde_json::json!({"path": path, "line": line, "severity": "error", "rule": rule,
+                               "check": rule.split(' ').next(), "message": message, "fails": true,
+                               "fingerprint": fingerprint})
+        })
+        .collect();
+    let report = serde_json::json!({"schema_version": 1, "gate": gate, "base": "<base>", "head": "<head>",
+                                    "failed_conditions": conditions, "findings_total": findings.len(),
+                                    "findings": findings, "failing_tests": null});
+    serde_json::to_string_pretty(&report).expect("a quality.json")
+}
+
 const PYPROJECT_WITH_ATTRS: &str =
     "[project]\nname = \"parity-project\"\nversion = \"0.1.0\"\ndependencies = [\"attrs>=25\"]\n";
 
@@ -262,6 +287,12 @@ impl Build {
         self
     }
 
+    /// Archive json as its quality.json, beside its quality file.
+    fn reporting(mut self, json: &str) -> Build {
+        self.0.insert("quality_json".into(), Value::from(json));
+        self
+    }
+
     /// Keep it running until the world releases hold.
     fn hold(mut self, hold: &str) -> Build {
         self.0.insert("hold".into(), Value::from(hold));
@@ -275,7 +306,8 @@ impl From<Build> for Value {
     }
 }
 
-/// A build that ends with result, archiving quality, or nothing for None: one that ended before its Gate stage.
+/// A build that ends with result, archiving quality, or nothing for None: one that ended before its Gate stage. It
+/// archives no quality.json, as a quality job older than octoflow-gate's quality.json does, unless it is `reporting`.
 fn build(result: &str, quality: Option<&str>) -> Build {
     Build(octoflow_engine::json::object([
         ("result", Value::from(result)),
@@ -295,7 +327,8 @@ fn gated<'a>(args: &[&'a str]) -> Vec<&'a str> {
 /// --quality-gate: the first quality round passes; the Builder added a dependency the spec names, which the
 /// orchestrator's checks look up on PyPI.
 pub fn quality_passes(w: &mut World) {
-    w.jenkins_build(build("SUCCESS", Some("GATE: OK\n\nEvery condition holds.\n")).into());
+    let ok = build("SUCCESS", Some("GATE: OK\n\nEvery condition holds.\n")).reporting(&report_json("OK", &[], &[]));
+    w.jenkins_build(ok.into());
     let attrs = serde_json::from_str::<Value>(
         r#"{"info": {"version": "25.3.0", "license_expression": "MIT"},
             "releases": {"15.0.0": [{"upload_time_iso_8601": "2015-01-29T00:00:00Z"}],
@@ -312,8 +345,8 @@ pub fn quality_passes(w: &mut World) {
 
 /// Quality round 1 fails, the Builder answers it, and quality round 2 passes.
 pub fn quality_fails_then_passes(w: &mut World) {
-    w.jenkins_build(build("UNSTABLE", Some(QUALITY_FAILED)).into());
-    w.jenkins_build(build("SUCCESS", Some("GATE: OK\n")).into());
+    w.jenkins_build(build("UNSTABLE", Some(QUALITY_FAILED)).reporting(&quality_failed_json()).into());
+    w.jenkins_build(build("SUCCESS", Some("GATE: OK\n")).reporting(&report_json("OK", &[], &[])).into());
     w.agent("spec", [spec_written()]);
     w.agent("build", [built(1, 0), built(1, 1)]);
     w.agent("review", [approved(1)]);
@@ -322,8 +355,8 @@ pub fn quality_fails_then_passes(w: &mut World) {
 
 /// Quality rounds 1 and 2 fail on the same finding: the loop stops and the Reviewer is told it is stuck.
 pub fn quality_stuck(w: &mut World) {
-    w.jenkins_build(build("UNSTABLE", Some(QUALITY_FAILED)).into());
-    w.jenkins_build(build("UNSTABLE", Some(QUALITY_FAILED)).into());
+    w.jenkins_build(build("UNSTABLE", Some(QUALITY_FAILED)).reporting(&quality_failed_json()).into());
+    w.jenkins_build(build("UNSTABLE", Some(QUALITY_FAILED)).reporting(&quality_failed_json()).into());
     w.agent("spec", [spec_written()]);
     w.agent("build", [built(1, 0), built(1, 1)]);
     w.agent("review", [reviewed(1, "CHANGES_REQUESTED", "1. src/calc.py:7: the gate still fails."), built(2, 0)]);
@@ -343,7 +376,8 @@ pub fn quality_build_failed(w: &mut World) {
     w.run(&gated(&["--max-quality-rounds", "2", "--", TASK]));
 }
 
-/// A workflow without a verdict step whose last quality round fails: QUALITY_GATE_FAILED, exit status 3.
+/// A workflow without a verdict step whose last quality round fails: QUALITY_GATE_FAILED, exit status 3. Its build
+/// archives no quality.json, so the round reads the gate from its quality file.
 pub fn quality_workflow_without_review(w: &mut World) {
     let path = w.write(
         "workflows/solo.toml",
@@ -480,7 +514,7 @@ pub fn kill_in_publish(w: &mut World) {
 
 /// Killed while Jenkins builds the quality round's snapshot; resumed, the run polls the build it recorded.
 pub fn kill_in_quality(w: &mut World) {
-    w.jenkins_build(build("SUCCESS", Some("GATE: OK\n")).hold("quality").into());
+    w.jenkins_build(build("SUCCESS", Some("GATE: OK\n")).reporting(&report_json("OK", &[], &[])).hold("quality").into());
     approved_roles(w);
     killed_and_resumed(w, "quality", &gated(&["--", TASK]));
 }

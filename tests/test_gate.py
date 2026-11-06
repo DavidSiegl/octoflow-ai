@@ -156,10 +156,10 @@ class TestChangedLines(unittest.TestCase):
 
 
 class TestQualityFileContract(unittest.TestCase):
-    """The quality file is the one interface between the gate and the engine, and each keeps its own copy of its
-    format: the gate's here, the engine's in engine/src/quality.rs, whose tests read the golden files this suite holds
-    quality_report and the gate to (the_engine_reads_what_the_gate_writes). This holds the engine's copies of the
-    format's words to the gate's, read from the Rust source."""
+    """The engine reads the gate's quality.json, but the quality file where there is none, and writes its own for a
+    build that ended before its Gate stage (docs/quality-gate.md, "The report as a contract"); for those it keeps its
+    own copy of the file's format in engine/src/quality.rs. No word of that copy is unread yet, so all are kept. This
+    holds the engine's copies of the format's words to the gate's, read from the Rust source."""
 
     def engine_constant(self, name):
         source = (conftest.REPO / "engine" / "src" / "quality.rs").read_text()

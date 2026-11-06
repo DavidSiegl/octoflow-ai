@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "gate": "OK",
+  "gate_version": "<version>",
+  "base": "<base>",
+  "head": "<head>",
+  "failed_conditions": [],
+  "findings": [
+    {
+      "path": "t.py",
+      "line": 3,
+      "severity": "warning",
+      "rule": "flaky test_x",
+      "check": "flaky",
+      "message": "m",
+      "fails": false,
+      "fingerprint": "a8818ff423701954"
+    },
+    {
+      "path": "t.py",
+      "line": null,
+      "severity": "warning",
+      "rule": "flaky test_x",
+      "check": "flaky",
+      "message": "m",
+      "fails": false,
+      "fingerprint": "a8818ff423701954"
+    },
+    {
+      "path": null,
+      "line": null,
+      "severity": "warning",
+      "rule": "mutants budget",
+      "check": "mutants",
+      "message": "m",
+      "fails": false,
+      "fingerprint": "af488a3c8c2ab46d"
+    }
+  ],
+  "findings_total": 3,
+  "failing_tests": [],
+  "coverage": {
+    "lines": 20,
+    "covered_lines": 17,
+    "conditions": 0,
+    "covered_conditions": 0,
+    "percent": 85.0,
+    "unmeasured": []
+  },
+  "suppressions": [],
+  "build_config": [
+    {
+      "files": [
+        "pyproject.toml"
+      ],
+      "text": "The change edits `pyproject.toml`. The gate took its rules from `main`'s `pyproject.toml`, so the edit did not change how the change was judged."
+    }
+  ]
+}

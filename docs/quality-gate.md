@@ -2,7 +2,7 @@
 
 How Jenkins judges this repository with `gate.py`, and how `orchestrator run --quality-gate` uses
 it: the [gate](#the-gate) itself, [running it in another project](#running-the-gate-in-another-project), the
-[quality file as a contract](#the-quality-file-as-a-contract) between the gate and the orchestrator, the
+[report as a contract](#the-report-as-a-contract) between the gate and the orchestrator, the
 [Jenkins setup](#jenkins-setup), the
 [credentials and permissions](#credentials-and-permissions) the orchestrator needs, the
 [orchestrator loop](#orchestrator-loop), and the [orchestrator's own checks](#the-orchestrators-checks), which
@@ -28,8 +28,7 @@ alone. The `cargo build` builds the helper the gate reads Rust with ([gate-rust]
 which `--rust-syntax` names.
 
 `gate.py` is a program of its own beside the engine, and the two share no code: the engine, Rust since 0.49.0, runs
-none of it and reads only the file it writes ([the quality file as a
-contract](#the-quality-file-as-a-contract)).
+none of it and reads only the report it writes ([the report as a contract](#the-report-as-a-contract)).
 
 It runs six linters over the files git tracks outside `mutants/` (below), each over the files it reads, and keeps
 only the findings on lines the change adds, and the lineless ones on files it touches. Findings on older lines are
@@ -754,15 +753,26 @@ from the project's `pyproject.toml`, or the one `--config` names, as [whose rule
 change](#whose-rules-judge-a-change) says. Which files the test-integrity check takes for tests is fixed for now:
 `tests/**`, `test_*.py` and `*_test.py`, and Rust's as [the gate](#the-gate) says.
 
-## The quality file as a contract
+## The report as a contract
 
-The gate writes the quality file and the orchestrator reads it back: from Jenkins after each quality round, to
-decide whether the gate passed, to compare one round's failures with the last (`gate_failures`, and
-`GateFailures.repeats` for a stuck loop), and to amend it with its own checks (`judge_run`). Neither imports the
-other. Each keeps its own copy of the parts below, the gate's in `gate.py` and the engine's in `engine/src/quality.rs`
-beside `parse_gate`. `TestQualityFileContract` holds the engine's copies of the format's words to the gate's, and the
-engine's `the_engine_reads_what_the_gate_writes` reads the quality files the gate's tests hold to `tests/golden/` as
-it reads a build's. A change to one of these parts changes both copies.
+The gate writes one report two ways, and the orchestrator reads both back from Jenkins after each quality round.
+`quality.json` is the contract: the gate's JSON Schema,
+[schema/quality-v1.json](https://github.com/DavidSiegl/octoflow-gate/blob/v0.5.0/schema/quality-v1.json), says what
+each field holds, and the gate's own docs say when its `schema_version` is raised ([the report as a
+contract](https://github.com/DavidSiegl/octoflow-gate/blob/v0.5.0/docs/quality-gate.md#the-report-as-a-contract)).
+From it the orchestrator takes whether the gate passed and what failed it (`quality::read_report`): the failed
+conditions, the `fingerprint` of each finding that `fails`, under its `check`, and each failing test, which it
+compares with the last round's for a stuck loop (`GateFailures.repeats`). It reads only `schema_version` 1 and stops
+the round, naming the version, on any other. `engine/tests/data/quality/` holds the `golden/` files of the release
+`ci/gate.pin` names, and the engine's tests hold its readers of both formats to them.
+
+The quality file, quality.md, is what the Builder and the Reviewer read: the orchestrator amends it with its own
+checks' findings (`judge_run`) and writes it into the run, its words unchanged, and rejects a quality.md whose gate
+line is not its quality.json's gate. It reads the parts below from it only where there is no quality.json: a build
+whose quality job archived none (a fallback, which TODO.md says when to delete), and the files only it writes, for a
+build that ended before its Gate stage or a snapshot it did not push. For those the engine keeps its own copy of the
+parts in `engine/src/quality.rs` beside `parse_gate`, the gate's in `gate.py`; `TestQualityFileContract` holds the
+engine's copies of the format's words to the gate's.
 
 - **The gate line.** The first non-blank line is `GATE: OK` or `GATE: ERROR`; the reader tolerates Markdown
   emphasis around it. Only the orchestrator writes `GATE: BUILD_FAILED`, for a build that ended before its Gate

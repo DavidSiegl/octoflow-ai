@@ -1,6 +1,6 @@
 //! The orchestrator's checks: what a quality round runs itself after the build's gate, because they need what the
 //! build never sees, the run's spec and its workflow (docs/quality-gate.md, "The orchestrator's checks"), and how
-//! judge_run adds what they find to the build's quality file.
+//! what they find is added to the build's report (RunFindings).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -12,7 +12,8 @@ use crate::paths::file_name;
 use crate::pipeline::Pipeline;
 use crate::package_index::PackageIndexes;
 use crate::quality::{
-    one_line, QUALITY_ERROR, QUALITY_FAILED_CONDITIONS, QUALITY_FINDINGS_LIMIT, QUALITY_OK, QUALITY_TO_WEIGH_NOTE,
+    finding_fingerprint, one_line, Judgement, QUALITY_ERROR, QUALITY_FAILED_CONDITIONS, QUALITY_FINDINGS_LIMIT,
+    QUALITY_OK, QUALITY_TO_WEIGH_NOTE,
 };
 
 pub mod dependencies;
@@ -92,6 +93,12 @@ impl Finding {
         Finding { severity: Severity::Error, ..Finding::warning(path, line, rule, message) }
     }
 
+    /// Its fingerprint, finding_fingerprint of its path, rule and message as numbered writes them.
+    fn fingerprint(&self) -> String {
+        let path = self.path.as_deref().map(one_line);
+        finding_fingerprint(path.as_deref(), &one_line(&self.rule), &one_line(&self.message))
+    }
+
     /// The finding as the k-th of the quality file's numbered list, as gate.py's _numbered writes it and
     /// crate::quality::gate_failures reads it.
     fn numbered(&self, k: u128) -> String {
@@ -139,32 +146,68 @@ pub fn orchestrator_checks<'a>(pipeline: &Pipeline, indexes: &'a PackageIndexes)
     ]
 }
 
-/// The quality file the build's gate wrote, quality, with what checks find in change added.
-///
-/// A check with failing findings is a failed condition, which turns `GATE: OK` into `GATE: ERROR`. Every finding is
-/// listed in a section of their own at the end, failing ones first, numbered on from the file's last number while
-/// the file lists at most QUALITY_FINDINGS_LIMIT in all; the rest are counted. quality comes back as it is when they
-/// find nothing. Errors: a check's.
-pub fn judge_run(quality: &str, checks: &[OrchestratorCheck], change: &RunChange) -> Result<String, OrchestratorError> {
-    let (mut conditions, mut issues, mut to_weigh) = (Vec::new(), Vec::new(), Vec::new());
+/// What checks find in change, to add to the build's report (RunFindings). Errors: a check's.
+pub fn judge_run(checks: &[OrchestratorCheck], change: &RunChange) -> Result<RunFindings, OrchestratorError> {
+    let mut found = RunFindings::default();
     for check in checks {
-        let found = (check.find)(change)?;
-        if !found.issues.is_empty() {
-            conditions.push(format!(
+        let by_check = (check.find)(change)?;
+        if !by_check.issues.is_empty() {
+            found.conditions.push(format!(
                 "{} findings of the `{}` check; each is listed below.",
-                found.issues.len(),
+                by_check.issues.len(),
                 check.name
             ));
         }
-        issues.extend(found.issues.into_iter().map(|f| named(check.name, f)));
-        to_weigh.extend(found.to_weigh.into_iter().map(|f| named(check.name, f)));
+        found.issues.extend(by_check.issues.into_iter().map(|f| named(check.name, f)));
+        found.to_weigh.extend(by_check.to_weigh.into_iter().map(|f| named(check.name, f)));
     }
-    if issues.is_empty() && to_weigh.is_empty() {
-        return Ok(quality.to_string());
+    Ok(found)
+}
+
+/// What the orchestrator's checks found in a quality round's change (judge_run), added to the build's report in
+/// either of its forms: the quality file, for the agents, or the judgement read from it, for the round.
+///
+/// A check with failing findings is a failed condition, which turns the gate from OK to ERROR.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RunFindings {
+    /// One failed condition per check with failing findings, in the checks' order.
+    conditions: Vec<String>,
+    /// The findings that fail the gate, then those that do not, each in the checks' order, their rules prefixed by
+    /// their check's name.
+    issues: Vec<Finding>,
+    to_weigh: Vec<Finding>,
+}
+
+impl RunFindings {
+    /// The quality file the build's gate wrote, quality, with these findings added. Every finding is listed in a
+    /// section of their own at the end, failing ones first, numbered on from the file's last number while the file
+    /// lists at most QUALITY_FINDINGS_LIMIT in all; the rest are counted. quality comes back as it is when there are
+    /// none.
+    pub fn added_to_file(&self, quality: &str) -> String {
+        if self.issues.is_empty() && self.to_weigh.is_empty() {
+            return quality.to_string();
+        }
+        let quality = if self.conditions.is_empty() { quality.to_string() } else { failed_by(quality, &self.conditions) };
+        let after = last_number(&quality);
+        let section = orchestrator_section(&self.issues, &self.to_weigh, after).join("\n");
+        format!("{}\n{section}\n", quality.trim_end_matches('\n'))
     }
-    let quality = if conditions.is_empty() { quality.to_string() } else { failed_by(quality, &conditions) };
-    let after = last_number(&quality);
-    Ok(format!("{}\n{}\n", quality.trim_end_matches('\n'), orchestrator_section(&issues, &to_weigh, after).join("\n")))
+
+    /// judgement, the build's report read, with these findings' failures added as gate_failures would read them
+    /// from added_to_file's quality file, but for each of them, however many that file lists: the conditions after
+    /// the report's, and each failing finding's fingerprint under its check.
+    pub fn added_to(&self, judgement: Judgement) -> Judgement {
+        let Judgement { mut gate, mut failures } = judgement;
+        if !self.conditions.is_empty() && gate == QUALITY_OK {
+            gate = QUALITY_ERROR;
+        }
+        failures.conditions.extend(self.conditions.iter().map(|c| one_line(c)));
+        for finding in &self.issues {
+            let check = finding.rule.split(' ').next().unwrap_or_default();
+            failures.add(check, finding.fingerprint());
+        }
+        Judgement { gate, failures }
+    }
 }
 
 /// finding with its rule prefixed by the check's name.

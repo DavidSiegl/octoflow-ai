@@ -8,6 +8,7 @@ use std::sync::Arc;
 use super::*;
 use crate::ci::fake::Outcome;
 use crate::http::Http;
+use crate::quality::gate_failures;
 use crate::package_index::PackageIndexes;
 use crate::patch::added_lines;
 use crate::pipeline::default_workflow;
@@ -160,9 +161,40 @@ fn judge_run_adds_the_checks_findings_as_the_python_engine_does() {
             })
             .collect();
         let quality = case.get("quality").and_then(Value::as_str).unwrap();
-        let out = Change::new("").run(&always, |change| judge_run(quality, &checks, change).unwrap());
-        assert_eq!(out, case.get("out").and_then(Value::as_str).unwrap(), "{quality:?}");
+        let found = Change::new("").run(&always, |change| judge_run(&checks, change).unwrap());
+        let out = case.get("out").and_then(Value::as_str).unwrap();
+        assert_eq!(found.added_to_file(quality), out, "{quality:?}");
+        assert_both_forms_agree(&found, quality, out);
     }
+}
+
+/// The judgement a quality file reads as.
+fn read(quality: &str) -> Judgement {
+    Judgement { gate: parse_gate(quality).unwrap(), failures: gate_failures(quality) }
+}
+
+/// Fail unless found, added to quality as a judgement (RunFindings::added_to), is what out, quality with found added
+/// to it as a file, reads as; unless out cuts the orchestrator's findings, which the judgement keeps whole, or quality
+/// has no GATE line, which a quality round rejects.
+fn assert_both_forms_agree(found: &RunFindings, quality: &str, out: &str) {
+    if parse_gate(quality).is_some() && !out.contains("more findings of the orchestrator's checks are not listed") {
+        assert_eq!(found.added_to(read(quality)), read(out), "{out}");
+    }
+}
+
+#[test]
+fn a_judgement_counts_the_failing_findings_the_file_cuts() {
+    let issues: Vec<Finding> = (1..=60).map(|k| Finding::error(Some("a.py"), Some(k), "", format!("m{k}"))).collect();
+    let checks = [OrchestratorCheck { name: "c", find: Box::new(move |_| Ok(CheckFindings { issues: issues.clone(), to_weigh: Vec::new() })) }];
+    let found = Change::new("").run(&always, |change| judge_run(&checks, change).unwrap());
+    let file = found.added_to_file("GATE: OK\n");
+    let judged = found.added_to(read("GATE: OK\n"));
+    assert_eq!(read(&file).failures.fingerprints.get("c").unwrap().len(), QUALITY_FINDINGS_LIMIT);
+    let all = judged.failures.fingerprints.get("c").unwrap();
+    assert_eq!(all.len(), 60);
+    assert_eq!(all[59], finding_fingerprint(Some("a.py"), "c", "m60"));
+    assert_eq!((judged.gate, read(&file).gate), (QUALITY_ERROR, QUALITY_ERROR));
+    assert_eq!(judged.failures.conditions, read(&file).failures.conditions);
 }
 
 #[test]
@@ -200,10 +232,9 @@ fn judge_run_on_every_recorded_quality_file_gives_the_recorded_result() {
             s.max_lines = int(case, "max_lines");
         })
         .unwrap();
-        let out = change.run(&always, |change| {
-            judge_run(&text("quality"), &orchestrator_checks(&pipeline, &indexes), change).unwrap()
-        });
-        assert_eq!(out, text("out"), "{}", text("from"));
+        let found = change.run(&always, |change| judge_run(&orchestrator_checks(&pipeline, &indexes), change).unwrap());
+        assert_eq!(found.added_to_file(&text("quality")), text("out"), "{}", text("from"));
+        assert_both_forms_agree(&found, &text("quality"), &text("out"));
     }
 }
 
@@ -268,7 +299,7 @@ fn checks_come_from_the_workflow() {
 #[test]
 fn a_check_s_error_fails_judge_run() {
     let failing = OrchestratorCheck { name: "c", find: Box::new(|_| Err(OrchestratorError::new("git failed"))) };
-    let e = Change::new("").run(&always, |c| judge_run("GATE: OK\n", &[failing], c).unwrap_err());
+    let e = Change::new("").run(&always, |c| judge_run(&[failing], c).unwrap_err());
     assert_eq!(e, OrchestratorError::new("git failed"));
 }
 
@@ -289,7 +320,8 @@ fn severities_are_written_as_the_gate_writes_them() {
 fn quality(change: &Change, pypi: &Arc<FakePyPI>, build: Outcome) -> String {
     let pipeline = default_workflow(&Prompts::default());
     let indexes = PackageIndexes::with_pypi(Arc::clone(pypi) as Arc<dyn Http>);
-    change.run(&always, |c| judge_run(&build.quality.unwrap(), &orchestrator_checks(&pipeline, &indexes), c).unwrap())
+    let found = change.run(&always, |c| judge_run(&orchestrator_checks(&pipeline, &indexes), c).unwrap());
+    found.added_to_file(&build.quality.unwrap())
 }
 
 fn limits() -> Arc<FakePyPI> {
@@ -461,8 +493,8 @@ fn slow_pypi_stops_asking_at_the_rounds_deadline_and_keeps_the_heartbeat_between
     };
     let pipeline = default_workflow(&Prompts::default());
     let indexes = PackageIndexes::with_pypi(Arc::clone(&pypi) as Arc<dyn Http>);
-    let q = change
-        .run(&in_time, |c| judge_run(&ok().quality.unwrap(), &orchestrator_checks(&pipeline, &indexes), c).unwrap());
+    let found = change.run(&in_time, |c| judge_run(&orchestrator_checks(&pipeline, &indexes), c).unwrap());
+    let q = found.added_to_file(&ok().quality.unwrap());
     assert_eq!(pypi.state().asked, ["limits", "rich"]);
     assert_eq!(*beats.borrow(), [0, 1, 2], "a beat before each ask");
     assert!(

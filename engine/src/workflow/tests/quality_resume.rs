@@ -54,7 +54,8 @@ fn resume_with_a_build_only_polls_it() {
     assert_eq!(f.workflow(f.as_saved_gated()).run(), verdict(APPROVE));
     assert!(f.host.state().snapshots.is_empty());
     assert!(!snapshot_pushed(&f));
-    assert_eq!(collapsed(&f.ci.state().names), strings(&["build", "quality", "build", "quality", "build", "quality"]));
+    let names = ["build", "quality", "build", "quality", "quality.json", "build", "quality", "quality.json"];
+    assert_eq!(collapsed(&f.ci.state().names), strings(&names));
     assert!(f.quality_file(1, 1).contains("`snap9`"));
 }
 
@@ -66,7 +67,7 @@ fn resume_with_the_quality_file_archived_and_the_build_running_takes_the_file() 
 
     assert_eq!(f.workflow(f.as_saved_gated()).run(), verdict(APPROVE));
 
-    assert_eq!(f.ci.state().names, strings(&["build", "quality", "build", "quality"]));
+    assert_eq!(f.ci.state().names, strings(&["build", "quality", "quality.json", "build", "quality", "quality.json"]));
     assert!(f.quality_file(1, 1).contains(
         "Jenkins build #41 judged snapshot `snap9` (round 1, quality round 1 of 3) and was still running when its \
          quality.md was read.\n"

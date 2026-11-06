@@ -10,6 +10,7 @@ use super::*;
 use crate::ci::fake::{credentials, Outcome, JENKINS, JOB, JOB_PATH};
 use crate::constants::{CI_POLL_SECONDS, HEARTBEAT_SECONDS, QUALITY_TIMEOUT};
 use crate::prompts::{QUALITY_PASSED_NOTE, QUALITY_STUCK_NOTE, QUALITY_UNRESOLVED_NOTE};
+use crate::quality::finding_fingerprint;
 
 /// make_workflow with the quality gate: Python's gated.
 fn gated(script: Script) -> Fixture {
@@ -61,7 +62,8 @@ fn gate_passes_first_time() {
     assert_eq!(wf.run(), verdict(APPROVE));
 
     let mut expected = strings(&["parameters", "trigger", "queue"]);
-    expected.extend(strings(&["build", "quality", "build", "quality", "build", "quality"]));
+    // Once quality.md is archived, each read of it is followed by one of quality.json.
+    expected.extend(strings(&["build", "quality", "build", "quality", "quality.json", "build", "quality", "quality.json"]));
     assert_eq!(names_of(&f), expected);
     let triggers: Vec<Map<String>> = f
         .ci
@@ -388,9 +390,9 @@ fn a_build_running_on_after_its_gate_ends_the_round_with_its_quality_file() {
     assert!(quality.contains("1. `limiter.py:3` error ruff F401: `os` imported but unused\n"));
     // The result and the file once per poll, the file taken on the second read that agrees, then round 2.
     let mut expected = strings(&["parameters", "trigger", "queue"]);
-    expected.extend(strings(&["build", "quality", "build", "quality", "build", "quality"]));
-    expected.push("trigger".into());
-    assert_eq!(names_of(&f)[..10], expected);
+    expected.extend(strings(&["build", "quality", "build", "quality", "quality.json", "build", "quality"]));
+    expected.extend(strings(&["quality.json", "trigger"]));
+    assert_eq!(names_of(&f)[..12], expected);
     assert_eq!(f.ci.state().builds[&41].left, polls - 3);
 }
 
@@ -657,3 +659,101 @@ fn a_failure_holding_a_credential_is_saved_masked() {
     assert!(saved.contains("unable to access 'https://agents:****@git.example/r/'"), "{saved}");
     assert_no_token(&f);
 }
+
+// -- quality.json ------------------------------------------------------------------------------------------------
+
+/// outcome with its quality.json changed by change, as a JSON object.
+fn reporting(outcome: Outcome, change: impl FnOnce(&mut Object)) -> Outcome {
+    let mut report: Object = serde_json::from_str(outcome.quality_json.as_deref().unwrap()).unwrap();
+    change(&mut report);
+    Outcome { quality_json: Some(Value::Object(report).to_string()), ..outcome }
+}
+
+/// red, its quality.json listing one more failing finding, of mypy, than its quality file.
+fn red_with_more_in_its_json() -> Outcome {
+    reporting(red(), |r| {
+        let more = serde_json::json!({"check": "mypy", "fails": true, "fingerprint": "0123456789abcdef"});
+        r["findings"].as_array_mut().unwrap().push(more);
+    })
+}
+
+/// A run whose Builder answers one quality round and whose Reviewer approves.
+fn fixed_once() -> Script {
+    vec![
+        ("spec", vec![spec_turn()]),
+        ("build", vec![build_turn(1), fix_turn(1, 1)]),
+        ("review", vec![review_turn(1, APPROVE)]),
+    ]
+}
+
+/// The fingerprints_by_check the run recorded for quality round q of round 1.
+fn recorded_fingerprints(f: &Fixture, q: u32) -> Value {
+    let saved = f.saved();
+    let rounds = saved.get("quality_rounds").and_then(Value::as_array).unwrap();
+    let round = rounds.iter().find(|r| r.get("quality_round") == Some(&Value::from(q))).unwrap();
+    round.get("fingerprints_by_check").cloned().unwrap()
+}
+
+#[test]
+fn the_round_records_what_quality_json_says_failed() {
+    let f = gated_building(fixed_once(), vec![red_with_more_in_its_json(), green()]);
+    assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
+    let f401 = finding_fingerprint(Some("limiter.py"), "ruff F401", "`os` imported but unused");
+    assert_eq!(recorded_fingerprints(&f, 1), serde_json::json!({"ruff": [f401], "mypy": ["0123456789abcdef"]}));
+    // The agents read the quality file, which the build wrote: quality.json changes none of its words.
+    assert!(!f.quality_file(1, 1).contains("mypy"));
+}
+
+#[test]
+fn a_build_that_archived_no_quality_json_is_read_from_its_quality_file() {
+    let f = gated_building(fixed_once(), vec![red_with_more_in_its_json().markdown_only(), green().markdown_only()]);
+    assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
+    let f401 = finding_fingerprint(Some("limiter.py"), "ruff F401", "`os` imported but unused");
+    assert_eq!(recorded_fingerprints(&f, 1), serde_json::json!({"ruff": [f401]}));
+    assert_eq!(f.saved().get("quality_rounds").and_then(Value::as_array).map(Vec::len), Some(2));
+}
+
+#[test]
+fn stuck_compares_every_failure_quality_json_lists() {
+    // The quality files are the same, but quality.json fails round 2 on a finding round 1 did not have.
+    let (f, _) = stuck_loop(vec![red(), red_with_more_in_its_json(), red()], 3);
+    assert_eq!(prompts_to(&f, "build-a1b2c3"), 3);
+    // Without quality.json, the same files are the same failures again.
+    let (f, _) = stuck_loop(vec![red().markdown_only(), red_with_more_in_its_json().markdown_only()], 3);
+    assert_eq!(prompts_to(&f, "build-a1b2c3"), 2);
+}
+
+#[test]
+fn an_unknown_schema_version_stops_the_round_naming_it() {
+    let newer = reporting(red(), |r| {
+        r.insert("schema_version".into(), Value::from(2));
+    });
+    let f = gated_building(approved(), vec![newer]);
+    let e = failure(f.workflow(RunSettings::default()).run());
+    assert!(e.contains("quality.json has schema_version 2, and this engine reads only schema_version 1"), "{e}");
+    assert!(f.host.state().files.get(&f.state.quality_path(1, 1)).is_none(), "no quality file is written");
+}
+
+#[test]
+fn a_quality_json_whose_gate_is_not_its_quality_file_s_is_rejected() {
+    let f = gated_building(approved(), vec![reporting(green(), |r| {
+        r.insert("gate".into(), Value::from("ERROR"));
+    })]);
+    let e = failure(f.workflow(RunSettings::default()).run());
+    assert!(e.contains("says GATE: OK, but its build's quality.json says ERROR"), "{e}");
+}
+
+#[test]
+fn a_running_build_s_reports_are_taken_once_two_reads_of_both_agree() {
+    // archiveArtifacts has copied quality.md, but not yet quality.json, at the first read.
+    let late = Outcome { polls: 50, after_gate: 49, ..red_with_more_in_its_json() };
+    let f = gated_building(fixed_once(), vec![late, green()]);
+    f.ci.state().quality_json_late = 1;
+    assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
+    // Three reads of the running build, the first finding no quality.json, then two of the green build.
+    let ci = f.ci.state();
+    assert_eq!((ci.quality_reads.len(), ci.quality_json_reads), (5, 5));
+    drop(ci);
+    assert!(recorded_fingerprints(&f, 1).get("mypy").is_some(), "read from quality.json");
+}
+
