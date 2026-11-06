@@ -1,0 +1,32 @@
+# The gate's settings for judging this repository: what its defaults do not already say (octoflow-gate's
+# docs/quality-gate.md, "The gate's settings", lists every key). A quality build judges a snapshot by main's copy of
+# this file, beside main's pyproject.toml; any other build by its own (the Jenkinsfile's Gate stage). The release
+# ci/gate.pin names must read it: it refuses a key it does not know.
+#
+# Its tests are where the defaults look: Python's under tests/, Rust's under engine/tests/, in tests.rs files and in
+# #[cfg(test)] modules, its golden files under tests/golden/.
+
+[build-config]
+Jenkinsfile = "The quality job reads it from `main`, so this analysis ran without the edit."
+
+# The commands a gate run outside Jenkins runs the tests with. The Jenkinsfile's Test stage runs them itself, as the
+# quality round's time and the e2e scenarios' filter need, and its Gate stage passes their reports with --tests and
+# --coverage, which replace these.
+[[test]]
+name = "pytest"
+command = ["uv", "run", "pytest", "--cov=gate", "--cov-branch", "--cov-context=test", "--cov-report=xml",
+           "--junitxml=test-results.xml"]
+junit = ["test-results.xml"]
+coverage = ["coverage.xml"]
+
+[[test]]
+name = "cargo-nextest"
+command = ["cargo", "llvm-cov", "nextest", "--locked", "--workspace", "--ignore-run-fail", "--profile", "ci",
+           "--config-file", "ci/nextest.toml", "--cobertura", "--output-path", "coverage-rust.xml"]
+junit = ["target/nextest/ci/junit.xml"]
+coverage = ["coverage-rust.xml"]
+
+# The defaults, written out: a quality round's timeout is sized for them.
+[budgets]
+mutation = 600
+base-run = 120

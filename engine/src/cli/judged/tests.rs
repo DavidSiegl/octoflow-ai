@@ -20,8 +20,11 @@ use crate::interrupt::Interrupt;
 use crate::map::Map;
 
 /// The files whose change decides the judging, as the test knows them: for ci/gate-rust, a file under it.
-const JUDGING: [&str; 8] = [
+const JUDGING: [&str; 11] = [
     "Jenkinsfile",
+    "ci/gate.pin",
+    "ci/fetch-gate.sh",
+    "gate.toml",
     "gate.py",
     "ci/gate-rust/src/main.rs",
     "pyproject.toml",

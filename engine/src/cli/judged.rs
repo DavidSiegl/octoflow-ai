@@ -7,12 +7,17 @@ use crate::constants::REMOTE;
 use crate::error::{shortened, OrchestratorError};
 use crate::host::{names_between, nul_separated, Host, DEFAULT_TIMEOUT};
 
-/// The files that decide how a change is judged, a directory standing for every file under it: the stages, the gate,
-/// the helper it reads Rust through (which a quality build, like gate.py, takes from the main commit it judges by), its
-/// rules, the versions of its tools and the Python and the Rust they run on. judged_in_quality trusts a quality build
-/// only when none of them differs.
-pub const JUDGING_FILES: [&str; 8] = [
+/// The files that decide how a change is judged, a directory standing for every file under it: the stages; the gate
+/// release the pin names and the script that fetches it; the gate's settings; the cutover fallback's gate.py and the
+/// helper it reads Rust through, which the Jenkinsfile's Gate stage runs for a main without the pin (ticket
+/// gate-standalone/10 drops both); its rules, the versions of its tools and the Python and the Rust they run on. A
+/// quality build takes the pin, the script, the settings, gate.py and the helper, like the rules, from the main commit
+/// it judges by. judged_in_quality trusts a quality build only when none of them differs.
+pub const JUDGING_FILES: [&str; 11] = [
     "Jenkinsfile",
+    "ci/gate.pin",
+    "ci/fetch-gate.sh",
+    "gate.toml",
     "gate.py",
     "ci/gate-rust",
     "pyproject.toml",

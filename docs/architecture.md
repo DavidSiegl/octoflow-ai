@@ -438,8 +438,8 @@ agent runs in the suite, and no request leaves the machine.
 - `Jenkinsfile`: `uv sync --frozen`, `uv run pytest` with branch coverage of `gate`, and the Cargo workspace's
   tests with line coverage (`cargo llvm-cov nextest`), without the e2e scenarios in a quality build whose change
   touches nothing they judge (the Test stage lists what), a UI stage that runs `ui/`'s `npm ci`,
-  `typecheck`, `lint` and `test`, failing the build before the gate, a Gate stage that runs `gate.py` and archives
-  `quality.md` (see [quality gate](quality-gate.md)), and a Package stage that runs `packaging/build-binary.sh` and
+  `typecheck`, `lint` and `test`, failing the build before the gate, a Gate stage that runs the octoflow-gate release
+  `ci/gate.pin` names and archives `quality.md` and `quality.json` (see [quality gate](quality-gate.md)), and a Package stage that runs `packaging/build-binary.sh` and
   `packaging/build-desktop.sh` on every build but a quality build (`GIT_REF` set). On `main` a Release stage publishes a
   new `pyproject.toml` version as a GitHub release, with the Linux binary and the Linux desktop app, each with its
   `.sha256`, and `octoflow-third-party-licenses.html`, in one `gh release create`, and `docs/releases/v<version>.md`, where there is one, before GitHub's
