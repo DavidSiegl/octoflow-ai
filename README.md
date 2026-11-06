@@ -112,11 +112,7 @@ cargo build --release --locked -p octoflow-engine   # target/release/orchestrato
 ```
 
 The examples below call it `orchestrator`: put the binary on your `PATH` under that name. `orchestrator --version`
-says which release it is. Releases before 0.49.0 were the Python engine, `orchestrator.py`, which also came as
-`octoflow.pyz`; the Rust engine takes the same commands and flags. A run a release before 0.54.0 started is not
-resumed: finish or close it with that release.
-
-The tk window that `gui` opened went with the Python engine; the [desktop app](#desktop-app) is the window now.
+says which release it is.
 
 ### Desktop app
 
@@ -143,9 +139,7 @@ first time when a browser downloaded it, as it does the binary.
 - **Agents:** a tab for each agent the run has started, showing the last lines of its herdr pane, read again every
   two seconds, with a box to type a message to it and keys (Esc, Enter, ↑, ↓, Ctrl+C), as you would in the pane:
   to answer a question it asked, or stop it. The window reaches each agent in the herdr session its run was
-  started or last resumed in, wherever the window was opened, in herdr or not. A run an earlier version saved did
-  not record its session; its agents are reached in the one the herdr CLI picks where the window was opened: its
-  herdr pane's, else `HERDR_SESSION`'s, else the default one.
+  started or last resumed in, wherever the window was opened, in herdr or not.
 - **Project bar:** a project folder and, for agents on another machine, a saved herdr machine. The app reopens
   the project you opened last.
 - **Setup:** "Check setup…" shows what `orchestrator doctor --machine --cwd` checks for the open project, with
