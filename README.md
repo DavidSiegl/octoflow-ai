@@ -2,6 +2,9 @@
 
 <p align="center">
   <a href="https://github.com/DavidSiegl/octoflow-ai/releases/latest"><img src="https://img.shields.io/github/v/release/DavidSiegl/octoflow-ai" alt="Latest release"></a>
+  <a href="https://github.com/DavidSiegl/octoflow-ai/releases"><img src="https://img.shields.io/github/downloads/DavidSiegl/octoflow-ai/total" alt="Downloads of all releases"></a>
+  <a href="#install"><img src="https://img.shields.io/badge/platforms-Linux%20x86__64%20%7C%20macOS%20arm64-informational" alt="Platforms: Linux x86_64, macOS arm64"></a>
+  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/built%20with-Rust-B7410E?logo=rust&logoColor=white" alt="Built with Rust"></a>
   <a href="https://github.com/DavidSiegl/octoflow-ai/actions/workflows/macos-binary.yml"><img src="https://img.shields.io/github/actions/workflow/status/DavidSiegl/octoflow-ai/macos-binary.yml?label=macOS%20binary" alt="macOS binary build"></a>
   <a href="https://github.com/DavidSiegl/octoflow-ai/commits/main"><img src="https://img.shields.io/github/last-commit/DavidSiegl/octoflow-ai" alt="Last commit"></a>
   <a href="https://ko-fi.com/davidsiegl"><img src="https://img.shields.io/badge/Ko--fi-support%20me-FF5E5B?logo=kofi&logoColor=white" alt="Support me on Ko-fi"></a>
