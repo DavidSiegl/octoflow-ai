@@ -113,8 +113,14 @@ impl Bench {
         self.wait(&self.start()?)
     }
 
+    /// The round's directory.
     fn out(&self) -> String {
         self.dir.join("out")
+    }
+
+    /// The job directory of the round's kth start.
+    fn job(&self, k: u32) -> String {
+        format!("{}/job-{k}", self.out())
     }
 
     /// The URLs curl was asked for, in order.
@@ -191,7 +197,7 @@ fn the_gate_judges_a_checkout_of_the_snapshot_by_the_bases_settings_and_both_rep
 
     let want = LocalVerdict::Judged { release: "1.2.3".into(), quality: QUALITY.into(), json: JSON.into() };
     assert_eq!(verdict, want);
-    let out = bench.out();
+    let out = bench.job(1);
     let resolved = std::fs::canonicalize(&out).unwrap().display().to_string();
     let args = bench.gate_args();
     assert_eq!(args[0], format!("{resolved}/tree"));
@@ -212,7 +218,7 @@ fn the_gate_judges_a_checkout_of_the_snapshot_by_the_bases_settings_and_both_rep
     assert_eq!(read(&format!("{out}/judge/pyproject.toml")), "[tool.x]\n");
     // What the gate wrote stayed in its checkout, which is gone with the release, and the run's worktree is as the
     // Builder left it.
-    for gone in ["tree", "release", "download.tar.gz", "job"] {
+    for gone in ["group", "tree", "release", "download.tar.gz"] {
         assert!(!std::path::Path::new(&format!("{out}/{gone}")).exists(), "{gone}");
     }
     assert!(!std::path::Path::new(&format!("{}/coverage.xml", bench.repo.path)).exists());
@@ -246,7 +252,7 @@ fn a_base_without_a_pyproject_toml_or_a_gate_toml_is_judged_by_empty_rules() {
     // A pyproject.toml the change adds does not judge it.
     bench.repo.put("pyproject.toml", "[tool.ruff]\nselect = []\n");
     bench.judge().unwrap();
-    let out = bench.out();
+    let out = bench.job(1);
     assert_eq!(bench.gate_args()[4], format!("{out}/judge/pyproject.toml"));
     assert_eq!(read(&format!("{out}/judge/pyproject.toml")), "");
     assert!(!std::path::Path::new(&format!("{out}/judge/gate.toml")).exists());
@@ -278,7 +284,7 @@ fn a_gate_that_judged_without_its_reports_is_an_error_not_the_last_judgement() {
     bench.judge().unwrap();
     put(&bench.dir.join("silent"), "");
     let e = bench.judge().unwrap_err().to_string();
-    assert!(e.contains("octoflow-gate 1.2.3 judged but wrote no ") && e.contains("/out/quality.md"), "{e}");
+    assert!(e.contains("octoflow-gate 1.2.3 judged but wrote no ") && e.contains("/out/job-2/quality.md"), "{e}");
 }
 
 #[test]
@@ -296,7 +302,7 @@ fn a_tarball_that_does_not_match_the_pin_is_never_unpacked_or_cached() {
     assert!(e.starts_with("fetching octoflow-gate 1.2.3: "), "{e}");
     assert!(e.contains(&format!("has sha256 {}, not the pinned", bench.sha256)), "{e}");
     assert!(bench.cached().is_empty(), "{:?}", bench.cached());
-    assert!(!std::path::Path::new(&format!("{}/download.tar.gz", bench.out())).exists());
+    assert!(!std::path::Path::new(&format!("{}/download.tar.gz", bench.job(1))).exists());
 }
 
 #[test]
@@ -328,7 +334,7 @@ fn a_stopped_gate_is_gone_with_its_checkout() {
     judging.stop(&bench.repo.host).unwrap();
 
     assert!(!bench.running(&judging));
-    assert!(!std::path::Path::new(&format!("{}/tree", bench.out())).exists());
+    assert!(!std::path::Path::new(&format!("{}/tree", bench.job(1))).exists());
 }
 
 #[test]
@@ -346,20 +352,44 @@ fn a_start_stops_the_job_an_earlier_one_left_and_judges_afresh() {
 }
 
 #[test]
-fn a_judgement_whose_round_a_later_start_took_over_leaves_the_new_job_alone() {
+fn what_a_replaced_start_does_to_its_own_files_leaves_the_new_job_alone() {
     let bench = Bench::pinned();
     put(&bench.dir.join("hang"), "");
     let replaced = bench.start().unwrap();
     bench.until_the_gate_runs();
     let taking_over = bench.start().unwrap();
 
-    let e = replaced.verdict(&bench.repo.host).unwrap_err().to_string();
-    replaced.stop(&bench.repo.host).unwrap();
+    // The engine taken over finds its job gone and stops it, its clean-up coming after the new start, as it may when
+    // the two engines' stops overlap.
+    let host = &bench.repo.host;
+    assert!(replaced.verdict(host).is_err());
+    clean_up(host, &bench.repo.path, &replaced.dir).unwrap();
+    replaced.stop(host).unwrap();
 
-    assert!(e.contains("is no longer this engine's"), "{e}");
     assert!(bench.running(&taking_over));
-    assert!(std::path::Path::new(&format!("{}/tree", bench.out())).exists());
-    taking_over.stop(&bench.repo.host).unwrap();
+    assert!(std::path::Path::new(&format!("{}/tree", bench.job(2))).exists());
+    taking_over.stop(host).unwrap();
+}
+
+#[test]
+fn a_gate_whose_jobs_leader_has_died_is_still_stopped() {
+    let bench = Bench::pinned();
+    put(&bench.dir.join("hang"), "");
+    let judging = bench.start().unwrap();
+    bench.until_the_gate_runs();
+    let leader = |args: &[&str]| std::process::Command::new(args[0]).args(&args[1..]).status().expect(args[0]).success();
+    assert!(leader(&["kill", "-KILL", &judging.group]));
+    for _ in 0..100 {
+        if !leader(&["sh", "-c", "ps -p \"$1\" >/dev/null", "_", &judging.group]) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(bench.running(&judging), "the gate outlives its job's leader");
+
+    judging.stop(&bench.repo.host).unwrap();
+
+    assert!(!bench.running(&judging));
 }
 
 #[test]
@@ -382,7 +412,7 @@ fn a_start_signals_no_group_the_job_a_crash_left_no_longer_is() {
     let bench = Bench::pinned();
     // The crashed job's pid, since given to a session leader of something else.
     let mut other = std::process::Command::new("sleep").arg("30").process_group(0).spawn().expect("sleep");
-    put(&format!("{}/job", bench.out()), &other.id().to_string());
+    put(&format!("{}/group", bench.job(1)), &other.id().to_string());
 
     let verdict = bench.judge();
     let alive = other.try_wait().unwrap().is_none();
@@ -412,7 +442,7 @@ fn a_judgement_leaves_the_repositorys_other_worktrees_registered() {
 }
 
 #[test]
-fn the_preflight_needs_python3_3_11_the_fetchs_tools_and_a_writable_cache() {
+fn the_preflight_needs_python3_3_11_the_fetchs_tools_a_full_ps_and_a_writable_cache() {
     let bench = Bench::pinned();
     preflight(&bench.repo.host).unwrap();
     assert!(std::path::Path::new(&bench.dir.join("cache/octoflow/gate")).is_dir());
@@ -436,6 +466,17 @@ fn the_preflight_needs_python3_3_11_the_fetchs_tools_and_a_writable_cache() {
     std::os::unix::fs::symlink(bench.dir.join("bin/python3"), format!("{only}/python3")).unwrap();
     let e = preflight(&host(environment(None, &[("PATH", &only)]))).unwrap_err().to_string();
     assert_eq!(e, "the local quality gate fetches octoflow-gate into a cache of its own: curl is not on PATH");
+
+    // A ps that does not name a process's command line, as BusyBox's does not, cannot tell the job from another.
+    let busybox = bench.dir.join("busybox");
+    tool(&busybox, "ps", "#!/bin/sh\necho 'ps: unrecognized option: w' >&2\nexit 1\n");
+    let cache = bench.dir.join("cache");
+    let e = preflight(&host(environment(Some(&busybox), &[("XDG_CACHE_HOME", &cache)]))).unwrap_err().to_string();
+    assert_eq!(
+        e,
+        "the local quality gate fetches octoflow-gate into a cache of its own: ps does not take -ww -o args= -p, which \
+         stopping the gate needs"
+    );
 
     // A cache under a file cannot be made.
     let file = bench.dir.join("file");

@@ -63,21 +63,21 @@ Each round, the orchestrator:
    change cannot loosen how it is itself judged, as a quality build judges by `main`'s; a base without `ci/gate.pin`
    is judged by the release the engine was tested against (`BUILT_IN_PIN`, 0.5.0), and one without
    `pyproject.toml` by an empty one, never the change's;
-3. checks the snapshot out into the round's directory under the run's, `gate-<n>-<q>/tree`, as a worktree of the
-   run's repository: the gate judges the files the Builder never told git about, as a Jenkins build does, and what
-   the gate and the tests write never reaches the run's worktree or the pull request. Build caches of the run's
-   worktree, such as `target/`, are not reused;
+3. checks the snapshot out as a worktree of the run's repository into `gate-<n>-<q>/job-<k>/tree` under the run's
+   directory, `k` counting the round's starts, as a resume starts it again: the gate judges the files the Builder
+   never told git about, as a Jenkins build does, and what the gate and the tests write never reaches the run's
+   worktree or the pull request. Build caches of the run's worktree, such as `target/`, are not reused;
 4. starts a job of its own on the machine, detached from the orchestrator, so the run keeps its heartbeat however
    long the tests take, and the job outlives an SSH connection that drops. The job downloads the release with curl,
    once per pin, into `${XDG_CACHE_HOME:-~/.cache}/octoflow/gate/octoflow-gate-<version>-<sha256>.tar.gz`, checks
    it against the pin's sha256 each time it is used, downloading it again when it no longer matches, unpacks it
-   fresh into the round's directory, and runs `python3 gate.py --base <base> --config <the base's pyproject.toml>`
+   fresh into the job's directory, and runs `python3 gate.py --base <base> --config <the base's pyproject.toml>`
    in the checkout. The release's Rust helper is built for Linux x86_64 alone; elsewhere the gate reports a Rust
    change as not read;
 5. asks after the job every `CI_POLL_SECONDS`, and stops it, its tests included, as a Ctrl-C would, when the round's
    `QUALITY_TIMEOUT` runs out, download included, or the run is interrupted. Once the job ends, its checkout, the
    unpacked release and the download go; `quality.md`, `quality.json`, what the gate said on standard error
-   (`gate.err`) and what the job said (`job.log`) stay in `gate-<n>-<q>/`;
+   (`gate.err`) and what the job said (`job.log`) stay in `gate-<n>-<q>/job-<k>/`;
 6. adds the orchestrator's checks to the report, as for Jenkins, and writes `quality-<n>-<q>.md`, whose line under
    `GATE:` names the release and the snapshot. A gate that could not judge, exiting 2 with its own `error: …` line,
    such as one refusing `gate.toml`, gives `GATE: BUILD_FAILED` with the end of what it said, and goes back to the
@@ -87,17 +87,17 @@ Each round, the orchestrator:
    match the pin.
 
 What it needs on that machine, which the preflight checks before the interview: `python3` 3.11 or later on `PATH`,
-curl, tar, ps, sha256sum (or macOS's shasum), a writable cache, and gitleaks; and, unchecked, whatever the project's
-`gate.toml` has the gate run: its `[[test]]` commands and the linters its files call for, such as pymarkdown,
-shellcheck or clippy, all from `PATH`. A linter the project runs through uv, as this repository runs pymarkdown, is
-there when the orchestrator itself runs under `uv run`.
+curl, tar, a `ps` that takes `-ww -o args= -p` (BusyBox's does not), sha256sum (or macOS's shasum), a writable
+cache, and gitleaks; and, unchecked, whatever the project's `gate.toml` has the gate run: its `[[test]]` commands
+and the linters its files call for, such as pymarkdown, shellcheck or clippy, all from `PATH`. A linter the project
+runs through uv, as this repository runs pymarkdown, is there when the orchestrator itself runs under `uv run`.
 
 The gate runs the project's tests as you, with no sandbox: the same trust as running them by hand, and more than a
 Jenkins agent's container gives them. A local round keeps nothing in `state.json`'s `ci`: a resume in the middle of
 one stops the job the interrupted round left, if its process is still that job, and runs the round again. An
-orchestrator that `resume --force` took the run over from leaves the job to the new one. Turning the gate off
-deletes no branch, as there is none. A run saved by a release before 0.63.0 with a build of a Jenkins job named
-`local` in flight is not resumed, as this release would take it for the local gate.
+orchestrator that `resume --force` took the run over from touches only its own job's files, never the new one's.
+Turning the gate off deletes no branch, as there is none. A run saved by a release before 0.63.0 with a build of a
+Jenkins job named `local` in flight is not resumed, as this release would take it for the local gate.
 
 ## The report as a contract
 

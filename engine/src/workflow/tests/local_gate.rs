@@ -47,6 +47,8 @@ fn plays(f: &Fixture, runs: Vec<GateRun>) -> Rc<RefCell<GateCalls>> {
         match argv {
             ["python3", "-c", _] => exits(0, ""),
             ["sh", "-c", script] if script.contains("mkdir -p") => exits(0, ""),
+            // Each round's first start makes job-1.
+            ["sh", "-c", script, "_", _out] if script.contains("job-$k") => exits(0, "1\n"),
             ["rm", "-rf", "--", paths @ ..] => {
                 let mut state = host.state();
                 let gone: Vec<String> = state
@@ -80,7 +82,7 @@ fn plays(f: &Fixture, runs: Vec<GateRun>) -> Rc<RefCell<GateCalls>> {
                 exits(0, "4242\n")
             }
             ["sh", "-c", script, "_", "4242"] if script.starts_with("kill -0") => exits(i32::from(!*hanging.borrow()), ""),
-            ["sh", "-c", _, "_", "4242", _name] => {
+            ["sh", "-c", _, "_", "4242", _name, "tracked"] => {
                 assert!(!interrupt.is_raised(), "a stop started with a Ctrl-C pending, which ProcessHost refuses");
                 recorded.borrow_mut().stops += 1;
                 *hanging.borrow_mut() = false;
@@ -132,14 +134,14 @@ fn the_local_gate_fails_then_passes_with_nothing_pushed() {
     // Each round judges a checkout of its snapshot, gone once judged, its files in a directory of its own.
     let calls = calls.borrow();
     assert_eq!(calls.jobs.len(), 2);
-    let (gate_dir, (version, sha256)) = (state.gate_dir(1, 2), local_gate::parse_pin(local_gate::BUILT_IN_PIN).unwrap());
+    let (job, (version, sha256)) = (format!("{}/job-1", state.gate_dir(1, 2)), local_gate::parse_pin(local_gate::BUILT_IN_PIN).unwrap());
     let url = format!("https://github.com/DavidSiegl/octoflow-gate/releases/download/v{version}/octoflow-gate-{version}.tar.gz");
-    assert_eq!(calls.jobs[1], strings(&[&gate_dir, &version, &sha256, &url, "abc123"]));
-    let tree = format!("{gate_dir}/tree");
+    assert_eq!(calls.jobs[1], strings(&[&job, &version, &sha256, &url, "abc123"]));
+    let tree = format!("{job}/tree");
     let host = f.host.state();
     assert!(host.git_calls.contains(&strings(&["worktree", "add", "--detach", &tree, "snap2"])), "{:?}", host.git_calls);
     assert!(!host.worktrees.contains_key(tree.as_str()));
-    assert_eq!(host.files.get(&format!("{gate_dir}/judge/pyproject.toml")).map(String::as_str), Some(""));
+    assert_eq!(host.files.get(&format!("{job}/judge/pyproject.toml")).map(String::as_str), Some(""));
     // gitleaks scanned each snapshot's change alone, as it goes nowhere; the publish at the end scans as a push does.
     let scanned: Vec<_> = host.scans.iter().filter(|scan| scan.commit.starts_with("snap")).map(|scan| scan.scanned).collect();
     assert_eq!(scanned, [Scanned::SinceBase, Scanned::SinceBase], "{:?}", host.scans);
@@ -252,7 +254,7 @@ fn a_gate_still_running_when_the_rounds_deadline_passes_is_stopped() {
 
     assert!(e.starts_with("quality gate: the local gate did not finish within 1200s"), "{e}");
     assert_eq!(calls.borrow().stops, 1);
-    assert!(!f.host.state().worktrees.contains_key(format!("{}/tree", f.state.gate_dir(1, 1)).as_str()));
+    assert!(!f.host.state().worktrees.contains_key(format!("{}/job-1/tree", f.state.gate_dir(1, 1)).as_str()));
 }
 
 #[test]
