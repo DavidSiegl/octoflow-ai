@@ -674,6 +674,9 @@ fn check_flag_values(command: &Command, p: &mut clap::Command) -> Result<(), cla
         Command::Run(a) => (a.starts.quality_gate.as_deref(), false),
         Command::Drain(a) => (a.run.starts.quality_gate.as_deref(), false),
         Command::Resume(a) => (a.quality_gate.as_deref(), a.no_quality_gate),
+        Command::JudgedInQuality { job, .. } if job == LOCAL_GATE => {
+            return error(p, "judged-in-quality asks a Jenkins job; a top-level job named local is /local");
+        }
         Command::JudgedInQuality { job, .. } => (Some(job.as_str()), false),
         _ => (None, false),
     };
@@ -691,11 +694,6 @@ fn check_flag_values(command: &Command, p: &mut clap::Command) -> Result<(), cla
         }
         if no_quality_gate {
             return error(p, "--max-quality-rounds does not apply with --no-quality-gate");
-        }
-    }
-    if let Command::JudgedInQuality { job, .. } = command {
-        if job == LOCAL_GATE {
-            return error(p, "judged-in-quality asks a Jenkins job; a top-level job named local is /local");
         }
     }
     if quality_gate.is_some_and(|job| !is_job_name(job)) {

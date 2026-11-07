@@ -40,9 +40,9 @@ fn plays(f: &Fixture, runs: Vec<GateRun>) -> Rc<RefCell<GateCalls>> {
     let hanging = Rc::new(RefCell::new(false));
     let interrupt = f.interrupt.clone();
     f.host.state().run_command = Some(Box::new(move |host, argv| {
-        let exits = |status: i32, stdout: &str| {
+        let exits = |code: i32, stdout: &str| {
             let command = argv.join(" ");
-            Some(Ok(Exec { command, status, stdout: stdout.as_bytes().to_vec(), stderr: Vec::new() }))
+            Some(Ok(Exec { command, status: code, stdout: stdout.as_bytes().to_vec(), stderr: Vec::new() }))
         };
         match argv {
             ["python3", "-c", _] => exits(0, ""),

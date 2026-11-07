@@ -256,7 +256,7 @@ impl Judging {
                 "octoflow-gate {release} stopped before it judged, its job gone without a status: {}",
                 log("job.log")?
             ))),
-            status => Err(OrchestratorError(format!("octoflow-gate {release} exited {status}: {}", log("gate.err")?))),
+            code => Err(OrchestratorError(format!("octoflow-gate {release} exited {code}: {}", log("gate.err")?))),
         }
     }
 

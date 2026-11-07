@@ -133,8 +133,8 @@ impl Bench {
         read(&self.dir.join("gate-args")).lines().map(String::from).collect()
     }
 
-    fn gate_exits(&self, status: u8) {
-        put(&self.dir.join("exit"), &status.to_string());
+    fn gate_exits(&self, code: u8) {
+        put(&self.dir.join("exit"), &code.to_string());
     }
 
     /// The names in the gate cache.
