@@ -2,6 +2,7 @@
 
 How Jenkins judges this repository with the quality gate, and how `orchestrator run --quality-gate` uses it: the
 [gate](#the-gate), the release this repository pins and how to run it by hand, the
+[local gate](#the-local-gate), which a run can have judge its changes without Jenkins, the
 [report as a contract](#the-report-as-a-contract) between the gate and the orchestrator, the
 [Jenkins setup](#jenkins-setup), the
 [credentials and permissions](#credentials-and-permissions) the orchestrator needs, the
@@ -43,8 +44,60 @@ uv run python ../gate-release/gate.py --base main --rust-syntax ../gate-release/
 
 It runs the tests itself first, by `gate.toml`'s `[[test]]` commands, which need cargo-llvm-cov and cargo-nextest;
 the surviving-mutants check needs cargo-mutants, and the linters shellcheck, actionlint and clippy
-(`ci/install-tools.sh` fetches the pinned cargo tools). Run so, the tests lack the Jenkinsfile's Test stage's
-environment, as `gate.toml` says. Exit status 0 means `GATE: OK`, 1 `GATE: ERROR`, 2 a gate that could not judge.
+(`ci/install-tools.sh` fetches the pinned cargo tools). The `[[test]]` command is `ci/rust-tests.sh`, which the
+Jenkinsfile's Test stage runs too, so the coverage is a Jenkins build's. Exit status 0 means `GATE: OK`, 1
+`GATE: ERROR`, 2 a gate that could not judge.
+
+## The local gate
+
+`--quality-gate local` has the orchestrator run octoflow-gate itself in each quality round, on the machine the run's
+project is on, in place of a Jenkins job. It needs no Jenkins, no credentials and no `origin`; nothing is pushed.
+A top-level Jenkins job that happens to be named `local` is written `/local`.
+
+Each round, the orchestrator:
+
+1. snapshots the working tree as a Jenkins round does ([snapshotting](#snapshotting-the-uncommitted-tree)) and has
+   gitleaks scan the change alone, the snapshot's commits that the base does not have; a snapshot holding a secret
+   is not judged, and the round's file is `GATE: LEAK`;
+2. reads `ci/gate.pin`, `gate.toml` and `pyproject.toml` from the run's base commit, not from the working tree, so a
+   change cannot loosen how it is itself judged, as a quality build judges by `main`'s; a base without `ci/gate.pin`
+   is judged by the release the engine was tested against (`BUILT_IN_PIN`, 0.5.0), and one without
+   `pyproject.toml` by an empty one, never the change's;
+3. checks the snapshot out as a worktree of the run's repository into `gate-<n>-<q>/job-<k>/tree` under the run's
+   directory, `k` counting the round's starts, as a resume starts it again: the gate judges the files the Builder
+   never told git about, as a Jenkins build does, and what the gate and the tests write never reaches the run's
+   worktree or the pull request. Build caches of the run's worktree, such as `target/`, are not reused;
+4. starts a job of its own on the machine, detached from the orchestrator, so the run keeps its heartbeat however
+   long the tests take, and the job outlives an SSH connection that drops. The job downloads the release with curl,
+   once per pin, into `${XDG_CACHE_HOME:-~/.cache}/octoflow/gate/octoflow-gate-<version>-<sha256>.tar.gz`, checks
+   it against the pin's sha256 each time it is used, downloading it again when it no longer matches, unpacks it
+   fresh into the job's directory, and runs `python3 gate.py --base <base> --config <the base's pyproject.toml>`
+   in the checkout. The release's Rust helper is built for Linux x86_64 alone; elsewhere the gate reports a Rust
+   change as not read;
+5. asks after the job every `CI_POLL_SECONDS`, and stops it, its tests included, as a Ctrl-C would, when the round's
+   `QUALITY_TIMEOUT` runs out, download included, or the run is interrupted. Once the job ends, its checkout, the
+   unpacked release and the download go; `quality.md`, `quality.json`, what the gate said on standard error
+   (`gate.err`) and what the job said (`job.log`) stay in `gate-<n>-<q>/job-<k>/`;
+6. adds the orchestrator's checks to the report, as for Jenkins, and writes `quality-<n>-<q>.md`, whose line under
+   `GATE:` names the release and the snapshot. A gate that could not judge, exiting 2 with its own `error: …` line,
+   such as one refusing `gate.toml`, gives `GATE: BUILD_FAILED` with the end of what it said, and goes back to the
+   Builder as a Jenkins build that failed before its Gate stage does. Any other exit status 2, as python3 gives for
+   a `gate.py` it cannot open and argparse for an argument the release does not take, stops the run with an error:
+   nothing the Builder changes would mend the release or the machine. So does a download that fails or does not
+   match the pin.
+
+What it needs on that machine, which the preflight checks before the interview: `python3` 3.11 or later on `PATH`,
+curl, tar, a `ps` that takes `-ww -o stat=,args= -p` (BusyBox's does not), sha256sum (or macOS's shasum), a writable
+cache, and gitleaks; and, unchecked, whatever the project's `gate.toml` has the gate run: its `[[test]]` commands
+and the linters its files call for, such as pymarkdown, shellcheck or clippy, all from `PATH`. A linter the project
+runs through uv, as this repository runs pymarkdown, is there when the orchestrator itself runs under `uv run`.
+
+The gate runs the project's tests as you, with no sandbox: the same trust as running them by hand, and more than a
+Jenkins agent's container gives them. A local round keeps nothing in `state.json`'s `ci`: a resume in the middle of
+one stops the job the interrupted round left, if its process is still that job, and runs the round again. An
+orchestrator that `resume --force` took the run over from touches only its own job's files, never the new one's.
+Turning the gate off deletes no branch, as there is none. A run saved by a release before 0.63.0 with a build of a
+Jenkins job named `local` in flight is not resumed, as this release would take it for the local gate.
 
 ## The report as a contract
 
@@ -287,7 +340,8 @@ build ──▶ quality ──▶ review
 ```
 
 A quality round snapshots the working tree, pushes the snapshot to a throwaway branch on `origin`, has the
-quality job judge it, and writes `quality-<n>-<q>.md`. The gate passes when the file says `GATE: OK`. Otherwise
+quality job judge it, and writes `quality-<n>-<q>.md`; with `--quality-gate local`, the gate judges it here instead
+([the local gate](#the-local-gate)), and the rest of the loop is the same. The gate passes when the file says `GATE: OK`. Otherwise
 the Builder gets the quality file and answers it in `build-<n>-q<q>.md`, and the next quality round judges that.
 After `--max-quality-rounds` rounds (default 3) the change goes to the Reviewer anyway, whose prompt names the
 last quality file as unresolved findings. Three rounds are at most three builds and two fix turns, and each
@@ -506,7 +560,8 @@ fails the run instead: those are the human's commits. So does one in the branch 
 
 ### Run state and resume
 
-`state.json` holds `quality_job` (None for a run without the gate, as for one saved before it),
+`state.json` holds `quality_job` (None for a run without the gate, as for one saved before it; `local` for the
+[local gate](#the-local-gate)),
 `max_quality_rounds`, `quality_round` and `ci`, `{ref, sha, queue_url, build}`, saved key by key, with `rejected`
 as above. Phase `build` with q = 0 goes to `quality` q = 1; `quality` q goes to `review` on `OK` or at q ≥
 `max_quality_rounds`, else to the fix turn, `build` with the same q, then `quality` q + 1; `CHANGES_REQUESTED`
@@ -545,7 +600,8 @@ what stopped it asking. It needs the same `JENKINS_*` credentials as `--quality-
 `state.json` as it was.
 
 `resume --quality-gate JOB` saves `JOB` as `quality_job`, after the preflight: in round 0, `_check_gate`, as for
-`run --quality-gate`; later, an `origin`, gitleaks, the credentials and `CI.preflight`, before any turn. Where the gate
+`run --quality-gate`; later, an `origin`, gitleaks, the credentials and `CI.preflight`, before any turn, or for
+`local`, gitleaks and the local gate's preflight. Where the gate
 starts depends on where the run is:
 
 - in round 0, or in `build`: that Builder turn is followed by quality round 1;
@@ -559,8 +615,8 @@ back), for a run that has another job (the same job is a no-op), in a workflow w
 a `--no-pr` run in the checkout itself past round 0: its tree was never required to be clean, and a snapshot takes
 the whole tree.
 
-`resume --no-quality-gate` deletes the run's `orchestrator-ci/<key>-*` branches on `origin`, a failure only
-logged, without cancelling a Jenkins build in progress, and saves `quality_job` null, `quality_gate_disabled` true
+`resume --no-quality-gate` deletes the run's `orchestrator-ci/<key>-*` branches on `origin` (a run with the local
+gate has none), a failure only logged, without cancelling a Jenkins build in progress, and saves `quality_job` null, `quality_gate_disabled` true
 and `ci` empty. A run in `quality` goes on at `review`, dropping an analysis that has not finished; a Builder in
 its fix turn writes `build-<n>-q<q>.md` and goes straight to `review`, with `quality_round` past the quality round
 no build ever judges. The Reviewer reads the Builder's latest report of the round. Its prompt ends with

@@ -95,6 +95,10 @@ fn every_flag_of_resume() {
     assert_eq!((args.run_ref.as_str(), args.force, args.quality_gate.as_deref()), ("a1b2c3", true, Some("job")));
     assert_eq!((args.no_quality_gate, args.settings.max_rounds), (false, Some(5)));
     assert!(resume(&["a1b2c3", "--no-quality-gate"]).no_quality_gate);
+    // `local` is the local gate, and `/local` the top-level job of that name: both reach crate::ci::QualityGate::named.
+    for gate in ["local", "/local"] {
+        assert_eq!(resume(&["a1b2c3", "--quality-gate", gate]).quality_gate.as_deref(), Some(gate));
+    }
     // argparse takes an abbreviation that names one flag.
     assert_eq!(resume(&["a1b2c3", "--max-r", "2"]).settings.max_rounds, Some(2));
 }
@@ -130,7 +134,9 @@ fn usage_errors_exit_2_naming_the_problem() {
         (&["run", "--max-quality-rounds", "2", "--quality-gate", "", "t"], "--max-quality-rounds needs --quality-gate"),
         (&["resume", "a1b2c3", "--max-quality-rounds", "2", "--no-quality-gate"], "does not apply with --no-quality-gate"),
         (&["run", "--quality-gate", "a//b", "t"], "--quality-gate takes a Jenkins job's full name"),
-        (&["resume", "a1b2c3", "--quality-gate", "/a"], "--quality-gate takes a Jenkins job's full name"),
+        (&["resume", "a1b2c3", "--quality-gate", "//a"], "--quality-gate takes a Jenkins job's full name"),
+        (&["run", "--quality-gate", "/", "t"], "--quality-gate takes a Jenkins job's full name"),
+        (&["judged-in-quality", "--quality-gate", "local", "--target", "main"], "a top-level job named local is /local"),
         (&["run", "--role-model", "build", "t"], "expected ROLE=MODEL, not \"build\""),
         (&["run", "--role-model", "=m", "t"], "expected ROLE=MODEL"),
         (&["run", "--role-agent", "build=vim", "t"], "expected ROLE=KIND, where KIND is one of claude, codex, gemini, opencode, pi; not \"build=vim\""),

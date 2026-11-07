@@ -71,7 +71,7 @@ impl Cli {
         let print = |text: &str| self.out.borrow_mut().push_str(text);
         let stderr = |text: &str| self.err.borrow_mut().push_str(text);
         let mut with = self.f.collaborators();
-        with.jenkins = None;
+        with.quality_gate = None;
         let world = Connected {
             with,
             jenkins: &jenkins,

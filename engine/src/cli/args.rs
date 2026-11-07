@@ -15,6 +15,7 @@ use crate::constants::{
     AGENT_KINDS, CLOSED_BRANCH_GRACE, DEFAULT_AGENT, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS,
     DEFAULT_TURN_TIMEOUT, EXIT_ERROR, EXIT_WAITING, REMOTE, ROLE_LABELS,
 };
+use crate::ci::LOCAL_GATE;
 use crate::cli::doctor::{dotted, GIT_MIN_VERSION, HERDR_MIN_VERSION};
 use crate::cli::drain::{DRAIN_DIR, SPEC_DONE, SPEC_FOR_HUMAN, SPEC_IN_REVIEW, SPEC_READY};
 use crate::cli::listing::RUN_RECORD_VERSION;
@@ -113,7 +114,7 @@ pub struct Starts {
     pub workflow_file: Option<String>,
     /// --worktree: build in a git worktree of the run's own.
     pub worktree: bool,
-    /// --quality-gate: the Jenkins job's full name.
+    /// --quality-gate: the Jenkins job's full name, or LOCAL_GATE (crate::ci::QualityGate::named).
     pub quality_gate: Option<String>,
 }
 
@@ -160,7 +161,7 @@ pub struct ResumeArgs {
     pub run_ref: String,
     /// --force: take over a run that still looks alive.
     pub force: bool,
-    /// --quality-gate: turn the gate on with this job.
+    /// --quality-gate: turn the gate on with this job, or LOCAL_GATE.
     pub quality_gate: Option<String>,
     /// --no-quality-gate: turn the run's gate off for good.
     pub no_quality_gate: bool,
@@ -306,8 +307,8 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         .arg(Arg::new("spec").long("spec").num_args(0..=1).default_missing_value("").hide(true))
         .arg(
             Arg::new("quality-gate").long("quality-gate").value_name("JOB").conflicts_with("no-quality-gate").help(
-                "turn the quality gate on with this Jenkins job, as run --quality-gate has it, for a run started \
-                 without it; a Builder report not yet judged is judged before the Reviewer starts, and otherwise \
+                "turn the quality gate on with this Jenkins job, or `local`, as run --quality-gate has it, for a run \
+                 started without it; a Builder report not yet judged is judged before the Reviewer starts, and otherwise \
                  the gate starts at the Builder's next turn",
             ),
         )
@@ -603,7 +604,9 @@ fn starts_args(config: &ConfigDir) -> Vec<Arg> {
         Arg::new("quality-gate").long("quality-gate").value_name("JOB").help(
             "after each Builder turn, have this Jenkins job (its full name, folders included) judge the change with \
              the quality gate, octoflow-gate, and send the findings back to the Builder; needs JENKINS_URL, \
-             JENKINS_USER and JENKINS_TOKEN, from the environment or ~/.config/ai-agents-orchestrator/ci.env",
+             JENKINS_USER and JENKINS_TOKEN, from the environment or ~/.config/ai-agents-orchestrator/ci.env. \
+             `local` runs the octoflow-gate release the run's base pins in ci/gate.pin here instead, with python3, \
+             as you and with no sandbox; a top-level job named local is `/local`",
         ),
     ]
 }
@@ -658,7 +661,8 @@ fn check_spec_args(matches: &ArgMatches, p: &mut clap::Command) -> Result<(), cl
 
 /// A usage error for flag values the parser cannot rule out: --machine without --cwd, a --max-rounds or
 /// --max-quality-rounds below 1, a run or drain given --max-quality-rounds without --quality-gate, a resume given it
-/// with --no-quality-gate, and a --quality-gate that is not a Jenkins job's full name.
+/// with --no-quality-gate, and a --quality-gate that is not a Jenkins job's full name or `local` (judged-in-quality's
+/// only a job's).
 ///
 /// A flag command does not take is not checked.
 fn check_flag_values(command: &Command, p: &mut clap::Command) -> Result<(), clap::Error> {
@@ -670,6 +674,9 @@ fn check_flag_values(command: &Command, p: &mut clap::Command) -> Result<(), cla
         Command::Run(a) => (a.starts.quality_gate.as_deref(), false),
         Command::Drain(a) => (a.run.starts.quality_gate.as_deref(), false),
         Command::Resume(a) => (a.quality_gate.as_deref(), a.no_quality_gate),
+        Command::JudgedInQuality { job, .. } if job == LOCAL_GATE => {
+            return error(p, "judged-in-quality asks a Jenkins job; a top-level job named local is /local");
+        }
         Command::JudgedInQuality { job, .. } => (Some(job.as_str()), false),
         _ => (None, false),
     };
@@ -690,14 +697,15 @@ fn check_flag_values(command: &Command, p: &mut clap::Command) -> Result<(), cla
         }
     }
     if quality_gate.is_some_and(|job| !is_job_name(job)) {
-        return error(p, "--quality-gate takes a Jenkins job's full name, such as folder/job");
+        return error(p, "--quality-gate takes a Jenkins job's full name, such as folder/job, or local");
     }
     Ok(())
 }
 
-/// Whether job is a Jenkins job's full name: names joined by "/", none empty.
+/// Whether job is a Jenkins job's full name: names joined by "/", none empty, after one optional leading "/"
+/// (crate::ci::Jenkins::job_url). LOCAL_GATE is one too.
 fn is_job_name(job: &str) -> bool {
-    job.split('/').all(|part| !part.is_empty())
+    job.strip_prefix('/').unwrap_or(job).split('/').all(|part| !part.is_empty())
 }
 
 /// A usage error of the subcommand name, one parser defines, with its usage.

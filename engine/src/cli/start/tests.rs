@@ -193,6 +193,20 @@ fn a_closed_run_is_not_resumed_even_with_force() {
     assert_eq!(error(resumable(&["--force"], &saved)), "run 20260929-120000-a1b2c3 was closed; start a new run");
 }
 
+#[test]
+fn a_build_in_flight_of_a_jenkins_job_named_local_is_not_resumed_as_the_local_gate() {
+    let ci = object([("ref", Value::from("refs/orchestrator/a1b2c3/1-1")), ("sha", Value::from("snap1"))]);
+    let saved = saved_settings(&[("quality_job", Value::from("local")), ("ci", Value::Object(ci))]);
+    assert_eq!(
+        error(resumable(&[], &saved)),
+        "run 20260929-120000-a1b2c3 has a quality build of the Jenkins job `local` in flight, saved by a release \
+         before 0.63.0; `local` now names the local gate, so resume the run with that release, or close it"
+    );
+    // A run of the local gate keeps no build there.
+    let saved = saved_settings(&[("quality_job", Value::from("local"))]);
+    assert_eq!(resumable(&[], &saved).unwrap().quality_job.as_deref(), Some("local"));
+}
+
 // -- TestOneRunPerCheckout: resume --force -------------------------------------------------------------------------
 
 /// resume --force of run a1b2c3 on host, which looks alive: saved 30 s ago by a live pid on this host. The fixture of

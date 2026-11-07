@@ -519,15 +519,21 @@ impl World {
         // The harnesses' CLIs, which doctor looks for on PATH and herdr would start: nothing runs them here.
         shims.extend(AGENT_KINDS.iter().map(|kind| ((*kind).to_string(), "exit 0".to_string())));
         for (program, body) in shims {
-            let path = self.root().join("bin").join(program);
-            let written = Command::new("sh")
-                .args(["-c", "printf %s \"$2\" > \"$1\" && chmod 755 \"$1\"", "sh"])
-                .arg(&path)
-                .arg(format!("#!/bin/sh\n{body}\n"))
-                .status()
-                .unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
-            assert!(written.success(), "writing {}: {written}", path.display());
+            self.tool(&program, &body);
         }
+    }
+
+    /// Put program in bin/, ahead of the system's on the engine's PATH: a sh script of body. Written by a child
+    /// process, as make_bin says why.
+    pub fn tool(&self, program: &str, body: &str) {
+        let path = self.root().join("bin").join(program);
+        let written = Command::new("sh")
+            .args(["-c", "printf %s \"$2\" > \"$1\" && chmod 755 \"$1\"", "sh"])
+            .arg(&path)
+            .arg(format!("#!/bin/sh\n{body}\n"))
+            .status()
+            .unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
+        assert!(written.success(), "writing {}: {written}", path.display());
     }
 
     fn make_repositories(&self) {

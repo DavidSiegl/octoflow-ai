@@ -147,18 +147,12 @@ pipeline {
                 //
                 // The Rust tests of every member of the top-level Cargo workspace (Cargo.toml), the engine's, its e2e
                 // scenarios' and docs check's, the desktop shell's and xtask's (which build the eval tasks' toy crates,
-                // and the engine into target/xtask-engine), with line coverage, for the Gate stage likewise:
-                // --ignore-run-fail writes the coverage report whatever tests fail and exits 0 for them, so a non-zero
-                // status is a build that did not compile or a tool that could not run. ci/nextest.toml has the ci
-                // profile write the JUnit report the Gate stage reads. Once the tests are built, --ignore-run-fail
-                // turns any failure of nextest's run into a warning (run_nextest in cargo-llvm-cov 0.9.1's
-                // src/main.rs), also one that runs no test, such as a test binary that cannot list its tests; so the
-                // JUnit report is removed first and must be there after. The lock as in the UI stage, which says why a
-                // quality build may skip it.
-                //
-                // The e2e scenarios and the docs check (engine/e2e) run the orchestrator binary this same command
-                // builds, instrumented, through E2E_ENGINE, so that their runs of it count to its coverage and they
-                // build no engine of their own; they pass it this run's LLVM_PROFILE_FILE.
+                // and the engine into target/xtask-engine), with line coverage, for the Gate stage likewise
+                // (ci/rust-tests.sh, which says what it writes and when it fails). Once the tests are built,
+                // --ignore-run-fail turns any failure of nextest's run into a warning (run_nextest in cargo-llvm-cov
+                // 0.9.1's src/main.rs), also one that runs no test, such as a test binary that cannot list its tests;
+                // so the JUnit report is removed first and must be there after. The lock as in the UI stage, which
+                // says why a quality build may skip it.
                 //
                 // A quality build (GIT_REF set) leaves the e2e scenarios out, by a nextest filter on their test binary,
                 // e2e, so that the docs check beside them still runs, when its change, against HEAD^, the run's base,
@@ -174,10 +168,7 @@ pipeline {
                             rust-toolchain.toml examples ci; then
                         set -- -E 'not (package(octoflow-e2e) and binary(e2e))'
                     fi
-                    E2E_ENGINE="$WORKSPACE/target/llvm-cov-target/debug/orchestrator" \\
-                    ci/cargo-lock.sh ${GIT_REF:+--no-wait} cargo llvm-cov nextest --locked --workspace \\
-                        --ignore-run-fail --profile ci --config-file "$WORKSPACE/ci/nextest.toml" \\
-                        --cobertura --output-path "$WORKSPACE/coverage-rust.xml" "$@"
+                    ci/cargo-lock.sh ${GIT_REF:+--no-wait} ci/rust-tests.sh "$@"
                     if [ ! -f "$junit" ]; then
                         echo "cargo-nextest wrote no $junit, so the Rust tests did not run" >&2
                         exit 1

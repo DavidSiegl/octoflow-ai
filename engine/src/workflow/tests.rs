@@ -24,6 +24,7 @@ mod gate_switch;
 mod harnesses;
 mod heartbeat;
 mod interrupted;
+mod local_gate;
 mod locked_files;
 mod one_run;
 mod orchestrator_checks;

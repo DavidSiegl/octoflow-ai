@@ -10,6 +10,7 @@ use std::rc::Weak;
 use std::sync::Arc;
 
 use super::*;
+use crate::ci::QualityGate;
 use crate::ci::fake::{jenkins_on, jenkins_with, FakeJenkins, JOB};
 use crate::ci::Jenkins;
 use crate::constants::{DEFAULT_MAX_QUALITY_ROUNDS, FINISHED};
@@ -51,9 +52,9 @@ fn pr_host() -> Rc<FakeHost> {
 }
 
 /// turn_quality_gate_on of state with jenkins on the default workflow: the lines it logged, or its error.
-fn turn_on(state: &mut RunState, jenkins: &Jenkins, host: &FakeHost) -> Result<Vec<String>, OrchestratorError> {
+fn turn_on(state: &mut RunState, jenkins: Jenkins, host: &FakeHost) -> Result<Vec<String>, OrchestratorError> {
     let told = Told::default();
-    turn_quality_gate_on(state, &DEFAULT_WORKFLOW, host, &told, jenkins)?;
+    turn_quality_gate_on(state, &DEFAULT_WORKFLOW, host, &told, &QualityGate::Jenkins(jenkins))?;
     Ok(told.lines())
 }
 
@@ -135,7 +136,7 @@ fn on_in_the_builders_step_gates_its_turn() {
     fake.state().outcomes = vec![red()].into();
     let mut state = pr_run("build", 1);
     let host = pr_host();
-    turn_on(&mut state, &jenkins_on(&fake), &host).expect("the gate turns on");
+    turn_on(&mut state, jenkins_on(&fake), &host).expect("the gate turns on");
     assert_eq!(fake.state().names, ["parameters"]);
     assert_eq!((state.phase.as_str(), state.quality_job.as_deref(), state.quality_round), ("build", Some(JOB), 0));
 
@@ -158,7 +159,7 @@ fn on_in_the_reviewers_step_judges_the_builders_report_before_the_review() {
     let fake = FakeJenkins::new();
     let mut state = pr_run("review", 1);
     let host = pr_host();
-    turn_on(&mut state, &jenkins_on(&fake), &host).expect("the gate turns on");
+    turn_on(&mut state, jenkins_on(&fake), &host).expect("the gate turns on");
     assert_eq!((state.phase.as_str(), state.quality_round), (QUALITY, 1));
 
     let reviews = seen();
@@ -175,12 +176,31 @@ fn on_in_the_reviewers_step_judges_the_builders_report_before_the_review() {
 }
 
 #[test]
+fn on_with_the_local_gate_runs_its_preflight_and_needs_no_origin() {
+    let mut state = pr_run("review", 1);
+    let host = pr_host();
+    host.state().has_origin = false;
+    let asked = seen();
+    let recorded = Rc::clone(&asked);
+    host.state().run_command = Some(Box::new(move |_, argv| {
+        recorded.borrow_mut().push(argv[0].to_string());
+        let exec = crate::host::Exec { command: argv.join(" "), status: 0, stdout: Vec::new(), stderr: Vec::new() };
+        Some(Ok(exec))
+    }));
+    let told = Told::default();
+    turn_quality_gate_on(&mut state, &DEFAULT_WORKFLOW, &*host, &told, &QualityGate::Local).expect("the gate turns on");
+    assert_eq!(*asked.borrow(), ["python3", "sh"]);
+    assert_eq!((state.phase.as_str(), state.quality_job.as_deref(), state.quality_round), (QUALITY, Some("local"), 1));
+    assert_eq!(told.lines(), [format!("turned the quality gate of run {RUN_ID} on, with local")]);
+}
+
+#[test]
 fn on_with_the_reviewer_prompted_gates_the_next_builder_turn() {
     let fake = FakeJenkins::new();
     let mut state = pr_run("review", 1);
     state.prompted = Some("review-1.md".into());
     let host = pr_host();
-    turn_on(&mut state, &jenkins_on(&fake), &host).expect("the gate turns on");
+    turn_on(&mut state, jenkins_on(&fake), &host).expect("the gate turns on");
     assert_eq!((state.phase.as_str(), state.quality_round), ("review", 0));
 
     let script = vec![("build", vec![build_turn(2)]), ("review", vec![review_turn(2, APPROVE)])];
@@ -201,7 +221,7 @@ fn on_with_the_reviewer_retried_or_blocked_gates_the_next_builder_turn() {
     let question = [("file", Value::from("review-1.md")), ("question", "which?".into()), ("k", 1.into())];
     blocked.blocked = Some(object(question));
     for (name, mut state) in [("retried", retried), ("blocked", blocked)] {
-        turn_on(&mut state, &jenkins_on(&FakeJenkins::new()), &pr_host()).expect("the gate turns on");
+        turn_on(&mut state, jenkins_on(&FakeJenkins::new()), &pr_host()).expect("the gate turns on");
         assert_eq!(
             (state.phase.as_str(), state.quality_round, state.quality_job.as_deref()),
             ("review", 0, Some(JOB)),
@@ -215,7 +235,7 @@ fn on_in_round_0_is_run_quality_gate() {
     let fake = FakeJenkins::new();
     let mut state = saved_run("spec", 0, &[]);
     state.pull_request = true;
-    turn_on(&mut state, &jenkins_on(&fake), &FakeHost::default()).expect("the gate turns on");
+    turn_on(&mut state, jenkins_on(&fake), &FakeHost::default()).expect("the gate turns on");
     assert!(fake.state().requests.is_empty());
     assert_eq!(state.quality_job.as_deref(), Some(JOB));
 
@@ -236,7 +256,7 @@ fn on_in_round_0_is_run_quality_gate() {
     fake.state().parameters = vec![];
     let mut state = saved_run("spec", 0, &[]);
     state.pull_request = true;
-    turn_on(&mut state, &jenkins_on(&fake), &FakeHost::default()).expect("the gate turns on");
+    turn_on(&mut state, jenkins_on(&fake), &FakeHost::default()).expect("the gate turns on");
     let f = on_jenkins(Fixture::on(Rc::new(FakeHost::default()), state, vec![("spec", vec![spec_turn()])]), &fake);
     let message = failure(f.workflow(RunSettings::default()).run());
     assert!(message.contains("lacks the parameters"), "{message}");
@@ -247,7 +267,7 @@ fn on_in_round_0_is_run_quality_gate() {
 fn an_in_place_no_pr_run_can_turn_it_on_in_round_0_only() {
     let fake = FakeJenkins::new();
     let mut state = saved_run("spec", 0, &[]);
-    turn_on(&mut state, &jenkins_on(&fake), &pr_host()).expect("the gate turns on");
+    turn_on(&mut state, jenkins_on(&fake), &pr_host()).expect("the gate turns on");
     assert_eq!(state.quality_job.as_deref(), Some(JOB));
     // Round 0 checks the tree is clean before the interview, as run --quality-gate does.
     let host = Rc::new(FakeHost::default());
@@ -267,7 +287,7 @@ fn refusals_leave_the_state_as_it_was() {
     turned_off.quality_gate_disabled = true;
     let mut another_job = pr_run("build", 1);
     another_job.quality_job = Some("other/job".into());
-    let another_why = format!("has quality gate job other/job, and cannot switch to {JOB}");
+    let another_why = format!("has quality gate other/job, and cannot switch to {JOB}");
     let cases = [
         ("done", done, "is in phase done, past its last turn"),
         ("publish", pr_run("publish", 1), "is in phase publish, past its last turn"),
@@ -279,7 +299,7 @@ fn refusals_leave_the_state_as_it_was() {
     for (name, mut state, why) in cases {
         let fake = FakeJenkins::new();
         let before = state.to_json();
-        let refused = turn_on(&mut state, &jenkins_on(&fake), &pr_host()).expect_err(name);
+        let refused = turn_on(&mut state, jenkins_on(&fake), &pr_host()).expect_err(name);
         assert!(refused.0.contains(why), "{name}: {}", refused.0);
         assert_eq!(state.to_json(), before, "{name}");
         assert!(fake.state().requests.is_empty(), "{name}");
@@ -289,7 +309,7 @@ fn refusals_leave_the_state_as_it_was() {
     (state.pull_request, state.workflow) = (true, "solo".into());
     let before = state.to_json();
     let (told, jenkins) = (Told::default(), jenkins_on(&FakeJenkins::new()));
-    let refused = turn_quality_gate_on(&mut state, &crate::test_support::solo(), &*pr_host(), &told, &jenkins)
+    let refused = turn_quality_gate_on(&mut state, &crate::test_support::solo(), &*pr_host(), &told, &QualityGate::Jenkins(jenkins))
         .expect_err("solo has no gated step");
     assert!(
         refused.0.contains(
@@ -306,10 +326,10 @@ fn the_same_job_again_changes_nothing() {
     let fake = FakeJenkins::new();
     let mut state = gated_pr_run("review", 1);
     let before = state.to_json();
-    let logged = turn_on(&mut state, &jenkins_on(&fake), &pr_host()).expect("the same job is no error");
+    let logged = turn_on(&mut state, jenkins_on(&fake), &pr_host()).expect("the same job is no error");
     assert_eq!(state.to_json(), before);
     assert!(fake.state().requests.is_empty());
-    assert!(logged.iter().any(|l| l.contains(&format!("already has quality gate job {JOB}"))), "{logged:?}");
+    assert!(logged.iter().any(|l| l.contains(&format!("already has quality gate {JOB}"))), "{logged:?}");
 }
 
 #[test]
@@ -340,7 +360,7 @@ fn a_failed_preflight_refuses_before_any_turn() {
     for (name, jenkins, host, why) in cases {
         let mut state = pr_run("build", 1);
         let before = state.to_json();
-        let refused = turn_on(&mut state, &jenkins, &host).expect_err(name);
+        let refused = turn_on(&mut state, jenkins, &host).expect_err(name);
         assert!(refused.0.contains(why), "{name}: {}", refused.0);
         assert_eq!(state.to_json(), before, "{name}");
     }
@@ -701,7 +721,7 @@ fn a_failed_read_of_the_next_steps_file_leaves_the_state_as_it_was() {
         state.prompted = prompted.map(String::from);
         let before = state.to_json();
         let jenkins = jenkins_on(&FakeJenkins::new());
-        let e = turn_quality_gate_on(&mut state, &DEFAULT_WORKFLOW, &Unreadable, &Told::default(), &jenkins);
+        let e = turn_quality_gate_on(&mut state, &DEFAULT_WORKFLOW, &Unreadable, &Told::default(), &QualityGate::Jenkins(jenkins));
         assert_eq!(e.unwrap_err().0, format!("cannot read {}/review-0.md", state.dir()), "{prompted:?}");
         assert_eq!(state.to_json(), before);
     }

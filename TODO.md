@@ -28,12 +28,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   machines and in CI. Decided against: one file on every platform, by embedding the orchestrator's bytes in the
   Rust executable and unpacking them at start (PyInstaller's onefile done twice), or by Python hosting the window,
   which [ui-options.md](docs/ui-options.md) chose against. Agreed 2026-10-24.
-- **The quality gate in a repository of its own: what is left.** The gate moved to
-  [octoflow-gate](https://github.com/DavidSiegl/octoflow-gate) (decided 2026-11-05: the agent-estate template's
-  `scripts/gate` is the second project that uses it), where the test-file patterns and the rest are `gate.toml`
-  settings, and Jenkins judges this repository's changes with the release `ci/gate.pin` names
-  (`.scratch/gate-standalone/`, ticket 07), whose `quality.json` the engine reads (08); `gate.py`, `ci/gate-rust/` and
-  their tests left this repository (10). Left: `--quality-gate local` (09).
 - **The e2e scenarios: what they do not record.** `engine/e2e/` runs 43 scenarios against the engine as a program and
   compares each with its recording (docs/architecture.md, Tests). The recordings are the Python engine's, made before
   rust-engine ticket 11 removed it, by the Python harness octoflow-without-python ticket 02 removed; a scenario added
@@ -84,14 +78,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   would argue for the standing job. Raised 2026-11-06.
 
 ## Open issues
-
-- **A quality build of a snapshot based on octoflow-without-python/09 before it merges fails.** Raised by cross-review
-  163 (F1): "A quality build loads main's Jenkinsfile; on a snapshot based on no-python-09 before it merges, main's
-  Install stage runs `uv run --frozen python -c '... tomllib.load(open("pyproject.toml","rb"))["project"]["version"]'`,
-  which raises KeyError because pyproject.toml has no `[project]` table any more, and main's Test stage runs
-  `uv run pytest`, which cannot spawn (pytest left the dev group) ... The round ends `GATE: BUILD_FAILED`." Affects
-  only a run whose base holds the branch's commits while main does not; none is started. Closes by itself when
-  octoflow-without-python/09 merges: delete this entry then.
 
 - **A stuck loop can compare a round read from `quality.json` with one read from `quality.md`.** Raised by
   cross-review 160 (F3): "A round judged from quality.json records every failing finding's fingerprint; one judged
@@ -600,7 +586,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   every branch, or one that restricts merges outside `main`.
 - **The secret scan does not look inside a change git diffs as binary.** Neither gitleaks nor `allow_comments`
   (`engine/src/host/scan.rs`) reads a change `git log -p` shows as "Binary files ... differ"; which changes those are
-  is in `Host::scan_unpublished`'s doc. gitleaks skips one before any rule runs, path rules and its own `pkcs12-file`
+  is in `Host::scan_secrets`'s doc. gitleaks skips one before any rule runs, path rules and its own `pkcs12-file`
   included (tested with gitleaks 8.30.1, cross-review 147), so a secret in it is pushed unreported. That includes a
   text file replacing a binary one. Decided against (2026-11-03, kept 2026-11-05 after the path-rule fallback was
   found not to work, secret-scan-gaps/02): scanning such changes as text with `--text`. Reopen it if such a secret is

@@ -194,6 +194,13 @@ fn the_runs_paths() {
     assert!(!s.had_quality_gate());
     s.quality_gate_disabled = true;
     assert!(s.had_quality_gate());
+    assert!(s.may_have_ci_refs());
+    s.quality_job = Some("local".into());
+    assert!(!s.may_have_ci_refs());
+    // A build in ci was of a Jenkins job named `local`, saved before `local` named the local gate.
+    s.ci.insert("ref".to_string(), Value::from("refs/orchestrator/a1b2c3/1-1"));
+    assert!(s.may_have_ci_refs());
+    s.ci = Object::new();
     s.worktree = Some("/proj/.orchestrator/worktrees/a1b2c3".into());
     assert_eq!(s.work_dir(), "/proj/.orchestrator/worktrees/a1b2c3");
     assert_eq!(s.prompts().unwrap(), Prompts::default());

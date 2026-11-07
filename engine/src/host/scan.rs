@@ -1,5 +1,6 @@
-//! The secret scan before each push (Host::scan_unpublished): gitleaks over what the push would publish, with the
-//! rules taken from the run's base, and the `gitleaks:allow` comments the change adds.
+//! The secret scan before each push and each local quality round (Host::scan_secrets): gitleaks over what the push
+//! would publish, or over the change alone, with the rules taken from the run's base, and the `gitleaks:allow` comments
+//! the change adds.
 
 use std::fmt;
 
@@ -34,12 +35,23 @@ impl fmt::Display for LeaksFound {
     }
 }
 
-/// Host::scan_unpublished, which says what it does.
-pub(super) fn scan_unpublished<H: Host + ?Sized>(
+/// Which of the commits reachable from the one scanned a secret scan reads (Host::scan_secrets).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scanned {
+    /// Those no origin ref reaches: what a push of the commit would publish.
+    Unpublished,
+    /// Those the run's base does not reach: the change alone, for a snapshot judged where it is, which publishes
+    /// nothing, so the commits below the base, the human's, are none of its concern.
+    SinceBase,
+}
+
+/// Host::scan_secrets, which says what it does.
+pub(super) fn scan_secrets<H: Host + ?Sized>(
     host: &H,
     cwd: &str,
     commit: &str,
     base: &str,
+    scanned: Scanned,
     report_path: &str,
 ) -> Result<Vec<Leak>, OrchestratorError> {
     let directory = report_path.rsplit_once('/').map_or(report_path, |(d, _)| d);
@@ -52,9 +64,15 @@ pub(super) fn scan_unpublished<H: Host + ?Sized>(
     host.check(&clear, None, DEFAULT_TIMEOUT)?;
     let git_dir = host.git(cwd, &["rev-parse", "--absolute-git-dir"])?;
     let on = host.ssh_target().map(|t| format!(" on {t}")).unwrap_or_default();
-    let failed = format!("gitleaks could not scan what the push would publish{on}, so nothing was pushed");
-    let remotes = format!("--remotes={REMOTE}");
-    let octopus = git_timed(host, cwd, &["rev-list", "--min-parents=3", commit, "--not", &remotes], GITLEAKS_TIMEOUT)?;
+    let failed = match scanned {
+        Scanned::Unpublished => format!("gitleaks could not scan what the push would publish{on}, so nothing was pushed"),
+        Scanned::SinceBase => format!("gitleaks could not scan the change{on}, so nothing judged it"),
+    };
+    let excluded = match scanned {
+        Scanned::Unpublished => format!("--remotes={REMOTE}"),
+        Scanned::SinceBase => base.to_string(),
+    };
+    let octopus = git_timed(host, cwd, &["rev-list", "--min-parents=3", commit, "--not", &excluded], GITLEAKS_TIMEOUT)?;
     if let Some(merge) = octopus.split_whitespace().next() {
         let short: String = merge.chars().take(12).collect();
         return Err(OrchestratorError(format!(
@@ -62,7 +80,7 @@ pub(super) fn scan_unpublished<H: Host + ?Sized>(
              merge its branches one at a time"
         )));
     }
-    let log_opts = format!("--diff-merges=remerge --no-textconv {commit} --not {remotes}");
+    let log_opts = format!("--diff-merges=remerge --no-textconv {commit} --not {excluded}");
     let empty_tree = host.git(cwd, &["hash-object", "-t", "tree", "/dev/null"])?;
     let git_env = scan_git_env(git_dir.trim(), empty_tree.trim());
     let log_flag = format!("--log-opts={log_opts}");

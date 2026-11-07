@@ -19,7 +19,7 @@ mod process;
 mod scan;
 
 pub use process::ProcessHost;
-pub use scan::LeaksFound;
+pub use scan::{LeaksFound, Scanned};
 pub(crate) use process::{run_process, ProcessError};
 
 use crate::quality::Leak;
@@ -598,27 +598,27 @@ pub trait Host {
         numstat(&out)
     }
 
-    /// Push commit to origin's branch, replacing what is there, once scan_unpublished finds no secret in what it
-    /// would publish; base and report_path are as scan_unpublished takes them. Errors: PushError::Leaks with what the
-    /// scan found, or PushError::Failed when it cannot judge or the push fails; nothing is pushed then.
+    /// Push commit to origin's branch, replacing what is there, once scan_secrets finds no secret in what it would
+    /// publish; base and report_path are as scan_secrets takes them. Errors: PushError::Leaks with what the scan
+    /// found, or PushError::Failed when it cannot judge or the push fails; nothing is pushed then.
     fn push_ref(&self, cwd: &str, commit: &str, branch: &str, base: &str, report_path: &str) -> Result<(), PushError> {
-        self.refuse_leaks(cwd, commit, base, report_path)?;
+        self.refuse_leaks(cwd, commit, base, Scanned::Unpublished, report_path)?;
         // --force replaces what a failed attempt left under the same name.
         let refspec = format!("{commit}:refs/heads/{branch}");
         git_timed(self, cwd, &["push", "--quiet", "--force", REMOTE, &refspec], NETWORK_TIMEOUT)?;
         Ok(())
     }
 
-    /// Push the local branch to origin's branch of that name and track it, once scan_unpublished finds no secret in
-    /// what its commit would publish; base and report_path are as scan_unpublished takes them. Errors: as push_ref's.
+    /// Push the local branch to origin's branch of that name and track it, once scan_secrets finds no secret in what
+    /// its commit would publish; base and report_path are as scan_secrets takes them. Errors: as push_ref's.
     fn push_branch(&self, cwd: &str, branch: &str, base: &str, report_path: &str) -> Result<(), PushError> {
         let commit = self.git(cwd, &["rev-parse", "--verify", &format!("refs/heads/{branch}")])?;
-        self.refuse_leaks(cwd, commit.trim(), base, report_path)?;
+        self.refuse_leaks(cwd, commit.trim(), base, Scanned::Unpublished, report_path)?;
         git_timed(self, cwd, &["push", "--quiet", "--set-upstream", REMOTE, branch], NETWORK_TIMEOUT)?;
         Ok(())
     }
 
-    /// Why gitleaks with its `git` subcommand (8.19 and later), which scan_unpublished runs, cannot run here; None
+    /// Why gitleaks with its `git` subcommand (8.19 and later), which scan_secrets runs, cannot run here; None
     /// when it can. Its help, not its version, is asked: a distribution's build may print no version number.
     fn gitleaks_problem(&self) -> Option<String> {
         match self.run(&["gitleaks", "git", "--help"], None, DEFAULT_TIMEOUT) {
@@ -639,22 +639,30 @@ pub trait Host {
         }
     }
 
-    /// PushError::Leaks when scan_unpublished finds any in what a push of commit would publish, and
-    /// PushError::Failed when it cannot judge, as scan_unpublished says, which also says what it writes beside
+    /// PushError::Leaks when scan_secrets finds any in the scanned commits reachable from commit, and
+    /// PushError::Failed when it cannot judge, as scan_secrets says, which also says what it writes beside
     /// report_path.
-    fn refuse_leaks(&self, cwd: &str, commit: &str, base: &str, report_path: &str) -> Result<(), PushError> {
-        let leaks = self.scan_unpublished(cwd, commit, base, report_path)?;
+    fn refuse_leaks(
+        &self,
+        cwd: &str,
+        commit: &str,
+        base: &str,
+        scanned: Scanned,
+        report_path: &str,
+    ) -> Result<(), PushError> {
+        let leaks = self.scan_secrets(cwd, commit, base, scanned, report_path)?;
         if leaks.is_empty() {
             return Ok(());
         }
         Err(PushError::Leaks(LeaksFound { leaks, report_path: report_path.to_string() }))
     }
 
-    /// The secrets gitleaks finds, and the `gitleaks:allow` comments added, in the commits a push of commit would
-    /// publish: those reachable from it and from no origin ref. A merge's own content is what it adds beyond git's
+    /// The secrets gitleaks finds, and the `gitleaks:allow` comments added, in the scanned commits reachable from
+    /// commit: for Scanned::Unpublished, those a push of it would publish, reachable from no origin ref; for
+    /// Scanned::SinceBase, those base does not reach. A merge's own content is what it adds beyond git's
     /// automatic merge of its parents (git's remerge diff), and a range holding a merge of three or more parents, of
-    /// which git gives no such diff, is refused. A remote-tracking ref for a branch origin has since deleted or
-    /// rewritten narrows the range: what only it reaches was public once, and is not scanned again.
+    /// which git gives no such diff, is refused. For Scanned::Unpublished, a remote-tracking ref for a branch origin
+    /// has since deleted or rewritten narrows the range: what only it reaches was public once, and is not scanned again.
     ///
     /// The rules come from base, a commit before the change: its .gitleaks.toml (else gitleaks' defaults), each file
     /// it extends with `[extend] path`, in turn, and its .gitleaksignore (else none), and nothing the change holds, so
@@ -675,14 +683,15 @@ pub trait Host {
     /// its .gitleaksignore is a symbolic link; the range holds an octopus merge; or gitleaks cannot be started, exits
     /// other than 0 or 1, writes no report or one that is not a list of findings, or exits 1 with an empty one, as it
     /// does when it cannot load its config.
-    fn scan_unpublished(
+    fn scan_secrets(
         &self,
         cwd: &str,
         commit: &str,
         base: &str,
+        scanned: Scanned,
         report_path: &str,
     ) -> Result<Vec<Leak>, OrchestratorError> {
-        scan::scan_unpublished(self, cwd, commit, base, report_path)
+        scan::scan_secrets(self, cwd, commit, base, scanned, report_path)
     }
 
     /// Delete origin's branch.

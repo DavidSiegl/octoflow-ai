@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use super::{ChangedFile, Completed, Exec, ExecError, Host, GIT_STATUS_ARGS};
+use super::{ChangedFile, Completed, Exec, ExecError, Host, Scanned, GIT_STATUS_ARGS};
 use crate::quality::Leak;
 use crate::constants::WORKTREES_DIR;
 use crate::error::OrchestratorError;
@@ -20,6 +20,15 @@ use crate::map::Map;
 pub(crate) const HOST_EPOCH: i64 = 1_791_000_000;
 /// FakeState::leaks' stand-in for the commit a scan is of.
 pub(crate) const SCANNED: &str = "scanned";
+
+/// One call of FakeHost::scan_secrets: its arguments but cwd.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Scan {
+    pub commit: String,
+    pub base: String,
+    pub scanned: Scanned,
+    pub report_path: String,
+}
 
 /// What a test plays after each sleep of a FakeClock, given the time then.
 type ClockHook = Box<dyn FnMut(f64)>;
@@ -108,7 +117,8 @@ impl FakeClock {
 ///
 /// Files written outside .orchestrator/ count as uncommitted changes until a commit. Git is played at the level of
 /// single commands (Host::git_run), so Host's own fetch, fast-forward and merge steps run on it; a process of any other
-/// kind panics the test, unless FakeState::processes runs it. A test scripts it through [`FakeHost::state`], whose fields say what each scripts.
+/// kind panics the test, unless FakeState::run_command answers it or FakeState::processes runs it. A test scripts it
+/// through [`FakeHost::state`], whose fields say what each scripts.
 pub(crate) struct FakeHost {
     state: RefCell<FakeState>,
 }
@@ -216,10 +226,10 @@ pub(crate) struct FakeState {
     pub clock: Option<Rc<FakeClock>>,
     /// Each file's modification time, by path; a file put straight into files has none, so mtime() gives now.
     pub mtimes: HashMap<String, i64>,
-    /// What scan_unpublished finds: every scan finds them all, a Leak whose commit is SCANNED in the commit scanned.
+    /// What scan_secrets finds: every scan finds them all, a Leak whose commit is SCANNED in the commit scanned.
     pub leaks: Vec<Leak>,
-    /// (commit, base, report path) of each scan.
-    pub scans: Vec<(String, String, String)>,
+    /// Each scan, in order.
+    pub scans: Vec<Scan>,
     /// check_gitleaks fails as on a machine without gitleaks.
     pub gitleaks_missing: bool,
     /// The text of each file in a commit, by (commit, path); file_at reads it, and records each read in file_reads.
@@ -260,6 +270,11 @@ pub(crate) struct FakeState {
     /// files, while read, write and rename stay in `files` and git stays played: a file a test puts there is not one
     /// a real command finds. None: such a command panics the test.
     pub processes: Option<super::ProcessHost>,
+    /// What a command the host runs other than git (Host::exec) gives in place of running, when set and it gives
+    /// Some, given the host, its state released so that the hook may read and write files, and the command's argv: a
+    /// test's stand-in for a program, such as the local quality gate's python3. When it gives None, the command runs as
+    /// processes says.
+    pub run_command: Option<RunCommand>,
 }
 
 /// A test's hook on writes (FakeState::before_write).
@@ -268,6 +283,8 @@ pub(crate) type BeforeWrite = Box<dyn FnMut(&str, &str) -> Result<(), Orchestrat
 pub(crate) type BeforeRename = Box<dyn FnMut(&str, &str)>;
 /// A test's hook on git commands (FakeState::before_git).
 pub(crate) type BeforeGit = Box<dyn FnMut(&str, &[&str])>;
+/// A test's stand-in for the programs the host runs (FakeState::run_command).
+pub(crate) type RunCommand = Box<dyn FnMut(&FakeHost, &[&str]) -> Option<Result<Exec, ExecError>>>;
 /// A test's own run_states (FakeState::run_states_with).
 pub(crate) type RunStatesWith = Box<dyn FnMut(&str) -> Option<Result<Vec<(u64, Value)>, OrchestratorError>>>;
 
@@ -329,6 +346,7 @@ impl FakeHost {
                 before_git: None,
                 run_states_with: None,
                 processes: None,
+                run_command: None,
             }),
         }
     }
@@ -638,6 +656,15 @@ impl Host for FakeHost {
     }
 
     fn exec(&self, argv: &[&str], stdin: Option<&[u8]>, timeout: u64) -> Result<Exec, ExecError> {
+        // Run with the host's state released, as before_write is.
+        let hook = self.state().run_command.take();
+        if let Some(mut hook) = hook {
+            let answered = hook(self, argv);
+            self.state().run_command = Some(hook);
+            if let Some(answered) = answered {
+                return answered;
+            }
+        }
         // Cloned, so that the command runs with the fake's state released.
         let Some(host) = self.state().processes.clone() else { panic!("FakeHost ran a real process: {argv:?}") };
         host.exec(argv, stdin, timeout)
@@ -860,15 +887,16 @@ impl Host for FakeHost {
         Ok(())
     }
 
-    fn scan_unpublished(
+    fn scan_secrets(
         &self,
         _cwd: &str,
         commit: &str,
         base: &str,
+        scanned: Scanned,
         report_path: &str,
     ) -> Result<Vec<Leak>, OrchestratorError> {
         let mut s = self.state();
-        s.scans.push((commit.to_string(), base.to_string(), report_path.to_string()));
+        s.scans.push(Scan { commit: commit.to_string(), base: base.to_string(), scanned, report_path: report_path.to_string() });
         if !s.leaks.is_empty() {
             // As a gitleaks run without --redact would write it: the report is the one place the secret may be.
             let report: Vec<String> = s
