@@ -393,6 +393,33 @@ fn a_gate_whose_jobs_leader_has_died_is_still_stopped() {
 }
 
 #[test]
+fn a_gate_whose_jobs_leader_died_unreaped_is_still_stopped() {
+    let bench = Bench::pinned();
+    put(&bench.dir.join("hang"), "");
+    let judging = bench.start().unwrap();
+    bench.until_the_gate_runs();
+    // Under a PID 1 that reaps no orphans the killed leader stays listed as a zombie; ps says so for it here.
+    let real = std::process::Command::new("sh").args(["-c", "command -v ps"]).output().expect("ps");
+    let real = String::from_utf8(real.stdout).unwrap().trim().to_string();
+    let killed = std::process::Command::new("kill").args(["-KILL", &judging.group]).status().expect("kill");
+    assert!(killed.success());
+    tool(
+        &bench.dir.join("bin"),
+        "ps",
+        &format!(
+            "#!/bin/sh\nfor a; do [ \"$a\" = '{g}' ] && {{ echo 'Z    [sh] <defunct>'; exit 0; }}; done\n\
+             exec '{real}' \"$@\"\n",
+            g = judging.group,
+        ),
+    );
+    assert!(bench.running(&judging), "the gate outlives its job's leader");
+
+    judging.stop(&bench.repo.host).unwrap();
+
+    assert!(!bench.running(&judging));
+}
+
+#[test]
 fn a_gate_whose_directorys_path_is_not_ascii_is_stopped() {
     let bench = Bench::pinned();
     put(&bench.dir.join("hang"), "");
@@ -474,7 +501,7 @@ fn the_preflight_needs_python3_3_11_the_fetchs_tools_a_full_ps_and_a_writable_ca
     let e = preflight(&host(environment(Some(&busybox), &[("XDG_CACHE_HOME", &cache)]))).unwrap_err().to_string();
     assert_eq!(
         e,
-        "the local quality gate fetches octoflow-gate into a cache of its own: ps does not take -ww -o args= -p, which \
+        "the local quality gate fetches octoflow-gate into a cache of its own: ps does not take -ww -o stat=,args= -p, which \
          stopping the gate needs"
     );
 

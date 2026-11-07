@@ -367,8 +367,9 @@ impl RunState {
         format!("{}/quality-{n}-{q}.md", self.dir())
     }
 
-    /// The directory the local gate keeps quality round q of round n's job in, its reports and judging settings
-    /// among its files (crate::local_gate::start), beside its quality file.
+    /// The directory the local gate keeps quality round q of round n's jobs in, one `job-<k>` directory per start
+    /// holding that job's reports and judging settings among its files (crate::local_gate::start), beside the
+    /// round's quality file.
     pub fn gate_dir(&self, n: u32, q: u32) -> String {
         format!("{}/gate-{n}-{q}", self.dir())
     }

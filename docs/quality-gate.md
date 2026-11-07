@@ -87,7 +87,7 @@ Each round, the orchestrator:
    match the pin.
 
 What it needs on that machine, which the preflight checks before the interview: `python3` 3.11 or later on `PATH`,
-curl, tar, a `ps` that takes `-ww -o args= -p` (BusyBox's does not), sha256sum (or macOS's shasum), a writable
+curl, tar, a `ps` that takes `-ww -o stat=,args= -p` (BusyBox's does not), sha256sum (or macOS's shasum), a writable
 cache, and gitleaks; and, unchecked, whatever the project's `gate.toml` has the gate run: its `[[test]]` commands
 and the linters its files call for, such as pymarkdown, shellcheck or clippy, all from `PATH`. A linter the project
 runs through uv, as this repository runs pymarkdown, is there when the orchestrator itself runs under `uv run`.

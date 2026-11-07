@@ -34,7 +34,7 @@ const PYTHON_MIN: (u32, u32) = (3, 11);
 /// What the preflight needs besides python3: the job's fetch on PATH (curl, tar, and sha256sum or macOS's shasum),
 /// a ps that names a process's command line as STOP asks it to, which BusyBox's does not, and a cache it can write.
 const PREFLIGHT: &str = r#"for c in curl tar; do command -v "$c" >/dev/null || { echo "$c is not on PATH" >&2; exit 1; }; done
-ps -ww -o args= -p $$ >/dev/null 2>&1 || { echo "ps does not take -ww -o args= -p, which stopping the gate needs" >&2; exit 1; }
+ps -ww -o stat=,args= -p $$ >/dev/null 2>&1 || { echo "ps does not take -ww -o stat=,args= -p, which stopping the gate needs" >&2; exit 1; }
 command -v sha256sum >/dev/null || command -v shasum >/dev/null || { echo "neither sha256sum nor shasum is on PATH" >&2; exit 1; }
 d=${XDG_CACHE_HOME:-$HOME/.cache}/octoflow/gate
 mkdir -p -- "$d" && [ -w "$d" ] || { echo "cannot write the cache $d" >&2; exit 1; }"#;
@@ -88,14 +88,15 @@ ended "$?""#;
 /// Stops the process group $1, the job named $2 (job_name), as a Ctrl-C would, SIGINT first so the gate kills its
 /// tests' groups itself, then SIGKILL to what is left after 5 s. $3 is how the caller knows the group (Known): a
 /// leader whose command line does not hold $2 as an argument of its own is never the job's, and a group whose leader
-/// has died is stopped only when it is `tracked`. A group is named `-"$g"` after the signal, without `--`, which dash's
-/// kill refuses.
+/// has died is stopped only when it is `tracked`. A leader that died but was never reaped, as under a PID 1 that does
+/// not reap orphans (docker run without --init), is still listed, in state Z and named `[sh] <defunct>`, so it counts
+/// as died. A group is named `-"$g"` after the signal, without `--`, which dash's kill refuses.
 const STOP: &str = r#"g=$1 name=$2 known=$3
-if args=$(ps -ww -o args= -p "$g" 2>/dev/null); then
-    case " $args " in *" $name "*) ;; *) exit 0 ;; esac
-elif [ "$known" != tracked ]; then
-    exit 0
-fi
+leader=$(ps -ww -o stat=,args= -p "$g" 2>/dev/null)
+case $leader in
+'' | Z*) [ "$known" = tracked ] || exit 0 ;;
+*) case " $leader " in *" $name "*) ;; *) exit 0 ;; esac ;;
+esac
 kill -INT -"$g" 2>/dev/null || exit 0
 for _ in 1 2 3 4 5; do kill -0 -"$g" 2>/dev/null || exit 0; sleep 1; done
 kill -KILL -"$g" 2>/dev/null; exit 0"#;
@@ -142,9 +143,8 @@ enum Known {
 }
 
 /// Fails, before a run's interview, if host could not run the local gate: python3 does not start from PATH or is
-/// older than 3.11; curl, tar, or both sha256sum and shasum, are not on PATH, or ps does not name a process's command
-/// line; or the gate cache cannot be made or
-/// written to.
+/// older than 3.11; curl, tar, or both sha256sum and shasum, are not on PATH, or ps does not show a process's state and
+/// command line; or the gate cache cannot be made or written to.
 pub fn preflight(host: &dyn Host) -> Result<(), OrchestratorError> {
     let (major, minor) = PYTHON_MIN;
     let probe = format!("import sys; sys.exit(sys.version_info < ({major}, {minor}))");
