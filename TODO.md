@@ -74,8 +74,8 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   nightly Rust, a `fuzz/` crate, kept corpora and Jenkins time, against a toolchain Jenkins pins and builds
   `--locked`. Generated-input tests already reach all but `parse_blocked`: `engine/src/handoff/tests.rs` and
   `engine/src/quality/tests.rs` the word parsers, `engine/src/env/tests.rs` `parse_env_file` against `sh`, each a
-  bounded number of cases from fixed seeds, which `.scratch/rust-test-seeds/` would vary per build. A panic found
-  would argue for the standing job. Raised 2026-11-06.
+  bounded number of cases, the same ones locally and other ones each Jenkins build (`OCTOFLOW_TEST_SEED`,
+  `engine/src/test_support.rs`). A panic found would argue for the standing job. Raised 2026-11-06.
 
 ## Open issues
 

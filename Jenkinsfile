@@ -160,7 +160,19 @@ pipeline {
                 // builds in, the example workflows they run, and ci/, which pins the gitleaks they run. Their Python
                 // forerunner took quality build #59 past the orchestrator's QUALITY_TIMEOUT (1299 s of 1200). A git
                 // diff that fails counts as a change, so they run. Pull request builds always run them.
+                //
+                // OCTOFLOW_TEST_SEED is the run seed of the engine's generated-input tests
+                // (engine/src/test_support.rs, Rng), a fresh one each build, so that a build tries other cases than the
+                // builds before; without it they generate the same cases every time. It is echoed here, whatever
+                // the tests do, as the assignment that runs a build's cases again.
                 sh '''
+                    OCTOFLOW_TEST_SEED=$(od -An -N8 -tu8 /dev/urandom | tr -d ' \\n')
+                    if [ -z "$OCTOFLOW_TEST_SEED" ]; then
+                        echo "no seed for the generated-input tests from /dev/urandom" >&2
+                        exit 1
+                    fi
+                    export OCTOFLOW_TEST_SEED
+                    echo "OCTOFLOW_TEST_SEED=$OCTOFLOW_TEST_SEED"
                     junit=target/nextest/ci/junit.xml
                     rm -f "$junit"
                     set --

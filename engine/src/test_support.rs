@@ -1,21 +1,62 @@
 //! What the engine's unit tests share: a seeded generator of test inputs, in place of Python's Hypothesis, and a
 //! temporary directory.
+//!
+//! The generated inputs are the same on every run unless the environment gives a run seed in OCTOFLOW_TEST_SEED,
+//! which Jenkins's Test stage sets afresh for each build. A test that fails under a run seed prints it; run it
+//! again on the same cases with `OCTOFLOW_TEST_SEED=<seed> cargo test <test's name>`.
 
 use std::path::PathBuf;
 
-/// A deterministic stream of pseudo-random numbers (xorshift64*), so that a generated case that fails fails again.
-pub struct Rng(u64);
+/// The environment variable that holds the run seed, a decimal u64: set, every Rng of the run generates other
+/// numbers than without it, and others for each value; unset, each Rng generates what its own seed alone decides.
+const RUN_SEED_VARIABLE: &str = "OCTOFLOW_TEST_SEED";
+
+/// A deterministic stream of pseudo-random numbers (xorshift64*), so that a generated case that fails fails again:
+/// always, with no run seed (RUN_SEED_VARIABLE), and under the same run seed with one. Dropped while its thread
+/// panics, as when an assert on what it generated fails, it prints the run seed it generated from to stderr, as the
+/// assignment to run the test with again; without a run seed it prints nothing, a plain rerun being the same test.
+pub struct Rng {
+    /// xorshift64*'s state, never 0.
+    state: u64,
+    /// The run seed the state was started from; None when the environment gave none.
+    run_seed: Option<u64>,
+}
 
 impl Rng {
+    /// A stream that seed decides, together with the environment's run seed when there is one: two tests with
+    /// different seeds generate different numbers under any run seed. Panics when RUN_SEED_VARIABLE is set to
+    /// anything but a decimal u64.
     pub fn new(seed: u64) -> Self {
-        Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1)
+        let run_seed = match std::env::var(RUN_SEED_VARIABLE) {
+            Ok(text) => Some(text.parse().unwrap_or_else(|e| panic!("{RUN_SEED_VARIABLE}={text:?}: {e}"))),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(e) => panic!("{RUN_SEED_VARIABLE}: {e}"),
+        };
+        Self::under(seed, run_seed)
+    }
+
+    /// Rng::new(seed), with run_seed as what the environment gives.
+    fn under(seed: u64, run_seed: Option<u64>) -> Self {
+        let own = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let state = match run_seed {
+            None => own,
+            // splitmix64's finalizer, a bijection, so that run seeds one apart, or tests' seeds one apart under
+            // one run seed, start streams with nothing in common.
+            Some(run) => {
+                let mut z = own.wrapping_add(run.wrapping_mul(0xD6E8_FEB8_6659_FD93));
+                z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+                z ^ (z >> 31)
+            }
+        };
+        Rng { state: state | 1, run_seed }
     }
 
     pub fn next(&mut self) -> u64 {
-        self.0 ^= self.0 >> 12;
-        self.0 ^= self.0 << 25;
-        self.0 ^= self.0 >> 27;
-        self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        self.state ^= self.state >> 12;
+        self.state ^= self.state << 25;
+        self.state ^= self.state >> 27;
+        self.state.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
 
     /// A number below n, which must not be 0.
@@ -48,6 +89,14 @@ impl Rng {
             }
         }
         out
+    }
+}
+
+impl Drop for Rng {
+    fn drop(&mut self) {
+        if let (Some(run_seed), true) = (self.run_seed, std::thread::panicking()) {
+            eprintln!("{RUN_SEED_VARIABLE}={run_seed} generated this failing test's input; set it to run the same cases again");
+        }
     }
 }
 
@@ -415,4 +464,32 @@ pub fn resumable(flags: &[&str], saved: &Object) -> Result<crate::state::RunStat
     };
     let runs = [(10_000, serde_json::Value::Object(saved.clone()))];
     crate::cli::resumable_state(&runs, &args, "/proj", "here", &|_| false).map(|(state, _)| state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn first(mut rng: Rng) -> [u64; 3] {
+        [rng.next(), rng.next(), rng.next()]
+    }
+
+    #[test]
+    fn a_seed_alone_generates_what_it_always_has() {
+        // What Rng::new(10) generated before there was a run seed.
+        let pinned = [14_025_306_511_418_466_756, 1_319_076_152_937_349_890, 7_228_085_411_122_872_806];
+        assert_eq!(first(Rng::under(10, None)), pinned);
+    }
+
+    #[test]
+    fn a_run_seed_changes_what_every_seed_generates_and_keeps_the_seeds_apart() {
+        let streams: Vec<[u64; 3]> = [None, Some(0), Some(1), Some(2), Some(u64::MAX)]
+            .into_iter()
+            .flat_map(|run_seed| [1, 2, 3, 10, 11].map(|seed| first(Rng::under(seed, run_seed))))
+            .collect();
+        for (k, stream) in streams.iter().enumerate() {
+            assert!(!streams[..k].contains(stream), "stream {k} repeats an earlier one: {streams:?}");
+        }
+        assert_eq!(first(Rng::under(10, Some(7))), first(Rng::under(10, Some(7))));
+    }
 }
