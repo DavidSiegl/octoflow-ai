@@ -1185,11 +1185,13 @@ fn working_tree<H: Host + ?Sized>(host: &H, cwd: &str) -> Result<String, Orchest
     // Through a copy of the index, in one sh -c script, because git -C cannot pass GIT_INDEX_FILE.
     let script = "cd -- \"$1\" || exit 1; i=$(git rev-parse --git-path index) || exit 1; t=$(mktemp) || exit 1; \
                   trap 'rm -f -- \"$t\"' EXIT; \
-                  if [ -f \"$i\" ]; then cp -p -- \"$i\" \"$t\" || exit 1; else rm -f -- \"$t\"; fi; \
+                  if [ -f \"$i\" ]; then { cp -- \"$i\" \"$t\" && touch -r \"$i\" -- \"$t\"; } || exit 1; \
+                  else rm -f -- \"$t\"; fi; \
                   GIT_INDEX_FILE=$t git add -A && GIT_INDEX_FILE=$t git write-tree";
-    // `cp -p`, for the index's modification time: git reads a file whose size and times are its entry's only when the
-    // index is no younger than the entry (https://git-scm.com/docs/racy-git), so a copy dated now would have git add
-    // take a file rewritten at its size within the second it was staged as unchanged, and the tree hold the old one.
+    // `touch -r`, which gives the copy the index's modification time: git reads a file whose size and times are its
+    // entry's only when the index is no younger than the entry (https://git-scm.com/docs/racy-git), so a copy dated
+    // now would have git add take a file rewritten at its size within the second it was staged as unchanged, and the
+    // tree hold the old one.
     // The `else`: a repository whose index was never written, from which git starts the copy afresh.
     Ok(host.check(&["sh", "-c", script, "_", cwd], None, DEFAULT_TIMEOUT)?.trim().to_string())
 }

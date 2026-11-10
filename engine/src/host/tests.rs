@@ -1893,13 +1893,13 @@ fn snapshot_of_the_working_tree() {
 
 #[test]
 fn snapshot_holds_a_file_rewritten_at_its_size_within_the_second_git_staged_it() {
-    // Such a file's size and times are the index entry's, so git reads the file only because the index is no younger
-    // than the entry (https://git-scm.com/docs/racy-git). The times are set, to an old second, so that the test waits
-    // for no clock: the file's before staging and after rewriting, the index's to the same. The file's change time
-    // cannot be set: when a second ends between the two writes, git reads the file for that, whatever the index's age.
+    // The case working_tree's comment describes. The times are set, to an old second, so that the test waits for no
+    // clock: the file's before staging and after rewriting, the index's to the same. The file's change time cannot be
+    // set, so git is told not to compare it; else a second ending between the two writes would have git read the file.
     const STAGED: i64 = 1_600_000_000;
     let r = Repo::new(&[]);
     let file = format!("{}/racy.py", r.path);
+    r.git(&["config", "core.trustctime", "false"]);
     r.put("racy.py", "before\n");
     set_mtime(&file, STAGED);
     let base = r.commit(&[], "base");
