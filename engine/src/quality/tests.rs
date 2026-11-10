@@ -171,7 +171,8 @@ fn read_back_the_gate_of_a_build_failed_report() {
     let mut rng = Rng::new(20);
     for _ in 0..200 {
         let (intro, console) = (rng.text(20, ""), rng.text(20, ""));
-        assert_eq!(parse_gate(&build_failed_report(&intro, None, &console)), Some(QUALITY_BUILD_FAILED));
+        let report = build_failed_report(&intro, None, &console);
+        assert_eq!(parse_gate(&report), Some(QUALITY_BUILD_FAILED), "{report:?}");
     }
 }
 

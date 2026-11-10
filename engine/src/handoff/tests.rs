@@ -64,8 +64,8 @@ fn never_panic_and_return_only_their_words() {
     let mut rng = Rng::new(10);
     for _ in 0..500 {
         let text = rng.text(30, "");
-        assert!(parse_gate(&text).is_none_or(|g| GATES.contains(&g)));
-        assert!(parse_verdict(&text).is_none_or(|v| VERDICTS.contains(&v)));
+        assert!(parse_gate(&text).is_none_or(|g| GATES.contains(&g)), "{text:?}");
+        assert!(parse_verdict(&text).is_none_or(|v| VERDICTS.contains(&v)), "{text:?}");
     }
 }
 
@@ -76,8 +76,10 @@ fn read_the_word_on_the_first_non_blank_line() {
         let (blanks, (before, behind)) = if k == 0 { (String::new(), ("_", "_")) } else { (blank_lines(&mut rng), *rng.pick(&EMPHASIS)) };
         let (gate, verdict) = (*rng.pick(&GATES), *rng.pick(&VERDICTS));
         let (after, rest) = if k == 0 { (String::new(), String::new()) } else { (after_word(&mut rng), rng.text(20, "")) };
-        assert_eq!(parse_gate(&format!("{blanks}{before}GATE: {gate}{behind}{after}\n{rest}")), Some(gate));
-        assert_eq!(parse_verdict(&format!("{blanks}{before}VERDICT: {verdict}{behind}{after}\n{rest}")), Some(verdict));
+        let text = format!("{blanks}{before}GATE: {gate}{behind}{after}\n{rest}");
+        assert_eq!(parse_gate(&text), Some(gate), "{text:?}");
+        let text = format!("{blanks}{before}VERDICT: {verdict}{behind}{after}\n{rest}");
+        assert_eq!(parse_verdict(&text), Some(verdict), "{text:?}");
     }
 }
 
@@ -96,8 +98,10 @@ fn refuse_a_word_that_goes_on() {
         }
         let (blanks, rest) = (blank_lines(&mut rng), rng.text(20, ""));
         let (gate, verdict) = (*rng.pick(&GATES), *rng.pick(&VERDICTS));
-        assert_eq!(parse_gate(&format!("{blanks}GATE: {gate}{going_on}\n{rest}")), None, "{going_on:?}");
-        assert_eq!(parse_verdict(&format!("{blanks}VERDICT: {verdict}{going_on}\n{rest}")), None, "{going_on:?}");
+        let text = format!("{blanks}GATE: {gate}{going_on}\n{rest}");
+        assert_eq!(parse_gate(&text), None, "{text:?}");
+        let text = format!("{blanks}VERDICT: {verdict}{going_on}\n{rest}");
+        assert_eq!(parse_verdict(&text), None, "{text:?}");
     }
 }
 
@@ -110,7 +114,8 @@ fn ignore_every_line_below_the_first_non_blank_one() {
             continue;
         }
         let (blanks, rest) = (blank_lines(&mut rng), format!("GATE: OK VERDICT: APPROVE {}", rng.text(20, "")));
-        assert_eq!(parse_gate(&format!("{blanks}{first}\n{rest}")), parse_gate(&first));
-        assert_eq!(parse_verdict(&format!("{blanks}{first}\n{rest}")), parse_verdict(&first));
+        let text = format!("{blanks}{first}\n{rest}");
+        assert_eq!(parse_gate(&text), parse_gate(&first), "{text:?}");
+        assert_eq!(parse_verdict(&text), parse_verdict(&first), "{text:?}");
     }
 }

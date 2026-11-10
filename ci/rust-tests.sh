@@ -8,8 +8,9 @@
 #   ci/rust-tests.sh [<cargo-nextest argument>...]
 #
 # The Jenkinsfile's Test stage runs it, and so does gate.toml's [[test]], so a gate run outside Jenkins, such as
-# octoflow's `--quality-gate local`, measures the coverage a Jenkins build does. Needs cargo-llvm-cov and
-# cargo-nextest.
+# octoflow's `--quality-gate local`, measures coverage the way a Jenkins build does. The same lines only as far as the
+# engine's generated-input tests reach the same ones: the Test stage gives them a run seed (OCTOFLOW_TEST_SEED,
+# engine/src/test_support.rs) and this script gives none. Needs cargo-llvm-cov and cargo-nextest.
 set -eu
 
 cd "$(dirname "$0")/.."

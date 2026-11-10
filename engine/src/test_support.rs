@@ -1,21 +1,66 @@
 //! What the engine's unit tests share: a seeded generator of test inputs, in place of Python's Hypothesis, and a
 //! temporary directory.
+//!
+//! The generated inputs are the same on every run unless the environment gives a run seed in OCTOFLOW_TEST_SEED,
+//! which Jenkins's Test stage sets afresh for each build. A test that fails under a run seed prints it; run it
+//! again on the same cases with `OCTOFLOW_TEST_SEED=<seed> cargo test <test's name>`.
 
 use std::path::PathBuf;
 
-/// A deterministic stream of pseudo-random numbers (xorshift64*), so that a generated case that fails fails again.
-pub struct Rng(u64);
+/// The environment variable that holds the run seed, a decimal u64; unset or empty, the run has none.
+const RUN_SEED_VARIABLE: &str = "OCTOFLOW_TEST_SEED";
+
+/// The run seed in var, which is what std::env::var gave for RUN_SEED_VARIABLE. Panics when the variable holds
+/// anything but a decimal u64 or nothing, blanks around a number included.
+fn run_seed(var: Result<String, std::env::VarError>) -> Option<u64> {
+    match var {
+        Ok(text) if text.is_empty() => None,
+        Ok(text) => Some(text.parse().unwrap_or_else(|e| panic!("{RUN_SEED_VARIABLE}={text:?}: {e}"))),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(e) => panic!("{RUN_SEED_VARIABLE}: {e}"),
+    }
+}
+
+/// A deterministic stream of pseudo-random numbers (xorshift64*). Dropped while its thread panics, as when an
+/// assert on what it generated fails, it prints the run seed it generated from to stderr, as the assignment to run
+/// the test with again (the module comment); without a run seed it prints nothing, a plain rerun being the same
+/// test.
+pub struct Rng {
+    /// xorshift64*'s state, never 0.
+    state: u64,
+    /// The run seed the state was started from; None when the environment gave none.
+    run_seed: Option<u64>,
+}
 
 impl Rng {
+    /// A stream that seed decides, together with the environment's run seed when there is one: two tests with
+    /// different seeds generate different numbers under any run seed. Panics as run_seed does.
     pub fn new(seed: u64) -> Self {
-        Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1)
+        Self::under(seed, run_seed(std::env::var(RUN_SEED_VARIABLE)))
+    }
+
+    /// Rng::new(seed), with run_seed as what the environment gives.
+    fn under(seed: u64, run_seed: Option<u64>) -> Self {
+        let own = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let state = match run_seed {
+            None => own,
+            // splitmix64's finalizer, a bijection, so that run seeds one apart, or tests' seeds one apart under
+            // one run seed, start streams with nothing in common.
+            Some(run) => {
+                let mut z = own.wrapping_add(run.wrapping_mul(0xD6E8_FEB8_6659_FD93));
+                z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+                z ^ (z >> 31)
+            }
+        };
+        Rng { state: state | 1, run_seed }
     }
 
     pub fn next(&mut self) -> u64 {
-        self.0 ^= self.0 >> 12;
-        self.0 ^= self.0 << 25;
-        self.0 ^= self.0 >> 27;
-        self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        self.state ^= self.state >> 12;
+        self.state ^= self.state << 25;
+        self.state ^= self.state >> 27;
+        self.state.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
 
     /// A number below n, which must not be 0.
@@ -48,6 +93,14 @@ impl Rng {
             }
         }
         out
+    }
+}
+
+impl Drop for Rng {
+    fn drop(&mut self) {
+        if let (Some(run_seed), true) = (self.run_seed, std::thread::panicking()) {
+            eprintln!("{RUN_SEED_VARIABLE}={run_seed} was this failing test's run seed; set it to generate the same cases again");
+        }
     }
 }
 
@@ -415,4 +468,56 @@ pub fn resumable(flags: &[&str], saved: &Object) -> Result<crate::state::RunStat
     };
     let runs = [(10_000, serde_json::Value::Object(saved.clone()))];
     crate::cli::resumable_state(&runs, &args, "/proj", "here", &|_| false).map(|(state, _)| state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn first(mut rng: Rng) -> [u64; 3] {
+        [rng.next(), rng.next(), rng.next()]
+    }
+
+    /// What Rng::new(10) generated first before there was a run seed.
+    const FIRST_OF_SEED_10: [u64; 3] =
+        [14_025_306_511_418_466_756, 1_319_076_152_937_349_890, 7_228_085_411_122_872_806];
+
+    #[test]
+    fn a_seed_alone_generates_what_it_always_has() {
+        assert_eq!(first(Rng::under(10, None)), FIRST_OF_SEED_10);
+    }
+
+    #[test]
+    fn the_run_seed_is_the_variables_number_and_none_when_it_is_unset_or_empty() {
+        assert_eq!(run_seed(Err(std::env::VarError::NotPresent)), None);
+        assert_eq!(run_seed(Ok(String::new())), None);
+        assert_eq!(run_seed(Ok("18446744073709551615".into())), Some(u64::MAX));
+    }
+
+    #[test]
+    #[should_panic(expected = "OCTOFLOW_TEST_SEED=\" 5\": invalid digit")]
+    fn a_run_seed_that_is_no_number_panics() {
+        run_seed(Ok(" 5".into()));
+    }
+
+    /// Asserts whichever half the run it is in can show: Jenkins's runs have a seed, a plain `cargo test` none.
+    #[test]
+    fn new_generates_from_the_environments_run_seed_and_as_ever_without_one() {
+        match std::env::var_os(RUN_SEED_VARIABLE) {
+            Some(seed) if !seed.is_empty() => assert_ne!(first(Rng::new(10)), FIRST_OF_SEED_10, "under {seed:?}"),
+            _ => assert_eq!(first(Rng::new(10)), FIRST_OF_SEED_10),
+        }
+    }
+
+    #[test]
+    fn a_run_seed_changes_what_every_seed_generates_and_keeps_the_seeds_apart() {
+        let streams: Vec<[u64; 3]> = [None, Some(0), Some(1), Some(2), Some(u64::MAX)]
+            .into_iter()
+            .flat_map(|run_seed| [1, 2, 3, 10, 11].map(|seed| first(Rng::under(seed, run_seed))))
+            .collect();
+        for (k, stream) in streams.iter().enumerate() {
+            assert!(!streams[..k].contains(stream), "stream {k} repeats an earlier one: {streams:?}");
+        }
+        assert_eq!(first(Rng::under(10, Some(7))), first(Rng::under(10, Some(7))));
+    }
 }
