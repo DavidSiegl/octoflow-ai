@@ -42,6 +42,7 @@ const OTHER_PROGRAMS_NAMES: &[(&str, &str)] = &[
     ("E2E_ENGINE", "the e2e package's environment variable, engine/e2e/src/engine.rs"),
     ("E2E_RECORD", "the e2e scenarios' environment variable, engine/e2e/tests/e2e/main.rs"),
     ("EVAL_ENGINE", "the eval runner's environment variable, xtask/src/eval.rs"),
+    ("OCTOFLOW_TEST_SEED", "the engine's tests' environment variable, engine/src/test_support.rs"),
     ("HARNESSES", "the Rust engine's table of the agent harnesses, engine/src/harness.rs"),
     ("CI", "the Python engine's Jenkins client, which engine/src/ci.rs ports as Jenkins"),
     ("PR_STATUS_CREATOR", "the Jenkinsfile's"),
