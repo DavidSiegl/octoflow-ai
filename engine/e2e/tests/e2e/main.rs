@@ -8,13 +8,14 @@
 //! made for coverage; else this checkout's, built with cargo (engine::binary). Linux only, as the engine's other
 //! process tests.
 
+mod app_recording;
 mod client;
 mod compare;
 mod scenarios;
 mod servers;
 mod world;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use octoflow_e2e::engine;
 use octoflow_e2e::scratch::Scratch;
@@ -43,16 +44,21 @@ impl Recordings {
         let mut w = world::World::new(name, &engine::binary());
         scenario(&mut w);
         let got = w.record();
-        let path = self.dir.join(format!("{name}.json"));
+        self.hold(&self.dir.join(format!("{name}.json")), name, &got);
+    }
+
+    /// Compare got, what scenario name gave, with the recording at path, or write it there when writing. Panics as
+    /// check does.
+    fn hold(&self, path: &Path, name: &str, got: &Value) {
         if self.writing {
-            std::fs::write(&path, recording_text(&got)).unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
+            std::fs::write(path, recording_text(got)).unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
             return;
         }
-        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        let text = std::fs::read_to_string(path).unwrap_or_else(|e| {
             panic!("scenario {name} has no recording at {} ({e}); make it with E2E_RECORD=1, and review what it records", path.display())
         });
         let want = serde_json::from_str::<Value>(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        if let Some(difference) = compare::first_difference(&want, &got, "$") {
+        if let Some(difference) = compare::first_difference(&want, got, "$") {
             panic!("scenario {name} differs from its recording at {difference}");
         }
     }
@@ -181,3 +187,14 @@ scenarios!(
     workflows_listed,
     worktree_run,
 );
+
+/// The desktop app's tests replay what serve sends: `ui/src/test/recorded-stream.json` is app_event_stream's event
+/// stream as app_recording writes it, compared here as a scenario's recording is, and written under E2E_RECORD=1.
+#[test]
+fn app_event_stream() {
+    let mut w = world::World::new("app_event_stream", &engine::binary());
+    let batches = scenarios::app_event_stream(&mut w);
+    let got = app_recording::recording(&batches, &mut w.normalizer, &w.project);
+    let path = octoflow_e2e::checkout().join("ui/src/test/recorded-stream.json");
+    Recordings::of_checkout().hold(&path, "app_event_stream", &got);
+}

@@ -29,17 +29,41 @@
      "quality_round": null,
      "role": null,
      "pane": null,
+     "agents": [
+      {
+       "role": "spec",
+       "name": "spec-beef00",
+       "kind": "claude"
+      },
+      {
+       "role": "build",
+       "name": "build-beef00",
+       "kind": "claude"
+      },
+      {
+       "role": "review",
+       "name": "review-beef00",
+       "kind": "claude"
+      }
+     ],
      "health": null,
      "health_reason": null,
      "heartbeat_age": 1,
      "waiting": null,
      "verdict": "APPROVE",
+     "verdicts": [
+      {
+       "round": 1,
+       "step": "review",
+       "verdict": "APPROVE"
+      }
+     ],
      "error": null,
      "closed": null,
-     "branch": null,
+     "branch": "orchestrator/add-a-token-bucket-rate-limiter-beef00",
      "worktree": null,
      "pr": {
-      "url": "https://github.com/o/r/pull/7",
+      "url": "https://github.com/parity/project/pull/1",
       "state": null,
       "error": null
      },
@@ -47,41 +71,47 @@
       {
        "step": "spec",
        "role": "spec",
-       "round": 1,
+       "round": 0,
        "quality_round": 0,
        "file": "spec.md",
        "agent": "claude",
        "model": null,
+       "session": "session-1",
+       "tokens": "unknown",
        "human_paced": true,
-       "started_at": "2026-10-24T14:00:00Z",
-       "ended_at": "x",
-       "seconds": 60
+       "started_at": "2026-10-24T14:00:00+00:00",
+       "ended_at": "2026-10-24T14:05:00+00:00",
+       "seconds": 300
       },
       {
        "step": "build",
        "role": "build",
        "round": 1,
        "quality_round": 0,
-       "file": "build.md",
+       "file": "build-1.md",
        "agent": "claude",
        "model": null,
+       "session": "session-2",
+       "tokens": "unknown",
        "human_paced": false,
-       "started_at": "2026-10-24T14:00:00Z",
-       "ended_at": "x",
-       "seconds": 60
+       "started_at": "2026-10-24T14:10:00+00:00",
+       "ended_at": "2026-10-24T14:15:00+00:00",
+       "seconds": 300
       },
       {
        "step": "review",
        "role": "review",
        "round": 1,
        "quality_round": 0,
-       "file": "review.md",
+       "file": "review-1.md",
        "agent": "claude",
        "model": null,
+       "session": "session-3",
+       "tokens": "unknown",
        "human_paced": false,
-       "started_at": "2026-10-24T14:00:00Z",
-       "ended_at": "x",
-       "seconds": 60
+       "started_at": "2026-10-24T14:20:00+00:00",
+       "ended_at": "2026-10-24T14:25:00+00:00",
+       "seconds": 300
       }
      ],
      "resume_command": null
@@ -92,12 +122,32 @@
     "run": "20261024-090000-beef00",
     "files": [
      {
+      "name": "build-1.md",
+      "mtime": 1792850400
+     },
+     {
+      "name": "gitleaksignore",
+      "mtime": 1792850400
+     },
+     {
+      "name": "leaks-publish.json",
+      "mtime": 1792850400
+     },
+     {
+      "name": "metrics.json",
+      "mtime": 1792850400
+     },
+     {
       "name": "review-1.md",
-      "mtime": 1792848934
+      "mtime": 1792850400
      },
      {
       "name": "spec.md",
-      "mtime": 1792848934
+      "mtime": 1792850400
+     },
+     {
+      "name": "summary.md",
+      "mtime": 1792850400
      }
     ]
    }
@@ -132,15 +182,23 @@
      "round": 0,
      "quality_round": null,
      "role": "spec",
-     "pane": "w1:p1",
+     "pane": "p4",
+     "agents": [
+      {
+       "role": "spec",
+       "name": "spec-c0ffee",
+       "kind": "claude"
+      }
+     ],
      "health": "running",
-     "health_reason": "beat 1s ago",
+     "health_reason": "pid 4003 on devbox, beat 1s ago",
      "heartbeat_age": 1,
      "waiting": {
       "reason": "interview",
       "detail": "spec"
      },
      "verdict": null,
+     "verdicts": [],
      "error": null,
      "closed": null,
      "branch": null,
@@ -150,13 +208,15 @@
       {
        "step": "spec",
        "role": "spec",
-       "round": 1,
+       "round": 0,
        "quality_round": 0,
        "file": "spec.md",
        "agent": "claude",
        "model": null,
+       "session": "session-4",
+       "tokens": null,
        "human_paced": true,
-       "started_at": "2026-10-24T14:00:00Z",
+       "started_at": "2026-10-24T14:00:00+00:00",
        "ended_at": null,
        "seconds": null
       }
@@ -200,41 +260,58 @@
      "round": 1,
      "quality_round": null,
      "role": "build",
-     "pane": "w1:p2",
+     "pane": "p5",
+     "agents": [
+      {
+       "role": "spec",
+       "name": "spec-c0ffee",
+       "kind": "claude"
+      },
+      {
+       "role": "build",
+       "name": "build-c0ffee",
+       "kind": "claude"
+      }
+     ],
      "health": "running",
-     "health_reason": "beat 1s ago",
+     "health_reason": "pid 4003 on devbox, beat 1s ago",
      "heartbeat_age": 1,
      "waiting": null,
      "verdict": null,
+     "verdicts": [],
      "error": null,
      "closed": null,
-     "branch": null,
+     "branch": "orchestrator/add-a-token-bucket-rate-limiter-c0ffee",
      "worktree": null,
      "pr": null,
      "turns": [
       {
        "step": "spec",
        "role": "spec",
-       "round": 1,
+       "round": 0,
        "quality_round": 0,
        "file": "spec.md",
        "agent": "claude",
        "model": null,
+       "session": "session-4",
+       "tokens": null,
        "human_paced": true,
-       "started_at": "2026-10-24T14:00:00Z",
-       "ended_at": "2026-10-24T14:05:00Z",
-       "seconds": 60
+       "started_at": "2026-10-24T14:00:00+00:00",
+       "ended_at": "2026-10-24T14:05:00+00:00",
+       "seconds": 300
       },
       {
        "step": "build",
        "role": "build",
        "round": 1,
        "quality_round": 0,
-       "file": "build.md",
+       "file": "build-1.md",
        "agent": "claude",
        "model": null,
+       "session": "session-5",
+       "tokens": null,
        "human_paced": false,
-       "started_at": "2026-10-24T14:00:00Z",
+       "started_at": "2026-10-24T14:10:00+00:00",
        "ended_at": null,
        "seconds": null
       }
@@ -248,7 +325,7 @@
     "files": [
      {
       "name": "spec.md",
-      "mtime": 1792848938
+      "mtime": 1792850520
      }
     ]
    }
@@ -283,44 +360,76 @@
      "round": 1,
      "quality_round": null,
      "role": "build",
-     "pane": "w1:p2",
+     "pane": "p5",
+     "agents": [
+      {
+       "role": "spec",
+       "name": "spec-c0ffee",
+       "kind": "claude"
+      },
+      {
+       "role": "build",
+       "name": "build-c0ffee",
+       "kind": "claude"
+      }
+     ],
      "health": "running",
-     "health_reason": "beat 1s ago",
+     "health_reason": "pid 4003 on devbox, beat 1s ago",
      "heartbeat_age": 1,
      "waiting": {
       "reason": "blocked",
       "detail": "should the limit be per client or global?"
      },
      "verdict": null,
+     "verdicts": [],
      "error": null,
      "closed": null,
-     "branch": null,
+     "branch": "orchestrator/add-a-token-bucket-rate-limiter-c0ffee",
      "worktree": null,
      "pr": null,
      "turns": [
       {
        "step": "spec",
        "role": "spec",
-       "round": 1,
+       "round": 0,
        "quality_round": 0,
        "file": "spec.md",
        "agent": "claude",
        "model": null,
+       "session": "session-4",
+       "tokens": null,
        "human_paced": true,
-       "started_at": "2026-10-24T14:00:00Z",
-       "ended_at": "2026-10-24T14:05:00Z",
-       "seconds": 60
+       "started_at": "2026-10-24T14:00:00+00:00",
+       "ended_at": "2026-10-24T14:05:00+00:00",
+       "seconds": 300
       },
       {
        "step": "build",
        "role": "build",
        "round": 1,
        "quality_round": 0,
-       "file": "build.md",
+       "file": "build-1.blocked-1.md",
        "agent": "claude",
        "model": null,
+       "session": "session-5",
+       "tokens": null,
        "human_paced": false,
-       "started_at": "2026-10-24T14:00:00Z",
+       "started_at": "2026-10-24T14:10:00+00:00",
+       "ended_at": "2026-10-24T14:15:00+00:00",
+       "seconds": 300
+      },
+      {
+       "step": "build",
+       "role": "build",
+       "round": 1,
+       "quality_round": 0,
+       "file": "build-1.md",
+       "agent": "claude",
+       "model": null,
+       "session": "session-5",
+       "tokens": null,
+       "human_paced": true,
+       "started_at": "2026-10-24T14:20:00+00:00",
        "ended_at": null,
        "seconds": null
       }
@@ -334,11 +443,11 @@
     "files": [
      {
       "name": "spec.md",
-      "mtime": 1792848938
+      "mtime": 1792850520
      },
      {
       "name": "build-1.blocked-1.md",
-      "mtime": 1792848939
+      "mtime": 1792850580
      }
     ]
    }
@@ -373,54 +482,93 @@
      "round": 1,
      "quality_round": null,
      "role": "review",
-     "pane": "w1:p3",
+     "pane": "p6",
+     "agents": [
+      {
+       "role": "spec",
+       "name": "spec-c0ffee",
+       "kind": "claude"
+      },
+      {
+       "role": "build",
+       "name": "build-c0ffee",
+       "kind": "claude"
+      },
+      {
+       "role": "review",
+       "name": "review-c0ffee",
+       "kind": "claude"
+      }
+     ],
      "health": "running",
-     "health_reason": "beat 1s ago",
+     "health_reason": "pid 4003 on devbox, beat 1s ago",
      "heartbeat_age": 1,
      "waiting": null,
      "verdict": null,
+     "verdicts": [],
      "error": null,
      "closed": null,
-     "branch": null,
+     "branch": "orchestrator/add-a-token-bucket-rate-limiter-c0ffee",
      "worktree": null,
      "pr": null,
      "turns": [
       {
        "step": "spec",
        "role": "spec",
-       "round": 1,
+       "round": 0,
        "quality_round": 0,
        "file": "spec.md",
        "agent": "claude",
        "model": null,
+       "session": "session-4",
+       "tokens": null,
        "human_paced": true,
-       "started_at": "2026-10-24T14:00:00Z",
-       "ended_at": "2026-10-24T14:05:00Z",
-       "seconds": 60
+       "started_at": "2026-10-24T14:00:00+00:00",
+       "ended_at": "2026-10-24T14:05:00+00:00",
+       "seconds": 300
       },
       {
        "step": "build",
        "role": "build",
        "round": 1,
        "quality_round": 0,
-       "file": "build.md",
+       "file": "build-1.blocked-1.md",
        "agent": "claude",
        "model": null,
+       "session": "session-5",
+       "tokens": null,
        "human_paced": false,
-       "started_at": "2026-10-24T14:00:00Z",
-       "ended_at": "2026-10-24T14:20:00Z",
-       "seconds": 60
+       "started_at": "2026-10-24T14:10:00+00:00",
+       "ended_at": "2026-10-24T14:15:00+00:00",
+       "seconds": 300
+      },
+      {
+       "step": "build",
+       "role": "build",
+       "round": 1,
+       "quality_round": 0,
+       "file": "build-1.md",
+       "agent": "claude",
+       "model": null,
+       "session": "session-5",
+       "tokens": null,
+       "human_paced": true,
+       "started_at": "2026-10-24T14:20:00+00:00",
+       "ended_at": "2026-10-24T14:25:00+00:00",
+       "seconds": 300
       },
       {
        "step": "review",
        "role": "review",
        "round": 1,
        "quality_round": 0,
-       "file": "review.md",
+       "file": "review-1.md",
        "agent": "claude",
        "model": null,
+       "session": "session-6",
+       "tokens": null,
        "human_paced": false,
-       "started_at": "2026-10-24T14:00:00Z",
+       "started_at": "2026-10-24T14:30:00+00:00",
        "ended_at": null,
        "seconds": null
       }
@@ -434,15 +582,15 @@
     "files": [
      {
       "name": "spec.md",
-      "mtime": 1792848938
+      "mtime": 1792850520
      },
      {
       "name": "build-1.blocked-1.md",
-      "mtime": 1792848939
+      "mtime": 1792850580
      },
      {
       "name": "build-1.md",
-      "mtime": 1792848941
+      "mtime": 1792850640
      }
     ]
    }
@@ -457,15 +605,15 @@
     "files": [
      {
       "name": "build-1.blocked-1.md",
-      "mtime": 1792848939
+      "mtime": 1792850580
      },
      {
       "name": "build-1.md",
-      "mtime": 1792848941
+      "mtime": 1792850640
      },
      {
       "name": "spec.md",
-      "mtime": 1792848943
+      "mtime": 1792850700
      }
     ]
    }

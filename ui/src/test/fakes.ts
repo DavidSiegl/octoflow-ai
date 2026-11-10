@@ -2,10 +2,12 @@ import { vi } from "vitest";
 import type { RunOptions, RunRequest, SetupReport } from "../api";
 import recorded from "./recorded-stream.json";
 
-/** The events `orchestrator.py serve` sent over a scripted run, recorded off a real server: each batch is what one
- * poll sent after the step its `after` names. The runs are 20261024-090000-beef00, finished and approved with a pull
+/** The events the engine's `serve` sent over a scripted run, recorded off the real server: each batch is what it
+ * sent after the step its `after` names. The runs are 20261024-090000-beef00, finished and approved with a pull
  * request when the stream opens, and 20261024-140000-c0ffee, which goes from its interview to the review, blocking
- * once, and whose spec.md is edited after. */
+ * once, and whose spec.md is edited after. The e2e test `app_event_stream` holds the file to what serve sends now,
+ * and `E2E_RECORD=1 cargo test -p octoflow-e2e --test e2e app_event_stream` records it again;
+ * `engine/e2e/tests/e2e/app_recording.rs` says what of it is a stand-in for the clock's values. */
 export const RECORDED: { after: string; events: ({ kind: string } & Record<string, unknown>)[] }[] = recorded;
 
 export const CONNECTION = { url: "http://127.0.0.1:4242", token: "s3cret", project: "/home/me/proj" };

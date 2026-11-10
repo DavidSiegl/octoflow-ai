@@ -10,6 +10,7 @@ use octoflow_e2e::{array_at, checkout, object, object_at};
 use serde_json::Value;
 use octoflow_engine::json::Object;
 
+use crate::app_recording::Batch;
 use crate::client;
 use crate::servers::JOB;
 use crate::world::World;
@@ -906,6 +907,73 @@ pub fn serve_endpoints_and_events(w: &mut World) {
             ("checkpoints", Value::Array(checkpoints)),
         ]),
     );
+}
+
+// -- The desktop app's recording ---------------------------------------------------------
+
+/// The task of the runs the desktop app's tests are shown.
+const APP_TASK: &str = "add a token-bucket rate limiter to the API client";
+
+/// The run the desktop app's tests replay (crate::app_recording): serve's event stream over a project whose first
+/// run is finished and approved, with a pull request, when the stream opens, and whose second run goes from its
+/// interview to its review, its Builder blocking once; then the second run's spec.md is edited and the first run
+/// deleted. Returns what the stream sent after each of those steps, once it had settled there: the batches, in order,
+/// as serve sent them. Both runs are over and serve is stopped when it returns.
+pub fn app_event_stream(w: &mut World) -> Vec<Batch> {
+    let spec = || writes("spec.md", "# Add a token-bucket rate limiter\n\n- 10 requests a second\n");
+    w.agent("spec", [spec()]);
+    w.agent("build", [built(1, 0)]);
+    w.agent("review", [approved(1)]);
+    w.run(&["run", "--", APP_TASK]);
+    let serve = w.start(&["serve"], true);
+    w.wait_for(|| w.invocations[serve - 1].stdout().ends_with('\n'), "serve to print its address");
+    let first = serde_json::from_str::<Value>(&w.invocation(serve).stdout()).expect("serve's first line is JSON");
+    let address = str_of(&first, "url").strip_prefix("http://").expect("serve's URL is http").to_string();
+    let target = format!("/events?cwd={}&token={}", quote(&w.project.to_string_lossy()), str_of(&first, "token"));
+    let mut stream = client::EventStream::open(&address, &target);
+
+    let mut batches: Vec<Batch> = Vec::new();
+    // Closes the batch after a step: the events since the batch before, once a poll has sent nothing more.
+    let mut settle = |w: &World, after: &'static str| {
+        let t = Instant::now();
+        w.wait_for(|| stream.settled_since(t), &format!("the event stream to settle after: {after}"));
+        let sent: usize = batches.iter().map(|b| b.events.len()).sum();
+        batches.push(Batch { after, events: stream.events().split_off(sent) });
+    };
+    settle(w, "the stream opened");
+    w.agent("spec", [spec().hold("spec")]);
+    let question = writes("build-1.md", "BLOCKED: should the limit be per client or global?\n");
+    w.agent("build", [question.hold("build"), built(1, 0).hold("answer")]);
+    w.agent("review", [approved(1).hold("review")]);
+    let run = w.start(&["run", "--", APP_TASK], true);
+    for (hold, after) in [
+        ("spec", "a run started its interview"),
+        ("build", "the spec was written and the build started"),
+        ("answer", "the Builder blocked"),
+        ("review", "the build was reported and the review started"),
+    ] {
+        w.wait_reached(hold);
+        settle(w, after);
+        if hold != "review" {
+            w.release(hold);
+        }
+    }
+    let run_dir = |n: usize| octoflow_e2e::run_dir(&w.project, &w.run_key(n));
+    let edited = run_dir(2).join("spec.md");
+    std::fs::write(&edited, "# Add a token-bucket rate limiter\n\n- 20 requests a second\n")
+        .unwrap_or_else(|e| panic!("editing {}: {e}", edited.display()));
+    settle(w, "the spec was edited");
+    let deleted = run_dir(1);
+    std::fs::remove_dir_all(&deleted).unwrap_or_else(|e| panic!("deleting {}: {e}", deleted.display()));
+    settle(w, "the finished run was deleted");
+
+    w.release("review");
+    w.invocation(run).wait();
+    stream.close();
+    let pid = nix::unistd::Pid::from_raw(w.invocation(serve).pid());
+    nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM).unwrap_or_else(|e| panic!("stopping serve: {e}"));
+    w.invocation(serve).wait();
+    batches
 }
 
 // -- The other commands -----------------------------------------------------------------

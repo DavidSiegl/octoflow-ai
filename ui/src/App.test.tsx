@@ -46,7 +46,7 @@ describe("the runs overview", () => {
     act(() => source.replay("the stream opened"));
     const done = row(DONE);
     expect(within(done).getByText("APPROVE")).toBeInTheDocument();
-    expect(within(done).getByRole("link", { name: "#7" })).toHaveAttribute("href", "https://github.com/o/r/pull/7");
+    expect(within(done).getByRole("link", { name: "#1" })).toHaveAttribute("href", "https://github.com/parity/project/pull/1");
     expect(stages(done)).toEqual([["spec", "done"], ["build", "done"], ["review", "done"]]);
 
     act(() => source.replayOne("a run started its interview"));
@@ -339,9 +339,12 @@ describe("the agents", () => {
   });
 
   it("says when an agent has exited, and when none has started", async () => {
-    const { agents } = await openAgents({});
+    const { agents, source } = await openAgents({});
     expect(await within(agents).findByText("the build agent has exited")).toBeInTheDocument();
 
+    // A run before its first agent: the recording has none, every run in it having started one.
+    const done = RECORDED[0]?.events.find((e) => e.kind === "record")?.record as Record<string, unknown>;
+    act(() => source.emit("record", { run: DONE, record: { ...done, agents: [] } }));
     fireEvent.click(screen.getByRole("button", { name: "‹ Runs" }));
     fireEvent.click(row(DONE));
     expect(within(screen.getByRole("region", { name: "agents" })).getByText("No agent has started yet.")).toBeInTheDocument();
