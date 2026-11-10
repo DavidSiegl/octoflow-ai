@@ -812,14 +812,17 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
     fn only_the_appimage_file_itself_is_the_runtime() {
         let dir = TempDir::new();
         let appimage = dir.join("x.AppImage");
         std::fs::write(&appimage, "").expect("a stand-in AppImage");
-        std::os::unix::fs::symlink(&appimage, dir.join("link.AppImage")).expect("a link to it");
         assert!(is_appimage(Some(&appimage), Some(&appimage)));
-        assert!(is_appimage(Some(&dir.join("link.AppImage")), Some(&appimage)), "APPIMAGE through a link");
+        #[cfg(unix)]
+        {
+            let link = dir.join("link.AppImage");
+            std::os::unix::fs::symlink(&appimage, &link).expect("a link to it");
+            assert!(is_appimage(Some(&link), Some(&appimage)), "APPIMAGE through a link");
+        }
         assert!(!is_appimage(Some(&appimage), Some(Path::new("/bin/sh"))), "a parent that is a shell");
         assert!(!is_appimage(None, Some(&appimage)), "no APPIMAGE");
         assert!(!is_appimage(Some(&appimage), None), "a parent whose executable cannot be read");
