@@ -503,6 +503,21 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   F3: "set TMPDIR for every stage that runs what it builds (one pipeline-level definition next to CARGO_HOME would
   do)"). Closes with that pipeline-level `TMPDIR`, created before any stage that uses it, and a Package stage seen
   to pass with it on agentbox0. The homelab can then drop `appimage_extracted`.
+- **`ci/version-raised.sh`'s failure hint leaves out `Cargo.lock`.** Its text says to raise `engine/Cargo.toml`'s
+  version and no more; the next build, with the raise and without `cargo update --workspace` after it (CLAUDE.md,
+  Releases), fails Jenkins's `--locked` cargo steps in the Test stage. Raised in cross-review 137, round 3
+  (2026-11-04). Closes when the hint names the lock file's refresh too.
+- **A change to the desktop shell's tests alone needs a release.** `ci/version-raised.sh` tells the engine's test
+  modules by their paths (`**/tests.rs` and the rest of NOT_RELEASED); the shell's tests sit in
+  `ui/src-tauri/src/lib.rs`'s `#[cfg(test)] mod tests`, a path it takes as released, so 0.63.3 shipped what 0.63.2
+  did for one changed test. Raised in cross-review 168 (F3). Closes when the shell's tests are in a file of their
+  own that NOT_RELEASED names, as the engine's are.
+- **Nothing in CI checks `uv.lock` against `pyproject.toml`.** Jenkins's Install stage runs `uv sync --frozen` and
+  its Gate stage `uv run --frozen`, which take what the lock file holds without asking whether it is still
+  `pyproject.toml`'s; nothing runs `uv lock --check`. Since 0.62.2 `pyproject.toml` holds only the quality gate's
+  toolchain, so a stale lock means a gate tool at another version than the one written down. Raised in cross-review
+  137, round 3 (2026-11-04). Closes with `uv lock --check` in the Install stage, or when the gate needs no Python
+  and both files go.
 - **No build has yet been seen waiting for `ci/cargo-lock.sh` on the Jenkins agent.** PR #88's builds ran both
   cargo steps through it on agentbox0 (builds 1-3, 2026-10-25), so the agent image has `flock` and the lock file's
   directory is writable, and a quality-style build (`GIT_REF` set) ran `--no-wait`; but the two run side by side
