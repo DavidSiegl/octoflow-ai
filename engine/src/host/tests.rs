@@ -1892,6 +1892,25 @@ fn snapshot_of_the_working_tree() {
 }
 
 #[test]
+fn snapshot_holds_a_file_rewritten_at_its_size_within_the_second_git_staged_it() {
+    // The case working_tree's comment describes. The times are set, to an old second, so that the test waits for no
+    // clock: the file's before staging and after rewriting, the index's to the same. The file's change time cannot be
+    // set, so git is told not to compare it; else a second ending between the two writes would have git read the file.
+    const STAGED: i64 = 1_600_000_000;
+    let r = Repo::new(&[]);
+    let file = format!("{}/racy.py", r.path);
+    r.git(&["config", "core.trustctime", "false"]);
+    r.put("racy.py", "before\n");
+    set_mtime(&file, STAGED);
+    let base = r.commit(&[], "base");
+    r.put("racy.py", "after!\n");
+    set_mtime(&file, STAGED);
+    set_mtime(&format!("{}/.git/index", r.path), STAGED);
+    let sha = r.host.snapshot(&r.path, &base, "snapshot").unwrap();
+    assert_eq!(r.git(&["show", &format!("{sha}:racy.py")]), "after!\n");
+}
+
+#[test]
 fn snapshot_of_a_repository_without_an_index() {
     let r = Repo::new(&[]);
     r.git(&["commit", "--quiet", "--allow-empty", "-m", "empty"]);
