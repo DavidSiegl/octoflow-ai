@@ -817,15 +817,20 @@ mod tests {
         let appimage = dir.join("x.AppImage");
         std::fs::write(&appimage, "").expect("a stand-in AppImage");
         assert!(is_appimage(Some(&appimage), Some(&appimage)));
-        #[cfg(unix)]
-        {
-            let link = dir.join("link.AppImage");
-            std::os::unix::fs::symlink(&appimage, &link).expect("a link to it");
-            assert!(is_appimage(Some(&link), Some(&appimage)), "APPIMAGE through a link");
-        }
         assert!(!is_appimage(Some(&appimage), Some(Path::new("/bin/sh"))), "a parent that is a shell");
         assert!(!is_appimage(None, Some(&appimage)), "no APPIMAGE");
         assert!(!is_appimage(Some(&appimage), None), "a parent whose executable cannot be read");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn the_appimage_named_through_a_link_is_the_runtime_too() {
+        let dir = TempDir::new();
+        let appimage = dir.join("x.AppImage");
+        std::fs::write(&appimage, "").expect("a stand-in AppImage");
+        let link = dir.join("link.AppImage");
+        std::os::unix::fs::symlink(&appimage, &link).expect("a link to it");
+        assert!(is_appimage(Some(&link), Some(&appimage)));
     }
 
     #[test]
