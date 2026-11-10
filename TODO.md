@@ -684,3 +684,13 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   line in the report carries its message, a Rust panic's second line included, and a line of the detail that names
   `OCTOFLOW_TEST_SEED` survives the cut; or with the seed in the panic's first line, which Rust's panic format does
   not allow from a Drop.
+- **`working_tree`'s copy of git's index: three small holes.** From cross-review 167 round 2, raised and not
+  recorded as findings (`engine/src/host.rs`, `working_tree`'s script). "`cp` and `touch -r "$i"` resolve the index
+  path twice. When another git process renames a new index into place between the two, a second or more after the
+  old one was written, the copy holds the old entries under the newer time and the racy check is off again for that
+  run"; the pass's remedy, not tried: `{ cat > "$t" && touch -r /dev/stdin -- "$t"; } < "$i"`. "The copy is at the
+  umask's mode once git rewrites it, also in the `else` branch, and a `$t.lock` left by a killed `git add` outlives
+  the trap; a `mktemp -d` would cover all three." And no test fails when the script goes back to `cp -p`. Not fixed
+  with gitignore-restore-flake/01: the first needs a concurrent index write within microseconds, the others were so
+  before it. Closes when the copy's entries and time come from one open file, the copy sits in a directory of its
+  own that the trap removes, and a test holds the copy to mktemp's mode.

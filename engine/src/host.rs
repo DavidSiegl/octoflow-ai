@@ -1191,7 +1191,8 @@ fn working_tree<H: Host + ?Sized>(host: &H, cwd: &str) -> Result<String, Orchest
     // `touch -r`, which gives the copy the index's modification time: git reads a file whose size and times are its
     // entry's only when the index is no younger than the entry (https://git-scm.com/docs/racy-git), so a copy dated
     // now would have git add take a file rewritten at its size within the second it was staged as unchanged, and the
-    // tree hold the old one.
+    // tree hold the old one. Not `cp -p`, which carries owner and mode too: it fails where the owner cannot be kept,
+    // and widens the mode mktemp gave the copy.
     // The `else`: a repository whose index was never written, from which git starts the copy afresh.
     Ok(host.check(&["sh", "-c", script, "_", cwd], None, DEFAULT_TIMEOUT)?.trim().to_string())
 }
