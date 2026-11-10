@@ -812,6 +812,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn only_the_appimage_file_itself_is_the_runtime() {
         let dir = TempDir::new();
         let appimage = dir.join("x.AppImage");
