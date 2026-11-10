@@ -217,7 +217,8 @@ fn reads_what_sh_exports() {
     for (text, names) in examples.into_iter().chain(generated) {
         let dir = TempDir::new();
         let path = write_private(&dir, &text);
-        assert_eq!(ci_credentials(&from(&[]), &path).unwrap(), sh_exports(&path, &names), "{text:?}");
+        let read = ci_credentials(&from(&[]), &path).unwrap_or_else(|e| panic!("{text:?}: {e:?}"));
+        assert_eq!(read, sh_exports(&path, &names), "{text:?}");
     }
 }
 
@@ -239,7 +240,7 @@ fn refuses_what_sh_reads_otherwise() {
     let examples = ["V=x y", "V='a'b", "V=a:~", "V=\"a$x\"", "V=a\0b", "export V={a,b}"].map(String::from);
     let mut rng = Rng::new(2);
     for line in examples.into_iter().chain((0..200).map(|_| misread_line(&mut rng))) {
-        let e = parse_env_file(&format!("{line}\n"), "ci.env").unwrap_err();
+        let e = parse_env_file(&format!("{line}\n"), "ci.env").expect_err(&format!("{line:?}"));
         assert_eq!(e.0, "ci.env:1: expected NAME=value", "{line:?}");
     }
 }
@@ -250,7 +251,7 @@ fn refuses_a_carriage_return() {
     for _ in 0..200 {
         let line_end = rng.pick(&["\r", "\r\n"]);
         let text = format!("{}{}={}{line_end}", padding(&mut rng), env_name(&mut rng), env_value(&mut rng));
-        let e = parse_env_file(&text, "ci.env").unwrap_err();
+        let e = parse_env_file(&text, "ci.env").expect_err(&format!("{text:?}"));
         assert!(e.0.starts_with("ci.env:1: a carriage return"), "{text:?}: {e}");
     }
 }

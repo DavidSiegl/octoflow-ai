@@ -45,7 +45,9 @@ uv run python ../gate-release/gate.py --base main --rust-syntax ../gate-release/
 It runs the tests itself first, by `gate.toml`'s `[[test]]` commands, which need cargo-llvm-cov and cargo-nextest;
 the surviving-mutants check needs cargo-mutants, and the linters shellcheck, actionlint and clippy
 (`ci/install-tools.sh` fetches the pinned cargo tools). The `[[test]]` command is `ci/rust-tests.sh`, which the
-Jenkinsfile's Test stage runs too, so the coverage is a Jenkins build's. Exit status 0 means `GATE: OK`, 1
+Jenkinsfile's Test stage runs too, so the coverage is measured as a Jenkins build's is; the Test stage alone gives the
+engine's generated-input tests a run seed (`OCTOFLOW_TEST_SEED`), so the lines only some generated cases reach can
+differ between the two. Exit status 0 means `GATE: OK`, 1
 `GATE: ERROR`, 2 a gate that could not judge.
 
 ## The local gate

@@ -98,8 +98,10 @@ fn refuse_a_word_that_goes_on() {
         }
         let (blanks, rest) = (blank_lines(&mut rng), rng.text(20, ""));
         let (gate, verdict) = (*rng.pick(&GATES), *rng.pick(&VERDICTS));
-        assert_eq!(parse_gate(&format!("{blanks}GATE: {gate}{going_on}\n{rest}")), None, "{going_on:?}");
-        assert_eq!(parse_verdict(&format!("{blanks}VERDICT: {verdict}{going_on}\n{rest}")), None, "{going_on:?}");
+        let text = format!("{blanks}GATE: {gate}{going_on}\n{rest}");
+        assert_eq!(parse_gate(&text), None, "{text:?}");
+        let text = format!("{blanks}VERDICT: {verdict}{going_on}\n{rest}");
+        assert_eq!(parse_verdict(&text), None, "{text:?}");
     }
 }
 

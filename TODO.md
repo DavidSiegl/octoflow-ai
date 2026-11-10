@@ -660,3 +660,22 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `World::make_bin` (`engine/e2e/tests/e2e/world.rs`) and `put_executable` (`ui/src-tauri/src/lib.rs`). Raised by
   cross-review 123 (F2, nit): "A correction to the writer has to land in all four, and a copy that is missed brings
   the flake back in that crate." Closes with one writer in the test-support crate the entry above would make.
+- **A failing generated-input test's run seed does not reach the engine's build-failed report.** Raised by
+  cross-review 165 (F1, should-fix): "`engine/src/quality.rs:127` keeps `detail.lines().next()` of each failing test.
+  For a Rust panic that line is `thread '…' panicked at <file>:<line>:<col>:`; the seed is printed by `Rng`'s Drop
+  (`engine/src/test_support.rs`) after the panic message, and the new `{text:?}` messages are on later lines too.
+  Failure: a Jenkins build draws a seed under which a generated case fails; the report the Builder reads names the
+  test and a source line, the Builder reruns with no seed, the test passes, and the case is reproducible only by
+  someone who opens the Jenkins console." The cut is `build_failed_report`'s, for every project's tests: of any Rust
+  panic it keeps the location and drops the message. The reviewer's pass reported the same first-line cut in
+  octoflow-gate's `gate.py` (`_tests_section`), not read here. Not fixed with rust-test-seeds/01 because it changes
+  the report every run's Builder reads, an engine change with a release of its own. Closes when a failing test's
+  line in the report carries its message, a Rust panic's second line included, and a line of the detail that names
+  `OCTOFLOW_TEST_SEED` survives the cut; or with the seed in the panic's first line, which Rust's panic format does
+  not allow from a Drop.
+- **`host::tests::a_gitignore_changed_since_hides_nothing_added_since` fails now and then.** Seen twice on 2026-11-10
+  by cross-review 165's own runs on rust-test-seeds-01 at fdcc3ee, which does not touch `engine/src/host`: once in
+  `cargo test --locked -p octoflow-engine --lib`, once in three runs alone, at `engine/src/host/tests.rs:1683`
+  (`left == right`, the `git status --porcelain --ignored` after `restore_tree`; what it printed was not kept). 30
+  runs alone afterwards passed. Ticket gitignore-restore-flake/01. Closes when the cause is shown and the test, or
+  `Host::restore_tree`, no longer depends on it.

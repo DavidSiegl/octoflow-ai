@@ -7,14 +7,24 @@
 
 use std::path::PathBuf;
 
-/// The environment variable that holds the run seed, a decimal u64: set, every Rng of the run generates other
-/// numbers than without it, and others for each value; unset, each Rng generates what its own seed alone decides.
+/// The environment variable that holds the run seed, a decimal u64; unset or empty, the run has none.
 const RUN_SEED_VARIABLE: &str = "OCTOFLOW_TEST_SEED";
 
-/// A deterministic stream of pseudo-random numbers (xorshift64*), so that a generated case that fails fails again:
-/// always, with no run seed (RUN_SEED_VARIABLE), and under the same run seed with one. Dropped while its thread
-/// panics, as when an assert on what it generated fails, it prints the run seed it generated from to stderr, as the
-/// assignment to run the test with again; without a run seed it prints nothing, a plain rerun being the same test.
+/// The run seed in var, which is what std::env::var gave for RUN_SEED_VARIABLE. Panics when the variable holds
+/// anything but a decimal u64 or nothing, blanks around a number included.
+fn run_seed(var: Result<String, std::env::VarError>) -> Option<u64> {
+    match var {
+        Ok(text) if text.is_empty() => None,
+        Ok(text) => Some(text.parse().unwrap_or_else(|e| panic!("{RUN_SEED_VARIABLE}={text:?}: {e}"))),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(e) => panic!("{RUN_SEED_VARIABLE}: {e}"),
+    }
+}
+
+/// A deterministic stream of pseudo-random numbers (xorshift64*). Dropped while its thread panics, as when an
+/// assert on what it generated fails, it prints the run seed it generated from to stderr, as the assignment to run
+/// the test with again (the module comment); without a run seed it prints nothing, a plain rerun being the same
+/// test.
 pub struct Rng {
     /// xorshift64*'s state, never 0.
     state: u64,
@@ -24,15 +34,9 @@ pub struct Rng {
 
 impl Rng {
     /// A stream that seed decides, together with the environment's run seed when there is one: two tests with
-    /// different seeds generate different numbers under any run seed. Panics when RUN_SEED_VARIABLE is set to
-    /// anything but a decimal u64.
+    /// different seeds generate different numbers under any run seed. Panics as run_seed does.
     pub fn new(seed: u64) -> Self {
-        let run_seed = match std::env::var(RUN_SEED_VARIABLE) {
-            Ok(text) => Some(text.parse().unwrap_or_else(|e| panic!("{RUN_SEED_VARIABLE}={text:?}: {e}"))),
-            Err(std::env::VarError::NotPresent) => None,
-            Err(e) => panic!("{RUN_SEED_VARIABLE}: {e}"),
-        };
-        Self::under(seed, run_seed)
+        Self::under(seed, run_seed(std::env::var(RUN_SEED_VARIABLE)))
     }
 
     /// Rng::new(seed), with run_seed as what the environment gives.
@@ -95,7 +99,7 @@ impl Rng {
 impl Drop for Rng {
     fn drop(&mut self) {
         if let (Some(run_seed), true) = (self.run_seed, std::thread::panicking()) {
-            eprintln!("{RUN_SEED_VARIABLE}={run_seed} generated this failing test's input; set it to run the same cases again");
+            eprintln!("{RUN_SEED_VARIABLE}={run_seed} was this failing test's run seed; set it to generate the same cases again");
         }
     }
 }
@@ -474,11 +478,35 @@ mod tests {
         [rng.next(), rng.next(), rng.next()]
     }
 
+    /// What Rng::new(10) generated first before there was a run seed.
+    const FIRST_OF_SEED_10: [u64; 3] =
+        [14_025_306_511_418_466_756, 1_319_076_152_937_349_890, 7_228_085_411_122_872_806];
+
     #[test]
     fn a_seed_alone_generates_what_it_always_has() {
-        // What Rng::new(10) generated before there was a run seed.
-        let pinned = [14_025_306_511_418_466_756, 1_319_076_152_937_349_890, 7_228_085_411_122_872_806];
-        assert_eq!(first(Rng::under(10, None)), pinned);
+        assert_eq!(first(Rng::under(10, None)), FIRST_OF_SEED_10);
+    }
+
+    #[test]
+    fn the_run_seed_is_the_variables_number_and_none_when_it_is_unset_or_empty() {
+        assert_eq!(run_seed(Err(std::env::VarError::NotPresent)), None);
+        assert_eq!(run_seed(Ok(String::new())), None);
+        assert_eq!(run_seed(Ok("18446744073709551615".into())), Some(u64::MAX));
+    }
+
+    #[test]
+    #[should_panic(expected = "OCTOFLOW_TEST_SEED=\" 5\": invalid digit")]
+    fn a_run_seed_that_is_no_number_panics() {
+        run_seed(Ok(" 5".into()));
+    }
+
+    /// Asserts whichever half the run it is in can show: Jenkins's runs have a seed, a plain `cargo test` none.
+    #[test]
+    fn new_generates_from_the_environments_run_seed_and_as_ever_without_one() {
+        match std::env::var_os(RUN_SEED_VARIABLE) {
+            Some(seed) if !seed.is_empty() => assert_ne!(first(Rng::new(10)), FIRST_OF_SEED_10, "under {seed:?}"),
+            _ => assert_eq!(first(Rng::new(10)), FIRST_OF_SEED_10),
+        }
     }
 
     #[test]
