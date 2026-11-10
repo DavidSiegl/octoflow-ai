@@ -14,7 +14,9 @@
 //!   that has ended took five minutes;
 //! - a heartbeat is one second old, in heartbeat_age and in health_reason;
 //! - a file's mtime is 14:00 UTC on 2026-10-24 plus a minute for each batch before the one that first held the
-//!   file as it is, and a run's files are in the order of that time, then of their names.
+//!   file as it is, and a run's files are in the order of that time, then of their names: the order serve promises
+//!   by the real times, oldest first and by name within a second, which is checked of each list it sent before the
+//!   stand-ins replace them, since the app takes the last file for the newest.
 
 use std::path::Path;
 
@@ -38,11 +40,12 @@ const START: i64 = 1_792_850_400;
 
 /// The recording of batches, as the module comment has it. project is the directory serve was asked for, and
 /// normalizer the world's, which learns the batches' runs here. Panics on an event that is neither a record nor a
-/// files event, on more runs than RUN_IDS names, and on a placeholder of the normalizer's this module has no
-/// stand-in for: something new that differs between two recordings, which needs one.
+/// files event, on files serve sent in another order than oldest first and by name within a second, on more runs
+/// than RUN_IDS names, and on a placeholder of the normalizer's this module has no stand-in for: something new that
+/// differs between two recordings, which needs one.
 pub fn recording(batches: &[Batch], normalizer: &mut Normalizer, project: &Path) -> Value {
-    let sent: Vec<Value> = batches.iter().flat_map(|b| b.events.iter().map(|(_, payload)| payload.clone())).collect();
-    normalizer.learn(&Value::Array(sent));
+    let payloads: Vec<Value> = batches.iter().flat_map(|b| b.events.iter().map(|(_, payload)| payload.clone())).collect();
+    normalizer.learn(&Value::Array(payloads));
     // By run and file name, the mtime serve last sent and the number of the batch that first held it.
     let mut versions: Map<(i64, usize)> = Map::new();
     let mut out = Vec::new();
@@ -50,15 +53,19 @@ pub fn recording(batches: &[Batch], normalizer: &mut Normalizer, project: &Path)
         // By run, in the order the batch first names them, its last record and last files.
         let mut last: Map<(Option<Value>, Option<Value>)> = Map::new();
         for (kind, payload) in &batch.events {
+            let part = match kind.as_str() {
+                "record" | "files" => at(payload, kind).clone(),
+                _ => panic!("serve sent a {kind} event after: {}: {payload}", batch.after),
+            };
             let run = str_at(payload, "run").to_string();
             if last.get(&run).is_none() {
                 last.insert(run.clone(), (None, None));
             }
             let entry = last.get_mut(&run).expect("the run's entry");
-            match kind.as_str() {
-                "record" => entry.0 = Some(at(payload, "record").clone()),
-                "files" => entry.1 = Some(at(payload, "files").clone()),
-                _ => panic!("serve sent a {kind} event after: {}: {payload}", batch.after),
+            if kind == "record" {
+                entry.0 = Some(part);
+            } else {
+                entry.1 = Some(part);
             }
         }
         let mut events = Vec::new();
@@ -69,18 +76,25 @@ pub fn recording(batches: &[Batch], normalizer: &mut Normalizer, project: &Path)
                 events.push(object([("kind", "record".into()), ("run", run_id.as_str().into()), ("record", record)]));
             }
             if let Some(files) = files {
-                let mut listed: Vec<(usize, String)> = Vec::new();
-                for file in files.as_array().expect("a files event's files") {
-                    let (name, mtime) = (str_at(file, "name"), at(file, "mtime").as_i64().expect("an mtime"));
+                let as_sent: Vec<(i64, &str)> = files
+                    .as_array()
+                    .expect("a files event's files")
+                    .iter()
+                    .map(|file| (at(file, "mtime").as_i64().expect("an mtime"), str_at(file, "name")))
+                    .collect();
+                assert!(as_sent.is_sorted(), "serve sent files not oldest first after: {}: {files}", batch.after);
+                // Each file's name behind the number of the batch that first held it as it is.
+                let mut listed: Vec<(usize, &str)> = Vec::new();
+                for (mtime, name) in as_sent {
                     let key = format!("{run}/{name}");
-                    if versions.get(&key).is_none_or(|(sent, _)| *sent != mtime) {
+                    if versions.get(&key).is_none_or(|(last_mtime, _)| *last_mtime != mtime) {
                         versions.insert(key.clone(), (mtime, n));
                     }
-                    listed.push((versions.get(&key).expect("the file's version").1, name.to_string()));
+                    listed.push((versions.get(&key).expect("the file's version").1, name));
                 }
                 listed.sort();
-                let files = listed.iter().map(|(batch, name)| {
-                    object([("name", name.as_str().into()), ("mtime", (START + 60 * *batch as i64).into())])
+                let files = listed.iter().map(|(first_held, name)| {
+                    object([("name", (*name).into()), ("mtime", (START + 60 * *first_held as i64).into())])
                 });
                 events.push(object([("kind", "files".into()), ("run", run_id.as_str().into()), ("files", files.collect())]));
             }
@@ -122,16 +136,16 @@ fn stand_in_turn(turn: &Value, k: usize, project: &Path) -> Value {
 /// text as the normalizer wrote it, with each placeholder replaced by its stand-in. Panics on one it has none for.
 fn stand_in_text(text: &str, project: &Path) -> String {
     let mut out = text.replace(&project.to_string_lossy().replace(&project.parent().expect("the world").to_string_lossy().into_owned(), "<world>"), "/home/me/proj");
-    for (n, id) in RUN_IDS.iter().enumerate() {
-        out = out.replace(&format!("<run:{}>", n + 1), id).replace(&format!("<key:{}>", n + 1), &id[id.len() - 6..]);
+    for (k, id) in RUN_IDS.iter().enumerate() {
+        out = out.replace(&format!("<run:{}>", k + 1), id).replace(&format!("<key:{}>", k + 1), &id[id.len() - 6..]);
     }
     out = out.replace("<host>", "devbox").replace("<duration>", "1s");
     while let Some((before, rest)) = out.split_once("<pid:") {
-        let Some((n, after)) = rest.split_once('>') else { break };
-        let n: i64 = n.parse().unwrap_or_else(|_| panic!("a pid of no engine invocation in {text:?}"));
-        out = format!("{before}{}{after}", 4000 + n);
+        let Some((invocation, behind)) = rest.split_once('>') else { break };
+        let invocation: i64 = invocation.parse().unwrap_or_else(|_| panic!("a pid of no engine invocation in {text:?}"));
+        out = format!("{before}{}{behind}", 4000 + invocation);
     }
-    let placeholder = out.find('<').filter(|at| out[*at..].contains('>'));
+    let placeholder = out.find('<').filter(|start| out[*start..].contains('>'));
     assert!(placeholder.is_none(), "no stand-in for the placeholder in {text:?}; app_recording.rs needs one");
     out
 }

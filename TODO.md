@@ -661,3 +661,13 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `World::make_bin` (`engine/e2e/tests/e2e/world.rs`) and `put_executable` (`ui/src-tauri/src/lib.rs`). Raised by
   cross-review 123 (F2, nit): "A correction to the writer has to land in all four, and a copy that is missed brings
   the flake back in that crate." Closes with one writer in the test-support crate the entry above would make.
+- **The desktop app's recorder reads the e2e Normalizer's placeholders back out of its text, and folds events as
+  `last_by_run` does.** Raised by cross-review 166 (F9, nit): "`<run:N>`, `<key:N>`, `<pid:`, `<host>`,
+  `<duration>`, `<seconds>`, `<time>` and `<world>` are spelt here as well as in normalize.rs, and line 134 takes
+  any `<…>` left in any record string for an unknown placeholder: a task, a BLOCKED question or an error with angle
+  brackets in it panics with "no stand-in for the placeholder" once the scenario holds one"
+  (`stand_in_text`, `engine/e2e/tests/e2e/app_recording.rs`); and (F8, nit) "`app_recording::recording` folds "last
+  record, last files per run" as `last_by_run` does" (`engine/e2e/tests/e2e/scenarios.rs`), so a change to the fold
+  has two places. Today's scenario holds no angle bracket of its own. Closes with a Normalizer that takes the
+  replacements to write (the e2e placeholders, or the app's stand-ins) rather than text to parse again, and one
+  fold both callers shape their output from.

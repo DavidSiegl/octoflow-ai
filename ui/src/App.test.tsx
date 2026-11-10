@@ -342,12 +342,16 @@ describe("the agents", () => {
     const { agents, source } = await openAgents({});
     expect(await within(agents).findByText("the build agent has exited")).toBeInTheDocument();
 
-    // A run before its first agent: the recording has none, every run in it having started one.
+    // A run before its first agent, and one from a server before 0.51.0, whose records have no agents key: the
+    // recording has neither, every run in it having started an agent.
     const done = RECORDED[0]?.events.find((e) => e.kind === "record")?.record as Record<string, unknown>;
-    act(() => source.emit("record", { run: DONE, record: { ...done, agents: [] } }));
-    fireEvent.click(screen.getByRole("button", { name: "‹ Runs" }));
-    fireEvent.click(row(DONE));
-    expect(within(screen.getByRole("region", { name: "agents" })).getByText("No agent has started yet.")).toBeInTheDocument();
+    const keyless = Object.fromEntries(Object.entries(done).filter(([key]) => key !== "agents"));
+    for (const record of [{ ...done, agents: [] }, keyless]) {
+      act(() => source.emit("record", { run: DONE, record }));
+      fireEvent.click(screen.getByRole("button", { name: "‹ Runs" }));
+      fireEvent.click(row(DONE));
+      expect(within(screen.getByRole("region", { name: "agents" })).getByText("No agent has started yet.")).toBeInTheDocument();
+    }
   });
 });
 

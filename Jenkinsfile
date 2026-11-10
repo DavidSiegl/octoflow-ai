@@ -157,7 +157,8 @@ pipeline {
                 // A quality build (GIT_REF set) leaves the e2e scenarios out, by a nextest filter on their test binary,
                 // e2e, so that the docs check beside them still runs, when its change, against HEAD^, the run's base,
                 // touches nothing they depend on: the engine and the e2e package under engine/, the Cargo workspace it
-                // builds in, the example workflows they run, and ci/, which pins the gitleaks they run. Their Python
+                // builds in, the example workflows they run, ci/, which pins the gitleaks they run, and the desktop app's
+                // recording, which the e2e binary's app_event_stream compares with what serve sends. Their Python
                 // forerunner took quality build #59 past the orchestrator's QUALITY_TIMEOUT (1299 s of 1200). A git
                 // diff that fails counts as a change, so they run. Pull request builds always run them.
                 sh '''
@@ -165,7 +166,7 @@ pipeline {
                     rm -f "$junit"
                     set --
                     if [ -n "${GIT_REF:-}" ] && git diff --quiet HEAD^ HEAD -- engine Cargo.toml Cargo.lock \
-                            rust-toolchain.toml examples ci; then
+                            rust-toolchain.toml examples ci ui/src/test/recorded-stream.json; then
                         set -- -E 'not (package(octoflow-e2e) and binary(e2e))'
                     fi
                     ci/cargo-lock.sh ${GIT_REF:+--no-wait} ci/rust-tests.sh "$@"

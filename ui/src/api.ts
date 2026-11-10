@@ -32,16 +32,9 @@ export interface AgentRef {
  * (`esc`, `enter`, `up`, `ctrl+c`). */
 export type AgentInput = { text: string } | { keys: string[] };
 
-/** The tokens of the answers an agent gave in a turn, by kind. */
-export interface TurnTokens {
-  input: number;
-  output: number;
-  cache_read: number;
-  cache_write: number;
-}
-
 /** One handoff file's turn as the run saved it (the engine's Workflow::turn_record); null means not known, or not
- * yet. `recording.test.ts` holds the keys to what the server sends. */
+ * yet. `recording.test.ts` holds the keys to what the server sends, but not those of tokens' counts, of which the
+ * recording has no example. */
 export interface Turn {
   step: string;
   role: string;
@@ -55,8 +48,10 @@ export interface Turn {
   agent: string | null;
   model: string | null;
   session: string | null;
-  /** Counted once the run is done, null until then; "unknown" when the turn's session has no usage to count. */
-  tokens: TurnTokens | "unknown" | null;
+  /** The tokens of the answers the turn's agent gave, by kind (the engine's Tokens::to_json names the kinds), counted
+   * once the run is done; "unknown" when the turn's session has no usage to count; null until the run is done, and
+   * always for a quality analysis. */
+  tokens: Record<string, number> | "unknown" | null;
   /** true for a turn whose length a human decides: an interview, or a wait for the answer to a BLOCKED report. */
   human_paced: boolean;
   started_at: string | null;

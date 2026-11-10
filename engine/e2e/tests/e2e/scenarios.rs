@@ -835,14 +835,27 @@ fn checkpoint(stream: &client::EventStream, hold: Option<&str>) -> Value {
     Value::Object(point)
 }
 
+/// Start `serve` with args and wait for its first line: the invocation's number, the host:port it listens on and
+/// its token.
+fn serve_started(w: &mut World, args: &[&str]) -> (usize, String, String) {
+    let serve = w.start(&[&["serve"], args].concat(), true);
+    w.wait_for(|| w.invocations[serve - 1].stdout().ends_with('\n'), "serve to print its address");
+    let first = serde_json::from_str::<Value>(&w.invocation(serve).stdout()).expect("serve's first line is JSON");
+    let address = str_of(&first, "url").strip_prefix("http://").expect("serve's URL is http").to_string();
+    (serve, address, str_of(&first, "token").to_string())
+}
+
+/// End the serve that is invocation serve with a SIGTERM, wait for it and return its exit status.
+fn stop_serve(w: &mut World, serve: usize) -> i32 {
+    let pid = nix::unistd::Pid::from_raw(w.invocation(serve).pid());
+    nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM).unwrap_or_else(|e| panic!("stopping serve: {e}"));
+    w.invocation(serve).wait()
+}
+
 /// serve: its endpoints and security checks, and an event stream over a run, read at each point where the run waits
 /// on an agent, and once it is done.
 pub fn serve_endpoints_and_events(w: &mut World) {
-    let serve = w.start(&["serve", "--origin", "tauri://localhost"], true);
-    w.wait_for(|| w.invocations[serve - 1].stdout().ends_with('\n'), "serve to print its address");
-    let first = serde_json::from_str::<Value>(&w.invocation(serve).stdout()).expect("serve's first line is JSON");
-    let (url, token) = (str_of(&first, "url").to_string(), str_of(&first, "token").to_string());
-    let address = url.strip_prefix("http://").expect("serve's URL is http").to_string();
+    let (serve, address, token) = serve_started(w, &["--origin", "tauri://localhost"]);
     w.normalizer.literal(&token, "<token>");
     w.normalizer.literal(&address, "<serve>");
     let cwd = quote(&w.project.to_string_lossy());
@@ -894,9 +907,8 @@ pub fn serve_endpoints_and_events(w: &mut World) {
     ] {
         requests.push(serve_request(&address, tok, &target, "GET", &[]));
     }
-    let pid = nix::unistd::Pid::from_raw(w.invocation(serve).pid());
-    nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM).unwrap_or_else(|e| panic!("stopping serve: {e}"));
-    w.invocation(serve).wait();
+    // Its exit status is in the scenario's record.
+    stop_serve(w, serve);
     w.note("requests", Value::Array(requests));
     let content_type = stream.content_type.clone().map_or(Value::Null, Value::from);
     w.note(
@@ -925,11 +937,8 @@ pub fn app_event_stream(w: &mut World) -> Vec<Batch> {
     w.agent("build", [built(1, 0)]);
     w.agent("review", [approved(1)]);
     w.run(&["run", "--", APP_TASK]);
-    let serve = w.start(&["serve"], true);
-    w.wait_for(|| w.invocations[serve - 1].stdout().ends_with('\n'), "serve to print its address");
-    let first = serde_json::from_str::<Value>(&w.invocation(serve).stdout()).expect("serve's first line is JSON");
-    let address = str_of(&first, "url").strip_prefix("http://").expect("serve's URL is http").to_string();
-    let target = format!("/events?cwd={}&token={}", quote(&w.project.to_string_lossy()), str_of(&first, "token"));
+    let (serve, address, token) = serve_started(w, &[]);
+    let target = format!("/events?cwd={}&token={token}", quote(&w.project.to_string_lossy()));
     let mut stream = client::EventStream::open(&address, &target);
 
     let mut batches: Vec<Batch> = Vec::new();
@@ -967,12 +976,11 @@ pub fn app_event_stream(w: &mut World) -> Vec<Batch> {
     std::fs::remove_dir_all(&deleted).unwrap_or_else(|e| panic!("deleting {}: {e}", deleted.display()));
     settle(w, "the finished run was deleted");
 
+    // Nothing compares this world's record, where the other scenarios' exit statuses are held.
     w.release("review");
-    w.invocation(run).wait();
+    assert_eq!(w.invocation(run).wait(), 0, "the second run's exit status");
     stream.close();
-    let pid = nix::unistd::Pid::from_raw(w.invocation(serve).pid());
-    nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM).unwrap_or_else(|e| panic!("stopping serve: {e}"));
-    w.invocation(serve).wait();
+    assert_eq!(stop_serve(w, serve), 0, "serve's exit status");
     batches
 }
 
