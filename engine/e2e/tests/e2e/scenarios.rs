@@ -10,6 +10,7 @@ use octoflow_e2e::{array_at, checkout, object, object_at};
 use serde_json::Value;
 use octoflow_engine::json::Object;
 
+use crate::app_recording::Batch;
 use crate::client;
 use crate::servers::JOB;
 use crate::world::World;
@@ -834,14 +835,27 @@ fn checkpoint(stream: &client::EventStream, hold: Option<&str>) -> Value {
     Value::Object(point)
 }
 
+/// Start `serve` with args and wait for its first line: the invocation's number, the host:port it listens on and
+/// its token.
+fn serve_started(w: &mut World, args: &[&str]) -> (usize, String, String) {
+    let serve = w.start(&[&["serve"], args].concat(), true);
+    w.wait_for(|| w.invocations[serve - 1].stdout().ends_with('\n'), "serve to print its address");
+    let first = serde_json::from_str::<Value>(&w.invocation(serve).stdout()).expect("serve's first line is JSON");
+    let address = str_of(&first, "url").strip_prefix("http://").expect("serve's URL is http").to_string();
+    (serve, address, str_of(&first, "token").to_string())
+}
+
+/// End the serve that is invocation serve with a SIGTERM, wait for it and return its exit status.
+fn stop_serve(w: &mut World, serve: usize) -> i32 {
+    let pid = nix::unistd::Pid::from_raw(w.invocation(serve).pid());
+    nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM).unwrap_or_else(|e| panic!("stopping serve: {e}"));
+    w.invocation(serve).wait()
+}
+
 /// serve: its endpoints and security checks, and an event stream over a run, read at each point where the run waits
 /// on an agent, and once it is done.
 pub fn serve_endpoints_and_events(w: &mut World) {
-    let serve = w.start(&["serve", "--origin", "tauri://localhost"], true);
-    w.wait_for(|| w.invocations[serve - 1].stdout().ends_with('\n'), "serve to print its address");
-    let first = serde_json::from_str::<Value>(&w.invocation(serve).stdout()).expect("serve's first line is JSON");
-    let (url, token) = (str_of(&first, "url").to_string(), str_of(&first, "token").to_string());
-    let address = url.strip_prefix("http://").expect("serve's URL is http").to_string();
+    let (serve, address, token) = serve_started(w, &["--origin", "tauri://localhost"]);
     w.normalizer.literal(&token, "<token>");
     w.normalizer.literal(&address, "<serve>");
     let cwd = quote(&w.project.to_string_lossy());
@@ -893,9 +907,8 @@ pub fn serve_endpoints_and_events(w: &mut World) {
     ] {
         requests.push(serve_request(&address, tok, &target, "GET", &[]));
     }
-    let pid = nix::unistd::Pid::from_raw(w.invocation(serve).pid());
-    nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM).unwrap_or_else(|e| panic!("stopping serve: {e}"));
-    w.invocation(serve).wait();
+    // Its exit status is in the scenario's record.
+    stop_serve(w, serve);
     w.note("requests", Value::Array(requests));
     let content_type = stream.content_type.clone().map_or(Value::Null, Value::from);
     w.note(
@@ -906,6 +919,69 @@ pub fn serve_endpoints_and_events(w: &mut World) {
             ("checkpoints", Value::Array(checkpoints)),
         ]),
     );
+}
+
+// -- The desktop app's recording ---------------------------------------------------------
+
+/// The task of the runs the desktop app's tests are shown.
+const APP_TASK: &str = "add a token-bucket rate limiter to the API client";
+
+/// The run the desktop app's tests replay (crate::app_recording): serve's event stream over a project whose first
+/// run is finished and approved, with a pull request, when the stream opens, and whose second run goes from its
+/// interview to its review, its Builder blocking once; then the second run's spec.md is edited and the first run
+/// deleted. Returns what the stream sent after each of those steps, once it had settled there: the batches, in order,
+/// as serve sent them. Both runs are over and serve is stopped when it returns.
+pub fn app_event_stream(w: &mut World) -> Vec<Batch> {
+    let spec = || writes("spec.md", "# Add a token-bucket rate limiter\n\n- 10 requests a second\n");
+    w.agent("spec", [spec()]);
+    w.agent("build", [built(1, 0)]);
+    w.agent("review", [approved(1)]);
+    w.run(&["run", "--", APP_TASK]);
+    let (serve, address, token) = serve_started(w, &[]);
+    let target = format!("/events?cwd={}&token={token}", quote(&w.project.to_string_lossy()));
+    let mut stream = client::EventStream::open(&address, &target);
+
+    let mut batches: Vec<Batch> = Vec::new();
+    // Closes the batch after a step: the events since the batch before, once a poll has sent nothing more.
+    let mut settle = |w: &World, after: &'static str| {
+        let t = Instant::now();
+        w.wait_for(|| stream.settled_since(t), &format!("the event stream to settle after: {after}"));
+        let sent: usize = batches.iter().map(|b| b.events.len()).sum();
+        batches.push(Batch { after, events: stream.events().split_off(sent) });
+    };
+    settle(w, "the stream opened");
+    w.agent("spec", [spec().hold("spec")]);
+    let question = writes("build-1.md", "BLOCKED: should the limit be per client or global?\n");
+    w.agent("build", [question.hold("build"), built(1, 0).hold("answer")]);
+    w.agent("review", [approved(1).hold("review")]);
+    let run = w.start(&["run", "--", APP_TASK], true);
+    for (hold, after) in [
+        ("spec", "a run started its interview"),
+        ("build", "the spec was written and the build started"),
+        ("answer", "the Builder blocked"),
+        ("review", "the build was reported and the review started"),
+    ] {
+        w.wait_reached(hold);
+        settle(w, after);
+        if hold != "review" {
+            w.release(hold);
+        }
+    }
+    let run_dir = |n: usize| octoflow_e2e::run_dir(&w.project, &w.run_key(n));
+    let edited = run_dir(2).join("spec.md");
+    std::fs::write(&edited, "# Add a token-bucket rate limiter\n\n- 20 requests a second\n")
+        .unwrap_or_else(|e| panic!("editing {}: {e}", edited.display()));
+    settle(w, "the spec was edited");
+    let deleted = run_dir(1);
+    std::fs::remove_dir_all(&deleted).unwrap_or_else(|e| panic!("deleting {}: {e}", deleted.display()));
+    settle(w, "the finished run was deleted");
+
+    // Nothing compares this world's record, where the other scenarios' exit statuses are held.
+    w.release("review");
+    assert_eq!(w.invocation(run).wait(), 0, "the second run's exit status");
+    stream.close();
+    assert_eq!(stop_serve(w, serve), 0, "serve's exit status");
+    batches
 }
 
 // -- The other commands -----------------------------------------------------------------

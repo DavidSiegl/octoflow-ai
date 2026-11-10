@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { RunRecord } from "./api";
+import type { RunRecord, Turn } from "./api";
 import { applyEvent, formatAge, formatRound, heartbeatAge, NO_RUNS, outcome, prLabel, progress } from "./runs";
 
 const STEPS = [
@@ -17,7 +17,10 @@ function record(overrides: Partial<RunRecord> = {}): RunRecord {
   };
 }
 
-const turn = (step: string) => ({ step, role: step, round: 1, started_at: "", ended_at: null });
+const turn = (step: string): Turn => ({
+  step, role: step, round: 1, quality_round: 0, file: `${step}-1.md`, agent: "claude", model: null, session: null,
+  tokens: null, human_paced: false, started_at: null, ended_at: null, seconds: null,
+});
 
 describe("progress", () => {
   it("marks the steps before the phase done", () => {

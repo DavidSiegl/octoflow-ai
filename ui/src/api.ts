@@ -32,15 +32,43 @@ export interface AgentRef {
  * (`esc`, `enter`, `up`, `ctrl+c`). */
 export type AgentInput = { text: string } | { keys: string[] };
 
+/** One handoff file's turn as the run saved it (the engine's Workflow::turn_record); null means not known, or not
+ * yet. `recording.test.ts` holds the keys to what the server sends, but not those of tokens' counts, of which the
+ * recording has no example. */
 export interface Turn {
   step: string;
   role: string;
   round: number;
-  started_at: string;
+  /** The quality round the turn belongs to; 0 for a step the quality gate does not judge. */
+  quality_round: number;
+  /** The handoff file the turn writes, by its name in the run directory. */
+  file: string;
+  /** The harness, model and session the turn's agent ran in; all null for a quality analysis, which runs no agent,
+   * model also for the harness's own, and session for a turn that ended in another session than it started in. */
+  agent: string | null;
+  model: string | null;
+  session: string | null;
+  /** The tokens of the answers the turn's agent gave, by kind (the engine's Tokens::to_json names the kinds), counted
+   * once the run is done; "unknown" when the turn's session has no usage to count; null until the run is done, and
+   * always for a quality analysis. */
+  tokens: Record<string, number> | "unknown" | null;
+  /** true for a turn whose length a human decides: an interview, or a wait for the answer to a BLOCKED report. */
+  human_paced: boolean;
+  started_at: string | null;
   ended_at: string | null;
+  /** From started_at to ended_at; null while either is. */
+  seconds: number | null;
 }
 
-/** One run as `list --json` prints it (orchestrator.py's run_record); null means the key does not apply. */
+/** One verdict a verdict step gave: the round it judged, the step's id, and APPROVE or CHANGES_REQUESTED. */
+export interface StepVerdict {
+  round: number;
+  step: string;
+  verdict: string;
+}
+
+/** One run as `list --json` prints it (run_record in the engine's cli/listing.rs, which says what each key holds);
+ * null means the key does not apply. `recording.test.ts` holds the keys to what the server sends. */
 export interface RunRecord {
   id: string;
   key: string;
@@ -60,6 +88,8 @@ export interface RunRecord {
   heartbeat_age: number;
   waiting: { reason: "blocked" | "interview" | "stale"; detail: string } | null;
   verdict: string | null;
+  /** Each verdict a verdict step gave, in the order given; absent from a server before 0.58.0. */
+  verdicts?: StepVerdict[];
   error: string | null;
   closed: string | null;
   branch: string | null;

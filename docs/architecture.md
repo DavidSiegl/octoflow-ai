@@ -340,7 +340,9 @@ layout), with no Python of its own.
   HTML skipped, and fetches it again whenever its mtime changes.
 - **Tests.** Vitest with React Testing Library in jsdom: `App.test.tsx` replays `test/recorded-stream.json`
   through `test/fakes.ts`'s `FakeEventSource`, with `fetch` stubbed. The recording is the events a real
-  `serve` sent over a scripted run. `runs.test.ts` covers the pure helpers. `cargo test -p octoflow-ui` starts
+  `serve` sent over a scripted run: the e2e test `app_event_stream` (below) fails when serve no longer sends them,
+  and `recording.test.ts` when a record in them has other keys than `api.ts`'s `RunRecord` and the types in it, so a
+  key added or dropped on either side fails a build. `runs.test.ts` covers the pure helpers. `cargo test -p octoflow-ui` starts
   and stops a real sidecar.
 
 ## Tests
@@ -364,8 +366,12 @@ changed between them; the run directory's files; and both repositories' refs, co
 whose record differs from `recorded/<scenario>.json` fails, naming where. The recordings are the Python engine's,
 made by the Python harness this replaced (octoflow-without-python tickets 01 and 02) before rust-engine ticket 11
 removed that engine. `E2E_RECORD=1 cargo nextest run -p octoflow-e2e` writes recordings instead, from the Rust
-engine, for a scenario added since or a change to what the engine does, whose recording is then a review of it. A
-kill ends the engine's group and each process below it, since the engine runs each command in a group of its own.
+engine, for a scenario added since or a change to what the engine does, whose recording is then a review of it. One
+test beside the scenarios, `app_event_stream`, keeps a recording outside the package:
+`ui/src/test/recorded-stream.json`, the events the desktop app's tests replay, which `tests/e2e/app_recording.rs`
+folds from what a real `serve` sent after each step of two scripted runs, with fixed stand-ins for what the clock
+decides. A kill ends the engine's group and each process below it, since the engine runs each command in a group of
+its own.
 
 The package's other test, `tests/docs/`, holds the README and `docs/` to the code: each command the docs run takes the
 flags they give it, the README's flag table gives each flag the commands that take it, every flag is documented, the
