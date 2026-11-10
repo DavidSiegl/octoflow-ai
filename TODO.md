@@ -102,9 +102,10 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   Code documents a way to ask whether a folder is trusted.
 - **The desktop app does not say which verdict step sent a run back.** `list` names it (`run_outcome`,
   `engine/src/cli/listing.rs`) and serve's `/runs` carries `verdicts`, but the app's `outcome` (`ui/src/runs.ts`)
-  shows only `verdict`, and its `RunRecord` (`ui/src/api.ts`) has no `verdicts`. Left out of acceptance-verdict
-  ticket 01 (2026-11-04): this checkout had no `node_modules` to run the app's tests with. Closes with
-  `verdicts?` on `RunRecord` and `outcome` naming the last step as `run_outcome` does, with a `runs.test.ts` case.
+  shows only `verdict`. Left out of acceptance-verdict ticket 01 (2026-11-04): this checkout had no `node_modules`
+  to run the app's tests with. `RunRecord` (`ui/src/api.ts`) has had `verdicts?` since app-serve-contract/01
+  (2026-11-10), which left the display here. Closes with `outcome` naming the last step as `run_outcome` does, with
+  a `runs.test.ts` case.
 - **The proofs note names the Reviewer whatever step wrote the proofs.** `PROOFS_NOTE` (`engine/src/prompts.rs`)
   tells the step a round loops back to "The Reviewer backed findings with tests". In a workflow whose proofs come
   from a verdict step of another role, that names a role the run does not have, the mismatch acceptance-verdict
