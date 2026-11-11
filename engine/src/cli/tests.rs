@@ -568,10 +568,10 @@ fn harness_precedence() {
     let cases: [(&[&str], String); 8] = [
         (&[], EVERY_ROLE_CLAUDE.into()),
         (&["--agent", "codex"], every("codex")),
-        (&["--agent", "gemini", "--role-agent", "review=pi"], r#"{"spec":"gemini","build":"gemini","review":"pi"}"#.into()),
+        (&["--agent", "agy", "--role-agent", "review=pi"], r#"{"spec":"agy","build":"agy","review":"pi"}"#.into()),
         (&["--role-agent", "build=opencode"], r#"{"spec":"claude","build":"opencode","review":"claude"}"#.into()),
         (&["--workflow", "coded"], r#"{"spec":"claude","build":"claude","review":"codex"}"#.into()),
-        (&["--workflow", "coded", "--agent", "gemini"], every("gemini")),
+        (&["--workflow", "coded", "--agent", "agy"], every("agy")),
         (&["--workflow", "coded", "--role-agent", "review=pi"], r#"{"spec":"claude","build":"claude","review":"pi"}"#.into()),
         (&["--workflow", "coded", "--agent", "pi", "--role-agent", "spec=claude"], r#"{"spec":"claude","build":"pi","review":"pi"}"#.into()),
     ];

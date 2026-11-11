@@ -192,8 +192,14 @@ fn a_model_or_agent_for_a_role_not_in_the_workflow() {
     let e = replaced(&quick(), |s| s.agents = roles(&[("review", "cursor")])).unwrap_err();
     assert_eq!(
         e,
-        "workflow quick: role review: agent cursor is not a harness this orchestrator supports; it takes claude, \
-         codex, gemini, opencode, pi"
+        "workflow quick: role review: agent cursor is not a harness this orchestrator supports; it takes agy, \
+         claude, codex, opencode, pi"
+    );
+    let e = replaced(&quick(), |s| s.agents = roles(&[("review", "gemini")])).unwrap_err();
+    assert_eq!(
+        e,
+        "workflow quick: role review: agent gemini is not a harness this orchestrator supports any more; agy \
+         replaced it"
     );
 }
 

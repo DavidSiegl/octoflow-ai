@@ -73,7 +73,7 @@ fn every_flag_of_run() {
     let args = run(&[
         "--machine", "box", "--cwd", "/p", "--max-rounds", "4", "--timeout", "90", "--permission-mode", "plan",
         "--model", "m", "--spec-model", "s", "--review-model", "r", "--role-model", "build=b", "--role-model",
-        "build=b2", "--agent", "codex", "--role-agent", "review=gemini", "--max-quality-rounds", "2",
+        "build=b2", "--agent", "codex", "--role-agent", "review=agy", "--max-quality-rounds", "2",
         "--workflow-file", "/w.toml", "--worktree", "--quality-gate", "f/job", "--spec", "/s.md", "--no-pr", "task",
     ]);
     assert_eq!(args.target, Target { machine: Some("box".into()), cwd: Some("/p".into()) });
@@ -83,7 +83,7 @@ fn every_flag_of_run() {
     assert_eq!((s.permission_mode.as_deref(), s.model.as_deref(), s.agent.as_deref()), (Some("plan"), Some("m"), Some("codex")));
     assert_eq!(s.label_models, [pair("spec", "s"), pair("review", "r")]);
     assert_eq!(s.role_model, [pair("build", "b"), pair("build", "b2")]);
-    assert_eq!(s.role_agent, [pair("review", "gemini")]);
+    assert_eq!(s.role_agent, [pair("review", "agy")]);
     assert_eq!((args.starts.workflow_file.as_deref(), args.starts.worktree), (Some("/w.toml"), true));
     assert_eq!(args.starts.quality_gate.as_deref(), Some("f/job"));
     assert_eq!((args.spec.as_deref(), args.no_pr, args.task.as_deref()), (Some("/s.md"), true, Some("task")));
@@ -139,7 +139,7 @@ fn usage_errors_exit_2_naming_the_problem() {
         (&["judged-in-quality", "--quality-gate", "local", "--target", "main"], "a top-level job named local is /local"),
         (&["run", "--role-model", "build", "t"], "expected ROLE=MODEL, not \"build\""),
         (&["run", "--role-model", "=m", "t"], "expected ROLE=MODEL"),
-        (&["run", "--role-agent", "build=vim", "t"], "expected ROLE=KIND, where KIND is one of claude, codex, gemini, opencode, pi; not \"build=vim\""),
+        (&["run", "--role-agent", "build=vim", "t"], "expected ROLE=KIND, where KIND is one of agy, claude, codex, opencode, pi; not \"build=vim\""),
         (&["run", "--agent", "vim", "t"], "vim"),
         (&["run", "--max-rounds", "two", "t"], "two"),
         (&["run", "--workflow", "default", "--workflow-file", "/w.toml", "t"], "--workflow-file"),
@@ -268,7 +268,7 @@ fn unknown_kinds_are_usage_errors() {
     ];
     for argv in argvs {
         let (message, status) = refused(argv);
-        assert!(message.contains("claude, codex, gemini, opencode, pi"), "{argv:?}: {message}");
+        assert!(message.contains("agy, claude, codex, opencode, pi"), "{argv:?}: {message}");
         assert_eq!(status, 2);
     }
 }
@@ -358,6 +358,10 @@ fn help_names_the_flags_python_names() {
         }
         if name == "doctor" {
             python.extend(["--setup-gate".into(), "--quality-gate".into()]);
+        }
+        // --permission-mode's help names agy's flags where Python's named gemini's (GitHub issue #125).
+        if python.remove("--approval-mode") {
+            python.extend(["--mode".into(), "--dangerously-skip-permissions".into()]);
         }
         assert_eq!(flags_in(&help), python, "{name:?}'s help:\n{help}");
     }

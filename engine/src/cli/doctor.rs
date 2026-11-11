@@ -3,8 +3,9 @@
 //! GUI (the rust-engine spec's Decisions).
 
 use super::{Local, Target};
-use crate::constants::{AGENT_KINDS, DEFAULT_AGENT, EXIT_ERROR, GITLEAKS_INSTALL, NETWORK_TIMEOUT, REMOTE};
+use crate::constants::{DEFAULT_AGENT, EXIT_ERROR, GITLEAKS_INSTALL, NETWORK_TIMEOUT, REMOTE};
 use crate::error::OrchestratorError;
+use crate::harness::{Harness, HARNESSES};
 use crate::herdr::ProcessHerdr;
 use crate::host::{checked, decoded, Completed, ExecError, Host, ProcessHost, DEFAULT_TIMEOUT};
 use crate::local_gate;
@@ -187,7 +188,8 @@ pub fn check_setup(
         });
     }
     let mut integrations = IntegrationStatus::new(agents);
-    for kind in AGENT_KINDS {
+    for Harness { kind, integration, .. } in &HARNESSES {
+        let kind = *kind;
         let (level, note) = if kind == DEFAULT_AGENT {
             (Level::Required, String::new())
         } else {
@@ -197,9 +199,9 @@ pub fn check_setup(
         check(&mut checks, &format!("{kind} CLI"), level, &fix, on_machine.as_ref(), &note, &mut || {
             on_path(agents, kind)
         });
-        let fix = format!("herdr integration install {kind}");
+        let fix = format!("herdr integration install {integration}");
         check(&mut checks, &format!("{kind} integration"), level, &fix, Some(&found), &note, &mut || {
-            integrations.current(kind)
+            integrations.current(integration)
         });
     }
     let fix = format!("install git {} or later", dotted(&GIT_MIN_VERSION));
@@ -380,10 +382,10 @@ fn version_number(text: &str) -> Option<&str> {
     None
 }
 
-/// The states `herdr integration status` gives the harnesses on a host, asked once, when first needed.
+/// The states `herdr integration status` gives the integrations on a host, asked once, when first needed.
 struct IntegrationStatus<'h> {
     host: &'h dyn Host,
-    /// By harness kind; or why herdr could not be asked; None until asked.
+    /// By integration name (Harness::integration); or why herdr could not be asked; None until asked.
     states: Option<Result<Vec<(String, String)>, String>>,
 }
 
@@ -392,9 +394,9 @@ impl<'h> IntegrationStatus<'h> {
         IntegrationStatus { host, states: None }
     }
 
-    /// The state of kind's integration when it is current, such as "current (v10)". Unmet: it is in any other, or not
-    /// listed, and with herdr's fix when herdr cannot be asked.
-    fn current(&mut self, kind: &str) -> Probed {
+    /// The state of the integration of the name when it is current, such as "current (v10)". Unmet: it is in any
+    /// other, or not listed, and with herdr's fix when herdr cannot be asked.
+    fn current(&mut self, name: &str) -> Probed {
         let host = self.host;
         let states = self.states.get_or_insert_with(|| {
             host.check(&["herdr", "integration", "status"], None, DEFAULT_TIMEOUT)
@@ -404,8 +406,8 @@ impl<'h> IntegrationStatus<'h> {
         let states = states.as_ref().map_err(|e| {
             Unmet::with_fix(e.clone(), "update herdr with `herdr update`, then check that `herdr integration status` runs")
         })?;
-        let Some((_, state)) = states.iter().find(|(k, _)| k == kind) else {
-            return Err(Unmet::new(format!("herdr integration status does not list {kind}")));
+        let Some((_, state)) = states.iter().find(|(n, _)| n == name) else {
+            return Err(Unmet::new(format!("herdr integration status does not list {name}")));
         };
         if !state.starts_with("current") {
             return Err(Unmet::new(state.clone()));
@@ -414,9 +416,9 @@ impl<'h> IntegrationStatus<'h> {
     }
 }
 
-/// Each harness's integration state, by its kind, from `herdr integration status`, whose lines read
-/// `<kind>: current (vN) (<path>)`, `<kind>: not installed (<path>)` or the like for another state, and a kind may
-/// carry a note, as `letta (experimental): ...`. The state is what follows the colon, the path left out. A kind listed
+/// Each integration's state, by its name, from `herdr integration status`, whose lines read
+/// `<name>: current (vN) (<path>)`, `<name>: not installed (<path>)` or the like for another state, and a name may
+/// carry a note, as `letta (experimental): ...`. The state is what follows the colon, the path left out. A name listed
 /// twice has its last state. Python's integration_states and its pattern `(\S+)[^:]*: (.*?)(?: \([^()]*\))?`, a blank
 /// (`\S`'s complement) being what char::is_whitespace takes.
 pub fn integration_states(listing: &str) -> Vec<(String, String)> {
@@ -432,10 +434,10 @@ pub fn integration_states(listing: &str) -> Vec<(String, String)> {
     states
 }
 
-/// The kind and state one stripped line of `herdr integration status` gives, as integration_states reads it; None
+/// The name and state one stripped line of `herdr integration status` gives, as integration_states reads it; None
 /// for a line in no such form.
 fn integration_line(line: &str) -> Option<(String, String)> {
-    // The kind is the longest run of non-blanks at the start after which the first colon is followed by a space.
+    // The name is the longest run of non-blanks at the start after which the first colon is followed by a space.
     let run = line.char_indices().find(|&(_, c)| c.is_whitespace()).map_or(line.len(), |(i, _)| i);
     let ends = line[..run].char_indices().map(|(i, c)| i + c.len_utf8()).rev();
     for end in ends {

@@ -524,8 +524,8 @@ fn settings_args() -> Vec<Arg> {
             .help(format!("seconds a Builder or Reviewer turn may take (default {DEFAULT_TURN_TIMEOUT})")),
         Arg::new("permission-mode").long("permission-mode").help(
             "permission mode for every role, by Claude Code's names, e.g. auto or acceptEdits. claude takes any as \
-             it is. gemini gets --approval-mode default, auto_edit or yolo for default, acceptEdits or \
-             bypassPermissions; codex nothing for default, --full-auto for acceptEdits, \
+             it is. agy gets nothing for default, --mode accept-edits for acceptEdits, \
+             --dangerously-skip-permissions for bypassPermissions and --mode plan for plan; codex nothing for default, --full-auto for acceptEdits, \
              --dangerously-bypass-approvals-and-sandbox for bypassPermissions and --sandbox read-only for plan. Any \
              other mode, and every mode for opencode and pi, is not passed, and the log says so",
         ),

@@ -7,6 +7,12 @@ use crate::constants::DEFAULT_AGENT;
 use crate::test_support::{oracle, unhex};
 use crate::json::Object;
 
+/// The harness this engine has and the Python engine has not: agy, which replaced Python's gemini (GitHub issue #125).
+/// Each comparison with the oracle leaves it out, and PYTHON_ONLY; agy_takes_ticket_01_s_flags tests agy.
+const OURS_ONLY: &str = "agy";
+/// The harness the Python engine has and this one has not, as OURS_ONLY replaced it.
+const PYTHON_ONLY: &str = "gemini";
+
 /// The cases harness.json holds of kind.
 fn cases(kind: &str) -> Vec<Vec<Value>> {
     let recorded = oracle("harness.json");
@@ -29,12 +35,14 @@ fn every_harness_s_tables_are_the_python_engine_s() {
     let recorded = oracle("harness.json");
     let constants = recorded.get("constants").unwrap();
     let kinds: Vec<&str> = HARNESSES.iter().map(|h| h.kind).collect();
-    assert_eq!(strings(constants.get("AGENT_KINDS").unwrap()), kinds);
     assert_eq!(kinds, AGENT_KINDS);
+    let mut python_kinds = strings(constants.get("AGENT_KINDS").unwrap());
+    python_kinds.retain(|k| k != PYTHON_ONLY);
+    assert_eq!(python_kinds, kinds.iter().filter(|k| **k != OURS_ONLY).copied().collect::<Vec<_>>());
     assert_eq!(constants.get("DEFAULT_AGENT").and_then(Value::as_str), Some(DEFAULT_AGENT));
     // Python's four tables, as the rows here make them.
     let (mut permissions, mut resume, mut add_dir, mut logs) = (Object::new(), Object::new(), Object::new(), Object::new());
-    for h in &HARNESSES {
+    for h in HARNESSES.iter().filter(|h| h.kind != OURS_ONLY) {
         if let Permissions::Equivalents(table) = h.permissions {
             let mut modes = Object::new();
             for (mode, args) in table {
@@ -51,10 +59,16 @@ fn every_harness_s_tables_are_the_python_engine_s() {
             logs.insert(h.kind.into(), Value::from(log.glob));
         }
     }
-    assert_eq!(constants.get("PERMISSION_ARGS"), Some(&Value::Object(permissions)));
-    assert_eq!(constants.get("RESUME_ARGS"), Some(&Value::Object(resume)));
-    assert_eq!(constants.get("ADD_DIR_ARGS"), Some(&Value::Object(add_dir)));
-    assert_eq!(constants.get("SESSION_LOGS"), Some(&Value::Object(logs)));
+    // The Python table of the name, without its PYTHON_ONLY row.
+    let python = |name: &str| {
+        let mut table = constants.get(name).and_then(Value::as_object).cloned().unwrap();
+        table.remove(PYTHON_ONLY);
+        Value::Object(table)
+    };
+    assert_eq!(python("PERMISSION_ARGS"), Value::Object(permissions));
+    assert_eq!(python("RESUME_ARGS"), Value::Object(resume));
+    assert_eq!(python("ADD_DIR_ARGS"), Value::Object(add_dir));
+    assert_eq!(python("SESSION_LOGS"), Value::Object(logs));
     // Only codex resumes by a subcommand, and its arguments start with it (launch below).
     assert!(HARNESSES.iter().all(|h| matches!(h.resume, Resume::Subcommand(_)) == (h.kind == "codex")));
 }
@@ -63,7 +77,7 @@ fn every_harness_s_tables_are_the_python_engine_s() {
 fn each_mode_s_arguments_in_each_harness_are_the_python_engine_s() {
     let cases = cases("permission_args");
     assert_eq!(cases.len(), 5 * 7);
-    for case in cases {
+    for case in cases.iter().filter(|case| case[0] != PYTHON_ONLY) {
         let [kind, mode, expected] = &case[..] else { panic!("{case:?}") };
         let (kind, mode) = (kind.as_str().unwrap(), mode.as_str().unwrap());
         let expected = (!expected.is_null()).then(|| strings(expected));
@@ -77,7 +91,7 @@ fn the_launch_of_every_combination_is_the_python_engine_s() {
     // opencode 2.0.24's TUI does not take.
     let cases = cases("launch_args");
     assert_eq!(cases.len(), 5 * 9 * 3 * 3 * 3);
-    for case in cases.iter().filter(|case| case[0] != "opencode") {
+    for case in cases.iter().filter(|case| case[0] != "opencode" && case[0] != PYTHON_ONLY) {
         let [kind, mode, model, session, extra, expected] = &case[..] else { panic!("{case:?}") };
         let h = harness(kind.as_str().unwrap()).unwrap();
         let launch = h.launch(text(mode), text(model), text(session), text(extra));
@@ -134,9 +148,9 @@ fn the_run_directory_is_granted_where_the_harness_can() {
     // opencode_takes_its_model_and_grant_as_config.
     let d = "/proj/.orchestrator/runs/r";
     let grants: [(&str, &[&str]); 4] = [
+        ("agy", &["--add-dir", d]),
         ("claude", &["--add-dir", d]),
         ("codex", &["--add-dir", d]),
-        ("gemini", &["--include-directories", d]),
         ("pi", &[]),
     ];
     for (kind, grant) in grants {
@@ -154,8 +168,39 @@ fn the_run_directory_is_granted_where_the_harness_can() {
 fn an_unknown_harness_is_refused_naming_those_there_are() {
     assert_eq!(
         harness("cursor").unwrap_err().0,
-        "agent cursor is not a harness this orchestrator supports; it takes claude, codex, gemini, opencode, pi"
+        "agent cursor is not a harness this orchestrator supports; it takes agy, claude, codex, opencode, pi"
     );
+}
+
+#[test]
+fn gemini_is_refused_naming_agy_which_replaced_it() {
+    assert_eq!(
+        harness("gemini").unwrap_err().0,
+        "agent gemini is not a harness this orchestrator supports any more; agy replaced it"
+    );
+}
+
+#[test]
+fn agy_takes_ticket_01_s_flags() {
+    // The flags agy 1.5.5's --help gives, tried together by hand (GitHub issue #124).
+    let h = harness("agy").unwrap();
+    let args = |mode| h.launch(mode, Some("m"), Some("c-1"), Some("/run")).args;
+    let rest = ["--conversation", "c-1", "--model", "m", "--add-dir", "/run"];
+    let cases: [(Option<&str>, &[&str]); 6] = [
+        (None, &[]),
+        (Some("default"), &[]),
+        (Some("acceptEdits"), &["--mode", "accept-edits"]),
+        (Some("bypassPermissions"), &["--dangerously-skip-permissions"]),
+        (Some("plan"), &["--mode", "plan"]),
+        // A mode agy has no equivalent of is not passed.
+        (Some("auto"), &[]),
+    ];
+    for (mode, permission) in cases {
+        let expected: Vec<String> = permission.iter().chain(&rest).map(|a| a.to_string()).collect();
+        assert_eq!(args(mode), expected, "{mode:?}");
+    }
+    assert_eq!(h.launch(None, None, None, None), Launch { args: vec![], env: vec![] });
+    assert_eq!(h.session_log, None);
 }
 
 #[test]

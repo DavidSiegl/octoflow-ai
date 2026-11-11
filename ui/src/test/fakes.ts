@@ -112,7 +112,7 @@ export const OPTIONS: RunOptions = {
     },
     { name: "broken", error: "workflow broken: no steps" },
   ],
-  agents: ["claude", "codex", "gemini", "opencode", "pi"],
+  agents: ["agy", "claude", "codex", "opencode", "pi"],
 };
 
 /** What a stubbed server's /workflows and POST /run answer: `options` (OPTIONS unless given), or a 500 with

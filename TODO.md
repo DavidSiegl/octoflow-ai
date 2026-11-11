@@ -572,11 +572,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   Reviewer sees it, but the gate does not prevent it. Found implementing rust-engine ticket 02 (2026-10-27). Closes with
   the gate taking those files from the commit `--config`'s rules come from, or with the Reviewer's prompt naming the
   listing as a finding to judge.
-- **herdr 0.9.1 lists no `gemini` integration.** `herdr integration status` on this host lists `antigravity-cli`
-  (whose hook is under `~/.gemini/`) but no `gemini`, so `doctor` warns that it does not list gemini, and the
-  README's `herdr integration install gemini` may name a kind herdr no longer has. Found by the doctor run
-  (2026-10-24); not checked whether `agent start --kind gemini` still works. Closes once `AGENT_KINDS` and the README
-  name the kind herdr installs for Gemini, or herdr is shown to accept `gemini`.
+- **Three checks of a harness kind, each with its own message.** `harness()` (`engine/src/harness.rs`) refuses an
+  unknown kind for a saved run and a workflow file, naming agy for a `gemini` (GitHub issue #125); `--agent` and
+  `--role-agent` (`engine/src/cli/args.rs`, clap's possible values and `role_agent`) and serve's start body
+  (`engine/src/serve/start.rs`) each check `AGENT_KINDS` themselves, so `--agent gemini` only lists the kinds there
+  are. Found implementing gemini-integration ticket 02 (2026-11-11). Closes with the three taking `harness()`'s
+  refusal, or with the replaced kind judged not worth naming there.
 - **The herdr server serve starts keeps serve's terminal session.** With no herdr server running, `Launcher::launch`
   (`engine/src/herdr.rs`, `start_server`) starts the session `octoflow`'s as `sh -c 'herdr server … &'`: a process
   group of its own, standard streams on /dev/null, but no session of its own, since macOS has no `setsid` command and

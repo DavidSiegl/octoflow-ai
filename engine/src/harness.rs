@@ -32,6 +32,9 @@ pub struct AgentSettings {
 pub struct Harness {
     /// Its name, as herdr's --kind and AGENT_KINDS have it.
     pub kind: &'static str,
+    /// The herdr integration that reports its agent's state, as `herdr integration install` and `status` name it;
+    /// without it herdr cannot tell a finished turn from a dialog waiting for an answer.
+    pub integration: &'static str,
     /// How it takes --permission-mode, which is in Claude Code's names.
     permissions: Permissions,
     /// How it resumes a saved session.
@@ -109,7 +112,23 @@ pub enum LogFormat {
 /// Every harness a role can run in, in AGENT_KINDS' order.
 pub const HARNESSES: [Harness; 5] = [
     Harness {
+        kind: "agy",
+        integration: "antigravity-cli",
+        // agy 1.5.5's default asks before each shell command, though not before an edit; it has no flag for it.
+        permissions: Permissions::Equivalents(&[
+            ("default", &[]),
+            ("acceptEdits", &["--mode", "accept-edits"]),
+            ("bypassPermissions", &["--dangerously-skip-permissions"]),
+            ("plan", &["--mode", "plan"]),
+        ]),
+        resume: Resume::Flag("--conversation"),
+        config: Config::Flags { add_dir: Some("--add-dir") },
+        // Its conversations are SQLite databases of protobuf rows with no published schema (GitHub issue #124).
+        session_log: None,
+    },
+    Harness {
         kind: "claude",
+        integration: "claude",
         permissions: Permissions::AsNamed,
         resume: Resume::Flag("--resume"),
         config: Config::Flags { add_dir: Some("--add-dir") },
@@ -117,6 +136,7 @@ pub const HARNESSES: [Harness; 5] = [
     },
     Harness {
         kind: "codex",
+        integration: "codex",
         // Codex asks before acting by default, so its default needs no flag.
         permissions: Permissions::Equivalents(&[
             ("default", &[]),
@@ -129,18 +149,8 @@ pub const HARNESSES: [Harness; 5] = [
         session_log: None,
     },
     Harness {
-        kind: "gemini",
-        permissions: Permissions::Equivalents(&[
-            ("default", &["--approval-mode", "default"]),
-            ("acceptEdits", &["--approval-mode", "auto_edit"]),
-            ("bypassPermissions", &["--approval-mode", "yolo"]),
-        ]),
-        resume: Resume::Flag("--resume"),
-        config: Config::Flags { add_dir: Some("--include-directories") },
-        session_log: None,
-    },
-    Harness {
         kind: "opencode",
+        integration: "opencode",
         permissions: Permissions::Equivalents(&[]),
         resume: Resume::Flag("--session"),
         config: Config::OpencodeEnv,
@@ -148,6 +158,7 @@ pub const HARNESSES: [Harness; 5] = [
     },
     Harness {
         kind: "pi",
+        integration: "pi",
         permissions: Permissions::Equivalents(&[]),
         resume: Resume::Flag("--session"),
         // pi asks before no tool call, inside its working directory or outside it, so it needs no grant.
@@ -156,14 +167,24 @@ pub const HARNESSES: [Harness; 5] = [
     },
 ];
 
-/// The harness of the name kind. Errors: kind is not one of AGENT_KINDS, as a hand-edited state.json can name; the
-/// Python engine fails on it with a KeyError.
+/// Harnesses this orchestrator once took, as (kind, the kind that replaced it): a saved run or workflow file can
+/// still name one.
+const REPLACED: [(&str, &str); 1] = [("gemini", "agy")];
+
+/// The harness of the name kind. Errors: kind is not one of AGENT_KINDS, as a saved run's state.json or a workflow
+/// file can name; for a kind in REPLACED, the message names the kind that replaced it. The Python engine fails on
+/// such a kind with a KeyError.
 pub fn harness(kind: &str) -> Result<&'static Harness, OrchestratorError> {
     HARNESSES.iter().find(|h| h.kind == kind).ok_or_else(|| {
-        OrchestratorError(format!(
-            "agent {kind} is not a harness this orchestrator supports; it takes {}",
-            AGENT_KINDS.join(", ")
-        ))
+        OrchestratorError(match REPLACED.iter().find(|(old, _)| *old == kind) {
+            Some((_, new)) => {
+                format!("agent {kind} is not a harness this orchestrator supports any more; {new} replaced it")
+            }
+            None => format!(
+                "agent {kind} is not a harness this orchestrator supports; it takes {}",
+                AGENT_KINDS.join(", ")
+            ),
+        })
     })
 }
 

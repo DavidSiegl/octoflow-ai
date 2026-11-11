@@ -1035,7 +1035,7 @@ fn a_resumed_session_is_read_in_each_harness_s_syntax() {
         ("claude", vec!["--permission-mode", "plan", "--resume", "s"], Some("s")),
         ("codex", vec!["resume", "s", "--full-auto"], Some("s")),
         ("codex", vec!["--full-auto", "resume", "s"], None),
-        ("gemini", vec!["--resume", "s"], Some("s")),
+        ("agy", vec!["--conversation", "s"], Some("s")),
         ("opencode", vec!["--session", "s"], Some("s")),
         ("pi", vec!["--model", "m"], None),
         ("pi", vec!["--session"], None),

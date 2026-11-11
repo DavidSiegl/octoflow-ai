@@ -11,16 +11,17 @@ use super::worktree::worktree_run;
 use crate::test_support::resumable;
 use super::*;
 
-const KINDS: &[&str] = &["claude", "codex", "gemini", "opencode", "pi"];
+const KINDS: &[&str] = &["agy", "claude", "codex", "opencode", "pi"];
 const MODES: &[&str] = &["default", "acceptEdits", "bypassPermissions", "plan", "auto", "dontAsk"];
 
 /// The spec's table of what --permission-mode becomes in each harness; None is dropped.
 fn permissions(kind: &str, mode: &str) -> Option<Vec<String>> {
     let args: Option<&[&str]> = match (kind, mode) {
         ("claude", _) => return Some(strings(&["--permission-mode", mode])),
-        ("gemini", "default") => Some(&["--approval-mode", "default"]),
-        ("gemini", "acceptEdits") => Some(&["--approval-mode", "auto_edit"]),
-        ("gemini", "bypassPermissions") => Some(&["--approval-mode", "yolo"]),
+        ("agy", "default") => Some(&[]),
+        ("agy", "acceptEdits") => Some(&["--mode", "accept-edits"]),
+        ("agy", "bypassPermissions") => Some(&["--dangerously-skip-permissions"]),
+        ("agy", "plan") => Some(&["--mode", "plan"]),
         ("codex", "default") => Some(&[]),
         ("codex", "acceptEdits") => Some(&["--full-auto"]),
         ("codex", "bypassPermissions") => Some(&["--dangerously-bypass-approvals-and-sandbox"]),
@@ -139,7 +140,7 @@ fn an_exited_agent_resumes_in_its_own_harness() {
     let resumed = |kind: &str| -> Vec<String> {
         strings(match kind {
             "claude" => &["--permission-mode", "acceptEdits", "--resume", "s-build", "--model", "m"],
-            "gemini" => &["--approval-mode", "auto_edit", "--resume", "s-build", "--model", "m"],
+            "agy" => &["--mode", "accept-edits", "--conversation", "s-build", "--model", "m"],
             "codex" => &["resume", "s-build", "--full-auto", "--model", "m"],
             "pi" => &["--session", "s-build", "--model", "m"],
             "opencode" => &["--session", "s-build", "--standalone"],
@@ -161,6 +162,19 @@ fn an_exited_agent_resumes_in_its_own_harness() {
         assert_eq!(*seen.borrow(), [continue_prompt(&wf.state().build_path(2))]);
         assert_eq!(wf.state().agents.get("build").unwrap().get("kind").map(String::as_str), Some(*kind));
     }
+}
+
+#[test]
+fn a_saved_run_on_gemini_is_refused_naming_agy() {
+    let mut state = saved_run("build", 2, FULL);
+    state.prompted = Some("build-2.md".into());
+    state.agents.get_mut("build").unwrap().insert("kind", "gemini".to_string());
+    let script = vec![("build", vec![build_turn(2)])];
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &["review"], &[("build", "s-build")]);
+    let settings = RunSettings { agents: agent_settings(None, &[], every_role("gemini")), ..f.as_saved() };
+    let Err(Stopped::Failed(e)) = f.workflow(settings).run() else { panic!("a run on gemini went on") };
+    assert!(e.0.contains("agent gemini is not a harness this orchestrator supports any more; agy replaced it"), "{e:?}");
+    assert!(f.herdr.state().kinds.is_empty());
 }
 
 #[test]
@@ -220,9 +234,9 @@ fn every_roles_harness_is_saved() {
 
 #[test]
 fn role_agent_starts_that_role_in_its_harness() {
-    // The harnesses new_state gives `run task --agent gemini --role-agent review=pi`, as test_precedence (crate::cli's tests)
+    // The harnesses new_state gives `run task --agent agy --role-agent review=pi`, as test_precedence (crate::cli's tests)
     // checks.
-    let expected = [("spec", "gemini"), ("build", "gemini"), ("review", "pi")];
+    let expected = [("spec", "agy"), ("build", "agy"), ("review", "pi")];
     let f = Fixture::new(approved());
     let kinds = expected.iter().map(|(r, k)| (*r, k.to_string())).collect();
     f.workflow(with_agents(agent_settings(None, &[], kinds))).run().unwrap();
@@ -233,10 +247,10 @@ fn role_agent_starts_that_role_in_its_harness() {
 #[test]
 fn resume_keeps_or_overrides_the_saved_harnesses() {
     let mut saved = saved_run("build", 2, FULL).to_json().as_object().unwrap().clone();
-    let kinds = r#"{"spec": "claude", "build": "codex", "review": "gemini"}"#;
+    let kinds = r#"{"spec": "claude", "build": "codex", "review": "agy"}"#;
     saved.insert("agent_kinds".into(), serde_json::from_str::<Value>(kinds).unwrap());
     let cases: [(&[&str], Map<String>); 3] = [
-        (&[], [("spec", "claude"), ("build", "codex"), ("review", "gemini")].map(|(r, k)| (r, k.to_string())).into_iter().collect()),
+        (&[], [("spec", "claude"), ("build", "codex"), ("review", "agy")].map(|(r, k)| (r, k.to_string())).into_iter().collect()),
         (&["--agent", "pi"], every_role("pi")),
         (
             &["--role-agent", "review=opencode"],
