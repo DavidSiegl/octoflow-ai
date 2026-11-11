@@ -543,6 +543,13 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   README's `herdr integration install gemini` may name a kind herdr no longer has. Found by the doctor run
   (2026-10-24); not checked whether `agent start --kind gemini` still works. Closes once `AGENT_KINDS` and the README
   name the kind herdr installs for Gemini, or herdr is shown to accept `gemini`.
+- **The herdr server serve starts keeps serve's terminal session.** With no herdr server running, `Launcher::launch`
+  (`engine/src/herdr.rs`, `start_server`) starts the session `octoflow`'s as `sh -c 'herdr server … &'`: a process
+  group of its own, standard streams on /dev/null, but no session of its own, since macOS has no `setsid` command and
+  `pre_exec` is unsafe code. The desktop app has no terminal, so nothing follows there; a `serve` typed into a
+  terminal leaves the server with that terminal as its controlling one. Not seen to end the server (its group is in
+  the background, so a hangup is not sent to it), and not tried on macOS. Closes with `setsid(2)` before the exec, or
+  a herdr that detaches its server itself.
 - **The desktop app's setup dialog shows doctor's fixes in the CLI's words.** `check_setup`
   (`engine/src/cli/doctor.rs`) words its fixes for a command line: "run from a herdr pane, or pass --machine", "pass
   --cwd a git checkout". `/setup` (`engine/src/serve/setup.rs`) passes them on as they are, so the dialog

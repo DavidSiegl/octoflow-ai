@@ -246,7 +246,11 @@ from a herdr pane.
   are on the machine, as from the CLI. The
   hidden `--run-id` lets serve then wait for exactly that run: its `state.json` saved answers 201; the command's
   end without one, told by a line the shell prints after it, answers 422 with what the pane showed; neither
-  within 30 seconds (`START_WAIT`) answers 202. Without a herdr server here, any project's run is refused.
+  within 30 seconds (`START_WAIT`) answers 202. When the server serve's environment reaches is not running, the
+  workspace opens in the herdr session `octoflow` (`OWN_SESSION`) instead, whose server the `Launcher` starts
+  first, headless, if it is not running either (`sh -c 'herdr server … &'`, then `herdr status server` until it
+  prints `status: running`; it exits 0 either way). That server outlives serve; the run saves it as its
+  `herdr_server`, so its agents are reached there as any run's.
 - **Endpoints.** Every request needs the token, and every one but `/setup/checked` and `/workflows` names the
   project by `?cwd=` and, optionally, `?machine=`:
 

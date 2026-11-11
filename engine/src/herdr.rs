@@ -14,7 +14,7 @@
 use std::ffi::OsString;
 use std::fmt;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::constants::AGENT_START_TIMEOUT_MS;
 use crate::error::OrchestratorError;
@@ -99,7 +99,21 @@ pub struct HerdrServer {
     session: Option<String>,
 }
 
+/// The named herdr session a Launcher starts a command in when the server its own environment picks is not running:
+/// one herdr server of the user's, started headless by the first such launch and left running, which every later
+/// one shares and `herdr session attach octoflow` shows. A fixed name rather than the environment's own session
+/// (decided by the user, 2026-11-11), so that what serve started is told apart from the session the human works in.
+pub const OWN_SESSION: &str = "octoflow";
+
+/// ProcessHerdr::server_start outside the tests. herdr 0.9.1's server took about a second to answer.
+const SERVER_START: (Duration, Duration) = (Duration::from_secs(15), Duration::from_millis(200));
+
 impl HerdrServer {
+    /// The server of the session OWN_SESSION, whatever the environment picks.
+    fn own_session() -> HerdrServer {
+        HerdrServer { socket_path: None, session: Some(OWN_SESSION.to_string()) }
+    }
+
     /// The server a herdr CLI run in the environment vars reaches; None when either variable is set to what is not
     /// UTF-8, which state.json cannot hold. A variable vars hold twice counts by its last value, as a process gets it.
     pub fn of_environment(vars: &[(OsString, OsString)]) -> Option<HerdrServer> {
@@ -232,14 +246,25 @@ pub trait AgentConsole: Send + Sync {
 pub trait Launcher: Send + Sync {
     /// Open a workspace labelled label whose pane's shell starts in cwd, without focusing it, and run argv there as
     /// one command, each word as given, whatever a shell or a terminal would make of its characters (quotes, `$`,
-    /// newlines, control characters); gives the pane's id. A word must hold no NUL, which no process argument can.
-    /// Errors: herdr's, such as server_not_running when no herdr server can be reached; the workspace is closed again
-    /// when it opened but the command could not be given to it.
-    fn launch(&self, cwd: &str, label: &str, argv: &[String]) -> Result<String, HerdrError>;
+    /// newlines, control characters). A word must hold no NUL, which no process argument can. The workspace is in
+    /// the herdr server the launcher's environment picks or, when that one is not running, in the session
+    /// OWN_SESSION, whose server is started first if it is not running either, and outlives the launcher.
+    /// Errors: herdr's; OWN_SESSION's server cannot be started, or does not answer in time. The workspace is closed
+    /// again when it opened but the command could not be given to it.
+    fn launch(&self, cwd: &str, label: &str, argv: &[String]) -> Result<Launched, HerdrError>;
 
-    /// What the pane showed of the command launch ran there, at most its last lines lines, once it has exited; None
-    /// while it runs. Errors: herdr's, such as pane_not_found once the pane has been closed.
-    fn exited(&self, pane: &str, lines: u32) -> Result<Option<String>, HerdrError>;
+    /// What launched's pane showed of its command, at most its last lines lines, once it has exited; None while it
+    /// runs. Errors: herdr's, such as pane_not_found once the pane has been closed.
+    fn exited(&self, launched: &Launched, lines: u32) -> Result<Option<String>, HerdrError>;
+}
+
+/// A command Launcher::launch started.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Launched {
+    /// The id of the pane it runs in, as its herdr server names it.
+    pub(crate) pane: String,
+    /// The herdr server that pane is in; None for the one the launcher's own environment picks.
+    pub(crate) server: Option<HerdrServer>,
 }
 
 /// The line a shell prints in pane once the command Launcher::launch typed there has exited. It names the pane, so
@@ -260,7 +285,39 @@ impl Launcher for ProcessHerdr {
     /// and the typed line is only `"$OCTOFLOW_ARG_0" "$OCTOFLOW_ARG_1" ...; echo '<marker>'`, which POSIX shells and
     /// fish read alike. A word typed even quoted would reach the terminal's line editing first: a ^U erases what was
     /// typed before it, and a ^C or ^M ends the line, so a client's text could run as a command of its own.
-    fn launch(&self, cwd: &str, label: &str, argv: &[String]) -> Result<String, HerdrError> {
+    fn launch(&self, cwd: &str, label: &str, argv: &[String]) -> Result<Launched, HerdrError> {
+        match self.launch_in_server(cwd, label, argv) {
+            // A machine's herdr is not this one's to start.
+            Err(e) if e.code() == Some("server_not_running") && self.machine.is_none() => {
+                let server = HerdrServer::own_session();
+                let own = self.in_server(&server);
+                own.start_server()?;
+                Ok(Launched { pane: own.launch_in_server(cwd, label, argv)?, server: Some(server) })
+            }
+            launched => Ok(Launched { pane: launched?, server: None }),
+        }
+    }
+
+    fn exited(&self, launched: &Launched, lines: u32) -> Result<Option<String>, HerdrError> {
+        let herdr = launched.server.as_ref().map_or_else(|| self.clone(), |server| self.in_server(server));
+        let pane = launched.pane.as_str();
+        // Unwrapped, so that a long line is one line, as the marker must be to be found; a few more lines than asked
+        // for, for the marker and the shell's prompt after it.
+        let shown = lines.saturating_add(5).to_string();
+        let args = ["pane", "read", pane, "--source", "recent-unwrapped", "--lines", &shown];
+        let text = herdr.exec_forwarded(&args, Some(Duration::from_secs(CALL_LIMIT_SECONDS)))?;
+        let marker = exit_marker(pane);
+        let all: Vec<&str> = text.lines().collect();
+        let Some(end) = all.iter().rposition(|line| line.trim_end() == marker) else { return Ok(None) };
+        let start = end.saturating_sub(lines as usize);
+        Ok(Some(all[start..end].join("\n")))
+    }
+}
+
+impl ProcessHerdr {
+    /// Launcher::launch in the server this herdr's environment picks, and no other; gives the pane's id. Errors:
+    /// herdr's, such as server_not_running.
+    fn launch_in_server(&self, cwd: &str, label: &str, argv: &[String]) -> Result<String, HerdrError> {
         let words: Vec<String> = argv.iter().enumerate().map(|(i, w)| format!("{}={w}", launched_word(i))).collect();
         let mut args = vec!["workspace", "create", "--cwd", cwd, "--label", label, "--no-focus"];
         for word in &words {
@@ -281,17 +338,44 @@ impl Launcher for ProcessHerdr {
         Ok(pane)
     }
 
-    fn exited(&self, pane: &str, lines: u32) -> Result<Option<String>, HerdrError> {
-        // Unwrapped, so that a long line is one line, as the marker must be to be found; a few more lines than asked
-        // for, for the marker and the shell's prompt after it.
-        let shown = lines.saturating_add(5).to_string();
-        let args = ["pane", "read", pane, "--source", "recent-unwrapped", "--lines", &shown];
-        let text = self.exec_forwarded(&args, Some(Duration::from_secs(CALL_LIMIT_SECONDS)))?;
-        let marker = exit_marker(pane);
-        let all: Vec<&str> = text.lines().collect();
-        let Some(end) = all.iter().rposition(|line| line.trim_end() == marker) else { return Ok(None) };
-        let start = end.saturating_sub(lines as usize);
-        Ok(Some(all[start..end].join("\n")))
+    /// Have the herdr server this herdr's environment picks running on this machine: started headless, when it is
+    /// not, in a process group of its own with no terminal's input or output, so that it outlives the engine as the
+    /// server herdr's own client starts does. Errors: herdr's; the server cannot be started, or does not answer as
+    /// running within server_start.
+    fn start_server(&self) -> Result<(), HerdrError> {
+        if self.server_runs()? {
+            return Ok(());
+        }
+        let failed = |why: String| HerdrError::Failed(OrchestratorError(format!("cannot start a herdr server: {why}")));
+        // `herdr server` serves until it is stopped, so a shell starts it in the background and exits; run_process
+        // gave the shell a process group, which the server keeps.
+        let argv = ["sh", "-c", "herdr server </dev/null >/dev/null 2>&1 &"].map(String::from);
+        match (self.run)(&argv, &self.env, Some(Duration::from_secs(CALL_LIMIT_SECONDS))) {
+            Ok((0, _, _)) => {}
+            Ok((status, _, stderr)) => {
+                return Err(failed(format!("sh exited with {status}: {}", String::from_utf8_lossy(&stderr).trim())))
+            }
+            Err(ProcessError::Start(e) | ProcessError::Io(e)) => return Err(failed(crate::error::os_error(&e, None))),
+            Err(ProcessError::Timeout) => return Err(failed("sh did not return".to_string())),
+            Err(ProcessError::Interrupted) => return Err(failed("interrupted".to_string())),
+        }
+        let (limit, pause) = self.server_start;
+        let deadline = Instant::now() + limit;
+        // An Interrupt raised meanwhile fails the next look, so the wait ends within a pause of it.
+        while !self.server_runs()? {
+            if Instant::now() >= deadline {
+                return Err(failed(format!("it was not running after {} seconds", limit.as_secs_f64())));
+            }
+            std::thread::sleep(pause);
+        }
+        Ok(())
+    }
+
+    /// Whether the herdr server this herdr's environment picks runs on this machine. `herdr status server` exits 0
+    /// either way (herdr 0.9.1), and says it in a line of its output. Errors: exec's.
+    fn server_runs(&self) -> Result<bool, HerdrError> {
+        let out = self.exec(&["status", "server"], Some(Duration::from_secs(CALL_LIMIT_SECONDS)))?;
+        Ok(out.lines().any(|line| line.trim() == "status: running"))
     }
 }
 
@@ -317,6 +401,9 @@ pub struct ProcessHerdr {
     env: Arc<Vec<(OsString, OsString)>>,
     /// Runs one herdr command.
     run: Arc<RunHerdr>,
+    /// How long a herdr server it starts has to answer `herdr status server` as running, and how long it sleeps
+    /// between two looks.
+    server_start: (Duration, Duration),
 }
 
 impl fmt::Debug for ProcessHerdr {
@@ -344,6 +431,7 @@ impl ProcessHerdr {
             machine: machine.filter(|m| !m.is_empty()).map(String::from),
             env: Arc::new(crate::env::without_withheld(vars)),
             run: Arc::new(move |argv, env, limit| run_process(argv, None, limit, env, &interrupt)),
+            server_start: SERVER_START,
         }
     }
 
@@ -358,6 +446,7 @@ impl ProcessHerdr {
             machine: machine.filter(|m| !m.is_empty()).map(String::from),
             env: Arc::default(),
             run: Arc::new(move |argv, _, limit| run(argv, limit)),
+            server_start: SERVER_START,
         }
     }
 
@@ -365,9 +454,14 @@ impl ProcessHerdr {
     /// forwarded to a machine: the herdr a console's command to the agent goes to.
     fn reaching(&self, agent: &AgentAddress) -> ProcessHerdr {
         match (&agent.server, &self.machine) {
-            (Some(server), None) => ProcessHerdr { env: Arc::new(server.select(&self.env)), ..self.clone() },
+            (Some(server), None) => self.in_server(server),
             _ => self.clone(),
         }
+    }
+
+    /// This herdr, its commands reaching server whatever server its own environment picks.
+    fn in_server(&self, server: &HerdrServer) -> ProcessHerdr {
+        ProcessHerdr { env: Arc::new(server.select(&self.env)), ..self.clone() }
     }
 
     /// The herdr machine the commands are forwarded to; None for this machine's herdr.

@@ -59,8 +59,8 @@ pub struct Reached {
     pub dir: String,
     /// Reaches its runs' agents, each by its AgentAddress.
     pub console: Arc<dyn AgentConsole>,
-    /// Starts a run's process for POST /run, in a pane of this machine's herdr server, the one serve's environment
-    /// reaches, for a project here and one on a machine alike: a machine's run is driven from here, as from the CLI.
+    /// Starts a run's process for POST /run, in a pane of this machine's herdr (Launcher::launch says which server),
+    /// for a project here and one on a machine alike: a machine's run is driven from here, as from the CLI.
     pub launcher: Arc<dyn Launcher>,
     /// The directory of this machine a run's process starts in: dir for a project here, serve's own working
     /// directory for one on a machine, which the run reaches over SSH.
@@ -127,7 +127,7 @@ fn serve(
 /// directory, cwd's, which may start with ~, and the console that reaches its agents, this machine's herdr
 /// forwarding to machine. Each command is stopped by stopping. Python's project_host: without connect's check for a
 /// herdr pane, since reading a project sends herdr no command, so a window started from a file manager reads it too.
-/// A run it starts is launched in this machine's herdr server (Reached::launcher).
+/// A run it starts is launched in this machine's herdr (Reached::launcher).
 /// On this machine, an agent's commands go to the herdr server its run saved (RunState::herdr_server), whatever
 /// server serve's own environment picks; an agent of a run saved before runs saved it is reached in the one serve's
 /// environment picks (HERDR_SOCKET_PATH, else HERDR_SESSION, else the default session). Errors: the machine is not
@@ -178,8 +178,8 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 ///   waits for it (start::START_WAIT, ProjectRuns::start). 201 {"run"} once it has saved its state.json; 422 {"error",
 ///   "run"} when `run` exited without saving one, error ending with the last lines its pane showed; 202 {"run",
 ///   "listed": false} after 30 seconds of neither. 400 for a body RunRequest::parse refuses and 413 as for
-///   /agent/input, both before the project is reached; 502 when herdr cannot launch it, "no herdr server here; start
-///   herdr" without a herdr server here.
+///   /agent/input, both before the project is reached; 502 when herdr cannot launch it, as when it has
+///   no server running here and none can be started.
 /// - /events: a text/event-stream of RunWatch's events, polled every SERVE_POLL.local, every SERVE_POLL.remote for a
 ///   --machine project, until the client goes or the server stops. An HTTP/1.1 client gets it chunked, so that the
 ///   end of the stream is the end of the response; an HTTP/1.0 client's ends when the connection closes.

@@ -496,11 +496,16 @@ fn launching(screen: &str) -> (ProcessHerdr, Commands) {
     (herdr, ran)
 }
 
+/// What launch gives for a command in pane of the server the launcher's environment picks.
+fn in_the_environment_s_server(pane: &str) -> Launched {
+    Launched { pane: pane.to_string(), server: None }
+}
+
 #[test]
 fn launch_gives_each_word_to_the_new_shell_as_a_variable_and_types_only_their_names() {
     let (herdr, ran) = launching("");
     let argv = argv(&["/bin/orchestrator", "run", "--model=--session", "--", "x\u{15}touch /tmp/pwned #"]);
-    assert_eq!(herdr.launch("/proj", "a1b2c3 a task", &argv).unwrap(), "w1:p1");
+    assert_eq!(herdr.launch("/proj", "a1b2c3 a task", &argv).unwrap(), in_the_environment_s_server("w1:p1"));
     let ran: Vec<Vec<String>> = ran.lock().unwrap().iter().map(|(argv, _)| argv.clone()).collect();
     let create = [
         "herdr", "workspace", "create", "--cwd", "/proj", "--label", "a1b2c3 a task", "--no-focus",
@@ -556,23 +561,123 @@ fn a_command_herdr_does_not_take_closes_the_workspace_it_opened() {
 fn exited_gives_what_the_pane_showed_before_the_marker_once_it_is_there() {
     let running = "$ \"$OCTOFLOW_ARG_0\"; echo 'octoflow: the command in pane w1:p1 has exited'\nworking\n";
     let (herdr, ran) = launching(running);
-    assert_eq!(herdr.exited("w1:p1", 3).unwrap(), None);
+    assert_eq!(herdr.exited(&in_the_environment_s_server("w1:p1"), 3).unwrap(), None);
     assert_eq!(last(&ran).0, ["herdr", "pane", "read", "w1:p1", "--source", "recent-unwrapped", "--lines", "8"]);
     let ended = format!("{running}error: no workflow x\noctoflow: the command in pane w1:p1 has exited  \n$ ");
     let (herdr, _) = launching(&ended);
-    assert_eq!(herdr.exited("w1:p1", 2).unwrap().as_deref(), Some("working\nerror: no workflow x"));
+    assert_eq!(herdr.exited(&in_the_environment_s_server("w1:p1"), 2).unwrap().as_deref(), Some("working\nerror: no workflow x"));
     // Another pane's marker is not this one's.
     let (herdr, _) = launching("octoflow: the command in pane w1:p2 has exited\n");
-    assert_eq!(herdr.exited("w1:p1", 2).unwrap(), None);
+    assert_eq!(herdr.exited(&in_the_environment_s_server("w1:p1"), 2).unwrap(), None);
+}
+
+/// A herdr on PATH, as a script, whose servers are those of the sessions named in `running` (the default session's
+/// name is empty), one per line, in the directory it gives; `herdr server` takes `starts` seconds to add its
+/// session there, or never does when None. It answers `status server` and `workspace create` by whether its
+/// session's server runs, shows `screen` at a `pane read`, and writes each command as `SESSION: ARGS` to `ran`
+/// there. Its session is HERDR_SESSION's unless HERDR_SOCKET_PATH is set, which it takes as no session's.
+fn herdr_with_servers(running: &[&str], starts: Option<&str>, screen: &str) -> (TempDir, Vec<(OsString, OsString)>) {
+    let d = TempDir::new();
+    let (servers, ran) = (d.join("running"), d.join("ran"));
+    std::fs::write(&servers, running.iter().map(|name| format!("{name}\n")).collect::<String>()).unwrap();
+    let start = starts.map_or_else(|| "exit 0".to_string(), |s| format!("sleep {s}; echo \"$session\" >> '{servers}'"));
+    let script = format!(
+        r#"#!/bin/sh
+session="${{HERDR_SOCKET_PATH:+socket }}$HERDR_SESSION"
+echo "$session: $*" >> '{ran}'
+runs() {{ grep -qx -- "$session" '{servers}'; }}
+case "$1 $2" in
+"server ") {start} ;;
+"status server") if runs; then echo 'status: running'; else echo 'status: not running'; fi; echo 'socket: /s.sock' ;;
+"pane read") printf '%s' '{screen}' ;;
+*)
+    if ! runs; then
+        echo '{{"error": {{"code": "server_not_running", "message": "no herdr server is running at /s.sock"}}}}' >&2
+        exit 1
+    fi
+    echo '{{"result": {{"workspace": {{"workspace_id": "w1"}}, "root_pane": {{"pane_id": "w1:p1"}}}}}}' ;;
+esac
+"#
+    );
+    tool(&d.path(), "herdr", &script);
+    let mut vars = environment(Some(&d.path()), &[]);
+    vars.retain(|(k, _)| !k.to_string_lossy().starts_with("HERDR_"));
+    (d, vars)
+}
+
+/// The commands a herdr_with_servers in d was given, in order, as it wrote them.
+fn given(d: &TempDir) -> Vec<String> {
+    std::fs::read_to_string(d.join("ran")).unwrap().lines().map(String::from).collect()
+}
+
+/// vars and each of set.
+fn with(vars: &[(OsString, OsString)], set: &[(&str, &str)]) -> std::vec::IntoIter<(OsString, OsString)> {
+    let set = set.iter().map(|(k, v)| (OsString::from(k), OsString::from(v)));
+    vars.iter().cloned().chain(set).collect::<Vec<_>>().into_iter()
+}
+
+/// What launch gives for a command in pane of the session OWN_SESSION.
+fn in_own_session(pane: &str) -> Launched {
+    let server = serde_json::from_str(r#"{"HERDR_SESSION": "octoflow"}"#).unwrap();
+    Launched { pane: pane.to_string(), server: Some(server) }
 }
 
 #[test]
-fn launch_fails_as_herdr_does_without_a_server() {
+fn without_a_server_launch_starts_the_own_session_s_and_launches_there() {
+    let (d, vars) = herdr_with_servers(&[], Some("0.3"), "");
+    // serve started in a pane of a server that has since stopped: neither of its variables reaches the new one.
+    let pane = [("HERDR_SOCKET_PATH", "/gone/herdr.sock"), ("HERDR_SESSION", "work")];
+    let herdr = ProcessHerdr::in_environment(None, with(&vars, &pane), &Interrupt::new());
+    let launched = herdr.launch("/proj", "l", &argv(&["true"])).unwrap();
+    assert_eq!(launched, in_own_session("w1:p1"));
+    let ran = given(&d);
+    assert!(ran[0].starts_with("socket work: workspace create "), "{ran:?}");
+    assert_eq!(ran[1..3], ["octoflow: status server", "octoflow: server"], "{ran:?}");
+    let (looks, launch) = ran[3..].split_at(ran.len() - 5);
+    assert!(looks.len() > 1 && looks.iter().all(|c| c == "octoflow: status server"), "it waits for the server: {ran:?}");
+    assert!(launch[0].starts_with("octoflow: workspace create --cwd /proj "), "{ran:?}");
+    assert!(launch[1].starts_with("octoflow: pane run w1:p1 "), "{ran:?}");
+    // Whether it has exited is asked of the server it is in.
+    herdr.exited(&launched, 2).unwrap();
+    assert!(given(&d).last().unwrap().starts_with("octoflow: pane read w1:p1 "));
+}
+
+#[test]
+fn a_running_own_session_is_launched_in_without_starting_it() {
+    let (d, vars) = herdr_with_servers(&["octoflow"], None, "");
+    let herdr = ProcessHerdr::in_environment(None, vars.into_iter(), &Interrupt::new());
+    assert_eq!(herdr.launch("/proj", "l", &argv(&["true"])).unwrap(), in_own_session("w1:p1"));
+    let ran: Vec<String> = given(&d).iter().map(|c| c.split(' ').take(3).collect::<Vec<_>>().join(" ")).collect();
+    assert_eq!(ran, [": workspace create", "octoflow: status server", "octoflow: workspace create", "octoflow: pane run"]);
+}
+
+#[test]
+fn a_running_server_of_the_environment_s_is_launched_in_and_the_own_session_left_alone() {
+    let (d, vars) = herdr_with_servers(&["work"], None, "");
+    let herdr = ProcessHerdr::in_environment(None, with(&vars, &[("HERDR_SESSION", "work")]), &Interrupt::new());
+    let launched = herdr.launch("/proj", "l", &argv(&["true"])).unwrap();
+    assert_eq!(launched, in_the_environment_s_server("w1:p1"));
+    herdr.exited(&launched, 2).unwrap();
+    assert!(given(&d).iter().all(|c| c.starts_with("work: ")), "{:?}", given(&d));
+}
+
+#[test]
+fn a_server_that_does_not_come_up_fails_the_launch_saying_so() {
+    let (d, vars) = herdr_with_servers(&[], None, "");
+    let mut herdr = ProcessHerdr::in_environment(None, vars.into_iter(), &Interrupt::new());
+    herdr.server_start = (Duration::from_millis(300), Duration::from_millis(50));
+    let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err();
+    assert_eq!(e.to_string(), "cannot start a herdr server: it was not running after 0.3 seconds");
+    assert!(!given(&d).iter().any(|c| c.starts_with("octoflow: workspace create")), "{:?}", given(&d));
+}
+
+#[test]
+fn a_machine_s_missing_server_is_not_started_here() {
     let message = "no herdr server is running at /s.sock";
-    let (herdr, ran) = answering(None, 1, "", &error("server_not_running", message));
+    let (herdr, ran) = answering(Some("box"), 1, "", &error("server_not_running", message));
     let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err();
     assert_eq!(e, HerdrError::new("server_not_running", message));
-    assert_eq!(ran.lock().unwrap().len(), 1, "nothing is typed without a workspace");
+    assert_eq!(ran.lock().unwrap().len(), 1, "nothing is started or typed");
 }
 
 // -- What the e2e scenarios recorded ---------------------------------------------------------------------------------
