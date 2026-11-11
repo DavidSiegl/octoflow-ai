@@ -272,7 +272,7 @@ pub(crate) struct FakeState {
     pub processes: Option<super::ProcessHost>,
     /// What a command the host runs other than git (Host::exec) gives in place of running, when set and it gives
     /// Some, given the host, its state released so that the hook may read and write files, and the command's argv: a
-    /// test's stand-in for a program, such as the local quality gate's python3. When it gives None, the command runs as
+    /// test's stand-in for a program, such as the local quality gate's job. When it gives None, the command runs as
     /// processes says.
     pub run_command: Option<RunCommand>,
 }

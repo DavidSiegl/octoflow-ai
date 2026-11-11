@@ -82,7 +82,6 @@ impl FakeTools {
             ("git --version", completed("git version 2.47.3\n")),
             ("gh auth status", completed("github.com\n  ✓ Logged in to github.com\n")),
             ("gitleaks git --help", completed("Usage: gitleaks git [flags]\n")),
-            ("python3 -c", completed("")),
             ("sh -c", completed("")),
             ("git -C /proj rev-parse --show-toplevel", completed("/proj\n")),
             ("git -C /proj remote get-url origin", completed("git@github.com:me/proj.git\n")),
@@ -145,10 +144,9 @@ impl FakeTools {
         if argv == ["true"] {
             return ran(0, "", "");
         }
-        // local_gate::preflight's two commands, answered as `python3 -c` and `sh -c` are, their scripts left out.
-        let preflight = argv.len() > 2 && argv[1] == "-c" && (argv[0] == "python3" || argv[2].contains("octoflow/gate"));
-        if preflight {
-            let answer = t.answers[&vec![argv[0].clone(), "-c".to_string()]].clone();
+        // local_gate::preflight's script, answered as `sh -c` is, the script left out.
+        if is_preflight(&argv) {
+            let answer = t.answers[&vec!["sh".to_string(), "-c".to_string()]].clone();
             return played(&answer);
         }
         if argv[0] == "sh" && argv[2] == "command -v -- \"$1\"" {
@@ -520,34 +518,35 @@ fn the_local_gate_is_checked_by_the_runs_preflight_and_is_optional() {
     let tools = FakeTools::new();
     let gate = setup(&tools, None, None)["local quality gate"].clone();
     assert_eq!((gate.level, gate.ok), (Level::Optional, true));
-    assert!(ran_python3(&tools, None), "the preflight's python3 probe ran");
-    tools.answer("python3 -c", failing("", 1));
+    assert!(ran_preflight(&tools, None), "the run's preflight ran");
+    tools.answer("sh -c", failing("curl is not on PATH", 1));
     let order = names(&tools, None);
     let checks = setup(&tools, None, None);
     let gate = &checks["local quality gate"];
-    let detail = "the local quality gate runs octoflow-gate with python3 3.11 or later from PATH, and it is older; \
-                  needed only for --quality-gate local";
+    let detail = "the local quality gate fetches octoflow-gate and runs it on the project's machine: curl is not on \
+                  PATH; needed only for --quality-gate local";
     assert_eq!((gate.ok, gate.detail.as_str()), (false, detail));
     assert!(gate.fix.contains("The local gate"), "{}", gate.fix);
     // Optional: a machine that cannot run the local gate still runs everything else.
     assert_eq!(reported(&checks, &order).1, 0);
-    tools.answer("python3 -c", completed(""));
-    tools.answer("sh -c", failing("curl is not on PATH", 1));
-    let detail = setup(&tools, None, None)["local quality gate"].detail.clone();
-    assert!(detail.ends_with("cache of its own: curl is not on PATH; needed only for --quality-gate local"), "{detail}");
 }
 
 #[test]
 fn the_local_gate_is_checked_where_the_agents_run() {
     let tools = FakeTools::new();
     assert!(setup(&tools, Some("box"), Some("/proj"))["local quality gate"].ok);
-    assert!(ran_python3(&tools, Some("me@box")));
-    assert!(!ran_python3(&tools, None));
+    assert!(ran_preflight(&tools, Some("me@box")));
+    assert!(!ran_preflight(&tools, None));
 }
 
-/// Whether python3 ran on target.
-fn ran_python3(tools: &FakeTools, target: Option<&str>) -> bool {
-    tools.tools().calls.iter().any(|(t, a)| t.as_deref() == target && a[0] == "python3")
+/// Whether argv is local_gate::preflight's command: sh running the script that makes the gate's cache.
+fn is_preflight(argv: &[String]) -> bool {
+    argv.len() > 2 && argv[0] == "sh" && argv[1] == "-c" && argv[2].contains("octoflow/gate")
+}
+
+/// Whether local_gate::preflight ran on target.
+fn ran_preflight(tools: &FakeTools, target: Option<&str>) -> bool {
+    tools.tools().calls.iter().any(|(t, a)| t.as_deref() == target && is_preflight(a))
 }
 
 /// What doctor_command prints for argv, a doctor command line, on tools from a herdr pane, and its exit status or

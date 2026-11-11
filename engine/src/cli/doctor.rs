@@ -209,7 +209,7 @@ pub fn check_setup(
     let fix = "install or fix what it names where the agents run (docs/quality-gate.md, \"The local gate\")";
     let note = "needed only for --quality-gate local";
     check(&mut checks, "local quality gate", Level::Optional, fix, on_machine.as_ref(), note, &mut || {
-        local_gate::preflight(agents).map(|()| "python3, curl, tar, sha256sum, ps and the gate cache are ready".to_string()).map_err(Unmet::from)
+        local_gate::preflight(agents).map(|()| "Linux x86_64, curl, tar, setsid, env, ps, sha256sum and the gate cache are ready".to_string()).map_err(Unmet::from)
     });
     if let Some(cwd) = cwd {
         let fix = "pass --cwd a git checkout, or make one with git clone or git init";

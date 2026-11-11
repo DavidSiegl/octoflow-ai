@@ -1,6 +1,6 @@
 GATE: OK
 
-`gate.py` judged the working tree at `<head>` against the base `<head>`.
+`gate` judged the working tree at `<head>` against the base `<head>`.
 
 ## Issues on changed lines
 

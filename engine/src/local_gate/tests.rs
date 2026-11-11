@@ -1,5 +1,5 @@
 //! local_gate on this machine: a real git repository for the base's files, real sh, sha256sum and tar, with curl
-//! serving a stub release from a file and python3 running the stub's gate.py with sh, and LAUNCH with the real one.
+//! serving a stub release from a file, whose gate is a script for sh.
 
 use super::*;
 use crate::host::tests::{environment, put, read, tool, Repo};
@@ -24,11 +24,13 @@ struct Bench {
 }
 
 impl Bench {
-    /// The stub release is a gate.py that records its physical working directory and arguments in <dir>/gate-args
+    /// The stub release is a gate that records its physical working directory and arguments in <dir>/gate-args
     /// and the names in that directory in <dir>/gate-files, writes coverage.xml there, sleeps 30 s when <dir>/hang
     /// exists, then exits as <dir>/exit says (0 when it is missing): with 2 it says <dir>/said, else CANNOT_JUDGE, on
     /// standard error and writes nothing; with 0 or 1 it writes QUALITY to --out and JSON beside it, unless
-    /// <dir>/silent exists. The fake python3 runs `-c` with the real one, which fails when <dir>/old exists.
+    /// <dir>/silent exists. When <dir>/hang exists, a SIGINT from the moment gate-args exists on is recorded in
+    /// <dir>/interrupted and exits 130. uname names the machine the release's gate is built for, whatever the
+    /// tests run on.
     fn new(base_files: &[(&str, &str)]) -> Bench {
         let dir = TempDir::new();
         let (bin, rel, served) = (dir.join("bin"), dir.join("rel"), dir.join("served.tar.gz"));
@@ -41,22 +43,14 @@ impl Bench {
                 log = dir.join("curl-log"),
             ),
         );
-        let real = std::process::Command::new("sh").args(["-c", "command -v python3"]).output().expect("python3");
-        let real = String::from_utf8(real.stdout).unwrap().trim().to_string();
-        assert!(!real.is_empty(), "python3 is on PATH");
+        tool(&bin, "uname", "#!/bin/sh\necho 'Linux x86_64'\n");
         tool(
-            &bin,
-            "python3",
+            &rel,
+            "gate",
             &format!(
-                "#!/bin/sh\ncase $1 in\n--version) echo 'Python 3.12.0' ;;\n\
-                 -c) [ -e '{old}' ] && exit 1; exec '{real}' \"$@\" ;;\n*) exec sh \"$@\" ;;\nesac\n",
-                old = dir.join("old"),
-            ),
-        );
-        put(
-            &format!("{rel}/gate.py"),
-            &format!(
-                "pwd -P > '{args}'; printf '%s\\n' \"$@\" >> '{args}'; ls -A > '{files}'; : > coverage.xml\n\
+                "#!/bin/sh\n\
+                 [ -e '{hang}' ] && trap \": > '{interrupted}'; exit 130\" INT\n\
+                 pwd -P > '{args}'; printf '%s\\n' \"$@\" >> '{args}'; ls -A > '{files}'; : > coverage.xml\n\
                  [ -e '{hang}' ] && sleep 30\n\
                  status=$(cat '{exit}' 2>/dev/null || echo 0)\n\
                  [ \"$status\" = 2 ] && {{ cat '{said}' >&2 2>/dev/null || echo '{CANNOT_JUDGE}' >&2; exit 2; }}\n\
@@ -66,12 +60,12 @@ impl Bench {
                 args = dir.join("gate-args"),
                 files = dir.join("gate-files"),
                 hang = dir.join("hang"),
+                interrupted = dir.join("interrupted"),
                 exit = dir.join("exit"),
                 said = dir.join("said"),
                 silent = dir.join("silent"),
             ),
         );
-        put(&format!("{rel}/gate-rust-linux-x86_64"), "");
         let tar = std::process::Command::new("tar").args(["-czf", &served, "-C", &rel, "."]).status().expect("tar");
         assert!(tar.success(), "tar the stub release");
         let sum = std::process::Command::new("sha256sum").arg(&served).output().expect("sha256sum");
@@ -165,7 +159,7 @@ impl Bench {
 fn a_pin_is_its_first_line_not_a_comment() {
     let sha = "a".repeat(64);
     assert_eq!(parse_pin(&format!("# c\n1.2.3 {sha}\n0.1 {sha}\n")).unwrap(), ("1.2.3".to_string(), sha.clone()));
-    assert_eq!(parse_pin(BUILT_IN_PIN).unwrap().0, "0.5.0");
+    assert_eq!(parse_pin(BUILT_IN_PIN).unwrap().0, "0.7.0");
     for bad in [
         String::new(),
         "# only a comment\n".to_string(),
@@ -201,18 +195,8 @@ fn the_gate_judges_a_checkout_of_the_snapshot_by_the_bases_settings_and_both_rep
     let resolved = std::fs::canonicalize(&out).unwrap().display().to_string();
     let args = bench.gate_args();
     assert_eq!(args[0], format!("{resolved}/tree"));
-    let mut want = vec![
-        "--base".to_string(),
-        base,
-        "--config".into(),
-        format!("{out}/judge/pyproject.toml"),
-        "--out".into(),
-        format!("{out}/quality.md"),
-    ];
-    if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-        want.extend(["--rust-syntax".into(), format!("{out}/release/gate-rust-linux-x86_64")]);
-    }
-    assert_eq!(args[1..], want);
+    let (settings, quality) = (format!("{out}/judge/gate.toml"), format!("{out}/quality.md"));
+    assert_eq!(args[1..], ["--base", &base, "--config", &settings, "--out", &quality]);
     assert!(read(&bench.dir.join("gate-files")).lines().any(|name| name == "new.py"));
     assert_eq!(read(&format!("{out}/judge/gate.toml")), "[gate]\nstrict = true\n");
     assert_eq!(read(&format!("{out}/judge/pyproject.toml")), "[tool.x]\n");
@@ -247,15 +231,16 @@ fn a_cached_release_that_no_longer_matches_the_pin_is_fetched_again() {
 }
 
 #[test]
-fn a_base_without_a_pyproject_toml_or_a_gate_toml_is_judged_by_empty_rules() {
+fn a_base_without_a_gate_toml_or_a_pyproject_toml_is_judged_by_the_gates_defaults() {
     let bench = Bench::pinned();
-    // A pyproject.toml the change adds does not judge it.
+    // Neither file judges the change that adds it.
+    bench.repo.put("gate.toml", "[budgets]\nmutation = 1\n");
     bench.repo.put("pyproject.toml", "[tool.ruff]\nselect = []\n");
     bench.judge().unwrap();
     let out = bench.job(1);
-    assert_eq!(bench.gate_args()[4], format!("{out}/judge/pyproject.toml"));
-    assert_eq!(read(&format!("{out}/judge/pyproject.toml")), "");
-    assert!(!std::path::Path::new(&format!("{out}/judge/gate.toml")).exists());
+    assert_eq!(bench.gate_args()[4], format!("{out}/judge/gate.toml"));
+    assert_eq!(read(&format!("{out}/judge/gate.toml")), "");
+    assert!(!std::path::Path::new(&format!("{out}/judge/pyproject.toml")).exists());
 }
 
 #[test]
@@ -269,13 +254,19 @@ fn a_gate_that_cannot_judge_says_why() {
 fn an_exit_status_2_that_is_not_the_gates_own_is_an_error() {
     let bench = Bench::pinned();
     bench.gate_exits(2);
-    put(&bench.dir.join("said"), "usage: gate.py [-h]\ngate.py: error: unrecognized arguments: --rust-syntax\n");
+    put(&bench.dir.join("said"), "usage: gate --base REV\ngate: error: unrecognized arguments: --out\n");
     let e = bench.judge().unwrap_err().to_string();
-    assert!(e.starts_with("octoflow-gate 1.2.3 exited 2: usage: gate.py"), "{e}");
+    assert!(e.starts_with("octoflow-gate 1.2.3 exited 2: usage: gate --base REV"), "{e}");
+}
 
-    put(&bench.dir.join("said"), "python3: can't open file 'gate.py': [Errno 2] No such file or directory\n");
-    let e = bench.judge().unwrap_err().to_string();
-    assert!(e.starts_with("octoflow-gate 1.2.3 exited 2: python3: can't open"), "{e}");
+#[test]
+fn a_release_from_before_the_gate_was_one_program_is_refused_before_any_download() {
+    let bench = Bench::new(&[("ci/gate.pin", &format!("0.6.0 {}\n", "0".repeat(64)))]);
+    let e = bench.start().unwrap_err().to_string();
+    let want = "the run's base's ci/gate.pin: octoflow-gate 0.6.0 ships no gate, which the local gate runs from 0.7.0 on";
+    assert_eq!(e, want);
+    assert!(bench.downloads().is_empty());
+    assert!(!std::path::Path::new(&bench.job(1)).exists());
 }
 
 #[test]
@@ -310,8 +301,8 @@ fn a_base_without_a_pin_is_judged_by_the_built_in_one() {
     let bench = Bench::new(&[("README", "base\n")]);
     // The stub is not the built-in release, so the fetch fails, having asked for it.
     let e = bench.judge().unwrap_err().to_string();
-    assert!(e.starts_with("fetching octoflow-gate 0.5.0: "), "{e}");
-    let url = "https://github.com/DavidSiegl/octoflow-gate/releases/download/v0.5.0/octoflow-gate-0.5.0.tar.gz";
+    assert!(e.starts_with("fetching octoflow-gate 0.7.0: "), "{e}");
+    let url = "https://github.com/DavidSiegl/octoflow-gate/releases/download/v0.7.0/octoflow-gate-0.7.0.tar.gz";
     assert_eq!(bench.downloads(), [url]);
 }
 
@@ -335,6 +326,20 @@ fn a_stopped_gate_is_gone_with_its_checkout() {
 
     assert!(!bench.running(&judging));
     assert!(!std::path::Path::new(&format!("{}/tree", bench.job(1))).exists());
+}
+
+#[test]
+fn a_stop_reaches_the_gate_as_a_ctrl_c_would() {
+    // The gate stops its tests, in sessions of their own, when it is interrupted: a SIGINT it never got, or ignored,
+    // would leave them running once its group is killed.
+    let bench = Bench::pinned();
+    put(&bench.dir.join("hang"), "");
+    let judging = bench.start().unwrap();
+    bench.until_the_gate_runs();
+
+    judging.stop(&bench.repo.host).unwrap();
+
+    assert!(std::path::Path::new(&bench.dir.join("interrupted")).exists());
 }
 
 #[test]
@@ -469,41 +474,41 @@ fn a_judgement_leaves_the_repositorys_other_worktrees_registered() {
 }
 
 #[test]
-fn the_preflight_needs_python3_3_11_the_fetchs_tools_a_full_ps_and_a_writable_cache() {
+fn the_preflight_needs_linux_on_x86_64_the_jobs_tools_a_full_ps_an_env_that_restores_signals_and_a_writable_cache() {
     let bench = Bench::pinned();
     preflight(&bench.repo.host).unwrap();
     assert!(std::path::Path::new(&bench.dir.join("cache/octoflow/gate")).is_dir());
 
     let host = |vars: Vec<_>| ProcessHost::in_environment(vars.into_iter(), &Interrupt::new());
-    let empty = TempDir::new();
-    let e = preflight(&host(environment(None, &[("PATH", &empty.path())]))).unwrap_err().to_string();
-    let python = "the local quality gate runs octoflow-gate with python3 3.11 or later from PATH, and ";
-    assert!(e.starts_with(python), "{e}");
+    let fails = "the local quality gate fetches octoflow-gate and runs it on the project's machine: ";
 
-    put(&bench.dir.join("old"), "");
-    let e = preflight(&bench.repo.host).unwrap_err().to_string();
-    assert_eq!(e, format!("{python}it is older"));
-    std::fs::remove_file(bench.dir.join("old")).unwrap();
+    // The release's gate does not run on a Mac.
+    let mac = bench.dir.join("mac");
+    tool(&mac, "uname", "#!/bin/sh\necho 'Darwin arm64'\n");
+    let e = preflight(&host(environment(Some(&mac), &[]))).unwrap_err().to_string();
+    assert_eq!(e, format!("{fails}the gate is built for Linux x86_64, and this machine is Darwin arm64"));
 
-    // A PATH with sh and python3 alone has no curl.
+    // A PATH with sh and uname alone has no curl.
     let only = bench.dir.join("only");
     std::fs::create_dir_all(&only).unwrap();
     let sh = std::process::Command::new("sh").args(["-c", "command -v sh"]).output().expect("sh");
     std::os::unix::fs::symlink(String::from_utf8(sh.stdout).unwrap().trim(), format!("{only}/sh")).unwrap();
-    std::os::unix::fs::symlink(bench.dir.join("bin/python3"), format!("{only}/python3")).unwrap();
+    std::os::unix::fs::symlink(bench.dir.join("bin/uname"), format!("{only}/uname")).unwrap();
     let e = preflight(&host(environment(None, &[("PATH", &only)]))).unwrap_err().to_string();
-    assert_eq!(e, "the local quality gate fetches octoflow-gate into a cache of its own: curl is not on PATH");
+    assert_eq!(e, format!("{fails}curl is not on PATH"));
 
     // A ps that does not name a process's command line, as BusyBox's does not, cannot tell the job from another.
     let busybox = bench.dir.join("busybox");
     tool(&busybox, "ps", "#!/bin/sh\necho 'ps: unrecognized option: w' >&2\nexit 1\n");
     let cache = bench.dir.join("cache");
     let e = preflight(&host(environment(Some(&busybox), &[("XDG_CACHE_HOME", &cache)]))).unwrap_err().to_string();
-    assert_eq!(
-        e,
-        "the local quality gate fetches octoflow-gate into a cache of its own: ps does not take -ww -o stat=,args= -p, which \
-         stopping the gate needs"
-    );
+    assert_eq!(e, format!("{fails}ps does not take -ww -o stat=,args= -p, which stopping the gate needs"));
+
+    // An env that cannot restore SIGINT, as BusyBox's, would start the gate deaf to a stop (LAUNCH).
+    let old_env = bench.dir.join("old-env");
+    tool(&old_env, "env", "#!/bin/sh\necho \"env: unrecognized option '$1'\" >&2\nexit 125\n");
+    let e = preflight(&host(environment(Some(&old_env), &[("XDG_CACHE_HOME", &cache)]))).unwrap_err().to_string();
+    assert_eq!(e, format!("{fails}env does not take --default-signal, which starting the gate needs"));
 
     // A cache under a file cannot be made.
     let file = bench.dir.join("file");
@@ -511,8 +516,7 @@ fn the_preflight_needs_python3_3_11_the_fetchs_tools_a_full_ps_and_a_writable_ca
     let e = preflight(&host(environment(Some(&bench.dir.join("bin")), &[("XDG_CACHE_HOME", &file)])))
         .unwrap_err()
         .to_string();
-    assert!(e.starts_with("the local quality gate fetches octoflow-gate into a cache of its own: "), "{e}");
-    assert!(e.contains("cannot write the cache"), "{e}");
+    assert!(e.starts_with(fails) && e.contains("cannot write the cache"), "{e}");
 }
 
 #[test]

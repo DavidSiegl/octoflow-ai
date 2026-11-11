@@ -256,7 +256,7 @@ pipeline {
                     withEnv(["GATE_BASE=${base}"]) {
                         status = sh(returnStatus: true, script: '''
                             # The judge's files, a quality build's copied out of the main commit Checkout named;
-                            # gate.toml beside pyproject.toml, where --config makes the gate read it. Exit status 2 for
+                            # pyproject.toml beside gate.toml, where --config makes the gate read it. Exit status 2 for
                             # whatever fails before the gate runs: a setup that failed is a gate that could not judge,
                             # never one that did not pass.
                             judge=.
@@ -273,11 +273,11 @@ pipeline {
                             version=$(sh "$judge/ci/fetch-gate.sh" "$judge/ci/gate.pin" "$release") || exit 2
                             echo "Gate: octoflow-gate $version, its tarball checked against ci/gate.pin's sha256"
                             # The Test stage ran the tests; their reports replace gate.toml's [[test]] commands.
-                            uv run --frozen python "$release/gate.py" --base "$GATE_BASE" \\
-                                --config "$judge/pyproject.toml" \\
+                            # uv run puts pymarkdown, which the gate runs, on PATH.
+                            uv run --frozen "$release/gate" --base "$GATE_BASE" \\
+                                --config "$judge/gate.toml" \\
                                 --tests target/nextest/ci/junit.xml \\
-                                --coverage coverage-rust.xml \\
-                                --rust-syntax "$release/gate-rust-linux-x86_64" --out quality.md
+                                --coverage coverage-rust.xml --out quality.md
                         ''')
                     }
                     if (status == 1 && params.GIT_REF) {

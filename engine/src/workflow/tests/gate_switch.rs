@@ -189,7 +189,7 @@ fn on_with_the_local_gate_runs_its_preflight_and_needs_no_origin() {
     }));
     let told = Told::default();
     turn_quality_gate_on(&mut state, &DEFAULT_WORKFLOW, &*host, &told, &QualityGate::Local).expect("the gate turns on");
-    assert_eq!(*asked.borrow(), ["python3", "sh"]);
+    assert_eq!(*asked.borrow(), ["sh"]);
     assert_eq!((state.phase.as_str(), state.quality_job.as_deref(), state.quality_round), (QUALITY, Some("local"), 1));
     assert_eq!(told.lines(), [format!("turned the quality gate of run {RUN_ID} on, with local")]);
 }

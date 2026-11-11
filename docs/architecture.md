@@ -408,7 +408,7 @@ agent runs in the suite, and no request leaves the machine.
 ## Tooling
 
 - `pyproject.toml`, with `uv.lock` and `.python-version`: not a Python project, but the quality gate's toolchain, the
-  Python the gate runs on and its Markdown linter, pymarkdown, in the `dev` group, and pymarkdown's rules.
+  Markdown linter the gate runs, pymarkdown, in the `dev` group, the Python it runs on, and its rules.
 - `ui/package.json`: the desktop app's npm scripts, `dev`, `build`, `test`, `typecheck`, `lint` and `tauri`. Its
   `.npmrc` sets `legacy-peer-deps`, because npm 9.2 as Debian ships it cannot resolve Vitest's optional peers.
   Jenkins runs the frontend's `typecheck`, `lint` and `test`, and the shell's tests under cargo-llvm-cov.

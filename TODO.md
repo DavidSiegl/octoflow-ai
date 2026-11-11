@@ -85,6 +85,17 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **The local gate's report names an empty `judge/gate.toml` for a base without `gate.toml`.** Raised by
+  cross-review 171 (F7): "the gate counts the file as there and reports `<…>/judge/gate.toml` as where the settings
+  came from … It does not report 'the defaults (there is no …)', so quality.md hides that the defaults judged the
+  change." octoflow-gate 0.7.0 refuses a `--config` that names no file or names a `pyproject.toml`
+  (`JudgedBy::for_tree`, `parse_args`), and without `--config` it reads the change's own `gate.toml`, so the empty
+  file is what keeps the change's settings out. Closes when octoflow-gate takes the judge's rules and settings
+  without a settings file, as a `--rules` option, or reports an empty one as its defaults.
+- **A local gate whose job cannot start shows it at the first verdict, not at `start`.** Raised by cross-review 171
+  (F6): "If setsid has gone missing since the preflight, the first verdict reports 'its job gone without a status:
+  <job.log tail>'." LAUNCH prints the job's pid either way; the tail of `job.log` still says why. Closes with
+  LAUNCH failing when the job's group never appears, which needs telling that from a job that ended within its wait.
 - **A stuck loop can compare a round read from `quality.json` with one read from `quality.md`.** Raised by
   cross-review 160 (F3): "A round judged from quality.json records every failing finding's fingerprint; one judged
   from quality.md (gate_failures) records at most QUALITY_FINDINGS_LIMIT." A round of a build that has
