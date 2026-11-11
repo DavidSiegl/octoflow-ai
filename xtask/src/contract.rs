@@ -290,7 +290,7 @@ impl Check<'_> {
         let polled = self.poll("the queue item to start a build", |check| {
             let item = match check.jenkins.queue_item(queue_url) {
                 // Jenkins forgets a queue item some minutes after its build started; a quality round then takes the
-                // newest build of its ref (quality_rounds.rs, queued_build), and so does this.
+                // newest build of its ref (ci/judging.rs, queued_build), and so does this.
                 Err(e) if e.status() == Some(404) => {
                     let found = check.jenkins.find_build(GIT_REF, &[])?;
                     let forgotten = || format!("Jenkins forgot the queue item, and no recent build is of {GIT_REF}");
@@ -344,8 +344,8 @@ impl Check<'_> {
     /// Step 5: the build polled, as a quality round polls it, for its result and its quality.md, until it has ended;
     /// each answer about it has `building` a boolean and `result` null or a string, a string once it is not building.
     /// The build is taken, for step 9, when a quality round would take it: at its end, or once two reads of a running
-    /// build's quality.md, a poll apart, agree and hold a whole non-blank line (`analyse`'s rule, in
-    /// engine/src/workflow/quality_rounds.rs); quality.md is not read again after that.
+    /// build's quality.md, a poll apart, agree and hold a whole non-blank line (`gate_or_end`'s rule, in
+    /// engine/src/ci/judging.rs); quality.md is not read again after that.
     fn ended(&mut self, number: i64) -> Result<Result<Ended, Finding>, Halt> {
         let mut taken_after = None;
         // The last read of quality.md while the build ran; None before one found it.

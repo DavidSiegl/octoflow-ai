@@ -99,6 +99,25 @@ fn a_secret_in_a_snapshot_goes_back_to_the_builder() {
 }
 
 #[test]
+fn a_leak_report_is_masked_as_every_quality_file_is() {
+    // A path that quotes the CI token, as the one place it can reach a leak report from.
+    let file = format!("token-{}.txt", crate::ci::fake::JENKINS_TOKEN);
+    let f = gated_on(
+        host_with(vec![Leak { file, ..snapshot_leak() }]),
+        vec![
+            ("spec", vec![spec_turn()]),
+            ("build", vec![build_turn(1), fix_keeping(0)]),
+            ("review", vec![review_turn(1, APPROVE)]),
+        ],
+    );
+    assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
+    let quality = f.quality_file(1, 1);
+    assert_eq!(parse_gate(&quality), Some(QUALITY_LEAK));
+    assert!(quality.contains("token-****.txt"), "{quality}");
+    assert!(!quality.contains(crate::ci::fake::JENKINS_TOKEN), "{quality}");
+}
+
+#[test]
 fn a_resume_finds_the_leak_quality_file() {
     let host = host_with(vec![snapshot_leak()]);
     let f = gated_on(Rc::clone(&host), vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)])]);

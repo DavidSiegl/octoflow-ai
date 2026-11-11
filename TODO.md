@@ -158,6 +158,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   reported failure needs its own handling first: a delete tried again finds no ref, and a push under a lease sees
   the value it set. Left out of origin-retry ticket 01 (2026-11-04). Closes with each write's retry made safe to
   repeat, then routed through `reaching_origin`.
+- **`ci` reads the run's layout from `RunState`.** `QualityGate::start` (`engine/src/ci.rs`) takes `&mut RunState` and
+  reads its base, work dir, run id, leaks path, gate dir, ci ref, quality place and `ci`, while `state.rs` imports
+  `crate::ci::LOCAL_GATE`. Deferred from cross-review 181 (F5, nit): "a module cycle, and the run's layout leaks into
+  the CI client. Passing the snapshot's inputs and `&mut Object` would keep `ci` below `state`." Closes with `start`
+  taking those inputs and `RunState::ci`, if the parameter list that brings stays shorter than what it removes.
 - **Workflow keeps its Collaborators field by field.** `Workflow::new` (`engine/src/workflow.rs`) takes a
   `Collaborators` apart into eight fields, so code shared between a Workflow and a CLI command that holds the
   `Collaborators` takes the pieces it needs one by one: `delete_ci_refs` (`workflow/quality_rounds.rs`) takes host,
@@ -692,8 +697,8 @@ is rewritten to say what is left. The quality gate's entries moved with it to
     `artifacts[relativePath]` in the result's `api/json` tree would halve the requests (F2).
   - No test covers a transient `CIError` between two reads, or a build that ends with a file other than the one read
     while it ran (F5).
-- **A running build's reports are taken as whole once two reads agree.** The quality round's `gate_or_end`
-  (`engine/src/workflow/quality_rounds.rs`) reads a still running build's `quality.md`, and its `quality.json` with it,
+- **A running build's reports are taken as whole once two reads agree.** A Jenkins judgement's `gate_or_end`
+  (`engine/src/ci/judging.rs`) reads a still running build's `quality.md`, and its `quality.json` with it,
   each poll and takes the pair when two reads at least `CI_POLL_SECONDS` apart are equal, because Jenkins serves an artifact while `archiveArtifacts` is still
   copying it. Raised by the cross-review of `quality-round-early-read` (F1, 2026-10-27): "Equal reads show only that the
   copy made no progress between them, not that it finished." Two such reads are taken only once they hold a whole

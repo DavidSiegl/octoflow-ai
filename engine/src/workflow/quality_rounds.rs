@@ -177,9 +177,25 @@ impl<'a> Workflow<'a> {
     /// Ctrl-C.
     fn judged_snapshot(&mut self, n: u32, q: u32) -> Outcome<(String, Option<Judgement>)> {
         let gate = self.gate()?;
+        let (text, judged) = self.unmasked_judgement(gate, n, q)?;
+        let judged = judged.map(|mut judged| {
+            // The conditions go into state.json, which the quality file's masking does not reach.
+            judged.failures.conditions.iter_mut().for_each(|c| *c = gate.mask(c));
+            judged
+        });
+        Ok((gate.mask(&text), judged))
+    }
+
+    /// judged_snapshot's quality file and judgement by gate, unmasked.
+    fn unmasked_judgement(&mut self, gate: &QualityGate, n: u32, q: u32) -> Outcome<(String, Option<Judgement>)> {
         let deadline = self.clocks.monotonic() + QUALITY_TIMEOUT as f64;
-        let human = self.human;
-        let mut judging = match gate.start(self.host, &mut self.state, n, q, &|line| human.log(line))? {
+        let git_ref = self.state.ci_ref(n, q);
+        // A snapshot branch of an earlier round, left on origin by a run stopped before that round ended.
+        if let Some(old) = self.state.ci.get("ref").and_then(Value::as_str).filter(|r| !r.is_empty() && *r != git_ref) {
+            delete_ci_ref(self.host, self.human, &self.state.cwd, old);
+            self.state.ci = Object::new();
+        }
+        let mut judging = match gate.start(self.host, &mut self.state, n, q)? {
             Started::Judging(judging) => judging,
             Started::Leaked { found, snapshot, so_what } => {
                 let base = self.state.base.clone().unwrap_or_default();
@@ -197,18 +213,12 @@ impl<'a> Workflow<'a> {
             }
         }
         let (quality, judged, judged_by) = match waited? {
-            Verdict::NotJudged(text) => return Ok((gate.mask(&text), None)),
+            Verdict::NotJudged(text) => return Ok((text, None)),
             Verdict::Judged { quality, judged, judged_by } => (quality, judged, judged_by),
         };
         let found = self.orchestrator_findings(judging.snapshot(), deadline)?;
-        let text = gate.mask(&under_gate_line(&found.added_to_file(&quality), &judged_by));
-        let judged = judged.map(|judged| {
-            let mut judged = found.added_to(judged);
-            // The conditions go into state.json, which the quality file's masking does not reach.
-            judged.failures.conditions.iter_mut().for_each(|c| *c = gate.mask(c));
-            judged
-        });
-        Ok((text, judged))
+        let text = under_gate_line(&found.added_to_file(&quality), &judged_by);
+        Ok((text, judged.map(|judged| found.added_to(judged))))
     }
 
     /// Ask judging for its verdict every CI_POLL_SECONDS until it gives one, and return that, keeping the heartbeat

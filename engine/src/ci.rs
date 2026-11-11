@@ -174,11 +174,10 @@ impl QualityGate {
     /// dir's tree whose only parent is the run's base, scanned by gitleaks by the base's rules, then judged.
     ///
     /// Jenkins judges a snapshot pushed to origin's branch RunState::ci_ref, once gitleaks finds no secret in it or in
-    /// the commits below it that origin lacks; state.ci then records the push, for the caller to save. When state.ci
-    /// already records that branch, as on a resume, the judgement goes on from the furthest link it records, and no
-    /// snapshot is taken; a branch it records of an earlier round is deleted from origin (a failure only logged to
-    /// log) and forgotten. The local gate judges a new snapshot each start, scanning only what it adds to the base,
-    /// in a job of its own under RunState::gate_dir (local_gate::start).
+    /// the commits below it that origin lacks; state.ci then records the push, in place of what it held, for the
+    /// caller to save. When state.ci already records that branch, as on a resume, the judgement goes on from the
+    /// furthest link it records, and no snapshot is taken. The local gate judges a new snapshot each start, scanning
+    /// only what it adds to the base, in a job of its own under RunState::gate_dir (local_gate::start).
     ///
     /// Errors: the run has no base; state.ci's link is of another type than a chain saves; git, the scan or the push
     /// fails; local_gate::start's.
@@ -188,23 +187,15 @@ impl QualityGate {
         state: &mut RunState,
         n: u32,
         q: u32,
-        log: &dyn Fn(&str),
     ) -> Result<Started<'_>, OrchestratorError> {
         let base =
             state.base.clone().ok_or_else(|| OrchestratorError("a quality round before the run has a base".into()))?;
         let (git_ref, place) = (state.ci_ref(n, q), state.quality_place(n, q));
-        let recorded = state.ci.get("ref").and_then(Value::as_str).map(str::to_string);
         if let QualityGate::Jenkins(jenkins) = self {
-            if recorded.as_deref() == Some(git_ref.as_str()) {
+            if state.ci.get("ref").and_then(Value::as_str) == Some(git_ref.as_str()) {
                 let sha = judging::ci_text(&state.ci, "sha")?;
                 return Ok(Started::Judging(Judging::jenkins(jenkins, &sha, &git_ref, &place, true)));
             }
-        }
-        if let Some(old) = recorded {
-            if let Err(e) = host.delete_remote_branch(&state.cwd, &old) {
-                log(&format!("could not delete {old} on {REMOTE}: {e}"));
-            }
-            state.ci = Object::new();
         }
         let work_dir = state.work_dir().to_string();
         let message = format!("Orchestrator run {}: round {n}, quality round {q}", state.run_id);
