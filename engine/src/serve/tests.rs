@@ -1082,12 +1082,9 @@ fn a_run_neither_listed_nor_exited_in_time_is_answered_as_not_yet_listed() {
 }
 
 #[test]
-fn without_a_herdr_server_here_a_run_is_refused_saying_to_start_one() {
+fn a_run_herdr_cannot_launch_is_refused_with_herdr_s_error() {
     let host = Arc::new(ServeHost::on(None));
     let served = starting(&host);
-    served.console.state().launch_error = Some(HerdrError::new("server_not_running", "no herdr server is running"));
-    let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#);
-    assert_eq!((reply.status, reply.error()), (Some(502), "no herdr server here; start herdr".to_string()));
     served.console.state().launch_error = Some(HerdrError::new("timeout", "herdr workspace create did not return"));
     let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#);
     assert_eq!((reply.status, reply.error()), (Some(502), "herdr timeout: herdr workspace create did not return".to_string()));

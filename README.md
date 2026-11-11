@@ -136,9 +136,12 @@ first time when a browser downloaded it, as it does the binary.
   one falls back to shown greyed; a role the next workflow you pick also has keeps its row's values), and two
   boxes: "No pull request", off as on the CLI, and "Separate worktree", on, so that runs started side by side do
   not share the checkout. Start runs `orchestrator run` with them in a new workspace of the herdr server on this
-  computer, where you can watch and interrupt it as one you started by hand; the app then opens the run. It needs
-  that herdr server running, also for a project on a machine, whose agents then run there. A run that fails before
-  it starts, such as one the checkout already holds, shows the last lines of its pane in the form.
+  computer, where you can watch and interrupt it as one you started by hand; the app then opens the run. That is
+  so for a project on a machine too, whose agents then run there. With no herdr server running here, the app
+  starts one of its own without a window, the herdr session `octoflow`, which stays up after the app closes:
+  `herdr session attach octoflow` shows its runs in a terminal, and `herdr session stop octoflow` ends it. A run
+  that fails before it starts, such as one the checkout already holds, shows the last lines of its pane in the
+  form.
 - **Run detail:** the files in a run's directory, the newest or the one you pick rendered as Markdown, updated
   as they are written.
 - **Agents:** a tab for each agent the run has started, showing the last lines of its herdr pane, read again every
@@ -190,7 +193,8 @@ The app starts `orchestrator serve` beside it, the checkout's own `target/debug/
 binary. `serve` works without the app too: it prints one JSON line,
 `{"url": "http://127.0.0.1:<port>", "token": "..."}`, and serves the project's runs on that port until Ctrl-C or
 SIGTERM; besides reading them, it types into their agents and starts new runs, each in a new workspace of this
-machine's herdr server. Its endpoints and security checks are in [serve](docs/architecture.md#serve).
+machine's herdr server, or of the session `octoflow`, which it starts when none is running. Its endpoints and
+security checks are in [serve](docs/architecture.md#serve).
 
 ## Usage
 

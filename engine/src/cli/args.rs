@@ -461,7 +461,8 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
             "Serve the runs of any project, local or on a saved herdr machine: the run records list --json prints, \
              each run's files and their contents, and a stream of events as they change; type into a run's agents; \
              and start a run, in a new workspace of this machine's herdr server, where it can be watched and \
-             interrupted as one started here. Prints one JSON line, {\"url\": ..., \"token\": ...}, then serves on a \
+             interrupted as one started here; with no herdr server running, in the herdr session octoflow, which \
+             it starts and leaves running. Prints one JSON line, {\"url\": ..., \"token\": ...}, then serves on a \
              free port of 127.0.0.1 until SIGINT or SIGTERM, and exits 0. Every request needs the token.",
         )
         .arg(Arg::new("origin").long("origin").value_name("ORIGIN").action(ArgAction::Append).help(

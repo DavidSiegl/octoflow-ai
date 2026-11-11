@@ -231,13 +231,12 @@ export class Api {
     return this.json(`${this.connection.url}/workflows`) as Promise<RunOptions>;
   }
 
-  /** Start the run request asks for in project, in a new workspace of this computer's herdr server, and resolve to
+  /** Start the run request asks for in project, in a new workspace of this computer's herdr, and resolve to
    * its id once it has saved its state or the server's 30 seconds of waiting for that have passed, whichever is
    * first: the run may not be in the event stream yet, and one that exits after the wait never will be. Rejects with
    * the server's error message: status 400 for a request it refuses, 413 for one too long, 422 for a run that exited
    * before saving its state, the message ending with the last lines its pane showed, 500 when the server cannot tell
-   * its own program or make a run id, and 502 for a project it cannot reach or a run herdr cannot start, "no herdr
-   * server here; start herdr" without a herdr server on this computer. */
+   * its own program or make a run id, and 502 for a project it cannot reach or a run herdr cannot start. */
   async startRun(project: Project, request: RunRequest): Promise<string> {
     const body = (await this.json(this.url("/run", project, {}), {
       method: "POST",

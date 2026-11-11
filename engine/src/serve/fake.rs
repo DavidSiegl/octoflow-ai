@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::constants::RUNS_DIR;
 use crate::error::OrchestratorError;
-use crate::herdr::{AgentAddress, AgentConsole, HerdrError, HerdrServer, Launcher};
+use crate::herdr::{AgentAddress, AgentConsole, HerdrError, HerdrServer, Launched, Launcher};
 use crate::host::{Exec, ExecError, Host, RunFile, RunFileText};
 use crate::serve::Reached;
 use serde_json::Value;
@@ -186,7 +186,7 @@ impl AgentConsole for FakeConsole {
 }
 
 impl Launcher for FakeConsole {
-    fn launch(&self, cwd: &str, label: &str, argv: &[String]) -> Result<String, HerdrError> {
+    fn launch(&self, cwd: &str, label: &str, argv: &[String]) -> Result<Launched, HerdrError> {
         let mut s = self.state();
         if let Some(e) = &s.launch_error {
             return Err(e.clone());
@@ -195,11 +195,11 @@ impl Launcher for FakeConsole {
         if let Some(play) = s.on_launch.as_mut() {
             play(argv);
         }
-        Ok(LAUNCHED_PANE.to_string())
+        Ok(Launched { pane: LAUNCHED_PANE.to_string(), server: None })
     }
 
-    fn exited(&self, pane: &str, _lines: u32) -> Result<Option<String>, HerdrError> {
-        assert_eq!(pane, LAUNCHED_PANE, "only a launched pane is asked about");
+    fn exited(&self, launched: &Launched, _lines: u32) -> Result<Option<String>, HerdrError> {
+        assert_eq!(launched.pane, LAUNCHED_PANE, "only a launched pane is asked about");
         let s = self.state();
         match &s.exited_error {
             Some(e) => Err(e.clone()),

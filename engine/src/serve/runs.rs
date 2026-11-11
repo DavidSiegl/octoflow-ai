@@ -202,8 +202,7 @@ impl ProjectRuns {
     /// `run` as `--cwd` and the directory serve resolved, for a project here, and as the client named it, with its
     /// `--machine`, for one on a machine. Once the run is launched a look that fails, at its state.json or its pane, is
     /// no answer: the wait goes on, so that the client still gets the id of a run that is running. Errors: Refused for
-    /// a run id that is not a plain name; Failed when herdr cannot launch it, as "no herdr server here; start herdr"
-    /// without a herdr server.
+    /// a run id that is not a plain name; Failed when herdr cannot launch it (Launcher::launch).
     pub fn start(
         &self,
         request: &RunRequest,
@@ -217,16 +216,13 @@ impl ProjectRuns {
         // The pane starts in the resolved directory too, where a relative cwd or one with ~ would resolve elsewhere.
         let target = if self.remote() { self.target.clone() } else { vec!["--cwd".to_string(), self.cwd.clone()] };
         let argv = request.argv(program, run_id, &target);
-        let pane = self.launcher.launch(&self.launch_dir, &label, &argv).map_err(|e| match e.code() {
-            Some("server_not_running") => OrchestratorError::new("no herdr server here; start herdr"),
-            _ => e.into(),
-        })?;
+        let launched = self.launcher.launch(&self.launch_dir, &label, &argv).map_err(OrchestratorError::from)?;
         let saved = || self.host.read(&state).is_ok_and(|text| text.is_some());
         Ok(wait.until(stopping, || {
             if saved() {
                 return Some(Started::Listed);
             }
-            let shown = self.launcher.exited(&pane, START_ERROR_LINES).ok().flatten()?;
+            let shown = self.launcher.exited(&launched, START_ERROR_LINES).ok().flatten()?;
             // It may have saved its state.json just before it exited, as a run that fails after its claim does.
             Some(if saved() { Started::Listed } else { Started::Exited(shown) })
         }))
