@@ -26,7 +26,7 @@ struct Bench {
 impl Bench {
     /// The stub release is a gate that records its physical working directory and arguments in <dir>/gate-args
     /// and the names in that directory in <dir>/gate-files, writes coverage.xml there, sleeps 30 s when <dir>/hang
-    /// exists, then exits as <dir>/exit says (0 when it is missing): with 2 it says <dir>/said, else CANNOT_JUDGE, on
+    /// exists, unless a SIGINT ends that, which it records in <dir>/interrupted and exits 130 for, then exits as <dir>/exit says (0 when it is missing): with 2 it says <dir>/said, else CANNOT_JUDGE, on
     /// standard error and writes nothing; with 0 or 1 it writes QUALITY to --out and JSON beside it, unless
     /// <dir>/silent exists. uname names the machine the release's gate is built for, whatever the tests run on.
     fn new(base_files: &[(&str, &str)]) -> Bench {
@@ -48,7 +48,7 @@ impl Bench {
             &format!(
                 "#!/bin/sh\n\
                  pwd -P > '{args}'; printf '%s\\n' \"$@\" >> '{args}'; ls -A > '{files}'; : > coverage.xml\n\
-                 [ -e '{hang}' ] && sleep 30\n\
+                 [ -e '{hang}' ] && {{ trap \": > '{interrupted}'; exit 130\" INT; sleep 30; }}\n\
                  status=$(cat '{exit}' 2>/dev/null || echo 0)\n\
                  [ \"$status\" = 2 ] && {{ cat '{said}' >&2 2>/dev/null || echo '{CANNOT_JUDGE}' >&2; exit 2; }}\n\
                  while [ $# -gt 0 ]; do [ \"$1\" = --out ] && out=$2; shift; done\n\
@@ -57,6 +57,7 @@ impl Bench {
                 args = dir.join("gate-args"),
                 files = dir.join("gate-files"),
                 hang = dir.join("hang"),
+                interrupted = dir.join("interrupted"),
                 exit = dir.join("exit"),
                 said = dir.join("said"),
                 silent = dir.join("silent"),
@@ -256,20 +257,13 @@ fn an_exit_status_2_that_is_not_the_gates_own_is_an_error() {
 }
 
 #[test]
-fn a_release_from_before_the_gate_was_one_program_is_an_error_that_says_so() {
-    let mut bench = Bench::new(&[("README", "base\n")]);
-    let (rel, served) = (bench.dir.join("old"), bench.dir.join("served.tar.gz"));
-    put(&format!("{rel}/gate.py"), "");
-    let tar = std::process::Command::new("tar").args(["-czf", &served, "-C", &rel, "."]).status().expect("tar");
-    assert!(tar.success(), "tar the old release");
-    let sum = std::process::Command::new("sha256sum").arg(&served).output().expect("sha256sum");
-    let sha256 = String::from_utf8(sum.stdout).unwrap().split(' ').next().unwrap().to_string();
-    bench.repo.base = Some(bench.repo.commit(&[("ci/gate.pin", &format!("0.5.0 {sha256}\n"))], "pin"));
-
-    let e = bench.judge().unwrap_err().to_string();
-
-    let want = "fetching octoflow-gate 0.5.0: release 0.5.0 holds no gate, which octoflow-gate ships since 0.7.0";
+fn a_release_from_before_the_gate_was_one_program_is_refused_before_any_download() {
+    let bench = Bench::new(&[("ci/gate.pin", &format!("0.6.0 {}\n", "0".repeat(64)))]);
+    let e = bench.start().unwrap_err().to_string();
+    let want = "the run's base's ci/gate.pin: octoflow-gate 0.6.0 ships no gate, which the local gate runs from 0.7.0 on";
     assert_eq!(e, want);
+    assert!(bench.downloads().is_empty());
+    assert!(!std::path::Path::new(&bench.job(1)).exists());
 }
 
 #[test]
@@ -329,6 +323,20 @@ fn a_stopped_gate_is_gone_with_its_checkout() {
 
     assert!(!bench.running(&judging));
     assert!(!std::path::Path::new(&format!("{}/tree", bench.job(1))).exists());
+}
+
+#[test]
+fn a_stop_reaches_the_gate_as_a_ctrl_c_would() {
+    // The gate stops its tests, in sessions of their own, when it is interrupted: a SIGINT it never got, or ignored,
+    // would leave them running once its group is killed.
+    let bench = Bench::pinned();
+    put(&bench.dir.join("hang"), "");
+    let judging = bench.start().unwrap();
+    bench.until_the_gate_runs();
+
+    judging.stop(&bench.repo.host).unwrap();
+
+    assert!(std::path::Path::new(&bench.dir.join("interrupted")).exists());
 }
 
 #[test]
@@ -463,7 +471,7 @@ fn a_judgement_leaves_the_repositorys_other_worktrees_registered() {
 }
 
 #[test]
-fn the_preflight_needs_linux_on_x86_64_the_jobs_tools_a_full_ps_and_a_writable_cache() {
+fn the_preflight_needs_linux_on_x86_64_the_jobs_tools_a_full_ps_an_env_that_restores_signals_and_a_writable_cache() {
     let bench = Bench::pinned();
     preflight(&bench.repo.host).unwrap();
     assert!(std::path::Path::new(&bench.dir.join("cache/octoflow/gate")).is_dir());
@@ -492,6 +500,12 @@ fn the_preflight_needs_linux_on_x86_64_the_jobs_tools_a_full_ps_and_a_writable_c
     let cache = bench.dir.join("cache");
     let e = preflight(&host(environment(Some(&busybox), &[("XDG_CACHE_HOME", &cache)]))).unwrap_err().to_string();
     assert_eq!(e, format!("{fails}ps does not take -ww -o stat=,args= -p, which stopping the gate needs"));
+
+    // An env that cannot restore SIGINT, as BusyBox's, would start the gate deaf to a stop (LAUNCH).
+    let old_env = bench.dir.join("old-env");
+    tool(&old_env, "env", "#!/bin/sh\necho \"env: unrecognized option '$1'\" >&2\nexit 125\n");
+    let e = preflight(&host(environment(Some(&old_env), &[("XDG_CACHE_HOME", &cache)]))).unwrap_err().to_string();
+    assert_eq!(e, format!("{fails}env does not take --default-signal, which starting the gate needs"));
 
     // A cache under a file cannot be made.
     let file = bench.dir.join("file");

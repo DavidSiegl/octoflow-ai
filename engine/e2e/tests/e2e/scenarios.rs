@@ -390,7 +390,7 @@ pub fn quality_local_fails_then_passes(w: &mut World) {
     );
     // The machine the release's gate is built for, whatever the scenarios run on.
     w.tool("uname", "echo 'Linux x86_64'");
-    w.write("project/ci/gate.pin", &format!("0.0.1 {sha256}\n"));
+    w.write("project/ci/gate.pin", &format!("9.9.9 {sha256}\n"));
     let project = w.project.clone();
     w.git(&project, &["add", "ci/gate.pin"]);
     w.git(&project, &["commit", "--quiet", "-m", "Pin the gate"]);

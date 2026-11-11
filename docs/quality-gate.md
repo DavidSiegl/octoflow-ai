@@ -32,7 +32,9 @@ What this repository gives it:
 **Raising the pin.** Only after the release exists: download its tarball and its `.sha256` asset, check them with
 `sha256sum -c`, and write the version and the sha256 into `ci/gate.pin`. The release must read this commit's
 `gate.toml`, since the gate refuses a key it does not know. A pull request that raises the pin is judged by the release
-it raises it to; quality builds take the new release once it is on `main`. Lowering the pin rolls back the same way.
+it raises it to; quality builds take the new release once it is on `main`. Lowering the pin rolls back the same way,
+to 0.7.0 or later: the Gate stage and the local gate run a release's `gate`, which the releases before 0.7.0 do not
+ship, so rolling back below it means reverting 0.66.0's cutover, its `Jenkinsfile` with its pin.
 
 **Running it by hand.** Fetch the pinned release and run it in the working tree:
 
@@ -77,7 +79,7 @@ Each round, the orchestrator:
    it against the pin's sha256 each time it is used, downloading it again when it no longer matches, unpacks it
    fresh into the job's directory, and runs its `gate --base <base> --config <the base's gate.toml>` in the
    checkout. `gate` is a program for Linux x86_64, which octoflow-gate ships since 0.7.0: a base that pins an
-   earlier release stops the run with an error that says so;
+   earlier release stops the run, before any download, with an error that says so;
 5. asks after the job every `CI_POLL_SECONDS`, and stops it, its tests included, as a Ctrl-C would, when the round's
    `QUALITY_TIMEOUT` runs out, download included, or the run is interrupted. Once the job ends, its checkout, the
    unpacked release and the download go; `quality.md`, `quality.json`, what the gate said on standard error

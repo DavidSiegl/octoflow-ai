@@ -9,10 +9,10 @@
 //! The release is the one the run's base pins in ci/gate.pin, else BUILT_IN_PIN. Its tarball is downloaded once per
 //! pin into the host's cache, `${XDG_CACHE_HOME:-~/.cache}/octoflow/gate/`, and checked against the pin's sha256
 //! each time it is unpacked, fresh, into the job's directory. It is the release's `gate`, a program for Linux x86_64,
-//! which octoflow-gate has shipped since 0.7.0: a base that pins an earlier release cannot be judged. The gate judges
-//! by the base's gate.toml and pyproject.toml, never the change's, so a change cannot loosen how it is itself judged,
-//! as a Jenkins quality build judges by main's. Every step runs as a command on the host, so a project on another
-//! machine is judged there, as its git steps are.
+//! which octoflow-gate has shipped since 0.7.0 (FIRST_WITH_GATE): a base that pins an earlier release cannot be
+//! judged. The gate judges by the base's gate.toml and pyproject.toml, never the change's, so a change cannot loosen
+//! how it is itself judged, as a Jenkins quality build judges by main's. Every step runs as a command on the host, so
+//! a project on another machine is judged there, as its git steps are.
 
 use crate::error::OrchestratorError;
 use crate::host::{Host, DEFAULT_TIMEOUT};
@@ -29,23 +29,38 @@ const RELEASE_URL: &str = "https://github.com/DavidSiegl/octoflow-gate/releases/
 /// The pin file, relative to the top level of the judged repository.
 const PIN_PATH: &str = "ci/gate.pin";
 
+/// The first octoflow-gate release, as (major, minor), that ships `gate`; the ones before ship gate.py, which this
+/// engine no longer runs.
+const FIRST_WITH_GATE: (u64, u64) = (0, 7);
+
 /// What the preflight needs: a machine the release's gate is built for (the module's comment), the job's fetch
-/// (curl, tar, and sha256sum or shasum) and LAUNCH's setsid on PATH, a ps that names a process's command line as STOP
-/// asks it to, which BusyBox's does not, and a cache it can write.
+/// (curl, tar, and sha256sum or shasum) and LAUNCH's setsid on PATH, an env that restores a signal's default as
+/// LAUNCH asks it to and a ps that names a process's command line as STOP asks it to, which BusyBox's do not, and a
+/// cache it can write.
 const PREFLIGHT: &str = r#"m=$(uname -sm)
 [ "$m" = "Linux x86_64" ] || { echo "the gate is built for Linux x86_64, and this machine is $m" >&2; exit 1; }
 for c in curl tar setsid; do command -v "$c" >/dev/null || { echo "$c is not on PATH" >&2; exit 1; }; done
+env --default-signal=INT true 2>/dev/null || { echo "env does not take --default-signal, which starting the gate needs" >&2; exit 1; }
 ps -ww -o stat=,args= -p $$ >/dev/null 2>&1 || { echo "ps does not take -ww -o stat=,args= -p, which stopping the gate needs" >&2; exit 1; }
 command -v sha256sum >/dev/null || command -v shasum >/dev/null || { echo "neither sha256sum nor shasum is on PATH" >&2; exit 1; }
 d=${XDG_CACHE_HOME:-$HOME/.cache}/octoflow/gate
 mkdir -p -- "$d" && [ -w "$d" ] || { echo "cannot write the cache $d" >&2; exit 1; }"#;
 
-/// Starts the command $2.. detached, in a session and so a process group of its own, its output appended to the file
-/// $1, and prints its pid, which is the group's id: sh starts a background command in its own process group when it
-/// has no terminal, so setsid, which forks only when it leads a group, becomes the command under the pid `$!` names.
+/// Starts the command $2.. detached, in a session and so a process group of its own, with SIGINT and SIGQUIT at their
+/// defaults, its output appended to the file $1, and prints its pid, which is the group's id, once that group exists
+/// or after 5 s if the command never makes it, as when it fails to start.
+///
+/// sh without job control, as here, leaves a background command in sh's own process group, so setsid(1), not leading
+/// a group, makes the session without forking and stays the pid `$!` names. sh also starts that command ignoring
+/// SIGINT and SIGQUIT (POSIX, "Asynchronous Lists"), which it cannot undo itself; env restores them, so that STOP's
+/// SIGINT reaches the gate, which stops its tests only when it gets one. `$!` is known as soon as sh forks, before
+/// setsid has run: a STOP or a verdict that came first would find no group.
 const LAUNCH: &str = r#"log=$1; shift
-setsid "$@" < /dev/null >> "$log" 2>&1 &
-echo "$!""#;
+setsid env --default-signal=INT,QUIT "$@" < /dev/null >> "$log" 2>&1 &
+g=$!
+i=0
+while [ "$i" -lt 500 ] && ! kill -0 -"$g" 2>/dev/null; do sleep 0.01; i=$((i + 1)); done
+echo "$g""#;
 
 /// Makes the round's directory $1 if need be, and in it job-<k>, a start's job directory, with k one more than the
 /// last one's, and prints k. mkdir makes each name once, so two starts never share one, even at once.
@@ -79,7 +94,6 @@ if [ ! -f "$tarball" ] || [ "$(sha_of "$tarball")" != "$sum" ]; then
 fi
 mkdir -- "$out/release" && tar -xzf "$tarball" -C "$out/release" || setup_failed "cannot unpack $tarball"
 [ "$(sha_of "$tarball")" = "$sum" ] || setup_failed "$tarball changed while it was unpacked"
-[ -f "$out/release/gate" ] || setup_failed "release $v holds no gate, which octoflow-gate ships since 0.7.0"
 cd -- "$out/tree" || setup_failed "cannot enter $out/tree"
 "$out/release/gate" --base "$base" --config "$out/judge/gate.toml" --out "$out/quality.md" 2> "$out/gate.err"
 ended "$?""#;
@@ -142,7 +156,8 @@ enum Known {
 }
 
 /// Fails, before a run's interview, if host could not run the local gate: it is not Linux on x86_64; curl, tar,
-/// setsid, or both sha256sum and shasum, are not on PATH, or ps does not show a process's state and command line; or
+/// setsid, or both sha256sum and shasum, are not on PATH, env cannot restore a signal's default, or ps does not show
+/// a process's state and command line; or
 /// the gate cache cannot be made or written to. What the project's own tests need, as a Python for the gate's
 /// `--python`, is not looked for: the gate reports a check it could not run.
 pub fn preflight(host: &dyn Host) -> Result<(), OrchestratorError> {
@@ -167,8 +182,9 @@ pub fn preflight(host: &dyn Host) -> Result<(), OrchestratorError> {
 /// which go when it ends or is stopped. The release and the settings are base's (the module's comment). The gate runs
 /// the project's tests itself, with gate.toml's [[test]] commands, as the user running the engine, with no sandbox.
 ///
-/// Errors: base's ci/gate.pin has no `<version> <sha256>` line; git, a command or a file fails, as git does when a
-/// job's tree/ was deleted while still registered as a worktree, which only `git worktree remove` or `prune` clears.
+/// Errors: base's ci/gate.pin has no `<version> <sha256>` line, or names a release before FIRST_WITH_GATE; git, a
+/// command or a file fails, as git does when a job's tree/ was deleted while still registered as a worktree, which
+/// only `git worktree remove` or `prune` clears.
 pub fn start(host: &dyn Host, cwd: &str, snapshot: &str, base: &str, out_dir: &str) -> Result<Judging, OrchestratorError> {
     let text = |path: &str| -> Result<Option<String>, OrchestratorError> {
         Ok(host.file_at(cwd, base, path)?.map(|bytes| String::from_utf8_lossy(&bytes).into_owned()))
@@ -177,6 +193,13 @@ pub fn start(host: &dyn Host, cwd: &str, snapshot: &str, base: &str, out_dir: &s
         Some(pin) => parse_pin(&pin).map_err(|why| OrchestratorError(format!("the run's base's {PIN_PATH}: {why}")))?,
         None => parse_pin(BUILT_IN_PIN)?,
     };
+    if !ships_gate(&release) {
+        let (major, minor) = FIRST_WITH_GATE;
+        return Err(OrchestratorError(format!(
+            "the run's base's {PIN_PATH}: octoflow-gate {release} ships no gate, which the local gate runs from \
+             {major}.{minor}.0 on"
+        )));
+    }
     let made = host.check(&["sh", "-c", NEXT_JOB, "_", out_dir], None, DEFAULT_TIMEOUT)?;
     let k: u32 = made
         .trim()
@@ -211,7 +234,7 @@ impl Judging {
     /// What the gate came to; None while it runs. Once it has ended, what only a running job needs is removed.
     ///
     /// Errors: the job could not fetch or unpack the release, as for a download that fails or does not match the pin's
-    /// sha256, or the release holds no `gate`; it ended without saying how, as when killed; the gate exits other than
+    /// sha256; it ended without saying how, as when killed; the gate exits other than
     /// 0, 1 or 2, as 127 where the machine cannot run it, or 2 without an error of its own, as for arguments the
     /// release does not take, or exits 0 or 1 without both reports; git or a file fails.
     pub fn verdict(&self, host: &dyn Host) -> Result<Option<LocalVerdict>, OrchestratorError> {
@@ -313,6 +336,16 @@ pub fn parse_pin(pin: &str) -> Result<(String, String), OrchestratorError> {
         return Err(OrchestratorError(format!("its first line '{line}' is not '<version> <sha256>'")));
     }
     Ok((version.to_string(), sha256.to_string()))
+}
+
+/// Whether the release version, as a pin names it, ships `gate`: is FIRST_WITH_GATE or later. A version whose major
+/// and minor are not numbers is given the benefit of the doubt, for the job to find out.
+fn ships_gate(version: &str) -> bool {
+    let mut parts = version.split('.').map(|part| part.parse::<u64>());
+    match (parts.next(), parts.next()) {
+        (Some(Ok(major)), Some(Ok(minor))) => (major, minor) >= FIRST_WITH_GATE,
+        _ => true,
+    }
 }
 
 #[cfg(test)]
