@@ -1,10 +1,10 @@
-//! The desktop shell: a window over `orchestrator serve`, which it starts as its sidecar when it launches and
-//! kills when it exits. The webview talks to the sidecar's server over HTTP; the shell only hands it the server's
-//! address and token, through the `server` command. Started with arguments, the app is the orchestrator's CLI
-//! instead: see `cli`.
+//! The desktop shell: a window over the orchestrator's `serve`, and the orchestrator itself, whose engine it links
+//! (`octoflow_engine`). Started with arguments, the app is the orchestrator's CLI: see `cli`. Started with none, it
+//! opens its window and starts itself, as `serve`, as its sidecar, which it kills when it exits. The webview talks to
+//! the sidecar's server over HTTP; the shell only hands it the server's address and token, through the `server`
+//! command.
 
 use std::ffi::{OsStr, OsString};
-use std::fmt;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -13,87 +13,15 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, RunEvent};
 
-/// The environment variable that names an orchestrator binary to serve, in place of the bundled one or the
-/// checkout's own build.
-const ORCHESTRATOR_ENV: &str = "ORCHESTRATOR_BIN";
-
-/// The orchestrator binary's file name in a release bundle, beside the app's own executable: Tauri's
-/// `externalBin` in tauri.release.conf.json, which drops the target triple that packaging/build-desktop.sh gives
-/// it on disk.
-const BUNDLED_NAME: &str = if cfg!(windows) { "octoflow.exe" } else { "octoflow" };
-
-/// The orchestrator the app serves, an executable of the Rust engine (engine/).
-#[derive(Debug, PartialEq)]
-enum Orchestrator {
-    /// The build of the checkout this app was built in, debug/orchestrator in its Cargo target directory, which
-    /// `cargo build -p octoflow-engine` makes and nothing here rebuilds: a development build's, which serves that
-    /// checkout's project.
-    Checkout(PathBuf),
-    /// Any other: $ORCHESTRATOR_BIN, or the binary a release bundle carries beside the app; it belongs to no
-    /// checkout.
-    Binary(PathBuf),
-}
-
-impl Orchestrator {
-    /// The one to serve: $ORCHESTRATOR_BIN when it is set, else the binary beside this executable when there is
-    /// one, as in a release bundle, else the checkout's own build.
-    fn locate() -> Orchestrator {
-        let exe_dir = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf));
-        Orchestrator::locate_from(std::env::var_os(ORCHESTRATOR_ENV), exe_dir.as_deref())
-    }
-
-    /// locate, given $ORCHESTRATOR_BIN's value and the executable's directory, None when either is unknown.
-    fn locate_from(env: Option<OsString>, exe_dir: Option<&Path>) -> Orchestrator {
-        if let Some(binary) = env {
-            return Orchestrator::Binary(canonical(PathBuf::from(binary)));
-        }
-        if let Some(bundled) = exe_dir.map(|dir| dir.join(BUNDLED_NAME)).filter(|path| path.is_file()) {
-            return Orchestrator::Binary(bundled);
-        }
-        Orchestrator::Checkout(checkout_build(std::env::var_os("CARGO_TARGET_DIR")))
-    }
-
-    /// A command that runs it with no arguments yet, in shell's environment and directory (`UserShell::apply`).
-    fn command(&self, shell: &UserShell) -> Command {
-        let (Orchestrator::Checkout(binary) | Orchestrator::Binary(binary)) = self;
-        let mut command = Command::new(binary);
-        shell.apply(&mut command);
-        command
-    }
-
-    /// The directory of the checkout it belongs to; None for any binary but the checkout's own build.
-    fn project(&self) -> Option<String> {
-        match self {
-            Orchestrator::Checkout(_) => Some(checkout().display().to_string()),
-            Orchestrator::Binary(_) => None,
-        }
-    }
-}
-
 /// The top of the checkout this app was built in, two directories above its crate's.
 fn checkout() -> PathBuf {
     canonical(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
 }
 
-/// Where `cargo build -p octoflow-engine` puts the checkout's orchestrator: under target_dir, $CARGO_TARGET_DIR's
-/// value, relative to the checkout as cargo takes it, else under the checkout's own target/.
-fn checkout_build(target_dir: Option<OsString>) -> PathBuf {
-    let name = if cfg!(windows) { "orchestrator.exe" } else { "orchestrator" };
-    let target = target_dir.map_or_else(|| checkout().join("target"), |dir| checkout().join(dir));
-    target.join("debug").join(name)
-}
-
-/// How it is run, for messages: the binary's path.
-impl fmt::Display for Orchestrator {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (Orchestrator::Checkout(binary) | Orchestrator::Binary(binary)) = self;
-        write!(f, "{}", binary.display())
-    }
-}
-
 /// The environment and working directory the shell that started the app had, as far as they can be recovered: what
-/// the orchestrator's process gets, so that it, and every process it starts, sees the user's libraries, Python and
-/// project rather than the bundle's. The app's own process keeps its environment, which GTK and WebKit need.
+/// the app's process takes as its own when it is the CLI (`UserShell::enter`), the sidecar included, so that the
+/// engine, and every process it starts, sees the user's libraries, Python and project rather than the bundle's. The
+/// process that shows the window keeps its environment, which GTK and WebKit need.
 ///
 /// Only an AppImage changes them. Its start-up (linuxdeploy's `AppRun`, its GTK hook and AppImageKit's
 /// `AppRun.wrapped`, as measured from v0.25.0's) points path lists and Python and GTK settings into the bundle,
@@ -195,12 +123,30 @@ impl UserShell {
         UserShell { vars, dir }
     }
 
-    /// Make command start with this environment, and in this directory when it is one. A directory since removed
-    /// leaves the app's own, so that the sidecar, which needs none, still starts; `Cli::exec` refuses it instead.
-    fn apply(&self, command: &mut Command) {
-        command.env_clear().envs(self.vars.iter().map(|(k, v)| (k, v)));
-        if let Some(dir) = self.dir.as_ref().filter(|dir| dir.is_dir()) {
-            command.current_dir(dir);
+    /// Make this process's environment and working directory the shell's: each variable the shell lacks removed,
+    /// each it holds set where the process's differs, and the directory entered when the shell names one. Call it
+    /// before the process starts another thread, which might read the environment meanwhile. Errors, saying which
+    /// directory and why: the shell's directory is not one, with nothing changed; or it cannot be entered, with the
+    /// environment already the shell's.
+    fn enter(&self) -> Result<(), String> {
+        if let Some(gone) = self.dir.as_ref().filter(|dir| !dir.is_dir()) {
+            return Err(format!("cannot start in {}: it is not a directory", gone.display()));
+        }
+        let own: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+        let value_in = |vars: &[(OsString, OsString)], name: &OsStr| {
+            vars.iter().find(|(k, _)| k == name).map(|(_, value)| value.clone())
+        };
+        for (name, _) in own.iter().filter(|(name, _)| value_in(&self.vars, name).is_none()) {
+            std::env::remove_var(name);
+        }
+        for (name, value) in self.vars.iter().filter(|(name, value)| value_in(&own, name).as_ref() != Some(value)) {
+            std::env::set_var(name, value);
+        }
+        match &self.dir {
+            Some(dir) => {
+                std::env::set_current_dir(dir).map_err(|e| format!("cannot start in {}: {e}", dir.display()))
+            }
+            None => Ok(()),
         }
     }
 }
@@ -235,30 +181,22 @@ fn users_path_list(name: &str, value: &OsStr, in_bundle: impl Fn(&Path) -> bool)
     std::env::join_paths(kept).expect("entries without a separator")
 }
 
-/// The orchestrator's CLI, ready to replace the app's process.
+/// The orchestrator's CLI, ready to take over the app's process.
 pub struct Cli {
-    /// What the command runs, for the message when it cannot.
-    orchestrator: Orchestrator,
-    /// The whole command line, with the user's shell's environment and, when it exists, directory.
-    command: Command,
-    /// The user's shell's directory, which the CLI must start in; None to start in the app's own.
-    dir: Option<PathBuf>,
+    /// The whole command line, the app's own name first.
+    argv: Vec<OsString>,
 }
 
-/// What the app's arguments, without its own name, ask for: with any, the CLI of the orchestrator
-/// `Orchestrator::locate` picks, given exactly those arguments, in the user's shell's environment and directory
-/// (`UserShell`); with none, or on macOS only the one a Finder launch may pass (`is_finder_launch`), None, for the
-/// window.
-pub fn cli(args: impl IntoIterator<Item = OsString>) -> Option<Cli> {
-    let args: Vec<OsString> = args.into_iter().collect();
-    if args.is_empty() || cfg!(target_os = "macos") && is_finder_launch(&args) {
+/// What argv, the app's command line with its own name first, asks for: with any argument, the CLI, given exactly
+/// that command line; with none, or on macOS only the one a Finder launch may pass (`is_finder_launch`), None, for
+/// the window.
+pub fn cli(argv: impl IntoIterator<Item = OsString>) -> Option<Cli> {
+    let argv: Vec<OsString> = argv.into_iter().collect();
+    let args = argv.get(1..).unwrap_or_default();
+    if args.is_empty() || cfg!(target_os = "macos") && is_finder_launch(args) {
         return None;
     }
-    let orchestrator = Orchestrator::locate();
-    let shell = UserShell::current();
-    let mut command = orchestrator.command(&shell);
-    command.args(args);
-    Some(Cli { orchestrator, command, dir: shell.dir })
+    Some(Cli { argv })
 }
 
 /// Whether args are only the process serial number, `-psn_<n>`, that macOS may pass an app opened from the Finder,
@@ -268,43 +206,36 @@ fn is_finder_launch(args: &[OsString]) -> bool {
 }
 
 impl Cli {
-    /// Replace this process with the CLI, so that the terminal, the exit status and the signals sent to the app are
-    /// the CLI's own. Under an AppImage run without FUSE the process the caller started is the AppImage's runtime,
-    /// which stays this one's parent and passes on no signal sent to it: the CLI gets SIGTERM when the runtime dies,
-    /// whatever signal stopped it (`stop_with_appimage_runtime`). Returns never: when the user's directory is gone
-    /// or the exec fails, prints why on standard error and exits 1. Call it before anything else starts a thread or
-    /// opens a window, which an exec would discard.
+    /// Run the engine's CLI (`octoflow_engine::cli::main`) as this process, in the user's shell's environment and
+    /// directory (`UserShell`), and end the process as the orchestrator's own program ends: with the CLI's exit
+    /// status, or by the SIGTERM or SIGHUP that interrupted it. Under an AppImage run without FUSE the process the
+    /// caller started is the AppImage's runtime, which stays this one's parent and passes on no signal sent to it:
+    /// the CLI gets SIGTERM when the runtime dies, whatever signal stopped it (`stop_with_appimage_runtime`).
+    /// Returns never: when the user's directory is gone, prints why on standard error and exits 1. Call it on the
+    /// main thread before anything else starts a thread or opens a window: it changes the process's environment and
+    /// starts its signal handling.
     #[cfg(unix)]
-    pub fn exec(mut self) -> ! {
-        use std::os::unix::process::CommandExt;
-        if let Some(why) = self.why_not_started() {
-            eprintln!("octoflow-ui: {why}");
-            std::process::exit(1)
-        }
-        // A CLI that outlives the runtime is still better than none: say so and run it.
+    pub fn run(self) -> ! {
+        // A CLI that outlives the runtime is still better than none: say so and run it. Before the user's shell is
+        // entered, which has no APPIMAGE.
         #[cfg(target_os = "linux")]
         if let Err(e) = stop_with_appimage_runtime(std::env::var_os("APPIMAGE").map(PathBuf::from).as_deref()) {
-            eprintln!("octoflow-ui: the CLI will not stop when the AppImage that started it does: {e}");
+            eprintln!("octoflow: the CLI will not stop when the AppImage that started it does: {e}");
         }
-        let e = self.command.exec();
-        eprintln!("octoflow-ui: cannot run {}: {e}", self.orchestrator);
-        std::process::exit(1)
-    }
-
-    /// Why the CLI cannot start where it must, the user's directory being gone; None when it can.
-    fn why_not_started(&self) -> Option<String> {
-        let dir = self.dir.as_ref().filter(|dir| !dir.is_dir())?;
-        Some(format!("cannot start in {}: it is not a directory", dir.display()))
+        if let Err(why) = UserShell::current().enter() {
+            eprintln!("octoflow: {why}");
+            std::process::exit(1)
+        }
+        octoflow_engine::interrupt::exit(octoflow_engine::cli::main(self.argv))
     }
 }
 
 /// When this process's parent is the AppImage's runtime that started it, appimage being the file `$APPIMAGE` names
-/// (None when it is unset), ask the kernel to send this process SIGTERM when that parent dies, a request an exec
-/// keeps; when the parent died before the request, end this process now by SIGTERM, as the request would have.
-/// Elsewhere, nothing. The runtime stays the parent under
-/// `APPIMAGE_EXTRACT_AND_RUN` (a machine without FUSE): it forks, runs the app in the child, waits, and passes on no
-/// signal sent to it. A mounted AppImage's runtime execs the app instead, so the app's parent is the caller's own,
-/// whose death must not stop the CLI. Errors when the kernel refuses the request or the signal.
+/// (None when it is unset), ask the kernel to send this process SIGTERM when that parent dies; when the parent died
+/// before the request, end this process now by SIGTERM, as the request would have. Elsewhere, nothing. The runtime
+/// stays the parent under `APPIMAGE_EXTRACT_AND_RUN` (a machine without FUSE): it forks, runs the app in the child,
+/// waits, and passes on no signal sent to it. A mounted AppImage's runtime execs the app instead, so the app's parent
+/// is the caller's own, whose death must not stop the CLI. Errors when the kernel refuses the request or the signal.
 #[cfg(target_os = "linux")]
 fn stop_with_appimage_runtime(appimage: Option<&Path>) -> nix::Result<()> {
     use nix::sys::signal::{raise, Signal};
@@ -363,12 +294,28 @@ struct Sidecar {
 }
 
 impl Sidecar {
-    /// Start orchestrator's `serve`, answering requests from origin, and read the server's first line. A sidecar
-    /// that cannot be started, or prints no such line, keeps the reason as its connection.
-    fn start(orchestrator: &Orchestrator, origin: &str) -> Sidecar {
-        match spawn(orchestrator, origin) {
+    /// The app itself as its sidecar: `Sidecar::start` with this process's executable, which is the CLI when given
+    /// arguments (`cli`), and with the checkout the app was built in as the project of a development build
+    /// (`tauri dev`), none otherwise. When the executable cannot be told, that is the connection's reason.
+    fn of_app(origin: &str) -> Sidecar {
+        let project = tauri::is_dev().then(|| checkout().display().to_string());
+        match std::env::current_exe() {
+            Ok(app) => Sidecar::start(&app, origin, project),
+            Err(e) => {
+                let reason = format!("cannot tell the app's own program: {e}");
+                Sidecar { child: Mutex::new(None), connection: Err(reason) }
+            }
+        }
+    }
+
+    /// Start program's `serve`, answering requests from origin, and read the server's first line; project is the
+    /// one the window opens first. The sidecar inherits the app's environment and directory, and takes the user's
+    /// shell itself, as the CLI does (`Cli::run`). A sidecar that cannot be started, or prints no such line, keeps
+    /// the reason as its connection.
+    fn start(program: &Path, origin: &str, project: Option<String>) -> Sidecar {
+        match spawn(program, origin) {
             Ok((child, served)) => {
-                let connection = Connection { url: served.url, token: served.token, project: orchestrator.project() };
+                let connection = Connection { url: served.url, token: served.token, project };
                 Sidecar { child: Mutex::new(Some(child)), connection: Ok(connection) }
             }
             Err(reason) => Sidecar { child: Mutex::new(None), connection: Err(reason) },
@@ -388,15 +335,14 @@ impl Sidecar {
 
 /// The started sidecar and its first line; Err with why, the sidecar killed, when it cannot be started or that line
 /// is not `serve`'s.
-fn spawn(orchestrator: &Orchestrator, origin: &str) -> Result<(Child, Served), String> {
-    let mut child = orchestrator
-        .command(&UserShell::current())
+fn spawn(program: &Path, origin: &str) -> Result<(Child, Served), String> {
+    let mut child = Command::new(program)
         .args(["serve", "--origin", origin])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
-        .map_err(|e| format!("cannot run {orchestrator}: {e}"))?;
+        .map_err(|e| format!("cannot run {}: {e}", program.display()))?;
     let mut line = String::new();
     let read = match child.stdout.take() {
         Some(stdout) => BufReader::new(stdout).read_line(&mut line).map_err(|e| e.to_string()),
@@ -404,7 +350,7 @@ fn spawn(orchestrator: &Orchestrator, origin: &str) -> Result<(Child, Served), S
     };
     let served = read.and_then(|_| {
         serde_json::from_str::<Served>(&line)
-            .map_err(|e| format!("{orchestrator} serve printed {:?}, not its address: {e}", line.trim()))
+            .map_err(|e| format!("{} serve printed {:?}, not its address: {e}", program.display(), line.trim()))
     });
     match served {
         Ok(served) => Ok((child, served)),
@@ -437,8 +383,7 @@ fn server(sidecar: tauri::State<'_, Sidecar>) -> Result<Connection, String> {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            let sidecar = Sidecar::start(&Orchestrator::locate(), &webview_origin(app));
-            app.manage(sidecar);
+            app.manage(Sidecar::of_app(&webview_origin(app)));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![server])
@@ -454,7 +399,6 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::OsStr;
 
     /// Whether a process with this pid still exists, zombies included, by its /proc entry.
     fn exists(pid: u32) -> bool {
@@ -512,40 +456,6 @@ mod tests {
         executable.expect("cargo reports the orchestrator it built")
     }
 
-    #[test]
-    fn locates_the_checkout_s_build_without_a_bundled_binary() {
-        let dir = TempDir::new();
-        let located = Orchestrator::locate_from(None, Some(dir.path()));
-        let Orchestrator::Checkout(binary) = &located else { panic!("{located:?}") };
-        assert_eq!(binary, &checkout_build(std::env::var_os("CARGO_TARGET_DIR")), "{located}");
-        assert!(Path::new(&located.project().expect("a checkout")).join("engine/Cargo.toml").is_file());
-    }
-
-    #[test]
-    fn the_checkout_s_build_is_where_cargo_target_dir_puts_it() {
-        let name = if cfg!(windows) { "orchestrator.exe" } else { "orchestrator" };
-        assert_eq!(checkout_build(None), checkout().join("target/debug").join(name));
-        assert!(checkout_build(Some("/elsewhere/target".into())).starts_with("/elsewhere/target/debug"));
-        assert!(checkout_build(Some("relative".into())).starts_with(checkout().join("relative/debug")));
-    }
-
-    #[test]
-    fn locates_the_bundled_binary_beside_the_executable() {
-        let dir = TempDir::new();
-        std::fs::write(dir.join(BUNDLED_NAME), "").expect("a stand-in binary");
-        let located = Orchestrator::locate_from(None, Some(dir.path()));
-        assert_eq!(located, Orchestrator::Binary(dir.join(BUNDLED_NAME)));
-        assert_eq!(located.project(), None);
-    }
-
-    #[test]
-    fn the_environment_wins_over_the_bundled_binary() {
-        let dir = TempDir::new();
-        std::fs::write(dir.join(BUNDLED_NAME), "").expect("a stand-in binary");
-        let located = Orchestrator::locate_from(Some("/elsewhere/orchestrator".into()), Some(dir.path()));
-        assert_eq!(located, Orchestrator::Binary(PathBuf::from("/elsewhere/orchestrator")));
-    }
-
     /// Write an executable script with the given text at path, by a child process; for why a child process writes it:
     /// `tool` in engine/src/host/tests.rs.
     #[cfg(unix)]
@@ -561,13 +471,13 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn serves_a_bundled_binary_without_a_project() {
+    fn serves_a_program_that_prints_serve_s_first_line() {
         let dir = TempDir::new();
-        let binary = dir.join(BUNDLED_NAME);
+        let program = dir.join("octoflow");
         // serve's first line, then a process for stop to kill.
         let script = "#!/bin/sh\necho '{\"url\": \"http://127.0.0.1:9\", \"token\": \"t\"}'\nexec sleep 60\n";
-        put_executable(&binary, script);
-        let sidecar = Sidecar::start(&Orchestrator::Binary(binary), "tauri://localhost");
+        put_executable(&program, script);
+        let sidecar = Sidecar::start(&program, "tauri://localhost", None);
         let connection = sidecar.connection.clone().expect("the sidecar started");
         assert_eq!(connection.url, "http://127.0.0.1:9");
         assert_eq!(connection.project, None);
@@ -576,13 +486,12 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "linux")]
-    fn serves_the_checkout_and_stops() {
-        let sidecar = Sidecar::start(&Orchestrator::Checkout(built_orchestrator()), "tauri://localhost");
+    fn serves_the_engine_s_serve_and_stops() {
+        let sidecar = Sidecar::start(&built_orchestrator(), "tauri://localhost", Some("/home/u/proj".into()));
         let connection = sidecar.connection.clone().expect("the sidecar started");
         assert!(connection.url.starts_with("http://127.0.0.1:"), "{}", connection.url);
         assert!(!connection.token.is_empty());
-        let project = connection.project.expect("a checkout");
-        assert!(Path::new(&project).join("engine/Cargo.toml").is_file(), "{project}");
+        assert_eq!(connection.project.as_deref(), Some("/home/u/proj"));
         let pid = sidecar.child.lock().unwrap().as_ref().expect("a child").id();
         assert!(exists(pid));
         sidecar.stop();
@@ -591,10 +500,10 @@ mod tests {
     }
 
     #[test]
-    fn a_binary_that_is_not_there_is_an_error() {
-        let sidecar = Sidecar::start(&Orchestrator::Binary("/nonexistent/orchestrator".into()), "tauri://localhost");
+    fn a_program_that_is_not_there_is_an_error() {
+        let sidecar = Sidecar::start(Path::new("/nonexistent/octoflow"), "tauri://localhost", None);
         let reason = sidecar.connection.err().expect("an error");
-        assert!(reason.contains("/nonexistent/orchestrator"), "{reason}");
+        assert!(reason.contains("/nonexistent/octoflow"), "{reason}");
         assert!(sidecar.child.lock().unwrap().is_none());
     }
 
@@ -620,12 +529,9 @@ mod tests {
     #[test]
     fn the_arguments_ask_for_the_cli_and_none_for_the_window() {
         assert!(cli(Vec::<OsString>::new()).is_none());
-        let Cli { orchestrator, command, .. } = cli(["run".into(), "add a limiter".into()]).expect("the CLI");
-        assert_eq!(orchestrator, Orchestrator::locate());
-        let args: Vec<&OsStr> = command.get_args().collect();
-        let (Orchestrator::Checkout(binary) | Orchestrator::Binary(binary)) = &orchestrator;
-        assert_eq!(command.get_program(), binary.as_os_str());
-        assert_eq!(args, [OsStr::new("run"), OsStr::new("add a limiter")]);
+        assert!(cli(["octoflow".into()]).is_none());
+        let Cli { argv } = cli(["octoflow".into(), "run".into(), "add a limiter".into()]).expect("the CLI");
+        assert_eq!(argv, ["octoflow", "run", "add a limiter"]);
     }
 
     #[test]
@@ -633,9 +539,8 @@ mod tests {
     fn the_cli_gets_the_arguments_as_they_came() {
         use std::os::unix::ffi::OsStringExt;
         let odd = OsString::from_vec(b"not \xff utf-8".to_vec());
-        let Cli { command, .. } = cli([odd.clone(), "--help".into()]).expect("the CLI");
-        let args: Vec<&OsStr> = command.get_args().collect();
-        assert_eq!(args, [odd.as_os_str(), OsStr::new("--help")]);
+        let Cli { argv } = cli(["octoflow".into(), odd.clone(), "--help".into()]).expect("the CLI");
+        assert_eq!(argv, [OsString::from("octoflow"), odd, OsString::from("--help")]);
     }
 
     #[test]
@@ -788,27 +693,43 @@ mod tests {
         }
     }
 
+    /// Set for the process `the_process_takes_the_users_shell` starts: that run of the test stands in for the app,
+    /// enters a shell and execs into sh, which prints what it got.
+    #[cfg(unix)]
+    const ENTERS_SHELL: &str = "OCTOFLOW_UI_TEST_ENTERS_SHELL";
+
     #[test]
     #[cfg(unix)]
-    fn the_command_starts_in_the_users_shell() {
-        let mut command = Command::new("sh");
-        // HOME is the test's own, which the shell's environment leaves out.
-        command.args(["-c", "pwd; echo \"$KEPT${HOME-unset}\""]);
-        let shell = UserShell { vars: vars(&[("KEPT", "kept ")]), dir: Some("/".into()) };
-        shell.apply(&mut command);
-        let out = command.output().expect("sh runs");
-        assert_eq!(String::from_utf8_lossy(&out.stdout), "/\nkept unset\n");
+    fn the_process_takes_the_users_shell() {
+        use std::os::unix::process::CommandExt;
+        if std::env::var_os(ENTERS_SHELL).is_some() {
+            let mut users = vars(&[("KEPT", "kept"), ("CHANGED", "the user's"), ("ADDED", "added")]);
+            // By which the exec below finds sh.
+            users.extend(std::env::var_os("PATH").map(|path| (OsString::from("PATH"), path)));
+            UserShell { vars: users, dir: Some("/".into()) }.enter().expect("the shell entered");
+            let print = "pwd; echo \"$KEPT,$CHANGED,$ADDED,${DROPPED-unset},${HOME-unset}\"";
+            let e = Command::new("sh").args(["-c", print]).exec();
+            panic!("cannot exec sh: {e}");
+        }
+        let out = Command::new(std::env::current_exe().expect("the test binary"))
+            .args(["tests::the_process_takes_the_users_shell", "--exact"])
+            .env(ENTERS_SHELL, "1")
+            .env("KEPT", "kept")
+            .env("CHANGED", "the bundle's")
+            .env("DROPPED", "dropped")
+            .env("HOME", "/home/u")
+            .env_remove("ADDED")
+            .output()
+            .expect("the test binary runs");
+        let printed = String::from_utf8_lossy(&out.stdout);
+        assert!(printed.ends_with("/\nkept,the user's,added,unset,unset\n"), "{printed}");
     }
 
     #[test]
-    fn the_cli_refuses_a_directory_since_removed() {
-        let Cli { orchestrator, command, .. } = cli(["list".into()]).expect("the CLI");
-        let gone = Cli { orchestrator, command, dir: Some("/nonexistent/proj".into()) };
-        assert_eq!(gone.why_not_started().as_deref(), Some("cannot start in /nonexistent/proj: it is not a directory"));
-        let Cli { orchestrator, command, .. } = cli(["list".into()]).expect("the CLI");
-        assert_eq!(Cli { orchestrator, command, dir: Some("/".into()) }.why_not_started(), None);
-        let Cli { orchestrator, command, .. } = cli(["list".into()]).expect("the CLI");
-        assert_eq!(Cli { orchestrator, command, dir: None }.why_not_started(), None);
+    fn a_directory_since_removed_is_refused_with_nothing_changed() {
+        let gone = UserShell { vars: Vec::new(), dir: Some("/nonexistent/proj".into()) };
+        assert_eq!(gone.enter(), Err("cannot start in /nonexistent/proj: it is not a directory".to_string()));
+        assert!(std::env::vars_os().next().is_some(), "the environment was emptied");
     }
 
     #[test]
@@ -920,16 +841,5 @@ mod tests {
             Command::new("kill").arg(cli.to_string()).status().expect("kill runs");
         }
         assert!(!left, "the CLI still runs 2 s after its runtime died");
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn a_directory_since_removed_leaves_the_apps_own() {
-        let mut command = Command::new("pwd");
-        let shell = UserShell { vars: vars(&[("PATH", "/usr/bin:/bin")]), dir: Some("/nonexistent/proj".into()) };
-        shell.apply(&mut command);
-        let out = command.output().expect("pwd runs");
-        let own = std::env::current_dir().expect("a working directory");
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim_end(), own.to_str().unwrap());
     }
 }

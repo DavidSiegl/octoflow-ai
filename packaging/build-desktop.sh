@@ -1,6 +1,7 @@
 #!/bin/sh
-# Build the desktop app in ui/ for release, with the orchestrator binary that build-binary.sh built for this machine
-# inside it as its sidecar, so the app needs no checkout. Writes to dist/, each with its .sha256: on Linux
+# Build the desktop app in ui/ for release. The app links the engine and is the orchestrator itself, its own sidecar
+# and the CLI (ui/src-tauri/src/lib.rs), so it bundles no other binary and needs no checkout. Writes to dist/, each
+# with its .sha256: on Linux
 # octoflow-desktop-linux-<arch>.deb and .AppImage, on macOS octoflow-desktop-macos-<arch>.dmg, signed ad hoc only. Each
 # holds build-binary.sh's third-party licenses, the crates', as THIRD-PARTY-LICENSES.html among the app's resources, and
 # beside it as THIRD-PARTY-LICENSES-NPM.html those of the npm packages its window bundles, which
@@ -21,26 +22,18 @@ case "$(uname -m)" in
     arm64 | aarch64) arch=arm64 ;;
     *) echo "build-desktop.sh: no desktop app is built for $(uname -m)" >&2; exit 1 ;;
 esac
-binary="dist/octoflow-$os-$arch"
-[ -x "$binary" ] || { echo "build-desktop.sh: no $binary; run packaging/build-binary.sh first" >&2; exit 1; }
 notices=dist/octoflow-third-party-licenses.html
 npm_notices=dist/octoflow-desktop-npm-licenses.html
 [ -f "$notices" ] || { echo "build-desktop.sh: no $notices; run packaging/build-binary.sh first" >&2; exit 1; }
 
 version=$(ci/release-version.sh)
-triple=$(rustc -vV | sed -n 's/^host: //p')
-[ -n "$triple" ] || { echo "build-desktop.sh: rustc names no host target" >&2; exit 1; }
 
-# Tauri's externalBin takes binaries/octoflow to mean binaries/octoflow-<target triple>, and bundles it
-# beside the app's executable as plain orchestrator, where the shell looks for it (BUNDLED_NAME in
-# ui/src-tauri/src/lib.rs).
-mkdir -p ui/src-tauri/binaries build/desktop
-cp "$binary" "ui/src-tauri/binaries/octoflow-$triple"
+mkdir -p build/desktop
 # Under the name Tauri bundles it as, so the config below names a file in ui/src-tauri, which resource paths are
 # relative to.
 cp "$notices" ui/src-tauri/THIRD-PARTY-LICENSES.html
 
-# Merged over tauri.conf.json, which bundles nothing, so that cargo test and tauri dev need no sidecar on
+# Merged over tauri.conf.json, which bundles nothing, so that cargo test and tauri dev need no license files on
 # disk. signingIdentity "-" signs the macOS app ad hoc: macOS reports an unsigned app downloaded onto Apple
 # silicon as damaged, and an app signed ad hoc only as from an unidentified developer.
 config="$PWD/build/desktop/tauri.release.json"
@@ -49,7 +42,6 @@ cat > "$config" <<EOF
   "version": "$version",
   "bundle": {
     "active": true,
-    "externalBin": ["binaries/octoflow"],
     "resources": ["THIRD-PARTY-LICENSES.html", "THIRD-PARTY-LICENSES-NPM.html"],
     "macOS": { "signingIdentity": "-" }
   }
@@ -118,10 +110,10 @@ smoke_cli() {
 }
 
 # smoke_appimage APPIMAGE: run the AppImage, an absolute path, as the CLI from a new directory, as smoke_cli does,
-# and check that the orchestrator that serve execs starts in that directory without
-# the bundle's LD_LIBRARY_PATH entries or PYTHONHOME (UserShell in ui/src-tauri/src/lib.rs). serve is the one
-# command that needs no herdr and stays up long enough to read its /proc entry. Exits 1, naming the check, when
-# one fails.
+# and check that a program the CLI starts, a stand-in herdr that doctor asks for its version, gets neither the
+# bundle's LD_LIBRARY_PATH entries nor PYTHONHOME, and that serve runs in that directory (UserShell in
+# ui/src-tauri/src/lib.rs). serve is the one command that needs no herdr and stays up long enough to read its /proc
+# entry. Exits 1, naming the check, when one fails.
 smoke_appimage() {
     smoke=$(mktemp -d)
     smoke=$(cd "$smoke" && pwd -P)
@@ -138,6 +130,23 @@ smoke_appimage() {
     }
     smoke_cli "$smoke" "$1"
 
+    # The environment the CLI's children get: /proc/<pid>/environ would show only what the app itself was started
+    # with, the bundle's, which it replaces once running. doctor's own status is not the check: it finds no herdr.
+    mkdir "$smoke/bin" || smoke_fail "could not make $smoke/bin"
+    printf '#!/bin/sh\nenv > "%s/herdr.env"\nexit 1\n' "$smoke" >"$smoke/bin/herdr" && chmod 755 "$smoke/bin/herdr" \
+        || smoke_fail "could not write the stand-in herdr"
+    (cd "$smoke" && PATH="$smoke/bin:$PATH" "$1" doctor >/dev/null 2>&1) || true
+    [ -s "$smoke/herdr.env" ] || smoke_fail "doctor did not run the herdr on PATH"
+    # The bundle is the AppImage's extraction, under TMPDIR.
+    if sed -n 's/^LD_LIBRARY_PATH=//p' "$smoke/herdr.env" | tr ':' '\n' | grep -q "^$smoke/"; then
+        smoke_fail "the CLI's children get the bundle's LD_LIBRARY_PATH: $(grep '^LD_LIBRARY_PATH=' "$smoke/herdr.env")"
+    fi
+    for name in PYTHONHOME APPDIR APPIMAGE GTK_PATH; do
+        if grep -q "^$name=" "$smoke/herdr.env"; then
+            smoke_fail "the CLI's children have $name set: $(grep "^$name=" "$smoke/herdr.env")"
+        fi
+    done
+
     (cd "$smoke" && exec "$1" serve >serve.out) &
     serve_pid=$!
     tries=0
@@ -148,8 +157,8 @@ smoke_appimage() {
         sleep 1
     done
 
-    # The AppImage's runtime extracts the bundle and starts AppRun, which execs the app, which execs the
-    # orchestrator: the nearest descendant running $APPDIR/usr/bin/octoflow is the process the app became.
+    # The AppImage's runtime extracts the bundle and starts AppRun, which execs the app, which is the orchestrator:
+    # the nearest descendant running $APPDIR/usr/bin/octoflow.
     pids=$serve_pid
     while [ -z "$orchestrator" ] && [ -n "$pids" ]; do
         next=
@@ -162,23 +171,13 @@ smoke_appimage() {
         done
         pids=$next
     done
-    [ -n "$orchestrator" ] || smoke_fail "no process of serve's runs the bundled orchestrator"
-    appdir=$(readlink "/proc/$orchestrator/exe") || smoke_fail "the orchestrator exited before its check"
-    appdir=${appdir%/usr/bin/octoflow}
-    env=$(tr '\0' '\n' <"/proc/$orchestrator/environ") || smoke_fail "cannot read the orchestrator's environment"
-
+    [ -n "$orchestrator" ] || smoke_fail "no process of serve's runs the app's usr/bin/octoflow"
     cwd=$(readlink "/proc/$orchestrator/cwd") || smoke_fail "cannot read the orchestrator's directory"
     [ "$cwd" = "$smoke" ] || smoke_fail "serve runs in $cwd, not the caller's $smoke"
-    if printf '%s\n' "$env" | sed -n 's/^LD_LIBRARY_PATH=//p' | tr ':' '\n' | grep -q "^$appdir\(/\|\$\)"; then
-        smoke_fail "serve's LD_LIBRARY_PATH has the bundle's $appdir in it"
-    fi
-    if printf '%s\n' "$env" | grep -q '^PYTHONHOME='; then
-        smoke_fail "serve has PYTHONHOME set: $(printf '%s\n' "$env" | grep '^PYTHONHOME=')"
-    fi
 
     # The runtime, as timeout or a service manager would stop it: under APPIMAGE_EXTRACT_AND_RUN it stays serve's
     # parent and passes on no signal, so serve stops only by the SIGTERM it asked for at its parent's death
-    # (Cli::exec in ui/src-tauri/src/lib.rs). Gone means no /proc entry, or a zombie's, state Z after its "(comm) ".
+    # (Cli::run in ui/src-tauri/src/lib.rs). Gone means no /proc entry, or a zombie's, state Z after its "(comm) ".
     kill "$serve_pid"
     tries=0
     while [ -e "/proc/$orchestrator" ] && [ "$(sed -n 's/.*) \(.\).*/\1/p' "/proc/$orchestrator/stat" 2>/dev/null)" != Z ]
@@ -194,9 +193,10 @@ smoke_appimage() {
 }
 
 # smoke_dmg DMG: get the CLI from the .dmg, an absolute path, as the README tells a Mac user to, and run it from a
-# new directory: as smoke_cli does, through a symlink to Contents/MacOS/octoflow in the mounted Octoflow.app; and
-# --help, exiting 0, through the app's own executable, CFBundleExecutable in its Info.plist, which runs the CLI when
-# given arguments (cli in ui/src-tauri/src/lib.rs). Detaches the .dmg; exits 1, naming the check, when one fails.
+# new directory, as smoke_cli does, through a symlink to Contents/MacOS/octoflow in the mounted Octoflow.app: the
+# app's own executable, which runs the CLI when given arguments (cli in ui/src-tauri/src/lib.rs). PATH is an empty
+# directory, so that nothing else the app might start is found. Detaches the .dmg; exits 1, naming the check, when
+# one fails.
 smoke_dmg() {
     smoke=$(mktemp -d)
     smoke=$(cd "$smoke" && pwd -P)
@@ -213,16 +213,8 @@ smoke_dmg() {
     app="$smoke/mnt/Octoflow.app"
     ln -s "$app/Contents/MacOS/octoflow" "$smoke/bin/octoflow" || smoke_fail "could not link the orchestrator"
     smoke_cli "$smoke/project" "$smoke/bin/octoflow"
-    exe=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist") \
-        || smoke_fail "Info.plist names no CFBundleExecutable"
-    # With no ORCHESTRATOR_BIN, the app runs the orchestrator it bundles: its fallback for a build with none, the
-    # checkout's target/debug/orchestrator (Orchestrator::locate_from), is one this script never builds, and is
-    # refused below where an earlier build left one, so that it cannot pass for the bundled one. PATH is an empty
-    # directory, so that nothing else the app might start is found either.
-    [ ! -e target/debug/orchestrator ] \
-        || smoke_fail "target/debug/orchestrator exists, so the app's fallback could pass for the bundled orchestrator"
-    (cd "$smoke/project" && env -u ORCHESTRATOR_BIN PATH=/var/empty "$app/Contents/MacOS/$exe" --help >/dev/null) \
-        || smoke_fail "$exe --help did not exit 0 with only the bundled orchestrator to run"
+    (cd "$smoke/project" && PATH=/var/empty "$smoke/bin/octoflow" --help >/dev/null) \
+        || smoke_fail "octoflow --help did not exit 0 with nothing on PATH"
     # The volume can be busy for a moment after the processes started from it exit, as Spotlight looks at it.
     tries=0
     until hdiutil detach -quiet "$smoke/mnt"; do
@@ -235,10 +227,11 @@ smoke_dmg() {
     done
     mounted=''
     rm -rf "$smoke"
-    echo "smoke-tested dist/$(basename "$1") as the CLI, by symlink and as $exe"
+    echo "smoke-tested dist/$(basename "$1") as the CLI, by symlink"
 }
 
-# A bundle without the sidecar still builds and opens, then says only that it cannot start the orchestrator.
+# The app's executable must be named octoflow (mainBinaryName in ui/src-tauri/tauri.conf.json): the README gives the
+# .deb's /usr/bin/octoflow and the .app's Contents/MacOS/octoflow as the CLI.
 # The Cargo workspace's target directory (Cargo.toml at the top), where tauri build writes the shell's bundles.
 out="target/release/bundle"
 if [ "$os" = linux ]; then

@@ -124,7 +124,7 @@ says which release it is.
 A desktop app shows your runs: one project's runs, their handoff files and their agents, live. It starts new
 ones, and of a run it changes nothing but what you type to its agents. It is a Tauri 2 app in [`ui/`](ui). Each release has it
 for Linux x86_64, as `octoflow-desktop-linux-x86_64.deb` and `.AppImage`, and for Apple Silicon macOS, as
-`octoflow-desktop-macos-arm64.dmg`, each with its `.sha256` and the orchestrator inside, so it needs no
+`octoflow-desktop-macos-arm64.dmg`, each with its `.sha256`. The app is the orchestrator too, so it needs no
 checkout. The macOS app is signed ad hoc only, not notarized, so macOS refuses to open it the
 first time when a browser downloaded it, as it does the binary.
 
@@ -162,8 +162,8 @@ window:
   its first argument, and then extracts itself into `$TMPDIR` (`/tmp` by default) and leaves it there, about 340 MB
   for each version. Install FUSE, or extract it once with `--appimage-extract` and run the `squashfs-root/AppRun`
   that makes instead.
-- **`.deb`:** it installs the orchestrator as `/usr/bin/octoflow`.
-- **macOS:** link the orchestrator inside the app onto your `PATH`:
+- **`.deb`:** it installs the app as `/usr/bin/octoflow`.
+- **macOS:** link the app's executable onto your `PATH`:
 
   ```bash
   ln -s /Applications/Octoflow.app/Contents/MacOS/octoflow /usr/local/bin/octoflow
@@ -183,14 +183,13 @@ sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev
 cd ui
 npm ci
 npm run tauri dev     # the window, rebuilt as you edit
-npm run tauri build   # an optimized build, ../target/release/octoflow-ui
+npm run tauri build   # an optimized build, ../target/release/octoflow
 npm test              # the frontend's tests; npm run typecheck and npm run lint check it too
 cargo test -p octoflow-ui     # the shell's, which start and stop a real serve
 ```
 
-The app starts `orchestrator serve` beside it, the checkout's own `target/debug/orchestrator` (build it first with
-`cargo build -p octoflow-engine`), and stops it when its window closes; set `ORCHESTRATOR_BIN` to serve another
-binary. `serve` works without the app too: it prints one JSON line,
+The app has the orchestrator built in: for its window it starts itself a second time, as `octoflow serve`, and
+stops that when the window closes. `serve` works without the app too: it prints one JSON line,
 `{"url": "http://127.0.0.1:<port>", "token": "..."}`, and serves the project's runs on that port until Ctrl-C or
 SIGTERM; besides reading them, it types into their agents and starts new runs, each in a new workspace of this
 machine's herdr server, or of the session `octoflow`, which it starts when none is running. Its endpoints and

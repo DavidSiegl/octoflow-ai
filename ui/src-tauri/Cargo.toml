@@ -1,7 +1,7 @@
 [package]
 name = "octoflow-ui"
 version = "0.1.0"
-description = "A read-only window over the orchestrator's runs, with orchestrator.py serve as its sidecar"
+description = "The orchestrator's desktop app: a window over its runs, and its CLI when given arguments"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
@@ -16,12 +16,14 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+# The engine, which the app is the CLI of (Cli::run) and serves its window by, as its own sidecar.
+octoflow-engine = { path = "../../engine" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Under an AppImage run without FUSE, the CLI asks for SIGTERM when its parent, the AppImage's runtime, dies
-# (Cli::exec), through nix's safe API, as the engine uses it. Already in Cargo.lock through the engine, so it adds no
+# (Cli::run), through nix's safe API, as the engine uses it. Already in Cargo.lock through the engine, so it adds no
 # crate (GitHub issue #240).
 nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
 
