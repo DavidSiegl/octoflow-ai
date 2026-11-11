@@ -1200,7 +1200,7 @@ struct EventStream {
     events: mpsc::Receiver<(String, Value, usize)>,
     /// The count of quiet polls so far, sent at each: polls that found nothing to tell, each of which the server tells
     /// by a keep-alive comment.
-    quiet: mpsc::Receiver<usize>,
+    quiet_counts: mpsc::Receiver<usize>,
     /// Gets one message when the response has ended.
     ended: mpsc::Receiver<()>,
     /// The connection, which the stream's reader shares, closed when the stream is dropped, as a client that goes.
@@ -1225,7 +1225,7 @@ impl EventStream {
             assert_ne!(reader.read_line(&mut head).expect("the head"), 0, "the response ended in its head: {head}");
         }
         let (send, events) = mpsc::channel();
-        let (send_quiet, quiet) = mpsc::channel();
+        let (send_quiet, quiet_counts) = mpsc::channel();
         let (end, ended) = mpsc::channel();
         std::thread::spawn(move || {
             let (mut kind, mut payload, mut quiet_polls) = (None, None, 0);
@@ -1243,7 +1243,7 @@ impl EventStream {
             });
             let _ = end.send(());
         });
-        EventStream { head, events, quiet, ended, conn }
+        EventStream { head, events, quiet_counts, ended, conn }
     }
 
     /// The next event, as (kind, payload); fails the test when none comes within timeout.
@@ -1258,11 +1258,13 @@ impl EventStream {
         self.events.recv_timeout(timeout).unwrap_or_else(|_| panic!("no event within {timeout:?}"))
     }
 
-    /// The count of quiet polls, once a quiet poll arrives after this call: the server is then between polls, and every
-    /// quiet poll counted later is a later poll's. Fails the test when none comes within timeout.
+    /// The count of quiet polls, once one arrives after this call, the latest the stream's reader has passed on: the
+    /// server has then finished that poll and is waiting for the next, unless the reader has fallen a poll interval
+    /// behind it, when the count lags. Fails the test when none comes within timeout.
     fn next_quiet_poll(&self, timeout: Duration) -> usize {
-        while self.quiet.try_recv().is_ok() {}
-        self.quiet.recv_timeout(timeout).unwrap_or_else(|_| panic!("no quiet poll within {timeout:?}"))
+        while self.quiet_counts.try_recv().is_ok() {}
+        let n = self.quiet_counts.recv_timeout(timeout).unwrap_or_else(|_| panic!("no quiet poll within {timeout:?}"));
+        self.quiet_counts.try_iter().last().unwrap_or(n)
     }
 
     fn kinds(&self, n: usize) -> Vec<String> {
@@ -1316,40 +1318,43 @@ fn the_stream() {
     };
     assert_eq!(names(&files), ["spec.md"]);
 
-    // A change is told by the first poll that starts after it: counted in polls, not seconds, as a busy host stretches
-    // each poll (one has taken 1.4 s beside the other tests, so that an event came 2.4 s after its change; GitHub issue
-    // #335). Each change is made just after a quiet poll, while the server waits SERVE_POLL.local; the next poll may
-    // still start first, and find nothing, when this thread is slower than that wait, but a change no poll tells
-    // until a second one after it is lost. The timeout only ends a test whose server hangs.
+    // A change is told by the first poll that starts after it, which is counted here in polls, not seconds, as a busy
+    // host stretches each poll (one took 1.4 s beside the other tests, so that an event came 2.4 s after its change;
+    // GitHub issue #335). Each change is made just after a quiet poll, while the server waits SERVE_POLL.local. The
+    // next poll may still start before the change is done, when this thread is slower than that wait, and find nothing:
+    // so one quiet poll before the event is allowed, and a second means a poll that started after the change missed it.
+    // A change told one poll late passes here; RunWatch's own tests (serve/runs/tests.rs) catch that. A correct server
+    // fails the bound only when this thread, or the stream's reader, falls about a whole interval behind. The timeout
+    // only ends a test whose server hangs.
     let timeout = SERVE_POLL.local * 10;
     let quiet_poll = || stream.next_quiet_poll(timeout);
-    // The next event is expected, and told with at most one quiet poll after the count of them was quiet.
-    let soon = |quiet: usize, expected_kind: &str, run: &str| {
-        let (kind, payload, quiet_since) = stream.next_counted(timeout);
-        assert!(quiet_since - quiet <= 1, "{kind} after {} quiet polls", quiet_since - quiet);
+    // The next event, which must be of expected_kind for run and come at most one quiet poll after the count `before`.
+    let soon = |before: usize, expected_kind: &str, run: &str| {
+        let (kind, payload, quiet_polls) = stream.next_counted(timeout);
         assert_eq!((kind.as_str(), payload.get("run")), (expected_kind, Some(&Value::from(run))));
+        assert!(quiet_polls <= before + 1, "{kind} after {} quiet polls", quiet_polls - before);
         payload
     };
-    let quiet = quiet_poll();
+    let before = quiet_poll();
     d.save(SERVE_ID, &[("phase", Value::from("review"))]);
-    let record = soon(quiet, "record", SERVE_ID);
+    let record = soon(before, "record", SERVE_ID);
     assert_eq!(record.get("record").and_then(|r| r.get("phase")), Some(&Value::from("review")));
 
     // A second later, so that the new file sorts after spec.md by its modification time.
     std::thread::sleep(Duration::from_millis(1100));
-    let quiet = quiet_poll();
+    let before = quiet_poll();
     d.write(&format!("{RUNS_DIR}/{SERVE_ID}/build-1.md"), "built");
-    let files = soon(quiet, "files", SERVE_ID);
+    let files = soon(before, "files", SERVE_ID);
     assert_eq!(names(&files), ["spec.md", "build-1.md"]);
 
-    let quiet = quiet_poll();
+    let before = quiet_poll();
     d.save("20261024-130000-a11ce0", &[]);
-    soon(quiet, "record", "20261024-130000-a11ce0");
-    assert_eq!(soon(quiet, "files", "20261024-130000-a11ce0").get("files"), Some(&Value::Array(vec![])));
+    soon(before, "record", "20261024-130000-a11ce0");
+    assert_eq!(soon(before, "files", "20261024-130000-a11ce0").get("files"), Some(&Value::Array(vec![])));
 
-    let quiet = quiet_poll();
+    let before = quiet_poll();
     std::fs::remove_dir_all(format!("{}/{RUNS_DIR}/{SERVE_ID}", d.0)).unwrap();
-    assert_eq!(soon(quiet, "record", SERVE_ID).get("record"), Some(&Value::Null));
+    assert_eq!(soon(before, "record", SERVE_ID).get("record"), Some(&Value::Null));
 }
 
 #[test]
