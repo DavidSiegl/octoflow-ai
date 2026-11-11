@@ -1,10 +1,10 @@
 #!/bin/sh
 # Download the octoflow-gate release that <pin> names from its GitHub release, check it against the pinned sha256,
-# and unpack it into <dir>, made if missing: <dir>/gate.py, <dir>/gate-rust-linux-x86_64 and the rest that
-# octoflow-gate's README, "Running the gate in a project", lists, and print the release's version. Exits 0 when <dir>
-# holds the release; exits non-zero, saying why on standard error, when <pin> cannot be read or has no
-# `<version> <sha256>` line, the download fails, or the tarball does not match the sha256, in which case nothing is
-# unpacked. What <dir> held before is overwritten where the release has the same file and otherwise left in place.
+# and unpack it into <dir>, made if missing: <dir>/gate and the rest that octoflow-gate's README, "Running the gate in
+# a project", lists, and print the release's version. Exits 0 when <dir> holds the release; exits non-zero, saying why
+# on standard error, when <pin> cannot be read or has no `<version> <sha256>` line, the download fails, or the tarball
+# does not match the sha256, in which case nothing is unpacked. What <dir> held before is overwritten where the
+# release has the same file and otherwise left in place.
 #
 #   ci/fetch-gate.sh <pin> <dir>
 #

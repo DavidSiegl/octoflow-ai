@@ -1,7 +1,7 @@
 # Not a Python project: octoflow has no Python of its own. This file and uv.lock hold the quality gate's toolchain,
-# with .python-version: the Python that runs the gate, the octoflow-gate release ci/gate.pin names, and the Markdown
-# linter it runs, pymarkdown; and pymarkdown's rules. They go when the gate no longer needs Python (octoflow-gate's
-# ticket gate-standalone/18). The release version is engine/Cargo.toml's (ci/release-version.sh).
+# with .python-version: the Markdown linter the gate runs, pymarkdown, the Python it runs on, and its rules, which the
+# gate, the octoflow-gate release ci/gate.pin names, reads from here beside gate.toml. The gate itself needs no Python.
+# The release version is engine/Cargo.toml's (ci/release-version.sh).
 
 [dependency-groups]
 dev = [

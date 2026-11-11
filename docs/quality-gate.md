@@ -15,7 +15,7 @@ The gate is [octoflow-gate](https://github.com/DavidSiegl/octoflow-gate), a proj
 from a base commit to the working tree with linters, the tests and their coverage, and checks of what the change did,
 and writes the quality file, `quality.md`, and `quality.json`. What it checks, the settings it reads and how it reads
 Rust are its own docs'
-([docs/quality-gate.md](https://github.com/DavidSiegl/octoflow-gate/blob/v0.5.0/docs/quality-gate.md)).
+([docs/quality-gate.md](https://github.com/DavidSiegl/octoflow-gate/blob/v0.7.0/docs/quality-gate.md)).
 This repository was its home until 0.62.1.
 
 What this repository gives it:
@@ -38,9 +38,11 @@ it raises it to; quality builds take the new release once it is on `main`. Lower
 
 ```bash
 sh ci/fetch-gate.sh ci/gate.pin ../gate-release
-uv run python ../gate-release/gate.py --base main --rust-syntax ../gate-release/gate-rust-linux-x86_64 \
-    --out quality.md
+uv run ../gate-release/gate --base main --out quality.md
 ```
+
+`uv run` puts pymarkdown, which the gate runs, on `PATH`; the gate itself is a program for Linux x86_64 and needs no
+Python.
 
 It runs the tests itself first, by `gate.toml`'s `[[test]]` commands, which need cargo-llvm-cov and cargo-nextest;
 the surviving-mutants check needs cargo-mutants, and the linters shellcheck, actionlint and clippy
@@ -63,8 +65,8 @@ Each round, the orchestrator:
    is not judged, and the round's file is `GATE: LEAK`;
 2. reads `ci/gate.pin`, `gate.toml` and `pyproject.toml` from the run's base commit, not from the working tree, so a
    change cannot loosen how it is itself judged, as a quality build judges by `main`'s; a base without `ci/gate.pin`
-   is judged by the release the engine was tested against (`BUILT_IN_PIN`, 0.5.0), and one without
-   `pyproject.toml` by an empty one, never the change's;
+   is judged by the release the engine was tested against (`BUILT_IN_PIN`, 0.7.0), one without `gate.toml` by the
+   gate's defaults and one without `pyproject.toml` by the linters' own, never by the change's;
 3. checks the snapshot out as a worktree of the run's repository into `gate-<n>-<q>/job-<k>/tree` under the run's
    directory, `k` counting the round's starts, as a resume starts it again: the gate judges the files the Builder
    never told git about, as a Jenkins build does, and what the gate and the tests write never reaches the run's
@@ -73,9 +75,9 @@ Each round, the orchestrator:
    long the tests take, and the job outlives an SSH connection that drops. The job downloads the release with curl,
    once per pin, into `${XDG_CACHE_HOME:-~/.cache}/octoflow/gate/octoflow-gate-<version>-<sha256>.tar.gz`, checks
    it against the pin's sha256 each time it is used, downloading it again when it no longer matches, unpacks it
-   fresh into the job's directory, and runs `python3 gate.py --base <base> --config <the base's pyproject.toml>`
-   in the checkout. The release's Rust helper is built for Linux x86_64 alone; elsewhere the gate reports a Rust
-   change as not read;
+   fresh into the job's directory, and runs its `gate --base <base> --config <the base's gate.toml>` in the
+   checkout. `gate` is a program for Linux x86_64, which octoflow-gate ships since 0.7.0: a base that pins an
+   earlier release stops the run with an error that says so;
 5. asks after the job every `CI_POLL_SECONDS`, and stops it, its tests included, as a Ctrl-C would, when the round's
    `QUALITY_TIMEOUT` runs out, download included, or the run is interrupted. Once the job ends, its checkout, the
    unpacked release and the download go; `quality.md`, `quality.json`, what the gate said on standard error
@@ -83,16 +85,17 @@ Each round, the orchestrator:
 6. adds the orchestrator's checks to the report, as for Jenkins, and writes `quality-<n>-<q>.md`, whose line under
    `GATE:` names the release and the snapshot. A gate that could not judge, exiting 2 with its own `error: …` line,
    such as one refusing `gate.toml`, gives `GATE: BUILD_FAILED` with the end of what it said, and goes back to the
-   Builder as a Jenkins build that failed before its Gate stage does. Any other exit status 2, as python3 gives for
-   a `gate.py` it cannot open and argparse for an argument the release does not take, stops the run with an error:
-   nothing the Builder changes would mend the release or the machine. So does a download that fails or does not
-   match the pin.
+   Builder as a Jenkins build that failed before its Gate stage does. Any other exit status 2, as for an argument
+   the release does not take, and any status but 0 and 1, as 127 where the machine cannot run the gate, stops the
+   run with an error: nothing the Builder changes would mend the release or the machine. So does a download that
+   fails or does not match the pin.
 
-What it needs on that machine, which the preflight checks before the interview: `python3` 3.11 or later on `PATH`,
-curl, tar, a `ps` that takes `-ww -o stat=,args= -p` (BusyBox's does not), sha256sum (or macOS's shasum), a writable
-cache, and gitleaks; and, unchecked, whatever the project's `gate.toml` has the gate run: its `[[test]]` commands
-and the linters its files call for, such as pymarkdown, shellcheck or clippy, all from `PATH`. A linter the project
-runs through uv, as this repository runs pymarkdown, is there when the orchestrator itself runs under `uv run`.
+What it needs on that machine, which the preflight checks before the interview: Linux on x86_64, and on `PATH` curl,
+tar, setsid, a `ps` that takes `-ww -o stat=,args= -p` (BusyBox's does not), sha256sum (or shasum), a writable
+cache, and gitleaks; and, unchecked, whatever the project's `gate.toml` has the gate run: its `[[test]]` commands,
+the Python a project with Python tests runs them in (`python3`, or `gate.toml`'s `python`) and the linters its files
+call for, such as pymarkdown, shellcheck or clippy, all from `PATH`. A linter the project runs through uv, as this
+repository runs pymarkdown, is there when the orchestrator itself runs under `uv run`.
 
 The gate runs the project's tests as you, with no sandbox: the same trust as running them by hand, and more than a
 Jenkins agent's container gives them. A local round keeps nothing in `state.json`'s `ci`: a resume in the middle of
@@ -105,9 +108,9 @@ Jenkins job named `local` in flight is not resumed, as this release would take i
 
 The gate writes one report two ways, and the orchestrator reads both back from Jenkins after each quality round.
 `quality.json` is the contract: the gate's JSON Schema,
-[schema/quality-v1.json](https://github.com/DavidSiegl/octoflow-gate/blob/v0.5.0/schema/quality-v1.json), says what
+[schema/quality-v1.json](https://github.com/DavidSiegl/octoflow-gate/blob/v0.7.0/schema/quality-v1.json), says what
 each field holds, and the gate's own docs say when its `schema_version` is raised ([the report as a
-contract](https://github.com/DavidSiegl/octoflow-gate/blob/v0.5.0/docs/quality-gate.md#the-report-as-a-contract)).
+contract](https://github.com/DavidSiegl/octoflow-gate/blob/v0.7.0/docs/quality-gate.md#the-report-as-a-contract)).
 From it the orchestrator takes whether the gate passed and what failed it (`quality::read_report`): the failed
 conditions, the `fingerprint` of each finding that `fails`, under its `check`, and each failing test, which it
 compares with the last round's for a stuck loop (`GateFailures.repeats`). It reads only `schema_version` 1 and stops
@@ -161,10 +164,10 @@ request](#a-build-of-main-judged-at-its-pull-request)).
   does not enforce that - a pushed branch's `Jenkinsfile` can ask for any label - so the restriction sits on
   the nodes, with the Job Restrictions plugin.
 - **`uv`, `git`, `shellcheck`, `actionlint` and clippy on the agent**: the Install stage runs `uv sync --frozen`, and
-  `uv` brings the Python of `.python-version`, which the gate runs on; clippy and llvm-tools (which cargo-llvm-cov reads
-  its coverage data with) are rustup components of the Rust below, which the agent image must add: its rustup home is
-  root's, so a build cannot, and the Install stage fails naming a missing one. The gate fails a build that lacks a
-  linter, and the tests that run the real clippy fail without it.
+  `uv` brings the Python of `.python-version`, which pymarkdown runs on; clippy and llvm-tools (which cargo-llvm-cov
+  reads its coverage data with) are rustup components of the Rust below, which the agent image must add: its rustup
+  home is root's, so a build cannot, and the Install stage fails naming a missing one. The gate fails a build that
+  lacks a linter, and the tests that run the real clippy fail without it.
 - **`curl`, `sha256sum`, `tar` and `openssl` on the agent**: the Install stage downloads, with `ci/install-tools.sh`,
   pinned releases of the gitleaks the e2e scenarios (`engine/e2e`) run, of cargo-llvm-cov and cargo-nextest,
   for the Rust tests and their coverage and the passes-at-base check's run of the changed Rust
@@ -182,9 +185,9 @@ request](#a-build-of-main-judged-at-its-pull-request)).
   the development host's CPUs; `CARGO_HOME` is kept in the workspace, so nothing is cached between builds. The UI stage
   runs `cargo check` under the same lock, since the Test stage's build of the dependencies is not the check clippy
   needs: with them checked, the Gate stage's clippy checks only the workspace's own crates, in about 2 s for the shell
-  alone, against 77 s for a clean one on the development host's 6 CPUs. The gate release brings its own Rust reader,
-  the gate-rust helper, built. Package bundles the `.deb` with `dpkg-deb`, and the `.AppImage` with `linuxdeploy`,
-  which `tauri build` downloads from GitHub each build.
+  alone, against 77 s for a clean one on the development host's 6 CPUs. The gate release is one program, built.
+  Package bundles the `.deb` with `dpkg-deb`, and the `.AppImage` with `linuxdeploy`, which `tauri build` downloads
+  from GitHub each build.
 - **`gh` on the agent, and a GitHub token** for the Release stage: a Secret text credential with the ID
   `GitHub-Agents`, holding a token with *Contents: read and write* on this repository. It is the agents' own
   `gh` token, so when that is rotated the credential must be too, or every build of `main` fails at Release.
@@ -227,12 +230,12 @@ empty `GIT_REF`, before it accepts `buildWithParameters`.
 | Pull request (`CHANGE_TARGET` set) | the merge base with the target branch, fetched first | its own, `Jenkinsfile` included (below) |
 | `main` | the last successful build's commit, else `HEAD^1`, as also when a force-push took that commit out of the history | its own; none when judged at its pull request (below) |
 
-The gate is an [octoflow-gate](https://github.com/DavidSiegl/octoflow-gate) release, `gate.py` and the gate-rust
-helper built for Linux x86_64, which the judge's `ci/fetch-gate.sh` downloads into `$WORKSPACE_TMP/gate` and checks
-against the sha256 the judge's `ci/gate.pin` names; the console says which version. A release that cannot be
-downloaded, or does not match, fails the build as one the gate could not judge, with no quality file. The release
-reads `gate.toml` beside the `pyproject.toml` it is given, so a quality build's settings are `main`'s too, and it
-writes `quality.json` beside `quality.md`, which the stage archives with it. A change to `ci/gate.pin` therefore
+The gate is an [octoflow-gate](https://github.com/DavidSiegl/octoflow-gate) release, the program `gate` built for
+Linux x86_64, which the judge's `ci/fetch-gate.sh` downloads into `$WORKSPACE_TMP/gate` and checks against the sha256
+the judge's `ci/gate.pin` names; the console says which version. A release that cannot be downloaded, or does not
+match, fails the build as one the gate could not judge, with no quality file. The gate takes the linters' rules from
+the `pyproject.toml` beside the `gate.toml` it is given, so a quality build's rules are `main`'s as its settings are,
+and it writes `quality.json` beside `quality.md`, which the stage archives with it. A change to `ci/gate.pin` therefore
 judges the changes after it reaches `main`, not itself, in a quality build; the pull request that raises it is judged
 by the release it raises it to. `gate.toml`'s `[build-config]` names the pin and `ci/fetch-gate.sh`, so a quality
 build's `quality.md` says so of a snapshot that edits either.

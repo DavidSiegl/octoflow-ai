@@ -606,8 +606,8 @@ fn starts_args(config: &ConfigDir) -> Vec<Arg> {
             "after each Builder turn, have this Jenkins job (its full name, folders included) judge the change with \
              the quality gate, octoflow-gate, and send the findings back to the Builder; needs JENKINS_URL, \
              JENKINS_USER and JENKINS_TOKEN, from the environment or ~/.config/ai-agents-orchestrator/ci.env. \
-             `local` runs the octoflow-gate release the run's base pins in ci/gate.pin here instead, with python3, \
-             as you and with no sandbox; a top-level job named local is `/local`",
+             `local` runs the octoflow-gate release the run's base pins in ci/gate.pin here instead, on Linux \
+             x86_64, as you and with no sandbox; a top-level job named local is `/local`",
         ),
     ]
 }
