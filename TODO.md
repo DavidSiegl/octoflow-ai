@@ -770,3 +770,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `.config/nextest.toml` profile, jest's through a reporter), so a failing test fails the gate as tests that could not
   be judged, naming the command, not the test. Kept by choice (doctor-gate-setup ticket 01, 2026-11-11): setup writes
   only `ci/gate.pin` and `gate.toml`. Closes, if wanted, with setup also writing the reporter's configuration.
+- **`local_gate::set_up` can replace a file made while it runs.** Cross-review 173 F10: "the look and the write are
+  separate commands. A gate.toml or ci/gate.pin created between `exists` and `write` is replaced … serve answers each
+  request on its own thread, so two clicks can race." The interface comment says so. Closes with a no-clobber write
+  in one command (`set -C`, or `ln` of a temporary file), so that "a file already there is kept" holds always.
+- **`local_gate::set_up` runs up to ten commands, one round trip each over SSH.** Cross-review 173 F11:
+  `resolve_dir`, `rev-parse`, a probe per `KIND_MARKERS` entry, the `pyproject.toml` read and two probes and writes
+  per target, inside serve's `POST /setup/gate` handler. Closes with one `sh -c` that reports the top level, the
+  markers and the missing targets at once; worth it with F10's fix, which reshapes the writes anyway.

@@ -124,13 +124,19 @@ pub(super) fn doctor_command(local: &Local, target: &Target, setup_gate: bool) -
     if !setup_gate {
         return Ok(status);
     }
-    // The agents' host, as check_setup reaches it.
-    let agents = match herdr.machine() {
-        Some(_) => local.host.over_ssh(&herdr.ssh_target()?),
-        None => local.host.clone(),
-    };
-    let files = local_gate::set_up(&agents, target.cwd.as_deref().unwrap_or("."))
-        .map_err(|e| OrchestratorError(format!("setting up the local quality gate: {e}")))?;
+    let files = (|| {
+        // The agents' host, as check_setup reaches it.
+        let agents = match herdr.machine() {
+            Some(_) => local.host.over_ssh(&herdr.ssh_target()?),
+            None => local.host.clone(),
+        };
+        let cwd = match &target.cwd {
+            Some(cwd) => cwd.clone(),
+            None => (local.cwd)()?,
+        };
+        local_gate::set_up(&agents, &cwd)
+    })()
+    .map_err(|e| OrchestratorError(format!("setting up the local quality gate: {e}")))?;
     for file in &files {
         match file.written {
             true => say(&format!("{:<8}{}", "wrote", file.path)),
@@ -205,11 +211,14 @@ pub fn check_setup(
     check(&mut checks, "gitleaks", Level::NeededForPr, GITLEAKS_INSTALL, on_machine.as_ref(), "", &mut || {
         agents.gitleaks_problem().map_or_else(|| Ok("`gitleaks git` runs".to_string()), |p| Err(Unmet::new(p)))
     });
-    // The run's own preflight, so the check cannot ask for less or more than a run with --quality-gate local does.
+    // What a run with --quality-gate local checks before its interview (Workflow::check_before_interview), so the check
+    // cannot ask for less or more: gitleaks, then the gate's own preflight.
     let fix = "install or fix what it names where the agents run (docs/quality-gate.md, \"The local gate\")";
     let note = "needed only for --quality-gate local";
     check(&mut checks, "local quality gate", Level::Optional, fix, on_machine.as_ref(), note, &mut || {
-        local_gate::preflight(agents).map(|()| "Linux x86_64, curl, tar, setsid, env, ps, sha256sum and the gate cache are ready".to_string()).map_err(Unmet::from)
+        agents.check_gitleaks()?;
+        local_gate::preflight(agents)?;
+        Ok("gitleaks, and all the gate's preflight asks for, are ready".to_string())
     });
     if let Some(cwd) = cwd {
         let fix = "pass --cwd a git checkout, or make one with git clone or git init";

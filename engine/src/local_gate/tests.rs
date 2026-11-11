@@ -521,12 +521,15 @@ fn the_preflight_needs_linux_on_x86_64_the_jobs_tools_a_full_ps_an_env_that_rest
 
 #[test]
 fn set_up_writes_the_built_in_pin_and_starter_settings_at_the_top_level_uncommitted() {
-    let repo = Repo::new(&[("Cargo.toml", "[package]\n"), ("sub/README", "x\n")]);
+    let pyproject = "[tool.pytest.ini_options]\n";
+    let repo = Repo::new(&[("Cargo.toml", "[package]\n"), ("pyproject.toml", pyproject), ("sub/README", "x\n")]);
     let files = set_up(&repo.host, &format!("{}/sub", repo.path)).unwrap();
     let written = |path| SetUpFile { path, written: true };
     assert_eq!(files, [written("ci/gate.pin"), written("gate.toml")]);
     assert_eq!(read(&format!("{}/ci/gate.pin", repo.path)), format!("{BUILT_IN_PIN}\n"));
-    assert_eq!(read(&format!("{}/gate.toml", repo.path)), starter_settings(&["Cargo.toml"]));
+    let settings = read(&format!("{}/gate.toml", repo.path));
+    assert_eq!(settings, starter_settings(&["Cargo.toml"], Some(pyproject)));
+    assert_eq!(tests_of(&settings).len(), 2, "{settings}");
     assert_eq!(repo.git(&["status", "--porcelain"]), "?? ci/\n?? gate.toml\n");
 }
 
@@ -575,13 +578,13 @@ fn tests_of(settings: &str) -> Vec<TestTable<String, Vec<String>>> {
         .collect()
 }
 
-/// Assert that the starter gate.toml for a top level holding present has the [[test]]s of want and asks for them to
-/// be checked.
-fn assert_guessed(present: &[&str], want: &[TestTable<&str, &str>]) {
+/// Assert that the starter gate.toml for a top level holding present, and pyproject.toml's text, has the [[test]]s
+/// of want and asks for them to be checked.
+fn assert_guessed(present: &[&str], pyproject: Option<&str>, want: &[TestTable<&str, &str>]) {
     let argv = |words: &str| words.split(' ').map(String::from).collect::<Vec<_>>();
-    let settings = starter_settings(present);
+    let settings = starter_settings(present, pyproject);
     let want: Vec<_> = want.iter().map(|(n, c, j)| (n.to_string(), argv(c), j.map(|j| vec![j.to_string()]))).collect();
-    assert_eq!(tests_of(&settings), want, "{present:?}");
+    assert_eq!(tests_of(&settings), want, "{present:?} {pyproject:?}");
     assert!(settings.contains("check that each command runs this project's tests"), "{settings}");
 }
 
@@ -589,16 +592,24 @@ fn assert_guessed(present: &[&str], want: &[TestTable<&str, &str>]) {
 fn starter_settings_guess_the_tests_from_the_projects_kind() {
     let cargo = ("cargo-test", "cargo test --workspace", None);
     let pytest = ("pytest", "python3 -m pytest --junitxml=junit.xml", Some("junit.xml"));
-    assert_guessed(&["Cargo.toml"], &[cargo]);
-    assert_guessed(&["setup.py"], &[pytest]);
-    assert_guessed(&["pyproject.toml", "uv.lock"], &[("pytest", "uv run pytest --junitxml=junit.xml", Some("junit.xml"))]);
-    assert_guessed(&["go.mod", "package.json"], &[("npm-test", "npm test", None), ("go-test", "go test ./...", None)]);
-    assert_guessed(&["Cargo.toml", "pyproject.toml"], &[cargo, pytest]);
+    assert_guessed(&["Cargo.toml"], None, &[cargo]);
+    assert_guessed(&["pytest.ini"], None, &[pytest]);
+    let uv_pytest = ("pytest", "uv run pytest --junitxml=junit.xml", Some("junit.xml"));
+    assert_guessed(&["uv.lock"], Some("[project]\n\n[tool.pytest.ini_options]\n"), &[uv_pytest]);
+    assert_guessed(&["go.mod", "package.json"], None, &[("npm-test", "npm test", None), ("go-test", "go test ./...", None)]);
+    assert_guessed(&["Cargo.toml", "conftest.py"], None, &[cargo, pytest]);
+}
+
+#[test]
+fn a_pyproject_toml_without_pytest_settings_is_no_python_tests() {
+    // As this repository's: it configures tools, and pytest would collect nothing.
+    let tools = "[tool.pymarkdown]\nplugins.md013.enabled = false\n";
+    assert_guessed(&["Cargo.toml", "uv.lock"], Some(tools), &[("cargo-test", "cargo test --workspace", None)]);
 }
 
 #[test]
 fn starter_settings_without_a_known_kind_say_to_add_the_tests() {
-    let settings = starter_settings(&["uv.lock"]);
+    let settings = starter_settings(&["uv.lock"], Some("[project]\nname = \"p\"\n"));
     assert_eq!(tests_of(&settings), []);
     assert!(settings.contains("Add a [[test]] for each command that runs them"), "{settings}");
 }

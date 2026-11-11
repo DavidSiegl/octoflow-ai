@@ -454,8 +454,8 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
              later and a way to reach it, each harness's CLI and herdr integration, git {} or later, gh logged in, \
              gitleaks, what --quality-gate local needs, and with --cwd a git checkout with an {REMOTE}. Prints a \
              line each, ok, missing, or warn for one only some runs need, with a fix under each that is not ok. \
-             Installs and changes nothing, unless --setup-gate asks it to write the local quality gate's files into \
-             the project. Exit status 0 when nothing is missing and any setup succeeded, {EXIT_ERROR} otherwise.",
+             Installs nothing and writes nothing into the project, unless --setup-gate asks it to write the local \
+             quality gate's files there; checking the gate makes the gate's cache directory, as a gated run does. Exit status 0 when nothing is missing and any setup succeeded, {EXIT_ERROR} otherwise.",
             dotted(&HERDR_MIN_VERSION),
             dotted(&GIT_MIN_VERSION)
         ))

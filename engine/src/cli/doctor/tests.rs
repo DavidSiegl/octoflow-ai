@@ -532,6 +532,14 @@ fn the_local_gate_is_checked_by_the_runs_preflight_and_is_optional() {
 }
 
 #[test]
+fn the_local_gate_check_needs_gitleaks_as_a_gated_run_does() {
+    let tools = FakeTools::new();
+    tools.answer("gitleaks git --help", failing("unknown command \"git\"", 1));
+    let gate = setup(&tools, None, None)["local quality gate"].clone();
+    assert!(!gate.ok && gate.detail.contains("`gitleaks git` does not run"), "{}", gate.detail);
+}
+
+#[test]
 fn the_local_gate_is_checked_where_the_agents_run() {
     let tools = FakeTools::new();
     assert!(setup(&tools, Some("box"), Some("/proj"))["local quality gate"].ok);
@@ -577,14 +585,15 @@ fn doctor_printed(tools: &FakeTools, argv: &[&str]) -> (Result<i32, Orchestrator
     (ended, out.into_inner())
 }
 
-/// Have tools play Host::exists and Host::write on target's files, existing the paths in there.
+/// Have tools play Host::exists, Host::read and Host::write on target's files, existing the paths in there, which
+/// read as empty.
 fn play_files(tools: &FakeTools, target: Option<&'static str>, there: &'static [&'static str]) {
     tools.tools().answer_with = Some(Box::new(move |t, argv| {
         if t != target || argv[0] != "sh" {
             return None;
         }
         let path = argv.last().unwrap();
-        if argv[2].starts_with("[ -e") {
+        if argv[2].starts_with("[ -e") || argv[2].starts_with("[ -f") {
             let status = if there.contains(&path.as_str()) { 0 } else { crate::host::MISSING_FILE_STATUS };
             return Some(Answer::Ran(status, String::new(), String::new()));
         }

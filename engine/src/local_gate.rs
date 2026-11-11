@@ -353,7 +353,8 @@ pub fn set_up(host: &dyn Host, cwd: &str) -> Result<Vec<SetUpFile>, Orchestrator
             kinds.push(marker);
         }
     }
-    let files = [(PIN_PATH, format!("{BUILT_IN_PIN}\n")), (SETTINGS_PATH, starter_settings(&kinds))];
+    let pyproject = host.read(&format!("{top}/pyproject.toml"))?;
+    let files = [(PIN_PATH, format!("{BUILT_IN_PIN}\n")), (SETTINGS_PATH, starter_settings(&kinds, pyproject.as_deref()))];
     let mut done = Vec::new();
     for (path, text) in files {
         let at = format!("{top}/{path}");
@@ -366,18 +367,23 @@ pub fn set_up(host: &dyn Host, cwd: &str) -> Result<Vec<SetUpFile>, Orchestrator
     Ok(done)
 }
 
-/// The files at a checkout's top level that starter_settings guesses a project's tests from.
-const KIND_MARKERS: [&str; 6] = ["Cargo.toml", "pyproject.toml", "setup.py", "uv.lock", "package.json", "go.mod"];
+/// The files at a checkout's top level that starter_settings guesses a project's tests from, with pyproject.toml's
+/// text.
+const KIND_MARKERS: [&str; 6] = ["Cargo.toml", "pytest.ini", "conftest.py", "uv.lock", "package.json", "go.mod"];
 
-/// The gate.toml set_up writes for a project whose top level holds the KIND_MARKERS in present: a comment on what
-/// the file is and that its guesses need checking, then a [[test]] for each kind of project found, Rust, Python,
-/// JavaScript and Go in that order; with none found, no [[test]] and a comment saying how to add one.
-fn starter_settings(present: &[&str]) -> String {
+/// The gate.toml set_up writes for a project whose top level holds the KIND_MARKERS in present, and pyproject.toml
+/// with the text pyproject (None: there is none): a comment on what the file is and that its guesses need checking,
+/// then a [[test]] for each kind of project found, Rust, Python, JavaScript and Go in that order; with none found, no
+/// [[test]] and a comment saying how to add one. A project has Python tests only when pytest is configured there, by
+/// pytest.ini, conftest.py or a [tool.pytest…] table: a pyproject.toml may hold only other tools' settings, and
+/// pytest would then collect nothing and fail every round.
+fn starter_settings(present: &[&str], pyproject: Option<&str>) -> String {
     let has = |marker: &str| present.contains(&marker);
     let mut text = String::from(
         "# octoflow-gate's settings for judging this project (docs/quality-gate.md, \"The gate's settings\", in\n\
-         # https://github.com/DavidSiegl/octoflow-gate): written by `orchestrator doctor --setup-gate`. A run with\n\
-         # --quality-gate local reads this file from the run's base commit, so an edit counts once it is committed.\n\
+         # https://github.com/DavidSiegl/octoflow-gate): written by `orchestrator doctor --setup-gate` or the desktop\n\
+         # app's \"Set up the quality gate\". A run with --quality-gate local reads this file from the run's base commit,\n\
+         # so an edit counts once it is committed.\n\
          #\n\
          # Each [[test]] runs at the top level, as an argv: `name`, `command`, and the reports it writes, `junit` and\n\
          # `coverage`, paths from the top level. A command without `junit` is judged by its exit status alone: one that\n\
@@ -387,7 +393,8 @@ fn starter_settings(present: &[&str]) -> String {
     if has("Cargo.toml") {
         tests.push(("cargo-test", "[\"cargo\", \"test\", \"--workspace\"]", None));
     }
-    if has("pyproject.toml") || has("setup.py") {
+    let pytest_settings = pyproject.is_some_and(|text| text.contains("[tool.pytest"));
+    if has("pytest.ini") || has("conftest.py") || pytest_settings {
         let command = match has("uv.lock") {
             true => "[\"uv\", \"run\", \"pytest\", \"--junitxml=junit.xml\"]",
             false => "[\"python3\", \"-m\", \"pytest\", \"--junitxml=junit.xml\"]",

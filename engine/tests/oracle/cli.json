@@ -154,8 +154,6 @@
    "--cwd",
    "--help",
    "--machine",
-   "--quality-gate",
-   "--setup-gate",
    "-h"
   ],
   "serve": [
