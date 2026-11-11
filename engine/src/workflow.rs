@@ -34,7 +34,7 @@ use serde_json::Value;
 use crate::map::Map;
 use crate::json::{object, Object, ValueExt};
 use crate::quality::parse_gate;
-use crate::runs::{local_host, run_health, RUNNING};
+use crate::runs::{local_host, RUNNING};
 use crate::spec_file::SpecFile;
 use crate::state::RunState;
 use crate::summary::{iso_utc, run_metrics, run_summary, turn_tokens};
@@ -92,7 +92,7 @@ pub struct Collaborators<'a> {
     /// The Ctrl-C: once raised, the run stops at its next pause, or at the failure of what was running when it was
     /// raised, as interrupted.
     pub interrupt: &'a Interrupt,
-    /// Whether a process of a pid exists on this machine, for judging the checkout's other runs (run_health):
+    /// Whether a process of a pid exists on this machine, for judging the checkout's other runs (RunState::health):
     /// crate::runs::pid_alive, which a test replaces.
     pub pid_alive: &'a dyn Fn(i64) -> bool,
     /// Who judges the change in the quality rounds, a Jenkins job or the local gate: Some turns the run's quality
@@ -474,8 +474,7 @@ impl<'a> Workflow<'a> {
         }
         self.check_branch()?;
         if let Some(QualityGate::Jenkins(jenkins)) = self.quality_gate {
-            let phase = self.state.phase.as_str();
-            if phase == QUALITY || self.pipeline.gated().is_some_and(|gated| gated.id == phase) {
+            if self.state.in_quality(&self.pipeline) {
                 // Before a turn of the gated step that may take half an hour, not after it.
                 jenkins.check_credentials()?;
             }
@@ -589,18 +588,17 @@ impl<'a> Workflow<'a> {
             return Ok(());
         }
         let me = self.me.get("host").and_then(Value::as_str).unwrap_or_default();
-        for (age, other) in self.host.run_states(&s.cwd)? {
-            if other.get("run_id").and_then(Value::as_str) == Some(&s.run_id)
-                || other.get("worktree").is_some_and(Value::is_set)
-            {
+        for run in self.host.run_states(&s.cwd)? {
+            // As far as it reads: a run another release drives shares the checkout too.
+            let other = run.shown();
+            if other.run_id == s.run_id || other.worktree.as_deref().is_some_and(|w| !w.is_empty()) {
                 continue;
             }
-            if let Some((RUNNING, why)) = run_health(&other, age, me, self.pid_alive) {
-                let id = other.get("run_id").map_or("None".to_string(), Value::text);
+            if let Some((RUNNING, why)) = run.health(me, self.pid_alive) {
                 return Err(OrchestratorError(format!(
-                    "run {id} is running in {} ({why}); one run at a time per checkout: wait for it, stop it, or \
+                    "run {} is running in {} ({why}); one run at a time per checkout: wait for it, stop it, or \
                      use another clone",
-                    s.cwd
+                    other.run_id, s.cwd
                 )));
             }
         }

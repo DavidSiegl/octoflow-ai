@@ -9,14 +9,12 @@ use crate::error::OrchestratorError;
 use crate::harness::harness;
 use crate::pipeline::{Pipeline, DONE, QUALITY};
 use crate::prompts::{load_prompts, Prompts};
-use serde_json::Value;
 use crate::map::Map;
-use crate::json::ValueExt;
-use crate::runs::{ending_health, run_health, RUNNING};
+use crate::runs::RUNNING;
 use crate::spec_file::SpecFile;
-use crate::state::RunState;
+use crate::state::{find_run, RunState, SavedRun};
 use crate::workflow::{turn_quality_gate_off, turn_quality_gate_on};
-use crate::workflow_file::{load_workflow_file, named_workflow, run_pipeline};
+use crate::workflow_file::{load_workflow_file, named_workflow};
 
 /// A new run's state from run's flags, and its workflow, for the project at cwd; with spec, run --spec's file, the run
 /// starts at the step after the contract step. Its prompts are the prompt files' as they are now (load_prompts), and
@@ -121,25 +119,23 @@ pub fn resumed_state(args: &ResumeArgs, cwd: &str, world: &Connected) -> Result<
     Ok((state, pipeline))
 }
 
-/// The saved state of the run to resume among runs, each (seconds since its state.json was written, the state as
-/// saved), with resume's settings flags applied and its machine the one args names, but a done run's as it saved
-/// it; and its workflow, from the definition and prompts it saved.
+/// The saved state of the run to resume among runs, as Host::run_states read them, with resume's settings flags
+/// applied and its machine the one args names, but a done run's as it saved it; and its workflow, from the definition
+/// and prompts it saved.
 ///
-/// The run's health is judged from local_host by pid_alive (crate::runs::run_health, and for a done run that was
-/// not released, ending_health). Errors: no run or several
-/// match args.run_ref; its state cannot be read, or its saved workflow or prompts; it was closed; it looks alive and
-/// args.force is not given; it is past the round limit it would have; a --role-model or --role-agent names a role
-/// its workflow lacks; or its quality round limit does not hold (resume_quality_limit).
+/// The run's health is judged from local_host by pid_alive (RunState::health). Errors: no run or several match
+/// args.run_ref; its state cannot be read (SavedRun::problem), or its saved workflow or prompts; it was closed; it
+/// looks alive and args.force is not given; it is past the round limit it would have; a --role-model or --role-agent
+/// names a role its workflow lacks; or its quality round limit does not hold (resume_quality_limit).
 pub fn resumable_state(
-    runs: &[(u64, Value)],
+    runs: &[SavedRun],
     args: &ResumeArgs,
     cwd: &str,
     local_host: &str,
     pid_alive: &dyn Fn(i64) -> bool,
 ) -> Result<(RunState, Pipeline), OrchestratorError> {
-    let (age, saved) = find_run(runs, &args.run_ref, cwd)?;
-    let saved_map = saved.as_object().ok_or_else(|| OrchestratorError("a run state is a JSON object".into()))?;
-    let mut state = RunState::from_saved(saved_map)?;
+    let run = find_run(runs, &args.run_ref, cwd)?;
+    let mut state = run.state()?.clone();
     // Not even with --force: close may have deleted its worktree and branch.
     if state.closed.is_some() {
         return Err(OrchestratorError(format!("run {} was closed; start a new run", state.run_id)));
@@ -153,9 +149,8 @@ pub fn resumable_state(
             state.run_id
         )));
     }
-    let pipeline = run_pipeline(&state.workflow, state.workflow_definition.as_ref(), &state.prompts()?)?;
-    let health = run_health(saved, *age, local_host, pid_alive).or_else(|| ending_health(saved, *age, local_host, pid_alive));
-    if let Some((RUNNING, why)) = health {
+    let pipeline = state.pipeline()?;
+    if let Some((RUNNING, why)) = run.health(local_host, pid_alive) {
         if !args.force {
             return Err(OrchestratorError(format!(
                 "run {} looks alive ({why}); pass --force to take it over",
@@ -197,24 +192,6 @@ pub fn resumable_state(
     // The herdr this resume addresses: the saved one may name the same herdr reached another way.
     state.machine = args.target.machine.clone();
     Ok((state, pipeline))
-}
-
-/// The run of runs named by its full id, or else by its key. Errors: none or several match.
-pub(super) fn find_run<'r>(runs: &'r [(u64, Value)], run_ref: &str, cwd: &str) -> Result<&'r (u64, Value), OrchestratorError> {
-    let id = |run: &(u64, Value)| run.1.get("run_id").map(|v| v.as_str().map_or_else(|| v.text(), String::from));
-    let mut matches: Vec<_> = runs.iter().filter(|r| id(r).as_deref() == Some(run_ref)).collect();
-    if matches.is_empty() {
-        let key = |r: &(u64, Value)| id(r).unwrap_or_default().rsplit('-').next().map(String::from);
-        matches = runs.iter().filter(|r| key(r).as_deref() == Some(run_ref)).collect();
-    }
-    match matches[..] {
-        [] => Err(OrchestratorError(format!("no run {run_ref} under {cwd}/{RUNS_DIR}"))),
-        [one] => Ok(one),
-        _ => {
-            let ids: Vec<String> = matches.iter().map(|r| id(r).unwrap_or_default()).collect();
-            Err(OrchestratorError(format!("{run_ref} matches several runs ({}); give the full run id", ids.join(", "))))
-        }
-    }
 }
 
 /// Apply resume's --max-quality-rounds to state, of workflow pipeline, and check the limit, given or saved, against

@@ -11,15 +11,15 @@ use std::sync::Arc;
 use crate::cli::listing::run_record;
 use crate::constants::RUNS_DIR;
 use crate::error::OrchestratorError;
-use crate::herdr::{AgentAddress, AgentConsole, HerdrError, HerdrServer, Launcher};
+use crate::herdr::{AgentAddress, AgentConsole, HerdrError, Launcher};
 use crate::host::{Host, RunFileText};
 use crate::local_gate::SetUpFile;
 use crate::paths::file_name;
-use serde::Deserialize;
 use serde_json::Value;
 use crate::json::{object, Object, ValueExt};
 use crate::interrupt::Interrupt;
 use crate::runs::{local_host, pid_alive};
+use crate::state::SavedRun;
 use super::start::{RunRequest, StartWait, Started};
 use super::Reached;
 
@@ -87,7 +87,8 @@ pub struct ProjectRuns {
     cwd: String,
     /// The --machine and --cwd flags as the client gave them (target_args), for the records' resume commands.
     target: Vec<String>,
-    /// Whether a process of an id runs on this machine, as run_health asks it: crate::runs::pid_alive, but in tests.
+    /// Whether a process of an id runs on this machine, as RunState::health asks it: crate::runs::pid_alive, but in
+    /// tests.
     pid_alive: Arc<dyn Fn(i64) -> bool + Send + Sync>,
 }
 
@@ -123,7 +124,7 @@ impl ProjectRuns {
             .host
             .run_states_inside(&self.cwd)?
             .iter()
-            .map(|(age, s)| run_record(s, *age, &here, &*self.pid_alive, &self.target))
+            .map(|run| run_record(run, &here, &*self.pid_alive, &self.target))
             .collect())
     }
 
@@ -181,25 +182,21 @@ impl ProjectRuns {
     /// The run's agent of role as its state.json saves it: its herdr name and its run's herdr server. Errors:
     /// Refused for a run id that is not a plain name; Missing for no such run, one whose state.json leads out as
     /// records leaves it out, or no started agent of that role in it; Failed when state.json cannot be read, is not
-    /// JSON, or saves a herdr_server of another shape.
+    /// JSON, or is not a state this engine reads (SavedRun::problem).
     fn agent(&self, run_id: &str, role: &str) -> Result<AgentAddress, RunReadError> {
         let dir = self.dir(run_id)?;
         let path = format!("{dir}/state.json");
         let RunFileText::Text(text) = self.host.read_inside(&dir, "state.json")? else {
             return Err(RunReadError::Missing(format!("no run {run_id}")));
         };
-        let state = serde_json::from_str::<Value>(&text).map_err(|e| OrchestratorError(format!("{path}: {e}")))?;
-        let name = state.get("agents").and_then(|a| a.get(role)).and_then(|a| a.get("name")).and_then(Value::as_str);
-        let Some(name) = name.filter(|n| !n.is_empty()) else {
+        let saved = serde_json::from_str::<Value>(&text).map_err(|e| OrchestratorError(format!("{path}: {e}")))?;
+        let run = SavedRun::read(0, saved);
+        let state = run.state().map_err(|e| OrchestratorError(format!("{path}: {e}")))?;
+        let name = state.agents.get(role).and_then(|a| a.get("name")).filter(|n| !n.is_empty());
+        let Some(name) = name else {
             return Err(RunReadError::Missing(format!("run {run_id} has no {role} agent")));
         };
-        let server = match state.get("herdr_server").filter(|s| !s.is_null()) {
-            None => None,
-            Some(saved) => Some(HerdrServer::deserialize(saved).map_err(|e| {
-                OrchestratorError(format!("{path}: herdr_server is not an object of herdr's variables: {e}"))
-            })?),
-        };
-        Ok(AgentAddress { name: name.to_string(), server })
+        Ok(AgentAddress { name: name.clone(), server: state.herdr_server.clone() })
     }
 
     /// Start the run request asks for, as run_id, by program, the orchestrator's binary, in a new herdr workspace

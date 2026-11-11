@@ -1,7 +1,6 @@
 use super::*;
 use crate::pipeline::DEFAULT_WORKFLOW;
 use crate::test_support::{helper_cases, oracle, unhex, GOLDEN_SUMMARY};
-use crate::workflow_file::saved_pipeline;
 use crate::json::object;
 
 #[test]
@@ -11,7 +10,7 @@ fn every_recorded_run_is_summed_up_as_the_python_engine_does() {
     for case in cases {
         let expected = |key: &str| case.expected.get(key).and_then(Value::as_str).map(String::from);
         let place = format!("{} {}", expected("recording").unwrap(), expected("run_dir").unwrap());
-        let pipeline = saved_pipeline(&case.saved);
+        let pipeline = case.state.pipeline().ok();
         let rounds: Vec<String> = (1..=case.state.round).map(|k| format!("Round {k}: as recorded")).collect();
         assert_eq!(pipeline.map(|p| run_summary(&case.state, &p, &rounds, case.now)), expected("run_summary"), "{place}");
         // The keys and values the Python engine wrote, its spacing aside.

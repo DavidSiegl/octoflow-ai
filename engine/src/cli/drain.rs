@@ -10,11 +10,9 @@ use super::start::{flagged_workflow, new_state};
 use super::{finish, prune, record_in_state, resume_command, Connected, Ended, Stop};
 use crate::constants::{EXIT_ERROR, EXIT_WAITING, RUNS_DIR, SUCCEEDED};
 use crate::error::OrchestratorError;
-use crate::pipeline::DONE;
 use crate::prompts::load_prompts;
-use serde_json::Value;
-use crate::json::ValueExt;
-use crate::runs::{run_health, RUNNING};
+use crate::runs::RUNNING;
+use crate::state::{RunState, SavedRun};
 use crate::workflow::Stopped;
 
 pub mod queue;
@@ -57,7 +55,7 @@ pub(super) fn drain_command(args: &DrainArgs, world: &Connected, cwd: &str) -> R
     // Only for a spec whose header took it up, or had nothing to change, so a drain that fails before, or a spec found
     // gone, keeps the record for the next drain.
     if !args.dry_run {
-        let taken: Vec<Value> =
+        let taken: Vec<RunState> =
             refreshed.taken.into_iter().filter(|(i, _)| !unwritten.contains(i)).map(|(_, saved)| saved).collect();
         forget_cleared(world, cwd, &taken).map_err(stopped)?;
     }
@@ -254,17 +252,17 @@ pub struct Refreshed {
     pub headers: Vec<(usize, Entries)>,
     /// The saved states, as read, of the runs whose conflict_cleared the pass took up (cleared_conflict), each by the
     /// index of the spec that took it up, whose header lines, if any, are in headers.
-    pub taken: Vec<(usize, Value)>,
+    pub taken: Vec<(usize, RunState)>,
 }
 
 /// Remove conflict_cleared from the state of each run of taken, as refreshed_headers read it, so that no later drain
 /// takes it up again (RunState::conflict_cleared); for the caller to do once the headers that took them up are
 /// written, for the runs of specs whose header was written or had nothing to change. cwd is the project, on world's host. Errors, naming the run: as record_in_state.
-pub fn forget_cleared(world: &Connected, cwd: &str, taken: &[Value]) -> Result<(), OrchestratorError> {
+pub fn forget_cleared(world: &Connected, cwd: &str, taken: &[RunState]) -> Result<(), OrchestratorError> {
     for saved in taken {
-        let run_id = saved.get("run_id").map(Value::text).unwrap_or_default();
+        let run_id = &saved.run_id;
         let path = format!("{cwd}/{RUNS_DIR}/{run_id}/state.json");
-        record_in_state(world.with.host, &path, saved, &[("conflict_cleared", Value::Null)], "drain took up its cleared conflict")
+        record_in_state(world.with.host, &path, saved, |s| s.conflict_cleared = None, "drain took up its cleared conflict")
             .map_err(|e| OrchestratorError(format!("run {run_id}: {e}")))?;
     }
     Ok(())
@@ -318,9 +316,9 @@ impl PullRequestStates<'_, '_> {
 /// rest is as refreshed_headers says. Errors: as those steps.
 fn settled_header(
     spec: &QueuedSpec,
-    runs: &[(u64, Value)],
+    runs: &[SavedRun],
     prs: &mut PullRequestStates,
-    taken: &mut Vec<Value>,
+    taken: &mut Vec<RunState>,
     target: &[String],
     dry_run: bool,
 ) -> Result<Entries, OrchestratorError> {
@@ -331,7 +329,8 @@ fn settled_header(
         (Some(SPEC_IN_REVIEW | SPEC_FOR_HUMAN), _) => merge(&mut entries, conflict_header(spec, runs, prs, taken, dry_run)?),
         (Some(SPEC_READY), Some(run)) => {
             merge(&mut entries, finished_run_header(spec, &run, runs, prs, target)?);
-            if let Some((_, saved)) = saved_run(runs, &run).filter(|(_, s)| cleared_conflict(s).is_some()) {
+            let saved = saved_run(runs, &run).and_then(|r| r.state().ok());
+            if let Some(saved) = saved.filter(|s| cleared_conflict(s).is_some()) {
                 taken.push(saved.clone());
             }
         }
@@ -351,27 +350,34 @@ fn settled_header(
     Ok(entries)
 }
 
-/// The run of runs whose id is run_id, with its age; None when there is none.
-fn saved_run<'r>(runs: &'r [(u64, Value)], run_id: &str) -> Option<&'r (u64, Value)> {
-    runs.iter().find(|(_, s)| s.get("run_id").and_then(Value::as_str) == Some(run_id))
+/// The run of runs whose id is run_id, readable or not; None when there is none.
+fn saved_run<'r>(runs: &'r [SavedRun], run_id: &str) -> Option<&'r SavedRun> {
+    runs.iter().find(|r| r.shown().run_id == run_id)
 }
 
 /// Refresh the run on the spec's Run: line, if it has_conflict, as refreshed_headers says, telling prs the state gh
 /// gave its pull request, and return the header lines that sets: SPEC_IN_REVIEW and the pull request for a
 /// SPEC_FOR_HUMAN spec whose succeeded run's pull request is open and no longer conflicts; none otherwise, and for a
-/// run not among runs, Host::run_states's.
+/// run not among runs, Host::run_states's, or one whose state cannot be read, which is logged with why.
 ///
 /// A run whose conflict a refresh before this drain cleared (cleared_conflict) counts as one this refresh cleared, its
 /// pull request's state asked of prs, and is added to taken once gh has answered. If gh cannot answer, that is logged
 /// and the spec left as it is, the record kept for the next drain: each drain asks again, and none fails for it.
 fn conflict_header(
     spec: &QueuedSpec,
-    runs: &[(u64, Value)],
+    runs: &[SavedRun],
     prs: &mut PullRequestStates,
-    taken: &mut Vec<Value>,
+    taken: &mut Vec<RunState>,
     dry_run: bool,
 ) -> Result<Entries, OrchestratorError> {
-    let Some((_, saved)) = spec.run().and_then(|run| saved_run(runs, &run)) else { return Ok(vec![]) };
+    let Some(run) = spec.run().and_then(|run| saved_run(runs, &run)) else { return Ok(vec![]) };
+    let saved = match run.state() {
+        Ok(saved) => saved,
+        Err(e) => {
+            prs.world.with.human.log(&format!("{}: {e}; {} is left as it is", run.shown().run_id, spec.slug));
+            return Ok(vec![]);
+        }
+    };
     // The pull request whose conflict is cleared now, while it is open; None when there is none.
     let cleared_open = if has_conflict(saved) {
         let check = refresh_conflict(prs.world, prs.cwd, saved, dry_run, false)?;
@@ -387,7 +393,7 @@ fn conflict_header(
                 (state == "OPEN").then_some(url)
             }
             Err(e) => {
-                let run_id = saved.get("run_id").map(Value::text).unwrap_or_default();
+                let run_id = &saved.run_id;
                 prs.world.with.human.log(&format!(
                     "{run_id}: cannot ask gh about {url}, whose conflict refresh cleared ({e}); {} is left as it is \
                      until a drain can",
@@ -399,7 +405,7 @@ fn conflict_header(
     } else {
         None
     };
-    let succeeded = saved.get("verdict").and_then(Value::as_str).is_some_and(|v| SUCCEEDED.contains(&v));
+    let succeeded = saved.verdict.as_deref().is_some_and(|v| SUCCEEDED.contains(&v));
     match cleared_open {
         Some(url) if spec.status().as_deref() == Some(SPEC_FOR_HUMAN) && succeeded => {
             Ok(vec![(STATUS_KEY, SPEC_IN_REVIEW.into()), (PR_KEY, url)])
@@ -408,10 +414,10 @@ fn conflict_header(
     }
 }
 
-/// The pull request whose conflict a refresh run by hand cleared for the run saved as saved, which no drain has taken
+/// The pull request whose conflict a refresh run by hand cleared for the run of state saved, which no drain has taken
 /// up yet (RunState::conflict_cleared); None for a run without one.
-fn cleared_conflict(saved: &Value) -> Option<String> {
-    saved.get("conflict_cleared").filter(|u| u.is_set()).map(Value::text)
+fn cleared_conflict(saved: &RunState) -> Option<String> {
+    saved.conflict_cleared.clone().filter(|u| !u.is_empty())
 }
 
 /// The header lines to set for a spec whose pull request is in state, as gh gives it: SPEC_DONE for MERGED,
@@ -432,18 +438,18 @@ fn pull_request_header(state: &str) -> Entries {
 fn finished_run_header(
     spec: &QueuedSpec,
     run_id: &str,
-    runs: &[(u64, Value)],
+    runs: &[SavedRun],
     prs: &PullRequestStates,
     target: &[String],
 ) -> Result<Entries, OrchestratorError> {
     let saved = saved_run(runs, run_id);
-    let Some((_, s)) = saved.filter(|(_, s)| s.get("phase").and_then(Value::as_str) == Some(DONE)) else {
+    let Some(s) = saved.and_then(|r| r.state().ok()).filter(|s| s.done()) else {
         let (why, remedy) = unfinished_run(spec, run_id, saved, prs, target);
         return Err(OrchestratorError(format!("spec {}: run {run_id}, on its {RUN_KEY}: line, {why}; {remedy}", spec.slug)));
     };
-    let pr = s.get("pr_url").filter(|p| p.is_set()).map(Value::text);
-    let succeeded = s.get("verdict").and_then(Value::as_str).is_some_and(|v| SUCCEEDED.contains(&v));
-    let conflicts = s.get("conflicts").is_some_and(Value::is_set);
+    let pr = s.pr_url.clone().filter(|p| !p.is_empty());
+    let succeeded = s.verdict.as_deref().is_some_and(|v| SUCCEEDED.contains(&v));
+    let conflicts = !s.conflicts.is_empty();
     match pr {
         Some(pr) if succeeded && !conflicts => Ok(vec![(STATUS_KEY, SPEC_IN_REVIEW.into()), (PR_KEY, pr)]),
         pr => Ok([(STATUS_KEY, SPEC_FOR_HUMAN.to_string())].into_iter().chain(pr.map(|pr| (PR_KEY, pr))).collect()),
@@ -451,36 +457,37 @@ fn finished_run_header(
 }
 
 /// Why the run run_id on the spec's Run: line is not finished, and what the human can do about it, as two clauses for
-/// finished_run_header's error. saved is the run's age and state as Host::run_states gives them, None when there is
-/// no such run; a saved run must not be done.
+/// finished_run_header's error. saved is the run as Host::run_states gives it, None when there is no such run; a
+/// saved run must not be both readable and done.
 fn unfinished_run(
     spec: &QueuedSpec,
     run_id: &str,
-    saved: Option<&(u64, Value)>,
+    saved: Option<&SavedRun>,
     prs: &PullRequestStates,
     target: &[String],
 ) -> (String, String) {
     let start_over = format!("remove the {RUN_KEY}: line from {} to start the spec over", spec.file.path);
-    let Some((age, s)) = saved else {
+    let Some(run) = saved else {
         return (format!("is not under {}/{RUNS_DIR}", prs.cwd), start_over);
     };
-    if let Some(closed) = s.get("closed").filter(|c| c.is_set()) {
-        return (format!("was closed ({})", closed.text()), start_over);
+    let s = run.shown();
+    if let Some(closed) = s.closed.as_deref().filter(|c| !c.is_empty()) {
+        return (format!("was closed ({closed})"), start_over);
     }
     let world = prs.world;
-    let health = run_health(s, *age, world.local_host, world.with.pid_alive);
+    let health = run.health(world.local_host, world.with.pid_alive);
     // A run still running is waited for whatever release drives it, since the remedy for a state this release cannot
     // read is removing its directory; resume refuses any other such run, and the problem says what to do instead.
     if let Some((RUNNING, why)) = health {
         return (format!("is {RUNNING} ({why})"), format!("wait for it to finish, or {start_over}"));
     }
-    if let Some(problem) = s.as_object().and_then(crate::state::format_problem) {
+    if let Some(problem) = run.problem() {
         return (format!("cannot be resumed: {problem}"), start_over);
     }
     let resume = format!("resume it with `{}`, or {start_over}", resume_command(run_id, target));
     match health {
         // None for a run that is not done: it failed.
-        None => (format!("failed: {}", s.get("error").map(Value::text).unwrap_or_default()), resume),
+        None => (format!("failed: {}", s.error.as_deref().unwrap_or_default()), resume),
         Some((health, why)) => (format!("is {health} ({why})"), resume),
     }
 }

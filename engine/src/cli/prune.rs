@@ -8,10 +8,9 @@ use super::{record_in_state, Connected};
 use crate::constants::{BRANCH_PREFIX, CLOSED_BRANCH_GRACE, RUNS_DIR, WORKTREES_DIR};
 use crate::error::OrchestratorError;
 use crate::host::{git_status, GhError, Host, PullRequest};
-use crate::json::ValueExt;
-use crate::runs::{run_health, RUNNING};
+use crate::runs::RUNNING;
+use crate::state::{RunState, SavedRun};
 use crate::workflow::{origin_unreachable, reaching_origin, Collaborators};
-use serde_json::Value;
 
 /// A run's branch_cleanup once both sides of its branch are gone.
 pub const BRANCH_DELETED: &str = "deleted";
@@ -34,8 +33,8 @@ pub struct PrunedRun {
     /// What became of the run's worktree: BRANCH_DELETED, "would be deleted", or BRANCH_KEPT and why; empty when the
     /// run has none to decide (see prune_worktree).
     pub worktree: String,
-    /// Why nothing was decided: the pull request is not done yet, or pruning the run failed. Nothing is recorded
-    /// then.
+    /// Why nothing was decided: the run's state cannot be read (SavedRun::problem), the pull request is not done
+    /// yet, or pruning the run failed. Nothing is recorded then.
     pub skipped: Option<String>,
     /// The run's branch_cleanup: written, or what would be in a dry run; None when skipped.
     pub cleanup: Option<String>,
@@ -63,9 +62,10 @@ impl PrunedRun {
 /// has no uncommitted changes and is at or behind the head too. Worktrees whose directory is gone are forgotten
 /// first (Host::prune_worktrees), unless dry_run. Only runs with no branch_cleanup yet are candidates, and with
 /// revisit the runs whose branch was kept too; a run without a pull request, one whose branch the orchestrator did
-/// not make, and one an orchestrator drives now, are not. Returns each candidate, in run_states' order, but those
-/// after gh was found unusable or origin unreachable, which ends the sweep. A failure on one run is logged and
-/// skips that run.
+/// not make, and one an orchestrator drives now (RunState::health, a done run still ending included), are not. A run
+/// whose state cannot be read (SavedRun::problem) is skipped with that reason. Returns each candidate and each such
+/// run, in run_states' order, but those after gh was found unusable or origin unreachable, which ends the sweep. A
+/// failure on one run is logged and skips that run.
 ///
 /// Errors: the runs or the checked-out branches cannot be read, or the gone worktrees not be forgotten, or a run's
 /// failure while world's interrupt is raised.
@@ -76,13 +76,9 @@ pub fn prune_branches(
     revisit: bool,
 ) -> Result<Vec<PrunedRun>, OrchestratorError> {
     let host = world.with.host;
-    let runs: Vec<Value> = host
-        .run_states(cwd)?
-        .into_iter()
-        .filter(|(age, s)| is_prune_candidate(s, *age, world, revisit))
-        .map(|(_, s)| s)
-        .collect();
-    if runs.is_empty() {
+    let saved = host.run_states(cwd)?;
+    let candidates: Vec<&SavedRun> = saved.iter().filter(|run| is_prune_candidate(run, world, revisit)).collect();
+    if candidates.is_empty() {
         return Ok(vec![]);
     }
     if !dry_run {
@@ -90,10 +86,19 @@ pub fn prune_branches(
     }
     let mut checked_out = host.checked_out_branches(cwd)?;
     let mut pruned = vec![];
-    for saved in runs {
-        let text = |key: &str| saved.get(key).map_or(String::new(), Value::text);
-        let mut run = PrunedRun { run_id: text("run_id"), branch: text("branch"), ..PrunedRun::default() };
-        match prune_run(world, cwd, &saved, &mut run, &mut checked_out, dry_run) {
+    for saved in candidates {
+        let shown = saved.shown();
+        let branch = shown.branch.clone().unwrap_or_default();
+        let mut run = PrunedRun { run_id: shown.run_id.clone(), branch, ..PrunedRun::default() };
+        let state = match saved.state() {
+            Ok(state) => state,
+            Err(e) => {
+                run.skipped = Some(e.0);
+                pruned.push(run);
+                continue;
+            }
+        };
+        match prune_run(world, cwd, state, &mut run, &mut checked_out, dry_run) {
             Ok(()) => {}
             Err(e) if world.with.interrupt.is_raised() => return Err(e.into()),
             Err(GhError::Unusable(e)) => {
@@ -110,27 +115,25 @@ pub fn prune_branches(
     Ok(pruned)
 }
 
-/// Whether prune may touch the branch of the run saved as s, its state.json written age seconds ago: one the
-/// orchestrator made and opened a pull request for, and that no orchestrator drives now, as world tells (run_health).
-/// A run without a pull request may hold the Builder's uncommitted work. One with a branch_cleanup is done with, or
-/// with revisit, only one whose branch was kept.
-fn is_prune_candidate(s: &Value, age: u64, world: &Connected, revisit: bool) -> bool {
-    let branch = s.get("branch").and_then(Value::as_str);
-    let cleanup = s.get("branch_cleanup").filter(|c| c.is_set());
-    if !(branch.is_some_and(|b| b.starts_with(BRANCH_PREFIX)) && s.get("pr_url").is_some_and(Value::is_set)) {
+/// Whether prune may touch the branch of run, as far as its state reads: one the orchestrator made and opened a pull
+/// request for, and that no orchestrator drives now, as world tells (RunState::health). A run without a pull request
+/// may hold the Builder's uncommitted work. One with a branch_cleanup is done with, or with revisit, only one whose
+/// branch was kept.
+fn is_prune_candidate(run: &SavedRun, world: &Connected, revisit: bool) -> bool {
+    let s = run.shown();
+    let branch = s.branch.as_deref().is_some_and(|b| b.starts_with(BRANCH_PREFIX));
+    if !(branch && s.pr_url.as_deref().is_some_and(|url| !url.is_empty())) {
         return false;
     }
-    if let Some(cleanup) = cleanup {
-        let kept = cleanup.as_str().is_some_and(|c| c.starts_with(BRANCH_KEPT));
-        if !(revisit && kept) {
+    if let Some(cleanup) = s.branch_cleanup.as_deref().filter(|c| !c.is_empty()) {
+        if !(revisit && cleanup.starts_with(BRANCH_KEPT)) {
             return false;
         }
     }
-    let health = run_health(s, age, world.local_host, world.with.pid_alive);
-    !health.is_some_and(|(h, _)| h == RUNNING)
+    !run.health(world.local_host, world.with.pid_alive).is_some_and(|(h, _)| h == RUNNING)
 }
 
-/// Decide the run's worktree and each side of its branch, as saved says, delete what may go, unless dry_run, and
+/// Decide the run's worktree and each side of its branch, as state says, delete what may go, unless dry_run, and
 /// record the result in its state.json, on world's host, filling run in; checked_out maps each branch checked out to
 /// its worktree, and loses the branch of a worktree removed. Errors: GhError::Unusable when gh is, or when prune_remote fails as origin_unreachable says (its read of
 /// origin's branch after every try, or a deletion there, which is tried once), either of which no other run can get
@@ -138,7 +141,7 @@ fn is_prune_candidate(s: &Value, age: u64, world: &Connected, revisit: bool) -> 
 fn prune_run(
     world: &Connected,
     cwd: &str,
-    saved: &Value,
+    state: &RunState,
     run: &mut PrunedRun,
     checked_out: &mut crate::map::Map<String>,
     dry_run: bool,
@@ -147,10 +150,8 @@ fn prune_run(
     let host = world.with.host;
     // Before gh pr view, as Python reads wall() for prune_run's call.
     let now = world.with.clocks.wall();
-    // Read from the state.json as it is, of whatever format: a run an earlier release saved is pruned as any other.
-    let text = |key: &str| saved.get(key).and_then(Value::as_str);
     // is_prune_candidate takes only runs with both.
-    let (Some(url), Some(branch)) = (text("pr_url"), text("branch")) else {
+    let (Some(url), Some(branch)) = (state.pr_url.as_deref(), state.branch.as_deref()) else {
         return Err(failed(OrchestratorError::new("the run has no branch or no pull request")));
     };
     let number = url.trim_end_matches('/').rsplit('/').next().unwrap_or("");
@@ -165,7 +166,7 @@ fn prune_run(
     let unusable = |e| if origin_unreachable(&e) { GhError::Unusable(e) } else { GhError::Failed(e) };
     let (remote, remote_kept) = prune_remote(&world.with, cwd, branch, head, number, dry_run).map_err(unusable)?;
     // Before the local branch, which a worktree that goes no longer pins.
-    let path = text("worktree").filter(|w| is_run_worktree(cwd, w));
+    let path = state.worktree.as_deref().filter(|w| is_run_worktree(cwd, w));
     let (worktree, worktree_kept) = match path {
         Some(path) => prune_worktree(host, cwd, path, branch, head, number, dry_run).map_err(failed)?,
         None => (String::new(), None),
@@ -181,8 +182,8 @@ fn prune_run(
     let cleanup = if kept.is_empty() { BRANCH_DELETED.to_string() } else { format!("{BRANCH_KEPT}{}", kept.join("; ")) };
     run.cleanup = Some(cleanup.clone());
     if !dry_run {
-        let path = format!("{cwd}/{RUNS_DIR}/{}/state.json", text("run_id").unwrap_or_default());
-        record_in_state(host, &path, saved, &[("branch_cleanup", Value::from(cleanup))], "its branch was pruned").map_err(failed)?;
+        let path = format!("{cwd}/{RUNS_DIR}/{}/state.json", state.run_id);
+        record_in_state(host, &path, state, |s| s.branch_cleanup = Some(cleanup), "its branch was pruned").map_err(failed)?;
     }
     Ok(())
 }

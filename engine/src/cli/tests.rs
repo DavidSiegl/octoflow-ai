@@ -620,24 +620,14 @@ fn bad_prompt_files_stop_a_run_before_any_agent() {
 #[test]
 fn list_names_a_non_default_workflow() {
     let cli = Cli::new();
-    let done = |id: &str, workflow: Option<&str>| {
+    let done = |id: &str, workflow: &str| {
         let mut state = saved_run("done", 1, &[]);
-        state.run_id = id.into();
-        state.verdict = Some(APPROVE.into());
-        let Value::Object(mut saved) = state.to_json() else { unreachable!("a state is saved as an object") };
-        match workflow {
-            Some(name) => {
-                saved.insert("workflow".into(), Value::from(name));
-            }
-            None => {
-                saved.remove("workflow");
-            }
-        }
-        Value::Object(saved)
+        (state.run_id, state.verdict, state.workflow) = (id.into(), Some(APPROVE.into()), workflow.into());
+        state.to_json()
     };
-    cli.save(&done("20260930-070000-c0ffe1", None), 1_000_000);
-    cli.save(&done("20260930-070000-c0ffe2", Some("default")), 1_000_000);
-    cli.save(&done("20260930-070000-c0ffe3", Some("quick")), 1_000_000);
+    cli.save(&done("20260930-070000-c0ffe1", "default"), 1_000_000);
+    cli.save(&done("20260930-070000-c0ffe2", "default"), 1_000_000);
+    cli.save(&done("20260930-070000-c0ffe3", "quick"), 1_000_000);
     let mut impl_run = saved_run("impl", 1, &[]);
     (impl_run.run_id, impl_run.quality_round, impl_run.workflow) = ("20260930-070000-c0ffe4".into(), 2, "impl".into());
     impl_run.workflow_definition = Some(workflow_definition(&crate::test_support::impl_()));

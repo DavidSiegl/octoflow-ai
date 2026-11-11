@@ -207,3 +207,120 @@ fn the_runs_paths() {
     s.prompt_overrides.insert("LATER_NOTE", "x".to_string());
     assert!(s.prompts().unwrap_err().0.contains("replaces prompt LATER_NOTE"));
 }
+
+/// saved_with's state.json as the object it reads back as.
+fn saved_object(fields: &[(&str, Option<&str>)]) -> Value {
+    serde_json::from_str(&saved_with(fields)).unwrap()
+}
+
+#[test]
+fn a_saved_run_of_this_format_is_its_state() {
+    let run = SavedRun::read(40, saved_object(&[("phase", Some("\"build\""))]));
+    assert_eq!((run.age(), run.problem()), (40, None));
+    assert_eq!(run.state().unwrap().phase, "build");
+    assert_eq!(run.shown(), run.state().unwrap());
+}
+
+#[test]
+fn an_unreadable_saved_run_is_refused_but_shown_as_far_as_it_reads() {
+    // (state.json, the problem's start, what shown keeps)
+    let cases = [
+        (saved_object(&[("format", None), ("phase", Some("\"build\""))]), "run r1 was saved by an octoflow before", "build"),
+        (saved_object(&[("format", Some("3")), ("phase", Some("\"build\""))]), "run r1 has state format 3", "build"),
+        (saved_object(&[("round", Some("\"2\"")), ("phase", Some("\"build\""))]), "run state r1 is invalid: ", "build"),
+        (Value::from("a run"), "a run state is a JSON object", "spec"),
+    ];
+    for (saved, problem, phase) in cases {
+        let run = SavedRun::read(7, saved.clone());
+        assert!(run.problem().is_some_and(|p| p.starts_with(problem)), "{saved}: {:?}", run.problem());
+        assert_eq!(run.state().unwrap_err().0, run.problem().unwrap());
+        assert_eq!((run.age(), run.shown().phase.as_str()), (7, phase), "{saved}");
+    }
+}
+
+#[test]
+fn an_unreadable_field_is_shown_at_its_default_and_the_others_as_saved() {
+    let saved = saved_object(&[
+        ("format", None), ("round", Some("\"2\"")), ("task", Some("\"add a rate limiter\"")), ("later", Some("1")),
+        ("owner", Some("{\"host\": \"here\", \"pid\": 1}")),
+    ]);
+    let shown = SavedRun::read(0, saved).shown().clone();
+    assert_eq!((shown.round, shown.task.as_str(), shown.run_id.as_str()), (0, "add a rate limiter", "r1"));
+    assert_eq!(shown.owner.map(|o| o.len()), Some(2));
+    assert_eq!(shown.unknown, crate::json::object([("later", Value::from(1))]));
+}
+
+#[test]
+fn done_is_the_done_phase() {
+    let mut state = RunState::new("r1", "t", "/p");
+    for (phase, done) in [("spec", false), ("build", false), ("quality", false), ("done", true)] {
+        state.phase = phase.into();
+        assert_eq!(state.done(), done, "{phase}");
+    }
+}
+
+#[test]
+fn in_quality_is_the_quality_phase_or_the_gated_step() {
+    let (impl_, quick) = (crate::test_support::impl_(), crate::test_support::quick());
+    let mut state = RunState::new("r1", "t", "/p");
+    // (phase, pipeline, in quality)
+    for (phase, pipeline, quality) in [
+        ("quality", &quick, true), ("impl", &impl_, true), ("review", &impl_, false), ("build", &quick, false),
+        ("impl", &quick, false),
+    ] {
+        state.phase = phase.into();
+        assert_eq!(state.in_quality(pipeline), quality, "{phase} of {}", pipeline.name());
+    }
+}
+
+#[test]
+fn a_state_names_its_workflow() {
+    let mut state = RunState::new("r1", "t", "/p");
+    assert_eq!(state.pipeline().unwrap(), *crate::pipeline::DEFAULT_WORKFLOW);
+    // A workflow that is not built in is read from its saved definition, never from its file.
+    let quick = crate::test_support::quick();
+    state.workflow = "quick".into();
+    assert!(state.pipeline().is_err());
+    state.workflow_definition = Some(crate::workflow_file::workflow_definition(&quick));
+    assert_eq!(state.pipeline().unwrap(), quick);
+    // Worded by its saved prompts, which must name prompts this engine has.
+    let mut state = RunState::new("r1", "t", "/p");
+    state.prompt_overrides.insert("LATER_NOTE", "x".into());
+    assert!(state.pipeline().is_err());
+    let fix = "Fix {findings}; report to {build_path}.";
+    state.prompt_overrides = [("FIX_PROMPT", fix.to_string())].into_iter().collect();
+    assert_eq!(state.pipeline().unwrap().step("build").unwrap().again.as_deref(), Some(fix));
+}
+
+// -- TestFindRun -----------------------------------------------------------------------------------------------------
+
+fn runs() -> Vec<SavedRun> {
+    ["20260930-070000-c0ffee", "20260930-080000-beef00", "20260929-080000-beef00"]
+        .iter()
+        .zip(1..)
+        .map(|(id, age)| SavedRun::read(age, RunState::new(id, "a task", "/p").to_json()))
+        .collect()
+}
+
+#[test]
+fn by_key_or_full_id() {
+    assert_eq!(find_run(&runs(), "c0ffee", "/p").unwrap().age(), 1);
+    assert_eq!(find_run(&runs(), "20260929-080000-beef00", "/p").unwrap().age(), 3);
+    // Unreadable or not.
+    let old = SavedRun::read(4, Value::Object(crate::json::object([("run_id", Value::from("20260928-080000-0dd000"))])));
+    assert_eq!(find_run(&[old], "0dd000", "/p").unwrap().age(), 4);
+}
+
+#[test]
+fn ambiguous_key() {
+    let e = find_run(&runs(), "beef00", "/p").unwrap_err();
+    assert_eq!(
+        e.0,
+        "beef00 matches several runs (20260930-080000-beef00, 20260929-080000-beef00); give the full run id"
+    );
+}
+
+#[test]
+fn no_match() {
+    assert_eq!(find_run(&runs(), "abcdef", "/p").unwrap_err().0, "no run abcdef under /p/.orchestrator/runs");
+}

@@ -17,6 +17,8 @@ use std::rc::Rc;
 
 use super::queue::*;
 use super::*;
+use crate::pipeline::DONE;
+use serde_json::Value;
 use crate::cli::fixture::Cli;
 use crate::cli::{interrupted_note, run_command, Ran, RunWorkflow};
 use crate::constants::{
@@ -752,6 +754,23 @@ fn an_in_review_specs_run_is_refreshed_too() {
     assert_eq!(d.header("a"), (some(SPEC_IN_REVIEW), Some(run_id.clone()), some(PR_A)));
     assert_eq!(d.run_conflicts(&run_id), Value::Array(vec![]));
     assert_eq!(r.out, "all specs cleared\n");
+}
+
+#[test]
+fn a_conflicted_run_an_earlier_release_saved_is_left_saying_why() {
+    // Its state.json has no format (crate::state::format_problem): no refresh, and the spec stays as it is.
+    let d = Drain::new();
+    let run_id = conflicted_spec(&d, SPEC_FOR_HUMAN, APPROVE, &[]);
+    let Value::Object(mut saved) = d.cli.saved(&run_id) else { unreachable!("a state is saved as an object") };
+    saved.shift_remove("format");
+    d.cli.save(&Value::Object(saved.clone()), 10_000);
+    let r = d.drain(vec![], &[]);
+    assert_eq!(r.status, 0, "{}", r.err);
+    assert_eq!(d.header("a"), (some(SPEC_FOR_HUMAN), Some(run_id.clone()), some(PR_A)));
+    let problem = crate::state::format_problem(&saved).unwrap();
+    assert!(r.err.contains(&format!("{run_id}: {problem}; a is left as it is\n")), "{}", r.err);
+    assert!(d.cli.f.host.state().pr_edits.is_empty() && d.views().is_empty());
+    assert_eq!(d.cli.saved(&run_id), Value::Object(saved));
 }
 
 #[test]

@@ -365,10 +365,10 @@ fn run_states() {
     // A file stamped ahead of the clock is no younger than new.
     set_mtime(&format!("{runs}/b/state.json"), now + 1000);
     let mut states = host.run_states(&cwd).unwrap();
-    states.sort_by_key(|(_, s)| s.get("run_id").and_then(Value::as_str).map(String::from));
-    assert!((12..15).contains(&states[0].0), "{states:?}");
-    assert_eq!(states[0].1.get("run_id").and_then(Value::as_str), Some("a"));
-    assert_eq!((states[1].0, states[1].1.get("run_id").and_then(Value::as_str)), (0, Some("b")));
+    states.sort_by_key(|s| s.shown().run_id.clone());
+    assert!((12..15).contains(&states[0].age()), "{states:?}");
+    assert_eq!(states[0].shown().run_id, "a");
+    assert_eq!((states[1].age(), states[1].shown().run_id.as_str()), (0, "b"));
     assert_eq!(states.len(), 2);
     assert_eq!(host.run_states(&d.join("nosuch")).unwrap(), vec![]);
 }
@@ -700,9 +700,9 @@ fn real_filesystem_state() {
     let names: Vec<String> =
         std::fs::read_dir(&run_dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
     assert_eq!(names, ["state.json"]);
-    let [(age, state)] = <[(u64, Value); 1]>::try_from(host.run_states(&d.path()).unwrap()).unwrap();
-    assert_eq!(state.get("phase").and_then(Value::as_str), Some("build"));
-    assert!(age < 5);
+    let [run] = <[SavedRun; 1]>::try_from(host.run_states(&d.path()).unwrap()).unwrap();
+    assert_eq!(run.shown().phase, "build");
+    assert!(run.age() < 5);
 }
 
 #[test]
@@ -822,7 +822,7 @@ fn what_leads_out_of_a_run_directory_is_neither_listed_nor_read_over_ssh() {
     std::fs::create_dir_all(format!("{runs}/s")).unwrap();
     link(&d.join("state.json"), &format!("{runs}/s/state.json"));
     let states = ssh.host.run_states_inside(&d.join("proj")).unwrap();
-    let ids: Vec<&str> = states.iter().map(|(_, s)| s.get("run_id").and_then(Value::as_str).unwrap()).collect();
+    let ids: Vec<&str> = states.iter().map(|s| s.shown().run_id.as_str()).collect();
     assert_eq!(ids, ["r", "r"]);
     // Each listing and each read is one command over ssh.
     assert_eq!(ssh.calls().len(), 4 + 9 + 1);
@@ -856,7 +856,7 @@ fn a_link_removed_while_it_is_resolved_is_missing_not_outside() {
 /// The run ids of the runs under project, as run_states reads them through a host with the tools in bin.
 fn run_ids(bin: &str, project: &str) -> Result<Vec<String>, OrchestratorError> {
     let states = host_with_tools(bin).run_states(project)?;
-    Ok(states.iter().map(|(_, s)| s.get("run_id").and_then(Value::as_str).unwrap_or_default().to_string()).collect())
+    Ok(states.iter().map(|s| s.shown().run_id.clone()).collect())
 }
 
 #[test]

@@ -23,6 +23,7 @@ pub use scan::{LeaksFound, Scanned};
 pub(crate) use process::{run_process, ProcessError};
 
 use crate::quality::Leak;
+use crate::state::SavedRun;
 
 #[cfg(test)]
 pub(crate) mod fake;
@@ -945,11 +946,12 @@ pub trait Host {
         }
     }
 
-    /// Each run's saved state under the project at cwd, with the seconds since its state.json was last written,
-    /// measured by this host's own clock, the one that stamped the file, so clock skew between the machines involved
-    /// cannot shift it. A run whose directory is removed while the runs are read, as prune removes one, is among them
-    /// or not, never an error. Errors: a state.json that is still there cannot be stat'ed or read, or is not JSON.
-    fn run_states(&self, cwd: &str) -> Result<Vec<(u64, Value)>, OrchestratorError> {
+    /// Each run under the project at cwd as its state.json reads back (SavedRun), its age measured by this host's own
+    /// clock, the one that stamped the file, so clock skew between the machines involved cannot shift it. A run whose
+    /// directory is removed while the runs are read, as prune removes one, is among them or not, never an error; one
+    /// of a format this engine does not read is among them, as unreadable. Errors: a state.json that is still there
+    /// cannot be stat'ed or read, or is not JSON.
+    fn run_states(&self, cwd: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
         let script = format!("now=$(date +%s) || exit 1; {}", run_states_loop("true"));
         parsed_run_states(cwd, &self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?)
     }
@@ -958,7 +960,7 @@ pub trait Host {
     /// runs directory, links resolved, or whose state.json, links resolved, is not below its run directory, is left
     /// out, as a run without a state.json is. The links are resolved on this host, as BELOW says. Errors: as
     /// run_states'.
-    fn run_states_inside(&self, cwd: &str) -> Result<Vec<(u64, Value)>, OrchestratorError> {
+    fn run_states_inside(&self, cwd: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
         // Without a runs directory there are no runs; f becomes the resolved path, which is what is stat'ed and read.
         let script = format!(
             "{BELOW}now=$(date +%s) || exit 1; runs=$(cd -P -- \"$1/{RUNS_DIR}\" 2>/dev/null && pwd -P) || exit 0; {}",
@@ -1064,7 +1066,7 @@ fn run_states_loop(keep: &str) -> String {
 
 /// The runs run_states_loop printed as out, under the project at cwd, as run_states gives them. Errors: an age that
 /// is not a number, or a state that is not JSON.
-fn parsed_run_states(cwd: &str, out: &str) -> Result<Vec<(u64, Value)>, OrchestratorError> {
+fn parsed_run_states(cwd: &str, out: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
     let mut runs = vec![];
     for entry in out.split('\0') {
         if entry.trim().is_empty() {
@@ -1074,7 +1076,8 @@ fn parsed_run_states(cwd: &str, out: &str) -> Result<Vec<(u64, Value)>, Orchestr
         let corrupt = |e: String| OrchestratorError(format!("corrupt run state under {cwd}/{RUNS_DIR}: {e}"));
         let not_int = || corrupt(format!("invalid literal for int() with base 10: {age:?}"));
         let age: i64 = python_int(age).ok_or_else(not_int)?;
-        runs.push((age.max(0).unsigned_abs(), serde_json::from_str::<Value>(text).map_err(|e| corrupt(e.to_string()))?));
+        let saved = serde_json::from_str::<Value>(text).map_err(|e| corrupt(e.to_string()))?;
+        runs.push(SavedRun::read(age.max(0).unsigned_abs(), saved));
     }
     Ok(runs)
 }

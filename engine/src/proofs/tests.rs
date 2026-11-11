@@ -1,13 +1,12 @@
 use super::*;
 use crate::test_support::{helper_cases, object as record};
-use crate::workflow_file::saved_pipeline;
 
 #[test]
 fn every_recorded_proof_run_is_reported_as_the_python_engine_does() {
     let mut compared = 0;
     for case in helper_cases() {
         let Some(expected) = case.expected.get("proofs_section").and_then(Value::as_str) else { continue };
-        let pipeline = saved_pipeline(&case.saved).unwrap();
+        let pipeline = case.state.pipeline().unwrap();
         let s = &case.state;
         let proofs: Vec<ProofRun> = s.proofs.iter().map(|p| ProofRun::read(p).unwrap()).collect();
         let section = proofs_section(pipeline.proof_command().unwrap_or(""), s.work_dir(), &case.review, &proofs);

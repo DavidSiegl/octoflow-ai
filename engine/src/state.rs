@@ -9,6 +9,8 @@ use crate::herdr::HerdrServer;
 use crate::prompts::{saved_prompts, Prompts};
 use crate::json::Object;
 use crate::map::Map;
+use crate::pipeline::{Pipeline, DONE, QUALITY};
+use crate::workflow_file::run_pipeline;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -265,6 +267,48 @@ impl RunState {
         Ok(state)
     }
 
+    /// The state of a saved state.json object that from_saved refuses, as far as it reads: each of its fields that
+    /// reads as RunState's field of that name, every other field at new's defaults, and the fields RunState does not
+    /// have in unknown. For showing a run of another format (SavedRun::shown), never for acting on it.
+    fn from_readable_fields(saved: &Object) -> RunState {
+        let Value::Object(mut fields) = RunState::new("", "", "").to_json() else { unreachable!("a run state is an object") };
+        fields.shift_remove("format");
+        let reads = |fields: &Object| serde_json::from_value::<RunState>(Value::Object(fields.clone())).is_ok();
+        // One field at a time, so a field that does not read leaves the others.
+        for (key, value) in saved {
+            if let Some(default) = fields.insert(key.clone(), value.clone()) {
+                if !reads(&fields) {
+                    fields.insert(key.clone(), default);
+                }
+            } else {
+                fields.shift_remove(key);
+            }
+        }
+        let Ok(mut state) = serde_json::from_value::<RunState>(Value::Object(fields)) else {
+            unreachable!("every field is new's or one that reads")
+        };
+        let Value::Object(known) = RunState::new("", "", "").to_json() else { unreachable!("a run state is an object") };
+        state.unknown = saved.iter().filter(|(k, _)| !known.contains_key(*k)).map(|(k, v)| (k.clone(), v.clone())).collect();
+        state
+    }
+
+    /// Whether the run is done: phase DONE, though its orchestrator may still be ending it (crate::runs, health).
+    pub fn done(&self) -> bool {
+        self.phase == DONE
+    }
+
+    /// The run's workflow, from the definition and prompts it saved, as resume and list take it. Errors: the saved
+    /// prompts cannot be used (prompts), or the workflow cannot be loaded (run_pipeline).
+    pub fn pipeline(&self) -> Result<Pipeline, OrchestratorError> {
+        run_pipeline(&self.workflow, self.workflow_definition.as_ref(), &self.prompts()?)
+    }
+
+    /// Whether the run, of workflow pipeline, is in its quality loop or in the step the gate judges, where it has a
+    /// quality round.
+    pub fn in_quality(&self, pipeline: &Pipeline) -> bool {
+        self.phase == QUALITY || pipeline.gated().is_some_and(|gated| gated.id == self.phase)
+    }
+
     /// The state as state.json holds it: "format", then the fields in RunState's order, then the unknown ones.
     pub fn to_json(&self) -> Value {
         let mut saved = Object::new();
@@ -405,6 +449,80 @@ impl RunState {
     /// The Builder's last report in round n, once its quality rounds are over: the one the Reviewer reads.
     pub fn last_report_path(&self, n: u32) -> String {
         self.builder_report_path(n, self.quality_round.saturating_sub(1))
+    }
+}
+
+/// A run's state.json as read back (Host::run_states): its age, and either its RunState or why its format cannot be
+/// read. The commands that act on a run take state(), which refuses an unreadable one; list and show take shown(),
+/// which shows one too. Not a Result of RunState and the problem: list would lose an unreadable run's task, phase
+/// and round, which the desktop app types as never null (ui/src/api.ts).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SavedRun {
+    /// Seconds since the state.json was last written, by the clock of the host that wrote it.
+    age: u64,
+    /// The state as saved; for an unreadable run, as much of it as reads (RunState::from_readable_fields).
+    state: RunState,
+    /// Why the state cannot be read, naming the run and what to do with it; None for a readable one.
+    problem: Option<String>,
+}
+
+impl SavedRun {
+    /// The run whose state.json holds saved, written age seconds ago: unreadable when saved is no object of
+    /// STATE_FORMAT whose fields all read (RunState::from_saved).
+    pub fn read(age: u64, saved: Value) -> SavedRun {
+        let Value::Object(saved) = saved else {
+            let problem = Some("a run state is a JSON object".to_string());
+            return SavedRun { age, state: RunState::new("", "", ""), problem };
+        };
+        match RunState::from_saved(&saved) {
+            Ok(state) => SavedRun { age, state, problem: None },
+            Err(e) => SavedRun { age, state: RunState::from_readable_fields(&saved), problem: Some(e.0) },
+        }
+    }
+
+    /// Seconds since the state.json was last written, by the clock of the host that wrote it.
+    pub fn age(&self) -> u64 {
+        self.age
+    }
+
+    /// The run's state, for a command that acts on the run. Errors: the run is unreadable, saying why (problem).
+    pub fn state(&self) -> Result<&RunState, OrchestratorError> {
+        match &self.problem {
+            None => Ok(&self.state),
+            Some(problem) => Err(OrchestratorError(problem.clone())),
+        }
+    }
+
+    /// The run's state as far as it reads, for what list and show print: for an unreadable run, each field of its
+    /// state.json that reads as that field, the rest at RunState::new's defaults. Never to act on.
+    pub fn shown(&self) -> &RunState {
+        &self.state
+    }
+
+    /// Why the run's state cannot be read, naming the run and what to do with it: format_problem's text, or the
+    /// field from_saved could not read; None for a readable run.
+    pub fn problem(&self) -> Option<&str> {
+        self.problem.as_deref()
+    }
+}
+
+/// The run of runs named by its full id, or else by its key (run_key), readable or not; cwd is the project, for the
+/// error. Errors: none or several match.
+pub fn find_run<'r>(runs: &'r [SavedRun], run_ref: &str, cwd: &str) -> Result<&'r SavedRun, OrchestratorError> {
+    fn id(run: &SavedRun) -> &str {
+        &run.state.run_id
+    }
+    let mut matches: Vec<_> = runs.iter().filter(|r| id(r) == run_ref).collect();
+    if matches.is_empty() {
+        matches = runs.iter().filter(|r| run_key(id(r)) == run_ref).collect();
+    }
+    match matches[..] {
+        [] => Err(OrchestratorError(format!("no run {run_ref} under {cwd}/{RUNS_DIR}"))),
+        [one] => Ok(one),
+        _ => {
+            let ids: Vec<&str> = matches.iter().map(|r| id(r)).collect();
+            Err(OrchestratorError(format!("{run_ref} matches several runs ({}); give the full run id", ids.join(", "))))
+        }
     }
 }
 

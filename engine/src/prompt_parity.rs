@@ -16,7 +16,6 @@ use crate::map::Map;
 use crate::json::Object;
 use crate::state::RunState;
 use crate::test_support::recordings;
-use crate::workflow_file::saved_pipeline;
 
 /// A piece of a template's text: literal text, or a placeholder whose value is not known here.
 #[derive(Clone, Debug)]
@@ -197,7 +196,7 @@ fn every_recorded_prompt_is_made_of_this_engines_templates_filled_in_as_the_pyth
         for (_, invocation) in events {
             for (role, text, saved) in latest_states(invocation.as_array().unwrap(), &mut states) {
                 let state = RunState::from_saved(&saved).unwrap();
-                let pipeline = saved_pipeline(&saved).unwrap_or_else(|| panic!("{scenario}: no workflow"));
+                let pipeline = state.pipeline().unwrap_or_else(|e| panic!("{scenario}: {e}"));
                 // The run files, named relative to the project's .orchestrator directory, as paths.
                 let paths: BTreeSet<String> = files.iter().map(|f| format!("{}/.orchestrator/{f}", state.cwd)).collect();
                 let firsts = firsts(&state, &pipeline, &role, &paths);

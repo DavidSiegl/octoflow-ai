@@ -9,7 +9,7 @@ use crate::host::Completed;
 use crate::pull_request::{conflict_warning, pr_body, GateEvidence};
 use serde_json::Value;
 use crate::json::Object;
-use crate::state::RunState;
+use crate::state::{format_problem, RunState, SavedRun};
 use crate::json::object;
 
 const REFRESH_ID: &str = "20261001-120000-a1b2c3";
@@ -243,6 +243,21 @@ fn without_a_run_every_done_run_with_a_pull_request_and_conflicts_in_run_order()
 }
 
 #[test]
+fn a_run_an_earlier_release_saved_is_skipped_saying_why() {
+    // Its state.json has no format (crate::state::format_problem): refresh neither asks gh about it nor records.
+    let t = Refresh::new();
+    let saved = t.add_run(&[]);
+    let mut old = saved.as_object().unwrap().clone();
+    old.shift_remove("format");
+    t.cli.f.host.state().files.insert(state_path(REFRESH_ID), Value::Object(old.clone()).to_string());
+    let problem = format_problem(&old).unwrap();
+    assert_eq!(t.refresh(&[]), (0, format!("{REFRESH_ID}: skipped: {problem}\n")));
+    assert_eq!(t.error(&[REFRESH_ID]), problem);
+    assert!(t.cli.f.host.state().gh_calls.is_empty() && t.pr_edits().is_empty());
+    assert_eq!(t.saved(), Value::Object(old));
+}
+
+#[test]
 fn without_a_run_and_nothing_to_refresh() {
     let t = Refresh::new();
     t.add(REFRESH_ID, REFRESH_URL, &[], APPROVE, None, &[]);
@@ -281,7 +296,7 @@ fn a_state_saved_meanwhile_is_not_overwritten() {
     let path = state_path(REFRESH_ID);
     // The run is resumed once refresh has read its state: the file holds what the resume saved since.
     t.resave(REFRESH_ID, &saved, &[("round", Value::from(2))]);
-    t.cli.f.host.state().run_states_with = Some(Box::new(move |_: &str| Some(Ok(vec![(0, saved.clone())]))));
+    t.cli.f.host.state().run_states_with = Some(Box::new(move |_: &str| Some(Ok(vec![SavedRun::read(0, saved.clone())]))));
     let error = t.error(&[REFRESH_ID]);
     let changed = format!("run {REFRESH_ID}: {path} changed while its pull request was refreshed; conflicts and conflict_cleared are not recorded");
     assert!(error.contains(&changed), "{error}");

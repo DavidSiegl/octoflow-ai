@@ -9,6 +9,7 @@ use crate::error::OrchestratorError;
 use crate::herdr::{AgentAddress, AgentConsole, HerdrError, HerdrServer, Launched, Launcher};
 use crate::host::{Exec, ExecError, Host, RunFile, RunFileText};
 use crate::serve::Reached;
+use crate::state::SavedRun;
 use serde_json::Value;
 
 /// A Host whose files are `files`, whose run_states_inside reads the state.json of each run among them, whose
@@ -73,7 +74,7 @@ impl Host for ServeHost {
         Ok(s.files.get(path).cloned())
     }
 
-    fn run_states_inside(&self, cwd: &str) -> Result<Vec<(u64, Value)>, OrchestratorError> {
+    fn run_states_inside(&self, cwd: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
         let mut s = self.state();
         s.run_states_inside_calls += 1;
         if let Some(e) = &s.run_states_inside_error {
@@ -83,7 +84,8 @@ impl Host for ServeHost {
         let mut states = vec![];
         for (path, text) in &s.files {
             if let Some((run_id, "state.json")) = path.strip_prefix(&runs).and_then(|rest| rest.split_once('/')) {
-                states.push((s.ages.get(run_id).copied().unwrap_or(0), serde_json::from_str::<Value>(text).map_err(|e| OrchestratorError(e.to_string()))?));
+                let saved = serde_json::from_str::<Value>(text).map_err(|e| OrchestratorError(e.to_string()))?;
+                states.push(SavedRun::read(s.ages.get(run_id).copied().unwrap_or(0), saved));
             }
         }
         Ok(states)
