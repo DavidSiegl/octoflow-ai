@@ -1196,7 +1196,11 @@ fn workflows_are_the_configuration_s_with_their_roles_and_the_harnesses() {
 struct EventStream {
     /// The response's status line and headers.
     head: String,
-    events: mpsc::Receiver<(String, Value)>,
+    /// Each event as (kind, payload, the count of quiet polls before it).
+    events: mpsc::Receiver<(String, Value, usize)>,
+    /// The count of quiet polls so far, sent at each: polls that found nothing to tell, each of which the server tells
+    /// by a keep-alive comment.
+    quiet: mpsc::Receiver<usize>,
     /// Gets one message when the response has ended.
     ended: mpsc::Receiver<()>,
     /// The connection, which the stream's reader shares, closed when the stream is dropped, as a client that goes.
@@ -1221,26 +1225,44 @@ impl EventStream {
             assert_ne!(reader.read_line(&mut head).expect("the head"), 0, "the response ended in its head: {head}");
         }
         let (send, events) = mpsc::channel();
+        let (send_quiet, quiet) = mpsc::channel();
         let (end, ended) = mpsc::channel();
         std::thread::spawn(move || {
-            let (mut kind, mut payload) = (None, None);
+            let (mut kind, mut payload, mut quiet_polls) = (None, None, 0);
             each_chunked_line(reader, |line| {
-                if let Some(k) = line.strip_prefix("event: ") {
+                if line == ":" {
+                    quiet_polls += 1;
+                    let _ = send_quiet.send(quiet_polls);
+                } else if let Some(k) = line.strip_prefix("event: ") {
                     kind = Some(k.to_string());
                 } else if let Some(d) = line.strip_prefix("data: ") {
                     payload = Some(serde_json::from_str::<Value>(d).expect("JSON data"));
                 } else if let (true, Some(k), Some(p)) = (line.is_empty(), kind.take(), payload.take()) {
-                    let _ = send.send((k, p));
+                    let _ = send.send((k, p, quiet_polls));
                 }
             });
             let _ = end.send(());
         });
-        EventStream { head, events, ended, conn }
+        EventStream { head, events, quiet, ended, conn }
     }
 
     /// The next event, as (kind, payload); fails the test when none comes within timeout.
     fn next(&self, timeout: Duration) -> (String, Value) {
+        let (kind, payload, _) = self.next_counted(timeout);
+        (kind, payload)
+    }
+
+    /// The next event, as (kind, payload, the count of quiet polls before it); fails the test when none comes within
+    /// timeout.
+    fn next_counted(&self, timeout: Duration) -> (String, Value, usize) {
         self.events.recv_timeout(timeout).unwrap_or_else(|_| panic!("no event within {timeout:?}"))
+    }
+
+    /// The count of quiet polls, once a quiet poll arrives after this call: the server is then between polls, and every
+    /// quiet poll counted later is a later poll's. Fails the test when none comes within timeout.
+    fn next_quiet_poll(&self, timeout: Duration) -> usize {
+        while self.quiet.try_recv().is_ok() {}
+        self.quiet.recv_timeout(timeout).unwrap_or_else(|_| panic!("no quiet poll within {timeout:?}"))
     }
 
     fn kinds(&self, n: usize) -> Vec<String> {
@@ -1294,33 +1316,40 @@ fn the_stream() {
     };
     assert_eq!(names(&files), ["spec.md"]);
 
-    // The next event is expected, and arrived within 2 s of started.
-    let soon = |started: Instant, expected_kind: &str, run: &str| {
-        let (kind, payload) = stream.next(Duration::from_secs(3));
-        assert!(started.elapsed() <= Duration::from_secs(2), "{kind} after {:?}", started.elapsed());
+    // A change is told by the first poll that starts after it: counted in polls, not seconds, as a busy host stretches
+    // each poll (one has taken 1.4 s beside the other tests, so that an event came 2.4 s after its change; GitHub issue
+    // #335). Each change is made just after a quiet poll, while the server waits SERVE_POLL.local; the next poll may
+    // still start first, and find nothing, when this thread is slower than that wait, but a change no poll tells
+    // until a second one after it is lost. The timeout only ends a test whose server hangs.
+    let timeout = SERVE_POLL.local * 10;
+    let quiet_poll = || stream.next_quiet_poll(timeout);
+    // The next event is expected, and told with at most one quiet poll after the count of them was quiet.
+    let soon = |quiet: usize, expected_kind: &str, run: &str| {
+        let (kind, payload, quiet_since) = stream.next_counted(timeout);
+        assert!(quiet_since - quiet <= 1, "{kind} after {} quiet polls", quiet_since - quiet);
         assert_eq!((kind.as_str(), payload.get("run")), (expected_kind, Some(&Value::from(run))));
         payload
     };
-    let started = Instant::now();
+    let quiet = quiet_poll();
     d.save(SERVE_ID, &[("phase", Value::from("review"))]);
-    let record = soon(started, "record", SERVE_ID);
+    let record = soon(quiet, "record", SERVE_ID);
     assert_eq!(record.get("record").and_then(|r| r.get("phase")), Some(&Value::from("review")));
 
-    let started = Instant::now();
     // A second later, so that the new file sorts after spec.md by its modification time.
     std::thread::sleep(Duration::from_millis(1100));
+    let quiet = quiet_poll();
     d.write(&format!("{RUNS_DIR}/{SERVE_ID}/build-1.md"), "built");
-    let files = soon(started + Duration::from_millis(1100), "files", SERVE_ID);
+    let files = soon(quiet, "files", SERVE_ID);
     assert_eq!(names(&files), ["spec.md", "build-1.md"]);
 
-    let started = Instant::now();
+    let quiet = quiet_poll();
     d.save("20261024-130000-a11ce0", &[]);
-    soon(started, "record", "20261024-130000-a11ce0");
-    assert_eq!(soon(started, "files", "20261024-130000-a11ce0").get("files"), Some(&Value::Array(vec![])));
+    soon(quiet, "record", "20261024-130000-a11ce0");
+    assert_eq!(soon(quiet, "files", "20261024-130000-a11ce0").get("files"), Some(&Value::Array(vec![])));
 
-    let started = Instant::now();
+    let quiet = quiet_poll();
     std::fs::remove_dir_all(format!("{}/{RUNS_DIR}/{SERVE_ID}", d.0)).unwrap();
-    assert_eq!(soon(started, "record", SERVE_ID).get("record"), Some(&Value::Null));
+    assert_eq!(soon(quiet, "record", SERVE_ID).get("record"), Some(&Value::Null));
 }
 
 #[test]
