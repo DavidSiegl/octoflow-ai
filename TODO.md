@@ -17,17 +17,23 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   "Octoflow AI" in Finder while staying `Octoflow.app`, with `CFBundleDisplayName` in a `ui/src-tauri/Info.plist`,
   unchecked on a Mac. Agreed 2026-10-25.
 
-- **The desktop app as the terminal client too: the macOS check.** Started with arguments, the app execs the
-  orchestrator it bundles (`cli` in `ui/src-tauri/src/lib.rs`), so the AppImage is the CLI too and the README says
+- **The desktop app as the terminal client too: the macOS check.** Started with arguments, the app, which links
+  the engine, is the orchestrator's CLI (`cli` in `ui/src-tauri/src/lib.rs`), so the AppImage is the CLI too and the README says
   how to get the CLI from each download; on macOS, where a `.app` is a directory, the CLI is a symlink to
   `Octoflow.app/Contents/MacOS/octoflow`. `build-desktop.sh`'s `smoke_dmg` mounts the `.dmg` and runs the CLI
-  through such a symlink and as the app's own executable, in `.github/workflows/macos-binary.yml`'s build of each
+  through such a symlink, in `.github/workflows/macos-binary.yml`'s build of each
   release and of each pull request that touches the packaging. Left: checking the README's quarantine advice for
   the `.dmg` against a downloaded copy (`.scratch/desktop-cli/issues/02-macos-cli-symlink.md`). The plain CLI
   binaries stay released: 13 MB against the AppImage's 120 MB of WebKit, and they start without FUSE on headless
   machines and in CI. Decided against: one file on every platform, by embedding the orchestrator's bytes in the
   Rust executable and unpacking them at start (PyInstaller's onefile done twice), or by Python hosting the window,
-  which [ui-options.md](docs/ui-options.md) chose against. Agreed 2026-10-24.
+  which [ui-options.md](docs/ui-options.md) chose against. Agreed 2026-10-24. Decided against too, 2026-11-11
+  (rust-engine/12, which made the app its own `serve` sidecar): the window serving its runs in its own process,
+  with or without the CLI there too. The AppImage's environment, which GTK needs and the engine's children must
+  not get, would then go through the engine as a parameter (herdr, `ProcessHost`, `ConfigDir`, the HTTP clients,
+  `current_dir`) where the sidecar takes the user's once at its start (`UserShell::enter`); an engine panic would
+  end the window; and `serve`'s signal handling needs the main thread. Its one gain is the first-line handshake
+  gone.
 - **The e2e scenarios: what they do not record.** `engine/e2e/` runs 43 scenarios against the engine as a program and
   compares each with its recording (docs/architecture.md, Tests). The recordings are the Python engine's, made before
   rust-engine ticket 11 removed it, by the Python harness octoflow-without-python ticket 02 removed; a scenario added
@@ -481,11 +487,19 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   judges". Closes with one script both call, should a third copy be needed or the idiom change.
 - **Ctrl-C during `packaging/build-desktop.sh`'s AppImage smoke test leaves `serve` running.** `smoke_appimage`
   starts the AppImage's `serve` as a background job, which a non-interactive shell starts with SIGINT ignored, and
-  the INT trap kills no one, so the AppImage and the orchestrator it execs outlive the script; the trap has removed
+  the INT trap kills no one, so the AppImage's processes outlive the script; the trap has removed
   the smoke test's directory they run from by then. A SIGTERM to the process group (a Jenkins abort) does reach
   them, and Jenkins runs with SIGINT ignored, so this is interactive use only. Older than desktop-packaging-gaps/03,
   whose traps kill no one either. Raised by cross-review 132 (round 2, not recorded there, 2026-11-04). Closes with
   the traps killing `serve`'s processes, as `smoke_fail` does, before removing the directory.
+- **A run the desktop app starts from a mounted AppImage runs a program on the mount.** `serve_program`
+  (`engine/src/serve.rs`) gives `POST /run` the sidecar's own executable, under a mounted AppImage
+  `/tmp/.mount_*/usr/bin/octoflow`, and the run in its herdr pane is meant to outlive the app; the mount goes when
+  the AppImage's runtime exits. Not reproduced: whether the run then dies, or fails only at its next `resume`,
+  is unchecked. So before rust-engine/12 too, when the program was the orchestrator bundled beside the app. An
+  AppImage run with `APPIMAGE_EXTRACT_AND_RUN`, the `.deb` and the `.dmg` are not affected. Noticed 2026-11-11
+  (`.scratch/rust-engine/issues/12-engine-in-app.md`). Closes with a check on a machine with FUSE, and, should the
+  run die, with a copy of the executable outside the mount for runs to start by, or the README saying so.
 - **`packaging/build-desktop.sh`'s macOS smoke test leaves its directory when the script is killed by a signal.**
   `smoke_dmg` removes its `mktemp -d` only in its `smoke_fail` and on success, not through `remove_temporaries`
   as `smoke_appimage`'s since desktop-packaging-gaps/03, so Ctrl-C or SIGTERM leaves it, with the .dmg possibly

@@ -5,8 +5,8 @@
 export interface Connection {
   url: string;
   token: string;
-  /** The project to show first: the checkout the sidecar's orchestrator.py is in; null for a release's bundled
-   * orchestrator, which is in none. */
+  /** The project to show first: the checkout a development build of the app was built in; null for a release's
+   * app, which belongs to none. */
   project: string | null;
 }
 

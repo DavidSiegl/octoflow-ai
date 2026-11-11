@@ -16,12 +16,11 @@ TESTING.md
 coverage-rust.xml
 quality.md
 
-# The desktop app's dependencies and build output, the schemas `tauri build` generates, and the orchestrator
-# binary and third-party licenses packaging/build-desktop.sh copies in for it to bundle
+# The desktop app's dependencies and build output, the schemas `tauri build` generates, and the third-party
+# licenses packaging/build-desktop.sh copies in for it to bundle
 ui/node_modules/
 ui/dist/
 ui/src-tauri/gen/
-ui/src-tauri/binaries/
 ui/src-tauri/THIRD-PARTY-LICENSES.html
 ui/src-tauri/THIRD-PARTY-LICENSES-NPM.html
 

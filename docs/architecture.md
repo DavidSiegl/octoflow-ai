@@ -310,29 +310,33 @@ from a herdr pane.
 A Vite + React + TypeScript frontend in `ui/src/`, in a Tauri 2 shell in `ui/src-tauri/` (`create-tauri-app`'s
 layout), with no Python of its own.
 
-- **Shell.** `src-tauri/src/lib.rs` starts the sidecar in `setup`: `serve --origin <the webview's origin>` of
-  the orchestrator `Orchestrator::locate` picks, `$ORCHESTRATOR_BIN`, else the binary beside the app's
-  executable that a release bundles (`BUNDLED_NAME`), else the checkout's own build, `target/debug/orchestrator`
-  of the checkout the app was built in. It reads the first line and keeps the URL, the token and the checkout's
-  directory, null for any binary but the checkout's build, or why it failed, for the `server` command. With no checkout and no project opened before,
-  the frontend asks for a project folder. It kills the sidecar on `RunEvent::Exit`. The webview's CSP allows
-  connections only to itself, Tauri's IPC and `http://127.0.0.1`.
-- **CLI.** Started with arguments, `main.rs` runs none of that: before GTK or WebKit start, `lib.rs`'s `cli` builds
-  the same orchestrator's command with the arguments appended, and `Cli::exec` replaces the app's process with it,
-  so the terminal, the exit status and the signals sent to the app are the CLI's; a user's directory that is gone,
-  or an exec that fails, prints why and exits 1. So the AppImage is the CLI too. Run without FUSE, the process its
-  caller started is the AppImage's runtime, which stays the CLI's parent and passes on no signal: the CLI asks for
-  SIGTERM when that parent dies (`stop_with_appimage_runtime`, prctl(2)'s parent-death signal), so whatever stops
-  the runtime stops it by SIGTERM. On macOS, a lone `-psn_` argument, which a Finder launch may pass, opens the
-  window. Windows, which builds no app and no console, has no CLI.
-- **The user's shell.** `Orchestrator::command`, which the sidecar and the CLI are both built from, starts the
-  orchestrator in `UserShell`'s environment and directory, not the app's. Only an AppImage makes them differ: its
-  `AppRun` points path lists, `PYTHONHOME` and GTK's variables into the bundle and starts the app in
-  `$APPDIR/usr`, and so does an extracted one's `squashfs-root/AppRun`. `UserShell` drops the bundle's entries and
-  variables (its constants list them), naming the bundle by `$APPDIR` and by what that resolves to, and changes to
-  the directory the AppImage was started from, `OWD`, or `PWD` where an extracted AppImage sets no `OWD`, so the
-  orchestrator, and every process it starts through `child_env`, sees the user's. The app's own process keeps the
-  bundle's, which its GTK needs.
+- **Shell.** `src-tauri/src/lib.rs` links the engine (`octoflow-engine`), so the app's executable, `octoflow`
+  (`mainBinaryName` in `tauri.conf.json`), is the orchestrator too. In `setup` it starts its sidecar,
+  `Sidecar::of_app`: its own executable as `serve --origin <the webview's origin>`, which is the CLI below. It
+  reads the first line and keeps the URL, the token and the project, or why it failed, which is what the sidecar
+  wrote to standard error when it wrote anything, for the `server` command; the project is the checkout the app
+  was built in for a development build (`tauri dev`), null otherwise. With no checkout and no project opened
+  before, the frontend asks for a project folder. It kills the sidecar on `RunEvent::Exit`. The webview's CSP
+  allows connections only to itself, Tauri's IPC and `http://127.0.0.1`.
+- **CLI.** Started with arguments, `main.rs` runs none of that: before GTK or WebKit start a thread, `lib.rs`'s
+  `cli` takes the command line and `Cli::run` runs the engine's `cli::main` with it in the app's own process, and
+  ends as the engine's `orchestrator` does (`interrupt::exit`), so the terminal, the exit status and the signals
+  sent to the app are the CLI's; a user's directory that is gone prints why and exits 1. So the AppImage is the
+  CLI too. Run without FUSE, the process its caller started is the AppImage's runtime, which stays the CLI's
+  parent and passes on no signal: the CLI asks for SIGTERM when that parent dies (`stop_with_appimage_runtime`,
+  prctl(2)'s parent-death signal), so whatever stops the runtime stops it by SIGTERM. On macOS, a lone `-psn_`
+  argument, which a Finder launch may pass, opens the window. Windows, which builds no app and no console, has no
+  CLI.
+- **The user's shell.** Before the engine starts, `Cli::run` makes the process's environment and directory
+  `UserShell`'s (`UserShell::enter`), not the ones the app was started with; the sidecar, being the CLI, does so
+  itself. Only an AppImage makes them differ: its `AppRun` points path lists, `PYTHONHOME` and GTK's variables
+  into the bundle and starts the app in `$APPDIR/usr`, and so does an extracted one's `squashfs-root/AppRun`.
+  `UserShell` drops the bundle's entries and variables (its constants list them), naming the bundle by `$APPDIR`
+  and by what that resolves to, and names the directory the AppImage was started from, `OWD`, or `PWD` where an
+  extracted AppImage sets no `OWD`, so the engine, which reads the process's environment and directory where it
+  needs them, and every process it starts see the user's. The process that shows the window keeps the bundle's,
+  which its GTK needs. Decided against: serving the window in the app's own process (`TODO.md`, Planned, "The
+  desktop app as the terminal client too").
 - **Frontend.** `api.ts` types the protocol: `RunRecord` mirrors `run_record`, `RunRequest` is `POST /run`'s body, and
   `Api` builds the URLs and makes the requests. `hooks.ts`'s `useRunStream` opens the `EventSource` and folds its
   events into a `RunsState` with `runs.ts`'s `applyEvent`. Every opening starts from no runs, since the server sends
@@ -413,11 +417,11 @@ agent runs in the suite, and no request leaves the machine.
   alias: `eval`, the eval set's runner, `bundles`, which builds its tasks' bundles, and `contract`, which checks the
   engine's Jenkins client against the real Jenkins), with one `Cargo.lock`, the lints every member takes
   (`[workspace.lints]`), and `rust-toolchain.toml`, the toolchain and components the Jenkins agent's image has.
-- `packaging/build-desktop.sh`: builds the desktop app with `tauri build`, the binary `build-binary.sh` built
-  copied in as its `externalBin` sidecar and the release's version, through a release config the script
-  writes and merges over `tauri.conf.json`, which bundles nothing. It writes
+- `packaging/build-desktop.sh`: builds the desktop app with `tauri build`, at the release's version,
+  through a release config the script writes and merges over `tauri.conf.json`, which bundles nothing. The app is
+  the one executable in it. It writes
   `dist/octoflow-desktop-<os>-<arch>` `.deb` and `.AppImage` on Linux, `.dmg` on macOS (signed ad hoc),
-  each with its `.sha256`, and refuses a bundle without the sidecar or without `build-binary.sh`'s third-party
+  each with its `.sha256`, and refuses a bundle without `build-binary.sh`'s third-party
   licenses, which it bundles as the resource `THIRD-PARTY-LICENSES.html`. Beside it, as
   `THIRD-PARTY-LICENSES-NPM.html`, go the licenses of the npm packages the app's window bundles, which
   `ui/scripts/npm-licenses.js` writes after `npm ci` to `dist/octoflow-desktop-npm-licenses.html`, the release's
@@ -425,8 +429,9 @@ agent runs in the suite, and no request leaves the machine.
   the bundle (the script's list of them: Vite and Rolldown), with the license text `node_modules` holds for it and,
   for a build tool, its third-party notices,
   and a package under no license `packaging/about.toml` accepts fails the build. On Linux it then runs the AppImage as the
-  CLI from a temporary directory: `--help` and `workflows` exit 0, and the orchestrator `serve` execs starts in
-  that directory with no `$APPDIR` entry in `LD_LIBRARY_PATH` and no `PYTHONHOME`, read from its `/proc` entry.
+  CLI from a temporary directory: `--help` and `workflows` exit 0, a stand-in `herdr` that `doctor` starts gets no entry of the
+  bundle in `LD_LIBRARY_PATH` and no `PYTHONHOME`, `APPDIR`, `APPIMAGE` or `GTK_PATH`, and `serve` runs in that
+  directory, read from its `/proc` entry, and stops when the AppImage's runtime does.
 - `packaging/build-binary.sh`: builds `dist/octoflow-<os>-<arch>` (`linux-x86_64`, `macos-arm64`), the engine's
   `orchestrator` binary, `cargo build --release --locked`, and its `.sha256`, then smoke-tests it: `--help`, and
   `workflows` lists `default`. Before the build, cargo-about writes `dist/octoflow-third-party-licenses.html`, the
