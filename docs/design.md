@@ -11,8 +11,8 @@ the process that drives them. `resume` picks the run up where `state.json` says 
 - A handoff file written while no orchestrator was watching is taken as it is, without prompting the role again.
 - A role whose agent still runs is reused. If it was already prompted for its current file, it is only waited on.
 - An agent that exited is relaunched in its pane into its saved session, keeping its conversation, with its
-  harness's own syntax: `--resume <id>` for claude and gemini, `--session <id>` for pi and opencode, and
-  `codex resume <id>`. When its session is gone, or the role runs in another harness now, a fresh one starts
+  harness's own syntax: `--resume <id>` for claude, `--conversation <id>` for agy, `--session <id>` for pi and
+  opencode, and `codex resume <id>`. When its session is gone, or the role runs in another harness now, a fresh one starts
   with a prompt that points it at the earlier rounds, and a Spec Collector's interview starts over.
 - `resume --agent` and `--role-agent` change the harness of each role's next agent; a role whose agent still
   runs keeps it until it exits. A state saved by 0.3.0 resumes with every role on claude and its saved
@@ -120,13 +120,13 @@ orchestrator metrics | jq -s 'map(.rounds) | add / length'
 `tokens` is `{"input", "output", "cache_read", "cache_write"}`, the sums over the model's answers in the turn's
 agent session from the turn's start to the second its handoff file was written, as the harness itself recorded
 them; `"unknown"` where that record cannot be read; `null` for a quality analysis. It is never estimated. What each
-harness records, as of October 2026:
+harness records, as of November 2026:
 
 | Harness | Token record the orchestrator reads | |
 | --- | --- | --- |
 | `claude` | `~/.claude/projects/<project>/<session>.jsonl`: each answer's `message.usage`, on every line of the answer, counted once by `message.id` | read |
 | `pi` | `~/.pi/agent/sessions/<project>/<time>_<session>.jsonl`: `message.usage` of each assistant message | read |
-| `gemini` | `~/.gemini/tmp/<project hash>/chats/session-*.json`: `tokens` of each `gemini` message, but the file is named by time, not by the session herdr reports | `unknown` |
+| `agy` | `~/.gemini/antigravity-cli/conversations/<session>.db`: SQLite rows of protobuf with no published schema | `unknown` |
 | `codex` | `~/.codex/sessions/`, `token_count` events in each rollout file; not installed where this was checked | `unknown` |
 | `opencode` | its SQLite database, `message.data`; not installed where this was checked | `unknown` |
 
@@ -422,8 +422,8 @@ Steps 1–3 run on the machine you start the orchestrator from.
 3. **Check that SSH works non-interactively.** File and `git` access runs over `ssh -o BatchMode=yes`, so
    `ssh -o BatchMode=yes <ssh-target> true` must succeed without a password, passphrase or host-key prompt.
 4. **Prepare the remote machine** as in the README's Requirements: herdr with the integration of each harness
-   the run uses (`herdr integration install <kind>`), that harness's CLI on `PATH` (`claude` by default),
-   the project's git checkout with an `origin` it can push to, and `gh` logged in unless you use `--no-pr`.
+   the run uses (`herdr integration install <integration>`; `antigravity-cli` for agy), that harness's CLI on
+   `PATH` (`claude` by default), the project's git checkout with an `origin` it can push to, and `gh` logged in unless you use `--no-pr`.
 
 With `--machine`, every herdr command is forwarded with `herdr --machine`. The orchestrator can also run on the
 remote machine itself: copy the binary there and run it from a herdr pane, without `--machine`.
@@ -513,12 +513,12 @@ or conflicts (`.github/workflows/automerge.yml` says which wait).
   dropped rather than guessed, and logged once per role, so the agent starts with its own default instead of
   failing on an unknown flag:
 
-  | `--permission-mode` | claude | gemini | codex | pi, opencode |
+  | `--permission-mode` | claude | agy | codex | pi, opencode |
   |---|---|---|---|---|
-  | `default` | `--permission-mode default` | `--approval-mode default` | (nothing) | dropped |
-  | `acceptEdits` | `--permission-mode acceptEdits` | `--approval-mode auto_edit` | `--full-auto` | dropped |
-  | `bypassPermissions` | `--permission-mode bypassPermissions` | `--approval-mode yolo` | `--dangerously-bypass-approvals-and-sandbox` | dropped |
-  | `plan` | `--permission-mode plan` | dropped | `--sandbox read-only` | dropped |
+  | `default` | `--permission-mode default` | (nothing) | (nothing) | dropped |
+  | `acceptEdits` | `--permission-mode acceptEdits` | `--mode accept-edits` | `--full-auto` | dropped |
+  | `bypassPermissions` | `--permission-mode bypassPermissions` | `--dangerously-skip-permissions` | `--dangerously-bypass-approvals-and-sandbox` | dropped |
+  | `plan` | `--permission-mode plan` | `--mode plan` | `--sandbox read-only` | dropped |
   | `auto`, `dontAsk`, any other | passed through | dropped | dropped | dropped |
 
 - **`state.json` says its format, and a run an earlier release saved is refused, not migrated.** `"format": 2`

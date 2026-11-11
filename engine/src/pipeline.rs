@@ -5,8 +5,9 @@
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::LazyLock;
 
-use crate::constants::{AGENT_KINDS, DEFAULT_MAX_FILES, DEFAULT_MAX_LINES, ROLE_LABELS};
+use crate::constants::{DEFAULT_MAX_FILES, DEFAULT_MAX_LINES, ROLE_LABELS};
 use crate::error::OrchestratorError;
+use crate::harness::harness;
 use crate::paths::split_extension;
 use crate::prompts::{Prompt, Prompts};
 use crate::prompts::template::{fill, parse, placeholders, Piece};
@@ -362,11 +363,8 @@ impl Pipeline {
             }
         }
         for (role, kind) in self.settings.agents.iter() {
-            if !AGENT_KINDS.contains(&kind.as_str()) {
-                return Some(format!(
-                    "role {role}: agent {kind} is not a harness this orchestrator supports; it takes {}",
-                    AGENT_KINDS.join(", ")
-                ));
+            if let Err(e) = harness(kind) {
+                return Some(format!("role {role}: {}", e.0));
             }
         }
         None

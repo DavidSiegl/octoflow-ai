@@ -671,11 +671,11 @@ describe("the run form", () => {
 
   it("keeps a role's values across a change of workflow that shares the role, and only that role's", async () => {
     const { form } = await openForm();
-    fireEvent.change(within(form).getByLabelText("Builder agent"), { target: { value: "gemini" } });
+    fireEvent.change(within(form).getByLabelText("Builder agent"), { target: { value: "agy" } });
     fireEvent.change(within(form).getByLabelText("Builder model"), { target: { value: "g2" } });
     fireEvent.change(within(form).getByLabelText("Reviewer agent"), { target: { value: "pi" } });
     fireEvent.change(within(form).getByLabelText("Workflow"), { target: { value: "tdd" } });
-    expect(within(form).getByLabelText("Builder agent")).toHaveValue("gemini");
+    expect(within(form).getByLabelText("Builder agent")).toHaveValue("agy");
     expect(within(form).getByLabelText("Builder model")).toHaveValue("g2");
     expect(within(form).getByLabelText("Test Writer agent")).toHaveValue("");
     fireEvent.change(within(form).getByLabelText("Workflow"), { target: { value: "default" } });

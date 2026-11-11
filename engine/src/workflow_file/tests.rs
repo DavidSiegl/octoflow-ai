@@ -366,7 +366,7 @@ fn invalid_agents_name_the_role() {
     let steps = "[[steps]]\nuse = \"spec\"\n[[steps]]\nuse = \"build\"\n[[steps]]\nuse = \"review\"\n";
     assert_eq!(parse_workflow("mine", &toml(steps), &built_in()).unwrap().steps(), DEFAULT_WORKFLOW.steps());
     for (text, message) in [
-        ("roles.review = { agent = \"cursor\" }\n", "role review: agent cursor is not a harness this orchestrator supports; it takes claude, codex, gemini, opencode, pi"),
+        ("roles.review = { agent = \"cursor\" }\n", "role review: agent cursor is not a harness this orchestrator supports; it takes agy, claude, codex, opencode, pi"),
         ("roles.review = { agent = 3 }\n", "role review: agent must be a string"),
         ("roles.review = { agnet = \"pi\" }\n", "role review: unknown key agnet; did you mean agent?"),
     ] {

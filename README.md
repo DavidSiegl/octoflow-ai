@@ -15,7 +15,7 @@
 # Octoflow AI
 
 Coding agents in relay, no role judging its own work: a handoff workflow running in [herdr](https://herdr.dev),
-each role in the agent of your choice: [Claude Code, Codex, Gemini CLI, opencode or pi](#five-coding-agents-in-any-mix).
+each role in the agent of your choice: [Antigravity CLI, Claude Code, Codex, opencode or pi](#five-coding-agents-in-any-mix).
 The default workflow:
 
 ```text
@@ -37,15 +37,15 @@ that wrote it:
 
 | Harness | `--agent` | Models | `--permission-mode` it understands |
 |---|---|---|---|
+| Antigravity CLI | `agy` | Google's Gemini | `default`, `acceptEdits`, `bypassPermissions`, `plan` |
 | [Claude Code](https://github.com/anthropics/claude-code) | `claude`, the default | Anthropic's Claude | every mode, as it is |
 | [Codex CLI](https://github.com/openai/codex) | `codex` | OpenAI's GPT | `default`, `acceptEdits`, `bypassPermissions`, `plan` |
-| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `gemini` | Google's Gemini | `default`, `acceptEdits`, `bypassPermissions` |
 | [opencode](https://github.com/sst/opencode) | `opencode` | any provider it is set up for | none; it starts with its own default |
 | [pi](https://github.com/badlogic/pi-mono) | `pi` | any provider it is set up for | none; it starts with its own default |
 
 - **A second opinion from another model.** `--role-agent review=codex` has Claude Code write the change and
   Codex review it, so the review does not share the builder's blind spots.
-- **One flag for every role, or one role at a time.** `--agent gemini` moves the whole run; `--role-agent
+- **One flag for every role, or one role at a time.** `--agent agy` moves the whole run; `--role-agent
   ROLE=KIND` moves one role; a [workflow file](#your-own-workflows) can pin `agent = "codex"` to a role. Models
   work the same way, with `--model` or `--role-model ROLE=MODEL`.
 - **One permission vocabulary.** `--permission-mode` takes Claude Code's mode names and gives each harness its
@@ -54,7 +54,7 @@ that wrote it:
   resume syntax.
 
 ```bash
-orchestrator run "add a token-bucket rate limiter" --role-agent review=codex --role-agent spec=gemini
+orchestrator run "add a token-bucket rate limiter" --role-agent review=codex --role-agent spec=agy
 ```
 
 ## Requirements
@@ -64,7 +64,8 @@ is missing. It also checks, as optional, what [the local quality gate](docs/qual
 there; `doctor --setup-gate` writes the gate's `ci/gate.pin` and a starter `gate.toml` into the project.
 
 - herdr 0.9+ where the agents run, with the integration of each harness a run uses
-  (`herdr integration install <kind>`, e.g. `herdr integration install claude`)
+  (`herdr integration install <integration>`: the kind's own name, e.g. `herdr integration install claude`, but
+  `antigravity-cli` for `agy`)
 - The CLI of each harness a run uses on `PATH` where the agents run: `claude` by default
 - Each harness able to start in the project directory without asking first. Claude Code, for one, asks once per
   folder whether to trust it: open `claude` there once, or answer in the pane when the run says the role
@@ -293,17 +294,17 @@ an `OPENCODE_CONFIG_CONTENT` its pane's shell exports before starting it with `-
 `export NAME='value'`, as sh, bash, zsh and fish do. pi asks before no tool call, so a worktree run needs nothing for it
 (see Worktree runs).
 
-| `--permission-mode` | claude | gemini | codex | pi, opencode |
+| `--permission-mode` | claude | agy | codex | pi, opencode |
 |---|---|---|---|---|
-| `default` | `--permission-mode default` | `--approval-mode default` | (nothing) | dropped |
-| `acceptEdits` | `--permission-mode acceptEdits` | `--approval-mode auto_edit` | `--full-auto` | dropped |
-| `bypassPermissions` | `--permission-mode bypassPermissions` | `--approval-mode yolo` | `--dangerously-bypass-approvals-and-sandbox` | dropped |
-| `plan` | `--permission-mode plan` | dropped | `--sandbox read-only` | dropped |
+| `default` | `--permission-mode default` | (nothing) | (nothing) | dropped |
+| `acceptEdits` | `--permission-mode acceptEdits` | `--mode accept-edits` | `--full-auto` | dropped |
+| `bypassPermissions` | `--permission-mode bypassPermissions` | `--dangerously-skip-permissions` | `--dangerously-bypass-approvals-and-sandbox` | dropped |
+| `plan` | `--permission-mode plan` | `--mode plan` | `--sandbox read-only` | dropped |
 | `auto`, `dontAsk`, any other | passed through | dropped | dropped | dropped |
 
 A dropped mode is not passed, so the agent starts with its own default, and the log says so once per role. An
-agent that exited is relaunched into its saved session: `--resume <id>` for claude and gemini, `--session <id>`
-for pi and opencode, and `codex resume <id>`. A role whose harness changed since starts a fresh session.
+agent that exited is relaunched into its saved session: `--resume <id>` for claude, `--conversation <id>` for
+agy, `--session <id>` for pi and opencode, and `codex resume <id>`. A role whose harness changed since starts a fresh session.
 
 #### Unattended runs
 
@@ -380,8 +381,8 @@ and [quality gate](docs/quality-gate.md).
 A `--worktree` run works in `.orchestrator/worktrees/<key>`, checked out from `origin`'s version of the project's
 branch, so the project's checkout need not be clean and stays yours to use. The worktree holds what git tracks.
 Untracked and ignored files, such as a `.venv`, are not in it, though Claude Code still reads the project's
-`CLAUDE.md` from the parent directory. The handoff files stay in the project's run directory. claude, codex and
-gemini are given access to it by a flag, and opencode by a `permission.external_directory` rule in the same
+`CLAUDE.md` from the parent directory. The handoff files stay in the project's run directory. agy, claude and
+codex are given access to it by a flag, and opencode by a `permission.external_directory` rule in the same
 `OPENCODE_CONFIG_CONTENT` that carries its model; pi asks before no write, so it needs nothing.
 
 The worktree is removed once the pull request is open. A failed or `--no-pr` run keeps its worktree, whose path

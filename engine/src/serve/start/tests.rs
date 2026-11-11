@@ -21,14 +21,14 @@ fn a_body_with_only_its_task_leaves_every_flag_to_run() {
 #[test]
 fn every_field_of_a_body() {
     let body = r#"{"task": "t", "workflow": "quick", "agent": "pi", "model": "m",
-                   "role_agents": {"review": "codex", "build": "gemini"}, "role_models": {"spec": "s"},
+                   "role_agents": {"review": "codex", "build": "agy"}, "role_models": {"spec": "s"},
                    "no_pr": true, "worktree": false}"#;
     let expected = RunRequest {
         task: "t".into(),
         workflow: Some("quick".into()),
         agent: Some("pi".into()),
         model: Some("m".into()),
-        role_agents: pairs(&[("review", "codex"), ("build", "gemini")]),
+        role_agents: pairs(&[("review", "codex"), ("build", "agy")]),
         role_models: pairs(&[("spec", "s")]),
         no_pr: true,
         worktree: false,
@@ -45,10 +45,10 @@ fn a_body_of_another_shape_is_refused_naming_what_is_wrong() {
         ("{}", "task must be a string that is not empty"),
         (r#"{"task": 1}"#, "task must be a string that is not empty"),
         (r#"{"task": "t", "model": ""}"#, "model must be a string that is not empty"),
-        (r#"{"task": "t", "agent": "vim"}"#, "agent \"vim\" is not one of claude, codex, gemini, opencode, pi"),
+        (r#"{"task": "t", "agent": "vim"}"#, "agent \"vim\" is not one of agy, claude, codex, opencode, pi"),
         (r#"{"task": "t", "no_pr": "yes"}"#, "no_pr must be true or false"),
-        (r#"{"task": "t", "role_agents": {"build": "vim"}}"#, "role_agents must be an object of role to one of claude, codex, gemini, opencode, pi"),
-        (r#"{"task": "t", "role_agents": ["build"]}"#, "role_agents must be an object of role to one of claude, codex, gemini, opencode, pi"),
+        (r#"{"task": "t", "role_agents": {"build": "vim"}}"#, "role_agents must be an object of role to one of agy, claude, codex, opencode, pi"),
+        (r#"{"task": "t", "role_agents": ["build"]}"#, "role_agents must be an object of role to one of agy, claude, codex, opencode, pi"),
         (r#"{"task": "t", "role_models": {"a=b": "m"}}"#, "role_models must be an object of role to a string that is not empty"),
         (r#"{"task": "t", "role_models": {"": "m"}}"#, "role_models must be an object of role to a string that is not empty"),
         (r#"{"task": "t", "role_models": {"build": ""}}"#, "role_models must be an object of role to a string that is not empty"),

@@ -32,9 +32,12 @@ fn pr_url(n: i64) -> String {
 }
 /// herdr's version as `herdr --version` prints it; doctor needs 0.9 or later.
 const HERDR_VERSION: &str = "herdr 0.9.4";
-/// The harnesses an agent can run in, as herdr's --kind takes them: each has a current integration, and a CLI on
-/// PATH that the world puts there and nothing runs.
-pub const AGENT_KINDS: [&str; 5] = ["claude", "codex", "gemini", "opencode", "pi"];
+/// The harnesses an agent can run in, as herdr's --kind takes them: each has a CLI on PATH that the world puts there
+/// and nothing runs, and a current integration (INTEGRATIONS).
+pub const AGENT_KINDS: [&str; 5] = ["agy", "claude", "codex", "opencode", "pi"];
+/// The herdr integrations `herdr integration status` lists as current: one per kind of AGENT_KINDS, agy's under the
+/// name antigravity-cli.
+const INTEGRATIONS: [&str; 5] = ["antigravity-cli", "claude", "codex", "opencode", "pi"];
 
 /// A herdr error answer, which herdr prints as {"error": {"code", "message"}} before exiting 1.
 struct HerdrFailure {
@@ -67,7 +70,7 @@ pub fn herdr(ledger: &Ledger, args: &[String]) -> i32 {
             return Ok(HERDR_VERSION.to_string());
         }
         if words.starts_with(&["integration", "status"]) {
-            let lines: Vec<String> = AGENT_KINDS.iter().map(|k| format!("{k}: current (v10) (/parity/{k})")).collect();
+            let lines: Vec<String> = INTEGRATIONS.iter().map(|i| format!("{i}: current (v10) (/parity/{i})")).collect();
             return Ok(lines.join("\n"));
         }
         if words.starts_with(&["machine", "list", "--json"]) {

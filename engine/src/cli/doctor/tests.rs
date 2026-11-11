@@ -10,14 +10,17 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::cli::{ended_status, herdrless_command, parse_args, Local};
+use crate::constants::AGENT_KINDS;
 use crate::env::ConfigDir;
 use crate::host::ProcessError;
 use crate::interrupt::Interrupt;
 
 /// What `herdr integration status` lists with every harness's integration current.
 fn integrations_current() -> String {
-    let current: String =
-        AGENT_KINDS.iter().map(|k| format!("{k}: current (v3) (/home/u/.{k}/herdr-agent-state.sh)\n")).collect();
+    let current: String = HARNESSES
+        .iter()
+        .map(|h| format!("{0}: current (v3) (/home/u/.{0}/herdr-agent-state.sh)\n", h.integration))
+        .collect();
     format!("{current}letta (experimental): not installed (/l)\n")
 }
 
@@ -342,7 +345,7 @@ fn integrations_not_installed() {
     let listing = integrations_current()
         .replace("claude: current (v3)", "claude: not installed")
         .replace("codex: current (v3)", "codex: not installed")
-        .replace("gemini: current (v3)", "gemini: outdated (v1)");
+        .replace("antigravity-cli: current (v3)", "antigravity-cli: outdated (v1)");
     tools.answer("herdr integration status", completed(&listing));
     let order = names(&tools, Some("/proj"));
     let checks = setup(&tools, None, Some("/proj"));
@@ -356,8 +359,16 @@ fn integrations_not_installed() {
         "herdr integration install codex",
     );
     assert_eq!(checks["codex integration"], codex);
-    assert_eq!(checks["gemini integration"].detail, "outdated (v1); needed only for a role that runs in gemini");
-    assert_eq!(failed(&checks, &order), ["claude integration", "codex integration", "gemini integration"]);
+    // agy's integration is listed by its own name, not the kind's.
+    let agy = check_of(
+        "agy integration",
+        Level::Optional,
+        false,
+        "outdated (v1); needed only for a role that runs in agy",
+        "herdr integration install antigravity-cli",
+    );
+    assert_eq!(checks["agy integration"], agy);
+    assert_eq!(failed(&checks, &order), ["agy integration", "claude integration", "codex integration"]);
     let asked = tools.tools().calls.iter().filter(|(t, a)| t.is_none() && *a == ["herdr", "integration", "status"]).count();
     // Once for each check_setup: names' and check's.
     assert_eq!(asked, 2);
@@ -402,7 +413,7 @@ fn integration_states_are_read_from_the_listing() {
     let listing = "pi: current (v9) (/home/u/.pi/a.ts)\n\
                    codex: not installed (/home/u/.codex/a.sh)\n\
                    letta (experimental): not installed (/home/u/.letta/a.sh)\n\
-                   gemini: outdated (v2, current is v3) (/g)\n\
+                   antigravity-cli: outdated (v2, current is v3) (/g)\n\
                    \n\
                    noise\n";
     let pairs = |pairs: &[(&str, &str)]| pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<Vec<_>>();
@@ -412,7 +423,7 @@ fn integration_states_are_read_from_the_listing() {
             ("pi", "current (v9)"),
             ("codex", "not installed"),
             ("letta", "not installed"),
-            ("gemini", "outdated (v2, current is v3)")
+            ("antigravity-cli", "outdated (v2, current is v3)")
         ])
     );
     // The pattern's corners, as Python's re reads them.

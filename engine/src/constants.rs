@@ -115,9 +115,9 @@ pub const CONSOLE_TAIL_LINES: usize = 60;
 /// roles take --model.
 pub const ROLE_LABELS: [(&str, &str); 3] = [("spec", "Spec Collector"), ("build", "Builder"), ("review", "Reviewer")];
 
-/// The agent harnesses a role can run in, by herdr's --kind. Each needs its herdr integration and its CLI
-/// where the agents run.
-pub const AGENT_KINDS: [&str; 5] = ["claude", "codex", "gemini", "opencode", "pi"];
+/// The agent harnesses a role can run in, by herdr's --kind, which is also the name of each one's CLI. Each needs
+/// that CLI and its herdr integration (crate::harness::Harness::integration) where the agents run.
+pub const AGENT_KINDS: [&str; 5] = ["agy", "claude", "codex", "opencode", "pi"];
 /// The harness of a role that names none.
 pub const DEFAULT_AGENT: &str = "claude";
 
