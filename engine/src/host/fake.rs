@@ -420,7 +420,7 @@ impl FakeState {
                 Some(ok(""))
             }
             args if args == GIT_STATUS_ARGS => Some(ok(&porcelain(&self.changed_in(cwd)))),
-            ["commit", ..] => {
+            ["commit", "--quiet", "-m", _, "-m", _, trailers @ ..] if trailer_args(trailers) => {
                 let changed = self.changed_in(cwd);
                 self.changed.retain(|p| !changed.contains(p));
                 self.commit_head();
@@ -445,29 +445,31 @@ impl FakeState {
             }
         }
         match args {
-            ["rev-parse", rest @ ..] => return self.git_rev_parse(rest),
+            ["rev-parse", ..] => return self.git_rev_parse(args),
             args if args == GIT_STATUS_ARGS => return ok(&porcelain(&self.changed_in(cwd))),
             ["switch", "-c", name] | ["switch", "--quiet", name] => self.branch = name.to_string(),
-            ["commit", ..] => {
+            ["commit", "--quiet", "-m", _, "-m", _, trailers @ ..] if trailer_args(trailers) => {
                 let changed = self.changed_in(cwd);
                 self.changed.retain(|p| !changed.contains(p));
                 self.commit_head();
             }
-            ["worktree", rest @ ..] => return self.git_worktree(rest),
+            ["worktree", ..] => return self.git_worktree(args),
             ["fetch", "--quiet", "origin", _] if self.fetch_error.is_some() && fails(&mut self.fetch_failures_left) => {
                 return Completed::new(128, "", self.fetch_error.as_deref().unwrap_or_default());
             }
             ["merge-base", "--is-ancestor", commit, of] => return self.git_is_ancestor(commit, of),
-            ["merge", rest @ ..] => return self.git_merge(rest),
+            ["merge", ..] => return self.git_merge(args),
             ["-c", "core.quotePath=false", "diff", "--no-relative", "--name-only", "-z", "--diff-filter=U"] => {
                 if !self.merge_head {
                     return ok("");
                 }
                 return ok(&self.conflicts.iter().map(|f| format!("{f}\0")).collect::<String>());
             }
-            ["push", rest @ ..] => return self.git_push(rest),
-            ["ls-remote", rest @ ..] => return self.git_ls_remote(rest),
-            ["-c", "core.quotePath=false", "diff", "--no-relative", "-U0", ..] => return ok(&self.diff),
+            ["push", ..] => return self.git_push(args),
+            ["ls-remote", ..] => return self.git_ls_remote(args),
+            ["-c", "core.quotePath=false", "diff", "--no-relative", diff @ ..] if change_diff_args(diff) => {
+                return ok(&self.diff)
+            }
             ["remote", "get-url", "origin"] => {
                 if !self.has_origin {
                     return Completed::new(2, "", "error: No such remote 'origin'");
@@ -495,40 +497,42 @@ impl FakeState {
         ok("")
     }
 
-    /// The commit of a local branch: HEAD's for one checked out, in the checkout or a linked worktree (whose commits
-    /// move HEAD too), else what branches holds. push_branch's `rev-parse --verify` reads it; prune's quiet one, whose
-    /// tests set up the branches they look at in branches alone, reads branches.
+    /// The commit refs/heads/b names, as both `rev-parse --verify`s read it: what branches holds, else HEAD's for a
+    /// branch checked out in the checkout or a linked worktree (whose commits move HEAD too) that branches does not
+    /// hold, as the run's branch is once `switch -c` made it; None for no such branch. A detached checkout or
+    /// worktree, whose branch reads "HEAD", is no branch.
     fn branch_commit(&self, b: &str) -> Option<&str> {
-        if b == self.branch || self.worktrees.values().any(|w| w == b) {
-            return self.head.as_deref();
+        if let Some(commit) = self.branches.get(b) {
+            return Some(commit);
         }
-        self.branches.get(b).map(String::as_str)
+        let checked_out = b != "HEAD" && (b == self.branch || self.worktrees.values().any(|w| w == b));
+        checked_out.then_some(self.head.as_deref()).flatten()
     }
 
-    /// `git rev-parse` in the checkout, given the arguments after `rev-parse`: the branch checked out, whether a
+    /// `git rev-parse` in the checkout: the branch checked out, whether a
     /// merge is in progress, a local branch's commit, quietly or failing as git does for no such branch, or whether
     /// this clone has a commit.
     fn git_rev_parse(&self, args: &[&str]) -> Completed {
         match args {
-            ["--abbrev-ref", "HEAD"] => ok(&format!("{}\n", self.branch)),
-            ["-q", "--verify", "MERGE_HEAD"] => status(if self.merge_head { 0 } else { 1 }),
-            ["-q", "--verify", git_ref] if git_ref.starts_with("refs/heads/") => {
-                match self.branches.get(&git_ref["refs/heads/".len()..]) {
+            ["rev-parse", "--abbrev-ref", "HEAD"] => ok(&format!("{}\n", self.branch)),
+            ["rev-parse", "-q", "--verify", "MERGE_HEAD"] => status(if self.merge_head { 0 } else { 1 }),
+            ["rev-parse", "-q", "--verify", git_ref] if git_ref.starts_with("refs/heads/") => {
+                match self.branch_commit(&git_ref["refs/heads/".len()..]) {
                     Some(commit) => ok(&format!("{commit}\n")),
                     None => status(1),
                 }
             }
-            ["--verify", git_ref] if git_ref.starts_with("refs/heads/") => {
+            ["rev-parse", "--verify", git_ref] if git_ref.starts_with("refs/heads/") => {
                 match self.branch_commit(&git_ref["refs/heads/".len()..]) {
                     Some(commit) => ok(&format!("{commit}\n")),
                     None => Completed::new(128, "", "fatal: Needed a single revision"),
                 }
             }
-            ["-q", "--verify", object] if object.ends_with("^{commit}") => {
+            ["rev-parse", "-q", "--verify", object] if object.ends_with("^{commit}") => {
                 let commit = &object[..object.len() - "^{commit}".len()];
                 status(if self.missing_commits.contains(commit) { 1 } else { 0 })
             }
-            _ => unplayed(&[&["rev-parse"], args].concat()),
+            _ => unplayed(args),
         }
     }
 
@@ -544,12 +548,12 @@ impl FakeState {
         status(if is { 0 } else { 1 })
     }
 
-    /// `git merge` of upstream, given the arguments after `merge`: a fast-forward to upstream, which fails once the
+    /// `git merge` of upstream: a fast-forward to upstream, which fails once the
     /// branches diverged; a merge, which stops with a merge in progress and the conflicted files changed when there
     /// are conflicts; or the abort of a merge in progress.
     fn git_merge(&mut self, args: &[&str]) -> Completed {
         match args {
-            ["--ff-only", "--quiet", _] => {
+            ["merge", "--ff-only", "--quiet", _] => {
                 if self.diverged {
                     return Completed::new(128, "", "fatal: Not possible to fast-forward, aborting.");
                 }
@@ -557,7 +561,7 @@ impl FakeState {
                     self.head = Some(upstream);
                 }
             }
-            ["--no-edit", "--quiet", _] => {
+            ["merge", "--no-edit", "--quiet", _] => {
                 if let Some(first) = self.conflicts.first() {
                     let said = format!("CONFLICT (content): Merge conflict in {first}");
                     self.merge_head = true;
@@ -567,13 +571,13 @@ impl FakeState {
                 let upstream = self.upstream.take();
                 self.head = Some(format!("merge-{}", upstream.as_deref().unwrap_or("None")));
             }
-            ["--abort"] => {
+            ["merge", "--abort"] => {
                 self.merge_head = false;
                 for f in self.conflicted_paths() {
                     self.changed.remove(&f);
                 }
             }
-            _ => unplayed(&[&["merge"], args].concat()),
+            _ => unplayed(args),
         }
         ok("")
     }
@@ -583,26 +587,26 @@ impl FakeState {
         self.conflicts.iter().map(|f| format!("/proj/{f}")).collect()
     }
 
-    /// `git worktree`, given the arguments after `worktree`: a detached worktree added; one removed, with the
+    /// `git worktree`: a detached worktree added; one removed, with the
     /// changes under it, which fails with remove_error when that is set; the vanished ones forgotten; or the
     /// porcelain list of the checkout and each linked worktree, a vanished one marked prunable.
     fn git_worktree(&mut self, args: &[&str]) -> Completed {
         match args {
-            ["add", "--detach", path, _] => self.worktrees.insert(*path, "HEAD".to_string()),
-            ["remove", path] | ["remove", "--force", path] => {
+            ["worktree", "add", "--detach", path, _] => self.worktrees.insert(*path, "HEAD".to_string()),
+            ["worktree", "remove", path] | ["worktree", "remove", "--force", path] => {
                 if let Some(error) = &self.remove_error {
                     return Completed::new(128, "", error);
                 }
                 self.worktrees.remove(path);
                 self.changed.retain(|p| !p.starts_with(&format!("{path}/")));
             }
-            ["prune"] => {
+            ["worktree", "prune"] => {
                 let vanished = std::mem::take(&mut self.vanished_worktrees);
                 for path in &vanished {
                     self.worktrees.remove(path);
                 }
             }
-            ["list", "--porcelain"] => {
+            ["worktree", "list", "--porcelain"] => {
                 let mut trees = vec![("/proj".to_string(), self.branch.clone())];
                 trees.extend(self.worktrees.iter().map(|(p, b)| (p.to_string(), b.clone())));
                 let listed: String = trees
@@ -615,35 +619,35 @@ impl FakeState {
                     .collect();
                 return ok(&listed);
             }
-            _ => unplayed(&[&["worktree"], args].concat()),
+            _ => unplayed(args),
         }
         ok("")
     }
 
-    /// `git push` to origin, given the arguments after `push`: a forced push of a commit to a branch, which remote
+    /// `git push` to origin: a forced push of a commit to a branch, which remote
     /// then holds; a local branch pushed with `--set-upstream`, which remote then holds at the branch's commit, with
     /// a tracking branch; or the delete of a branch from remote, which fails when remote has none, and with a lease
     /// fails unless remote has it at the commit the lease names ("None" for no branch), and drops its tracking branch
     /// too.
     fn git_push(&mut self, args: &[&str]) -> Completed {
         match args {
-            ["--quiet", "--force", "origin", refspec] => {
+            ["push", "--quiet", "--force", "origin", refspec] => {
                 let (commit, git_ref) = refspec.split_once(':').unwrap_or((refspec, ""));
                 self.remote.insert(git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref), commit.to_string());
             }
-            ["--quiet", "--set-upstream", "origin", b] => {
+            ["push", "--quiet", "--set-upstream", "origin", b] => {
                 let commit = self.branch_commit(b).unwrap_or_else(|| panic!("FakeHost has no branch {b} to push"));
                 let commit = commit.to_string();
                 self.remote.insert(*b, commit);
                 self.tracking.insert(b.to_string());
             }
-            ["--quiet", "origin", "--delete", git_ref] => {
+            ["push", "--quiet", "origin", "--delete", git_ref] => {
                 if self.remote.remove(git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref)).is_none() {
                     let said = format!("error: unable to delete '{git_ref}': remote ref does not exist");
                     return Completed::new(1, "", &said);
                 }
             }
-            ["--quiet", lease, "origin", "--delete", git_ref] if lease.starts_with("--force-with-lease=") => {
+            ["push", "--quiet", lease, "origin", "--delete", git_ref] if lease.starts_with("--force-with-lease=") => {
                 let b = git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref);
                 let at = self.remote.get(b).map_or("None", String::as_str);
                 if *lease != format!("--force-with-lease={git_ref}:{at}") {
@@ -652,26 +656,26 @@ impl FakeState {
                 self.remote.remove(b);
                 self.tracking.remove(b);
             }
-            _ => unplayed(&[&["push"], args].concat()),
+            _ => unplayed(args),
         }
         ok("")
     }
 
-    /// `git ls-remote` of origin, given the arguments after `ls-remote`: every branch remote holds, which fails with
+    /// `git ls-remote` of origin: every branch remote holds, which fails with
     /// list_remote_error when that is set; or the one branch a ref names, nothing when remote has none.
     fn git_ls_remote(&mut self, args: &[&str]) -> Completed {
         if let Some(error) = self.list_remote_error.as_deref().filter(|_| fails(&mut self.list_remote_failures_left)) {
             return Completed::new(128, "", error);
         }
         match args {
-            ["--heads", "origin"] => {
+            ["ls-remote", "--heads", "origin"] => {
                 ok(&self.remote.iter().map(|(b, c)| format!("{c}\trefs/heads/{b}\n")).collect::<String>())
             }
-            ["origin", git_ref] => {
+            ["ls-remote", "origin", git_ref] => {
                 let b = git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref);
                 ok(&self.remote.get(b).map(|c| format!("{c}\t{git_ref}\n")).unwrap_or_default())
             }
-            _ => unplayed(&[&["ls-remote"], args].concat()),
+            _ => unplayed(args),
         }
     }
 }
@@ -1039,6 +1043,18 @@ impl Host for FakeHost {
     }
 }
 
+/// Whether args, a diff's arguments after `--no-relative`, are those Host::change_diff sends: from a base, to a
+/// commit or the working tree.
+fn change_diff_args(args: &[&str]) -> bool {
+    let fixed = ["-U0", "-M", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/"];
+    args.starts_with(&fixed) && matches!(&args[fixed.len()..], [_, "--"] | [_, _, "--"])
+}
+
+/// Whether args, a commit's arguments after its message, are `--trailer <trailer>` pairs.
+fn trailer_args(args: &[&str]) -> bool {
+    args.chunks(2).all(|pair| matches!(pair, ["--trailer", _]))
+}
+
 /// Whether a scripted failure happens now, given how many more are left (None: every one), counting this one off.
 fn fails(left: &mut Option<u32>) -> bool {
     match left {
@@ -1051,12 +1067,12 @@ fn fails(left: &mut Option<u32>) -> bool {
     }
 }
 
-/// A command that exited with status 0, having printed stdout.
 /// Fails the test on a git command FakeState plays no arm for, so a flag changed in Host is not played as success.
 fn unplayed(args: &[&str]) -> ! {
     panic!("FakeHost got an unplayed git command: {args:?}")
 }
 
+/// A command that exited with status 0, having printed stdout.
 fn ok(stdout: &str) -> Completed {
     Completed::new(0, stdout, "")
 }

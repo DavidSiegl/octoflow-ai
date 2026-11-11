@@ -21,7 +21,7 @@ fn files_written_outside_the_run_directory_are_changes() {
     assert_eq!(changed, [&proj(&format!("{WORKTREES_DIR}/a1/f.py")), &proj("app.py")]);
     drop(s);
     assert_eq!(git_status(&host, &proj("")).unwrap().lines().count(), 2);
-    host.git("/proj", &["commit", "--quiet", "-m", "x"]).unwrap();
+    host.git("/proj", &["commit", "--quiet", "-m", "x", "-m", "note"]).unwrap();
     assert!(host.state().changed.is_empty());
     assert_eq!(host.git_head("/proj").unwrap().as_deref(), Some("abc123+commit"));
 }
@@ -155,7 +155,7 @@ fn worktrees_see_their_own_branch_and_changes() {
     host.write("/proj/mine.py", "x", false).unwrap();
     assert_eq!(git_status(&host, &wt).unwrap(), format!("?? {wt}/f.py\n"));
     assert_eq!(git_status(&host, "/proj").unwrap(), "?? /proj/mine.py\n");
-    host.git(&wt, &["commit", "-m", "x"]).unwrap();
+    host.git(&wt, &["commit", "--quiet", "-m", "x", "-m", "note"]).unwrap();
     assert_eq!(host.state().changed.len(), 1);
     host.state().remove_error = Some("fatal: contains modified or untracked files".into());
     assert!(host.remove_worktree("/proj", &wt, false).unwrap_err().0.contains("untracked"));
@@ -298,9 +298,26 @@ fn push_branch_scans_and_lands_the_branch_s_commit() {
     assert_eq!(s.scans.iter().map(|scan| scan.commit.as_str()).collect::<Vec<_>>(), ["abc123"]);
     assert_eq!(s.remote.get("orchestrator/x").map(String::as_str), Some("abc123"));
     assert!(s.tracking.contains("orchestrator/x"));
-    drop(s);
-    let missing = host.git("/proj", &["rev-parse", "--verify", "refs/heads/none"]);
-    assert!(missing.is_err(), "{missing:?}");
+}
+
+#[test]
+fn a_branch_s_commit_is_what_branches_holds_else_head_s_where_it_is_checked_out() {
+    let host = FakeHost::new(Some("abc123"), "main");
+    {
+        let mut s = host.state();
+        s.worktrees.insert(proj(&format!("{WORKTREES_DIR}/a1")), "orchestrator/x".into());
+        s.worktrees.insert(proj(&format!("{WORKTREES_DIR}/b2")), "HEAD".into());
+        s.branches.insert("main", "c0".into());
+    }
+    let verified = |b: &str| host.git_run("/proj", &["rev-parse", "--verify", &format!("refs/heads/{b}")], 60).unwrap();
+    for (b, commit) in [("main", Some("c0")), ("orchestrator/x", Some("abc123")), ("HEAD", None), ("none", None)] {
+        assert_eq!(host.branch_commit("/proj", b).unwrap().as_deref(), commit, "{b}");
+        let said = verified(b);
+        match commit {
+            Some(commit) => assert_eq!((said.status, said.stdout), (0, format!("{commit}\n")), "{b}"),
+            None => assert_eq!(said.status, 128, "{b}"),
+        }
+    }
 }
 
 #[test]
