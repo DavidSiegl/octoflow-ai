@@ -3,6 +3,7 @@
 //! real processes for what only they show; every herdr command the e2e scenarios recorded; and the FakeHerdr the
 //! Workflow tests of ticket 08 run on.
 
+use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
@@ -632,9 +633,12 @@ fn without_a_server_launch_starts_the_own_session_s_and_launches_there() {
     assert_eq!(launched, in_own_session("w1:p1"));
     let ran = given(&d);
     assert!(ran[0].starts_with("socket work: workspace create "), "{ran:?}");
-    assert_eq!(ran[1..3], ["octoflow: status server", "octoflow: server"], "{ran:?}");
-    let (looks, launch) = ran[3..].split_at(ran.len() - 5);
-    assert!(looks.len() > 1 && looks.iter().all(|c| c == "octoflow: status server"), "it waits for the server: {ran:?}");
+    let (start, launch) = ran[1..].split_at(ran.len() - 3);
+    // The server is started in the background, so where its line falls among the looks that follow is not fixed.
+    assert_eq!(start[0], "octoflow: status server", "{ran:?}");
+    assert_eq!(start.iter().filter(|c| *c == "octoflow: server").count(), 1, "{ran:?}");
+    let looks = start.iter().filter(|c| *c == "octoflow: status server").count();
+    assert!(looks > 2 && looks == start.len() - 1, "it waits for the server: {ran:?}");
     assert!(launch[0].starts_with("octoflow: workspace create --cwd /proj "), "{ran:?}");
     assert!(launch[1].starts_with("octoflow: pane run w1:p1 "), "{ran:?}");
     // Whether it has exited is asked of the server it is in.
@@ -665,10 +669,51 @@ fn a_running_server_of_the_environment_s_is_launched_in_and_the_own_session_left
 fn a_server_that_does_not_come_up_fails_the_launch_saying_so() {
     let (d, vars) = herdr_with_servers(&[], None, "");
     let mut herdr = ProcessHerdr::in_environment(None, vars.into_iter(), &Interrupt::new());
-    herdr.server_start = (Duration::from_millis(300), Duration::from_millis(50));
+    herdr.server_start = ServerStart { limit: Duration::from_millis(300), every: Duration::from_millis(50) };
     let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err();
     assert_eq!(e.to_string(), "cannot start a herdr server: it was not running after 0.3 seconds");
     assert!(!given(&d).iter().any(|c| c.starts_with("octoflow: workspace create")), "{:?}", given(&d));
+}
+
+#[test]
+fn a_look_herdr_answers_with_an_error_while_its_server_comes_up_is_not_the_end() {
+    let created = r#"{"result": {"workspace": {"workspace_id": "w1"}, "root_pane": {"pane_id": "w1:p1"}}}"#;
+    let no_server = error("server_not_running", "no herdr server is running at /s.sock");
+    // What each command gives in turn: its exit status, standard output and standard error.
+    let answers = Mutex::new(VecDeque::from([
+        (1, String::new(), no_server),                           // workspace create, in the environment's server
+        (0, "status: not running\n".to_string(), String::new()),
+        (0, String::new(), String::new()),                       // sh, which starts the server
+        (1, String::new(), "connection refused\n".to_string()), // a look the server is not yet there to answer
+        (0, "status: running\n".to_string(), String::new()),
+        (0, created.to_string(), String::new()),                 // workspace create, in the session octoflow's
+        (0, String::new(), String::new()),                       // pane run
+    ]));
+    let herdr = ProcessHerdr::with_runner(None, move |argv, _| {
+        let next = answers.lock().unwrap().pop_front();
+        let (status, stdout, stderr) = next.unwrap_or_else(|| panic!("one command more than expected: {argv:?}"));
+        Ok((status, stdout.into_bytes(), stderr.into_bytes()))
+    });
+    assert_eq!(herdr.launch("/proj", "l", &argv(&["true"])).unwrap(), in_own_session("w1:p1"));
+}
+
+#[test]
+fn a_server_that_never_answers_fails_the_launch_with_what_herdr_last_said() {
+    let no_server = error("server_not_running", "no herdr server is running at /s.sock");
+    let looked = Mutex::new(false);
+    // sh, which starts the server, succeeds; after it, herdr has no server to answer a look with.
+    let mut herdr = ProcessHerdr::with_runner(None, move |argv, _| match argv[1].as_str() {
+        "workspace" => Ok((1, Vec::new(), no_server.clone().into_bytes())),
+        "status" if !std::mem::replace(&mut *looked.lock().unwrap(), true) => {
+            Ok((0, b"status: not running\n".to_vec(), Vec::new()))
+        }
+        "status" => Ok((1, Vec::new(), b"connection refused\n".to_vec())),
+        _ => Ok((0, Vec::new(), Vec::new())),
+    });
+    herdr.server_start = ServerStart { limit: Duration::from_millis(100), every: Duration::from_millis(20) };
+    let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
+    assert!(e.starts_with("cannot start a herdr server: it was not running after 0.1 seconds; herdr status server"), "{e}");
+    assert!(e.contains("connection refused"), "{e}");
 }
 
 #[test]

@@ -550,6 +550,29 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   terminal leaves the server with that terminal as its controlling one. Not seen to end the server (its group is in
   the background, so a hangup is not sent to it), and not tried on macOS. Closes with `setsid(2)` before the exec, or
   a herdr that detaches its server itself.
+- **A herdr server that serve starts and that exits at once costs the whole wait and loses its reason.**
+  `start_server` (`engine/src/herdr.rs`) sends the server's output to /dev/null and backgrounds it, so `sh` exits 0
+  whatever `herdr server` does. When the server exits straight away (a bad config.toml, a session directory it
+  cannot write), the looks that follow go on for the whole `SERVER_START` limit and `POST /run` answers 502 `cannot
+  start a herdr server: it was not running after 15 seconds`, with herdr's own message discarded. Raised by
+  cross-review 169 (F2), by reading; no failing `herdr server` was provoked. Closes with the server started as a
+  child the engine keeps a handle on until it answers, its standard error read, or with its output in a file the
+  error quotes.
+- **A server of the session `octoflow` left running by an older herdr counts as ready.** `server_runs`
+  (`engine/src/herdr.rs`) takes the line `status: running` alone; herdr 0.9.1's `herdr status server` prints beside
+  it `endpoint_compatible: yes`, `private_protocol: 22`, `private_protocol_compatible: yes`. The session is left
+  running by design, for weeks, with nobody attached; after a herdr update its server is the old binary. If herdr
+  then refuses the CLI's commands as incompatible, every Start fails at `workspace create` with herdr's error, and
+  nothing says that `herdr session stop octoflow` clears it. Raised by cross-review 169 (F5); not reproduced, since
+  what herdr answers in that case is unknown. Closes with a second herdr version to see it, then the error naming
+  the stop, or the engine restarting a server that is not compatible.
+- **Which herdr session holds a run that serve started never reaches the client.** `Launched.server`
+  (`engine/src/herdr.rs`) is used for `exited` and dropped (`ProjectRuns::start`, `engine/src/serve/runs.rs`). On a
+  202 the app says "If it never is, its herdr workspace shows why" (`ui/src/App.tsx`); a user with no herdr open
+  has no workspace to look at and is not told `herdr session attach octoflow`, which only the README and the
+  release notes name. Each `exited` look also filters the environment anew for the session's server (`in_server`),
+  every 500 ms for up to 30 s. Raised by cross-review 169 (F6, F8). Closes with `POST /run`'s answer naming the
+  session and the app wording its hint by it.
 - **The desktop app's setup dialog shows doctor's fixes in the CLI's words.** `check_setup`
   (`engine/src/cli/doctor.rs`) words its fixes for a command line: "run from a herdr pane, or pass --machine", "pass
   --cwd a git checkout". `/setup` (`engine/src/serve/setup.rs`) passes them on as they are, so the dialog

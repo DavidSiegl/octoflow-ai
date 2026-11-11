@@ -13,7 +13,7 @@
 
 use std::ffi::OsString;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::constants::AGENT_START_TIMEOUT_MS;
@@ -105,8 +105,22 @@ pub struct HerdrServer {
 /// (decided by the user, 2026-11-11), so that what serve started is told apart from the session the human works in.
 pub const OWN_SESSION: &str = "octoflow";
 
+/// How long a herdr server the engine starts has to come up.
+#[derive(Clone, Copy, Debug)]
+struct ServerStart {
+    /// From its start, for answering `herdr status server` as running.
+    limit: Duration,
+    /// Between two looks at whether it does.
+    every: Duration,
+}
+
 /// ProcessHerdr::server_start outside the tests. herdr 0.9.1's server took about a second to answer.
-const SERVER_START: (Duration, Duration) = (Duration::from_secs(15), Duration::from_millis(200));
+const SERVER_START: ServerStart = ServerStart { limit: Duration::from_secs(15), every: Duration::from_millis(200) };
+
+/// Held while a ProcessHerdr looks for a herdr server and starts it (`start_server`), so that of two launches at once
+/// in this process, as serve's requests make them, the second finds the server the first started rather than
+/// starting another.
+static STARTING_SERVER: Mutex<()> = Mutex::new(());
 
 impl HerdrServer {
     /// The server of the session OWN_SESSION, whatever the environment picks.
@@ -299,7 +313,7 @@ impl Launcher for ProcessHerdr {
     }
 
     fn exited(&self, launched: &Launched, lines: u32) -> Result<Option<String>, HerdrError> {
-        let herdr = launched.server.as_ref().map_or_else(|| self.clone(), |server| self.in_server(server));
+        let herdr = self.reaching_server(launched.server.as_ref());
         let pane = launched.pane.as_str();
         // Unwrapped, so that a long line is one line, as the marker must be to be found; a few more lines than asked
         // for, for the marker and the shell's prompt after it.
@@ -340,10 +354,13 @@ impl ProcessHerdr {
 
     /// Have the herdr server this herdr's environment picks running on this machine: started headless, when it is
     /// not, in a process group of its own with no terminal's input or output, so that it outlives the engine as the
-    /// server herdr's own client starts does. Errors: herdr's; the server cannot be started, or does not answer as
-    /// running within server_start.
+    /// server herdr's own client starts does. One start at a time in this process (STARTING_SERVER). Errors: herdr
+    /// cannot be asked; the server cannot be started; or it does not answer as running within server_start's limit,
+    /// with what herdr last answered instead, when it answered with an error.
     fn start_server(&self) -> Result<(), HerdrError> {
-        if self.server_runs()? {
+        // The lock guards no data, so one a panicking start left poisoned is as good as new.
+        let _starting = STARTING_SERVER.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if self.server_runs(Duration::from_secs(CALL_LIMIT_SECONDS))? {
             return Ok(());
         }
         let failed = |why: String| HerdrError::Failed(OrchestratorError(format!("cannot start a herdr server: {why}")));
@@ -359,22 +376,33 @@ impl ProcessHerdr {
             Err(ProcessError::Timeout) => return Err(failed("sh did not return".to_string())),
             Err(ProcessError::Interrupted) => return Err(failed("interrupted".to_string())),
         }
-        let (limit, pause) = self.server_start;
+        let ServerStart { limit, every } = self.server_start;
         let deadline = Instant::now() + limit;
-        // An Interrupt raised meanwhile fails the next look, so the wait ends within a pause of it.
-        while !self.server_runs()? {
+        loop {
+            // No look outlasts the wait by more than a pause. An error of herdr's own, a look that ran out of time
+            // included, is a server not up yet; herdr not asked at all ends the wait, as an Interrupt raised
+            // meanwhile does, within a pause of it.
+            let left = deadline.saturating_duration_since(Instant::now());
+            // The error herdr answered this look with, if it did.
+            let refused = match self.server_runs(left.max(every)) {
+                Ok(true) => return Ok(()),
+                Ok(false) => None,
+                Err(e @ HerdrError::Herdr { .. }) => Some(e),
+                Err(e @ HerdrError::Failed(_)) => return Err(e),
+            };
             if Instant::now() >= deadline {
-                return Err(failed(format!("it was not running after {} seconds", limit.as_secs_f64())));
+                let last = refused.map_or_else(String::new, |e| format!("; herdr status server last answered: {e}"));
+                return Err(failed(format!("it was not running after {} seconds{last}", limit.as_secs_f64())));
             }
-            std::thread::sleep(pause);
+            std::thread::sleep(every);
         }
-        Ok(())
     }
 
-    /// Whether the herdr server this herdr's environment picks runs on this machine. `herdr status server` exits 0
-    /// either way (herdr 0.9.1), and says it in a line of its output. Errors: exec's.
-    fn server_runs(&self) -> Result<bool, HerdrError> {
-        let out = self.exec(&["status", "server"], Some(Duration::from_secs(CALL_LIMIT_SECONDS)))?;
+    /// Whether the herdr server this herdr's environment picks runs on this machine, asked with limit on herdr's
+    /// process. `herdr status server` exits 0 either way (herdr 0.9.1), and says it in a line of its output. Errors:
+    /// exec's.
+    fn server_runs(&self, limit: Duration) -> Result<bool, HerdrError> {
+        let out = self.exec(&["status", "server"], Some(limit))?;
         Ok(out.lines().any(|line| line.trim() == "status: running"))
     }
 }
@@ -401,9 +429,8 @@ pub struct ProcessHerdr {
     env: Arc<Vec<(OsString, OsString)>>,
     /// Runs one herdr command.
     run: Arc<RunHerdr>,
-    /// How long a herdr server it starts has to answer `herdr status server` as running, and how long it sleeps
-    /// between two looks.
-    server_start: (Duration, Duration),
+    /// The time it gives a herdr server it starts.
+    server_start: ServerStart,
 }
 
 impl fmt::Debug for ProcessHerdr {
@@ -453,7 +480,13 @@ impl ProcessHerdr {
     /// This herdr, its commands run so that they reach the agent's server when it names one and they are not
     /// forwarded to a machine: the herdr a console's command to the agent goes to.
     fn reaching(&self, agent: &AgentAddress) -> ProcessHerdr {
-        match (&agent.server, &self.machine) {
+        self.reaching_server(agent.server.as_ref())
+    }
+
+    /// This herdr, its commands run so that they reach server when one is given and they are not forwarded to a
+    /// machine, whose herdr picks its own.
+    fn reaching_server(&self, server: Option<&HerdrServer>) -> ProcessHerdr {
+        match (server, &self.machine) {
             (Some(server), None) => self.in_server(server),
             _ => self.clone(),
         }
