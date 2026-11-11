@@ -158,9 +158,9 @@ For each task and repeat, the runner clones the task's bundle into a directory o
 as `run --no-pr --spec`, with a copy of the task's text as the spec, then runs the hidden test on what the run left
 and closes the run's workspace with `close`. The arguments after `--` go to `run` unchanged; the runner refuses
 the flags it sets itself and those that would put the change elsewhere. A workflow whose first step writes the
-spec, such as `default` or `product-team`, starts at the step after it, so no interview waits for an answer; one
-without such a step, such as `examples/workflows/quick.toml`, cannot take `--spec`, and the engine refuses it
-before any agent starts.
+spec, such as the built-in `default` or `examples/workflows/product-team.toml`, starts at the step after it, so no
+interview waits for an answer; one without such a step, such as `examples/workflows/quick.toml`, cannot take
+`--spec`, and the engine refuses it before any agent starts.
 `xtask/src/eval.rs`'s module comment gives its flags, the shape of a task and its exit status. A Ctrl-C stops the
 eval once the engine has saved its run, keeps that trial's clone, prints the table of the trials before it and exits
 130.
@@ -196,7 +196,10 @@ for none). Commit that file with the change it measures.
 A mean is over the trials that know the value, `?` when none does, and `(k/n)` says it is over k of the row's n. A
 run that failed or was interrupted has no `metrics.json`, so it adds to `passed` and `wall time` only. Five tasks
 and a few repeats are a small sample: one trial more or less passed is noise, a shift across tasks and repeats is
-not. Compare results of the same tasks only; a line's `commit`, this checkout's HEAD, says which.
+not. Compare results of the same tasks only; a line's `commit`, this checkout's HEAD, says which. The Rust series'
+first trial, `bugfix` in `evals/results/2026-11-11-default.jsonl`, is no baseline for wall time or tokens: an unknown
+part of its 73m49s was its Builder's pane waiting on a harness's first-run question, and its `tokens` are `null`
+though Claude Code's are read (TODO.md, "The first real eval run").
 
 A result line holds `version` (2 since the tasks became Rust crates, whose numbers start a new series on 2026-10-31; 1
 for the Python tasks before), `date`, `config`, `run_args`, `engine` (`EVAL_ENGINE`, or `this checkout's build`),
