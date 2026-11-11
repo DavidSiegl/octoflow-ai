@@ -398,7 +398,7 @@ record round 1 of each workflow as sent, so a reworded prompt fails both. Of rou
 session's prompts, the recordings hold only the templates, in `state.json`; the text as sent, placeholders filled in
 and a fresh session's prompt put together, only the golden files hold. The engine's
 other texts, its follow-up prompts, notes, commit messages and pull request bodies, have no golden files: the
-scenarios record them as sent, where one reaches them. TODO.md lists the texts neither reaches.
+scenarios record them as sent, where one reaches them. GitHub #347 lists the texts neither reaches.
 
 xtask's tests (`xtask/tests/`) cover the eval runner, `cargo xtask eval` ([Evals](design.md#evals)), with the
 `fake-engine` binary as its engine, a program that plays a scripted run in the clone, and the eval tasks: each bundle
