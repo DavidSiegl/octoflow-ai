@@ -111,17 +111,20 @@ pub struct HerdrServer {
 /// (decided by the user, 2026-11-11), so that what serve started is told apart from the session the human works in.
 pub const OWN_SESSION: &str = "octoflow";
 
-/// How long a herdr server the engine starts has to come up.
+/// How long to keep looking for something herdr reports to come about, and how often.
 #[derive(Clone, Copy, Debug)]
-struct ServerStart {
-    /// From its start, for answering `herdr status server` as running; also the longest one look at that may take.
+struct Poll {
+    /// From the first look, after which the last look's answer stands.
     limit: Duration,
-    /// Between two looks at whether it does.
+    /// Between two looks.
     every: Duration,
 }
 
 /// ProcessHerdr::server_start outside the tests. herdr 0.9.1's server took about a second to answer.
-const SERVER_START: ServerStart = ServerStart { limit: Duration::from_secs(15), every: Duration::from_millis(200) };
+const SERVER_START: Poll = Poll { limit: Duration::from_secs(15), every: Duration::from_millis(200) };
+
+/// ProcessHerdr::shell_ready outside the tests: a new pane's shell may still be running its startup files.
+const SHELL_READY: Poll = Poll { limit: Duration::from_secs(10), every: Duration::from_millis(100) };
 
 /// Held while a ProcessHerdr looks for a herdr server and starts it (`start_server`), so that of two launches at once
 /// in this process, as serve's requests make them, the second finds the server the first started rather than
@@ -205,8 +208,8 @@ pub trait Herdr {
     /// agent exits. The shell must take POSIX `export NAME='value'`, as sh, bash, zsh and fish do; fish reads `\\`
     /// and `\'` inside the quotes as escapes, so a value with `\\` in it reaches fish changed. Returns once the shell
     /// has run the export. Errors: Failed, without typing anything, for a value with a control character (typable)
-    /// or a pane whose shell is not at its prompt, as when an agent still runs there; Failed when the shell has not
-    /// run the line within EXPORT_TIMEOUT_MS; herdr's, such as pane_not_found.
+    /// or a pane whose shell has not reached its prompt within a few seconds, as when an agent still runs there;
+    /// Failed when the shell has not run the line within EXPORT_TIMEOUT_MS; herdr's, such as pane_not_found.
     fn export(&self, pane: &str, vars: &[(String, String)]) -> Result<(), HerdrError>;
 
     /// Start an agent named name in pane, of the harness kind (herdr's --kind), passing it args. Gives false when it
@@ -391,7 +394,7 @@ impl ProcessHerdr {
             Err(ProcessError::Timeout) => return Err(failed("sh did not return".to_string())),
             Err(ProcessError::Interrupted) => return Err(failed("interrupted".to_string())),
         }
-        let ServerStart { limit, every } = self.server_start;
+        let Poll { limit, every } = self.server_start;
         let deadline = Instant::now() + limit;
         loop {
             // A look may take as long as the whole wait, the last one too, so that a server up at the wait's end is
@@ -420,6 +423,30 @@ impl ProcessHerdr {
         let out = self.exec(&["status", "server"], Some(limit))?;
         Ok(out.lines().any(|line| line.trim() == "status: running"))
     }
+
+    /// Returns once pane's shell is at its prompt, its own process group in the foreground, looking again within
+    /// shell_ready: a new pane's shell may still be running its startup files, and a line typed meanwhile into an
+    /// agent running there would be a prompt to it. Errors: Failed when the shell is not at its prompt within
+    /// shell_ready's limit; bad_response for an answer without the shell's pid; herdr's, such as pane_not_found.
+    fn await_prompt(&self, pane: &str) -> Result<(), HerdrError> {
+        let Poll { limit, every } = self.shell_ready;
+        let deadline = Instant::now() + limit;
+        loop {
+            let info = self.call(&["pane", "process-info", "--pane", pane])?;
+            let Some(shell) = info.pointer("/process_info/shell_pid").and_then(Value::as_u64) else {
+                return Err(HerdrError::new("bad_response", "pane process-info: no process_info.shell_pid in the answer"));
+            };
+            let foreground = info.pointer("/process_info/foreground_process_group_id").and_then(Value::as_u64);
+            if foreground == Some(shell) {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                let why = format!("cannot type into pane {pane}: its shell is not at its prompt");
+                return Err(HerdrError::Failed(OrchestratorError::new(why)));
+            }
+            std::thread::sleep(every);
+        }
+    }
 }
 
 /// What running the herdr CLI once gives: its exit status and both outputs, as run_process gives them.
@@ -444,8 +471,11 @@ pub struct ProcessHerdr {
     env: Arc<Vec<(OsString, OsString)>>,
     /// Runs one herdr command.
     run: Arc<RunHerdr>,
-    /// The time it gives a herdr server it starts.
-    server_start: ServerStart,
+    /// The time it gives a herdr server it starts to answer `herdr status server` as running; its limit is also the
+    /// longest one look at that may take.
+    server_start: Poll,
+    /// The time it gives a pane's shell to reach its prompt before export types into it.
+    shell_ready: Poll,
 }
 
 impl fmt::Debug for ProcessHerdr {
@@ -474,6 +504,7 @@ impl ProcessHerdr {
             env: Arc::new(crate::env::without_withheld(vars)),
             run: Arc::new(move |argv, env, limit| run_process(argv, None, limit, env, &interrupt)),
             server_start: SERVER_START,
+            shell_ready: SHELL_READY,
         }
     }
 
@@ -489,6 +520,7 @@ impl ProcessHerdr {
             env: Arc::default(),
             run: Arc::new(move |argv, _, limit| run(argv, limit)),
             server_start: SERVER_START,
+            shell_ready: SHELL_READY,
         }
     }
 
@@ -643,8 +675,6 @@ fn herdr_error(status: i32, stdout: &str, stderr: &str) -> HerdrError {
     HerdrError::new(&format!("exit_{status}"), printed.trim())
 }
 
-/// A string field of an answer, at the path of keys; bad_response naming the command and the path when it is not
-/// there or not a string.
 /// Ok when each value of vars can be typed into pane's shell (Herdr::export); else Failed, naming the first that
 /// cannot: one with a control character, which the shell's line editor would take as a key rather than text.
 pub(crate) fn typable(pane: &str, vars: &[(String, String)]) -> Result<(), HerdrError> {
@@ -662,6 +692,8 @@ fn names(vars: &[(String, String)]) -> String {
     vars.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>().join(", ")
 }
 
+/// A string field of an answer, at the path of keys; bad_response naming the command and the path when it is not
+/// there or not a string.
 fn field(answer: &Value, command: &str, path: &[&str]) -> Result<String, HerdrError> {
     let mut value = answer;
     for key in path {
@@ -708,14 +740,7 @@ impl Herdr for ProcessHerdr {
 
     fn export(&self, pane: &str, vars: &[(String, String)]) -> Result<(), HerdrError> {
         typable(pane, vars)?;
-        // Typed into an agent still running there, the line would be a prompt to it.
-        let info = self.call(&["pane", "process-info", "--pane", pane])?;
-        let at_prompt = info.pointer("/process_info/shell_pid").filter(|pid| pid.is_u64())
-            == info.pointer("/process_info/foreground_process_group_id");
-        if !at_prompt {
-            let why = format!("cannot type into pane {pane}: its shell is not at its prompt");
-            return Err(HerdrError::Failed(OrchestratorError::new(why)));
-        }
+        self.await_prompt(pane)?;
         let quoted = |value: &str| format!("'{}'", value.replace('\'', r"'\''"));
         let words: Vec<String> = vars.iter().map(|(name, value)| format!("{name}={}", quoted(value))).collect();
         // The shell prints the marker once it has run the export, and only then: a line the shell has not read yet,
