@@ -803,3 +803,15 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   sibling directories, and other glob syntax opencode recognises can stop the rule matching the real run dir"
   (`Harness::launch`, `engine/src/harness.rs`). opencode 2.0.24 documents no escape for its wildcards. Closes with
   no grant for such a path (opencode then asks, as before 0.67.1), or an escape once opencode has one.
+- **FakeHost plays git command lines, not repository operations.** The Workflow tests' `FakeHost`
+  (`engine/src/host/fake.rs`) answers each git command `Host` sends, so a flag changed in `engine/src/host.rs` has to
+  change in the fake too. Decided against (the user's ruling, 2026-11-11, from the architecture review): moving the
+  fake's seam up to repository operations (fetch, fast-forward, merge, push). At command level `Host`'s own steps run
+  in every Workflow test, and since a command the fake has no arm for fails the test, a flag changed in one file and
+  not the other is caught.
+- **serve's `RunRequest` checks harness kinds and role flags that the command line checks again.** `RunRequest`
+  (`engine/src/serve/start.rs`, `parse`, `by_role`, `argv`) checks what `engine/src/cli/args.rs` checks
+  (`role_agent_arg`, `role_model_arg`). Decided against (the user's ruling, 2026-11-11): validating by running
+  `parse_args` on the built argv and returning clap's error. The desktop app shows serve's `error` text verbatim
+  (`ui/src/api.ts`), and clap's is several lines with `Usage:` and "try '--help'"; `serve/start/tests.rs`'s round
+  trip through `parse_args` already catches the two checks drifting apart.

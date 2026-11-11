@@ -471,6 +471,14 @@ pub(crate) fn saved_run(phase: &str, rnd: u32, roles: &[&str]) -> RunState {
 /// The ref of round 1's first quality round.
 pub(crate) const REF_1_1: &str = "orchestrator-ci/a1b2c3-1-q1";
 
+/// origin's quality snapshot branches (`CI_REF_PREFIX`) with their commits, leaving out the run's own branch, which
+/// publishing pushes and the end keeps.
+pub(crate) fn ci_refs(host: &FakeHost) -> Vec<(String, String)> {
+    let s = host.state();
+    let snapshots = s.remote.iter().filter(|(b, _)| b.starts_with(crate::constants::CI_REF_PREFIX));
+    snapshots.map(|(b, c)| (b.to_string(), c.clone())).collect()
+}
+
 /// A build whose gate fails on an unused import: Python's outcome(**RED).
 pub(crate) fn red() -> Outcome {
     Outcome::gate("ERROR", &["`limiter.py:3` error ruff F401: `os` imported but unused"])

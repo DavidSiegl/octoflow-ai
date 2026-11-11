@@ -285,6 +285,25 @@ fn an_unscripted_gh_command_fails_the_test() {
 }
 
 #[test]
+#[should_panic(expected = "unplayed git command")]
+fn an_unplayed_git_command_fails_the_test() {
+    let _ = FakeHost::default().git("/proj", &["stash"]);
+}
+
+#[test]
+fn push_branch_scans_and_lands_the_branch_s_commit() {
+    let host = FakeHost::new(Some("abc123"), "orchestrator/x");
+    host.push_branch("/proj", "orchestrator/x", "base0", "/r/leaks.json").unwrap();
+    let s = host.state();
+    assert_eq!(s.scans.iter().map(|scan| scan.commit.as_str()).collect::<Vec<_>>(), ["abc123"]);
+    assert_eq!(s.remote.get("orchestrator/x").map(String::as_str), Some("abc123"));
+    assert!(s.tracking.contains("orchestrator/x"));
+    drop(s);
+    let missing = host.git("/proj", &["rev-parse", "--verify", "refs/heads/none"]);
+    assert!(missing.is_err(), "{missing:?}");
+}
+
+#[test]
 fn pruning_forgets_a_worktree_whose_directory_is_gone() {
     let host = FakeHost::new(Some("abc123"), "main");
     let wt = proj(&format!("{WORKTREES_DIR}/a1b2c3"));

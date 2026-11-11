@@ -181,7 +181,8 @@ pub(crate) struct FakeState {
     pub merge_head: bool,
     /// (parent, message) of each snapshot, whose commit is snap<n>.
     pub snapshots: Vec<(String, String)>,
-    /// origin's branches, by name, with their commit: those `push --force` created, which `ls-remote` lists.
+    /// origin's branches, by name, with their commit: those `push --force` and `push --set-upstream` created, which
+    /// `ls-remote` lists.
     pub remote: Map<String>,
     /// The stderr of a failing `ls-remote` of origin, which lists remote; None lists it.
     pub list_remote_error: Option<String>,
@@ -485,14 +486,28 @@ impl FakeState {
             ["branch", "--quiet", "-D", b] => {
                 self.branches.remove(b);
             }
-            _ => {}
+            // What a fetch brings is set up in the state beforehand (upstream, missing_commits), not fetched.
+            ["fetch", "--quiet", "origin", _] => {}
+            // The index is not modelled: commit takes every change.
+            ["add", "--all"] => {}
+            _ => unplayed(args),
         }
         ok("")
     }
 
+    /// The commit of a local branch: HEAD's for one checked out, in the checkout or a linked worktree (whose commits
+    /// move HEAD too), else what branches holds. push_branch's `rev-parse --verify` reads it; prune's quiet one, whose
+    /// tests set up the branches they look at in branches alone, reads branches.
+    fn branch_commit(&self, b: &str) -> Option<&str> {
+        if b == self.branch || self.worktrees.values().any(|w| w == b) {
+            return self.head.as_deref();
+        }
+        self.branches.get(b).map(String::as_str)
+    }
+
     /// `git rev-parse` in the checkout, given the arguments after `rev-parse`: the branch checked out, whether a
-    /// merge is in progress, a local branch's commit, or whether this clone has a commit. Anything else prints
-    /// nothing.
+    /// merge is in progress, a local branch's commit, quietly or failing as git does for no such branch, or whether
+    /// this clone has a commit.
     fn git_rev_parse(&self, args: &[&str]) -> Completed {
         match args {
             ["--abbrev-ref", "HEAD"] => ok(&format!("{}\n", self.branch)),
@@ -503,11 +518,17 @@ impl FakeState {
                     None => status(1),
                 }
             }
+            ["--verify", git_ref] if git_ref.starts_with("refs/heads/") => {
+                match self.branch_commit(&git_ref["refs/heads/".len()..]) {
+                    Some(commit) => ok(&format!("{commit}\n")),
+                    None => Completed::new(128, "", "fatal: Needed a single revision"),
+                }
+            }
             ["-q", "--verify", object] if object.ends_with("^{commit}") => {
                 let commit = &object[..object.len() - "^{commit}".len()];
                 status(if self.missing_commits.contains(commit) { 1 } else { 0 })
             }
-            _ => ok(""),
+            _ => unplayed(&[&["rev-parse"], args].concat()),
         }
     }
 
@@ -525,7 +546,7 @@ impl FakeState {
 
     /// `git merge` of upstream, given the arguments after `merge`: a fast-forward to upstream, which fails once the
     /// branches diverged; a merge, which stops with a merge in progress and the conflicted files changed when there
-    /// are conflicts; or the abort of a merge in progress. Anything else prints nothing.
+    /// are conflicts; or the abort of a merge in progress.
     fn git_merge(&mut self, args: &[&str]) -> Completed {
         match args {
             ["--ff-only", "--quiet", _] => {
@@ -552,7 +573,7 @@ impl FakeState {
                     self.changed.remove(&f);
                 }
             }
-            _ => {}
+            _ => unplayed(&[&["merge"], args].concat()),
         }
         ok("")
     }
@@ -564,8 +585,7 @@ impl FakeState {
 
     /// `git worktree`, given the arguments after `worktree`: a detached worktree added; one removed, with the
     /// changes under it, which fails with remove_error when that is set; the vanished ones forgotten; or the
-    /// porcelain list of the checkout and each linked worktree, a vanished one marked prunable. Anything else prints
-    /// nothing.
+    /// porcelain list of the checkout and each linked worktree, a vanished one marked prunable.
     fn git_worktree(&mut self, args: &[&str]) -> Completed {
         match args {
             ["add", "--detach", path, _] => self.worktrees.insert(*path, "HEAD".to_string()),
@@ -595,20 +615,27 @@ impl FakeState {
                     .collect();
                 return ok(&listed);
             }
-            _ => {}
+            _ => unplayed(&[&["worktree"], args].concat()),
         }
         ok("")
     }
 
     /// `git push` to origin, given the arguments after `push`: a forced push of a commit to a branch, which remote
-    /// then holds; or the delete of a branch from remote, which fails when remote has none, and with a lease fails
-    /// unless remote has it at the commit the lease names ("None" for no branch), and drops its tracking branch too.
-    /// Anything else prints nothing.
+    /// then holds; a local branch pushed with `--set-upstream`, which remote then holds at the branch's commit, with
+    /// a tracking branch; or the delete of a branch from remote, which fails when remote has none, and with a lease
+    /// fails unless remote has it at the commit the lease names ("None" for no branch), and drops its tracking branch
+    /// too.
     fn git_push(&mut self, args: &[&str]) -> Completed {
         match args {
             ["--quiet", "--force", "origin", refspec] => {
                 let (commit, git_ref) = refspec.split_once(':').unwrap_or((refspec, ""));
                 self.remote.insert(git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref), commit.to_string());
+            }
+            ["--quiet", "--set-upstream", "origin", b] => {
+                let commit = self.branch_commit(b).unwrap_or_else(|| panic!("FakeHost has no branch {b} to push"));
+                let commit = commit.to_string();
+                self.remote.insert(*b, commit);
+                self.tracking.insert(b.to_string());
             }
             ["--quiet", "origin", "--delete", git_ref] => {
                 if self.remote.remove(git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref)).is_none() {
@@ -625,14 +652,13 @@ impl FakeState {
                 self.remote.remove(b);
                 self.tracking.remove(b);
             }
-            _ => {}
+            _ => unplayed(&[&["push"], args].concat()),
         }
         ok("")
     }
 
     /// `git ls-remote` of origin, given the arguments after `ls-remote`: every branch remote holds, which fails with
-    /// list_remote_error when that is set; or the one branch a ref names, nothing when remote has none. Anything else
-    /// prints nothing.
+    /// list_remote_error when that is set; or the one branch a ref names, nothing when remote has none.
     fn git_ls_remote(&mut self, args: &[&str]) -> Completed {
         if let Some(error) = self.list_remote_error.as_deref().filter(|_| fails(&mut self.list_remote_failures_left)) {
             return Completed::new(128, "", error);
@@ -645,7 +671,7 @@ impl FakeState {
                 let b = git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref);
                 ok(&self.remote.get(b).map(|c| format!("{c}\t{git_ref}\n")).unwrap_or_default())
             }
-            _ => ok(""),
+            _ => unplayed(&[&["ls-remote"], args].concat()),
         }
     }
 }
@@ -1026,6 +1052,11 @@ fn fails(left: &mut Option<u32>) -> bool {
 }
 
 /// A command that exited with status 0, having printed stdout.
+/// Fails the test on a git command FakeState plays no arm for, so a flag changed in Host is not played as success.
+fn unplayed(args: &[&str]) -> ! {
+    panic!("FakeHost got an unplayed git command: {args:?}")
+}
+
 fn ok(stdout: &str) -> Completed {
     Completed::new(0, stdout, "")
 }
