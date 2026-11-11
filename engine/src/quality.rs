@@ -21,7 +21,7 @@ use crate::host::line_ends_as_lf;
 use crate::map::Map;
 
 /// The words of the gate line, the file's first non-blank one. Only the engine writes BUILD_FAILED, for a build that
-/// ended before its Gate stage (Workflow::quality_report).
+/// ended before its Gate stage or a local gate that could not judge (build_failed_report, could_not_judge_report).
 pub const QUALITY_OK: &str = "OK";
 pub const QUALITY_ERROR: &str = "ERROR";
 pub const QUALITY_BUILD_FAILED: &str = "BUILD_FAILED";

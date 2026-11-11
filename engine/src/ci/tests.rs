@@ -569,3 +569,199 @@ fn ci_reads_the_file_but_no_child_process_sees_it() {
     let env = ProcessHost::local(&Interrupt::new()).check(&["env"], None, 60).unwrap();
     assert!(!env.contains(token), "a child saw the token");
 }
+
+/// The snapshot and round the chain tests judge, pushed to REF_1_1.
+const SNAPSHOT: &str = "5ca1ab1e";
+const PLACE: &str = "round 1, quality 1";
+
+/// RunState::ci as QualityGate::start leaves it once it pushed SNAPSHOT to REF_1_1.
+fn pushed() -> Object {
+    crate::json::object([("ref", Value::from(REF_1_1)), ("sha", Value::from(SNAPSHOT))])
+}
+
+/// How a judgement by Jenkins on fake, from ci, ended: its verdict or error, and the Poll::Recorded calls on the way.
+struct Ran {
+    came: Result<Verdict, CIError>,
+    recorded: usize,
+    log: Vec<String>,
+}
+
+/// Judges SNAPSHOT on fake from ci as a start would (adopt on a resume), asking for the verdict until it comes or
+/// fails, at most stop_after Poll::Recorded calls when given; the judgement is then dropped, as an orchestrator that
+/// stops is.
+fn judge(fake: &Arc<FakeJenkins>, ci: &mut Object, adopt: bool, stop_after: Option<usize>) -> Ran {
+    let jenkins = jenkins_on(fake);
+    let mut judging = Judging::jenkins(&jenkins, SNAPSHOT, REF_1_1, PLACE, adopt);
+    let host = crate::host::fake::FakeHost::default();
+    let log = Mutex::new(Vec::new());
+    let mut recorded = 0;
+    for _ in 0..50 {
+        match judging.verdict(&host, ci, &|line| log.lock().unwrap().push(line.to_string())) {
+            Ok(Poll::Came(verdict)) => return Ran { came: Ok(verdict), recorded, log: log.into_inner().unwrap() },
+            Ok(Poll::Recorded) => recorded += 1,
+            Ok(Poll::Waiting) => {}
+            Err(e) => return Ran { came: Err(e), recorded, log: log.into_inner().unwrap() },
+        }
+        if stop_after == Some(recorded) {
+            return Ran { came: Err(CIError::Refused(OrchestratorError("stopped".into()))), recorded, log: vec![] };
+        }
+    }
+    panic!("no verdict after 50 polls: {:?}", fake.state().names);
+}
+
+/// The text of the Judged verdict's GATE line, and its judged_by line.
+fn judged(came: Result<Verdict, CIError>) -> (Option<String>, String) {
+    match came {
+        Ok(Verdict::Judged { quality, judged_by, .. }) => {
+            (crate::quality::parse_gate(&quality).map(str::to_string), judged_by)
+        }
+        Ok(Verdict::NotJudged(text)) => panic!("not judged: {text}"),
+        Err(e) => panic!("failed: {e}"),
+    }
+}
+
+/// The message of a refusal, which the round reports and does not retry.
+fn refused(came: Result<Verdict, CIError>) -> String {
+    match came {
+        Err(CIError::Refused(e)) => e.to_string(),
+        Err(e) => panic!("may pass: {e}"),
+        Ok(_) => panic!("a verdict came"),
+    }
+}
+
+fn count(names: &[String], name: &str) -> usize {
+    names.iter().filter(|n| *n == name).count()
+}
+
+#[test]
+fn a_chain_triggers_a_build_and_records_each_link() {
+    let fake = FakeJenkins::new();
+    fake.state().outcomes.push_back(Outcome::gate("ERROR", &["`a.py:3` error ruff F401: unused"]));
+    let mut ci = pushed();
+    let ran = judge(&fake, &mut ci, false, None);
+    let (gate, by) = judged(ran.came);
+    assert_eq!(gate.as_deref(), Some("ERROR"));
+    assert_eq!(by, format!("Jenkins build #41 judged snapshot `{SNAPSHOT}` ({PLACE}) and ended UNSTABLE."));
+    assert_eq!(ran.recorded, 2, "the queue item, then the build");
+    assert_eq!(ci.get("queue_url"), Some(&Value::from(format!("{JENKINS}/queue/item/941/"))));
+    assert_eq!(ci.get("build"), Some(&Value::from(41)));
+    let names = fake.state().names.clone();
+    assert_eq!(names[..2], ["trigger", "queue"], "no look for a build to adopt off a resume: {names:?}");
+    assert_eq!(fake.state().triggered(), [REF_1_1]);
+}
+
+#[test]
+fn a_resumed_chain_adopts_a_build_of_its_ref_it_did_not_record() {
+    let fake = FakeJenkins::new();
+    fake.state().add_build("orchestrator-ci/other-1-q1", Outcome::gate("ERROR", &["`a.py:3` error ruff F401: unused"]));
+    let ours = fake.state().add_build(REF_1_1, Outcome::gate("OK", &[]));
+    let mut ci = pushed();
+    let ran = judge(&fake, &mut ci, true, None);
+    assert_eq!(judged(ran.came).0.as_deref(), Some("OK"));
+    assert_eq!(ci.get("build"), Some(&Value::from(ours)));
+    assert!(!ci.contains_key("queue_url"));
+    assert_eq!(ran.log, [format!("[quality] adopting Jenkins build #{ours} of {REF_1_1}")]);
+    let names = fake.state().names.clone();
+    assert_eq!(names[0], "find");
+    assert_eq!(count(&names, "trigger"), 0, "{names:?}");
+}
+
+#[test]
+fn a_resumed_chain_with_no_build_to_adopt_triggers_one_and_looks_once() {
+    let fake = FakeJenkins::new();
+    let rejected = fake.state().add_build(REF_1_1, Outcome::gate("OK", &[]));
+    let mut ci = pushed();
+    ci.insert("rejected".into(), serde_json::json!([rejected]));
+    let ran = judge(&fake, &mut ci, true, None);
+    assert_eq!(judged(ran.came).0.as_deref(), Some("OK"));
+    assert_eq!(ci.get("build"), Some(&Value::from(rejected + 1)), "never the rejected build");
+    let names = fake.state().names.clone();
+    assert_eq!((count(&names, "find"), count(&names, "trigger")), (1, 1), "{names:?}");
+}
+
+#[test]
+fn a_chain_resumes_from_each_link_it_saved() {
+    for links in 1..=2 {
+        let fake = FakeJenkins::new();
+        let mut ci = pushed();
+        let first = judge(&fake, &mut ci, false, Some(links));
+        assert_eq!(first.recorded, links);
+        let saved = ci.clone();
+        let ran = judge(&fake, &mut ci, true, None);
+        assert_eq!(judged(ran.came).0.as_deref(), Some("OK"), "from {saved:?}");
+        assert_eq!(ci.get("build"), Some(&Value::from(41)), "from {saved:?}");
+        let names = fake.state().names.clone();
+        assert_eq!((count(&names, "trigger"), count(&names, "find")), (1, 0), "from {saved:?}: {names:?}");
+        assert_eq!(ran.recorded, 2 - links, "from {saved:?}");
+    }
+}
+
+#[test]
+fn a_cancelled_queue_item_cuts_the_chain_back_to_the_snapshot() {
+    let fake = FakeJenkins::new();
+    fake.state().cancelled = true;
+    let mut ci = pushed();
+    let ran = judge(&fake, &mut ci, false, None);
+    assert!(refused(ran.came).contains("was cancelled in Jenkins's queue"));
+    assert_eq!(ci, pushed());
+}
+
+#[test]
+fn a_forgotten_queue_item_is_found_among_the_builds_or_cuts_the_chain_back() {
+    let fake = FakeJenkins::new();
+    fake.state().forgotten = true;
+    let mut ci = pushed();
+    assert_eq!(judged(judge(&fake, &mut ci, false, None).came).0.as_deref(), Some("OK"));
+    assert_eq!(ci.get("build"), Some(&Value::from(41)));
+
+    let fake = FakeJenkins::new();
+    let mut ci = pushed();
+    ci.insert("queue_url".into(), Value::from(format!("{JENKINS}/queue/item/977/")));
+    assert!(refused(judge(&fake, &mut ci, true, None).came).contains("Jenkins forgot queue item"));
+    assert_eq!(ci, pushed());
+}
+
+#[test]
+fn a_discarded_build_cuts_the_chain_back_to_the_snapshot() {
+    let fake = FakeJenkins::new();
+    let mut ci = pushed();
+    ci.insert("queue_url".into(), Value::from(format!("{JENKINS}/queue/item/907/")));
+    ci.insert("build".into(), Value::from(7));
+    let ran = judge(&fake, &mut ci, true, None);
+    assert!(refused(ran.came).contains("Jenkins build #7 of orchestrator-ci/a1b2c3-1-q1 is gone"));
+    assert_eq!(ci, pushed());
+    assert_eq!(fake.state().names, [format!("GET {JOB_PATH}7/api/json")], "Jenkins has no build #7");
+}
+
+#[test]
+fn an_aborted_build_is_rejected_and_a_resume_builds_anew() {
+    let fake = FakeJenkins::new();
+    fake.state().outcomes.push_back(Outcome { result: "ABORTED".into(), ..Outcome::unarchived() });
+    let mut ci = pushed();
+    assert!(refused(judge(&fake, &mut ci, false, None).came).contains("was aborted before the quality gate ran"));
+    let mut cut = pushed();
+    cut.insert("rejected".into(), serde_json::json!([41]));
+    assert_eq!(ci, cut);
+    let ran = judge(&fake, &mut ci, true, None);
+    assert_eq!(judged(ran.came).0.as_deref(), Some("OK"));
+    assert_eq!(ci.get("build"), Some(&Value::from(42)));
+    assert!(ran.log.is_empty(), "adopted the aborted build: {:?}", ran.log);
+}
+
+#[test]
+fn a_build_that_ends_before_its_gate_is_not_judged_and_says_what_failed() {
+    let fake = FakeJenkins::new();
+    let failing = ("t.Suite".to_string(), "a_test".to_string(), "boom".to_string());
+    fake.state().outcomes.push_back(Outcome { tests: vec![failing], ..Outcome::unarchived() });
+    let mut ci = pushed();
+    match judge(&fake, &mut ci, false, None).came {
+        Ok(Verdict::NotJudged(text)) => {
+            assert!(text.contains("ended FAILURE before the quality gate ran"), "{text}");
+            assert!(text.contains("a_test"), "{text}");
+        }
+        _ => panic!("judged, or failed"),
+    }
+    let names = fake.state().names.clone();
+    assert_eq!((count(&names, "tests"), count(&names, "console")), (1, 0), "{names:?}");
+    assert_eq!(ci.get("build"), Some(&Value::from(41)), "a verdict keeps the chain");
+}

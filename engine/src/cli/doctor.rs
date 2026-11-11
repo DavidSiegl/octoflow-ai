@@ -4,6 +4,7 @@
 
 use super::{Local, Target};
 use crate::constants::{DEFAULT_AGENT, EXIT_ERROR, GITLEAKS_INSTALL, NETWORK_TIMEOUT, REMOTE};
+use crate::ci::QualityGate;
 use crate::error::OrchestratorError;
 use crate::harness::{Harness, HARNESSES};
 use crate::herdr::ProcessHerdr;
@@ -212,13 +213,12 @@ pub fn check_setup(
     check(&mut checks, "gitleaks", Level::NeededForPr, GITLEAKS_INSTALL, on_machine.as_ref(), "", &mut || {
         agents.gitleaks_problem().map_or_else(|| Ok("`gitleaks git` runs".to_string()), |p| Err(Unmet::new(p)))
     });
-    // What a run with --quality-gate local checks before its interview (Workflow::check_before_interview), so the check
-    // cannot ask for less or more: gitleaks, then the gate's own preflight.
+    // What a run with --quality-gate local checks before its interview (QualityGate::preflight), so the check cannot
+    // ask for less or more. The local gate's asks nothing of a checkout, so a project not given does not skip it.
     let fix = "install or fix what it names where the agents run (docs/quality-gate.md, \"The local gate\")";
     let note = "needed only for --quality-gate local";
     check(&mut checks, "local quality gate", Level::Optional, fix, on_machine.as_ref(), note, &mut || {
-        agents.check_gitleaks()?;
-        local_gate::preflight(agents)?;
+        QualityGate::Local.preflight(agents, cwd.unwrap_or("."))?;
         Ok("gitleaks, and all the gate's preflight asks for, are ready".to_string())
     });
     if let Some(cwd) = cwd {

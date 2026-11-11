@@ -1,7 +1,8 @@
 //! RunState: what a run has done so far, saved as state.json in its run directory.
 
 use crate::constants::{
-    DEFAULT_AGENT, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT, LOCAL_REFS_PREFIX, RUNS_DIR,
+    CI_REF_PREFIX, DEFAULT_AGENT, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
+    LOCAL_REFS_PREFIX, RUNS_DIR,
 };
 use crate::ci::LOCAL_GATE;
 use crate::error::OrchestratorError;
@@ -515,6 +516,17 @@ impl RunState {
 
     pub fn quality_path(&self, n: u32, q: u32) -> String {
         format!("{}/quality-{n}-{q}.md", self.dir())
+    }
+
+    /// The branch on origin a Jenkins quality job builds quality round q of round n's snapshot from,
+    /// `<CI_REF_PREFIX><key>-<n>-q<q>`: one round of one run, which delete_ci_refs finds by its prefix.
+    pub fn ci_ref(&self, n: u32, q: u32) -> String {
+        format!("{CI_REF_PREFIX}{}-{n}-q{q}", self.key())
+    }
+
+    /// Quality round q of round n, as a quality file's intro names it: "round 1, quality round 2 of 3".
+    pub fn quality_place(&self, n: u32, q: u32) -> String {
+        format!("round {n}, quality round {q} of {}", self.max_quality_rounds)
     }
 
     /// The directory the local gate keeps quality round q of round n's jobs in, one `job-<k>` directory per start
