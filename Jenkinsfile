@@ -127,7 +127,7 @@ pipeline {
                 // program run from a file written there ("Drop and execute new binary in container", Critical): 109
                 // mails in 15 minutes on 2026-11-03. The workspace's own target/ is on the volume and was never
                 // reported. Python's tempfile takes /tmp, silently, for a TMPDIR that does not exist, so each stage
-                // creates it first. The Package stage still uses /tmp (TODO.md).
+                // creates it first. The Package stage still uses /tmp (GitHub #373).
                 TMPDIR = "${env.WORKSPACE_TMP}/tmp"
             }
             steps {
@@ -222,10 +222,10 @@ pipeline {
         // and coverage of new code, judged on the lines the change adds. The judge is the tree whose ci/gate.pin,
         // pyproject.toml and gate.toml decide how the change is judged: a quality build's is the main commit Checkout
         // named, so a change cannot loosen how it is itself judged, but for clippy's rules, which are the tree's own
-        // Cargo.toml (TODO.md); any other build's is its own tree. The gate is the octoflow-gate release the judge's
-        // ci/gate.pin names, fetched and checked against its sha256 by the judge's ci/fetch-gate.sh. A quality build
-        // goes UNSTABLE on a red gate, and a pull request or main fails. A gate that could not judge, or could not be
-        // fetched, fails any build and writes no quality file.
+        // Cargo.toml (GitHub #377); any other build's is its own tree. The gate is the octoflow-gate release the
+        // judge's ci/gate.pin names, fetched and checked against its sha256 by the judge's ci/fetch-gate.sh. A quality
+        // build goes UNSTABLE on a red gate, and a pull request or main fails. A gate that could not judge, or could
+        // not be fetched, fails any build and writes no quality file.
         stage('Gate') {
             when { expression { return env.JUDGED_AT_PR != 'true' } }
             environment {

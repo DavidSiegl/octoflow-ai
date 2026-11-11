@@ -42,10 +42,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   holds by design, each a choice a later ticket may revisit: output a human reads (logs, errors, `show`, `list`,
   `prune`) as its facts (`normalize::facts`), not its words; a run's files listed by modification time, as `/files` and
   the event stream list them, sorted by name, since seconds of the clock decide that order; ssh's commands not at all,
-  only what they did; doctor's lines without git's and Tk's, which are the host's. Two more are open issues below: the
-  `state.json` saves between two commands, and serve's events between two checkpoints. One engine run takes 2 to 25
-  seconds a scenario (25 for serve's event stream); when a quality build runs them is the Jenkinsfile's Test stage's to
-  say. Decided against (2026-10-27): scenarios as data files the harness interprets, which needed a language of their
+  only what they did; doctor's lines without git's and Tk's, which are the host's. Two more are recorded as decided
+  against below: the `state.json` saves between two commands, and serve's events between two checkpoints. One engine run
+  takes 2 to 25 seconds a scenario (25 for serve's event stream); when a quality build runs them is the Jenkinsfile's
+  Test stage's to say. Decided against (2026-10-27): scenarios as data files the harness interprets, which needed a
+  language of their
   own for kills, takeovers and serve's stream; a cassette of the expected requests that the fakes answer in order, which
   breaks on every count of polls; and a stub gitleaks where none is installed, which would record what no engine run
   with gitleaks does. Decided against too (2026-10-27, orchestrator-test-methods/06): golden files of the engine's
@@ -59,7 +60,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   developer's chore, not a user's feature. Not covered: the quality gate, since the
   toy repositories have no quality job and their origin is a bundle no snapshot can be pushed to, so `quality rounds`
   stays 0; a `--worktree` or `--machine` run, which the runner refuses; and an interview, which `--spec` skips.
-  Decided 2026-10-28. The verification run it still lacks is under Open issues.
+  Decided 2026-10-28. The verification run it still lacks is GitHub #364 and #365.
 
 ## Open issues
 
@@ -84,6 +85,46 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   stuck rule misses that loop, so the Builder gets one more turn. Closes with recording the round before the quality
   file is written, or comparing only the first `QUALITY_FINDINGS_LIMIT` of a JSON-read round against a Markdown-read
   one; goes with the fallback below.
+- **A running build's reports are taken as whole once two reads agree.** The quality round's `gate_or_end`
+  (`engine/src/workflow/quality_rounds.rs`) reads a still running build's `quality.md`, and its `quality.json` with
+  it, each poll and takes the pair when two reads at least `CI_POLL_SECONDS` apart are equal, because Jenkins serves
+  an artifact while `archiveArtifacts` is still copying it. Raised by the cross-review of `quality-round-early-read`
+  (F1, 2026-10-27): "Equal reads show only that the copy made no progress between them, not that it finished." Two
+  such reads are taken only once they hold a whole non-blank line (review 58, F1), so a copy stalled that long past
+  its first line and then resumed still hands the round a cut file, which shortens the Builder's findings and
+  `quality_rounds`' fingerprints. A `quality.json` not yet copied when two reads agree leaves the round on the
+  fallback below. Ticketed as GitHub #387 (`.scratch/todo/issues/45`), which says how it closes.
+- **The engine still reads a build's `quality.md` where it archived no `quality.json`.** `Workflow::quality`
+  (`engine/src/workflow/quality_rounds.rs`) falls back to `parse_gate` and `gate_failures` for a build without
+  `quality.json`: a quality job whose judged `main` predates gate-standalone/07, or another project's job running a
+  gate release before 0.5.0. Delete the fallback for builds once no supported quality job lacks `quality.json`;
+  `parse_gate` and `gate_failures` stay for the files the engine writes itself (`GATE: BUILD_FAILED`, `GATE: LEAK`).
+  Ticketed as GitHub #349 (`.scratch/todo/issues/07`).
+- **An in-place run puts back what the human changes in the checkout while a proof runs.** `Workflow::run_proof`
+  snapshots the working tree before each proof and `Host::restore_tree` puts back every path that differs afterwards,
+  whoever changed it (cross-review 143, F2): in an in-place run a file the human saves during a proof is overwritten
+  and one they create is deleted, without a warning; a worktree run is not exposed. Ticketed as GitHub #384
+  (`.scratch/todo/issues/42`): keep the human's version and warn. Decided against (the user's ruling, 2026-11-11):
+  running proofs in a scratch worktree of the tree under test.
+- **Readers of `state.json` still take records an earlier release wrote.** A `state.json` without the format marker
+  is refused (`crate::state::format_problem`), so no record an earlier release wrote reaches them, but
+  `ProofRun::read` (`engine/src/proofs.rs`) still reads a `proofs` record without `written` as a first run, and the
+  turn and agent readers a record without `kind` as `DEFAULT_AGENT`'s: branches no format-2 run takes. Ticketed in
+  `.scratch/saved-run/issues/02`, which requires both fields.
+- **No coverage-guided fuzzing of the engine's parsers.** Decided against (the user's ruling, 2026-11-11): a
+  cargo-fuzz pass over `handoff::first_line_word`, `parse_verdict`, `parse_gate`, `parse_blocked` and
+  `parse_env_file`, looking for panics. The seeded generated-input tests (`test_support::Rng`) cover them instead;
+  `parse_blocked`'s are GitHub #348 (`.scratch/todo/issues/06`).
+- **A non-editing step between two verdict steps is refused, not tracked.** Decided against (the user's ruling,
+  2026-11-11, GitHub #352, `.scratch/todo/issues/10`): tracking every step's rounds through its turn records, so that
+  such a step's `again` prompt and `{prev_X_path}` name rounds it ran; `Pipeline::loop_problem` refuses the shape
+  instead.
+- **The desktop app's window has a minimum width.** Decided against (the user's ruling, 2026-11-11, GitHub #357,
+  `.scratch/todo/issues/15`): letting the project bar's fields shrink so that its last button stays inside a narrow
+  window; `tauri.conf.json` sets `minWidth` instead.
+- **A quality build's Reviewer is told to weigh a loosened lint config.** Decided against (the user's ruling,
+  2026-11-11, GitHub #377, `.scratch/todo/issues/35`): having the gate take clippy's rule files from the base commit,
+  which is a change in octoflow-gate; the Reviewer's quality notes say to weigh an edited one instead.
 
 - **No `doctor` check that a harness can start in the project without asking.** Claude Code's folder-trust dialog
   stops a run before its first turn; run-usability/02 made the run say so and the README list it, but `doctor` does
@@ -180,15 +221,16 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   too, since the timeout bounds it. (2) Under macOS, `by_signals`
   reads no `/proc/self/status` and takes the kernel to discard a signal that was ignored when the engine started, even
   while blocked, as the BSD kernels do, so `serve`, which waits for SIGINT and SIGTERM also when it started with one
-  ignored, as Python's `signal.signal` replaces an ignored disposition (ticket 10, `crate::serve::serve_command`),
-  does not stop at one it started ignoring there, and `run_process` gives
-  a command the whole 250 ms grace, nix having no `waitid` there; unchecked on a Mac. Decided against (the user's
-  ruling, 2026-11-11): `engine/tests/signals.rs`, which is Linux's (it reads `/proc` and starts the engine with GNU
-  `env`), ported to macOS and run on one, since no Mac runs the tests; reopen when a Mac user reports a hang. A process that left the command's group, as a daemon does, is not reached, as at
-  a timeout; that is no gap, as the terminal's Ctrl-C does not reach one in Python either. (3) On a Linux whose
-  `/proc/self/status` cannot be read, as in a container or sandbox without `/proc`, `ignored_signals` finds nothing
-  ignored, so `by_signals` waits for a signal the engine started with ignored and takes it, Linux queueing a blocked
-  signal whatever its disposition (cross-review 102, F2: "an engine under `nohup` in a container or sandbox without
+  ignored, as Python's `signal.signal` replaces an ignored disposition (ticket 10, `crate::serve::serve_command`), does
+  not stop at one it started ignoring there, and `run_process` gives a command the whole 250 ms grace, nix having no
+  `waitid` there; unchecked on a Mac. Decided against (the user's ruling, 2026-11-11): `engine/tests/signals.rs`, which
+  is Linux's (it reads `/proc` and starts the engine with GNU `env`), ported to macOS and run on one, since no Mac runs
+  the tests; reopen when a Mac user reports a hang. A process that left the command's group, as a daemon does, is not
+  reached, as at a timeout; that is no gap, as the terminal's Ctrl-C does not reach one in Python either. (3) On a Linux
+  whose `/proc/self/status` cannot be read, as in a container or sandbox without `/proc`, `ignored_signals` finds
+  nothing ignored, so `by_signals` waits for a signal the engine started with ignored and takes it, Linux queueing a
+  blocked signal whatever its disposition (cross-review 102, F2: "an engine under `nohup` in a container or sandbox
+  without
   /proc is hung up: the Interrupt is raised, the run released as interrupted", and `interrupt::exit`'s raise of the
   still-ignored signal returns, so the program exits 129 by `std::process::exit`). Part 6 had the gap for SIGINT;
   the follow-ups extend it to SIGTERM and SIGHUP. nix reads a signal's disposition only through `sigaction`, which
