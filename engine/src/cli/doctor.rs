@@ -188,8 +188,7 @@ pub fn check_setup(
         });
     }
     let mut integrations = IntegrationStatus::new(agents);
-    for Harness { kind, integration, .. } in &HARNESSES {
-        let kind = *kind;
+    for Harness { kind, integration, .. } in HARNESSES {
         let (level, note) = if kind == DEFAULT_AGENT {
             (Level::Required, String::new())
         } else {
@@ -425,10 +424,10 @@ pub fn integration_states(listing: &str) -> Vec<(String, String)> {
     let mut states: Vec<(String, String)> = Vec::new();
     for line in listing.lines() {
         let line = line.trim();
-        let Some((kind, state)) = integration_line(line) else { continue };
-        match states.iter_mut().find(|(k, _)| *k == kind) {
+        let Some((name, state)) = integration_line(line) else { continue };
+        match states.iter_mut().find(|(n, _)| *n == name) {
             Some(entry) => entry.1 = state,
-            None => states.push((kind, state)),
+            None => states.push((name, state)),
         }
     }
     states

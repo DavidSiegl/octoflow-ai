@@ -114,7 +114,8 @@ pub const HARNESSES: [Harness; 5] = [
     Harness {
         kind: "agy",
         integration: "antigravity-cli",
-        // agy 1.5.5's default asks before each shell command, though not before an edit; it has no flag for it.
+        // agy 1.5.5 starts in its default mode, asking before each shell command though not before an edit, when given
+        // no --mode; it has no --mode default.
         permissions: Permissions::Equivalents(&[
             ("default", &[]),
             ("acceptEdits", &["--mode", "accept-edits"]),
@@ -171,13 +172,18 @@ pub const HARNESSES: [Harness; 5] = [
 /// still name one.
 const REPLACED: [(&str, &str); 1] = [("gemini", "agy")];
 
+/// The kind that replaced kind, a harness this orchestrator once took (GitHub issue #125); None for any other kind.
+pub fn replaced_by(kind: &str) -> Option<&'static str> {
+    REPLACED.iter().find(|(old, _)| *old == kind).map(|(_, new)| *new)
+}
+
 /// The harness of the name kind. Errors: kind is not one of AGENT_KINDS, as a saved run's state.json or a workflow
 /// file can name; for a kind in REPLACED, the message names the kind that replaced it. The Python engine fails on
 /// such a kind with a KeyError.
 pub fn harness(kind: &str) -> Result<&'static Harness, OrchestratorError> {
     HARNESSES.iter().find(|h| h.kind == kind).ok_or_else(|| {
-        OrchestratorError(match REPLACED.iter().find(|(old, _)| *old == kind) {
-            Some((_, new)) => {
+        OrchestratorError(match replaced_by(kind) {
+            Some(new) => {
                 format!("agent {kind} is not a harness this orchestrator supports any more; {new} replaced it")
             }
             None => format!(

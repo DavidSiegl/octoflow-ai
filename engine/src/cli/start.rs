@@ -6,6 +6,7 @@ use super::Connected;
 use crate::ci::{QualityGate, LOCAL_GATE};
 use crate::constants::{DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT, RUNS_DIR, WORKTREES_DIR};
 use crate::error::OrchestratorError;
+use crate::harness::harness;
 use crate::pipeline::{Pipeline, DONE, QUALITY};
 use crate::prompts::{load_prompts, Prompts};
 use serde_json::Value;
@@ -177,8 +178,15 @@ pub fn resumable_state(
         state.permission_mode = Some(mode.clone());
     }
     state.models = merged(&state.models, role_models(s, pipeline.roles())?);
-    // Taken up by each role's next agent; one still running keeps its harness.
+    // Taken up by each role's next agent; one still running keeps its harness. Refused before any turn runs when a
+    // role's is one this orchestrator no longer takes, as a run saved by an earlier release can name.
     state.agent_kinds = merged(&state.agent_kinds, role_agents(s, pipeline.roles())?);
+    if let Some((role, e)) = state.agent_kinds.iter().find_map(|(role, kind)| harness(kind).err().map(|e| (role, e))) {
+        return Err(OrchestratorError(format!(
+            "run {}: role {role}: {}; resume it with --role-agent {role}=KIND",
+            state.run_id, e.0
+        )));
+    }
     if state.phase != DONE && state.max_rounds < state.round {
         return Err(OrchestratorError(format!(
             "run {} is already in round {}; --max-rounds {} is too low",

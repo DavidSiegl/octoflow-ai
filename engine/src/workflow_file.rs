@@ -25,6 +25,7 @@
 use crate::constants::{BUDGET_KEYS, DEFAULT_MAX_FILES, DEFAULT_MAX_LINES};
 use crate::env::ConfigDir;
 use crate::error::{closest_name, strerror, OrchestratorError};
+use crate::harness::replaced_by;
 use crate::paths::{file_name, split_extension};
 use crate::pipeline::{default_workflow, find_workflow, Pipeline, PipelineSettings, Step, DEFAULT_WORKFLOW, WORKFLOWS};
 use crate::prompts::template::{is_name, placeholders};
@@ -455,10 +456,30 @@ pub fn run_pipeline(name: &str, definition: Option<&Value>, prompts: &Prompts) -
     match definition {
         None => find_workflow(name, prompts),
         // A saved definition is canonical, with no use for prompts to word.
-        Some(definition) => parse_workflow(name, definition, prompts).map_err(|e| {
+        Some(definition) => parse_workflow(name, &with_replaced_agents(definition), prompts).map_err(|e| {
             OrchestratorError(format!("the definition of workflow {name} saved with the run is invalid: {e}"))
         }),
     }
+}
+
+/// A saved workflow definition with each role's agent of a replaced kind (harness::replaced_by) as the kind that
+/// replaced it, so that a run saved before the replacement still has its workflow. A resumed role runs in the
+/// harness the run's agent_kinds name, never the definition's, and resume refuses a replaced one there
+/// (crate::cli::start's resumable_state).
+fn with_replaced_agents(definition: &Value) -> std::borrow::Cow<'_, Value> {
+    let named_replaced = |table: &Value| table.get("agent").and_then(Value::as_str).and_then(replaced_by).is_some();
+    let roles = definition.get("roles").and_then(Value::as_object);
+    if !roles.is_some_and(|roles| roles.values().any(named_replaced)) {
+        return std::borrow::Cow::Borrowed(definition);
+    }
+    let mut definition = definition.clone();
+    let tables = definition.get_mut("roles").and_then(Value::as_object_mut).into_iter().flat_map(|r| r.values_mut());
+    for table in tables.filter_map(Value::as_object_mut) {
+        if let Some(new) = table.get("agent").and_then(Value::as_str).and_then(replaced_by) {
+            table.insert("agent".into(), Value::from(new));
+        }
+    }
+    std::borrow::Cow::Owned(definition)
 }
 
 /// The workflow of a saved state.json, or None when this orchestrator cannot tell: its workflow, by its

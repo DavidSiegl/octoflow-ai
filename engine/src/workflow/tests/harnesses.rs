@@ -296,6 +296,35 @@ fn saved_with_the_run() {
 }
 
 #[test]
+fn a_run_saved_with_gemini_resumes_only_moved_to_another_harness() {
+    // A run 0.67 saved: its workflow's review role and its agent_kinds name gemini (GitHub issue #125).
+    let quick = crate::test_support::quick();
+    let mut settings = quick.settings().clone();
+    settings.agents.insert("review", "codex".to_string());
+    let p = crate::pipeline::Pipeline::with("coded", quick.roles().clone(), quick.steps().to_vec(), settings).unwrap();
+    let mut definition = crate::workflow_file::workflow_definition(&p);
+    definition["roles"]["review"]["agent"] = Value::from("gemini");
+    let mut saved = saved_run("build", 2, FULL).to_json().as_object().unwrap().clone();
+    saved.insert("workflow".into(), Value::from("coded"));
+    saved.insert("workflow_definition".into(), definition);
+    saved.insert("agent_kinds".into(), serde_json::from_str(r#"{"build": "claude", "review": "gemini"}"#).unwrap());
+    // Its workflow reads, with agy in gemini's place, so that listings show it.
+    let pipeline = crate::workflow_file::saved_pipeline(&saved).expect("the saved workflow reads");
+    assert_eq!(pipeline.agents().get("review").map(String::as_str), Some("agy"));
+    // A resume is refused before any turn unless the role moves.
+    assert_eq!(
+        resumable(&[], &saved).unwrap_err().0,
+        format!(
+            "run {}: role review: agent gemini is not a harness this orchestrator supports any more; agy replaced it; \
+             resume it with --role-agent review=KIND",
+            saved.get("run_id").and_then(Value::as_str).unwrap()
+        )
+    );
+    let state = resumable(&["--role-agent", "review=agy"], &saved).unwrap();
+    assert_eq!(state.agent_kinds.get("review").map(String::as_str), Some("agy"));
+}
+
+#[test]
 fn run_dir_granted_in_worktree_runs_only() {
     // TestHarnessFlags.test_run_dir_granted_in_worktree_runs_only, its Workflow half; the launch half is
     // crate::harness's.
