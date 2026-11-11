@@ -671,7 +671,9 @@ fn a_server_that_does_not_come_up_fails_the_launch_saying_so() {
     let mut herdr = ProcessHerdr::in_environment(None, vars.into_iter(), &Interrupt::new());
     herdr.server_start = ServerStart { limit: Duration::from_millis(300), every: Duration::from_millis(50) };
     let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err();
-    assert_eq!(e.to_string(), "cannot start a herdr server: it was not running after 0.3 seconds");
+    // The start of it: on a loaded machine the fake herdr, a process, may outlast a look, which the error then names.
+    let e = e.to_string();
+    assert!(e.starts_with("cannot start a herdr server: it was not running after 0.3 seconds"), "{e}");
     assert!(!given(&d).iter().any(|c| c.starts_with("octoflow: workspace create")), "{:?}", given(&d));
 }
 

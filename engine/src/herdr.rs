@@ -108,7 +108,7 @@ pub const OWN_SESSION: &str = "octoflow";
 /// How long a herdr server the engine starts has to come up.
 #[derive(Clone, Copy, Debug)]
 struct ServerStart {
-    /// From its start, for answering `herdr status server` as running.
+    /// From its start, for answering `herdr status server` as running; also the longest one look at that may take.
     limit: Duration,
     /// Between two looks at whether it does.
     every: Duration,
@@ -379,12 +379,12 @@ impl ProcessHerdr {
         let ServerStart { limit, every } = self.server_start;
         let deadline = Instant::now() + limit;
         loop {
-            // No look outlasts the wait by more than a pause. An error of herdr's own, a look that ran out of time
-            // included, is a server not up yet; herdr not asked at all ends the wait, as an Interrupt raised
-            // meanwhile does, within a pause of it.
-            let left = deadline.saturating_duration_since(Instant::now());
+            // A look may take as long as the whole wait, the last one too, so that a server up at the wait's end is
+            // still found and a herdr that hangs holds the launch for twice the limit at most. An error of herdr's
+            // own, a look that ran out of time included, is a server not up yet; herdr not asked at all ends the
+            // wait, as an Interrupt raised meanwhile does, within a pause of it.
             // The error herdr answered this look with, if it did.
-            let refused = match self.server_runs(left.max(every)) {
+            let refused = match self.server_runs(limit) {
                 Ok(true) => return Ok(()),
                 Ok(false) => None,
                 Err(e @ HerdrError::Herdr { .. }) => Some(e),
