@@ -133,8 +133,9 @@ smoke_appimage() {
     # The environment the CLI's children get: /proc/<pid>/environ would show only what the app itself was started
     # with, the bundle's, which it replaces once running. doctor's own status is not the check: it finds no herdr.
     mkdir "$smoke/bin" || smoke_fail "could not make $smoke/bin"
-    printf '#!/bin/sh\nenv > "%s/herdr.env"\nexit 1\n' "$smoke" >"$smoke/bin/herdr" && chmod 755 "$smoke/bin/herdr" \
+    printf '#!/bin/sh\nenv > "%s/herdr.env"\nexit 1\n' "$smoke" >"$smoke/bin/herdr" \
         || smoke_fail "could not write the stand-in herdr"
+    chmod 755 "$smoke/bin/herdr" || smoke_fail "could not make the stand-in herdr executable"
     (cd "$smoke" && PATH="$smoke/bin:$PATH" "$1" doctor >/dev/null 2>&1) || true
     [ -s "$smoke/herdr.env" ] || smoke_fail "doctor did not run the herdr on PATH"
     # The bundle is the AppImage's extraction, under TMPDIR.
