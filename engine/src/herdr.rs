@@ -194,6 +194,13 @@ pub trait Herdr {
     /// Give pane the label shown on it.
     fn rename_pane(&self, pane: &str, label: &str) -> Result<(), HerdrError>;
 
+    /// Have the shell in pane, which must be at its prompt, export each (name, value) of vars, so that an agent
+    /// started there after (start_agent) inherits them: herdr's `agent start` passes an agent arguments only. The
+    /// shell must take POSIX `export NAME='value'`, as sh, bash, zsh and fish do; fish reads `\\` and `\'` inside
+    /// the quotes as escapes, so a value with a backslash reaches it changed. Errors: Failed, without asking herdr,
+    /// for a value with a control character, which the shell's line editor would take as a key rather than text.
+    fn export(&self, pane: &str, vars: &[(String, String)]) -> Result<(), HerdrError>;
+
     /// Start an agent named name in pane, of the harness kind (herdr's --kind), passing it args. Gives false when it
     /// is blocked on a startup dialog (herdr's agent_not_ready), such as Claude Code's folder-trust question in a
     /// directory it has not seen: herdr keeps the name bound, so the agent can still be waited on.
@@ -672,6 +679,18 @@ impl Herdr for ProcessHerdr {
 
     fn rename_pane(&self, pane: &str, label: &str) -> Result<(), HerdrError> {
         self.call(&["pane", "rename", pane, label]).map(drop)
+    }
+
+    fn export(&self, pane: &str, vars: &[(String, String)]) -> Result<(), HerdrError> {
+        if let Some((name, _)) = vars.iter().find(|(_, value)| value.chars().any(char::is_control)) {
+            let why = format!("cannot type {name} into pane {pane}: its value has a control character");
+            return Err(HerdrError::Failed(OrchestratorError::new(why)));
+        }
+        let quoted = |value: &str| format!("'{}'", value.replace('\'', r"'\''"));
+        let words: Vec<String> = vars.iter().map(|(name, value)| format!("{name}={}", quoted(value))).collect();
+        let line = format!("export {}", words.join(" "));
+        // `pane run` prints nothing on success; its errors are JSON as every command's.
+        self.exec_forwarded(&["pane", "run", pane, &line], Some(Duration::from_secs(CALL_LIMIT_SECONDS))).map(drop)
     }
 
     fn start_agent(&self, name: &str, pane: &str, kind: &str, args: &[String]) -> Result<bool, HerdrError> {

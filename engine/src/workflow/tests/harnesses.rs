@@ -30,6 +30,12 @@ fn permissions(kind: &str, mode: &str) -> Option<Vec<String>> {
     args.map(strings)
 }
 
+/// The arguments that start an agent of harness kind on model m; opencode takes the model in its config, exported
+/// before it starts (opencode_s_config_is_exported_before_it_starts).
+fn on_model(kind: &str) -> Vec<String> {
+    strings(if kind == "opencode" { &["--standalone"] } else { &["--model", "m"] })
+}
+
 /// Every role of the default workflow in harness kind.
 fn every_role(kind: &str) -> Map<String> {
     FULL.iter().map(|role| (*role, kind.to_string())).collect()
@@ -81,7 +87,7 @@ fn dropped(logged: &[String]) -> Vec<String> {
 fn a_new_agent_in_each_harness() {
     for kind in KINDS {
         let (started, _) = run_default(with_agents(agent_settings(None, &[("build", "m")], every_role(kind))));
-        assert_eq!(started, expected_starts(kind, [vec![], strings(&["--model", "m"]), vec![]]), "{kind}");
+        assert_eq!(started, expected_starts(kind, [vec![], on_model(kind), vec![]]), "{kind}");
     }
 }
 
@@ -92,7 +98,7 @@ fn each_permission_mode_in_each_harness() {
             let (started, logged) = run_default(with_agents(agent_settings(Some(mode), &[("review", "m")], every_role(kind))));
             let expected = permissions(kind, mode);
             let args = expected.clone().unwrap_or_default();
-            let review = [args.clone(), strings(&["--model", "m"])].concat();
+            let review = [args.clone(), on_model(kind)].concat();
             assert_eq!(started, expected_starts(kind, [args.clone(), args, review]), "{kind} {mode}");
             let told: Vec<String> = match expected {
                 None => FULL
@@ -135,7 +141,8 @@ fn an_exited_agent_resumes_in_its_own_harness() {
             "claude" => &["--permission-mode", "acceptEdits", "--resume", "s-build", "--model", "m"],
             "gemini" => &["--approval-mode", "auto_edit", "--resume", "s-build", "--model", "m"],
             "codex" => &["resume", "s-build", "--full-auto", "--model", "m"],
-            "pi" | "opencode" => &["--session", "s-build", "--model", "m"],
+            "pi" => &["--session", "s-build", "--model", "m"],
+            "opencode" => &["--session", "s-build", "--standalone"],
             _ => unreachable!("{kind}"),
         })
     };
@@ -276,7 +283,7 @@ fn saved_with_the_run() {
 
 #[test]
 fn run_dir_granted_in_worktree_runs_only() {
-    // TestHarnessFlags.test_run_dir_granted_in_worktree_runs_only, its Workflow half; the launch_args half is
+    // TestHarnessFlags.test_run_dir_granted_in_worktree_runs_only, its Workflow half; the launch half is
     // crate::harness's.
     let f = worktree_run(Rc::new(FakeHost::default()), None);
     f.workflow(RunSettings::default()).run().unwrap();
@@ -286,4 +293,20 @@ fn run_dir_granted_in_worktree_runs_only() {
     f.workflow(RunSettings::default()).run().unwrap();
     let args: Vec<Vec<String>> = starts(&f).into_iter().map(|(_, _, args)| args).collect();
     assert_eq!(args, vec![Vec::<String>::new(); 3]);
+}
+
+#[test]
+fn opencode_s_config_is_exported_before_it_starts() {
+    let f = worktree_run(Rc::new(FakeHost::default()), None);
+    let kinds = [("build", "opencode".to_string())].into_iter().collect();
+    let agents = agent_settings(None, &[("build", "m")], kinds);
+    f.workflow(RunSettings { agents, ..RunSettings::default() }).run().unwrap();
+    let calls = f.herdr.state().calls.clone();
+    let exported: Vec<&Call> = calls.iter().filter(|c| matches!(c, Call::Export { .. })).collect();
+    let config = format!(r#"{{"model":"m","permission":{{"external_directory":{{"{}/*":"allow"}}}}}}"#, f.state.dir());
+    let export = Call::Export { pane: "w1:p2".into(), vars: vec![("OPENCODE_CONFIG_CONTENT".into(), config)] };
+    assert_eq!(exported, [&export]);
+    let at = |name: &str| calls.iter().position(|c| matches!(c, Call::Start { name: n, .. } if n == name)).unwrap();
+    let exported_at = calls.iter().position(|c| *c == export).unwrap();
+    assert!(at("spec-a1b2c3") < exported_at && exported_at < at("build-a1b2c3"), "{calls:?}");
 }

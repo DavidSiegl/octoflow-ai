@@ -44,7 +44,7 @@ fn every_harness_s_tables_are_the_python_engine_s() {
         }
         let (Resume::Flag(word) | Resume::Subcommand(word)) = h.resume;
         resume.insert(h.kind.into(), Value::from(word));
-        if let Some(flag) = h.add_dir {
+        if let Config::Flags { add_dir: Some(flag) } = h.config {
             add_dir.insert(h.kind.into(), Value::from(flag));
         }
         if let Some(log) = h.session_log {
@@ -55,7 +55,7 @@ fn every_harness_s_tables_are_the_python_engine_s() {
     assert_eq!(constants.get("RESUME_ARGS"), Some(&Value::Object(resume)));
     assert_eq!(constants.get("ADD_DIR_ARGS"), Some(&Value::Object(add_dir)));
     assert_eq!(constants.get("SESSION_LOGS"), Some(&Value::Object(logs)));
-    // Only codex resumes by a subcommand, and its arguments start with it (launch_args below).
+    // Only codex resumes by a subcommand, and its arguments start with it (launch below).
     assert!(HARNESSES.iter().all(|h| matches!(h.resume, Resume::Subcommand(_)) == (h.kind == "codex")));
 }
 
@@ -72,46 +72,79 @@ fn each_mode_s_arguments_in_each_harness_are_the_python_engine_s() {
 }
 
 #[test]
-fn the_launch_arguments_of_every_combination_are_the_python_engine_s() {
+fn the_launch_of_every_combination_is_the_python_engine_s() {
+    // opencode's is this engine's own (opencode_takes_its_model_and_grant_as_config): Python passed it --model, which
+    // opencode 2.0.24's TUI does not take.
     let cases = cases("launch_args");
     assert_eq!(cases.len(), 5 * 9 * 3 * 3 * 3);
-    for case in cases {
+    for case in cases.iter().filter(|case| case[0] != "opencode") {
         let [kind, mode, model, session, extra, expected] = &case[..] else { panic!("{case:?}") };
         let h = harness(kind.as_str().unwrap()).unwrap();
-        let args = h.launch_args(text(mode), text(model), text(session), text(extra));
-        assert_eq!(args, strings(expected), "{case:?}");
+        let launch = h.launch(text(mode), text(model), text(session), text(extra));
+        assert_eq!(launch, Launch { args: strings(expected), env: vec![] }, "{case:?}");
     }
 }
 
 #[test]
-fn launch_args_are_the_same_each_time() {
+fn opencode_takes_its_model_and_grant_as_config() {
+    let h = harness("opencode").unwrap();
+    let d = "/proj/.orchestrator/runs/r";
+    // A launch with args, its config exported as the JSON json when given one.
+    let launch = |args: &[&str], json: Option<&str>| Launch {
+        args: args.iter().map(|a| a.to_string()).collect(),
+        env: json.map(|j| ("OPENCODE_CONFIG_CONTENT".to_string(), j.to_string())).into_iter().collect(),
+    };
+    let grant = r#""permission":{"external_directory":{"/proj/.orchestrator/runs/r/*":"allow"}}"#;
+    let cases = [
+        (None, None, None, launch(&[], None)),
+        (Some(""), Some(""), Some(""), launch(&[], None)),
+        (None, Some("s-1"), None, launch(&["--session", "s-1"], None)),
+        (Some("big-pickle"), None, None, launch(&["--standalone"], Some(r#"{"model":"big-pickle"}"#))),
+        (None, None, Some(d), launch(&["--standalone"], Some(&format!("{{{grant}}}")))),
+        (
+            Some("m"),
+            Some("s-1"),
+            Some(d),
+            launch(&["--session", "s-1", "--standalone"], Some(&format!(r#"{{"model":"m",{grant}}}"#))),
+        ),
+    ];
+    for (model, session, extra, expected) in cases {
+        // opencode has no equivalent of any permission mode, so none changes its launch.
+        for mode in [None, Some("acceptEdits"), Some("bypassPermissions")] {
+            assert_eq!(h.launch(mode, model, session, extra), expected, "{mode:?} {model:?} {session:?} {extra:?}");
+        }
+    }
+}
+
+#[test]
+fn the_launch_is_the_same_each_time() {
     // TestHarnessFlags.test_launch_args_leave_the_permission_table_alone: Python's extended its table's list in place.
     for h in &HARNESSES {
-        let first = h.launch_args(Some("acceptEdits"), Some("m"), None, Some("/run"));
-        assert_eq!(h.launch_args(Some("acceptEdits"), Some("m"), None, Some("/run")), first, "{}", h.kind);
+        let first = h.launch(Some("acceptEdits"), Some("m"), None, Some("/run"));
+        assert_eq!(h.launch(Some("acceptEdits"), Some("m"), None, Some("/run")), first, "{}", h.kind);
     }
 }
 
 #[test]
 fn the_run_directory_is_granted_where_the_harness_can() {
-    // TestHarnessFlags.test_run_dir_granted_in_worktree_runs_only, its launch_args half; the Workflow half is in
-    // workflow/tests/harnesses.rs.
+    // TestHarnessFlags.test_run_dir_granted_in_worktree_runs_only, its launch half for the harnesses that take a flag;
+    // the Workflow half is in workflow/tests/harnesses.rs, and opencode's grant in
+    // opencode_takes_its_model_and_grant_as_config.
     let d = "/proj/.orchestrator/runs/r";
-    let grants: [(&str, &[&str]); 5] = [
+    let grants: [(&str, &[&str]); 4] = [
         ("claude", &["--add-dir", d]),
         ("codex", &["--add-dir", d]),
         ("gemini", &["--include-directories", d]),
-        ("opencode", &[]),
         ("pi", &[]),
     ];
     for (kind, grant) in grants {
         let h = harness(kind).unwrap();
         for (mode, model, session) in [(None, None, None), (Some("acceptEdits"), Some("m"), Some("s1"))] {
-            let mut expected = h.launch_args(mode, model, session, None);
-            expected.extend(grant.iter().map(|g| g.to_string()));
-            assert_eq!(h.launch_args(mode, model, session, Some(d)), expected, "{kind}");
+            let mut expected = h.launch(mode, model, session, None);
+            expected.args.extend(grant.iter().map(|g| g.to_string()));
+            assert_eq!(h.launch(mode, model, session, Some(d)), expected, "{kind}");
         }
-        assert!(h.launch_args(None, None, None, None).is_empty());
+        assert_eq!(h.launch(None, None, None, None), Launch { args: vec![], env: vec![] });
     }
 }
 

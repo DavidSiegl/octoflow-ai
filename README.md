@@ -288,7 +288,8 @@ off on `resume` has rules of its own; see
 
 A role's harness is herdr's `--kind` for its agent. The precedence is `--role-agent`, then `--agent`, then the
 role's `agent` in the workflow file, then `claude`. A model name is passed as it is, never translated, so give
-each role a model its harness knows.
+each role a model its harness knows. opencode, whose interactive interface takes no `--model`, gets it as `model` in
+an `OPENCODE_CONFIG_CONTENT` its pane's shell exports before starting it with `--standalone`.
 
 | `--permission-mode` | claude | gemini | codex | pi, opencode |
 |---|---|---|---|---|
@@ -378,7 +379,8 @@ A `--worktree` run works in `.orchestrator/worktrees/<key>`, checked out from `o
 branch, so the project's checkout need not be clean and stays yours to use. The worktree holds what git tracks.
 Untracked and ignored files, such as a `.venv`, are not in it, though Claude Code still reads the project's
 `CLAUDE.md` from the parent directory. The handoff files stay in the project's run directory. claude, codex and
-gemini are given access to it; opencode and pi may ask before writing there, and herdr notifies you to allow it.
+gemini are given access to it by a flag, and opencode by a `permission.external_directory` rule in the same
+`OPENCODE_CONFIG_CONTENT` that carries its model; pi asks before no write, so it needs nothing.
 
 The worktree is removed once the pull request is open. A failed or `--no-pr` run keeps its worktree, whose path
 `show` prints. `close` removes a failed run's worktree, discarding its changes, but keeps a finished `--no-pr`

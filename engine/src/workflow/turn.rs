@@ -655,8 +655,11 @@ impl Workflow<'_> {
         // The handoff files are outside a worktree run's working directory.
         let extra_dir = self.state.worktree.as_ref().map(|_| self.state.dir());
         let model = self.state.models.get(role).cloned();
-        let args = h.launch_args(self.state.permission_mode.as_deref(), model.as_deref(), session, extra_dir.as_deref());
-        let ready = self.herdr.start_agent(&name, pane, &kind, &args)?;
+        let launch = h.launch(self.state.permission_mode.as_deref(), model.as_deref(), session, extra_dir.as_deref());
+        if !launch.env.is_empty() {
+            self.herdr.export(pane, &launch.env)?;
+        }
+        let ready = self.herdr.start_agent(&name, pane, &kind, &launch.args)?;
         let record = [("name", name.clone()), ("pane", pane.to_string()), ("kind", kind)].into_iter().collect();
         self.state.agents.insert(role, record);
         self.save()?;

@@ -125,6 +125,31 @@ fn start_agent_passes_the_harness_args_after_separator() {
 }
 
 #[test]
+fn export_types_a_line_that_gives_a_shell_back_each_value() {
+    let (herdr, ran) = launching("");
+    let vars = [("A", r#"{"p":"/it's/a dir/*"}"#), ("B", r"\'$HOME `x`"), ("C", "")];
+    herdr.export("w1:p2", &vars.map(|(n, v)| (n.to_string(), v.to_string()))).unwrap();
+    let ran = ran.lock().unwrap().clone();
+    assert_eq!(ran.len(), 1);
+    let (args, limit) = &ran[0];
+    assert_eq!((&args[..4], *limit), (&argv(&["herdr", "pane", "run", "w1:p2"])[..], Some(Duration::from_secs(120))));
+    let line = format!("{}; printf '<%s>' \"$A\" \"$B\" \"$C\"", args[4]);
+    let out = std::process::Command::new("sh").args(["-c", &line]).output().unwrap();
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), r#"<{"p":"/it's/a dir/*"}><\'$HOME `x`><>"#);
+}
+
+#[test]
+fn export_refuses_a_control_character_without_asking_herdr() {
+    let (herdr, ran) = launching("");
+    for value in ["a\u{15}b", "a\u{7f}b", "a\nb"] {
+        let e = herdr.export("w1:p2", &[("A".to_string(), "ok".to_string()), ("B".to_string(), value.to_string())]);
+        let message = e.unwrap_err().to_string();
+        assert_eq!(message, "cannot type B into pane w1:p2: its value has a control character", "{value:?}");
+    }
+    assert!(ran.lock().unwrap().is_empty());
+}
+
+#[test]
 fn start_agent_blocked_at_startup() {
     let (herdr, _) = answering(None, 1, "", &error("agent_not_ready", "blocked during startup"));
     assert_eq!(herdr.start_agent("spec-x", "w1:p1", "claude", &[]), Ok(false));
@@ -817,13 +842,13 @@ fn every_recorded_agent_starts_with_the_launch_arguments_of_its_run() {
                 assert_eq!(s.agents.get(role).and_then(|a| a.get("session")), Some(session), "{scenario} {name}");
             }
             let extra_dir = s.worktree.is_some().then(|| s.dir());
-            let expected = harness(kind).unwrap().launch_args(
+            let expected = harness(kind).unwrap().launch(
                 s.permission_mode.as_deref(),
                 s.models.get(role).map(String::as_str),
                 session.as_deref(),
                 extra_dir.as_deref(),
             );
-            assert_eq!(given, expected, "{scenario} {name}");
+            assert_eq!(given, expected.args, "{scenario} {name}");
             starts += 1;
         }
     }
