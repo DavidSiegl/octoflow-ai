@@ -527,7 +527,8 @@ fn settings_args() -> Vec<Arg> {
              it is. agy gets nothing for default, --mode accept-edits for acceptEdits, \
              --dangerously-skip-permissions for bypassPermissions and --mode plan for plan; codex nothing for \
              default, --full-auto for acceptEdits, --dangerously-bypass-approvals-and-sandbox for bypassPermissions \
-             and --sandbox read-only for plan. Any other mode, and every mode for opencode and pi, is not passed, and the log says so",
+             and --sandbox read-only for plan. Any other mode, and every mode for opencode and pi, is not passed, \
+             and the log says so",
         ),
         Arg::new("model")
             .long("model")
