@@ -183,7 +183,7 @@ fn agent_and_turn_records_keep_the_fields_they_do_not_know_after_their_own() {
     let state = RunState::from_text(&text).unwrap();
     let (agent, turn) = (state.agents.get("build").unwrap(), &state.turns[0]);
     assert_eq!((agent.kind.as_str(), agent.session.as_deref()), ("pi", None));
-    assert_eq!((turn.harness.as_deref(), turn.session.as_deref(), turn.open()), (Some("codex"), Some("s1"), true));
+    assert_eq!((turn.harness.as_deref(), turn.session.as_deref(), turn.under_way()), (Some("codex"), Some("s1"), true));
     assert_eq!(state.to_text(), text + "\n");
 }
 
@@ -199,6 +199,19 @@ fn an_agent_or_turn_record_without_a_field_its_engine_writes_is_refused() {
         let e = RunState::from_text(&saved_with(&[("turns", Some(&turn_with(&[(key, None)])))])).unwrap_err();
         assert_eq!(e.0, format!("run state r1 is invalid: missing field `{key}`"));
     }
+}
+
+#[test]
+fn an_empty_harness_name_is_refused() {
+    // Read, it would pass for no harness: a quality analysis's, whose tokens are never counted.
+    let agents = r#"{"build": {"name": "build-r1", "pane": "p2", "kind": ""}}"#;
+    let turns = turn_with(&[("agent", Some(r#""""#))]);
+    for (key, value) in [("agents", agents), ("turns", turns.as_str())] {
+        let e = RunState::from_text(&saved_with(&[(key, Some(value))])).unwrap_err();
+        assert!(e.0.contains("an empty harness name"), "{key}: {e}");
+    }
+    let quality = turn_with(&[("agent", Some("null"))]);
+    assert_eq!(RunState::from_text(&saved_with(&[("turns", Some(&quality))])).unwrap().turns[0].harness, None);
 }
 
 #[test]

@@ -167,7 +167,9 @@ pub struct AgentRecord {
     pub name: String,
     /// The herdr pane it runs in; empty once the run's workspace was found gone, until the role's next agent starts.
     pub pane: String,
-    /// The harness it runs in, one of AGENT_KINDS.
+    /// The harness it runs in, never empty; one of AGENT_KINDS when this engine started it, though a run may hold a
+    /// kind this engine no longer runs, which Workflow::agent_kind refuses once the role's agent restarts.
+    #[serde(deserialize_with = "harness_name")]
     pub kind: String,
     /// The harness's session id, as herdr reports it; None until it does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -185,13 +187,14 @@ pub struct TurnRecord {
     pub step: String,
     /// The role whose turn it was; QUALITY for a quality analysis.
     pub role: String,
+    /// The run's review round (RunState::round) when the turn started.
     pub round: u32,
     /// The quality round the turn answered or judged; 0 for a turn of a step the gate does not judge.
     pub quality_round: u32,
     /// The handoff file's basename: the file the turn wrote, or the name it was moved to once rejected or blocked.
     pub file: String,
-    /// The harness the turn's agent ran in; None for a quality analysis, which runs no agent.
-    #[serde(rename = "agent", deserialize_with = "Option::deserialize")]
+    /// The harness the turn's agent ran in, never empty; None for a quality analysis, which runs no agent.
+    #[serde(rename = "agent", deserialize_with = "optional_harness_name")]
     pub harness: Option<String>,
     /// The role's model, as RunState::models has it; None for the harness's default and a quality analysis.
     #[serde(deserialize_with = "Option::deserialize")]
@@ -228,9 +231,26 @@ impl AgentRecord {
     }
 }
 
+/// Reads a harness's name, refusing an empty one: the engine never writes it, and a reader would take it for no
+/// harness (a quality analysis's) and skip the turn's tokens.
+fn harness_name<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    let name = String::deserialize(d)?;
+    if name.is_empty() {
+        return Err(serde::de::Error::custom("an empty harness name"));
+    }
+    Ok(name)
+}
+
+/// harness_name's, for a field that is null when no harness ran; the field must be present.
+fn optional_harness_name<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    #[derive(Deserialize)]
+    struct Name(#[serde(deserialize_with = "harness_name")] String);
+    Ok(Option::<Name>::deserialize(d)?.map(|Name(n)| n))
+}
+
 impl TurnRecord {
     /// Whether the turn is under way: its file has not been found written.
-    pub fn open(&self) -> bool {
+    pub fn under_way(&self) -> bool {
         self.ended_at.is_none()
     }
 }

@@ -186,7 +186,7 @@ step's turn and so after the editing steps' turns and the quality loop, runs eac
 last run failed, or a rerun found it erroring; one whose file a rerun found gone, as a proof the Builder moved into the
 project is, is listed once as moved and carried no further) from the proofs directory of the round that wrote it, and
 records the outcome in `RunState.proofs` with the round it ran in and, as `written`, the round that wrote it
-(`proof_written` reads a record saved before there was one as a first run); a resume runs no proof again once the
+(required: a record without it is refused with its `state.json`); a resume runs no proof again once the
 round's reruns are recorded. `CARRIED_PROOFS_NOTE`, after the quality and locks notes, tells the verdict step which
 proofs still fail or now error, with their last lines, and which now pass, and asks it to weigh one that does not pass
 as a finding that stands unless a report shows the proof itself is wrong; the reruns leave the reviews themselves alone.

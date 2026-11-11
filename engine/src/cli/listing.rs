@@ -67,7 +67,7 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
         Some((BLOCKED_STATUS, question))
     } else if running
         && step.is_some_and(|st| st.human_paced)
-        && last_turn.is_some_and(TurnRecord::open)
+        && last_turn.is_some_and(TurnRecord::under_way)
     {
         Some(("interview", role.clone().map_or(Value::Null, Value::from)))
     } else {

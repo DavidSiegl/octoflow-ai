@@ -75,7 +75,7 @@ impl TurnCells {
     /// harness.
     fn of(t: &TurnRecord, zone: &TimeZone) -> TurnCells {
         let set = |text: &Option<String>| text.clone().filter(|t| !t.is_empty());
-        let harness = set(&t.harness);
+        let harness = t.harness.clone();
         let round = match t.quality_round {
             0 => t.round.to_string(),
             q => format!("{} q{q}", t.round),
@@ -229,7 +229,7 @@ pub fn run_metrics(state: &RunState, now: i64) -> Value {
         .turns
         .iter()
         .map(|t| {
-            let harness = t.harness.as_deref().filter(|h| !h.is_empty());
+            let harness = t.harness.as_deref();
             let tokens = match harness {
                 None => Value::Null,
                 Some(_) if t.tokens.is_set() => t.tokens.clone(),

@@ -369,7 +369,7 @@ impl<'a> Workflow<'a> {
     fn ending_left(&self) -> Result<Option<Ending>, OrchestratorError> {
         let s = &self.state;
         if s.owner.is_some() {
-            let count_tokens = s.turns.iter().any(|t| t.harness.as_deref().is_some_and(|h| !h.is_empty()) && !t.tokens.is_set());
+            let count_tokens = s.turns.iter().any(|t| t.harness.is_some() && !t.tokens.is_set());
             return Ok(Some(Ending { count_tokens, ..Ending::WHOLE }));
         }
         let missing = |name: &str| self.host.exists(&format!("{}/{name}", s.dir())).map(|there| !there);
@@ -698,7 +698,7 @@ impl<'a> Workflow<'a> {
         let mut usage = std::collections::HashMap::new();
         for i in 0..self.state.turns.len() {
             let t = &self.state.turns[i];
-            let Some(kind) = t.harness.clone().filter(|h| !h.is_empty()) else { continue };
+            let Some(kind) = t.harness.clone() else { continue };
             let key = (kind, t.session.clone().unwrap_or_default());
             if !usage.contains_key(&key) {
                 let read = || -> Result<_, OrchestratorError> {

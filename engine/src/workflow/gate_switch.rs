@@ -125,7 +125,7 @@ pub fn turn_quality_gate_off(
     if s.phase == QUALITY {
         if let Some(gated) = pipeline.gated() {
             // An analysis that has not finished has an open record, which no quality file will ever close.
-            s.turns.retain(|t| t.step != QUALITY || !t.open());
+            s.turns.retain(|t| t.step != QUALITY || !t.under_way());
             s.phase = pipeline.after(&gated.id).map_or(PUBLISH, |f| f.id.as_str()).to_string();
         }
     }

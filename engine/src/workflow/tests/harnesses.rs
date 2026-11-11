@@ -179,14 +179,11 @@ fn a_saved_run_on_gemini_is_refused_naming_agy() {
 
 #[test]
 fn a_changed_harness_starts_fresh() {
-    // The saved record without a kind is a claude agent's, as 0.3.0 saved it.
-    for (saved_kind, kind) in [(None, "codex"), (Some("claude"), "pi"), (Some("gemini"), "claude")] {
+    for (saved_kind, kind) in [("codex", "claude"), ("claude", "pi"), ("gemini", "claude")] {
         let seen = seen();
         let mut state = saved_run("build", 2, FULL);
         state.prompted = Some("build-2.md".into());
-        if let Some(saved_kind) = saved_kind {
-            state.agents.get_mut("build").unwrap().kind = saved_kind.to_string();
-        }
+        state.agents.get_mut("build").unwrap().kind = saved_kind.to_string();
         let script = vec![("build", vec![recording(build_turn(2), &seen)]), ("review", vec![review_turn(2, APPROVE)])];
         let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &["review"], &[("build", "s-build")]);
         let kinds = [("build", kind.to_string())].into_iter().collect();
@@ -199,7 +196,7 @@ fn a_changed_harness_starts_fresh() {
         assert!(first.contains("This is round 2, and you are a fresh session"), "{first}");
         let told = format!(
             "[build] session s-build is {}'s, and the role runs in {kind} now; starting a fresh one",
-            saved_kind.unwrap_or("claude")
+            saved_kind
         );
         assert!(f.told.lines().contains(&told), "{:?}", f.told.lines());
     }

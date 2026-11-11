@@ -162,6 +162,7 @@ fn turn_tokens_sums_the_answers_within_the_turn_as_the_python_engine_does() {
         .collect();
     let cases = recorded.get("turn_tokens").and_then(Value::as_array).unwrap();
     assert!(cases.len() >= 16);
+    let mut refused = 0;
     for case in cases {
         let [fields_given, expected] = &case.as_array().unwrap()[..] else { panic!("{case:?}") };
         // The case's fields over a turn's others; a field of a type that no turn record has (a session of 7, a
@@ -171,7 +172,10 @@ fn turn_tokens_sums_the_answers_within_the_turn_as_the_python_engine_does() {
         fields.extend(fields_given.as_object().unwrap().clone());
         match serde_json::from_value::<TurnRecord>(Value::Object(fields)) {
             Ok(typed) => record = typed,
-            Err(_) => continue,
+            Err(_) => {
+                refused += 1;
+                continue;
+            }
         }
         let expected = expected.as_array().unwrap();
         assert_eq!(expected.len(), logs.len() + 1);
@@ -181,4 +185,6 @@ fn turn_tokens_sums_the_answers_within_the_turn_as_the_python_engine_does() {
             }
         }
     }
+    // The session of 7 and the start of 5; any more means TurnRecord stopped holding cases the engine writes.
+    assert_eq!((refused, cases.len()), (2, 16));
 }

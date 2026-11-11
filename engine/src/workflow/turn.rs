@@ -466,7 +466,7 @@ impl Workflow<'_> {
 
     /// The index in RunState.turns of the record of the turn under way that writes file; None when there is none.
     pub(super) fn open_turn(&self, file: &str) -> Option<usize> {
-        self.state.turns.iter().position(|t| t.file == file && t.open())
+        self.state.turns.iter().position(|t| t.file == file && t.under_way())
     }
 
     /// An open record of the current phase's turn that writes file: the current step's, or with no step of the phase,

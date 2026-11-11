@@ -796,3 +796,9 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   sibling directories, and other glob syntax opencode recognises can stop the rule matching the real run dir"
   (`Harness::launch`, `engine/src/harness.rs`). opencode 2.0.24 documents no escape for its wildcards. Closes with
   no grant for such a path (opencode then asks, as before 0.67.1), or an escape once opencode has one.
+- **A harness has two names in the engine: `kind` and `harness`.** Cross-review 180 F10: "One concept, two names:
+  `kind` (`AgentRecord::kind`, `agent_kinds`, `Workflow::agent_kind`) and `harness` (`TurnRecord::harness`,
+  `RunState::harness`); in `agent()` `kind = self.state.harness(role)` sits beside `target = self.agent_kind(role)`."
+  `AGENT_KINDS`, `--role-agent`'s kinds and the saved `agents.<role>.kind` and turn `agent` keys are on users' disks
+  and command lines, so only the engine's own names can follow. Closes with one name for the engine's identifiers
+  (and GLOSSARY.md defining it), the saved keys left as they are.
