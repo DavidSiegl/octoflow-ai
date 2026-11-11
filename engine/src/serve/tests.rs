@@ -601,6 +601,33 @@ fn the_setup_marker_needs_the_token() {
 }
 
 #[test]
+fn setup_gate_writes_the_missing_files_into_the_project_and_names_each() {
+    let repo = crate::host::tests::Repo::new(&[("gate.toml", "# mine\n")]);
+    let served = Served::real();
+    let reply = served.post(&format!("/setup/gate?{}", urlencode(&[("cwd", &repo.path)])), "");
+    assert_eq!(reply.status, Some(200), "{reply:?}");
+    let want = serde_json::json!({"files": [
+        {"path": "ci/gate.pin", "written": true},
+        {"path": "gate.toml", "written": false},
+    ]});
+    assert_eq!(reply.json(), want);
+    let pin = std::fs::read_to_string(format!("{}/ci/gate.pin", repo.path)).unwrap();
+    assert_eq!(pin, format!("{}\n", crate::local_gate::BUILT_IN_PIN));
+    assert_eq!(std::fs::read_to_string(format!("{}/gate.toml", repo.path)).unwrap(), "# mine\n");
+}
+
+#[test]
+fn setup_gate_needs_a_checkout_and_a_cwd() {
+    let repo = crate::host::tests::Repo::new(&[]);
+    let served = Served::real();
+    let reply = served.post(&format!("/setup/gate?{}", urlencode(&[("cwd", &repo.outside)])), "");
+    assert_eq!(reply.status, Some(502), "{reply:?}");
+    assert!(reply.error().contains("rev-parse --show-toplevel"), "{reply:?}");
+    let reply = served.post("/setup/gate", "");
+    assert_eq!((reply.status, reply.error()), (Some(400), "missing parameter cwd".to_string()));
+}
+
+#[test]
 fn unknown_endpoint() {
     let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
     let reply = served.get(&Served::query("/state", &[]), &[]);

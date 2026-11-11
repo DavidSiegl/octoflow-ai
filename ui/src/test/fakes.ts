@@ -1,5 +1,5 @@
 import { vi } from "vitest";
-import type { RunOptions, RunRequest, SetupReport } from "../api";
+import type { GateFile, RunOptions, RunRequest, SetupReport } from "../api";
 import recorded from "./recorded-stream.json";
 
 /** The events the engine's `serve` sent over a scripted run, recorded off the real server: each batch is what it
@@ -83,6 +83,11 @@ export interface FakeSetup {
   reportText?: string;
   markError?: string;
   marked?: number;
+  /** What POST /setup/gate answers: these files (none unless given), or a 502 with gateError when given. */
+  gateFiles?: GateFile[];
+  gateError?: string;
+  /** The query's cwd of each POST /setup/gate, in order. */
+  gateCwds?: (string | null)[];
 }
 
 /** The workflows a stubbed server offers unless told otherwise: `default`, `tdd`, and `broken`, which does not load.
@@ -124,7 +129,8 @@ export interface FakeStart {
 
 /** Stub EventSource, and fetch with a server whose /file answers the text of `files` by name, else 404; whose /agent
  * answers the screen of `agents` by role, else 404 as for an agent that has exited; whose POST /agent/input takes
- * any input; whose /setup endpoints answer as `setup` says, a POST of /setup/checked setting its `checked`; and
+ * any input; whose /setup endpoints answer as `setup` says, a POST of /setup/checked setting its `checked`, and a
+ * POST of /setup/gate recording its cwd; and
  * whose /workflows and POST /run answer as `start` says. */
 export function stubServer(
   files: Record<string, string>,
@@ -143,6 +149,10 @@ export function stubServer(
         return new Response(setup.reportText, { status: 200 });
       }
       return answer(200, setup.report ?? { checks: [], passed: true });
+    }
+    if (pathname === "/setup/gate" && init?.method === "POST") {
+      setup.gateCwds = [...(setup.gateCwds ?? []), searchParams.get("cwd")];
+      return setup.gateError === undefined ? answer(200, { files: setup.gateFiles ?? [] }) : answer(502, { error: setup.gateError });
     }
     if (pathname === "/setup/checked" && init?.method === "POST") {
       if (setup.markError !== undefined) {

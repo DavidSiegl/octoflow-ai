@@ -226,7 +226,7 @@ fn herdrless_command(command: &Command, local: &Local) -> Option<Result<Ended, S
         }
         Command::JudgedInQuality { job, branch } => judged_in_quality_command(local, job, branch),
         // Not being in a herdr pane is one of the things doctor reports.
-        Command::Doctor(target) => doctor::doctor_command(local, target),
+        Command::Doctor { target, setup_gate } => doctor::doctor_command(local, target, *setup_gate),
         _ => return None,
     };
     Some(match ended {
@@ -348,7 +348,7 @@ fn run_command(command: &Command, world: &Connected) -> Result<Ended, Stop> {
             let status = refresh::refresh_command(world, &cwd, run_ref.as_deref()).map_err(stopped)?;
             return if interrupt.is_raised() { Err(Stop::Interrupted(None)) } else { Ok(Ended::Status(status)) };
         }
-        Command::Workflows(_) | Command::JudgedInQuality { .. } | Command::Doctor(_) | Command::Serve(_) => {
+        Command::Workflows(_) | Command::JudgedInQuality { .. } | Command::Doctor { .. } | Command::Serve(_) => {
             unreachable!("main runs {command:?} without herdr (herdrless_command, serve_command)")
         }
     };

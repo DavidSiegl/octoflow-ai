@@ -82,6 +82,8 @@ impl FakeTools {
             ("git --version", completed("git version 2.47.3\n")),
             ("gh auth status", completed("github.com\n  ✓ Logged in to github.com\n")),
             ("gitleaks git --help", completed("Usage: gitleaks git [flags]\n")),
+            ("python3 -c", completed("")),
+            ("sh -c", completed("")),
             ("git -C /proj rev-parse --show-toplevel", completed("/proj\n")),
             ("git -C /proj remote get-url origin", completed("git@github.com:me/proj.git\n")),
             ("git -C /home/u/proj rev-parse --show-toplevel", completed("/home/u/proj\n")),
@@ -143,7 +145,13 @@ impl FakeTools {
         if argv == ["true"] {
             return ran(0, "", "");
         }
-        if argv[0] == "sh" && argv[2].contains("command -v") {
+        // local_gate::preflight's two commands, answered as `python3 -c` and `sh -c` are, their scripts left out.
+        let preflight = argv.len() > 2 && argv[1] == "-c" && (argv[0] == "python3" || argv[2].contains("octoflow/gate"));
+        if preflight {
+            let answer = t.answers[&vec![argv[0].clone(), "-c".to_string()]].clone();
+            return played(&answer);
+        }
+        if argv[0] == "sh" && argv[2] == "command -v -- \"$1\"" {
             return match t.paths.get(argv.last().unwrap()) {
                 Some(path) => ran(0, &format!("{path}\n"), ""),
                 None => ran(1, "", ""),
@@ -266,7 +274,7 @@ fn all_present() {
     for kind in AGENT_KINDS {
         want.extend([format!("{kind} CLI"), format!("{kind} integration")]);
     }
-    want.extend(["git", "gh", "gitleaks", "git checkout", "origin"].map(String::from));
+    want.extend(["git", "gh", "gitleaks", "local quality gate", "git checkout", "origin"].map(String::from));
     assert_eq!(order, want);
     let checks = setup(&tools, None, Some("/proj"));
     assert_eq!(failed(&checks, &order), Vec::<String>::new());
@@ -508,6 +516,125 @@ fn gitleaks() {
 }
 
 #[test]
+fn the_local_gate_is_checked_by_the_runs_preflight_and_is_optional() {
+    let tools = FakeTools::new();
+    let gate = setup(&tools, None, None)["local quality gate"].clone();
+    assert_eq!((gate.level, gate.ok), (Level::Optional, true));
+    assert!(ran_python3(&tools, None), "the preflight's python3 probe ran");
+    tools.answer("python3 -c", failing("", 1));
+    let order = names(&tools, None);
+    let checks = setup(&tools, None, None);
+    let gate = &checks["local quality gate"];
+    let detail = "the local quality gate runs octoflow-gate with python3 3.11 or later from PATH, and it is older; \
+                  needed only for --quality-gate local";
+    assert_eq!((gate.ok, gate.detail.as_str()), (false, detail));
+    assert!(gate.fix.contains("The local gate"), "{}", gate.fix);
+    // Optional: a machine that cannot run the local gate still runs everything else.
+    assert_eq!(reported(&checks, &order).1, 0);
+    tools.answer("python3 -c", completed(""));
+    tools.answer("sh -c", failing("curl is not on PATH", 1));
+    let detail = setup(&tools, None, None)["local quality gate"].detail.clone();
+    assert!(detail.ends_with("cache of its own: curl is not on PATH; needed only for --quality-gate local"), "{detail}");
+}
+
+#[test]
+fn the_local_gate_is_checked_where_the_agents_run() {
+    let tools = FakeTools::new();
+    assert!(setup(&tools, Some("box"), Some("/proj"))["local quality gate"].ok);
+    assert!(ran_python3(&tools, Some("me@box")));
+    assert!(!ran_python3(&tools, None));
+}
+
+/// Whether python3 ran on target.
+fn ran_python3(tools: &FakeTools, target: Option<&str>) -> bool {
+    tools.tools().calls.iter().any(|(t, a)| t.as_deref() == target && a[0] == "python3")
+}
+
+/// What doctor_command prints for argv, a doctor command line, on tools from a herdr pane, and its exit status or
+/// error.
+fn doctor_printed(tools: &FakeTools, argv: &[&str]) -> (Result<i32, OrchestratorError>, String) {
+    let config = ConfigDir::at("/nowhere");
+    let Ok(crate::cli::Command::Doctor { target, setup_gate }) = parse_args(argv.iter().map(OsString::from), &config) else {
+        panic!("{argv:?} is no doctor command")
+    };
+    let out = RefCell::new(String::new());
+    let host = tools.host(&[]);
+    let herdr = |machine: Option<&str>| tools.herdr(machine);
+    let (interrupt, print) = (Interrupt::new(), |t: &str| out.borrow_mut().push_str(t));
+    let jenkins = |_: &str| -> Result<crate::ci::Jenkins, OrchestratorError> { panic!("doctor made a Jenkins") };
+    let cwd = || -> Result<String, OrchestratorError> { panic!("doctor read the current directory") };
+    let local = Local {
+        host: &host,
+        herdr: &herdr,
+        in_herdr_pane: true,
+        jenkins: &jenkins,
+        cwd: &cwd,
+        config: &config,
+        stdout: &print,
+        stderr: &print,
+        interrupt: &interrupt,
+    };
+    let ended = doctor_command(&local, &target, setup_gate);
+    (ended, out.into_inner())
+}
+
+/// Have tools play Host::exists and Host::write on target's files, existing the paths in there.
+fn play_files(tools: &FakeTools, target: Option<&'static str>, there: &'static [&'static str]) {
+    tools.tools().answer_with = Some(Box::new(move |t, argv| {
+        if t != target || argv[0] != "sh" {
+            return None;
+        }
+        let path = argv.last().unwrap();
+        if argv[2].starts_with("[ -e") {
+            let status = if there.contains(&path.as_str()) { 0 } else { crate::host::MISSING_FILE_STATUS };
+            return Some(Answer::Ran(status, String::new(), String::new()));
+        }
+        argv[2].contains("cat >").then(|| completed(""))
+    }));
+}
+
+/// The paths tools wrote to on target, by Host::write, in order.
+fn written(tools: &FakeTools, target: Option<&str>) -> Vec<String> {
+    let calls = tools.tools().calls.clone();
+    calls.into_iter().filter(|(t, a)| t.as_deref() == target && a[0] == "sh" && a[2].contains("cat >")).map(|(_, a)| a.last().unwrap().clone()).collect()
+}
+
+#[test]
+fn doctor_writes_nothing_unless_asked_to_set_up_the_gate() {
+    let tools = FakeTools::new();
+    play_files(&tools, None, &[]);
+    let (status, out) = doctor_printed(&tools, &["doctor", "--cwd", "/proj"]);
+    assert_eq!(status.unwrap(), 0);
+    assert!(out.contains("ok      local quality gate: "), "{out}");
+    assert_eq!(written(&tools, None), Vec::<String>::new());
+}
+
+#[test]
+fn setup_gate_writes_the_missing_files_where_the_agents_run_and_keeps_the_rest() {
+    let tools = FakeTools::new();
+    play_files(&tools, Some("me@box"), &["/home/u/proj/gate.toml"]);
+    let (status, out) = doctor_printed(&tools, &["doctor", "--machine", "box", "--cwd", "~/proj", "--setup-gate"]);
+    assert_eq!(status.unwrap(), 0);
+    assert_eq!(written(&tools, Some("me@box")), ["/home/u/proj/ci/gate.pin"]);
+    assert_eq!(written(&tools, None), Vec::<String>::new());
+    let tail = "wrote   ci/gate.pin\nkept    gate.toml: already there\n\
+                --quality-gate local reads these from a run's base commit: commit them for a run to be judged by them.\n";
+    assert!(out.ends_with(tail), "{out}");
+}
+
+#[test]
+fn setup_gate_outside_a_checkout_is_an_error_after_the_checks() {
+    let tools = FakeTools::new();
+    play_files(&tools, None, &[]);
+    tools.answer("git -C /proj rev-parse --show-toplevel", failing("fatal: not a git repository", 128));
+    let (status, out) = doctor_printed(&tools, &["doctor", "--cwd", "/proj", "--setup-gate"]);
+    let e = status.unwrap_err().to_string();
+    assert!(e.starts_with("setting up the local quality gate: "), "{e}");
+    assert!(out.contains("missing git checkout: /proj is not in a git checkout"), "{out}");
+    assert_eq!(written(&tools, None), Vec::<String>::new());
+}
+
+#[test]
 fn not_a_checkout() {
     let tools = FakeTools::new();
     let stderr = "fatal: not a git repository (or any of the parent directories): .git\nmore\n";
@@ -738,7 +865,7 @@ fn machine_needs_cwd() {
     let config = ConfigDir::at("/nowhere");
     let parse = |argv: &[&str]| parse_args(argv.iter().map(OsString::from), &config);
     assert_eq!(parse(&["doctor", "--machine", "box"]).unwrap_err().exit_code(), 2);
-    assert_eq!(parse(&["doctor"]).unwrap(), crate::cli::Command::Doctor(crate::cli::Target::default()));
+    assert_eq!(parse(&["doctor"]).unwrap(), crate::cli::Command::Doctor { target: crate::cli::Target::default(), setup_gate: false });
 }
 
 #[test]

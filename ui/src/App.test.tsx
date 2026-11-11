@@ -458,6 +458,36 @@ describe("the setup dialog", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("sets the quality gate up for the open project, and shows what it wrote and kept", async () => {
+    const files = [
+      { path: "ci/gate.pin", written: true },
+      { path: "gate.toml", written: false },
+    ];
+    const setup: FakeSetup = { checked: false, report: { ...REPORT, checks: [...REPORT.checks] }, gateFiles: files };
+    await openWith(setup);
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
+    await within(dialog).findByText("herdr 0.9.1", { exact: false });
+    expect(within(dialog).queryByRole("region", { name: "Quality gate" })).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Set up the quality gate" }));
+    const gate = await within(dialog).findByRole("region", { name: "Quality gate" });
+    expect(await within(gate).findByText("wrote")).toBeInTheDocument();
+    expect(within(gate).getByText("ci/gate.pin")).toBeInTheDocument();
+    expect(within(gate).getByText("kept")).toBeInTheDocument();
+    expect(within(gate).getByText("gate.toml")).toBeInTheDocument();
+    expect(within(gate).getByText(/reads these from a run's base commit/)).toBeInTheDocument();
+    expect(setup.gateCwds).toEqual(["/home/me/proj"]);
+  });
+
+  it("shows why the quality gate could not be set up", async () => {
+    const setup: FakeSetup = { checked: false, report: { ...REPORT, checks: [...REPORT.checks] }, gateError: "/home/me/proj is in no git checkout" };
+    await openWith(setup);
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
+    await within(dialog).findByText("herdr 0.9.1", { exact: false });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Set up the quality gate" }));
+    const gate = await within(dialog).findByRole("region", { name: "Quality gate" });
+    expect(await within(gate).findByText("/home/me/proj is in no git checkout")).toBeInTheDocument();
+  });
+
   it("checks again", async () => {
     const setup: FakeSetup = { checked: false, report: { ...FAILED, checks: [...FAILED.checks] } };
     const fetch = await openWith(setup);

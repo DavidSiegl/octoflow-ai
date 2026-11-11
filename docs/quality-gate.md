@@ -88,11 +88,21 @@ Each round, the orchestrator:
    nothing the Builder changes would mend the release or the machine. So does a download that fails or does not
    match the pin.
 
-What it needs on that machine, which the preflight checks before the interview: `python3` 3.11 or later on `PATH`,
+What it needs on that machine, which the preflight checks before the interview, and `orchestrator doctor` as its
+optional check `local quality gate`: `python3` 3.11 or later on `PATH`,
 curl, tar, a `ps` that takes `-ww -o stat=,args= -p` (BusyBox's does not), sha256sum (or macOS's shasum), a writable
 cache, and gitleaks; and, unchecked, whatever the project's `gate.toml` has the gate run: its `[[test]]` commands
 and the linters its files call for, such as pymarkdown, shellcheck or clippy, all from `PATH`. A linter the project
 runs through uv, as this repository runs pymarkdown, is there when the orchestrator itself runs under `uv run`.
+
+`orchestrator doctor --setup-gate`, or "Set up the quality gate" in the desktop app's setup dialog, writes at the top
+level of the project's checkout, on the machine its agents run on, whichever of these is missing: `ci/gate.pin`,
+naming `BUILT_IN_PIN`, and a starter `gate.toml` with a `[[test]]` for each kind of project it finds there
+(`Cargo.toml`: `cargo test --workspace`; `pyproject.toml` or `setup.py`: pytest, through `uv run` when there is a
+`uv.lock`, writing `junit.xml`; `package.json`: `npm test`; `go.mod`: `go test ./...`), or none, with a comment
+saying how to add one, when it finds no kind it knows. Check the guessed commands. A file already there is kept.
+Nothing is committed, and nothing makes the project's runs gated: commit the files for the gate to read them, and
+pass `--quality-gate local` to a run.
 
 The gate runs the project's tests as you, with no sandbox: the same trust as running them by hand, and more than a
 Jenkins agent's container gives them. A local round keeps nothing in `state.json`'s `ci`: a resume in the middle of

@@ -753,3 +753,9 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   with gitignore-restore-flake/01: the first needs a concurrent index write within microseconds, the others were so
   before it. Closes when the copy's entries and time come from one open file, the copy sits in a directory of its
   own that the trap removes, and a test holds the copy to mktemp's mode.
+- **The starter `gate.toml`'s Rust and npm tests name no failing test.** `starter_settings`
+  (`engine/src/local_gate.rs`) guesses `cargo test --workspace` and `npm test` without a `junit` report: neither
+  writes JUnit without configuration that `doctor --setup-gate` does not write (nextest's through a
+  `.config/nextest.toml` profile, jest's through a reporter), so a failing test fails the gate as tests that could not
+  be judged, naming the command, not the test. Kept by choice (doctor-gate-setup ticket 01, 2026-11-11): setup writes
+  only `ci/gate.pin` and `gate.toml`. Closes, if wanted, with setup also writing the reporter's configuration.

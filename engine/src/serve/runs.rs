@@ -13,6 +13,7 @@ use crate::constants::RUNS_DIR;
 use crate::error::OrchestratorError;
 use crate::herdr::{AgentAddress, AgentConsole, HerdrError, HerdrServer, Launcher};
 use crate::host::{Host, RunFileText};
+use crate::local_gate::SetUpFile;
 use crate::paths::file_name;
 use serde::Deserialize;
 use serde_json::Value;
@@ -101,6 +102,11 @@ impl ProjectRuns {
     #[cfg(test)]
     pub(crate) fn with_pid_alive(self, pid_alive: impl Fn(i64) -> bool + Send + Sync + 'static) -> ProjectRuns {
         ProjectRuns { pid_alive: Arc::new(pid_alive), ..self }
+    }
+
+    /// Set the project up for the local quality gate, as crate::local_gate::set_up does, on the machine it is on.
+    pub fn set_up_gate(&self) -> Result<Vec<SetUpFile>, OrchestratorError> {
+        crate::local_gate::set_up(&*self.host, &self.cwd)
     }
 
     /// Whether the project is on another machine, read over SSH.
