@@ -281,8 +281,8 @@ struct Served {
 struct Connection {
     url: String,
     token: String,
-    /// The project the app opens first: the checkout the orchestrator served belongs to; None for the bundled
-    /// one, which belongs to none.
+    /// The project the app opens first: the checkout a development build was built in (`Sidecar::of_app`); None for
+    /// any other build, which belongs to no checkout.
     project: Option<String>,
 }
 
@@ -334,13 +334,14 @@ impl Sidecar {
 }
 
 /// The started sidecar and its first line; Err with why, the sidecar killed, when it cannot be started or that line
-/// is not `serve`'s.
+/// is not `serve`'s: what the sidecar wrote to its standard error, as `serve` and the CLI say why they refuse
+/// (`Cli::run`), else what it printed instead. A started sidecar's standard error goes on to the app's.
 fn spawn(program: &Path, origin: &str) -> Result<(Child, Served), String> {
     let mut child = Command::new(program)
         .args(["serve", "--origin", origin])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("cannot run {}: {e}", program.display()))?;
     let mut line = String::new();
@@ -352,12 +353,26 @@ fn spawn(program: &Path, origin: &str) -> Result<(Child, Served), String> {
         serde_json::from_str::<Served>(&line)
             .map_err(|e| format!("{} serve printed {:?}, not its address: {e}", program.display(), line.trim()))
     });
+    let stderr = child.stderr.take();
     match served {
-        Ok(served) => Ok((child, served)),
-        Err(reason) => {
+        Ok(served) => {
+            // The forwarder ends when the sidecar does; what it fails to copy is lost to no one but the log.
+            if let Some(mut stderr) = stderr {
+                std::thread::spawn(move || std::io::copy(&mut stderr, &mut std::io::stderr()));
+            }
+            Ok((child, served))
+        }
+        Err(printed) => {
             let _ = child.kill();
             let _ = child.wait();
-            Err(reason)
+            let mut said = String::new();
+            if let Some(mut stderr) = stderr {
+                // Read after the kill, so that it ends: a sidecar that started no process of its own holds the pipe
+                // alone. A failed read leaves what was read.
+                let _ = std::io::Read::read_to_string(&mut stderr, &mut said);
+            }
+            let said = said.trim();
+            Err(if said.is_empty() { printed } else { said.to_string() })
         }
     }
 }
@@ -497,6 +512,27 @@ mod tests {
         sidecar.stop();
         assert!(!exists(pid), "serve {pid} is still there");
         sidecar.stop();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_sidecar_that_refuses_gives_its_reason() {
+        let dir = TempDir::new();
+        let program = dir.join("octoflow");
+        let script = "#!/bin/sh\necho 'octoflow: cannot start in /gone: it is not a directory' >&2\nexit 1\n";
+        put_executable(&program, script);
+        let reason = Sidecar::start(&program, "tauri://localhost", None).connection.err().expect("an error");
+        assert_eq!(reason, "octoflow: cannot start in /gone: it is not a directory");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_sidecar_that_prints_something_else_is_named_with_what_it_printed() {
+        let dir = TempDir::new();
+        let program = dir.join("octoflow");
+        put_executable(&program, "#!/bin/sh\necho hello\n");
+        let reason = Sidecar::start(&program, "tauri://localhost", None).connection.err().expect("an error");
+        assert!(reason.contains("serve printed \"hello\", not its address"), "{reason}");
     }
 
     #[test]

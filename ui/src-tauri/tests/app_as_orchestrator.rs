@@ -38,3 +38,32 @@ fn the_app_serves_as_its_own_sidecar() {
     assert!(served["url"].as_str().is_some_and(|url| url.starts_with("http://127.0.0.1:")), "{line}");
     assert!(served["token"].as_str().is_some_and(|token| !token.is_empty()), "{line}");
 }
+
+/// The app's executable run with args as an AppImage would start it from proj, a directory since removed: `OWD`
+/// names it, and `APPDIR` and `APPIMAGE` name a bundle, which need not exist.
+fn from_a_removed_directory(args: &[&str]) -> std::process::Output {
+    Command::new(APP)
+        .args(args)
+        .env("APPDIR", "/nonexistent/Octoflow.AppDir")
+        .env("APPIMAGE", "/nonexistent/octoflow.AppImage")
+        .env("OWD", "/nonexistent/proj")
+        .stdin(Stdio::null())
+        .output()
+        .expect("the app runs")
+}
+
+#[test]
+fn the_cli_refuses_a_directory_since_removed() {
+    let out = from_a_removed_directory(&["workflows"]);
+    assert_eq!(out.status.code(), Some(1));
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(said.contains("octoflow: cannot start in /nonexistent/proj: it is not a directory"), "{said}");
+    assert!(out.stdout.is_empty(), "{}", String::from_utf8_lossy(&out.stdout));
+}
+
+#[test]
+fn the_sidecar_refuses_it_too_before_its_first_line() {
+    let out = from_a_removed_directory(&["serve", "--origin", "tauri://localhost"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stdout.is_empty(), "{}", String::from_utf8_lossy(&out.stdout));
+}

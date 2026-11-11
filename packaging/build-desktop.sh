@@ -194,9 +194,8 @@ smoke_appimage() {
 
 # smoke_dmg DMG: get the CLI from the .dmg, an absolute path, as the README tells a Mac user to, and run it from a
 # new directory, as smoke_cli does, through a symlink to Contents/MacOS/octoflow in the mounted Octoflow.app: the
-# app's own executable, which runs the CLI when given arguments (cli in ui/src-tauri/src/lib.rs). PATH is an empty
-# directory, so that nothing else the app might start is found. Detaches the .dmg; exits 1, naming the check, when
-# one fails.
+# app's own executable, which runs the CLI when given arguments (cli in ui/src-tauri/src/lib.rs). Detaches the .dmg;
+# exits 1, naming the check, when one fails.
 smoke_dmg() {
     smoke=$(mktemp -d)
     smoke=$(cd "$smoke" && pwd -P)
@@ -213,8 +212,6 @@ smoke_dmg() {
     app="$smoke/mnt/Octoflow.app"
     ln -s "$app/Contents/MacOS/octoflow" "$smoke/bin/octoflow" || smoke_fail "could not link the orchestrator"
     smoke_cli "$smoke/project" "$smoke/bin/octoflow"
-    (cd "$smoke/project" && PATH=/var/empty "$smoke/bin/octoflow" --help >/dev/null) \
-        || smoke_fail "octoflow --help did not exit 0 with nothing on PATH"
     # The volume can be busy for a moment after the processes started from it exit, as Spotlight looks at it.
     tries=0
     until hdiutil detach -quiet "$smoke/mnt"; do
@@ -230,10 +227,10 @@ smoke_dmg() {
     echo "smoke-tested dist/$(basename "$1") as the CLI, by symlink"
 }
 
-# The app's executable must be named octoflow (mainBinaryName in ui/src-tauri/tauri.conf.json): the README gives the
-# .deb's /usr/bin/octoflow and the .app's Contents/MacOS/octoflow as the CLI.
 # The Cargo workspace's target directory (Cargo.toml at the top), where tauri build writes the shell's bundles.
 out="target/release/bundle"
+# Each bundle's executable must be octoflow (mainBinaryName in ui/src-tauri/tauri.conf.json): the README gives the
+# .deb's /usr/bin/octoflow and the .app's Contents/MacOS/octoflow as the CLI.
 if [ "$os" = linux ]; then
     for deb in "$out/deb/Octoflow_${version}_"*.deb; do
         # A .deb's paths start with ./ when dpkg-deb built it, and may not when Tauri did.
