@@ -3,8 +3,9 @@
 //! and kept. docs/design.md, Evals, says when to run it and what the numbers mean.
 //!
 //! Run it from a herdr pane, as `orchestrator run`: every trial is a real run, with real agents. RUN_ARGS, after `--`,
-//! are given to the engine's `run` unchanged, such as `--workflow quick --model sonnet`; the runner sets `--no-pr`,
-//! `--spec` and `--cwd` itself, and refuses those, `--machine` and `--worktree` there ([`OWN_FLAGS`]).
+//! are given to the engine's `run` unchanged, such as `--model sonnet`; a workflow given there must start with a spec
+//! step (docs/design.md, Evals). The runner sets `--no-pr`, `--spec` and `--cwd` itself, and refuses those,
+//! `--machine` and `--worktree` there ([`OWN_FLAGS`]).
 //!
 //! The engine is the command line `EVAL_ENGINE` gives, else this checkout's own, built first ([`built_engine`]), so
 //! that a trial never runs a binary older than the commit it is recorded under. It is run as a program, through `run`

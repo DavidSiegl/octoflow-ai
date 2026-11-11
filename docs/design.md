@@ -149,7 +149,7 @@ trial is a real run, which spends tokens and needs a herdr pane.
 # Every task once, with the default workflow and harness
 cargo xtask eval
 # Three runs of two tasks, with run's flags after --
-cargo xtask eval --tasks feature,bugfix --repeat 3 -- --workflow quick --model sonnet
+cargo xtask eval --tasks feature,bugfix --repeat 3 -- --model sonnet
 # A release's binary, or any other program that takes run's and close's arguments
 EVAL_ENGINE=target/release/octoflow cargo xtask eval --tasks docs
 ```
@@ -158,7 +158,9 @@ For each task and repeat, the runner clones the task's bundle into a directory o
 as `run --no-pr --spec`, with a copy of the task's text as the spec, then runs the hidden test on what the run left
 and closes the run's workspace with `close`. The arguments after `--` go to `run` unchanged; the runner refuses
 the flags it sets itself and those that would put the change elsewhere. A workflow whose first step writes the
-spec, such as `default` or `product-team`, starts at the step after it, so no interview waits for an answer.
+spec, such as `default` or `product-team`, starts at the step after it, so no interview waits for an answer; one
+without such a step, such as `examples/workflows/quick.toml`, cannot take `--spec`, and the engine refuses it
+before any agent starts.
 `xtask/src/eval.rs`'s module comment gives its flags, the shape of a task and its exit status. A Ctrl-C stops the
 eval once the engine has saved its run, keeps that trial's clone, prints the table of the trials before it and exits
 130.
