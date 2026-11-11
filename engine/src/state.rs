@@ -272,6 +272,8 @@ impl RunState {
     /// have in unknown. For showing a run of another format (SavedRun::shown), never for acting on it.
     fn from_readable_fields(saved: &Object) -> RunState {
         let Value::Object(mut fields) = RunState::new("", "", "").to_json() else { unreachable!("a run state is an object") };
+        // RunState writes every field it has, format included, so a blank state's keys are all it knows.
+        let known: std::collections::HashSet<String> = fields.keys().cloned().collect();
         fields.shift_remove("format");
         let reads = |fields: &Object| serde_json::from_value::<RunState>(Value::Object(fields.clone())).is_ok();
         // One field at a time, so a field that does not read leaves the others.
@@ -287,8 +289,7 @@ impl RunState {
         let Ok(mut state) = serde_json::from_value::<RunState>(Value::Object(fields)) else {
             unreachable!("every field is new's or one that reads")
         };
-        let Value::Object(known) = RunState::new("", "", "").to_json() else { unreachable!("a run state is an object") };
-        state.unknown = saved.iter().filter(|(k, _)| !known.contains_key(*k)).map(|(k, v)| (k.clone(), v.clone())).collect();
+        state.unknown = saved.iter().filter(|(k, _)| !known.contains(k.as_str())).map(|(k, v)| (k.clone(), v.clone())).collect();
         state
     }
 
@@ -467,17 +468,18 @@ pub struct SavedRun {
 }
 
 impl SavedRun {
-    /// The run whose state.json holds saved, written age seconds ago: unreadable when saved is no object of
-    /// STATE_FORMAT whose fields all read (RunState::from_saved).
-    pub fn read(age: u64, saved: Value) -> SavedRun {
-        let Value::Object(saved) = saved else {
-            let problem = Some("a run state is a JSON object".to_string());
-            return SavedRun { age, state: RunState::new("", "", ""), problem };
+    /// The run whose state.json holds saved, written age seconds ago: unreadable when saved is not of STATE_FORMAT or
+    /// a field of it does not read (RunState::from_saved). Errors: saved is not an object with a run_id, a non-empty
+    /// string, so that it names no run to show or act on.
+    pub fn read(age: u64, saved: Value) -> Result<SavedRun, OrchestratorError> {
+        let saved = match saved {
+            Value::Object(saved) if saved.get("run_id").and_then(Value::as_str).is_some_and(|id| !id.is_empty()) => saved,
+            _ => return Err(OrchestratorError("a run state is a JSON object with its run_id".to_string())),
         };
-        match RunState::from_saved(&saved) {
+        Ok(match RunState::from_saved(&saved) {
             Ok(state) => SavedRun { age, state, problem: None },
             Err(e) => SavedRun { age, state: RunState::from_readable_fields(&saved), problem: Some(e.0) },
-        }
+        })
     }
 
     /// Seconds since the state.json was last written, by the clock of the host that wrote it.

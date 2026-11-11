@@ -642,3 +642,25 @@ fn list_names_a_non_default_workflow() {
     assert!(lines[3].starts_with("20260930-070000-c0ffe4  impl     round 1 q2  stale"), "{}", lines[3]);
     assert!(lines[3].ends_with("  [impl workflow]"), "{}", lines[3]);
 }
+
+#[test]
+fn record_in_state_refuses_a_changed_file_naming_what_it_does_not_record() {
+    let path = "/proj/.orchestrator/runs/r1/state.json";
+    let read = crate::state::RunState::new("r1", "a task", "/proj");
+    let mut now = read.clone();
+    now.round = 3;
+    let host = FakeHost::default();
+    host.state().files.insert(path.to_string(), now.to_text());
+    type Change = dyn Fn(&mut crate::state::RunState);
+    // (change, the end of the error)
+    let cases: [(&Change, &str); 3] = [
+        (&|_| {}, "nothing is recorded"),
+        (&|s| s.closed = Some("closed".into()), "closed is not recorded"),
+        (&|s| { s.closed = Some("closed".into()); s.conflicts = vec!["a".into()]; }, "conflicts and closed are not recorded"),
+    ];
+    for (change, end) in cases {
+        let e = record_in_state(&host, path, &read, change, "it was closed").unwrap_err();
+        assert_eq!(e.0, format!("{path} changed while it was closed; {end}"));
+    }
+    assert!(host.state().writes.is_empty());
+}

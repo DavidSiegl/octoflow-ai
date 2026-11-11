@@ -115,12 +115,12 @@ fn live_run_needs_force() {
     let me = [("host", Value::from("here")), ("pid", Value::from(42)), ("started_at", Value::from("x"))];
     let saved = Value::Object(saved_settings(&[("owner", Value::Object(object(me)))]));
     let alive = |_: i64| true;
-    let e = resumable_state(&[SavedRun::read(30, saved.clone())], &resume_args(&["a1b2c3"]), "/proj", "here", &alive).unwrap_err();
+    let e = resumable_state(&[SavedRun::read(30, saved.clone()).unwrap()], &resume_args(&["a1b2c3"]), "/proj", "here", &alive).unwrap_err();
     assert_eq!(
         e.0,
         "run 20260929-120000-a1b2c3 looks alive (pid 42 on here, beat 30s ago); pass --force to take it over"
     );
-    let forced = resumable_state(&[SavedRun::read(30, saved)], &resume_args(&["a1b2c3", "--force"]), "/proj", "here", &alive);
+    let forced = resumable_state(&[SavedRun::read(30, saved).unwrap()], &resume_args(&["a1b2c3", "--force"]), "/proj", "here", &alive);
     assert_eq!(forced.unwrap().0.run_id, "20260929-120000-a1b2c3");
 }
 
@@ -130,7 +130,7 @@ fn a_done_run_still_ending_needs_force() {
     let done = [("phase", Value::from("done")), ("owner", Value::Object(object(me)))];
     let saved = Value::Object(saved_settings(&done));
     let alive = |_: i64| true;
-    let e = resumable_state(&[SavedRun::read(30, saved.clone())], &resume_args(&["a1b2c3"]), "/proj", "here", &alive).unwrap_err();
+    let e = resumable_state(&[SavedRun::read(30, saved.clone()).unwrap()], &resume_args(&["a1b2c3"]), "/proj", "here", &alive).unwrap_err();
     assert_eq!(
         e.0,
         "run 20260929-120000-a1b2c3 looks alive (pid 42 on here, beat 30s ago); pass --force to take it over"
@@ -138,7 +138,7 @@ fn a_done_run_still_ending_needs_force() {
     // Once its orchestrator is gone, it is resumed so that its ending is finished.
     let dead = |_: i64| false;
     let late = HEARTBEAT_SECONDS + 1;
-    assert!(resumable_state(&[SavedRun::read(late, saved)], &resume_args(&["a1b2c3"]), "/proj", "here", &dead).is_ok());
+    assert!(resumable_state(&[SavedRun::read(late, saved).unwrap()], &resume_args(&["a1b2c3"]), "/proj", "here", &dead).is_ok());
 }
 
 #[test]

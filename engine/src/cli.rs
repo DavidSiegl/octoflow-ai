@@ -429,8 +429,8 @@ fn runs_command(runs: &RunsCommand, world: &Connected, cwd: &str, target: &[Stri
 /// they do not drive. The file keeps its modification time, which is the run's heartbeat: a stale run must not look
 /// live. meanwhile says what was being done, for the error.
 ///
-/// Errors: the file is gone, or no longer reads as read (naming the fields change sets and meanwhile; nothing is
-/// recorded), or cannot be read or written.
+/// Errors: the file is gone, or no longer reads as read (naming the fields change gives new values, and meanwhile;
+/// nothing is recorded), or cannot be read or written.
 pub fn record_in_state(
     host: &dyn Host,
     path: &str,
@@ -446,8 +446,12 @@ pub fn record_in_state(
             unreachable!("a run state is an object")
         };
         let keys: Vec<&str> = after.iter().filter(|(k, v)| before.get(*k) != Some(*v)).map(|(k, _)| k.as_str()).collect();
-        let verb = if keys.len() == 1 { "is" } else { "are" };
-        return Err(OrchestratorError(format!("{path} changed while {meanwhile}; {} {verb} not recorded", keys.join(" and "))));
+        let unrecorded = match keys[..] {
+            [] => "nothing is recorded".to_string(),
+            [key] => format!("{key} is not recorded"),
+            _ => format!("{} are not recorded", keys.join(" and ")),
+        };
+        return Err(OrchestratorError(format!("{path} changed while {meanwhile}; {unrecorded}")));
     }
     host.write(path, &updated.to_text(), true)
 }

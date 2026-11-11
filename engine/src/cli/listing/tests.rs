@@ -51,7 +51,7 @@ fn run(phase: &str) -> Value {
 
 /// The saved runs of state.json objects, each with its age.
 fn saved_runs(runs: &[(u64, Value)]) -> Vec<SavedRun> {
-    runs.iter().map(|(age, state)| SavedRun::read(*age, state.clone())).collect()
+    runs.iter().map(|(age, state)| SavedRun::read(*age, state.clone()).unwrap()).collect()
 }
 
 /// state with each of fields set, as Python's {**state, **fields}.
@@ -82,7 +82,7 @@ fn block() -> Value {
 /// is.
 fn record(state: &Value, age: u64, alive: bool, target: &[&str]) -> Object {
     let target: Vec<String> = target.iter().map(|s| s.to_string()).collect();
-    run_record(&SavedRun::read(age, state.clone()), "here", &move |_| alive, &target)
+    run_record(&SavedRun::read(age, state.clone()).unwrap(), "here", &move |_| alive, &target)
 }
 
 /// record's value of key.
@@ -243,7 +243,7 @@ fn an_unreadable_state_is_listed_with_why() {
     assert_eq!(listed.keys().collect::<Vec<_>>(), RUN_RECORD_KEYS);
     let shown = [key(&listed, "task"), key(&listed, "phase"), key(&listed, "round")];
     assert_eq!(shown, [Value::from("t"), Value::from("review"), Value::from(2)]);
-    let problem = SavedRun::read(0, state.clone()).problem().unwrap().to_string();
+    let problem = SavedRun::read(0, state.clone()).unwrap().problem().unwrap().to_string();
     assert_eq!(key(&listed, "error"), Value::from(problem));
     assert_eq!((key(&listed, "waiting"), key(&listed, "resume_command")), (Value::Null, Value::Null));
     // One an earlier release saved, with format_problem's reason.

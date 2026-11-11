@@ -56,7 +56,7 @@ pub(super) fn drain_command(args: &DrainArgs, world: &Connected, cwd: &str) -> R
     // gone, keeps the record for the next drain.
     if !args.dry_run {
         let taken: Vec<RunState> =
-            refreshed.taken.into_iter().filter(|(i, _)| !unwritten.contains(i)).map(|(_, saved)| saved).collect();
+            refreshed.taken.into_iter().filter(|(i, _)| !unwritten.contains(i)).map(|(_, state)| state).collect();
         forget_cleared(world, cwd, &taken).map_err(stopped)?;
     }
     let by_slug: HashMap<String, usize> = specs.iter().enumerate().map(|(i, s)| (s.slug.clone(), i)).collect();
@@ -238,7 +238,7 @@ pub fn refreshed_headers(
     for (i, spec) in specs.iter().enumerate() {
         let mut taken = vec![];
         let entries = settled_header(spec, &runs, &mut prs, &mut taken, target, dry_run)?;
-        refreshed.taken.extend(taken.into_iter().map(|saved| (i, saved)));
+        refreshed.taken.extend(taken.into_iter().map(|state| (i, state)));
         if !entries.is_empty() {
             refreshed.headers.push((i, entries));
         }
@@ -259,10 +259,10 @@ pub struct Refreshed {
 /// takes it up again (RunState::conflict_cleared); for the caller to do once the headers that took them up are
 /// written, for the runs of specs whose header was written or had nothing to change. cwd is the project, on world's host. Errors, naming the run: as record_in_state.
 pub fn forget_cleared(world: &Connected, cwd: &str, taken: &[RunState]) -> Result<(), OrchestratorError> {
-    for saved in taken {
-        let run_id = &saved.run_id;
+    for state in taken {
+        let run_id = &state.run_id;
         let path = format!("{cwd}/{RUNS_DIR}/{run_id}/state.json");
-        record_in_state(world.with.host, &path, saved, |s| s.conflict_cleared = None, "drain took up its cleared conflict")
+        record_in_state(world.with.host, &path, state, |s| s.conflict_cleared = None, "drain took up its cleared conflict")
             .map_err(|e| OrchestratorError(format!("run {run_id}: {e}")))?;
     }
     Ok(())
@@ -329,9 +329,9 @@ fn settled_header(
         (Some(SPEC_IN_REVIEW | SPEC_FOR_HUMAN), _) => merge(&mut entries, conflict_header(spec, runs, prs, taken, dry_run)?),
         (Some(SPEC_READY), Some(run)) => {
             merge(&mut entries, finished_run_header(spec, &run, runs, prs, target)?);
-            let saved = saved_run(runs, &run).and_then(|r| r.state().ok());
-            if let Some(saved) = saved.filter(|s| cleared_conflict(s).is_some()) {
-                taken.push(saved.clone());
+            let state = saved_run(runs, &run).and_then(|r| r.state().ok());
+            if let Some(state) = state.filter(|s| cleared_conflict(s).is_some()) {
+                taken.push(state.clone());
             }
         }
         _ => {}
@@ -371,29 +371,29 @@ fn conflict_header(
     dry_run: bool,
 ) -> Result<Entries, OrchestratorError> {
     let Some(run) = spec.run().and_then(|run| saved_run(runs, &run)) else { return Ok(vec![]) };
-    let saved = match run.state() {
-        Ok(saved) => saved,
+    let state = match run.state() {
+        Ok(state) => state,
         Err(e) => {
             prs.world.with.human.log(&format!("{}: {e}; {} is left as it is", run.shown().run_id, spec.slug));
             return Ok(vec![]);
         }
     };
     // The pull request whose conflict is cleared now, while it is open; None when there is none.
-    let cleared_open = if has_conflict(saved) {
-        let check = refresh_conflict(prs.world, prs.cwd, saved, dry_run, false)?;
+    let cleared_open = if has_conflict(state) {
+        let check = refresh_conflict(prs.world, prs.cwd, state, dry_run, false)?;
         if !dry_run {
             prs.world.with.human.log(&check.line());
         }
         prs.learn(&check.url, &check.pr_state);
         (check.pr_state == "OPEN" && check.clears()).then_some(check.url)
-    } else if let Some(url) = cleared_conflict(saved) {
+    } else if let Some(url) = cleared_conflict(state) {
         match prs.state(&url) {
-            Ok(state) => {
-                taken.push(saved.clone());
-                (state == "OPEN").then_some(url)
+            Ok(pr_state) => {
+                taken.push(state.clone());
+                (pr_state == "OPEN").then_some(url)
             }
             Err(e) => {
-                let run_id = &saved.run_id;
+                let run_id = &state.run_id;
                 prs.world.with.human.log(&format!(
                     "{run_id}: cannot ask gh about {url}, whose conflict refresh cleared ({e}); {} is left as it is \
                      until a drain can",
@@ -405,7 +405,7 @@ fn conflict_header(
     } else {
         None
     };
-    let succeeded = saved.verdict.as_deref().is_some_and(|v| SUCCEEDED.contains(&v));
+    let succeeded = state.verdict.as_deref().is_some_and(|v| SUCCEEDED.contains(&v));
     match cleared_open {
         Some(url) if spec.status().as_deref() == Some(SPEC_FOR_HUMAN) && succeeded => {
             Ok(vec![(STATUS_KEY, SPEC_IN_REVIEW.into()), (PR_KEY, url)])
@@ -414,10 +414,10 @@ fn conflict_header(
     }
 }
 
-/// The pull request whose conflict a refresh run by hand cleared for the run of state saved, which no drain has taken
-/// up yet (RunState::conflict_cleared); None for a run without one.
-fn cleared_conflict(saved: &RunState) -> Option<String> {
-    saved.conflict_cleared.clone().filter(|u| !u.is_empty())
+/// The pull request whose conflict a refresh run by hand cleared for the run whose state is state, which no drain has
+/// taken up yet (RunState::conflict_cleared); None for a run without one.
+fn cleared_conflict(state: &RunState) -> Option<String> {
+    state.conflict_cleared.clone().filter(|u| !u.is_empty())
 }
 
 /// The header lines to set for a spec whose pull request is in state, as gh gives it: SPEC_DONE for MERGED,
@@ -434,7 +434,8 @@ fn pull_request_header(state: &str) -> Entries {
 /// for one that succeeded without conflicts, SPEC_FOR_HUMAN otherwise, with its pull request if it has one.
 ///
 /// runs are Host::run_states's. Errors: the run is not finished, being running, stale, failed, closed or not among
-/// runs; the message names the spec, the run and what to do about it.
+/// runs, or is done but cannot be read (SavedRun::problem); the message names the spec, the run and what to do about
+/// it.
 fn finished_run_header(
     spec: &QueuedSpec,
     run_id: &str,
@@ -442,9 +443,9 @@ fn finished_run_header(
     prs: &PullRequestStates,
     target: &[String],
 ) -> Result<Entries, OrchestratorError> {
-    let saved = saved_run(runs, run_id);
-    let Some(s) = saved.and_then(|r| r.state().ok()).filter(|s| s.done()) else {
-        let (why, remedy) = unfinished_run(spec, run_id, saved, prs, target);
+    let run = saved_run(runs, run_id);
+    let Some(s) = run.and_then(|r| r.state().ok()).filter(|s| s.done()) else {
+        let (why, remedy) = unfinished_run(spec, run_id, run, prs, target);
         return Err(OrchestratorError(format!("spec {}: run {run_id}, on its {RUN_KEY}: line, {why}; {remedy}", spec.slug)));
     };
     let pr = s.pr_url.clone().filter(|p| !p.is_empty());
@@ -457,17 +458,18 @@ fn finished_run_header(
 }
 
 /// Why the run run_id on the spec's Run: line is not finished, and what the human can do about it, as two clauses for
-/// finished_run_header's error. saved is the run as Host::run_states gives it, None when there is no such run; a
-/// saved run must not be both readable and done.
+/// finished_run_header's error: for a done run whose state cannot be read, why the human is to settle its spec instead.
+/// run is the run as Host::run_states gives it, None when there is no such run; it must not be both readable and
+/// done.
 fn unfinished_run(
     spec: &QueuedSpec,
     run_id: &str,
-    saved: Option<&SavedRun>,
+    run: Option<&SavedRun>,
     prs: &PullRequestStates,
     target: &[String],
 ) -> (String, String) {
     let start_over = format!("remove the {RUN_KEY}: line from {} to start the spec over", spec.file.path);
-    let Some(run) = saved else {
+    let Some(run) = run else {
         return (format!("is not under {}/{RUNS_DIR}", prs.cwd), start_over);
     };
     let s = run.shown();
@@ -480,6 +482,14 @@ fn unfinished_run(
     // read is removing its directory; resume refuses any other such run, and the problem says what to do instead.
     if let Some((RUNNING, why)) = health {
         return (format!("is {RUNNING} ({why})"), format!("wait for it to finish, or {start_over}"));
+    }
+    // Starting over would do a finished run's work twice, so its spec's header is the human's to set.
+    if let Some(problem) = run.problem().filter(|_| s.done()) {
+        let pr = s.pr_url.as_deref().filter(|p| !p.is_empty()).map(|p| format!(" (its pull request: {p})")).unwrap_or_default();
+        return (
+            format!("is done but cannot be read: {problem}"),
+            format!("drain with that release, or set its {STATUS_KEY}: and {PR_KEY}: lines by hand{pr}"),
+        );
     }
     if let Some(problem) = run.problem() {
         return (format!("cannot be resumed: {problem}"), start_over);

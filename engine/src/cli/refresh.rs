@@ -57,31 +57,31 @@ pub fn has_conflict(s: &RunState) -> bool {
     s.done() && s.pr_url.as_deref().is_some_and(|url| !url.is_empty()) && !s.conflicts.is_empty()
 }
 
-/// Ask gh about the pull request of the run of state saved, which has_conflict, and, unless dry_run, act on what it
-/// says: for one that merges cleanly now, remove the conflict warning from its body, every other edit to the body
+/// Ask gh about the pull request of the run whose state is state, which has_conflict, and, unless dry_run, act on what
+/// it says: for one that merges cleanly now, remove the conflict warning from its body, every other edit to the body
 /// kept, take it out of draft if the run succeeded, and record no conflicts in the run's state, and with
-/// for_later_drain the pull request as conflict_cleared too (RunState::conflict_cleared); for one merged or closed, only
-/// no conflicts. One that still conflicts, or whose mergeability GitHub has not computed yet, is left as it is. Returns
-/// what gh said, and so what was done.
+/// for_later_drain the pull request as conflict_cleared too (RunState::conflict_cleared); for one merged or closed,
+/// only no conflicts. One that still conflicts, or whose mergeability GitHub has not computed yet, is left as it is.
+/// Returns what gh said, and so what was done.
 ///
 /// for_later_drain is true for refresh run by hand, whose clearing a later drain is to take up, and false for drain's
 /// own refresh, which takes it up in the same pass. cwd is the project, where gh runs and the run's state is, on
-/// world's host. Errors, naming the run: gh fails, or the state changed since it was read as saved (record_in_state).
+/// world's host. Errors, naming the run: gh fails, or its state.json changed since state was read (record_in_state).
 pub fn refresh_conflict(
     world: &Connected,
     cwd: &str,
-    saved: &RunState,
+    state: &RunState,
     dry_run: bool,
     for_later_drain: bool,
 ) -> Result<ConflictCheck, OrchestratorError> {
-    let run_id = &saved.run_id;
+    let run_id = &state.run_id;
     let refreshed = || -> Result<ConflictCheck, OrchestratorError> {
         let host = world.with.host;
-        let url = saved.pr_url.clone().unwrap_or_default();
+        let url = state.pr_url.clone().unwrap_or_default();
         let pr = host.pull_request_merge(cwd, &url)?;
         let clean = pr.state == "OPEN" && pr.mergeable == "MERGEABLE";
-        let body = clean.then(|| without_conflict_warning(&pr.body, saved.base_branch.as_deref(), &saved.conflicts));
-        let succeeded = saved.verdict.as_deref().is_some_and(|v| SUCCEEDED.contains(&v));
+        let body = clean.then(|| without_conflict_warning(&pr.body, state.base_branch.as_deref(), &state.conflicts));
+        let succeeded = state.verdict.as_deref().is_some_and(|v| SUCCEEDED.contains(&v));
         let check = ConflictCheck {
             run_id: run_id.clone(),
             url: url.clone(),
@@ -103,11 +103,11 @@ pub fn refresh_conflict(
         let cleared = (for_later_drain && check.pr_state == "OPEN").then(|| url.clone());
         let record = |s: &mut RunState| {
             s.conflicts.clear();
-            if cleared.is_some() {
-                s.conflict_cleared = cleared;
+            if let Some(url) = cleared {
+                s.conflict_cleared = Some(url);
             }
         };
-        record_in_state(host, &path, saved, record, "its pull request was refreshed")?;
+        record_in_state(host, &path, state, record, "its pull request was refreshed")?;
         Ok(check)
     };
     refreshed().map_err(|e| OrchestratorError(format!("run {run_id}: {e}")))
@@ -117,13 +117,13 @@ pub fn refresh_conflict(
 /// printing a line each (ConflictCheck::line); there, a run that has_conflict as far as its state reads, but whose
 /// state cannot be read, gets a line saying why it is skipped (SavedRun::problem). Returns the exit status: 0 when each
 /// conflict was forgotten, or there was none to refresh, and EXIT_WAITING when any pull request still conflicts or is
-/// not known to merge yet. Errors: run_ref names no run, one whose state cannot be read, or one that is not done; and
-/// as refresh_conflict.
+/// not known to merge yet, a skipped run's among them. Errors: run_ref names no run, one whose state cannot be read, or
+/// one that is not done; and as refresh_conflict.
 pub fn refresh_command(world: &Connected, cwd: &str, run_ref: Option<&str>) -> Result<i32, OrchestratorError> {
-    let saved = world.with.host.run_states(cwd)?;
+    let all = world.with.host.run_states(cwd)?;
     let runs: Vec<&SavedRun> = match run_ref {
         Some(run_ref) => {
-            let run = find_run(&saved, run_ref, cwd)?;
+            let run = find_run(&all, run_ref, cwd)?;
             let state = run.state()?;
             if !state.done() {
                 return Err(OrchestratorError(format!(
@@ -138,7 +138,7 @@ pub fn refresh_command(world: &Connected, cwd: &str, run_ref: Option<&str>) -> R
             vec![run]
         }
         None => {
-            let mut runs: Vec<&SavedRun> = saved.iter().filter(|run| has_conflict(run.shown())).collect();
+            let mut runs: Vec<&SavedRun> = all.iter().filter(|run| has_conflict(run.shown())).collect();
             runs.sort_by(|a, b| a.shown().run_id.cmp(&b.shown().run_id));
             runs
         }
@@ -149,6 +149,8 @@ pub fn refresh_command(world: &Connected, cwd: &str, run_ref: Option<&str>) -> R
             Ok(state) => state,
             Err(e) => {
                 world.say(&format!("{}: skipped: {e}", run.shown().run_id));
+                // Its conflict is not cleared, and nothing tells when it will be.
+                waiting = true;
                 continue;
             }
         };

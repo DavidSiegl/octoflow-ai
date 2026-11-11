@@ -465,7 +465,7 @@ pub fn resumable(flags: &[&str], saved: &Object) -> Result<crate::state::RunStat
     let Ok(crate::cli::Command::Resume(args)) = crate::cli::parse_args(argv, &crate::env::ConfigDir::at("/nowhere")) else {
         panic!("not a resume: {flags:?}")
     };
-    let runs = [crate::state::SavedRun::read(10_000, serde_json::Value::Object(saved.clone()))];
+    let runs = [crate::state::SavedRun::read(10_000, serde_json::Value::Object(saved.clone())).unwrap()];
     crate::cli::resumable_state(&runs, &args, "/proj", "here", &|_| false).map(|(state, _)| state)
 }
 

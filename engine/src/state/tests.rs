@@ -215,7 +215,7 @@ fn saved_object(fields: &[(&str, Option<&str>)]) -> Value {
 
 #[test]
 fn a_saved_run_of_this_format_is_its_state() {
-    let run = SavedRun::read(40, saved_object(&[("phase", Some("\"build\""))]));
+    let run = SavedRun::read(40, saved_object(&[("phase", Some("\"build\""))])).unwrap();
     assert_eq!((run.age(), run.problem()), (40, None));
     assert_eq!(run.state().unwrap().phase, "build");
     assert_eq!(run.shown(), run.state().unwrap());
@@ -228,13 +228,25 @@ fn an_unreadable_saved_run_is_refused_but_shown_as_far_as_it_reads() {
         (saved_object(&[("format", None), ("phase", Some("\"build\""))]), "run r1 was saved by an octoflow before", "build"),
         (saved_object(&[("format", Some("3")), ("phase", Some("\"build\""))]), "run r1 has state format 3", "build"),
         (saved_object(&[("round", Some("\"2\"")), ("phase", Some("\"build\""))]), "run state r1 is invalid: ", "build"),
-        (Value::from("a run"), "a run state is a JSON object", "spec"),
     ];
     for (saved, problem, phase) in cases {
-        let run = SavedRun::read(7, saved.clone());
+        let run = SavedRun::read(7, saved.clone()).unwrap();
         assert!(run.problem().is_some_and(|p| p.starts_with(problem)), "{saved}: {:?}", run.problem());
         assert_eq!(run.state().unwrap_err().0, run.problem().unwrap());
         assert_eq!((run.age(), run.shown().phase.as_str()), (7, phase), "{saved}");
+    }
+}
+
+#[test]
+fn a_saved_run_names_its_run() {
+    let cases = [
+        Value::from("a run"),
+        saved_object(&[("run_id", None)]),
+        saved_object(&[("run_id", Some("5"))]),
+        saved_object(&[("run_id", Some("\"\""))]),
+    ];
+    for saved in cases {
+        assert_eq!(SavedRun::read(0, saved.clone()).unwrap_err().0, "a run state is a JSON object with its run_id", "{saved}");
     }
 }
 
@@ -244,7 +256,7 @@ fn an_unreadable_field_is_shown_at_its_default_and_the_others_as_saved() {
         ("format", None), ("round", Some("\"2\"")), ("task", Some("\"add a rate limiter\"")), ("later", Some("1")),
         ("owner", Some("{\"host\": \"here\", \"pid\": 1}")),
     ]);
-    let shown = SavedRun::read(0, saved).shown().clone();
+    let shown = SavedRun::read(0, saved).unwrap().shown().clone();
     assert_eq!((shown.round, shown.task.as_str(), shown.run_id.as_str()), (0, "add a rate limiter", "r1"));
     assert_eq!(shown.owner.map(|o| o.len()), Some(2));
     assert_eq!(shown.unknown, crate::json::object([("later", Value::from(1))]));
@@ -298,7 +310,7 @@ fn runs() -> Vec<SavedRun> {
     ["20260930-070000-c0ffee", "20260930-080000-beef00", "20260929-080000-beef00"]
         .iter()
         .zip(1..)
-        .map(|(id, age)| SavedRun::read(age, RunState::new(id, "a task", "/p").to_json()))
+        .map(|(id, age)| SavedRun::read(age, RunState::new(id, "a task", "/p").to_json()).unwrap())
         .collect()
 }
 
@@ -307,7 +319,7 @@ fn by_key_or_full_id() {
     assert_eq!(find_run(&runs(), "c0ffee", "/p").unwrap().age(), 1);
     assert_eq!(find_run(&runs(), "20260929-080000-beef00", "/p").unwrap().age(), 3);
     // Unreadable or not.
-    let old = SavedRun::read(4, Value::Object(crate::json::object([("run_id", Value::from("20260928-080000-0dd000"))])));
+    let old = SavedRun::read(4, Value::Object(crate::json::object([("run_id", Value::from("20260928-080000-0dd000"))]))).unwrap();
     assert_eq!(find_run(&[old], "0dd000", "/p").unwrap().age(), 4);
 }
 

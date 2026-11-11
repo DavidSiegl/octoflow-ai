@@ -76,8 +76,8 @@ pub fn prune_branches(
     revisit: bool,
 ) -> Result<Vec<PrunedRun>, OrchestratorError> {
     let host = world.with.host;
-    let saved = host.run_states(cwd)?;
-    let candidates: Vec<&SavedRun> = saved.iter().filter(|run| is_prune_candidate(run, world, revisit)).collect();
+    let runs = host.run_states(cwd)?;
+    let candidates: Vec<&SavedRun> = runs.iter().filter(|run| is_prune_candidate(run, world, revisit)).collect();
     if candidates.is_empty() {
         return Ok(vec![]);
     }
@@ -86,11 +86,11 @@ pub fn prune_branches(
     }
     let mut checked_out = host.checked_out_branches(cwd)?;
     let mut pruned = vec![];
-    for saved in candidates {
-        let shown = saved.shown();
+    for candidate in candidates {
+        let shown = candidate.shown();
         let branch = shown.branch.clone().unwrap_or_default();
         let mut run = PrunedRun { run_id: shown.run_id.clone(), branch, ..PrunedRun::default() };
-        let state = match saved.state() {
+        let state = match candidate.state() {
             Ok(state) => state,
             Err(e) => {
                 run.skipped = Some(e.0);

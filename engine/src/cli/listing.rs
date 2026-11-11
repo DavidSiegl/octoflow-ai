@@ -81,7 +81,7 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
     record.insert("id".into(), Value::from(s.run_id.as_str()));
     record.insert("key".into(), Value::from(s.key()));
     record.insert("task".into(), Value::from(s.task.as_str()));
-    record.insert("workflow".into(), Value::from(if s.workflow.is_empty() { "default" } else { s.workflow.as_str() }));
+    record.insert("workflow".into(), Value::from(s.workflow.as_str()));
     record.insert(
         "steps".into(),
         pipeline.as_ref().map_or(Value::Null, |p| {
@@ -279,11 +279,10 @@ pub fn show_run(world: &Connected, cwd: &str, run_ref: &str, target: &[String]) 
     // The directory state.json was found in, which outlives a project moved since the run saved its cwd.
     let run_dir = format!("{cwd}/{RUNS_DIR}/{}", row[0]);
     let pipeline = s.pipeline().ok();
-    let workflow = if s.workflow.is_empty() { "default" } else { s.workflow.as_str() };
     world.say("");
     match &pipeline {
-        Some(p) => world.say(&format!("workflow   {workflow}: {}", workflow_shape(p))),
-        None => world.say(&format!("workflow   {workflow}: this orchestrator cannot load it")),
+        Some(p) => world.say(&format!("workflow   {}: {}", s.workflow, workflow_shape(p))),
+        None => world.say(&format!("workflow   {}: this orchestrator cannot load it", s.workflow)),
     }
     let fields = [
         ("worktree", s.worktree.clone()),

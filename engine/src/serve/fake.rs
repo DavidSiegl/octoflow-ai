@@ -85,7 +85,7 @@ impl Host for ServeHost {
         for (path, text) in &s.files {
             if let Some((run_id, "state.json")) = path.strip_prefix(&runs).and_then(|rest| rest.split_once('/')) {
                 let saved = serde_json::from_str::<Value>(text).map_err(|e| OrchestratorError(e.to_string()))?;
-                states.push(SavedRun::read(s.ages.get(run_id).copied().unwrap_or(0), saved));
+                states.push(SavedRun::read(s.ages.get(run_id).copied().unwrap_or(0), saved)?);
             }
         }
         Ok(states)

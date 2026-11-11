@@ -950,7 +950,7 @@ pub trait Host {
     /// clock, the one that stamped the file, so clock skew between the machines involved cannot shift it. A run whose
     /// directory is removed while the runs are read, as prune removes one, is among them or not, never an error; one
     /// of a format this engine does not read is among them, as unreadable. Errors: a state.json that is still there
-    /// cannot be stat'ed or read, or is not JSON.
+    /// cannot be stat'ed or read, or is not JSON naming its run (SavedRun::read).
     fn run_states(&self, cwd: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
         let script = format!("now=$(date +%s) || exit 1; {}", run_states_loop("true"));
         parsed_run_states(cwd, &self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?)
@@ -1065,7 +1065,7 @@ fn run_states_loop(keep: &str) -> String {
 }
 
 /// The runs run_states_loop printed as out, under the project at cwd, as run_states gives them. Errors: an age that
-/// is not a number, or a state that is not JSON.
+/// is not a number, or a state that is not JSON naming its run (SavedRun::read).
 fn parsed_run_states(cwd: &str, out: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
     let mut runs = vec![];
     for entry in out.split('\0') {
@@ -1077,7 +1077,7 @@ fn parsed_run_states(cwd: &str, out: &str) -> Result<Vec<SavedRun>, Orchestrator
         let not_int = || corrupt(format!("invalid literal for int() with base 10: {age:?}"));
         let age: i64 = python_int(age).ok_or_else(not_int)?;
         let saved = serde_json::from_str::<Value>(text).map_err(|e| corrupt(e.to_string()))?;
-        runs.push(SavedRun::read(age.max(0).unsigned_abs(), saved));
+        runs.push(SavedRun::read(age.max(0).unsigned_abs(), saved).map_err(|e| corrupt(e.0))?);
     }
     Ok(runs)
 }

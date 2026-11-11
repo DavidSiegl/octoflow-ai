@@ -190,7 +190,7 @@ impl ProjectRuns {
             return Err(RunReadError::Missing(format!("no run {run_id}")));
         };
         let saved = serde_json::from_str::<Value>(&text).map_err(|e| OrchestratorError(format!("{path}: {e}")))?;
-        let run = SavedRun::read(0, saved);
+        let run = SavedRun::read(0, saved).map_err(|e| OrchestratorError(format!("{path}: {e}")))?;
         let state = run.state().map_err(|e| OrchestratorError(format!("{path}: {e}")))?;
         let name = state.agents.get(role).and_then(|a| a.get("name")).filter(|n| !n.is_empty());
         let Some(name) = name else {

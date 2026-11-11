@@ -1063,6 +1063,31 @@ fn a_run_an_earlier_release_saved_is_waited_for_while_it_runs_and_never_resumed(
 }
 
 #[test]
+fn a_finished_run_an_earlier_release_saved_stops_the_drain_without_starting_the_spec_over() {
+    // Its pull request is open: starting the spec over would do its work twice, so the remedy names the release that
+    // saved it and the header lines to set by hand.
+    let run_id = "20261024-100000-aaaaaa";
+    let d = Drain::new();
+    d.sweepable();
+    d.spec("a", &spec_text("First", Some(SPEC_READY), &[&format!("Run: {run_id}")]));
+    let mut saved = serde_json::from_str::<Value>(&RunState::new(run_id, "spec a", "/proj").to_text()).unwrap();
+    let fields = saved.as_object_mut().unwrap();
+    fields.remove("format");
+    fields.insert("phase".into(), Value::from("done"));
+    fields.insert("pr_url".into(), Value::from(PR_A));
+    d.cli.save(&saved, HEARTBEAT_SECONDS + STALE_SECONDS);
+    let before = d.text("a");
+    let r = d.drain(vec![], &[]);
+    assert_eq!(r.status, EXIT_ERROR);
+    let why = format!("error: spec a: run {run_id}, on its Run: line, is done but cannot be read: run {run_id} was saved");
+    assert!(r.err.starts_with(&why), "{}", r.err);
+    assert!(r.err.contains(&format!("set its Status: and PR: lines by hand (its pull request: {PR_A})")), "{}", r.err);
+    assert!(!r.err.contains("start the spec over"), "{}", r.err);
+    assert_eq!(d.text("a"), before);
+    assert!(!d.swept());
+}
+
+#[test]
 fn a_refresh_that_fails_changes_no_spec() {
     let d = Drain::new();
     d.spec("a", &spec_text("First", Some(SPEC_IN_REVIEW), &[&format!("PR: {PR_A}")]));
