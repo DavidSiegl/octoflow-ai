@@ -25,13 +25,9 @@ fn run_dir() -> String {
 
 /// serve_state(**kw) of the Python tests, for run_id, as state.json's text.
 fn serve_state(run_id: &str, extra: &[(&str, Value)]) -> String {
-    let mut state = crate::json::object([
-        ("format", Value::from(crate::state::STATE_FORMAT)),
-        ("run_id", Value::from(run_id)),
-        ("task", Value::from("add a rate limiter")),
-        ("phase", Value::from("build")),
-        ("round", Value::from(1)),
-    ]);
+    let mut fresh = crate::state::RunState::new(run_id, "add a rate limiter", "/proj");
+    (fresh.phase, fresh.round) = ("build".into(), 1);
+    let Value::Object(mut state) = fresh.to_json() else { unreachable!("a state is saved as an object") };
     for (key, value) in extra {
         state.insert(key.to_string(), value.clone());
     }
@@ -295,7 +291,7 @@ fn runs_are_list_json_records_on_a_machine() {
         .run_states_inside("/proj")
         .unwrap()
         .iter()
-        .map(|(age, s)| Value::Object(run_record(s, *age, &crate::runs::local_host(), &crate::runs::pid_alive, &target)))
+        .map(|s| Value::Object(run_record(s, &crate::runs::local_host(), &crate::runs::pid_alive, &target)))
         .collect();
     let doc = reply.json();
     assert_eq!(doc, object([("version", Value::from(1)), ("runs", Value::Array(listed))]));
@@ -319,7 +315,7 @@ fn runs_are_list_json_records_locally() {
         .run_states(&d.0)
         .unwrap()
         .iter()
-        .map(|(age, s)| without_aging(run_record(s, *age, &crate::runs::local_host(), &crate::runs::pid_alive, &target)))
+        .map(|s| without_aging(run_record(s, &crate::runs::local_host(), &crate::runs::pid_alive, &target)))
         .collect();
     let doc = reply.json();
     assert_eq!(doc.get("version"), Some(&Value::from(1)));

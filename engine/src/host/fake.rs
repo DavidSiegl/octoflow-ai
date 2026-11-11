@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use super::{ChangedFile, Completed, Exec, ExecError, Host, Scanned, GIT_STATUS_ARGS};
 use crate::quality::Leak;
+use crate::state::SavedRun;
 use crate::constants::WORKTREES_DIR;
 use crate::error::OrchestratorError;
 use crate::host::tests::FAKE_TOKEN;
@@ -286,7 +287,7 @@ pub(crate) type BeforeGit = Box<dyn FnMut(&str, &[&str])>;
 /// A test's stand-in for the programs the host runs (FakeState::run_command).
 pub(crate) type RunCommand = Box<dyn FnMut(&FakeHost, &[&str]) -> Option<Result<Exec, ExecError>>>;
 /// A test's own run_states (FakeState::run_states_with).
-pub(crate) type RunStatesWith = Box<dyn FnMut(&str) -> Option<Result<Vec<(u64, Value)>, OrchestratorError>>>;
+pub(crate) type RunStatesWith = Box<dyn FnMut(&str) -> Option<Result<Vec<SavedRun>, OrchestratorError>>>;
 
 impl FakeHost {
     /// A checkout of /proj at commit head (None: no repository with a commit), on branch.
@@ -962,7 +963,7 @@ impl Host for FakeHost {
         Ok(())
     }
 
-    fn run_states(&self, cwd: &str) -> Result<Vec<(u64, Value)>, OrchestratorError> {
+    fn run_states(&self, cwd: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
         let hook = self.state().run_states_with.take();
         if let Some(mut hook) = hook {
             let answer = hook(cwd);
@@ -980,7 +981,7 @@ impl Host for FakeHost {
             };
             if name == "state.json" {
                 let state = serde_json::from_str::<Value>(text).map_err(|e| OrchestratorError(e.to_string()))?;
-                states.push((s.ages.get(run_id).copied().unwrap_or(0), state));
+                states.push(SavedRun::read(s.ages.get(run_id).copied().unwrap_or(0), state)?);
             }
         }
         Ok(states)

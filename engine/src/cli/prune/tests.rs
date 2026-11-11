@@ -12,6 +12,7 @@
 use std::rc::Rc;
 
 use super::*;
+use crate::state::format_problem;
 use crate::cli::fixture::Cli;
 use crate::cli::{parse_args, Command, RunsCommand, Target};
 use crate::cli::Stop;
@@ -24,6 +25,7 @@ use crate::summary::iso_utc;
 use crate::workflow::fixture::{build_turn, review_turn, saved_run, spec_turn, Fixture};
 use crate::state::RunState;
 use crate::json::object;
+use serde_json::Value;
 
 const PR_HEAD: &str = "1111111111111111111111111111111111111111";
 const OLDER: &str = "2222222222222222222222222222222222222222";
@@ -550,6 +552,20 @@ fn running_run_is_skipped() {
 }
 
 #[test]
+fn done_run_still_ending_is_skipped() {
+    // Saved as done a moment ago by a live orchestrator on this machine, which may still be cleaning up its
+    // workspace (Workflow::end_done_run): the run is driven (RunState::health).
+    let mut p = Prune::new();
+    p.cli.f.pid_alive = Box::new(|pid| pid == 4242);
+    let owner = Value::Object(
+        object([("host", Value::from("here")), ("pid", Value::from(4242)), ("started_at", Value::from("x"))]),
+    );
+    p.add(run("aaaaaa", merged()).with("owner", owner));
+    assert!(p.prune(false, false).is_empty());
+    assert!(p.host().gh_calls.is_empty() && p.deleting_calls().is_empty());
+}
+
+#[test]
 fn stale_run_is_a_candidate_and_keeps_its_age() {
     let p = Prune::new();
     let run_id = p.add(run("aaaaaa", merged()).with("phase", "publish").with("verdict", Value::Null));
@@ -702,17 +718,17 @@ fn an_origin_still_unreachable_stops_the_sweep_after_one_run() {
 }
 
 #[test]
-fn a_run_an_earlier_release_saved_is_pruned_as_any_other() {
-    // Its state.json has no format (crate::state::format_problem), which prune does not need.
+fn a_run_an_earlier_release_saved_is_skipped() {
+    // Its state.json has no format: prune says why (crate::state::format_problem) and leaves its branch and state.
     let p = Prune::new();
     let run_id = p.add(run("aaaaaa", merged()));
     let mut saved = p.saved(&run_id);
     saved.remove("format");
-    p.resave(&run_id, saved);
-    assert_eq!(p.pruned(&run_id).cleanup.as_deref(), Some(BRANCH_DELETED));
-    let saved = p.saved(&run_id);
-    assert_eq!(saved.get("branch_cleanup"), Some(&Value::from(BRANCH_DELETED)));
-    assert!(!saved.contains_key("format"));
+    p.resave(&run_id, saved.clone());
+    let r = p.pruned(&run_id);
+    assert_eq!((r.skipped, r.cleanup), (format_problem(&saved), None));
+    assert!(p.host().gh_calls.is_empty() && p.deleting_calls().is_empty());
+    assert_eq!(p.saved(&run_id), saved);
 }
 
 #[test]

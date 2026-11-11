@@ -309,7 +309,7 @@ fn a_run_saved_with_gemini_resumes_only_moved_to_another_harness() {
     saved.insert("workflow_definition".into(), definition);
     saved.insert("agent_kinds".into(), serde_json::from_str(r#"{"build": "claude", "review": "gemini"}"#).unwrap());
     // Its workflow reads, with agy in gemini's place, so that listings show it.
-    let pipeline = crate::workflow_file::saved_pipeline(&saved).expect("the saved workflow reads");
+    let pipeline = RunState::from_saved(&saved).unwrap().pipeline().expect("the saved workflow reads");
     assert_eq!(pipeline.agents().get("review").map(String::as_str), Some("agy"));
     // A resume is refused before any turn unless the role moves.
     assert_eq!(

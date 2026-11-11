@@ -45,7 +45,9 @@ Resuming a finished run does nothing but print its verdict.
 ## Stale runs
 
 While a run is going, its orchestrator rewrites `state.json` at least once a minute and records its host and
-pid there. `list` shows each unfinished run as `running` or `stale`. A run is stale when `state.json` is more
+pid there. `list` shows each unfinished run as `running` or `stale`, and so a run saved as `done` whose
+orchestrator has not let go of it yet, since it may still be ending it (closing its workspace, deleting its CI refs).
+A run is stale when `state.json` is more
 than five minutes old, measured by the clock of the machine that holds it, or when its orchestrator ran on this
 host and its pid is gone. A stale run's line ends with the `resume` command for it. `resume` refuses a run
 that is still running unless you pass `--force`, and an orchestrator whose run is taken over stops at its next
@@ -53,7 +55,7 @@ save. Ctrl-C is recorded as the error `interrupted`.
 
 A running run also blocks every other run in its checkout, since they would share one working tree: right
 after claiming its own `state.json`, a run that starts or resumes stops with an error if another run there is
-`running`. A stale, finished or failed run does not block, and `--force` does not override the check, which is
+`running`. A stale, finished or failed run does not block, unless it is a finished run still being ended, and `--force` does not override the check, which is
 about a different run. Two runs that start together each see the other's claim and both stop.
 
 ## Turn timings and the summary

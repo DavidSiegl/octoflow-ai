@@ -9,6 +9,8 @@
 use std::rc::Rc;
 
 use super::*;
+use crate::state::format_problem;
+use serde_json::Value;
 use crate::cli::fixture::Cli;
 use crate::cli::{Command, RunsCommand, Target};
 use crate::constants::{APPROVE, EXIT_ERROR, HEARTBEAT_SECONDS, STALE_SECONDS, WORKTREES_DIR};
@@ -342,15 +344,17 @@ fn state_saved_meanwhile_is_not_overwritten() {
 }
 
 #[test]
-fn a_run_an_earlier_release_saved_is_closed_as_any_other() {
-    // Its state.json has no format (crate::state::format_problem), which close does not need.
+fn a_run_an_earlier_release_saved_is_left_to_that_release() {
+    // Its state.json has no format: close says why (crate::state::format_problem) and touches nothing.
     let c = Close::new();
     let mut saved = c.add(0, true, &[]);
     saved.shift_remove("format");
-    c.cli.f.host.state().files.insert(close_state(), format!("{}\n", Value::Object(saved)));
-    assert_eq!(c.close(&[]).0, 0);
-    c.assert_closed("workspace closed; worktree deleted; branch deleted");
-    assert!(!c.saved().contains_key("format"));
+    let text = format!("{}\n", Value::Object(saved));
+    c.cli.f.host.state().files.insert(close_state(), text.clone());
+    let problem = format_problem(&c.saved()).unwrap();
+    assert_eq!(c.error(), problem);
+    assert!(c.cli.f.herdr.state().calls.is_empty() && c.cli.f.host.state().git_calls.is_empty());
+    assert_eq!(c.cli.f.host.state().files.get(&close_state()), Some(&text));
 }
 
 #[test]
@@ -498,7 +502,7 @@ fn a_done_run_still_ending_is_refused_untouched() {
 
 #[test]
 fn a_done_run_that_stopped_while_ending_closes_as_a_finished_one() {
-    // ending_health calls it stale; its worktree is still a --no-pr run's change.
+    // RunState::health calls it stale; its worktree is still a --no-pr run's change.
     let c = Close::new();
     let ended = [("phase", Value::from("done")), ("error", Value::Null), ("owner", me()), locked()];
     c.add(STALE_SECONDS + 1, true, &ended);

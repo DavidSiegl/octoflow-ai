@@ -620,24 +620,14 @@ fn bad_prompt_files_stop_a_run_before_any_agent() {
 #[test]
 fn list_names_a_non_default_workflow() {
     let cli = Cli::new();
-    let done = |id: &str, workflow: Option<&str>| {
+    let done = |id: &str, workflow: &str| {
         let mut state = saved_run("done", 1, &[]);
-        state.run_id = id.into();
-        state.verdict = Some(APPROVE.into());
-        let Value::Object(mut saved) = state.to_json() else { unreachable!("a state is saved as an object") };
-        match workflow {
-            Some(name) => {
-                saved.insert("workflow".into(), Value::from(name));
-            }
-            None => {
-                saved.remove("workflow");
-            }
-        }
-        Value::Object(saved)
+        (state.run_id, state.verdict, state.workflow) = (id.into(), Some(APPROVE.into()), workflow.into());
+        state.to_json()
     };
-    cli.save(&done("20260930-070000-c0ffe1", None), 1_000_000);
-    cli.save(&done("20260930-070000-c0ffe2", Some("default")), 1_000_000);
-    cli.save(&done("20260930-070000-c0ffe3", Some("quick")), 1_000_000);
+    cli.save(&done("20260930-070000-c0ffe1", "default"), 1_000_000);
+    cli.save(&done("20260930-070000-c0ffe2", "default"), 1_000_000);
+    cli.save(&done("20260930-070000-c0ffe3", "quick"), 1_000_000);
     let mut impl_run = saved_run("impl", 1, &[]);
     (impl_run.run_id, impl_run.quality_round, impl_run.workflow) = ("20260930-070000-c0ffe4".into(), 2, "impl".into());
     impl_run.workflow_definition = Some(workflow_definition(&crate::test_support::impl_()));
@@ -651,4 +641,26 @@ fn list_names_a_non_default_workflow() {
     ]);
     assert!(lines[3].starts_with("20260930-070000-c0ffe4  impl     round 1 q2  stale"), "{}", lines[3]);
     assert!(lines[3].ends_with("  [impl workflow]"), "{}", lines[3]);
+}
+
+#[test]
+fn record_in_state_refuses_a_changed_file_naming_what_it_does_not_record() {
+    let path = "/proj/.orchestrator/runs/r1/state.json";
+    let read = crate::state::RunState::new("r1", "a task", "/proj");
+    let mut now = read.clone();
+    now.round = 3;
+    let host = FakeHost::default();
+    host.state().files.insert(path.to_string(), now.to_text());
+    type Change = dyn Fn(&mut crate::state::RunState);
+    // (change, the end of the error)
+    let cases: [(&Change, &str); 3] = [
+        (&|_| {}, "nothing is recorded"),
+        (&|s| s.closed = Some("closed".into()), "closed is not recorded"),
+        (&|s| { s.closed = Some("closed".into()); s.conflicts = vec!["a".into()]; }, "conflicts and closed are not recorded"),
+    ];
+    for (change, end) in cases {
+        let e = record_in_state(&host, path, &read, change, "it was closed").unwrap_err();
+        assert_eq!(e.0, format!("{path} changed while it was closed; {end}"));
+    }
+    assert!(host.state().writes.is_empty());
 }

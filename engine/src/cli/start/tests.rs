@@ -1,8 +1,8 @@
-//! The state a run starts from. Python's cases of resumable_state, by class: TestFindRun, TestResumableState,
-//! TestOneRunPerCheckout's two resume --force cases, TestWorkflowFiles' and TestPromptFiles' saved definitions and
-//! prompts that stop a resume, and TestQualityCLI's resume limits. TestHarnessFlags' resumable_state halves are in
-//! crate::workflow's harnesses tests, beside the Workflow halves of the same cases. new_state has no Python test but
-//! through main (TestCLI, crate::cli's tests); its cases here are the Rust engine's.
+//! The state a run starts from. Python's cases of resumable_state, by class: TestResumableState (TestFindRun's are
+//! crate::state's), TestOneRunPerCheckout's two resume --force cases, TestWorkflowFiles' and TestPromptFiles' saved
+//! definitions and prompts that stop a resume, and TestQualityCLI's resume limits. TestHarnessFlags' resumable_state
+//! halves are in crate::workflow's harnesses tests, beside the Workflow halves of the same cases. new_state has no
+//! Python test but through main (TestCLI, crate::cli's tests); its cases here are the Rust engine's.
 
 use std::rc::Rc;
 
@@ -20,6 +20,8 @@ use crate::workflow::fixture::{quality_state, review_turn, saved_run, Fixture};
 use crate::workflow_file::{workflow_definition, workflow_toml};
 use crate::json::Object;
 use crate::json::object;
+use crate::state::SavedRun;
+use serde_json::Value;
 
 /// resume's arguments in argv, after `resume`.
 fn resume_args(argv: &[&str]) -> ResumeArgs {
@@ -58,36 +60,6 @@ fn error(result: Result<RunState, OrchestratorError>) -> String {
         Ok(state) => panic!("resumed: {}", state.run_id),
         Err(e) => e.0,
     }
-}
-
-// -- TestFindRun ---------------------------------------------------------------------------------------------------
-
-fn runs() -> Vec<(u64, Value)> {
-    ["20260930-070000-c0ffee", "20260930-080000-beef00", "20260929-080000-beef00"]
-        .iter()
-        .zip(1..)
-        .map(|(id, age)| (age, Value::Object(object([("run_id", Value::from(*id))]))))
-        .collect()
-}
-
-#[test]
-fn by_key_or_full_id() {
-    assert_eq!(find_run(&runs(), "c0ffee", "/p").unwrap().0, 1);
-    assert_eq!(find_run(&runs(), "20260929-080000-beef00", "/p").unwrap().0, 3);
-}
-
-#[test]
-fn ambiguous_key() {
-    let e = find_run(&runs(), "beef00", "/p").unwrap_err();
-    assert_eq!(
-        e.0,
-        "beef00 matches several runs (20260930-080000-beef00, 20260929-080000-beef00); give the full run id"
-    );
-}
-
-#[test]
-fn no_match() {
-    assert_eq!(find_run(&runs(), "abcdef", "/p").unwrap_err().0, "no run abcdef under /p/.orchestrator/runs");
 }
 
 // -- TestResumableState --------------------------------------------------------------------------------------------
@@ -143,12 +115,12 @@ fn live_run_needs_force() {
     let me = [("host", Value::from("here")), ("pid", Value::from(42)), ("started_at", Value::from("x"))];
     let saved = Value::Object(saved_settings(&[("owner", Value::Object(object(me)))]));
     let alive = |_: i64| true;
-    let e = resumable_state(&[(30, saved.clone())], &resume_args(&["a1b2c3"]), "/proj", "here", &alive).unwrap_err();
+    let e = resumable_state(&[SavedRun::read(30, saved.clone()).unwrap()], &resume_args(&["a1b2c3"]), "/proj", "here", &alive).unwrap_err();
     assert_eq!(
         e.0,
         "run 20260929-120000-a1b2c3 looks alive (pid 42 on here, beat 30s ago); pass --force to take it over"
     );
-    let forced = resumable_state(&[(30, saved)], &resume_args(&["a1b2c3", "--force"]), "/proj", "here", &alive);
+    let forced = resumable_state(&[SavedRun::read(30, saved).unwrap()], &resume_args(&["a1b2c3", "--force"]), "/proj", "here", &alive);
     assert_eq!(forced.unwrap().0.run_id, "20260929-120000-a1b2c3");
 }
 
@@ -158,7 +130,7 @@ fn a_done_run_still_ending_needs_force() {
     let done = [("phase", Value::from("done")), ("owner", Value::Object(object(me)))];
     let saved = Value::Object(saved_settings(&done));
     let alive = |_: i64| true;
-    let e = resumable_state(&[(30, saved.clone())], &resume_args(&["a1b2c3"]), "/proj", "here", &alive).unwrap_err();
+    let e = resumable_state(&[SavedRun::read(30, saved.clone()).unwrap()], &resume_args(&["a1b2c3"]), "/proj", "here", &alive).unwrap_err();
     assert_eq!(
         e.0,
         "run 20260929-120000-a1b2c3 looks alive (pid 42 on here, beat 30s ago); pass --force to take it over"
@@ -166,7 +138,7 @@ fn a_done_run_still_ending_needs_force() {
     // Once its orchestrator is gone, it is resumed so that its ending is finished.
     let dead = |_: i64| false;
     let late = HEARTBEAT_SECONDS + 1;
-    assert!(resumable_state(&[(late, saved)], &resume_args(&["a1b2c3"]), "/proj", "here", &dead).is_ok());
+    assert!(resumable_state(&[SavedRun::read(late, saved).unwrap()], &resume_args(&["a1b2c3"]), "/proj", "here", &dead).is_ok());
 }
 
 #[test]

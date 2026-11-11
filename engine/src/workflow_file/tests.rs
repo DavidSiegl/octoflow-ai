@@ -427,17 +427,3 @@ fn a_workflow_files_own_prompt_is_not_replaced() {
     assert!(build.prompt.starts_with("You are the Builder, the first of two roles"), "{}", build.prompt);
     assert_eq!(build.again.as_deref(), Some(prompts.text(Prompt::FixPrompt)));
 }
-
-#[test]
-fn a_saved_state_names_its_workflow() {
-    let saved = |text: &str| serde_json::from_str::<Value>(text).unwrap().as_object().unwrap().clone();
-    assert_eq!(saved_pipeline(&saved(r#"{"run_id": "r"}"#)), Some(DEFAULT_WORKFLOW.clone()));
-    assert_eq!(saved_pipeline(&saved(r#"{"workflow": "quick"}"#)), None);
-    let definition = workflow_definition(&quick()).to_string();
-    let state = saved(&format!(r#"{{"workflow": "quick", "workflow_definition": {definition}, "prompt_overrides": null}}"#));
-    assert_eq!(saved_pipeline(&state), Some(quick()));
-    assert_eq!(saved_pipeline(&saved(r#"{"prompt_overrides": {"LATER_NOTE": "x"}}"#)), None);
-    assert_eq!(saved_pipeline(&saved(r#"{"workflow": 5}"#)), None);
-    let worded = saved_pipeline(&saved(r#"{"prompt_overrides": {"FIX_PROMPT": "Fix {findings}; report to {build_path}."}}"#)).unwrap();
-    assert_eq!(worded.step("build").unwrap().again.as_deref(), Some("Fix {findings}; report to {build_path}."));
-}
