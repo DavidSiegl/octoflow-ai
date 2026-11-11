@@ -1031,14 +1031,15 @@ pub fn doctor_checks(w: &mut World) {
     w.note("lines", Value::Array(lines));
 }
 
-/// doctor's lines without those of the git and tkinter checks, and their fixes, which say what the host has.
+/// doctor's lines without those of the git, tkinter and local quality gate checks, and their fixes, which say what
+/// the host has.
 fn host_free(report: &str) -> Vec<String> {
     let mut lines = Vec::new();
     let mut skipping = false;
     for line in report.lines() {
         if !line.starts_with(' ') {
             let check = line.split(':').next().unwrap_or_default().split_whitespace().last().unwrap_or_default();
-            skipping = check == "git" || check == "tkinter";
+            skipping = ["git", "tkinter", "gate"].contains(&check);
         }
         if !skipping {
             lines.push(line.to_string());

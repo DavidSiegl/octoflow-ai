@@ -130,6 +130,13 @@ export interface SetupReport {
   passed: boolean;
 }
 
+/** A file the quality gate's setup looked after: its path from the project's top level, and whether the setup wrote
+ * it; false means something was there already, which the setup kept as it was. */
+export interface GateFile {
+  path: string;
+  written: boolean;
+}
+
 /** A role of a workflow as /workflows offers it: the harness it runs in unless the run names another, and its
  * workflow's model for it, null for the harness's own. */
 export interface OfferedRole {
@@ -223,6 +230,19 @@ export class Api {
    * itself; rejects with why it could not be recorded. */
   async markSetupChecked(): Promise<void> {
     await this.json(`${this.connection.url}/setup/checked`, { method: "POST" });
+  }
+
+  /** Write, at the top level of the project's checkout where its agents run, what `--quality-gate local` reads,
+   * where it is missing: ci/gate.pin and a starter gate.toml, whose test commands are guessed from the project's
+   * kind. Nothing is committed, and a run's gate reads them from its base commit. Resolves to each file, the pin
+   * first; rejects with the server's error message, status 502 for a project it cannot reach or a setup that fails,
+   * as for a directory in no git checkout. */
+  async setUpGate(project: Project): Promise<GateFile[]> {
+    const body = (await this.json(this.url("/setup/gate", project, {}), { method: "POST" })) as { files?: unknown };
+    if (!Array.isArray(body.files)) {
+      throw new HttpError(200, "the answer has no files");
+    }
+    return body.files as GateFile[];
   }
 
   /** What a run can be started with, from the configuration of this computer, where the server starts its runs, so

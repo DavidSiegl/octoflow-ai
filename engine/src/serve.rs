@@ -151,7 +151,7 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 
 /// serve's HTTP server, on a free port of 127.0.0.1, with its token, answering until it is dropped. Its endpoints
 /// but /setup/checked and /workflows each name the project by ?cwd= and an optional ?machine=, and answer JSON; each
-/// is a GET but the three POSTs:
+/// is a GET but the four POSTs:
 ///
 /// - /runs: {"version", "runs"}, as `list --json` prints it.
 /// - /files?run=ID: {"run", "files"}, the run's files as ProjectRuns::files lists them.
@@ -171,6 +171,9 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 ///   (Setup::checked); 500 when that cannot be told.
 /// - POST /setup/checked: records that it has (Setup::mark), whatever the checks say, and answers {"checked": true};
 ///   500 when the marker cannot be written.
+/// - POST /setup/gate?cwd=DIR: sets the project up for `--quality-gate local` (ProjectRuns::set_up_gate) and answers
+///   {"files": [{"path", "written"}, ...]}, written false for a file it kept; 400 for a cwd missing, 502 for a project
+///   that cannot be reached or a setup that fails, as for a cwd in no git checkout.
 /// - /workflows: what a run can be started with, as start::offered_workflows gives it from the configuration
 ///   directory; 500 when its workflows directory cannot be listed.
 /// - POST /run?cwd=DIR: starts the run the JSON body asks for (start::RunRequest::parse), as a new run id, in a new
@@ -419,6 +422,7 @@ impl Endpoint {
 /// The endpoints a POST may name.
 const AGENT_INPUT: &str = "/agent/input";
 const SETUP_CHECKED: &str = "/setup/checked";
+const SETUP_GATE: &str = "/setup/gate";
 const RUN: &str = "/run";
 /// The GET endpoints outside Endpoint, which reach no project (unreached_answer): the setup dialog's checks, and the
 /// workflows a run can be started with.
@@ -435,6 +439,7 @@ fn answer(shared: &Shared, request: Request) {
         "GET" => get(shared, request, &path, &query),
         "POST" if path == AGENT_INPUT => post_input(shared, request, &query),
         "POST" if path == SETUP_CHECKED => post_checked(shared, request, &query),
+        "POST" if path == SETUP_GATE => post_setup_gate(shared, request, &query),
         "POST" if path == RUN => post_run(shared, request, &query),
         "OPTIONS" => preflight(shared, request),
         method => {
@@ -621,6 +626,24 @@ fn post_checked(shared: &Shared, request: Request, query: &HashMap<String, Strin
     let (code, body) = match shared.setup.mark() {
         Ok(()) => (200, object([("checked", Value::from(true))])),
         Err(why) => (500, error(&why)),
+    };
+    send_json(request, code, &body);
+}
+
+/// Answer a POST of /setup/gate with the query's parameters, as target gives them, by setting the project up for the
+/// local quality gate.
+fn post_setup_gate(shared: &Shared, request: Request, query: &HashMap<String, String>) {
+    if let Some((code, body)) = refusal(shared, &request, query) {
+        return send_json(request, code, &body);
+    }
+    let set_up = project_of(shared, query, &["cwd"])
+        .and_then(|project| project.set_up_gate().map_err(|e| (502, error(&e.0))));
+    let (code, body) = match set_up {
+        Ok(files) => {
+            let files = files.into_iter().map(|f| object([("path", Value::from(f.path)), ("written", Value::from(f.written))]));
+            (200, object([("files", Value::Array(files.collect()))]))
+        }
+        Err(answer) => answer,
     };
     send_json(request, code, &body);
 }

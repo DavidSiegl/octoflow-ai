@@ -518,3 +518,98 @@ fn the_preflight_needs_linux_on_x86_64_the_jobs_tools_a_full_ps_an_env_that_rest
         .to_string();
     assert!(e.starts_with(fails) && e.contains("cannot write the cache"), "{e}");
 }
+
+#[test]
+fn set_up_writes_the_built_in_pin_and_starter_settings_at_the_top_level_uncommitted() {
+    let pyproject = "[tool.pytest.ini_options]\n";
+    let repo = Repo::new(&[("Cargo.toml", "[package]\n"), ("pyproject.toml", pyproject), ("sub/README", "x\n")]);
+    let files = set_up(&repo.host, &format!("{}/sub", repo.path)).unwrap();
+    let written = |path| SetUpFile { path, written: true };
+    assert_eq!(files, [written("ci/gate.pin"), written("gate.toml")]);
+    assert_eq!(read(&format!("{}/ci/gate.pin", repo.path)), format!("{BUILT_IN_PIN}\n"));
+    let settings = read(&format!("{}/gate.toml", repo.path));
+    assert_eq!(settings, starter_settings(&["Cargo.toml"], Some(pyproject)));
+    assert_eq!(tests_of(&settings).len(), 2, "{settings}");
+    assert_eq!(repo.git(&["status", "--porcelain"]), "?? ci/\n?? gate.toml\n");
+}
+
+#[test]
+fn set_up_keeps_a_file_already_there() {
+    let repo = Repo::new(&[("gate.toml", "# mine\n")]);
+    let files = set_up(&repo.host, &repo.path).unwrap();
+    assert_eq!(files, [SetUpFile { path: "ci/gate.pin", written: true }, SetUpFile { path: "gate.toml", written: false }]);
+    assert_eq!(read(&format!("{}/gate.toml", repo.path)), "# mine\n");
+    repo.put("ci/gate.pin", "0.4.0 mine\n");
+    std::fs::remove_file(format!("{}/gate.toml", repo.path)).unwrap();
+    let files = set_up(&repo.host, &repo.path).unwrap();
+    assert_eq!(files, [SetUpFile { path: "ci/gate.pin", written: false }, SetUpFile { path: "gate.toml", written: true }]);
+    assert_eq!(read(&format!("{}/ci/gate.pin", repo.path)), "0.4.0 mine\n");
+}
+
+#[test]
+fn set_up_needs_a_checkout() {
+    let repo = Repo::new(&[]);
+    let e = set_up(&repo.host, &repo.outside).unwrap_err().to_string();
+    assert!(e.contains("rev-parse --show-toplevel"), "{e}");
+    assert!(set_up(&repo.host, &format!("{}/gone", repo.outside)).is_err());
+    assert!(!std::path::Path::new(&format!("{}/gate.toml", repo.outside)).exists());
+}
+
+/// A [[test]] table as the gate reads it: (name, command, junit).
+type TestTable<S, L> = (S, L, Option<L>);
+
+/// The [[test]] tables of a starter gate.toml.
+fn tests_of(settings: &str) -> Vec<TestTable<String, Vec<String>>> {
+    let table: toml::Table = toml::from_str(settings).unwrap_or_else(|e| panic!("{e}\n{settings}"));
+    let Some(tests) = table.get("test") else { return vec![] };
+    let strings = |v: &toml::Value| -> Vec<String> {
+        v.as_array().unwrap().iter().map(|s| s.as_str().unwrap().to_string()).collect()
+    };
+    tests
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| {
+            let t = t.as_table().unwrap();
+            let keys: Vec<&str> = t.keys().map(String::as_str).collect();
+            assert!(keys.iter().all(|k| ["name", "command", "junit", "coverage"].contains(k)), "{keys:?}");
+            (t["name"].as_str().unwrap().to_string(), strings(&t["command"]), t.get("junit").map(strings))
+        })
+        .collect()
+}
+
+/// Assert that the starter gate.toml for a top level holding present, and pyproject.toml's text, has the [[test]]s
+/// of want and asks for them to be checked.
+fn assert_guessed(present: &[&str], pyproject: Option<&str>, want: &[TestTable<&str, &str>]) {
+    let argv = |words: &str| words.split(' ').map(String::from).collect::<Vec<_>>();
+    let settings = starter_settings(present, pyproject);
+    let want: Vec<_> = want.iter().map(|(n, c, j)| (n.to_string(), argv(c), j.map(|j| vec![j.to_string()]))).collect();
+    assert_eq!(tests_of(&settings), want, "{present:?} {pyproject:?}");
+    assert!(settings.contains("check that each command runs this project's tests"), "{settings}");
+}
+
+#[test]
+fn starter_settings_guess_the_tests_from_the_projects_kind() {
+    let cargo = ("cargo-test", "cargo test --workspace", None);
+    let pytest = ("pytest", "python3 -m pytest --junitxml=junit.xml", Some("junit.xml"));
+    assert_guessed(&["Cargo.toml"], None, &[cargo]);
+    assert_guessed(&["pytest.ini"], None, &[pytest]);
+    let uv_pytest = ("pytest", "uv run pytest --junitxml=junit.xml", Some("junit.xml"));
+    assert_guessed(&["uv.lock"], Some("[project]\n\n[tool.pytest.ini_options]\n"), &[uv_pytest]);
+    assert_guessed(&["go.mod", "package.json"], None, &[("npm-test", "npm test", None), ("go-test", "go test ./...", None)]);
+    assert_guessed(&["Cargo.toml", "conftest.py"], None, &[cargo, pytest]);
+}
+
+#[test]
+fn a_pyproject_toml_without_pytest_settings_is_no_python_tests() {
+    // As this repository's: it configures tools, and pytest would collect nothing.
+    let tools = "[tool.pymarkdown]\nplugins.md013.enabled = false\n";
+    assert_guessed(&["Cargo.toml", "uv.lock"], Some(tools), &[("cargo-test", "cargo test --workspace", None)]);
+}
+
+#[test]
+fn starter_settings_without_a_known_kind_say_to_add_the_tests() {
+    let settings = starter_settings(&["uv.lock"], Some("[project]\nname = \"p\"\n"));
+    assert_eq!(tests_of(&settings), []);
+    assert!(settings.contains("Add a [[test]] for each command that runs them"), "{settings}");
+}

@@ -7,6 +7,7 @@ use crate::constants::{AGENT_KINDS, DEFAULT_AGENT, EXIT_ERROR, GITLEAKS_INSTALL,
 use crate::error::OrchestratorError;
 use crate::herdr::ProcessHerdr;
 use crate::host::{checked, decoded, Completed, ExecError, Host, ProcessHost, DEFAULT_TIMEOUT};
+use crate::local_gate;
 
 /// The oldest herdr a run works with, by the numbers its --version prints.
 pub const HERDR_MIN_VERSION: [u64; 2] = [0, 9];
@@ -107,20 +108,48 @@ pub fn report_checks(checks: &[Check], say: &dyn Fn(&str)) -> i32 {
 }
 
 /// Print check_setup's checks where the agents run, this machine or the herdr machine target names, and of the
-/// project at its cwd when it has one, as report_checks does, and return report_checks' exit status. Errors: only the
-/// interrupt, once local's is raised, which nothing is printed for.
-pub(super) fn doctor_command(local: &Local, target: &Target) -> Result<i32, OrchestratorError> {
+/// project at its cwd when it has one, as report_checks does; then, with setup_gate, set the project up for the local
+/// quality gate there (local_gate::set_up), the current directory standing for a cwd not given, printing a line for
+/// each file written or kept and that a run's gate reads them once committed. Returns report_checks' exit status.
+/// Errors: the setup fails, as for a cwd in no git checkout, after the checks are printed; the interrupt, once
+/// local's is raised, for which nothing more is printed.
+pub(super) fn doctor_command(local: &Local, target: &Target, setup_gate: bool) -> Result<i32, OrchestratorError> {
     let herdr = (local.herdr)(target.machine.as_deref());
     let checks = check_setup(local.host, &herdr, target.cwd.as_deref(), local.in_herdr_pane, Level::Required);
     if local.interrupt.is_raised() {
         return Err(OrchestratorError::new("interrupted"));
     }
-    Ok(report_checks(&checks, &|line| (local.stdout)(&format!("{line}\n"))))
+    let say = |line: &str| (local.stdout)(&format!("{line}\n"));
+    let status = report_checks(&checks, &say);
+    if !setup_gate {
+        return Ok(status);
+    }
+    let files = (|| {
+        // The agents' host, as check_setup reaches it.
+        let agents = match herdr.machine() {
+            Some(_) => local.host.over_ssh(&herdr.ssh_target()?),
+            None => local.host.clone(),
+        };
+        let cwd = match &target.cwd {
+            Some(cwd) => cwd.clone(),
+            None => (local.cwd)()?,
+        };
+        local_gate::set_up(&agents, &cwd)
+    })()
+    .map_err(|e| OrchestratorError(format!("setting up the local quality gate: {e}")))?;
+    for file in &files {
+        match file.written {
+            true => say(&format!("{:<8}{}", "wrote", file.path)),
+            false => say(&format!("{:<8}{}: already there", "kept", file.path)),
+        }
+    }
+    say("--quality-gate local reads these from a run's base commit: commit them for a run to be judged by them.");
+    Ok(status)
 }
 
 /// A Check of each thing a run needs, in this order: herdr, reaching herdr, with herdr's machine herdr on that
-/// machine, each harness's CLI and herdr integration, git, gh, gitleaks, and with cwd the project's git checkout and
-/// its origin.
+/// machine, each harness's CLI and herdr integration, git, gh, gitleaks, the local quality gate, and with cwd the
+/// project's git checkout and its origin.
 ///
 /// host runs commands on this machine, where the orchestrator runs and whose herdr a run drives. Without a machine the
 /// agents run here too, and herdr is reached from a herdr pane, which in_herdr_pane says this process is in; that
@@ -129,7 +158,8 @@ pub(super) fn doctor_command(local: &Local, target: &Target) -> Result<i32, Orch
 /// Host that starts commands as host does (ProcessHost::over_ssh). cwd is the project's directory where the agents
 /// run, a leading ~ meaning the home directory there, as for a run; without it the project is not checked.
 ///
-/// Only reads: it installs, logs in and writes nothing. A check that fails, or cannot run or times out, has ok false
+/// Only reads: it installs, logs in and writes nothing, but for the local quality gate's cache directory, which the
+/// check of the gate makes as a run's preflight does. A check that fails, or cannot run or times out, has ok false
 /// and the error as its detail. A check that needs an earlier one that failed is skipped: ok false, with a detail
 /// naming that one. So one failure does not stop the rest, and nothing is an error.
 pub fn check_setup(
@@ -180,6 +210,15 @@ pub fn check_setup(
     check(&mut checks, "gh", Level::NeededForPr, fix, on_machine.as_ref(), "", &mut || gh_logged_in(agents));
     check(&mut checks, "gitleaks", Level::NeededForPr, GITLEAKS_INSTALL, on_machine.as_ref(), "", &mut || {
         agents.gitleaks_problem().map_or_else(|| Ok("`gitleaks git` runs".to_string()), |p| Err(Unmet::new(p)))
+    });
+    // What a run with --quality-gate local checks before its interview (Workflow::check_before_interview), so the check
+    // cannot ask for less or more: gitleaks, then the gate's own preflight.
+    let fix = "install or fix what it names where the agents run (docs/quality-gate.md, \"The local gate\")";
+    let note = "needed only for --quality-gate local";
+    check(&mut checks, "local quality gate", Level::Optional, fix, on_machine.as_ref(), note, &mut || {
+        agents.check_gitleaks()?;
+        local_gate::preflight(agents)?;
+        Ok("gitleaks, and all the gate's preflight asks for, are ready".to_string())
     });
     if let Some(cwd) = cwd {
         let fix = "pass --cwd a git checkout, or make one with git clone or git init";

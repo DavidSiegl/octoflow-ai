@@ -41,7 +41,11 @@ pub enum Command {
     /// finished run with one when None.
     Refresh(Target, Option<String>),
     /// `doctor`: check what a run needs where the agents run, and the project at the Target's cwd when it has one.
-    Doctor(Target),
+    Doctor {
+        target: Target,
+        /// --setup-gate: then write what the local quality gate reads into the project (crate::local_gate::set_up).
+        setup_gate: bool,
+    },
     /// `judged-in-quality`: whether a build of the quality job already judged the current directory's HEAD as a
     /// pull request's build into the branch would.
     JudgedInQuality {
@@ -175,7 +179,7 @@ impl Command {
             Command::Run(a) => Some(&a.target),
             Command::Resume(a) => Some(&a.target),
             Command::Drain(a) => Some(&a.run.target),
-            Command::Runs(target, _) | Command::Refresh(target, _) | Command::Doctor(target) => Some(target),
+            Command::Runs(target, _) | Command::Refresh(target, _) | Command::Doctor { target, .. } => Some(target),
             Command::Workflows(_) | Command::JudgedInQuality { .. } | Command::Serve(_) => None,
         }
     }
@@ -237,7 +241,7 @@ pub fn parse_args(argv: impl IntoIterator<Item = OsString>, config: &ConfigDir) 
             dry_run: m.get_flag("dry-run"),
         }),
         Some(("refresh", m)) => Command::Refresh(target(m), string(m, "run_ref")),
-        Some(("doctor", m)) => Command::Doctor(target(m)),
+        Some(("doctor", m)) => Command::Doctor { target: target(m), setup_gate: m.get_flag("setup-gate") },
         Some(("judged-in-quality", m)) => Command::JudgedInQuality {
             job: string(m, "quality-gate").unwrap_or_default(),
             branch: string(m, "target").unwrap_or_default(),
@@ -448,13 +452,20 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         .long_about(format!(
             "Check what a run needs where the agents run, on this machine or with --machine on that one: herdr {} or \
              later and a way to reach it, each harness's CLI and herdr integration, git {} or later, gh logged in, \
-             gitleaks, and with --cwd a git checkout with an {REMOTE}. Prints a line each, ok, missing, or warn for \
-             one only some runs need, with a fix under each that is not ok. Installs and changes nothing. Exit \
-             status 0 when nothing is missing, {EXIT_ERROR} otherwise.",
+             gitleaks, what --quality-gate local needs, and with --cwd a git checkout with an {REMOTE}. Prints a \
+             line each, ok, missing, or warn for one only some runs need, with a fix under each that is not ok. \
+             Installs nothing and writes nothing into the project, unless --setup-gate asks it to write the local \
+             quality gate's files there; checking the gate makes the gate's cache directory, as a gated run does. Exit status 0 when nothing is missing and any setup succeeded, {EXIT_ERROR} otherwise.",
             dotted(&HERDR_MIN_VERSION),
             dotted(&GIT_MIN_VERSION)
         ))
-        .args(target_args());
+        .args(target_args())
+        .arg(Arg::new("setup-gate").long("setup-gate").action(ArgAction::SetTrue).help(
+            "after the checks, write at the project's top level what --quality-gate local reads, where missing: \
+             ci/gate.pin, naming the gate release this engine was tested with, and a gate.toml whose test commands \
+             are guessed from the project's kind. A file already there is kept. Nothing is committed: a run's gate \
+             reads them from its base commit",
+        ));
     let serve = clap::Command::new("serve")
         .about("serve the runs of any project over HTTP on 127.0.0.1, and start new ones, for the desktop app")
         .long_about(

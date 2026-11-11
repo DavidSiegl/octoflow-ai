@@ -324,6 +324,106 @@ fn clean_up(host: &dyn Host, cwd: &str, dir: &str) -> Result<(), OrchestratorErr
     host.check(&["rm", "-rf", "--", &gone[0], &gone[1], &gone[2]], None, DEFAULT_TIMEOUT).map(drop)
 }
 
+/// One of the files set_up looks after.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SetUpFile {
+    /// Its path from the checkout's top level, such as `ci/gate.pin`.
+    pub path: &'static str,
+    /// true when set_up wrote it; false when something was at its path already, which set_up left as it was.
+    pub written: bool,
+}
+
+/// The project's gate settings file, relative to the top level of its checkout.
+const SETTINGS_PATH: &str = "gate.toml";
+
+/// Make the project in cwd on host ready for `--quality-gate local`, as `doctor --setup-gate` and serve's
+/// `POST /setup/gate` ask: at the top level of the checkout cwd is in, write ci/gate.pin, naming BUILT_IN_PIN, and a
+/// starter gate.toml whose [[test]] commands are guessed from the project's kind (starter_settings), each only where
+/// nothing is at its path yet. Nothing is committed: a run's gate reads both from the run's base commit, so they count
+/// once committed. cwd may start with ~, host's home. Returns the pin's SetUpFile, then gate.toml's. The look and the
+/// write are two commands, so a file made between them is replaced.
+///
+/// Errors: cwd is no directory on host, or in no git checkout; a command fails, as a write to a read-only checkout.
+pub fn set_up(host: &dyn Host, cwd: &str) -> Result<Vec<SetUpFile>, OrchestratorError> {
+    let dir = host.resolve_dir(cwd)?;
+    let top = host.git(&dir, &["rev-parse", "--show-toplevel"])?.trim().to_string();
+    let mut kinds = Vec::new();
+    for marker in KIND_MARKERS {
+        if host.exists(&format!("{top}/{marker}"))? {
+            kinds.push(marker);
+        }
+    }
+    let pyproject = host.read(&format!("{top}/pyproject.toml"))?;
+    let files = [(PIN_PATH, format!("{BUILT_IN_PIN}\n")), (SETTINGS_PATH, starter_settings(&kinds, pyproject.as_deref()))];
+    let mut done = Vec::new();
+    for (path, text) in files {
+        let at = format!("{top}/{path}");
+        let written = !host.exists(&at)?;
+        if written {
+            host.write(&at, &text, false)?;
+        }
+        done.push(SetUpFile { path, written });
+    }
+    Ok(done)
+}
+
+/// The files at a checkout's top level whose presence starter_settings guesses a project's tests from; it also reads
+/// pyproject.toml's text, which set_up passes it apart.
+const KIND_MARKERS: [&str; 6] = ["Cargo.toml", "pytest.ini", "conftest.py", "uv.lock", "package.json", "go.mod"];
+
+/// The gate.toml set_up writes for a project whose top level holds the KIND_MARKERS in present, and pyproject.toml
+/// with the text pyproject (None: there is none): a comment on what the file is and that its guesses need checking,
+/// then a [[test]] for each kind of project found, Rust, Python, JavaScript and Go in that order; with none found, no
+/// [[test]] and a comment saying how to add one. A project has Python tests only when pytest is configured there, by
+/// pytest.ini, conftest.py or a [tool.pytest…] table: a pyproject.toml may hold only other tools' settings, and
+/// pytest would then collect nothing and fail every round.
+fn starter_settings(present: &[&str], pyproject: Option<&str>) -> String {
+    let has = |marker: &str| present.contains(&marker);
+    let mut text = String::from(
+        "# octoflow-gate's settings for judging this project (docs/quality-gate.md, \"The gate's settings\", in\n\
+         # https://github.com/DavidSiegl/octoflow-gate): written by `orchestrator doctor --setup-gate` or the desktop\n\
+         # app's \"Set up the quality gate\". A run with --quality-gate local reads this file from the run's base commit,\n\
+         # so an edit counts once it is committed.\n\
+         #\n\
+         # Each [[test]] runs at the top level, as an argv: `name`, `command`, and the reports it writes, `junit` and\n\
+         # `coverage`, paths from the top level. A command without `junit` is judged by its exit status alone: one that\n\
+         # exits non-zero fails the gate as tests that could not be judged, naming no test.\n",
+    );
+    let mut tests = Vec::new();
+    if has("Cargo.toml") {
+        tests.push(("cargo-test", "[\"cargo\", \"test\", \"--workspace\"]", None));
+    }
+    let pytest_settings = pyproject.is_some_and(|text| text.contains("[tool.pytest"));
+    if has("pytest.ini") || has("conftest.py") || pytest_settings {
+        let command = match has("uv.lock") {
+            true => "[\"uv\", \"run\", \"pytest\", \"--junitxml=junit.xml\"]",
+            false => "[\"python3\", \"-m\", \"pytest\", \"--junitxml=junit.xml\"]",
+        };
+        tests.push(("pytest", command, Some("[\"junit.xml\"]")));
+    }
+    if has("package.json") {
+        tests.push(("npm-test", "[\"npm\", \"test\"]", None));
+    }
+    if has("go.mod") {
+        tests.push(("go-test", "[\"go\", \"test\", \"./...\"]", None));
+    }
+    if tests.is_empty() {
+        text.push_str(
+            "#\n# No kind of project was recognised, so no tests run. Add a [[test]] for each command that runs them:\n\
+             #\n# [[test]]\n# name = \"tests\"\n# command = [\"make\", \"test\"]\n# junit = [\"junit.xml\"]\n",
+        );
+        return text;
+    }
+    text.push_str("#\n# Guessed from the files at the top level: check that each command runs this project's tests.\n");
+    for (name, command, junit) in tests {
+        text.push_str(&format!("\n[[test]]\nname = \"{name}\"\ncommand = {command}\n"));
+        if let Some(junit) = junit {
+            text.push_str(&format!("junit = {junit}\n"));
+        }
+    }
+    text
+}
+
 /// The release version and sha256 a pin names, read as ci/fetch-gate.sh reads one: the first line not starting with
 /// #, `<version> <sha256>`, the version only letters, digits and `.+-`, as it goes into a URL, and the sha256 64
 /// lowercase hex digits. Errors: no such line.

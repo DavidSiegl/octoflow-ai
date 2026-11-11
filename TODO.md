@@ -764,3 +764,21 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   with gitignore-restore-flake/01: the first needs a concurrent index write within microseconds, the others were so
   before it. Closes when the copy's entries and time come from one open file, the copy sits in a directory of its
   own that the trap removes, and a test holds the copy to mktemp's mode.
+- **The starter `gate.toml`'s Rust and npm tests name no failing test.** `starter_settings`
+  (`engine/src/local_gate.rs`) guesses `cargo test --workspace` and `npm test` without a `junit` report: neither
+  writes JUnit without configuration that `doctor --setup-gate` does not write (nextest's through a
+  `.config/nextest.toml` profile, jest's through a reporter), so a failing test fails the gate as tests that could not
+  be judged, naming the command, not the test. Kept by choice (doctor-gate-setup ticket 01, 2026-11-11): setup writes
+  only `ci/gate.pin` and `gate.toml`. Closes, if wanted, with setup also writing the reporter's configuration.
+- **`local_gate::set_up` can replace a file made while it runs.** Cross-review 173 F10: "the look and the write are
+  separate commands. A gate.toml or ci/gate.pin created between `exists` and `write` is replaced … serve answers each
+  request on its own thread, so two clicks can race." The interface comment says so. Closes with a no-clobber write
+  in one command (`set -C`, or `ln` of a temporary file), so that "a file already there is kept" holds always.
+- **`local_gate::set_up` runs up to ten commands, one round trip each over SSH.** Cross-review 173 F11:
+  `resolve_dir`, `rev-parse`, a probe per `KIND_MARKERS` entry, the `pyproject.toml` read and two probes and writes
+  per target, inside serve's `POST /setup/gate` handler. Closes with one `sh -c` that reports the top level, the
+  markers and the missing targets at once; worth it with F10's fix, which reshapes the writes anyway.
+- **doctor's `local quality gate` check words a missing gitleaks as a run would.** Cross-review 173 round 2: it
+  reuses `Host::check_gitleaks`, whose message opens "this run pushes, and every push is scanned for secrets first,
+  but …" (`engine/src/host.rs`), though doctor has no run, and the install text then sits beside the check's own fix.
+  Closes with the check using `gitleaks_problem` and its own wording, as doctor's `gitleaks` check does.

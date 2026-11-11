@@ -351,9 +351,13 @@ fn help_names_the_flags_python_names() {
             .iter()
             .map(Value::text)
             .collect();
-        // The Rust engine's own: orchestrator.py had no --version (run-usability/01).
+        // The Rust engine's own: orchestrator.py had no --version (run-usability/01), nor doctor's --setup-gate and
+        // the --quality-gate its help names (doctor-gate-setup/01).
         if name.is_empty() {
             python.insert("--version".into());
+        }
+        if name == "doctor" {
+            python.extend(["--setup-gate".into(), "--quality-gate".into()]);
         }
         assert_eq!(flags_in(&help), python, "{name:?}'s help:\n{help}");
     }

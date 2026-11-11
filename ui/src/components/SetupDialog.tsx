@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Api, Project, SetupCheck, SetupReport } from "../api";
+import type { Api, GateFile, Project, SetupCheck, SetupReport } from "../api";
 import { Dialog } from "./Dialog";
 
 interface Props {
@@ -17,8 +17,12 @@ const LEVELS: { level: SetupCheck["level"]; heading: string }[] = [
 /** What a round of checks gave: the report, the error that kept the server from giving one, or null while it runs. */
 type Outcome = { report: SetupReport } | { error: string } | null;
 
+/** What setting up the quality gate gave: the files it looked after, the error it failed with, or null while it runs. */
+type GateOutcome = { files: GateFile[] } | { error: string } | null;
+
 /** What the project needs for a run, checked where its agents run, grouped by how much each check matters, a failed
- * one with its fix. Closing it records that setup was checked when every required check passed, so the app does not
+ * one with its fix; and a button that sets the project up for the local quality gate, showing which files it wrote
+ * and which it kept. Closing it records that setup was checked when every required check passed, so the app does not
  * open it by itself again; a failure to record that is shown, and closing once more closes without it. */
 export function SetupDialog({ api, project, onClose }: Props) {
   // Which round of checks is shown: "Check again" starts the next.
@@ -28,6 +32,8 @@ export function SetupDialog({ api, project, onClose }: Props) {
   // True while Close waits for the marker to be written, so a second click sends no second write.
   const [marking, setMarking] = useState(false);
   const [markError, setMarkError] = useState<string | null>(null);
+  // The quality gate's setup: undefined until asked for, then as GateOutcome says.
+  const [gate, setGate] = useState<GateOutcome | undefined>(undefined);
   useEffect(() => {
     let current = true;
     api.setupChecks(project).then(
@@ -50,6 +56,13 @@ export function SetupDialog({ api, project, onClose }: Props) {
       setMarkError(error.message);
     });
   };
+  const setUpGate = () => {
+    setGate(null);
+    api.setUpGate(project).then(
+      (files) => setGate({ files }),
+      (error: Error) => setGate({ error: error.message }),
+    );
+  };
   return (
     <Dialog label="setup" title="Setup" project={project} className="setup">
       {outcome === null && <p className="loading">Checking…</p>}
@@ -59,10 +72,14 @@ export function SetupDialog({ api, project, onClose }: Props) {
         LEVELS.map(({ level, heading }) => (
           <CheckGroup key={level} heading={heading} checks={outcome.report.checks.filter((c) => c.level === level)} />
         ))}
+      {gate !== undefined && <GateSetup outcome={gate} />}
       {markError !== null && <p className="problem">Could not record that setup was checked: {markError}</p>}
       <footer>
         <button type="button" onClick={() => setRound((r) => r + 1)} disabled={outcome === null || marking}>
           Check again
+        </button>
+        <button type="button" onClick={setUpGate} disabled={gate === null || marking}>
+          Set up the quality gate
         </button>
         <button type="button" onClick={close} disabled={marking}>
           Close
@@ -91,6 +108,34 @@ function CheckGroup({ heading, checks }: { heading: string; checks: SetupCheck[]
           );
         })}
       </ul>
+    </section>
+  );
+}
+
+/** What setting up the local quality gate gave: a line for each file, wrote or kept as `orchestrator doctor
+ * --setup-gate` words them, and that they count once committed; the error it failed with; or that it runs. */
+function GateSetup({ outcome }: { outcome: GateOutcome }) {
+  return (
+    <section aria-label="Quality gate">
+      <h3>Quality gate</h3>
+      {outcome === null && <p className="loading">Setting up…</p>}
+      {outcome && "error" in outcome && <p className="problem">{outcome.error}</p>}
+      {outcome && "files" in outcome && (
+        <>
+          <ul className="checks">
+            {outcome.files.map((f) => (
+              <li key={f.path} data-state={f.written ? "ok" : "warn"}>
+                <span className="word">{f.written ? "wrote" : "kept"}</span> <span className="name">{f.path}</span>
+                {!f.written && ": already there"}
+              </li>
+            ))}
+          </ul>
+          <p>
+            <code>--quality-gate local</code> reads these from a run's base commit: commit them for a run to be judged
+            by them.
+          </p>
+        </>
+      )}
     </section>
   );
 }

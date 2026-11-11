@@ -60,7 +60,8 @@ orchestrator run "add a token-bucket rate limiter" --role-agent review=codex --r
 ## Requirements
 
 `orchestrator doctor` checks these, here and where the agents run, and says how to fix each one that
-is missing.
+is missing. It also checks, as optional, what [the local quality gate](docs/quality-gate.md#the-local-gate) needs
+there; `doctor --setup-gate` writes the gate's `ci/gate.pin` and a starter `gate.toml` into the project.
 
 - herdr 0.9+ where the agents run, with the integration of each harness a run uses
   (`herdr integration install <kind>`, e.g. `herdr integration install claude`)
@@ -152,7 +153,7 @@ first time when a browser downloaded it, as it does the binary.
   the project you opened last.
 - **Setup:** "Check setup…" shows what `orchestrator doctor --machine --cwd` checks for the open project, with
   the fix for each problem. It opens by itself when the app starts, until you have closed it once with everything
-  a run needs present.
+  a run needs present. Its "Set up the quality gate" button does what `doctor --setup-gate` does.
 
 Each download is the CLI too, with the same commands and flags; started without arguments, the app opens its
 window:
@@ -200,6 +201,9 @@ security checks are in [serve](docs/architecture.md#serve).
 ```bash
 # Check what a run needs, and print a fix for each missing piece; exit status 1 if any is missing
 orchestrator doctor --machine <machine> --cwd ~/GitHub/myproject
+
+# The same, then write what --quality-gate local reads into the project, where it is missing; commit it yourself
+orchestrator doctor --cwd ~/GitHub/myproject --setup-gate
 
 # From a herdr pane, on the project in the current directory
 orchestrator run "add a token-bucket rate limiter to the API client"
