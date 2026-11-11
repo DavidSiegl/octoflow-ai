@@ -367,8 +367,8 @@ pub fn set_up(host: &dyn Host, cwd: &str) -> Result<Vec<SetUpFile>, Orchestrator
     Ok(done)
 }
 
-/// The files at a checkout's top level that starter_settings guesses a project's tests from, with pyproject.toml's
-/// text.
+/// The files at a checkout's top level whose presence starter_settings guesses a project's tests from; it also reads
+/// pyproject.toml's text, which set_up passes it apart.
 const KIND_MARKERS: [&str; 6] = ["Cargo.toml", "pytest.ini", "conftest.py", "uv.lock", "package.json", "go.mod"];
 
 /// The gate.toml set_up writes for a project whose top level holds the KIND_MARKERS in present, and pyproject.toml

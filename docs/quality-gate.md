@@ -106,7 +106,8 @@ naming `BUILT_IN_PIN`, and a starter `gate.toml` with a `[[test]]` for each kind
 (`Cargo.toml`: `cargo test --workspace`; pytest's settings, in `pytest.ini`, `conftest.py` or a `[tool.pytest…]`
 table of `pyproject.toml`: pytest, through `uv run` when there is a `uv.lock`, writing `junit.xml`; `package.json`:
 `npm test`; `go.mod`: `go test ./...`), or none, with a comment saying how to add one, when it finds no kind it
-knows. A `pyproject.toml` alone is not taken for tests, as it may configure only other tools. Check the guessed commands. A file already there is kept.
+knows. A `pyproject.toml` alone is not taken for tests, as it may configure only other tools. Check the guessed
+commands. A file already there is kept.
 Nothing is committed, and nothing makes the project's runs gated: commit the files for the gate to read them, and
 pass `--quality-gate local` to a run.
 

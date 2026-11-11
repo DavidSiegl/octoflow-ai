@@ -778,3 +778,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `resolve_dir`, `rev-parse`, a probe per `KIND_MARKERS` entry, the `pyproject.toml` read and two probes and writes
   per target, inside serve's `POST /setup/gate` handler. Closes with one `sh -c` that reports the top level, the
   markers and the missing targets at once; worth it with F10's fix, which reshapes the writes anyway.
+- **doctor's `local quality gate` check words a missing gitleaks as a run would.** Cross-review 173 round 2: it
+  reuses `Host::check_gitleaks`, whose message opens "this run pushes, and every push is scanned for secrets first,
+  but …" (`engine/src/host.rs`), though doctor has no run, and the install text then sits beside the check's own fix.
+  Closes with the check using `gitleaks_problem` and its own wording, as doctor's `gitleaks` check does.
