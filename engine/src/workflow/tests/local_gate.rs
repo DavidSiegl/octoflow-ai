@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 use super::*;
 use crate::ci::fake::Outcome;
 use crate::constants::CI_REF_PREFIX;
-use crate::host::{Exec, ExecError, Scanned};
+use crate::host::{Exec, Scanned};
 use crate::local_gate;
 use crate::prompts::QUALITY_PASSED_NOTE;
 use crate::quality::{parse_gate, Leak, QUALITY_LEAK};
@@ -45,7 +45,6 @@ fn plays(f: &Fixture, runs: Vec<GateRun>) -> Rc<RefCell<GateCalls>> {
             Some(Ok(Exec { command, status: code, stdout: stdout.as_bytes().to_vec(), stderr: Vec::new() }))
         };
         match argv {
-            ["python3", "-c", _] => exits(0, ""),
             ["sh", "-c", script] if script.contains("mkdir -p") => exits(0, ""),
             // Each round's first start makes job-1.
             ["sh", "-c", script, "_", _out] if script.contains("job-$k") => exits(0, "1\n"),
@@ -63,7 +62,7 @@ fn plays(f: &Fixture, runs: Vec<GateRun>) -> Rc<RefCell<GateCalls>> {
                 drop(state);
                 exits(0, "")
             }
-            ["python3", "-c", _, _log, "sh", "-c", _, _name, job @ ..] => {
+            ["sh", "-c", _, "_", _log, "sh", "-c", _, _name, job @ ..] => {
                 recorded.borrow_mut().jobs.push(job.iter().map(|a| a.to_string()).collect());
                 let out = job[0];
                 let write = |name: &str, text: &str| host.write(&format!("{out}/{name}"), text, false).expect("written");
@@ -125,7 +124,7 @@ fn the_local_gate_fails_then_passes_with_nothing_pushed() {
     let state = &f.state;
     let quality = f.quality_file(1, 1);
     assert!(quality.starts_with(
-        "GATE: ERROR\n\noctoflow-gate 0.5.0, run locally, judged snapshot `snap1` (round 1, quality round 1 of 3).\n"
+        "GATE: ERROR\n\noctoflow-gate 0.7.0, run locally, judged snapshot `snap1` (round 1, quality round 1 of 3).\n"
     ), "{quality}");
     assert!(quality.contains("1. `limiter.py:3` error ruff F401: `os` imported but unused\n"));
     assert_eq!(*builds.borrow(), [quality_fix(state, 1, 1) + &note()]);
@@ -141,7 +140,7 @@ fn the_local_gate_fails_then_passes_with_nothing_pushed() {
     let host = f.host.state();
     assert!(host.git_calls.contains(&strings(&["worktree", "add", "--detach", &tree, "snap2"])), "{:?}", host.git_calls);
     assert!(!host.worktrees.contains_key(tree.as_str()));
-    assert_eq!(host.files.get(&format!("{job}/judge/pyproject.toml")).map(String::as_str), Some(""));
+    assert_eq!(host.files.get(&format!("{job}/judge/gate.toml")).map(String::as_str), Some(""));
     // gitleaks scanned each snapshot's change alone, as it goes nowhere; the publish at the end scans as a push does.
     let scanned: Vec<_> = host.scans.iter().filter(|scan| scan.commit.starts_with("snap")).map(|scan| scan.scanned).collect();
     assert_eq!(scanned, [Scanned::SinceBase, Scanned::SinceBase], "{:?}", host.scans);
@@ -226,20 +225,20 @@ fn a_resume_in_a_round_without_its_quality_file_runs_the_gate_again() {
     assert_eq!(f.workflow(f.as_saved_gated()).run(), verdict(APPROVE));
 
     assert_eq!(calls.borrow().jobs.len(), 1);
-    assert!(f.quality_file(1, 1).starts_with("GATE: OK\n\noctoflow-gate 0.5.0, run locally, judged snapshot `snap1`"));
+    assert!(f.quality_file(1, 1).starts_with("GATE: OK\n\noctoflow-gate 0.7.0, run locally, judged snapshot `snap1`"));
 }
 
 #[test]
-fn without_python3_the_run_fails_before_the_interview() {
+fn on_a_machine_that_fails_the_preflight_the_run_fails_before_the_interview() {
     let f = Fixture::new(vec![("spec", vec![])]).gated_locally();
     f.host.state().run_command = Some(Box::new(|_, argv| {
-        let missing = OrchestratorError(format!("{} is not on PATH", argv[0]));
-        (argv[0] == "python3").then_some(Err(ExecError::NotFound(missing)))
+        let (command, stderr) = (argv.join(" "), b"curl is not on PATH\n".to_vec());
+        Some(Ok(Exec { command, status: 1, stdout: Vec::new(), stderr }))
     }));
 
     let e = failure(f.workflow(RunSettings::default()).run());
 
-    assert!(e.contains("the local quality gate runs octoflow-gate with python3 3.11 or later from PATH, and python3 is not on PATH"), "{e}");
+    assert!(e.contains("the local quality gate fetches octoflow-gate and runs it on the project's machine: curl is not"), "{e}");
     assert!(f.herdr.state().calls.is_empty());
 }
 

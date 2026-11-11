@@ -355,25 +355,27 @@ pub fn quality_fails_then_passes(w: &mut World) {
 }
 
 /// --quality-gate local: the run's base pins a stub octoflow-gate release, which curl serves from the world and
-/// python3 runs with sh. Its first run fails as QUALITY_FAILED, the Builder answers it, and its second passes; nothing
-/// is pushed for either, and Jenkins is asked nothing.
+/// whose gate is a script for sh. Its first run fails as QUALITY_FAILED, the Builder answers it, and its second
+/// passes; nothing is pushed for either, and Jenkins is asked nothing.
 pub fn quality_local_fails_then_passes(w: &mut World) {
     let root = w.root().to_string_lossy().into_owned();
     w.write("reports/failed.md", QUALITY_FAILED);
     w.write("reports/failed.json", &quality_failed_json());
     w.write("reports/ok.md", "GATE: OK\n\nEvery condition holds.\n");
     w.write("reports/ok.json", &report_json("OK", &[], &[]));
-    w.write(
-        "gate-release/gate.py",
+    let gate = w.write(
+        "gate-release/gate",
         &format!(
-            "n=$(cat '{root}/gate-runs' 2>/dev/null || echo 0); n=$((n + 1)); echo \"$n\" > '{root}/gate-runs'\n\
+            "#!/bin/sh\n\
+             n=$(cat '{root}/gate-runs' 2>/dev/null || echo 0); n=$((n + 1)); echo \"$n\" > '{root}/gate-runs'\n\
              while [ $# -gt 0 ]; do [ \"$1\" = --out ] && out=$2; shift; done\n\
              report=ok; [ \"$n\" = 1 ] && report=failed\n\
              cp -- '{root}/reports/'\"$report.md\" \"$out\" && cp -- '{root}/reports/'\"$report.json\" \"${{out%.md}}.json\"\n\
              [ \"$report\" = ok ]\n"
         ),
     );
-    w.write("gate-release/gate-rust-linux-x86_64", "");
+    let runnable = std::os::unix::fs::PermissionsExt::from_mode(0o755);
+    std::fs::set_permissions(&gate, runnable).expect("the stub gate made runnable");
     let served = format!("{root}/gate.tar.gz");
     let packed = std::process::Command::new("tar")
         .args(["-czf", &served, "-C", &format!("{root}/gate-release"), "."])
@@ -386,12 +388,9 @@ pub fn quality_local_fails_then_passes(w: &mut World) {
         "curl",
         &format!("while [ $# -gt 0 ]; do case $1 in -o) out=$2; shift ;; esac; shift; done\ncp -- '{served}' \"$out\""),
     );
-    // python3 runs the engine's own `-c` scripts, the preflight's and the job's launcher, and the stub's gate.py with sh.
-    let real = std::process::Command::new("sh").args(["-c", "command -v python3"]).output().expect("python3");
-    let real = String::from_utf8_lossy(&real.stdout).trim().to_string();
-    assert!(!real.is_empty(), "python3 is on PATH");
-    w.tool("python3", &format!("[ \"$1\" = -c ] && exec '{real}' \"$@\"\nexec sh \"$@\""));
-    w.write("project/ci/gate.pin", &format!("0.0.1 {sha256}\n"));
+    // The machine the release's gate is built for, whatever the scenarios run on.
+    w.tool("uname", "echo 'Linux x86_64'");
+    w.write("project/ci/gate.pin", &format!("9.9.9 {sha256}\n"));
     let project = w.project.clone();
     w.git(&project, &["add", "ci/gate.pin"]);
     w.git(&project, &["commit", "--quiet", "-m", "Pin the gate"]);

@@ -23,10 +23,10 @@ done
 exit 2
 "#;
 
-/// What the release's one file, gate.py, holds.
-const GATE: &str = "print('the released gate')\n";
+/// What the release's one file, gate, holds.
+const GATE: &str = "the released gate\n";
 
-/// A directory holding the curl stub, a release tarball of gate.py, and where the script unpacks to. Removed when
+/// A directory holding the curl stub, a release tarball of gate, and where the script unpacks to. Removed when
 /// dropped.
 struct Fetch {
     dir: TempDir,
@@ -55,9 +55,9 @@ impl Fetch {
         fs::set_permissions(&curl, fs::Permissions::from_mode(0o755)).expect("made executable");
         let release = dir.path().join("release");
         fs::create_dir(&release).expect("made");
-        fs::write(release.join("gate.py"), GATE).expect("written");
+        fs::write(release.join("gate"), GATE).expect("written");
         let tarball = dir.path().join("release.tar.gz");
-        run(dir.path(), "tar", &["-czf", "release.tar.gz", "-C", "release", "gate.py"]);
+        run(dir.path(), "tar", &["-czf", "release.tar.gz", "-C", "release", "gate"]);
         let sum = run(dir.path(), "sha256sum", &["release.tar.gz"]);
         let sha256 = sum.split_whitespace().next().expect("a sum").to_owned();
         Fetch { dir, bin, tarball, sha256, served: true }
@@ -114,7 +114,7 @@ fn a_matching_release_is_unpacked_and_its_version_printed() {
     );
     let release = "https://github.com/DavidSiegl/octoflow-gate/releases/download/v0.5.0";
     assert_eq!(fetch.urls(), [format!("{release}/octoflow-gate-0.5.0.tar.gz")]);
-    assert_eq!(fs::read_to_string(fetch.out().join("gate.py")).expect("unpacked"), GATE);
+    assert_eq!(fs::read_to_string(fetch.out().join("gate")).expect("unpacked"), GATE);
 }
 
 #[test]

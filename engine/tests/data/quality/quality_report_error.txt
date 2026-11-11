@@ -1,6 +1,6 @@
 GATE: ERROR
 
-`gate.py` judged the working tree at `<head>` against the base `<base>`, with the settings from `main.toml`.
+`gate` judged the working tree at `<head>` against the base `<base>`, with the settings from `main.toml`.
 
 ## Failed conditions
 

@@ -1,6 +1,6 @@
 GATE: OK
 
-`gate.py` judged the working tree at `<head>` against the base `<base>`, by the rules in `main`'s `pyproject.toml`.
+`gate` judged the working tree at `<head>` against the base `<base>`, by the rules from `main`'s `pyproject.toml`.
 
 ## Issues on changed lines
 
