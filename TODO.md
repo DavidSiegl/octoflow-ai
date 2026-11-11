@@ -260,11 +260,20 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   (`engine/src/ci.rs`) has no call for it: a POST to `<job>/<number>/stop`, or the queue item's cancel, once the
   `agents` user is known to hold Jenkins's Cancel permission on the job.
 
-- **No agent has run an eval task yet.** live-checks/04's verification asks for one real `cargo xtask eval --tasks <one>
-  --repeat 1` from a herdr pane (it starts real agents, so it was left to the user), with its row in the pull
-  request's description and its result line committed under `evals/results/`. Cross-review 80 (F9, 2026-10-28):
-  "Finding 1 is the kind of defect only a real run's output (or a test built from one) shows": a task text or a
-  hidden test that misjudges real work shows only then. Closed by that run, and by fixing what its output shows.
+- **The first real eval run showed no tokens, and a Builder that waited.** `cargo xtask eval --tasks bugfix` on
+  2026-11-11 (0.65.0, `evals/results/2026-11-11-default.jsonl`) passed, 1 round, but its `tokens` were `null`,
+  though Claude Code's token record is one the orchestrator reads (docs/design.md, Token usage), so some turn's were
+  `"unknown"`; and it took 73m49s: the Builder's pane "needs your answer before it starts" and its prompt was sent
+  again after 30 s. Which turn lost its tokens, and how long the wait took, are not known: the clone went with the
+  run (no `--keep`). What is the eval's own: every trial runs in a fresh clone in a new directory, so a harness's
+  first-run question (Claude Code's folder trust among them; see "No `doctor` check that a harness can start in the
+  project without asking") can come, and stall, every trial. Closed by a `--keep` run whose metrics.json shows which
+  turn lost its tokens and why, by fixing that, and by trials that no first-run question stops.
+- **The eval runner records a trial for a workflow the engine refuses.** RUN_ARGS naming a workflow without a spec
+  step (`--workflow-file examples/workflows/quick.toml`) pass the runner's checks (`xtask/src/eval.rs`, `OWN_FLAGS`),
+  the engine refuses them under `--spec` before any agent starts, and the runner appends a failed result line for each
+  trial (seen 2026-11-11, cross-review 172). Closed by the runner refusing such a run before its first trial, or by
+  not recording a trial whose engine exited without a run directory.
 
 - **A quality build now takes longer than `QUALITY_TIMEOUT`.** The contract test's one live run (live-checks/01,
   2026-10-27) triggered build #59 of `Octoflow-AI/py-octoflow-ai-quality` with `GIT_REF=main` (`f4628cc`): it ended
