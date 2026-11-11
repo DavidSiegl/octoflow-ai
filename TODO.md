@@ -809,6 +809,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   fake's seam up to repository operations (fetch, fast-forward, merge, push). At command level `Host`'s own steps run
   in every Workflow test, and since a command the fake has no arm for fails the test, a flag changed in one file and
   not the other is caught.
+- **FakeHost's commits move HEAD, not a branch `branches` lists.** Cross-review 177 (round 2, raised and not
+  recorded): "a checked-out branch also listed in `branches` reads a stale commit after a commit; in git the ref is
+  HEAD's", and `branch --quiet -D` of a checked-out branch succeeds where git refuses it
+  (`engine/src/host/fake.rs`, `branch_commit`, `commit_head`). No test commits on and then pushes or deletes such a
+  branch today; the fake's own test pins a checked-out `main` at another commit than HEAD, which git cannot be in.
+  Closes with the checked-out branch's commit held in one place, `branches` or HEAD, that a commit moves.
 - **serve's `RunRequest` checks harness kinds and role flags that the command line checks again.** `RunRequest`
   (`engine/src/serve/start.rs`, `parse`, `by_role`, `argv`) checks what `engine/src/cli/args.rs` checks
   (`role_agent_arg`, `role_model_arg`). Decided against (the user's ruling, 2026-11-11): validating by running

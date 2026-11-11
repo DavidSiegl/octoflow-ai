@@ -194,7 +194,9 @@ pub(crate) struct FakeState {
     pub has_origin: bool,
     /// The seconds since each run's state.json was written, by run id; 0 for one not listed.
     pub ages: HashMap<String, u64>,
-    /// For prune: the local branches besides the checked-out one, by name, with their commit.
+    /// The local branches by name, with their commit, as `rev-parse --verify refs/heads/<b>` reads them
+    /// (FakeState::branch_commit): a commit does not move one, so a branch checked out and committed on is left out,
+    /// and its commit is HEAD's.
     pub branches: Map<String>,
     /// The branches origin/<name> exists for.
     pub tracking: BTreeSet<String>,
@@ -509,9 +511,8 @@ impl FakeState {
         checked_out.then_some(self.head.as_deref()).flatten()
     }
 
-    /// `git rev-parse` in the checkout: the branch checked out, whether a
-    /// merge is in progress, a local branch's commit, quietly or failing as git does for no such branch, or whether
-    /// this clone has a commit.
+    /// `git rev-parse` in the checkout: the branch checked out, whether a merge is in progress, a local branch's
+    /// commit, quietly or failing as git does for no such branch, or whether this clone has a commit.
     fn git_rev_parse(&self, args: &[&str]) -> Completed {
         match args {
             ["rev-parse", "--abbrev-ref", "HEAD"] => ok(&format!("{}\n", self.branch)),
@@ -548,9 +549,9 @@ impl FakeState {
         status(if is { 0 } else { 1 })
     }
 
-    /// `git merge` of upstream: a fast-forward to upstream, which fails once the
-    /// branches diverged; a merge, which stops with a merge in progress and the conflicted files changed when there
-    /// are conflicts; or the abort of a merge in progress.
+    /// `git merge` of upstream: a fast-forward to upstream, which fails once the branches diverged; a merge, which
+    /// stops with a merge in progress and the conflicted files changed when there are conflicts; or the abort of a
+    /// merge in progress.
     fn git_merge(&mut self, args: &[&str]) -> Completed {
         match args {
             ["merge", "--ff-only", "--quiet", _] => {
@@ -587,9 +588,9 @@ impl FakeState {
         self.conflicts.iter().map(|f| format!("/proj/{f}")).collect()
     }
 
-    /// `git worktree`: a detached worktree added; one removed, with the
-    /// changes under it, which fails with remove_error when that is set; the vanished ones forgotten; or the
-    /// porcelain list of the checkout and each linked worktree, a vanished one marked prunable.
+    /// `git worktree`: a detached worktree added; one removed, with the changes under it, which fails with remove_error
+    /// when that is set; the vanished ones forgotten; or the porcelain list of the checkout and each linked worktree, a
+    /// vanished one marked prunable.
     fn git_worktree(&mut self, args: &[&str]) -> Completed {
         match args {
             ["worktree", "add", "--detach", path, _] => self.worktrees.insert(*path, "HEAD".to_string()),
@@ -624,11 +625,10 @@ impl FakeState {
         ok("")
     }
 
-    /// `git push` to origin: a forced push of a commit to a branch, which remote
-    /// then holds; a local branch pushed with `--set-upstream`, which remote then holds at the branch's commit, with
-    /// a tracking branch; or the delete of a branch from remote, which fails when remote has none, and with a lease
-    /// fails unless remote has it at the commit the lease names ("None" for no branch), and drops its tracking branch
-    /// too.
+    /// `git push` to origin: a forced push of a commit to a branch, which remote then holds; a local branch pushed with
+    /// `--set-upstream`, which remote then holds at the branch's commit, with a tracking branch; or the delete of a
+    /// branch from remote, which fails when remote has none, and with a lease fails unless remote has it at the commit
+    /// the lease names ("None" for no branch), and drops its tracking branch too.
     fn git_push(&mut self, args: &[&str]) -> Completed {
         match args {
             ["push", "--quiet", "--force", "origin", refspec] => {
@@ -661,8 +661,8 @@ impl FakeState {
         ok("")
     }
 
-    /// `git ls-remote` of origin: every branch remote holds, which fails with
-    /// list_remote_error when that is set; or the one branch a ref names, nothing when remote has none.
+    /// `git ls-remote` of origin: every branch remote holds, which fails with list_remote_error when that is set; or
+    /// the one branch a ref names, nothing when remote has none.
     fn git_ls_remote(&mut self, args: &[&str]) -> Completed {
         if let Some(error) = self.list_remote_error.as_deref().filter(|_| fails(&mut self.list_remote_failures_left)) {
             return Completed::new(128, "", error);
@@ -1050,7 +1050,7 @@ fn change_diff_args(args: &[&str]) -> bool {
     args.starts_with(&fixed) && matches!(&args[fixed.len()..], [_, "--"] | [_, _, "--"])
 }
 
-/// Whether args, a commit's arguments after its message, are `--trailer <trailer>` pairs.
+/// Whether args, a commit's arguments after its two messages, are `--trailer <trailer>` pairs.
 fn trailer_args(args: &[&str]) -> bool {
     args.chunks(2).all(|pair| matches!(pair, ["--trailer", _]))
 }
