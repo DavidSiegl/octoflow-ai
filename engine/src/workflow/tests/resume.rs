@@ -29,7 +29,7 @@ fn spec_written_while_orchestrator_was_gone() {
     let mut state = RunState::new("20260929-120000-a1b2c3", "add a rate limiter", "/proj");
     state.machine = Some("remote".into());
     state.workspace_id = "w1".into();
-    state.agents.insert("spec", [("name", "spec-a1b2c3".to_string()), ("pane", "w1:p1".to_string())].into_iter().collect());
+    state.agents.insert("spec", AgentRecord::new("spec-a1b2c3", "w1:p1", DEFAULT_AGENT));
     let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![
         ("build", vec![build_turn(1)]),
         ("review", vec![review_turn(1, APPROVE)]),
@@ -80,9 +80,9 @@ fn a_live_agent_saved_without_its_session_has_it_noted_before_its_turn_is_record
     let mut wf = f.workflow(f.as_saved());
     assert_eq!(wf.run(), verdict(APPROVE));
     assert!(!names(&f, "start").contains(&"review-a1b2c3".to_string()), "the live agent is not started again");
-    let review = wf.state().turns.iter().find(|t| t.get("role") == Some(&Value::from("review"))).expect("a review turn");
-    assert_eq!(review.get("session"), Some(&Value::from("s-review")));
-    assert_eq!(review.get("tokens"), Some(&serde_json::json!({"input": 10, "output": 20, "cache_read": 7, "cache_write": 1})));
+    let review = wf.state().turns.iter().find(|t| t.role == "review").expect("a review turn");
+    assert_eq!(review.session.as_deref(), Some("s-review"));
+    assert_eq!(review.tokens, serde_json::json!({"input": 10, "output": 20, "cache_read": 7, "cache_write": 1}));
 }
 
 #[test]
@@ -94,8 +94,8 @@ fn a_live_agent_in_another_session_than_saved_has_its_turn_recorded_in_that_one(
     f.herdr.state().sessions.insert("review-a1b2c3".into(), "s-now".into());
     let mut wf = f.workflow(f.as_saved());
     assert_eq!(wf.run(), verdict(APPROVE));
-    let review = wf.state().turns.iter().find(|t| t.get("role") == Some(&Value::from("review"))).expect("a review turn");
-    assert_eq!(review.get("session"), Some(&Value::from("s-now")));
+    let review = wf.state().turns.iter().find(|t| t.role == "review").expect("a review turn");
+    assert_eq!(review.session.as_deref(), Some("s-now"));
 }
 
 #[test]
@@ -156,7 +156,7 @@ fn lost_session_falls_back_to_a_fresh_one() {
     let args: Vec<Vec<String>> = starts(&f).into_iter().map(|(_, _, args)| args).collect();
     assert_eq!(args, [strings(&["--resume", "s-gone"]), vec![]]);
     assert!(seen.borrow()[0].contains("You are the Builder"));
-    assert_ne!(wf.state().agents.get("build").unwrap().get("session").map(String::as_str), Some("s-gone"));
+    assert_ne!(wf.state().agents.get("build").unwrap().session.as_deref(), Some("s-gone"));
 }
 
 #[test]
@@ -224,7 +224,7 @@ fn stopped_after_saving_done() -> RunState {
 /// stopped_after_saving_done with its tokens counted, as its ending leaves it from then until its release.
 fn counted() -> RunState {
     let mut state = stopped_after_saving_done();
-    state.turns[0].insert("tokens".into(), Value::from(7));
+    state.turns[0].tokens = Value::from(7);
     state
 }
 

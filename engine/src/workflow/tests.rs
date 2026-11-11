@@ -16,7 +16,8 @@ use crate::host::Host;
 use serde_json::Value;
 use crate::map::Map;
 use crate::json::{Object, ValueExt};
-use crate::state::RunState;
+use crate::state::{AgentRecord, RunState, TurnRecord};
+use crate::constants::DEFAULT_AGENT;
 
 mod blocked;
 mod default_prompts;

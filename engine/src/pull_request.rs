@@ -2,7 +2,7 @@
 //! request's body, all from its RunState and handoff files.
 
 use crate::constants::{
-    APPROVE, BRANCH_PREFIX, DEFAULT_AGENT, FINISHED, PR_SECTION_LIMIT, QUALITY_GATE_FAILED,
+    APPROVE, BRANCH_PREFIX, FINISHED, PR_SECTION_LIMIT, QUALITY_GATE_FAILED,
 };
 use crate::handoff::parse_verdict;
 use crate::quality::parse_gate;
@@ -124,7 +124,7 @@ pub fn provenance(state: &RunState, quality: &GateEvidence) -> Vec<(String, Stri
         ("Orchestrator-Workflow".to_string(), s.workflow.clone()),
     ];
     for (role, agent) in s.agents.iter() {
-        let kind = agent.get("kind").map_or(DEFAULT_AGENT, String::as_str);
+        let kind = &agent.kind;
         let model = s.models.get(role).filter(|m| !m.is_empty()).map_or("default", String::as_str);
         trailers.push(("Orchestrator-Role".to_string(), format!("{role}={kind}/{model}")));
     }

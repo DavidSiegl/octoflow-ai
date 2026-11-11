@@ -882,7 +882,7 @@ fn writes_are_not_served() {
 /// A server whose project holds the run with a build agent named build-5e7e00, which shows "> ready".
 fn served_with_agent() -> Served {
     let host = Arc::new(ServeHost::on(None));
-    let agents = r#"{"spec": {"name": "", "pane": ""}, "build": {"name": "build-5e7e00", "pane": "w1:p2"}}"#;
+    let agents = r#"{"spec": {"name": "", "pane": "", "kind": "claude"}, "build": {"name": "build-5e7e00", "pane": "w1:p2", "kind": "claude"}}"#;
     let state = serve_state(SERVE_ID, &[("agents", serde_json::from_str::<Value>(agents).unwrap())]);
     host.state().files.insert(format!("{}/state.json", run_dir()), state);
     let served = Served::fake(&host, &[]);

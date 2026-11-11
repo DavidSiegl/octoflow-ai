@@ -124,7 +124,7 @@ fn without_a_harness_every_role_is_claude_as_before() {
 #[test]
 fn a_dropped_mode_is_logged_once_per_role() {
     let mut state = saved_run("build", 2, FULL);
-    state.agents.get_mut("build").unwrap().insert("kind", "pi".to_string());
+    state.agents.get_mut("build").unwrap().kind = "pi".to_string();
     let script = vec![("build", vec![build_turn(2)]), ("review", vec![review_turn(2, APPROVE)])];
     let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &["review"], &[("build", "s-gone")]);
     f.herdr.state().lost_sessions.insert("s-gone".into());
@@ -151,7 +151,7 @@ fn an_exited_agent_resumes_in_its_own_harness() {
         let seen = seen();
         let mut state = saved_run("build", 2, FULL);
         state.prompted = Some("build-2.md".into());
-        state.agents.get_mut("build").unwrap().insert("kind", kind.to_string());
+        state.agents.get_mut("build").unwrap().kind = kind.to_string();
         let script = vec![("build", vec![recording(build_turn(2), &seen)]), ("review", vec![review_turn(2, APPROVE)])];
         let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &["review"], &[("build", "s-build")]);
         let settings = RunSettings { agents: agent_settings(Some("acceptEdits"), &[("build", "m")], every_role(kind)), ..f.as_saved() };
@@ -160,7 +160,7 @@ fn an_exited_agent_resumes_in_its_own_harness() {
         assert_eq!(starts(&f), [("build-a1b2c3".into(), "w1:p2".into(), resumed(kind))], "{kind}");
         assert_eq!(f.herdr.state().kinds, [("build-a1b2c3".to_string(), kind.to_string())]);
         assert_eq!(*seen.borrow(), [continue_prompt(&wf.state().build_path(2))]);
-        assert_eq!(wf.state().agents.get("build").unwrap().get("kind").map(String::as_str), Some(*kind));
+        assert_eq!(wf.state().agents.get("build").unwrap().kind, *kind);
     }
 }
 
@@ -168,7 +168,7 @@ fn an_exited_agent_resumes_in_its_own_harness() {
 fn a_saved_run_on_gemini_is_refused_naming_agy() {
     let mut state = saved_run("build", 2, FULL);
     state.prompted = Some("build-2.md".into());
-    state.agents.get_mut("build").unwrap().insert("kind", "gemini".to_string());
+    state.agents.get_mut("build").unwrap().kind = "gemini".to_string();
     let script = vec![("build", vec![build_turn(2)])];
     let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &["review"], &[("build", "s-build")]);
     let settings = RunSettings { agents: agent_settings(None, &[], every_role("gemini")), ..f.as_saved() };
@@ -185,7 +185,7 @@ fn a_changed_harness_starts_fresh() {
         let mut state = saved_run("build", 2, FULL);
         state.prompted = Some("build-2.md".into());
         if let Some(saved_kind) = saved_kind {
-            state.agents.get_mut("build").unwrap().insert("kind", saved_kind.to_string());
+            state.agents.get_mut("build").unwrap().kind = saved_kind.to_string();
         }
         let script = vec![("build", vec![recording(build_turn(2), &seen)]), ("review", vec![review_turn(2, APPROVE)])];
         let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &["review"], &[("build", "s-build")]);

@@ -14,7 +14,7 @@ use crate::host::fake::FakeHost;
 use crate::host::tests::{assert_scrubbed, environment, tool, with_credentials};
 use crate::host::Host;
 use crate::state::RunState;
-use crate::test_support::{ended, hearing_sigint, raise_once_written, recordings, TempDir};
+use crate::test_support::{ended, hearing_sigint, raise_once_written, recorded_state, recordings, TempDir};
 
 /// Each command a ProcessHerdr ran, with the limit on its process.
 type Commands = Arc<Mutex<Vec<(Vec<String>, Option<Duration>)>>>;
@@ -901,7 +901,7 @@ fn every_recorded_agent_starts_with_the_launch_arguments_of_its_run() {
         invocations.sort_by_key(|(n, _)| *n);
         for event in invocations.iter().flat_map(|(_, e)| e.as_array().unwrap()) {
             if let Some(saved) = event.get("state").and_then(|s| s.get("saved")).and_then(Value::as_object) {
-                state = Some(RunState::from_saved(saved).unwrap());
+                state = Some(recorded_state(saved));
                 continue;
             }
             let Some(args) = event.get("herdr").and_then(Value::as_array) else { continue };
@@ -916,7 +916,7 @@ fn every_recorded_agent_starts_with_the_launch_arguments_of_its_run() {
             // The session it resumes, when it does, is its role's agent's as last saved.
             let session = resumed_session(kind, &given);
             if let Some(session) = &session {
-                assert_eq!(s.agents.get(role).and_then(|a| a.get("session")), Some(session), "{scenario} {name}");
+                assert_eq!(s.agents.get(role).and_then(|a| a.session.as_ref()), Some(session), "{scenario} {name}");
             }
             let extra_dir = s.worktree.is_some().then(|| s.dir());
             let expected = harness(kind).unwrap().launch(

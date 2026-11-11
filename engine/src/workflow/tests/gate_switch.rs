@@ -373,15 +373,8 @@ fn off_in_quality_drops_the_analysis_and_goes_to_the_reviewer() {
     let ref_2 = "orchestrator-ci/a1b2c3-1-q2";
     let mut state = gated_pr_run("quality", 2);
     state.ci = ci_of(&[("ref", ref_2.into()), ("sha", "snap9".into())]);
-    let analysis = [
-        ("step", Value::from(QUALITY)),
-        ("role", QUALITY.into()),
-        ("round", 1.into()),
-        ("quality_round", 2.into()),
-        ("file", "quality-1-2.md".into()),
-        ("ended_at", Value::Null),
-    ];
-    state.turns = vec![object(analysis)];
+    let analysis = record(QUALITY, "quality-1-2.md", Some(0), None).with("quality_round", 2).with("agent", Value::Null);
+    state.turns = vec![analysis.map()];
     let host = pr_host();
     host.state().remote =
         [(REF_1_1, "snap1"), (ref_2, "snap9"), ("orchestrator-ci/ffffff-1-q1", "another-run")]

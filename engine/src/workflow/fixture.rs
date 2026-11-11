@@ -19,7 +19,8 @@ use serde_json::Value;
 use crate::map::Map;
 use crate::json::Object;
 use crate::runs::pid_alive;
-use crate::state::RunState;
+use crate::state::{AgentRecord, RunState, TurnRecord};
+use crate::constants::DEFAULT_AGENT;
 use crate::json::object;
 
 /// The run every test starts unless it says otherwise: Python's RunState("20260929-120000-a1b2c3", ...).
@@ -185,13 +186,13 @@ impl Fixture {
         sessions: &[(&str, &str)],
     ) -> Fixture {
         for (role, session) in sessions {
-            state.agents.get_mut(role).expect("a saved agent").insert("session", session.to_string());
+            state.agents.get_mut(role).expect("a saved agent").session = Some(session.to_string());
         }
         let f = Fixture::on(host, state, script);
         {
             let mut h = f.herdr.state();
             h.workspaces.insert("w1".to_string());
-            let panes: Vec<String> = f.state.agents.values().filter_map(|a| a.get("pane").cloned()).collect();
+            let panes: Vec<String> = f.state.agents.values().map(|a| a.pane.clone()).collect();
             h.live_panes.extend(panes);
             h.live_panes.insert("w1:p1".to_string());
             h.panes = 3;
@@ -427,15 +428,25 @@ impl Record {
         self
     }
 
-    /// The record as a saved run holds it, Python's dict(turn(...)): only its fields.
-    pub fn map(&self) -> Object {
-        self.0.clone()
+    /// The record as a saved run holds it, Python's dict(turn(...)): its fields, and a null session and tokens
+    /// unless with gave them.
+    pub fn map(&self) -> TurnRecord {
+        let mut fields = object([("session", Value::Null), ("tokens", Value::Null)]);
+        fields.extend(self.0.clone());
+        serde_json::from_value(Value::Object(fields)).expect("a record of every field a turn record has")
     }
 }
 
 impl PartialEq<Object> for Record {
     fn eq(&self, other: &Object) -> bool {
         self.0.iter().all(|(key, value)| other.get(key) == Some(value))
+    }
+}
+
+impl PartialEq<TurnRecord> for Record {
+    fn eq(&self, other: &TurnRecord) -> bool {
+        let Ok(Value::Object(fields)) = serde_json::to_value(other) else { return false };
+        *self == fields
     }
 }
 
@@ -460,8 +471,7 @@ pub(crate) fn saved_run(phase: &str, rnd: u32, roles: &[&str]) -> RunState {
             "build" => "w1:p2",
             _ => "w1:p3",
         };
-        let agent = [("name", format!("{role}-a1b2c3")), ("pane", pane.to_string())].into_iter().collect();
-        state.agents.insert(*role, agent);
+        state.agents.insert(*role, AgentRecord::new(&format!("{role}-a1b2c3"), pane, DEFAULT_AGENT));
     }
     state
 }

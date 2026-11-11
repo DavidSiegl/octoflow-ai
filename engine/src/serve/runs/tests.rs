@@ -212,7 +212,7 @@ fn an_agent_is_reached_in_the_herdr_server_its_run_saved() {
     let console = Arc::new(FakeConsole::default());
     let project = ProjectRuns::new(reached(&host, &console), vec![]);
     console.state().screens.insert("build-5e7e00".to_string(), "> ready".to_string());
-    let agents = serde_json::from_str::<Value>(r#"{"build": {"name": "build-5e7e00", "pane": "w1:p2"}}"#).unwrap();
+    let agents = serde_json::from_str::<Value>(r#"{"build": {"name": "build-5e7e00", "pane": "w1:p2", "kind": "claude"}}"#).unwrap();
     let save = |server: Option<&str>| {
         let mut extra = vec![("agents", agents.clone())];
         extra.extend(server.map(|s| ("herdr_server", serde_json::from_str::<Value>(s).unwrap())));

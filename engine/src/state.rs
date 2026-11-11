@@ -1,7 +1,7 @@
 //! RunState: what a run has done so far, saved as state.json in its run directory.
 
 use crate::constants::{
-    DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT, LOCAL_REFS_PREFIX, RUNS_DIR,
+    DEFAULT_AGENT, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT, LOCAL_REFS_PREFIX, RUNS_DIR,
 };
 use crate::ci::LOCAL_GATE;
 use crate::error::OrchestratorError;
@@ -19,7 +19,7 @@ use serde_json::Value;
 /// state.json is one line of JSON, an object: "format", STATE_FORMAT, then these fields in this order, then the fields
 /// of unknown. Every field that is not an Option must be there, but verdicts, which a state saved by an earlier
 /// release lacks; a missing Option is None. The records a field holds as JSON are kept as they were read, key order
-/// included.
+/// included; the agent and turn records are typed (AgentRecord, TurnRecord).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RunState {
     pub run_id: String,
@@ -63,16 +63,16 @@ pub struct RunState {
     /// cleared, whose clearing a drain has taken up, or that a release before this field saved.
     pub conflict_cleared: Option<String>,
     pub error: Option<String>,
-    /// Per role: the agent's name, its pane, the harness it runs in (kind) and, once herdr reports it, its session id.
-    /// A record without a kind is a DEFAULT_AGENT agent's.
-    pub agents: Map<Map<String>>,
+    /// Per role that has started an agent, its last one, in the order the roles first started theirs.
+    pub agents: Map<AgentRecord>,
     pub max_rounds: u32,
     /// Seconds a turn may take.
     pub turn_timeout: u64,
     /// As --permission-mode names it; each harness's agent gets its own equivalent (permission_args).
     pub permission_mode: Option<String>,
     pub models: Map<String>,
-    /// Per role: the harness its next agent starts in. A role missing here runs in DEFAULT_AGENT.
+    /// Per role: the harness its next agent starts in, which may differ from the one its agent runs in (harness).
+    /// A role missing here runs in DEFAULT_AGENT.
     pub agent_kinds: Map<String>,
     /// Whether the run works on a branch of its own and ends in a pull request; false for a --no-pr run.
     pub pull_request: bool,
@@ -116,7 +116,7 @@ pub struct RunState {
     pub closed: Option<String>,
     /// One record per handoff file, in the order the turns started (Workflow::turn_record). A turn's record opens
     /// when its prompt is delivered, or a quality analysis starts, and closes when its file is found.
-    pub turns: Vec<Object>,
+    pub turns: Vec<TurnRecord>,
     /// One record per quality round judged, in order: {"round", "quality_round", "gate", "conditions",
     /// "fingerprints_by_check"}, the last two the round's GateFailures, as read_report reads them from its build's
     /// quality.json, or gate_failures from its quality file where there is none (Workflow::quality), with the
@@ -157,6 +157,82 @@ pub struct StepVerdict {
     pub step: String,
     /// APPROVE or CHANGES_REQUESTED, as its file's VERDICT line says.
     pub verdict: String,
+}
+
+/// A role's agent as the run started it (RunState::agents). Saved as {"name", "pane", "kind"}, and "session" once
+/// known, then the fields this engine does not know.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentRecord {
+    /// The agent's herdr name, `<role>-<key>`.
+    pub name: String,
+    /// The herdr pane it runs in; empty once the run's workspace was found gone, until the role's next agent starts.
+    pub pane: String,
+    /// The harness it runs in, one of AGENT_KINDS.
+    pub kind: String,
+    /// The harness's session id, as herdr reports it; None until it does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
+    /// The fields of the record this engine does not know, as read, written after its own.
+    #[serde(flatten)]
+    pub unknown: Object,
+}
+
+/// The record of one handoff file's turn (RunState::turns), as Workflow::turn_record opens it and end_turn closes it.
+/// Saved with every field, None as null, in this order, then the fields this engine does not know.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TurnRecord {
+    /// The phase the turn was in: its step's id, or QUALITY for a quality analysis.
+    pub step: String,
+    /// The role whose turn it was; QUALITY for a quality analysis.
+    pub role: String,
+    pub round: u32,
+    /// The quality round the turn answered or judged; 0 for a turn of a step the gate does not judge.
+    pub quality_round: u32,
+    /// The handoff file's basename: the file the turn wrote, or the name it was moved to once rejected or blocked.
+    pub file: String,
+    /// The harness the turn's agent ran in; None for a quality analysis, which runs no agent.
+    #[serde(rename = "agent", deserialize_with = "Option::deserialize")]
+    pub harness: Option<String>,
+    /// The role's model, as RunState::models has it; None for the harness's default and a quality analysis.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub model: Option<String>,
+    /// The agent's session for the whole turn; None when that is not known, as for a turn that ended in another
+    /// session than it started in.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub session: Option<String>,
+    /// The tokens of the turn, as crate::summary::turn_tokens gives them, which count_tokens counts once the run is
+    /// done; null until then, and always for a quality analysis.
+    pub tokens: Value,
+    /// Whether the human paced the turn as much as its agent: a human-paced step's, or a blocked turn's wait for the
+    /// human's answer and the rewrite after it.
+    pub human_paced: bool,
+    /// When the turn started, as iso_utc writes it; None when not known, as for a file written while no orchestrator
+    /// had prompted for it.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub started_at: Option<String>,
+    /// When its file was written (its mtime, never before started_at); None while the turn is under way.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub ended_at: Option<String>,
+    /// ended_at less started_at, in seconds; None while either is not known.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub seconds: Option<i64>,
+    /// The fields of the record this engine does not know, as read, written after its own.
+    #[serde(flatten)]
+    pub unknown: Object,
+}
+
+impl AgentRecord {
+    /// The record of an agent just started as name, in pane, in harness kind: its session not yet known.
+    pub fn new(name: &str, pane: &str, kind: &str) -> AgentRecord {
+        AgentRecord { name: name.into(), pane: pane.into(), kind: kind.into(), session: None, unknown: Object::new() }
+    }
+}
+
+impl TurnRecord {
+    /// Whether the turn is under way: its file has not been found written.
+    pub fn open(&self) -> bool {
+        self.ended_at.is_none()
+    }
 }
 
 /// Whether verdicts, a run's (RunState::verdicts), came from more than one verdict step: whether what the run
@@ -291,6 +367,15 @@ impl RunState {
         };
         state.unknown = saved.iter().filter(|(k, _)| !known.contains(k.as_str())).map(|(k, v)| (k.clone(), v.clone())).collect();
         state
+    }
+
+    /// The harness the role's agent runs in: its started agent's, else the one its next agent starts in (agent_kinds),
+    /// else DEFAULT_AGENT.
+    pub fn harness(&self, role: &str) -> &str {
+        match self.agents.get(role) {
+            Some(agent) => &agent.kind,
+            None => self.agent_kinds.get(role).map_or(DEFAULT_AGENT, String::as_str),
+        }
     }
 
     /// Whether the run is done: phase DONE, though its orchestrator may still be ending it (crate::runs, health).

@@ -224,13 +224,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   added to its manifest that names the package (`line_naming`), not the line of that source's entry: `foo = "1"` and
   `foo = { git = ".." }` added to one Cargo.toml both point at the first. Found while implementing ticket
   cargo-dependency-rules/01 (2026-11-04). Closes with the readers giving each source the line of its entry.
-- **Readers of `state.json` still take records an earlier release wrote.** Since octoflow-without-python ticket 04
-  (2026-11-03) a `state.json` without the format marker is refused (`crate::state::format_problem`), so no record an
-  earlier release wrote reaches them, but `ProofRun::read` (`engine/src/proofs.rs`) still reads a `proofs` record
-  without `written` as a first run, `Restored::read` (`engine/src/workflow/locks.rs`) a `restored` record without
-  `paths` as restoring nothing, and the turn and agent readers a record without `kind` as `DEFAULT_AGENT`'s. Each is
-  a branch no format-2 run takes. Closes with those branches removed and the records' fields required, as
-  `RunState`'s are.
 - **`crate::map::Map` hand-writes an insertion-ordered map.** `engine/src/map.rs`, moved out of `py::json` by ticket
   octoflow-without-python/04 for the engine's maps of values that are not JSON (`Map<Dependency>`, `Map<String>`).
   Raised by cross-review 114 (F9, nit, 2026-11-03): "`indexmap::IndexMap` is already in the build through

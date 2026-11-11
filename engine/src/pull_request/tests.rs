@@ -1,6 +1,7 @@
 use super::*;
 use serde_json::Value;
 use crate::test_support::{helper_cases, TempDir};
+use crate::state::AgentRecord;
 
 #[test]
 fn every_recorded_run_is_published_as_the_python_engine_does() {
@@ -157,7 +158,7 @@ fn evidence(round: u32, q: u32, text: &str, unjudged: bool) -> GateEvidence {
 
 #[test]
 fn the_gate_trailer_says_how_the_last_quality_round_ended() {
-    let s = state(|s| s.agents.insert("build", [("name", "build-r".to_string()), ("pane", "p1".to_string())].into_iter().collect()));
+    let s = state(|s| s.agents.insert("build", AgentRecord::new("build-r", "p1", "claude")));
     let last = |e: &GateEvidence| provenance(&s, e).last().cloned().unwrap();
     assert_eq!(last(&evidence(2, 1, "GATE: OK\n", false)), ("Orchestrator-Gate".into(), "OK after 1 quality round".into()));
     assert_eq!(last(&evidence(2, 3, "garbled", false)), ("Orchestrator-Gate".into(), "? after 3 quality rounds".into()));
@@ -219,9 +220,9 @@ fn git_reads_them_as_trailers() {
     let s = state(|s| {
         s.run_id = "20260929-120000-a1b2c3".into();
         for role in ["spec", "build", "review"] {
-            s.agents.insert(role, [("name", format!("{role}-a1b2c3")), ("pane", "p".into())].into_iter().collect());
+            let kind = if role == "review" { "codex" } else { "claude" };
+            s.agents.insert(role, AgentRecord::new(&format!("{role}-a1b2c3"), "p", kind));
         }
-        s.agents.get_mut("review").unwrap().insert("kind", "codex".into());
         s.models.insert("review", "gpt-5".to_string());
         s.quality_round = 2;
     });

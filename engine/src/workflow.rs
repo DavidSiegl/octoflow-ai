@@ -369,8 +369,7 @@ impl<'a> Workflow<'a> {
     fn ending_left(&self) -> Result<Option<Ending>, OrchestratorError> {
         let s = &self.state;
         if s.owner.is_some() {
-            let set = |t: &Object, key: &str| t.get(key).is_some_and(Value::is_set);
-            let count_tokens = s.turns.iter().any(|t| set(t, "agent") && !set(t, "tokens"));
+            let count_tokens = s.turns.iter().any(|t| t.harness.as_deref().is_some_and(|h| !h.is_empty()) && !t.tokens.is_set());
             return Ok(Some(Ending { count_tokens, ..Ending::WHOLE }));
         }
         let missing = |name: &str| self.host.exists(&format!("{}/{name}", s.dir())).map(|there| !there);
@@ -699,9 +698,8 @@ impl<'a> Workflow<'a> {
         let mut usage = std::collections::HashMap::new();
         for i in 0..self.state.turns.len() {
             let t = &self.state.turns[i];
-            let Some(agent) = t.get("agent").filter(|a| a.is_set()).map(Value::text) else { continue };
-            let session = t.get("session").filter(|s| s.is_set()).map(Value::text).unwrap_or_default();
-            let key = (agent, session);
+            let Some(kind) = t.harness.clone().filter(|h| !h.is_empty()) else { continue };
+            let key = (kind, t.session.clone().unwrap_or_default());
             if !usage.contains_key(&key) {
                 let read = || -> Result<_, OrchestratorError> {
                     if key.1.is_empty() {
@@ -717,7 +715,7 @@ impl<'a> Workflow<'a> {
                 usage.insert(key.clone(), counted);
             }
             let tokens = turn_tokens(t, usage[&key].as_deref());
-            self.state.turns[i].insert("tokens".into(), tokens);
+            self.state.turns[i].tokens = tokens;
         }
     }
 
@@ -836,7 +834,7 @@ impl<'a> Workflow<'a> {
             // needs; its panes went with the old one.
             self.human.log(&format!("herdr workspace {} is gone; opening a new one", s.workspace_id));
             for agent in s.agents.values_mut() {
-                agent.insert("pane", String::new());
+                agent.pane.clear();
             }
         }
         let label = workspace_label(&s.run_id, &s.task);

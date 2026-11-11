@@ -197,8 +197,7 @@ fn written(f: &Fixture) -> Vec<String> {
 fn impl_saved() -> RunState {
     let mut state = saved_run("impl", 1, &[]);
     (state.quality_job, state.workflow) = (Some(JOB.to_string()), "impl".into());
-    let agent = [("name", "impl-a1b2c3".to_string()), ("pane", "w1:p1".to_string())].into_iter().collect();
-    state.agents.insert("impl", agent);
+    state.agents.insert("impl", AgentRecord::new("impl-a1b2c3", "w1:p1", DEFAULT_AGENT));
     state
 }
 
@@ -438,7 +437,7 @@ fn a_run_keeps_its_workflow_when_the_file_is_gone() {
     std::fs::remove_file(&path).unwrap();
     let seen = seen();
     let state = RunState::from_saved(&saved).unwrap();
-    assert_eq!(Some(&state.root_pane), state.agents.get("build").and_then(|a| a.get("pane")));
+    assert_eq!(Some(&state.root_pane), state.agents.get("build").map(|a| &a.pane));
     let f2 = Fixture::resume(Rc::clone(&f.host), state, vec![("review", vec![recording(review_turn(2, APPROVE), &seen)])], &[], &[]);
     let mut wf = f2.workflow(f2.as_saved());
     assert_eq!(wf.run(), verdict(APPROVE));

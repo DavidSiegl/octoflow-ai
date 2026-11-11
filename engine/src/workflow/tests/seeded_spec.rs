@@ -171,6 +171,6 @@ fn a_seeded_spec_has_no_record() {
     let f = Fixture::on(Rc::new(FakeHost::default()), seeded_run(&DEFAULT_WORKFLOW), script);
     let mut wf = f.workflow(given(&DEFAULT_WORKFLOW, GIVEN_SPEC));
     assert_eq!(wf.run(), verdict(APPROVE));
-    let files: Vec<String> = wf.state().turns.iter().map(|t| t.get("file").map(Value::text).unwrap_or_default()).collect();
+    let files: Vec<String> = wf.state().turns.iter().map(|t| t.file.clone()).collect();
     assert_eq!(files, ["build-1.md", "review-1.md"]);
 }
