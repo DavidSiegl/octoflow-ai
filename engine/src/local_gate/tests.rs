@@ -26,9 +26,11 @@ struct Bench {
 impl Bench {
     /// The stub release is a gate that records its physical working directory and arguments in <dir>/gate-args
     /// and the names in that directory in <dir>/gate-files, writes coverage.xml there, sleeps 30 s when <dir>/hang
-    /// exists, unless a SIGINT ends that, which it records in <dir>/interrupted and exits 130 for, then exits as <dir>/exit says (0 when it is missing): with 2 it says <dir>/said, else CANNOT_JUDGE, on
+    /// exists, then exits as <dir>/exit says (0 when it is missing): with 2 it says <dir>/said, else CANNOT_JUDGE, on
     /// standard error and writes nothing; with 0 or 1 it writes QUALITY to --out and JSON beside it, unless
-    /// <dir>/silent exists. uname names the machine the release's gate is built for, whatever the tests run on.
+    /// <dir>/silent exists. When <dir>/hang exists, a SIGINT from the moment gate-args exists on is recorded in
+    /// <dir>/interrupted and exits 130. uname names the machine the release's gate is built for, whatever the
+    /// tests run on.
     fn new(base_files: &[(&str, &str)]) -> Bench {
         let dir = TempDir::new();
         let (bin, rel, served) = (dir.join("bin"), dir.join("rel"), dir.join("served.tar.gz"));
@@ -47,8 +49,9 @@ impl Bench {
             "gate",
             &format!(
                 "#!/bin/sh\n\
+                 [ -e '{hang}' ] && trap \": > '{interrupted}'; exit 130\" INT\n\
                  pwd -P > '{args}'; printf '%s\\n' \"$@\" >> '{args}'; ls -A > '{files}'; : > coverage.xml\n\
-                 [ -e '{hang}' ] && {{ trap \": > '{interrupted}'; exit 130\" INT; sleep 30; }}\n\
+                 [ -e '{hang}' ] && sleep 30\n\
                  status=$(cat '{exit}' 2>/dev/null || echo 0)\n\
                  [ \"$status\" = 2 ] && {{ cat '{said}' >&2 2>/dev/null || echo '{CANNOT_JUDGE}' >&2; exit 2; }}\n\
                  while [ $# -gt 0 ]; do [ \"$1\" = --out ] && out=$2; shift; done\n\
