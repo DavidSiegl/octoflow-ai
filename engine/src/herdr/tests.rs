@@ -124,23 +124,71 @@ fn start_agent_passes_the_harness_args_after_separator() {
     );
 }
 
+/// A ProcessHerdr whose panes' shell, pid 7, has the process group foreground in the foreground, and whose shell
+/// prints the line export waits for when printed, else never; and what it ran.
+fn exporting(foreground: u64, printed: bool) -> (ProcessHerdr, Commands) {
+    let ran: Commands = Arc::default();
+    let seen = ran.clone();
+    let herdr = ProcessHerdr::with_runner(None, move |argv, limit| {
+        seen.lock().unwrap().push((argv.to_vec(), limit));
+        let info = format!(r#"{{"process_info": {{"shell_pid": 7, "foreground_process_group_id": {foreground}}}}}"#);
+        Ok(match argv[1..3].join(" ").as_str() {
+            "pane process-info" => (0, result(&info).into_bytes(), vec![]),
+            "pane wait-output" if !printed => (1, vec![], error("timeout", "timed out").into_bytes()),
+            "pane wait-output" => (0, result("{}").into_bytes(), vec![]),
+            _ => (0, vec![], vec![]),
+        })
+    });
+    (herdr, ran)
+}
+
 #[test]
-fn export_types_a_line_that_gives_a_shell_back_each_value() {
-    let (herdr, ran) = launching("");
+fn export_types_a_line_that_gives_a_shell_back_each_value_then_waits_for_it_to_run() {
+    let (herdr, ran) = exporting(7, true);
     let vars = [("A", r#"{"p":"/it's/a dir/*"}"#), ("B", r"\'$HOME `x`"), ("C", "")];
     herdr.export("w1:p2", &vars.map(|(n, v)| (n.to_string(), v.to_string()))).unwrap();
     let ran = ran.lock().unwrap().clone();
-    assert_eq!(ran.len(), 1);
-    let (args, limit) = &ran[0];
-    assert_eq!((&args[..4], *limit), (&argv(&["herdr", "pane", "run", "w1:p2"])[..], Some(Duration::from_secs(120))));
-    let line = format!("{}; printf '<%s>' \"$A\" \"$B\" \"$C\"", args[4]);
+    let commands: Vec<&[String]> = ran.iter().map(|(args, _)| &args[..4]).collect();
+    assert_eq!(commands, [
+        &argv(&["herdr", "pane", "process-info", "--pane"])[..],
+        &argv(&["herdr", "pane", "run", "w1:p2"])[..],
+        &argv(&["herdr", "pane", "wait-output", "w1:p2"])[..],
+    ]);
+    // The shell, given the typed line, sets each variable and prints the line the wait matches, which the typed
+    // line, echoed on the screen, does not match.
+    let typed = &ran[1].0[4];
+    let line = format!("{typed}; printf '<%s>' \"$A\" \"$B\" \"$C\"");
     let out = std::process::Command::new("sh").args(["-c", &line]).output().unwrap();
-    assert_eq!(String::from_utf8(out.stdout).unwrap(), r#"<{"p":"/it's/a dir/*"}><\'$HOME `x`><>"#);
+    let printed = String::from_utf8(out.stdout).unwrap();
+    let (marker, values) = printed.split_once('\n').unwrap();
+    assert_eq!(values, r#"<{"p":"/it's/a dir/*"}><\'$HOME `x`><>"#);
+    let wait = &ran[2].0;
+    let pattern = &wait[wait.iter().position(|a| a == "--regex").unwrap() + 1];
+    // The pattern is that whole line alone, and nothing in it is a regex's but `.`-free text and the anchors.
+    assert_eq!(*pattern, format!("(?m)^{marker}$"));
+    assert!(marker.chars().all(|c| c.is_ascii_alphanumeric() || " :".contains(c)), "{marker:?}");
+    assert!(!typed.lines().any(|line| line == marker), "{typed:?}");
+}
+
+#[test]
+fn export_types_nothing_into_a_pane_whose_shell_is_not_at_its_prompt() {
+    let (herdr, ran) = exporting(9, true);
+    let e = herdr.export("w1:p2", &[("A".to_string(), "a".to_string())]).unwrap_err();
+    assert_eq!(e.to_string(), "cannot type into pane w1:p2: its shell is not at its prompt");
+    assert_eq!(ran.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn export_fails_when_the_shell_does_not_run_the_line() {
+    let (herdr, _) = exporting(7, false);
+    let vars = [("A".to_string(), "a".to_string()), ("B".to_string(), "b".to_string())];
+    let e = herdr.export("w1:p2", &vars).unwrap_err();
+    assert_eq!(e.to_string(), "the shell in pane w1:p2 did not run the export of A, B typed into it");
 }
 
 #[test]
 fn export_refuses_a_control_character_without_asking_herdr() {
-    let (herdr, ran) = launching("");
+    let (herdr, ran) = exporting(7, true);
     for value in ["a\u{15}b", "a\u{7f}b", "a\nb"] {
         let e = herdr.export("w1:p2", &[("A".to_string(), "ok".to_string()), ("B".to_string(), value.to_string())]);
         let message = e.unwrap_err().to_string();

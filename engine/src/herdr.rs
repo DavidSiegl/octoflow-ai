@@ -14,7 +14,7 @@
 use std::ffi::OsString;
 use std::fmt;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::constants::AGENT_START_TIMEOUT_MS;
 use crate::error::OrchestratorError;
@@ -31,6 +31,12 @@ const CALL_LIMIT_SECONDS: u64 = 120;
 /// How much longer than the time herdr is given to wait the CLI's process may run, in milliseconds: the limit only
 /// guards against a hung CLI.
 const WAIT_MARGIN_MS: u64 = 60_000;
+
+/// How long, in milliseconds, a pane's shell has to run a line Herdr::export types into it.
+const EXPORT_TIMEOUT_MS: u64 = 10_000;
+
+/// What the line Herdr::export types prints, before its nonce, once the shell has run it.
+const EXPORTED: &str = "octoflow: exported";
 
 /// Why a herdr command failed.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -194,11 +200,13 @@ pub trait Herdr {
     /// Give pane the label shown on it.
     fn rename_pane(&self, pane: &str, label: &str) -> Result<(), HerdrError>;
 
-    /// Have the shell in pane, which must be at its prompt, export each (name, value) of vars, so that an agent
-    /// started there after (start_agent) inherits them: herdr's `agent start` passes an agent arguments only. The
-    /// shell must take POSIX `export NAME='value'`, as sh, bash, zsh and fish do; fish reads `\\` and `\'` inside
-    /// the quotes as escapes, so a value with a backslash reaches it changed. Errors: Failed, without asking herdr,
-    /// for a value with a control character, which the shell's line editor would take as a key rather than text.
+    /// Have the shell in pane export each (name, value) of vars, so that an agent started there after (start_agent)
+    /// inherits them: herdr's `agent start` passes an agent arguments only. They stay set in that shell after the
+    /// agent exits. The shell must take POSIX `export NAME='value'`, as sh, bash, zsh and fish do; fish reads `\\`
+    /// and `\'` inside the quotes as escapes, so a value with `\\` in it reaches fish changed. Returns once the shell
+    /// has run the export. Errors: Failed, without typing anything, for a value with a control character (typable)
+    /// or a pane whose shell is not at its prompt, as when an agent still runs there; Failed when the shell has not
+    /// run the line within EXPORT_TIMEOUT_MS; herdr's, such as pane_not_found.
     fn export(&self, pane: &str, vars: &[(String, String)]) -> Result<(), HerdrError>;
 
     /// Start an agent named name in pane, of the harness kind (herdr's --kind), passing it args. Gives false when it
@@ -637,6 +645,23 @@ fn herdr_error(status: i32, stdout: &str, stderr: &str) -> HerdrError {
 
 /// A string field of an answer, at the path of keys; bad_response naming the command and the path when it is not
 /// there or not a string.
+/// Ok when each value of vars can be typed into pane's shell (Herdr::export); else Failed, naming the first that
+/// cannot: one with a control character, which the shell's line editor would take as a key rather than text.
+pub(crate) fn typable(pane: &str, vars: &[(String, String)]) -> Result<(), HerdrError> {
+    match vars.iter().find(|(_, value)| value.chars().any(char::is_control)) {
+        Some((name, _)) => {
+            let why = format!("cannot type {name} into pane {pane}: its value has a control character");
+            Err(HerdrError::Failed(OrchestratorError::new(why)))
+        }
+        None => Ok(()),
+    }
+}
+
+/// The names of vars, joined for a message.
+fn names(vars: &[(String, String)]) -> String {
+    vars.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>().join(", ")
+}
+
 fn field(answer: &Value, command: &str, path: &[&str]) -> Result<String, HerdrError> {
     let mut value = answer;
     for key in path {
@@ -682,15 +707,35 @@ impl Herdr for ProcessHerdr {
     }
 
     fn export(&self, pane: &str, vars: &[(String, String)]) -> Result<(), HerdrError> {
-        if let Some((name, _)) = vars.iter().find(|(_, value)| value.chars().any(char::is_control)) {
-            let why = format!("cannot type {name} into pane {pane}: its value has a control character");
+        typable(pane, vars)?;
+        // Typed into an agent still running there, the line would be a prompt to it.
+        let info = self.call(&["pane", "process-info", "--pane", pane])?;
+        let at_prompt = info.pointer("/process_info/shell_pid").filter(|pid| pid.is_u64())
+            == info.pointer("/process_info/foreground_process_group_id");
+        if !at_prompt {
+            let why = format!("cannot type into pane {pane}: its shell is not at its prompt");
             return Err(HerdrError::Failed(OrchestratorError::new(why)));
         }
         let quoted = |value: &str| format!("'{}'", value.replace('\'', r"'\''"));
         let words: Vec<String> = vars.iter().map(|(name, value)| format!("{name}={}", quoted(value))).collect();
-        let line = format!("export {}", words.join(" "));
+        // The shell prints the marker once it has run the export, and only then: a line the shell has not read yet,
+        // or one it read as something else, is caught here rather than as an agent started without the variables.
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+        let line = format!("export {} && echo '{EXPORTED}' '{nonce}'", words.join(" "));
         // `pane run` prints nothing on success; its errors are JSON as every command's.
-        self.exec_forwarded(&["pane", "run", pane, &line], Some(Duration::from_secs(CALL_LIMIT_SECONDS))).map(drop)
+        self.exec_forwarded(&["pane", "run", pane, &line], Some(Duration::from_secs(CALL_LIMIT_SECONDS)))?;
+        let printed = format!("(?m)^{EXPORTED} {nonce}$");
+        let timeout = EXPORT_TIMEOUT_MS.to_string();
+        let args =
+            ["pane", "wait-output", pane, "--regex", &printed, "--source", "recent-unwrapped", "--timeout", &timeout];
+        match self.call_within(&args, Some(Duration::from_millis(EXPORT_TIMEOUT_MS + WAIT_MARGIN_MS))) {
+            Ok(_) => Ok(()),
+            Err(e) if e.code() == Some("timeout") => {
+                let why = format!("the shell in pane {pane} did not run the export of {} typed into it", names(vars));
+                Err(HerdrError::Failed(OrchestratorError::new(why)))
+            }
+            Err(e) => Err(e),
+        }
     }
 
     fn start_agent(&self, name: &str, pane: &str, kind: &str, args: &[String]) -> Result<bool, HerdrError> {

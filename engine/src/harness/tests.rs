@@ -98,6 +98,8 @@ fn opencode_takes_its_model_and_grant_as_config() {
     let cases = [
         (None, None, None, launch(&[], None)),
         (Some(""), Some(""), Some(""), launch(&[], None)),
+        // No `\\` in the value, which fish would read as an escape.
+        (Some(r#"a\b"c"#), None, None, launch(&["--standalone"], Some(r#"{"model":"a\u005cb\"c"}"#))),
         (None, Some("s-1"), None, launch(&["--session", "s-1"], None)),
         (Some("big-pickle"), None, None, launch(&["--standalone"], Some(r#"{"model":"big-pickle"}"#))),
         (None, None, Some(d), launch(&["--standalone"], Some(&format!("{{{grant}}}")))),

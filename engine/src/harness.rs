@@ -1,6 +1,7 @@
 //! The agent harnesses a role can run in (AGENT_KINDS, herdr's `--kind`), as orchestrator.py's "Agent harnesses"
-//! section and its session logs know them: how each harness's agent starts, resumes a saved session and is granted a
-//! directory ([`Harness::launch`]), and where and how it records the tokens a session used ([`SessionLog`],
+//! section and its session logs know them, but for opencode's model and granted directory, which go in its config
+//! (Config::OpencodeEnv): how each harness's agent starts, resumes a saved session and is granted a directory
+//! ([`Harness::launch`]), and where and how it records the tokens a session used ([`SessionLog`],
 //! [`Harness::session_usage`]).
 //!
 //! What Python keeps in four tables by harness (PERMISSION_ARGS, RESUME_ARGS, ADD_DIR_ARGS and SESSION_LOGS) is one
@@ -25,7 +26,8 @@ pub struct AgentSettings {
     pub kinds: Map<String>,
 }
 
-/// What the engine knows of one agent harness: the arguments its agent starts with, and its session log.
+/// What the engine knows of one agent harness: how its agent starts (the arguments, and the environment its pane's
+/// shell exports first), and its session log.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Harness {
     /// Its name, as herdr's --kind and AGENT_KINDS have it.
@@ -221,7 +223,9 @@ impl Harness {
                 }
                 if !config.is_empty() {
                     args.push("--standalone".to_string());
-                    env.push(("OPENCODE_CONFIG_CONTENT".to_string(), Value::Object(config).to_string()));
+                    // A backslash as \u005c, not \\, which fish's single quotes would read as one (Herdr::export).
+                    let json = Value::Object(config).to_string().replace(r"\\", r"\u005c");
+                    env.push(("OPENCODE_CONFIG_CONTENT".to_string(), json));
                 }
             }
         }

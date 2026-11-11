@@ -289,7 +289,9 @@ off on `resume` has rules of its own; see
 A role's harness is herdr's `--kind` for its agent. The precedence is `--role-agent`, then `--agent`, then the
 role's `agent` in the workflow file, then `claude`. A model name is passed as it is, never translated, so give
 each role a model its harness knows. opencode, whose interactive interface takes no `--model`, gets it as `model` in
-an `OPENCODE_CONFIG_CONTENT` its pane's shell exports before starting it with `--standalone`.
+an `OPENCODE_CONFIG_CONTENT` its pane's shell exports before starting it with `--standalone`, so that shell must take
+`export NAME='value'`, as sh, bash, zsh and fish do. pi asks before no tool call, so a worktree run needs nothing for it
+(see Worktree runs).
 
 | `--permission-mode` | claude | gemini | codex | pi, opencode |
 |---|---|---|---|---|

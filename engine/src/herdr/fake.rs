@@ -223,6 +223,7 @@ impl Herdr for FakeHerdr {
     }
 
     fn export(&self, pane: &str, vars: &[(String, String)]) -> Result<(), HerdrError> {
+        super::typable(pane, vars)?;
         self.record(Call::Export { pane: pane.to_string(), vars: vars.to_vec() });
         Ok(())
     }
