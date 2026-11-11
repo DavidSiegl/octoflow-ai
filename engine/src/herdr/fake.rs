@@ -33,6 +33,7 @@ pub(crate) enum Call {
     Workspace { label: String },
     Split { pane: String, direction: Direction },
     Rename { pane: String, label: String },
+    Export { pane: String, vars: Vec<(String, String)> },
     Start { name: String, pane: String, args: Vec<String> },
     Prompt { name: String },
     Focus { name: String },
@@ -218,6 +219,12 @@ impl Herdr for FakeHerdr {
 
     fn rename_pane(&self, pane: &str, label: &str) -> Result<(), HerdrError> {
         self.record(Call::Rename { pane: pane.to_string(), label: label.to_string() });
+        Ok(())
+    }
+
+    fn export(&self, pane: &str, vars: &[(String, String)]) -> Result<(), HerdrError> {
+        super::typable(pane, vars)?;
+        self.record(Call::Export { pane: pane.to_string(), vars: vars.to_vec() });
         Ok(())
     }
 

@@ -791,3 +791,14 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   reuses `Host::check_gitleaks`, whose message opens "this run pushes, and every push is scanned for secrets first,
   but …" (`engine/src/host.rs`), though doctor has no run, and the install text then sits beside the check's own fix.
   Closes with the check using `gitleaks_problem` and its own wording, as doctor's `gitleaks` check does.
+- **opencode's exported config stays set in its pane's shell.** Cross-review 174 F3: "Nothing unsets
+  `OPENCODE_CONFIG_CONTENT` after the agent exits … A failed or `--no-pr` run keeps its workspace; an `opencode` the
+  user starts in that pane inherits the run's model and its `<run dir>/*` allow rule." `Herdr::export` says so
+  (`engine/src/herdr.rs`). Nothing can be typed into the pane while the agent runs, and herdr 0.9.1's `agent start`
+  takes no environment. Closes with herdr's `agent start` taking `--env`, or the engine unsetting it once the agent
+  has exited.
+- **opencode's grant puts the run directory into a glob unescaped.** Cross-review 174 F5: "`format!("{dir}/*")`
+  makes the project path part of a glob. A project path with `*` or `?` yields a rule that also allows writes under
+  sibling directories, and other glob syntax opencode recognises can stop the rule matching the real run dir"
+  (`Harness::launch`, `engine/src/harness.rs`). opencode 2.0.24 documents no escape for its wildcards. Closes with
+  no grant for such a path (opencode then asks, as before 0.67.1), or an escape once opencode has one.

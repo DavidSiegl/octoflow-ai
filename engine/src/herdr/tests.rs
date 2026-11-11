@@ -124,6 +124,108 @@ fn start_agent_passes_the_harness_args_after_separator() {
     );
 }
 
+/// A ProcessHerdr whose panes' shell, pid 7, has the process group foreground in the foreground, and whose shell
+/// prints the line export waits for when printed, else never; and what it ran.
+fn exporting(foreground: u64, printed: bool) -> (ProcessHerdr, Commands) {
+    exporting_after(&[], foreground, printed)
+}
+
+/// As exporting, the first `pane process-info` answers each giving one process group of busy in the foreground
+/// in turn, as a shell still running its startup files does; and looking again every 20 ms for 300 ms.
+fn exporting_after(busy: &[u64], foreground: u64, printed: bool) -> (ProcessHerdr, Commands) {
+    let ran: Commands = Arc::default();
+    let seen = ran.clone();
+    let busy = Mutex::new(VecDeque::from(busy.to_vec()));
+    let mut herdr = ProcessHerdr::with_runner(None, move |argv, limit| {
+        seen.lock().unwrap().push((argv.to_vec(), limit));
+        Ok(match argv[1..3].join(" ").as_str() {
+            "pane process-info" => {
+                let group = busy.lock().unwrap().pop_front().unwrap_or(foreground);
+                let info = format!(r#"{{"process_info": {{"shell_pid": 7, "foreground_process_group_id": {group}}}}}"#);
+                (0, result(&info).into_bytes(), vec![])
+            }
+            "pane wait-output" if !printed => (1, vec![], error("timeout", "timed out").into_bytes()),
+            "pane wait-output" => (0, result("{}").into_bytes(), vec![]),
+            _ => (0, vec![], vec![]),
+        })
+    });
+    herdr.shell_ready = Poll { limit: Duration::from_millis(300), every: Duration::from_millis(20) };
+    (herdr, ran)
+}
+
+#[test]
+fn export_types_a_line_that_gives_a_shell_back_each_value_then_waits_for_it_to_run() {
+    let (herdr, ran) = exporting(7, true);
+    let vars = [("A", r#"{"p":"/it's/a dir/*"}"#), ("B", r"\'$HOME `x`"), ("C", "")];
+    herdr.export("w1:p2", &vars.map(|(n, v)| (n.to_string(), v.to_string()))).unwrap();
+    let ran = ran.lock().unwrap().clone();
+    let commands: Vec<&[String]> = ran.iter().map(|(args, _)| &args[..4]).collect();
+    assert_eq!(commands, [
+        &argv(&["herdr", "pane", "process-info", "--pane"])[..],
+        &argv(&["herdr", "pane", "run", "w1:p2"])[..],
+        &argv(&["herdr", "pane", "wait-output", "w1:p2"])[..],
+    ]);
+    // The shell, given the typed line, sets each variable and prints the line the wait matches, which the typed
+    // line, echoed on the screen, does not match.
+    let typed = &ran[1].0[4];
+    let line = format!("{typed}; printf '<%s>' \"$A\" \"$B\" \"$C\"");
+    let out = std::process::Command::new("sh").args(["-c", &line]).output().unwrap();
+    let printed = String::from_utf8(out.stdout).unwrap();
+    let (marker, values) = printed.split_once('\n').unwrap();
+    assert_eq!(values, r#"<{"p":"/it's/a dir/*"}><\'$HOME `x`><>"#);
+    let wait = &ran[2].0;
+    let pattern = &wait[wait.iter().position(|a| a == "--regex").unwrap() + 1];
+    // The pattern is that whole line alone, and nothing in it is a regex's but `.`-free text and the anchors.
+    assert_eq!(*pattern, format!("(?m)^{marker}$"));
+    assert!(marker.chars().all(|c| c.is_ascii_alphanumeric() || " :".contains(c)), "{marker:?}");
+    assert!(!typed.lines().any(|line| line == marker), "{typed:?}");
+}
+
+#[test]
+fn export_types_nothing_into_a_pane_whose_shell_is_not_at_its_prompt() {
+    let (herdr, ran) = exporting(9, true);
+    let e = herdr.export("w1:p2", &[("A".to_string(), "a".to_string())]).unwrap_err();
+    assert_eq!(e.to_string(), "cannot type into pane w1:p2: its shell is not at its prompt");
+    let ran = ran.lock().unwrap();
+    assert!(ran.len() > 1, "{ran:?}");
+    assert!(ran.iter().all(|(args, _)| args[1..3] == argv(&["pane", "process-info"])), "{ran:?}");
+}
+
+#[test]
+fn export_waits_for_a_new_panes_shell_to_reach_its_prompt() {
+    let (herdr, ran) = exporting_after(&[11, 12], 7, true);
+    herdr.export("w1:p2", &[("A".to_string(), "a".to_string())]).unwrap();
+    let ran = ran.lock().unwrap();
+    let commands: Vec<String> = ran.iter().map(|(args, _)| args[1..3].join(" ")).collect();
+    assert_eq!(commands, ["pane process-info"; 3].into_iter().chain(["pane run", "pane wait-output"]).collect::<Vec<_>>());
+}
+
+#[test]
+fn export_refuses_an_answer_without_the_shells_pid() {
+    let herdr = ProcessHerdr::with_runner(None, |_, _| Ok((0, result(r#"{"process_info": {}}"#).into_bytes(), vec![])));
+    let e = herdr.export("w1:p2", &[("A".to_string(), "a".to_string())]).unwrap_err();
+    assert_eq!(e.code(), Some("bad_response"));
+}
+
+#[test]
+fn export_fails_when_the_shell_does_not_run_the_line() {
+    let (herdr, _) = exporting(7, false);
+    let vars = [("A".to_string(), "a".to_string()), ("B".to_string(), "b".to_string())];
+    let e = herdr.export("w1:p2", &vars).unwrap_err();
+    assert_eq!(e.to_string(), "the shell in pane w1:p2 did not run the export of A, B typed into it");
+}
+
+#[test]
+fn export_refuses_a_control_character_without_asking_herdr() {
+    let (herdr, ran) = exporting(7, true);
+    for value in ["a\u{15}b", "a\u{7f}b", "a\nb"] {
+        let e = herdr.export("w1:p2", &[("A".to_string(), "ok".to_string()), ("B".to_string(), value.to_string())]);
+        let message = e.unwrap_err().to_string();
+        assert_eq!(message, "cannot type B into pane w1:p2: its value has a control character", "{value:?}");
+    }
+    assert!(ran.lock().unwrap().is_empty());
+}
+
 #[test]
 fn start_agent_blocked_at_startup() {
     let (herdr, _) = answering(None, 1, "", &error("agent_not_ready", "blocked during startup"));
@@ -669,7 +771,7 @@ fn a_running_server_of_the_environment_s_is_launched_in_and_the_own_session_left
 fn a_server_that_does_not_come_up_fails_the_launch_saying_so() {
     let (d, vars) = herdr_with_servers(&[], None, "");
     let mut herdr = ProcessHerdr::in_environment(None, vars.into_iter(), &Interrupt::new());
-    herdr.server_start = ServerStart { limit: Duration::from_millis(300), every: Duration::from_millis(50) };
+    herdr.server_start = Poll { limit: Duration::from_millis(300), every: Duration::from_millis(50) };
     let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err();
     // The start of it: on a loaded machine the fake herdr, a process, may outlast a look, which the error then names.
     let e = e.to_string();
@@ -712,7 +814,7 @@ fn a_server_that_never_answers_fails_the_launch_with_what_herdr_last_said() {
         "status" => Ok((1, Vec::new(), b"connection refused\n".to_vec())),
         _ => Ok((0, Vec::new(), Vec::new())),
     });
-    herdr.server_start = ServerStart { limit: Duration::from_millis(100), every: Duration::from_millis(20) };
+    herdr.server_start = Poll { limit: Duration::from_millis(100), every: Duration::from_millis(20) };
     let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
     assert!(e.starts_with("cannot start a herdr server: it was not running after 0.1 seconds; herdr status server"), "{e}");
     assert!(e.contains("connection refused"), "{e}");
@@ -817,13 +919,13 @@ fn every_recorded_agent_starts_with_the_launch_arguments_of_its_run() {
                 assert_eq!(s.agents.get(role).and_then(|a| a.get("session")), Some(session), "{scenario} {name}");
             }
             let extra_dir = s.worktree.is_some().then(|| s.dir());
-            let expected = harness(kind).unwrap().launch_args(
+            let expected = harness(kind).unwrap().launch(
                 s.permission_mode.as_deref(),
                 s.models.get(role).map(String::as_str),
                 session.as_deref(),
                 extra_dir.as_deref(),
             );
-            assert_eq!(given, expected, "{scenario} {name}");
+            assert_eq!(given, expected.args, "{scenario} {name}");
             starts += 1;
         }
     }

@@ -1,6 +1,7 @@
 //! The agent harnesses a role can run in (AGENT_KINDS, herdr's `--kind`), as orchestrator.py's "Agent harnesses"
-//! section and its session logs know them: how each harness's agent starts, resumes a saved session and is granted a
-//! directory ([`Harness::launch_args`]), and where and how it records the tokens a session used ([`SessionLog`],
+//! section and its session logs know them, but for opencode's model and granted directory, which go in its config
+//! (Config::OpencodeEnv): how each harness's agent starts, resumes a saved session and is granted a directory
+//! ([`Harness::launch`]), and where and how it records the tokens a session used ([`SessionLog`],
 //! [`Harness::session_usage`]).
 //!
 //! What Python keeps in four tables by harness (PERMISSION_ARGS, RESUME_ARGS, ADD_DIR_ARGS and SESSION_LOGS) is one
@@ -25,7 +26,8 @@ pub struct AgentSettings {
     pub kinds: Map<String>,
 }
 
-/// What the engine knows of one agent harness: the arguments its agent starts with, and its session log.
+/// What the engine knows of one agent harness: how its agent starts (the arguments, and the environment its pane's
+/// shell exports first), and its session log.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Harness {
     /// Its name, as herdr's --kind and AGENT_KINDS have it.
@@ -34,9 +36,9 @@ pub struct Harness {
     permissions: Permissions,
     /// How it resumes a saved session.
     pub(crate) resume: Resume,
-    /// The flag that grants its agent a directory outside its working directory, before the directory; None when it
-    /// has none. A worktree run's handoff files are in the project's run directory, not the worktree.
-    add_dir: Option<&'static str>,
+    /// How it takes the model its agent starts on and a directory it is granted outside its working directory. A
+    /// worktree run's handoff files are in the project's run directory, not the worktree.
+    config: Config,
     /// Where and how it records the tokens of a session; None when it records none the engine reads, so that its
     /// turns' tokens are "unknown" (docs/design.md, Token usage).
     pub session_log: Option<SessionLog>,
@@ -58,6 +60,28 @@ pub(crate) enum Resume {
     Flag(&'static str),
     /// A subcommand, which has to come before every other argument: codex's `resume`.
     Subcommand(&'static str),
+}
+
+/// How a harness takes the model its agent starts on and a directory it is granted.
+#[derive(Debug, PartialEq, Eq)]
+enum Config {
+    /// By flags: `--model` before the model, and add_dir before the directory; add_dir None when the harness has no
+    /// such flag.
+    Flags { add_dir: Option<&'static str> },
+    /// By opencode's JSON config in OPENCODE_CONFIG_CONTENT: opencode 2.0.24's TUI has no `--model` and no flag that
+    /// grants a directory, and asks before writing outside its working directory. Only a `--standalone` opencode
+    /// reads the variable; without that flag the TUI joins opencode's background service, whose config was read when
+    /// the service started.
+    OpencodeEnv,
+}
+
+/// How a role's agent starts in a harness.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Launch {
+    /// Its arguments, after herdr's `--`.
+    pub args: Vec<String>,
+    /// The environment variables, as (name, value), its pane's shell exports before it starts (Herdr::export).
+    pub env: Vec<(String, String)>,
 }
 
 /// Where a harness keeps the record of a session's tokens, and how it writes it.
@@ -88,7 +112,7 @@ pub const HARNESSES: [Harness; 5] = [
         kind: "claude",
         permissions: Permissions::AsNamed,
         resume: Resume::Flag("--resume"),
-        add_dir: Some("--add-dir"),
+        config: Config::Flags { add_dir: Some("--add-dir") },
         session_log: Some(SessionLog { glob: ".claude/projects/*/{session}.jsonl", format: LogFormat::ClaudeCode }),
     },
     Harness {
@@ -101,7 +125,7 @@ pub const HARNESSES: [Harness; 5] = [
             ("plan", &["--sandbox", "read-only"]),
         ]),
         resume: Resume::Subcommand("resume"),
-        add_dir: Some("--add-dir"),
+        config: Config::Flags { add_dir: Some("--add-dir") },
         session_log: None,
     },
     Harness {
@@ -112,21 +136,22 @@ pub const HARNESSES: [Harness; 5] = [
             ("bypassPermissions", &["--approval-mode", "yolo"]),
         ]),
         resume: Resume::Flag("--resume"),
-        add_dir: Some("--include-directories"),
+        config: Config::Flags { add_dir: Some("--include-directories") },
         session_log: None,
     },
     Harness {
         kind: "opencode",
         permissions: Permissions::Equivalents(&[]),
         resume: Resume::Flag("--session"),
-        add_dir: None,
+        config: Config::OpencodeEnv,
         session_log: None,
     },
     Harness {
         kind: "pi",
         permissions: Permissions::Equivalents(&[]),
         resume: Resume::Flag("--session"),
-        add_dir: None,
+        // pi asks before no tool call, inside its working directory or outside it, so it needs no grant.
+        config: Config::Flags { add_dir: None },
         session_log: Some(SessionLog { glob: ".pi/agent/sessions/*/*_{session}.jsonl", format: LogFormat::Pi }),
     },
 ];
@@ -153,16 +178,16 @@ impl Harness {
         }
     }
 
-    /// The arguments a role's agent starts with in this harness, after herdr's `--`: permission_mode's equivalent
-    /// (none when the harness has none), into session if given one, on model if given one, and with access to
-    /// extra_dir where the harness can grant it. An empty string is none, as Python takes it.
-    pub fn launch_args(
+    /// How a role's agent starts in this harness: with permission_mode's equivalent (none when the harness has none),
+    /// into session if given one, on model if given one, and with access to extra_dir, and to every file under it,
+    /// where the harness can grant it. An empty string is none, as Python takes it.
+    pub fn launch(
         &self,
         permission_mode: Option<&str>,
         model: Option<&str>,
         session: Option<&str>,
         extra_dir: Option<&str>,
-    ) -> Vec<String> {
+    ) -> Launch {
         fn given(value: Option<&str>) -> Option<&str> {
             value.filter(|v| !v.is_empty())
         }
@@ -177,13 +202,34 @@ impl Harness {
                 }
             }
         }
-        if let Some(model) = model {
-            args.extend(["--model".to_string(), model.to_string()]);
+        let mut env = vec![];
+        match self.config {
+            Config::Flags { add_dir } => {
+                if let Some(model) = model {
+                    args.extend(["--model".to_string(), model.to_string()]);
+                }
+                if let (Some(dir), Some(flag)) = (extra_dir, add_dir) {
+                    args.extend([flag.to_string(), dir.to_string()]);
+                }
+            }
+            Config::OpencodeEnv => {
+                let mut config = serde_json::Map::new();
+                if let Some(model) = model {
+                    config.insert("model".to_string(), model.into());
+                }
+                if let Some(dir) = extra_dir {
+                    let grant = serde_json::json!({ "external_directory": { format!("{dir}/*"): "allow" } });
+                    config.insert("permission".to_string(), grant);
+                }
+                if !config.is_empty() {
+                    args.push("--standalone".to_string());
+                    // A backslash as \u005c, not \\, which fish's single quotes would read as one (Herdr::export).
+                    let json = Value::Object(config).to_string().replace(r"\\", r"\u005c");
+                    env.push(("OPENCODE_CONFIG_CONTENT".to_string(), json));
+                }
+            }
         }
-        if let (Some(dir), Some(flag)) = (extra_dir, self.add_dir) {
-            args.extend([flag.to_string(), dir.to_string()]);
-        }
-        args
+        Launch { args, env }
     }
 
     /// The token usage this harness's session log, as its SessionLog finds it, records for each answer of the model,
