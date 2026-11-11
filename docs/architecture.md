@@ -316,7 +316,8 @@ layout), with no Python of its own.
   reads the first line and keeps the URL, the token and the project, or why it failed, which is what the sidecar
   wrote to standard error when it wrote anything, for the `server` command; the project is the checkout the app
   was built in for a development build (`tauri dev`), null otherwise. With no checkout and no project opened
-  before, the frontend asks for a project folder. It kills the sidecar on `RunEvent::Exit`. The webview's CSP allows connections only to itself, Tauri's IPC and `http://127.0.0.1`.
+  before, the frontend asks for a project folder. It kills the sidecar on `RunEvent::Exit`. The webview's CSP
+  allows connections only to itself, Tauri's IPC and `http://127.0.0.1`.
 - **CLI.** Started with arguments, `main.rs` runs none of that: before GTK or WebKit start a thread, `lib.rs`'s
   `cli` takes the command line and `Cli::run` runs the engine's `cli::main` with it in the app's own process, and
   ends as the engine's `orchestrator` does (`interrupt::exit`), so the terminal, the exit status and the signals
