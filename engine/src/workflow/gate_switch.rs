@@ -2,6 +2,7 @@
 //! resumes it, its state changed in memory for the Workflow to save. Python's turn_quality_gate_on and _off.
 
 use super::quality_rounds::delete_ci_refs;
+use super::turn::turn_started;
 use super::{Collaborators, Human};
 use crate::ci::QualityGate;
 use crate::error::OrchestratorError;
@@ -41,10 +42,7 @@ pub fn turn_quality_gate_on(
     if let Some(following) = pipeline.after(&gated.id).filter(|f| f.id == s.phase) {
         let path = following.path(&s.dir(), s.round, 0);
         let file = file_name(&path);
-        // A turn that was prompted, asked again for its verdict, or is waiting on its BLOCKED answer has seen the
-        // change; only one with none of these has not.
-        let blocked = s.blocked.as_ref().and_then(|b| b.get("file")).and_then(|f| f.as_str());
-        let started = [s.prompted.as_deref(), s.retrying.as_deref(), blocked].contains(&Some(file));
+        let started = turn_started(s, file);
         // Read whether or not the turn started, as Python reads it first: a failed read stops the resume either way.
         let missing = host.read(&format!("{}/{file}", s.dir()))?.is_none();
         judge_first = missing && !started;

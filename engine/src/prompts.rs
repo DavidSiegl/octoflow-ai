@@ -10,7 +10,7 @@ use crate::map::Map;
 
 pub mod template;
 
-use template::{fill, placeholders};
+use template::{fill, placeholders, TemplateError};
 
 // -- The built-in texts. Each is a template (template.rs) whose placeholders a prompt file replacing it must keep
 // -- (prompt_problem).
@@ -285,6 +285,13 @@ impl Prompts {
         &self.texts[p.index()]
     }
 
+    /// p's text with each placeholder replaced by its value in values, as (name, value) pairs. Errors: the text uses
+    /// a placeholder values has no value for (prompt_error).
+    pub fn fill(&self, p: Prompt, values: &[(&str, &str)]) -> Result<String, OrchestratorError> {
+        let value = |name: &str| values.iter().find(|(n, _)| *n == name).map(|(_, v)| v.to_string());
+        fill(self.text(p), &value).map_err(|e| prompt_error(p.name(), &e))
+    }
+
     /// Name -> text of each prompt that differs from the built-in text, in Prompt::ALL's order;
     /// Prompts::from_overrides gives these prompts back.
     pub fn overrides(&self) -> Map<String> {
@@ -294,6 +301,13 @@ impl Prompts {
             .map(|p| (p.name(), self.text(*p).to_string()))
             .collect()
     }
+}
+
+/// The error of a prompt template named name that cannot be filled in, e: one of Prompts (Prompts::fill), a step's
+/// (named by its id) or the proof command. The checks of Pipeline, of prompt files and of a run's saved prompts
+/// (saved_prompts) leave no case for it.
+pub(crate) fn prompt_error(name: &str, e: &TemplateError) -> OrchestratorError {
+    OrchestratorError(format!("prompt {name} cannot be filled in: {e}"))
 }
 
 /// The placeholders an earlier release's built-in text of a prompt took, where they differ from today's: an override

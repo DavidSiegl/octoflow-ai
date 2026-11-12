@@ -11,6 +11,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::origin::reaching_origin;
+use super::step_prompt::RunView;
 use super::{Clocks, Human, Outcome, Stopped, Workflow};
 use crate::checks::{judge_run, orchestrator_checks, RunChange, RunFindings, SLOW_STEP_MARGIN};
 use crate::ci::{CIError, Judging, Poll, QualityGate, Started, Verdict};
@@ -39,7 +40,7 @@ impl<'a> Workflow<'a> {
         if gate == QUALITY_OK || q >= self.state.max_quality_rounds {
             return Ok(true);
         }
-        if self.stuck(n, q)? {
+        if self.view().stuck(n, q)? {
             self.human.log(&format!(
                 "[quality] round {n}, quality round {q} failed on just what quality round {} failed on; going on \
                  rather than back to {}",
@@ -53,57 +54,6 @@ impl<'a> Workflow<'a> {
         Ok(false)
     }
 
-    /// Whether quality round q of round n failed on the failures of quality round q-1 again (GateFailures::repeats):
-    /// the gated step's turn between them fixed none of them. False for the first quality round, and when either
-    /// round's failures are unknown (failures_of).
-    fn stuck(&self, n: u32, q: u32) -> Result<bool, OrchestratorError> {
-        if q < 2 {
-            return Ok(false);
-        }
-        Ok(match (self.failures_of(n, q - 1)?, self.failures_of(n, q)?) {
-            (Some(before), Some(after)) => after.repeats(&before),
-            _ => false,
-        })
-    }
-
-    /// What quality round q of round n failed on: its record in RunState::quality_rounds, or what its quality file
-    /// says (gate_failures) for a round judged by an engine that kept no such records; None when it has neither.
-    /// Errors: the record is not of the shape quality_record writes, or the file cannot be read.
-    fn failures_of(&self, n: u32, q: u32) -> Result<Option<GateFailures>, OrchestratorError> {
-        if let Some(record) = self.quality_record(n, q) {
-            return recorded_failures(record).map(Some);
-        }
-        Ok(self.host.read(&self.state.quality_path(n, q))?.map(|text| gate_failures(&text)))
-    }
-
-    /// The record of quality round q of round n in RunState::quality_rounds; None before that round is judged.
-    fn quality_record(&self, n: u32, q: u32) -> Option<&Object> {
-        self.state.quality_rounds.iter().find(|r| is_record_of(r, n, q))
-    }
-
-    /// What a verdict step hears of round n's last quality file, after a blank line: QUALITY_PASSED_NOTE, or the
-    /// findings left (QUALITY_STUCK_NOTE when the last quality round was stuck, else QUALITY_UNRESOLVED_NOTE), or for
-    /// an unjudged change (unjudged) QUALITY_OFF_NOTE naming each of the round's quality files; "" without one.
-    /// Errors: a file cannot be read, or the prompt cannot be filled in.
-    pub(super) fn quality_note(&self, n: u32) -> Result<String, OrchestratorError> {
-        let s = &self.state;
-        let Some(last) = self.last_quality(n)? else { return Ok(String::new()) };
-        if self.unjudged(Some(&last)) {
-            let paths: Vec<String> = (1..=last.0).map(|k| s.quality_path(n, k)).collect();
-            let note = self.fill(Prompt::QualityOffNote, &[("quality_paths", &paths.join(", "))])?;
-            return Ok(format!("\n\n{note}"));
-        }
-        let (q, text) = last;
-        let note = if parse_gate(&text) == Some(QUALITY_OK) {
-            Prompt::QualityPassedNote
-        } else if self.stuck(n, q)? {
-            Prompt::QualityStuckNote
-        } else {
-            Prompt::QualityUnresolvedNote
-        };
-        Ok(format!("\n\n{}", self.fill(note, &[("quality_path", &s.quality_path(n, q))])?))
-    }
-
     /// Whether round n's last quality round passed the gate; true for a run without the gate, or whose round had no
     /// quality round.
     pub(super) fn gate_passed(&self, n: u32) -> Result<bool, OrchestratorError> {
@@ -112,7 +62,7 @@ impl<'a> Workflow<'a> {
             return Ok(true);
         }
         // With the gate on, the quality loop has written the current quality round's file by now; one missing fails.
-        let last = self.last_quality(n)?;
+        let last = self.view().last_quality(n)?;
         Ok(last.is_some_and(|(q, text)| q == s.quality_round && parse_gate(&text) == Some(QUALITY_OK)))
     }
 
@@ -157,7 +107,7 @@ impl<'a> Workflow<'a> {
         let judged = judged.unwrap_or_else(|| Judgement { gate, failures: gate_failures(&text) });
         // A record of a file deleted to be judged again is the old build's.
         self.state.quality_rounds.retain(|r| !(written && is_record_of(r, n, q)));
-        if self.quality_record(n, q).is_none() {
+        if self.view().quality_record(n, q).is_none() {
             self.state.quality_rounds.push(quality_record(n, q, &judged));
         }
         self.human.log(&format!("[quality] round {n}, quality round {q}: {gate}"));
@@ -367,7 +317,60 @@ impl<'a> Workflow<'a> {
         }
         Ok(())
     }
+}
 
+/// What a run's records and quality files say of its quality rounds.
+impl RunView<'_> {
+    /// Whether quality round q of round n failed on the failures of quality round q-1 again (GateFailures::repeats):
+    /// the gated step's turn between them fixed none of them. False for the first quality round, and when either
+    /// round's failures are unknown (failures_of).
+    pub(super) fn stuck(&self, n: u32, q: u32) -> Result<bool, OrchestratorError> {
+        if q < 2 {
+            return Ok(false);
+        }
+        Ok(match (self.failures_of(n, q - 1)?, self.failures_of(n, q)?) {
+            (Some(before), Some(after)) => after.repeats(&before),
+            _ => false,
+        })
+    }
+
+    /// What quality round q of round n failed on: its record in RunState::quality_rounds, or what its quality file
+    /// says (gate_failures) for a round judged by an engine that kept no such records; None when it has neither.
+    /// Errors: the record is not of the shape quality_record writes, or the file cannot be read.
+    fn failures_of(&self, n: u32, q: u32) -> Result<Option<GateFailures>, OrchestratorError> {
+        if let Some(record) = self.quality_record(n, q) {
+            return recorded_failures(record).map(Some);
+        }
+        Ok(self.host.read(&self.state.quality_path(n, q))?.map(|text| gate_failures(&text)))
+    }
+
+    /// The record of quality round q of round n in RunState::quality_rounds; None before that round is judged.
+    pub(super) fn quality_record(&self, n: u32, q: u32) -> Option<&Object> {
+        self.state.quality_rounds.iter().find(|r| is_record_of(r, n, q))
+    }
+
+    /// What a verdict step hears of round n's last quality file, after a blank line: QUALITY_PASSED_NOTE, or the
+    /// findings left (QUALITY_STUCK_NOTE when the last quality round was stuck, else QUALITY_UNRESOLVED_NOTE), or for
+    /// an unjudged change (unjudged) QUALITY_OFF_NOTE naming each of the round's quality files; "" without one.
+    /// Errors: a file cannot be read, or the prompt cannot be filled in.
+    pub(super) fn quality_note(&self, n: u32) -> Result<String, OrchestratorError> {
+        let s = self.state;
+        let Some(last) = self.last_quality(n)? else { return Ok(String::new()) };
+        if self.unjudged(Some(&last)) {
+            let paths: Vec<String> = (1..=last.0).map(|k| s.quality_path(n, k)).collect();
+            let note = self.prompts.fill(Prompt::QualityOffNote, &[("quality_paths", &paths.join(", "))])?;
+            return Ok(format!("\n\n{note}"));
+        }
+        let (q, text) = last;
+        let note = if parse_gate(&text) == Some(QUALITY_OK) {
+            Prompt::QualityPassedNote
+        } else if self.stuck(n, q)? {
+            Prompt::QualityStuckNote
+        } else {
+            Prompt::QualityUnresolvedNote
+        };
+        Ok(format!("\n\n{}", self.prompts.fill(note, &[("quality_path", &s.quality_path(n, q))])?))
+    }
 }
 
 /// found, the secrets gitleaks found in snapshot sha and the commits a push of it would publish, when all are in sha
