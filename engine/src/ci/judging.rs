@@ -97,13 +97,16 @@ type Reports = (String, Option<String>);
 /// archived no quality.md, as read once it archived quality.md or ended.
 type Ended = (Option<String>, Option<Reports>);
 
-/// The build a Chain's verdict judges: its number, its result (None while it runs the stages after its Gate stage),
-/// and the snapshot it built with the round's place, as the verdict's words name them.
+/// What a Chain's verdict says of the build it ended on, which judged and not_judged word their verdict from.
 #[derive(Clone, Copy)]
 struct Build<'a> {
+    /// The build's number in the Jenkins job.
     number: i64,
+    /// The build's result, None while it runs the stages after its Gate stage.
     result: Option<&'a str>,
+    /// The commit the build checked out, Judging's snapshot.
     snapshot: &'a str,
+    /// Which round of the run judged it, Judging's place.
     place: &'a str,
 }
 
@@ -216,11 +219,12 @@ impl Chain<'_> {
             let Some(ended) = self.gate_or_end(ci, number)? else { return Ok(Poll::Waiting) };
             self.ended = Some(ended);
         }
-        let Some((result, reports)) = self.ended.clone() else { unreachable!("set above") };
+        let Some((result, reports)) = &self.ended else { unreachable!("set above") };
+        let result = result.clone();
         let build = Build { number, result: result.as_deref(), snapshot, place };
         match reports {
-            Some((quality, json)) => self.judged(ci, &build, quality, json.as_deref()),
-            None => self.not_judged(ci, &build, waiting),
+            Some((quality, json)) => self.judged(ci, build, quality, json.as_deref()),
+            None => self.not_judged(ci, build, waiting),
         }
     }
 
@@ -229,7 +233,7 @@ impl Chain<'_> {
     /// starts. Poll::Recorded once it recorded a link, Poll::Waiting while the queue item waits. Errors: as
     /// queued_build's, and a failed request.
     fn record_build(&mut self, ci: &mut Object, waiting: &mut String, log: &dyn Fn(&str)) -> Result<Poll, CIError> {
-        let (jenkins, git_ref) = (self.jenkins, self.git_ref.clone());
+        let (jenkins, git_ref) = (self.jenkins, &self.git_ref);
         if ci.contains_key("queue_url") {
             *waiting = format!("waiting for Jenkins to start the build of {git_ref}");
             let Some(build) = self.queued_build(ci)? else { return Ok(Poll::Waiting) };
@@ -240,7 +244,7 @@ impl Chain<'_> {
             // The ref names one round of one run, so a build of it is this round's, triggered by an orchestrator
             // that stopped before it recorded the queue item.
             *waiting = format!("looking for a Jenkins build of {git_ref}");
-            let found = jenkins.find_build(&git_ref, &rejected(ci))?;
+            let found = jenkins.find_build(git_ref, &rejected(ci))?;
             self.adopt = false;
             if let Some(found) = found {
                 log(&format!("[quality] adopting Jenkins build #{found} of {git_ref}"));
@@ -249,15 +253,15 @@ impl Chain<'_> {
             }
         }
         *waiting = format!("triggering Jenkins job {} for {git_ref}", jenkins.job());
-        ci.insert("queue_url".into(), Value::from(jenkins.trigger(&git_ref)?));
+        ci.insert("queue_url".into(), Value::from(jenkins.trigger(git_ref)?));
         Ok(Poll::Recorded)
     }
 
     /// The verdict of build, which archived quality, and json where Jenkins served one. Errors: refused, with ci cut
     /// back so that a resume builds the snapshot anew, when json is unreadable or disagrees with quality (judgement).
-    fn judged(&self, ci: &mut Object, build: &Build, quality: String, json: Option<&str>) -> Result<Poll, CIError> {
-        let Build { number, result, snapshot, place } = *build;
-        let judged = match json.map(|json| judgement(&quality, json)).transpose() {
+    fn judged(&self, ci: &mut Object, build: Build, quality: &str, json: Option<&str>) -> Result<Poll, CIError> {
+        let Build { number, result, snapshot, place } = build;
+        let judged = match json.map(|json| judgement(quality, json)).transpose() {
             Ok(judged) => judged,
             Err(why) => {
                 // A build of the same snapshot again is the resume's to make, once the job is fixed.
@@ -271,14 +275,14 @@ impl Chain<'_> {
             Some(result) => format!("ended {result}"),
         };
         let judged_by = format!("Jenkins build #{number} judged snapshot `{snapshot}` ({place}) and {how_it_stood}.");
-        Ok(Poll::Came(Verdict::Judged { quality, judged, judged_by }))
+        Ok(Poll::Came(Verdict::Judged { quality: quality.to_string(), judged, judged_by }))
     }
 
     /// The report of build, which ended before its Gate stage: what failed it, its failing tests or else the end of
     /// its console, read once each across calls. Errors: a failed request; refused, with ci cut back, for a build
     /// aborted before the gate ran.
-    fn not_judged(&mut self, ci: &mut Object, build: &Build, waiting: &mut String) -> Result<Poll, CIError> {
-        let Build { number, result, snapshot, place } = *build;
+    fn not_judged(&mut self, ci: &mut Object, build: Build, waiting: &mut String) -> Result<Poll, CIError> {
+        let Build { number, result, snapshot, place } = build;
         let (jenkins, git_ref) = (self.jenkins, &self.git_ref);
         if result == Some("ABORTED") {
             cut_back(ci, Some(number));
