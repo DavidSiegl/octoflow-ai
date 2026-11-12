@@ -8,17 +8,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Planned
 
-- **The desktop app as the terminal client too: what was decided against.** The app, started with arguments, is the
-  CLI (`cli` in `ui/src-tauri/src/lib.rs`), and the plain CLI binaries stay released. Decided against (2026-10-24):
-  one file on every platform, by embedding the orchestrator's bytes in the Rust executable and unpacking them at start
-  (PyInstaller's onefile done twice), or by Python hosting the window, which [ui-options.md](docs/ui-options.md) chose
-  against. Decided against too, 2026-11-11 (rust-engine/12, which made the app its own `serve` sidecar): the window
-  serving its runs in its own process, with or without the CLI there too. The AppImage's environment, which GTK needs
-  and the engine's children must not get, would then go through the engine as a parameter (herdr, `ProcessHost`,
-  `ConfigDir`, the HTTP clients, `current_dir`) where the sidecar takes the user's once at its start
-  (`UserShell::enter`); an engine panic would end the window; and `serve`'s signal handling needs the main thread.
-  Its one gain is the first-line handshake gone.
-
 - **The e2e scenarios: what they do not record.** `engine/e2e/` runs 43 scenarios against the engine as a program and
   compares each with its recording (docs/architecture.md, Tests). The recordings are the Python engine's, made before
   rust-engine ticket 11 removed it, by the Python harness octoflow-without-python ticket 02 removed; a scenario added
@@ -56,6 +45,17 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **The desktop app as the terminal client too: what was decided against.** The app, started with arguments, is the CLI
+  (`cli` in `ui/src-tauri/src/lib.rs`), and the plain CLI binaries stay released: 13 MB against the AppImage's 120 MB of
+  WebKit, and they start without FUSE on headless machines and in CI. Decided against (2026-10-24): one file on every
+  platform, by embedding the orchestrator's bytes in the Rust executable and unpacking them at start (PyInstaller's
+  onefile done twice), or by Python hosting the window, which [ui-options.md](docs/ui-options.md) chose against. Decided
+  against too, 2026-11-11 (rust-engine/12, which made the app its own `serve` sidecar): the window serving its runs in
+  its own process, with or without the CLI there too. The AppImage's environment, which GTK needs and the engine's
+  children must not get, would then go through the engine as a parameter (herdr, `ProcessHost`, `ConfigDir`, the HTTP
+  clients, `current_dir`) where the sidecar takes the user's once at its start (`UserShell::enter`); an engine panic
+  would end the window; and `serve`'s signal handling needs the main thread. Its one gain is the first-line handshake
+  gone.
 - **The local gate's report names an empty `judge/gate.toml` for a base without `gate.toml`.** Raised by
   cross-review 171 (F7): "the gate counts the file as there and reports `<…>/judge/gate.toml` as where the settings
   came from … It does not report 'the defaults (there is no …)', so quality.md hides that the defaults judged the
@@ -247,13 +247,13 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   one is not TOML is the toml crate's words with `(at line L, column C)`; and rustls refuses a server certificate that
   is a CA's own, as a self-signed one made by `openssl req -x509` with its default extensions is (`CaUsedAsEndEntity`),
   where OpenSSL accepts it when it is trusted, so the e2e scenarios' PyPI has a leaf under a CA of its own (found by
-  ticket 08's part 7, 2026-10-29). Decided against unless a setup is found that needs it. Decided against (2026-10-28,
-  ticket 07, design-it-twice): `CI` and `PyPI` as traits of their own with in-memory fakes. The engine's tests would
-  then word every URL and error twice, in the code and in the fake, and ticket 08's Workflow tests, which read the
-  requests Jenkins got (`FakeCI.names`, `requests`, `auth`), would port only by re-deriving them; with the seam at
-  `Http`, as Python's at `urlopen`, `FakeJenkins` and `FakePyPI` play the servers and every line of `Jenkins` and `PyPI`
-  runs in those tests. The user kept the `Http` seam and amended the spec's Lane to say so (2026-10-28, cross-review 93,
-  F1), and issue 08 says which seam it is given.
+  ticket 08's part 7, 2026-10-29). The rest is decided against unless a setup is found that needs it. Decided against
+  (2026-10-28, ticket 07, design-it-twice): `CI` and `PyPI` as traits of their own with in-memory fakes. The engine's
+  tests would then word every URL and error twice, in the code and in the fake, and ticket 08's Workflow tests, which
+  read the requests Jenkins got (`FakeCI.names`, `requests`, `auth`), would port only by re-deriving them; with the seam
+  at `Http`, as Python's at `urlopen`, `FakeJenkins` and `FakePyPI` play the servers and every line of `Jenkins` and
+  `PyPI` runs in those tests. The user kept the `Http` seam and amended the spec's Lane to say so (2026-10-28,
+  cross-review 93, F1), and issue 08 says which seam it is given.
 - **No build runs the Rust doctests.** cargo-nextest does not run doctests, and since the Test stage's `cargo llvm-cov
   nextest` replaced the UI stage's `cargo test`, nothing does: `octoflow_ui_lib` is an `rlib` among its crate types
   (`ui/src-tauri/Cargo.toml`), so `cargo test` ran them. The crate has no doc example today. Raised by cross-review 72
