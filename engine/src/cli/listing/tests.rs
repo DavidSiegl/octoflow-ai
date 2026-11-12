@@ -1,5 +1,5 @@
 //! What `list`, `list --json`, `show` and `metrics` print. Python's cases, by class: TestRunHealth's test_print_runs
-//! and test_print_closed_runs (its run_health cases are crate::runs'); TestRunRecord; TestListJSON;
+//! and test_print_closed_runs (its health cases are crate::runs'); TestRunRecord; TestListJSON;
 //! TestCLI.test_list_on_machine_uses_ssh_host; TestShow; TestQualityGateOffOnResume.test_show_names_the_gate;
 //! TestBlockedListing but test_status_tag, which is the GUI's (not ported, the rust-engine spec's Decisions); the
 //! print_runs half of TestBlocked.test_the_wait_is_saved_and_listed, on the state its Workflow half saves
@@ -42,12 +42,16 @@ fn json(text: &str) -> Value {
     serde_json::from_str::<Value>(text).unwrap_or_else(|e| panic!("{text}: {e}"))
 }
 
-/// Python's run_record helper: a run of phase in round 1, its owner, error and verdict null, of this engine's format.
+/// Python's run_record helper: the state.json of a run of phase in round 1, its owner, error and verdict null.
 fn run(phase: &str) -> Value {
-    json(&format!(
-        r#"{{"format": 2, "run_id": "{RUN_ID}", "task": "add a rate limiter", "phase": "{phase}", "round": 1,
-            "owner": null, "error": null, "verdict": null}}"#
-    ))
+    let mut state = RunState::new(RUN_ID, "add a rate limiter", "/proj");
+    (state.phase, state.round) = (phase.to_string(), 1);
+    state.to_json()
+}
+
+/// The saved runs of state.json objects, each with its age.
+fn saved_runs(runs: &[(u64, Value)]) -> Vec<SavedRun> {
+    runs.iter().map(|(age, state)| SavedRun::read(*age, state.clone()).unwrap()).collect()
 }
 
 /// state with each of fields set, as Python's {**state, **fields}.
@@ -74,10 +78,11 @@ fn block() -> Value {
     json(&format!(r#"{{"file": "build-1.md", "question": "{QUESTION}", "k": 1}}"#))
 }
 
-/// run_record of state, saved age seconds ago, on this machine "here" where every pid is alive or none is.
+/// run_record of the state.json state, saved age seconds ago, on this machine "here" where every pid is alive or none
+/// is.
 fn record(state: &Value, age: u64, alive: bool, target: &[&str]) -> Object {
     let target: Vec<String> = target.iter().map(|s| s.to_string()).collect();
-    run_record(state, age, "here", &move |_| alive, &target)
+    run_record(&SavedRun::read(age, state.clone()).unwrap(), "here", &move |_| alive, &target)
 }
 
 /// record's value of key.
@@ -96,7 +101,7 @@ fn alive() -> Cli {
 fn listed(runs: &[(u64, Value)], target: &[&str]) -> Vec<String> {
     let cli = alive();
     let target: Vec<String> = target.iter().map(|s| s.to_string()).collect();
-    cli.with(|world| print_runs(world, runs, &target));
+    cli.with(|world| print_runs(world, &saved_runs(runs), &target));
     cli.lines().into_iter().step_by(2).collect()
 }
 
@@ -117,7 +122,7 @@ fn print_runs_lists_each_run_and_its_task() {
         "20260930-070000-c0ffee  build    round 1  error: interrupted",
     ]);
     let cli = alive();
-    cli.with(|world| print_runs(world, &runs, &[]));
+    cli.with(|world| print_runs(world, &saved_runs(&runs), &[]));
     assert_eq!(cli.lines()[1], "    add a rate limiter");
     cli.with(|world| print_runs(world, &[], &[]));
     assert_eq!(cli.take_out(), "No runs.\n");
@@ -231,15 +236,21 @@ fn a_run_sent_back_by_one_of_several_verdict_steps_lists_which() {
 }
 
 #[test]
-fn a_state_from_before_the_newer_fields() {
+fn an_unreadable_state_is_listed_with_why() {
+    // Of a format this engine reads, but lacking fields: shown as far as it reads, never offered for resume.
     let state = json(&format!(r#"{{"format": 2, "run_id": "{RUN_ID}", "task": "t", "phase": "review", "round": 2}}"#));
-    let record = record(&state, STALE_SECONDS + 1, true, &[]);
-    assert_eq!(record.keys().collect::<Vec<_>>(), RUN_RECORD_KEYS);
-    assert_eq!(
-        [key(&record, "turns"), key(&record, "quality_round"), key(&record, "closed"), key(&record, "worktree")],
-        [json("[]"), Value::Null, Value::Null, Value::Null]
-    );
-    assert_eq!(key(&record, "waiting"), json(r#"{"reason": "stale", "detail": "orchestrator resume c0ffee"}"#));
+    let listed = record(&state, STALE_SECONDS + 1, true, &[]);
+    assert_eq!(listed.keys().collect::<Vec<_>>(), RUN_RECORD_KEYS);
+    let shown = [key(&listed, "task"), key(&listed, "phase"), key(&listed, "round")];
+    assert_eq!(shown, [Value::from("t"), Value::from("review"), Value::from(2)]);
+    let problem = SavedRun::read(0, state.clone()).unwrap().problem().unwrap().to_string();
+    assert_eq!(key(&listed, "error"), Value::from(problem));
+    assert_eq!((key(&listed, "waiting"), key(&listed, "resume_command")), (Value::Null, Value::Null));
+    // One an earlier release saved, with format_problem's reason.
+    let Value::Object(mut old) = run("review") else { unreachable!("a state is saved as an object") };
+    old.shift_remove("format");
+    let problem = crate::state::format_problem(&old).unwrap();
+    assert_eq!(key(&record(&Value::Object(old), 1_000_000, true, &[]), "error"), Value::from(problem));
 }
 
 #[test]
@@ -362,7 +373,7 @@ fn plain_lines_in_each_state() {
         (1_000_000, with(approved, &[("workflow", Value::from("gone"))])),
         (40, with(run("quality"), &[("owner", me()), ("quality_round", Value::from(2))])),
     ];
-    let rows = run_rows(&runs, "here", &|_| true, &[]);
+    let rows = run_rows(&saved_runs(&runs), "here", &|_| true, &[]);
     assert_eq!(rows.iter().map(run_line).collect::<Vec<_>>(), [
         "20260930-070000-c0ffee  build    round 1  running: pid 4242 on here, beat 40s ago".to_string(),
         "20260930-070000-c0ffee  build    round 1  stale: no heartbeat for 5m; resume: orchestrator resume c0ffee".into(),
@@ -451,7 +462,7 @@ fn one_record_per_run_in_order() {
     let doc = list_json(&cli, &[], &runs);
     let records = doc.get("runs").and_then(Value::as_array).unwrap();
     assert_eq!(records.iter().map(|r| r.get("key").unwrap().text()).collect::<Vec<_>>(), ["c0ffee", "beef00"]);
-    assert_eq!(records[0], Value::Object(run_record(&runs[0].1, 40, "here", &crate::runs::pid_alive, &[])));
+    assert_eq!(records[0], Value::Object(run_record(&saved_runs(&runs)[0], "here", &crate::runs::pid_alive, &[])));
     // Written pretty-printed.
     assert_eq!(serde_json::to_string_pretty(&doc).unwrap(), {
         cli.main(&["list", "--json", "--cwd", "/proj"]);
@@ -508,7 +519,7 @@ fn on_a_machine() {
     let states = Rc::clone(&asked);
     cli.f.host.state().run_states_with = Some(Box::new(move |cwd| {
         states.borrow_mut().push(cwd.to_string());
-        Some(Ok(vec![(STALE_SECONDS + 1, mine())]))
+        Some(Ok(saved_runs(&[(STALE_SECONDS + 1, mine())])))
     }));
     assert_eq!(cli.main(&["list", "--json", "--machine", "remote", "--cwd", "~/proj"]), 0);
     assert_eq!(*asked.borrow(), ["~/proj"]);
@@ -532,15 +543,14 @@ fn long_task() -> String {
 
 /// Python's show_state: a run of the default workflow, done with APPROVE, in workspace w1, with fields set.
 fn show_state(fields: &[(&str, Value)]) -> Value {
-    let state = json(&format!(
-        r#"{{"format": 2, "run_id": "{SHOW_ID}", "task": "{}", "cwd": "/proj", "phase": "done", "round": 1, "verdict": "APPROVE",
-            "workspace_id": "w1",
-            "agents": {{"spec": {{"name": "spec-a1b2c3", "pane": "w1:p1"}},
-                        "build": {{"name": "build-a1b2c3", "pane": "w1:p2", "kind": "codex"}},
-                        "review": {{"name": "review-a1b2c3", "pane": "w1:p3", "kind": "claude"}}}}}}"#,
-        long_task()
-    ));
-    with(state, fields)
+    let mut state = RunState::new(SHOW_ID, &long_task(), "/proj");
+    (state.phase, state.round, state.verdict, state.workspace_id) = ("done".into(), 1, Some(APPROVE.into()), "w1".into());
+    let agents = json(
+        r#"{"spec": {"name": "spec-a1b2c3", "pane": "w1:p1"},
+            "build": {"name": "build-a1b2c3", "pane": "w1:p2", "kind": "codex"},
+            "review": {"name": "review-a1b2c3", "pane": "w1:p3", "kind": "claude"}}"#,
+    );
+    with(with(state.to_json(), &[("agents", agents)]), fields)
 }
 
 /// A world whose /proj holds states, each saved 10^6 s ago: Python's ShowHost.
@@ -949,16 +959,16 @@ fn show_of_a_blocked_run() {
 #[test]
 fn the_wait_is_listed() {
     // The state a Workflow saves while the Builder's BLOCKED report waits (crate::workflow's blocked tests).
-    let saved = json(&format!(
-        r#"{{"format": 2, "run_id": "20260929-120000-a1b2c3", "task": "add a rate limiter", "cwd": "/proj",
-            "phase": "build", "round": 1, "owner": {{"host": "box", "pid": 7, "started_at": "2026-09-29T12:00:00+00:00"}},
-            "agents": {{"spec": {{"name": "spec-a1b2c3", "pane": "w1:p1"}}, "build": {{"name": "build-a1b2c3", "pane": "w1:p2"}}}},
-            "blocked": {{"file": "build-1.md", "question": "{QUESTION}", "k": 1}}, "prompted": null}}"#
-    ));
+    let saved = with(run("build"), &[
+        ("run_id", Value::from("20260929-120000-a1b2c3")),
+        ("owner", json(r#"{"host": "box", "pid": 7, "started_at": "2026-09-29T12:00:00+00:00"}"#)),
+        ("agents", json(r#"{"spec": {"name": "spec-a1b2c3", "pane": "w1:p1"}, "build": {"name": "build-a1b2c3", "pane": "w1:p2"}}"#)),
+        ("blocked", block()),
+    ]);
     let cli = alive();
     cli.with(|world| {
         let world = Connected { local_host: "box", ..*world };
-        print_runs(&world, &[(40, saved)], &[]);
+        print_runs(&world, &saved_runs(&[(40, saved)]), &[]);
     });
     assert_eq!(cli.lines()[0], format!("20260929-120000-a1b2c3  build    round 1  blocked: {QUESTION} (pane w1:p2)"));
 }

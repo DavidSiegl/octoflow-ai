@@ -15,12 +15,9 @@ fn run_dir() -> String {
 
 /// serve_state(**kw) of the Python tests: the run's state with the extra keys.
 fn serve_state(extra: &[(&str, Value)]) -> String {
-    let mut state: Object = object([
-        ("run_id", Value::from(SERVE_ID)),
-        ("task", Value::from("add a rate limiter")),
-        ("phase", Value::from("build")),
-        ("round", Value::from(1)),
-    ]);
+    let mut fresh = crate::state::RunState::new(SERVE_ID, "add a rate limiter", "/proj");
+    (fresh.phase, fresh.round) = ("build".into(), 1);
+    let Value::Object(mut state) = fresh.to_json() else { unreachable!("a state is saved as an object") };
     for (key, value) in extra {
         state.insert(key.to_string(), value.clone());
     }
@@ -241,6 +238,6 @@ fn an_agent_is_reached_in_the_herdr_server_its_run_saved() {
     // A server of another shape is no server to guess at.
     save(Some(r#""work""#));
     let e = project.agent_text(SERVE_ID, "build", 10).unwrap_err();
-    assert_eq!(e.to_string(), format!("{}/state.json: herdr_server is not an object of herdr's variables: invalid type: string \"work\", expected struct HerdrServer", run_dir()));
+    assert_eq!(e.to_string(), format!("{}/state.json: run state {SERVE_ID} is invalid: invalid type: string \"work\", expected struct HerdrServer", run_dir()));
     assert_eq!(console.state().typed.len(), 5);
 }

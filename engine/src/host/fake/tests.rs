@@ -265,7 +265,7 @@ fn run_states_and_session_logs() {
     host.write("/proj/.orchestrator/runs/r2/state.json", "{\"run_id\": \"r2\"}", false).unwrap();
     host.state().ages.insert("r2".into(), 400);
     let states = host.run_states("/proj").unwrap();
-    let ages: Vec<u64> = states.iter().map(|(age, _)| *age).collect();
+    let ages: Vec<u64> = states.iter().map(SavedRun::age).collect();
     assert_eq!(ages, [0, 400]);
     host.state().session_logs.insert(("claude".into(), "s1".into()), "log".into());
     assert_eq!(host.session_log("claude", "s1").unwrap().as_deref(), Some(&b"log"[..]));

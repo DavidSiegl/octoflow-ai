@@ -400,7 +400,7 @@ fn runs_command(runs: &RunsCommand, world: &Connected, cwd: &str, target: &[Stri
             let mut records: Vec<_> = host
                 .run_states(cwd)?
                 .iter()
-                .map(|(age, s)| listing::run_record(s, *age, world.local_host, world.with.pid_alive, target))
+                .map(|run| listing::run_record(run, world.local_host, world.with.pid_alive, target))
                 .collect();
             if *pr_state {
                 listing::fill_pr_states(world, cwd, &mut records)?;
@@ -424,36 +424,36 @@ fn runs_command(runs: &RunsCommand, world: &Connected, cwd: &str, target: &[Stri
     Ok(())
 }
 
-/// Set each key of recorded to its value in the run's state.json at path on host, in one write, unless the run has
-/// saved since it was read as saved; for what prune, close and refresh write about a run they do not drive. The file
-/// keeps its modification time, which is the run's heartbeat: a stale run must not look live. meanwhile says what was
-/// being done, for the error.
+/// Make change to read, the run's state as a command read it, and write the result to the run's state.json at path on
+/// host, in one write, unless the file no longer holds read; for what prune, close, refresh and drain write about a run
+/// they do not drive. The file keeps its modification time, which is the run's heartbeat: a stale run must not look
+/// live. meanwhile says what was being done, for the error.
 ///
-/// Errors: the file is gone or changed (naming the keys and meanwhile; nothing is recorded), is not JSON, or cannot be
-/// read or written.
+/// Errors: the file is gone, or no longer reads as read (naming the fields change gives new values, and meanwhile;
+/// nothing is recorded), or cannot be read or written.
 pub fn record_in_state(
     host: &dyn Host,
     path: &str,
-    saved: &Value,
-    recorded: &[(&str, Value)],
+    read: &RunState,
+    change: impl FnOnce(&mut RunState),
     meanwhile: &str,
 ) -> Result<(), OrchestratorError> {
-    let text = host.read(path)?;
-    let unchanged = match &text {
-        None => false,
-        Some(text) => serde_json::from_str::<Value>(text).map_err(|e| OrchestratorError(format!("corrupt {path}: {e}")))? == *saved,
-    };
+    let mut updated = read.clone();
+    change(&mut updated);
+    let unchanged = host.read(path)?.is_some_and(|text| RunState::from_text(&text).is_ok_and(|now| now == *read));
     if !unchanged {
-        let keys: Vec<&str> = recorded.iter().map(|(key, _)| *key).collect();
-        let verb = if keys.len() == 1 { "is" } else { "are" };
-        return Err(OrchestratorError(format!("{path} changed while {meanwhile}; {} {verb} not recorded", keys.join(" and "))));
+        let (Value::Object(before), Value::Object(after)) = (read.to_json(), updated.to_json()) else {
+            unreachable!("a run state is an object")
+        };
+        let keys: Vec<&str> = after.iter().filter(|(k, v)| before.get(*k) != Some(*v)).map(|(k, _)| k.as_str()).collect();
+        let unrecorded = match keys[..] {
+            [] => "nothing is recorded".to_string(),
+            [key] => format!("{key} is not recorded"),
+            _ => format!("{} are not recorded", keys.join(" and ")),
+        };
+        return Err(OrchestratorError(format!("{path} changed while {meanwhile}; {unrecorded}")));
     }
-    let Value::Object(mut updated) = saved.clone() else {
-        return Err(OrchestratorError(format!("corrupt {path}: not a JSON object")));
-    };
-    updated.extend(recorded.iter().map(|(key, value)| (key.to_string(), value.clone())));
-    // One line, as RunState::to_text writes a state, whatever format saved is of.
-    host.write(path, &format!("{}\n", Value::Object(updated)), true)
+    host.write(path, &updated.to_text(), true)
 }
 
 /// Drive the run state describes through pipeline, by the settings saved in state, to its verdict. spec is the file

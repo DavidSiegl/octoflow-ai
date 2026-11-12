@@ -330,7 +330,6 @@ pub fn recordings() -> Vec<(String, serde_json::Value)> {
 pub struct HelperCase {
     /// The case: its recording, run directory and conflicts, and the Python engine's outputs by helper.
     pub expected: serde_json::Value,
-    pub saved: Object,
     pub state: crate::state::RunState,
     pub spec: String,
     pub report: String,
@@ -382,7 +381,7 @@ pub fn helper_cases() -> Vec<HelperCase> {
             crate::pull_request::QualityFile { round: round.parse().unwrap(), quality_round: q.parse().unwrap(), text }
         });
         let evidence = crate::pull_request::GateEvidence { last: quality, unjudged: state.quality_gate_disabled };
-        out.push(HelperCase { expected: case.clone(), saved, state, spec, report, review, evidence, now });
+        out.push(HelperCase { expected: case.clone(), state, spec, report, review, evidence, now });
     }
     out
 }
@@ -466,7 +465,7 @@ pub fn resumable(flags: &[&str], saved: &Object) -> Result<crate::state::RunStat
     let Ok(crate::cli::Command::Resume(args)) = crate::cli::parse_args(argv, &crate::env::ConfigDir::at("/nowhere")) else {
         panic!("not a resume: {flags:?}")
     };
-    let runs = [(10_000, serde_json::Value::Object(saved.clone()))];
+    let runs = [crate::state::SavedRun::read(10_000, serde_json::Value::Object(saved.clone())).unwrap()];
     crate::cli::resumable_state(&runs, &args, "/proj", "here", &|_| false).map(|(state, _)| state)
 }
 

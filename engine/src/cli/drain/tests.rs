@@ -17,6 +17,8 @@ use std::rc::Rc;
 
 use super::queue::*;
 use super::*;
+use crate::pipeline::DONE;
+use serde_json::Value;
 use crate::cli::fixture::Cli;
 use crate::cli::{interrupted_note, run_command, Ran, RunWorkflow};
 use crate::constants::{
@@ -755,6 +757,23 @@ fn an_in_review_specs_run_is_refreshed_too() {
 }
 
 #[test]
+fn a_conflicted_run_an_earlier_release_saved_is_left_saying_why() {
+    // Its state.json has no format (crate::state::format_problem): no refresh, and the spec stays as it is.
+    let d = Drain::new();
+    let run_id = conflicted_spec(&d, SPEC_FOR_HUMAN, APPROVE, &[]);
+    let Value::Object(mut saved) = d.cli.saved(&run_id) else { unreachable!("a state is saved as an object") };
+    saved.shift_remove("format");
+    d.cli.save(&Value::Object(saved.clone()), 10_000);
+    let r = d.drain(vec![], &[]);
+    assert_eq!(r.status, 0, "{}", r.err);
+    assert_eq!(d.header("a"), (some(SPEC_FOR_HUMAN), Some(run_id.clone()), some(PR_A)));
+    let problem = crate::state::format_problem(&saved).unwrap();
+    assert!(r.err.contains(&format!("{run_id}: {problem}; a is left as it is\n")), "{}", r.err);
+    assert!(d.cli.f.host.state().pr_edits.is_empty() && d.views().is_empty());
+    assert_eq!(d.cli.saved(&run_id), Value::Object(saved));
+}
+
+#[test]
 fn an_in_review_spec_whose_refresh_finds_its_pull_request_merged_is_done_asking_gh_once() {
     let d = Drain::new();
     conflicted_spec(&d, SPEC_IN_REVIEW, APPROVE, &[("state", Value::from("MERGED"))]);
@@ -1041,6 +1060,31 @@ fn a_run_an_earlier_release_saved_is_waited_for_while_it_runs_and_never_resumed(
         assert!(r.err.contains(remedy), "{}", r.err);
         assert!(!d.swept(), "{why}");
     }
+}
+
+#[test]
+fn a_finished_run_an_earlier_release_saved_stops_the_drain_without_starting_the_spec_over() {
+    // Its pull request is open: starting the spec over would do its work twice, so the remedy names the release that
+    // saved it and the header lines to set by hand.
+    let run_id = "20261024-100000-aaaaaa";
+    let d = Drain::new();
+    d.sweepable();
+    d.spec("a", &spec_text("First", Some(SPEC_READY), &[&format!("Run: {run_id}")]));
+    let mut saved = serde_json::from_str::<Value>(&RunState::new(run_id, "spec a", "/proj").to_text()).unwrap();
+    let fields = saved.as_object_mut().unwrap();
+    fields.remove("format");
+    fields.insert("phase".into(), Value::from("done"));
+    fields.insert("pr_url".into(), Value::from(PR_A));
+    d.cli.save(&saved, HEARTBEAT_SECONDS + STALE_SECONDS);
+    let before = d.text("a");
+    let r = d.drain(vec![], &[]);
+    assert_eq!(r.status, EXIT_ERROR);
+    let why = format!("error: spec a: run {run_id}, on its Run: line, is done but cannot be read: run {run_id} was saved");
+    assert!(r.err.starts_with(&why), "{}", r.err);
+    assert!(r.err.contains(&format!("set its Status: and PR: lines by hand (its pull request: {PR_A})")), "{}", r.err);
+    assert!(!r.err.contains("start the spec over"), "{}", r.err);
+    assert_eq!(d.text("a"), before);
+    assert!(!d.swept());
 }
 
 #[test]

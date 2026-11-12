@@ -29,10 +29,10 @@ use crate::harness::replaced_by;
 use crate::paths::{file_name, split_extension};
 use crate::pipeline::{default_workflow, find_workflow, Pipeline, PipelineSettings, Step, DEFAULT_WORKFLOW, WORKFLOWS};
 use crate::prompts::template::{is_name, placeholders};
-use crate::prompts::{files_with_extension, saved_prompts, Prompts};
+use crate::prompts::{files_with_extension, Prompts};
 use serde_json::Value;
 use crate::map::Map;
-use crate::json::{Object, ValueExt};
+use crate::json::Object;
 
 /// The keys a workflow definition's top table may have.
 pub const WORKFLOW_KEYS: [&str; 6] = ["description", "roles", "steps", "proof_command", "max_files", "max_lines"];
@@ -480,21 +480,6 @@ fn with_replaced_agents(definition: &Value) -> std::borrow::Cow<'_, Value> {
         }
     }
     std::borrow::Cow::Owned(definition)
-}
-
-/// The workflow of a saved state.json, or None when this orchestrator cannot tell: its workflow, by its
-/// workflow_definition, else the built-in one of its name, worded by its prompt_overrides; a state saved before
-/// workflows existed ran the default.
-pub fn saved_pipeline(saved: &Object) -> Option<Pipeline> {
-    let name = saved.get("workflow").filter(|w| w.is_set()).map_or(Some("default"), Value::as_str)?;
-    let definition = saved.get("workflow_definition").filter(|d| !d.is_null());
-    let overrides = match saved.get("prompt_overrides").filter(|o| o.is_set()) {
-        None => Map::new(),
-        Some(o) => o.as_object()?.iter().map(|(k, v)| v.as_str().map(|v| (k, v.to_string()))).collect::<Option<_>>()?,
-    };
-    let run_id = saved.get("run_id").and_then(Value::as_str).unwrap_or("?");
-    let prompts = saved_prompts(&overrides, run_id).ok()?;
-    run_pipeline(name, definition, &prompts).ok()
 }
 
 #[cfg(test)]

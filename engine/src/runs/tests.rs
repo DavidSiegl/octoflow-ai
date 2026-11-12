@@ -2,39 +2,32 @@
 
 use super::*;
 use crate::constants::APPROVE;
-use crate::json::object;
+use crate::json::{object, Object};
 
 const ME_PID: i64 = 4242;
 
 /// Python's run_record: a run of 20260930-070000-c0ffee in round 1 of phase, with owner, error and verdict.
-fn run_record(phase: &str, owner: Option<Value>, error: Option<&str>, verdict: Option<&str>) -> Value {
-    let text = |s: Option<&str>| s.map_or(Value::Null, Value::from);
-    Value::Object(
-        object([
-            ("run_id", Value::from("20260930-070000-c0ffee")),
-            ("task", Value::from("add a rate limiter")),
-            ("phase", Value::from(phase)),
-            ("round", Value::from(1)),
-            ("owner", owner.unwrap_or(Value::Null)),
-            ("error", text(error)),
-            ("verdict", text(verdict)),
-        ]),
-    )
+fn run_record(phase: &str, owner: Option<Object>, error: Option<&str>, verdict: Option<&str>) -> RunState {
+    let mut state = RunState::new("20260930-070000-c0ffee", "add a rate limiter", "/proj");
+    state.phase = phase.to_string();
+    state.round = 1;
+    state.owner = owner;
+    state.error = error.map(String::from);
+    state.verdict = verdict.map(String::from);
+    state
 }
 
 /// ME, the owner on host "here", or on another host.
-fn owner(host: &str) -> Value {
-    Value::Object(
-        object([
-            ("host", Value::from(host)),
-            ("pid", Value::from(ME_PID)),
-            ("started_at", Value::from("2026-09-30T07:00:00+00:00")),
-        ]),
-    )
+fn owner(host: &str) -> Object {
+    object([
+        ("host", Value::from(host)),
+        ("pid", Value::from(ME_PID)),
+        ("started_at", Value::from("2026-09-30T07:00:00+00:00")),
+    ])
 }
 
-fn health(record: &Value, age: u64, alive: bool) -> Option<(&'static str, String)> {
-    run_health(record, age, "here", &|_| alive)
+fn health(record: &RunState, age: u64, alive: bool) -> Option<(&'static str, String)> {
+    record.health(age, "here", &|_| alive)
 }
 
 #[test]
@@ -75,13 +68,15 @@ fn finished_and_failed_runs_are_never_stale() {
 
 #[test]
 fn a_done_run_not_yet_released_is_judged_by_its_owner_as_ending() {
-    let ending = |record: &Value, age: u64, alive: bool| ending_health(record, age, "here", &|_| alive);
     let owned = run_record("done", Some(owner("here")), None, Some(APPROVE));
-    assert_eq!(health(&owned, 40, true), None, "a done run is not running, as list shows it");
-    assert_eq!(ending(&owned, 40, true), Some((RUNNING, "pid 4242 on here, beat 40s ago".to_string())));
-    assert_eq!(ending(&owned, HEARTBEAT_SECONDS + 1, false).unwrap().0, STALE);
-    assert_eq!(ending(&run_record("done", None, None, Some(APPROVE)), 40, true), None);
-    assert_eq!(ending(&run_record("build", Some(owner("here")), None, None), 40, true), None);
+    assert_eq!(health(&owned, 40, true), Some((RUNNING, "pid 4242 on here, beat 40s ago".to_string())));
+    assert_eq!(health(&owned, HEARTBEAT_SECONDS + 1, false).unwrap().0, STALE);
+    assert_eq!(health(&run_record("done", Some(Object::new()), None, Some(APPROVE)), 40, true), None);
+}
+
+#[test]
+fn a_failed_run_with_an_empty_error_is_judged_by_its_heartbeat() {
+    assert_eq!(health(&run_record("build", None, Some(""), None), 40, true).unwrap().0, RUNNING);
 }
 
 #[test]
