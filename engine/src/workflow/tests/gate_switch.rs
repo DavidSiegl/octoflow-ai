@@ -610,7 +610,7 @@ fn refs_left_by_a_failed_deletion_are_deleted_at_the_end() {
     let f = Fixture::resume(host, state, vec![("review", vec![review_turn(1, APPROVE)])], &[], &[]);
     f.put(&f.state.build_path(1), "report 1");
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
-    assert!(f.host.state().remote.is_empty());
+    assert_eq!(ci_refs(&f.host), []);
 }
 
 #[test]
