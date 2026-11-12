@@ -151,7 +151,8 @@ fn print_closed_runs() {
 fn open_turn(step: &str, role: &str) -> Value {
     json(&format!(
         r#"{{"step": "{step}", "role": "{role}", "round": 1, "quality_round": 0, "file": "{step}.md",
-            "agent": "claude", "model": null, "human_paced": true, "started_at": "2026-09-30T07:00:00Z",
+            "agent": "claude", "model": null, "session": null, "tokens": null, "human_paced": true,
+            "started_at": "2026-09-30T07:00:00Z",
             "ended_at": null, "seconds": null}}"#
     ))
 }
@@ -188,9 +189,9 @@ fn every_key_is_present() {
 #[test]
 fn the_agents_are_those_started_with_their_names_and_kinds() {
     let agents = json(
-        r#"{"spec": {"name": "spec-c0ffee", "pane": "w1:p1"},
+        r#"{"spec": {"name": "spec-c0ffee", "pane": "w1:p1", "kind": "claude"},
             "build": {"name": "build-c0ffee", "pane": "w1:p2", "kind": "codex"},
-            "review": {"name": "", "pane": ""}}"#,
+            "review": {"name": "", "pane": "", "kind": "claude"}}"#,
     );
     let record = record(&with(mine(), &[("agents", agents)]), 40, true, &[]);
     assert_eq!(
@@ -305,7 +306,7 @@ fn quality_round_only_in_the_quality_loop_or_gated_step() {
 fn blocked_waits_for_the_answer() {
     let state = with(mine(), &[
         ("blocked", json(r#"{"file": "build-1.md", "question": "which db?", "k": 1}"#)),
-        ("agents", json(r#"{"build": {"name": "build-c0ffee", "pane": "w1:p2"}}"#)),
+        ("agents", json(r#"{"build": {"name": "build-c0ffee", "pane": "w1:p2", "kind": "claude"}}"#)),
         ("turns", Value::Array(vec![open_turn("spec", "spec")])),
     ]);
     let record = record(&state, 40, true, &[]);
@@ -360,7 +361,7 @@ fn finished_and_failed_runs_wait_for_nothing() {
 fn plain_lines_in_each_state() {
     let blocked = with(mine(), &[
         ("blocked", json(r#"{"file": "build-1.md", "question": "which db?", "k": 1}"#)),
-        ("agents", json(r#"{"build": {"name": "build-c0ffee", "pane": "w1:p2"}}"#)),
+        ("agents", json(r#"{"build": {"name": "build-c0ffee", "pane": "w1:p2", "kind": "claude"}}"#)),
     ]);
     let approved = with(run("done"), &[("verdict", Value::from(APPROVE))]);
     let runs = [
@@ -546,7 +547,7 @@ fn show_state(fields: &[(&str, Value)]) -> Value {
     let mut state = RunState::new(SHOW_ID, &long_task(), "/proj");
     (state.phase, state.round, state.verdict, state.workspace_id) = ("done".into(), 1, Some(APPROVE.into()), "w1".into());
     let agents = json(
-        r#"{"spec": {"name": "spec-a1b2c3", "pane": "w1:p1"},
+        r#"{"spec": {"name": "spec-a1b2c3", "pane": "w1:p1", "kind": "claude"},
             "build": {"name": "build-a1b2c3", "pane": "w1:p2", "kind": "codex"},
             "review": {"name": "review-a1b2c3", "pane": "w1:p3", "kind": "claude"}}"#,
     );
@@ -669,7 +670,7 @@ fn turn(step: &str, file: &str, start: Option<i64>, end: Option<i64>, fields: &[
     let at = |s: Option<i64>| s.map_or(Value::Null, |s| Value::from(iso_utc(HOST_EPOCH + s)));
     let record = json(&format!(
         r#"{{"step": "{step}", "role": "{step}", "round": 1, "quality_round": 0, "file": "{file}", "agent": "claude",
-            "model": null, "human_paced": false}}"#
+            "model": null, "session": null, "tokens": null, "human_paced": false}}"#
     ));
     let seconds = start.zip(end).map_or(Value::Null, |(s, e)| Value::from(e - s));
     with(with(record, &[("started_at", at(start)), ("ended_at", at(end)), ("seconds", seconds)]), fields)
@@ -746,7 +747,7 @@ fn a_run_an_earlier_release_started_with_its_fix_prompt_file_lists_and_shows_who
     // EARLIER_PLACEHOLDERS).
     let fields = [
         ("prompt_overrides", json(r#"{"FIX_PROMPT": "Fix {prev_review_path}; report to {build_path}."}"#)),
-        ("agents", json(r#"{"build": {"name": "build-c0ffee", "pane": "w1:p2"}}"#)),
+        ("agents", json(r#"{"build": {"name": "build-c0ffee", "pane": "w1:p2", "kind": "claude"}}"#)),
     ];
     let stale = with(mine(), &fields);
     let record = record(&stale, STALE_SECONDS + 1, true, &[]);
@@ -931,7 +932,7 @@ fn show_names_the_gate() {
 
 #[test]
 fn a_running_blocked_run_shows_its_question_and_pane() {
-    let blocked = with(mine(), &[("blocked", block()), ("agents", json(r#"{"build": {"pane": "w1:p2"}}"#))]);
+    let blocked = with(mine(), &[("blocked", block()), ("agents", json(r#"{"build": {"name": "build-a1b2c3", "pane": "w1:p2", "kind": "claude"}}"#))]);
     assert_eq!(listed(&[(40, blocked.clone()), (STALE_SECONDS + 1, blocked)], &[]), [
         format!("20260930-070000-c0ffee  build    round 1  blocked: {QUESTION} (pane w1:p2)"),
         "20260930-070000-c0ffee  build    round 1  stale: no heartbeat for 5m; resume: orchestrator resume c0ffee".into(),
@@ -962,7 +963,7 @@ fn the_wait_is_listed() {
     let saved = with(run("build"), &[
         ("run_id", Value::from("20260929-120000-a1b2c3")),
         ("owner", json(r#"{"host": "box", "pid": 7, "started_at": "2026-09-29T12:00:00+00:00"}"#)),
-        ("agents", json(r#"{"spec": {"name": "spec-a1b2c3", "pane": "w1:p1"}, "build": {"name": "build-a1b2c3", "pane": "w1:p2"}}"#)),
+        ("agents", json(r#"{"spec": {"name": "spec-a1b2c3", "pane": "w1:p1", "kind": "claude"}, "build": {"name": "build-a1b2c3", "pane": "w1:p2", "kind": "claude"}}"#)),
         ("blocked", block()),
     ]);
     let cli = alive();

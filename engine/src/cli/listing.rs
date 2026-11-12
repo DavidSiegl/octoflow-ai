@@ -4,14 +4,14 @@
 //! lists.
 
 use super::{resume_command, Connected};
-use crate::constants::{APPROVE, DEFAULT_AGENT, RUNS_DIR};
+use crate::constants::{APPROVE, RUNS_DIR};
 use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
 use crate::pipeline::{workflow_shape, Pipeline, QUALITY};
 use crate::json::{object, Object, ValueExt};
 use crate::map::Map;
 use crate::runs::{RUNNING, STALE};
-use crate::state::{find_run, judged_by_several, RunState, SavedRun, StepVerdict};
+use crate::state::{find_run, judged_by_several, AgentRecord, RunState, SavedRun, StepVerdict, TurnRecord};
 use crate::summary::turn_lines;
 use serde_json::Value;
 
@@ -33,7 +33,7 @@ pub const BLOCKED_STATUS: &str = "blocked";
 /// - role, pane: the current step's role and that role's pane; null in quality, publish or done, or when the
 ///   workflow cannot be loaded, and pane also before the role's agent is started.
 /// - agents: each role's agent the run has started, {"role", "name", "kind"}, in the order they were started: its
-///   herdr name and harness, "claude" for one saved before there were others; [] before the first.
+///   herdr name and harness; [] before the first.
 /// - health, health_reason: RUNNING or STALE and why, as RunState::health has them; null for a run nothing drives.
 ///   heartbeat_age is the run's age.
 /// - waiting: what the run waits on the human for, {"reason", "detail"}, else null. Reasons, first match wins:
@@ -60,14 +60,14 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
     let running = health.as_ref().is_some_and(|(h, _)| *h == RUNNING);
     // resume refuses a run whose state.json it cannot read.
     let resume = (stale && !set(&s.closed) && unreadable.is_none()).then(|| resume_command(&s.run_id, target));
-    let last_turn = s.turns.iter().rev().find(|t| t.get("step").and_then(Value::as_str) == Some(s.phase.as_str()));
+    let last_turn = s.turns.iter().rev().find(|t| t.step == s.phase);
     let blocked = s.blocked.as_ref().filter(|b| !b.is_empty());
     let waiting = if running && blocked.is_some() {
         let question = blocked.and_then(|b| b.get("question")).cloned().unwrap_or(Value::Null);
         Some((BLOCKED_STATUS, question))
     } else if running
         && step.is_some_and(|st| st.human_paced)
-        && last_turn.is_some_and(|t| t.get("ended_at").is_none_or(Value::is_null))
+        && last_turn.is_some_and(TurnRecord::under_way)
     {
         Some(("interview", role.clone().map_or(Value::Null, Value::from)))
     } else {
@@ -75,7 +75,7 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
     };
     // A workflow this orchestrator lacks has no gated step known, so only phase quality has a quality round then.
     let in_quality = pipeline.as_ref().map_or(s.phase == QUALITY, |p| s.in_quality(p));
-    let pane = role.as_deref().and_then(|role| s.agents.get(role)?.get("pane").cloned());
+    let pane = role.as_deref().and_then(|role| Some(s.agents.get(role)?.pane.clone()));
     let optional = |text: Option<String>| text.map_or(Value::Null, Value::from);
     let mut record = Object::new();
     record.insert("id".into(), Value::from(s.run_id.as_str()));
@@ -119,17 +119,17 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
             Value::Object(object([("url", Value::from(url)), ("state", Value::Null), ("error", Value::Null)]))
         }),
     );
-    record.insert("turns".into(), Value::Array(s.turns.iter().cloned().map(Value::Object).collect()));
+    // Records of strings, numbers and JSON values serialize without fail.
+    record.insert("turns".into(), serde_json::to_value(&s.turns).expect("turns serialize"));
     record.insert("resume_command".into(), optional(resume));
     record
 }
 
 /// run_record's agents, of a state's agents, by role.
-fn agent_refs(agents: &Map<Map<String>>) -> Value {
-    let started = agents.iter().filter_map(|(role, agent)| {
-        let name = agent.get("name").filter(|n| !n.is_empty())?;
-        let kind = agent.get("kind").map_or("claude", String::as_str);
-        Some(Value::Object(object([("role", Value::from(role)), ("name", Value::from(name.as_str())), ("kind", Value::from(kind))])))
+fn agent_refs(agents: &Map<AgentRecord>) -> Value {
+    let started = agents.iter().filter(|(_, agent)| !agent.name.is_empty()).map(|(role, agent)| {
+        let (name, kind) = (agent.name.as_str(), agent.kind.as_str());
+        Value::Object(object([("role", Value::from(role)), ("name", Value::from(name)), ("kind", Value::from(kind))]))
     });
     Value::Array(started.collect())
 }
@@ -302,9 +302,7 @@ pub fn show_run(world: &Connected, cwd: &str, run_ref: &str, target: &[String]) 
     }
     let width = s.agents.keys().map(|role| role.chars().count()).max().unwrap_or(0);
     let agent_lines = s.agents.iter().map(|(role, a)| {
-        let kind = a.get("kind").filter(|k| !k.is_empty()).map_or(DEFAULT_AGENT, String::as_str);
-        let pane = a.get("pane").map_or("", String::as_str);
-        format!("{role:<width$}  {kind:<8}  {pane}")
+        format!("{role:<width$}  {:<8}  {}", a.kind, a.pane)
     });
     print_section(world, "agents", agent_lines.collect());
     let turns = &s.turns;
@@ -340,12 +338,12 @@ fn print_section(world: &Connected, title: &str, lines: Vec<String>) {
 /// zone as show's turns heading names it: its IANA name, such as Europe/Vienna; for a zone without one (a POSIX TZ
 /// string, a copied /etc/localtime), the offsets from UTC it had at the starts of turns, each once in their order,
 /// such as UTC+02:00 and UTC+01:00, since the offset may change between turns; "local time" when no start is known.
-fn zone_name(zone: &jiff::tz::TimeZone, turns: &[Object]) -> String {
+fn zone_name(zone: &jiff::tz::TimeZone, turns: &[TurnRecord]) -> String {
     if let Some(name) = zone.iana_name() {
         return name.to_string();
     }
     let mut offsets: Vec<String> = Vec::new();
-    let starts = turns.iter().filter_map(|t| t.get("started_at")?.as_str()?.parse::<jiff::Timestamp>().ok());
+    let starts = turns.iter().filter_map(|t| t.started_at.as_deref()?.parse::<jiff::Timestamp>().ok());
     for at in starts {
         let offset = format!("UTC{}", at.to_zoned(zone.clone()).strftime("%:z"));
         if !offsets.contains(&offset) {

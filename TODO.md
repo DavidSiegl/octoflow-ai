@@ -106,11 +106,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   and one they create is deleted, without a warning; a worktree run is not exposed. Ticketed as GitHub #384
   (`.scratch/todo/issues/42`): keep the human's version and warn. Decided against (the user's ruling, 2026-11-11):
   running proofs in a scratch worktree of the tree under test.
-- **Readers of `state.json` still take records an earlier release wrote.** A `state.json` without the format marker
-  is refused (`crate::state::format_problem`), so no record an earlier release wrote reaches them, but
-  `ProofRun::read` (`engine/src/proofs.rs`) still reads a `proofs` record without `written` as a first run, and the
-  turn and agent readers a record without `kind` as `DEFAULT_AGENT`'s: branches no format-2 run takes. Ticketed in
-  `.scratch/saved-run/issues/02`, which requires both fields.
+- **A harness has two names in the engine: `kind` and `harness`.** Cross-review 180 F10: "One concept, two names:
+  `kind` (`AgentRecord::kind`, `agent_kinds`, `Workflow::agent_kind`) and `harness` (`TurnRecord::harness`,
+  `RunState::harness`); in `agent()` `kind = self.state.harness(role)` sits beside `target = self.agent_kind(role)`."
+  `AGENT_KINDS`, `--role-agent`'s kinds and the saved `agents.<role>.kind` and turn `agent` keys are on users' disks
+  and command lines, so only the engine's own names can follow. Closes with one name for the engine's identifiers
+  (and GLOSSARY.md defining it), the saved keys left as they are.
 - **No coverage-guided fuzzing of the engine's parsers.** Decided against (the user's ruling, 2026-11-11): a
   cargo-fuzz pass over `handoff::first_line_word`, `parse_verdict`, `parse_gate`, `parse_blocked` and
   `parse_env_file`, looking for panics. The seeded generated-input tests (`test_support::Rng`) cover them instead;

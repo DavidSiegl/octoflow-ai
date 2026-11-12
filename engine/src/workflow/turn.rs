@@ -3,7 +3,7 @@
 
 use super::{How, Outcome, Stopped, Workflow};
 use crate::constants::{
-    APPROVE, CHANGES_REQUESTED, DEFAULT_AGENT, HEARTBEAT_SECONDS, POLL_SECONDS, PROMPT_DELIVERY_SECONDS,
+    APPROVE, CHANGES_REQUESTED, HEARTBEAT_SECONDS, POLL_SECONDS, PROMPT_DELIVERY_SECONDS,
     STALL_SECONDS,
 };
 use crate::error::OrchestratorError;
@@ -14,6 +14,7 @@ use crate::paths::{file_name, split_extension};
 use crate::prompts::Prompt;
 use serde_json::Value;
 use crate::json::{object, Object, ValueExt};
+use crate::state::{AgentRecord, TurnRecord};
 use crate::summary::{epoch_seconds, iso_utc};
 
 /// What a turn does once its agent is ready, before any prompt.
@@ -160,7 +161,7 @@ impl Workflow<'_> {
         let how = self.agent(role)?;
         let message = self.prompt_for(how, &file, &t.text, t.fresh_text.as_deref(), path)?;
         self.announce(role, how, message.is_some(), &t.announce)?;
-        self.human.log(&format!("[{role}] working in pane {}", self.agent_field(role, "pane")));
+        self.human.log(&format!("[{role}] working in pane {}", self.pane(role)));
         if let Some(message) = message {
             // A resumed or restarted turn keeps its record and start. Read before the prompt goes out, so that no
             // agent can write its file before its turn started (its mtime still can: end_turn counts that as the
@@ -193,8 +194,8 @@ impl Workflow<'_> {
             Announce::Nothing => Ok(()),
             Announce::Interview if !prompting => Ok(()),
             Announce::Interview => {
-                let (name, pane) = (self.agent_field(role, "name"), self.agent_field(role, "pane"));
-                self.herdr.focus(&name)?;
+                let (name, pane) = (self.agent_name(role), self.pane(role));
+                self.herdr.focus(name)?;
                 let label = self.label(role);
                 let what = if how == How::Restarted { "restarted; the interview starts over" } else { "is waiting for you" };
                 self.human.notify(&format!("{label} {what}"), &format!("pane {pane}: {}", self.state.task));
@@ -202,7 +203,7 @@ impl Workflow<'_> {
                 Ok(())
             }
             Announce::Blocked { question } => {
-                self.herdr.focus(&self.agent_field(role, "name"))?;
+                self.herdr.focus(self.agent_name(role))?;
                 self.ask_human(role, &format!("is blocked: {question}"));
                 Ok(())
             }
@@ -243,8 +244,8 @@ impl Workflow<'_> {
         // The turn's record, which written closed, goes with the file, as in retry; the wait opens a record of its
         // own, human-paced (turn_record).
         let moved = file_name(&blocked).to_string();
-        if let Some(t) = s.turns.iter_mut().rev().find(|t| file_of(t) == Some(&file)) {
-            t.insert("file".into(), Value::from(moved.as_str()));
+        if let Some(t) = s.turns.iter_mut().rev().find(|t| t.file == file) {
+            t.file.clone_from(&moved);
         }
         self.save()?;
         self.host.rename(path, &blocked)?;
@@ -286,15 +287,15 @@ impl Workflow<'_> {
     ///
     /// Errors: the agent takes neither prompt, naming what a resume does about it, or exits meanwhile; herdr fails.
     fn deliver(&mut self, role: &str, path: &str, message: &str) -> Outcome<()> {
-        let name = self.agent_field(role, "name");
-        self.herdr.prompt(&name, message)?;
+        let name = self.agent_name(role);
+        self.herdr.prompt(name, message)?;
         if self.taken(role, path)? {
             return Ok(());
         }
         self.human.log(&format!("[{role}] did not take its prompt within {PROMPT_DELIVERY_SECONDS}s; sending it again"));
-        self.herdr.prompt(&name, message)?;
+        self.herdr.prompt(name, message)?;
         if !self.taken(role, path)? {
-            let (label, pane) = (self.label(role), self.agent_field(role, "pane"));
+            let (label, pane) = (self.label(role), self.pane(role));
             return Err(Stopped::Failed(OrchestratorError(format!(
                 "the {label} did not take its prompt to write {path}, sent twice; see pane {pane}, and resume to send \
                  it again"
@@ -309,12 +310,12 @@ impl Workflow<'_> {
     ///
     /// Errors: the agent exits without writing path; herdr fails otherwise than by the wait running out.
     fn taken(&self, role: &str, path: &str) -> Outcome<bool> {
-        let name = self.agent_field(role, "name");
+        let name = self.agent_name(role);
         // First, for a turn so quick that the agent is done before the wait begins.
         if self.host.read(path)?.is_some() {
             return Ok(true);
         }
-        match self.herdr.wait(&name, Some(PROMPT_DELIVERY_SECONDS * 1000), &["working", "blocked"]) {
+        match self.herdr.wait(name, Some(PROMPT_DELIVERY_SECONDS * 1000), &["working", "blocked"]) {
             Ok(_) => return Ok(true),
             // herdr's wait on an agent that has exited fails with agent_not_found, which is told apart below.
             Err(e) if matches!(e.code(), Some("timeout" | "agent_not_found")) => {}
@@ -323,7 +324,7 @@ impl Workflow<'_> {
         if self.host.read(path)?.is_some() {
             return Ok(true);
         }
-        if self.herdr.agent(&name)?.is_none() {
+        if self.herdr.agent(name)?.is_none() {
             let label = self.label(role);
             return Err(Stopped::Failed(OrchestratorError(format!("the {label} exited without writing {path}"))));
         }
@@ -352,8 +353,8 @@ impl Workflow<'_> {
         // The turn's record, which written closed, goes with the file, whose mtime the rename kept; the retry opens a
         // record of its own.
         let moved = file_name(&rejected).to_string();
-        if let Some(record) = self.state.turns.iter_mut().rev().find(|t| file_of(t) == Some(&file)) {
-            record.insert("file".into(), Value::from(moved.as_str()));
+        if let Some(record) = self.state.turns.iter_mut().rev().find(|t| t.file == file) {
+            record.file.clone_from(&moved);
         }
         self.save()?;
         self.human.log(&format!("[{role}] {file} {why}; moved it to {moved}, prompting once more"));
@@ -400,14 +401,14 @@ impl Workflow<'_> {
             if let Some(out) = self.host.read(path)? {
                 return Ok(out);
             }
-            let Some(record) = self.herdr.agent(&self.agent_field(role, "name"))? else {
+            let Some(record) = self.herdr.agent(self.agent_name(role))? else {
                 return Err(Stopped::Failed(OrchestratorError(format!("the {label} exited without writing {path}"))));
             };
             self.note_session(role, &record)?;
             let now = self.clocks.monotonic();
             if let (Some(deadline), Some(timeout)) = (deadline, timeout) {
                 if now > deadline {
-                    let pane = self.agent_field(role, "pane");
+                    let pane = self.pane(role);
                     return Err(Stopped::Failed(OrchestratorError(format!(
                         "the {label} did not write {path} within {timeout}s; see pane {pane}"
                     ))));
@@ -465,46 +466,39 @@ impl Workflow<'_> {
 
     /// The index in RunState.turns of the record of the turn under way that writes file; None when there is none.
     pub(super) fn open_turn(&self, file: &str) -> Option<usize> {
-        self.state.turns.iter().position(|t| file_of(t) == Some(file) && t.get("ended_at").is_some_and(Value::is_null))
+        self.state.turns.iter().position(|t| t.file == file && t.under_way())
     }
 
     /// An open record of the current phase's turn that writes file: the current step's, or with no step of the phase,
     /// a quality analysis, which runs no agent. started is None when the turn's start is not known.
-    pub(super) fn turn_record(&self, role: &str, file: &str, started: Option<i64>) -> Object {
+    pub(super) fn turn_record(&self, role: &str, file: &str, started: Option<i64>) -> TurnRecord {
         let s = &self.state;
         let step = self.pipeline.step(&s.phase);
-        let known = s.agents.get(role);
-        let text = |value: Option<&String>| value.map_or(Value::Null, |v| Value::from(v.as_str()));
-        let (agent, model, session) = match step {
-            None => (Value::Null, Value::Null, Value::Null),
-            Some(_) => {
-                let kind = known.and_then(|a| a.get("kind")).filter(|k| !k.is_empty());
-                let kind = kind.or_else(|| s.agent_kinds.get(role)).map_or(DEFAULT_AGENT, String::as_str);
-                (Value::from(kind), text(s.models.get(role)), text(known.and_then(|a| a.get("session"))))
-            }
+        let (harness, model, session) = match step {
+            None => (None, None, None),
+            Some(_) => (
+                Some(s.harness(role).to_string()),
+                s.models.get(role).cloned(),
+                s.agents.get(role).and_then(|a| a.session.clone()),
+            ),
         };
         let blocked = s.blocked.as_ref().is_some_and(|b| file_of(b) == Some(file));
-        let quality_round = if step.is_none_or(|st| st.quality_gated) { s.quality_round } else { 0 };
-        object([
-            ("step", Value::from(s.phase.as_str())),
-            ("role", Value::from(role)),
-            ("round", Value::from(i64::from(s.round))),
-            ("quality_round", Value::from(i64::from(quality_round))),
-            ("file", Value::from(file)),
-            // The agent's session for the whole turn, None when that is not known: end_turn clears it for a turn that
-            // ended in another session than it started in.
-            ("agent", agent),
-            ("model", model),
-            ("session", session),
-            // The tokens of the turn, which count_tokens counts once the run is done; None until then, and always
-            // for a quality analysis.
-            ("tokens", Value::Null),
-            // A blocked turn's wait for the human's answer, and the rewrite after it, is paced by the human too.
-            ("human_paced", Value::from(step.is_some_and(|st| st.human_paced) || blocked)),
-            ("started_at", started.map_or(Value::Null, |t| Value::from(iso_utc(t)))),
-            ("ended_at", Value::Null),
-            ("seconds", Value::Null),
-        ])
+        TurnRecord {
+            step: s.phase.clone(),
+            role: role.to_string(),
+            round: s.round,
+            quality_round: if step.is_none_or(|st| st.quality_gated) { s.quality_round } else { 0 },
+            file: file.to_string(),
+            harness,
+            model,
+            session,
+            tokens: Value::Null,
+            human_paced: step.is_some_and(|st| st.human_paced) || blocked,
+            started_at: started.map(iso_utc),
+            ended_at: None,
+            seconds: None,
+            unknown: Object::new(),
+        }
     }
 
     /// Close the record of the turn that wrote path, found written, at the file's mtime: the turn ended then, even
@@ -520,30 +514,29 @@ impl Workflow<'_> {
         let i = match self.open_turn(file) {
             Some(i) => i,
             // Closed already, by an orchestrator that stopped before the run moved on.
-            None if self.state.turns.iter().any(|t| file_of(t) == Some(file)) => return Ok(()),
+            None if self.state.turns.iter().any(|t| t.file == file) => return Ok(()),
             None => {
                 let record = self.turn_record(role, file, None);
                 self.state.turns.push(record);
                 self.state.turns.len() - 1
             }
         };
-        let session = self.state.agents.get(role).and_then(|a| a.get("session")).map(|s| Value::from(s.as_str()));
-        if self.state.turns[i].get("session").unwrap_or(&Value::Null) != &session.unwrap_or(Value::Null) {
-            self.state.turns[i].insert("session".into(), Value::Null);
+        let session = self.state.agents.get(role).and_then(|a| a.session.clone());
+        let record = &mut self.state.turns[i];
+        if record.session != session {
+            record.session = None;
         }
-        let started = self.state.turns[i]
-            .get("started_at")
-            .and_then(Value::as_str)
+        let started = record
+            .started_at
+            .as_deref()
             .map(epoch_seconds)
             .transpose()
             .map_err(|e| OrchestratorError(format!("the turn that wrote {file} started at no time: {e}")))?;
         let mtime = self.host.mtime(path)?;
         let ended = started.map_or(mtime, |started| mtime.max(started));
         let record = &mut self.state.turns[i];
-        record.insert("ended_at".into(), Value::from(iso_utc(ended)));
-        if let Some(started) = started {
-            record.insert("seconds".into(), Value::from(ended - started));
-        }
+        record.ended_at = Some(iso_utc(ended));
+        record.seconds = started.map(|started| ended - started);
         self.save()
     }
 
@@ -556,14 +549,14 @@ impl Workflow<'_> {
     fn agent(&mut self, role: &str) -> Outcome<How> {
         let known = self.state.agents.get(role).cloned();
         if let Some(known) = &known {
-            if let Some(record) = self.herdr.agent(known.get("name").map_or("", String::as_str))? {
+            if let Some(record) = self.herdr.agent(&known.name)? {
                 self.note_session(role, &record)?;
                 return Ok(How::Alive);
             }
         }
         let pane = self.pane_for(role)?;
-        let session = known.as_ref().and_then(|a| a.get("session")).filter(|s| !s.is_empty()).cloned();
-        let kind = known.as_ref().and_then(|a| a.get("kind")).map_or(DEFAULT_AGENT, String::as_str).to_string();
+        let session = known.as_ref().and_then(|a| a.session.clone()).filter(|s| !s.is_empty());
+        let kind = self.state.harness(role).to_string();
         let target = self.agent_kind(role)?;
         if let Some(session) = &session {
             if kind != target {
@@ -592,7 +585,7 @@ impl Workflow<'_> {
         let s = &self.state;
         let roles = self.pane_order(role);
         let i = roles.iter().position(|r| r == role).unwrap_or(0);
-        let pane_of = |r: &str| s.agents.get(r).and_then(|a| a.get("pane")).filter(|p| !p.is_empty()).cloned();
+        let pane_of = |r: &str| s.agents.get(r).map(|a| a.pane.clone()).filter(|p| !p.is_empty());
         let old = pane_of(role).unwrap_or_else(|| if i == 0 { s.root_pane.clone() } else { String::new() });
         if !old.is_empty() && self.herdr.pane_exists(&old)? {
             return Ok(old);
@@ -604,7 +597,7 @@ impl Workflow<'_> {
             (s.root_pane.clone(), Direction::Right)
         };
         let mut survivors = vec![parent, s.root_pane.clone()];
-        survivors.extend(s.agents.values().map(|a| a.get("pane").cloned().unwrap_or_default()));
+        survivors.extend(s.agents.values().map(|a| a.pane.clone()));
         let mut tried = vec![];
         for pane in survivors {
             if pane.is_empty() || pane == old || tried.contains(&pane) {
@@ -660,8 +653,7 @@ impl Workflow<'_> {
             self.herdr.export(pane, &launch.env)?;
         }
         let ready = self.herdr.start_agent(&name, pane, &kind, &launch.args)?;
-        let record = [("name", name.clone()), ("pane", pane.to_string()), ("kind", kind)].into_iter().collect();
-        self.state.agents.insert(role, record);
+        self.state.agents.insert(role, AgentRecord::new(&name, pane, &kind));
         self.save()?;
         if !ready {
             self.ask_human(role, "needs your answer before it starts");
@@ -696,8 +688,8 @@ impl Workflow<'_> {
     fn note_session(&mut self, role: &str, record: &Agent) -> Outcome<()> {
         let Some(session) = record.session.as_deref().filter(|s| !s.is_empty()) else { return Ok(()) };
         let agent = self.state.agents.get_mut(role).ok_or_else(|| OrchestratorError(format!("no agent of {role}")))?;
-        if agent.get("session").map(String::as_str) != Some(session) {
-            agent.insert("session", session.to_string());
+        if agent.session.as_deref() != Some(session) {
+            agent.session = Some(session.to_string());
             self.save()?;
         }
         Ok(())
@@ -705,17 +697,24 @@ impl Workflow<'_> {
 
     /// Tell the human the role's agent is in a state that needs them, naming its pane.
     pub(super) fn ask_human(&self, role: &str, what: &str) {
-        let pane = self.agent_field(role, "pane");
+        let pane = self.pane(role);
         self.human.notify(&format!("{} {what}", self.label(role)), &format!("pane {pane}"));
         self.human.log(&format!("[{role}] {what} (pane {pane})"));
     }
 
-    /// A field of the role's agent record, name or pane; "" for an agent or a field the record lacks.
-    fn agent_field(&self, role: &str, field: &str) -> String {
-        self.state.agents.get(role).and_then(|a| a.get(field)).cloned().unwrap_or_default()
+    /// The herdr name of the role's agent; "" before it has one.
+    fn agent_name(&self, role: &str) -> &str {
+        self.state.agents.get(role).map_or("", |a| &a.name)
     }
 
-    /// The harness the role's next agent starts in. Errors: the state names none, which Workflow::new rules out.
+    /// The pane of the role's agent; "" before it has one, or once its workspace was found gone.
+    fn pane(&self, role: &str) -> &str {
+        self.state.agents.get(role).map_or("", |a| &a.pane)
+    }
+
+    /// The harness the role's next agent starts in, which a resume's --role-agent may have made another than the one
+    /// its agent runs in (RunState::harness): it decides what starts, the other what ran. Errors: the state names
+    /// none, which Workflow::new rules out.
     fn agent_kind(&self, role: &str) -> Result<String, OrchestratorError> {
         self.state.agent_kinds.get(role).cloned().ok_or_else(|| OrchestratorError(format!("no harness for role {role}")))
     }
@@ -726,7 +725,7 @@ impl Workflow<'_> {
     }
 }
 
-/// The file a turn record, or the record of a block (RunState::blocked), is of; None for a record without one.
+/// The file the record of a block (RunState::blocked) is of; None for a record without one.
 fn file_of(record: &Object) -> Option<&str> {
     record.get("file").and_then(Value::as_str)
 }

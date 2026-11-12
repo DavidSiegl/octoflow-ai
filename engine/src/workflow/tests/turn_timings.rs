@@ -81,8 +81,8 @@ fn the_end_is_the_files_mtime_even_when_no_orchestrator_watched() {
     let f2 = Fixture::resume(Rc::clone(&f.host), saved, review, &["build"], &[]);
     let mut wf = f2.workflow(f2.as_saved());
     assert_eq!(wf.run(), verdict(APPROVE));
-    let builds: Vec<&Object> = wf.state().turns.iter().filter(|t| t.get("file") == Some(&Value::from("build-1.md"))).collect();
-    assert_eq!([record("build", "build-1.md", Some(0), Some(1200))], builds.into_iter().cloned().collect::<Vec<_>>()[..]);
+    let builds: Vec<TurnRecord> = wf.state().turns.iter().filter(|t| t.file == "build-1.md").cloned().collect();
+    assert_eq!([record("build", "build-1.md", Some(0), Some(1200))], builds[..]);
     assert_eq!(record("review", "review-1.md", Some(5000), Some(5100)), *wf.state().turns.last().unwrap());
     let written = summary(&f2).unwrap();
     assert!(written.contains("- **Outcome:** APPROVE\n"), "{written}");
@@ -105,8 +105,8 @@ fn a_restarted_agent_keeps_its_turns_record() {
     let mut wf = f.workflow(f.as_saved());
     assert_eq!(wf.run(), verdict(APPROVE));
     assert!(called(&f, &Call::Prompt { name: "build-a1b2c3".into() }));
-    let files: Vec<&Value> = wf.state().turns.iter().map(|t| t.get("file").unwrap()).collect();
-    assert_eq!(files, [&Value::from("build-2.md"), &Value::from("review-2.md")]);
+    let files: Vec<&str> = wf.state().turns.iter().map(|t| t.file.as_str()).collect();
+    assert_eq!(files, ["build-2.md", "review-2.md"]);
     assert_eq!(record("build", "build-2.md", Some(-1000), Some(50)).with("round", 2), wf.state().turns[0]);
 }
 
@@ -122,7 +122,7 @@ fn a_record_closed_before_the_run_moved_on_is_not_recorded_again() {
     assert_eq!(wf.run(), verdict(APPROVE));
     let turns = &wf.state().turns;
     assert_eq!([closed], turns[..turns.len() - 1]);
-    assert_eq!(turns.last().unwrap().get("file").unwrap(), &Value::from("review-1.md"));
+    assert_eq!(turns.last().unwrap().file, "review-1.md");
 }
 
 #[test]
@@ -373,8 +373,8 @@ fn tokens_come_from_the_session_the_turn_ran_in() {
         ("review".into(), r#"{"input":5,"output":6,"cache_read":2,"cache_write":0}"#.into()),
     ]);
     let known = sessions.borrow();
-    let turn_sessions: Vec<Value> = wf.state().turns[1..].iter().map(|t| t.get("session").unwrap().clone()).collect();
-    assert_eq!(turn_sessions, [Value::from(known.get("build").unwrap().as_str()), Value::from(known.get("review").unwrap().as_str())]);
+    let turn_sessions: Vec<Option<String>> = wf.state().turns[1..].iter().map(|t| t.session.clone()).collect();
+    assert_eq!(turn_sessions, [known.get("build").cloned(), known.get("review").cloned()]);
 }
 
 #[test]
@@ -391,7 +391,7 @@ fn a_turn_that_changed_sessions_has_unknown_tokens() {
     let mut wf = f.workflow(f.as_saved());
     assert_eq!(wf.run(), verdict(APPROVE));
     let first = &wf.state().turns[0];
-    assert_eq!((first.get("session").unwrap(), first.get("tokens").unwrap()), (&Value::Null, &Value::from("unknown")));
+    assert_eq!((&first.session, &first.tokens), (&None, &Value::from("unknown")));
 }
 
 // -- The cases of a gated run -------------------------------------------------------------------------------------
@@ -414,16 +414,9 @@ fn quality_rounds_and_answers_have_records_of_their_own() {
 
     assert_eq!(wf.run(), verdict(APPROVE));
     let turns = wf.state().turns.clone();
-    let shape: Vec<(Value, Value, Value, Value, Value)> = turns
-        .iter()
-        .map(|t| {
-            let get = |k: &str| field(t, k).clone();
-            (get("file"), get("step"), get("role"), get("round"), get("quality_round"))
-        })
-        .collect();
-    let row = |file: &str, step: &str, n: i64, q: i64| {
-        (Value::from(file), Value::from(step), Value::from(step), Value::from(n), Value::from(q))
-    };
+    let shape: Vec<(&str, &str, &str, u32, u32)> =
+        turns.iter().map(|t| (t.file.as_str(), t.step.as_str(), t.role.as_str(), t.round, t.quality_round)).collect();
+    let row = |file, step, n, q| (file, step, step, n, q);
     assert_eq!(shape, [
         row("spec.md", "spec", 0, 0),
         row("build-1.md", "build", 1, 0),
@@ -432,17 +425,17 @@ fn quality_rounds_and_answers_have_records_of_their_own() {
         row("quality-1-2.md", "quality", 1, 2),
         row("review-1.md", "review", 1, 0),
     ]);
-    let quality: Vec<&Object> = turns.iter().filter(|t| t.get("role") == Some(&Value::from("quality"))).collect();
+    let quality: Vec<&TurnRecord> = turns.iter().filter(|t| t.role == "quality").collect();
     for t in &quality {
-        assert_eq!((field(t, "agent"), field(t, "model"), field(t, "human_paced")), (&Value::Null, &Value::Null, &Value::Bool(false)));
+        assert_eq!((&t.harness, &t.model, t.human_paced), (&None, &None, false));
     }
-    let seconds = |t: &Object, k: &str| crate::summary::epoch_seconds(field(t, k).as_str().unwrap()).unwrap();
+    let seconds = |at: &Option<String>| crate::summary::epoch_seconds(at.as_deref().unwrap()).unwrap();
     for t in &turns {
-        assert!(seconds(t, "started_at") <= seconds(t, "ended_at"));
-        assert_eq!(field(t, "seconds"), &Value::from(seconds(t, "ended_at") - seconds(t, "started_at")));
+        assert!(seconds(&t.started_at) <= seconds(&t.ended_at));
+        assert_eq!(t.seconds, Some(seconds(&t.ended_at) - seconds(&t.started_at)));
     }
     // Each quality round polls Jenkins, which takes the host's time too.
-    assert!(field(quality[0], "seconds").as_i64().unwrap() > 0);
+    assert!(quality[0].seconds.unwrap() > 0);
     let summary = summary(&f).unwrap();
     assert!(summary.contains("| quality | quality | 1 q1 | - | - |"), "{summary}");
     assert!(summary.contains("- Round 1: quality gate ERROR, OK; review APPROVE\n"), "{summary}");
@@ -469,9 +462,9 @@ fn a_resumed_analysis_keeps_its_start() {
 
     assert_eq!(wf.run(), verdict(APPROVE));
     // build-1.md was written before turns were recorded.
-    let files: Vec<&Value> = wf.state().turns.iter().map(|t| field(t, "file")).collect();
-    assert_eq!(files, [&Value::from("quality-1-1.md"), &Value::from("review-1.md")]);
-    assert_eq!(field(&wf.state().turns[0], "started_at"), &Value::from(at(-500)));
+    let files: Vec<&str> = wf.state().turns.iter().map(|t| t.file.as_str()).collect();
+    assert_eq!(files, ["quality-1-1.md", "review-1.md"]);
+    assert_eq!(wf.state().turns[0].started_at, Some(at(-500)));
 }
 
 #[test]

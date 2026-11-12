@@ -325,6 +325,13 @@ pub fn recordings() -> Vec<(String, serde_json::Value)> {
         .collect()
 }
 
+/// The state a recording's saved state.json object holds, read as the engine reads one, its "<time>" and
+/// "<seconds>" made values (denormalized), as a turn record's seconds must be a number. Panics: it does not read.
+pub fn recorded_state(saved: &serde_json::Map<String, serde_json::Value>) -> crate::state::RunState {
+    let text = denormalized(&serde_json::Value::Object(saved.clone()).to_string(), 1_791_000_000);
+    crate::state::RunState::from_text(&text).unwrap_or_else(|e| panic!("{e}: {text}"))
+}
+
 /// A run of helpers.json's cases with the inputs engine/tests/oracle/helpers.py gives its helpers, read from its
 /// recording as that script reads them, and the outputs it recorded.
 pub struct HelperCase {
@@ -389,7 +396,7 @@ pub fn helper_cases() -> Vec<HelperCase> {
 /// helpers.py's denormalized: text, a recording's state.json, with each "<time>" string in it a time as
 /// crate::summary::iso_utc writes it, the first at epoch (Unix seconds) and each a minute after the one before, and
 /// each "<seconds>" string a count, 5 and then 7 more each time.
-fn denormalized(text: &str, epoch: i64) -> String {
+pub fn denormalized(text: &str, epoch: i64) -> String {
     use serde_json::Value;
     let mut out = String::new();
     let (mut times, mut counts) = (0, 5);

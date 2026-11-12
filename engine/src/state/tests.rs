@@ -1,14 +1,15 @@
 use super::*;
-use crate::test_support::recordings;
+use crate::test_support::{denormalized, recordings};
 
-/// The state.json texts the e2e recordings hold among their run files.
+/// The state.json texts the e2e recordings hold among their run files, denormalized, as a turn record's seconds must
+/// be a number.
 fn recorded_states() -> Vec<String> {
     let mut texts = Vec::new();
     for (_, recording) in recordings() {
         let files = recording.get("run_files").and_then(Value::as_object).unwrap();
         for (path, text) in files {
             if path.ends_with("state.json") {
-                texts.push(text.as_str().unwrap().to_string());
+                texts.push(denormalized(text.as_str().unwrap(), 1_791_000_000));
             }
         }
     }
@@ -155,6 +156,74 @@ fn each_verdict_is_recorded_once_per_step_and_round() {
         "{text}"
     );
     assert_eq!(RunState::from_text(&text).unwrap(), state);
+}
+
+/// A turn record of every field, as Workflow::turn_record saves one, with these fields replaced, or removed for None.
+fn turn_with(fields: &[(&str, Option<&str>)]) -> String {
+    let mut turn: Object = serde_json::from_str(
+        r#"{"step": "build", "role": "build", "round": 1, "quality_round": 0, "file": "build-1.md", "agent": "codex",
+            "model": null, "session": "s1", "tokens": null, "human_paced": false,
+            "started_at": "2026-10-03T04:00:00+00:00", "ended_at": null, "seconds": null}"#,
+    )
+    .unwrap();
+    for (key, value) in fields {
+        match value {
+            Some(text) => turn.insert(key.to_string(), serde_json::from_str(text).unwrap()),
+            None => turn.remove(*key),
+        };
+    }
+    format!("[{}]", Value::Object(turn))
+}
+
+#[test]
+fn agent_and_turn_records_keep_the_fields_they_do_not_know_after_their_own() {
+    let agents = r#"{"build": {"name": "build-r1", "pane": "p2", "kind": "pi", "later": 1}}"#;
+    let turns = turn_with(&[("later", Some("[2]"))]);
+    let text = saved_with(&[("agents", Some(agents)), ("turns", Some(&turns))]);
+    let state = RunState::from_text(&text).unwrap();
+    let (agent, turn) = (state.agents.get("build").unwrap(), &state.turns[0]);
+    assert_eq!((agent.kind.as_str(), agent.session.as_deref()), ("pi", None));
+    assert_eq!((turn.harness.as_deref(), turn.session.as_deref(), turn.under_way()), (Some("codex"), Some("s1"), true));
+    assert_eq!(state.to_text(), text + "\n");
+}
+
+#[test]
+fn an_agent_or_turn_record_without_a_field_its_engine_writes_is_refused() {
+    let agentless = [r#"{"build": {"name": "build-r1", "pane": "p2"}}"#, r#"{"build": {"name": "b", "kind": 1, "pane": ""}}"#];
+    for agents in agentless {
+        let e = RunState::from_text(&saved_with(&[("agents", Some(agents))])).unwrap_err();
+        assert!(e.0.starts_with("run state r1 is invalid: "), "{agents}: {e}");
+    }
+    let keys = ["step", "role", "round", "quality_round", "file", "agent", "model", "session", "tokens", "human_paced"];
+    for key in keys.into_iter().chain(["started_at", "ended_at", "seconds"]) {
+        let e = RunState::from_text(&saved_with(&[("turns", Some(&turn_with(&[(key, None)])))])).unwrap_err();
+        assert_eq!(e.0, format!("run state r1 is invalid: missing field `{key}`"));
+    }
+}
+
+#[test]
+fn an_empty_harness_name_is_refused() {
+    // Read, it would pass for no harness: a quality analysis's, whose tokens are never counted.
+    let agents = r#"{"build": {"name": "build-r1", "pane": "p2", "kind": ""}}"#;
+    let turns = turn_with(&[("agent", Some(r#""""#))]);
+    for (key, value) in [("agents", agents), ("turns", turns.as_str())] {
+        let e = RunState::from_text(&saved_with(&[(key, Some(value))])).unwrap_err();
+        assert!(e.0.contains("an empty harness name"), "{key}: {e}");
+    }
+    let quality = turn_with(&[("agent", Some("null"))]);
+    assert_eq!(RunState::from_text(&saved_with(&[("turns", Some(&quality))])).unwrap().turns[0].harness, None);
+}
+
+#[test]
+fn a_roles_harness_is_its_agents_then_its_next_agents_then_the_default() {
+    let mut state = RunState::new("r1", "t", "/p");
+    state.agent_kinds.insert("build", "codex".to_string());
+    state.agent_kinds.insert("review", "pi".to_string());
+    state.agents.insert("build", AgentRecord::new("build-r1", "p2", "agy"));
+    // build's agent runs in agy though its next one starts in codex: a resume's --role-agent changed it.
+    for (role, harness) in [("build", "agy"), ("review", "pi"), ("spec", DEFAULT_AGENT)] {
+        assert_eq!(state.harness(role), harness, "{role}");
+    }
 }
 
 #[test]

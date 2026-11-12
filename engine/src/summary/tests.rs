@@ -2,6 +2,7 @@ use super::*;
 use crate::pipeline::DEFAULT_WORKFLOW;
 use crate::test_support::{helper_cases, oracle, unhex, GOLDEN_SUMMARY};
 use crate::json::object;
+use crate::state::AgentRecord;
 
 #[test]
 fn every_recorded_run_is_summed_up_as_the_python_engine_does() {
@@ -52,23 +53,24 @@ fn times_are_written_and_read_as_rfc_3339() {
 
 /// A turn record that started and ended this many seconds after 2026-10-03T04:00:00, as tests/test_orchestrator.py's
 /// turn() makes one.
-fn turn(step: &str, file: &str, start: Option<i64>, end: Option<i64>, change: impl FnOnce(&mut Object)) -> Object {
+fn turn(step: &str, file: &str, start: Option<i64>, end: Option<i64>, change: impl FnOnce(&mut Object)) -> TurnRecord {
     let at = |s: Option<i64>| Value::from(s.map(|s| iso_utc(1_791_000_000 + s)));
     let mut t: Object = object([
         ("step", Value::from(step)), ("role", Value::from(step)), ("round", Value::from(1)), ("quality_round", Value::from(0)),
-        ("file", Value::from(file)), ("agent", Value::from("claude")), ("model", Value::Null), ("human_paced", Value::Bool(false)),
+        ("file", Value::from(file)), ("agent", Value::from("claude")), ("model", Value::Null), ("session", Value::Null),
+        ("tokens", Value::Null), ("human_paced", Value::Bool(false)),
         ("started_at", at(start)), ("ended_at", at(end)),
         ("seconds", Value::from(start.zip(end).map(|(s, e)| e - s))),
     ]);
     change(&mut t);
-    t
+    serde_json::from_value(Value::Object(t)).expect("a turn record")
 }
 
 #[test]
 fn turn_lines_shows_starts_in_the_zone_given() {
     // run-usability/04's case: 20:30:37 UTC is 21:30:37 at +01:00; turns_table stays UTC.
     let mut t = turn("build", "build-1.md", Some(0), Some(5), |_| {});
-    t.insert("started_at".into(), Value::from("2026-11-05T20:30:37+00:00"));
+    t.started_at = Some("2026-11-05T20:30:37+00:00".into());
     let zone = jiff::tz::TimeZone::fixed(jiff::tz::offset(1));
     assert!(turn_lines(std::slice::from_ref(&t), &zone)[0].contains("2026-11-05 21:30:37"));
     assert!(turns_table(&[t]).contains("| 2026-11-05 20:30:37 |"));
@@ -89,7 +91,7 @@ fn approved_run() -> RunState {
     s.branch = Some("orchestrator/add-a-token-bucket-rate-limiter-a1b2c3".into());
     s.round = 1;
     for (role, kind) in [("spec", "claude"), ("build", "codex"), ("review", "claude")] {
-        s.agents.insert(role, [("name", format!("{role}-a1b2c3")), ("pane", "p1".into()), ("kind", kind.into())].into_iter().collect());
+        s.agents.insert(role, AgentRecord::new(&format!("{role}-a1b2c3"), "p1", kind));
     }
     s.models.insert("review", "opus".to_string());
     s.turns = vec![
@@ -160,15 +162,29 @@ fn turn_tokens_sums_the_answers_within_the_turn_as_the_python_engine_does() {
         .collect();
     let cases = recorded.get("turn_tokens").and_then(Value::as_array).unwrap();
     assert!(cases.len() >= 16);
+    let mut refused = 0;
     for case in cases {
-        let [turn, expected] = &case.as_array().unwrap()[..] else { panic!("{case:?}") };
-        let turn = turn.as_object().unwrap();
+        let [fields_given, expected] = &case.as_array().unwrap()[..] else { panic!("{case:?}") };
+        // The case's fields over a turn's others; a field of a type that no turn record has (a session of 7, a
+        // start of 5) is refused when state.json is read, so never reaches turn_tokens.
+        let mut record = turn("build", "build-1.md", None, None, |_| {});
+        let Value::Object(mut fields) = serde_json::to_value(&record).unwrap() else { unreachable!() };
+        fields.extend(fields_given.as_object().unwrap().clone());
+        match serde_json::from_value::<TurnRecord>(Value::Object(fields)) {
+            Ok(typed) => record = typed,
+            Err(_) => {
+                refused += 1;
+                continue;
+            }
+        }
         let expected = expected.as_array().unwrap();
         assert_eq!(expected.len(), logs.len() + 1);
         for (usage, expected) in logs.iter().map(|u| u.as_deref().map(Some)).chain([Some(None)]).zip(expected) {
             if let Some(usage) = usage {
-                assert_eq!(&turn_tokens(turn, usage), expected, "{}", case);
+                assert_eq!(&turn_tokens(&record, usage), expected, "{}", case);
             }
         }
     }
+    // The session of 7 and the start of 5; any more means TurnRecord stopped holding cases the engine writes.
+    assert_eq!((refused, cases.len()), (2, 16));
 }

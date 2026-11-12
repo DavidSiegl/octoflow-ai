@@ -64,12 +64,11 @@ pub struct ProofOutcome {
 }
 
 impl ProofRun {
-    /// The run record holds; a record saved before there was a written is the proof's first run, and one saved
-    /// before there was a moved is not moved.
+    /// The run record holds; one without moved is not moved (ProofRun::record).
     ///
     /// Errors: a field missing or of another type than the engines write, as no released engine's state.json has
-    /// (since v0.24.0, the first with proofs, every record has each field but written), where the Python engine fails
-    /// on a KeyError or a TypeError.
+    /// (every record a format-2 state.json holds has each field, moved only when true), where the Python engine
+    /// fails on a KeyError or a TypeError.
     pub fn read(record: &Object) -> Result<ProofRun, OrchestratorError> {
         let field = |key: &str| {
             record.get(key).ok_or_else(|| OrchestratorError(format!("a proof run saved in state.json has no {key}")))
@@ -85,8 +84,7 @@ impl ProofRun {
             let value = field(key)?;
             value.as_str().map(String::from).ok_or_else(|| invalid(key, value, "a string"))
         };
-        let round = round_of("round")?;
-        let written = if record.contains_key("written") { round_of("written")? } else { round };
+        let (round, written) = (round_of("round")?, round_of("written")?);
         let finding = match field("finding")? {
             Value::Null => None,
             value => Some(value.as_i64().and_then(|n| u64::try_from(n).ok()).ok_or_else(|| invalid("finding", value, "a number"))?),

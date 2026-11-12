@@ -540,9 +540,9 @@ fn resume_blocked(state: RunState, host: Rc<FakeHost>, alive: &[&str], sessions:
     assert!(called(&f, &Call::Focus { name: "build-a1b2c3".into() }));
     let s = wf.state();
     let files: Vec<String> =
-        s.turns.iter().filter(|t| t.get("step") == Some(&Value::from("build"))).map(|t| t.get("file").map(Value::text).unwrap_or_default()).collect();
+        s.turns.iter().filter(|t| t.step == "build").map(|t| t.file.clone()).collect();
     assert_eq!(files, ["build-1.blocked-1.md", "build-1.md"]);
-    assert_eq!(s.turns[2].get("human_paced"), Some(&Value::Bool(true)));
+    assert!(s.turns[2].human_paced);
     assert_eq!(s.blocked, None);
     let prompts = seen.borrow().clone();
     prompts
@@ -603,7 +603,7 @@ fn killed_waiting_with_the_agent_resumed_continues() {
 #[test]
 fn killed_waiting_with_the_agent_restarted_gets_the_blocked_prompt() {
     let (mut state, host) = killed_waiting();
-    state.agents.get_mut("build").unwrap().remove("session");
+    state.agents.get_mut("build").unwrap().session = None;
     assert_eq!(resume_blocked(state, host, &[], &[]), [blocked_prompt(&build_1(), 1)]);
 }
 

@@ -342,7 +342,7 @@ fn resumed_in_review(proj: &TempDir, review: &str, proofs: Vec<Object>) -> (Fixt
     (f, end, prompts)
 }
 
-const FIRST_RUN: &str = r#"{"round": 1, "file": "test_1.sh", "finding": 1, "demonstrated": true, "said": "it fails"}"#;
+const FIRST_RUN: &str = r#"{"round": 1, "written": 1, "file": "test_1.sh", "finding": 1, "demonstrated": true, "said": "it fails"}"#;
 
 #[test]
 fn a_review_judged_before_a_resume_is_not_judged_again() {
