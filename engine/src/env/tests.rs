@@ -108,12 +108,15 @@ fn a_file_that_is_not_utf8_is_named() {
 #[test]
 fn path_follows_xdg_config_home() {
     let env = from(&[("XDG_CONFIG_HOME", "/xdg"), ("HOME", "/home/u")]);
-    assert_eq!(ConfigDir::for_env(&env, &|| None).ci_env_path(), "/xdg/ai-agents-orchestrator/ci.env");
+    let config = ConfigDir::for_env(&env, &|| None);
+    assert_eq!(config.ci_env_path(), "/xdg/ai-agents-orchestrator/ci.env");
+    assert_eq!(config.setup_checked_path(), "/xdg/ai-agents-orchestrator/setup-checked");
     let env = from(&[("XDG_CONFIG_HOME", "relative"), ("HOME", "/home/u/")]);
     let config = ConfigDir::for_env(&env, &|| None);
     assert_eq!(config.ci_env_path(), "/home/u/.config/ai-agents-orchestrator/ci.env");
     assert_eq!(config.prompts_dir(), "/home/u/.config/ai-agents-orchestrator/prompts");
     assert_eq!(config.workflows_dir(), "/home/u/.config/ai-agents-orchestrator/workflows");
+    assert_eq!(config.setup_checked_path(), "/home/u/.config/ai-agents-orchestrator/setup-checked");
     assert_eq!(ConfigDir::for_env(&from(&[]), &|| None).path(), "~/.config/ai-agents-orchestrator");
     // Without HOME, the user's home from /etc/passwd, as os.path.expanduser takes it.
     assert_eq!(ConfigDir::for_env(&from(&[]), &|| Some("/home/p".into())).path(), "/home/p/.config/ai-agents-orchestrator");
