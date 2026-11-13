@@ -204,8 +204,9 @@ impl ProjectRuns {
     /// (StartWait::until) for it to save its state.json or for its command to exit without one. The project is given to
     /// `run` as `--cwd` and the directory serve resolved, for a project here, and as the client named it, with its
     /// `--machine`, for one on a machine. Once the run is launched a look that fails, at its state.json or its pane, is
-    /// no answer: the wait goes on, so that the client still gets the id of a run that is running. Errors: Refused for
-    /// a run id that is not a plain name; Failed when herdr cannot launch it (Launcher::launch).
+    /// no answer: the wait goes on, so that the client still gets the id of a run that is running. Gives how the wait
+    /// ended, and the named herdr session the run's pane is in (Launched::herdr_session). Errors: Refused for a run
+    /// id that is not a plain name; Failed when herdr cannot launch it (Launcher::launch).
     pub fn start(
         &self,
         request: &RunRequest,
@@ -213,7 +214,7 @@ impl ProjectRuns {
         run_id: &str,
         wait: StartWait,
         stopping: &Interrupt,
-    ) -> Result<Started, RunReadError> {
+    ) -> Result<(Started, Option<String>), RunReadError> {
         let state = format!("{}/state.json", self.dir(run_id)?);
         let label = crate::workflow::workspace_label(run_id, &request.task);
         // The pane starts in the resolved directory too, where a relative cwd or one with ~ would resolve elsewhere.
@@ -221,14 +222,15 @@ impl ProjectRuns {
         let argv = request.argv(program, run_id, &target);
         let launched = self.launcher.launch(&self.launch_dir, &label, &argv).map_err(OrchestratorError::from)?;
         let saved = || self.host.read(&state).is_ok_and(|text| text.is_some());
-        Ok(wait.until(stopping, || {
+        let ended = wait.until(stopping, || {
             if saved() {
                 return Some(Started::Listed);
             }
             let shown = self.launcher.exited(&launched, START_ERROR_LINES).ok().flatten()?;
             // It may have saved its state.json just before it exited, as a run that fails after its claim does.
             Some(if saved() { Started::Listed } else { Started::Exited(shown) })
-        }))
+        });
+        Ok((ended, launched.herdr_session().map(String::from)))
     }
 
     fn dir(&self, run_id: &str) -> Result<String, RunReadError> {

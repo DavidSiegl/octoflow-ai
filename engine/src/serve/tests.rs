@@ -14,7 +14,7 @@ use crate::json::{Object, ValueExt};
 use crate::http::urlencode;
 use crate::cli::doctor::{Check, Level};
 use crate::serve::fake::{reached, FakeConsole, ServeHost};
-use crate::herdr::HerdrError;
+use crate::herdr::{HerdrError, HerdrServer, OWN_SESSION};
 
 const SERVE_ID: &str = "20261024-120000-5e7e00";
 const TAURI_ORIGIN: &str = "tauri://localhost";
@@ -1091,6 +1091,7 @@ fn a_run_neither_listed_nor_exited_in_time_is_answered_as_not_yet_listed() {
     assert_eq!(reply.status, Some(202));
     let answer = reply.json();
     assert_eq!(answer["listed"], Value::from(false));
+    // In the server serve's environment picks: no session is named.
     assert_eq!(answer.as_object().map(|o| o.len()), Some(2), "{answer}");
     // A run that saved its state.json just before it exited is listed.
     let saving = Arc::clone(&host);
@@ -1102,6 +1103,24 @@ fn a_run_neither_listed_nor_exited_in_time_is_answered_as_not_yet_listed() {
     }));
     drop(console);
     assert_eq!(served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#).status, Some(201));
+}
+
+#[test]
+fn a_run_launched_into_the_own_session_is_answered_with_that_session() {
+    let host = Arc::new(ServeHost::on(None));
+    let served = starting(&host);
+    served.console.state().launched_server = Some(HerdrServer::own_session());
+    let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#);
+    assert_eq!(reply.status, Some(202), "{}", reply.body);
+    assert_eq!(reply.json()["herdr_session"], Value::from(OWN_SESSION));
+    let saving = Arc::clone(&host);
+    served.console.state().on_launch = Some(Box::new(move |argv: &[String]| {
+        let id = started_id(argv);
+        saving.state().files.insert(format!("/proj/{RUNS_DIR}/{id}/state.json"), serve_state(&id, &[]));
+    }));
+    let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#);
+    assert_eq!(reply.status, Some(201), "{}", reply.body);
+    assert_eq!(reply.json()["herdr_session"], Value::from(OWN_SESSION));
 }
 
 #[test]

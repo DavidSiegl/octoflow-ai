@@ -139,6 +139,8 @@ pub struct Consoled {
     pub launch_error: Option<HerdrError>,
     /// While set, what every look at whether a launched command has exited fails with.
     pub exited_error: Option<HerdrError>,
+    /// The server each launch's pane is in (Launched::server); None for the one the launcher's environment picks.
+    pub launched_server: Option<HerdrServer>,
 }
 
 /// What a FakeConsole does at a launch, given its argv (Consoled::on_launch).
@@ -197,7 +199,7 @@ impl Launcher for FakeConsole {
         if let Some(play) = s.on_launch.as_mut() {
             play(argv);
         }
-        Ok(Launched { pane: LAUNCHED_PANE.to_string(), server: None })
+        Ok(Launched { pane: LAUNCHED_PANE.to_string(), server: s.launched_server.clone() })
     }
 
     fn exited(&self, launched: &Launched, _lines: u32) -> Result<Option<String>, HerdrError> {

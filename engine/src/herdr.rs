@@ -144,7 +144,7 @@ static STARTING_SERVER: Mutex<()> = Mutex::new(());
 
 impl HerdrServer {
     /// The server of the session OWN_SESSION, whatever the environment picks.
-    fn own_session() -> HerdrServer {
+    pub(crate) fn own_session() -> HerdrServer {
         HerdrServer { socket_path: None, session: Some(OWN_SESSION.to_string()) }
     }
 
@@ -308,6 +308,15 @@ pub struct Launched {
     pub(crate) pane: String,
     /// The herdr server that pane is in; None for the one the launcher's own environment picks.
     pub(crate) server: Option<HerdrServer>,
+}
+
+impl Launched {
+    /// The named herdr session its pane is in, which `herdr session attach <it>` shows, when the launcher picked the
+    /// server by that name, as it does OWN_SESSION's; None for the server the launcher's own environment picks,
+    /// whichever that is.
+    pub fn herdr_session(&self) -> Option<&str> {
+        self.server.as_ref().filter(|s| s.socket_path.is_none()).and_then(|s| s.session.as_deref())
+    }
 }
 
 /// The line a shell prints in pane once the command Launcher::launch typed there has exited. It names the pane, so

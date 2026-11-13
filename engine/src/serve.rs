@@ -180,7 +180,9 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 ///   herdr workspace of this machine (Reached::launcher) where its `run` command can be watched and interrupted, and
 ///   waits for it (start::START_WAIT, ProjectRuns::start). 201 {"run"} once it has saved its state.json; 422 {"error",
 ///   "run"} when `run` exited without saving one, error ending with the last lines its pane showed; 202 {"run",
-///   "listed": false} after 30 seconds of neither. 400 for a body RunRequest::parse refuses and 413 as for
+///   "listed": false} after 30 seconds of neither. A 201 or 202 adds "herdr_session", the named herdr session the
+///   run's workspace is in, when serve started one to launch it in (herdr::OWN_SESSION); without it, the workspace
+///   is in the herdr server serve's own environment reaches. 400 for a body RunRequest::parse refuses and 413 as for
 ///   /agent/input, both before the project is reached; 502 when herdr cannot launch it, as when it has
 ///   no server running here and none can be started.
 /// - /events: a text/event-stream of RunWatch's events, polled every SERVE_POLL.local, every SERVE_POLL.remote for a
@@ -678,15 +680,22 @@ fn start_answer(shared: &Shared, project: &ProjectRuns, run: &RunRequest) -> Ans
         Ok(id) => id,
         Err(e) => return (500, error(&e.0)),
     };
-    match project.start(run, &program, &run_id, shared.start_wait, &shared.stopping) {
-        Ok(Started::Listed) => (201, object([("run", Value::from(run_id))])),
-        Ok(Started::Exited(shown)) => {
+    let (ended, herdr_session) = match project.start(run, &program, &run_id, shared.start_wait, &shared.stopping) {
+        Ok(started) => started,
+        Err(e) => return read_failure(e),
+    };
+    let (code, mut fields) = match ended {
+        Started::Listed => (201, crate::json::object([("run", Value::from(run_id))])),
+        Started::Exited(shown) => {
             let why = format!("run {run_id} exited before it saved its state; its pane showed:\n{shown}");
-            (422, object([("error", Value::from(why)), ("run", Value::from(run_id))]))
+            return (422, object([("error", Value::from(why)), ("run", Value::from(run_id))]));
         }
-        Ok(Started::Unlisted) => (202, object([("run", Value::from(run_id)), ("listed", Value::from(false))])),
-        Err(e) => read_failure(e),
+        Started::Unlisted => (202, crate::json::object([("run", Value::from(run_id)), ("listed", Value::from(false))])),
+    };
+    if let Some(session) = herdr_session {
+        fields.insert("herdr_session".to_string(), Value::from(session));
     }
+    (code, Value::Object(fields))
 }
 
 /// The path of serve's own program, which POST /run starts its runs by. Errors: it cannot be told, or is not UTF-8.
