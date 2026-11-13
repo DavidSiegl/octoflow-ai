@@ -3,8 +3,6 @@
 //! (SavedRun::shown), so a state saved by an older version, or one whose workflow this orchestrator cannot load, still
 //! lists.
 
-use std::collections::BTreeSet;
-
 use super::{resume_command, Connected};
 use crate::constants::{APPROVE, RUNS_DIR};
 use crate::error::OrchestratorError;
@@ -32,9 +30,8 @@ pub const BLOCKED_STATUS: &str = "blocked";
 /// - steps: the workflow's steps, each {"id", "role", "role_label", "loop_to", "quality_gated"}, in order; null when
 ///   the workflow cannot be loaded. role_label is the workflow's label for the role; loop_to the step a
 ///   CHANGES_REQUESTED sends the run back to, null for a step that gives no verdict; quality_gated whether the quality
-///   loop follows, or followed, the step's turns in this run: the step is gated, and the run has the gate or a
-///   quality turn followed one of the step's turns. A gate resume turned off before it checked the step leaves it
-///   false; one resume turned on makes it true.
+///   loop follows, or followed, the step's turns in this run: the step is gated, and the run has the gate (from
+///   start or from resume) or has a quality turn saved, so false for a gate resume turned off before its first check.
 /// - pull_request: whether the run opens a pull request; false for a --no-pr run.
 /// - phase, round: as saved. quality_round: the quality round while the run is in the quality loop or its gated
 ///   step, once it has one; null otherwise.
@@ -126,25 +123,16 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
 
 /// run_record's steps, of s's workflow p.
 fn step_refs(p: &Pipeline, s: &RunState) -> Value {
-    // A quality turn is saved with step quality, after the turns of the step it checks.
-    let mut checked = BTreeSet::new();
-    let mut last_step = None;
-    for t in &s.turns {
-        if t.step == QUALITY {
-            checked.extend(last_step);
-        } else {
-            last_step = Some(t.step.as_str());
-        }
-    }
+    // A workflow has one gated step at most (Pipeline::uniqueness_problem), so any quality turn checked that step.
+    let gate_checks = s.quality_job.is_some() || s.turns.iter().any(|t| t.step == QUALITY);
     let step = |st: &Step| {
         let label = p.roles().get(&st.role).expect("Pipeline::new refuses a step whose role has no label");
-        let checks = s.quality_job.is_some() || checked.contains(st.id.as_str());
         Value::Object(object([
             ("id", Value::from(st.id.as_str())),
             ("role", Value::from(st.role.as_str())),
             ("role_label", Value::from(label.as_str())),
             ("loop_to", st.loop_to.as_deref().map_or(Value::Null, Value::from)),
-            ("quality_gated", Value::from(st.quality_gated && checks)),
+            ("quality_gated", Value::from(st.quality_gated && gate_checks)),
         ]))
     };
     Value::Array(p.steps().iter().map(step).collect())
