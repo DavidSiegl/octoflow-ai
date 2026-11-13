@@ -46,7 +46,8 @@ export function acceptedLicenses(aboutToml) {
  *   expression when this list holds every license offered.
  * @returns {string} the page
  * @throws {Error} naming each package, one a line, that is under no accepted license, whose license is not an SPDX
- *   identifier or an OR of them, that has no one license text, or that is not installed although the lockfile
+ *   identifier or an OR of them, that has no one license text, whose one text, named for none of its licenses, may be
+ *   that of one about.toml does not accept, or that is not installed although the lockfile
  *   does not mark it optional (an optional one npm ci skipped on this platform is not in the bundle); and, naming the
  *   file, when the lockfile or a package.json cannot be read
  */
@@ -74,8 +75,8 @@ export function npmNotices(ui, accepted) {
       continue;
     }
     const notice = licenseNotice(dir, offered, usable);
-    if (notice === undefined) {
-      problems.push(`${name}: no one license text for ${offered.join(" OR ")} in ${path}`);
+    if (typeof notice === "string") {
+      problems.push(`${name}: ${notice} in ${path}`);
       continue;
     }
     if (buildCode) notice.text = withThirdPartyNotices(dir, notice.text);
@@ -107,9 +108,9 @@ function offeredLicenses(expression) {
 // its order: a text from its LICENSE*, LICENCE* or COPYING* files and the license it is shipped under. The first of
 // usable that exactly one file's name holds, as LICENSE-MIT does MIT and LICENSE-APACHE-2.0 Apache-2.0, gives that
 // file under that license. Otherwise, when the files hold one text (LICENSE and LICENSE.md may hold it twice) and
-// about.toml accepts every license offered, that text under all of them, since nothing says which it is. Undefined
-// otherwise: no file, files that differ, or one text of a package also offered under a license about.toml does not
-// accept, which may be that license's text alone.
+// about.toml accepts every license offered, that text under all of them, since nothing says which it is. Otherwise,
+// why there is none, as a phrase about the expression: no file or files that differ, or one text of a package also
+// offered under a license about.toml does not accept, which may be that license's text alone.
 function licenseNotice(dir, offered, usable) {
   const files = noticeFiles(dir, /^(licen[cs]e|copying)/i);
   for (const license of usable) {
@@ -117,9 +118,12 @@ function licenseNotice(dir, offered, usable) {
     const named = files.filter((f) => f.name.toLowerCase().includes(family));
     if (named.length === 1) return { license, text: named[0].text };
   }
-  if (usable.length < offered.length || files.length === 0) return undefined;
-  if (files.some((f) => f.text !== files[0].text)) return undefined;
-  return { license: offered.join(" OR "), text: files[0].text };
+  const expression = offered.join(" OR ");
+  if (files.length === 0 || files.some((f) => f.text !== files[0].text)) return `no one license text for ${expression}`;
+  if (usable.length < offered.length) {
+    return `one license text for ${expression}, not every license of which about.toml accepts`;
+  }
+  return { license: expression, text: files[0].text };
 }
 
 // text followed by each THIRD-PARTY-LICENSE*, THIRD-PARTY-LICENCE* or NOTICE* file in dir, by name, each headed by
