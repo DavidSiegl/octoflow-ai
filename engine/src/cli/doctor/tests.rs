@@ -547,7 +547,10 @@ fn the_local_gate_check_needs_gitleaks_as_a_gated_run_does() {
     let tools = FakeTools::new();
     tools.answer("gitleaks git --help", failing("unknown command \"git\"", 1));
     let gate = setup(&tools, None, None)["local quality gate"].clone();
-    assert!(!gate.ok && gate.detail.contains("`gitleaks git` does not run"), "{}", gate.detail);
+    // In doctor's words, not a run's, with the install text once, as the fix.
+    let detail = "`gitleaks git` does not run, and the gate scans each snapshot for secrets with it; \
+                  needed only for --quality-gate local";
+    assert_eq!(gate, check_of("local quality gate", Level::Optional, false, detail, GITLEAKS_INSTALL));
 }
 
 #[test]

@@ -45,6 +45,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **A gated run without a pull request is told it pushes when gitleaks is missing.** `Host::check_gitleaks`
+  (`engine/src/host.rs:630`) opens "this run pushes, and every push is scanned for secrets first", and
+  `QualityGate::preflight` (`engine/src/ci.rs:148`) raises it for any gated run: a `--quality-gate local` run without
+  `--pr` pushes nothing; what gitleaks scans there is each snapshot before it is judged. Raised while doing todo/53,
+  which gave doctor its own wording. Closed by having the gate's preflight say why it needs gitleaks in its own words,
+  leaving check_gitleaks's to a run that publishes.
 - **Two engine test directories are still named by pid, removing what is there first.** `Dir::new`
   (`engine/tests/program.rs:23`) names its directory `octoflow-program-<name>-<pid>` and removes what is there, and
   `engine/tests/signals.rs:237` names one `octoflow-signals-<case>-<pid>`: two test runs over one `/tmp` whose

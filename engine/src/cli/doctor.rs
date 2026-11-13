@@ -210,14 +210,20 @@ pub fn check_setup(
     });
     let fix = "install gh (https://cli.github.com)";
     check(&mut checks, "gh", Level::NeededForPr, fix, on_machine.as_ref(), "", &mut || gh_logged_in(agents));
-    check(&mut checks, "gitleaks", Level::NeededForPr, GITLEAKS_INSTALL, on_machine.as_ref(), "", &mut || {
+    let level = Level::NeededForPr;
+    let gitleaks = check(&mut checks, "gitleaks", level, GITLEAKS_INSTALL, on_machine.as_ref(), "", &mut || {
         agents.gitleaks_problem().map_or_else(|| Ok("`gitleaks git` runs".to_string()), |p| Err(Unmet::new(p)))
     });
     // What a run with --quality-gate local checks before its interview (QualityGate::preflight), so the check cannot
     // ask for less or more. The local gate's asks nothing of a checkout, so a project not given does not skip it.
+    // gitleaks, which the preflight checks first, is told from the check above: the preflight words it for a run.
     let fix = "install or fix what it names where the agents run (docs/quality-gate.md, \"The local gate\")";
     let note = "needed only for --quality-gate local";
     check(&mut checks, "local quality gate", Level::Optional, fix, on_machine.as_ref(), note, &mut || {
+        if !gitleaks.ok {
+            let detail = format!("{}, and the gate scans each snapshot for secrets with it", gitleaks.detail);
+            return Err(Unmet::with_fix(detail, GITLEAKS_INSTALL));
+        }
         QualityGate::Local.preflight(agents, cwd.unwrap_or("."))?;
         Ok("gitleaks, and all the gate's preflight asks for, are ready".to_string())
     });
