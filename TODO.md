@@ -152,6 +152,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `crate::ci::LOCAL_GATE`. Deferred from cross-review 181 (F5, nit): "a module cycle, and the run's layout leaks into
   the CI client. Passing the snapshot's inputs and `&mut Object` would keep `ci` below `state`." Closes with `start`
   taking those inputs and `RunState::ci`, if the parameter list that brings stays shorter than what it removes.
+- **`host`'s text helpers sit in an import cycle.** `last_lines` and `line_ends_as_lf` (`engine/src/host.rs`) are pure
+  `&str` functions, but `host` imports `state::SavedRun` and `state` imports `herdr`, so herdr → host → state →
+  herdr (`engine/src/herdr.rs:21`, `engine/src/host.rs:26`, `engine/src/state.rs:9`) and prompts → host → state →
+  prompts (`engine/src/prompts.rs:6`, for `line_ends_as_lf` alone) are cycles, on main too. Deferred from
+  cross-review 188 (F2, F3, nits): "A leaf text module importing only constants would hold both helpers without that
+  hazard." Closes with both helpers in such a module and their importers pointed there.
 - **Host::fetch does not wait out an outage by itself.** Each caller wraps it in `reaching_origin`
   (`engine/src/workflow.rs`'s five, `quality_rounds.rs`'s `delete_ci_refs`, `cli/prune.rs`'s `prune_remote`), since a
   `Host` (`engine/src/host.rs`) has no clock to wait on and no human to tell; a new caller gets no retry unless it
