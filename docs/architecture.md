@@ -136,7 +136,9 @@ first that does not approve (`Workflow::take_turn`): before round `max_rounds` t
 target in the next round, and in round `max_rounds` it goes on past the last verdict step, so a later verdict step
 never judges a change an earlier one rejected. Every verdict step judges the change a round ends with, because
 `loop_problem` refuses a loop target after the first verdict step, as a loop must run every earlier verdict step
-again, and an editing step between the first verdict step and the last, whose edits the earlier ones would not judge.
+again; a loop with no editing step, which would judge the same change again; and any step between the first verdict
+step and the last that is not one, whose edits the earlier ones would not judge and whose rounds an earlier verdict
+step's send-back would skip, untracked by `judged_rounds`.
 One round counter, and one `max_rounds`, serve them all, so `{n}`, `build-{n}.md` and the quality loop are as with
 one. `RunState.verdicts` records each verdict step's verdict per round (`RunState::record_verdict`), and
 `RunState.verdict`, the run's verdict, turns to `CHANGES_REQUESTED` at a request for changes and to `APPROVE` only
