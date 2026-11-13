@@ -154,8 +154,8 @@ fn failure_summary(detail: &str) -> String {
     let Some(first) = lines.next() else { return "failed".to_string() };
     let mut parts = vec![first];
     let rust_panic = first.starts_with("thread '") && first.contains("' panicked at ") && first.ends_with(':');
-    if let Some(message) = lines.next().filter(|_| rust_panic) {
-        parts.push(message);
+    if rust_panic {
+        parts.extend(lines.next());
     }
     parts.extend(lines.filter(|line| line.contains(RUN_SEED_VARIABLE)));
     parts.join(" ")

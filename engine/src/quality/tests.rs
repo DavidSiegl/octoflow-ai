@@ -179,6 +179,14 @@ fn a_failing_rust_test_s_line_keeps_its_panic_message_and_its_run_seed() {
 }
 
 #[test]
+fn a_seed_on_the_second_line_after_a_first_that_is_no_panic_is_kept() {
+    let seed = "OCTOFLOW_TEST_SEED=7 was this failing test's run seed; set it to generate the same cases again";
+    let tests = [("gen::tests::joins".to_string(), format!("cases differ\n{seed}"))];
+    let text = build_failed_report("intro", Some(&tests), "");
+    assert!(text.contains(&format!("- `gen::tests::joins`: cases differ {seed}\n")), "{text}");
+}
+
+#[test]
 fn read_back_the_gate_of_a_build_failed_report() {
     let mut rng = Rng::new(20);
     for _ in 0..200 {
