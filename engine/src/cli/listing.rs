@@ -3,6 +3,8 @@
 //! (SavedRun::shown), so a state saved by an older version, or one whose workflow this orchestrator cannot load, still
 //! lists.
 
+use std::collections::BTreeSet;
+
 use super::{resume_command, Connected};
 use crate::constants::{APPROVE, RUNS_DIR};
 use crate::error::OrchestratorError;
@@ -30,8 +32,9 @@ pub const BLOCKED_STATUS: &str = "blocked";
 /// - steps: the workflow's steps, each {"id", "role", "role_label", "loop_to", "quality_gated"}, in order; null when
 ///   the workflow cannot be loaded. role_label is the workflow's label for the role; loop_to the step a
 ///   CHANGES_REQUESTED sends the run back to, null for a step that gives no verdict; quality_gated whether the quality
-///   loop follows, or followed, the step's turns in this run: the step is gated and the run has or had the gate
-///   (RunState::had_quality_gate).
+///   loop follows, or followed, the step's turns in this run: the step is gated, and the run has the gate or a
+///   quality turn followed one of the step's turns. A gate resume turned off before it checked the step leaves it
+///   false; one resume turned on makes it true.
 /// - pull_request: whether the run opens a pull request; false for a --no-pr run.
 /// - phase, round: as saved. quality_round: the quality round while the run is in the quality loop or its gated
 ///   step, once it has one; null otherwise.
@@ -87,7 +90,7 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
     record.insert("key".into(), Value::from(s.key()));
     record.insert("task".into(), Value::from(s.task.as_str()));
     record.insert("workflow".into(), Value::from(s.workflow.as_str()));
-    record.insert("steps".into(), pipeline.as_ref().map_or(Value::Null, |p| step_refs(p, s.had_quality_gate())));
+    record.insert("steps".into(), pipeline.as_ref().map_or(Value::Null, |p| step_refs(p, s)));
     record.insert("pull_request".into(), Value::from(s.pull_request));
     record.insert("phase".into(), Value::from(s.phase.as_str()));
     record.insert("round".into(), Value::from(s.round));
@@ -121,17 +124,27 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
     record
 }
 
-/// run_record's steps, of the run's workflow p; gated says whether the run has or had the quality gate.
-fn step_refs(p: &Pipeline, gated: bool) -> Value {
+/// run_record's steps, of s's workflow p.
+fn step_refs(p: &Pipeline, s: &RunState) -> Value {
+    // A quality turn is saved with step quality, after the turns of the step it checks.
+    let mut checked = BTreeSet::new();
+    let mut last_step = None;
+    for t in &s.turns {
+        if t.step == QUALITY {
+            checked.extend(last_step);
+        } else {
+            last_step = Some(t.step.as_str());
+        }
+    }
     let step = |st: &Step| {
-        // Pipeline::new refuses a step whose role has no label.
-        let label = p.roles().get(&st.role).map_or(st.role.as_str(), String::as_str);
+        let label = p.roles().get(&st.role).expect("Pipeline::new refuses a step whose role has no label");
+        let checks = s.quality_job.is_some() || checked.contains(st.id.as_str());
         Value::Object(object([
             ("id", Value::from(st.id.as_str())),
             ("role", Value::from(st.role.as_str())),
-            ("role_label", Value::from(label)),
+            ("role_label", Value::from(label.as_str())),
             ("loop_to", st.loop_to.as_deref().map_or(Value::Null, Value::from)),
-            ("quality_gated", Value::from(gated && st.quality_gated)),
+            ("quality_gated", Value::from(st.quality_gated && checks)),
         ]))
     };
     Value::Array(p.steps().iter().map(step).collect())

@@ -193,19 +193,23 @@ fn every_key_is_present() {
 
 #[test]
 fn each_step_has_its_role_label_loop_and_quality_gate() {
-    // A workflow file's own labels; its review step loops to impl, whose turns the quality loop follows only in a run
-    // that has, or had, the gate.
+    // A workflow file's own labels; its review step loops to impl, whose turns the quality loop follows only while the
+    // run has the gate, or once a quality turn followed them.
     let state = with(run("impl"), &[("workflow", Value::from("impl")), ("workflow_definition", workflow_definition(&impl_()))]);
     let steps = |fields: &[(&str, Value)]| key(&record(&with(state.clone(), fields), 40, true, &[]), "steps");
-    let gated = |gated: bool| {
+    let expected = |impl_gated: bool| {
         json(&format!(
-            r#"[{{"id": "impl", "role": "impl", "role_label": "Implementer", "loop_to": null, "quality_gated": {gated}}},
+            r#"[{{"id": "impl", "role": "impl", "role_label": "Implementer", "loop_to": null, "quality_gated": {impl_gated}}},
                 {{"id": "review", "role": "review", "role_label": "Reviewer", "loop_to": "impl", "quality_gated": false}}]"#
         ))
     };
-    assert_eq!(steps(&[]), gated(false));
-    assert_eq!(steps(&[("quality_job", Value::from(JOB))]), gated(true));
-    assert_eq!(steps(&[("quality_gate_disabled", Value::from(true))]), gated(true));
+    let disabled = ("quality_gate_disabled", Value::from(true));
+    let impl_turn = turn("impl", "build-1.md", Some(0), Some(10), &[]);
+    let quality_turn = turn("quality", "quality-1-1.json", Some(10), Some(20), &[]);
+    assert_eq!(steps(&[]), expected(false));
+    assert_eq!(steps(&[("quality_job", Value::from(JOB))]), expected(true));
+    assert_eq!(steps(&[disabled.clone(), ("turns", Value::Array(vec![impl_turn.clone()]))]), expected(false));
+    assert_eq!(steps(&[disabled, ("turns", Value::Array(vec![impl_turn, quality_turn]))]), expected(true));
 }
 
 #[test]
