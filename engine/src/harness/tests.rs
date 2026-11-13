@@ -133,6 +133,22 @@ fn opencode_takes_its_model_and_grant_as_config() {
 }
 
 #[test]
+fn opencode_grants_no_run_directory_its_matcher_would_read_as_more_than_itself() {
+    // opencode 2.0.24 reads `*` and `?` in a grant as wildcards, and `\` as `/`, so each would widen or move it.
+    let h = harness("opencode").unwrap();
+    for dir in ["/p*/.orchestrator/runs/r", "/p?/.orchestrator/runs/r", r"/p\q/.orchestrator/runs/r"] {
+        let expected = Launch {
+            args: vec!["--standalone".to_string()],
+            env: vec![("OPENCODE_CONFIG_CONTENT".to_string(), r#"{"model":"m"}"#.to_string())],
+        };
+        assert_eq!(h.launch(None, Some("m"), None, Some(dir)), expected, "{dir}");
+    }
+    // Other characters it takes as they are.
+    let launch = h.launch(None, None, None, Some("/p[1]{a,b}+/r"));
+    assert_eq!(launch.env[0].1, r#"{"permission":{"external_directory":{"/p[1]{a,b}+/r/*":"allow"}}}"#);
+}
+
+#[test]
 fn the_launch_is_the_same_each_time() {
     // TestHarnessFlags.test_launch_args_leave_the_permission_table_alone: Python's extended its table's list in place.
     for h in &HARNESSES {

@@ -208,6 +208,11 @@ impl Harness {
     /// How a role's agent starts in this harness: with permission_mode's equivalent (none when the harness has none),
     /// into session if given one, on model if given one, and with access to extra_dir, and to every file under it,
     /// where the harness can grant it. An empty string is none, as Python takes it.
+    ///
+    /// opencode's grant is a pattern, in which it reads `*` and `?` as wildcards and `\` as `/`, with no escape for
+    /// them; so an extra_dir holding any of them gets no grant, rather than one that also reaches other directories.
+    /// opencode then asks in its pane before each write there, and the run's blocked-agent notice points the human
+    /// at it.
     pub fn launch(
         &self,
         permission_mode: Option<&str>,
@@ -244,7 +249,7 @@ impl Harness {
                 if let Some(model) = model {
                     config.insert("model".to_string(), model.into());
                 }
-                if let Some(dir) = extra_dir {
+                if let Some(dir) = extra_dir.filter(|d| !d.contains(['*', '?', '\\'])) {
                     let grant = serde_json::json!({ "external_directory": { format!("{dir}/*"): "allow" } });
                     config.insert("permission".to_string(), grant);
                 }
