@@ -59,10 +59,10 @@ pub fn has_conflict(s: &RunState) -> bool {
 
 /// Ask gh about the pull request of the run whose state is state, which has_conflict, and, unless dry_run, act on what
 /// it says: for one that merges cleanly now, remove the conflict warning from its body, every other edit to the body
-/// kept, take it out of draft if the run succeeded, and record no conflicts in the run's state, and with
-/// for_later_drain the pull request as conflict_cleared too (RunState::conflict_cleared); for one merged or closed,
-/// only no conflicts. One that still conflicts, or whose mergeability GitHub has not computed yet, is left as it is.
-/// Returns what gh said, and so what was done.
+/// kept, take it out of draft if the run succeeded, and record no conflicts in the run's state; for one merged or
+/// closed, only no conflicts. With for_later_drain, either records the pull request as conflict_cleared too
+/// (RunState::conflict_cleared). One that still conflicts, or whose mergeability GitHub has not computed yet, is
+/// left as it is. Returns what gh said, and so what was done.
 ///
 /// for_later_drain is true for refresh run by hand, whose clearing a later drain is to take up, and false for drain's
 /// own refresh, which takes it up in the same pass. cwd is the project, where gh runs and the run's state is, on
@@ -100,7 +100,7 @@ pub fn refresh_conflict(
             host.mark_pr_ready(cwd, &url)?;
         }
         let path = format!("{cwd}/{RUNS_DIR}/{run_id}/state.json");
-        let cleared = (for_later_drain && check.pr_state == "OPEN").then(|| url.clone());
+        let cleared = for_later_drain.then(|| url.clone());
         let record = |s: &mut RunState| {
             s.conflicts.clear();
             if let Some(url) = cleared {

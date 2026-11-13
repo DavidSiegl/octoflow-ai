@@ -844,6 +844,21 @@ fn a_spec_for_the_human_whose_conflict_refresh_cleared_stays_unless_its_run_succ
     }
 }
 
+#[test]
+fn a_spec_for_the_human_whose_pull_request_refresh_found_merged_or_closed_is_settled_by_the_next_drain() {
+    // The pull request's state as refresh finds it, and the spec's status the drain after it leaves.
+    for (pr_state, spec_after) in [("MERGED", SPEC_DONE), ("CLOSED", SPEC_FOR_HUMAN)] {
+        let d = Drain::new();
+        let run_id = conflicted_spec(&d, SPEC_FOR_HUMAN, APPROVE, &[("state", Value::from(pr_state))]);
+        d.cli.with(|world| crate::cli::refresh::refresh_command(world, "/proj", None)).unwrap();
+        assert_eq!(d.run_conflicts(&run_id), Value::Array(vec![]), "{pr_state}");
+        let r = d.drain(vec![], &[]);
+        assert_eq!(r.status, 0, "{}", r.err);
+        assert_eq!(d.header("a"), (some(spec_after), Some(run_id.clone()), some(PR_A)), "{pr_state}");
+        assert_eq!(d.cli.saved(&run_id).get("conflict_cleared"), Some(&Value::Null), "{pr_state}");
+    }
+}
+
 /// Spec a set back to SPEC_FOR_HUMAN by the human, its Run: and PR: lines kept.
 fn set_back_for_human(d: &Drain, run_id: &str) {
     d.spec("a", &spec_text("First", Some(SPEC_FOR_HUMAN), &[&format!("Run: {run_id}"), &format!("PR: {PR_A}")]));
