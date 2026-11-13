@@ -7,7 +7,7 @@ use super::{resume_command, Connected};
 use crate::constants::{APPROVE, RUNS_DIR};
 use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
-use crate::pipeline::{workflow_shape, Pipeline, QUALITY};
+use crate::pipeline::{workflow_shape, Pipeline, Step, QUALITY};
 use crate::json::{object, Object, ValueExt};
 use crate::map::Map;
 use crate::runs::{RUNNING, STALE};
@@ -27,7 +27,12 @@ pub const BLOCKED_STATUS: &str = "blocked";
 /// are RunState::health's, and target the --machine and --cwd flags resume_command repeats. Reads nothing beyond
 /// run. The record has every key below, in this order; null means the key does not apply to the run:
 /// - id, key, task (the whole task), workflow: the run's id, its key (as resume takes it), task and workflow.
-/// - steps: the workflow's steps, each {"id", "role"}, in order; null when the workflow cannot be loaded.
+/// - steps: the workflow's steps, each {"id", "role", "role_label", "loop_to", "quality_gated"}, in order; null when
+///   the workflow cannot be loaded. role_label is the workflow's label for the role; loop_to the step a
+///   CHANGES_REQUESTED sends the run back to, null for a step that gives no verdict; quality_gated whether the quality
+///   loop follows, or followed, the step's turns in this run: the step is gated and the run has or had the gate
+///   (RunState::had_quality_gate).
+/// - pull_request: whether the run opens a pull request; false for a --no-pr run.
 /// - phase, round: as saved. quality_round: the quality round while the run is in the quality loop or its gated
 ///   step, once it has one; null otherwise.
 /// - role, pane: the current step's role and that role's pane; null in quality, publish or done, or when the
@@ -82,17 +87,8 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
     record.insert("key".into(), Value::from(s.key()));
     record.insert("task".into(), Value::from(s.task.as_str()));
     record.insert("workflow".into(), Value::from(s.workflow.as_str()));
-    record.insert(
-        "steps".into(),
-        pipeline.as_ref().map_or(Value::Null, |p| {
-            Value::Array(
-                p.steps()
-                    .iter()
-                    .map(|st| Value::Object(object([("id", Value::from(st.id.as_str())), ("role", Value::from(st.role.as_str()))])))
-                    .collect(),
-            )
-        }),
-    );
+    record.insert("steps".into(), pipeline.as_ref().map_or(Value::Null, |p| step_refs(p, s.had_quality_gate())));
+    record.insert("pull_request".into(), Value::from(s.pull_request));
     record.insert("phase".into(), Value::from(s.phase.as_str()));
     record.insert("round".into(), Value::from(s.round));
     record.insert("quality_round".into(), (in_quality && s.quality_round != 0).then_some(s.quality_round).map_or(Value::Null, Value::from));
@@ -123,6 +119,22 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
     record.insert("turns".into(), serde_json::to_value(&s.turns).expect("turns serialize"));
     record.insert("resume_command".into(), optional(resume));
     record
+}
+
+/// run_record's steps, of the run's workflow p; gated says whether the run has or had the quality gate.
+fn step_refs(p: &Pipeline, gated: bool) -> Value {
+    let step = |st: &Step| {
+        // Pipeline::new refuses a step whose role has no label.
+        let label = p.roles().get(&st.role).map_or(st.role.as_str(), String::as_str);
+        Value::Object(object([
+            ("id", Value::from(st.id.as_str())),
+            ("role", Value::from(st.role.as_str())),
+            ("role_label", Value::from(label)),
+            ("loop_to", st.loop_to.as_deref().map_or(Value::Null, Value::from)),
+            ("quality_gated", Value::from(gated && st.quality_gated)),
+        ]))
+    };
+    Value::Array(p.steps().iter().map(step).collect())
 }
 
 /// run_record's agents, of a state's agents, by role.

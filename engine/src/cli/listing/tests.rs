@@ -31,11 +31,18 @@ const SHOW_DIR: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
 const JOB: &str = crate::ci::fake::JOB;
 
 /// The keys of a run record, in the order run_record gives them.
-const RUN_RECORD_KEYS: [&str; 24] = [
-    "id", "key", "task", "workflow", "steps", "phase", "round", "quality_round", "role", "pane", "agents", "health",
-    "health_reason", "heartbeat_age", "waiting", "verdict", "verdicts", "error", "closed", "branch", "worktree", "pr",
-    "turns", "resume_command",
+const RUN_RECORD_KEYS: [&str; 25] = [
+    "id", "key", "task", "workflow", "steps", "pull_request", "phase", "round", "quality_round", "role", "pane",
+    "agents", "health", "health_reason", "heartbeat_age", "waiting", "verdict", "verdicts", "error", "closed", "branch",
+    "worktree", "pr", "turns", "resume_command",
 ];
+
+/// The default workflow's steps as a run record gives them for a run without the quality gate.
+const DEFAULT_STEPS: &str = r#"[
+    {"id": "spec", "role": "spec", "role_label": "Spec Collector", "loop_to": null, "quality_gated": false},
+    {"id": "build", "role": "build", "role_label": "Builder", "loop_to": null, "quality_gated": false},
+    {"id": "review", "role": "review", "role_label": "Reviewer", "loop_to": "build", "quality_gated": false}
+]"#;
 
 /// JSON text as a value.
 fn json(text: &str) -> Value {
@@ -165,10 +172,8 @@ fn every_key_is_present() {
     assert_eq!(key(&record, "id"), Value::from(RUN_ID));
     assert_eq!(key(&record, "key"), Value::from("c0ffee"));
     assert_eq!(key(&record, "workflow"), Value::from("default"));
-    assert_eq!(
-        key(&record, "steps"),
-        json(r#"[{"id": "spec", "role": "spec"}, {"id": "build", "role": "build"}, {"id": "review", "role": "review"}]"#)
-    );
+    assert_eq!(key(&record, "steps"), json(DEFAULT_STEPS));
+    assert_eq!(key(&record, "pull_request"), Value::from(false));
     assert_eq!([key(&record, "phase"), key(&record, "round"), key(&record, "role")], [
         Value::from("build"),
         Value::from(1),
@@ -184,6 +189,31 @@ fn every_key_is_present() {
     assert_eq!(key(&record, "turns"), json("[]"));
     assert_eq!((key(&record, "waiting"), key(&record, "resume_command")), (Value::Null, Value::Null));
     Value::Object(record).to_string();
+}
+
+#[test]
+fn each_step_has_its_role_label_loop_and_quality_gate() {
+    // A workflow file's own labels; its review step loops to impl, whose turns the quality loop follows only in a run
+    // that has, or had, the gate.
+    let state = with(run("impl"), &[("workflow", Value::from("impl")), ("workflow_definition", workflow_definition(&impl_()))]);
+    let steps = |fields: &[(&str, Value)]| key(&record(&with(state.clone(), fields), 40, true, &[]), "steps");
+    let gated = |gated: bool| {
+        json(&format!(
+            r#"[{{"id": "impl", "role": "impl", "role_label": "Implementer", "loop_to": null, "quality_gated": {gated}}},
+                {{"id": "review", "role": "review", "role_label": "Reviewer", "loop_to": "impl", "quality_gated": false}}]"#
+        ))
+    };
+    assert_eq!(steps(&[]), gated(false));
+    assert_eq!(steps(&[("quality_job", Value::from(JOB))]), gated(true));
+    assert_eq!(steps(&[("quality_gate_disabled", Value::from(true))]), gated(true));
+}
+
+#[test]
+fn pull_request_says_whether_the_run_opens_one() {
+    for opens in [true, false] {
+        let state = with(run("build"), &[("pull_request", Value::from(opens))]);
+        assert_eq!(key(&record(&state, 40, true, &[]), "pull_request"), Value::from(opens));
+    }
 }
 
 #[test]
@@ -751,8 +781,7 @@ fn a_run_an_earlier_release_started_with_its_fix_prompt_file_lists_and_shows_who
     ];
     let stale = with(mine(), &fields);
     let record = record(&stale, STALE_SECONDS + 1, true, &[]);
-    let steps =
-        json(r#"[{"id": "spec", "role": "spec"}, {"id": "build", "role": "build"}, {"id": "review", "role": "review"}]"#);
+    let steps = json(DEFAULT_STEPS);
     assert_eq!(
         [key(&record, "steps"), key(&record, "role"), key(&record, "pane"), key(&record, "resume_command")],
         [steps.clone(), Value::from("build"), Value::from("w1:p2"), Value::from("orchestrator resume c0ffee")]
