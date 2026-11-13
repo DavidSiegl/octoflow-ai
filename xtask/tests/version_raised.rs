@@ -5,7 +5,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-
 /// An engine/Cargo.toml whose [package] has version, between tables whose own version lines must not be taken for it.
 fn manifest(version: &str) -> String {
     format!(

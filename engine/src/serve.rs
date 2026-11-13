@@ -684,13 +684,17 @@ fn start_answer(shared: &Shared, project: &ProjectRuns, run: &RunRequest) -> Ans
         Ok(started) => started,
         Err(e) => return read_failure(e),
     };
-    let (code, mut fields) = match ended {
-        Started::Listed => (201, crate::json::object([("run", Value::from(run_id))])),
-        Started::Exited(shown) => {
-            let why = format!("run {run_id} exited before it saved its state; its pane showed:\n{shown}");
-            return (422, object([("error", Value::from(why)), ("run", Value::from(run_id))]));
-        }
-        Started::Unlisted => (202, crate::json::object([("run", Value::from(run_id)), ("listed", Value::from(false))])),
+    if let Started::Exited(shown) = ended {
+        let why = format!("run {run_id} exited before it saved its state; its pane showed:\n{shown}");
+        return (422, object([("error", Value::from(why)), ("run", Value::from(run_id))]));
+    }
+    // A run that started: its id, whether it is listed yet, and the herdr session it is in.
+    let mut fields = crate::json::object([("run", Value::from(run_id))]);
+    let code = if matches!(ended, Started::Unlisted) {
+        fields.insert("listed".to_string(), Value::from(false));
+        202
+    } else {
+        201
     };
     if let Some(session) = herdr_session {
         fields.insert("herdr_session".to_string(), Value::from(session));

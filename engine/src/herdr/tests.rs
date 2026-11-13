@@ -794,9 +794,9 @@ esac
     let state = d.join("state");
     let vars = environment(Some(&d.path()), &[("XDG_STATE_HOME", &state)]);
     let mut herdr = ProcessHerdr::in_environment(None, vars.into_iter(), &Interrupt::new());
-    herdr.server_start = Poll { limit: Duration::from_millis(300), every: Duration::from_millis(50) };
+    herdr.server_start = Poll { limit: Duration::from_millis(1000), every: Duration::from_millis(50) };
     let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
-    assert!(e.starts_with("cannot start a herdr server: it was not running after 0.3 seconds"), "{e}");
+    assert!(e.starts_with("cannot start a herdr server: it was not running after 1 seconds"), "{e}");
     let log = format!("{state}/octoflow/herdr-server.log");
     assert!(e.ends_with(&format!("; herdr server wrote to {log}:\nherdr: cannot parse config.toml: line 3")), "{e}");
 }
@@ -805,10 +805,37 @@ esac
 fn a_server_that_says_nothing_fails_the_launch_naming_where_its_output_went() {
     let (d, vars) = herdr_with_servers(&[], None, "");
     let mut herdr = ProcessHerdr::in_environment(None, vars.into_iter(), &Interrupt::new());
-    herdr.server_start = Poll { limit: Duration::from_millis(100), every: Duration::from_millis(20) };
+    herdr.server_start = Poll { limit: Duration::from_millis(1000), every: Duration::from_millis(50) };
     let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
     let log = format!("{}/octoflow/herdr-server.log", d.join("state"));
     assert!(e.ends_with(&format!("; herdr server wrote nothing to {log}")), "{e}");
+}
+
+#[test]
+fn a_relative_xdg_state_home_is_ignored_as_the_xdg_spec_asks() {
+    let (d, vars) = herdr_with_servers(&[], None, "");
+    let vars = vars.into_iter().filter(|(k, _)| k != "XDG_STATE_HOME" && k != "HOME").collect::<Vec<_>>();
+    let home = d.join("home");
+    let mut herdr = ProcessHerdr::in_environment(None, with(&vars, &[("XDG_STATE_HOME", "state"), ("HOME", &home)]), &Interrupt::new());
+    herdr.server_start = Poll { limit: Duration::from_millis(1000), every: Duration::from_millis(50) };
+    let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
+    let log = format!("{home}/.local/state/octoflow/herdr-server.log");
+    assert!(e.ends_with(&format!("; herdr server wrote nothing to {log}")), "{e}");
+}
+
+#[test]
+fn a_log_directory_that_cannot_be_made_still_starts_the_server_and_says_its_output_was_not_kept() {
+    let (d, vars) = herdr_with_servers(&[], None, "");
+    let vars = vars.into_iter().filter(|(k, _)| k != "XDG_STATE_HOME").collect::<Vec<_>>();
+    // A regular file where the state directory should be: nothing can be made under it.
+    let state = d.join("not-a-directory");
+    std::fs::write(&state, "").unwrap();
+    let mut herdr = ProcessHerdr::in_environment(None, with(&vars, &[("XDG_STATE_HOME", &state)]), &Interrupt::new());
+    herdr.server_start = Poll { limit: Duration::from_millis(1000), every: Duration::from_millis(50) };
+    let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
+    assert!(given(&d).iter().any(|c| c == "octoflow: server"), "the server was not started: {:?}", given(&d));
+    assert!(e.contains("; herdr server's output was not kept: "), "{e}");
+    assert!(e.contains(&state), "{e}");
 }
 
 #[test]

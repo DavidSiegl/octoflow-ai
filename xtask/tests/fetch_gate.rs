@@ -8,7 +8,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-
 /// Copies FAKE_TARBALL to the file after -o and appends the URL, its last argument, to CURL_LOG; exits 22, as curl -f
 /// does on an HTTP error, when FAKE_TARBALL is unset.
 const CURL_STUB: &str = r#"#!/bin/sh

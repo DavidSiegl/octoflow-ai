@@ -128,14 +128,18 @@ const SERVER_START: Poll = Poll { limit: Duration::from_secs(15), every: Duratio
 const SHELL_READY: Poll = Poll { limit: Duration::from_secs(10), every: Duration::from_millis(100) };
 
 /// The shell script ProcessHerdr::start_server starts `herdr server` with, in the background, its standard output
-/// and error going to `${XDG_STATE_HOME:-$HOME/.local/state}/octoflow/herdr-server.log` in the environment herdr runs
-/// in, emptied first. It prints that file's path, and fails, having said why, when the file's directory cannot be
-/// made. The file is state of the engine's that outlives the start: for the end of the wait to quote, and for the
-/// human to read while the server runs. One file, since the only server serve starts is the session OWN_SESSION's.
-const START_SERVER: &str = r#"d=${XDG_STATE_HOME:-$HOME/.local/state}/octoflow
-mkdir -p -- "$d" || exit 1
-herdr server </dev/null >"$d/herdr-server.log" 2>&1 &
-echo "$d/herdr-server.log""#;
+/// and error going to `octoflow/herdr-server.log` under the state directory of the environment herdr runs in, emptied
+/// first: XDG_STATE_HOME when it is an absolute path, as the [XDG Base Directory
+/// spec](https://specifications.freedesktop.org/basedir-spec/latest/) asks, else `$HOME/.local/state`. It prints that
+/// file's path. When the file cannot be made or written, the server is started all the same with its output going to
+/// /dev/null, and the script prints `/dev/null` and, on standard error, why. The file is state of the engine's that
+/// outlives the start: for the end of the wait to quote, and for the human to read while the server runs. One file,
+/// since the only server serve starts is the session OWN_SESSION's.
+const START_SERVER: &str = r#"case $XDG_STATE_HOME in /*) d=$XDG_STATE_HOME ;; *) d=$HOME/.local/state ;; esac
+d=$d/octoflow
+if mkdir -p -- "$d" && : >"$d/herdr-server.log"; then log=$d/herdr-server.log; else log=/dev/null; fi
+herdr server </dev/null >"$log" 2>&1 &
+echo "$log""#;
 
 /// Held while a ProcessHerdr looks for a herdr server and starts it (`start_server`), so that of two launches at once
 /// in this process, as serve's requests make them, the second finds the server the first started rather than
@@ -394,10 +398,10 @@ impl ProcessHerdr {
     /// not, in a process group of its own with no terminal's input or output, so that it outlives the engine as the
     /// server herdr's own client starts does. One start at a time in this process (STARTING_SERVER). The server's
     /// standard output and error go to the file START_SERVER names, emptied at each start, which the server keeps
-    /// writing to for as long as it runs. Errors: herdr cannot be asked; the server cannot be started, that file's
-    /// directory made included; or it does not answer as running within server_start's limit, with what herdr last
-    /// answered instead, when it answered with an error, and the end of what the server wrote, or that it wrote
-    /// nothing or that it cannot be read.
+    /// writing to for as long as it runs. Errors: herdr cannot be asked; the server cannot be started; or it does not
+    /// answer as running within server_start's limit, with what herdr last answered instead, when it answered with an
+    /// error, and the end of what the server wrote, or that it wrote nothing, that it cannot be read, or why its
+    /// output was not kept.
     fn start_server(&self) -> Result<(), HerdrError> {
         // The lock guards no data, so one a panicking start left poisoned is as good as new.
         let _starting = STARTING_SERVER.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -408,9 +412,13 @@ impl ProcessHerdr {
         // `herdr server` serves until it is stopped, so a shell starts it in the background and exits; run_process
         // gave the shell a process group, which the server keeps.
         let argv = ["sh", "-c", START_SERVER].map(String::from);
-        // The file the server's output goes to, as sh printed it.
-        let log = match (self.run)(&argv, &self.env, Some(Duration::from_secs(CALL_LIMIT_SECONDS))) {
-            Ok((0, stdout, _)) => String::from_utf8_lossy(&stdout).trim().to_string(),
+        // The file the server's output goes to, as sh printed it, and what sh said on standard error, which is why
+        // when that file is /dev/null.
+        let (log, unkept) = match (self.run)(&argv, &self.env, Some(Duration::from_secs(CALL_LIMIT_SECONDS))) {
+            Ok((0, stdout, stderr)) => (
+                String::from_utf8_lossy(&stdout).trim().to_string(),
+                String::from_utf8_lossy(&stderr).trim().to_string(),
+            ),
             Ok((status, _, stderr)) => {
                 return Err(failed(format!("sh exited with {status}: {}", String::from_utf8_lossy(&stderr).trim())))
             }
@@ -436,6 +444,7 @@ impl ProcessHerdr {
                 let last = refused.map_or_else(String::new, |e| format!("; herdr status server last answered: {e}"));
                 let text = std::fs::read(&log).map(|bytes| String::from_utf8_lossy(&bytes).trim_end().to_string());
                 let wrote = match text {
+                    _ if log == "/dev/null" => format!("herdr server's output was not kept: {unkept}"),
                     Ok(text) if text.is_empty() => format!("herdr server wrote nothing to {log}"),
                     Ok(text) => format!("herdr server wrote to {log}:\n{}", last_lines(&text)),
                     Err(e) => format!("cannot read what herdr server wrote: {}", os_error(&e, Some(&log))),

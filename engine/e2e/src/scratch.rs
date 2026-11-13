@@ -22,9 +22,10 @@ impl Scratch {
         let dir = tempfile::Builder::new()
             .prefix(&format!("octoflow-e2e-{name}-"))
             .tempdir()
-            .unwrap_or_else(|e| panic!("making a directory for {name}: {e}"))
-            .keep();
-        let path = dir.canonicalize().unwrap_or_else(|e| panic!("resolving {}: {e}", dir.display()));
+            .unwrap_or_else(|e| panic!("making a directory for {name}: {e}"));
+        let path = dir.path().canonicalize().unwrap_or_else(|e| panic!("resolving {}: {e}", dir.path().display()));
+        // Kept from here on, so that this type's Drop decides whether to remove it; dir alone removed it until now.
+        let _ = dir.keep();
         Scratch { path, kept_on_failure: false }
     }
 

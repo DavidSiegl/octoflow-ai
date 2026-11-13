@@ -142,9 +142,9 @@ first time when a browser downloaded it, as it does the binary.
   so for a project on a machine too, whose agents then run there. With no herdr server running here, the app
   starts one of its own without a window, the herdr session `octoflow`, which stays up after the app closes:
   `herdr session attach octoflow` shows its runs in a terminal, and `herdr session stop octoflow` ends it. Its
-  output goes to `${XDG_STATE_HOME:-~/.local/state}/octoflow/herdr-server.log`, whose last lines the form shows
-  when it does not come up. A run that fails before it starts, such as one the checkout already holds, shows the
-  last lines of its pane in the form.
+  output goes to `octoflow/herdr-server.log` under `$XDG_STATE_HOME` (`~/.local/state` when that is unset or not
+  an absolute path), whose last lines the form shows when it does not come up. A run that fails before it starts,
+  such as one the checkout already holds, shows the last lines of its pane in the form.
 - **Run detail:** the files in a run's directory, the newest or the one you pick rendered as Markdown, updated
   as they are written.
 - **Agents:** a tab for each agent the run has started, showing the last lines of its herdr pane, read again every

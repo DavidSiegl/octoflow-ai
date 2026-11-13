@@ -4,7 +4,6 @@
 use std::fs;
 use std::process::Output;
 
-
 /// The script's run from a copy of it in a tree without git, whose engine/Cargo.toml holds manifest.
 fn release_version(manifest: &str) -> Output {
     let dir = tempfile::Builder::new().prefix("xtask-release-version-test-").tempdir().expect("a temporary directory");

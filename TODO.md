@@ -45,6 +45,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **Two engine test directories are still named by pid, removing what is there first.** `Dir::new`
+  (`engine/tests/program.rs:23`) names its directory `octoflow-program-<name>-<pid>` and removes what is there, and
+  `engine/tests/signals.rs:237` names one `octoflow-signals-<case>-<pid>`: two test runs over one `/tmp` whose
+  processes share a pid, as in different PID namespaces, delete each other's, the collision todo/49 fixed for the e2e
+  scenarios' `Scratch`. Raised by cross-review 186 (raised and not recorded). Closed by making both on
+  `tempfile::Builder`, as `Scratch::new` is.
 - **The desktop app as the terminal client too: what was decided against.** The app, started with arguments, is the CLI
   (`cli` in `ui/src-tauri/src/lib.rs`), and the plain CLI binaries stay released: 13 MB against the AppImage's 120 MB of
   WebKit, and they start without FUSE on headless machines and in CI. Decided against (2026-10-24): one file on every
