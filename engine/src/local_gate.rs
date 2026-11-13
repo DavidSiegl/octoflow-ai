@@ -1,9 +1,8 @@
-//! `--quality-gate local`: the engine runs octoflow-gate itself on the project's host, in place of a Jenkins job
-//! (docs/quality-gate.md, "The local gate").
+//! `--quality-gate local`: the engine runs octoflow-gate itself on the project's host (docs/quality-gate.md).
 //!
 //! Each judgement is a job of its own on the host, started detached from the engine (start) and asked after until it
 //! ends (Judging::verdict), so the engine keeps its heartbeat while the project's tests run, and the job outlives an
-//! SSH connection that drops. The job judges a checkout of the snapshot, as a Jenkins build does, so the Builder's
+//! SSH connection that drops. The job judges a checkout of the snapshot, so the Builder's
 //! untracked files are judged and what the gate and the tests write never reaches the run's worktree.
 //!
 //! The release is the one the run's base pins in ci/gate.pin, else BUILT_IN_PIN. Its tarball is downloaded once per
@@ -11,11 +10,14 @@
 //! each time it is unpacked, fresh, into the job's directory. It is the release's `gate`, a program for Linux x86_64,
 //! which octoflow-gate has shipped since 0.7.0 (FIRST_WITH_GATE): a base that pins an earlier release cannot be
 //! judged. The gate judges by the base's gate.toml and pyproject.toml, never the change's, so a change cannot loosen
-//! how it is itself judged, as a Jenkins quality build judges by main's. Every step runs as a command on the host, so
+//! how it is itself judged. Every step runs as a command on the host, so
 //! a project on another machine is judged there, as its git steps are.
 
 use crate::error::OrchestratorError;
 use crate::host::{last_lines, shell_path, Host, DEFAULT_TIMEOUT};
+
+/// The --quality-gate name of the local gate, the only gate there is, as state.json's quality_job keeps it.
+pub const LOCAL_GATE: &str = "local";
 
 /// The release a base without ci/gate.pin is judged by, in ci/gate.pin's form: the octoflow-gate release this engine
 /// was tested against, whose quality.json schema crate::quality::read_report reads. Raise it with the repository's own

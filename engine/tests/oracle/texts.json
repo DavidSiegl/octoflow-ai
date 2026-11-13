@@ -37,28 +37,15 @@
    "max_files",
    "max_lines"
   ],
-  "HTTP_TIMEOUT": 30,
   "PYPI_TIMEOUT": 15,
   "CI_POLL_SECONDS": 10,
   "QUALITY_TIMEOUT": 1200,
-  "CI_ENV": [
-   "JENKINS_URL",
-   "JENKINS_USER",
-   "JENKINS_TOKEN"
-  ],
-  "CI_TOKENS": [
-   "JENKINS_TOKEN"
-  ],
   "GIT_PATHSPEC_ENV": [
    "GIT_LITERAL_PATHSPECS",
    "GIT_GLOB_PATHSPECS",
    "GIT_NOGLOB_PATHSPECS",
    "GIT_ICASE_PATHSPECS"
   ],
-  "JOB_PARAMETERS": [
-   "GIT_REF"
-  ],
-  "CI_REF_PREFIX": "orchestrator-ci/",
   "LOCAL_REFS_PREFIX": "refs/orchestrator/",
   "CONSOLE_TAIL_LINES": 60,
   "ROLE_LABELS": {

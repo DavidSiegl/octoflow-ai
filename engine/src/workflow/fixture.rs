@@ -7,8 +7,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use super::{Clocks, Collaborators, Human, RunSettings, Workflow};
-use crate::ci::fake::{jenkins_on, jenkins_with, FakeJenkins, Outcome};
-use crate::ci::QualityGate;
 use crate::herdr::fake::{FakeHerdr, Turn};
 use crate::http::Http;
 use crate::pypi::fake::FakePyPI;
@@ -17,7 +15,6 @@ use crate::host::fake::{FakeClock, FakeHost};
 use crate::host::{Exec, Host, ProcessHost};
 use crate::interrupt::Interrupt;
 use serde_json::Value;
-use crate::map::Map;
 use crate::json::Object;
 use crate::runs::pid_alive;
 use crate::state::{AgentRecord, RunState, TurnRecord};
@@ -88,12 +85,8 @@ pub(crate) struct Fixture {
     pub pid_alive: Box<dyn Fn(i64) -> bool>,
     /// The state the Workflow starts from.
     pub state: RunState,
-    /// The Jenkins behind a Jenkins quality_gate, Python's FakeCI: there for every fixture, so that a run without the quality gate
-    /// can be shown to ask it nothing.
-    pub ci: Arc<FakeJenkins>,
-    /// The quality gate the Workflow is given: None for a run without one, until gated or gated_on_jenkins gives it
-    /// one.
-    pub quality_gate: Option<QualityGate>,
+    /// Whether the Workflow is given the quality gate: false until gated turns it on.
+    pub quality_gate_on: bool,
     /// The local gate gated plays on the host: what each of its runs does, and what it was asked.
     pub gate: Rc<RefCell<FakeGate>>,
     /// The PyPI behind the Workflow's indexes, with no project unless a test adds them.
@@ -141,8 +134,7 @@ impl Fixture {
             interrupt,
             pid_alive: Box::new(pid_alive),
             state,
-            ci: FakeJenkins::new(),
-            quality_gate: None,
+            quality_gate_on: false,
             gate: Rc::default(),
             pypi,
             indexes,
@@ -157,29 +149,15 @@ impl Fixture {
     /// The fixture with the quality gate on: the local gate (crate::local_gate), its commands played by the host as
     /// gate says, ahead of any run_command the host had, which answers the rest.
     pub fn gated(mut self) -> Fixture {
-        self.quality_gate = Some(QualityGate::Local);
+        self.quality_gate_on = true;
         let earlier = self.host.state().run_command.take();
         self.host.state().run_command = Some(plays(Rc::clone(&self.gate), self.interrupt.clone(), earlier));
-        self
-    }
-
-    /// The fixture with the Jenkins quality gate on: the Workflow is given the quality job on ci, with every
-    /// credential, as Python's gated gives it.
-    pub fn gated_on_jenkins(mut self) -> Fixture {
-        self.quality_gate = Some(QualityGate::Jenkins(jenkins_on(&self.ci)));
         self
     }
 
     /// Have the local gate's next runs judge as outcomes say, in order, and green ones after them.
     pub fn judging(&self, outcomes: Vec<Outcome>) {
         self.gate.borrow_mut().runs = outcomes.into_iter().map(GateRun::Judges).collect();
-    }
-
-    /// The fixture with the quality gate on, asked with these credentials of CI_ENV, by name: Python's gated with
-    /// env.
-    pub fn gated_with(mut self, credentials: &Map<String>) -> Fixture {
-        self.quality_gate = Some(QualityGate::Jenkins(jenkins_with(&self.ci, credentials)));
-        self
     }
 
     /// The fixture whose Workflow asks this PyPI instead.
@@ -234,7 +212,7 @@ impl Fixture {
             human: &self.told,
             interrupt: &self.interrupt,
             pid_alive: &*self.pid_alive,
-            quality_gate: self.quality_gate.as_ref(),
+            quality_gate_on: self.quality_gate_on,
             indexes: &self.indexes,
         }
     }
@@ -491,15 +469,49 @@ pub(crate) fn saved_run(phase: &str, rnd: u32, roles: &[&str]) -> RunState {
 
 // -- The quality gate's, by Python's names -----------------------------------------------------------------------
 
-/// The ref of round 1's first quality round.
-pub(crate) const REF_1_1: &str = "orchestrator-ci/a1b2c3-1-q1";
+/// What one judging run of the fake local gate leaves: Python's outcome().
+#[derive(Clone, Debug)]
+pub(crate) struct Outcome {
+    /// The quality.md it writes.
+    pub quality: String,
+    /// The quality.json it writes with quality.md.
+    pub quality_json: String,
+    /// The gate's exit status: 0 for a passing gate, 1 for a failing one.
+    pub exit: i32,
+    /// How many probes still see it running.
+    pub polls: u32,
+}
 
-/// origin's quality snapshot branches (`CI_REF_PREFIX`) with their commits, leaving out the run's own branch, which
-/// publishing pushes and the end keeps.
-pub(crate) fn ci_refs(host: &FakeHost) -> Vec<(String, String)> {
-    let s = host.state();
-    let snapshots = s.remote.iter().filter(|(b, _)| b.starts_with(crate::constants::CI_REF_PREFIX));
-    snapshots.map(|(b, c)| (b.to_string(), c.clone())).collect()
+impl Outcome {
+    /// A run whose quality.md says gate and the numbered findings, with a quality.json that says the same
+    /// (report_json), exiting as the gate does for such a verdict.
+    pub fn gate(gate: &str, findings: &[&str]) -> Outcome {
+        let numbered: Vec<String> = findings.iter().enumerate().map(|(k, f)| format!("{}. {f}", k + 1)).collect();
+        let numbered = if numbered.is_empty() { "None.".to_string() } else { numbered.join("\n") };
+        let quality = format!(
+            "GATE: {gate}\n\n`orchestrator.py gate` judged the working tree.\n\n## Issues on changed lines\n\n{numbered}\n"
+        );
+        Outcome { quality_json: report_json(&quality), quality, exit: i32::from(gate != "OK"), polls: 2 }
+    }
+}
+
+/// A quality.json that says what quality, a quality file, says as the engine reads it (parse_gate, gate_failures):
+/// its gate, its failed conditions, and a finding that fails it per fingerprint, a failing test's too, with only the
+/// fields the engine reads.
+pub(crate) fn report_json(quality: &str) -> String {
+    let failures = crate::quality::gate_failures(quality);
+    let findings: Vec<Value> = failures
+        .fingerprints
+        .iter()
+        .flat_map(|(check, found)| {
+            found.iter().map(move |f| serde_json::json!({"check": check, "fails": true, "fingerprint": f}))
+        })
+        .collect();
+    let report = serde_json::json!({
+        "schema_version": 1, "gate": crate::quality::parse_gate(quality), "failed_conditions": failures.conditions,
+        "findings": findings, "failing_tests": null,
+    });
+    report.to_string()
 }
 
 /// A build whose gate fails on an unused import: Python's outcome(**RED).
@@ -526,22 +538,6 @@ pub(crate) fn fix_turn(n: u32, q: u32) -> Turn {
     })
 }
 
-/// FakeJenkins's request names without repeats in a row, which polls make.
-pub(crate) fn collapsed(names: &[String]) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for name in names {
-        if out.last() != Some(name) {
-            out.push(name.clone());
-        }
-    }
-    out
-}
-
-/// Whether text holds the Jenkins token of the tests: Python's leaks.
-pub(crate) fn holds_token(text: &str) -> bool {
-    text.contains(crate::ci::fake::JENKINS_TOKEN)
-}
-
 /// A run saved in quality round q of round 1 of the default workflow, with the local gate: Python's quality_state.
 pub(crate) fn quality_state(q: u32) -> RunState {
     let mut state = saved_run("quality", 1, &["spec", "build"]);
@@ -557,8 +553,8 @@ pub(crate) fn gated_building(script: Vec<(&str, Vec<Turn>)>, outcomes: Vec<Outco
     f
 }
 
-/// What one run of the fake local gate does: judge, writing an Outcome's quality.md and quality.json and exiting 0
-/// for a SUCCESS result and 1 otherwise, once as many probes as the Outcome's polls have seen it running; not judge,
+/// What one run of the fake local gate does: judge, writing an Outcome's quality.md and quality.json and exiting
+/// with its exit status, once as many probes as the Outcome's polls have seen it running; not judge,
 /// exiting 2 at once with this on standard error; or run on until it is stopped.
 pub(crate) enum GateRun {
     Judges(Outcome),
@@ -596,9 +592,9 @@ fn plays(
             let write = |name: &str, text: &str| host.state().files.insert(format!("{out}/{name}"), text.to_string());
             match run {
                 GateRun::Judges(outcome) => {
-                    write("quality.md", &outcome.quality.expect("a quality.md"));
-                    write("quality.json", &outcome.quality_json.expect("a quality.json"));
-                    write("exit", if outcome.result == "SUCCESS" { "0\n" } else { "1\n" });
+                    write("quality.md", &outcome.quality);
+                    write("quality.json", &outcome.quality_json);
+                    write("exit", &format!("{}\n", outcome.exit));
                 }
                 GateRun::CannotJudge(said) => {
                     write("gate.err", said);
@@ -675,28 +671,11 @@ fn plays(
     })
 }
 
-/// RunState::ci of a round in flight, as pairs of its fields.
-pub(crate) fn ci_of(fields: &[(&str, Value)]) -> Object {
-    object(fields.iter().cloned())
-}
-
 impl Fixture {
     /// Python's resume_gated: a resume of state with the gate on, and round 1's build report written.
     pub fn resume_gated(host: Rc<FakeHost>, state: RunState, script: Vec<(&str, Vec<Turn>)>, alive: &[&str]) -> Fixture {
         host.state().files.insert(state.build_path(1), "report 1".to_string());
         Fixture::resume(host, state, script, alive, &[]).gated()
-    }
-
-    /// resume_gated with the Jenkins gate on, the ref in flight, if any, on origin.
-    pub fn resume_on_jenkins(host: Rc<FakeHost>, state: RunState, script: Vec<(&str, Vec<Turn>)>, alive: &[&str]) -> Fixture {
-        if let (Some(Value::String(git_ref)), Some(Value::String(sha))) = (state.ci.get("ref"), state.ci.get("sha")) {
-            let mut h = host.state();
-            if !h.remote.contains_key(git_ref) {
-                h.remote.insert(git_ref.as_str(), sha.clone());
-            }
-        }
-        host.state().files.insert(state.build_path(1), "report 1".to_string());
-        Fixture::resume(host, state, script, alive, &[]).gated_on_jenkins()
     }
 
     /// The text of the run's quality-<n>-<q>.md. Panics when it is not written.

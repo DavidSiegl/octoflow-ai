@@ -1,10 +1,9 @@
 //! RunState: what a run has done so far, saved as state.json in its run directory.
 
 use crate::constants::{
-    CI_REF_PREFIX, DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
+    DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
     LOCAL_REFS_PREFIX, RUNS_DIR,
 };
-use crate::ci::LOCAL_GATE;
 use crate::error::OrchestratorError;
 use crate::herdr::HerdrServer;
 use crate::prompts::{saved_prompts, Prompts};
@@ -88,7 +87,8 @@ pub struct RunState {
     /// The orchestrator process driving the run, {"host", "pid", "started_at"}; None while none does.
     pub owner: Option<Object>,
     pub heartbeat_at: Option<String>,
-    /// The Jenkins job that runs the quality gate; None for a run without the gate.
+    /// The quality gate's name, LOCAL_GATE (crate::local_gate), for a run with the gate; None for a run without it. A
+    /// release before 0.71.0 also saved a Jenkins job's name here, which a resume replaces (cli::start::resumable_state).
     pub quality_job: Option<String>,
     /// True once resume --no-quality-gate turned the gate off, for good: quality_job is None then, and the quality
     /// files written until then stay the run's (turn_quality_gate_off).
@@ -98,8 +98,8 @@ pub struct RunState {
     /// quality-fix turn that ends after resume --no-quality-gate leaves it one past the last quality round, which
     /// never runs.
     pub quality_round: u32,
-    /// The quality build in flight, {ref, sha, queue_url, build}, each saved as soon as it is known. rejected lists
-    /// builds of ref that ended without a verdict, so a resume does not adopt them again.
+    /// Always empty: a release before 0.71.0 kept a Jenkins quality build in flight here, which a resume drops
+    /// (cli::start::resumable_state). Still written, as those releases read no state.json without it.
     pub ci: Object,
     /// The name of the run's workflow.
     pub workflow: String,
@@ -521,12 +521,6 @@ impl RunState {
         format!("{}/quality-{n}-{q}.md", self.dir())
     }
 
-    /// The branch on origin a Jenkins quality job builds quality round q of round n's snapshot from,
-    /// `<CI_REF_PREFIX><key>-<n>-q<q>`: one round of one run, which delete_ci_refs finds by its prefix.
-    pub fn ci_ref(&self, n: u32, q: u32) -> String {
-        format!("{CI_REF_PREFIX}{}-{n}-q{q}", self.key())
-    }
-
     /// Quality round q of round n, as a quality file's intro names it: "round 1, quality round 2 of 3".
     pub fn quality_place(&self, n: u32, q: u32) -> String {
         format!("round {n}, quality round {q} of {}", self.max_quality_rounds)
@@ -557,14 +551,6 @@ impl RunState {
     /// files.
     pub fn had_quality_gate(&self) -> bool {
         self.quality_job.is_some() || self.quality_gate_disabled
-    }
-
-    /// Whether the run may have quality snapshot refs on origin: it has or had the quality gate, and the gate is not
-    /// the local one, which pushes none. A run whose local gate resume turned off counts, as its state no longer names
-    /// the gate; deleting its refs then finds none. So does a run whose gate a release before 0.63.0 saved as `local`
-    /// with a build in ci: that was a Jenkins job of the name (cli::start::resumable_state).
-    pub fn may_have_ci_refs(&self) -> bool {
-        self.had_quality_gate() && (self.quality_job.as_deref() != Some(LOCAL_GATE) || !self.ci.is_empty())
     }
 
     /// The Builder's last report in round n, once its quality rounds are over: the one the Reviewer reads.

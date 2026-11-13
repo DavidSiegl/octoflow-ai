@@ -7,7 +7,7 @@
 use std::rc::Rc;
 
 use super::*;
-use crate::ci::fake::JOB;
+use crate::local_gate::LOCAL_GATE;
 use crate::cli::args::{parse_args, Command};
 use crate::constants::{APPROVE, HEARTBEAT_SECONDS};
 use crate::env::ConfigDir;
@@ -22,6 +22,9 @@ use crate::json::Object;
 use crate::json::object;
 use crate::state::SavedRun;
 use serde_json::Value;
+
+/// The Jenkins quality job a run saved by a release before 0.71.0 can name.
+const JENKINS_JOB: &str = "Octoflow-AI/octoflow-ai-quality";
 
 /// resume's arguments in argv, after `resume`.
 fn resume_args(argv: &[&str]) -> ResumeArgs {
@@ -165,20 +168,6 @@ fn a_closed_run_is_not_resumed_even_with_force() {
     assert_eq!(error(resumable(&["--force"], &saved)), "run 20260929-120000-a1b2c3 was closed; start a new run");
 }
 
-#[test]
-fn a_build_in_flight_of_a_jenkins_job_named_local_is_not_resumed_as_the_local_gate() {
-    let ci = object([("ref", Value::from("refs/orchestrator/a1b2c3/1-1")), ("sha", Value::from("snap1"))]);
-    let saved = saved_settings(&[("quality_job", Value::from("local")), ("ci", Value::Object(ci))]);
-    assert_eq!(
-        error(resumable(&[], &saved)),
-        "run 20260929-120000-a1b2c3 has a quality build of the Jenkins job `local` in flight, saved by a release \
-         before 0.63.0; `local` now names the local gate, so resume the run with that release, or close it"
-    );
-    // A run of the local gate keeps no build there.
-    let saved = saved_settings(&[("quality_job", Value::from("local"))]);
-    assert_eq!(resumable(&[], &saved).unwrap().quality_job.as_deref(), Some("local"));
-}
-
 // -- TestOneRunPerCheckout: resume --force -------------------------------------------------------------------------
 
 /// resume --force of run a1b2c3 on host, which looks alive: saved 30 s ago by a live pid on this host. The fixture of
@@ -270,7 +259,7 @@ fn a_state_that_replaces_an_unknown_prompt() {
 /// The state.json of a run in phase, round rnd and quality round q, with the quality gate.
 fn gated_run(phase: &str, rnd: u32, q: u32) -> Object {
     let mut state = saved_run(phase, rnd, &["spec", "build"]);
-    state.quality_job = Some(JOB.to_string());
+    state.quality_job = Some(LOCAL_GATE.to_string());
     state.quality_round = q;
     saved_with(&state, &[])
 }
@@ -299,19 +288,16 @@ fn resume_limit_needs_the_gate() {
     let saved = saved_with(&saved_run("build", 1, &[]), &[]);
     assert!(error(resumable(&["--max-quality-rounds", "2"], &saved)).contains("has no quality gate"));
     // The gate this resume turns on is enough.
-    let state = resumable(&["--quality-gate", JOB, "--max-quality-rounds", "2"], &saved).unwrap();
+    let state = resumable(&["--quality-gate", LOCAL_GATE, "--max-quality-rounds", "2"], &saved).unwrap();
     assert_eq!(state.max_quality_rounds, 2);
 }
 
 // -- new_state ---------------------------------------------------------------------------------------------------
 
-type MakeJenkins = dyn Fn(&str) -> Result<crate::ci::Jenkins, OrchestratorError>;
-
-/// A Connected of f's fakes, the configuration directory config, and jenkins for a run's quality job.
-fn connected<'a>(f: &'a Fixture, config: &'a ConfigDir, jenkins: &'a MakeJenkins) -> Connected<'a> {
+/// A Connected of f's fakes and the configuration directory config.
+fn connected<'a>(f: &'a Fixture, config: &'a ConfigDir) -> Connected<'a> {
     Connected {
         with: f.collaborators(),
-        jenkins,
         config,
         local_host: "here",
         stdout: &|_| {},
@@ -320,15 +306,11 @@ fn connected<'a>(f: &'a Fixture, config: &'a ConfigDir, jenkins: &'a MakeJenkins
     }
 }
 
-fn no_jenkins(job: &str) -> Result<crate::ci::Jenkins, OrchestratorError> {
-    Err(OrchestratorError(format!("no Jenkins for {job} here")))
-}
-
 #[test]
 fn a_new_run_takes_the_defaults_and_the_flags() {
     let (f, d) = (Fixture::new(vec![]), TempDir::new());
     let config = ConfigDir::at(&d.path());
-    let world = connected(&f, &config, &no_jenkins);
+    let world = connected(&f, &config);
     let (state, pipeline) = new_state(&run_args(&["--", "a task"], &config), "/proj", None, &world).unwrap();
     assert_eq!((state.task.as_str(), state.cwd.as_str(), state.phase.as_str()), ("a task", "/proj", "spec"));
     assert_eq!((state.workflow.as_str(), pipeline.name()), ("default", "default"));
@@ -342,14 +324,14 @@ fn a_new_run_takes_the_defaults_and_the_flags() {
     let flags = [
         "--max-rounds", "5", "--timeout", "60", "--permission-mode", "plan", "--model", "m", "--build-model", "b",
         "--role-model", "review=r", "--agent", "codex", "--role-agent", "spec=agy", "--no-pr", "--worktree",
-        "--quality-gate", JOB, "--max-quality-rounds", "2", "--machine", "box", "--cwd", "/p", "--", "a task",
+        "--quality-gate", LOCAL_GATE, "--max-quality-rounds", "2", "--machine", "box", "--cwd", "/p", "--", "a task",
     ];
     let (state, _) = new_state(&run_args(&flags, &config), "/proj", None, &world).unwrap();
     assert_eq!((state.max_rounds, state.turn_timeout, state.max_quality_rounds), (5, 60, 2));
     assert_eq!((state.permission_mode.as_deref(), state.machine.as_deref()), (Some("plan"), Some("box")));
     assert_eq!(dumps(&state.models), r#"{"spec":"m","build":"b","review":"r"}"#);
     assert_eq!(dumps(&state.next_harnesses), r#"{"spec":"agy","build":"codex","review":"codex"}"#);
-    assert_eq!((state.pull_request, state.quality_job.as_deref()), (false, Some(JOB)));
+    assert_eq!((state.pull_request, state.quality_job.as_deref()), (false, Some(LOCAL_GATE)));
     assert_eq!(state.worktree, Some(format!("/proj/.orchestrator/worktrees/{}", state.key())));
     // A timeout of 0 is none given, as Python's `args.timeout or DEFAULT_TURN_TIMEOUT` takes it.
     let (state, _) = new_state(&run_args(&["--timeout", "0", "t"], &config), "/proj", None, &world).unwrap();
@@ -360,7 +342,7 @@ fn a_new_run_takes_the_defaults_and_the_flags() {
 fn a_new_run_takes_the_run_id_given_unless_its_directory_is_there() {
     let (f, d) = (Fixture::new(vec![]), TempDir::new());
     let config = ConfigDir::at(&d.path());
-    let world = connected(&f, &config, &no_jenkins);
+    let world = connected(&f, &config);
     let id = "20261103-142233-a1b2c3";
     let (state, _) = new_state(&run_args(&["--run-id", id, "t"], &config), "/proj", None, &world).unwrap();
     assert_eq!(state.run_id, id);
@@ -377,7 +359,7 @@ fn a_new_run_takes_the_run_id_given_unless_its_directory_is_there() {
 fn a_new_run_from_a_spec_starts_after_its_contract_step_and_takes_its_title() {
     let (f, d) = (Fixture::new(vec![]), TempDir::new());
     let config = ConfigDir::at(&d.path());
-    let world = connected(&f, &config, &no_jenkins);
+    let world = connected(&f, &config);
     let spec = crate::spec_file::SpecFile { path: "/s.md".into(), text: "# Add subtract\n\nbody\n".into() };
     let (state, _) = new_state(&run_args(&["--spec", "/s.md"], &config), "/proj", Some(&spec), &world).unwrap();
     assert_eq!((state.task.as_str(), state.phase.as_str()), ("Add subtract", "build"));
@@ -393,7 +375,7 @@ fn a_new_run_of_a_workflow_file_or_a_named_one() {
     std::fs::write(d.join("workflows/quick.toml"), workflow_toml(&quick())).unwrap();
     std::fs::write(d.join("solo.toml"), workflow_toml(&solo())).unwrap();
     let config = ConfigDir::at(&d.path());
-    let world = connected(&f, &config, &no_jenkins);
+    let world = connected(&f, &config);
     let (state, pipeline) = new_state(&run_args(&["--workflow", "quick", "t"], &config), "/proj", None, &world).unwrap();
     assert_eq!((state.workflow.as_str(), state.phase.as_str(), pipeline.name()), ("quick", "build", "quick"));
     let file = d.join("solo.toml");
@@ -414,21 +396,43 @@ fn a_new_run_of_a_workflow_file_or_a_named_one() {
 fn a_resume_finds_its_run_on_the_host_and_switches_its_gate() {
     let host = Rc::new(FakeHost::default());
     let mut saved = saved_run("build", 1, &["spec", "build"]);
-    saved.quality_job = Some(JOB.to_string());
+    saved.quality_job = Some(LOCAL_GATE.to_string());
     host.state().files.insert(format!("{}/state.json", saved.dir()), saved.to_text());
     host.state().ages.insert(saved.run_id.clone(), 10_000);
     let f = Fixture::on(host, saved, vec![]);
     let config = ConfigDir::at("/nowhere");
-    let world = connected(&f, &config, &no_jenkins);
+    let world = connected(&f, &config);
     let (state, pipeline) = resumed_state(&resume_args(&["a1b2c3"]), "/proj", &world).unwrap();
-    assert_eq!((state.quality_job.as_deref(), pipeline.name()), (Some(JOB), "default"));
+    assert_eq!((state.quality_job.as_deref(), pipeline.name()), (Some(LOCAL_GATE), "default"));
     let (state, _) = resumed_state(&resume_args(&["a1b2c3", "--no-quality-gate"]), "/proj", &world).unwrap();
     assert_eq!((state.quality_job, state.quality_gate_disabled), (None, true));
-    // The job of --quality-gate, which must be had first.
-    let e = resumed_state(&resume_args(&["a1b2c3", "--quality-gate", "other/job"]), "/proj", &world).unwrap_err();
-    assert_eq!(e.0, "no Jenkins for other/job here");
     let e = resumed_state(&resume_args(&["b0b0b0"]), "/proj", &world).unwrap_err();
     assert_eq!(e.0, "no run b0b0b0 under /proj/.orchestrator/runs");
+}
+
+#[test]
+fn a_run_of_the_jenkins_gate_resumes_on_the_local_gate() {
+    // A quality build in flight, as a release before 0.71.0 saved it: a Jenkins job of any name, `local` too, as a
+    // release before 0.63.0 took it.
+    let ci = object([("ref", Value::from("orchestrator-ci/a1b2c3-1-q1")), ("sha", Value::from("snap1"))]);
+    for job in [JENKINS_JOB, LOCAL_GATE] {
+        let host = Rc::new(FakeHost::default());
+        let state = quality_state(1);
+        let saved = saved_with(&state, &[("quality_job", Value::from(job)), ("ci", Value::Object(ci.clone()))]);
+        host.state().files.insert(format!("{}/state.json", state.dir()), Value::Object(saved).to_string());
+        host.state().ages.insert(state.run_id.clone(), 10_000);
+        let f = Fixture::on(host, state, vec![]);
+        let config = ConfigDir::at("/nowhere");
+        let world = connected(&f, &config);
+        let (resumed, _) = resumed_state(&resume_args(&["a1b2c3"]), "/proj", &world).unwrap();
+        assert_eq!((resumed.quality_job.as_deref(), resumed.ci.is_empty()), (Some(LOCAL_GATE), true), "{job}");
+        assert_eq!((resumed.phase.as_str(), resumed.quality_round), ("quality", 1), "{job}");
+        let warning = format!(
+            "run 20260929-120000-a1b2c3: the Jenkins quality gate was removed in 0.71.0, so the local gate replaces \
+             job {JENKINS_JOB}"
+        );
+        assert_eq!(f.told.lines(), if job == JENKINS_JOB { vec![warning] } else { vec![] }, "{job}");
+    }
 }
 
 /// The herdr server whose session is session, its socket path unset.
@@ -440,7 +444,7 @@ fn session(session: &str) -> HerdrServer {
 fn a_run_saves_the_herdr_server_it_starts_or_resumes_its_agents_in() {
     let (f, d) = (Fixture::new(vec![]), TempDir::new());
     let config = ConfigDir::at(&d.path());
-    let world = connected(&f, &config, &no_jenkins);
+    let world = connected(&f, &config);
     f.herdr.state().server = Some(session("work"));
     let (state, _) = new_state(&run_args(&["t"], &config), "/proj", None, &world).unwrap();
     assert_eq!(state.herdr_server, Some(session("work")));
@@ -457,7 +461,7 @@ fn a_run_saves_the_herdr_server_it_starts_or_resumes_its_agents_in() {
     host.state().files.insert(format!("{}/state.json", saved.dir()), saved.to_text());
     host.state().ages.insert(saved.run_id.clone(), 10_000);
     let f = Fixture::on(host, saved, vec![]);
-    let world = connected(&f, &config, &no_jenkins);
+    let world = connected(&f, &config);
     f.herdr.state().server = Some(session("new"));
     let (state, _) = resumed_state(&resume_args(&["a1b2c3"]), "/proj", &world).unwrap();
     assert_eq!(state.herdr_server, Some(session("new")));

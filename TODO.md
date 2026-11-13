@@ -47,7 +47,8 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 - **A gated run without a pull request is told it pushes when gitleaks is missing.** `Host::check_gitleaks`
   (`engine/src/host.rs:630`) opens "this run pushes, and every push is scanned for secrets first", and
-  `QualityGate::preflight` (`engine/src/ci.rs:148`) raises it for any gated run: a `--quality-gate local` run without
+  `Workflow::check_gate` (`engine/src/workflow.rs`) and `turn_quality_gate_on` (`engine/src/workflow/gate_switch.rs`)
+  raise it for any gated run: a `--quality-gate local` run without
   `--pr` pushes nothing; what gitleaks scans there is each snapshot before it is judged. Raised while doing todo/53,
   which gave doctor its own wording. Closed by having the gate's preflight say why it needs gitleaks in its own words,
   leaving check_gitleaks's to a run that publishes.
@@ -87,28 +88,13 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   LAUNCH failing when the job's group never appears, which needs telling that from a job that ended within its wait.
 - **A stuck loop can compare a round read from `quality.json` with one read from `quality.md`.** Raised by
   cross-review 160 (F3): "A round judged from quality.json records every failing finding's fingerprint; one judged
-  from quality.md (gate_failures) records at most QUALITY_FINDINGS_LIMIT." A round of a build that has
-  `quality.json` is still read from its `quality.md` when the orchestrator stopped between writing the quality file
-  and saving the round, or when two reads of a running build agreed before `quality.json` was copied; with more than
+  from quality.md (gate_failures) records at most QUALITY_FINDINGS_LIMIT." A round the gate wrote a
+  `quality.json` for is still read from its quality file when the orchestrator stopped between writing that file and
+  saving the round (`Workflow::quality`, `engine/src/workflow/quality_rounds.rs`); with more than
   50 identical failing findings in rounds Q-1 and Q from different sources, `GateFailures.repeats` is false and the
   stuck rule misses that loop, so the Builder gets one more turn. Closes with recording the round before the quality
   file is written, or comparing only the first `QUALITY_FINDINGS_LIMIT` of a JSON-read round against a Markdown-read
-  one; goes with the fallback below.
-- **A running build's reports are taken as whole once two reads agree.** A Jenkins judgement's `gate_or_end`
-  (`engine/src/ci/judging.rs`) reads a still running build's `quality.md`, and its `quality.json` with
-  it, each poll and takes the pair when two reads at least `CI_POLL_SECONDS` apart are equal, because Jenkins serves
-  an artifact while `archiveArtifacts` is still copying it. Raised by the cross-review of `quality-round-early-read`
-  (F1, 2026-10-27): "Equal reads show only that the copy made no progress between them, not that it finished." Two
-  such reads are taken only once they hold a whole non-blank line (review 58, F1), so a copy stalled that long past
-  its first line and then resumed still hands the round a cut file, which shortens the Builder's findings and
-  `quality_rounds`' fingerprints. A `quality.json` not yet copied when two reads agree leaves the round on the
-  fallback below. Ticketed as GitHub #387 (`.scratch/todo/issues/45`), which says how it closes.
-- **The engine still reads a build's `quality.md` where it archived no `quality.json`.** `Workflow::quality`
-  (`engine/src/workflow/quality_rounds.rs`) falls back to `parse_gate` and `gate_failures` for a build without
-  `quality.json`: a quality job whose judged `main` predates gate-standalone/07, or another project's job running a
-  gate release before 0.5.0. Delete the fallback for builds once no supported quality job lacks `quality.json`;
-  `parse_gate` and `gate_failures` stay for the files the engine writes itself (`GATE: BUILD_FAILED`, `GATE: LEAK`).
-  Ticketed as GitHub #349 (`.scratch/todo/issues/07`).
+  one.
 - **An in-place run puts back what the human changes in the checkout while a proof runs.** `Workflow::run_proof`
   snapshots the working tree before each proof and `Host::restore_tree` puts back every path that differs afterwards,
   whoever changed it (cross-review 143, F2): in an in-place run a file the human saves during a proof is overwritten
@@ -153,11 +139,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   the value it set. Left out of origin-retry ticket 01 (2026-11-04). Would close with each write's retry made safe to
   repeat, then routed through `reaching_origin`. Decided against (the user's ruling, 2026-11-11): a run a write fails
   is resumed once origin is back, and making each write safe to repeat costs more than that resume.
-- **`ci` reads the run's layout from `RunState`.** `QualityGate::start` (`engine/src/ci.rs`) takes `&mut RunState` and
-  reads its base, work dir, run id, leaks path, gate dir, ci ref, quality place and `ci`, while `state.rs` imports
-  `crate::ci::LOCAL_GATE`. Deferred from cross-review 181 (F5, nit): "a module cycle, and the run's layout leaks into
-  the CI client. Passing the snapshot's inputs and `&mut Object` would keep `ci` below `state`." Closes with `start`
-  taking those inputs and `RunState::ci`, if the parameter list that brings stays shorter than what it removes.
 - **`host`'s text helpers sit in an import cycle.** `last_lines` and `line_ends_as_lf` (`engine/src/host.rs`) are pure
   `&str` functions, but `host` imports `state::SavedRun` and `state` imports `herdr`, so herdr → host → state →
   herdr (`engine/src/herdr.rs:21`, `engine/src/host.rs:26`, `engine/src/state.rs:9`) and prompts → host → state →
@@ -213,11 +194,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 - **The Rust engine's Ctrl-C, what is left.** Rust-engine ticket 08's part 6 (2026-10-29) has a SIGINT raise the
   `Interrupt`, which stops the command the engine waits on (`crate::interrupt`), and since ticket 10 every command of
   the binary takes it. Not closed: (1) A
-  Ctrl-C during a Jenkins or PyPI request (`crate::http`, ureq) waits for the request to end, up to its timeout, where
+  Ctrl-C during a PyPI or crates.io request (`crate::http`, ureq) waits for the request to end, up to its timeout, where
   Python's KeyboardInterrupt stops `urlopen` at once: there is no process to stop, and ureq has no way to abandon a
   request from another thread. The user accepted that wait for a Ctrl-C (2026-10-29, review 100). Since ticket 08's
   follow-ups a SIGTERM or a SIGHUP waits so too (cross-review 102, F4: "a `kill <pid>` or a service manager's stop
-  during the quality gate's Jenkins polling or the dependency check's PyPI request waits up to the request
+  during the dependency check's PyPI request waits up to the request
   timeout"), where it ended the Python engine at once; a service manager that sends SIGKILL after a shorter grace
   kills the engine with the run unreleased. Decided against (the user's ruling, 2026-11-11): a request the Interrupt
   can cut short, by slices of the timeout or a thread nobody waits for; the wait is accepted for SIGTERM and SIGHUP
@@ -249,7 +230,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   against (the user's ruling, 2026-11-11): the command's group killed when the engine dies, by a subreaper or a
   watchdog (Linux's `PR_SET_PDEATHSIG`, set in `run_process`'s `pre_exec`, reaches only the command itself, not what
   it starts); a SIGKILL allows no cleanup, and a resumed run takes over the agents it finds alive.
-- **The Rust engine talks to Jenkins and PyPI otherwise than urllib in a few cases.** Its transport is ureq
+- **The Rust engine talks to PyPI otherwise than urllib in a few cases.** Its transport is ureq
   (`HttpClient`, `engine/src/http.rs`, rust-engine ticket 07, 2026-10-28), which differs from `urlopen` where no test of
   the Python engine pins it (its CONNECT to a proxy for a plain-http URL stays, documented in README's Requirements:
   the user's ruling, 2026-11-12, GitHub #410): TLS trusts the certificates of the places the environment names, else of
@@ -269,19 +250,15 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   macOS, where neither engine reads the keychain; and without either variable, on a machine with no certificate at all,
   it trusts Mozilla's roots (webpki-roots), where Python trusts none and fails every https request; and the timeout
   bounds the connect and each read and write, as urllib's does, but not name resolution. In what it reads
-  (`engine/src/ci.rs`, `engine/src/pypi.rs`, `engine/src/checks/dependencies.rs`): an answer of Jenkins's of another
-  shape than a queue item, a build's result, a list of builds or a test report is a `CIError` that may pass, where the
-  Python engine fails with an `AttributeError`, and a queue item's `executable.number` that is not an integer is one
-  too, where Python keeps it; a manifest is read as TOML 1.1, which tomllib before Python 3.15 refuses in part, and why
+  (`engine/src/pypi.rs`, `engine/src/checks/dependencies.rs`): a manifest is read as TOML 1.1, which tomllib before Python 3.15 refuses in part, and why
   one is not TOML is the toml crate's words with `(at line L, column C)`; and rustls refuses a server certificate that
   is a CA's own, as a self-signed one made by `openssl req -x509` with its default extensions is (`CaUsedAsEndEntity`),
   where OpenSSL accepts it when it is trusted, so the e2e scenarios' PyPI has a leaf under a CA of its own (found by
   ticket 08's part 7, 2026-10-29). The rest is decided against unless a setup is found that needs it. Decided against
-  (2026-10-28, ticket 07, design-it-twice): `CI` and `PyPI` as traits of their own with in-memory fakes. The engine's
-  tests would then word every URL and error twice, in the code and in the fake, and ticket 08's Workflow tests, which
-  read the requests Jenkins got (`FakeCI.names`, `requests`, `auth`), would port only by re-deriving them; with the seam
-  at `Http`, as Python's at `urlopen`, `FakeJenkins` and `FakePyPI` play the servers and every line of `Jenkins` and
-  `PyPI` runs in those tests. The user kept the `Http` seam and amended the spec's Lane to say so (2026-10-28,
+  (2026-10-28, ticket 07, design-it-twice): `PyPI` as a trait of its own with an in-memory fake. The engine's tests
+  would then word every URL and error twice, in the code and in the fake; with the seam at `Http`, as Python's at
+  `urlopen`, `FakePyPI` and `FakeCratesIo` play the servers and every line of `PyPI` and `CratesIo` runs in those
+  tests. The user kept the `Http` seam and amended the spec's Lane to say so (2026-10-28,
   cross-review 93, F1), and issue 08 says which seam it is given.
 - **No build runs the Rust doctests.** cargo-nextest does not run doctests, and since the Test stage's `cargo llvm-cov
   nextest` replaced the UI stage's `cargo test`, nothing does: `octoflow_ui_lib` is an `rlib` among its crate types
@@ -291,8 +268,8 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   under the agent's 3 GB, for no example. Closes with `cargo test --doc --locked` in the Test stage once a doc example
   lands, or with cargo-llvm-cov's `--doctests` once it runs on a stable toolchain.
 - **The e2e scenarios record `state.json` at each command the fakes get, not after each save.** Ticket
-  rust-engine/01 asks for "`state.json` after each save"; the ledger reads it only when herdr, gh, Jenkins or PyPI
-  gets a call, and leaves out a change to `heartbeat_at` alone (`engine/e2e/src/ledger.rs`, `changed_states`). Raised
+  rust-engine/01 asks for "`state.json` after each save"; the ledger reads it only when herdr, gh or PyPI gets
+  a call, and leaves out a change to `heartbeat_at` alone (`engine/e2e/src/ledger.rs`, `changed_states`). Raised
   by cross-review 65 (F2, 2026-10-27): "a Rust engine that skips or reorders saves between two of those calls, or
   writes a wrong intermediate state that a later save overwrites, still passes." Only the engine's own process sees
   every save: for the Python engine an audit hook through `sitecustomize`, or a `mv` on PATH that `Host.write` calls,

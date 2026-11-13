@@ -3,10 +3,11 @@
 
 use super::args::{ResumeArgs, RunArgs, Settings};
 use super::Connected;
-use crate::ci::{QualityGate, LOCAL_GATE};
 use crate::constants::{DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT, RUNS_DIR, WORKTREES_DIR};
 use crate::error::OrchestratorError;
 use crate::harness::harness;
+use crate::json::Object;
+use crate::local_gate::LOCAL_GATE;
 use crate::pipeline::{Pipeline, DONE, QUALITY};
 use crate::prompts::{load_prompts, Prompts};
 use crate::map::Map;
@@ -59,7 +60,7 @@ pub fn new_state(
     state.pull_request = !args.no_pr;
     // Its path from the start, so round 0 creates the worktree there.
     state.worktree = args.starts.worktree.then(|| format!("{cwd}/{WORKTREES_DIR}/{}", state.key()));
-    state.quality_job = args.starts.quality_gate.clone();
+    state.quality_job = args.starts.quality_gate.then(|| LOCAL_GATE.to_string());
     state.max_quality_rounds = s.max_quality_rounds.map_or(DEFAULT_MAX_QUALITY_ROUNDS, saturating_u32);
     Ok((state, pipeline))
 }
@@ -97,12 +98,14 @@ pub(crate) fn new_run_id(wall: f64, zone: &jiff::tz::TimeZone) -> Result<String,
 }
 
 /// The state of the run args.run_ref names among cwd's runs and its workflow, as resumable_state finds them, with the
-/// quality gate turned on or off as args asks (turn_quality_gate_on and _off: the gate's preflight, and the run's
-/// refs on origin deleted), and its herdr server world's herdr's (Herdr::server), where it starts its agents from
-/// now on; a done run's as resumable_state gives it. Changes nothing on disk.
+/// quality gate turned on or off as args asks (turn_quality_gate_on and _off), and its herdr server world's herdr's
+/// (Herdr::server), where it starts its agents from now on; a done run's as resumable_state gives it. Changes nothing
+/// on disk.
 ///
-/// Errors: the run cannot be resumed (resumable_state), its gate cannot be switched, or the job's credentials
-/// cannot be read.
+/// A run a release before 0.71.0 started on a Jenkins quality job goes on with the local gate, its human told which
+/// job it leaves; a quality build it had in flight is dropped, and its quality round judged again locally.
+///
+/// Errors: the run cannot be resumed (resumable_state), or its gate cannot be switched.
 pub fn resumed_state(args: &ResumeArgs, cwd: &str, world: &Connected) -> Result<(RunState, Pipeline), OrchestratorError> {
     let w = &world.with;
     let runs = w.host.run_states(cwd)?;
@@ -111,8 +114,17 @@ pub fn resumed_state(args: &ResumeArgs, cwd: &str, world: &Connected) -> Result<
         return Ok((state, pipeline));
     }
     state.herdr_server = w.herdr.server();
-    if let Some(name) = args.quality_gate.as_deref().filter(|j| !j.is_empty()) {
-        turn_quality_gate_on(&mut state, &pipeline, w.host, w.human, &QualityGate::named(name, world.jenkins)?)?;
+    if let Some(job) = state.quality_job.take_if(|job| !job.is_empty() && job != LOCAL_GATE) {
+        w.human.log(&format!(
+            "run {}: the Jenkins quality gate was removed in 0.71.0, so the local gate replaces job {job}",
+            state.run_id
+        ));
+        state.quality_job = Some(LOCAL_GATE.to_string());
+    }
+    // Only a Jenkins build was ever kept here, even under a job named `local`, as a release before 0.63.0 took it.
+    state.ci = Object::new();
+    if args.quality_gate {
+        turn_quality_gate_on(&mut state, &pipeline, w.host, w.human)?;
     } else if args.no_quality_gate {
         turn_quality_gate_off(&mut state, &pipeline, w)?;
     }
@@ -139,15 +151,6 @@ pub fn resumable_state(
     // Not even with --force: close may have deleted its worktree and branch.
     if state.closed.is_some() {
         return Err(OrchestratorError(format!("run {} was closed; start a new run", state.run_id)));
-    }
-    // A local gate never keeps a build in state.ci: this one is of a Jenkins job named `local`, as a release before
-    // 0.63.0 took that name, and this engine would read it as the local gate.
-    if state.quality_job.as_deref() == Some(LOCAL_GATE) && !state.ci.is_empty() {
-        return Err(OrchestratorError(format!(
-            "run {} has a quality build of the Jenkins job `{LOCAL_GATE}` in flight, saved by a release before 0.63.0; \
-             `{LOCAL_GATE}` now names the local gate, so resume the run with that release, or close it",
-            state.run_id
-        )));
     }
     let pipeline = state.pipeline()?;
     if let Some((RUNNING, why)) = run.health(local_host, pid_alive) {
@@ -200,8 +203,7 @@ pub fn resumable_state(
 /// is already past the limit.
 fn resume_quality_limit(state: &mut RunState, pipeline: &Pipeline, args: &ResumeArgs) -> Result<(), OrchestratorError> {
     if let Some(n) = args.settings.max_quality_rounds {
-        let gate_on = args.quality_gate.as_deref().is_some_and(|j| !j.is_empty());
-        if state.quality_job.as_deref().is_none_or(str::is_empty) && !gate_on {
+        if state.quality_job.as_deref().is_none_or(str::is_empty) && !args.quality_gate {
             return Err(OrchestratorError(format!(
                 "run {} has no quality gate, so --max-quality-rounds does not apply",
                 state.run_id

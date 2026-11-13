@@ -12,7 +12,7 @@
 //! crate::state's (ticket 04).
 
 use super::*;
-use crate::ci::fake::{credentials, Outcome};
+use crate::workflow::fixture::Outcome;
 use crate::constants::{FINISHED, QUALITY_GATE_FAILED};
 use crate::paths::file_name;
 use crate::prompts::QUALITY_PASSED_NOTE;
@@ -267,18 +267,6 @@ fn fresh_gated_step_answering_a_quality_round() {
     // The second role goes to the right of the first.
     assert_eq!(calls_of(&f, "split"), [split("w1:p1", Direction::Right)]);
     assert_eq!(wf.state().quality_round, 2);
-}
-
-#[test]
-fn resumed_gated_step_checks_the_credentials_first() {
-    let mut env = credentials();
-    env.remove("JENKINS_TOKEN");
-    let f = Fixture::resume(Rc::new(FakeHost::default()), impl_saved(), vec![("impl", vec![impl_turn(1, 0)])], &[], &[])
-        .gated_with(&env);
-
-    let e = failure(f.workflow(RunSettings { pipeline: Some(impl_()), ..f.as_saved() }).run());
-    assert!(e.contains("needs JENKINS_TOKEN"), "{e}");
-    assert!(names(&f, "prompt").is_empty());
 }
 
 #[test]

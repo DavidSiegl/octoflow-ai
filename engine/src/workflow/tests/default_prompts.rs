@@ -12,7 +12,7 @@
 //! built by hand (new_state is the CLI's).
 
 use super::*;
-use crate::ci::fake::Outcome;
+use crate::workflow::fixture::Outcome;
 use crate::env::ConfigDir;
 use crate::paths::file_name;
 use crate::pipeline::{find_workflow, Pipeline, DEFAULT_WORKFLOW};
@@ -466,7 +466,7 @@ fn gate_runs_out_then_passes() {
 /// saved_run of the default workflow's three roles with the gate's job.
 fn gated_run(phase: &str, rnd: u32) -> RunState {
     let mut state = saved_run(phase, rnd, FULL);
-    state.quality_job = Some(crate::ci::LOCAL_GATE.to_string());
+    state.quality_job = Some(crate::local_gate::LOCAL_GATE.to_string());
     state
 }
 

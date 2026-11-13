@@ -182,10 +182,9 @@ pub(crate) struct FakeState {
     pub merge_head: bool,
     /// (parent, message) of each snapshot, whose commit is snap<n>.
     pub snapshots: Vec<(String, String)>,
-    /// origin's branches, by name, with their commit: those `push --force` and `push --set-upstream` created, which
-    /// `ls-remote` lists.
+    /// origin's branches, by name, with their commit: those `push --set-upstream` created, which `ls-remote` reads.
     pub remote: Map<String>,
-    /// The stderr of a failing `ls-remote` of origin, which lists remote; None lists it.
+    /// The stderr of a failing `ls-remote` of origin, which reads remote; None reads it.
     pub list_remote_error: Option<String>,
     /// How many more `ls-remote`s fail with list_remote_error, the ones after them succeeding; None: every one.
     pub list_remote_failures_left: Option<u32>,
@@ -626,27 +625,16 @@ impl FakeState {
         ok("")
     }
 
-    /// `git push` to origin: a forced push of a commit to a branch, which remote then holds; a local branch pushed with
-    /// `--set-upstream`, which remote then holds at the branch's commit, with a tracking branch; or the delete of a
-    /// branch from remote, which fails when remote has none, and with a lease fails unless remote has it at the commit
-    /// the lease names ("None" for no branch), and drops its tracking branch too.
+    /// `git push` to origin: a local branch pushed with `--set-upstream`, which remote then holds at the branch's
+    /// commit, with a tracking branch; or the delete of a branch from remote with a lease, which fails unless remote
+    /// has it at the commit the lease names ("None" for no branch), and drops its tracking branch too.
     fn git_push(&mut self, args: &[&str]) -> Completed {
         match args {
-            ["push", "--quiet", "--force", "origin", refspec] => {
-                let (commit, git_ref) = refspec.split_once(':').unwrap_or((refspec, ""));
-                self.remote.insert(git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref), commit.to_string());
-            }
             ["push", "--quiet", "--set-upstream", "origin", b] => {
                 let commit = self.branch_commit(b).unwrap_or_else(|| panic!("FakeHost has no branch {b} to push"));
                 let commit = commit.to_string();
                 self.remote.insert(*b, commit);
                 self.tracking.insert(b.to_string());
-            }
-            ["push", "--quiet", "origin", "--delete", git_ref] => {
-                if self.remote.remove(git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref)).is_none() {
-                    let said = format!("error: unable to delete '{git_ref}': remote ref does not exist");
-                    return Completed::new(1, "", &said);
-                }
             }
             ["push", "--quiet", lease, "origin", "--delete", git_ref] if lease.starts_with("--force-with-lease=") => {
                 let b = git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref);
@@ -662,16 +650,13 @@ impl FakeState {
         ok("")
     }
 
-    /// `git ls-remote` of origin: every branch remote holds, which fails with list_remote_error when that is set; or
-    /// the one branch a ref names, nothing when remote has none.
+    /// `git ls-remote` of origin's one branch a ref names, nothing when remote has none; it fails with
+    /// list_remote_error when that is set.
     fn git_ls_remote(&mut self, args: &[&str]) -> Completed {
         if let Some(error) = self.list_remote_error.as_deref().filter(|_| fails(&mut self.list_remote_failures_left)) {
             return Completed::new(128, "", error);
         }
         match args {
-            ["ls-remote", "--heads", "origin"] => {
-                ok(&self.remote.iter().map(|(b, c)| format!("{c}\trefs/heads/{b}\n")).collect::<String>())
-            }
             ["ls-remote", "origin", git_ref] => {
                 let b = git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref);
                 ok(&self.remote.get(b).map(|c| format!("{c}\t{git_ref}\n")).unwrap_or_default())

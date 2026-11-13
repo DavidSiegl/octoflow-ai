@@ -19,7 +19,7 @@ use octoflow_e2e::ledger::{write_atomically, Ledger, INVOCATION_VAR};
 use octoflow_e2e::normalize::{facts, Normalizer};
 use octoflow_e2e::scratch::Scratch;
 
-use crate::servers::{ServerFailure, Servers, JENKINS_TOKEN, JENKINS_USER, PYPI_CA};
+use crate::servers::{ServerFailure, Servers, PYPI_CA};
 use octoflow_e2e::{array_at, checkout, object, object_at, procs, str_at, strings};
 use serde_json::Value;
 use octoflow_engine::map::Map;
@@ -173,7 +173,7 @@ fn read_lossy(path: &Path) -> String {
 /// output). Dropping it kills any invocation still running and removes the directory, unless the scenario failed,
 /// when the directory is kept for a look and its path printed.
 pub struct World {
-    /// The world's Jenkins and PyPI. Declared before scratch, so that they stop before the directory they read goes.
+    /// The world's PyPI. Declared before scratch, so that it stops before the directory it reads goes.
     servers: Servers,
     /// The world's directory, removed when the world is dropped, or kept when the scenario failed. Fields drop after
     /// World's own drop has killed the invocations, so nothing of the engine's still runs in it then.
@@ -208,7 +208,7 @@ fn fakes() -> [(&'static str, &'static str); 4] {
 }
 
 impl World {
-    /// A world in a new directory named for the scenario, running engine, its Jenkins and PyPI serving. Panics,
+    /// A world in a new directory named for the scenario, running engine, its PyPI serving. Panics,
     /// failing the scenario, where gitleaks or openssl is not on PATH: the engine runs the real gitleaks, and a
     /// scenario without it would record its absence; openssl makes PyPI's certificate (servers::Servers::start).
     pub fn new(scenario: &str, engine: &Path) -> World {
@@ -228,7 +228,6 @@ impl World {
             ("agents", object([])),
             ("machines", Value::Array(Vec::new())),
             ("gh", object([])),
-            ("jenkins", object([("builds", Value::Array(Vec::new()))])),
             ("gate", object([("judgements", Value::Array(Vec::new()))])),
             ("pypi", object([])),
         ]);
@@ -237,7 +236,6 @@ impl World {
             fs::create_dir_all(&path).unwrap_or_else(|e| panic!("making {}: {e}", path.display()));
         }
         let servers = Servers::start(&root);
-        normalizer.literal(&servers.jenkins_url, "<jenkins>");
         let world = World {
             servers,
             ledger: Ledger::new(&root),
@@ -282,15 +280,6 @@ impl World {
         self.write_script();
     }
 
-    /// Script the next build the quality job is asked for, build: how it ends ("result"), the quality.md it archives
-    /// ("quality", null for one that ended before its Gate stage), its failing tests ("tests", [name, detail] pairs, or
-    /// null for no test report), its "console" and "description"; with "hold", it runs until release(hold), archiving
-    /// nothing meanwhile.
-    pub fn jenkins_build(&mut self, build: Value) {
-        array_at(object_at(&mut self.script, "jenkins"), "builds").push(build);
-        self.write_script();
-    }
-
     /// Make the project's main pin a stub octoflow-gate release, which curl serves from the world, whose gate is the
     /// fake gate (octoflow_e2e::fakes::gate), and script its judgements, one per run of `--quality-gate local`, in
     /// order. Call it once, before the engine first runs.
@@ -327,13 +316,6 @@ impl World {
         self.git(&project, &["add", "ci/gate.pin"]);
         self.git(&project, &["commit", "--quiet", "-m", "Pin the gate"]);
         self.git(&project, &["push", "--quiet", "origin", "main"]);
-    }
-
-    /// Give the quality job a build that Jenkins keeps from before the scenario, as judged-in-quality reads it.
-    pub fn retained_build(&mut self, number: i64, result: &str, description: &str) {
-        let build = object([("number", Value::from(number)), ("result", Value::from(result)), ("description", Value::from(description))]);
-        array_at(object_at(&mut self.script, "jenkins"), "retained").push(build);
-        self.write_script();
     }
 
     /// Make PyPI answer GET /pypi/<name>/json with answer, its JSON API's document; any other name is a 404.
@@ -530,9 +512,6 @@ impl World {
         env.push(("HERDR_ENV".to_string(), "1".to_string()));
         env.push((INVOCATION_VAR.to_string(), n.to_string()));
         env.extend([
-            ("JENKINS_URL", self.servers.jenkins_url.clone()),
-            ("JENKINS_USER", JENKINS_USER.to_string()),
-            ("JENKINS_TOKEN", JENKINS_TOKEN.to_string()),
             ("no_proxy", "127.0.0.1,localhost".to_string()),
             ("https_proxy", self.servers.proxy_url.clone()),
             ("SSL_CERT_FILE", self.root().join(PYPI_CA).display().to_string()),

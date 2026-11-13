@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::constants::PYPI_TIMEOUT;
 use crate::error::shortened;
-use crate::http::{quote, Http, HttpError, Method, Request};
+use crate::http::{quote, Http, HttpError, Request};
 use crate::package_index::{IndexError, IndexedPackage, PackageIndex, Upload};
 use serde_json::Value;
 use crate::json::ValueExt;
@@ -28,10 +28,8 @@ impl PyPI {
     pub fn project(&self, name: &str) -> Result<Option<IndexedPackage>, IndexError> {
         let url = format!("https://pypi.org/pypi/{}/json", quote(name));
         let request = Request {
-            method: Method::Get,
             url: url.clone(),
             headers: vec![("Accept".to_string(), "application/json".to_string())],
-            form: None,
             timeout: PYPI_TIMEOUT,
         };
         let body = match self.http.send(&request) {

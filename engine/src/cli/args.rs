@@ -15,12 +15,12 @@ use crate::constants::{
     HARNESS_NAMES, CLOSED_BRANCH_GRACE, DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS,
     DEFAULT_TURN_TIMEOUT, EXIT_ERROR, EXIT_WAITING, REMOTE, ROLE_LABELS,
 };
-use crate::ci::LOCAL_GATE;
 use crate::cli::doctor::{dotted, GIT_MIN_VERSION, HERDR_MIN_VERSION};
 use crate::cli::drain::{DRAIN_DIR, SPEC_DONE, SPEC_FOR_HUMAN, SPEC_IN_REVIEW, SPEC_READY};
 use crate::cli::listing::RUN_RECORD_VERSION;
 use crate::pipeline::METRICS_FILE;
 use crate::env::ConfigDir;
+use crate::local_gate::LOCAL_GATE;
 use crate::pipeline::WORKFLOWS;
 use crate::workflow_file::workflow_names;
 
@@ -45,14 +45,6 @@ pub enum Command {
         target: Target,
         /// --setup-gate: then write what the local quality gate reads into the project (crate::local_gate::set_up).
         setup_gate: bool,
-    },
-    /// `judged-in-quality`: whether a build of the quality job already judged the current directory's HEAD as a
-    /// pull request's build into the branch would.
-    JudgedInQuality {
-        /// --quality-gate: the quality job's full name.
-        job: String,
-        /// --target: the branch the pull request would merge into.
-        branch: String,
     },
     /// `serve`: serve the runs of any project, and start new ones, over HTTP on 127.0.0.1, also answering the origins
     /// given with --origin, in their order.
@@ -118,8 +110,8 @@ pub struct Starts {
     pub workflow_file: Option<String>,
     /// --worktree: build in a git worktree of the run's own.
     pub worktree: bool,
-    /// --quality-gate: the Jenkins job's full name, or LOCAL_GATE (crate::ci::QualityGate::named).
-    pub quality_gate: Option<String>,
+    /// --quality-gate local: the run's Builder turns are judged by the local quality gate (crate::local_gate).
+    pub quality_gate: bool,
 }
 
 /// `run`'s flags and arguments.
@@ -165,22 +157,21 @@ pub struct ResumeArgs {
     pub run_ref: String,
     /// --force: take over a run that still looks alive.
     pub force: bool,
-    /// --quality-gate: turn the gate on with this job, or LOCAL_GATE.
-    pub quality_gate: Option<String>,
+    /// --quality-gate local: turn the run's gate on.
+    pub quality_gate: bool,
     /// --no-quality-gate: turn the run's gate off for good.
     pub no_quality_gate: bool,
 }
 
 impl Command {
-    /// Where the project is, as the human gave it; None for workflows, judged-in-quality and serve, which take no
-    /// --machine or --cwd.
+    /// Where the project is, as the human gave it; None for workflows and serve, which take no --machine or --cwd.
     pub fn target(&self) -> Option<&Target> {
         match self {
             Command::Run(a) => Some(&a.target),
             Command::Resume(a) => Some(&a.target),
             Command::Drain(a) => Some(&a.run.target),
             Command::Runs(target, _) | Command::Refresh(target, _) | Command::Doctor { target, .. } => Some(target),
-            Command::Workflows(_) | Command::JudgedInQuality { .. } | Command::Serve(_) => None,
+            Command::Workflows(_) | Command::Serve(_) => None,
         }
     }
 
@@ -242,16 +233,12 @@ pub fn parse_args(argv: impl IntoIterator<Item = OsString>, config: &ConfigDir) 
         }),
         Some(("refresh", m)) => Command::Refresh(target(m), string(m, "run_ref")),
         Some(("doctor", m)) => Command::Doctor { target: target(m), setup_gate: m.get_flag("setup-gate") },
-        Some(("judged-in-quality", m)) => Command::JudgedInQuality {
-            job: string(m, "quality-gate").unwrap_or_default(),
-            branch: string(m, "target").unwrap_or_default(),
-        },
         Some(("resume", m)) => Command::Resume(ResumeArgs {
             target: target(m),
             settings: settings(m),
             run_ref: string(m, "run_ref").unwrap_or_default(),
             force: m.get_flag("force"),
-            quality_gate: string(m, "quality-gate"),
+            quality_gate: m.contains_id("quality-gate"),
             no_quality_gate: m.get_flag("no-quality-gate"),
         }),
         Some(("list", m)) => {
@@ -310,15 +297,16 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         // must not be taken for it.
         .arg(Arg::new("spec").long("spec").num_args(0..=1).default_missing_value("").hide(true))
         .arg(
-            Arg::new("quality-gate").long("quality-gate").value_name("JOB").conflicts_with("no-quality-gate").help(
-                "turn the quality gate on with this Jenkins job, or `local`, as run --quality-gate has it, for a run \
-                 started without it; a Builder report not yet judged is judged before the Reviewer starts, and otherwise \
-                 the gate starts at the Builder's next turn",
+            quality_gate_arg().conflicts_with("no-quality-gate").help(
+                "turn the local quality gate on, as run --quality-gate local has it, for a run started without it; \
+                 a Builder report not yet judged is judged before the Reviewer starts, and otherwise the gate starts \
+                 at the Builder's next turn. A run started on the Jenkins gate, removed in 0.71.0, resumes on the \
+                 local gate without it",
             ),
         )
         .arg(Arg::new("no-quality-gate").long("no-quality-gate").action(ArgAction::SetTrue).help(
-            "turn the run's quality gate off for good, deleting its refs on origin; an analysis under way is \
-             dropped, and the Reviewer is told what the gate last found",
+            "turn the run's quality gate off for good; an analysis under way is dropped, and the Reviewer is told \
+             what the gate last found",
         ));
     let run_ref = || Arg::new("run_ref").value_name("RUN").required(true).help(RUN_REF_HELP);
     let list = clap::Command::new("list")
@@ -424,29 +412,6 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         ))
         .args(target_args())
         .arg(Arg::new("run_ref").value_name("RUN").help(format!("{RUN_REF_HELP}; default: every such run")));
-    let judged = clap::Command::new("judged-in-quality")
-        .about("exit 0 when a quality build already judged HEAD as its pull request's build would")
-        .long_about(format!(
-            "Exit 0 when a build of the quality job JOB already judged HEAD as a pull request's build into BRANCH \
-             would, so that build need not judge it again; docs/quality-gate.md says when. Fetches BRANCH, and the \
-             main commit a build names. Otherwise, and on any error, exit {EXIT_ERROR}, saying why in one line on \
-             standard error. Needs JENKINS_URL, JENKINS_USER and JENKINS_TOKEN, from the environment or {}.",
-            config.ci_env_path()
-        ))
-        .arg(
-            Arg::new("quality-gate")
-                .long("quality-gate")
-                .value_name("JOB")
-                .required(true)
-                .help("the quality job's full name, folders included"),
-        )
-        .arg(
-            Arg::new("target")
-                .long("target")
-                .value_name("BRANCH")
-                .required(true)
-                .help("the branch the pull request would merge into"),
-        );
     let doctor = clap::Command::new("doctor")
         .about("check what a run needs, and say what to run for each that is missing")
         .long_about(format!(
@@ -492,7 +457,7 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         .infer_long_args(true)
         // argparse takes the last of a flag given twice, where clap would refuse it.
         .subcommands(
-            [run, resume, list, metrics, show, prune, drain, close, refresh, workflows, judged, doctor, serve]
+            [run, resume, list, metrics, show, prune, drain, close, refresh, workflows, doctor, serve]
                 .map(|c| c.args_override_self(true)),
         )
 }
@@ -572,7 +537,7 @@ fn settings_args() -> Vec<Arg> {
             .value_parser(number())
             .allow_negative_numbers(true)
             .help(format!(
-                "with --quality-gate: quality builds per review round before the Reviewer gets the change anyway \
+                "with --quality-gate: quality gate analyses per review round before the Reviewer gets the change anyway \
                  (default {DEFAULT_MAX_QUALITY_ROUNDS})"
             )),
     ]);
@@ -585,7 +550,7 @@ fn starts(m: &ArgMatches) -> Starts {
         workflow: string(m, "workflow").unwrap_or_else(|| "default".to_string()),
         workflow_file: string(m, "workflow-file"),
         worktree: m.get_flag("worktree"),
-        quality_gate: string(m, "quality-gate"),
+        quality_gate: m.contains_id("quality-gate"),
     }
 }
 
@@ -614,14 +579,24 @@ fn starts_args(config: &ConfigDir) -> Vec<Arg> {
              use. Needs a branch checked out and an origin. The worktree is removed once the pull request is open; \
              when the run fails, or for run --no-pr, it stays",
         ),
-        Arg::new("quality-gate").long("quality-gate").value_name("JOB").help(
-            "after each Builder turn, have this Jenkins job (its full name, folders included) judge the change with \
-             the quality gate, octoflow-gate, and send the findings back to the Builder; needs JENKINS_URL, \
-             JENKINS_USER and JENKINS_TOKEN, from the environment or ~/.config/ai-agents-orchestrator/ci.env. \
-             `local` runs the octoflow-gate release the run's base pins in ci/gate.pin here instead, on Linux \
-             x86_64, as you and with no sandbox; a top-level job named local is `/local`",
+        quality_gate_arg().help(
+            "after each Builder turn, have the quality gate, octoflow-gate, judge the change and send the findings \
+             back to the Builder: `local`, the only value since the Jenkins gate was removed in 0.71.0, runs the \
+             release the run's base pins in ci/gate.pin here, on Linux x86_64, as you and with no sandbox",
         ),
     ]
+}
+
+/// The --quality-gate flag of run, drain and resume, whose one value is LOCAL_GATE; any other is a usage error
+/// naming the release that removed the Jenkins gate, the flag's other values.
+fn quality_gate_arg() -> Arg {
+    Arg::new("quality-gate").long("quality-gate").value_name("GATE").value_parser(|text: &str| {
+        if text == LOCAL_GATE {
+            Ok(text.to_string())
+        } else {
+            Err(format!("the Jenkins quality gate was removed in 0.71.0; use --quality-gate {LOCAL_GATE}"))
+        }
+    })
 }
 
 /// A run id as new_run_id makes them: YYYYMMDD-HHMMSS-hhhhhh, digits and then six lowercase hex digits.
@@ -673,9 +648,8 @@ fn check_spec_args(matches: &ArgMatches, p: &mut clap::Command) -> Result<(), cl
 }
 
 /// A usage error for flag values the parser cannot rule out: --machine without --cwd, a --max-rounds or
-/// --max-quality-rounds below 1, a run or drain given --max-quality-rounds without --quality-gate, a resume given it
-/// with --no-quality-gate, and a --quality-gate that is not a Jenkins job's full name or `local` (judged-in-quality's
-/// only a job's).
+/// --max-quality-rounds below 1, a run or drain given --max-quality-rounds without --quality-gate, and a resume given
+/// it with --no-quality-gate.
 ///
 /// A flag command does not take is not checked.
 fn check_flag_values(command: &Command, p: &mut clap::Command) -> Result<(), clap::Error> {
@@ -684,14 +658,10 @@ fn check_flag_values(command: &Command, p: &mut clap::Command) -> Result<(), cla
         return error(p, "--cwd is required with --machine");
     }
     let (quality_gate, no_quality_gate) = match command {
-        Command::Run(a) => (a.starts.quality_gate.as_deref(), false),
-        Command::Drain(a) => (a.run.starts.quality_gate.as_deref(), false),
-        Command::Resume(a) => (a.quality_gate.as_deref(), a.no_quality_gate),
-        Command::JudgedInQuality { job, .. } if job == LOCAL_GATE => {
-            return error(p, "judged-in-quality asks a Jenkins job; a top-level job named local is /local");
-        }
-        Command::JudgedInQuality { job, .. } => (Some(job.as_str()), false),
-        _ => (None, false),
+        Command::Run(a) => (a.starts.quality_gate, false),
+        Command::Drain(a) => (a.run.starts.quality_gate, false),
+        Command::Resume(a) => (a.quality_gate, a.no_quality_gate),
+        _ => (false, false),
     };
     let unset = Settings::default();
     let settings = command.settings().unwrap_or(&unset);
@@ -702,23 +672,14 @@ fn check_flag_values(command: &Command, p: &mut clap::Command) -> Result<(), cla
         if n < 1 {
             return error(p, "--max-quality-rounds must be at least 1");
         }
-        if matches!(command, Command::Run(_) | Command::Drain(_)) && quality_gate.is_none_or(str::is_empty) {
+        if matches!(command, Command::Run(_) | Command::Drain(_)) && !quality_gate {
             return error(p, "--max-quality-rounds needs --quality-gate");
         }
         if no_quality_gate {
             return error(p, "--max-quality-rounds does not apply with --no-quality-gate");
         }
     }
-    if quality_gate.is_some_and(|job| !is_job_name(job)) {
-        return error(p, "--quality-gate takes a Jenkins job's full name, such as folder/job, or local");
-    }
     Ok(())
-}
-
-/// Whether job is a Jenkins job's full name: names joined by "/", none empty, after one optional leading "/"
-/// (crate::ci::Jenkins::job_url). LOCAL_GATE is one too.
-fn is_job_name(job: &str) -> bool {
-    job.strip_prefix('/').unwrap_or(job).split('/').all(|part| !part.is_empty())
 }
 
 /// A usage error of the subcommand name, one parser defines, with its usage.

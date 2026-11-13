@@ -12,7 +12,6 @@ use octoflow_engine::json::Object;
 
 use crate::app_recording::Batch;
 use crate::client;
-use crate::servers::JOB;
 use crate::world::World;
 
 // -- What the agents write ------------------------------------------------------
@@ -241,7 +240,6 @@ pub fn proofs_run(w: &mut World) {
 
 // -- The quality gate ----------------------------------------------------------------
 
-const GATED: [&str; 3] = ["run", "--quality-gate", JOB];
 const QUALITY_FAILED: &str = "GATE: ERROR\n\n## Failed conditions\n\n- 1 findings of the `ruff` check; each is listed below.\n\n\
                               ## Findings\n\n1. `src/calc.py:7` error ruff F821: undefined name `c`\n";
 /// QUALITY_FAILED's quality.json.
@@ -272,65 +270,12 @@ fn report_json(gate: &str, conditions: &[&str], findings: &[(&str, u64, &str, &s
 const PYPROJECT_WITH_ATTRS: &str =
     "[project]\nname = \"parity-project\"\nversion = \"0.1.0\"\ndependencies = [\"attrs>=25\"]\n";
 
-/// A quality build the scenario scripts (World::jenkins_build), built up from `build`.
-struct Build(Object);
-
-impl Build {
-    /// Its failing tests, (dotted name, detail), in its test report.
-    fn tests(mut self, tests: &[(&str, &str)]) -> Build {
-        let pairs = tests.iter().map(|(name, detail)| Value::Array(vec![Value::from(*name), Value::from(*detail)]));
-        self.0.insert("tests".into(), Value::Array(pairs.collect()));
-        self
-    }
-
-    fn console(mut self, console: &str) -> Build {
-        self.0.insert("console".into(), Value::from(console));
-        self
-    }
-
-    /// Archive json as its quality.json, beside its quality file.
-    fn reporting(mut self, json: &str) -> Build {
-        self.0.insert("quality_json".into(), Value::from(json));
-        self
-    }
-
-    /// Keep it running until the world releases hold.
-    fn hold(mut self, hold: &str) -> Build {
-        self.0.insert("hold".into(), Value::from(hold));
-        self
-    }
-}
-
-impl From<Build> for Value {
-    fn from(build: Build) -> Value {
-        Value::Object(build.0)
-    }
-}
-
-/// A build that ends with result, archiving quality, or nothing for None: one that ended before its Gate stage. It
-/// archives no quality.json, as a quality job older than octoflow-gate's quality.json does, unless it is `reporting`.
-fn build(result: &str, quality: Option<&str>) -> Build {
-    Build(octoflow_engine::json::object([
-        ("result", Value::from(result)),
-        ("quality", quality.map_or(Value::Null, Value::from)),
-        ("tests", Value::Null),
-        ("console", Value::from("")),
-        ("hold", Value::Null),
-        ("description", Value::Null),
-    ]))
-}
+/// `run --quality-gate local`, the gate World::local_gate pins.
+const GATED: [&str; 3] = ["run", "--quality-gate", "local"];
 
 /// GATED, then args.
 fn gated<'a>(args: &[&'a str]) -> Vec<&'a str> {
     GATED.iter().copied().chain(args.iter().copied()).collect()
-}
-
-/// `run --quality-gate local`, the gate World::local_gate pins.
-const GATED_LOCALLY: [&str; 3] = ["run", "--quality-gate", "local"];
-
-/// GATED_LOCALLY, then args.
-fn gated_locally<'a>(args: &[&'a str]) -> Vec<&'a str> {
-    GATED_LOCALLY.iter().copied().chain(args.iter().copied()).collect()
 }
 
 /// A judgement of the local gate the scenario scripts (World::local_gate), built up from `judged_ok` or
@@ -370,20 +315,12 @@ fn judged_failed() -> Judgement {
     judgement(false, QUALITY_FAILED, &quality_failed_json())
 }
 
-/// --quality-gate: the first quality round passes; the Builder added a dependency the spec names, which the
+/// --quality-gate local: the first quality round passes; the Builder added a dependency the spec names, which the
 /// orchestrator's checks look up on PyPI.
 pub fn quality_passes(w: &mut World) {
-    let ok = build("SUCCESS", Some("GATE: OK\n\nEvery condition holds.\n")).reporting(&report_json("OK", &[], &[]));
-    w.jenkins_build(ok.into());
-    attrs_added(w);
-    w.run(&gated(&["--", TASK]));
-}
-
-/// quality_passes on the local gate.
-pub fn quality_local_passes(w: &mut World) {
     w.local_gate([judged_ok()]);
     attrs_added(w);
-    w.run(&gated_locally(&["--", TASK]));
+    w.run(&gated(&["--", TASK]));
 }
 
 /// Agents for a run whose spec names attrs, which the Builder adds as a dependency, and whose review approves; attrs
@@ -402,73 +339,30 @@ fn attrs_added(w: &mut World) {
     w.agent("review", [approved(1)]);
 }
 
-/// Quality round 1 fails, the Builder answers it, and quality round 2 passes.
+/// Quality round 1 fails, the Builder answers it, and quality round 2 passes; nothing is pushed for either.
 pub fn quality_fails_then_passes(w: &mut World) {
-    w.jenkins_build(build("UNSTABLE", Some(QUALITY_FAILED)).reporting(&quality_failed_json()).into());
-    w.jenkins_build(build("SUCCESS", Some("GATE: OK\n")).reporting(&report_json("OK", &[], &[])).into());
+    w.local_gate([judged_failed(), judged_ok()]);
     w.agent("spec", [spec_written()]);
     w.agent("build", [built(1, 0), built(1, 1)]);
     w.agent("review", [approved(1)]);
     w.run(&gated(&["--", TASK]));
 }
 
-/// quality_fails_then_passes on the local gate: nothing is pushed for either quality round, and Jenkins is asked
-/// nothing.
-pub fn quality_local_fails_then_passes(w: &mut World) {
-    w.local_gate([judged_failed(), judged_ok()]);
-    w.agent("spec", [spec_written()]);
-    w.agent("build", [built(1, 0), built(1, 1)]);
-    w.agent("review", [approved(1)]);
-    w.run(&gated_locally(&["--", TASK]));
-}
-
 /// Quality rounds 1 and 2 fail on the same finding: the loop stops and the Reviewer is told it is stuck.
 pub fn quality_stuck(w: &mut World) {
-    w.jenkins_build(build("UNSTABLE", Some(QUALITY_FAILED)).reporting(&quality_failed_json()).into());
-    w.jenkins_build(build("UNSTABLE", Some(QUALITY_FAILED)).reporting(&quality_failed_json()).into());
+    w.local_gate([judged_failed(), judged_failed()]);
     w.agent("spec", [spec_written()]);
     w.agent("build", [built(1, 0), built(1, 1)]);
     w.agent("review", [reviewed(1, "CHANGES_REQUESTED", "1. src/calc.py:7: the gate still fails."), built(2, 0)]);
     w.run(&gated(&["--max-rounds", "1", "--", TASK]));
 }
 
-/// quality_stuck on the local gate.
-pub fn quality_local_stuck(w: &mut World) {
-    w.local_gate([judged_failed(), judged_failed()]);
-    w.agent("spec", [spec_written()]);
-    w.agent("build", [built(1, 0), built(1, 1)]);
-    w.agent("review", [reviewed(1, "CHANGES_REQUESTED", "1. src/calc.py:7: the gate still fails."), built(2, 0)]);
-    w.run(&gated_locally(&["--max-rounds", "1", "--", TASK]));
-}
-
-/// The build ends FAILURE before its Gate stage, once with a test report and once without, until
-/// --max-quality-rounds; the Reviewer gets the change anyway.
-pub fn quality_build_failed(w: &mut World) {
-    w.jenkins_build(build("FAILURE", None).tests(&[("tests.test_calc.test_subtract", "AssertionError: 1 != -1")]).into());
-    w.jenkins_build(
-        build("FAILURE", None).console("Started\n+ uv sync --frozen\nerror: lock file out of date\nFinished").into(),
-    );
-    w.agent("spec", [spec_written()]);
-    w.agent("build", [built(1, 0), built(1, 1)]);
-    w.agent("review", [approved(1)]);
-    w.run(&gated(&["--max-quality-rounds", "2", "--", TASK]));
-}
-
-/// A workflow without a verdict step whose last quality round fails: QUALITY_GATE_FAILED, exit status 3. Its build
-/// archives no quality.json, so the round reads the gate from its quality file.
+/// A workflow without a verdict step whose last quality round fails: QUALITY_GATE_FAILED, exit status 3.
 pub fn quality_workflow_without_review(w: &mut World) {
-    let path = solo_workflow(w);
-    w.jenkins_build(build("UNSTABLE", Some(QUALITY_FAILED)).into());
-    w.agent("build", [built(1, 0)]);
-    w.run(&gated(&["--max-quality-rounds", "1", "--workflow-file", &path, "--", TASK]));
-}
-
-/// quality_workflow_without_review on the local gate, which always writes quality.json.
-pub fn quality_local_workflow_without_review(w: &mut World) {
     let path = solo_workflow(w);
     w.local_gate([judged_failed()]);
     w.agent("build", [built(1, 0)]);
-    w.run(&gated_locally(&["--max-quality-rounds", "1", "--workflow-file", &path, "--", TASK]));
+    w.run(&gated(&["--max-quality-rounds", "1", "--workflow-file", &path, "--", TASK]));
 }
 
 /// Write a workflow of the Builder alone, with no verdict step; its path.
@@ -481,49 +375,14 @@ fn solo_workflow(w: &mut World) -> String {
     )
 }
 
-/// judged-in-quality on a branch whose tree a retained quality build judged: refused while only a build of another
-/// tree is there, then found; and refused for a target that is no branch name.
-pub fn judged_in_quality(w: &mut World) {
-    let project = w.project.clone();
-    w.git(&project, &["switch", "--quiet", "-c", "feature"]);
-    w.write("project/src/calc.py", CALC_WITH_SUBTRACT);
-    w.git(&project, &["commit", "--quiet", "-am", "Add subtract"]);
-    let tree = w.git(&project, &["rev-parse", "HEAD^{tree}"]).trim().to_string();
-    let base = w.git(&project, &["rev-parse", "main"]).trim().to_string();
-    let other = w.git(&project, &["rev-parse", "main^{tree}"]).trim().to_string();
-    let judged = ["judged-in-quality", "--quality-gate", JOB, "--target"];
-    w.retained_build(5, "SUCCESS", &format!("judged tree={other} parent={base} main={base}"));
-    w.run(&[&judged[..], &["main"]].concat());
-    w.retained_build(6, "SUCCESS", &format!("judged tree={tree} parent={base} main={base}"));
-    w.run(&[&judged[..], &["main"]].concat());
-    w.run(&[&judged[..], &["no..branch"]].concat());
-}
-
-/// A run started without the quality gate, killed in its build, resumed with --quality-gate: the Builder's report is
-/// judged before the Reviewer starts.
+/// A run started without the quality gate, killed in its build, resumed with --quality-gate local: the Builder's
+/// report is judged before the Reviewer starts.
 pub fn gate_turned_on_by_resume(w: &mut World) {
-    w.jenkins_build(build("SUCCESS", Some("GATE: OK\n")).into());
-    w.agent("spec", [spec_written()]);
-    w.agent("build", [built(1, 0).hold("build")]);
-    w.agent("review", [approved(1)]);
-    killed_and_resumed_with(w, "build", &["run", "--", TASK], &["--quality-gate", JOB]);
-}
-
-/// gate_turned_on_by_resume, resumed with --quality-gate local.
-pub fn gate_local_turned_on_by_resume(w: &mut World) {
     w.local_gate([judged_ok()]);
     w.agent("spec", [spec_written()]);
     w.agent("build", [built(1, 0).hold("build")]);
     w.agent("review", [approved(1)]);
     killed_and_resumed_with(w, "build", &["run", "--", TASK], &["--quality-gate", "local"]);
-}
-
-/// A run killed while Jenkins builds its first quality round, resumed with --no-quality-gate: its refs on origin go,
-/// and the Reviewer is told nothing judged the change.
-pub fn gate_turned_off_by_resume(w: &mut World) {
-    w.jenkins_build(build("SUCCESS", Some("GATE: OK\n")).hold("quality").into());
-    approved_roles(w);
-    killed_held_and_resumed(w, "quality", &gated(&["--", TASK]), &["--no-quality-gate"]);
 }
 
 // -- Where the run works -------------------------------------------------------------
@@ -618,19 +477,12 @@ pub fn kill_in_publish(w: &mut World) {
     killed_and_resumed(w, "publish", &["run", "--", TASK]);
 }
 
-/// Killed while Jenkins builds the quality round's snapshot; resumed, the run polls the build it recorded.
-pub fn kill_in_quality(w: &mut World) {
-    w.jenkins_build(build("SUCCESS", Some("GATE: OK\n")).reporting(&report_json("OK", &[], &[])).hold("quality").into());
-    approved_roles(w);
-    killed_and_resumed(w, "quality", &gated(&["--", TASK]));
-}
-
 /// Killed while the local gate judges the quality round's snapshot; resumed, the run stops the job the kill left and
 /// judges the round again.
-pub fn kill_in_local_quality(w: &mut World) {
+pub fn kill_in_quality(w: &mut World) {
     w.local_gate([judged_ok().hold("quality"), judged_ok()]);
     approved_roles(w);
-    killed_held_and_resumed(w, "quality", &gated_locally(&["--", TASK]), &[]);
+    killed_held_and_resumed(w, "quality", &gated(&["--", TASK]), &[]);
 }
 
 /// examples/workflows/product-team.toml killed in step hold, design or tests, and resumed.

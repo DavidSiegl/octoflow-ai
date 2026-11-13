@@ -1,10 +1,9 @@
-//! The quality rounds of a run with the local gate (`--quality-gate local`): the gate run on the host in place of a
-//! Jenkins build, played by FakeHost::run_command, with nothing pushed and nothing asked of Jenkins; a gate that
+//! The quality rounds of a run with the local gate (`--quality-gate local`): the gate run on the host as a job of its
+//! own, played by FakeHost::run_command; a gate that
 //! could not judge, a secret in the snapshot, a resume in a round, a gate stopped by the deadline or a Ctrl-C, and the
 //! preflight.
 
 use super::*;
-use crate::constants::CI_REF_PREFIX;
 use crate::host::{Exec, Scanned};
 use crate::local_gate;
 use crate::prompts::QUALITY_PASSED_NOTE;
@@ -15,12 +14,6 @@ fn gated_locally(script: Script, runs: Vec<GateRun>) -> Fixture {
     let f = Fixture::new(script).gated();
     f.gate.borrow_mut().runs = runs.into();
     f
-}
-
-/// How many snapshots were pushed to a ref of their own, as a Jenkins round pushes each.
-fn snapshot_pushes(f: &Fixture) -> usize {
-    let calls = &f.host.state().git_calls;
-    calls.iter().filter(|c| c[0] == "push" && c.iter().any(|a| a.contains(CI_REF_PREFIX))).count()
 }
 
 #[test]
@@ -63,9 +56,6 @@ fn the_local_gate_fails_then_passes_with_nothing_pushed() {
     assert_eq!(scanned, [Scanned::SinceBase, Scanned::SinceBase], "{:?}", host.scans);
     assert_eq!(calls.stops, 0);
     drop(host);
-    // Nothing went to origin or to Jenkins, and nothing is left to delete.
-    assert_eq!(snapshot_pushes(&f), 0);
-    assert!(f.ci.state().requests.is_empty());
     let saved = f.saved();
     assert_eq!(text(&saved, "quality_job").as_deref(), Some("local"));
     assert_eq!(saved.get("ci"), Some(&Value::Object(Object::new())));
@@ -126,7 +116,6 @@ fn a_secret_in_the_snapshot_is_not_judged() {
     assert!(quality.contains("the local gate did not judge the change"), "{quality}");
     // Only the round after the secret went was judged.
     assert_eq!(f.gate.borrow().jobs.len(), 1);
-    assert_eq!(snapshot_pushes(&f), 0);
 }
 
 #[test]

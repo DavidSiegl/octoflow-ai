@@ -1,32 +1,28 @@
 //! The quality gate's rounds (docs/quality-gate.md): after each turn of the quality-gated step, a quality round has
-//! the run's QualityGate judge a snapshot of the change, a Jenkins job or the local gate (crate::local_gate), adds what
-//! the orchestrator's own checks find, and sends a change the gate does not pass back to that step, up to
-//! max_quality_rounds analyses per round; what each verdict step hears of them; and the snapshots' refs on origin,
-//! deleted once they are of no more use.
-//!
-//! A round names no gate: QualityGate::start and its Judging hide which gate judges, and how (crate::ci::judging says
-//! what a resume of each picks up).
+//! the local gate (crate::local_gate) judge a snapshot of the change, adds what the orchestrator's own checks find,
+//! and sends a change the gate does not pass back to that step, up to max_quality_rounds analyses per round; and what
+//! each verdict step hears of them.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::origin::reaching_origin;
 use super::step_prompt::RunView;
-use super::{Clocks, Human, Outcome, Stopped, Workflow};
+use super::{Outcome, Stopped, Workflow};
 use crate::checks::{judge_run, orchestrator_checks, RunChange, RunFindings, SLOW_STEP_MARGIN};
-use crate::ci::{CIError, Judging, Poll, QualityGate, Started, Verdict};
-use crate::constants::{CI_POLL_SECONDS, CI_REF_PREFIX, QUALITY_TIMEOUT, REMOTE};
+use crate::constants::{CI_POLL_SECONDS, QUALITY_TIMEOUT};
 use crate::error::OrchestratorError;
-use crate::host::{Host, LeaksFound};
-use crate::interrupt::Interrupt;
+use crate::host::{LeaksFound, PushError, Scanned};
+use crate::local_gate::{self, LocalVerdict};
 use crate::patch::added_lines;
 use crate::paths::file_name;
 use crate::pipeline::{Step, QUALITY};
 use crate::prompts::Prompt;
 use serde_json::Value;
 use crate::json::{object, Object};
-use crate::quality::{gate_failures, leak_report, parse_gate, under_gate_line, GateFailures, Judgement, QUALITY_OK};
-use crate::state::RunState;
+use crate::quality::{
+    could_not_judge_report, gate_failures, leak_report, parse_gate, read_report, under_gate_line, GateFailures,
+    Judgement, QUALITY_OK,
+};
 
 impl<'a> Workflow<'a> {
     /// The current quality round of round n, of the quality-gated step gated; false when its gate sends the change
@@ -58,7 +54,7 @@ impl<'a> Workflow<'a> {
     /// quality round.
     pub(super) fn gate_passed(&self, n: u32) -> Result<bool, OrchestratorError> {
         let s = &self.state;
-        if self.quality_gate.is_none() || s.quality_round == 0 {
+        if !self.quality_gate_on || s.quality_round == 0 {
             return Ok(true);
         }
         // With the gate on, the quality loop has written the current quality round's file by now; one missing fails.
@@ -66,21 +62,15 @@ impl<'a> Workflow<'a> {
         Ok(last.is_some_and(|(q, text)| q == s.quality_round && parse_gate(&text) == Some(QUALITY_OK)))
     }
 
-    /// The run's quality gate. Errors: the run has none, which only a quality round asks it for.
-    fn gate(&self) -> Result<&'a QualityGate, OrchestratorError> {
-        self.quality_gate.ok_or_else(|| OrchestratorError("a quality round in a run without the quality gate".into()))
-    }
-
-    /// Quality round q of round n: have the run's gate judge a snapshot of the change (judged_snapshot), write
+    /// Quality round q of round n: have the local gate judge a snapshot of the change (judged_snapshot), write
     /// quality-<n>-<q>.md, record what failed it in RunState::quality_rounds, and return its gate.
     ///
     /// The gate and its failures are read from the gate's quality.json, with the orchestrator's checks added
     /// (RunFindings::added_to), and recorded in RunState::quality_rounds, replacing the record of a quality file
     /// deleted to be judged again. They are read from the quality file instead (parse_gate, gate_failures) for a round
-    /// with no quality.json: one whose Jenkins build archived none, the fallback for a quality job that writes only
-    /// quality.md (TODO.md says when it goes); one the gate could not judge or whose snapshot held a secret, whose file
-    /// only the engine writes; and one whose file an earlier orchestrator wrote but did not record. A quality file
-    /// already written is taken as it is.
+    /// with no quality.json: one the gate could not judge or whose snapshot held a secret, whose file only the engine
+    /// writes; and one whose file an earlier orchestrator wrote but did not record, as a Jenkins build's quality file
+    /// may be, from a release before 0.71.0. A quality file already written is taken as it is.
     ///
     /// Errors: judged_snapshot's; the quality file does not start with a GATE line; a file or saving fails.
     fn quality(&mut self, n: u32, q: u32) -> Outcome<&'static str> {
@@ -111,115 +101,75 @@ impl<'a> Workflow<'a> {
             self.state.quality_rounds.push(quality_record(n, q, &judged));
         }
         self.human.log(&format!("[quality] round {n}, quality round {q}: {gate}"));
-        self.finish_analysis(&self.state.ci_ref(n, q))?;
+        self.save()?;
         Ok(gate)
     }
 
-    /// The quality file of quality round q of round n, masked (QualityGate::mask), and the judgement of the gate's
-    /// quality.json with the orchestrator's checks added; no judgement for a file without one. The run's gate judges a
-    /// snapshot of the change (QualityGate::start), asked after every CI_POLL_SECONDS with the heartbeat kept, and is
-    /// stopped when the round's deadline, QUALITY_TIMEOUT seconds from now, passes or the run is interrupted first. A
-    /// snapshot gitleaks finds a secret in is not judged, and its file is QUALITY_LEAK; one the gate could not judge
-    /// gets the BUILD_FAILED file the gate gives.
+    /// The quality file of quality round q of round n, and the judgement of the gate's quality.json with the
+    /// orchestrator's checks added; no judgement for a file without one.
     ///
-    /// Errors: QualityGate::start's and Judging::verdict's, one that may pass only once the deadline passes; a secret
-    /// is in the run's base or below it, which is the human's to rewrite; the checks or saving fail; a takeover or the
-    /// Ctrl-C.
+    /// The gate judges a snapshot of the change, a commit of the work dir's tree whose only parent is the run's base,
+    /// once gitleaks, by the base's rules, finds no secret in what it adds to the base. It runs as a job of its own
+    /// under RunState::gate_dir (local_gate::start), asked after every CI_POLL_SECONDS with the heartbeat kept, and is
+    /// stopped when the round's deadline, QUALITY_TIMEOUT seconds from now, passes or the run is interrupted first; a
+    /// resume judges a new snapshot. A snapshot gitleaks finds a secret in is not judged, and its file is QUALITY_LEAK;
+    /// one the gate could not judge gets a BUILD_FAILED file with what the gate said.
+    ///
+    /// Errors: the run has no base; git or the scan fails; local_gate::start's and local_gate::Judging::verdict's; the
+    /// gate's two reports disagree or its quality.json is unreadable (judgement); no verdict by the deadline; the checks
+    /// or saving fail; a takeover or the Ctrl-C.
     fn judged_snapshot(&mut self, n: u32, q: u32) -> Outcome<(String, Option<Judgement>)> {
-        let gate = self.gate()?;
-        let (text, judged) = self.unmasked_judgement(gate, n, q)?;
-        let judged = judged.map(|mut judged| {
-            // The conditions go into state.json, which the quality file's masking does not reach.
-            judged.failures.conditions.iter_mut().for_each(|c| *c = gate.mask(c));
-            judged
-        });
-        Ok((gate.mask(&text), judged))
-    }
-
-    /// judged_snapshot's quality file and judgement by gate, unmasked.
-    fn unmasked_judgement(&mut self, gate: &QualityGate, n: u32, q: u32) -> Outcome<(String, Option<Judgement>)> {
         let deadline = self.clocks.monotonic() + QUALITY_TIMEOUT as f64;
-        let git_ref = self.state.ci_ref(n, q);
-        // A snapshot branch of an earlier round, left on origin by a run stopped before that round ended.
-        if let Some(old) = self.state.ci.get("ref").and_then(Value::as_str).filter(|r| !r.is_empty() && *r != git_ref) {
-            delete_ci_ref(self.host, self.human, &self.state.cwd, old);
-            self.state.ci = Object::new();
+        let base = self.base()?;
+        let work_dir = self.state.work_dir().to_string();
+        let message = format!("Orchestrator run {}: round {n}, quality round {q}", self.state.run_id);
+        let snapshot = self.host.snapshot(&work_dir, &base, &message)?;
+        let leaks_path = self.state.leaks_path("snapshot");
+        match self.host.refuse_leaks(&work_dir, &snapshot, &base, Scanned::SinceBase, &leaks_path) {
+            Ok(()) => {}
+            Err(PushError::Failed(e)) => return Err(e.into()),
+            Err(PushError::Leaks(found)) => return Ok((self.leak_report(n, q, &found), None)),
         }
-        let mut judging = match gate.start(self.host, &mut self.state, n, q)? {
-            Started::Judging(judging) => judging,
-            Started::Leaked { found, snapshot, so_what } => {
-                let base = self.state.base.clone().unwrap_or_default();
-                let found = leaks_in_snapshot(found, &snapshot, &base)?;
-                return Ok((self.leak_report(n, q, &found, so_what), None));
-            }
-        };
-        self.save()?;
-        let waited = self.poll(&mut judging, deadline);
+        let job = local_gate::start(self.host, &work_dir, &snapshot, &base, &self.state.gate_dir(n, q))?;
+        let waited = self.poll(&job, deadline);
         if waited.is_err() {
             let host = self.host;
             // Run as a finally block, so that a Ctrl-C still pending lets the stop start.
-            if let Err(e) = self.interrupt.finally(|| judging.stop(host)) {
+            if let Err(e) = self.interrupt.finally(|| job.stop(host)) {
                 self.human.log(&format!("[quality] could not stop the quality gate: {e}"));
             }
         }
-        let (quality, judged, judged_by) = match waited? {
-            Verdict::NotJudged(text) => return Ok((text, None)),
-            Verdict::Judged { quality, judged, judged_by } => (quality, judged, judged_by),
+        let place = self.state.quality_place(n, q);
+        let (release, quality, json) = match waited? {
+            LocalVerdict::Judged { release, quality, json } => (release, quality, json),
+            LocalVerdict::CouldNotJudge(said) => {
+                let intro = format!(
+                    "octoflow-gate, run locally, could not judge snapshot `{snapshot}` ({place}), so nothing judged \
+                     the change. Make it judgeable first: what the gate said is below."
+                );
+                return Ok((could_not_judge_report(&intro, &said), None));
+            }
         };
-        let found = self.orchestrator_findings(judging.snapshot(), deadline)?;
+        let judged = judgement(&quality, &json)
+            .map_err(|why| OrchestratorError(format!("octoflow-gate {release} on snapshot {snapshot}: {why}")))?;
+        let judged_by = format!("octoflow-gate {release}, run locally, judged snapshot `{snapshot}` ({place}).");
+        let found = self.orchestrator_findings(&snapshot, deadline)?;
         let text = under_gate_line(&found.added_to_file(&quality), &judged_by);
-        Ok((text, judged.map(|judged| found.added_to(judged))))
+        Ok((text, Some(found.added_to(judged))))
     }
 
-    /// Ask judging for its verdict every CI_POLL_SECONDS until it gives one, and return that, keeping the heartbeat
-    /// between the calls; a call that recorded a link of the chain in RunState::ci is saved and asked again at once.
-    ///
-    /// A failure that may pass, such as Jenkins being unreachable, is retried until the round's deadline, a
-    /// monotonic time; any other fails the run at once. Either way RunState::ci keeps what is known so far. Errors:
-    /// one that does not pass, named after what it waited for (Judging::waiting), or a refusal as it is; no verdict by
-    /// the deadline, naming the last failure; saving fails; a takeover or the Ctrl-C.
-    fn poll(&mut self, judging: &mut Judging, deadline: f64) -> Outcome<Verdict> {
-        // What the last call waited for and how it failed, while the calls fail in a way that may pass.
-        let mut failing: Option<(String, CIError)> = None;
+    /// Ask job for its verdict every CI_POLL_SECONDS until it gives one, and return that, keeping the heartbeat
+    /// between the calls. Errors: the job's (local_gate::Judging::verdict), at once; no verdict by deadline, a
+    /// monotonic time; saving fails; a takeover or the Ctrl-C.
+    fn poll(&mut self, job: &local_gate::Judging, deadline: f64) -> Outcome<LocalVerdict> {
         loop {
-            let human = self.human;
-            let polled = judging.verdict(self.host, &mut self.state.ci, &|line| human.log(line));
-            let waiting = judging.waiting().to_string();
-            // A call goes on to the next link once one answers, so the link that failed last may have answered now.
-            let answered = |failing: Option<(String, CIError)>| {
-                if let Some((waited, _)) = failing {
-                    human.log(&format!("[quality] {waited}: answered again"));
-                }
-            };
-            match polled {
-                Ok(poll) => {
-                    answered(failing.take());
-                    match poll {
-                        Poll::Came(verdict) => return Ok(verdict),
-                        Poll::Recorded => {
-                            self.save()?;
-                            continue;
-                        }
-                        Poll::Waiting => {}
-                    }
-                }
-                Err(CIError::Refused(e)) => return Err(Stopped::Failed(e)),
-                Err(e) if !e.transient() => {
-                    return Err(Stopped::Failed(OrchestratorError(format!("quality gate: {waiting}: {e}"))));
-                }
-                Err(e) => {
-                    if failing.as_ref().is_none_or(|(waited, _)| *waited != waiting) {
-                        answered(failing.take());
-                        self.human.log(&format!("[quality] {waiting}: {e}; retrying"));
-                    }
-                    failing = Some((waiting.clone(), e));
-                }
+            if let Some(verdict) = job.verdict(self.host)? {
+                return Ok(verdict);
             }
             if self.clocks.monotonic() >= deadline {
-                let why = failing.map(|(_, e)| format!("; last error: {e}")).unwrap_or_default();
                 return Err(Stopped::Failed(OrchestratorError(format!(
-                    "quality gate: {waiting} did not finish within {QUALITY_TIMEOUT}s of the round's start{why}; resume \
-                     to go on"
+                    "quality gate: the local gate did not finish within {QUALITY_TIMEOUT}s of the round's start; \
+                     resume to go on"
                 ))));
             }
             self.heartbeat()?;
@@ -227,11 +177,15 @@ impl<'a> Workflow<'a> {
         }
     }
 
-    /// The quality file of quality round q of round n, whose snapshot was not judged for the secrets found; so_what
-    /// says what then did not happen, as a clause: "the gate did not judge the change".
-    fn leak_report(&self, n: u32, q: u32, found: &LeaksFound, so_what: &str) -> String {
+    /// The run's base. Errors: it has none yet, which a quality round never meets.
+    fn base(&self) -> Result<String, OrchestratorError> {
+        self.state.base.clone().ok_or_else(|| OrchestratorError("a quality round before the run has a base".into()))
+    }
+
+    /// The quality file of quality round q of round n, whose snapshot was not judged for the secrets found.
+    fn leak_report(&self, n: u32, q: u32, found: &LeaksFound) -> String {
         let intro = format!(
-            "{} in the snapshot of {}, so {so_what}. Take each secret \
+            "{} in the snapshot of {}, so the local gate did not judge the change. Take each secret \
              below out of the change; a comment telling gitleaks to allow its line counts as one too. If one is not a \
              secret, say so in your report: only the human can let it through, and not in this run, which keeps the \
              rules of its base: listed as `file:rule:line` in .gitleaksignore on the base branch, it passes in a run \
@@ -249,11 +203,7 @@ impl<'a> Workflow<'a> {
     /// takeover, the Ctrl-C) lets the checks start no more slow steps, and is the error once they are done. Errors:
     /// that stop; git or a check fails.
     fn orchestrator_findings(&mut self, sha: &str, deadline: f64) -> Outcome<RunFindings> {
-        let base = self
-            .state
-            .base
-            .clone()
-            .ok_or_else(|| Stopped::Failed(OrchestratorError("a quality round before the run has a base".into())))?;
+        let base = self.base()?;
         let pipeline = Rc::clone(&self.pipeline);
         // A workflow without a contract step has only its task to say what the change is for.
         let spec = Some(self.last_text(pipeline.contract(), 0)?).filter(|s| !s.is_empty());
@@ -287,35 +237,6 @@ impl<'a> Workflow<'a> {
             return Err(stop);
         }
         Ok(found?)
-    }
-
-    /// After the analysis of git_ref: delete the ref on origin and forget it, as its build no longer needs it.
-    fn finish_analysis(&mut self, git_ref: &str) -> Outcome<()> {
-        if self.state.ci.get("ref").and_then(Value::as_str) == Some(git_ref) {
-            // Jenkins has checked the ref out by now, though the build may still run the stages after its Gate stage
-            // (ci::Judging); the Jenkinsfile's Checkout comment says why that is enough. A leftover is only clutter,
-            // which the run's end tries again.
-            delete_ci_ref(self.host, self.human, &self.state.cwd, git_ref);
-            self.state.ci = Object::new();
-        }
-        self.save()
-    }
-
-    /// At the end of a run that may have refs on origin (RunState::may_have_ci_refs), delete them, again for one whose
-    /// gate resume turned off, in case deleting them then failed; a failure is only logged.
-    ///
-    /// Errors: the Ctrl-C, raised meanwhile, which keeps RunState::ci, as Python's KeyboardInterrupt in
-    /// delete_ci_refs does, for a resume to find the build.
-    pub(super) fn clean_up_quality(&mut self) -> Outcome<()> {
-        if self.state.may_have_ci_refs() {
-            let ci = self.state.ci.clone();
-            delete_ci_refs(self.host, self.human, self.clocks, self.interrupt, &mut self.state);
-            if self.interrupt.is_raised() {
-                self.state.ci = ci;
-                return Err(Stopped::Interrupted);
-            }
-        }
-        Ok(())
     }
 }
 
@@ -373,21 +294,6 @@ impl RunView<'_> {
     }
 }
 
-/// found, the secrets gitleaks found in snapshot sha and the commits a push of it would publish, when all are in sha
-/// itself, for the Builder to take out. Errors: one is in another commit, so in base or below it, as sha's only
-/// parent is base: the human's history, which the Builder cannot rewrite.
-fn leaks_in_snapshot(found: LeaksFound, sha: &str, base: &str) -> Result<LeaksFound, Stopped> {
-    if found.leaks.iter().all(|leak| leak.commit == sha) {
-        return Ok(found);
-    }
-    let (snapshot, base): (String, String) = (sha.chars().take(12).collect(), base.chars().take(12).collect());
-    Err(Stopped::Failed(OrchestratorError(format!(
-        "{found}\nThose not in snapshot {snapshot} are in the run's base {base} or below it, which {REMOTE} does not \
-         have: the human's commits, not the Builder's to fix. Rewrite them without the secret, or list a finding that \
-         is not one in .gitleaksignore there, and start a new run."
-    ))))
-}
-
 /// Whether record, one of RunState::quality_rounds, is quality round q of round n's.
 fn is_record_of(record: &Object, n: u32, q: u32) -> bool {
     let is = |key: &str, number: u32| record.get(key) == Some(&Value::from(i64::from(number)));
@@ -428,31 +334,16 @@ fn recorded_failures(record: &Object) -> Result<GateFailures, OrchestratorError>
     Ok(failures)
 }
 
-/// Delete the run's quality snapshot refs on origin and forget its build in flight (RunState::ci); a failure is only
-/// logged, to human. Listing the refs waits out a short outage of origin on clocks, as reaching_origin does, unless
-/// interrupt is raised.
-pub(super) fn delete_ci_refs(
-    host: &dyn Host,
-    human: &dyn Human,
-    clocks: &dyn Clocks,
-    interrupt: &Interrupt,
-    state: &mut RunState,
-) {
-    let prefix = format!("{CI_REF_PREFIX}{}-", state.key());
-    let listed = reaching_origin(clocks, human, interrupt, || host.remote_branches(&state.cwd, &prefix));
-    let refs = listed.unwrap_or_else(|e| {
-        human.log(&format!("could not list the {CI_REF_PREFIX} branches on {REMOTE}: {e}"));
-        Vec::new()
-    });
-    for git_ref in refs {
-        delete_ci_ref(host, human, &state.cwd, &git_ref);
-    }
-    state.ci = Object::new();
-}
-
-/// Delete the branch git_ref on cwd's origin; a failure is only logged, to human.
-fn delete_ci_ref(host: &dyn Host, human: &dyn Human, cwd: &str, git_ref: &str) {
-    if let Err(e) = host.delete_remote_branch(cwd, git_ref) {
-        human.log(&format!("could not delete {git_ref} on {REMOTE}: {e}"));
+/// The judgement of a gate's quality.json, json, whose quality.md is quality. Errors: as read_report's, or quality.md
+/// has a GATE line other than quality.json's gate; the run's other readers of the round's gate (gate_passed,
+/// quality_note, the pull request) read the quality file, so the two must agree.
+fn judgement(quality: &str, json: &str) -> Result<Judgement, OrchestratorError> {
+    let judged = read_report(json)?;
+    match parse_gate(quality) {
+        Some(gate) if gate != judged.gate => Err(OrchestratorError(format!(
+            "its quality.md says GATE: {gate}, but its quality.json says {}: the gate wrote two reports that disagree",
+            judged.gate
+        ))),
+        _ => Ok(judged),
     }
 }

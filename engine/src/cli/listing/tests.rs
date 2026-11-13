@@ -28,7 +28,8 @@ const PR_URL: &str = "https://github.com/o/r/pull/7";
 const QUESTION: &str = "which database?";
 const SHOW_ID: &str = "20260929-120000-a1b2c3";
 const SHOW_DIR: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
-const JOB: &str = crate::ci::fake::JOB;
+/// A Jenkins job a run saved before 0.71.0 removed the Jenkins quality gate; listings still show it.
+const JOB: &str = "Octoflow-AI/octoflow-ai-quality";
 
 /// The keys of a run record, in the order run_record gives them.
 const RUN_RECORD_KEYS: [&str; 24] = [

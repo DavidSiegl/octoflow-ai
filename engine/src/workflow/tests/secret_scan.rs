@@ -1,6 +1,6 @@
 //! TestSecretScanWorkflow: the scan before each of a run's pushes, on FakeHost's scripted findings: a quality
-//! snapshot holding a secret goes back to the Builder unpushed, a secret in the run's base fails the run, and one on
-//! the run's branch stops publish until it is rewritten; and gitleaks needed only by a run that pushes.
+//! snapshot holding a secret goes back to the Builder unjudged, and one on the run's branch (a secret in the run's
+//! base among them) stops publish until it is rewritten; and gitleaks needed only by a run that pushes.
 
 use std::cell::RefCell;
 
@@ -95,27 +95,6 @@ fn a_secret_in_a_snapshot_goes_back_to_the_builder() {
 }
 
 #[test]
-fn a_leak_report_is_masked_as_every_quality_file_is() {
-    // A path that quotes the CI token, as the one place it can reach a leak report from.
-    let file = format!("token-{}.txt", crate::ci::fake::JENKINS_TOKEN);
-    let f = Fixture::on(
-        host_with(vec![Leak { file, ..snapshot_leak() }]),
-        new_state(),
-        vec![
-            ("spec", vec![spec_turn()]),
-            ("build", vec![build_turn(1), fix_keeping(0)]),
-            ("review", vec![review_turn(1, APPROVE)]),
-        ],
-    )
-    .gated_on_jenkins();
-    assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
-    let quality = f.quality_file(1, 1);
-    assert_eq!(parse_gate(&quality), Some(QUALITY_LEAK));
-    assert!(quality.contains("token-****.txt"), "{quality}");
-    assert!(!quality.contains(crate::ci::fake::JENKINS_TOKEN), "{quality}");
-}
-
-#[test]
 fn a_resume_finds_the_leak_quality_file() {
     let host = host_with(vec![snapshot_leak()]);
     let f = gated_on(Rc::clone(&host), vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)])]);
@@ -189,22 +168,6 @@ fn removing_one_of_two_secrets_of_a_kind_keeps_the_loop_going() {
     let (leaked, ok) = (Value::from(QUALITY_LEAK), Value::from(QUALITY_OK));
     assert_eq!(gates, [Some(&leaked), Some(&leaked), Some(&ok)]);
     assert_eq!(prompts_to(&f, "build-a1b2c3"), 3);
-}
-
-#[test]
-fn a_secret_in_the_base_fails_the_run() {
-    // In base or below it, not in the snapshot: the human's commit.
-    let f = gated_on(host_with(vec![snapshot_leak(), leak()]), approved());
-    let mut wf = f.workflow(RunSettings::default());
-    let e = failure(wf.run());
-    assert!(e.contains("the human's commits, not the Builder's to fix"), "{e}");
-    assert!(e.contains("`limiter.py:3` github-pat in c0ffeec0ffee"), "{e}");
-    let base: String = wf.state().base.clone().unwrap().chars().take(12).collect();
-    assert!(e.contains(&format!("in the run's base {base}")), "{e}");
-    assert!(!f.host.state().files.contains_key(&f.state.quality_path(1, 1)));
-    assert!(judged(&f).is_empty());
-    assert!(wf.state().ci.is_empty());
-    assert!(!f.host.state().git_calls.iter().any(|c| c[0] == "push"));
 }
 
 #[test]

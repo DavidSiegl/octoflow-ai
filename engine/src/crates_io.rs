@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::constants::CRATES_IO_TIMEOUT;
 use crate::error::shortened;
-use crate::http::{quote, Http, HttpError, Method, Request};
+use crate::http::{quote, Http, HttpError, Request};
 use crate::package_index::{IndexError, IndexedPackage, PackageIndex, Upload};
 
 #[cfg(test)]
@@ -44,13 +44,11 @@ impl PackageIndex for CratesIo {
     fn package(&self, key: &str) -> Result<Option<IndexedPackage>, IndexError> {
         let url = format!("https://crates.io/api/v1/crates/{}", quote(key));
         let request = Request {
-            method: Method::Get,
             url: url.clone(),
             headers: vec![
                 ("Accept".to_string(), "application/json".to_string()),
                 ("User-Agent".to_string(), USER_AGENT.to_string()),
             ],
-            form: None,
             timeout: CRATES_IO_TIMEOUT,
         };
         let body = match self.http.send(&request) {

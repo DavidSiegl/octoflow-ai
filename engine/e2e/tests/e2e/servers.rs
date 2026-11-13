@@ -1,5 +1,5 @@
-//! The world's servers, which the engine reaches over the network: Jenkins's REST API for the quality job, and an
-//! HTTPS proxy that answers for PyPI. Each serves from threads of the test process on a free port of 127.0.0.1, reads
+//! The world's servers, which the engine reaches over the network: an HTTPS proxy that answers for PyPI. It serves
+//! from threads of the test process on a free port of 127.0.0.1, reads
 //! what to answer from the world's script, and logs each request it gets in the world's ledger, by the latest
 //! invocation, the one whose requests these are in every scenario.
 
@@ -12,27 +12,18 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use octoflow_e2e::ledger::Ledger;
-use octoflow_e2e::{array_at, holds, object, object_at, procs};
+use octoflow_e2e::{object_at, procs};
 use serde_json::Value;
 use octoflow_engine::json::Object;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
-/// The Jenkins job the quality-gate scenarios run, by its full name.
-pub const JOB: &str = "parity/quality";
-/// The credentials the engine sends Jenkins.
-pub const JENKINS_USER: &str = "parity";
-pub const JENKINS_TOKEN: &str = "parity-token";
 /// The file, in the world's directory, of the certificate authority that signed PyPI's certificate, which the engine
 /// trusts by SSL_CERT_FILE.
 pub const PYPI_CA: &str = "pypi-ca.pem";
 
-/// A world's Jenkins and PyPI proxy, serving until dropped.
+/// A world's PyPI proxy, serving until dropped.
 pub struct Servers {
-    /// Jenkins's server; unblocked by a drop, which ends its thread.
-    jenkins: Arc<tiny_http::Server>,
-    /// Jenkins's base URL, `http://127.0.0.1:<port>`.
-    pub jenkins_url: String,
     /// The proxy's URL, as https_proxy names it.
     pub proxy_url: String,
     /// The proxy's address, which a drop connects to, so that its accept loop sees `stopping` set.
@@ -41,38 +32,24 @@ pub struct Servers {
     stopping: Arc<AtomicBool>,
     /// Whether the answer to a request has panicked.
     failed: ServerFailure,
-    /// The two servers' accept loops.
+    /// The proxy's accept loop.
     threads: Vec<JoinHandle<()>>,
 }
 
 impl Servers {
-    /// Start both for the world in directory world, after making PyPI's certificate there with openssl. Panics,
+    /// Start the proxy for the world in directory world, after making PyPI's certificate there with openssl. Panics,
     /// failing the scenario, when openssl is missing or fails, or a server cannot listen.
     pub fn start(world: &Path) -> Servers {
         let tls = Arc::new(pypi_tls(world));
-        let jenkins = Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap_or_else(|e| panic!("serving Jenkins: {e}")));
-        let jenkins_port = jenkins.server_addr().to_ip().expect("Jenkins listens on an IP address").port();
-        let jenkins_url = format!("http://127.0.0.1:{jenkins_port}");
         let proxy = TcpListener::bind("127.0.0.1:0").unwrap_or_else(|e| panic!("serving the PyPI proxy: {e}"));
         let proxy_address = proxy.local_addr().unwrap_or_else(|e| panic!("the PyPI proxy's address: {e}"));
         let (stopping, failed) = (Arc::new(AtomicBool::new(false)), ServerFailure(Arc::new(AtomicBool::new(false))));
-        let threads = vec![
-            {
-                let (server, world, url) = (Arc::clone(&jenkins), world.to_path_buf(), jenkins_url.clone());
-                let failed = Arc::clone(&failed.0);
-                std::thread::spawn(move || {
-                    for request in server.incoming_requests() {
-                        flag_panic(&failed, || jenkins_answer(&world, &url, request));
-                    }
-                })
-            },
-            {
-                let (world, stopping, failed) = (world.to_path_buf(), Arc::clone(&stopping), Arc::clone(&failed.0));
-                std::thread::spawn(move || proxy_accept(&proxy, &world, &tls, &stopping, &failed))
-            },
-        ];
+        let threads = vec![{
+            let (world, stopping, failed) = (world.to_path_buf(), Arc::clone(&stopping), Arc::clone(&failed.0));
+            std::thread::spawn(move || proxy_accept(&proxy, &world, &tls, &stopping, &failed))
+        }];
         let proxy_url = format!("http://{proxy_address}");
-        Servers { jenkins, jenkins_url, proxy_url, proxy_address, stopping, failed, threads }
+        Servers { proxy_url, proxy_address, stopping, failed, threads }
     }
 
     /// Whether an answer of these servers has panicked, for what waits on the engine to check (ServerFailure::check).
@@ -103,9 +80,8 @@ fn flag_panic(failed: &AtomicBool, answer: impl FnOnce()) {
 }
 
 impl Drop for Servers {
-    /// Stops both servers and waits for their threads, whose answers' panics flag_panic caught.
+    /// Stops the proxy and waits for its threads, whose answers' panics flag_panic caught.
     fn drop(&mut self) {
-        self.jenkins.unblock();
         self.stopping.store(true, Ordering::SeqCst);
         // Wakes the proxy's accept, which then sees stopping; a failure means it no longer listens.
         let _ = TcpStream::connect(self.proxy_address);
@@ -137,226 +113,7 @@ fn log_request(ledger: &Ledger, event: Object) {
     });
 }
 
-// -- Jenkins ------------------------------------------------------------------------
-
-/// Answer one request to Jenkins's REST API for the job JOB, as the engine's CI class uses it, from the world's
-/// scripted builds (World::jenkins_build and retained_build); the request is logged, with its form, first.
-///
-/// The retained builds keep their numbers; the triggered ones follow the highest of them, in the order they were
-/// triggered, from 1 where there are none. Queue item k is build k's. The JSON answers have the fields and types of
-/// the live Jenkins's, which `cargo xtask contract` (xtask/src/contract.rs) checks against the real job; the texts,
-/// such as a console, are each scenario's own.
-fn jenkins_answer(world: &Path, base_url: &str, mut request: tiny_http::Request) {
-    let method = request.method().as_str().to_string();
-    let target = request.url().to_string();
-    let mut event = octoflow_engine::json::object([("jenkins", Value::from(format!("{method} {target}")))]);
-    let form = (method == "POST").then(|| {
-        let mut body = String::new();
-        request.as_reader().read_to_string(&mut body).unwrap_or_else(|e| panic!("reading a Jenkins request: {e}"));
-        parse_qs(&body)
-    });
-    if let Some(form) = &form {
-        event.insert("form".into(), form_json(form));
-    }
-    let ledger = Ledger::new(world);
-    log_request(&ledger, event);
-    let authorized = request.headers().iter().any(|h| h.field.equiv("Authorization") && h.value.as_str().starts_with("Basic "));
-    let answer = if authorized { jenkins_route(&ledger, base_url, &method, &target, form.as_ref()) } else { Answer::text(401, "no credentials") };
-    answer.send(request);
-}
-
-/// What Jenkins answers a request: its status, its body, and a Location header where it has one.
-struct Answer {
-    status: u16,
-    body: String,
-    json: bool,
-    location: Option<String>,
-}
-
-impl Answer {
-    fn text(status: u16, body: &str) -> Answer {
-        Answer { status, body: body.to_string(), json: false, location: None }
-    }
-
-    fn json(body: &Value) -> Answer {
-        Answer { status: 200, body: body.to_string(), json: true, location: None }
-    }
-
-    fn send(self, request: tiny_http::Request) {
-        let mut response = tiny_http::Response::from_string(self.body).with_status_code(self.status);
-        if self.json {
-            response.add_header(header("Content-Type", "application/json"));
-        }
-        if let Some(location) = self.location {
-            response.add_header(header("Location", &location));
-        }
-        if let Err(e) = request.respond(response) {
-            eprintln!("answering the engine's Jenkins request: {e}");
-        }
-    }
-}
-
-fn header(name: &str, value: &str) -> tiny_http::Header {
-    tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes()).expect("a valid header")
-}
-
-/// The answer to an authorized request for target, a path with its query.
-fn jenkins_route(ledger: &Ledger, base_url: &str, method: &str, target: &str, form: Option<&Vec<(String, Vec<String>)>>) -> Answer {
-    let (path, query) = target.split_once('?').unwrap_or((target, ""));
-    let prefix: String = JOB.split('/').map(|part| format!("/job/{part}")).collect::<String>() + "/";
-    if let Some(item) = path.strip_prefix("/queue/item/") {
-        let number: i64 = item.split('/').next().and_then(|n| n.parse().ok()).expect("a queue item's number");
-        return Answer::json(&object([("cancelled", Value::Bool(false)), ("executable", object([("number", Value::from(number))]))]));
-    }
-    let Some(rest) = path.strip_prefix(&prefix) else { return Answer::text(404, "no such job") };
-    let script = ledger.script();
-    let (build, held) = match ledger.change(|state| jenkins_build_of(state, &script, base_url, method, rest, query, form)) {
-        Ok(answer) => return answer,
-        Err(found) => found,
-    };
-    let (_, what) = rest.split_once('/').unwrap_or((rest, ""));
-    let quality = build.get("quality").and_then(Value::as_str);
-    let quality_json = build.get("quality_json").and_then(Value::as_str);
-    match what {
-        "api/json" => {
-            let result = if held { Value::Null } else { build.get("result").cloned().unwrap_or(Value::Null) };
-            Answer::json(&object([("building", Value::Bool(held)), ("result", result)]))
-        }
-        "artifact/quality.md" if quality.is_some() && !held => Answer::text(200, quality.unwrap_or_default()),
-        "artifact/quality.json" if quality_json.is_some() && !held => Answer::text(200, quality_json.unwrap_or_default()),
-        "testReport/api/json" if build.get("tests").is_some_and(|t| *t != Value::Null) => Answer::json(&test_report(&build)),
-        "consoleText" => Answer::text(200, build.get("console").and_then(Value::as_str).unwrap_or_default()),
-        _ => Answer::text(404, "not found"),
-    }
-}
-
-/// Under the ledger's lock: the answer to a request about the job itself, or Err with the build rest names and
-/// whether it is held, for jenkins_route to answer from. A poll of a held build's quality.md marks its hold reached:
-/// it is the last request of the engine's poll of a running build, after which it sleeps and polls again.
-fn jenkins_build_of(
-    state: &mut Object,
-    script: &Value,
-    base_url: &str,
-    method: &str,
-    rest: &str,
-    query: &str,
-    form: Option<&Vec<(String, Vec<String>)>>,
-) -> Result<Answer, (Value, bool)> {
-    if rest == "buildWithParameters" && method == "POST" {
-        let git_ref = form.and_then(|f| f.iter().find(|(k, _)| k == "GIT_REF")).map(|(_, v)| v[0].clone()).unwrap_or_default();
-        array_at(state, "triggered").push(Value::from(git_ref));
-        let n = builds(script, state).keys().max().copied().unwrap_or_default();
-        let location = Some(format!("{base_url}/queue/item/{n}/"));
-        return Ok(Answer { status: 201, body: String::new(), json: false, location });
-    }
-    let builds = builds(script, state);
-    if rest == "api/json" {
-        let tree = parse_qs(query).into_iter().find(|(k, _)| k == "tree").map(|(_, v)| v[0].clone()).unwrap_or_default();
-        return Ok(Answer::json(&job(&tree, &builds)));
-    }
-    let (number, what) = rest.split_once('/').unwrap_or((rest, ""));
-    let Some(build) = number.parse::<i64>().ok().and_then(|n| builds.get(&n)).cloned() else {
-        return Ok(Answer::text(404, "no such build"));
-    };
-    let hold = build.get("hold").and_then(Value::as_str).filter(|h| !h.is_empty()).map(str::to_string);
-    let held = hold.as_deref().is_some_and(|h| !holds(state, "released", h));
-    if let Some(hold) = hold.filter(|_| held && what == "artifact/quality.md") {
-        if !holds(state, "reached", &hold) {
-            array_at(state, "reached").push(Value::from(hold));
-        }
-    }
-    Err((build, held))
-}
-
-/// The job's builds by number: the retained ones, then those triggered so far, each its scripted outcome (a FAILURE
-/// without a quality file past the last scripted) with its GIT_REF under "ref".
-fn builds(script: &Value, state: &mut Object) -> std::collections::BTreeMap<i64, Value> {
-    let jenkins = script.get("jenkins");
-    let list = |key: &str| jenkins.and_then(|j| j.get(key)).and_then(Value::as_array).cloned().unwrap_or_default();
-    let mut out = std::collections::BTreeMap::new();
-    for retained in list("retained") {
-        let mut build = retained.as_object().cloned().expect("a retained build is an object");
-        build.insert("ref".into(), Value::Null);
-        let number = build.get("number").and_then(Value::as_i64).expect("a retained build's number");
-        out.insert(number, Value::Object(build));
-    }
-    let first = out.keys().max().copied().unwrap_or(0) + 1;
-    let scripted = list("builds");
-    for (k, git_ref) in array_at(state, "triggered").iter().enumerate() {
-        let mut build = scripted.get(k).and_then(Value::as_object).cloned().unwrap_or_else(|| {
-            octoflow_engine::json::object([("result", Value::from("FAILURE")), ("quality", Value::Null)])
-        });
-        let number = first + i64::try_from(k).expect("a build count fits an i64");
-        build.insert("number".into(), Value::from(number));
-        build.insert("ref".into(), git_ref.clone());
-        out.insert(number, Value::Object(build));
-    }
-    out
-}
-
-/// The job's api/json for the tree the engine asks for: its parameters, its builds' GIT_REFs, or its builds' results
-/// and descriptions; builds newest first.
-fn job(tree: &str, builds: &std::collections::BTreeMap<i64, Value>) -> Value {
-    let newest = builds.values().rev();
-    let number = |b: &Value| b.get("number").cloned().unwrap_or(Value::Null);
-    if tree.contains("parameterDefinitions") {
-        let parameters = Value::Array(vec![object([("name", Value::from("GIT_REF"))])]);
-        return object([("property", Value::Array(vec![object([("parameterDefinitions", parameters)])]))]);
-    }
-    if tree.contains("actions") {
-        let builds = newest.map(|b| {
-            let parameter = object([("name", Value::from("GIT_REF")), ("value", b.get("ref").cloned().unwrap_or(Value::Null))]);
-            let actions = Value::Array(vec![object([("parameters", Value::Array(vec![parameter]))])]);
-            object([("number", number(b)), ("actions", actions)])
-        });
-        return object([("builds", Value::Array(builds.collect()))]);
-    }
-    let builds = newest.map(|b| {
-        let field = |k: &str| b.get(k).cloned().unwrap_or(Value::Null);
-        object([("number", number(b)), ("result", field("result")), ("description", field("description"))])
-    });
-    object([("builds", Value::Array(builds.collect()))])
-}
-
-/// A build's test report: each of its failing tests, (dotted name, detail), as a failed case of one suite.
-fn test_report(build: &Value) -> Value {
-    let tests = build.get("tests").and_then(Value::as_array).cloned().unwrap_or_default();
-    let cases = tests.iter().map(|t| {
-        let pair = t.as_array().expect("a test is a [name, detail] pair");
-        let name = pair[0].as_str().expect("a test's name");
-        let (class, short) = name.rsplit_once('.').unwrap_or((name, name));
-        object([
-            ("className", Value::from(class)),
-            ("name", Value::from(short)),
-            ("status", Value::from("FAILED")),
-            ("errorDetails", pair[1].clone()),
-        ])
-    });
-    object([("suites", Value::Array(vec![object([("cases", Value::Array(cases.collect()))])]))])
-}
-
-/// A form or query string's fields, each with its values in order, as Python's urllib.parse.parse_qs reads it: `+`
-/// and `%XX` decoded, a field without a value left out.
-fn parse_qs(text: &str) -> Vec<(String, Vec<String>)> {
-    let mut out: Vec<(String, Vec<String>)> = Vec::new();
-    for pair in text.split('&').filter(|p| !p.is_empty()) {
-        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        let value = unquote(&value.replace('+', " "));
-        if value.is_empty() {
-            continue;
-        }
-        let key = unquote(&key.replace('+', " "));
-        match out.iter_mut().find(|(k, _)| *k == key) {
-            Some((_, values)) => values.push(value),
-            None => out.push((key, vec![value])),
-        }
-    }
-    out
-}
-
-fn form_json(form: &[(String, Vec<String>)]) -> Value {
-    Value::Object(form.iter().map(|(k, v)| (k.clone(), octoflow_e2e::strings(v))).collect())
-}
+// -- PyPI, behind its proxy ---------------------------------------------------------
 
 /// text with each `%XX` decoded to its byte, X a hex digit, the bytes read as UTF-8 with replacement, as
 /// urllib.parse.unquote does; a `%` before anything else stays as it is.
@@ -386,8 +143,6 @@ fn unquote(text: &str) -> String {
     }
     String::from_utf8_lossy(&out).into_owned()
 }
-
-// -- PyPI, behind its proxy ---------------------------------------------------------
 
 /// The TLS configuration of pypi.org's server: a certificate for pypi.org signed by a certificate authority of the
 /// world's own, PYPI_CA, made with openssl in world. A leaf under a CA, as PyPI's is, since rustls refuses a server
@@ -489,10 +244,7 @@ fn read_head(stream: &mut impl Read) -> Option<String> {
 }
 
 #[test]
-fn a_form_is_read_as_parse_qs_reads_it() {
-    let form = parse_qs("GIT_REF=orchestrator-ci%2Fa+b&EMPTY=&x=1&x=2");
-    let expected = vec![("GIT_REF".to_string(), vec!["orchestrator-ci/a b".to_string()]), ("x".to_string(), vec!["1".to_string(), "2".to_string()])];
-    assert_eq!(form, expected);
+fn unquote_decodes_as_urllib_does() {
     assert_eq!(unquote("100%25%zz%e2%80%94"), "100%%zz\u{2014}");
     assert_eq!(unquote("a%+1%-1%"), "a%+1%-1%");
 }

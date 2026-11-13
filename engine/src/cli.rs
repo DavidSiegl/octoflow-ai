@@ -4,8 +4,7 @@
 //! [`herdrless_command`], given the same [`Local`], for one that needs no herdr pane: every command of Python's but
 //! gui, not ported, and serve, crate::serve's, which main runs before it starts the others' signal handling. `run`
 //! and `resume` are here and in crate::cli::start; the commands about a project's runs in crate::cli::listing, prune
-//! and close; `workflows`, `drain`, `refresh`, `judged-in-quality` and `doctor` in modules of their names (judged for
-//! judged-in-quality).
+//! and close; `workflows`, `drain`, `refresh` and `doctor` in modules of their names.
 
 use std::cell::Cell;
 use std::ffi::OsString;
@@ -13,7 +12,6 @@ use std::path::Path;
 use std::sync::OnceLock;
 use std::io::Write;
 
-use crate::ci::{Jenkins, QualityGate};
 use crate::constants::{EXIT_CHANGES_REQUESTED, EXIT_CONFLICT, EXIT_ERROR, EXIT_INTERRUPTED, SUCCEEDED};
 use crate::env::ConfigDir;
 use crate::error::OrchestratorError;
@@ -33,7 +31,6 @@ pub mod args;
 mod close;
 pub mod doctor;
 pub mod drain;
-pub mod judged;
 pub mod refresh;
 pub mod listing;
 pub mod prune;
@@ -44,17 +41,14 @@ pub use args::{parse_args, Command, RunsCommand, Target};
 pub use start::{new_state, resumable_state, resumed_state};
 pub(crate) use start::new_run_id;
 
-/// What a command talks to once connected: the Workflow's collaborators but its Jenkins, which each run makes for
-/// its own job, and where the orchestrator's configuration is.
+/// What a command talks to once connected: the Workflow's collaborators and where the orchestrator's configuration
+/// is.
 #[derive(Clone, Copy)]
 pub struct Connected<'a> {
-    /// Every collaborator a Workflow is given; its quality_gate is None, and a run's own is made with jenkins
-    /// (QualityGate::named).
+    /// Every collaborator a Workflow is given; its quality_gate_on is false, and each run sets it from its saved
+    /// state (run_workflow).
     pub with: Collaborators<'a>,
-    /// The quality job of a name, with its credentials (crate::ci::Jenkins::from_env for a real run). Errors: its
-    /// credentials cannot be read.
-    pub jenkins: &'a dyn Fn(&str) -> Result<Jenkins, OrchestratorError>,
-    /// The orchestrator's configuration directory on this machine: its prompt and workflow files and ci.env.
+    /// The orchestrator's configuration directory on this machine: its prompt and workflow files.
     pub config: &'a ConfigDir,
     /// This machine's name, which an owner record of a run here names (crate::runs::local_host).
     pub local_host: &'a str,
@@ -96,8 +90,6 @@ pub(super) struct Local<'a> {
     pub herdr: &'a dyn Fn(Option<&str>) -> ProcessHerdr,
     /// Whether this process runs in a pane herdr manages (in_herdr_pane).
     pub in_herdr_pane: bool,
-    /// The quality job of a name, as Connected's jenkins.
-    pub jenkins: &'a dyn Fn(&str) -> Result<Jenkins, OrchestratorError>,
     /// The current directory (current_dir). Errors: it is gone or not UTF-8.
     pub cwd: &'a dyn Fn() -> Result<String, OrchestratorError>,
     /// The orchestrator's configuration directory on this machine.
@@ -185,7 +177,6 @@ pub fn main(argv: impl IntoIterator<Item = OsString>) -> i32 {
         }
     };
     let local_host = ProcessHost::local(interrupt);
-    let jenkins = |job: &str| Jenkins::from_env(job, &config);
     // A line stderr does not take is lost, as after a hangup; the status still tells.
     let stderr = |text: &str| drop(std::io::stderr().lock().write_all(text.as_bytes()));
     let herdr = |machine: Option<&str>| ProcessHerdr::new(machine, interrupt);
@@ -193,7 +184,6 @@ pub fn main(argv: impl IntoIterator<Item = OsString>) -> i32 {
         host: &local_host,
         herdr: &herdr,
         in_herdr_pane: in_herdr_pane(),
-        jenkins: &jenkins,
         cwd: &current_dir,
         config: &config,
         stdout: &print,
@@ -224,7 +214,6 @@ fn herdrless_command(command: &Command, local: &Local) -> Option<Result<Ended, S
         Command::Workflows(reference) => {
             workflows::workflows_command(local.config, reference.as_deref(), local.stdout).map(|()| 0)
         }
-        Command::JudgedInQuality { job, branch } => judged_in_quality_command(local, job, branch),
         // Not being in a herdr pane is one of the things doctor reports.
         Command::Doctor { target, setup_gate } => doctor::doctor_command(local, target, *setup_gate),
         _ => return None,
@@ -234,31 +223,6 @@ fn herdrless_command(command: &Command, local: &Local) -> Option<Result<Ended, S
         Ok(_) if interrupt.is_raised() => Err(Stop::Interrupted(None)),
         Ok(status) => Ok(Ended::Status(status)),
     })
-}
-
-/// Say whether a build of the Jenkins quality job job already judged the current directory's HEAD, as
-/// judged::judged_in_quality decides it for a pull request into the branch: 0, naming the build on standard output,
-/// when one did; otherwise EXIT_ERROR, with one line on standard error saying why, the condition the closest build
-/// fails or what stopped the question being answered. Python's judged_in_quality_command. Errors: only one met while
-/// local's interrupt is raised, which is not printed.
-fn judged_in_quality_command(local: &Local, job: &str, branch: &str) -> Result<i32, OrchestratorError> {
-    let judged = (local.cwd)().and_then(|cwd| {
-        let ci = (local.jenkins)(job)?;
-        judged::judged_in_quality(local.host, &cwd, &ci, branch)
-    });
-    match judged {
-        Ok(number) => {
-            (local.stdout)(&format!(
-                "judged-in-quality: build #{number} of {job} judged HEAD's tree from its merge base with {branch}\n"
-            ));
-            Ok(0)
-        }
-        Err(e) if local.interrupt.is_raised() => Err(e),
-        Err(e) => {
-            (local.stderr)(&format!("judged-in-quality: {}\n", e.0.lines().collect::<Vec<_>>().join(" ")));
-            Ok(EXIT_ERROR)
-        }
-    }
 }
 
 /// The exit status of a command that ended so, its last line printed: finish's for a run, by print, the command's
@@ -297,7 +261,6 @@ fn connect(command: &Command, local: &Local, human: &LocalHuman) -> Result<Ended
     };
     let clocks = SystemClocks::new(interrupt).map_err(stopped)?;
     let indexes = PackageIndexes::from_env();
-    let jenkins = |job: &str| Jenkins::from_env(job, config);
     let here = local_host();
     let world = Connected {
         with: Collaborators {
@@ -307,10 +270,9 @@ fn connect(command: &Command, local: &Local, human: &LocalHuman) -> Result<Ended
             human,
             interrupt,
             pid_alive: &pid_alive,
-            quality_gate: None,
+            quality_gate_on: false,
             indexes: &indexes,
         },
-        jenkins: &jenkins,
         config,
         local_host: &here,
         stdout,
@@ -348,7 +310,7 @@ fn run_command(command: &Command, world: &Connected) -> Result<Ended, Stop> {
             let status = refresh::refresh_command(world, &cwd, run_ref.as_deref()).map_err(stopped)?;
             return if interrupt.is_raised() { Err(Stop::Interrupted(None)) } else { Ok(Ended::Status(status)) };
         }
-        Command::Workflows(_) | Command::JudgedInQuality { .. } | Command::Doctor { .. } | Command::Serve(_) => {
+        Command::Workflows(_) | Command::Doctor { .. } | Command::Serve(_) => {
             unreachable!("main runs {command:?} without herdr (herdrless_command, serve_command)")
         }
     };
@@ -457,18 +419,14 @@ pub fn record_in_state(
 }
 
 /// Drive the run state describes through pipeline, by the settings saved in state, to its verdict. spec is the file
-/// a new run --spec run starts from; None for any other run. Errors: as Workflow::new and Workflow::run, and
-/// Stopped::Failed when the run's quality gate cannot be made.
+/// a new run --spec run starts from; None for any other run. Errors: as Workflow::new and Workflow::run.
 pub fn run_workflow(
     world: &Connected,
     state: RunState,
     pipeline: Pipeline,
     spec: Option<SpecFile>,
 ) -> Result<Ran, Stopped> {
-    let gate = match state.quality_job.as_deref().filter(|j| !j.is_empty()) {
-        Some(name) => Some(QualityGate::named(name, world.jenkins).map_err(Stopped::Failed)?),
-        None => None,
-    };
+    let quality_gate_on = state.quality_job.as_deref().is_some_and(|j| !j.is_empty());
     let settings = RunSettings {
         max_rounds: state.max_rounds,
         turn_timeout: state.turn_timeout,
@@ -482,7 +440,7 @@ pub fn run_workflow(
         pipeline: Some(pipeline.clone()),
         spec,
     };
-    let with = Collaborators { quality_gate: gate.as_ref(), ..world.with };
+    let with = Collaborators { quality_gate_on, ..world.with };
     let mut workflow = Workflow::new(with, state, settings).map_err(Stopped::Failed)?;
     let verdict = workflow.run()?;
     Ok(Ran { verdict, state: workflow.state().clone(), pipeline })
