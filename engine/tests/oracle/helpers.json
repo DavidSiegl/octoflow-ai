@@ -440,6 +440,46 @@
    "proofs_section": null
   },
   {
+   "recording": "gate_turned_off_by_resume.json",
+   "run_dir": "runs/<run:1>/",
+   "conflicts": [],
+   "spec_title": "Add a subtract function",
+   "branch_name": "orchestrator/add-a-subtract-function-<run:1>",
+   "verdict_line": "Reviewer verdict after 1 round: **APPROVE**.",
+   "commit_note": "Orchestrator run <run:1>: APPROVE after 1 review round(s).",
+   "provenance": [
+    [
+     "Orchestrator-Run",
+     "<run:1>"
+    ],
+    [
+     "Orchestrator-Workflow",
+     "default"
+    ],
+    [
+     "Orchestrator-Role",
+     "spec=claude/default"
+    ],
+    [
+     "Orchestrator-Role",
+     "build=claude/default"
+    ],
+    [
+     "Orchestrator-Role",
+     "review=claude/default"
+    ]
+   ],
+   "pr_body": "> [!NOTE]\n> The quality gate was turned off (`resume --no-quality-gate`) before any analysis finished, so nothing judged the change.\n\nOpened by Octoflow AI run `<run:1>`. Reviewer verdict after 1 round: **APPROVE**.\n\n| Commit trailer | Value |\n| --- | --- |\n| Orchestrator-Run | `<run:1>` |\n| Orchestrator-Workflow | `default` |\n| Orchestrator-Role | `spec=claude/default` |\n| Orchestrator-Role | `build=claude/default` |\n| Orchestrator-Role | `review=claude/default` |\n\n<details open>\n<summary>Spec</summary>\n\n# Add a subtract function\n\nAdd `subtract(a, b)` to `src/calc.py`, returning a - b, with a test.\n\n</details>\n\n<details>\n<summary>Builder report (round 1)</summary>\n\nAdded subtract and its test (round 1). `pytest` passes.\n\n</details>\n\n<details>\n<summary>Review (round 1)</summary>\n\nVERDICT: APPROVE\n\nNone.\n\n</details>\n\n<details>\n<summary>Run timings</summary>\n\n| step | role | round | harness | model | start (UTC) | duration | file |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| spec (human-paced) | spec | 0 | claude | default | 2026-10-03 04:01:00 | 5s | spec.md |\n| build | build | 1 | claude | default | 2026-10-03 04:03:00 | 12s | build-1.md |\n| review | review | 1 | claude | default | 2026-10-03 04:05:00 | 19s | review-1.md |\n\n</details>\n",
+   "turn_lines": [
+    "spec    0  claude  2026-10-03 04:01:00  5s   spec.md",
+    "build   1  claude  2026-10-03 04:03:00  12s  build-1.md",
+    "review  1  claude  2026-10-03 04:05:00  19s  review-1.md"
+   ],
+   "run_summary": "# Run <run:1>\n\n- **Workflow:** default\n- **Outcome:** APPROVE\n- **Pull request:** https://github.com/parity/project/pull/1\n- **Branch:** `orchestrator/add-a-subtract-function-<key:1>`\n- **Wall time:** 6h 59m, from the first turn's start to 2026-10-03T11:00:00+00:00\n\n## Task\n\nAdd a subtract function\n\n## Roles\n\n| role | harness | model |\n| --- | --- | --- |\n| Spec Collector (spec) | claude | default |\n| Builder (build) | claude | default |\n| Reviewer (review) | claude | default |\n\n## Turns\n\n| step | role | round | harness | model | start (UTC) | duration | file |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| spec (human-paced) | spec | 0 | claude | default | 2026-10-03 04:01:00 | 5s | spec.md |\n| build | build | 1 | claude | default | 2026-10-03 04:03:00 | 12s | build-1.md |\n| review | review | 1 | claude | default | 2026-10-03 04:05:00 | 19s | review-1.md |\n\n## Rounds\n\n- Round 1: as recorded\n",
+   "run_metrics": "{\"version\": 1, \"run_id\": \"<run:1>\", \"workflow\": \"default\", \"outcome\": \"APPROVE\", \"rounds\": 1, \"max_rounds\": 3, \"quality_gate\": true, \"max_quality_rounds\": 3, \"pull_request\": \"https://github.com/parity/project/pull/1\", \"started_at\": \"2026-10-03T04:01:00+00:00\", \"ended_at\": \"2026-10-03T11:00:00+00:00\", \"seconds\": 25140, \"roles\": {\"spec\": {\"harness\": \"claude\", \"model\": null}, \"build\": {\"harness\": \"claude\", \"model\": null}, \"review\": {\"harness\": \"claude\", \"model\": null}}, \"turns\": [{\"step\": \"spec\", \"role\": \"spec\", \"harness\": \"claude\", \"model\": null, \"round\": 0, \"quality_round\": 0, \"human_paced\": true, \"started_at\": \"2026-10-03T04:01:00+00:00\", \"ended_at\": \"2026-10-03T04:02:00+00:00\", \"seconds\": 5, \"tokens\": \"unknown\"}, {\"step\": \"build\", \"role\": \"build\", \"harness\": \"claude\", \"model\": null, \"round\": 1, \"quality_round\": 0, \"human_paced\": false, \"started_at\": \"2026-10-03T04:03:00+00:00\", \"ended_at\": \"2026-10-03T04:04:00+00:00\", \"seconds\": 12, \"tokens\": \"unknown\"}, {\"step\": \"review\", \"role\": \"review\", \"harness\": \"claude\", \"model\": null, \"round\": 1, \"quality_round\": 0, \"human_paced\": false, \"started_at\": \"2026-10-03T04:05:00+00:00\", \"ended_at\": \"2026-10-03T04:06:00+00:00\", \"seconds\": 19, \"tokens\": \"unknown\"}], \"quality_rounds\": [], \"restored_locked_files\": 0}",
+   "proofs_section": null
+  },
+  {
    "recording": "gate_turned_on_by_resume.json",
    "run_dir": "runs/<run:1>/",
    "conflicts": [],

@@ -175,8 +175,8 @@ pub fn preflight(host: &dyn Host) -> Result<(), OrchestratorError> {
 /// Start the gate judging snapshot, a commit of cwd's repository whose only parent is base, and return the job, which
 /// runs on, detached from the engine, until it ends or is stopped. Each start for out_dir, a quality round's directory,
 /// judges in a job directory of its own, out_dir/job-<k>, k counting the round's starts, so that what one start does to
-/// its files, as an engine since taken over still may, never touches another's. The jobs earlier starts left there that
-/// still run are stopped first (Known::Left), and what only a running job needs is removed. The job directory holds
+/// its files, as an engine since taken over still may, never touches another's. The jobs earlier starts left there are
+/// stopped first (stop_left). The job directory holds
 /// judge/ (base's gate.toml, an empty one for a base without, and base's pyproject.toml when it has one), job.log,
 /// gate.err and exit, and, once the gate has judged, quality.md and quality.json; while the job runs, also group (its
 /// process group), tree/ (a checkout of snapshot, a worktree of cwd's repository) and release/ (the release, unpacked),
@@ -201,18 +201,12 @@ pub fn start(host: &dyn Host, cwd: &str, snapshot: &str, base: &str, out_dir: &s
              {major}.{minor}.0 on"
         )));
     }
+    stop_left(host, cwd, out_dir)?;
     let made = host.check(&["sh", "-c", NEXT_JOB, "_", out_dir], None, DEFAULT_TIMEOUT)?;
     let k: u32 = made
         .trim()
         .parse()
         .map_err(|_| OrchestratorError(format!("making a job directory in {out_dir} printed {made:?}")))?;
-    for earlier in 1..k {
-        let dir = format!("{out_dir}/job-{earlier}");
-        if let (Some(group), None) = (host.read(&format!("{dir}/group"))?, host.read(&format!("{dir}/exit"))?) {
-            stop_job(host, group.trim(), &dir, Known::Left)?;
-        }
-        clean_up(host, cwd, &dir)?;
-    }
     let dir = format!("{out_dir}/job-{k}");
     let judge = format!("{dir}/judge");
     // The gate takes its settings from --config's gate.toml, an empty one being its defaults, and the linters' rules
@@ -285,6 +279,26 @@ impl Judging {
         let probe = ["sh", "-c", "kill -0 -\"$1\" 2>/dev/null", "_", &self.group];
         Ok(host.run(&probe, None, DEFAULT_TIMEOUT)?.status == 0)
     }
+}
+
+/// Stop each job that starts for out_dir, a quality round's directory, left running, as after a crash, a takeover or a
+/// run killed while its gate judged, and remove what only a running job needs (clean_up) from every job directory
+/// there, cwd being the repository the snapshots' checkouts are worktrees of. What the jobs wrote, their reports and
+/// logs, stays. An out_dir that does not exist holds no job. Errors: a command or git fails; the jobs before the
+/// failing one are stopped.
+pub fn stop_left(host: &dyn Host, cwd: &str, out_dir: &str) -> Result<(), OrchestratorError> {
+    // NEXT_JOB makes job-<k> only once job-1 to job-<k-1> exist, so the first gap ends them.
+    for k in 1.. {
+        let dir = format!("{out_dir}/job-{k}");
+        if !host.exists(&dir)? {
+            return Ok(());
+        }
+        if let (Some(group), None) = (host.read(&format!("{dir}/group"))?, host.read(&format!("{dir}/exit"))?) {
+            stop_job(host, group.trim(), &dir, Known::Left)?;
+        }
+        clean_up(host, cwd, &dir)?;
+    }
+    unreachable!("a round has fewer than u32::MAX jobs")
 }
 
 /// Whether said, the end of the gate's standard error, is the gate's report of a change it could not judge.

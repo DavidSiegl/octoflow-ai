@@ -152,6 +152,7 @@ scenarios!(
     doctor_checks,
     failed_run_closed,
     finished_run_closed,
+    gate_turned_off_by_resume,
     gate_turned_on_by_resume,
     kill_in_build,
     kill_in_design,

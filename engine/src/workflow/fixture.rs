@@ -659,7 +659,7 @@ fn plays(
                 }
                 exits(i32::from(ended), "")
             }
-            ["sh", "-c", _, "_", "4242", _name, "tracked"] => {
+            ["sh", "-c", _, "_", "4242", _name, "tracked" | "left"] => {
                 assert!(!interrupt.is_raised(), "a stop started with a Ctrl-C pending, which ProcessHost refuses");
                 let mut gate = gate.borrow_mut();
                 gate.stops += 1;

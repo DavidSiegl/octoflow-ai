@@ -86,6 +86,8 @@ fn gate_can_start<'p>(state: &RunState, pipeline: &'p Pipeline) -> Result<Option
 ///
 /// A run in phase quality goes on at the step after the gated one, dropping an analysis that
 /// has not finished; the verdict step then hears of the round's quality files as the quality note says (Workflow::quality_note).
+/// The jobs of that round's gate left running, as by a run killed while its gate judged, are stopped
+/// (local_gate::stop_left); a failure to is logged and does not stop the turn.
 ///
 /// Errors, with state unchanged: the run has no quality gate, or is done.
 pub fn turn_quality_gate_off(
@@ -101,6 +103,10 @@ pub fn turn_quality_gate_off(
     s.quality_job = None;
     s.quality_gate_disabled = true;
     if s.phase == QUALITY {
+        let gate_dir = s.gate_dir(s.round, s.quality_round);
+        if let Err(e) = crate::local_gate::stop_left(with.host, s.work_dir(), &gate_dir) {
+            with.human.log(&format!("could not stop the quality gate's job: {e}"));
+        }
         if let Some(gated) = pipeline.gated() {
             // An analysis that has not finished has an open record, which no quality file will ever close.
             s.turns.retain(|t| t.step != QUALITY || !t.under_way());

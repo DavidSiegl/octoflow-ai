@@ -385,6 +385,14 @@ pub fn gate_turned_on_by_resume(w: &mut World) {
     killed_and_resumed_with(w, "build", &["run", "--", TASK], &["--quality-gate", "local"]);
 }
 
+/// A run killed while the local gate judges its first quality round, resumed with --no-quality-gate: the job the kill
+/// left is stopped, and the Reviewer is told nothing judged the change.
+pub fn gate_turned_off_by_resume(w: &mut World) {
+    w.local_gate([judged_ok().hold("quality")]);
+    approved_roles(w);
+    killed_held_and_resumed(w, "quality", &gated(&["--", TASK]), &["--no-quality-gate"]);
+}
+
 // -- Where the run works -------------------------------------------------------------
 
 /// run --worktree: the run builds in a worktree of its own from origin's main, which is removed once the pull request is

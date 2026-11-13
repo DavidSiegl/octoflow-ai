@@ -595,6 +595,58 @@ fn round_results_keep_the_quality_files() {
     assert!(summary.contains("Round 1: quality gate OK; review APPROVE"), "{summary}");
 }
 
+// -- Not Python's: the job a killed run left --------------------------------------------------------------------
+
+#[test]
+fn off_in_quality_stops_the_job_a_killed_run_left_and_keeps_what_ended_jobs_wrote() {
+    let mut state = gated_pr_run("quality", 1);
+    let host = pr_host();
+    let gate_dir = state.gate_dir(1, 1);
+    let (ended, left) = (format!("{gate_dir}/job-1"), format!("{gate_dir}/job-2"));
+    {
+        let mut s = host.state();
+        s.files.insert(format!("{ended}/exit"), "1\n".into());
+        s.files.insert(format!("{ended}/quality.md"), "GATE: ERROR\n".into());
+        s.files.insert(format!("{left}/group"), "4242".into());
+        s.files.insert(format!("{left}/job.log"), "fetching\n".into());
+        s.files.insert(format!("{left}/release/gate"), "a program".into());
+        s.worktrees.insert(format!("{left}/tree"), "HEAD".into());
+    }
+    let f = Fixture::on(Rc::clone(&host), state.clone(), vec![]).gated();
+
+    turn_quality_gate_off(&mut state, &DEFAULT_WORKFLOW, &f.collaborators()).expect("the gate turns off");
+
+    assert_eq!(f.gate.borrow().stops, 1, "the left job is stopped");
+    let s = host.state();
+    assert!(!s.worktrees.contains_key(&format!("{left}/tree")), "the left job's checkout is removed");
+    for gone in ["group", "release/gate"] {
+        assert!(!s.files.contains_key(&format!("{left}/{gone}")), "{gone} stays");
+    }
+    assert!(s.files.contains_key(&format!("{left}/job.log")));
+    assert_eq!(s.files.get(&format!("{ended}/quality.md")).map(String::as_str), Some("GATE: ERROR\n"));
+    assert_eq!(state.phase, "review");
+}
+
+#[test]
+fn off_in_quality_goes_on_when_the_left_job_cannot_be_cleared_saying_why() {
+    let mut state = gated_pr_run("quality", 1);
+    let host = pr_host();
+    let job = format!("{}/job-1", state.gate_dir(1, 1));
+    {
+        let mut s = host.state();
+        s.files.insert(format!("{job}/group"), "4242".into());
+        s.worktrees.insert(format!("{job}/tree"), "HEAD".into());
+        s.remove_error = Some("fatal: cannot remove a locked working tree".into());
+    }
+    let f = Fixture::on(Rc::clone(&host), state.clone(), vec![]).gated();
+
+    turn_quality_gate_off(&mut state, &DEFAULT_WORKFLOW, &f.collaborators()).expect("the gate turns off");
+
+    assert_eq!(state.phase, "review");
+    let lines = f.told.lines();
+    assert!(lines.iter().any(|l| l.starts_with("could not stop the quality gate's job: ")), "{lines:?}");
+}
+
 // -- Not Python's: a failure after the checks ---------------------------------------------------------------------
 
 /// A host whose every read fails, and which runs no command.

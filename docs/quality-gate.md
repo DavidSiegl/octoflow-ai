@@ -517,8 +517,8 @@ come back), in a workflow without a quality-gated step, and for
 a `--no-pr` run in the checkout itself past round 0: its tree was never required to be clean, and a snapshot takes
 the whole tree. For a run that has the gate already it changes nothing.
 
-`resume --no-quality-gate` saves `quality_job` null and `quality_gate_disabled` true. A run in `quality` goes on at `review`, dropping an analysis that has not finished; a Builder in
-its fix turn writes `build-<n>-q<q>.md` and goes straight to `review`, with `quality_round` past the quality round
+`resume --no-quality-gate` saves `quality_job` null and `quality_gate_disabled` true. A run in `quality` goes on at `review`, dropping an analysis that has not finished and stopping
+the gate's job a killed run left running, if any (a failure to is logged); a Builder in its fix turn writes `build-<n>-q<q>.md` and goes straight to `review`, with `quality_round` past the quality round
 no gate ever judges. The Reviewer reads the Builder's latest report of the round. Its prompt ends with
 `QUALITY_PASSED_NOTE`, `QUALITY_UNRESOLVED_NOTE` or `QUALITY_STUCK_NOTE` for the round's last quality file that is
 written; with `QUALITY_OFF_NOTE`, naming the round's quality files, when the Builder changed the code after it; and
