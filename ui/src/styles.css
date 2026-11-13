@@ -100,6 +100,9 @@ a {
   line-height: 32px;
 }
 
+/* Its fields keep their minimum widths, so a window too narrow for it pushes its last button past the edge; the main
+ * window's minWidth in src-tauri/tauri.conf.json keeps it wide enough. That width is this bar's, measured with a
+ * vertical scrollbar showing (642 px in headless Chromium, 660 for the web view's fonts): re-measure when it changes. */
 .project-bar {
   display: flex;
   flex: 1 1 480px;
