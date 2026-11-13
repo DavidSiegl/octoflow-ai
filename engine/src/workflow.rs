@@ -16,7 +16,6 @@ use crate::constants::{
     FINISHED, HEARTBEAT_SECONDS, QUALITY_GATE_FAILED, REMOTE, SUCCEEDED,
 };
 use crate::ci::QualityGate;
-use crate::local_gate;
 use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
 use crate::harness::{harness, AgentSettings};
@@ -472,10 +471,10 @@ impl<'a> Workflow<'a> {
             self.check_worktree()?;
         }
         self.check_branch()?;
-        if let Some(QualityGate::Jenkins(jenkins)) = self.quality_gate {
+        if let Some(gate) = self.quality_gate {
             if self.state.in_quality(&self.pipeline) {
                 // Before a turn of the gated step that may take half an hour, not after it.
-                jenkins.check_credentials()?;
+                gate.check_resume()?;
             }
         }
         Ok(())
@@ -487,11 +486,11 @@ impl<'a> Workflow<'a> {
         if self.state.worktree.is_some() {
             self.open_worktree()?;
         }
-        if self.state.pull_request || self.quality_gate.is_some() {
-            self.host.check_gitleaks()?;
-        }
-        if let Some(gate) = self.quality_gate {
-            self.check_gate(gate)?;
+        match self.quality_gate {
+            Some(gate) => self.check_gate(gate)?,
+            // Publishing scans what it pushes; the gate's preflight checks gitleaks itself.
+            None if self.state.pull_request => self.host.check_gitleaks()?,
+            None => {}
         }
         if self.state.pull_request && self.state.worktree.is_none() {
             self.check_repo()?;
@@ -512,15 +511,7 @@ impl<'a> Workflow<'a> {
             // A snapshot takes every change in the tree, so the tree must start with none.
             self.require_clean()?;
         }
-        match gate {
-            QualityGate::Jenkins(jenkins) => {
-                if !self.state.pull_request {
-                    quality_rounds::require_origin(self.host, cwd)?;
-                }
-                jenkins.preflight()
-            }
-            QualityGate::Local => local_gate::preflight(self.host),
-        }
+        gate.preflight(self.host, cwd)
     }
 
     /// Before the interview, check out origin's base branch, detached, in the run's worktree.

@@ -1,12 +1,11 @@
 //! resume's --quality-gate and --no-quality-gate: the quality gate of a stopped run turned on or off before a Workflow
 //! resumes it, its state changed in memory for the Workflow to save. Python's turn_quality_gate_on and _off.
 
-use super::quality_rounds::{delete_ci_refs, require_origin};
+use super::quality_rounds::delete_ci_refs;
 use super::{Collaborators, Human};
 use crate::ci::QualityGate;
 use crate::error::OrchestratorError;
 use crate::host::Host;
-use crate::local_gate;
 use crate::paths::file_name;
 use crate::pipeline::{Pipeline, Step, DONE, PUBLISH, QUALITY};
 use crate::state::RunState;
@@ -14,10 +13,9 @@ use crate::state::RunState;
 /// Turn the quality gate of the run in state, of workflow pipeline, on with gate, a Jenkins job or the local gate, as
 /// resume --quality-gate does; the run's own gate again changes nothing. human hears what was done.
 ///
-/// From round 1 on, gitleaks must run and the gate pass its preflight (Jenkins::preflight, local_gate::preflight), and
-/// for a Jenkins job the checkout must have an origin; round 0 is left to the Workflow's own preflight, as for run
-/// --quality-gate. A run in the step after the gated one, whose turn has not started, goes to quality round 1 first;
-/// any other starts the gate at the gated step's next turn.
+/// From round 1 on, the gate must pass its preflight (QualityGate::preflight); round 0 is left to the Workflow's own
+/// preflight, as for run --quality-gate. A run in the step after the gated one, whose turn has not started, goes to
+/// quality round 1 first; any other starts the gate at the gated step's next turn.
 ///
 /// Errors, with state unchanged: the run is in phase done or publish (even with its own gate), had its gate turned
 /// off, has another gate, is of a workflow without a quality-gated step, or is an in-place --no-pr run past round 0,
@@ -36,18 +34,7 @@ pub fn turn_quality_gate_on(
         return Ok(());
     };
     if s.round > 0 {
-        // Every quality snapshot is scanned before it is judged (Host::refuse_leaks); round 0's preflight checks it.
-        match gate {
-            QualityGate::Jenkins(jenkins) => {
-                require_origin(host, &s.cwd)?;
-                host.check_gitleaks()?;
-                jenkins.preflight()?;
-            }
-            QualityGate::Local => {
-                host.check_gitleaks()?;
-                local_gate::preflight(host)?;
-            }
-        }
+        gate.preflight(host, &s.cwd)?;
     }
     // Whether the run goes to quality round 1 first: read before state changes, so that a failed read leaves it as it was.
     let mut judge_first = false;

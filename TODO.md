@@ -77,8 +77,8 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   stuck rule misses that loop, so the Builder gets one more turn. Closes with recording the round before the quality
   file is written, or comparing only the first `QUALITY_FINDINGS_LIMIT` of a JSON-read round against a Markdown-read
   one; goes with the fallback below.
-- **A running build's reports are taken as whole once two reads agree.** The quality round's `gate_or_end`
-  (`engine/src/workflow/quality_rounds.rs`) reads a still running build's `quality.md`, and its `quality.json` with
+- **A running build's reports are taken as whole once two reads agree.** A Jenkins judgement's `gate_or_end`
+  (`engine/src/ci/judging.rs`) reads a still running build's `quality.md`, and its `quality.json` with
   it, each poll and takes the pair when two reads at least `CI_POLL_SECONDS` apart are equal, because Jenkins serves
   an artifact while `archiveArtifacts` is still copying it. Raised by the cross-review of `quality-round-early-read`
   (F1, 2026-10-27): "Equal reads show only that the copy made no progress between them, not that it finished." Two
@@ -136,6 +136,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   the value it set. Left out of origin-retry ticket 01 (2026-11-04). Would close with each write's retry made safe to
   repeat, then routed through `reaching_origin`. Decided against (the user's ruling, 2026-11-11): a run a write fails
   is resumed once origin is back, and making each write safe to repeat costs more than that resume.
+- **`ci` reads the run's layout from `RunState`.** `QualityGate::start` (`engine/src/ci.rs`) takes `&mut RunState` and
+  reads its base, work dir, run id, leaks path, gate dir, ci ref, quality place and `ci`, while `state.rs` imports
+  `crate::ci::LOCAL_GATE`. Deferred from cross-review 181 (F5, nit): "a module cycle, and the run's layout leaks into
+  the CI client. Passing the snapshot's inputs and `&mut Object` would keep `ci` below `state`." Closes with `start`
+  taking those inputs and `RunState::ci`, if the parameter list that brings stays shorter than what it removes.
 - **Host::fetch does not wait out an outage by itself.** Each caller wraps it in `reaching_origin`
   (`engine/src/workflow.rs`'s five, `quality_rounds.rs`'s `delete_ci_refs`, `cli/prune.rs`'s `prune_remote`), since a
   `Host` (`engine/src/host.rs`) has no clock to wait on and no human to tell; a new caller gets no retry unless it

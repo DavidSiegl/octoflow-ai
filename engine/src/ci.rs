@@ -7,17 +7,23 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::constants::{CI_ENV, CI_TOKENS, HTTP_TIMEOUT, JOB_PARAMETERS};
+use crate::constants::{CI_ENV, CI_TOKENS, HTTP_TIMEOUT, JOB_PARAMETERS, REMOTE};
 use crate::env::{ci_credentials, ConfigDir};
 use crate::error::OrchestratorError;
+use crate::host::{Host, PushError, Scanned};
+use crate::local_gate;
+use crate::state::RunState;
 use crate::quality::last_lines;
 use crate::http::{quote, urlencode, Http, HttpClient, HttpError, Method, Request, Response};
 use serde_json::Value;
 use crate::map::Map;
-use crate::json::{Object, ValueExt};
+use crate::json::{object, Object, ValueExt};
 
 #[cfg(test)]
 pub(crate) mod fake;
+mod judging;
+
+pub use judging::{Judging, Poll, Started, Verdict};
 
 /// Why a call to Jenkins failed.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -134,6 +140,92 @@ impl QualityGate {
             QualityGate::Jenkins(jenkins) => jenkins.mask(text),
             QualityGate::Local => text.to_string(),
         }
+    }
+
+    /// Fails if a run with this gate in the checkout at cwd could not judge its change: gitleaks, which scans every
+    /// snapshot before it is judged, cannot run; for a Jenkins job, cwd has no origin to push snapshots to, or the job
+    /// fails Jenkins::preflight; for the local gate, host fails local_gate::preflight. Errors: those, and git failing.
+    pub fn preflight(&self, host: &dyn Host, cwd: &str) -> Result<(), OrchestratorError> {
+        host.check_gitleaks()?;
+        match self {
+            QualityGate::Jenkins(jenkins) => {
+                if !host.has_origin(cwd)? {
+                    return Err(OrchestratorError(format!(
+                        "the quality gate pushes snapshots to {REMOTE}, and {cwd} has no {REMOTE}"
+                    )));
+                }
+                jenkins.preflight()
+            }
+            QualityGate::Local => local_gate::preflight(host),
+        }
+    }
+
+    /// Fails if a run past its preflight, resumed into its quality loop, could not have a snapshot judged: a Jenkins
+    /// job's credentials are missing (Jenkins::check_credentials). Asks no one over the network, so it is cheap
+    /// enough for every start.
+    pub fn check_resume(&self) -> Result<(), OrchestratorError> {
+        match self {
+            QualityGate::Jenkins(jenkins) => jenkins.check_credentials(),
+            QualityGate::Local => Ok(()),
+        }
+    }
+
+    /// Start judging quality round q of round n of the run in state: a snapshot of its change, a commit of its work
+    /// dir's tree whose only parent is the run's base, scanned by gitleaks by the base's rules, then judged.
+    ///
+    /// Jenkins judges a snapshot pushed to origin's branch RunState::ci_ref, once gitleaks finds no secret in it or in
+    /// the commits below it that origin lacks; state.ci then records the push, in place of what it held, for the
+    /// caller to save. When state.ci already records that branch, as on a resume, the judgement goes on from the
+    /// furthest link it records, and no snapshot is taken. The local gate judges a new snapshot each start, scanning
+    /// only what it adds to the base, in a job of its own under RunState::gate_dir (local_gate::start).
+    ///
+    /// Errors: the run has no base; state.ci's link is of another type than a chain saves; git, the scan or the push
+    /// fails; local_gate::start's.
+    pub fn start(
+        &self,
+        host: &dyn Host,
+        state: &mut RunState,
+        n: u32,
+        q: u32,
+    ) -> Result<Started<'_>, OrchestratorError> {
+        let base =
+            state.base.clone().ok_or_else(|| OrchestratorError("a quality round before the run has a base".into()))?;
+        let (git_ref, place) = (state.ci_ref(n, q), state.quality_place(n, q));
+        if let QualityGate::Jenkins(jenkins) = self {
+            if state.ci.get("ref").and_then(Value::as_str) == Some(git_ref.as_str()) {
+                let sha = judging::ci_text(&state.ci, "sha")?;
+                return Ok(Started::Judging(Judging::jenkins(jenkins, &sha, &git_ref, &place, true)));
+            }
+        }
+        let work_dir = state.work_dir().to_string();
+        let message = format!("Orchestrator run {}: round {n}, quality round {q}", state.run_id);
+        let sha = host.snapshot(&work_dir, &base, &message)?;
+        let leaks_path = state.leaks_path("snapshot");
+        let (scanned, so_what) = match self {
+            QualityGate::Jenkins(_) => (
+                host.push_ref(&work_dir, &sha, &git_ref, &base, &leaks_path),
+                "it was not pushed and Jenkins did not judge the change",
+            ),
+            QualityGate::Local => (
+                host.refuse_leaks(&work_dir, &sha, &base, Scanned::SinceBase, &leaks_path),
+                "the local gate did not judge the change",
+            ),
+        };
+        match scanned {
+            Ok(()) => {}
+            Err(PushError::Failed(e)) => return Err(e),
+            Err(PushError::Leaks(found)) => return Ok(Started::Leaked { found, snapshot: sha, so_what }),
+        }
+        Ok(Started::Judging(match self {
+            QualityGate::Jenkins(jenkins) => {
+                state.ci = object([("ref", Value::from(git_ref.as_str())), ("sha", Value::from(sha.as_str()))]);
+                Judging::jenkins(jenkins, &sha, &git_ref, &place, false)
+            }
+            QualityGate::Local => {
+                let job = local_gate::start(host, &work_dir, &sha, &base, &state.gate_dir(n, q))?;
+                Judging::local(job, &sha, &place)
+            }
+        }))
     }
 }
 
