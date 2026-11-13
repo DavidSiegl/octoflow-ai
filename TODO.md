@@ -251,8 +251,9 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   it starts); a SIGKILL allows no cleanup, and a resumed run takes over the agents it finds alive.
 - **The Rust engine talks to Jenkins and PyPI otherwise than urllib in a few cases.** Its transport is ureq
   (`HttpClient`, `engine/src/http.rs`, rust-engine ticket 07, 2026-10-28), which differs from `urlopen` where no test of
-  the Python engine pins it (its CONNECT to a proxy for a plain-http URL is GitHub #410): TLS trusts the certificates of
-  the places the environment names, else of the system's as openssl-probe finds them, each read by rustls-native-certs
+  the Python engine pins it (its CONNECT to a proxy for a plain-http URL stays, documented in README's Requirements:
+  the user's ruling, 2026-11-12, GitHub #410): TLS trusts the certificates of the places the environment names, else of
+  the system's as openssl-probe finds them, each read by rustls-native-certs
   (`root_certs`), which trusts otherwise than OpenSSL does for Python in five ways (the user's rulings, 2026-10-28,
   cross-review 93, F22 and F23): with `SSL_CERT_FILE` set non-empty and `SSL_CERT_DIR` unset, or the reverse, it reads
   only what is set, where OpenSSL adds the system's default directory or file (with the other set empty, OpenSSL adds

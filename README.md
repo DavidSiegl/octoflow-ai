@@ -89,7 +89,9 @@ there; `doctor --setup-gate` writes the gate's `ci/gate.pin` and a starter `gate
   [Running the agents on another machine](docs/design.md#running-the-agents-on-another-machine)
 - For `--quality-gate JOB`: a Jenkins quality job set up as in [quality gate](docs/quality-gate.md), its
   credentials in `~/.config/ai-agents-orchestrator/ci.env` or the environment, and a git checkout with an
-  `origin`, also with `--no-pr`
+  `origin`, also with `--no-pr`. The orchestrator reaches an `http://` `JENKINS_URL` through `http_proxy` with
+  `CONNECT`, which a proxy allowing it only to port 443, as squid does by default, refuses: name such a Jenkins in
+  `no_proxy`, or reach it over https
 - For `--quality-gate local`, a project on a Linux x86_64 machine, which the gate is built for, with curl, tar,
   setsid, ps, sha256sum (or shasum) and gitleaks, and the tools the project's `gate.toml` has the gate run, its test
   commands and linters, all on `PATH`
