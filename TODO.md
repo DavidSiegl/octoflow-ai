@@ -313,10 +313,10 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   terms by design". The example's header says so. Decided against (the user's ruling, 2026-11-11): the check reading
   every non-editing step's file that precedes the first editing step, or a workflow key naming the file that holds
   the paths; only the contract step names paths in the example workflows, and the finding is one to weigh.
-- **Removing a tree of read-only directories is written out twice.** `chmod -R u+rwX "$dir" && rm -rf "$dir"`,
-  with a warning when it fails, is in the Jenkinsfile's Test stage (emptying `TMPDIR` before the tests) and in
-  `packaging/build-desktop.sh`'s `remove_temporaries`, for the AppImage extractions it removes; a fix to one does
-  not reach the other. `engine/src/proofs.rs`'s `REMOVE_TREE_SCRIPT` is a looser third (`rm` runs even when `chmod`
+- **Removing a tree of read-only directories is written out twice.** `chmod -R u+rwX "$dir" && rm -rf "$dir"`, with a
+  warning when it fails, is in the Jenkinsfile's Checkout stage (emptying `TMPDIR` before any stage uses it) and in
+  `packaging/build-desktop.sh`'s `remove_temporaries`, for the AppImage extractions it removes; a fix to one does not
+  reach the other. `engine/src/proofs.rs`'s `REMOVE_TREE_SCRIPT` is a looser third (`rm` runs even when `chmod`
   fails, with no warning). Raised by cross-review 132 (F6, nit, 2026-11-04): "Record or share it, as the implementer
   judges". Closes with one script both call, should a third copy be needed or the idiom change.
 - **No build has yet been seen waiting for `ci/cargo-lock.sh` on the Jenkins agent.** PR #88's builds ran both

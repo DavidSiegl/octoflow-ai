@@ -15,6 +15,15 @@ pipeline {
         // For the Test, UI, Gate and Package stages: crates are fetched into the workspace, which cleanWs empties, so
         // no build compiles sources an earlier build left behind.
         CARGO_HOME     = "${env.WORKSPACE}/.cargo-home"
+        // Temporary files on the agent's mounted volume, beside the workspace, rather than in /tmp. The tests and the
+        // gate build Rust in temporary directories and run what they build: the test fixtures' build scripts and test
+        // binaries, and cargo-mutants on the gate's copy of a tree; and the Package stage's AppImage smoke test runs
+        // the app extracted there. /tmp is in the container's writable layer, where the agent host's Falco reports
+        // every program run from a file written there ("Drop and execute new binary in container", Critical): 109
+        // mails in 15 minutes on 2026-11-03. The workspace's own target/ is on the volume and was never reported.
+        // Python's tempfile takes /tmp, silently, for a TMPDIR that does not exist, so the Checkout stage creates it
+        // first.
+        TMPDIR         = "${env.WORKSPACE_TMP}/tmp"
         // Tools the Install stage downloads into the workspace (ci/install-tools.sh), first on PATH for every stage.
         PATH           = "${env.WORKSPACE}/.tools/bin:${env.PATH}"
         // The dev profile, which the Test stage's test build and clippy's checks inherit, without debug info. Debug
@@ -35,6 +44,18 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
+                // What an earlier build of this workspace left in TMPDIR goes first: on the volume, unlike in the
+                // container's /tmp, it would otherwise stay. The chmod is for a directory a killed test left without
+                // write permission, such as engine/src/host/tests.rs's 0o500 one; a clear-out that still fails only
+                // warns, since failing here would fail every later build of this workspace until someone cleaned the
+                // volume by hand.
+                sh '''
+                    if [ -e "$TMPDIR" ]; then
+                        { chmod -R u+rwX "$TMPDIR" && rm -rf "$TMPDIR"; } ||
+                            echo "could not empty $TMPDIR; what an earlier build left there stays" >&2
+                    fi
+                    mkdir -p "$TMPDIR"
+                '''
                 script {
                     def checkedOut = checkout scm
                     // The Gate stage measures a build of main from here.
@@ -86,29 +107,7 @@ pipeline {
 
         stage('Test') {
             when { expression { return env.JUDGED_AT_PR != 'true' } }
-            environment {
-                // Temporary files on the agent's mounted volume, beside the workspace, rather than in /tmp, for this
-                // stage and the Gate stage. The tests and the gate build Rust in temporary directories and run what
-                // they build: the test fixtures' build scripts and test binaries, and cargo-mutants on the gate's copy
-                // of a tree. /tmp is in the container's writable layer, where the agent host's Falco reports every
-                // program run from a file written there ("Drop and execute new binary in container", Critical): 109
-                // mails in 15 minutes on 2026-11-03. The workspace's own target/ is on the volume and was never
-                // reported. Python's tempfile takes /tmp, silently, for a TMPDIR that does not exist, so each stage
-                // creates it first. The Package stage still uses /tmp (GitHub #373).
-                TMPDIR = "${env.WORKSPACE_TMP}/tmp"
-            }
             steps {
-                // What an earlier build of this workspace left there goes first: on the volume, unlike in the
-                // container's /tmp, it would otherwise stay. The chmod is for a directory a killed test left without write permission, such as
-                // engine/src/host/tests.rs's 0o500 one; a clear-out that still fails only warns, since failing here
-                // would fail every later build of this workspace until someone cleaned the volume by hand.
-                sh '''
-                    if [ -e "$TMPDIR" ]; then
-                        { chmod -R u+rwX "$TMPDIR" && rm -rf "$TMPDIR"; } ||
-                            echo "could not empty $TMPDIR; what an earlier build left there stays" >&2
-                    fi
-                    mkdir -p "$TMPDIR"
-                '''
                 // A failing test does not stop the build here: the Gate stage judges it with everything else, so its
                 // report lists failing tests and findings together.
                 //
@@ -175,12 +174,7 @@ pipeline {
         // does a gate that could not judge, or could not be fetched, which writes no quality file.
         stage('Gate') {
             when { expression { return env.JUDGED_AT_PR != 'true' } }
-            environment {
-                // Off the writable layer, as the Test stage's says why.
-                TMPDIR = "${env.WORKSPACE_TMP}/tmp"
-            }
             steps {
-                sh 'mkdir -p "$TMPDIR"'
                 script {
                     def base
                     if (env.CHANGE_TARGET) {
