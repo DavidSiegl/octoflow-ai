@@ -25,8 +25,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   the event stream list them, sorted by name, since seconds of the clock decide that order; ssh's commands not at all,
   only what they did; doctor's lines without git's and Tk's, which are the host's. Two more are recorded as decided
   against below: the `state.json` saves between two commands, and serve's events between two checkpoints. One engine run
-  takes 2 to 25 seconds a scenario (25 for serve's event stream); when a quality build runs them is the Jenkinsfile's
-  Test stage's to say. Decided against (2026-10-27): scenarios as data files the harness interprets, which needed a
+  takes 2 to 25 seconds a scenario (25 for serve's event stream). Decided against (2026-10-27): scenarios as data files the harness interprets, which needed a
   language of their
   own for kills, takeovers and serve's stream; a cassette of the expected requests that the fakes answer in order, which
   breaks on every count of polls; and a stub gitleaks where none is installed, which would record what no engine run
@@ -38,9 +37,9 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   docs/design.md, Evals) runs the engine as a program, `run --no-pr --spec`, rather than being the `orchestrator.py
   eval` command the ticket named, since the Python engine was frozen then; it runs `EVAL_ENGINE`, else the checkout's
   own build. Decided against (the user's ruling, 2026-11-11): an `eval` command of the engine's own, since evals are a
-  developer's chore, not a user's feature. Not covered: the quality gate, since the
-  toy repositories have no quality job and their origin is a bundle no snapshot can be pushed to, so `quality rounds`
-  stays 0; a `--worktree` or `--machine` run, which the runner refuses; and an interview, which `--spec` skips.
+  developer's chore, not a user's feature. Not covered: the quality gate, which a trial
+  runs only given `--quality-gate local` after `--`, and then by an empty `gate.toml`, since the toy repositories have
+  none, so `quality rounds` stays 0; a `--worktree` or `--machine` run, which the runner refuses; and an interview, which `--spec` skips.
   Decided 2026-10-28. The verification run it still lacks is GitHub #364 and #365.
 
 ## Open issues
@@ -328,14 +327,13 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   judges". Closes with one script both call, should a third copy be needed or the idiom change.
 - **No build has yet been seen waiting for `ci/cargo-lock.sh` on the Jenkins agent.** PR #88's builds ran both
   cargo steps through it on agentbox0 (builds 1-3, 2026-10-25), so the agent image has `flock` and the lock file's
-  directory is writable, and a quality-style build (`GIT_REF` set) ran `--no-wait`; but the two run side by side
+  directory is writable; but the two run side by side
   reached their cargo steps 15 s apart, the lock free each time, so the wait and its message were seen only on the
   development host. Raised by cross-review 25 (F3). Closes with two builds whose cargo steps overlap on agentbox0,
   one saying that it waits for the lock and both passing.
 - **Is 3 GB the right memory limit for the agentbox0 Jenkins agent?** All builds on the node share its container's
   `mem_limit: 3g` (Homelab `jenkins/agentbox0.yaml`), which this repo cannot change. Since `ci/cargo-lock.sh`, two of
-  this repository's builds compile Rust at once only when a quality build starts its `cargo llvm-cov nextest` or
-  `cargo check` beside another build's cargo step, or when the Gate stage's clippy, outside the lock, checks the desktop
+  this repository's builds compile Rust at once only when the Gate stage's clippy, outside the lock, checks the desktop
   shell's own crate, the one crate the UI stage's `cargo check` leaves it; but everything else they run (the gate's
   cargo-mutants, npm) still shares the 3 GB beside a locked rustc, as do other jobs' builds on the node. Decided
   against (2026-11-03): raising it; the 3 GB stays until a build is OOM-killed, which reopens it.

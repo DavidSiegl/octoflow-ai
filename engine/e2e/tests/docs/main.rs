@@ -45,7 +45,6 @@ const OTHER_PROGRAMS_NAMES: &[(&str, &str)] = &[
     ("OCTOFLOW_TEST_SEED", "the engine's tests' environment variable, engine/src/test_support.rs"),
     ("HARNESSES", "the Rust engine's table of the agent harnesses, engine/src/harness.rs"),
     ("PR_STATUS_CREATOR", "the Jenkinsfile's"),
-    ("GIT_REF", "the quality job's parameter, which the Jenkinsfile declares and the engine's tests send"),
     ("CHANGE_TARGET", "an environment variable Jenkins sets"),
     ("OPTIONS", "an HTTP method"),
     ("NAME", "the README's placeholder for a prompt's name"),

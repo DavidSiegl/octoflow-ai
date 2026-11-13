@@ -160,12 +160,12 @@ and the Reviewer to read; the orchestrator passes it on as it is.
 
 ## Jenkins setup
 
-One `Jenkinsfile` serves two jobs. Every build installs, runs the Rust tests with line coverage of the Rust, checks the
-desktop app's frontend, runs the gate and archives `quality.md`; a pull request or `main` build then builds the Linux
-binary and desktop app, which a quality build skips (the `Jenkinsfile`'s Package stage says why), and a build of `main`
-that gets that far also releases. A build of `main` whose tree a pull request build already judged skips the tests, the
-desktop app's checks and the gate (see [A build of main judged at its pull
-request](#a-build-of-main-judged-at-its-pull-request)).
+One multibranch job builds `main` and every pull request with the `Jenkinsfile`. Every build installs, runs the Rust
+tests with line coverage of the Rust, checks the desktop app's frontend, runs the gate, archives `quality.md` and
+builds the Linux binary and desktop app, and a build of `main` that gets that far also releases. A build of `main`
+whose tree a pull request build already judged skips the tests, the desktop app's checks and the gate (see [A build of
+main judged at its pull request](#a-build-of-main-judged-at-its-pull-request)). An orchestrator run's quality gate
+runs on the machine the run does, not here ([The local gate](#the-local-gate)).
 
 ### What Jenkins needs
 
@@ -205,7 +205,7 @@ request](#a-build-of-main-judged-at-its-pull-request)).
   `GitHub-Agents`, holding a token with *Contents: read and write* on this repository. It is the agents' own
   `gh` token, so when that is rotated the credential must be too, or every build of `main` fails at Release.
   Only builds of `main` use it, for Release and to read pull request statuses.
-- **A GitHub App of Jenkins's own, as the checkout credential**: both jobs check out with `GitHub-Agents-scm`,
+- **A GitHub App of Jenkins's own, as the checkout credential**: the job checks out with `GitHub-Agents-scm`,
   a GitHub Branch Source *GitHub App* credential, and Jenkins reports each pull request's
   `continuous-integration/jenkins/pr-head` status with it. The App needs *Contents: read*, *Pull requests:
   read* and *Commit statuses: read and write* on this repository - without the last the build passes and the
@@ -217,47 +217,27 @@ request](#a-build-of-main-judged-at-its-pull-request)).
   Keep the credentials in this folder's own store, not the global one: any build can bind any credential it
   can see by ID, and a pushed branch's `Jenkinsfile` is a build.
 
-### The two jobs
+### The job
 
-Both load the `Jenkinsfile` with "Pipeline script from SCM". The Checkout stage needs that: it runs
-`checkout scm`, or fetches `GIT_REF` from `scm`'s remote.
-
-- **The ordinary job**, a Multibranch Pipeline, builds `main` and every pull request. Its branch source needs:
-  - **Discover branches** set to *Exclude branches that are also filed as PRs*, so an `orchestrator/*` branch
-    is built once, as its pull request.
-  - **Filter by name (with wildcards)** excluding `orchestrator-ci/*`. The orchestrator pushes its snapshots
-    there for the quality job and deletes them afterwards; the multibranch job would otherwise build each one
-    as a branch of its own.
-- **The quality job**, here `AI-Agents-Orchestrator/py-ai-agents-orchestrator-quality`: a plain Pipeline job that
-  loads the `Jenkinsfile` from `main`. It takes any ref as a parameter, keeps quality builds out of the ordinary
-  job's history, and a change to the `Jenkinsfile` cannot alter how that same change is judged.
-
-Jenkins learns a Jenkinsfile's `parameters` only by running it, so a new job needs one build, by hand and with an
-empty `GIT_REF`, before it accepts `buildWithParameters`.
+A Multibranch Pipeline that loads the `Jenkinsfile` with "Pipeline script from SCM", which the Checkout stage's
+`checkout scm` needs. Its branch source's **Discover branches** is set to *Exclude branches that are also filed as
+PRs*, so a branch is built once, as its pull request.
 
 ### What the Gate stage judges
 
 | Build | `--base` | Gate and rules |
 |---|---|---|
-| Quality build (`GIT_REF` set) | `HEAD^`: the snapshot's only parent is the run's base | `main`'s: the gate release its `ci/gate.pin` names, its `pyproject.toml` and `gate.toml`, from the `origin/main` commit its description names (below); a commit without `ci/gate.pin` fails the stage, unjudged |
 | Pull request (`CHANGE_TARGET` set) | the merge base with the target branch, fetched first | its own, `Jenkinsfile` included (below) |
 | `main` | the last successful build's commit, else `HEAD^1`, as also when a force-push took that commit out of the history | its own; none when judged at its pull request (below) |
 
 The gate is an [octoflow-gate](https://github.com/DavidSiegl/octoflow-gate) release, the program `gate` built for
-Linux x86_64, which the judge's `ci/fetch-gate.sh` downloads into `$WORKSPACE_TMP/gate` and checks against the sha256
-the judge's `ci/gate.pin` names; the console says which version. A release that cannot be downloaded, or does not
+Linux x86_64, which the build's `ci/fetch-gate.sh` downloads into `$WORKSPACE_TMP/gate` and checks against the sha256
+its `ci/gate.pin` names; the console says which version. A release that cannot be downloaded, or does not
 match, fails the build as one the gate could not judge, with no quality file. The gate takes the linters' rules from
-the `pyproject.toml` beside the `gate.toml` it is given, so a quality build's rules are `main`'s as its settings are,
-and it writes `quality.json` beside `quality.md`, which the stage archives with it. A change to `ci/gate.pin` therefore
-judges the changes after it reaches `main`, not itself, in a quality build; the pull request that raises it is judged
-by the release it raises it to. `gate.toml`'s `[build-config]` names the pin and `ci/fetch-gate.sh`, so a quality
-build's `quality.md` says so of a snapshot that edits either.
-
-Before Install runs any code of the change, a quality build's Checkout stage sets its build description to
-`judged tree=<sha> parent=<sha> main=<sha>`, exactly: full lowercase shas, one space apart. `tree` is the
-snapshot's tree, `parent` its only parent, the run's base, and `main` the `origin/main` commit fetched then,
-whose gate and rules the Gate stage judges with. A build restarted from a later stage skips Checkout,
-records nothing and so is never trusted; its Gate stage refuses to run without the recorded commit.
+the `pyproject.toml` beside the `gate.toml` it is given, and it writes `quality.json` beside `quality.md`, which the
+stage archives with it. The pull request that raises `ci/gate.pin` is judged by the release it raises it to.
+`gate.toml`'s `[build-config]` names the pin and `ci/fetch-gate.sh`, so `quality.md` says so of a change that edits
+either.
 
 A pull request is judged by the gate and rules it brings, and most from a branch of this repository merge once
 Jenkins's App reports `pr-head` green, with no human in between (`.github/workflows/automerge.yml` says which).
@@ -266,9 +246,8 @@ whoever can push a branch here, the agents included, can change the rules that b
 an agent's pull request, the orchestrator's own included, can reach `main` without a human. A fork's pull
 request still waits for one.
 
-The repository is public, so the stage fetches `main` or the target branch without credentials. `GIT_REF` and
-the base reach the shell as environment variables, never as Groovy-built shell code, and `GIT_REF` is otherwise
-interpolated only into the checkout's branch spec.
+The repository is public, so `ci/pr-base.sh` fetches the target branch without credentials. The base reaches the
+shell as an environment variable, never as Groovy-built shell code.
 
 ### A build of main judged at its pull request
 
@@ -289,15 +268,10 @@ with this commit's `Jenkinsfile`, passed.
 ### What each kind of build reports
 
 The Test stage does not stop at a failing test, so the gate reports failing tests together with the findings; it
-stops only when the tests could not be built or run. The gate's exit status then decides:
+stops only when the tests could not be built or run. A build fails on `GATE: ERROR`, so a red gate blocks the merge
+and `main`'s release, and when the gate could not judge.
 
-- **A quality build** ends UNSTABLE on `GATE: ERROR`, SUCCESS on `GATE: OK`. FAILURE means the change never got
-  as far as the gate, and its quality file is `GATE: BUILD_FAILED`.
-- **A pull request or `main`** fails on `GATE: ERROR`, so a red gate blocks the merge and `main`'s release.
-- **Any build** fails when the gate could not judge.
-
-The multibranch job mails a failed build of `main` or a pull request, with the log attached, and the first build
-that passes after one. The quality job mails nothing: its result goes to the orchestrator run that asked for it.
+The job mails a failed build, with the log attached, and the first build that passes after one.
 
 A build of `main` that passes then releases the version in `engine/Cargo.toml` (`ci/release-version.sh`): if GitHub has
 no release `v<version>` yet, `gh release create` makes one, with the tag at the commit built, notes generated from the

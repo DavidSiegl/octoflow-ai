@@ -439,15 +439,13 @@ is of its source, and each hidden test rejects its task's starting point and acc
   license texts of the crates in the binary and the desktop app, by `packaging/about.toml` and `about.hbs`; a crate
   under a license `about.toml` does not accept fails the script.
 - `Jenkinsfile`: `uv sync --frozen` for the gate, the Cargo workspace's tests with line coverage (`cargo llvm-cov
-  nextest`), without the e2e scenarios in a quality build whose change touches nothing they judge (the Test stage lists
-  what), a UI stage that runs `ui/`'s `npm ci`, `typecheck`, `lint` and `test`, failing the build before the gate, a
+  nextest`), a UI stage that runs `ui/`'s `npm ci`, `typecheck`, `lint` and `test`, failing the build before the gate, a
   Gate stage that runs the octoflow-gate release `ci/gate.pin` names and archives `quality.md` and `quality.json` (see
   [quality gate](quality-gate.md)), and a Package stage that runs `packaging/build-binary.sh` and
-  `packaging/build-desktop.sh` on every build but a quality build (`GIT_REF` set). On `main` a Release stage publishes a
+  `packaging/build-desktop.sh`. On `main` a Release stage publishes a
   new version (`ci/release-version.sh`) as a GitHub release, with the Linux binary and the Linux desktop app, each with
   its `.sha256`, and `octoflow-third-party-licenses.html`, in one `gh release create`, and
-  `docs/releases/v<version>.md`, where there is one, before GitHub's generated notes. Its parameter `GIT_REF` builds
-  another branch; such a build never releases. A pull request build into `main` fails its Version stage unless the pull
+  `docs/releases/v<version>.md`, where there is one, before GitHub's generated notes. A pull request build into `main` fails its Version stage unless the pull
   request raises the version over `main`'s or changes only docs, tests, CI or repository tooling (`ci/version-raised.sh`
   lists those paths), so that every merge into `main` that reaches users is released.
 - `.github/workflows/automerge.yml`: keeps auto-merge on for a pull request into `main` from a branch of this
