@@ -24,7 +24,7 @@ impl Scratch {
             .tempdir()
             .unwrap_or_else(|e| panic!("making a directory for {name}: {e}"));
         let path = dir.path().canonicalize().unwrap_or_else(|e| panic!("resolving {}: {e}", dir.path().display()));
-        // Kept from here on, so that this type's Drop decides whether to remove it; dir alone removed it until now.
+        // This type's Drop removes the directory, or keeps it on failure, so tempfile's must not.
         let _ = dir.keep();
         Scratch { path, kept_on_failure: false }
     }

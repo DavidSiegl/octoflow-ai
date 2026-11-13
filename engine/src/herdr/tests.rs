@@ -839,6 +839,20 @@ fn a_log_directory_that_cannot_be_made_still_starts_the_server_and_says_its_outp
 }
 
 #[test]
+fn a_log_file_that_cannot_be_written_still_starts_the_server_and_says_its_output_was_not_kept() {
+    let (d, vars) = herdr_with_servers(&[], None, "");
+    // A directory where the log file should be: the directory exists, and the file cannot be opened for writing.
+    let log = format!("{}/octoflow/herdr-server.log", d.join("state"));
+    std::fs::create_dir_all(&log).unwrap();
+    let mut herdr = ProcessHerdr::in_environment(None, vars.into_iter(), &Interrupt::new());
+    herdr.server_start = Poll { limit: Duration::from_millis(1000), every: Duration::from_millis(50) };
+    let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
+    assert!(given(&d).iter().any(|c| c == "octoflow: server"), "the server was not started: {:?}", given(&d));
+    assert!(e.contains("; herdr server's output was not kept: "), "{e}");
+    assert!(e.contains(&log), "{e}");
+}
+
+#[test]
 fn a_look_herdr_answers_with_an_error_while_its_server_comes_up_is_not_the_end() {
     let created = r#"{"result": {"workspace": {"workspace_id": "w1"}, "root_pane": {"pane_id": "w1:p1"}}}"#;
     let no_server = error("server_not_running", "no herdr server is running at /s.sock");

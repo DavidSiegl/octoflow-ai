@@ -135,9 +135,12 @@ const SHELL_READY: Poll = Poll { limit: Duration::from_secs(10), every: Duration
 /// /dev/null, and the script prints `/dev/null` and, on standard error, why. The file is state of the engine's that
 /// outlives the start: for the end of the wait to quote, and for the human to read while the server runs. One file,
 /// since the only server serve starts is the session OWN_SESSION's.
+///
+/// The file is tried with `true`, not `:`: a failed redirection on a special built-in such as `:` ends a POSIX shell
+/// before its `else` (XCU 2.8.1), as dash, Debian's /bin/sh, does.
 const START_SERVER: &str = r#"case $XDG_STATE_HOME in /*) d=$XDG_STATE_HOME ;; *) d=$HOME/.local/state ;; esac
 d=$d/octoflow
-if mkdir -p -- "$d" && : >"$d/herdr-server.log"; then log=$d/herdr-server.log; else log=/dev/null; fi
+if mkdir -p -- "$d" && true >"$d/herdr-server.log"; then log=$d/herdr-server.log; else log=/dev/null; fi
 herdr server </dev/null >"$log" 2>&1 &
 echo "$log""#;
 
