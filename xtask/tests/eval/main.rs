@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 use xtask::eval::{self, Args, Eval, Halt, Task, Tokens, Trial};
-use xtask::{bundles, TempDir};
+use xtask::bundles;
 
 const RUN_ID: &str = "20261028-120000-abc123";
 const TASK_NAMES: [&str; 5] = ["bugfix", "docs", "feature", "no-dependency", "refactor"];
@@ -38,12 +38,13 @@ impl Default for Plan {
 
 /// The fake engine, with its plan and log in a directory of the test's own.
 struct FakeEngine {
-    dir: TempDir,
+    dir: tempfile::TempDir,
 }
 
 impl FakeEngine {
     fn new() -> FakeEngine {
-        FakeEngine { dir: TempDir::new("xtask-eval-test-").expect("a temporary directory") }
+        let dir = tempfile::Builder::new().prefix("xtask-eval-test-").tempdir().expect("a temporary directory");
+        FakeEngine { dir }
     }
 
     fn plan(&self, plan: Plan) {
@@ -267,7 +268,7 @@ fn the_clone_is_removed_unless_kept() {
 
 #[test]
 fn an_unreadable_bundle_is_an_error_of_the_runners() {
-    let dir = TempDir::new("xtask-eval-test-").expect("a temporary directory");
+    let dir = tempfile::Builder::new().prefix("xtask-eval-test-").tempdir().expect("a temporary directory");
     for name in ["task.md", "repo.bundle", "hidden_test.rs"] {
         fs::write(dir.path().join(name), "not a bundle\n").expect("written");
     }
@@ -425,7 +426,7 @@ fn a_record_is_the_evals_fields_then_the_trials() {
 
 #[test]
 fn records_are_appended_a_line_each() {
-    let dir = TempDir::new("xtask-eval-test-").expect("a temporary directory");
+    let dir = tempfile::Builder::new().prefix("xtask-eval-test-").tempdir().expect("a temporary directory");
     let path = dir.path().join("results/x.jsonl");
     eval::append_records(&path, &strings(&[r#"{"a": 1}"#])).expect("appended");
     eval::append_records(&path, &strings(&[r#"{"a": 2}"#, r#"{"a": 3}"#])).expect("appended");
@@ -444,7 +445,7 @@ fn config_name() {
 
 #[test]
 fn a_tracked_change_marks_the_commit_dirty() {
-    let dir = TempDir::new("xtask-eval-test-").expect("a temporary directory");
+    let dir = tempfile::Builder::new().prefix("xtask-eval-test-").tempdir().expect("a temporary directory");
     let bundle = dir.path().join("b.bundle");
     let commit = bundles::make_bundle(&[("prompt.txt", "v1\n")], &bundle, "m").expect("the bundle is made");
     let repo = dir.path().join("repo");
@@ -530,8 +531,8 @@ fn the_checkouts_engine_is_built_when_eval_engine_is_unset_or_empty() {
 }
 
 /// A checkout of its own with the real task named, and nothing else.
-fn checkout_with(task: &str) -> TempDir {
-    let dir = TempDir::new("xtask-eval-checkout-").expect("a temporary directory");
+fn checkout_with(task: &str) -> tempfile::TempDir {
+    let dir = tempfile::Builder::new().prefix("xtask-eval-checkout-").tempdir().expect("a temporary directory");
     let tasks = eval::tasks_dir(dir.path()).join(task);
     fs::create_dir_all(&tasks).expect("made");
     for name in ["task.md", "repo.bundle", "hidden_test.rs"] {

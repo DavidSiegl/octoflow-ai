@@ -15,6 +15,7 @@ use crate::http::urlencode;
 use crate::cli::doctor::{Check, Level};
 use crate::serve::fake::{reached, FakeConsole, ServeHost};
 use crate::herdr::{HerdrError, HerdrServer, OWN_SESSION};
+use crate::test_support::TempDir;
 
 const SERVE_ID: &str = "20261024-120000-5e7e00";
 const TAURI_ORIGIN: &str = "tauri://localhost";
@@ -228,20 +229,21 @@ fn unchecked() -> Setup {
     Setup::new(Box::new(|_: &str, _: &str, _: &Interrupt| panic!("no setup check was expected")), "/nowhere/setup-checked".into())
 }
 
-/// A directory of the test's own, removed when it is dropped.
-struct TempDir(String);
+/// A project directory of the test's own, which serve is asked about by its path, removed when it is dropped.
+struct Project(TempDir);
 
-impl TempDir {
-    fn new(name: &str) -> TempDir {
-        let base = std::env::var("TMPDIR").unwrap_or_else(|_| std::env::temp_dir().display().to_string());
-        let dir = format!("{base}/octoflow-serve-{name}-{}", std::process::id());
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("a directory for the test");
-        TempDir(dir)
+impl Project {
+    fn new() -> Project {
+        Project(TempDir::new())
+    }
+
+    /// The directory's path, which a request's cwd names.
+    fn root(&self) -> String {
+        self.0.path()
     }
 
     fn write(&self, path: &str, text: &str) {
-        let path = format!("{}/{path}", self.0);
+        let path = self.0.join(path);
         std::fs::create_dir_all(std::path::Path::new(&path).parent().unwrap()).unwrap();
         std::fs::write(path, text).expect("the file is written");
     }
@@ -251,13 +253,7 @@ impl TempDir {
     }
 
     fn query(&self, endpoint: &str) -> String {
-        format!("{endpoint}?{}", urlencode(&[("cwd", &self.0)]))
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        format!("{endpoint}?{}", urlencode(&[("cwd", &self.root())]))
     }
 }
 
@@ -303,16 +299,16 @@ fn runs_are_list_json_records_on_a_machine() {
 
 #[test]
 fn runs_are_list_json_records_locally() {
-    let d = TempDir::new("records");
+    let d = Project::new();
     d.save(SERVE_ID, &[]);
     d.save("x-beef00", &[("phase", Value::from("done")), ("verdict", Value::from(APPROVE))]);
     let served = Served::real();
     let reply = served.get(&d.query("/runs"), &[]);
     assert_eq!(reply.status, Some(200));
-    let target = ["--cwd".to_string(), d.0.clone()];
+    let target = ["--cwd".to_string(), d.root()];
     // A second may pass between the two reads; everything else is the same.
     let listed: Vec<Value> = ProcessHost::local(&Interrupt::new())
-        .run_states(&d.0)
+        .run_states(&d.root())
         .unwrap()
         .iter()
         .map(|s| without_aging(run_record(s, &crate::runs::local_host(), &crate::runs::pid_alive, &target)))
@@ -416,20 +412,20 @@ fn files_of_a_run_outside_the_runs_directory_are_refused() {
 fn a_link_that_leads_out_of_the_run_directory_is_refused() {
     // An agent may leave a symbolic link in its run directory, and a run directory may itself be one; the name asked
     // for is still a plain name (serve-run-files/02, #231).
-    let d = TempDir::new("link");
+    let d = Project::new();
     d.save(SERVE_ID, &[]);
     d.write("outside.txt", "outside");
     d.write(&format!("{RUNS_DIR}/{SERVE_ID}/spec.md"), "spec");
-    let (runs, link) = (format!("{}/{RUNS_DIR}", d.0), |target: &str, at: &str| std::os::unix::fs::symlink(target, at).unwrap());
-    link(&format!("{}/outside.txt", d.0), &format!("{runs}/{SERVE_ID}/out.md"));
+    let (runs, link) = (format!("{}/{RUNS_DIR}", d.root()), |target: &str, at: &str| std::os::unix::fs::symlink(target, at).unwrap());
+    link(&format!("{}/outside.txt", d.root()), &format!("{runs}/{SERVE_ID}/out.md"));
     link("../../../outside.txt", &format!("{runs}/{SERVE_ID}/up.md"));
     link("spec.md", &format!("{runs}/{SERVE_ID}/in.md"));
-    link(&d.0, &format!("{runs}/elsewhere"));
+    link(&d.root(), &format!("{runs}/elsewhere"));
     link(SERVE_ID, &format!("{runs}/alias"));
     let served = Served::real();
-    let file = |run: &str, name: &str| served.get(&format!("/file?{}", urlencode(&[("cwd", &d.0), ("run", run), ("name", name)])), &[]);
+    let file = |run: &str, name: &str| served.get(&format!("/file?{}", urlencode(&[("cwd", &d.root()), ("run", run), ("name", name)])), &[]);
     let names = |run: &str| {
-        let reply = served.get(&format!("/files?{}", urlencode(&[("cwd", &d.0), ("run", run)])), &[]);
+        let reply = served.get(&format!("/files?{}", urlencode(&[("cwd", &d.root()), ("run", run)])), &[]);
         assert_eq!(reply.status, Some(200), "{reply:?}");
         let mut names: Vec<String> = reply.json().get("files").and_then(Value::as_array).unwrap().iter().map(|f| f.get("name").unwrap().text()).collect();
         names.sort();
@@ -456,15 +452,15 @@ fn a_run_whose_state_json_leads_out_of_its_run_directory_is_no_run() {
     // serve-run-files/02's ruling (2026-11-04, the user): a run's state.json is refused as its files are, so a
     // run that is a link out of the runs directory, or whose state.json is a link out of its run directory, is left
     // out of /runs and the event stream, as a run without a state.json is.
-    let d = TempDir::new("state-link");
+    let d = Project::new();
     d.save(SERVE_ID, &[]);
-    let runs = format!("{}/{RUNS_DIR}", d.0);
+    let runs = format!("{}/{RUNS_DIR}", d.root());
     let link = |target: &str, at: &str| std::os::unix::fs::symlink(target, at).unwrap();
     d.write("elsewhere/state.json", &serve_state("x-away00", &[]));
-    link(&format!("{}/elsewhere", d.0), &format!("{runs}/x-away00"));
+    link(&format!("{}/elsewhere", d.root()), &format!("{runs}/x-away00"));
     d.write("outside.json", &serve_state("x-out000", &[]));
     std::fs::create_dir_all(format!("{runs}/x-out000")).unwrap();
-    link(&format!("{}/outside.json", d.0), &format!("{runs}/x-out000/state.json"));
+    link(&format!("{}/outside.json", d.root()), &format!("{runs}/x-out000/state.json"));
     // A state.json that is a link inside its own run directory is that run's.
     d.write(&format!("{RUNS_DIR}/x-in0000/saved.json"), &serve_state("x-in0000", &[]));
     link("saved.json", &format!("{runs}/x-in0000/state.json"));
@@ -473,7 +469,7 @@ fn a_run_whose_state_json_leads_out_of_its_run_directory_is_no_run() {
     let mut ids: Vec<String> = reply.json().get("runs").and_then(Value::as_array).unwrap().iter().map(|r| r.get("id").unwrap().text()).collect();
     ids.sort();
     assert_eq!((reply.status, ids), (Some(200), vec![SERVE_ID.to_string(), "x-in0000".to_string()]));
-    let agent = served.get(&format!("/agent?{}", urlencode(&[("cwd", &d.0), ("run", "x-out000"), ("role", "build")])), &[]);
+    let agent = served.get(&format!("/agent?{}", urlencode(&[("cwd", &d.root()), ("run", "x-out000"), ("role", "build")])), &[]);
     assert_eq!((agent.status, agent.error()), (Some(404), "no run x-out000".to_string()));
     // The stream gives a record and a files event for each run it lists, and none for the two refused.
     let stream = EventStream::open(&served, &d.query("/events"), "");
@@ -560,8 +556,8 @@ fn setup_needs_the_project() {
 
 #[test]
 fn the_setup_marker_is_written_and_read() {
-    let d = TempDir::new("marker");
-    let marker = format!("{}/config/setup-checked", d.0);
+    let d = Project::new();
+    let marker = format!("{}/config/setup-checked", d.root());
     let (served, asked) = setup_served(&marker, vec![]);
     let checked = |served: &Served| served.get("/setup/checked", &[]).json().get("checked").cloned();
     assert_eq!(checked(&served), Some(Value::from(false)));
@@ -576,9 +572,9 @@ fn the_setup_marker_is_written_and_read() {
 
 #[test]
 fn a_setup_marker_that_cannot_be_written_or_looked_for_is_500() {
-    let d = TempDir::new("unmarkable");
+    let d = Project::new();
     d.write("config", "a file where the directory should be");
-    let marker = format!("{}/config/setup-checked", d.0);
+    let marker = format!("{}/config/setup-checked", d.root());
     let (served, _) = setup_served(&marker, vec![]);
     let reply = served.post("/setup/checked", "");
     assert_eq!(reply.status, Some(500));
@@ -1168,7 +1164,7 @@ fn a_run_needs_the_token_and_the_server_s_own_origin() {
 
 #[test]
 fn workflows_are_the_configuration_s_with_their_roles_and_the_harnesses() {
-    let d = crate::test_support::TempDir::new();
+    let d = TempDir::new();
     std::fs::create_dir_all(d.join("workflows")).unwrap();
     let solo = "description = \"one builder\"\n[roles]\nbuild = { label = \"Solo\", agent = \"codex\", model = \"o3\" }\n\
                 [[steps]]\nid = \"build\"\nfile = \"build.md\"\nprompt = \"Build {task} in {cwd}; report to {path}.\"\n\
@@ -1315,7 +1311,7 @@ fn each_chunked_line(mut reader: BufReader<TcpStream>, mut on_line: impl FnMut(&
 
 #[test]
 fn the_stream() {
-    let d = TempDir::new("stream");
+    let d = Project::new();
     d.save(SERVE_ID, &[]);
     d.write(&format!("{RUNS_DIR}/{SERVE_ID}/spec.md"), "# Spec\n");
     let served = Served::real();
@@ -1368,7 +1364,7 @@ fn the_stream() {
     assert_eq!(soon(before, "files", "20261024-130000-a11ce0").get("files"), Some(&Value::Array(vec![])));
 
     let before = quiet_poll();
-    std::fs::remove_dir_all(format!("{}/{RUNS_DIR}/{SERVE_ID}", d.0)).unwrap();
+    std::fs::remove_dir_all(format!("{}/{RUNS_DIR}/{SERVE_ID}", d.root())).unwrap();
     assert_eq!(soon(before, "record", SERVE_ID).get("record"), Some(&Value::Null));
 }
 
@@ -1382,7 +1378,7 @@ fn nothing_while_nothing_changes() {
 
 #[test]
 fn an_unreadable_project_is_a_problem_event() {
-    let d = TempDir::new("problem");
+    let d = Project::new();
     d.write(&format!("{RUNS_DIR}/{SERVE_ID}/state.json"), "{not json");
     let served = Served::real();
     let stream = EventStream::open(&served, &d.query("/events"), "");

@@ -19,6 +19,9 @@ nix = { version = "0.31", default-features = false, features = ["signal"] }
 octoflow-engine = { path = "../engine" }
 # cargo's build messages, a run's metrics.json, the eval's result lines and the fake engine's plan and log.
 serde_json = "1"
+# Scratch directories, removed when dropped: an eval's trial (eval.rs) and the bundles' repos (bundles.rs), and the
+# tests'. Approved by the user for ticket 48, 2026-11-13.
+tempfile = "3"
 
 # A stand-in for the engine, for tests/eval/: a binary of this package, so that its tests find it by
 # CARGO_BIN_EXE_fake-engine, which Cargo sets only for a test's own package.

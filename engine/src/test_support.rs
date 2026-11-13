@@ -5,8 +5,6 @@
 //! which Jenkins's Test stage sets afresh for each build. A test that fails under a run seed prints it; run it
 //! again on the same cases with `OCTOFLOW_TEST_SEED=<seed> cargo test <test's name>`.
 
-use std::path::PathBuf;
-
 /// The environment variable that holds the run seed, a decimal u64; unset or empty, the run has none.
 const RUN_SEED_VARIABLE: &str = "OCTOFLOW_TEST_SEED";
 
@@ -104,35 +102,23 @@ impl Drop for Rng {
     }
 }
 
-/// A directory of its own under the system's temporary directory, removed with everything in it when dropped.
-pub struct TempDir(PathBuf);
+/// A directory of its own under the system's temporary directory, removed with everything in it when dropped; a
+/// removal that fails is ignored. Its paths come as Strings, which is what the engine's functions under test take.
+pub struct TempDir(tempfile::TempDir);
 
 impl TempDir {
     pub fn new() -> Self {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static COUNT: AtomicU64 = AtomicU64::new(0);
-        let n = COUNT.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("octoflow-engine-test-{}-{n}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("a temporary directory");
-        TempDir(dir)
+        TempDir(tempfile::Builder::new().prefix("octoflow-engine-test-").tempdir().expect("a temporary directory"))
     }
 
     /// The directory's path, as a str.
     pub fn path(&self) -> String {
-        self.0.to_str().expect("a UTF-8 path").to_string()
+        self.0.path().to_str().expect("a UTF-8 path").to_string()
     }
 
     /// The path of name in the directory, as a str.
     pub fn join(&self, name: &str) -> String {
-        self.0.join(name).to_str().expect("a UTF-8 path").to_string()
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        if let Err(e) = std::fs::remove_dir_all(&self.0) {
-            eprintln!("could not remove {}: {e}", self.0.display());
-        }
+        self.0.path().join(name).to_str().expect("a UTF-8 path").to_string()
     }
 }
 

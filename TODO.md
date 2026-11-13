@@ -416,8 +416,8 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `World::make_bin` (`engine/e2e/tests/e2e/world.rs`) and `put_executable` (`ui/src-tauri/src/lib.rs`). Raised by
   cross-review 123 (F2, nit): "A correction to the writer has to land in all four, and a copy that is missed brings
   the flake back in that crate." Decided against (the user's ruling, 2026-11-11): one writer in a test-support crate
-  of the workspace's own; the copies of a scratch directory removed on drop are to go to the `tempfile` crate
-  instead, so no such crate is made.
+  of the workspace's own; the scratch directories removed on drop, which such a crate would also have held, are the
+  `tempfile` crate's since todo/48, so it would hold this writer alone.
 - **The starter `gate.toml`'s Rust and npm tests name no failing test.** `starter_settings`
   (`engine/src/local_gate.rs`) guesses `cargo test --workspace` and `npm test` without a `junit` report: neither
   writes JUnit without configuration that `doctor --setup-gate` does not write (nextest's through a

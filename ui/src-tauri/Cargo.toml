@@ -27,6 +27,10 @@ serde_json = "1"
 # crate (GitHub issue #240).
 nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
 
+[dev-dependencies]
+# The tests' scratch directories, removed when dropped. Approved by the user for ticket 48, 2026-11-13.
+tempfile = "3"
+
 # clippy's rules, which are the workspace's (Cargo.toml at the repository's top).
 [lints]
 workspace = true

@@ -43,6 +43,11 @@ tiny_http = "0.12"
 # refused naming the first, as the Python engine refuses it.
 toml = { version = "1", default-features = false, features = ["parse", "preserve_order", "serde", "std"] }
 
+[dev-dependencies]
+# The tests' scratch directories (test_support::TempDir), removed when dropped. Approved by the user for ticket 48,
+# 2026-11-13.
+tempfile = "3"
+
 # The orchestrator program: crate::cli::main.
 [[bin]]
 name = "orchestrator"

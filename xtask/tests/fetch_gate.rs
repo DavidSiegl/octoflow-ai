@@ -8,7 +8,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use xtask::TempDir;
 
 /// Copies FAKE_TARBALL to the file after -o and appends the URL, its last argument, to CURL_LOG; exits 22, as curl -f
 /// does on an HTTP error, when FAKE_TARBALL is unset.
@@ -29,7 +28,7 @@ const GATE: &str = "the released gate\n";
 /// A directory holding the curl stub, a release tarball of gate, and where the script unpacks to. Removed when
 /// dropped.
 struct Fetch {
-    dir: TempDir,
+    dir: tempfile::TempDir,
     bin: PathBuf,
     tarball: PathBuf,
     /// The tarball's sha256, in lower-case hex.
@@ -47,7 +46,7 @@ fn run(dir: &Path, program: &str, args: &[&str]) -> String {
 
 impl Fetch {
     fn new() -> Fetch {
-        let dir = TempDir::new("xtask-fetch-gate-test-").expect("a temporary directory");
+        let dir = tempfile::Builder::new().prefix("xtask-fetch-gate-test-").tempdir().expect("a temporary directory");
         let bin = dir.path().join("bin");
         fs::create_dir(&bin).expect("made");
         let curl = bin.join("curl");
