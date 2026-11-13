@@ -14,7 +14,7 @@ use crate::map::Map;
 use crate::runs::RUNNING;
 use crate::spec_file::SpecFile;
 use crate::state::{find_run, RunState, SavedRun};
-use crate::workflow::{turn_quality_gate_off, turn_quality_gate_on};
+use crate::workflow::{check_gate_mid_run, turn_quality_gate_off, turn_quality_gate_on};
 use crate::workflow_file::{load_workflow_file, named_workflow};
 
 /// A new run's state from run's flags, and its workflow, for the project at cwd; with spec, run --spec's file, the run
@@ -100,12 +100,15 @@ pub(crate) fn new_run_id(wall: f64, zone: &jiff::tz::TimeZone) -> Result<String,
 /// The state of the run args.run_ref names among cwd's runs and its workflow, as resumable_state finds them, with the
 /// quality gate turned on or off as args asks (turn_quality_gate_on and _off), and its herdr server world's herdr's
 /// (Herdr::server), where it starts its agents from now on; a done run's as resumable_state gives it. Changes nothing
-/// on disk.
+/// on disk but the gate's job --no-quality-gate stops (turn_quality_gate_off), which stays stopped even when the resume
+/// fails later, before the run is saved; a resume after that judges the round again.
 ///
 /// A run a release before 0.71.0 started on a Jenkins quality job goes on with the local gate, its human told which
-/// job it leaves; a quality build it had in flight is dropped, and its quality round judged again locally.
+/// job it leaves, once host passes check_gate_mid_run, as for a run that gets the gate on resume; a quality build it
+/// had in flight is dropped, and its quality round judged again locally.
 ///
-/// Errors: the run cannot be resumed (resumable_state), or its gate cannot be switched.
+/// Errors: the run cannot be resumed (resumable_state), a Jenkins run fails check_gate_mid_run, or its gate cannot be
+/// switched.
 pub fn resumed_state(args: &ResumeArgs, cwd: &str, world: &Connected) -> Result<(RunState, Pipeline), OrchestratorError> {
     let w = &world.with;
     let runs = w.host.run_states(cwd)?;
@@ -114,14 +117,18 @@ pub fn resumed_state(args: &ResumeArgs, cwd: &str, world: &Connected) -> Result<
         return Ok((state, pipeline));
     }
     state.herdr_server = w.herdr.server();
-    if let Some(job) = state.quality_job.take_if(|job| !job.is_empty() && job != LOCAL_GATE) {
+    // A build kept in ci means a Jenkins job, even one named `local`, as a release before 0.63.0 took it.
+    let jenkins = !state.ci.is_empty();
+    if let Some(job) = state.quality_job.take_if(|job| !job.is_empty() && (job != LOCAL_GATE || jenkins)) {
         w.human.log(&format!(
             "run {}: the Jenkins quality gate was removed in 0.71.0, so the local gate replaces job {job}",
             state.run_id
         ));
         state.quality_job = Some(LOCAL_GATE.to_string());
+        if !args.no_quality_gate {
+            check_gate_mid_run(&state, w.host)?;
+        }
     }
-    // Only a Jenkins build was ever kept here, even under a job named `local`, as a release before 0.63.0 took it.
     state.ci = Object::new();
     if args.quality_gate {
         turn_quality_gate_on(&mut state, &pipeline, w.host, w.human)?;

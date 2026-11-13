@@ -88,7 +88,7 @@ pub struct RunState {
     pub owner: Option<Object>,
     pub heartbeat_at: Option<String>,
     /// The quality gate's name, LOCAL_GATE (crate::local_gate), for a run with the gate; None for a run without it. A
-    /// release before 0.71.0 also saved a Jenkins job's name here, which a resume replaces (cli::start::resumable_state).
+    /// release before 0.71.0 also saved a Jenkins job's name here, which a resume replaces (cli::start::resumed_state).
     pub quality_job: Option<String>,
     /// True once resume --no-quality-gate turned the gate off, for good: quality_job is None then, and the quality
     /// files written until then stay the run's (turn_quality_gate_off).
@@ -98,8 +98,8 @@ pub struct RunState {
     /// quality-fix turn that ends after resume --no-quality-gate leaves it one past the last quality round, which
     /// never runs.
     pub quality_round: u32,
-    /// Always empty: a release before 0.71.0 kept a Jenkins quality build in flight here, which a resume drops
-    /// (cli::start::resumable_state). Still written, as those releases read no state.json without it.
+    /// Empty but in a state.json a release before 0.71.0 saved, which kept a Jenkins quality build in flight here; a
+    /// resume drops it (cli::start::resumed_state). Still written, as those releases read no state.json without it.
     pub ci: Object,
     /// The name of the run's workflow.
     pub workflow: String,

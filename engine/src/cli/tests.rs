@@ -51,10 +51,8 @@ fn saved_on_host(state: RunState) -> (Fixture, String) {
 /// run_command of argv on f's fakes, a run's or a resume's.
 fn run_on(f: &Fixture, argv: &[&str]) -> Result<Ran, Stop> {
     let config = ConfigDir::at("/nowhere");
-    let mut with = f.collaborators();
-    with.quality_gate_on = false;
     let world = Connected {
-        with,
+        with: f.collaborators(),
         config: &config,
         local_host: "here",
         stdout: &|_| {},

@@ -714,7 +714,6 @@ fn proving_on(
         human: &told,
         interrupt,
         pid_alive: &crate::runs::pid_alive,
-        quality_gate_on: false,
         indexes: &crate::package_index::PackageIndexes::with_pypi(crate::pypi::fake::FakePyPI::from_json(
             Default::default(),
         )),

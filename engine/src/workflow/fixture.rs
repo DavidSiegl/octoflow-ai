@@ -85,7 +85,7 @@ pub(crate) struct Fixture {
     pub pid_alive: Box<dyn Fn(i64) -> bool>,
     /// The state the Workflow starts from.
     pub state: RunState,
-    /// Whether the Workflow is given the quality gate: false until gated turns it on.
+    /// Whether the Workflow's settings turn the quality gate on, whatever a test's say: false until gated turns it on.
     pub quality_gate_on: bool,
     /// The local gate gated plays on the host: what each of its runs does, and what it was asked.
     pub gate: Rc<RefCell<FakeGate>>,
@@ -200,7 +200,8 @@ impl Fixture {
     }
 
     pub fn try_workflow(&self, settings: RunSettings) -> Result<Workflow<'_>, crate::error::OrchestratorError> {
-        Workflow::new(self.collaborators(), self.state.clone(), settings)
+        let quality_gate_on = settings.quality_gate_on || self.quality_gate_on;
+        Workflow::new(self.collaborators(), self.state.clone(), RunSettings { quality_gate_on, ..settings })
     }
 
     /// The fixture's fakes as a Workflow is given them.
@@ -212,7 +213,6 @@ impl Fixture {
             human: &self.told,
             interrupt: &self.interrupt,
             pid_alive: &*self.pid_alive,
-            quality_gate_on: self.quality_gate_on,
             indexes: &self.indexes,
         }
     }

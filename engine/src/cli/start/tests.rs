@@ -421,7 +421,7 @@ fn a_run_of_the_jenkins_gate_resumes_on_the_local_gate() {
         let saved = saved_with(&state, &[("quality_job", Value::from(job)), ("ci", Value::Object(ci.clone()))]);
         host.state().files.insert(format!("{}/state.json", state.dir()), Value::Object(saved).to_string());
         host.state().ages.insert(state.run_id.clone(), 10_000);
-        let f = Fixture::on(host, state, vec![]);
+        let f = Fixture::on(host, state, vec![]).gated();
         let config = ConfigDir::at("/nowhere");
         let world = connected(&f, &config);
         let (resumed, _) = resumed_state(&resume_args(&["a1b2c3"]), "/proj", &world).unwrap();
@@ -429,10 +429,29 @@ fn a_run_of_the_jenkins_gate_resumes_on_the_local_gate() {
         assert_eq!((resumed.phase.as_str(), resumed.quality_round), ("quality", 1), "{job}");
         let warning = format!(
             "run 20260929-120000-a1b2c3: the Jenkins quality gate was removed in 0.71.0, so the local gate replaces \
-             job {JENKINS_JOB}"
+             job {job}"
         );
-        assert_eq!(f.told.lines(), if job == JENKINS_JOB { vec![warning] } else { vec![] }, "{job}");
+        assert_eq!(f.told.lines(), [warning], "{job}");
     }
+}
+
+#[test]
+fn a_run_of_the_jenkins_gate_past_round_0_needs_the_local_gates_preflight() {
+    // Such a run passed only the Jenkins gate's checks; round 0's are the Workflow's, before the interview.
+    let host = Rc::new(FakeHost::default());
+    host.state().gitleaks_missing = true;
+    let state = quality_state(1);
+    let saved = saved_with(&state, &[("quality_job", Value::from(JENKINS_JOB))]);
+    host.state().files.insert(format!("{}/state.json", state.dir()), Value::Object(saved).to_string());
+    host.state().ages.insert(state.run_id.clone(), 10_000);
+    let f = Fixture::on(host, state, vec![]);
+    let config = ConfigDir::at("/nowhere");
+    let world = connected(&f, &config);
+    let e = resumed_state(&resume_args(&["a1b2c3"]), "/proj", &world).unwrap_err();
+    assert!(e.0.contains("every push is scanned for secrets first"), "{e}");
+    // A run whose gate goes off needs none of it.
+    let (resumed, _) = resumed_state(&resume_args(&["a1b2c3", "--no-quality-gate"]), "/proj", &world).unwrap();
+    assert_eq!((resumed.quality_job, resumed.quality_gate_disabled), (None, true));
 }
 
 /// The herdr server whose session is session, its socket path unset.

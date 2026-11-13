@@ -47,7 +47,7 @@ mod step_prompt;
 mod system;
 mod turn;
 
-pub use gate_switch::{turn_quality_gate_off, turn_quality_gate_on};
+pub use gate_switch::{check_gate_mid_run, turn_quality_gate_off, turn_quality_gate_on};
 pub(crate) use origin::{origin_unreachable, reaching_origin};
 pub use system::{machine_zone, LocalHuman, SystemClocks};
 
@@ -94,9 +94,6 @@ pub struct Collaborators<'a> {
     /// Whether a process of a pid exists on this machine, for judging the checkout's other runs (RunState::health):
     /// crate::runs::pid_alive, which a test replaces.
     pub pid_alive: &'a dyn Fn(i64) -> bool,
-    /// Whether the run has the quality gate: the local gate (crate::local_gate) judges the change in its quality
-    /// rounds.
-    pub quality_gate_on: bool,
     /// The indexes the quality rounds' new-dependencies check asks about each package the change adds
     /// (crate::checks); a run without the quality gate never asks them.
     pub indexes: &'a PackageIndexes,
@@ -116,6 +113,9 @@ pub struct RunSettings {
     /// Whether the run ends in a pull request: the editing steps work on a branch of their own, which is committed,
     /// pushed and opened as a pull request against the branch the run started on, checked out again afterwards.
     pub pull_request: bool,
+    /// Whether the run has the quality gate: the local gate (crate::local_gate) judges the change in its quality
+    /// rounds.
+    pub quality_gate_on: bool,
     /// Analyses per round, with the quality gate.
     pub max_quality_rounds: u32,
     /// The run's workflow; None for the one the state names.
@@ -133,6 +133,7 @@ impl Default for RunSettings {
             turn_timeout: DEFAULT_TURN_TIMEOUT,
             agents: AgentSettings::default(),
             pull_request: true,
+            quality_gate_on: false,
             max_quality_rounds: DEFAULT_MAX_QUALITY_ROUNDS,
             pipeline: None,
             spec: None,
@@ -203,7 +204,7 @@ enum How {
 /// opened as a pull request against the branch the run started on, which is checked out again afterwards. The
 /// workspace is then closed. A run that fails keeps its workspace and branch, to see what happened.
 ///
-/// With the quality gate (Collaborators::quality_gate_on), each turn of the quality-gated step is followed by a quality
+/// With the quality gate (RunSettings::quality_gate_on), each turn of the quality-gated step is followed by a quality
 /// round (phase quality) that has the gate judge a snapshot of the change; a gate that does not pass goes back to that step,
 /// up to max_quality_rounds analyses per round, before the next step.
 pub struct Workflow<'a> {
@@ -213,7 +214,7 @@ pub struct Workflow<'a> {
     human: &'a dyn Human,
     interrupt: &'a Interrupt,
     pid_alive: &'a dyn Fn(i64) -> bool,
-    /// Collaborators::quality_gate_on.
+    /// RunSettings::quality_gate_on.
     quality_gate_on: bool,
     /// Collaborators::indexes.
     indexes: &'a PackageIndexes,
@@ -241,7 +242,7 @@ impl<'a> Workflow<'a> {
     /// state names (and its saved definition), is the run's.
     ///
     /// Errors: the state's prompt overrides or saved workflow cannot be read, the run has the quality gate
-    /// (with.quality_gate_on) and its workflow no quality-gated step, or the run is to end in a pull request and its workflow
+    /// (settings.quality_gate_on) and its workflow no quality-gated step, or the run is to end in a pull request and its workflow
     /// has no editing step.
     pub fn new(with: Collaborators<'a>, mut state: RunState, settings: RunSettings) -> Result<Workflow<'a>, OrchestratorError> {
         let prompts = state.prompts()?;
@@ -249,7 +250,7 @@ impl<'a> Workflow<'a> {
             Some(p) => p,
             None => run_pipeline(&state.workflow, state.workflow_definition.as_ref(), &prompts)?,
         };
-        if with.quality_gate_on && pipeline.gated().is_none() {
+        if settings.quality_gate_on && pipeline.gated().is_none() {
             return Err(OrchestratorError(format!(
                 "workflow {} has no quality-gated step, so the quality gate does not apply",
                 pipeline.name()
@@ -276,7 +277,7 @@ impl<'a> Workflow<'a> {
             .map(|role| (role, agents.harnesses.get(role).cloned().unwrap_or_else(|| DEFAULT_HARNESS.to_string())))
             .collect();
         state.pull_request = settings.pull_request;
-        state.quality_job = with.quality_gate_on.then(|| LOCAL_GATE.to_string());
+        state.quality_job = settings.quality_gate_on.then(|| LOCAL_GATE.to_string());
         state.max_quality_rounds = settings.max_quality_rounds;
         let me = object([
             ("host", Value::from(local_host())),
@@ -290,7 +291,7 @@ impl<'a> Workflow<'a> {
             human: with.human,
             interrupt: with.interrupt,
             pid_alive: with.pid_alive,
-            quality_gate_on: with.quality_gate_on,
+            quality_gate_on: settings.quality_gate_on,
             indexes: with.indexes,
             state,
             pipeline: Rc::new(pipeline),

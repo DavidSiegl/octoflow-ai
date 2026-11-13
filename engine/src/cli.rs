@@ -45,8 +45,7 @@ pub(crate) use start::new_run_id;
 /// is.
 #[derive(Clone, Copy)]
 pub struct Connected<'a> {
-    /// Every collaborator a Workflow is given; its quality_gate_on is false, and each run sets it from its saved
-    /// state (run_workflow).
+    /// Every collaborator a Workflow is given.
     pub with: Collaborators<'a>,
     /// The orchestrator's configuration directory on this machine: its prompt and workflow files.
     pub config: &'a ConfigDir,
@@ -270,7 +269,6 @@ fn connect(command: &Command, local: &Local, human: &LocalHuman) -> Result<Ended
             human,
             interrupt,
             pid_alive: &pid_alive,
-            quality_gate_on: false,
             indexes: &indexes,
         },
         config,
@@ -426,7 +424,6 @@ pub fn run_workflow(
     pipeline: Pipeline,
     spec: Option<SpecFile>,
 ) -> Result<Ran, Stopped> {
-    let quality_gate_on = state.quality_job.as_deref().is_some_and(|j| !j.is_empty());
     let settings = RunSettings {
         max_rounds: state.max_rounds,
         turn_timeout: state.turn_timeout,
@@ -436,12 +433,12 @@ pub fn run_workflow(
             harnesses: state.next_harnesses.clone(),
         },
         pull_request: state.pull_request,
+        quality_gate_on: state.quality_job.as_deref().is_some_and(|j| !j.is_empty()),
         max_quality_rounds: state.max_quality_rounds,
         pipeline: Some(pipeline.clone()),
         spec,
     };
-    let with = Collaborators { quality_gate_on, ..world.with };
-    let mut workflow = Workflow::new(with, state, settings).map_err(Stopped::Failed)?;
+    let mut workflow = Workflow::new(world.with, state, settings).map_err(Stopped::Failed)?;
     let verdict = workflow.run()?;
     Ok(Ran { verdict, state: workflow.state().clone(), pipeline })
 }

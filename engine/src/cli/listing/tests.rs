@@ -914,7 +914,12 @@ fn help() {
 #[test]
 fn show_names_the_gate() {
     let cases = [
-        (vec![("quality_job", Value::from(JOB))], Some(format!("quality    {JOB}"))),
+        (vec![("quality_job", Value::from("local"))], Some("quality    local".to_string())),
+        // A run a release before 0.71.0 started on a Jenkins job, which its resume will put on the local gate.
+        (
+            vec![("quality_job", Value::from(JOB))],
+            Some(format!("quality    local once resumed (Jenkins job {JOB}, removed in 0.71.0)")),
+        ),
         (vec![("quality_gate_disabled", Value::Bool(true))], Some("quality    off (turned off by resume)".to_string())),
         (vec![], None),
     ];

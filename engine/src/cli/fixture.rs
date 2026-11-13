@@ -67,10 +67,8 @@ impl Cli {
     pub fn with_workflow<T>(&self, workflow: &RunWorkflow<'_>, f: impl FnOnce(&Connected) -> T) -> T {
         let print = |text: &str| self.out.borrow_mut().push_str(text);
         let stderr = |text: &str| self.err.borrow_mut().push_str(text);
-        let mut with = self.f.collaborators();
-        with.quality_gate_on = false;
         let world = Connected {
-            with,
+            with: self.f.collaborators(),
             config: &self.config,
             local_host: "here",
             stdout: &print,

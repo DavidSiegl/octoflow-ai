@@ -1,5 +1,6 @@
 //! resume's --quality-gate and --no-quality-gate: the quality gate of a stopped run turned on or off before a Workflow
-//! resumes it, its state changed in memory for the Workflow to save. Python's turn_quality_gate_on and _off.
+//! resumes it, its state changed in memory for the Workflow to save; turning it off also stops the gate's job a killed
+//! run left (turn_quality_gate_off). Python's turn_quality_gate_on and _off.
 
 use super::turn::turn_started;
 use super::{Collaborators, Human};
@@ -13,8 +14,7 @@ use crate::state::RunState;
 /// Turn the quality gate of the run in state, of workflow pipeline, on, as resume --quality-gate does; a run that has
 /// it already is left as it is. human hears what was done.
 ///
-/// From round 1 on, host must pass the gate's preflight (gitleaks runs, and local_gate::preflight); round 0 is left to
-/// the Workflow's own preflight, as for run --quality-gate. A run in the step after the gated one, whose turn has not started, goes to
+/// host must pass check_gate_mid_run. A run in the step after the gated one, whose turn has not started, goes to
 /// quality round 1 first; any other starts the gate at the gated step's next turn.
 ///
 /// Errors, with state unchanged: the run is in phase done or publish (even with the gate on), had its gate turned
@@ -32,10 +32,7 @@ pub fn turn_quality_gate_on(
         human.log(&format!("run {} already has quality gate {LOCAL_GATE}", s.run_id));
         return Ok(());
     };
-    if s.round > 0 {
-        host.check_gitleaks()?;
-        crate::local_gate::preflight(host)?;
-    }
+    check_gate_mid_run(s, host)?;
     // Whether the run goes to quality round 1 first: read before state changes, so that a failed read leaves it as it was.
     let mut judge_first = false;
     if let Some(following) = pipeline.after(&gated.id).filter(|f| f.id == s.phase) {
@@ -52,6 +49,19 @@ pub fn turn_quality_gate_on(
         s.quality_round = 1;
     }
     human.log(&format!("turned the quality gate of run {} on, with {LOCAL_GATE}", s.run_id));
+    Ok(())
+}
+
+/// Check that host can run the local gate for the run in state, which gets it on resume, before any turn: from round 1
+/// on, gitleaks runs and local_gate::preflight passes. Round 0 is left to the Workflow's own preflight before the
+/// interview, which checks the same, as for run --quality-gate.
+///
+/// Errors: either check fails.
+pub fn check_gate_mid_run(state: &RunState, host: &dyn Host) -> Result<(), OrchestratorError> {
+    if state.round > 0 {
+        host.check_gitleaks()?;
+        crate::local_gate::preflight(host)?;
+    }
     Ok(())
 }
 
