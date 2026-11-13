@@ -222,7 +222,7 @@ pub fn check_setup(
         Ok("gitleaks, and all the gate's preflight asks for, are ready".to_string())
     });
     if let Some(cwd) = cwd {
-        let fix = "pass --cwd a git checkout, or make one with git clone or git init";
+        let fix = "choose a git checkout as the project (--cwd), or make one with git clone or git init";
         let checkout = check(&mut checks, "git checkout", Level::NeededForPr, fix, Some(&git), "", &mut || {
             top_level(agents, cwd)
         });
@@ -292,7 +292,10 @@ fn reach_herdr(
     let Some(machine) = herdr.machine() else {
         let check = match in_herdr_pane {
             true => reached(true, "inside a herdr pane".into(), String::new()),
-            false => reached(false, "not inside a herdr pane".into(), "run from a herdr pane, or pass --machine".into()),
+            false => {
+                let fix = "run from a herdr pane, or choose a herdr machine (--machine)";
+                reached(false, "not inside a herdr pane".into(), fix.into())
+            }
         };
         return (Some(host.clone()), Check { level: pane_level, ..check });
     };

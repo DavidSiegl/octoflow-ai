@@ -359,7 +359,7 @@ describe("the setup dialog", () => {
   const REPORT = {
     checks: [
       { name: "herdr", level: "required", ok: true, detail: "herdr 0.9.1", fix: "" },
-      { name: "reaching herdr", level: "optional", ok: false, detail: "not inside a herdr pane", fix: "run from a herdr pane, or pass --machine" },
+      { name: "reaching herdr", level: "optional", ok: false, detail: "not inside a herdr pane", fix: "run from a herdr pane, or choose a herdr machine (--machine)" },
       { name: "gh", level: "needed-for-pr", ok: false, detail: "gh auth status fails", fix: "gh auth login" },
     ],
     passed: true,
