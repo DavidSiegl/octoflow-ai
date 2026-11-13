@@ -131,7 +131,9 @@ impl Repo {
 }
 
 /// An ssh played by a script on the Host's PATH: it records each call's arguments, one file per call, NUL-separated,
-/// and runs the command it was given with sh, here, as sshd would run it there.
+/// and runs the command it was given with sh, here, as sshd would run it there. With FAKE_SSH_REFUSES_SHARED set in
+/// the host's environment it fails a call that shares a connection (ControlMaster) as OpenSSH 10.0's client does when
+/// the server refuses the master another session (MaxSessions), running nothing.
 pub(crate) struct FakeSsh {
     dir: TempDir,
     pub host: ProcessHost,
@@ -147,6 +149,8 @@ impl FakeSsh {
             "ssh",
             "#!/bin/sh\nd=$(dirname \"$0\")/calls; mkdir -p \"$d\"; n=$(ls \"$d\" | wc -l)\n\
              for a in \"$@\"; do printf '%s\\0' \"$a\"; done > \"$d/$n\"\n\
+             case \"$*\" in *ControlMaster=*) if [ -n \"$FAKE_SSH_REFUSES_SHARED\" ]; then\n\
+             echo 'mux_client_request_session: session request failed: Session open refused by peer' >&2; exit 255; fi;; esac\n\
              eval \"last=\\${$#}\"\nexec sh -c \"$last\"\n",
         );
         let host = ProcessHost::in_environment(environment(Some(&bin), set).into_iter(), &Interrupt::new()).over_ssh("remote-host");
@@ -215,6 +219,28 @@ fn commands_over_ssh_share_one_connection_through_a_private_directory() {
     assert!(std::path::Path::new(path).exists());
     drop(copy);
     assert!(!std::path::Path::new(path).exists());
+}
+
+#[test]
+fn a_command_the_server_refuses_on_the_shared_connection_runs_again_unshared_as_do_the_next() {
+    let ssh = FakeSsh::new(&[("FAKE_SSH_REFUSES_SHARED", "1")]);
+    let ran = ssh.host.run(&["echo", "hi"], None, DEFAULT_TIMEOUT).unwrap();
+    assert_eq!((ran.status, ran.stdout.as_str()), (0, "hi\n"));
+    ssh.host.over_ssh("remote-host").run(&["true"], None, DEFAULT_TIMEOUT).unwrap();
+    let shares = |call: &Vec<String>| call.iter().any(|a| a.starts_with("ControlMaster="));
+    let shared: Vec<bool> = ssh.calls().iter().map(shares).collect();
+    assert_eq!(shared, [true, false, false]);
+    assert!(ssh.host.ssh_sharing_options().is_empty());
+}
+
+#[test]
+fn a_command_failing_with_255_for_another_reason_is_not_run_again() {
+    let ssh = FakeSsh::new(&[]);
+    let refused = "echo 'ssh: connect to host remote-host port 22: Connection refused' >&2; exit 255";
+    let ran = ssh.host.run(&["sh", "-c", refused], None, DEFAULT_TIMEOUT).unwrap();
+    assert_eq!(ran.status, 255);
+    assert_eq!(ssh.calls().len(), 1);
+    assert!(!ssh.host.ssh_sharing_options().is_empty());
 }
 
 /// A short directory under /tmp, for an XDG_RUNTIME_DIR whose control sockets' paths ssh accepts.
