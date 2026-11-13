@@ -49,6 +49,13 @@ const METRICS_ARCHIVE: &str = ".orchestrator/metrics-archive.jsonl";
 /// still there fails the script.
 const SKIP_F_IF_GONE: &str = "{ [ -f \"$f\" ] || continue; exit 1; }";
 
+/// sh printing the file at path, a shell parameter such as `$1`. A cat that fails on a file no longer there, removed
+/// since the script tested it, exits MISSING_FILE_STATUS, as a file never there does; one that fails on a file still
+/// there exits 1.
+fn cat_unless_gone(path: &str) -> String {
+    format!("cat -- \"{path}\" || {{ [ -f \"{path}\" ] && exit 1; exit {MISSING_FILE_STATUS}; }}")
+}
+
 /// sh: sets m to the modification time of file $f, in seconds since the epoch; fails when stat does. stat -c is GNU,
 /// stat -f is BSD.
 const MTIME_OF_F: &str = "m=$(stat -c %Y -- \"$f\" 2>/dev/null || stat -f %m -- \"$f\")";
@@ -330,7 +337,7 @@ pub trait Host {
 
     /// The file's contents, or None when it does not exist yet. Errors: it cannot be read, or is not UTF-8.
     fn read(&self, path: &str) -> Result<Option<String>, OrchestratorError> {
-        let script = format!("[ -f \"$1\" ] || exit {MISSING_FILE_STATUS}; cat -- \"$1\"");
+        let script = format!("[ -f \"$1\" ] || exit {MISSING_FILE_STATUS}; {}", cat_unless_gone("$1"));
         let proc = self.run(&["sh", "-c", &script, "_", path], None, DEFAULT_TIMEOUT)?;
         match proc.status {
             MISSING_FILE_STATUS => Ok(None),
@@ -1113,14 +1120,15 @@ pub trait Host {
 
     /// The text of the file name, a plain name, in run_dir, if it stays inside the run directory as run_files_inside
     /// lists only those that do: Outside, having read nothing, for a file that leads out or a run_dir that does;
-    /// Missing for a file not there, or removed while it is resolved. Errors: the file cannot be read, or is not UTF-8.
+    /// Missing for a file not there, or removed before it is read. Errors: the file cannot be read, or is not UTF-8.
     fn read_inside(&self, run_dir: &str, name: &str) -> Result<RunFileText, OrchestratorError> {
         // What is read is the path below resolved, so the links it walked are not followed again; one put in its
         // place after that is, a race TODO.md records ("serve's link checks race the agent").
         let script = format!(
             "{}f=$1/$2; [ -f \"$f\" ] || exit {MISSING_FILE_STATUS}; below \"$f\" \"$d\"; \
-             case $? in 0) ;; 1) exit {OUTSIDE_STATUS};; *) exit {MISSING_FILE_STATUS};; esac; cat -- \"$r\"",
-            run_dir_resolved()
+             case $? in 0) ;; 1) exit {OUTSIDE_STATUS};; *) exit {MISSING_FILE_STATUS};; esac; {}",
+            run_dir_resolved(),
+            cat_unless_gone("$r")
         );
         let proc = self.run(&["sh", "-c", &script, "_", run_dir, name], None, DEFAULT_TIMEOUT)?;
         match proc.status {

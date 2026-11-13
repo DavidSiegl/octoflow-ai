@@ -887,6 +887,30 @@ fn a_link_removed_while_it_is_resolved_is_missing_not_outside() {
     assert_eq!(host_with_tools(&bin.path()).read_inside(&run_dir, "in.md").unwrap(), RunFileText::Missing);
 }
 
+#[test]
+fn a_file_removed_between_its_test_and_its_read_is_missing() {
+    let d = TempDir::new();
+    let path = d.join("spec.md");
+    put(&path, "spec");
+    // cat removes spec.md just before it reads it, as a running run removes a file.
+    let bin = TempDir::new();
+    tool_that_loses(&bin.path(), "cat", &path);
+    assert_eq!(host_with_tools(&bin.path()).read(&path).unwrap(), None);
+}
+
+#[test]
+fn a_run_file_removed_between_its_test_and_its_read_is_missing() {
+    let d = TempDir::new();
+    let run_dir = d.join(&format!("{RUNS_DIR}/r"));
+    put(&format!("{run_dir}/leaks-publish.json"), "[]");
+    // read_inside cats the path with its links resolved, which is what cat is given.
+    let resolved = std::fs::canonicalize(format!("{run_dir}/leaks-publish.json")).unwrap();
+    let bin = TempDir::new();
+    tool_that_loses(&bin.path(), "cat", resolved.to_str().unwrap());
+    let host = host_with_tools(&bin.path());
+    assert_eq!(host.read_inside(&run_dir, "leaks-publish.json").unwrap(), RunFileText::Missing);
+}
+
 /// The run ids of the runs under project, as run_states reads them through a host with the tools in bin.
 fn run_ids(bin: &str, project: &str) -> Result<Vec<String>, OrchestratorError> {
     let states = host_with_tools(bin).run_states(project)?;
