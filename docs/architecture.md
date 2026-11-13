@@ -344,17 +344,20 @@ layout), with no Python of its own.
 - **Frontend.** `api.ts` types the protocol: `RunRecord` mirrors `run_record`, `RunRequest` is `POST /run`'s body, and
   `Api` builds the URLs and makes the requests. `hooks.ts`'s `useRunStream` opens the `EventSource` and folds its
   events into a `RunsState` with `runs.ts`'s `applyEvent`. Every opening starts from no runs, since the server sends
-  every run again. `runs.ts` also holds `progress` (the stages of a run's progress bar, with `quality` after the step
-  it judges) and the wording helpers, which follow `format_age` and `run_round`. A `RunEntry` keeps when its record
+  every run again. `runs.ts` also holds `progress` (every stage of a run from its start: its steps, `quality` after
+  each step the quality loop follows, `publish` when the run opens a pull request, each with its turns and its
+  state; the overview's `StepProgress` and the run detail's `RunMap` both draw it) and the wording helpers, which follow `format_age` and `run_round`. A `RunEntry` keeps when its record
   arrived, so `heartbeatAge` ticks with `useNow` between events. The components are `ProjectBar`, `RunsOverview`,
   `RunForm` (a new run, selected once `POST /run` answers) and `SetupDialog`, both a `Dialog`, `RunDetail`,
-  `AgentPanes`, `StepProgress` and `HandoffFile`, which renders a file with `react-markdown` and `remark-gfm`, raw
+  `AgentPanes`, `StepProgress`, `RunMap` (the run as an octopus, hand-written SVG: `runMap.ts` places the arms and
+  shapes them, and a `requestAnimationFrame` loop sways them unless the viewer prefers reduced motion) and
+  `HandoffFile`, which renders a file with `react-markdown` and `remark-gfm`, raw
   HTML skipped, and fetches it again whenever its mtime changes.
 - **Tests.** Vitest with React Testing Library in jsdom: `App.test.tsx` replays `test/recorded-stream.json`
   through `test/fakes.ts`'s `FakeEventSource`, with `fetch` stubbed. The recording is the events a real
   `serve` sent over a scripted run: the e2e test `app_event_stream` (below) fails when serve no longer sends them,
   and `recording.test.ts` when a record in them has other keys than `api.ts`'s `RunRecord` and the types in it, so a
-  key added or dropped on either side fails a build. `runs.test.ts` covers the pure helpers. `cargo test -p octoflow-ui` starts
+  key added or dropped on either side fails a build. `runs.test.ts` and `runMap.test.ts` cover the pure helpers, and `RunMap.test.tsx` the map as a reader gets it. `cargo test -p octoflow-ui` starts
   and stops a real sidecar.
 
 ## Tests

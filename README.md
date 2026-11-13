@@ -147,8 +147,12 @@ first time when a browser downloaded it, as it does the binary.
   output goes to `octoflow/herdr-server.log` under `$XDG_STATE_HOME` (`~/.local/state` when that is unset or not
   an absolute path), whose last lines the form shows when it does not come up. A run that fails before it starts,
   such as one the checkout already holds, shows the last lines of its pane in the form.
-- **Run detail:** the files in a run's directory, the newest or the one you pick rendered as Markdown, updated
-  as they are written.
+- **Run detail:** the run as an octopus map: the head is the run, with its round, and each stage of its workflow
+  (its steps, the quality gate after each gated step, and the pull request) is an arm ending in a station that shows
+  who holds it, the harness and model of its last turn, its rounds and a verdict step's last verdict. The working
+  arm is amber, and arrows show where a verdict step loops back to. A bubble on the head asks for your answer when
+  the run waits on you. Below the map are what runs now and the run's turns, newest first. Under it, the files in
+  the run's directory, the newest or the one you pick rendered as Markdown, updated as they are written.
 - **Agents:** a tab for each agent the run has started, showing the last lines of its herdr pane, read again every
   two seconds, with a box to type a message to it and keys (Esc, Enter, ↑, ↓, Ctrl+C), as you would in the pane:
   to answer a question it asked, or stop it. The window reaches each agent in the herdr session its run was
