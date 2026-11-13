@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::constants::{AGENT_KINDS, DEFAULT_AGENT};
+use crate::constants::{HARNESS_NAMES, DEFAULT_HARNESS};
 use crate::env::ConfigDir;
 use crate::error::OrchestratorError;
 use crate::interrupt::Interrupt;
@@ -64,11 +64,11 @@ pub struct RunRequest {
     pub task: String,
     /// --workflow; None for run's default.
     pub workflow: Option<String>,
-    /// --agent, one of AGENT_KINDS.
+    /// --agent, one of HARNESS_NAMES.
     pub agent: Option<String>,
     /// --model.
     pub model: Option<String>,
-    /// Each --role-agent, (role, kind), in the body's order; kind one of AGENT_KINDS.
+    /// Each --role-agent, (role, kind), in the body's order; kind one of HARNESS_NAMES.
     pub role_agents: Vec<(String, String)>,
     /// Each --role-model, (role, model), in the body's order.
     pub role_models: Vec<(String, String)>,
@@ -83,8 +83,8 @@ const FIELDS: [&str; 8] = ["task", "workflow", "agent", "model", "role_agents", 
 
 impl RunRequest {
     /// The run body asks for: a JSON object with "task", a string that is not empty, and any of "workflow", "agent"
-    /// and "model", each a string that is not empty, "agent" one of AGENT_KINDS; "role_agents" and "role_models",
-    /// each an object of role to harness (one of AGENT_KINDS) or to model, each role and model not empty and a role
+    /// and "model", each a string that is not empty, "agent" one of HARNESS_NAMES; "role_agents" and "role_models",
+    /// each an object of role to harness (one of HARNESS_NAMES) or to model, each role and model not empty and a role
     /// without `=`; and "no_pr" and "worktree", each a boolean; null for any of them but "task" is leaving it out.
     /// Errors: why the body is not so, in words a client can show, naming the first field that is wrong.
     pub fn parse(body: &[u8]) -> Result<RunRequest, String> {
@@ -111,15 +111,15 @@ impl RunRequest {
         };
         let task = text("task")?.ok_or_else(|| "task must be a string that is not empty".to_string())?;
         let agent = text("agent")?;
-        if let Some(kind) = agent.as_deref().filter(|k| !AGENT_KINDS.contains(k)) {
-            return Err(format!("agent {kind:?} is not one of {}", AGENT_KINDS.join(", ")));
+        if let Some(kind) = agent.as_deref().filter(|k| !HARNESS_NAMES.contains(k)) {
+            return Err(format!("agent {kind:?} is not one of {}", HARNESS_NAMES.join(", ")));
         }
         Ok(RunRequest {
             task,
             workflow: text("workflow")?,
             agent,
             model: text("model")?,
-            role_agents: by_role(given("role_agents"), "role_agents", Some(&AGENT_KINDS))?,
+            role_agents: by_role(given("role_agents"), "role_agents", Some(&HARNESS_NAMES))?,
             role_models: by_role(given("role_models"), "role_models", None)?,
             no_pr: flag("no_pr")?,
             worktree: flag("worktree")?,
@@ -151,9 +151,9 @@ impl RunRequest {
 /// What GET /workflows answers: {"workflows", "agents"}. workflows is each workflow `run --workflow` offers from
 /// config (workflow_names), in that order, as {"name", "description", "roles"}, roles being each of its roles in pane
 /// order as {"role", "label", "agent", "model"}: the harness the role runs in unless the run names another, its
-/// workflow's or DEFAULT_AGENT, and its workflow's model, null for the harness's own; one that does not load, as a
+/// workflow's or DEFAULT_HARNESS, and its workflow's model, null for the harness's own; one that does not load, as a
 /// workflow file may not, is {"name", "error"} instead, its error as `run --workflow` would give it
-/// (named_workflow). agents is AGENT_KINDS. The workflows are worded by the built-in prompts, which change no role,
+/// (named_workflow). agents is HARNESS_NAMES. The workflows are worded by the built-in prompts, which change no role,
 /// harness or model. Errors: the workflows directory cannot be listed.
 pub fn offered_workflows(config: &ConfigDir) -> Result<Value, OrchestratorError> {
     let built_in = Prompts::default();
@@ -165,7 +165,7 @@ pub fn offered_workflows(config: &ConfigDir) -> Result<Value, OrchestratorError>
         };
         workflows.push(entry);
     }
-    Ok(json!({"workflows": workflows, "agents": AGENT_KINDS}))
+    Ok(json!({"workflows": workflows, "agents": HARNESS_NAMES}))
 }
 
 /// pipeline's roles, as offered_workflows gives them.
@@ -174,7 +174,7 @@ fn roles(pipeline: &Pipeline) -> Vec<Value> {
         .roles()
         .iter()
         .map(|(role, label)| {
-            let agent = pipeline.agents().get(role).map_or(DEFAULT_AGENT, String::as_str);
+            let agent = pipeline.agents().get(role).map_or(DEFAULT_HARNESS, String::as_str);
             json!({"role": role, "label": label, "agent": agent, "model": pipeline.models().get(role)})
         })
         .collect()

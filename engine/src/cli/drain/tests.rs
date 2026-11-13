@@ -1279,7 +1279,7 @@ fn the_flags_reach_every_run() {
         let models: Vec<(String, String)> = state.models.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         let want = [("spec", "m"), ("build", "m"), ("review", "r")].map(|(k, v)| (k.to_string(), v.to_string()));
         assert_eq!(models, want);
-        assert!(state.agent_kinds.values().all(|k| k == "codex"));
+        assert!(state.next_harnesses.values().all(|k| k == "codex"));
     }
 }
 

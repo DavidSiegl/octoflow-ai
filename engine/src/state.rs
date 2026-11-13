@@ -1,7 +1,7 @@
 //! RunState: what a run has done so far, saved as state.json in its run directory.
 
 use crate::constants::{
-    CI_REF_PREFIX, DEFAULT_AGENT, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
+    CI_REF_PREFIX, DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
     LOCAL_REFS_PREFIX, RUNS_DIR,
 };
 use crate::ci::LOCAL_GATE;
@@ -74,8 +74,9 @@ pub struct RunState {
     pub permission_mode: Option<String>,
     pub models: Map<String>,
     /// Per role: the harness its next agent starts in, which may differ from the one its agent runs in (harness).
-    /// A role missing here runs in DEFAULT_AGENT.
-    pub agent_kinds: Map<String>,
+    /// A role missing here runs in DEFAULT_HARNESS. Saved as "agent_kinds", the name earlier releases gave it.
+    #[serde(rename = "agent_kinds")]
+    pub next_harnesses: Map<String>,
     /// Whether the run works on a branch of its own and ends in a pull request; false for a --no-pr run.
     pub pull_request: bool,
     /// Basename of the handoff file whose prompt was delivered, so a resume does not prompt for it again.
@@ -169,10 +170,10 @@ pub struct AgentRecord {
     pub name: String,
     /// The herdr pane it runs in; empty once the run's workspace was found gone, until the role's next agent starts.
     pub pane: String,
-    /// The harness it runs in, never empty; one of AGENT_KINDS when this engine started it, though a run may hold a
-    /// kind this engine no longer runs, which Workflow::agent_kind refuses once the role's agent restarts.
-    #[serde(deserialize_with = "harness_name")]
-    pub kind: String,
+    /// The harness it runs in, never empty; one of HARNESS_NAMES when this engine started it, though a run may hold a
+    /// harness this engine no longer runs, which Workflow::next_harness refuses once the role's agent restarts.
+    #[serde(rename = "kind", deserialize_with = "harness_name")]
+    pub harness: String,
     /// The harness's session id, as herdr reports it; None until it does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
@@ -227,9 +228,10 @@ pub struct TurnRecord {
 }
 
 impl AgentRecord {
-    /// The record of an agent just started as name, in pane, in harness kind: its session not yet known.
-    pub fn new(name: &str, pane: &str, kind: &str) -> AgentRecord {
-        AgentRecord { name: name.into(), pane: pane.into(), kind: kind.into(), session: None, unknown: Object::new() }
+    /// The record of an agent just started as name, in pane, in harness: its session not yet known.
+    pub fn new(name: &str, pane: &str, harness: &str) -> AgentRecord {
+        let (name, pane, harness) = (name.into(), pane.into(), harness.into());
+        AgentRecord { name, pane, harness, session: None, unknown: Object::new() }
     }
 }
 
@@ -310,7 +312,7 @@ impl RunState {
             turn_timeout: DEFAULT_TURN_TIMEOUT,
             permission_mode: None,
             models: Map::new(),
-            agent_kinds: Map::new(),
+            next_harnesses: Map::new(),
             pull_request: false,
             prompted: None,
             retried: Vec::new(),
@@ -391,12 +393,12 @@ impl RunState {
         state
     }
 
-    /// The harness the role's agent runs in: its started agent's, else the one its next agent starts in (agent_kinds),
-    /// else DEFAULT_AGENT.
+    /// The harness the role's agent runs in: its started agent's, else the one its next agent starts in
+    /// (next_harnesses), else DEFAULT_HARNESS.
     pub fn harness(&self, role: &str) -> &str {
         match self.agents.get(role) {
-            Some(agent) => &agent.kind,
-            None => self.agent_kinds.get(role).map_or(DEFAULT_AGENT, String::as_str),
+            Some(agent) => &agent.harness,
+            None => self.next_harnesses.get(role).map_or(DEFAULT_HARNESS, String::as_str),
         }
     }
 

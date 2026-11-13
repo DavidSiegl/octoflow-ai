@@ -340,12 +340,9 @@ pub trait Host {
     /// The absolute form of a directory's path, a leading ~ expanded to the home directory on this host. Errors:
     /// there is no such directory.
     fn resolve_dir(&self, path: &str) -> Result<String, OrchestratorError> {
-        let (script, arg) = if path == "~" || path.starts_with("~/") {
-            ("cd -- \"$HOME$1\" && pwd", &path[1..])
-        } else {
-            ("cd -- \"$1\" && pwd", path)
-        };
-        Ok(self.check(&["sh", "-c", script, "_", arg], None, DEFAULT_TIMEOUT)?.trim().to_string())
+        let (word, arg) = shell_path(path);
+        let script = format!("cd -- {word} && pwd");
+        Ok(self.check(&["sh", "-c", &script, "_", arg], None, DEFAULT_TIMEOUT)?.trim().to_string())
     }
 
     /// HEAD's commit, or None when cwd is not a git repository with a commit.
@@ -969,11 +966,11 @@ pub trait Host {
         parsed_run_states(cwd, &self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?)
     }
 
-    /// The log in which the harness kind keeps a session's token usage (crate::harness::SessionLog), found in the
-    /// home directory here, as it is on disk; None for a harness without one, a session id that is not a plain name,
-    /// or no such file.
-    fn session_log(&self, kind: &str, session: &str) -> Result<Option<Vec<u8>>, OrchestratorError> {
-        let Some(SessionLog { glob: pattern, .. }) = harness(kind).ok().and_then(|h| h.session_log) else {
+    /// The log in which the harness named name keeps a session's token usage (crate::harness::SessionLog), found in
+    /// the home directory here, as it is on disk; None for a harness without one, a session id that is not a plain
+    /// name, or no such file.
+    fn session_log(&self, name: &str, session: &str) -> Result<Option<Vec<u8>>, OrchestratorError> {
+        let Some(SessionLog { glob: pattern, .. }) = harness(name).ok().and_then(|h| h.session_log) else {
             return Ok(None);
         };
         if session.is_empty() || !session.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
@@ -1184,6 +1181,16 @@ pub fn decoded(exec: Exec) -> Result<Completed, OrchestratorError> {
     Ok(Completed { status, stdout, stderr: decode(stderr)? })
 }
 
+/// path, which may start with ~ for the home directory, as an `sh -c` script takes it: the word to write in the
+/// script where the path goes, and the argument to pass the script as its `$1`, which the word expands.
+pub(crate) fn shell_path(path: &str) -> (&'static str, &str) {
+    if path == "~" || path.starts_with("~/") {
+        ("\"$HOME$1\"", &path[1..])
+    } else {
+        ("\"$1\"", path)
+    }
+}
+
 /// git pathspecs that each match exactly one of paths, relative to the repository's top level, whatever directory git
 /// runs in, and with no glob in them.
 fn top_literal<S: AsRef<str>>(paths: &[S]) -> Vec<String> {
@@ -1194,17 +1201,19 @@ fn top_literal<S: AsRef<str>>(paths: &[S]) -> Vec<String> {
 /// fails.
 fn working_tree<H: Host + ?Sized>(host: &H, cwd: &str) -> Result<String, OrchestratorError> {
     // Through a copy of the index, in one sh -c script, because git -C cannot pass GIT_INDEX_FILE.
-    let script = "cd -- \"$1\" || exit 1; i=$(git rev-parse --git-path index) || exit 1; t=$(mktemp) || exit 1; \
-                  trap 'rm -f -- \"$t\"' EXIT; \
-                  if [ -f \"$i\" ]; then { cp -- \"$i\" \"$t\" && touch -r \"$i\" -- \"$t\"; } || exit 1; \
-                  else rm -f -- \"$t\"; fi; \
+    let script = "cd -- \"$1\" || exit 1; i=$(git rev-parse --git-path index) || exit 1; d=$(mktemp -d) || exit 1; \
+                  trap 'rm -rf -- \"$d\"' EXIT; t=$d/index; \
+                  if [ -f \"$i\" ]; then { cat > \"$t\" && touch -r /dev/stdin -- \"$t\"; } < \"$i\" || exit 1; fi; \
                   GIT_INDEX_FILE=$t git add -A && GIT_INDEX_FILE=$t git write-tree";
     // `touch -r`, which gives the copy the index's modification time: git reads a file whose size and times are its
     // entry's only when the index is no younger than the entry (https://git-scm.com/docs/racy-git), so a copy dated
     // now would have git add take a file rewritten at its size within the second it was staged as unchanged, and the
-    // tree hold the old one. Not `cp -p`, which carries owner and mode too: it fails where the owner cannot be kept,
-    // and widens the mode mktemp gave the copy.
-    // The `else`: a repository whose index was never written, from which git starts the copy afresh.
+    // tree hold the old one. Not `cp -p`, which carries owner and mode too: it fails where the owner cannot be kept.
+    // Entries and time come from the one open file on stdin: a git renaming a new index into place between two opens
+    // would leave the copy the old entries under the new time, which is the race again.
+    // The copy sits in a directory of its own, which only its owner can enter whatever mode the copy has once git
+    // rewrites it, and which goes whole on exit, with the index.lock a git killed mid-write leaves beside the copy.
+    // No index to copy: a repository whose index was never written, from which git starts the copy afresh.
     Ok(host.check(&["sh", "-c", script, "_", cwd], None, DEFAULT_TIMEOUT)?.trim().to_string())
 }
 

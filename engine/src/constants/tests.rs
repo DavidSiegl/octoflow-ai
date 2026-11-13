@@ -51,7 +51,7 @@ fn every_constant_is_the_python_engines() {
         CLOSED_BRANCH_GRACE, PR_SECTION_LIMIT, APPROVE, CHANGES_REQUESTED, FINISHED, QUALITY_GATE_FAILED, SUCCEEDED,
         BLOCKED, NO_QUESTION, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_FILES, DEFAULT_MAX_LINES, BUDGET_KEYS,
         HTTP_TIMEOUT, PYPI_TIMEOUT, CI_POLL_SECONDS, QUALITY_TIMEOUT, CI_ENV, CI_TOKENS, GIT_PATHSPEC_ENV,
-        JOB_PARAMETERS, CI_REF_PREFIX, LOCAL_REFS_PREFIX, CONSOLE_TAIL_LINES, DEFAULT_AGENT,
+        JOB_PARAMETERS, CI_REF_PREFIX, LOCAL_REFS_PREFIX, CONSOLE_TAIL_LINES,
         EXIT_ERROR, EXIT_CHANGES_REQUESTED, EXIT_CONFLICT, EXIT_WAITING, EXIT_INTERRUPTED,
     ];
     let texts = oracle("texts.json");
@@ -59,10 +59,13 @@ fn every_constant_is_the_python_engines() {
     for (name, value) in &ported {
         assert_eq!(python.get(*name).map(Value::to_string), Some(value.to_string()), "{name}");
     }
+    // Renamed here: Python's names a harness an agent.
+    assert_eq!(python.get("DEFAULT_AGENT").map(Value::to_string), Some(DEFAULT_HARNESS.as_json().to_string()));
     // ROLE_LABELS is a dict in Python, a list of pairs here.
     let labels: Vec<(&str, &str)> = python.get("ROLE_LABELS").and_then(Value::as_object).unwrap()
         .iter().map(|(k, v)| (k.as_str(), v.as_str().unwrap())).collect();
     assert_eq!(labels, ROLE_LABELS);
-    // AGENT_KINDS differs from Python's, agy in place of gemini; harness/tests.rs compares the rest of it.
-    assert_eq!(ported.len() + 2, python.len(), "a constant of texts.py's list is not compared here");
+    // HARNESS_NAMES differs from Python's AGENT_KINDS, agy in place of gemini; harness/tests.rs compares the rest of
+    // it.
+    assert_eq!(ported.len() + 3, python.len(), "a constant of texts.py's list is not compared here");
 }

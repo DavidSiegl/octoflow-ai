@@ -131,15 +131,17 @@ impl Repo {
 }
 
 /// An ssh played by a script on the Host's PATH: it records each call's arguments, one file per call, NUL-separated,
-/// and runs the command it was given with sh, here, as sshd would run it there.
-struct FakeSsh {
+/// and runs the command it was given with sh, here, as sshd would run it there. With FAKE_SSH_REFUSES_SHARED set in
+/// the host's environment it fails a call that shares a connection (ControlMaster=auto) as OpenSSH 10.0's client does
+/// when the server refuses the master another session (MaxSessions), running nothing.
+pub(crate) struct FakeSsh {
     dir: TempDir,
-    host: ProcessHost,
+    pub host: ProcessHost,
 }
 
 impl FakeSsh {
     /// A host over this fake ssh to remote-host, in the engine's environment with set added.
-    fn new(set: &[(&str, &str)]) -> FakeSsh {
+    pub fn new(set: &[(&str, &str)]) -> FakeSsh {
         let dir = TempDir::new();
         let bin = dir.join("bin");
         tool(
@@ -147,6 +149,8 @@ impl FakeSsh {
             "ssh",
             "#!/bin/sh\nd=$(dirname \"$0\")/calls; mkdir -p \"$d\"; n=$(ls \"$d\" | wc -l)\n\
              for a in \"$@\"; do printf '%s\\0' \"$a\"; done > \"$d/$n\"\n\
+             case \"$*\" in *ControlMaster=auto*) if [ -n \"$FAKE_SSH_REFUSES_SHARED\" ]; then\n\
+             echo 'mux_client_request_session: session request failed: Session open refused by peer' >&2; exit 255; fi;; esac\n\
              eval \"last=\\${$#}\"\nexec sh -c \"$last\"\n",
         );
         let host = ProcessHost::in_environment(environment(Some(&bin), set).into_iter(), &Interrupt::new()).over_ssh("remote-host");
@@ -154,7 +158,7 @@ impl FakeSsh {
     }
 
     /// The arguments of each call of ssh, in order.
-    fn calls(&self) -> Vec<Vec<String>> {
+    pub fn calls(&self) -> Vec<Vec<String>> {
         let dir = self.dir.join("bin/calls");
         let n = std::fs::read_dir(&dir).map(|d| d.count()).unwrap_or(0);
         (0..n)
@@ -215,6 +219,33 @@ fn commands_over_ssh_share_one_connection_through_a_private_directory() {
     assert!(std::path::Path::new(path).exists());
     drop(copy);
     assert!(!std::path::Path::new(path).exists());
+}
+
+#[test]
+fn a_command_the_server_refuses_on_the_shared_connection_runs_again_unshared_as_do_the_next() {
+    let ssh = FakeSsh::new(&[("FAKE_SSH_REFUSES_SHARED", "1")]);
+    let ran = ssh.host.run(&["echo", "hi"], None, DEFAULT_TIMEOUT).unwrap();
+    assert_eq!((ran.status, ran.stdout.as_str()), (0, "hi\n"));
+    ssh.host.over_ssh("remote-host").run(&["true"], None, DEFAULT_TIMEOUT).unwrap();
+    let unshared = ["-o", "ControlMaster=no", "-o", "ControlPath=none"].map(String::from).to_vec();
+    let calls = ssh.calls();
+    assert!(calls[0].iter().any(|a| a == "ControlMaster=auto"), "{calls:?}");
+    // On a connection of its own, also where the user's ssh_config would share one.
+    for call in &calls[1..] {
+        assert_eq!(call[SSH.len()..call.len() - 2], unshared, "{calls:?}");
+    }
+    assert_eq!(calls.len(), 3);
+    assert_eq!(ssh.host.ssh_sharing_options(), unshared);
+}
+
+#[test]
+fn a_command_failing_with_255_for_another_reason_is_not_run_again() {
+    let ssh = FakeSsh::new(&[]);
+    let refused = "echo 'ssh: connect to host remote-host port 22: Connection refused' >&2; exit 255";
+    let ran = ssh.host.run(&["sh", "-c", refused], None, DEFAULT_TIMEOUT).unwrap();
+    assert_eq!(ran.status, 255);
+    assert_eq!(ssh.calls().len(), 1);
+    assert!(!ssh.host.ssh_sharing_options().is_empty());
 }
 
 /// A short directory under /tmp, for an XDG_RUNTIME_DIR whose control sockets' paths ssh accepts.
@@ -1908,6 +1939,51 @@ fn snapshot_holds_a_file_rewritten_at_its_size_within_the_second_git_staged_it()
     set_mtime(&format!("{}/.git/index", r.path), STAGED);
     let sha = r.host.snapshot(&r.path, &base, "snapshot").unwrap();
     assert_eq!(r.git(&["show", &format!("{sha}:racy.py")]), "after!\n");
+}
+
+/// A Repo with a base commit, whose Host finds in bin a git that runs the system's git and makes its temporary files
+/// under tmp. At a `git add` given GIT_INDEX_FILE, the git writes bin/seen: the umask, then the modes of
+/// GIT_INDEX_FILE's directory and of the file, in octal, one to a line. After such a `git write-tree`, it leaves
+/// GIT_INDEX_FILE.lock behind, as a git killed while it held the lock would.
+fn repo_watching_the_index_copy(bin: &str, tmp: &str) -> Repo {
+    tool(
+        bin,
+        "git",
+        &format!(
+            "#!/bin/sh\ncase \"${{GIT_INDEX_FILE:+set}} $* \" in set*\" add \"*) {{ umask; stat -c %a -- \"${{GIT_INDEX_FILE%/*}}\" \
+             \"$GIT_INDEX_FILE\"; }} > '{bin}/seen' || exit 1;; esac\n\
+             for s in /usr/bin/git /bin/git; do [ -x \"$s\" ] && {{ \"$s\" \"$@\"; e=$?; break; }}; done\n\
+             case \"${{GIT_INDEX_FILE:+set}} $* \" in set*\" write-tree \"*) : > \"$GIT_INDEX_FILE.lock\" || exit 1;; esac\nexit \"${{e:-127}}\"\n"
+        ),
+    );
+    let host = ProcessHost::in_environment(environment(Some(bin), &[("TMPDIR", tmp)]).into_iter(), &Interrupt::new());
+    Repo::with_host(&[("a.py", "a\n")], host)
+}
+
+#[test]
+fn the_copy_of_the_index_git_stages_into_is_private_and_not_at_the_index_s_mode() {
+    let (bin, tmp) = (TempDir::new(), TempDir::new());
+    let r = repo_watching_the_index_copy(&bin.path(), &tmp.path());
+    // A mode with an execute bit, which no new file has whatever the umask, so that a copy at it was made by `cp -p`.
+    std::fs::set_permissions(format!("{}/.git/index", r.path), std::fs::Permissions::from_mode(0o641)).unwrap();
+    r.put("b.py", "b\n");
+    r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    let seen = read(&bin.join("seen"));
+    let octal: Vec<u32> = seen.lines().map(|l| u32::from_str_radix(l, 8).unwrap()).collect();
+    let [umask, dir, file] = octal[..] else { panic!("{seen}") };
+    // Only its owner can reach the copy, which is at a new file's mode, not at the index's, as `cp -p` would make it.
+    assert_eq!((dir, file), (0o700, 0o666 & !umask), "{seen}");
+}
+
+#[test]
+fn a_tree_snapshot_leaves_nothing_in_the_temporary_directory_not_even_a_lock() {
+    let (bin, tmp) = (TempDir::new(), TempDir::new());
+    let r = repo_watching_the_index_copy(&bin.path(), &tmp.path());
+    r.put("b.py", "b\n");
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    assert_eq!(r.git(&["ls-tree", "--name-only", &tree]).split_whitespace().collect::<Vec<_>>(), ["a.py", "b.py"]);
+    let left: Vec<_> = std::fs::read_dir(tmp.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert!(left.is_empty(), "{left:?}");
 }
 
 #[test]

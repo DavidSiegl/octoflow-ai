@@ -55,7 +55,7 @@ pub fn new_state(
     state.turn_timeout = s.timeout.filter(|&t| t != 0).map_or(DEFAULT_TURN_TIMEOUT, |t| t.max(0).unsigned_abs());
     state.permission_mode = s.permission_mode.clone();
     state.models = merged(pipeline.models(), role_models(s, pipeline.roles())?);
-    state.agent_kinds = merged(pipeline.agents(), role_agents(s, pipeline.roles())?);
+    state.next_harnesses = merged(pipeline.agents(), role_agents(s, pipeline.roles())?);
     state.pull_request = !args.no_pr;
     // Its path from the start, so round 0 creates the worktree there.
     state.worktree = args.starts.worktree.then(|| format!("{cwd}/{WORKTREES_DIR}/{}", state.key()));
@@ -175,8 +175,9 @@ pub fn resumable_state(
     state.models = merged(&state.models, role_models(s, pipeline.roles())?);
     // Taken up by each role's next agent; one still running keeps its harness. Refused before any turn runs when a
     // role's is one this orchestrator no longer takes, as a run saved by an earlier release can name.
-    state.agent_kinds = merged(&state.agent_kinds, role_agents(s, pipeline.roles())?);
-    if let Some((role, e)) = state.agent_kinds.iter().find_map(|(role, kind)| harness(kind).err().map(|e| (role, e))) {
+    state.next_harnesses = merged(&state.next_harnesses, role_agents(s, pipeline.roles())?);
+    let unknown = state.next_harnesses.iter().find_map(|(role, name)| harness(name).err().map(|e| (role, e)));
+    if let Some((role, e)) = unknown {
         return Err(OrchestratorError(format!(
             "run {}: role {role}: {}; resume it with --role-agent {role}=KIND",
             state.run_id, e.0
@@ -240,7 +241,7 @@ fn role_models(s: &Settings, roles: &Map<String>) -> Result<Map<String>, Orchest
         .collect())
 }
 
-/// The harness each of roles runs in by the flags, each one of AGENT_KINDS as the parser takes them: --role-agent's,
+/// The harness each of roles runs in by the flags, each one of HARNESS_NAMES as the parser takes them: --role-agent's,
 /// else --agent's; a role with none is left out,
 /// keeping its workflow's, or the saved one. Errors: a --role-agent names a role not among roles.
 fn role_agents(s: &Settings, roles: &Map<String>) -> Result<Map<String>, OrchestratorError> {

@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use nix::sys::signal::{kill, killpg, Signal};
 use nix::unistd::Pid;
-use octoflow_e2e::fakes::AGENT_KINDS;
+use octoflow_e2e::fakes::HARNESS_NAMES;
 use octoflow_e2e::ledger::{write_atomically, Ledger, INVOCATION_VAR};
 use octoflow_e2e::normalize::{facts, Normalizer};
 use octoflow_e2e::scratch::Scratch;
@@ -517,7 +517,7 @@ impl World {
             .map(|(name, fake)| ((*name).to_string(), format!("exec {} {root} \"$@\"", shlex_quote(fake))))
             .collect();
         // The harnesses' CLIs, which doctor looks for on PATH and herdr would start: nothing runs them here.
-        shims.extend(AGENT_KINDS.iter().map(|kind| ((*kind).to_string(), "exit 0".to_string())));
+        shims.extend(HARNESS_NAMES.iter().map(|kind| ((*kind).to_string(), "exit 0".to_string())));
         for (program, body) in shims {
             self.tool(&program, &body);
         }

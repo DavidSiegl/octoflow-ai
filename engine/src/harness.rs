@@ -1,4 +1,4 @@
-//! The agent harnesses a role can run in (AGENT_KINDS, herdr's `--kind`), as orchestrator.py's "Agent harnesses"
+//! The agent harnesses a role can run in (HARNESS_NAMES, herdr's `--kind`), as orchestrator.py's "Agent harnesses"
 //! section and its session logs know them, but for opencode's model and granted directory, which go in its config
 //! (Config::OpencodeEnv): how each harness's agent starts, resumes a saved session and is granted a directory
 //! ([`Harness::launch`]), and where and how it records the tokens a session used ([`SessionLog`],
@@ -9,28 +9,28 @@
 
 use std::collections::HashSet;
 
-use crate::constants::AGENT_KINDS;
+use crate::constants::HARNESS_NAMES;
 use crate::error::OrchestratorError;
 use serde_json::Value;
 use crate::map::Map;
 
-/// How each role's agent starts: the permission mode, and by role its model and its harness (kinds). A role missing
-/// from models starts on its harness's default model, and one missing from kinds in DEFAULT_AGENT.
+/// How each role's agent starts: the permission mode, and by role its model and its harness. A role missing from
+/// models starts on its harness's default model, and one missing from harnesses in DEFAULT_HARNESS.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AgentSettings {
     /// --permission-mode as given, in Claude Code's names; None passes none to any harness.
     pub permission_mode: Option<String>,
     /// By role, the model its agent starts on.
     pub models: Map<String>,
-    /// By role, the harness its agent starts in, one of AGENT_KINDS.
-    pub kinds: Map<String>,
+    /// By role, the harness its agent starts in, one of HARNESS_NAMES.
+    pub harnesses: Map<String>,
 }
 
 /// What the engine knows of one agent harness: how its agent starts (the arguments, and the environment its pane's
 /// shell exports first), and its session log.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Harness {
-    /// Its name, as herdr's --kind and AGENT_KINDS have it.
+    /// Its name, as herdr's --kind and HARNESS_NAMES have it.
     pub kind: &'static str,
     /// The herdr integration that reports its agent's state, as `herdr integration install` and `status` name it;
     /// without it herdr cannot tell a finished turn from a dialog waiting for an answer.
@@ -109,7 +109,7 @@ pub enum LogFormat {
     Pi,
 }
 
-/// Every harness a role can run in, in AGENT_KINDS' order.
+/// Every harness a role can run in, in HARNESS_NAMES' order.
 pub const HARNESSES: [Harness; 5] = [
     Harness {
         kind: "agy",
@@ -168,27 +168,28 @@ pub const HARNESSES: [Harness; 5] = [
     },
 ];
 
-/// Harnesses this orchestrator once took, as (kind, the kind that replaced it): a saved run or workflow file can
-/// still name one.
+/// Harnesses this orchestrator once took, as (name, the name of the harness that replaced it): a saved run or workflow
+/// file can still name one.
 const REPLACED: [(&str, &str); 1] = [("gemini", "agy")];
 
-/// The kind that replaced kind, a harness this orchestrator once took (GitHub issue #125); None for any other kind.
-pub fn replaced_by(kind: &str) -> Option<&'static str> {
-    REPLACED.iter().find(|(old, _)| *old == kind).map(|(_, new)| *new)
+/// The name of the harness that replaced the one named name, which this orchestrator once took (GitHub issue #125);
+/// None for any other name.
+pub fn replaced_by(name: &str) -> Option<&'static str> {
+    REPLACED.iter().find(|(old, _)| *old == name).map(|(_, new)| *new)
 }
 
-/// The harness of the name kind. Errors: kind is not one of AGENT_KINDS, as a saved run's state.json or a workflow
-/// file can name; for a kind in REPLACED, the message names the kind that replaced it. The Python engine fails on
-/// such a kind with a KeyError.
-pub fn harness(kind: &str) -> Result<&'static Harness, OrchestratorError> {
-    HARNESSES.iter().find(|h| h.kind == kind).ok_or_else(|| {
-        OrchestratorError(match replaced_by(kind) {
+/// The harness named name. Errors: name is not one of HARNESS_NAMES, as a saved run's state.json or a workflow file
+/// can name; for a name in REPLACED, the message names the harness that replaced it. The Python engine fails on such
+/// a name with a KeyError.
+pub fn harness(name: &str) -> Result<&'static Harness, OrchestratorError> {
+    HARNESSES.iter().find(|h| h.kind == name).ok_or_else(|| {
+        OrchestratorError(match replaced_by(name) {
             Some(new) => {
-                format!("agent {kind} is not a harness this orchestrator supports any more; {new} replaced it")
+                format!("agent {name} is not a harness this orchestrator supports any more; {new} replaced it")
             }
             None => format!(
-                "agent {kind} is not a harness this orchestrator supports; it takes {}",
-                AGENT_KINDS.join(", ")
+                "agent {name} is not a harness this orchestrator supports; it takes {}",
+                HARNESS_NAMES.join(", ")
             ),
         })
     })
@@ -208,6 +209,11 @@ impl Harness {
     /// How a role's agent starts in this harness: with permission_mode's equivalent (none when the harness has none),
     /// into session if given one, on model if given one, and with access to extra_dir, and to every file under it,
     /// where the harness can grant it. An empty string is none, as Python takes it.
+    ///
+    /// opencode's grant is a pattern, in which it reads `*` and `?` as wildcards and `\` as `/`, with no escape for
+    /// them; so an extra_dir holding any of them gets no grant, rather than one that also reaches other directories.
+    /// opencode then asks in its pane before each write there, and the run's blocked-agent notice points the human
+    /// at it.
     pub fn launch(
         &self,
         permission_mode: Option<&str>,
@@ -244,7 +250,7 @@ impl Harness {
                 if let Some(model) = model {
                     config.insert("model".to_string(), model.into());
                 }
-                if let Some(dir) = extra_dir {
+                if let Some(dir) = extra_dir.filter(|d| !d.contains(['*', '?', '\\'])) {
                     let grant = serde_json::json!({ "external_directory": { format!("{dir}/*"): "allow" } });
                     config.insert("permission".to_string(), grant);
                 }

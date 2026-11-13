@@ -334,7 +334,7 @@ fn a_new_run_takes_the_defaults_and_the_flags() {
     assert_eq!((state.workflow.as_str(), pipeline.name()), ("default", "default"));
     assert_eq!((state.max_rounds, state.turn_timeout, state.max_quality_rounds), (3, 1800, 3));
     assert_eq!((state.pull_request, &state.worktree, &state.quality_job, &state.machine), (true, &None, &None, &None));
-    assert!(state.models.is_empty() && state.agent_kinds.is_empty() && state.prompt_overrides.is_empty());
+    assert!(state.models.is_empty() && state.next_harnesses.is_empty() && state.prompt_overrides.is_empty());
     let id = &state.run_id;
     assert!(id.len() == 22 && id.as_bytes()[8] == b'-' && id.as_bytes()[15] == b'-', "{id}");
     assert!(id.chars().all(|c| c.is_ascii_hexdigit() || c == '-'), "{id}");
@@ -348,7 +348,7 @@ fn a_new_run_takes_the_defaults_and_the_flags() {
     assert_eq!((state.max_rounds, state.turn_timeout, state.max_quality_rounds), (5, 60, 2));
     assert_eq!((state.permission_mode.as_deref(), state.machine.as_deref()), (Some("plan"), Some("box")));
     assert_eq!(dumps(&state.models), r#"{"spec":"m","build":"b","review":"r"}"#);
-    assert_eq!(dumps(&state.agent_kinds), r#"{"spec":"agy","build":"codex","review":"codex"}"#);
+    assert_eq!(dumps(&state.next_harnesses), r#"{"spec":"agy","build":"codex","review":"codex"}"#);
     assert_eq!((state.pull_request, state.quality_job.as_deref()), (false, Some(JOB)));
     assert_eq!(state.worktree, Some(format!("/proj/.orchestrator/worktrees/{}", state.key())));
     // A timeout of 0 is none given, as Python's `args.timeout or DEFAULT_TURN_TIMEOUT` takes it.

@@ -254,7 +254,7 @@ pub fn run_metrics(state: &RunState, now: i64) -> Value {
         .agents
         .iter()
         .map(|(role, agent)| {
-            (role.to_string(), json!({"harness": agent.kind, "model": s.models.get(role)}))
+            (role.to_string(), json!({"harness": agent.harness, "model": s.models.get(role)}))
         })
         .collect();
     let restored: usize = s

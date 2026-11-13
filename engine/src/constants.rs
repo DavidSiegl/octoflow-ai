@@ -118,9 +118,9 @@ pub const ROLE_LABELS: [(&str, &str); 3] = [("spec", "Spec Collector"), ("build"
 
 /// The agent harnesses a role can run in, by herdr's --kind, which is also the name of each one's CLI. Each needs
 /// that CLI and its herdr integration (crate::harness::Harness::integration) where the agents run.
-pub const AGENT_KINDS: [&str; 5] = ["agy", "claude", "codex", "opencode", "pi"];
+pub const HARNESS_NAMES: [&str; 5] = ["agy", "claude", "codex", "opencode", "pi"];
 /// The harness of a role that names none.
-pub const DEFAULT_AGENT: &str = "claude";
+pub const DEFAULT_HARNESS: &str = "claude";
 
 /// The exit statuses of the orchestrator's commands, besides 0 for success.
 pub const EXIT_ERROR: i32 = 1;

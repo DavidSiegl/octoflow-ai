@@ -20,7 +20,7 @@ use crate::map::Map;
 use crate::json::Object;
 use crate::runs::pid_alive;
 use crate::state::{AgentRecord, RunState, TurnRecord};
-use crate::constants::DEFAULT_AGENT;
+use crate::constants::DEFAULT_HARNESS;
 use crate::json::object;
 
 /// The run every test starts unless it says otherwise: Python's RunState("20260929-120000-a1b2c3", ...).
@@ -471,7 +471,7 @@ pub(crate) fn saved_run(phase: &str, rnd: u32, roles: &[&str]) -> RunState {
             "build" => "w1:p2",
             _ => "w1:p3",
         };
-        state.agents.insert(*role, AgentRecord::new(&format!("{role}-a1b2c3"), pane, DEFAULT_AGENT));
+        state.agents.insert(*role, AgentRecord::new(&format!("{role}-a1b2c3"), pane, DEFAULT_HARNESS));
     }
     state
 }

@@ -614,7 +614,7 @@ fn setup_gate_needs_a_checkout_and_a_cwd() {
     let served = Served::real();
     let reply = served.post(&format!("/setup/gate?{}", urlencode(&[("cwd", &repo.outside)])), "");
     assert_eq!(reply.status, Some(502), "{reply:?}");
-    assert!(reply.error().contains("rev-parse --show-toplevel"), "{reply:?}");
+    assert!(reply.error().contains("not a git repository"), "{reply:?}");
     let reply = served.post("/setup/gate", "");
     assert_eq!((reply.status, reply.error()), (Some(400), "missing parameter cwd".to_string()));
 }
@@ -1175,7 +1175,7 @@ fn workflows_are_the_configuration_s_with_their_roles_and_the_harnesses() {
     let reply = served.get("/workflows", &[]);
     assert_eq!(reply.status, Some(200), "{}", reply.body);
     let answer = reply.json();
-    assert_eq!(answer["agents"], serde_json::json!(crate::constants::AGENT_KINDS));
+    assert_eq!(answer["agents"], serde_json::json!(crate::constants::HARNESS_NAMES));
     let workflows = answer["workflows"].as_array().unwrap();
     let names: Vec<&str> = workflows.iter().map(|w| w["name"].as_str().unwrap()).collect();
     let mut expected: Vec<&str> = crate::pipeline::WORKFLOWS.iter().copied().chain(["broken", "solo"]).collect();

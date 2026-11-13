@@ -45,6 +45,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **A gated run without a pull request is told it pushes when gitleaks is missing.** `Host::check_gitleaks`
+  (`engine/src/host.rs:630`) opens "this run pushes, and every push is scanned for secrets first", and
+  `QualityGate::preflight` (`engine/src/ci.rs:148`) raises it for any gated run: a `--quality-gate local` run without
+  `--pr` pushes nothing; what gitleaks scans there is each snapshot before it is judged. Raised while doing todo/53,
+  which gave doctor its own wording. Closed by having the gate's preflight say why it needs gitleaks in its own words,
+  leaving check_gitleaks's to a run that publishes.
 - **Two engine test directories are still named by pid, removing what is there first.** `Dir::new`
   (`engine/tests/program.rs:23`) names its directory `octoflow-program-<name>-<pid>` and removes what is there, and
   `engine/tests/signals.rs:237` names one `octoflow-signals-<case>-<pid>`: two test runs over one `/tmp` whose
@@ -182,7 +188,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `Infinity` is skipped, as serde_json refuses it, and a count beyond 64 bits is not an integer, where Python counts its
   tokens, and a lone surrogate in a line, as an escape or as a byte that is not UTF-8, is read as U+FFFD, so that two
   Claude Code message ids that differ only there count as one answer, where Python counts two (`Harness::session_usage`
-  in `engine/src/harness.rs`, `without_lone_surrogates`); a harness that is not one of `AGENT_KINDS`, as a hand-edited
+  in `engine/src/harness.rs`, `without_lone_surrogates`); a harness that is not one of `HARNESS_NAMES`, as a hand-edited
   `state.json` can name, is refused naming those there are (`crate::harness::harness`), where the Python engine fails on
   a KeyError; and an answer of herdr's that lacks what its command gives, or is not UTF-8, is a `bad_response` naming
   the command or a failure naming it (`engine/src/herdr.rs`), where Python fails on a KeyError or a UnicodeDecodeError.
@@ -245,8 +251,9 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   it starts); a SIGKILL allows no cleanup, and a resumed run takes over the agents it finds alive.
 - **The Rust engine talks to Jenkins and PyPI otherwise than urllib in a few cases.** Its transport is ureq
   (`HttpClient`, `engine/src/http.rs`, rust-engine ticket 07, 2026-10-28), which differs from `urlopen` where no test of
-  the Python engine pins it (its CONNECT to a proxy for a plain-http URL is GitHub #410): TLS trusts the certificates of
-  the places the environment names, else of the system's as openssl-probe finds them, each read by rustls-native-certs
+  the Python engine pins it (its CONNECT to a proxy for a plain-http URL stays, documented in README's Requirements:
+  the user's ruling, 2026-11-12, GitHub #410): TLS trusts the certificates of the places the environment names, else of
+  the system's as openssl-probe finds them, each read by rustls-native-certs
   (`root_certs`), which trusts otherwise than OpenSSL does for Python in five ways (the user's rulings, 2026-10-28,
   cross-review 93, F22 and F23): with `SSL_CERT_FILE` set non-empty and `SSL_CERT_DIR` unset, or the reverse, it reads
   only what is set, where OpenSSL adds the system's default directory or file (with the other set empty, OpenSSL adds

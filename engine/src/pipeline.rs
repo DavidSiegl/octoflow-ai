@@ -192,7 +192,7 @@ pub struct PipelineSettings {
     pub models: Map<String>,
     /// Shown by `workflows`.
     pub description: String,
-    /// Role key -> the harness its agent runs in when no agent flag names one; else DEFAULT_AGENT.
+    /// Role key -> the harness its agent runs in when no agent flag names one; else DEFAULT_HARNESS.
     pub agents: Map<String>,
     /// The size of change past which a quality round asks the Builder why (diff_budget): files touched, and lines
     /// added plus lines removed. The workflow's, not the gated step's: the change a quality round judges runs from
@@ -362,8 +362,8 @@ impl Pipeline {
                 return Some(format!("{what} is set for role {unknown}, which is not one of the workflow's roles"));
             }
         }
-        for (role, kind) in self.settings.agents.iter() {
-            if let Err(e) = harness(kind) {
+        for (role, name) in self.settings.agents.iter() {
+            if let Err(e) = harness(name) {
                 return Some(format!("role {role}: {}", e.0));
             }
         }

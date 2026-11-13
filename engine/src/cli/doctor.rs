@@ -3,7 +3,7 @@
 //! GUI (the rust-engine spec's Decisions).
 
 use super::{Local, Target};
-use crate::constants::{DEFAULT_AGENT, EXIT_ERROR, GITLEAKS_INSTALL, NETWORK_TIMEOUT, REMOTE};
+use crate::constants::{DEFAULT_HARNESS, EXIT_ERROR, GITLEAKS_INSTALL, NETWORK_TIMEOUT, REMOTE};
 use crate::ci::QualityGate;
 use crate::error::OrchestratorError;
 use crate::harness::{Harness, HARNESSES};
@@ -15,8 +15,6 @@ use crate::local_gate;
 pub const HERDR_MIN_VERSION: [u64; 2] = [0, 9];
 /// The oldest git a run works with, by the numbers its --version prints.
 pub const GIT_MIN_VERSION: [u64; 2] = [2, 36];
-/// The exit status a POSIX shell gives a command it cannot find, as the shell an SSH command runs in does.
-const COMMAND_NOT_FOUND_EXIT: i32 = 127;
 
 /// A version as it is written, such as 0.9 for [0, 9].
 pub fn dotted(version: &[u64]) -> String {
@@ -190,7 +188,7 @@ pub fn check_setup(
     }
     let mut integrations = IntegrationStatus::new(agents);
     for Harness { kind, integration, .. } in HARNESSES {
-        let (level, note) = if kind == DEFAULT_AGENT {
+        let (level, note) = if kind == DEFAULT_HARNESS {
             (Level::Required, String::new())
         } else {
             (Level::Optional, format!("needed only for a role that runs in {kind}"))
@@ -210,14 +208,20 @@ pub fn check_setup(
     });
     let fix = "install gh (https://cli.github.com)";
     check(&mut checks, "gh", Level::NeededForPr, fix, on_machine.as_ref(), "", &mut || gh_logged_in(agents));
-    check(&mut checks, "gitleaks", Level::NeededForPr, GITLEAKS_INSTALL, on_machine.as_ref(), "", &mut || {
+    let level = Level::NeededForPr;
+    let gitleaks = check(&mut checks, "gitleaks", level, GITLEAKS_INSTALL, on_machine.as_ref(), "", &mut || {
         agents.gitleaks_problem().map_or_else(|| Ok("`gitleaks git` runs".to_string()), |p| Err(Unmet::new(p)))
     });
     // What a run with --quality-gate local checks before its interview (QualityGate::preflight), so the check cannot
     // ask for less or more. The local gate's asks nothing of a checkout, so a project not given does not skip it.
+    // gitleaks, which the preflight checks first, is told from the check above: the preflight words it for a run.
     let fix = "install or fix what it names where the agents run (docs/quality-gate.md, \"The local gate\")";
     let note = "needed only for --quality-gate local";
     check(&mut checks, "local quality gate", Level::Optional, fix, on_machine.as_ref(), note, &mut || {
+        if !gitleaks.ok {
+            let detail = format!("{}, and the gate scans each snapshot for secrets with it", gitleaks.detail);
+            return Err(Unmet::with_fix(detail, GITLEAKS_INSTALL));
+        }
         QualityGate::Local.preflight(agents, cwd.unwrap_or("."))?;
         Ok("gitleaks, and all the gate's preflight asks for, are ready".to_string())
     });
@@ -328,20 +332,18 @@ fn on_path(host: &dyn Host, command: &str) -> Probed {
     Ok(path.to_string())
 }
 
-/// argv's exit status and output, as host.run gives them, run within timeout seconds. Unmet as on_path's, when argv[0]
-/// is not on host's PATH: it cannot be started here, or over SSH the remote shell exits COMMAND_NOT_FOUND_EXIT; and
-/// with the error for any other failure to run it.
+/// argv's exit status and output, as host.run gives them, run within timeout seconds once on_path finds argv[0] on
+/// host's PATH. Unmet as on_path's when it does not, or argv[0] is gone by the time it is started; and with the error
+/// for any other failure to look it up or run it. Looking it up first through `sh -c` keeps the answer the same
+/// whatever login shell an SSH command runs in (csh exits 1 for a missing command, not 127) and whatever status the
+/// tool itself exits with.
 fn run_tool(host: &dyn Host, argv: &[&str], timeout: u64) -> Result<Completed, Unmet> {
-    let not_on_path = || Unmet::new(format!("{} is not on PATH", argv[0]));
-    let proc = match host.exec(argv, None, timeout) {
-        Err(ExecError::NotFound(_)) => return Err(not_on_path()),
-        Err(ExecError::Failed(e)) => return Err(e.into()),
-        Ok(exec) => decoded(exec)?,
-    };
-    if host.ssh_target().is_some() && proc.status == COMMAND_NOT_FOUND_EXIT {
-        return Err(not_on_path());
+    on_path(host, argv[0])?;
+    match host.exec(argv, None, timeout) {
+        Err(ExecError::NotFound(_)) => Err(Unmet::new(format!("{} is not on PATH", argv[0]))),
+        Err(ExecError::Failed(e)) => Err(e.into()),
+        Ok(exec) => Ok(decoded(exec)?),
     }
-    Ok(proc)
 }
 
 /// What `command --version` prints, once command is on host's PATH and the first version number it prints is

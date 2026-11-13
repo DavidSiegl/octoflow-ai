@@ -556,12 +556,12 @@ impl Workflow<'_> {
         }
         let pane = self.pane_for(role)?;
         let session = known.as_ref().and_then(|a| a.session.clone()).filter(|s| !s.is_empty());
-        let kind = self.state.harness(role).to_string();
-        let target = self.agent_kind(role)?;
+        let ran = self.state.harness(role).to_string();
+        let next = self.next_harness(role)?;
         if let Some(session) = &session {
-            if kind != target {
+            if ran != next {
                 self.human.log(&format!(
-                    "[{role}] session {session} is {kind}'s, and the role runs in {target} now; starting a fresh one"
+                    "[{role}] session {session} is {ran}'s, and the role runs in {next} now; starting a fresh one"
                 ));
             } else {
                 // Keeps the conversation: for the Spec Collector that is the interview itself.
@@ -634,13 +634,13 @@ impl Workflow<'_> {
     /// Start the role's agent in the pane, in its saved session if given one; false when it exited at once.
     fn start(&mut self, role: &str, pane: &str, session: Option<&str>) -> Result<bool, StartFailure> {
         let name = format!("{role}-{}", self.state.key());
-        let kind = self.agent_kind(role)?;
-        let h = harness(&kind)?;
+        let h = harness(&self.next_harness(role)?)?;
         let mode = self.state.permission_mode.clone().filter(|m| !m.is_empty());
         if let Some(mode) = &mode {
             if h.permission_args(mode).is_none() && self.told_dropped.insert(role.to_string()) {
                 self.human.log(&format!(
-                    "[{role}] {kind} has no equivalent of --permission-mode {mode}; starting it without one"
+                    "[{role}] {} has no equivalent of --permission-mode {mode}; starting it without one",
+                    h.kind
                 ));
             }
         }
@@ -652,8 +652,8 @@ impl Workflow<'_> {
         if !launch.env.is_empty() {
             self.herdr.export(pane, &launch.env)?;
         }
-        let ready = self.herdr.start_agent(&name, pane, &kind, &launch.args)?;
-        self.state.agents.insert(role, AgentRecord::new(&name, pane, &kind));
+        let ready = self.herdr.start_agent(&name, pane, h.kind, &launch.args)?;
+        self.state.agents.insert(role, AgentRecord::new(&name, pane, h.kind));
         self.save()?;
         if !ready {
             self.ask_human(role, "needs your answer before it starts");
@@ -715,8 +715,9 @@ impl Workflow<'_> {
     /// The harness the role's next agent starts in, which a resume's --role-agent may have made another than the one
     /// its agent runs in (RunState::harness): it decides what starts, the other what ran. Errors: the state names
     /// none, which Workflow::new rules out.
-    fn agent_kind(&self, role: &str) -> Result<String, OrchestratorError> {
-        self.state.agent_kinds.get(role).cloned().ok_or_else(|| OrchestratorError(format!("no harness for role {role}")))
+    fn next_harness(&self, role: &str) -> Result<String, OrchestratorError> {
+        let next = self.state.next_harnesses.get(role).cloned();
+        next.ok_or_else(|| OrchestratorError(format!("no harness for role {role}")))
     }
 
     /// The role's label, as the workflow names it to the human.

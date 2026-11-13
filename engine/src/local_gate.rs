@@ -15,7 +15,7 @@
 //! a project on another machine is judged there, as its git steps are.
 
 use crate::error::OrchestratorError;
-use crate::host::{last_lines, Host, DEFAULT_TIMEOUT};
+use crate::host::{last_lines, shell_path, Host, DEFAULT_TIMEOUT};
 
 /// The release a base without ci/gate.pin is judged by, in ci/gate.pin's form: the octoflow-gate release this engine
 /// was tested against, whose quality.json schema crate::quality::read_report reads. Raise it with the repository's own
@@ -338,36 +338,87 @@ const SETTINGS_PATH: &str = "gate.toml";
 /// Make the project in cwd on host ready for `--quality-gate local`, as `doctor --setup-gate` and serve's
 /// `POST /setup/gate` ask: at the top level of the checkout cwd is in, write ci/gate.pin, naming BUILT_IN_PIN, and a
 /// starter gate.toml whose [[test]] commands are guessed from the project's kind (starter_settings), each only where
-/// nothing is at its path yet. Nothing is committed: a run's gate reads both from the run's base commit, so they count
-/// once committed. cwd may start with ~, host's home. Returns the pin's SetUpFile, then gate.toml's. The look and the
-/// write are two commands, so a file made between them is replaced.
+/// nothing is at its path yet; a file already there is kept, even one made while set_up runs. Nothing is committed: a
+/// run's gate reads both from the run's base commit, so they count once committed. cwd may start with ~, host's home.
+/// Returns the pin's SetUpFile, then gate.toml's. Two commands on host, so two round trips over SSH.
 ///
 /// Errors: cwd is no directory on host, or in no git checkout; a command fails, as a write to a read-only checkout.
 pub fn set_up(host: &dyn Host, cwd: &str) -> Result<Vec<SetUpFile>, OrchestratorError> {
-    let dir = host.resolve_dir(cwd)?;
-    let top = host.git(&dir, &["rev-parse", "--show-toplevel"])?.trim().to_string();
-    let mut kinds = Vec::new();
-    for marker in KIND_MARKERS {
-        if host.exists(&format!("{top}/{marker}"))? {
-            kinds.push(marker);
+    let (word, arg) = shell_path(cwd);
+    let look = format!("cd -- {word} && {SET_UP_LOOK}");
+    let mut argv = vec!["sh", "-c", &look, "_", arg];
+    argv.extend(KIND_MARKERS);
+    argv.push(PYPROJECT_PATH);
+    let looked = set_up_step(host, &argv, &format!("looking at {cwd}"))?;
+    let unread = || OrchestratorError(format!("looking at {cwd}: the look printed {looked:?}"));
+    let (top, mut rest) = looked.split_once('\0').ok_or_else(unread)?;
+    let mut present = Vec::new();
+    loop {
+        let (name, after) = rest.split_once('\0').ok_or_else(unread)?;
+        rest = after;
+        match KIND_MARKERS.iter().chain([&PYPROJECT_PATH]).find(|m| **m == name) {
+            Some(marker) => present.push(*marker),
+            None if name.is_empty() => break,
+            None => return Err(unread()),
         }
     }
-    let pyproject = host.read(&format!("{top}/pyproject.toml"))?;
-    let files = [(PIN_PATH, format!("{BUILT_IN_PIN}\n")), (SETTINGS_PATH, starter_settings(&kinds, pyproject.as_deref()))];
-    let mut done = Vec::new();
-    for (path, text) in files {
-        let at = format!("{top}/{path}");
-        let written = !host.exists(&at)?;
-        if written {
-            host.write(&at, &text, false)?;
-        }
-        done.push(SetUpFile { path, written });
+    let pyproject = present.contains(&PYPROJECT_PATH).then_some(rest);
+    let pin = format!("{BUILT_IN_PIN}\n");
+    let settings = starter_settings(&present, pyproject);
+    let argv = ["sh", "-c", SET_UP_WRITE, "_", top, PIN_PATH, &pin, SETTINGS_PATH, &settings];
+    let wrote = set_up_step(host, &argv, &format!("setting up the gate in {top}"))?;
+    match wrote.lines().collect::<Vec<_>>()[..] {
+        [a, b] if [a, b].iter().all(|w| ["written", "kept"].contains(w)) => Ok(vec![
+            SetUpFile { path: PIN_PATH, written: a == "written" },
+            SetUpFile { path: SETTINGS_PATH, written: b == "written" },
+        ]),
+        _ => Err(OrchestratorError(format!("setting up the gate in {top}: the write printed {wrote:?}"))),
     }
-    Ok(done)
 }
 
+/// The standard output of argv on host, a step of set_up. Errors: it exits non-zero, said as doing, then its standard
+/// error.
+fn set_up_step(host: &dyn Host, argv: &[&str], doing: &str) -> Result<String, OrchestratorError> {
+    let done = host.run(argv, None, DEFAULT_TIMEOUT)?;
+    match done.status {
+        0 => Ok(done.stdout),
+        _ => Err(OrchestratorError(format!("{doing}: {}", done.stderr.trim()))),
+    }
+}
+
+/// pyproject.toml's path from a checkout's top level, whose text starter_settings reads.
+const PYPROJECT_PATH: &str = "pyproject.toml";
+
+/// The rest of set_up's look, run where cwd is, given the files to look for as its arguments: the checkout's top level,
+/// then each of those files present there, each ended by a NUL, an empty name after the last, then pyproject.toml's
+/// text when it is present.
+pub(crate) const SET_UP_LOOK: &str = r#"top=$(git rev-parse --show-toplevel) && cd -- "$top" || exit 1
+shift
+printf '%s\0' "$top"
+for f; do if [ -e "$f" ] || [ -L "$f" ]; then printf '%s\0' "$f"; fi; done
+printf '\0'
+if [ -e pyproject.toml ]; then cat pyproject.toml || exit 1; fi"#;
+
+/// set_up's write: given the top level, then a path from it and its text for each file to write, writes each where
+/// nothing is at its path, making its directory, and prints a line for each: `written`, or `kept` for what was there.
+/// The text is written aside and hard-linked into place, which fails rather than replace what another process made
+/// meanwhile; a directory made there meanwhile, which ln puts the link in, gets it taken out again and is kept.
+pub(crate) const SET_UP_WRITE: &str = r#"cd -- "$1" || exit 1; shift
+while [ $# -ge 2 ]; do
+  if [ -e "$1" ] || [ -L "$1" ]; then echo kept; shift 2; continue; fi
+  t="$1.tmp.$$"
+  { mkdir -p -- "$(dirname -- "$1")" && printf %s "$2" > "$t"; } || { rm -f -- "$t"; exit 1; }
+  if e=$(ln -- "$t" "$1" 2>&1); then
+    if [ "$1" -ef "$t" ]; then echo written; else rm -f -- "$1/${t##*/}" || exit 1; echo kept; fi
+  elif [ -e "$1" ] || [ -L "$1" ]; then echo kept
+  else echo "$e" >&2; rm -f -- "$t"; exit 1
+  fi
+  rm -f -- "$t" || exit 1
+  shift 2
+done"#;
+
 /// The files at a checkout's top level whose presence starter_settings guesses a project's tests from; it also reads
-/// pyproject.toml's text, which set_up passes it apart.
+/// PYPROJECT_PATH's text, which set_up passes it apart.
 const KIND_MARKERS: [&str; 6] = ["Cargo.toml", "pytest.ini", "conftest.py", "uv.lock", "package.json", "go.mod"];
 
 /// The gate.toml set_up writes for a project whose top level holds the KIND_MARKERS in present, and pyproject.toml
