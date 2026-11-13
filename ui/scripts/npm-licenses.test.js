@@ -68,6 +68,19 @@ describe("the notices of the app's own npm packages", () => {
     expect(sectionOf(rolldown)?.text).toContain(licenseText(rolldown));
     expect(sectionOf(rolldown)?.text).toContain(thirdParty);
   });
+
+  it("ship every notice-like file of each build-code package", () => {
+    // Wider than what npmNotices looks for, so that a file under a name it does not know fails here, not in silence.
+    const noticeLike = /licen[cs]e|notice|copying|third[-_ ]?party/i;
+    for (const path of buildCode) {
+      const files = readdirSync(join(ui, path), { withFileTypes: true })
+        .filter((f) => f.isFile() && noticeLike.test(f.name) && !/\.spdx$/i.test(f.name))
+        .map((f) => f.name);
+      expect(files.length, `${path} has a notice-like file`).toBeGreaterThan(0);
+      const unshipped = files.filter((f) => !sectionOf(path)?.text?.includes(readFileSync(join(ui, path, f), "utf8").trim()));
+      expect(unshipped, path).toEqual([]);
+    }
+  });
 });
 
 describe("npmNotices on a made-up tree", () => {
@@ -160,7 +173,7 @@ describe("npmNotices on a made-up tree", () => {
     expect(sections(npmNotices(ui, accepted))).toEqual([{ license: "MIT", packages: ["twice 1.0.0"], text: "same" }]);
   });
 
-  it("adds a build-code package's third-party notices to its license text, and no other package's", () => {
+  it("adds every package's NOTICE files to its license text, and a build-code package's third-party licenses", () => {
     const notices = { LICENSE: "own", "THIRD-PARTY-LICENSE": "theirs", NOTICE: "notice", "NOTICE.spdx": "tag" };
     const ui = tree([
       { name: BUILD_CODE[0], license: "MIT", files: notices, flags: { dev: true } },
@@ -172,9 +185,24 @@ describe("npmNotices on a made-up tree", () => {
         packages: [`${BUILD_CODE[0]} 1.0.0`],
         text: "own\n\nNOTICE:\n\nnotice\n\nTHIRD-PARTY-LICENSE:\n\ntheirs",
       },
-      { license: "ISC", packages: ["plain 1.0.0"], text: "own" },
+      { license: "ISC", packages: ["plain 1.0.0"], text: "own\n\nNOTICE:\n\nnotice" },
     ]);
   });
+
+  it.each(["THIRD_PARTY_LICENSES", "ThirdPartyNotices.txt", "LICENSE-THIRD-PARTY"])(
+    "takes %s for a build-code package's third-party licenses, not for any package's own license",
+    (file) => {
+      const files = { LICENSE: "own", [file]: "theirs" };
+      const ui = tree([
+        { name: BUILD_CODE[0], license: "MIT", files, flags: { dev: true } },
+        { name: "plain", license: "ISC", files },
+      ]);
+      expect(sections(npmNotices(ui, accepted))).toEqual([
+        { license: "MIT", packages: [`${BUILD_CODE[0]} 1.0.0`], text: `own\n\n${file}:\n\ntheirs` },
+        { license: "ISC", packages: ["plain 1.0.0"], text: "own" },
+      ]);
+    },
+  );
 
   it("lists the packages sharing a license and its text under one section, and leaves dev packages out", () => {
     const ui = tree([
