@@ -12,7 +12,7 @@ use std::fmt;
 use std::rc::Rc;
 
 use crate::constants::{
-    APPROVE, CHANGES_REQUESTED, DEFAULT_AGENT, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
+    APPROVE, CHANGES_REQUESTED, DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
     FINISHED, HEARTBEAT_SECONDS, QUALITY_GATE_FAILED, REMOTE, SUCCEEDED,
 };
 use crate::ci::QualityGate;
@@ -270,10 +270,10 @@ impl<'a> Workflow<'a> {
         let agents = settings.agents;
         state.permission_mode = agents.permission_mode;
         state.models = agents.models;
-        state.agent_kinds = pipeline
+        state.next_harnesses = pipeline
             .roles()
             .keys()
-            .map(|role| (role, agents.kinds.get(role).cloned().unwrap_or_else(|| DEFAULT_AGENT.to_string())))
+            .map(|role| (role, agents.kinds.get(role).cloned().unwrap_or_else(|| DEFAULT_HARNESS.to_string())))
             .collect();
         state.pull_request = settings.pull_request;
         state.quality_job = with.quality_gate.map(|g| g.name().to_string());

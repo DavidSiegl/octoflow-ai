@@ -34,8 +34,8 @@ fn pr_url(n: i64) -> String {
 const HERDR_VERSION: &str = "herdr 0.9.4";
 /// The harnesses an agent can run in, as herdr's --kind takes them: each has a CLI on PATH that the world puts there
 /// and nothing runs, and a current integration (INTEGRATIONS).
-pub const AGENT_KINDS: [&str; 5] = ["agy", "claude", "codex", "opencode", "pi"];
-/// The herdr integrations `herdr integration status` lists as current: one per kind of AGENT_KINDS, agy's under the
+pub const HARNESS_NAMES: [&str; 5] = ["agy", "claude", "codex", "opencode", "pi"];
+/// The herdr integrations `herdr integration status` lists as current: one per kind of HARNESS_NAMES, agy's under the
 /// name antigravity-cli.
 const INTEGRATIONS: [&str; 5] = ["antigravity-cli", "claude", "codex", "opencode", "pi"];
 

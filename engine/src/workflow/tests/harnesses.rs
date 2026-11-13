@@ -124,7 +124,7 @@ fn without_a_harness_every_role_is_claude_as_before() {
 #[test]
 fn a_dropped_mode_is_logged_once_per_role() {
     let mut state = saved_run("build", 2, FULL);
-    state.agents.get_mut("build").unwrap().kind = "pi".to_string();
+    state.agents.get_mut("build").unwrap().harness = "pi".to_string();
     let script = vec![("build", vec![build_turn(2)]), ("review", vec![review_turn(2, APPROVE)])];
     let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &["review"], &[("build", "s-gone")]);
     f.herdr.state().lost_sessions.insert("s-gone".into());
@@ -151,7 +151,7 @@ fn an_exited_agent_resumes_in_its_own_harness() {
         let seen = seen();
         let mut state = saved_run("build", 2, FULL);
         state.prompted = Some("build-2.md".into());
-        state.agents.get_mut("build").unwrap().kind = kind.to_string();
+        state.agents.get_mut("build").unwrap().harness = kind.to_string();
         let script = vec![("build", vec![recording(build_turn(2), &seen)]), ("review", vec![review_turn(2, APPROVE)])];
         let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &["review"], &[("build", "s-build")]);
         let settings = RunSettings { agents: agent_settings(Some("acceptEdits"), &[("build", "m")], every_role(kind)), ..f.as_saved() };
@@ -160,7 +160,7 @@ fn an_exited_agent_resumes_in_its_own_harness() {
         assert_eq!(starts(&f), [("build-a1b2c3".into(), "w1:p2".into(), resumed(kind))], "{kind}");
         assert_eq!(f.herdr.state().kinds, [("build-a1b2c3".to_string(), kind.to_string())]);
         assert_eq!(*seen.borrow(), [continue_prompt(&wf.state().build_path(2))]);
-        assert_eq!(wf.state().agents.get("build").unwrap().kind, *kind);
+        assert_eq!(wf.state().agents.get("build").unwrap().harness, *kind);
     }
 }
 
@@ -168,7 +168,7 @@ fn an_exited_agent_resumes_in_its_own_harness() {
 fn a_saved_run_on_gemini_is_refused_naming_agy() {
     let mut state = saved_run("build", 2, FULL);
     state.prompted = Some("build-2.md".into());
-    state.agents.get_mut("build").unwrap().kind = "gemini".to_string();
+    state.agents.get_mut("build").unwrap().harness = "gemini".to_string();
     let script = vec![("build", vec![build_turn(2)])];
     let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &["review"], &[("build", "s-build")]);
     let settings = RunSettings { agents: agent_settings(None, &[], every_role("gemini")), ..f.as_saved() };
@@ -183,7 +183,7 @@ fn a_changed_harness_starts_fresh() {
         let seen = seen();
         let mut state = saved_run("build", 2, FULL);
         state.prompted = Some("build-2.md".into());
-        state.agents.get_mut("build").unwrap().kind = saved_kind.to_string();
+        state.agents.get_mut("build").unwrap().harness = saved_kind.to_string();
         let script = vec![("build", vec![recording(build_turn(2), &seen)]), ("review", vec![review_turn(2, APPROVE)])];
         let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &["review"], &[("build", "s-build")]);
         let kinds = [("build", kind.to_string())].into_iter().collect();
@@ -255,7 +255,7 @@ fn resume_keeps_or_overrides_the_saved_harnesses() {
         ),
     ];
     for (flags, kinds) in cases {
-        assert_eq!(resumable(flags, &saved).unwrap().agent_kinds, kinds, "{flags:?}");
+        assert_eq!(resumable(flags, &saved).unwrap().next_harnesses, kinds, "{flags:?}");
     }
 }
 
@@ -263,7 +263,7 @@ fn resume_keeps_or_overrides_the_saved_harnesses() {
 fn resume_with_a_new_harness_relaunches_in_it() {
     let saved = saved_run("review", 2, FULL).to_json().as_object().unwrap().clone();
     let state = resumable(&["--agent", "pi"], &saved).unwrap();
-    let agents = agent_settings(state.permission_mode.as_deref(), &[], state.agent_kinds.clone());
+    let agents = agent_settings(state.permission_mode.as_deref(), &[], state.next_harnesses.clone());
     let script = vec![("review", vec![review_turn(2, APPROVE)])];
     let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &[], &[]);
     f.put(&f.state.build_path(2), "report 2");
@@ -294,7 +294,7 @@ fn saved_with_the_run() {
 
 #[test]
 fn a_run_saved_with_gemini_resumes_only_moved_to_another_harness() {
-    // A run 0.67 saved: its workflow's review role and its agent_kinds name gemini (GitHub issue #125).
+    // A run 0.67 saved: its workflow's review role and its next_harnesses name gemini (GitHub issue #125).
     let quick = crate::test_support::quick();
     let mut settings = quick.settings().clone();
     settings.agents.insert("review", "codex".to_string());
@@ -318,7 +318,7 @@ fn a_run_saved_with_gemini_resumes_only_moved_to_another_harness() {
         )
     );
     let state = resumable(&["--role-agent", "review=agy"], &saved).unwrap();
-    assert_eq!(state.agent_kinds.get("review").map(String::as_str), Some("agy"));
+    assert_eq!(state.next_harnesses.get("review").map(String::as_str), Some("agy"));
 }
 
 #[test]

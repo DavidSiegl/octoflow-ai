@@ -12,7 +12,7 @@ use clap::error::ErrorKind;
 use clap::{Arg, ArgAction, ArgMatches};
 
 use crate::constants::{
-    AGENT_KINDS, CLOSED_BRANCH_GRACE, DEFAULT_AGENT, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS,
+    HARNESS_NAMES, CLOSED_BRANCH_GRACE, DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS,
     DEFAULT_TURN_TIMEOUT, EXIT_ERROR, EXIT_WAITING, REMOTE, ROLE_LABELS,
 };
 use crate::ci::LOCAL_GATE;
@@ -100,9 +100,9 @@ pub struct Settings {
     pub label_models: Vec<(String, String)>,
     /// Each --role-model ROLE=MODEL, in order.
     pub role_model: Vec<(String, String)>,
-    /// --agent: the harness of every role, one of AGENT_KINDS.
+    /// --agent: the harness of every role, one of HARNESS_NAMES.
     pub agent: Option<String>,
-    /// Each --role-agent ROLE=KIND, in order, KIND one of AGENT_KINDS.
+    /// Each --role-agent ROLE=KIND, in order, KIND one of HARNESS_NAMES.
     pub role_agent: Vec<(String, String)>,
     /// --max-quality-rounds: analyses per round with the quality gate.
     pub max_quality_rounds: Option<i64>,
@@ -552,12 +552,12 @@ fn settings_args() -> Vec<Arg> {
                 "model for one role of the workflow, by its key; overrides --model and the workflow's own model for \
                  it; repeatable",
             ),
-        Arg::new("agent").long("agent").value_name("KIND").value_parser(PossibleValuesParser::new(AGENT_KINDS)).help(
+        Arg::new("agent").long("agent").value_name("KIND").value_parser(PossibleValuesParser::new(HARNESS_NAMES)).help(
             format!(
                 "agent harness for every role, one of {}; overrides the agent key of a role in the workflow file \
-                 (default {DEFAULT_AGENT}). Each harness a run uses needs its CLI on PATH and its herdr \
+                 (default {DEFAULT_HARNESS}). Each harness a run uses needs its CLI on PATH and its herdr \
                  integration (`orchestrator doctor` names it) where the agents run",
-                AGENT_KINDS.join(", ")
+                HARNESS_NAMES.join(", ")
             ),
         ),
         Arg::new("role-agent")
@@ -643,15 +643,15 @@ fn role_model_arg(text: &str) -> Result<(String, String), String> {
     }
 }
 
-/// ROLE=KIND, ROLE non-empty and KIND one of AGENT_KINDS.
+/// ROLE=KIND, ROLE non-empty and KIND one of HARNESS_NAMES.
 fn role_agent_arg(text: &str) -> Result<(String, String), String> {
     match text.split_once('=') {
-        Some((role, kind)) if !role.is_empty() && AGENT_KINDS.contains(&kind) => {
+        Some((role, kind)) if !role.is_empty() && HARNESS_NAMES.contains(&kind) => {
             Ok((role.to_string(), kind.to_string()))
         }
         _ => Err(format!(
             "expected ROLE=KIND, where KIND is one of {}; not {text:?}",
-            AGENT_KINDS.join(", ")
+            HARNESS_NAMES.join(", ")
         )),
     }
 }

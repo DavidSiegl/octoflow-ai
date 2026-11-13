@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::cli::{ended_status, herdrless_command, parse_args, Local};
-use crate::constants::AGENT_KINDS;
+use crate::constants::HARNESS_NAMES;
 use crate::env::ConfigDir;
 use crate::host::ProcessError;
 use crate::interrupt::Interrupt;
@@ -75,7 +75,7 @@ impl FakeTools {
     }
 
     fn with_targets(targets: &[&str]) -> FakeTools {
-        let names = AGENT_KINDS.iter().copied().chain(["herdr", "git", "gh"]);
+        let names = HARNESS_NAMES.iter().copied().chain(["herdr", "git", "gh"]);
         let paths = names.map(|n| (n.to_string(), format!("/usr/bin/{n}"))).collect();
         let argv = |words: &str| words.split(' ').map(String::from).collect::<Vec<_>>();
         let machines = r#"[{"label": "box", "id": "m1", "enabled": true, "target": "me@box"}, {"label": "off", "id": "m2", "enabled": false, "target": "me@off"}]"#;
@@ -272,7 +272,7 @@ fn all_present() {
     let tools = FakeTools::new();
     let order = names(&tools, Some("/proj"));
     let mut want: Vec<String> = vec!["herdr".into(), "reaching herdr".into()];
-    for kind in AGENT_KINDS {
+    for kind in HARNESS_NAMES {
         want.extend([format!("{kind} CLI"), format!("{kind} integration")]);
     }
     want.extend(["git", "gh", "gitleaks", "local quality gate", "git checkout", "origin"].map(String::from));
@@ -400,7 +400,7 @@ fn integration_unlisted_or_unasked() {
     tools.answer("herdr integration status", failing("unknown command", 2));
     let checks = setup(&tools, None, None);
     assert!(checks["claude integration"].detail.contains("herdr integration status failed: unknown command"));
-    for kind in AGENT_KINDS {
+    for kind in HARNESS_NAMES {
         assert_eq!(
             checks[&format!("{kind} integration")].fix,
             "update herdr with `herdr update`, then check that `herdr integration status` runs"
@@ -781,7 +781,7 @@ fn on_a_machine() {
         .map(|a| a.last().unwrap().clone())
         .collect();
     looked_up.sort();
-    let mut kinds: Vec<String> = AGENT_KINDS.iter().map(|k| k.to_string()).collect();
+    let mut kinds: Vec<String> = HARNESS_NAMES.iter().map(|k| k.to_string()).collect();
     kinds.sort();
     assert_eq!(looked_up, kinds);
     for argv in ["herdr --version", "herdr integration status", "git --version", "gh auth status", "gitleaks git --help", "git -C /proj rev-parse --show-toplevel"] {

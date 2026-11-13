@@ -198,7 +198,7 @@ fn role(name: &str) -> &str {
 
 /// The session a harness's arguments resume, as each harness takes them; None for a fresh one.
 pub(crate) fn resumed_session(kind: &str, args: &[String]) -> Option<String> {
-    match harness(kind).expect("a harness of AGENT_KINDS").resume {
+    match harness(kind).expect("a harness of HARNESS_NAMES").resume {
         Resume::Subcommand(word) => (args.first().map(String::as_str) == Some(word)).then(|| args.get(1).cloned())?,
         Resume::Flag(flag) => args.get(args.iter().position(|a| a == flag)? + 1).cloned(),
     }

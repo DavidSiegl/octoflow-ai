@@ -188,7 +188,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `Infinity` is skipped, as serde_json refuses it, and a count beyond 64 bits is not an integer, where Python counts its
   tokens, and a lone surrogate in a line, as an escape or as a byte that is not UTF-8, is read as U+FFFD, so that two
   Claude Code message ids that differ only there count as one answer, where Python counts two (`Harness::session_usage`
-  in `engine/src/harness.rs`, `without_lone_surrogates`); a harness that is not one of `AGENT_KINDS`, as a hand-edited
+  in `engine/src/harness.rs`, `without_lone_surrogates`); a harness that is not one of `HARNESS_NAMES`, as a hand-edited
   `state.json` can name, is refused naming those there are (`crate::harness::harness`), where the Python engine fails on
   a KeyError; and an answer of herdr's that lacks what its command gives, or is not UTF-8, is a `bad_response` naming
   the command or a failure naming it (`engine/src/herdr.rs`), where Python fails on a KeyError or a UnicodeDecodeError.

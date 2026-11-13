@@ -117,7 +117,7 @@ fn a_run_without_turns_or_an_end_says_so() {
     assert!(summary.contains("- **Wall time:** ?, from the first turn's start to 1970-01-01T00:00:00+00:00\n"));
     assert!(summary.contains("## Task\n\nt\n") && summary.ends_with("## Turns\n\nNo turns were recorded.\n"));
     s.error = None;
-    s.agent_kinds.insert("build", "pi".to_string());
+    s.next_harnesses.insert("build", "pi".to_string());
     let summary = run_summary(&s, &DEFAULT_WORKFLOW, &[], 0);
     assert!(summary.contains("- **Outcome:** unfinished\n") && summary.contains("| Builder (build) | pi | default |"));
     let metrics = run_metrics(&s, 10);

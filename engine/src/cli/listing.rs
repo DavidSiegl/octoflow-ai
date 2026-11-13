@@ -128,7 +128,7 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
 /// run_record's agents, of a state's agents, by role.
 fn agent_refs(agents: &Map<AgentRecord>) -> Value {
     let started = agents.iter().filter(|(_, agent)| !agent.name.is_empty()).map(|(role, agent)| {
-        let (name, kind) = (agent.name.as_str(), agent.kind.as_str());
+        let (name, kind) = (agent.name.as_str(), agent.harness.as_str());
         Value::Object(object([("role", Value::from(role)), ("name", Value::from(name)), ("kind", Value::from(kind))]))
     });
     Value::Array(started.collect())
@@ -302,7 +302,7 @@ pub fn show_run(world: &Connected, cwd: &str, run_ref: &str, target: &[String]) 
     }
     let width = s.agents.keys().map(|role| role.chars().count()).max().unwrap_or(0);
     let agent_lines = s.agents.iter().map(|(role, a)| {
-        format!("{role:<width$}  {:<8}  {}", a.kind, a.pane)
+        format!("{role:<width$}  {:<8}  {}", a.harness, a.pane)
     });
     print_section(world, "agents", agent_lines.collect());
     let turns = &s.turns;

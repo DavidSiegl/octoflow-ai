@@ -3,7 +3,7 @@
 //! GUI (the rust-engine spec's Decisions).
 
 use super::{Local, Target};
-use crate::constants::{DEFAULT_AGENT, EXIT_ERROR, GITLEAKS_INSTALL, NETWORK_TIMEOUT, REMOTE};
+use crate::constants::{DEFAULT_HARNESS, EXIT_ERROR, GITLEAKS_INSTALL, NETWORK_TIMEOUT, REMOTE};
 use crate::ci::QualityGate;
 use crate::error::OrchestratorError;
 use crate::harness::{Harness, HARNESSES};
@@ -190,7 +190,7 @@ pub fn check_setup(
     }
     let mut integrations = IntegrationStatus::new(agents);
     for Harness { kind, integration, .. } in HARNESSES {
-        let (level, note) = if kind == DEFAULT_AGENT {
+        let (level, note) = if kind == DEFAULT_HARNESS {
             (Level::Required, String::new())
         } else {
             (Level::Optional, format!("needed only for a role that runs in {kind}"))

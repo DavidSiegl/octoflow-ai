@@ -3,7 +3,7 @@
 //! mode, model, session and directory, and the token usage of sample session logs.
 
 use super::*;
-use crate::constants::DEFAULT_AGENT;
+use crate::constants::DEFAULT_HARNESS;
 use crate::test_support::{oracle, unhex};
 use crate::json::Object;
 
@@ -35,11 +35,11 @@ fn every_harness_s_tables_are_the_python_engine_s() {
     let recorded = oracle("harness.json");
     let constants = recorded.get("constants").unwrap();
     let kinds: Vec<&str> = HARNESSES.iter().map(|h| h.kind).collect();
-    assert_eq!(kinds, AGENT_KINDS);
+    assert_eq!(kinds, HARNESS_NAMES);
     let mut python_kinds = strings(constants.get("AGENT_KINDS").unwrap());
     python_kinds.retain(|k| k != PYTHON_ONLY);
     assert_eq!(python_kinds, kinds.iter().filter(|k| **k != OURS_ONLY).copied().collect::<Vec<_>>());
-    assert_eq!(constants.get("DEFAULT_AGENT").and_then(Value::as_str), Some(DEFAULT_AGENT));
+    assert_eq!(constants.get("DEFAULT_AGENT").and_then(Value::as_str), Some(DEFAULT_HARNESS));
     // Python's four tables, as the rows here make them.
     let (mut permissions, mut resume, mut add_dir, mut logs) = (Object::new(), Object::new(), Object::new(), Object::new());
     for h in HARNESSES.iter().filter(|h| h.kind != OURS_ONLY) {

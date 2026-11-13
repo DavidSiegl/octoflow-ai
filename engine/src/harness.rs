@@ -1,4 +1,4 @@
-//! The agent harnesses a role can run in (AGENT_KINDS, herdr's `--kind`), as orchestrator.py's "Agent harnesses"
+//! The agent harnesses a role can run in (HARNESS_NAMES, herdr's `--kind`), as orchestrator.py's "Agent harnesses"
 //! section and its session logs know them, but for opencode's model and granted directory, which go in its config
 //! (Config::OpencodeEnv): how each harness's agent starts, resumes a saved session and is granted a directory
 //! ([`Harness::launch`]), and where and how it records the tokens a session used ([`SessionLog`],
@@ -9,20 +9,20 @@
 
 use std::collections::HashSet;
 
-use crate::constants::AGENT_KINDS;
+use crate::constants::HARNESS_NAMES;
 use crate::error::OrchestratorError;
 use serde_json::Value;
 use crate::map::Map;
 
 /// How each role's agent starts: the permission mode, and by role its model and its harness (kinds). A role missing
-/// from models starts on its harness's default model, and one missing from kinds in DEFAULT_AGENT.
+/// from models starts on its harness's default model, and one missing from kinds in DEFAULT_HARNESS.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AgentSettings {
     /// --permission-mode as given, in Claude Code's names; None passes none to any harness.
     pub permission_mode: Option<String>,
     /// By role, the model its agent starts on.
     pub models: Map<String>,
-    /// By role, the harness its agent starts in, one of AGENT_KINDS.
+    /// By role, the harness its agent starts in, one of HARNESS_NAMES.
     pub kinds: Map<String>,
 }
 
@@ -30,7 +30,7 @@ pub struct AgentSettings {
 /// shell exports first), and its session log.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Harness {
-    /// Its name, as herdr's --kind and AGENT_KINDS have it.
+    /// Its name, as herdr's --kind and HARNESS_NAMES have it.
     pub kind: &'static str,
     /// The herdr integration that reports its agent's state, as `herdr integration install` and `status` name it;
     /// without it herdr cannot tell a finished turn from a dialog waiting for an answer.
@@ -109,7 +109,7 @@ pub enum LogFormat {
     Pi,
 }
 
-/// Every harness a role can run in, in AGENT_KINDS' order.
+/// Every harness a role can run in, in HARNESS_NAMES' order.
 pub const HARNESSES: [Harness; 5] = [
     Harness {
         kind: "agy",
@@ -177,7 +177,7 @@ pub fn replaced_by(kind: &str) -> Option<&'static str> {
     REPLACED.iter().find(|(old, _)| *old == kind).map(|(_, new)| *new)
 }
 
-/// The harness of the name kind. Errors: kind is not one of AGENT_KINDS, as a saved run's state.json or a workflow
+/// The harness of the name kind. Errors: kind is not one of HARNESS_NAMES, as a saved run's state.json or a workflow
 /// file can name; for a kind in REPLACED, the message names the kind that replaced it. The Python engine fails on
 /// such a kind with a KeyError.
 pub fn harness(kind: &str) -> Result<&'static Harness, OrchestratorError> {
@@ -188,7 +188,7 @@ pub fn harness(kind: &str) -> Result<&'static Harness, OrchestratorError> {
             }
             None => format!(
                 "agent {kind} is not a harness this orchestrator supports; it takes {}",
-                AGENT_KINDS.join(", ")
+                HARNESS_NAMES.join(", ")
             ),
         })
     })

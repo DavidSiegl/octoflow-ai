@@ -124,7 +124,7 @@ pub fn provenance(state: &RunState, quality: &GateEvidence) -> Vec<(String, Stri
         ("Orchestrator-Workflow".to_string(), s.workflow.clone()),
     ];
     for (role, agent) in s.agents.iter() {
-        let kind = &agent.kind;
+        let kind = &agent.harness;
         let model = s.models.get(role).filter(|m| !m.is_empty()).map_or("default", String::as_str);
         trailers.push(("Orchestrator-Role".to_string(), format!("{role}={kind}/{model}")));
     }

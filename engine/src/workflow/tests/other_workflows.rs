@@ -197,7 +197,7 @@ fn written(f: &Fixture) -> Vec<String> {
 fn impl_saved() -> RunState {
     let mut state = saved_run("impl", 1, &[]);
     (state.quality_job, state.workflow) = (Some(JOB.to_string()), "impl".into());
-    state.agents.insert("impl", AgentRecord::new("impl-a1b2c3", "w1:p1", DEFAULT_AGENT));
+    state.agents.insert("impl", AgentRecord::new("impl-a1b2c3", "w1:p1", DEFAULT_HARNESS));
     state
 }
 

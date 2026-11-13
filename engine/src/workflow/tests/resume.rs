@@ -29,7 +29,7 @@ fn spec_written_while_orchestrator_was_gone() {
     let mut state = RunState::new("20260929-120000-a1b2c3", "add a rate limiter", "/proj");
     state.machine = Some("remote".into());
     state.workspace_id = "w1".into();
-    state.agents.insert("spec", AgentRecord::new("spec-a1b2c3", "w1:p1", DEFAULT_AGENT));
+    state.agents.insert("spec", AgentRecord::new("spec-a1b2c3", "w1:p1", DEFAULT_HARNESS));
     let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![
         ("build", vec![build_turn(1)]),
         ("review", vec![review_turn(1, APPROVE)]),
