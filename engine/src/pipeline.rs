@@ -362,8 +362,8 @@ impl Pipeline {
                 return Some(format!("{what} is set for role {unknown}, which is not one of the workflow's roles"));
             }
         }
-        for (role, kind) in self.settings.agents.iter() {
-            if let Err(e) = harness(kind) {
+        for (role, name) in self.settings.agents.iter() {
+            if let Err(e) = harness(name) {
                 return Some(format!("role {role}: {}", e.0));
             }
         }

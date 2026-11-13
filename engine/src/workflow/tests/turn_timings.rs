@@ -36,7 +36,7 @@ fn each_turn_of_an_approved_run_is_recorded_on_the_host_clock() {
     ]);
     let mut wf = f.workflow(settings(|s| {
         s.agents.models.insert("review", "opus".into());
-        s.agents.kinds.insert("build", "codex".into());
+        s.agents.harnesses.insert("build", "codex".into());
     }));
     assert_eq!(wf.run(), verdict(APPROVE));
     let expected = [
@@ -357,7 +357,7 @@ fn tokens_come_from_the_session_the_turn_ran_in() {
     });
     f.play("review", vec![taking(60, with_logs)]);
     let mut wf = f.workflow(settings(|s| {
-        s.agents.kinds.insert("review", "pi".into());
+        s.agents.harnesses.insert("review", "pi".into());
     }));
     assert_eq!(wf.run(), verdict(APPROVE));
     let metrics = serde_json::from_str::<Value>(f.host.state().files.get(&format!("{}/metrics.json", f.state.dir())).unwrap()).unwrap();

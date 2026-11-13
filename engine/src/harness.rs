@@ -14,8 +14,8 @@ use crate::error::OrchestratorError;
 use serde_json::Value;
 use crate::map::Map;
 
-/// How each role's agent starts: the permission mode, and by role its model and its harness (kinds). A role missing
-/// from models starts on its harness's default model, and one missing from kinds in DEFAULT_HARNESS.
+/// How each role's agent starts: the permission mode, and by role its model and its harness. A role missing from
+/// models starts on its harness's default model, and one missing from harnesses in DEFAULT_HARNESS.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AgentSettings {
     /// --permission-mode as given, in Claude Code's names; None passes none to any harness.
@@ -23,7 +23,7 @@ pub struct AgentSettings {
     /// By role, the model its agent starts on.
     pub models: Map<String>,
     /// By role, the harness its agent starts in, one of HARNESS_NAMES.
-    pub kinds: Map<String>,
+    pub harnesses: Map<String>,
 }
 
 /// What the engine knows of one agent harness: how its agent starts (the arguments, and the environment its pane's
@@ -168,26 +168,27 @@ pub const HARNESSES: [Harness; 5] = [
     },
 ];
 
-/// Harnesses this orchestrator once took, as (kind, the kind that replaced it): a saved run or workflow file can
-/// still name one.
+/// Harnesses this orchestrator once took, as (name, the name of the harness that replaced it): a saved run or workflow
+/// file can still name one.
 const REPLACED: [(&str, &str); 1] = [("gemini", "agy")];
 
-/// The kind that replaced kind, a harness this orchestrator once took (GitHub issue #125); None for any other kind.
-pub fn replaced_by(kind: &str) -> Option<&'static str> {
-    REPLACED.iter().find(|(old, _)| *old == kind).map(|(_, new)| *new)
+/// The name of the harness that replaced the one named name, which this orchestrator once took (GitHub issue #125);
+/// None for any other name.
+pub fn replaced_by(name: &str) -> Option<&'static str> {
+    REPLACED.iter().find(|(old, _)| *old == name).map(|(_, new)| *new)
 }
 
-/// The harness of the name kind. Errors: kind is not one of HARNESS_NAMES, as a saved run's state.json or a workflow
-/// file can name; for a kind in REPLACED, the message names the kind that replaced it. The Python engine fails on
-/// such a kind with a KeyError.
-pub fn harness(kind: &str) -> Result<&'static Harness, OrchestratorError> {
-    HARNESSES.iter().find(|h| h.kind == kind).ok_or_else(|| {
-        OrchestratorError(match replaced_by(kind) {
+/// The harness named name. Errors: name is not one of HARNESS_NAMES, as a saved run's state.json or a workflow file
+/// can name; for a name in REPLACED, the message names the harness that replaced it. The Python engine fails on such
+/// a name with a KeyError.
+pub fn harness(name: &str) -> Result<&'static Harness, OrchestratorError> {
+    HARNESSES.iter().find(|h| h.kind == name).ok_or_else(|| {
+        OrchestratorError(match replaced_by(name) {
             Some(new) => {
-                format!("agent {kind} is not a harness this orchestrator supports any more; {new} replaced it")
+                format!("agent {name} is not a harness this orchestrator supports any more; {new} replaced it")
             }
             None => format!(
-                "agent {kind} is not a harness this orchestrator supports; it takes {}",
+                "agent {name} is not a harness this orchestrator supports; it takes {}",
                 HARNESS_NAMES.join(", ")
             ),
         })

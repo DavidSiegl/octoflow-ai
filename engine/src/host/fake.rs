@@ -1038,9 +1038,9 @@ impl Host for FakeHost {
         Ok(files)
     }
 
-    fn session_log(&self, kind: &str, session: &str) -> Result<Option<Vec<u8>>, OrchestratorError> {
+    fn session_log(&self, name: &str, session: &str) -> Result<Option<Vec<u8>>, OrchestratorError> {
         let s = self.state();
-        Ok(s.session_logs.get(&(kind.to_string(), session.to_string())).map(|log| log.clone().into_bytes()))
+        Ok(s.session_logs.get(&(name.to_string(), session.to_string())).map(|log| log.clone().into_bytes()))
     }
 }
 

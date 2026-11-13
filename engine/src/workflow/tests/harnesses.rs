@@ -43,11 +43,11 @@ fn every_role(kind: &str) -> Map<String> {
 }
 
 /// AgentSettings of a permission mode, the models and the harnesses by role.
-fn agent_settings(permission_mode: Option<&str>, models: &[(&str, &str)], kinds: Map<String>) -> AgentSettings {
+fn agent_settings(permission_mode: Option<&str>, models: &[(&str, &str)], harnesses: Map<String>) -> AgentSettings {
     AgentSettings {
         permission_mode: permission_mode.map(String::from),
         models: models.iter().map(|(r, m)| (*r, m.to_string())).collect(),
-        kinds,
+        harnesses,
     }
 }
 

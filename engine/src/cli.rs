@@ -475,7 +475,7 @@ pub fn run_workflow(
         agents: AgentSettings {
             permission_mode: state.permission_mode.clone(),
             models: state.models.clone(),
-            kinds: state.next_harnesses.clone(),
+            harnesses: state.next_harnesses.clone(),
         },
         pull_request: state.pull_request,
         max_quality_rounds: state.max_quality_rounds,

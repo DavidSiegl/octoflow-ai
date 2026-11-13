@@ -966,11 +966,11 @@ pub trait Host {
         parsed_run_states(cwd, &self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?)
     }
 
-    /// The log in which the harness kind keeps a session's token usage (crate::harness::SessionLog), found in the
-    /// home directory here, as it is on disk; None for a harness without one, a session id that is not a plain name,
-    /// or no such file.
-    fn session_log(&self, kind: &str, session: &str) -> Result<Option<Vec<u8>>, OrchestratorError> {
-        let Some(SessionLog { glob: pattern, .. }) = harness(kind).ok().and_then(|h| h.session_log) else {
+    /// The log in which the harness named name keeps a session's token usage (crate::harness::SessionLog), found in
+    /// the home directory here, as it is on disk; None for a harness without one, a session id that is not a plain
+    /// name, or no such file.
+    fn session_log(&self, name: &str, session: &str) -> Result<Option<Vec<u8>>, OrchestratorError> {
+        let Some(SessionLog { glob: pattern, .. }) = harness(name).ok().and_then(|h| h.session_log) else {
             return Ok(None);
         };
         if session.is_empty() || !session.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {

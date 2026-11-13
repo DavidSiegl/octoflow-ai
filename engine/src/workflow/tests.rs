@@ -463,7 +463,7 @@ fn agents(permission_mode: Option<&str>, models: &[(&str, &str)]) -> RunSettings
     let agents = AgentSettings {
         permission_mode: permission_mode.map(String::from),
         models: models.iter().map(|(r, m)| (*r, m.to_string())).collect(),
-        kinds: Map::new(),
+        harnesses: Map::new(),
     };
     RunSettings { agents, ..RunSettings::default() }
 }
