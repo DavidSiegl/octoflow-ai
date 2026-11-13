@@ -132,8 +132,8 @@ impl Repo {
 
 /// An ssh played by a script on the Host's PATH: it records each call's arguments, one file per call, NUL-separated,
 /// and runs the command it was given with sh, here, as sshd would run it there. With FAKE_SSH_REFUSES_SHARED set in
-/// the host's environment it fails a call that shares a connection (ControlMaster=auto) as OpenSSH 10.0's client does when
-/// the server refuses the master another session (MaxSessions), running nothing.
+/// the host's environment it fails a call that shares a connection (ControlMaster=auto) as OpenSSH 10.0's client does
+/// when the server refuses the master another session (MaxSessions), running nothing.
 pub(crate) struct FakeSsh {
     dir: TempDir,
     pub host: ProcessHost,
@@ -1964,7 +1964,8 @@ fn repo_watching_the_index_copy(bin: &str, tmp: &str) -> Repo {
 fn the_copy_of_the_index_git_stages_into_is_private_and_not_at_the_index_s_mode() {
     let (bin, tmp) = (TempDir::new(), TempDir::new());
     let r = repo_watching_the_index_copy(&bin.path(), &tmp.path());
-    std::fs::set_permissions(format!("{}/.git/index", r.path), std::fs::Permissions::from_mode(0o666)).unwrap();
+    // A mode with an execute bit, which no new file has whatever the umask, so that a copy at it was made by `cp -p`.
+    std::fs::set_permissions(format!("{}/.git/index", r.path), std::fs::Permissions::from_mode(0o641)).unwrap();
     r.put("b.py", "b\n");
     r.host.tree_snapshot(&r.path).unwrap().unwrap();
     let seen = read(&bin.join("seen"));
