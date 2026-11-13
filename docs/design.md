@@ -332,7 +332,9 @@ and asks `gh` whether it merges cleanly now. If it does, `refresh`:
   next `drain` takes up the run's spec once, as though it had cleared the conflict itself
   ([Draining specs](#draining-specs)).
 
-A pull request merged or closed meanwhile only has its conflict forgotten. One that still conflicts, or whose
+A pull request merged or closed meanwhile has its conflict forgotten and the clearing recorded the same way, so
+that the next `drain` settles the run's spec by it: `done` for a merged one, `ready-for-human` for a closed one.
+`refresh` does not touch it otherwise. One that still conflicts, or whose
 mergeability GitHub is still computing, is left as it is, and `refresh` exits `5`; run it again later. It prints
 a line per run.
 

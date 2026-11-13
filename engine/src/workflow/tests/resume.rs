@@ -86,6 +86,19 @@ fn a_live_agent_saved_without_its_session_has_it_noted_before_its_turn_is_record
 }
 
 #[test]
+fn herdr_failing_to_look_up_a_known_agent_stops_the_run_without_starting_one() {
+    // A skip in place of the failure would start a second Reviewer next to the live one.
+    let state = prompted(saved_run("review", 1, FULL), "build-1.md");
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![("review", vec![review_turn(1, APPROVE)])], &[
+        "review",
+    ], &[]);
+    f.herdr.state().agent_error = Some(crate::herdr::HerdrError::new("server_error", "herdr is down"));
+    let e = failure(f.workflow(f.as_saved()).run());
+    assert!(e.contains("herdr is down"), "{e}");
+    assert!(names(&f, "start").is_empty(), "no agent is started: {:?}", names(&f, "start"));
+}
+
+#[test]
 fn a_live_agent_in_another_session_than_saved_has_its_turn_recorded_in_that_one() {
     let state = prompted(saved_run("review", 1, FULL), "build-1.md");
     let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![("review", vec![review_turn(1, APPROVE)])], &["review"], &[(

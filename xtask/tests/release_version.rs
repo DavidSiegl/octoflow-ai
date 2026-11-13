@@ -4,11 +4,9 @@
 use std::fs;
 use std::process::Output;
 
-use xtask::TempDir;
-
 /// The script's run from a copy of it in a tree without git, whose engine/Cargo.toml holds manifest.
 fn release_version(manifest: &str) -> Output {
-    let dir = TempDir::new("xtask-release-version-test-").expect("a temporary directory");
+    let dir = tempfile::Builder::new().prefix("xtask-release-version-test-").tempdir().expect("a temporary directory");
     for sub in ["ci", "engine"] {
         fs::create_dir(dir.path().join(sub)).expect("made");
     }

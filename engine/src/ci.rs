@@ -10,10 +10,9 @@ use std::sync::Arc;
 use crate::constants::{CI_ENV, CI_TOKENS, HTTP_TIMEOUT, JOB_PARAMETERS, REMOTE};
 use crate::env::{ci_credentials, ConfigDir};
 use crate::error::OrchestratorError;
-use crate::host::{Host, PushError, Scanned};
+use crate::host::{last_lines, Host, PushError, Scanned};
 use crate::local_gate;
 use crate::state::RunState;
-use crate::quality::last_lines;
 use crate::http::{quote, urlencode, Http, HttpClient, HttpError, Method, Request, Response};
 use serde_json::Value;
 use crate::map::Map;
@@ -482,7 +481,7 @@ impl Jenkins {
         Ok(Some(failed))
     }
 
-    /// The end of the build's console (crate::quality::last_lines), each byte that is not UTF-8 replaced.
+    /// The end of the build's console (crate::host::last_lines), each byte that is not UTF-8 replaced.
     pub fn console_tail(&self, number: i64) -> Result<String, CIError> {
         let answer = self.request(Method::Get, &self.build_url(number, "consoleText", None), None)?;
         Ok(last_lines(&String::from_utf8_lossy(&answer.body)))

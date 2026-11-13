@@ -703,7 +703,8 @@ esac
 "#
     );
     tool(&d.path(), "herdr", &script);
-    let mut vars = environment(Some(&d.path()), &[]);
+    // The server's output goes under the state directory; one of the test's own, not the user's.
+    let mut vars = environment(Some(&d.path()), &[("XDG_STATE_HOME", &d.join("state"))]);
     vars.retain(|(k, _)| !k.to_string_lossy().starts_with("HERDR_"));
     (d, vars)
 }
@@ -780,6 +781,78 @@ fn a_server_that_does_not_come_up_fails_the_launch_saying_so() {
 }
 
 #[test]
+fn a_server_that_exits_at_once_fails_the_launch_with_what_it_said() {
+    let d = TempDir::new();
+    let script = r#"#!/bin/sh
+case "$1 $2" in
+"server ") echo 'herdr: cannot parse config.toml: line 3' >&2; exit 1 ;;
+"status server") echo 'status: not running' ;;
+*) echo '{"error": {"code": "server_not_running", "message": "no herdr server is running at /s.sock"}}' >&2; exit 1 ;;
+esac
+"#;
+    tool(&d.path(), "herdr", script);
+    let state = d.join("state");
+    let vars = environment(Some(&d.path()), &[("XDG_STATE_HOME", &state)]);
+    let mut herdr = ProcessHerdr::in_environment(None, vars.into_iter(), &Interrupt::new());
+    herdr.server_start = Poll { limit: Duration::from_millis(1000), every: Duration::from_millis(50) };
+    let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
+    assert!(e.starts_with("cannot start a herdr server: it was not running after 1 seconds"), "{e}");
+    let log = format!("{state}/octoflow/herdr-server.log");
+    assert!(e.ends_with(&format!("; herdr server wrote to {log}:\nherdr: cannot parse config.toml: line 3")), "{e}");
+}
+
+#[test]
+fn a_server_that_says_nothing_fails_the_launch_naming_where_its_output_went() {
+    let (d, vars) = herdr_with_servers(&[], None, "");
+    let mut herdr = ProcessHerdr::in_environment(None, vars.into_iter(), &Interrupt::new());
+    herdr.server_start = Poll { limit: Duration::from_millis(1000), every: Duration::from_millis(50) };
+    let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
+    let log = format!("{}/octoflow/herdr-server.log", d.join("state"));
+    assert!(e.ends_with(&format!("; herdr server wrote nothing to {log}")), "{e}");
+}
+
+#[test]
+fn a_relative_xdg_state_home_is_ignored_as_the_xdg_spec_asks() {
+    let (d, vars) = herdr_with_servers(&[], None, "");
+    let vars = vars.into_iter().filter(|(k, _)| k != "XDG_STATE_HOME" && k != "HOME").collect::<Vec<_>>();
+    let home = d.join("home");
+    let mut herdr = ProcessHerdr::in_environment(None, with(&vars, &[("XDG_STATE_HOME", "state"), ("HOME", &home)]), &Interrupt::new());
+    herdr.server_start = Poll { limit: Duration::from_millis(1000), every: Duration::from_millis(50) };
+    let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
+    let log = format!("{home}/.local/state/octoflow/herdr-server.log");
+    assert!(e.ends_with(&format!("; herdr server wrote nothing to {log}")), "{e}");
+}
+
+#[test]
+fn a_log_directory_that_cannot_be_made_still_starts_the_server_and_says_its_output_was_not_kept() {
+    let (d, vars) = herdr_with_servers(&[], None, "");
+    let vars = vars.into_iter().filter(|(k, _)| k != "XDG_STATE_HOME").collect::<Vec<_>>();
+    // A regular file where the state directory should be: nothing can be made under it.
+    let state = d.join("not-a-directory");
+    std::fs::write(&state, "").unwrap();
+    let mut herdr = ProcessHerdr::in_environment(None, with(&vars, &[("XDG_STATE_HOME", &state)]), &Interrupt::new());
+    herdr.server_start = Poll { limit: Duration::from_millis(1000), every: Duration::from_millis(50) };
+    let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
+    assert!(given(&d).iter().any(|c| c == "octoflow: server"), "the server was not started: {:?}", given(&d));
+    assert!(e.contains("; herdr server's output was not kept: "), "{e}");
+    assert!(e.contains(&state), "{e}");
+}
+
+#[test]
+fn a_log_file_that_cannot_be_written_still_starts_the_server_and_says_its_output_was_not_kept() {
+    let (d, vars) = herdr_with_servers(&[], None, "");
+    // A directory where the log file should be: the directory exists, and the file cannot be opened for writing.
+    let log = format!("{}/octoflow/herdr-server.log", d.join("state"));
+    std::fs::create_dir_all(&log).unwrap();
+    let mut herdr = ProcessHerdr::in_environment(None, vars.into_iter(), &Interrupt::new());
+    herdr.server_start = Poll { limit: Duration::from_millis(1000), every: Duration::from_millis(50) };
+    let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
+    assert!(given(&d).iter().any(|c| c == "octoflow: server"), "the server was not started: {:?}", given(&d));
+    assert!(e.contains("; herdr server's output was not kept: "), "{e}");
+    assert!(e.contains(&log), "{e}");
+}
+
+#[test]
 fn a_look_herdr_answers_with_an_error_while_its_server_comes_up_is_not_the_end() {
     let created = r#"{"result": {"workspace": {"workspace_id": "w1"}, "root_pane": {"pane_id": "w1:p1"}}}"#;
     let no_server = error("server_not_running", "no herdr server is running at /s.sock");
@@ -812,12 +885,16 @@ fn a_server_that_never_answers_fails_the_launch_with_what_herdr_last_said() {
             Ok((0, b"status: not running\n".to_vec(), Vec::new()))
         }
         "status" => Ok((1, Vec::new(), b"connection refused\n".to_vec())),
+        // sh -c, which prints where the server's output goes; nothing is there.
+        "-c" => Ok((0, b"/gone/herdr-server.log\n".to_vec(), Vec::new())),
         _ => Ok((0, Vec::new(), Vec::new())),
     });
     herdr.server_start = Poll { limit: Duration::from_millis(100), every: Duration::from_millis(20) };
     let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
     assert!(e.starts_with("cannot start a herdr server: it was not running after 0.1 seconds; herdr status server"), "{e}");
     assert!(e.contains("connection refused"), "{e}");
+    let gone = r#"[Errno 2] No such file or directory: "/gone/herdr-server.log""#;
+    assert!(e.ends_with(&format!("; cannot read what herdr server wrote: {gone}")), "{e}");
 }
 
 #[test]

@@ -6,7 +6,7 @@
 //! implements only those, and a fake overrides what it plays in memory, as `FakeHost` (host/fake.rs) plays git one
 //! command at a time through [`Host::git_run`], so that Host's own git steps run on it.
 
-use crate::constants::{NETWORK_TIMEOUT, REMOTE, RUNS_DIR};
+use crate::constants::{CONSOLE_TAIL_LINES, NETWORK_TIMEOUT, REMOTE, RUNS_DIR};
 use crate::error::OrchestratorError;
 use crate::harness::{harness, SessionLog};
 use serde_json::Value;
@@ -1125,6 +1125,14 @@ pub fn line_ends_as_lf(text: &str) -> String {
         return text.to_string();
     }
     text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+/// The last CONSOLE_TAIL_LINES lines of text, each line ending at "\n", "\r\n" or a lone "\r" (line_ends_as_lf),
+/// joined by "\n": the end of a log that is shown.
+pub fn last_lines(text: &str) -> String {
+    let text = line_ends_as_lf(text);
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(CONSOLE_TAIL_LINES)..].join("\n")
 }
 
 /// argv as one line of sh that runs it, each word quoted by shlex_quote, between single spaces.

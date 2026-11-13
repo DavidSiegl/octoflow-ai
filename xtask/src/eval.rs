@@ -36,7 +36,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::process::{command, interrupted, make_temp_dir, watch_interrupts};
+use crate::process::{command, interrupted, watch_interrupts};
 use crate::Error;
 
 /// Where the tasks are, and where the result lines go, relative to the checkout's top.
@@ -307,10 +307,12 @@ pub fn config_name(run_args: &[String]) -> String {
 /// the result. Errors: [`Halt::Failed`] when the bundle cannot be cloned or the hidden test cannot be started;
 /// [`Halt::Interrupted`] after a Ctrl-C, once the command it reached has stopped, leaving the directory for a resume.
 pub fn run_trial(task: &Task, repeat: u32, engine: &[String], run_args: &[String], keep: bool) -> Result<Trial, Halt> {
-    let work = make_temp_dir(&format!("octoflow-eval-{}-", task.name))
+    let work = tempfile::Builder::new()
+        .prefix(&format!("octoflow-eval-{}-", task.name))
+        .tempdir()
         .map_err(|e| Error(format!("task {}: could not make its directory: {e}", task.name)))?;
-    let repo = work.join("repo");
-    let trial = match judged_trial(task, repeat, engine, run_args, &work, &repo) {
+    let repo = work.path().join("repo");
+    let trial = match judged_trial(task, repeat, engine, run_args, work.path(), &repo) {
         // A command the Ctrl-C reached failed by it.
         Err(Halt::Failed(_)) if interrupted() => Err(Halt::Interrupted),
         trial => trial,
@@ -318,11 +320,15 @@ pub fn run_trial(task: &Task, repeat: u32, engine: &[String], run_args: &[String
     if trial == Err(Halt::Interrupted) {
         eprintln!("interrupted: the run's clone stays in {}", repo.display());
     }
-    if keep {
-        eprintln!("{} #{repeat}: kept in {}", task.name, work.display());
-    } else if trial != Err(Halt::Interrupted) {
-        if let Err(e) = fs::remove_dir_all(&work) {
-            eprintln!("warning: could not remove {}: {e}", work.display());
+    if keep || trial == Err(Halt::Interrupted) {
+        let kept = work.keep();
+        if keep {
+            eprintln!("{} #{repeat}: kept in {}", task.name, kept.display());
+        }
+    } else {
+        let path = work.path().to_path_buf();
+        if let Err(e) = work.close() {
+            eprintln!("warning: could not remove {}: {e}", path.display());
         }
     }
     trial

@@ -12,8 +12,6 @@ pub mod toy_repos;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-pub use process::TempDir;
-
 /// The checkout this xtask was built from: the workspace's top directory, which holds evals/.
 pub fn checkout() -> PathBuf {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));

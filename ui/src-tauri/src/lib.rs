@@ -422,34 +422,8 @@ mod tests {
 
     /// A new directory of its own under the system's temporary directory, removed with everything in it when
     /// dropped, so it must outlive every use of its path.
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new() -> Self {
-            use std::sync::atomic::{AtomicU64, Ordering};
-            static COUNT: AtomicU64 = AtomicU64::new(0);
-            let n = COUNT.fetch_add(1, Ordering::Relaxed);
-            let dir = std::env::temp_dir().join(format!("octoflow-ui-test-{}-{n}", std::process::id()));
-            std::fs::create_dir_all(&dir).expect("a scratch directory");
-            TempDir(dir)
-        }
-
-        fn path(&self) -> &Path {
-            &self.0
-        }
-
-        /// The path of name in the directory.
-        fn join(&self, name: impl AsRef<Path>) -> PathBuf {
-            self.0.join(name)
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            if let Err(e) = std::fs::remove_dir_all(&self.0) {
-                eprintln!("could not remove {}: {e}", self.0.display());
-            }
-        }
+    fn scratch_dir() -> tempfile::TempDir {
+        tempfile::Builder::new().prefix("octoflow-ui-test-").tempdir().expect("a scratch directory")
     }
 
     /// The orchestrator binary of this checkout, built as `cargo build -p octoflow-engine` builds it, with the cargo
@@ -487,8 +461,8 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn serves_a_program_that_prints_serve_s_first_line() {
-        let dir = TempDir::new();
-        let program = dir.join("octoflow");
+        let dir = scratch_dir();
+        let program = dir.path().join("octoflow");
         // serve's first line, then a process for stop to kill.
         let script = "#!/bin/sh\necho '{\"url\": \"http://127.0.0.1:9\", \"token\": \"t\"}'\nexec sleep 60\n";
         put_executable(&program, script);
@@ -517,8 +491,8 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn a_sidecar_that_refuses_gives_its_reason() {
-        let dir = TempDir::new();
-        let program = dir.join("octoflow");
+        let dir = scratch_dir();
+        let program = dir.path().join("octoflow");
         let script = "#!/bin/sh\necho 'octoflow: cannot start in /gone: it is not a directory' >&2\nexit 1\n";
         put_executable(&program, script);
         let reason = Sidecar::start(&program, "tauri://localhost", None).connection.err().expect("an error");
@@ -528,8 +502,8 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn a_sidecar_that_prints_something_else_is_named_with_what_it_printed() {
-        let dir = TempDir::new();
-        let program = dir.join("octoflow");
+        let dir = scratch_dir();
+        let program = dir.path().join("octoflow");
         put_executable(&program, "#!/bin/sh\necho hello\n");
         let reason = Sidecar::start(&program, "tauri://localhost", None).connection.err().expect("an error");
         assert!(reason.contains("serve printed \"hello\", not its address"), "{reason}");
@@ -592,7 +566,7 @@ mod tests {
     #[test]
     fn an_extracted_appimage_started_by_its_apprun_is_one_too() {
         // squashfs-root/AppRun sets APPDIR and the bundle's variables, but no APPIMAGE.
-        let dir = TempDir::new();
+        let dir = scratch_dir();
         let root = dir.path().canonicalize().expect("a scratch directory");
         std::fs::write(root.join("AppRun"), "").expect("a stand-in AppRun");
         let python_home = format!("{}/usr/", root.display());
@@ -617,11 +591,11 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn the_bundle_is_appdir_and_what_it_resolves_to() {
-        let dir = TempDir::new();
-        std::fs::create_dir_all(dir.join("real/app/usr/lib")).expect("an AppDir");
-        std::fs::write(dir.join("real/app/AppRun"), "").expect("a stand-in AppRun");
-        std::os::unix::fs::symlink(dir.join("real"), dir.join("link")).expect("a link");
-        let (real, link) = (dir.join("real/app"), dir.join("link/app"));
+        let dir = scratch_dir();
+        std::fs::create_dir_all(dir.path().join("real/app/usr/lib")).expect("an AppDir");
+        std::fs::write(dir.path().join("real/app/AppRun"), "").expect("a stand-in AppRun");
+        std::os::unix::fs::symlink(dir.path().join("real"), dir.path().join("link")).expect("a link");
+        let (real, link) = (dir.path().join("real/app"), dir.path().join("link/app"));
         let real = real.canonicalize().expect("the AppDir resolves");
         // As AppRun.wrapped writes them: from /proc/self/exe, resolved; the GTK hook's from APPDIR, as it is.
         let path_list = format!("{}/usr/lib/:{}/usr/lib:", real.display(), link.display());
@@ -770,8 +744,8 @@ mod tests {
 
     #[test]
     fn only_the_appimage_file_itself_is_the_runtime() {
-        let dir = TempDir::new();
-        let appimage = dir.join("x.AppImage");
+        let dir = scratch_dir();
+        let appimage = dir.path().join("x.AppImage");
         std::fs::write(&appimage, "").expect("a stand-in AppImage");
         assert!(is_appimage(Some(&appimage), Some(&appimage)));
         assert!(!is_appimage(Some(&appimage), Some(Path::new("/bin/sh"))), "a parent that is a shell");
@@ -782,10 +756,10 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn the_appimage_named_through_a_link_is_the_runtime_too() {
-        let dir = TempDir::new();
-        let appimage = dir.join("x.AppImage");
+        let dir = scratch_dir();
+        let appimage = dir.path().join("x.AppImage");
         std::fs::write(&appimage, "").expect("a stand-in AppImage");
-        let link = dir.join("link.AppImage");
+        let link = dir.path().join("link.AppImage");
         std::os::unix::fs::symlink(&appimage, &link).expect("a link to it");
         assert!(is_appimage(Some(&link), Some(&appimage)));
     }
@@ -798,8 +772,8 @@ mod tests {
         // This process's parent, the test runner, stands in for the runtime. The request armed below only sends this
         // process SIGTERM should the runner die first, and is withdrawn before the assertions.
         let runner = std::fs::read_link(format!("/proc/{}/exe", nix::unistd::getppid())).expect("the runner's exe");
-        let dir = TempDir::new();
-        let other = dir.join("x.AppImage");
+        let dir = scratch_dir();
+        let other = dir.path().join("x.AppImage");
         std::fs::write(&other, "").expect("a stand-in AppImage");
         stop_with_appimage_runtime(None).expect("no APPIMAGE");
         let without = get_pdeathsig();
@@ -840,8 +814,8 @@ mod tests {
             let e = Command::new("sleep").arg("30").exec();
             panic!("cannot exec sleep: {e}");
         }
-        let dir = TempDir::new();
-        let ready = dir.join("ready");
+        let dir = scratch_dir();
+        let ready = dir.path().join("ready");
         let test = std::env::current_exe().expect("the test binary");
         // The runtime: a shell that starts the stand-in, prints its pid, and waits for its standard input to close.
         let mut runtime = Command::new("sh")

@@ -359,7 +359,7 @@ describe("the setup dialog", () => {
   const REPORT = {
     checks: [
       { name: "herdr", level: "required", ok: true, detail: "herdr 0.9.1", fix: "" },
-      { name: "reaching herdr", level: "optional", ok: false, detail: "not inside a herdr pane", fix: "run from a herdr pane, or pass --machine" },
+      { name: "reaching herdr", level: "optional", ok: false, detail: "not inside a herdr pane", fix: "run from a herdr pane, or choose a herdr machine (--machine)" },
       { name: "gh", level: "needed-for-pr", ok: false, detail: "gh auth status fails", fix: "gh auth login" },
     ],
     passed: true,
@@ -585,11 +585,21 @@ describe("the run form", () => {
     const { form, source } = await openForm({ runStatus: 202, runBody: { run: RUN, listed: false } });
     typeTask(form, "Add a rate limiter");
     fireEvent.click(within(form).getByRole("button", { name: "Start" }));
-    expect(await screen.findByText(new RegExp(`^Run ${RUN} has started but is not listed yet`))).toBeInTheDocument();
+    const hint = await screen.findByText(new RegExp(`^Run ${RUN} has started but is not listed yet`));
+    expect(hint).toHaveTextContent(/If it never is, its herdr workspace shows why\.$/);
     act(() => source.replay("a run started its interview"));
     expect(screen.getByRole("region", { name: "run c0ffee" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "‹ Runs" }));
     expect(screen.queryByText(/is not listed yet/)).not.toBeInTheDocument();
+  });
+
+  it("names the herdr session to attach to for a run not listed yet that is in one", async () => {
+    const { form } = await openForm({ runStatus: 202, runBody: { run: RUN, listed: false, herdr_session: "octoflow" } });
+    typeTask(form, "Add a rate limiter");
+    fireEvent.click(within(form).getByRole("button", { name: "Start" }));
+    const hint = await screen.findByText(new RegExp(`^Run ${RUN} has started but is not listed yet`));
+    expect(hint).toHaveTextContent(/If it never is, herdr session attach octoflow shows why\.$/);
+    expect(within(hint).getByText("herdr session attach octoflow").tagName).toBe("CODE");
   });
 
   it("stops waiting for a run that is not listed", async () => {

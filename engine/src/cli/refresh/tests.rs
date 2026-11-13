@@ -180,7 +180,7 @@ fn a_pull_request_that_still_conflicts_or_is_not_known_is_left() {
 }
 
 #[test]
-fn a_merged_or_closed_pull_request_only_forgets_the_conflict() {
+fn a_merged_or_closed_pull_request_forgets_the_conflict_and_leaves_it_to_a_drain() {
     for state in ["MERGED", "CLOSED"] {
         let t = Refresh::new();
         // Whatever GitHub says of its mergeability, which decides nothing once it is not open.
@@ -189,7 +189,8 @@ fn a_merged_or_closed_pull_request_only_forgets_the_conflict() {
         assert_eq!(t.refresh(&[REFRESH_ID]), (0, line));
         assert_eq!(t.pr_edits(), []);
         assert_eq!(t.saved().get("conflicts"), Some(&Value::Array(vec![])));
-        assert_eq!(t.saved().get("conflict_cleared"), Some(&Value::Null), "{state}");
+        // For a later drain to settle its spec by (crate::cli::drain).
+        assert_eq!(t.saved().get("conflict_cleared"), Some(&Value::from(REFRESH_URL)), "{state}");
     }
 }
 

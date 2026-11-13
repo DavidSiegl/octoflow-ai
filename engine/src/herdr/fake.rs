@@ -85,6 +85,8 @@ pub(crate) struct FakeHerdrState {
     pub wait_with: Option<WaitWith>,
     /// The error close_workspace fails with, when set.
     pub close_error: Option<HerdrError>,
+    /// The error agent, the look-up of an agent by name, fails with, when set.
+    pub agent_error: Option<HerdrError>,
     /// Run before each command calls records, given it, when set: what a Python test does in its own
     /// FakeHerdr.focus or create_workspace before the fake's.
     pub before_call: Option<BeforeCall>,
@@ -132,6 +134,7 @@ impl FakeHerdr {
                 cwds: vec![],
                 wait_with: None,
                 close_error: None,
+                agent_error: None,
                 before_call: None,
                 interrupt: None,
                 prompt_with: None,
@@ -288,6 +291,9 @@ impl Herdr for FakeHerdr {
 
     fn agent(&self, name: &str) -> Result<Option<Agent>, HerdrError> {
         let s = self.state();
+        if let Some(e) = s.agent_error.clone() {
+            return Err(e);
+        }
         Ok(s.statuses.get(name).map(|status| Agent { status: status.clone(), session: s.sessions.get(name).cloned() }))
     }
 

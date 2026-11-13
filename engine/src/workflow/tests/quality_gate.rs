@@ -415,6 +415,48 @@ fn a_quality_file_read_while_its_build_runs_is_taken_once_two_reads_agree() {
 }
 
 #[test]
+fn a_read_of_a_running_build_s_quality_file_outlasts_a_failed_read_after_it() {
+    let f = gated_building(approved(), vec![Outcome { polls: 6, after_gate: 5, ..green() }]);
+    // The read after the first fails as Jenkins's own trouble does, once.
+    let path = format!("{JOB_PATH}41/artifact/quality.md");
+    let ci = Arc::clone(&f.ci);
+    f.clock.hook(move |_| {
+        let mut ci = ci.state();
+        let failed = ci.names.iter().any(|n| n.ends_with(" failing"));
+        if ci.quality_reads.len() == 1 && !failed && ci.fail.is_empty() {
+            ci.fail.push((("GET", path.clone()), 503));
+        } else if failed {
+            ci.fail.clear();
+        }
+    });
+
+    assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
+
+    assert!(f.ci.state().names.iter().any(|n| n.ends_with("quality.md failing")), "{:?}", f.ci.state().names);
+    // The read before the failure is the first of the two that agree: taken at the next read, the build still running.
+    assert_eq!(f.ci.state().quality_reads.len(), 2);
+    assert!(f.ci.state().builds[&41].left > 0);
+    assert!(f.quality_file(1, 1).starts_with("GATE: OK\n\nJenkins build #41 judged snapshot `snap1`"));
+    assert!(f.told.lines().iter().any(|l| l.ends_with("answered again")), "{:?}", f.told.lines());
+}
+
+#[test]
+fn a_build_that_ends_with_another_quality_file_than_the_one_read_while_it_ran_is_judged_by_the_last() {
+    // Read once while it runs, then again once it has ended.
+    let f = gated_building(approved(), vec![Outcome { polls: 2, after_gate: 0, ..green() }]);
+    let running = "GATE: FAIL\n\n`orchestrator.py gate` judged the working tree.\n\n## Issues on changed lines\n\n\
+                   1. x\n";
+    f.ci.state().quality_replies.insert(1, running.to_string());
+
+    assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
+
+    assert_eq!(f.ci.state().quality_reads.len(), 2);
+    let quality = f.quality_file(1, 1);
+    assert!(quality.starts_with("GATE: OK\n"), "{quality}");
+    assert!(!quality.contains("still running"), "{quality}");
+}
+
+#[test]
 fn two_reads_of_a_running_build_without_their_gate_line_are_not_its_quality_file() {
     // archiveArtifacts can leave the file empty, or cut inside its GATE line, for longer than a poll interval.
     for cut in ["", "GATE: O"] {

@@ -663,6 +663,9 @@ fn not_a_checkout() {
         checks["git checkout"].detail,
         "/proj is not in a git checkout: fatal: not a git repository (or any of the parent directories): .git"
     );
+    // Worded for the app's setup dialog too, where the project is chosen in the project bar.
+    let fix = "choose a git checkout as the project (--cwd), or make one with git clone or git init";
+    assert_eq!(checks["git checkout"].fix, fix);
     let origin = check_of("origin", Level::NeededForPr, false, "skipped: needs git checkout", "fix git checkout first");
     assert_eq!(checks["origin"], origin);
     assert!(!tools.ran(None, "git -C /proj remote get-url origin"));
@@ -706,13 +709,13 @@ fn outside_a_herdr_pane() {
         Level::Required,
         false,
         "not inside a herdr pane",
-        "run from a herdr pane, or pass --machine",
+        "run from a herdr pane, or choose a herdr machine (--machine)",
     );
     assert_eq!(checks["reaching herdr"], reach);
     assert_eq!(failed(&checks, &order), ["reaching herdr"]);
     let (out, status) = reported(&checks, &order);
     assert_eq!(status, EXIT_ERROR);
-    assert!(out.contains("missing reaching herdr: not inside a herdr pane\n        fix: run from a herdr pane, or pass --machine\n"), "{out}");
+    assert!(out.contains("missing reaching herdr: not inside a herdr pane\n        fix: run from a herdr pane, or choose a herdr machine (--machine)\n"), "{out}");
 }
 
 #[test]

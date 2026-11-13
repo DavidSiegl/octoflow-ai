@@ -17,7 +17,6 @@ use sha2::{Digest, Sha256};
 use crate::constants::CONSOLE_TAIL_LINES;
 use crate::error::OrchestratorError;
 use crate::handoff::first_line_word;
-use crate::host::line_ends_as_lf;
 use crate::map::Map;
 
 /// The words of the gate line, the file's first non-blank one. Only the engine writes BUILD_FAILED, for a build that
@@ -152,14 +151,6 @@ pub fn could_not_judge_report(intro: &str, said: &str) -> String {
         out.extend(["", "## What the gate said on standard error", "", "````", said, "````"].map(String::from));
     }
     out.join("\n") + "\n"
-}
-
-/// The last CONSOLE_TAIL_LINES lines of text, each line ending at "\n", "\r\n" or a lone "\r" (line_ends_as_lf),
-/// joined by "\n": the end of a log that is shown.
-pub fn last_lines(text: &str) -> String {
-    let text = line_ends_as_lf(text);
-    let lines: Vec<&str> = text.lines().collect();
-    lines[lines.len().saturating_sub(CONSOLE_TAIL_LINES)..].join("\n")
 }
 
 /// What a quality file says failed the gate, in a form two quality rounds can be compared by.

@@ -108,7 +108,8 @@ pub const JOB_PARAMETERS: [&str; 1] = ["GIT_REF"];
 pub const CI_REF_PREFIX: &str = "orchestrator-ci/";
 /// A run's local refs are under refs/orchestrator/<key>/ (crate::state::refs_prefix).
 pub const LOCAL_REFS_PREFIX: &str = "refs/orchestrator/";
-/// How much of a build's console the quality file of a build that failed before its Gate stage shows, in lines.
+/// How many lines crate::host::last_lines keeps of a log it shows: the console of a build that failed before its Gate
+/// stage, in the quality file; herdr server's log, when it fails to start; the local gate's output.
 pub const CONSOLE_TAIL_LINES: usize = 60;
 
 /// The default workflow's roles, key and label, in pane order. Each has its own --ROLE-model flag; another workflow's

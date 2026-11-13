@@ -45,6 +45,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **Two engine test directories are still named by pid, removing what is there first.** `Dir::new`
+  (`engine/tests/program.rs:23`) names its directory `octoflow-program-<name>-<pid>` and removes what is there, and
+  `engine/tests/signals.rs:237` names one `octoflow-signals-<case>-<pid>`: two test runs over one `/tmp` whose
+  processes share a pid, as in different PID namespaces, delete each other's, the collision todo/49 fixed for the e2e
+  scenarios' `Scratch`. Raised by cross-review 186 (raised and not recorded). Closed by making both on
+  `tempfile::Builder`, as `Scratch::new` is.
 - **The desktop app as the terminal client too: what was decided against.** The app, started with arguments, is the CLI
   (`cli` in `ui/src-tauri/src/lib.rs`), and the plain CLI binaries stay released: 13 MB against the AppImage's 120 MB of
   WebKit, and they start without FUSE on headless machines and in CI. Decided against (2026-10-24): one file on every
@@ -146,6 +152,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `crate::ci::LOCAL_GATE`. Deferred from cross-review 181 (F5, nit): "a module cycle, and the run's layout leaks into
   the CI client. Passing the snapshot's inputs and `&mut Object` would keep `ci` below `state`." Closes with `start`
   taking those inputs and `RunState::ci`, if the parameter list that brings stays shorter than what it removes.
+- **`host`'s text helpers sit in an import cycle.** `last_lines` and `line_ends_as_lf` (`engine/src/host.rs`) are pure
+  `&str` functions, but `host` imports `state::SavedRun` and `state` imports `herdr`, so herdr → host → state →
+  herdr (`engine/src/herdr.rs:21`, `engine/src/host.rs:26`, `engine/src/state.rs:9`) and prompts → host → state →
+  prompts (`engine/src/prompts.rs:6`, for `line_ends_as_lf` alone) are cycles, on main too. Deferred from
+  cross-review 188 (F2, F3, nits): "A leaf text module importing only constants would hold both helpers without that
+  hazard." Closes with both helpers in such a module and their importers pointed there.
 - **Host::fetch does not wait out an outage by itself.** Each caller wraps it in `reaching_origin`
   (`engine/src/workflow.rs`'s five, `quality_rounds.rs`'s `delete_ci_refs`, `cli/prune.rs`'s `prune_remote`), since a
   `Host` (`engine/src/host.rs`) has no clock to wait on and no human to tell; a new caller gets no retry unless it
@@ -416,8 +428,8 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `World::make_bin` (`engine/e2e/tests/e2e/world.rs`) and `put_executable` (`ui/src-tauri/src/lib.rs`). Raised by
   cross-review 123 (F2, nit): "A correction to the writer has to land in all four, and a copy that is missed brings
   the flake back in that crate." Decided against (the user's ruling, 2026-11-11): one writer in a test-support crate
-  of the workspace's own; the copies of a scratch directory removed on drop are to go to the `tempfile` crate
-  instead, so no such crate is made.
+  of the workspace's own; the scratch directories removed on drop, which such a crate would also have held, are the
+  `tempfile` crate's since todo/48, so it would hold this writer alone.
 - **The starter `gate.toml`'s Rust and npm tests name no failing test.** `starter_settings`
   (`engine/src/local_gate.rs`) guesses `cargo test --workspace` and `npm test` without a `junit` report: neither
   writes JUnit without configuration that `doctor --setup-gate` does not write (nextest's through a

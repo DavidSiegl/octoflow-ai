@@ -5,7 +5,6 @@ use std::process::Command;
 
 use xtask::bundles::{bundle_commit, make_bundle, stale_bundles};
 use xtask::toy_repos::{ToyRepo, REFACTOR_LIB, TOY_REPOS};
-use xtask::TempDir;
 
 #[test]
 fn the_bundles_are_of_the_toy_repositories() {
@@ -24,7 +23,7 @@ fn a_changed_toy_repository_is_caught_by_the_check() {
 
 #[test]
 fn a_bundle_holds_one_commit_on_main_whose_id_its_files_decide() {
-    let dir = TempDir::new("xtask-bundles-test-").expect("a temporary directory");
+    let dir = tempfile::Builder::new().prefix("xtask-bundles-test-").tempdir().expect("a temporary directory");
     let files = [("a.txt", "a\n"), ("dir/b.txt", "b\n")];
     let (first, second) = (dir.path().join("1.bundle"), dir.path().join("2.bundle"));
     let commit = make_bundle(&files, &first, "m").expect("made");
@@ -51,7 +50,7 @@ fn a_bundle_holds_one_commit_on_main_whose_id_its_files_decide() {
 
 #[test]
 fn the_check_holds_whatever_git_repository_the_environment_names() {
-    let dir = TempDir::new("xtask-bundles-test-").expect("a temporary directory");
+    let dir = tempfile::Builder::new().prefix("xtask-bundles-test-").tempdir().expect("a temporary directory");
     let checked =
         Command::new(env!("CARGO_BIN_EXE_xtask")).args(["bundles", "--check"]).env("GIT_DIR", dir.path()).status();
     assert!(checked.expect("xtask runs").success(), "GIT_DIR misled the check");
@@ -59,7 +58,7 @@ fn the_check_holds_whatever_git_repository_the_environment_names() {
 
 #[test]
 fn not_a_bundle_is_an_error() {
-    let dir = TempDir::new("xtask-bundles-test-").expect("a temporary directory");
+    let dir = tempfile::Builder::new().prefix("xtask-bundles-test-").tempdir().expect("a temporary directory");
     let path = dir.path().join("x.bundle");
     fs::write(&path, "no bundle\n").expect("written");
     assert!(bundle_commit(&path).is_err());

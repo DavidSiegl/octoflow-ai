@@ -10,7 +10,6 @@ use nix::sys::signal::{kill, Signal};
 use nix::unistd::Pid;
 use xtask::bundles::{stale_bundles, write_bundles};
 use xtask::toy_repos::TOY_REPOS;
-use xtask::TempDir;
 
 fn xtask(args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_xtask")).args(args).output().expect("xtask runs")
@@ -27,7 +26,7 @@ fn usage_errors_exit_2() {
 
 #[test]
 fn written_bundles_pass_the_check() {
-    let dir = TempDir::new("xtask-cli-test-").expect("a temporary directory");
+    let dir = tempfile::Builder::new().prefix("xtask-cli-test-").tempdir().expect("a temporary directory");
     let written = write_bundles(&TOY_REPOS[..2], dir.path()).expect("the bundles are written");
     let paths: Vec<_> = written.iter().map(|(path, _)| path.clone()).collect();
     assert_eq!(paths, [dir.path().join("bugfix/repo.bundle"), dir.path().join("docs/repo.bundle")]);
