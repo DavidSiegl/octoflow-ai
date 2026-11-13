@@ -64,11 +64,21 @@ remove_temporaries() {
             || echo "build-desktop.sh: could not remove $dir" >&2
     done
 }
-trap remove_temporaries EXIT
+# The pids of the AppImage smoke test's serve, the AppImage's runtime, and of the orchestrator it runs, once found;
+# empty when none is running. A signal sent to this script alone, rather than to its process group as a Ctrl-C at a
+# terminal is, reaches neither of them.
+serve_pid='' orchestrator=''
+# Stops serve before its directory goes. The orchestrator by its own pid too: the smoke test's failed check may be
+# that the runtime's death did not stop it.
+clean_up() {
+    for pid in $orchestrator $serve_pid; do kill "$pid" 2>/dev/null || true; done
+    remove_temporaries
+}
+trap clean_up EXIT
 # Dies of the signal after cleaning up, so that a caller sees how the script ended.
-trap 'remove_temporaries; trap - EXIT HUP; kill -HUP $$' HUP
-trap 'remove_temporaries; trap - EXIT INT; kill -INT $$' INT
-trap 'remove_temporaries; trap - EXIT TERM; kill -TERM $$' TERM
+trap 'clean_up; trap - EXIT HUP; kill -HUP $$' HUP
+trap 'clean_up; trap - EXIT INT; kill -INT $$' INT
+trap 'clean_up; trap - EXIT TERM; kill -TERM $$' TERM
 remove_temporaries
 mkdir "$build_tmp"
 (
@@ -121,11 +131,9 @@ smoke_appimage() {
     # For the AppImage's extraction (APPIMAGE_EXTRACT_AND_RUN, above). Nothing after this function, the script's last
     # step, makes temporary files.
     export TMPDIR="$smoke"
-    serve_pid='' orchestrator=''
+    # The EXIT trap stops serve.
     smoke_fail() {
         echo "build-desktop.sh: the AppImage as the CLI: $*" >&2
-        # The orchestrator by its own pid too: the failed check may be that the runtime's death did not stop it.
-        for pid in $orchestrator $serve_pid; do kill "$pid" 2>/dev/null || true; done
         exit 1
     }
     smoke_cli "$smoke" "$1"
@@ -189,6 +197,7 @@ smoke_appimage() {
     done
     # The runtime's status is its death by SIGTERM's; the orchestrator's, an orphan's, reaches no one.
     wait "$serve_pid" || true
+    serve_pid='' orchestrator=''
     remove_temporaries
     echo "smoke-tested dist/$(basename "$1") as the CLI"
 }
