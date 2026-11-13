@@ -21,7 +21,7 @@ use crate::quality::last_lines;
 /// The release a base without ci/gate.pin is judged by, in ci/gate.pin's form: the octoflow-gate release this engine
 /// was tested against, whose quality.json schema crate::quality::read_report reads. Raise it with the repository's own
 /// ci/gate.pin.
-pub const BUILT_IN_PIN: &str = "0.7.0 9700f6072b5d6926b9ce32c01ed582fde7bf887424b62e9ec0ced868b24509e1";
+pub const BUILT_IN_PIN: &str = "0.10.0 8f6007f046be5fcf516496201a41bc7185a3af53c5e7778a9489a0d10414525a";
 
 /// Where a pin's release is downloaded from: the GitHub release `v<version>` of octoflow-gate, with {v} the version.
 const RELEASE_URL: &str = "https://github.com/DavidSiegl/octoflow-gate/releases/download/v{v}/octoflow-gate-{v}.tar.gz";
@@ -373,8 +373,9 @@ const KIND_MARKERS: [&str; 6] = ["Cargo.toml", "pytest.ini", "conftest.py", "uv.
 
 /// The gate.toml set_up writes for a project whose top level holds the KIND_MARKERS in present, and pyproject.toml
 /// with the text pyproject (None: there is none): a comment on what the file is and that its guesses need checking,
-/// then a [[test]] for each kind of project found, Rust, Python, JavaScript and Go in that order; with none found, no
-/// [[test]] and a comment saying how to add one. A project has Python tests only when pytest is configured there, by
+/// then a [[test]] for each kind of project found, Rust, Python, JavaScript and Go in that order, a Go project's
+/// preceded by a comment that the gate needs golangci-lint and how to turn it off; with none found, no [[test]] and a
+/// comment saying how to add one. A project has Python tests only when pytest is configured there, by
 /// pytest.ini, conftest.py or a [tool.pytest…] table: a pyproject.toml may hold only other tools' settings, and
 /// pytest would then collect nothing and fail every round.
 fn starter_settings(present: &[&str], pyproject: Option<&str>) -> String {
@@ -415,6 +416,13 @@ fn starter_settings(present: &[&str], pyproject: Option<&str>) -> String {
         return text;
     }
     text.push_str("#\n# Guessed from the files at the top level: check that each command runs this project's tests.\n");
+    if has("go.mod") {
+        // From octoflow-gate 0.9.0 on, the gate fails every round of a project that tracks Go files and lacks it.
+        text.push_str(
+            "#\n# Go is linted with golangci-lint, which must be on PATH where the gate runs; to judge without it:\n\
+             #\n# [linters]\n# golangci-lint = []\n",
+        );
+    }
     for (name, command, junit) in tests {
         text.push_str(&format!("\n[[test]]\nname = \"{name}\"\ncommand = {command}\n"));
         if let Some(junit) = junit {

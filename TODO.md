@@ -59,11 +59,16 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 - **The local gate's report names an empty `judge/gate.toml` for a base without `gate.toml`.** Raised by
   cross-review 171 (F7): "the gate counts the file as there and reports `<…>/judge/gate.toml` as where the settings
   came from … It does not report 'the defaults (there is no …)', so quality.md hides that the defaults judged the
-  change." octoflow-gate 0.7.0 refuses a `--config` that names no file or names a `pyproject.toml`
+  change." octoflow-gate 0.10.0, as 0.7.0, refuses a `--config` that names no file or names a `pyproject.toml`
   (`JudgedBy::for_tree`, `parse_args`), and without `--config` it reads the change's own `gate.toml`, so the empty
   file is what keeps the change's settings out. Would close when octoflow-gate takes the judge's rules and settings
   without a settings file, as a `--rules` option, or reports an empty one as its defaults. Decided against (the user's
   ruling, 2026-11-11): either costs a gate release and a `BUILT_IN_PIN` bump for the name of one file in the report.
+- **A resumed run without `ci/gate.pin` can change gate release between rounds.** Raised by cross-review 185
+  (round 2): `local_gate::start` reads `BUILT_IN_PIN` each round rather than from the run's saved state, so a run
+  started under one engine and resumed under one with a raised pin has its rounds judged by two releases, and
+  `GateFailures.repeats` compares two check sets. First seen with 0.70.0's raise from 0.7.0 to 0.10.0. Closes with the
+  release a pinless run starts with saved in its state and judged by on resume.
 - **A local gate whose job cannot start shows it at the first verdict, not at `start`.** Raised by cross-review 171
   (F6): "If setsid has gone missing since the preflight, the first verdict reports 'its job gone without a status:
   <job.log tail>'." LAUNCH prints the job's pid either way; the tail of `job.log` still says why. Closes with
