@@ -1910,6 +1910,50 @@ fn snapshot_holds_a_file_rewritten_at_its_size_within_the_second_git_staged_it()
     assert_eq!(r.git(&["show", &format!("{sha}:racy.py")]), "after!\n");
 }
 
+/// A Repo with a base commit, whose Host finds in bin a git that runs the system's git and makes its temporary files
+/// under tmp. At a `git add` given GIT_INDEX_FILE, the git writes bin/seen: the umask, then the modes of
+/// GIT_INDEX_FILE's directory and of the file, in octal, one to a line. After such a `git write-tree`, it leaves
+/// GIT_INDEX_FILE.lock behind, as a git killed while it held the lock would.
+fn repo_watching_the_index_copy(bin: &str, tmp: &str) -> Repo {
+    tool(
+        bin,
+        "git",
+        &format!(
+            "#!/bin/sh\ncase \"${{GIT_INDEX_FILE:+set}} $* \" in set*\" add \"*) {{ umask; stat -c %a -- \"${{GIT_INDEX_FILE%/*}}\" \
+             \"$GIT_INDEX_FILE\"; }} > '{bin}/seen' || exit 1;; esac\n\
+             for s in /usr/bin/git /bin/git; do [ -x \"$s\" ] && {{ \"$s\" \"$@\"; e=$?; break; }}; done\n\
+             case \"${{GIT_INDEX_FILE:+set}} $* \" in set*\" write-tree \"*) : > \"$GIT_INDEX_FILE.lock\" || exit 1;; esac\nexit \"${{e:-127}}\"\n"
+        ),
+    );
+    let host = ProcessHost::in_environment(environment(Some(bin), &[("TMPDIR", tmp)]).into_iter(), &Interrupt::new());
+    Repo::with_host(&[("a.py", "a\n")], host)
+}
+
+#[test]
+fn the_copy_of_the_index_git_stages_into_is_private_and_not_at_the_index_s_mode() {
+    let (bin, tmp) = (TempDir::new(), TempDir::new());
+    let r = repo_watching_the_index_copy(&bin.path(), &tmp.path());
+    std::fs::set_permissions(format!("{}/.git/index", r.path), std::fs::Permissions::from_mode(0o666)).unwrap();
+    r.put("b.py", "b\n");
+    r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    let seen = read(&bin.join("seen"));
+    let octal: Vec<u32> = seen.lines().map(|l| u32::from_str_radix(l, 8).unwrap()).collect();
+    let [umask, dir, file] = octal[..] else { panic!("{seen}") };
+    // Only its owner can reach the copy, which is at a new file's mode, not at the index's, as `cp -p` would make it.
+    assert_eq!((dir, file), (0o700, 0o666 & !umask), "{seen}");
+}
+
+#[test]
+fn a_tree_snapshot_leaves_nothing_in_the_temporary_directory_not_even_a_lock() {
+    let (bin, tmp) = (TempDir::new(), TempDir::new());
+    let r = repo_watching_the_index_copy(&bin.path(), &tmp.path());
+    r.put("b.py", "b\n");
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    assert_eq!(r.git(&["ls-tree", "--name-only", &tree]).split_whitespace().collect::<Vec<_>>(), ["a.py", "b.py"]);
+    let left: Vec<_> = std::fs::read_dir(tmp.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert!(left.is_empty(), "{left:?}");
+}
+
 #[test]
 fn snapshot_of_a_repository_without_an_index() {
     let r = Repo::new(&[]);
