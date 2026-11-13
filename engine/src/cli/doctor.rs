@@ -15,8 +15,6 @@ use crate::local_gate;
 pub const HERDR_MIN_VERSION: [u64; 2] = [0, 9];
 /// The oldest git a run works with, by the numbers its --version prints.
 pub const GIT_MIN_VERSION: [u64; 2] = [2, 36];
-/// The exit status a POSIX shell gives a command it cannot find, as the shell an SSH command runs in does.
-const COMMAND_NOT_FOUND_EXIT: i32 = 127;
 
 /// A version as it is written, such as 0.9 for [0, 9].
 pub fn dotted(version: &[u64]) -> String {
@@ -334,20 +332,18 @@ fn on_path(host: &dyn Host, command: &str) -> Probed {
     Ok(path.to_string())
 }
 
-/// argv's exit status and output, as host.run gives them, run within timeout seconds. Unmet as on_path's, when argv[0]
-/// is not on host's PATH: it cannot be started here, or over SSH the remote shell exits COMMAND_NOT_FOUND_EXIT; and
-/// with the error for any other failure to run it.
+/// argv's exit status and output, as host.run gives them, run within timeout seconds once on_path finds argv[0] on
+/// host's PATH. Unmet as on_path's when it does not, or argv[0] is gone by the time it is started; and with the error
+/// for any other failure to look it up or run it. Looking it up first through `sh -c` keeps the answer the same
+/// whatever login shell an SSH command runs in (csh exits 1 for a missing command, not 127) and whatever status the
+/// tool itself exits with.
 fn run_tool(host: &dyn Host, argv: &[&str], timeout: u64) -> Result<Completed, Unmet> {
-    let not_on_path = || Unmet::new(format!("{} is not on PATH", argv[0]));
-    let proc = match host.exec(argv, None, timeout) {
-        Err(ExecError::NotFound(_)) => return Err(not_on_path()),
-        Err(ExecError::Failed(e)) => return Err(e.into()),
-        Ok(exec) => decoded(exec)?,
-    };
-    if host.ssh_target().is_some() && proc.status == COMMAND_NOT_FOUND_EXIT {
-        return Err(not_on_path());
+    on_path(host, argv[0])?;
+    match host.exec(argv, None, timeout) {
+        Err(ExecError::NotFound(_)) => Err(Unmet::new(format!("{} is not on PATH", argv[0]))),
+        Err(ExecError::Failed(e)) => Err(e.into()),
+        Ok(exec) => Ok(decoded(exec)?),
     }
-    Ok(proc)
 }
 
 /// What `command --version` prints, once command is on host's PATH and the first version number it prints is

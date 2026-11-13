@@ -62,6 +62,18 @@ struct Tools {
     envs: Vec<Vec<(OsString, OsString)>>,
     /// Answers in place of answers when it gives one, given the target and argv: a test's own.
     answer_with: Option<AnswerWith>,
+    /// What the login shell an SSH command runs in answers for a command, by its name, that is not on PATH.
+    missing_over_ssh: fn(&str) -> Answer,
+}
+
+/// A POSIX login shell's answer for a command not on PATH.
+fn sh_not_found(command: &str) -> Answer {
+    failing(&format!("sh: 1: {command}: not found\n"), 127)
+}
+
+/// A csh or tcsh login shell's answer for a command not on PATH.
+fn csh_not_found(command: &str) -> Answer {
+    failing(&format!("{command}: Command not found.\n"), 1)
 }
 
 /// A machine's commands with every tool doctor checks present; a test changes paths or answers to take one away.
@@ -103,6 +115,7 @@ impl FakeTools {
             calls: vec![],
             envs: vec![],
             answer_with: None,
+            missing_over_ssh: sh_not_found,
         })))
     }
 
@@ -168,9 +181,9 @@ impl FakeTools {
             };
         }
         if !t.paths.contains_key(&argv[0]) && argv[0] != "gitleaks" {
-            // The remote shell answers for a command it cannot find; locally it cannot be started at all.
+            // The remote login shell answers for a command it cannot find; locally it cannot be started at all.
             if target.is_some() {
-                return ran(127, "", &format!("sh: 1: {}: not found\n", argv[0]));
+                return played(&(t.missing_over_ssh)(&argv[0]));
             }
             return Err(ProcessError::Start(std::io::ErrorKind::NotFound.into()));
         }
@@ -482,21 +495,37 @@ fn gh_logged_out() {
 }
 
 #[test]
-fn a_missing_git_or_gh_is_found_by_running_it_once() {
+fn a_missing_git_or_gh_is_looked_up_through_sh_whatever_the_login_shell_and_not_run() {
+    let lookup = |tool: &str| ["sh", "-c", "command -v -- \"$1\"", "_", tool].map(String::from).to_vec();
     for (machine, target) in [(None, None), (Some("box"), Some("me@box"))] {
-        for (tool, argv) in [("git", &["git", "--version"][..]), ("gh", &["gh", "auth", "status"][..])] {
-            let tools = FakeTools::new();
-            tools.remove(tool);
-            assert_eq!(setup(&tools, machine, None)[tool].detail, format!("{tool} is not on PATH"));
-            let asked: Vec<Vec<String>> = tools
-                .tools()
-                .calls
-                .iter()
-                .filter(|(t, a)| t.as_deref() == target && (a.first().map(String::as_str) == Some(tool) || a.last().map(String::as_str) == Some(tool)))
-                .map(|(_, a)| a.clone())
-                .collect();
-            assert_eq!(asked, [argv.iter().map(|a| a.to_string()).collect::<Vec<_>>()], "{machine:?} {tool}");
+        for login_shell in [sh_not_found as fn(&str) -> Answer, csh_not_found] {
+            for tool in ["git", "gh"] {
+                let tools = FakeTools::new();
+                tools.tools().missing_over_ssh = login_shell;
+                tools.remove(tool);
+                assert_eq!(setup(&tools, machine, None)[tool].detail, format!("{tool} is not on PATH"), "{machine:?}");
+                let asked: Vec<Vec<String>> = tools
+                    .tools()
+                    .calls
+                    .iter()
+                    .filter(|(t, a)| t.as_deref() == target && (a[0] == tool || a.last().unwrap() == tool))
+                    .map(|(_, a)| a.clone())
+                    .collect();
+                assert_eq!(asked, [lookup(tool)], "{machine:?} {tool}");
+            }
         }
+    }
+}
+
+#[test]
+fn a_tool_on_path_that_exits_127_itself_fails_rather_than_being_missing() {
+    for machine in [None, Some("box")] {
+        let tools = FakeTools::new();
+        tools.answer("gh auth status", failing("gh: exec: /opt/gh/bin/gh: not found", 127));
+        tools.answer("git --version", failing("git: shim target gone", 127));
+        let checks = setup(&tools, machine, None);
+        assert_eq!(checks["gh"].detail, "gh auth status fails: gh: exec: /opt/gh/bin/gh: not found", "{machine:?}");
+        assert!(checks["git"].detail.starts_with("git --version failed"), "{machine:?}: {}", checks["git"].detail);
     }
 }
 
@@ -772,23 +801,23 @@ fn on_a_machine() {
     let calls = tools.tools().calls.clone();
     let local: Vec<Vec<String>> = calls.iter().filter(|(t, _)| t.is_none()).map(|(_, a)| a.clone()).collect();
     let words = |w: &str| w.split(' ').map(String::from).collect::<Vec<_>>();
-    assert_eq!(local, [words("herdr --version"), words("herdr machine list --json")]);
+    let lookup = |tool: &str| ["sh", "-c", "command -v -- \"$1\"", "_", tool].map(String::from).to_vec();
+    assert_eq!(local, [lookup("herdr"), words("herdr --version"), words("herdr machine list --json")]);
     let remote: Vec<Vec<String>> = calls.iter().filter(|(t, _)| t.as_deref() == Some("me@box")).map(|(_, a)| a.clone()).collect();
-    // A tool whose version or login is checked is run, never first looked up; only the agent CLIs are.
+    // Every tool run for its version or login is looked up first, as the agent CLIs are.
     let mut looked_up: Vec<String> = remote
         .iter()
         .filter(|a| a.len() > 3 && a[..3] == ["sh", "-c", "command -v -- \"$1\""])
         .map(|a| a.last().unwrap().clone())
         .collect();
     looked_up.sort();
-    let mut kinds: Vec<String> = HARNESS_NAMES.iter().map(|k| k.to_string()).collect();
-    kinds.sort();
-    assert_eq!(looked_up, kinds);
+    let mut tools_run: Vec<String> = HARNESS_NAMES.iter().copied().chain(["gh", "git", "herdr"]).map(String::from).collect();
+    tools_run.sort();
+    assert_eq!(looked_up, tools_run);
     for argv in ["herdr --version", "herdr integration status", "git --version", "gh auth status", "gitleaks git --help", "git -C /proj rev-parse --show-toplevel"] {
         assert!(remote.contains(&words(argv)), "{argv}");
     }
-    let codex = ["sh", "-c", "command -v -- \"$1\"", "_", "codex"].map(String::from).to_vec();
-    assert!(remote.contains(&codex));
+    assert!(remote.contains(&lookup("codex")));
 }
 
 #[test]
