@@ -6,4 +6,4 @@
 # earlier one, 0.7.0 or later: the Gate stage runs a release's `gate`, which the ones before do not ship, so going
 # below 0.7.0 means reverting the commit that raised the pin to it with the Gate stage. The release named here must
 # read this commit's gate.toml, which refuses keys it does not know.
-0.7.0 9700f6072b5d6926b9ce32c01ed582fde7bf887424b62e9ec0ced868b24509e1
+0.10.0 8f6007f046be5fcf516496201a41bc7185a3af53c5e7778a9489a0d10414525a
