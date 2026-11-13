@@ -16,7 +16,7 @@
 
 use crate::error::OrchestratorError;
 use crate::host::{Host, DEFAULT_TIMEOUT};
-use crate::quality::last_lines;
+use crate::host::last_lines;
 
 /// The release a base without ci/gate.pin is judged by, in ci/gate.pin's form: the octoflow-gate release this engine
 /// was tested against, whose quality.json schema crate::quality::read_report reads. Raise it with the repository's own

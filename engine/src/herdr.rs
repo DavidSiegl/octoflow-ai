@@ -18,9 +18,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::constants::AGENT_START_TIMEOUT_MS;
 use crate::error::{os_error, OrchestratorError};
-use crate::host::{line_ends_as_lf, run_process, ProcessError};
+use crate::host::{last_lines, line_ends_as_lf, run_process, ProcessError};
 use crate::interrupt::Interrupt;
-use crate::quality::last_lines;
 use serde_json::Value;
 use crate::json::ValueExt;
 
