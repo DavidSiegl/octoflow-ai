@@ -208,7 +208,7 @@ fn a_failing_proof_demonstrates_its_finding_and_the_builder_must_make_it_pass() 
     assert_eq!(text(&state.proofs[0], "said").unwrap(), "it fails:\nchecking test_1_bug.sh");
     let seen = p.seen.borrow();
     assert!(seen[1].contains(&proofs_note(&format!("{}/test_1_bug.sh", state.proofs_dir(1)))), "{}", seen[1]);
-    assert!(!seen[0].contains("Reviewer backed"));
+    assert!(!seen[0].contains("Findings were backed with tests"));
 }
 
 #[test]
@@ -228,7 +228,7 @@ fn no_proofs_directory_leaves_the_review_as_it_is() {
     assert_eq!(wf.run(), verdict(APPROVE));
     assert_eq!(review(&p.f, wf.state(), 1), "VERDICT: CHANGES_REQUESTED\n1. a bug\n2. another\n3. more\n");
     assert!(wf.state().proofs.is_empty());
-    assert!(!p.seen.borrow()[1].contains("Reviewer backed"));
+    assert!(!p.seen.borrow()[1].contains("Findings were backed with tests"));
 }
 
 #[test]

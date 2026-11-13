@@ -149,9 +149,10 @@ pub const QUALITY_OFF_NOTE: &str = concat!(
     "the round's earlier quality files are {quality_paths}, and the Builder's reports since answer them.",
 );
 
-/// Appended to the prompt of the step a review loops back to, when tests the Reviewer wrote fail against the change.
+/// Appended to the prompt of the step a review loops back to, when tests the proof step (Pipeline::proof_step) wrote
+/// fail against the change. It names no role: the proof step may be of any.
 pub const PROOFS_NOTE: &str = concat!(
-    "The Reviewer backed findings with tests, and these do not pass against your change: {proofs}. ",
+    "Findings were backed with tests, and these do not pass against your change: {proofs}. ",
     "Make each of them pass, without changing it; you may move one into the project as a regression test. ",
     "The orchestrator copies each proof's whole directory under the working tree's `",
     proof_copies_dir!(),
