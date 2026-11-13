@@ -275,25 +275,25 @@ const GOLDEN_PR_BODY: &str = concat!(
     "`20260929-120000-a1b2c3` |\n| Orchestrator-Workflow | `default` |\n| Orchestrator-Role | ",
     "`spec=claude/default` |\n| Orchestrator-Role | `build=claude/default` |\n| Orchestrator-Role | ",
     "`review=claude/default` |\n| Orchestrator-Gate | `ERROR after 2 quality rounds` |\n\n<details ",
-    "open>\n<summary>Spec</summary>\n\n# Add a token-bucket rate limiter\n\n## Goal\nlimit requests\n\n",
-    "</details>\n\n<details>\n<summary>Builder report (round 2)</summary>\n\nreport 2 q1\n\n</details>\n\n",
-    "<details>\n<summary>Quality gate (round 2)</summary>\n\nGATE: ERROR\n\nJenkins build #44 judged ",
-    "snapshot `snap4` (round 2, quality round 2 of 2) and ended UNSTABLE.\n\n`orchestrator.py gate` ",
-    "judged the working tree.\n\n## Issues on changed lines\n\n1. `limiter.py:9` error mypy arg-type: ",
-    "Argument 1 has incompatible type\n\n</details>\n\n<details>\n<summary>Review (round 2)</summary>\n\n",
-    "**VERDICT: APPROVE**\n1. finding\n\n</details>\n\n<details>\n<summary>Run timings</summary>\n\n| step | ",
-    "role | round | harness | model | start (UTC) | duration | file |\n| --- | --- | --- | --- | --- ",
-    "| --- | --- | --- |\n| spec (human-paced) | spec | 0 | claude | default | 2026-10-03 04:00:00 | ",
-    "0s | spec.md |\n| build | build | 1 | claude | default | 2026-10-03 04:00:00 | 0s | build-1.md |\n",
-    "| quality | quality | 1 q1 | - | - | 2026-10-03 04:00:00 | 30s | quality-1-1.md |\n| build | ",
-    "build | 1 q1 | claude | default | 2026-10-03 04:00:30 | 0s | build-1-q1.md |\n| quality | ",
-    "quality | 1 q2 | - | - | 2026-10-03 04:00:30 | 30s | quality-1-2.md |\n| review | review | 1 | ",
-    "claude | default | 2026-10-03 04:01:00 | 0s | review-1.md |\n| build | build | 2 | claude | ",
-    "default | 2026-10-03 04:01:00 | 0s | build-2.md |\n| quality | quality | 2 q1 | - | - | ",
-    "2026-10-03 04:01:00 | 30s | quality-2-1.md |\n| build | build | 2 q1 | claude | default | ",
-    "2026-10-03 04:01:30 | 0s | build-2-q1.md |\n| quality | quality | 2 q2 | - | - | 2026-10-03 ",
-    "04:01:30 | 30s | quality-2-2.md |\n| review | review | 2 | claude | default | 2026-10-03 ",
-    "04:02:00 | 0s | review-2.md |\n\n</details>\n",
+    "open>\n<summary>Spec</summary>\n\n# Add a token-bucket rate limiter\n\n## Goal\nlimit ",
+    "requests\n\n</details>\n\n<details>\n<summary>Builder report (round 2)</summary>\n\nreport 2 ",
+    "q1\n\n</details>\n\n<details>\n<summary>Quality gate (round 2)</summary>\n\nGATE: ",
+    "ERROR\n\noctoflow-gate 0.10.0, run locally, judged snapshot `snap4` (round 2, quality round 2 of ",
+    "2).\n\n`orchestrator.py gate` judged the working tree.\n\n## Issues on changed lines\n\n1. ",
+    "`limiter.py:9` error mypy arg-type: Argument 1 has incompatible ",
+    "type\n\n</details>\n\n<details>\n<summary>Review (round 2)</summary>\n\n**VERDICT: APPROVE**\n1. ",
+    "finding\n\n</details>\n\n<details>\n<summary>Run timings</summary>\n\n| step | role | round | ",
+    "harness | model | start (UTC) | duration | file |\n| --- | --- | --- | --- | --- | --- | --- | --- ",
+    "|\n| spec (human-paced) | spec | 0 | claude | default | 2026-10-03 04:00:00 | 0s | spec.md |\n| ",
+    "build | build | 1 | claude | default | 2026-10-03 04:00:00 | 0s | build-1.md |\n| quality | quality ",
+    "| 1 q1 | - | - | 2026-10-03 04:00:00 | 10s | quality-1-1.md |\n| build | build | 1 q1 | claude | ",
+    "default | 2026-10-03 04:00:10 | 0s | build-1-q1.md |\n| quality | quality | 1 q2 | - | - | ",
+    "2026-10-03 04:00:10 | 10s | quality-1-2.md |\n| review | review | 1 | claude | default | 2026-10-03 ",
+    "04:00:20 | 0s | review-1.md |\n| build | build | 2 | claude | default | 2026-10-03 04:00:20 | 0s | ",
+    "build-2.md |\n| quality | quality | 2 q1 | - | - | 2026-10-03 04:00:20 | 10s | quality-2-1.md |\n| ",
+    "build | build | 2 q1 | claude | default | 2026-10-03 04:00:30 | 0s | build-2-q1.md |\n| quality | ",
+    "quality | 2 q2 | - | - | 2026-10-03 04:00:30 | 10s | quality-2-2.md |\n| review | review | 2 | ",
+    "claude | default | 2026-10-03 04:00:40 | 0s | review-2.md |\n\n</details>\n",
 );
 
 /// The prompts of the step with id step in round n of the run in state, of pipeline, its files those host holds:
@@ -354,7 +354,7 @@ fn two_gated_rounds(outcomes: Vec<Outcome>, build: Vec<Turn>, review: Vec<Turn>)
         ("review", review.into_iter().map(|r| recording(r, &seen)).collect()),
     ])
     .gated();
-    f.ci.state().outcomes = outcomes.into();
+    f.judging(outcomes);
     let phases = Rc::new(std::cell::RefCell::new(Vec::new()));
     let saved = Rc::clone(&phases);
     f.host.state().before_write = Some(Box::new(move |path, text| {
@@ -412,7 +412,9 @@ fn gate_passes_after_a_fix_then_runs_out() {
         .state()
         .writes
         .iter()
-        .filter(|p| p.starts_with(D) && !p.ends_with("state.json"))
+        // The run directory's own files: the local gate's are in directories of their own.
+        .filter(|p| p.strip_prefix(D).is_some_and(|name| !name.trim_start_matches('/').contains('/')))
+        .filter(|p| !p.ends_with("state.json"))
         .map(|p| file_name(p).to_string())
         .collect();
     assert_eq!(written, [
@@ -464,7 +466,7 @@ fn gate_runs_out_then_passes() {
 /// saved_run of the default workflow's three roles with the gate's job.
 fn gated_run(phase: &str, rnd: u32) -> RunState {
     let mut state = saved_run(phase, rnd, FULL);
-    state.quality_job = Some(crate::ci::fake::JOB.to_string());
+    state.quality_job = Some(crate::ci::LOCAL_GATE.to_string());
     state
 }
 

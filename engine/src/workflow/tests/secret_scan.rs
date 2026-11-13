@@ -38,6 +38,11 @@ fn gated_on(host: Rc<FakeHost>, script: Script) -> Fixture {
     Fixture::on(host, new_state(), script).gated()
 }
 
+/// The job directories of the local gate's runs in f, in order.
+fn judged(f: &Fixture) -> Vec<String> {
+    f.gate.borrow().jobs.iter().map(|job| job[0].clone()).collect()
+}
+
 /// The paths of the files that hold the fake secret.
 fn holding_the_secret(f: &Fixture) -> Vec<String> {
     f.host.state().files.iter().filter(|(_, text)| text.contains(FAKE_TOKEN)).map(|(p, _)| p.to_string()).collect()
@@ -73,22 +78,13 @@ fn a_secret_in_a_snapshot_goes_back_to_the_builder() {
     let state = &f.state;
     let quality = f.quality_file(1, 1);
     assert_eq!(parse_gate(&quality), Some(QUALITY_LEAK));
-    assert!(quality.contains("so it was not pushed and Jenkins did not judge the change"));
+    assert!(quality.contains("so the local gate did not judge the change"));
     let in_snapshot = Leak { commit: "snap1".into(), ..leak() };
     assert!(quality.contains(&format!("## Secrets found\n\n1. {in_snapshot}\n")), "{quality}");
     assert_eq!(wf.state().quality_rounds[0].get("gate"), Some(&Value::from(QUALITY_LEAK)));
     assert_eq!(*builds.borrow(), [quality_fix(state, 1, 1) + &note()]);
-    // Only the clean second snapshot was pushed and built.
-    let pushes: Vec<Vec<String>> = f
-        .host
-        .state()
-        .git_calls
-        .iter()
-        .filter(|c| c.len() > 2 && c[..3] == ["push", "--quiet", "--force"])
-        .cloned()
-        .collect();
-    assert_eq!(pushes, [strings(&["push", "--quiet", "--force", "origin", "snap2:refs/heads/orchestrator-ci/a1b2c3-1-q2"])]);
-    assert_eq!(f.ci.state().triggered(), ["orchestrator-ci/a1b2c3-1-q2"]);
+    // Only the clean second snapshot was judged.
+    assert_eq!(judged(&f), [format!("{}/job-1", state.gate_dir(1, 2))]);
     assert!(f.quality_file(1, 2).starts_with("GATE: OK"));
     let scanned: Vec<String> = f.host.state().scans.iter().take(2).map(|s| s.commit.clone()).collect();
     assert_eq!(scanned, ["snap1", "snap2"]);
@@ -102,14 +98,16 @@ fn a_secret_in_a_snapshot_goes_back_to_the_builder() {
 fn a_leak_report_is_masked_as_every_quality_file_is() {
     // A path that quotes the CI token, as the one place it can reach a leak report from.
     let file = format!("token-{}.txt", crate::ci::fake::JENKINS_TOKEN);
-    let f = gated_on(
+    let f = Fixture::on(
         host_with(vec![Leak { file, ..snapshot_leak() }]),
+        new_state(),
         vec![
             ("spec", vec![spec_turn()]),
             ("build", vec![build_turn(1), fix_keeping(0)]),
             ("review", vec![review_turn(1, APPROVE)]),
         ],
-    );
+    )
+    .gated_on_jenkins();
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
     let quality = f.quality_file(1, 1);
     assert_eq!(parse_gate(&quality), Some(QUALITY_LEAK));
@@ -147,7 +145,7 @@ fn a_resume_finds_the_leak_quality_file() {
     // The LEAK file was taken as written: no new snapshot or scan before the fix turn.
     assert_eq!(*before_fix.borrow(), [(scans, snapshots)]);
     assert_eq!(parse_gate(&g.quality_file(1, 1)), Some(QUALITY_LEAK));
-    assert_eq!(g.ci.state().triggered(), ["orchestrator-ci/a1b2c3-1-q2"]);
+    assert_eq!(judged(&g), [format!("{}/job-1", g.state.gate_dir(1, 2))]);
 }
 
 #[test]
@@ -172,7 +170,7 @@ fn a_secret_the_builder_leaves_in_stops_the_loop_early() {
     let found: Vec<Option<&Value>> =
         s.quality_rounds.iter().map(|r| r.get("fingerprints_by_check").and_then(|f| f.get("gitleaks"))).collect();
     assert_eq!(found, [Some(&fingerprint), Some(&fingerprint)]);
-    assert!(f.ci.state().triggered().is_empty());
+    assert!(judged(&f).is_empty());
 }
 
 #[test]
@@ -204,7 +202,7 @@ fn a_secret_in_the_base_fails_the_run() {
     let base: String = wf.state().base.clone().unwrap().chars().take(12).collect();
     assert!(e.contains(&format!("in the run's base {base}")), "{e}");
     assert!(!f.host.state().files.contains_key(&f.state.quality_path(1, 1)));
-    assert!(f.ci.state().triggered().is_empty());
+    assert!(judged(&f).is_empty());
     assert!(wf.state().ci.is_empty());
     assert!(!f.host.state().git_calls.iter().any(|c| c[0] == "push"));
 }

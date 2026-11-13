@@ -434,7 +434,7 @@ fn quality_rounds_and_answers_have_records_of_their_own() {
         assert!(seconds(&t.started_at) <= seconds(&t.ended_at));
         assert_eq!(t.seconds, Some(seconds(&t.ended_at) - seconds(&t.started_at)));
     }
-    // Each quality round polls Jenkins, which takes the host's time too.
+    // Each quality round polls the gate's job, which takes the host's time too.
     assert!(quality[0].seconds.unwrap() > 0);
     let summary = summary(&f).unwrap();
     assert!(summary.contains("| quality | quality | 1 q1 | - | - |"), "{summary}");
@@ -445,19 +445,11 @@ fn quality_rounds_and_answers_have_records_of_their_own() {
 fn a_resumed_analysis_keeps_its_start() {
     let mut state = quality_state(1);
     let host = Rc::new(FakeHost::default());
-    let fake_ci_build = 41;
-    state.ci = ci_of(&[
-        ("ref", REF_1_1.into()),
-        ("sha", "snap9".into()),
-        ("queue_url", format!("{}/queue/item/1/", crate::ci::fake::JENKINS).into()),
-        ("build", fake_ci_build.into()),
-    ]);
     state.turns = vec![record("quality", "quality-1-1.md", Some(-500), None)
         .with("quality_round", 1)
         .with("agent", Value::Null)
         .map()];
     let f = Fixture::resume_gated(host, state, vec![("review", vec![review_turn(1, APPROVE)])], &[]);
-    assert_eq!(f.ci.state().add_build(REF_1_1, green()), fake_ci_build);
     let mut wf = f.workflow(f.as_saved_gated());
 
     assert_eq!(wf.run(), verdict(APPROVE));
@@ -524,8 +516,8 @@ fn a_gated_run_of_two_rounds_records_its_turns_and_quality_rounds() {
         ("round", Value::from(1)),
         ("quality_round", Value::from(1)),
         ("human_paced", Value::Bool(false)),
-        ("started_at", Value::from(at(730))),
-        ("ended_at", Value::from(at(780))),
+        ("started_at", Value::from(at(710))),
+        ("ended_at", Value::from(at(760))),
         ("seconds", Value::from(50)),
         ("tokens", Value::from("unknown")),
     ]);

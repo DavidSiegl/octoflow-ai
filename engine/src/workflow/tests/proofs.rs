@@ -11,8 +11,8 @@
 //!
 //! test_a_carried_proof_runs_again_after_the_rounds_last_quality_round_and_before_the_review logs what happens in a
 //! file of the scratch project, which the proof appends to too, where Python wraps the Workflow's _judge_quality and
-//! _run_proof: a quality round is logged as its snapshot is pushed, and a proof without its round, which its place
-//! among the turns gives.
+//! _run_proof: a quality round is logged as the gate checks its snapshot out, and a proof without its round, which
+//! its place among the turns gives.
 //!
 //! Not here: test_proof_command_needs_a_verdict_step_and_names_the_proof_once, test_a_workflow_file_takes_proof_command_and_proofs_dir
 //! and test_proof_command_round_trips_through_a_workflow_file, which are crate::pipeline's and crate::workflow_file's
@@ -941,15 +941,15 @@ fn a_carried_proof_runs_again_after_the_rounds_last_quality_round_and_before_the
     (state.phase, state.workflow) = ("build".into(), pipeline.name().to_string());
     let host = Rc::new(FakeHost::default());
     // git ignores the scratch project's .orchestrator, as FakeHost has it ignore /proj's, for the gate's clean-tree
-    // check; and a quality round is logged as its snapshot is pushed.
-    let (weak, orchestrator_dir, pushed) = (Rc::downgrade(&host), format!("{dir}/.orchestrator/"), event.clone());
+    // check; and a quality round is logged as the local gate checks its snapshot out, in gate-<n>-<q>/job-1/tree.
+    let (weak, orchestrator_dir, judged) = (Rc::downgrade(&host), format!("{dir}/.orchestrator/"), event.clone());
     host.state().before_git = Some(Box::new(move |_, args| {
         if let Some(host) = weak.upgrade() {
             host.state().changed.retain(|p| !p.starts_with(&orchestrator_dir));
         }
-        if let ["push", "--quiet", "--force", "origin", refspec] = args {
-            let round = refspec.rsplit_once("a1b2c3-").map_or("", |(_, nq)| nq).replace("-q", " ");
-            pushed(format!("quality round {round}"));
+        if let ["worktree", "add", "--detach", tree, _] = args {
+            let round = tree.rsplit_once("/gate-").map_or("", |(_, nq)| nq).trim_end_matches("/job-1/tree").replace('-', " ");
+            judged(format!("quality round {round}"));
         }
     }));
     let f = Fixture::on(host, state, vec![
@@ -958,7 +958,7 @@ fn a_carried_proof_runs_again_after_the_rounds_last_quality_round_and_before_the
     ])
     .gated();
     f.run_processes();
-    f.ci.state().outcomes = vec![green(), red(), green()].into();
+    f.judging(vec![green(), red(), green()]);
 
     let mut wf = f.workflow(settings(&pipeline, 3));
     assert_eq!(wf.run(), verdict(APPROVE));

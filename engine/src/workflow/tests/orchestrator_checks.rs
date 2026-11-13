@@ -32,7 +32,7 @@ fn limits() -> Arc<FakePyPI> {
 fn checked(host: FakeHost, script: Script, pypi: Arc<FakePyPI>, build: Outcome) -> Fixture {
     let f = Fixture::on(Rc::new(host), new_state(), script).gated().with_pypi(pypi);
     f.clock.set(TODAY);
-    f.ci.state().outcomes = [build].into();
+    f.judging(vec![build]);
     f
 }
 
@@ -46,7 +46,7 @@ fn spec_of(spec: &str) -> Turn {
 }
 
 #[test]
-fn a_build_that_failed_before_the_gate_is_not_checked() {
+fn a_change_the_gate_could_not_judge_is_not_checked() {
     let host = FakeHost::default();
     host.state().diff = pyproject_diff(&["requests"]);
     pyproject_files(&host, &["requests"]);
@@ -55,7 +55,8 @@ fn a_build_that_failed_before_the_gate_is_not_checked() {
         ("build", vec![build_turn(1)]),
         ("review", vec![review_turn(1, APPROVE)]),
     ];
-    let f = checked(host, script, limits(), Outcome { console: "boom".into(), ..Outcome::unarchived() });
+    let f = checked(host, script, limits(), green());
+    f.gate.borrow_mut().runs = [GateRun::CannotJudge("error: boom\n")].into();
 
     assert_eq!(f.workflow(one_round()).run(), verdict(APPROVE));
     let quality = f.host.state().files.get(&f.state.quality_path(1, 1)).cloned().unwrap();

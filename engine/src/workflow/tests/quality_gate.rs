@@ -1,7 +1,9 @@
-//! TestQualityGate and TestStuckQualityLoop: the quality rounds of a gated run, on FakeJenkins, as Jenkins plays them
-//! for real: the preflight, the snapshot pushed and built, the quality file the build archives or the report of a
-//! build that failed, Jenkins failing on the way, the heartbeat while it builds, the refs deleted at the end, and a
-//! loop that stops when a quality round fails on just what the one before it failed on.
+//! TestQualityGate and TestStuckQualityLoop: the quality rounds of a gated run, which either gate goes through
+//! alike, on the local gate: the rounds, the heartbeat while the gate runs, the quality.json each round records, and
+//! a loop that stops when a quality round fails on just what the one before it failed on. And the Jenkins gate's own
+//! (on_jenkins), on FakeJenkins as Jenkins plays them for real: the preflight, the snapshot pushed and built, the
+//! quality file the build archives or the report of a build that failed, Jenkins failing on the way, and the refs
+//! deleted at the end.
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -15,6 +17,18 @@ use crate::quality::finding_fingerprint;
 /// make_workflow with the quality gate: Python's gated.
 fn gated(script: Script) -> Fixture {
     Fixture::new(script).gated()
+}
+
+/// make_workflow with the Jenkins quality gate.
+fn on_jenkins(script: Script) -> Fixture {
+    Fixture::new(script).gated_on_jenkins()
+}
+
+/// on_jenkins, its builds playing outcomes, in order, and then green ones.
+fn building_on_jenkins(script: Script, outcomes: Vec<Outcome>) -> Fixture {
+    let f = on_jenkins(script);
+    f.ci.state().outcomes = outcomes.into();
+    f
 }
 
 /// The push of snapshot sha to the ref of round n's quality round q.
@@ -61,32 +75,17 @@ fn gate_passes_first_time() {
 
     assert_eq!(wf.run(), verdict(APPROVE));
 
-    let mut expected = strings(&["parameters", "trigger", "queue"]);
-    // Once quality.md is archived, each read of it is followed by one of quality.json.
-    expected.extend(strings(&["build", "quality", "build", "quality", "quality.json", "build", "quality", "quality.json"]));
-    assert_eq!(names_of(&f), expected);
-    let triggers: Vec<Map<String>> = f
-        .ci
-        .state()
-        .requests
-        .iter()
-        .filter(|r| r.url.ends_with("/buildWithParameters"))
-        .map(|r| r.form.clone())
-        .collect();
-    assert_eq!(triggers, [[("GIT_REF", REF_1_1.to_string())].into_iter().collect::<Map<String>>()]);
-    assert!(f.host.state().git_calls.contains(&pushed("snap1", 1, 1)));
+    assert_eq!(f.gate.borrow().jobs.len(), 1);
     assert_eq!(f.host.state().snapshots[0].0, "abc123");
     let state = &f.state;
     assert_eq!(
         f.quality_file(1, 1),
-        "GATE: OK\n\nJenkins build #41 judged snapshot `snap1` (round 1, quality round 1 of 3) and ended SUCCESS.\n\
+        "GATE: OK\n\noctoflow-gate 0.10.0, run locally, judged snapshot `snap1` (round 1, quality round 1 of 3).\n\
          \n`orchestrator.py gate` judged the working tree.\n\n## Issues on changed lines\n\nNone.\n"
     );
     assert!(seen.borrow()[0].contains(&quality_note(QUALITY_PASSED_NOTE, &state.quality_path(1, 1))));
     assert!(seen.borrow()[0].contains(&format!("The Builder's report is in {}", state.build_path(1))));
     assert!(f.host.state().prs[0].body.contains("<summary>Quality gate (round 1)</summary>"));
-    // done: the refs are gone.
-    assert_eq!(ci_refs(&f.host), []);
     let saved = f.saved();
     assert_eq!(text(&saved, "phase").as_deref(), Some("done"));
     assert_eq!(saved.get("ci"), Some(&Value::Object(Object::new())));
@@ -94,7 +93,7 @@ fn gate_passes_first_time() {
 
 #[test]
 fn credentials_travel_only_in_the_authorization_header() {
-    let f = gated(approved());
+    let f = on_jenkins(approved());
     f.workflow(RunSettings::default()).run().unwrap();
 
     let jenkins = format!("Basic {}", "YWdlbnRzOmplbmtpbnMtc2VjcmV0LXRva2Vu");
@@ -111,7 +110,7 @@ fn credentials_travel_only_in_the_authorization_header() {
 
 #[test]
 fn jenkins_requests_go_under_the_jobs_folder() {
-    let f = gated(approved());
+    let f = on_jenkins(approved());
     f.workflow(RunSettings::default()).run().unwrap();
 
     let job = format!("{JENKINS}{JOB_PATH}");
@@ -141,14 +140,14 @@ fn gate_fails_then_passes() {
     let state = &f.state;
     let quality = f.quality_file(1, 1);
     assert!(quality.starts_with(
-        "GATE: ERROR\n\nJenkins build #41 judged snapshot `snap1` (round 1, quality round 1 of 3) and ended UNSTABLE.\n"
+        "GATE: ERROR\n\noctoflow-gate 0.10.0, run locally, judged snapshot `snap1` (round 1, quality round 1 of 3).\n"
     ));
     assert!(quality.contains("1. `limiter.py:3` error ruff F401: `os` imported but unused\n"));
     assert_eq!(*builds.borrow(), [quality_fix(state, 1, 1) + &note()]);
     assert!(reviews.borrow()[0].contains(&format!("The Builder's report is in {}", state.quality_build_path(1, 1))));
     assert!(reviews.borrow()[0].contains(&quality_note(QUALITY_PASSED_NOTE, &state.quality_path(1, 2))));
     assert!(f.quality_file(1, 2).starts_with("GATE: OK"));
-    assert_eq!(f.ci.state().triggered(), [REF_1_1, "orchestrator-ci/a1b2c3-1-q2"]);
+    assert_eq!(f.gate.borrow().jobs.len(), 2);
 }
 
 #[test]
@@ -185,8 +184,9 @@ fn a_later_round_has_its_own_quality_rounds() {
 
     assert_eq!(wf.run(), verdict(APPROVE));
 
-    assert!(f.host.state().git_calls.contains(&pushed("snap2", 2, 1)));
-    assert_eq!(f.ci.state().triggered(), [REF_1_1, "orchestrator-ci/a1b2c3-2-q1"]);
+    let judged: Vec<String> = f.gate.borrow().jobs.iter().map(|job| job[0].clone()).collect();
+    assert_eq!(judged, [format!("{}/job-1", f.state.gate_dir(1, 1)), format!("{}/job-1", f.state.gate_dir(2, 1))]);
+    assert!(f.quality_file(2, 1).contains("judged snapshot `snap2` (round 2, quality round 1 of 3)"));
     assert!(reviews.borrow()[0].contains(&format!("the new report is in {}", f.state.build_path(2))));
     assert!(reviews.borrow()[0].contains(&quality_note(QUALITY_PASSED_NOTE, &f.state.quality_path(2, 1))));
 }
@@ -206,8 +206,14 @@ fn preflight_fails(f: &Fixture, settings: RunSettings, patterns: &[&str]) {
     }
 }
 
+/// A run on host, with the quality gate, of a Spec writer that is never asked.
 fn gated_on(host: FakeHost) -> Fixture {
     Fixture::on(Rc::new(host), new_state(), vec![("spec", vec![])]).gated()
+}
+
+/// gated_on, with the Jenkins quality gate.
+fn on_jenkins_on(host: FakeHost) -> Fixture {
+    Fixture::on(Rc::new(host), new_state(), vec![("spec", vec![])]).gated_on_jenkins()
 }
 
 #[test]
@@ -221,21 +227,21 @@ fn missing_credentials_fail_before_the_interview() {
 
 #[test]
 fn unreachable_jenkins_fails_before_the_interview() {
-    let f = gated_on(FakeHost::default());
+    let f = on_jenkins_on(FakeHost::default());
     f.ci.state().down = true;
     preflight_fails(&f, RunSettings::default(), &["Jenkins at JENKINS_URL failed the preflight: GET ", "Connection refused"]);
 }
 
 #[test]
 fn job_without_the_parameter_fails_before_the_interview() {
-    let f = gated_on(FakeHost::default());
+    let f = on_jenkins_on(FakeHost::default());
     f.ci.state().parameters.clear();
     preflight_fails(&f, RunSettings::default(), &["lacks the parameters GIT_REF; build it once by hand"]);
 }
 
 #[test]
 fn missing_job_fails_before_the_interview() {
-    let f = gated_on(FakeHost::default());
+    let f = on_jenkins_on(FakeHost::default());
     f.ci.state().job_gone = true;
     preflight_fails(&f, RunSettings::default(), &[&format!("there is no Jenkins job {JOB} at JENKINS_URL: "), " HTTP 404"]);
 }
@@ -246,23 +252,27 @@ fn not_a_git_repository_is_refused() {
         let f = gated_on(FakeHost::new(None, "main"));
         let settings = RunSettings { pull_request, ..RunSettings::default() };
         preflight_fails(&f, settings, &["the quality gate needs a git repository"]);
-        assert!(f.ci.state().requests.is_empty(), "pull_request {pull_request}");
+        assert!(f.gate.borrow().jobs.is_empty(), "pull_request {pull_request}");
     }
 }
 
 #[test]
-fn no_pr_needs_a_clean_tree_and_an_origin() {
+fn no_pr_needs_a_clean_tree() {
     let host = FakeHost::default();
     host.state().changed.insert("/proj/wip.py".into());
     preflight_fails(&gated_on(host), no_pr(), &["uncommitted changes"]);
+}
+
+#[test]
+fn jenkins_needs_an_origin() {
     let host = FakeHost::default();
     host.state().has_origin = false;
-    preflight_fails(&gated_on(host), no_pr(), &["pushes snapshots to origin, and /proj has no origin"]);
+    preflight_fails(&on_jenkins_on(host), no_pr(), &["pushes snapshots to origin, and /proj has no origin"]);
 }
 
 #[test]
 fn no_pr_pushes_snapshots_without_a_run_branch() {
-    let f = gated(approved());
+    let f = on_jenkins(approved());
     let mut wf = f.workflow(no_pr());
 
     assert_eq!(wf.run(), verdict(APPROVE));
@@ -275,7 +285,7 @@ fn no_pr_pushes_snapshots_without_a_run_branch() {
 
 #[test]
 fn job_deleted_mid_run_fails_at_once() {
-    let f = gated(vec![("spec", vec![]), ("build", vec![build_turn(1)])]);
+    let f = on_jenkins(vec![("spec", vec![]), ("build", vec![build_turn(1)])]);
     let ci = Arc::clone(&f.ci);
     let mut spec = spec_turn();
     f.play(
@@ -310,7 +320,7 @@ fn jenkins_down_after_the_change_is_triggered(f: &Fixture, back_after: Option<f6
 
 #[test]
 fn jenkins_unreachable_mid_round_then_back() {
-    let f = gated(approved());
+    let f = on_jenkins(approved());
     jenkins_down_after_the_change_is_triggered(&f, Some(300.0));
 
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
@@ -321,7 +331,7 @@ fn jenkins_unreachable_mid_round_then_back() {
 
 #[test]
 fn jenkins_unreachable_until_the_round_times_out() {
-    let f = gated(vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)])]);
+    let f = on_jenkins(vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)])]);
     jenkins_down_after_the_change_is_triggered(&f, None);
 
     let e = failure(f.workflow(RunSettings::default()).run());
@@ -347,7 +357,7 @@ fn jenkins_unreachable_until_the_round_times_out() {
 
 #[test]
 fn heartbeat_during_a_twenty_minute_build() {
-    let f = gated_building(approved(), vec![Outcome { polls: 110, ..green() }]);
+    let f = gated_building(approved(), vec![Outcome { polls: 115, ..green() }]);
     let beats = Rc::new(RefCell::new(Vec::new()));
     let (clock, written) = (Rc::clone(&f.clock), Rc::clone(&beats));
     f.host.state().before_write = Some(Box::new(move |path, _| {
@@ -368,7 +378,7 @@ fn heartbeat_during_a_twenty_minute_build() {
 fn a_build_running_on_after_its_gate_ends_the_round_with_its_quality_file() {
     // quality.md archived on the second poll, and the build running long past the round's deadline after it.
     let polls = (2 * QUALITY_TIMEOUT / CI_POLL_SECONDS) as u32;
-    let f = gated_building(
+    let f = building_on_jenkins(
         vec![
             ("spec", vec![spec_turn()]),
             ("build", vec![build_turn(1), fix_turn(1, 1)]),
@@ -398,7 +408,7 @@ fn a_build_running_on_after_its_gate_ends_the_round_with_its_quality_file() {
 
 #[test]
 fn a_quality_file_read_while_its_build_runs_is_taken_once_two_reads_agree() {
-    let f = gated_building(approved(), vec![Outcome { polls: 5, after_gate: 4, ..green() }]);
+    let f = building_on_jenkins(approved(), vec![Outcome { polls: 5, after_gate: 4, ..green() }]);
     let cut: String = green().quality.unwrap().chars().take(12).collect();
     f.ci.state().quality_replies.insert(1, cut);
 
@@ -416,7 +426,7 @@ fn a_quality_file_read_while_its_build_runs_is_taken_once_two_reads_agree() {
 
 #[test]
 fn a_read_of_a_running_build_s_quality_file_outlasts_a_failed_read_after_it() {
-    let f = gated_building(approved(), vec![Outcome { polls: 6, after_gate: 5, ..green() }]);
+    let f = building_on_jenkins(approved(), vec![Outcome { polls: 6, after_gate: 5, ..green() }]);
     // The read after the first fails as Jenkins's own trouble does, once.
     let path = format!("{JOB_PATH}41/artifact/quality.md");
     let ci = Arc::clone(&f.ci);
@@ -443,7 +453,7 @@ fn a_read_of_a_running_build_s_quality_file_outlasts_a_failed_read_after_it() {
 #[test]
 fn a_build_that_ends_with_another_quality_file_than_the_one_read_while_it_ran_is_judged_by_the_last() {
     // Read once while it runs, then again once it has ended.
-    let f = gated_building(approved(), vec![Outcome { polls: 2, after_gate: 0, ..green() }]);
+    let f = building_on_jenkins(approved(), vec![Outcome { polls: 2, after_gate: 0, ..green() }]);
     let running = "GATE: FAIL\n\n`orchestrator.py gate` judged the working tree.\n\n## Issues on changed lines\n\n\
                    1. x\n";
     f.ci.state().quality_replies.insert(1, running.to_string());
@@ -460,7 +470,7 @@ fn a_build_that_ends_with_another_quality_file_than_the_one_read_while_it_ran_is
 fn two_reads_of_a_running_build_without_their_gate_line_are_not_its_quality_file() {
     // archiveArtifacts can leave the file empty, or cut inside its GATE line, for longer than a poll interval.
     for cut in ["", "GATE: O"] {
-        let f = gated_building(approved(), vec![Outcome { polls: 6, after_gate: 5, ..green() }]);
+        let f = building_on_jenkins(approved(), vec![Outcome { polls: 6, after_gate: 5, ..green() }]);
         f.ci.state().quality_replies.extend([(1, cut.to_string()), (2, cut.to_string())]);
 
         assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE), "cut {cut:?}");
@@ -474,7 +484,7 @@ fn two_reads_of_a_running_build_without_their_gate_line_are_not_its_quality_file
 
 #[test]
 fn two_reads_of_a_running_build_with_a_whole_line_but_no_gate_stop_the_round_at_once() {
-    let f = gated_building(approved(), vec![Outcome { polls: 50, after_gate: 49, ..green() }]);
+    let f = building_on_jenkins(approved(), vec![Outcome { polls: 50, after_gate: 49, ..green() }]);
     f.ci.state().quality_replies.extend((1..50).map(|k| (k, "Not a gate line\n".to_string())));
 
     let e = failure(f.workflow(RunSettings::default()).run());
@@ -488,7 +498,7 @@ fn build_failed_before_the_gate_goes_back_to_the_builder() {
     let lines: Vec<String> = (0..100).map(|i| format!("line {i}")).collect();
     let console = format!("{}\nJENKINS_TOKEN={}\nSyntaxError: bad", lines.join("\n"), crate::ci::fake::JENKINS_TOKEN);
     let builds = seen();
-    let f = gated_building(
+    let f = building_on_jenkins(
         vec![
             ("spec", vec![spec_turn()]),
             ("build", vec![build_turn(1), recording(fix_turn(1, 1), &builds)]),
@@ -514,7 +524,7 @@ fn build_failed_before_the_gate_goes_back_to_the_builder() {
 #[test]
 fn build_failed_with_failing_tests_has_no_console() {
     let failing = ("tests.t".to_string(), "test_a".to_string(), "AssertionError: 1 != 2".to_string());
-    let f = gated_building(
+    let f = building_on_jenkins(
         vec![
             ("spec", vec![spec_turn()]),
             ("build", vec![build_turn(1), fix_turn(1, 1)]),
@@ -532,7 +542,7 @@ fn build_failed_with_failing_tests_has_no_console() {
 
 #[test]
 fn aborted_build_without_a_quality_file_fails_the_run() {
-    let f = gated_building(
+    let f = building_on_jenkins(
         vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)])],
         vec![Outcome { result: "ABORTED".into(), ..Outcome::unarchived() }],
     );
@@ -556,7 +566,7 @@ fn quality_file_is_followed_whatever_the_result() {
 
 #[test]
 fn queue_item_cancelled_fails_the_run() {
-    let f = gated(vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)])]);
+    let f = on_jenkins(vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)])]);
     f.ci.state().cancelled = true;
 
     let e = failure(f.workflow(RunSettings::default()).run());
@@ -567,7 +577,7 @@ fn queue_item_cancelled_fails_the_run() {
 
 #[test]
 fn done_deletes_only_this_runs_refs() {
-    let f = gated(approved());
+    let f = on_jenkins(approved());
     f.host.state().remote.insert("orchestrator-ci/a1b2c3-1-q7", "left-over".into());
     f.host.state().remote.insert("orchestrator-ci/ffffff-1-q1", "another-run".into());
 
@@ -578,7 +588,7 @@ fn done_deletes_only_this_runs_refs() {
 
 #[test]
 fn refused_request_mid_round_fails_at_once_naming_the_step() {
-    let f = gated(vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)])]);
+    let f = on_jenkins(vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)])]);
     f.ci.state().fail.push((("GET", format!("{JOB_PATH}41/artifact/quality.md")), 403));
 
     let e = failure(f.workflow(RunSettings::default()).run());
@@ -591,7 +601,7 @@ fn refused_request_mid_round_fails_at_once_naming_the_step() {
 
 #[test]
 fn cleanup_without_origin_listing_is_only_logged() {
-    let f = gated(approved());
+    let f = on_jenkins(approved());
     f.host.state().list_remote_error = Some("ssh: connection reset".into());
 
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
@@ -603,7 +613,7 @@ fn cleanup_without_origin_listing_is_only_logged() {
 #[test]
 fn a_build_failed_with_a_test_report_of_no_failures_shows_its_console() {
     // Not one of Python's cases: a report without failing tests says nothing, so the console's end is read instead.
-    let f = gated_building(
+    let f = building_on_jenkins(
         vec![
             ("spec", vec![spec_turn()]),
             ("build", vec![build_turn(1), fix_turn(1, 1)]),
@@ -620,16 +630,22 @@ fn a_build_failed_with_a_test_report_of_no_failures_shows_its_console() {
 
 // -- TestStuckQualityLoop ---------------------------------------------------------------------------------------
 
-/// A gated run whose builds play outcomes, with builds turns of the Builder in round 1; its fixture, run to APPROVE,
-/// and the reviews' prompts.
+/// A gated run whose gate runs judge as outcomes say, with builds turns of the Builder in round 1; its fixture, run
+/// to APPROVE, and the reviews' prompts.
 fn stuck_loop(outcomes: Vec<Outcome>, builds: u32) -> (Fixture, Rc<RefCell<Vec<String>>>) {
+    stuck_on(|script| gated_building(script, outcomes), builds)
+}
+
+/// stuck_loop, on the fixture make makes of the run's script.
+fn stuck_on(make: impl FnOnce(Script) -> Fixture, builds: u32) -> (Fixture, Rc<RefCell<Vec<String>>>) {
     let reviews = seen();
     let mut turns = vec![build_turn(1)];
     turns.extend((1..builds).map(|q| fix_turn(1, q)));
-    let f = gated_building(
-        vec![("spec", vec![spec_turn()]), ("build", turns), ("review", vec![recording(review_turn(1, APPROVE), &reviews)])],
-        outcomes,
-    );
+    let f = make(vec![
+        ("spec", vec![spec_turn()]),
+        ("build", turns),
+        ("review", vec![recording(review_turn(1, APPROVE), &reviews)]),
+    ]);
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
     (f, reviews)
 }
@@ -678,10 +694,16 @@ fn a_finding_on_a_moved_line_is_the_same() {
 }
 
 #[test]
-fn a_build_that_failed_with_nothing_listed_is_not_stuck() {
-    let failed =
-        Outcome { console: "error: cannot install".into(), test_report: false, ..Outcome::unarchived() };
-    let (f, _) = stuck_loop(vec![failed.clone(), failed.clone(), failed], 3);
+fn a_gate_that_could_not_judge_is_not_stuck() {
+    let (f, _) = stuck_on(
+        |script| {
+            let f = Fixture::new(script).gated();
+            let cannot = || GateRun::CannotJudge("error: cannot install\n");
+            f.gate.borrow_mut().runs = [cannot(), cannot(), cannot()].into();
+            f
+        },
+        3,
+    );
     assert_eq!(prompts_to(&f, "build-a1b2c3"), 3);
 }
 
@@ -691,7 +713,7 @@ fn a_failure_holding_a_credential_is_saved_masked() {
     let host = FakeHost::default();
     host.state().fetch_error =
         Some(format!("fatal: unable to access 'https://agents:{}@git.example/r/'", crate::ci::fake::JENKINS_TOKEN));
-    let f = gated_on(host);
+    let f = on_jenkins_on(host);
 
     let e = failure(f.workflow(RunSettings::default()).run());
     assert!(holds_token(&e), "the error itself is git's, as Python raises it: {e}");
@@ -746,7 +768,7 @@ fn the_round_records_what_quality_json_says_failed() {
 
 #[test]
 fn a_build_that_archived_no_quality_json_is_read_from_its_quality_file() {
-    let f = gated_building(fixed_once(), vec![red_with_more_in_its_json().markdown_only(), green().markdown_only()]);
+    let f = building_on_jenkins(fixed_once(), vec![red_with_more_in_its_json().markdown_only(), green().markdown_only()]);
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
     let f401 = finding_fingerprint(Some("limiter.py"), "ruff F401", "`os` imported but unused");
     assert_eq!(recorded_fingerprints(&f, 1), serde_json::json!({"ruff": [f401]}));
@@ -758,8 +780,12 @@ fn stuck_compares_every_failure_quality_json_lists() {
     // The quality files are the same, but quality.json fails round 2 on a finding round 1 did not have.
     let (f, _) = stuck_loop(vec![red(), red_with_more_in_its_json(), red()], 3);
     assert_eq!(prompts_to(&f, "build-a1b2c3"), 3);
-    // Without quality.json, the same files are the same failures again.
-    let (f, _) = stuck_loop(vec![red().markdown_only(), red_with_more_in_its_json().markdown_only()], 3);
+}
+
+#[test]
+fn without_quality_json_the_same_quality_files_are_stuck() {
+    let outcomes = vec![red().markdown_only(), red_with_more_in_its_json().markdown_only()];
+    let (f, _) = stuck_on(|script| building_on_jenkins(script, outcomes), 3);
     assert_eq!(prompts_to(&f, "build-a1b2c3"), 2);
 }
 
@@ -775,10 +801,10 @@ fn an_unknown_schema_version_stops_the_round_naming_it() {
     assert_build_is_left_to_build_again(&f);
 }
 
-/// The run saved its round's build 41 as rejected, so that a resume builds the snapshot again.
+/// The run saved nothing of its round's judgement, so that a resume judges the snapshot again.
 fn assert_build_is_left_to_build_again(f: &Fixture) {
-    let ci = ci_of(&[("ref", REF_1_1.into()), ("sha", "snap1".into()), ("rejected", Value::Array(vec![41.into()]))]);
-    assert_eq!(f.saved().get("ci"), Some(&Value::Object(ci)));
+    assert_eq!(f.saved().get("ci"), Some(&Value::Object(Object::new())));
+    assert!(f.host.state().files.get(&f.state.quality_path(1, 1)).is_none());
 }
 
 #[test]
@@ -796,7 +822,7 @@ fn a_quality_json_whose_gate_is_not_its_quality_file_s_is_rejected() {
 fn a_running_build_s_reports_are_taken_once_two_reads_of_both_agree() {
     // archiveArtifacts has copied quality.md, but not yet quality.json, at the first read.
     let late = Outcome { polls: 50, after_gate: 49, ..red_with_more_in_its_json() };
-    let f = gated_building(fixed_once(), vec![late, green()]);
+    let f = building_on_jenkins(fixed_once(), vec![late, green()]);
     f.ci.state().quality_json_late = 1;
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
     // Three reads of the running build, the first finding no quality.json, then two of the green build.

@@ -1,9 +1,9 @@
 //! A world: a project with an origin, fakes of everything the engine talks to, and the engine run in it.
 //!
 //! `World` is what a scenario (scenarios.rs) is written against. It makes, in a temporary directory, a git project
-//! whose `origin` is a bare repository beside it, and puts the fake herdr, gh and ssh (octoflow_e2e::fakes) first on
-//! PATH; the scenario scripts each of them, runs the engine as a program, and `record` then gives what the run did,
-//! normalized, for main.rs to compare with the scenario's recording.
+//! whose `origin` is a bare repository beside it, and puts the fake herdr, gh, ssh and octoflow-gate
+//! (octoflow_e2e::fakes) first on PATH; the scenario scripts each of them, runs the engine as a program, and `record`
+//! then gives what the run did, normalized, for main.rs to compare with the scenario's recording.
 
 use std::fs;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
@@ -196,12 +196,14 @@ pub struct World {
     pub ledger: Ledger,
 }
 
-/// The fake programs a world puts on PATH, by the name they stand in for.
-fn fakes() -> [(&'static str, &'static str); 3] {
+/// The fake programs a world puts on PATH, by the name they stand in for; octoflow-gate is what the gate of the release
+/// local_gate pins runs.
+fn fakes() -> [(&'static str, &'static str); 4] {
     [
         ("herdr", env!("CARGO_BIN_EXE_fake-herdr")),
         ("gh", env!("CARGO_BIN_EXE_fake-gh")),
         ("ssh", env!("CARGO_BIN_EXE_fake-ssh")),
+        ("octoflow-gate", env!("CARGO_BIN_EXE_fake-gate")),
     ]
 }
 
@@ -227,6 +229,7 @@ impl World {
             ("machines", Value::Array(Vec::new())),
             ("gh", object([])),
             ("jenkins", object([("builds", Value::Array(Vec::new()))])),
+            ("gate", object([("judgements", Value::Array(Vec::new()))])),
             ("pypi", object([])),
         ]);
         for d in ["home", "config/ai-agents-orchestrator", "bin", "fakes", "out", "tmp"] {
@@ -286,6 +289,44 @@ impl World {
     pub fn jenkins_build(&mut self, build: Value) {
         array_at(object_at(&mut self.script, "jenkins"), "builds").push(build);
         self.write_script();
+    }
+
+    /// Make the project's main pin a stub octoflow-gate release, which curl serves from the world, whose gate is the
+    /// fake gate (octoflow_e2e::fakes::gate), and script its judgements, one per run of `--quality-gate local`, in
+    /// order. Call it once, before the engine first runs.
+    pub fn local_gate<J: Into<Value>>(&mut self, judgements: impl IntoIterator<Item = J>) {
+        array_at(object_at(&mut self.script, "gate"), "judgements").extend(judgements.into_iter().map(Into::into));
+        self.write_script();
+        let root = self.root().to_string_lossy().into_owned();
+        // The release is the same bytes in every world, as a run that leaves its job's download behind records it:
+        // its gate names the fake by its shim on PATH, and tar and gzip write no time, owner or name of their own.
+        let gate = self.write("gate-release/gate", "#!/bin/sh\nexec octoflow-gate \"$@\"\n");
+        let runnable = std::os::unix::fs::PermissionsExt::from_mode(0o755);
+        fs::set_permissions(&gate, runnable).unwrap_or_else(|e| panic!("making {gate} runnable: {e}"));
+        let served = format!("{root}/gate.tar.gz");
+        let pack = "tar -cf - --mtime=@0 --owner=0 --group=0 --numeric-owner -C \"$1\" gate | gzip -n > \"$2\"";
+        let packed = Command::new("sh")
+            .args(["-c", pack, "sh", &format!("{root}/gate-release"), &served])
+            .status()
+            .unwrap_or_else(|e| panic!("running tar: {e}"));
+        assert!(packed.success(), "packing the stub release: {packed}");
+        let sum = Command::new("sha256sum").arg(&served).output().unwrap_or_else(|e| panic!("running sha256sum: {e}"));
+        assert!(sum.status.success(), "sha256sum {served}: {}", sum.status);
+        let sha256 = String::from_utf8_lossy(&sum.stdout).split(' ').next().unwrap_or_default().to_string();
+        self.tool(
+            "curl",
+            &format!(
+                "while [ $# -gt 0 ]; do case $1 in -o) out=$2; shift ;; esac; shift; done\ncp -- {} \"$out\"",
+                shlex_quote(&served)
+            ),
+        );
+        // The machine the release's gate is built for, whatever the scenarios run on.
+        self.tool("uname", "echo 'Linux x86_64'");
+        self.write("project/ci/gate.pin", &format!("9.9.9 {sha256}\n"));
+        let project = self.project.clone();
+        self.git(&project, &["add", "ci/gate.pin"]);
+        self.git(&project, &["commit", "--quiet", "-m", "Pin the gate"]);
+        self.git(&project, &["push", "--quiet", "origin", "main"]);
     }
 
     /// Give the quality job a build that Jenkins keeps from before the scenario, as judged-in-quality reads it.

@@ -1,6 +1,7 @@
 //! TestQualityResume: a run resumed in a quality round, or in the gated step's turn around one, picks the round up
-//! from the furthest link of its chain in RunState::ci (the quality file, the build, the queue item, the pushed ref),
-//! and a resumed Builder or Reviewer hears of the quality rounds before it.
+//! from its quality file, if written, and a resumed Builder or Reviewer hears of the quality rounds before it; on the
+//! local gate. And the Jenkins gate's own: a round picked up from the furthest link of its chain in RunState::ci (the
+//! build, the queue item, the pushed ref).
 
 use std::sync::Arc;
 
@@ -25,9 +26,10 @@ fn queue_url() -> (&'static str, Value) {
     ("queue_url", format!("{JENKINS}/queue/item/1/").into())
 }
 
-/// quality_state(q) with ci.
+/// quality_state(q) on the Jenkins job, with ci.
 fn quality_in(q: u32, ci: Object) -> RunState {
     let mut state = quality_state(q);
+    state.quality_job = Some(JOB.to_string());
     state.ci = ci;
     state
 }
@@ -35,6 +37,11 @@ fn quality_in(q: u32, ci: Object) -> RunState {
 /// resume_gated of state on a default FakeHost, the review approving.
 fn resumed(state: RunState) -> Fixture {
     Fixture::resume_gated(Rc::new(FakeHost::default()), state, vec![("review", vec![review_turn(1, APPROVE)])], &[])
+}
+
+/// resumed, on the Jenkins gate.
+fn resumed_on_jenkins(state: RunState) -> Fixture {
+    Fixture::resume_on_jenkins(Rc::new(FakeHost::default()), state, vec![("review", vec![review_turn(1, APPROVE)])], &[])
 }
 
 /// Add a build of git_ref that plays outcome to f's Jenkins; it must be the build numbered number.
@@ -48,7 +55,7 @@ fn snapshot_pushed(f: &Fixture) -> bool {
 
 #[test]
 fn resume_with_a_build_only_polls_it() {
-    let f = resumed(quality_in(1, in_flight(&[queue_url(), ("build", FIRST_BUILD.into())])));
+    let f = resumed_on_jenkins(quality_in(1, in_flight(&[queue_url(), ("build", FIRST_BUILD.into())])));
     add_build(&f, REF_1_1, green(), FIRST_BUILD);
 
     assert_eq!(f.workflow(f.as_saved_gated()).run(), verdict(APPROVE));
@@ -62,7 +69,7 @@ fn resume_with_a_build_only_polls_it() {
 #[test]
 fn resume_with_the_quality_file_archived_and_the_build_running_takes_the_file() {
     let polls = (2 * QUALITY_TIMEOUT / CI_POLL_SECONDS) as u32;
-    let f = resumed(quality_in(1, in_flight(&[queue_url(), ("build", FIRST_BUILD.into())])));
+    let f = resumed_on_jenkins(quality_in(1, in_flight(&[queue_url(), ("build", FIRST_BUILD.into())])));
     add_build(&f, REF_1_1, Outcome { polls, after_gate: polls, ..green() }, FIRST_BUILD);
 
     assert_eq!(f.workflow(f.as_saved_gated()).run(), verdict(APPROVE));
@@ -86,7 +93,7 @@ fn resume_of_a_state_saved_with_sonarqube() {
     saved.insert("quality_baseline".into(), "analysis-base".into());
     let state = RunState::from_text(&Value::Object(saved).to_string()).expect("an old state reads");
     let builds = seen();
-    let f = Fixture::resume_gated(
+    let f = Fixture::resume_on_jenkins(
         Rc::new(FakeHost::default()),
         state,
         vec![("build", vec![recording(fix_turn(1, 1), &builds)]), ("review", vec![review_turn(1, APPROVE)])],
@@ -110,7 +117,7 @@ fn resume_of_a_state_saved_with_sonarqube() {
 
 #[test]
 fn resume_with_only_the_ref_adopts_its_build() {
-    let f = resumed(quality_in(1, in_flight(&[])));
+    let f = resumed_on_jenkins(quality_in(1, in_flight(&[])));
     add_build(&f, REF_1_1, green(), FIRST_BUILD);
     add_build(&f, "orchestrator-ci/a1b2c3-1-q2", green(), FIRST_BUILD + 1);
 
@@ -122,7 +129,7 @@ fn resume_with_only_the_ref_adopts_its_build() {
 
 #[test]
 fn resume_with_only_the_ref_and_no_build_triggers_one() {
-    let f = resumed(quality_in(1, in_flight(&[])));
+    let f = resumed_on_jenkins(quality_in(1, in_flight(&[])));
 
     assert_eq!(f.workflow(f.as_saved_gated()).run(), verdict(APPROVE));
     assert_eq!(collapsed(&f.ci.state().names)[..2], strings(&["find", "trigger"]));
@@ -131,7 +138,7 @@ fn resume_with_only_the_ref_and_no_build_triggers_one() {
 
 #[test]
 fn forgotten_queue_item_finds_its_build() {
-    let f = resumed(quality_in(1, in_flight(&[queue_url()])));
+    let f = resumed_on_jenkins(quality_in(1, in_flight(&[queue_url()])));
     add_build(&f, REF_1_1, green(), FIRST_BUILD);
     f.ci.state().forgotten = true;
 
@@ -142,7 +149,7 @@ fn forgotten_queue_item_finds_its_build() {
 
 #[test]
 fn forgotten_queue_item_without_a_build_fails_the_run() {
-    let f = Fixture::resume_gated(Rc::new(FakeHost::default()), quality_in(1, in_flight(&[queue_url()])), vec![], &[]);
+    let f = Fixture::resume_on_jenkins(Rc::new(FakeHost::default()), quality_in(1, in_flight(&[queue_url()])), vec![], &[]);
     f.ci.state().forgotten = true;
 
     let mut wf = f.workflow(f.as_saved_gated());
@@ -155,7 +162,7 @@ fn forgotten_queue_item_without_a_build_fails_the_run() {
 fn discarded_build_is_cut_back_so_a_resume_builds_again() {
     let host = Rc::new(FakeHost::default());
     let state = quality_in(1, in_flight(&[queue_url(), ("build", FIRST_BUILD.into())]));
-    let f = Fixture::resume_gated(Rc::clone(&host), state, vec![], &[]);
+    let f = Fixture::resume_on_jenkins(Rc::clone(&host), state, vec![], &[]);
 
     let mut wf = f.workflow(f.as_saved_gated());
     let e = failure(wf.run());
@@ -164,16 +171,16 @@ fn discarded_build_is_cut_back_so_a_resume_builds_again() {
 
     // Resumed on the same Jenkins and host.
     let mut again =
-        Fixture::resume_gated(Rc::clone(&host), wf.state().clone(), vec![("review", vec![review_turn(1, APPROVE)])], &[]);
+        Fixture::resume_on_jenkins(Rc::clone(&host), wf.state().clone(), vec![("review", vec![review_turn(1, APPROVE)])], &[]);
     again.ci = Arc::clone(&f.ci);
-    let again = again.gated();
+    let again = again.gated_on_jenkins();
     assert_eq!(again.workflow(again.as_saved_gated()).run(), verdict(APPROVE));
     assert_eq!(f.ci.state().triggered(), [REF_1_1]);
 }
 
 #[test]
 fn a_leftover_ref_of_another_round_is_dropped() {
-    let f = resumed(quality_in(2, in_flight(&[queue_url()])));
+    let f = resumed_on_jenkins(quality_in(2, in_flight(&[queue_url()])));
     f.put(&f.state.quality_build_path(1, 1), "report 1 q1");
     // The run's end cannot list origin's refs, so only the analysis that drops the leftover deletes it.
     f.host.state().list_remote_error = Some("ssh: connection reset".into());
@@ -189,7 +196,7 @@ fn resume_with_the_quality_file_makes_no_request() {
     f.put(&f.state.quality_path(1, 1), "GATE: OK\n");
 
     assert_eq!(f.workflow(f.as_saved_gated()).run(), verdict(APPROVE));
-    assert!(f.ci.state().requests.is_empty());
+    assert!(f.gate.borrow().jobs.is_empty());
 }
 
 #[test]
@@ -199,11 +206,11 @@ fn quality_file_without_a_gate_is_refused() {
 
     let e = failure(f.workflow(f.as_saved_gated()).run());
     assert!(e.contains("quality-1-1.md does not start with a GATE line; fix it"), "{e}");
-    assert!(f.ci.state().requests.is_empty());
+    assert!(f.gate.borrow().jobs.is_empty());
 }
 
 #[test]
-fn build_ends_alike_live_and_resumed() {
+fn build_ends_alike_live_and_resumed_on_jenkins() {
     let cases = [
         ("no quality file", Outcome::unarchived(), "GATE: BUILD_FAILED"),
         ("quality file after FAILURE", Outcome { result: "FAILURE".into(), ..green() }, "GATE: OK"),
@@ -211,7 +218,7 @@ fn build_ends_alike_live_and_resumed() {
     ];
     for (name, outcome, expected) in cases {
         let state = quality_in(1, in_flight(&[queue_url(), ("build", FIRST_BUILD.into())]));
-        let f = Fixture::resume_gated(
+        let f = Fixture::resume_on_jenkins(
             Rc::new(FakeHost::default()),
             state,
             vec![("build", vec![fix_turn(1, 1)]), ("review", vec![review_turn(1, APPROVE)])],
@@ -234,7 +241,7 @@ fn build_ends_alike_live_and_resumed() {
 fn fresh_builder_answering_a_quality_round_is_briefed() {
     let seen = seen();
     let mut state = saved_run("build", 1, FULL);
-    state.quality_job = Some(JOB.to_string());
+    state.quality_job = Some("local".to_string());
     state.quality_round = 1;
     state.prompted = Some("build-1-q1.md".to_string());
     let f = Fixture::resume_gated(
@@ -262,7 +269,7 @@ fn fresh_builder_answering_a_quality_round_is_briefed() {
 fn fresh_builder_in_a_later_round_hears_of_every_earlier_report() {
     let seen = seen();
     let mut state = saved_run("build", 2, FULL);
-    state.quality_job = Some(JOB.to_string());
+    state.quality_job = Some("local".to_string());
     let f = Fixture::resume_gated(
         Rc::new(FakeHost::default()),
         state,
@@ -289,7 +296,7 @@ fn the_last_allowed_quality_round_goes_to_review() {
         vec![("review", vec![recording(review_turn(1, APPROVE), &reviews)])],
         &[],
     );
-    f.ci.state().outcomes.push_back(red());
+    f.judging(vec![red()]);
     f.put(&f.state.quality_build_path(1, 1), "report 1 q1");
 
     assert_eq!(f.workflow(f.as_saved_gated()).run(), verdict(APPROVE));
@@ -337,13 +344,12 @@ fn a_change_the_gate_was_turned_off_before_judging_is_said_to_be_unjudged() {
 
 #[test]
 fn a_quality_file_judged_again_replaces_its_round_s_record() {
-    let mut state = quality_in(1, in_flight(&[queue_url(), ("build", FIRST_BUILD.into())]));
+    let mut state = quality_state(1);
     let stale = serde_json::json!({
         "round": 1, "quality_round": 1, "gate": "ERROR", "conditions": ["old"], "fingerprints_by_check": {}
     });
     state.quality_rounds.push(stale.as_object().cloned().unwrap());
     let f = resumed(state);
-    add_build(&f, REF_1_1, green(), FIRST_BUILD);
 
     assert_eq!(f.workflow(f.as_saved_gated()).run(), verdict(APPROVE));
     let rounds = f.saved().get("quality_rounds").cloned().unwrap();

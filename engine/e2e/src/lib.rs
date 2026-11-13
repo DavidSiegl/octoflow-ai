@@ -1,5 +1,5 @@
 //! The engine's end-to-end scenarios: the orchestrator program run, as a human runs it, against fakes of herdr, gh,
-//! ssh, Jenkins and PyPI, each scenario's record compared with its recording in `recorded/`.
+//! ssh, octoflow-gate, Jenkins and PyPI, each scenario's record compared with its recording in `recorded/`.
 //!
 //! The scenarios and the world they run in are this package's test `tests/e2e/`; `tests/docs/` holds the README and
 //! docs/ to the engine they describe. What the tests share with each other and with the fakes, which run as programs

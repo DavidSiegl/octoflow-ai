@@ -276,7 +276,7 @@ fn a_blocked_quality_answer_waits_then_goes_back_to_the_quality_round() {
         ("review", vec![recording(review_turn(1, APPROVE), &reviews)]),
     ])
     .gated();
-    f.ci.state().outcomes = vec![red(), green()].into();
+    f.judging(vec![red(), green()]);
     bounded(&f);
 
     let mut wf = f.workflow(RunSettings::default());
@@ -307,7 +307,7 @@ fn the_note_is_in_every_prompt_of_the_steps_that_can_block_only() {
         ),
     ])
     .gated();
-    f.ci.state().outcomes = vec![red(), green(), green()].into();
+    f.judging(vec![red(), green(), green()]);
 
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
     // First, quality fix and again; the fresh prompts are in default_prompts.rs's golden texts.
