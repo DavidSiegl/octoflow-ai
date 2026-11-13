@@ -111,9 +111,14 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 - **The desktop app's window has a minimum width.** Decided against (the user's ruling, 2026-11-11, GitHub #357,
   `.scratch/todo/issues/15`): letting the project bar's fields shrink so that its last button stays inside a narrow
   window; `tauri.conf.json` sets `minWidth` instead.
-- **A quality build's Reviewer is told to weigh a loosened lint config.** Decided against (the user's ruling,
+- **A quality round's Reviewer is told to weigh a loosened lint config.** Decided against (the user's ruling,
   2026-11-11, GitHub #377, `.scratch/todo/issues/35`): having the gate take clippy's rule files from the base commit,
   which is a change in octoflow-gate; the Reviewer's quality notes say to weigh an edited one instead.
+- **No command removes the `orchestrator-ci/*` branches a release before 0.71.0 pushed.** With the Jenkins gate gone
+  (drop-jenkins-gate/02, 2026-11-13), so are `delete_ci_refs` and `clean_up_quality`, which deleted a run's snapshot
+  branches on origin; a run that had one in flight when it stopped leaves it there for good. Raised by cross-review
+  191 (F6, nit). Decided against with the spec, which removed the snapshot refs whole: docs/releases/v0.71.0.md says to
+  delete them with `git push origin --delete`. Reopens if a user reports many left.
 
 - **No `doctor` check that a harness can start in the project without asking.** Claude Code's folder-trust dialog
   stops a run before its first turn; run-usability/02 made the run say so and the README list it, but `doctor` does
@@ -145,7 +150,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   cross-review 188 (F2, F3, nits): "A leaf text module importing only constants would hold both helpers without that
   hazard." Closes with both helpers in such a module and their importers pointed there.
 - **Host::fetch does not wait out an outage by itself.** Each caller wraps it in `reaching_origin`
-  (`engine/src/workflow.rs`'s five, `quality_rounds.rs`'s `delete_ci_refs`, `cli/prune.rs`'s `prune_remote`), since a
+  (`engine/src/workflow.rs`'s five, `cli/prune.rs`'s `prune_remote`), since a
   `Host` (`engine/src/host.rs`) has no clock to wait on and no human to tell; a new caller gets no retry unless it
   wraps too, and a wrapped `fast_forward` or `merge_upstream` would also retry a local merge whose error happened to
   say a phrase of `UNREACHABLE`. Deferred from cross-review 135 (F7, nit, 2026-11-04). Would close with the waiting

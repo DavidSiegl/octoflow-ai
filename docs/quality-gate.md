@@ -114,8 +114,8 @@ The gate runs the project's tests as you, with no sandbox: the same trust as run
 nothing in `state.json`'s `ci`: a resume in the middle of one stops the job the interrupted round left, if its
 process is still that job, and runs the round again. An orchestrator that `resume --force` took the run over from
 touches only its own job's files, never the new one's. A run saved by a release before 0.71.0 whose gate was a
-Jenkins job resumes, and drains, on this gate, with a warning naming the job; a round that was in flight on Jenkins
-starts again here.
+Jenkins job resumes on this gate, once it passes this gate's preflight, with a warning naming the job; a round that
+was in flight on Jenkins starts again here, and `show` names this gate for such a run before its resume.
 
 ## The report as a contract
 

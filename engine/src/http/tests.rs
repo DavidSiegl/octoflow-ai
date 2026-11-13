@@ -171,14 +171,14 @@ fn the_proxy_is_the_schemes_and_the_lower_case_variable_wins() {
         ("HTTP_PROXY", "http://plain:3"),
     ]));
     assert_eq!(proxies.for_url("https://pypi.org/pypi/x/json"), Some("http://lower:2"));
-    assert_eq!(proxies.for_url("http://jenkins:8080/job/"), Some("http://plain:3"));
+    assert_eq!(proxies.for_url("http://index:8080/simple/"), Some("http://plain:3"));
     assert_eq!(proxies.for_url("ftp://x/"), None);
     assert_eq!(proxies.for_url("nonsense"), None);
 
     let cancelled = Proxies::from_env(&env(&[("HTTPS_PROXY", "http://upper:1"), ("https_proxy", "")]));
     assert_eq!(cancelled.for_url("https://pypi.org/"), None);
     let cgi = Proxies::from_env(&env(&[("HTTP_PROXY", "http://header:1"), ("REQUEST_METHOD", "GET")]));
-    assert_eq!(cgi.for_url("http://jenkins/"), None);
+    assert_eq!(cgi.for_url("http://index/"), None);
 }
 
 #[test]
@@ -227,15 +227,15 @@ fn a_request_goes_through_the_proxy_its_scheme_names() {
         (connect[0].clone(), tunnelled[0].clone())
     });
     let client = HttpClient::with_env(&env(&[("http_proxy", &url)]));
-    let answer = client.send(&get("http://jenkins.invalid/job/x/api/json")).unwrap();
+    let answer = client.send(&get("http://index.invalid/simple/x/")).unwrap();
     assert_eq!(answer.body, b"from the proxy");
     assert_eq!(
         tunnel.join().unwrap(),
-        ("CONNECT jenkins.invalid:80 HTTP/1.1".to_string(), "GET /job/x/api/json HTTP/1.1".to_string())
+        ("CONNECT index.invalid:80 HTTP/1.1".to_string(), "GET /simple/x/ HTTP/1.1".to_string())
     );
 
     let broken = HttpClient::with_env(&env(&[("http_proxy", "http://alice:s3cret@[::1")]));
-    let answer = broken.send(&get("http://jenkins.invalid/"));
+    let answer = broken.send(&get("http://index.invalid/"));
     assert!(
         matches!(&answer, Err(HttpError::NoAnswer(m)) if m.starts_with("the proxy ") && !m.contains("s3cret")),
         "{answer:?}"
@@ -274,7 +274,7 @@ fn tls_trusts_the_certificates_ssl_cert_file_and_ssl_cert_dir_name() {
     std::fs::create_dir(&certs).unwrap();
     std::fs::create_dir(&more).unwrap();
     // Any name, as rustls-native-certs reads every file of a directory; a file of no certificate adds none.
-    std::fs::write(format!("{certs}/jenkins-ca.pem"), OTHER_CERT).unwrap();
+    std::fs::write(format!("{certs}/index-ca.pem"), OTHER_CERT).unwrap();
     std::fs::write(format!("{certs}/5ed36f99.0"), CERT).unwrap();
     std::fs::write(format!("{more}/notes.txt"), "not a certificate\n").unwrap();
     let roots = |vars: &[(&str, &str)]| count(root_certs(&env(vars)));

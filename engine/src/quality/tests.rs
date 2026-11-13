@@ -139,7 +139,7 @@ fn nothing_failed_repeats_nothing() {
 }
 
 #[test]
-fn read_back_the_gate_of_a_build_failed_report() {
+fn read_back_the_gate_of_a_could_not_judge_report() {
     let mut rng = Rng::new(20);
     for _ in 0..200 {
         let (intro, said) = (rng.text(20, ""), rng.text(20, ""));
