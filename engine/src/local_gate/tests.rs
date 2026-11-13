@@ -569,6 +569,24 @@ fn set_up_keeps_a_file_made_after_it_looked() {
 }
 
 #[test]
+fn set_up_keeps_a_directory_made_after_it_looked_and_leaves_nothing_in_it() {
+    let repo = Repo::new(&[("Cargo.toml", "[package]\n")]);
+    // An ln that finds a directory at gate.toml, which it would make its link in.
+    let bin = TempDir::new();
+    tool(
+        &bin.path(),
+        "ln",
+        "#!/bin/sh\neval \"last=\\${$#}\"\ncase $last in *gate.toml) mkdir -- \"$last\" || exit 1;; esac\n\
+         for s in /usr/bin/ln /bin/ln; do [ -x \"$s\" ] && exec \"$s\" \"$@\"; done\nexit 127\n",
+    );
+    let host = ProcessHost::in_environment(environment(Some(&bin.path()), &[]).into_iter(), &Interrupt::new());
+    let files = set_up(&host, &repo.path).unwrap();
+    assert_eq!(files, [SetUpFile { path: "ci/gate.pin", written: true }, SetUpFile { path: "gate.toml", written: false }]);
+    let left: Vec<_> = std::fs::read_dir(format!("{}/gate.toml", repo.path)).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert!(left.is_empty(), "{left:?}");
+}
+
+#[test]
 fn set_up_is_two_commands_over_ssh_from_a_directory_under_home() {
     let home = TempDir::new();
     let ssh = FakeSsh::new(&[("HOME", &home.path())]);

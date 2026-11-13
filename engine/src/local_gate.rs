@@ -402,13 +402,14 @@ if [ -e pyproject.toml ]; then cat pyproject.toml || exit 1; fi"#;
 /// set_up's write: given the top level, then a path from it and its text for each file to write, writes each where
 /// nothing is at its path, making its directory, and prints a line for each: `written`, or `kept` for what was there.
 /// The text is written aside and hard-linked into place, which fails rather than replace what another process made
-/// meanwhile.
+/// meanwhile; a directory made there meanwhile, which ln puts the link in, gets it taken out again and is kept.
 pub(crate) const SET_UP_WRITE: &str = r#"cd -- "$1" || exit 1; shift
 while [ $# -ge 2 ]; do
   if [ -e "$1" ] || [ -L "$1" ]; then echo kept; shift 2; continue; fi
   t="$1.tmp.$$"
   { mkdir -p -- "$(dirname -- "$1")" && printf %s "$2" > "$t"; } || { rm -f -- "$t"; exit 1; }
-  if e=$(ln -- "$t" "$1" 2>&1); then echo written
+  if e=$(ln -- "$t" "$1" 2>&1); then
+    if [ "$1" -ef "$t" ]; then echo written; else rm -f -- "$1/${t##*/}" || exit 1; echo kept; fi
   elif [ -e "$1" ] || [ -L "$1" ]; then echo kept
   else echo "$e" >&2; rm -f -- "$t"; exit 1
   fi
