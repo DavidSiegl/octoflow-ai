@@ -2,7 +2,7 @@
 //! serving a stub release from a file, whose gate is a script for sh.
 
 use super::*;
-use crate::host::tests::{environment, put, read, tool, Repo};
+use crate::host::tests::{environment, put, read, tool, FakeSsh, Repo};
 use crate::host::ProcessHost;
 use crate::interrupt::Interrupt;
 use crate::test_support::TempDir;
@@ -547,10 +547,46 @@ fn set_up_keeps_a_file_already_there() {
 }
 
 #[test]
+fn set_up_keeps_a_file_made_after_it_looked() {
+    let repo = Repo::new(&[("Cargo.toml", "[package]\n")]);
+    // An ln and an mv that make gate.toml, as a second set_up would, just before they put theirs there.
+    let bin = TempDir::new();
+    for name in ["ln", "mv"] {
+        tool(
+            &bin.path(),
+            name,
+            &format!(
+                "#!/bin/sh\neval \"last=\\${{$#}}\"\ncase $last in *gate.toml) printf '# mine\\n' > \"$last\";; esac\n\
+                 for s in /usr/bin/{name} /bin/{name}; do [ -x \"$s\" ] && exec \"$s\" \"$@\"; done\nexit 127\n"
+            ),
+        );
+    }
+    let host = ProcessHost::in_environment(environment(Some(&bin.path()), &[]).into_iter(), &Interrupt::new());
+    let files = set_up(&host, &repo.path).unwrap();
+    assert_eq!(files, [SetUpFile { path: "ci/gate.pin", written: true }, SetUpFile { path: "gate.toml", written: false }]);
+    assert_eq!(read(&format!("{}/gate.toml", repo.path)), "# mine\n");
+    assert_eq!(repo.git(&["status", "--porcelain"]), "?? ci/\n?? gate.toml\n");
+}
+
+#[test]
+fn set_up_is_two_commands_over_ssh_from_a_directory_under_home() {
+    let home = TempDir::new();
+    let ssh = FakeSsh::new(&[("HOME", &home.path())]);
+    let repo = Repo::with_host(&[("go.mod", "module m\n"), ("pyproject.toml", "[tool.pytest]\n")], ssh.host.clone());
+    std::os::unix::fs::symlink(&repo.path, home.join("proj")).unwrap();
+    let before = ssh.calls().len();
+    let files = set_up(&ssh.host, "~/proj").unwrap();
+    assert_eq!(ssh.calls().len() - before, 2);
+    assert!(files.iter().all(|f| f.written), "{files:?}");
+    let settings = read(&format!("{}/gate.toml", repo.path));
+    assert_eq!(settings, starter_settings(&["go.mod"], Some("[tool.pytest]\n")));
+}
+
+#[test]
 fn set_up_needs_a_checkout() {
     let repo = Repo::new(&[]);
     let e = set_up(&repo.host, &repo.outside).unwrap_err().to_string();
-    assert!(e.contains("rev-parse --show-toplevel"), "{e}");
+    assert!(e.starts_with(&format!("looking at {}: ", repo.outside)) && e.contains("not a git repository"), "{e}");
     assert!(set_up(&repo.host, &format!("{}/gone", repo.outside)).is_err());
     assert!(!std::path::Path::new(&format!("{}/gate.toml", repo.outside)).exists());
 }

@@ -340,12 +340,9 @@ pub trait Host {
     /// The absolute form of a directory's path, a leading ~ expanded to the home directory on this host. Errors:
     /// there is no such directory.
     fn resolve_dir(&self, path: &str) -> Result<String, OrchestratorError> {
-        let (script, arg) = if path == "~" || path.starts_with("~/") {
-            ("cd -- \"$HOME$1\" && pwd", &path[1..])
-        } else {
-            ("cd -- \"$1\" && pwd", path)
-        };
-        Ok(self.check(&["sh", "-c", script, "_", arg], None, DEFAULT_TIMEOUT)?.trim().to_string())
+        let (word, arg) = shell_path(path);
+        let script = format!("cd -- {word} && pwd");
+        Ok(self.check(&["sh", "-c", &script, "_", arg], None, DEFAULT_TIMEOUT)?.trim().to_string())
     }
 
     /// HEAD's commit, or None when cwd is not a git repository with a commit.
@@ -1182,6 +1179,16 @@ pub fn decoded(exec: Exec) -> Result<Completed, OrchestratorError> {
     };
     let stdout = decode(stdout)?;
     Ok(Completed { status, stdout, stderr: decode(stderr)? })
+}
+
+/// path, which may start with ~ for the home directory, as an `sh -c` script takes it: the word to write in the
+/// script where the path goes, and the argument to pass the script as its `$1`, which the word expands.
+pub(crate) fn shell_path(path: &str) -> (&'static str, &str) {
+    if path == "~" || path.starts_with("~/") {
+        ("\"$HOME$1\"", &path[1..])
+    } else {
+        ("\"$1\"", path)
+    }
 }
 
 /// git pathspecs that each match exactly one of paths, relative to the repository's top level, whatever directory git

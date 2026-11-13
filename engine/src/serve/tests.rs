@@ -614,7 +614,7 @@ fn setup_gate_needs_a_checkout_and_a_cwd() {
     let served = Served::real();
     let reply = served.post(&format!("/setup/gate?{}", urlencode(&[("cwd", &repo.outside)])), "");
     assert_eq!(reply.status, Some(502), "{reply:?}");
-    assert!(reply.error().contains("rev-parse --show-toplevel"), "{reply:?}");
+    assert!(reply.error().contains("not a git repository"), "{reply:?}");
     let reply = served.post("/setup/gate", "");
     assert_eq!((reply.status, reply.error()), (Some(400), "missing parameter cwd".to_string()));
 }

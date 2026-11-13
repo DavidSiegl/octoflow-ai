@@ -132,14 +132,14 @@ impl Repo {
 
 /// An ssh played by a script on the Host's PATH: it records each call's arguments, one file per call, NUL-separated,
 /// and runs the command it was given with sh, here, as sshd would run it there.
-struct FakeSsh {
+pub(crate) struct FakeSsh {
     dir: TempDir,
-    host: ProcessHost,
+    pub host: ProcessHost,
 }
 
 impl FakeSsh {
     /// A host over this fake ssh to remote-host, in the engine's environment with set added.
-    fn new(set: &[(&str, &str)]) -> FakeSsh {
+    pub fn new(set: &[(&str, &str)]) -> FakeSsh {
         let dir = TempDir::new();
         let bin = dir.join("bin");
         tool(
@@ -154,7 +154,7 @@ impl FakeSsh {
     }
 
     /// The arguments of each call of ssh, in order.
-    fn calls(&self) -> Vec<Vec<String>> {
+    pub fn calls(&self) -> Vec<Vec<String>> {
         let dir = self.dir.join("bin/calls");
         let n = std::fs::read_dir(&dir).map(|d| d.count()).unwrap_or(0);
         (0..n)

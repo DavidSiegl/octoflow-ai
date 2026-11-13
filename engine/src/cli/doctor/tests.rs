@@ -596,26 +596,38 @@ fn doctor_printed(tools: &FakeTools, argv: &[&str]) -> (Result<i32, Orchestrator
     (ended, out.into_inner())
 }
 
-/// Have tools play Host::exists, Host::read and Host::write on target's files, existing the paths in there, which
-/// read as empty.
+/// Have tools play local_gate::set_up's look and write on target (None: here), home being /home/u: the look finds the
+/// directory it is given to be a checkout's top level, holding no file it looks for; the write keeps each path from
+/// the top level that there names and writes the others.
 fn play_files(tools: &FakeTools, target: Option<&'static str>, there: &'static [&'static str]) {
     tools.tools().answer_with = Some(Box::new(move |t, argv| {
         if t != target || argv[0] != "sh" {
             return None;
         }
-        let path = argv.last().unwrap();
-        if argv[2].starts_with("[ -e") || argv[2].starts_with("[ -f") {
-            let status = if there.contains(&path.as_str()) { 0 } else { crate::host::MISSING_FILE_STATUS };
-            return Some(Answer::Ran(status, String::new(), String::new()));
+        if argv[2].ends_with(crate::local_gate::SET_UP_LOOK) {
+            let home = if argv[2].contains("$HOME") { "/home/u" } else { "" };
+            return Some(completed(&format!("{home}{}\0\0", argv[4])));
         }
-        argv[2].contains("cat >").then(|| completed(""))
+        (argv[2] == crate::local_gate::SET_UP_WRITE).then(|| {
+            let top = &argv[4];
+            let said: String = argv[5..]
+                .iter()
+                .step_by(2)
+                .map(|path| if there.contains(&format!("{top}/{path}").as_str()) { "kept\n" } else { "written\n" })
+                .collect();
+            completed(&said)
+        })
     }));
 }
 
-/// The paths tools wrote to on target, by Host::write, in order.
-fn written(tools: &FakeTools, target: Option<&str>) -> Vec<String> {
+/// The top level of each checkout local_gate::set_up wrote files into on target, in order.
+fn set_up_writes(tools: &FakeTools, target: Option<&str>) -> Vec<String> {
     let calls = tools.tools().calls.clone();
-    calls.into_iter().filter(|(t, a)| t.as_deref() == target && a[0] == "sh" && a[2].contains("cat >")).map(|(_, a)| a.last().unwrap().clone()).collect()
+    calls
+        .into_iter()
+        .filter(|(t, a)| t.as_deref() == target && a[0] == "sh" && a[2] == crate::local_gate::SET_UP_WRITE)
+        .map(|(_, a)| a[4].clone())
+        .collect()
 }
 
 #[test]
@@ -625,7 +637,7 @@ fn doctor_writes_nothing_unless_asked_to_set_up_the_gate() {
     let (status, out) = doctor_printed(&tools, &["doctor", "--cwd", "/proj"]);
     assert_eq!(status.unwrap(), 0);
     assert!(out.contains("ok      local quality gate: "), "{out}");
-    assert_eq!(written(&tools, None), Vec::<String>::new());
+    assert_eq!(set_up_writes(&tools, None), Vec::<String>::new());
 }
 
 #[test]
@@ -634,8 +646,8 @@ fn setup_gate_writes_the_missing_files_where_the_agents_run_and_keeps_the_rest()
     play_files(&tools, Some("me@box"), &["/home/u/proj/gate.toml"]);
     let (status, out) = doctor_printed(&tools, &["doctor", "--machine", "box", "--cwd", "~/proj", "--setup-gate"]);
     assert_eq!(status.unwrap(), 0);
-    assert_eq!(written(&tools, Some("me@box")), ["/home/u/proj/ci/gate.pin"]);
-    assert_eq!(written(&tools, None), Vec::<String>::new());
+    assert_eq!(set_up_writes(&tools, Some("me@box")), ["/home/u/proj"]);
+    assert_eq!(set_up_writes(&tools, None), Vec::<String>::new());
     let tail = "wrote   ci/gate.pin\nkept    gate.toml: already there\n\
                 --quality-gate local reads these from a run's base commit: commit them for a run to be judged by them.\n";
     assert!(out.ends_with(tail), "{out}");
@@ -644,13 +656,16 @@ fn setup_gate_writes_the_missing_files_where_the_agents_run_and_keeps_the_rest()
 #[test]
 fn setup_gate_outside_a_checkout_is_an_error_after_the_checks() {
     let tools = FakeTools::new();
-    play_files(&tools, None, &[]);
     tools.answer("git -C /proj rev-parse --show-toplevel", failing("fatal: not a git repository", 128));
+    tools.tools().answer_with = Some(Box::new(|_, argv| {
+        let look = argv[0] == "sh" && argv[2].ends_with(crate::local_gate::SET_UP_LOOK);
+        look.then(|| failing("fatal: not a git repository", 128))
+    }));
     let (status, out) = doctor_printed(&tools, &["doctor", "--cwd", "/proj", "--setup-gate"]);
     let e = status.unwrap_err().to_string();
-    assert!(e.starts_with("setting up the local quality gate: "), "{e}");
+    assert_eq!(e, "setting up the local quality gate: looking at /proj: fatal: not a git repository");
     assert!(out.contains("missing git checkout: /proj is not in a git checkout"), "{out}");
-    assert_eq!(written(&tools, None), Vec::<String>::new());
+    assert_eq!(set_up_writes(&tools, None), Vec::<String>::new());
 }
 
 #[test]
