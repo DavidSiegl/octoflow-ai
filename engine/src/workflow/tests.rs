@@ -20,6 +20,7 @@ use crate::state::{AgentRecord, RunState, TurnRecord};
 use crate::constants::DEFAULT_AGENT;
 
 mod blocked;
+mod crash_resume;
 mod default_prompts;
 mod gate_switch;
 mod harnesses;
