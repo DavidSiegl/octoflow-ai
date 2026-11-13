@@ -17,9 +17,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::constants::AGENT_START_TIMEOUT_MS;
-use crate::error::OrchestratorError;
+use crate::error::{os_error, OrchestratorError};
 use crate::host::{line_ends_as_lf, run_process, ProcessError};
 use crate::interrupt::Interrupt;
+use crate::quality::last_lines;
 use serde_json::Value;
 use crate::json::ValueExt;
 
@@ -125,6 +126,16 @@ const SERVER_START: Poll = Poll { limit: Duration::from_secs(15), every: Duratio
 
 /// ProcessHerdr::shell_ready outside the tests: a new pane's shell may still be running its startup files.
 const SHELL_READY: Poll = Poll { limit: Duration::from_secs(10), every: Duration::from_millis(100) };
+
+/// The shell script ProcessHerdr::start_server starts `herdr server` with, in the background, its standard output
+/// and error going to `${XDG_STATE_HOME:-$HOME/.local/state}/octoflow/herdr-server.log` in the environment herdr runs
+/// in, emptied first. It prints that file's path, and fails, having said why, when the file's directory cannot be
+/// made. The file is state of the engine's that outlives the start: for the end of the wait to quote, and for the
+/// human to read while the server runs. One file, since the only server serve starts is the session OWN_SESSION's.
+const START_SERVER: &str = r#"d=${XDG_STATE_HOME:-$HOME/.local/state}/octoflow
+mkdir -p -- "$d" || exit 1
+herdr server </dev/null >"$d/herdr-server.log" 2>&1 &
+echo "$d/herdr-server.log""#;
 
 /// Held while a ProcessHerdr looks for a herdr server and starts it (`start_server`), so that of two launches at once
 /// in this process, as serve's requests make them, the second finds the server the first started rather than
@@ -372,9 +383,12 @@ impl ProcessHerdr {
 
     /// Have the herdr server this herdr's environment picks running on this machine: started headless, when it is
     /// not, in a process group of its own with no terminal's input or output, so that it outlives the engine as the
-    /// server herdr's own client starts does. One start at a time in this process (STARTING_SERVER). Errors: herdr
-    /// cannot be asked; the server cannot be started; or it does not answer as running within server_start's limit,
-    /// with what herdr last answered instead, when it answered with an error.
+    /// server herdr's own client starts does. One start at a time in this process (STARTING_SERVER). The server's
+    /// standard output and error go to the file START_SERVER names, emptied at each start, which the server keeps
+    /// writing to for as long as it runs. Errors: herdr cannot be asked; the server cannot be started, that file's
+    /// directory made included; or it does not answer as running within server_start's limit, with what herdr last
+    /// answered instead, when it answered with an error, and the end of what the server wrote, or that it wrote
+    /// nothing or that it cannot be read.
     fn start_server(&self) -> Result<(), HerdrError> {
         // The lock guards no data, so one a panicking start left poisoned is as good as new.
         let _starting = STARTING_SERVER.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -384,16 +398,17 @@ impl ProcessHerdr {
         let failed = |why: String| HerdrError::Failed(OrchestratorError(format!("cannot start a herdr server: {why}")));
         // `herdr server` serves until it is stopped, so a shell starts it in the background and exits; run_process
         // gave the shell a process group, which the server keeps.
-        let argv = ["sh", "-c", "herdr server </dev/null >/dev/null 2>&1 &"].map(String::from);
-        match (self.run)(&argv, &self.env, Some(Duration::from_secs(CALL_LIMIT_SECONDS))) {
-            Ok((0, _, _)) => {}
+        let argv = ["sh", "-c", START_SERVER].map(String::from);
+        // The file the server's output goes to, as sh printed it.
+        let log = match (self.run)(&argv, &self.env, Some(Duration::from_secs(CALL_LIMIT_SECONDS))) {
+            Ok((0, stdout, _)) => String::from_utf8_lossy(&stdout).trim().to_string(),
             Ok((status, _, stderr)) => {
                 return Err(failed(format!("sh exited with {status}: {}", String::from_utf8_lossy(&stderr).trim())))
             }
-            Err(ProcessError::Start(e) | ProcessError::Io(e)) => return Err(failed(crate::error::os_error(&e, None))),
+            Err(ProcessError::Start(e) | ProcessError::Io(e)) => return Err(failed(os_error(&e, None))),
             Err(ProcessError::Timeout) => return Err(failed("sh did not return".to_string())),
             Err(ProcessError::Interrupted) => return Err(failed("interrupted".to_string())),
-        }
+        };
         let Poll { limit, every } = self.server_start;
         let deadline = Instant::now() + limit;
         loop {
@@ -410,7 +425,13 @@ impl ProcessHerdr {
             };
             if Instant::now() >= deadline {
                 let last = refused.map_or_else(String::new, |e| format!("; herdr status server last answered: {e}"));
-                return Err(failed(format!("it was not running after {} seconds{last}", limit.as_secs_f64())));
+                let text = std::fs::read(&log).map(|bytes| String::from_utf8_lossy(&bytes).trim_end().to_string());
+                let wrote = match text {
+                    Ok(text) if text.is_empty() => format!("herdr server wrote nothing to {log}"),
+                    Ok(text) => format!("herdr server wrote to {log}:\n{}", last_lines(&text)),
+                    Err(e) => format!("cannot read what herdr server wrote: {}", os_error(&e, Some(&log))),
+                };
+                return Err(failed(format!("it was not running after {} seconds{last}; {wrote}", limit.as_secs_f64())));
             }
             std::thread::sleep(every);
         }
@@ -631,7 +652,7 @@ impl ProcessHerdr {
             Err(ProcessError::Start(e)) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Err(HerdrError::Failed(OrchestratorError::new("herdr is not on PATH")))
             }
-            Err(ProcessError::Start(e) | ProcessError::Io(e)) => return Err(failed(crate::error::os_error(&e, None))),
+            Err(ProcessError::Start(e) | ProcessError::Io(e)) => return Err(failed(os_error(&e, None))),
             Err(ProcessError::Timeout) => {
                 return Err(HerdrError::new("timeout", format!("herdr {command} did not return")));
             }
