@@ -122,9 +122,7 @@ pub fn build_failed_report(intro: &str, tests: Option<&[(String, String)]>, cons
         None => out.push("Jenkins has no test report for this build.".into()),
         Some(tests) => {
             for (name, detail) in tests.iter().take(QUALITY_FINDINGS_LIMIT) {
-                let detail = detail.trim();
-                let first = detail.lines().next().unwrap_or("failed");
-                out.push(one_line(&format!("- `{name}`: {first}")));
+                out.push(one_line(&format!("- `{name}`: {}", failure_summary(detail))));
             }
             if tests.is_empty() {
                 out.push("None.".into());
@@ -140,6 +138,27 @@ pub fn build_failed_report(intro: &str, tests: Option<&[(String, String)]>, cons
         out.extend(["", "````", console, "````"].map(String::from));
     }
     out.join("\n") + "\n"
+}
+
+/// The environment variable the engine's own generated-input tests read their run seed from, a decimal u64 (unset or
+/// empty, a run has none), and which a failing one names on its standard error (test_support's Rng), so that
+/// build_failed_report can keep the seed.
+pub const RUN_SEED_VARIABLE: &str = "OCTOFLOW_TEST_SEED";
+
+/// What a failing test's line in build_failed_report says of detail, the failure text Jenkins reported for it: its
+/// first line, "failed" when it has none; for a Rust panic, whose first line only says where, the message on the line
+/// after too; then every line that names RUN_SEED_VARIABLE, so that the case can be generated again. The parts are
+/// joined by spaces, still with any line breaks inside them (one_line escapes those).
+fn failure_summary(detail: &str) -> String {
+    let mut lines = detail.trim().lines();
+    let Some(first) = lines.next() else { return "failed".to_string() };
+    let mut parts = vec![first];
+    let rust_panic = first.starts_with("thread '") && first.contains("' panicked at ") && first.ends_with(':');
+    if let Some(message) = lines.next().filter(|_| rust_panic) {
+        parts.push(message);
+    }
+    parts.extend(lines.filter(|line| line.contains(RUN_SEED_VARIABLE)));
+    parts.join(" ")
 }
 
 /// The quality file of a local gate that could not judge the change (crate::local_gate::LocalVerdict::CouldNotJudge):

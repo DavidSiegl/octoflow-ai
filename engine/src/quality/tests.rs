@@ -167,6 +167,18 @@ fn build_failed_reports() {
 }
 
 #[test]
+fn a_failing_rust_test_s_line_keeps_its_panic_message_and_its_run_seed() {
+    let panic = "thread 'gen::tests::splits' panicked at engine/src/gen/tests.rs:41:5:\nassertion `left == right` failed\n  left: 1\n right: 2\nnote: run with `RUST_BACKTRACE=1`";
+    let seeded = format!("{panic}\nOCTOFLOW_TEST_SEED=8150 was this failing test's run seed; set it to generate the same cases again");
+    let tests = [("gen::tests::splits".to_string(), panic.to_string()), ("gen::tests::joins".to_string(), seeded)];
+    let text = build_failed_report("intro", Some(&tests), "");
+    let header = "thread 'gen::tests::splits' panicked at engine/src/gen/tests.rs:41:5:";
+    assert!(text.contains(&format!("- `gen::tests::splits`: {header} assertion `left == right` failed\n")), "{text}");
+    let seed = "OCTOFLOW_TEST_SEED=8150 was this failing test's run seed; set it to generate the same cases again";
+    assert!(text.contains(&format!("- `gen::tests::joins`: {header} assertion `left == right` failed {seed}\n")), "{text}");
+}
+
+#[test]
 fn read_back_the_gate_of_a_build_failed_report() {
     let mut rng = Rng::new(20);
     for _ in 0..200 {
