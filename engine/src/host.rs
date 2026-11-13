@@ -1203,12 +1203,14 @@ fn working_tree<H: Host + ?Sized>(host: &H, cwd: &str) -> Result<String, Orchest
     // Through a copy of the index, in one sh -c script, because git -C cannot pass GIT_INDEX_FILE.
     let script = "cd -- \"$1\" || exit 1; i=$(git rev-parse --git-path index) || exit 1; d=$(mktemp -d) || exit 1; \
                   trap 'rm -rf -- \"$d\"' EXIT; t=$d/index; \
-                  if [ -f \"$i\" ]; then { cp -- \"$i\" \"$t\" && touch -r \"$i\" -- \"$t\"; } || exit 1; fi; \
+                  if [ -f \"$i\" ]; then { cat > \"$t\" && touch -r /dev/stdin -- \"$t\"; } < \"$i\" || exit 1; fi; \
                   GIT_INDEX_FILE=$t git add -A && GIT_INDEX_FILE=$t git write-tree";
     // `touch -r`, which gives the copy the index's modification time: git reads a file whose size and times are its
     // entry's only when the index is no younger than the entry (https://git-scm.com/docs/racy-git), so a copy dated
     // now would have git add take a file rewritten at its size within the second it was staged as unchanged, and the
     // tree hold the old one. Not `cp -p`, which carries owner and mode too: it fails where the owner cannot be kept.
+    // Entries and time come from the one open file on stdin: a git renaming a new index into place between two opens
+    // would leave the copy the old entries under the new time, which is the race again.
     // The copy sits in a directory of its own, which only its owner can enter whatever mode the copy has once git
     // rewrites it, and which goes whole on exit, with the index.lock a git killed mid-write leaves beside the copy.
     // No index to copy: a repository whose index was never written, from which git starts the copy afresh.
