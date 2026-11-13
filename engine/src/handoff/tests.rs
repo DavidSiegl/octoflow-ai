@@ -66,6 +66,8 @@ fn never_panic_and_return_only_their_words() {
         let text = rng.text(30, "");
         assert!(parse_gate(&text).is_none_or(|g| GATES.contains(&g)), "{text:?}");
         assert!(parse_verdict(&text).is_none_or(|v| VERDICTS.contains(&v)), "{text:?}");
+        let question = parse_blocked(&text);
+        assert!(question.is_none_or(|q| !q.is_empty() && q.trim() == q), "{text:?}");
     }
 }
 
@@ -113,9 +115,49 @@ fn ignore_every_line_below_the_first_non_blank_one() {
         if first.trim().is_empty() {
             continue;
         }
-        let (blanks, rest) = (blank_lines(&mut rng), format!("GATE: OK VERDICT: APPROVE {}", rng.text(20, "")));
+        let rest = format!("BLOCKED: why? GATE: OK VERDICT: APPROVE {}", rng.text(20, ""));
+        let (blanks, rest) = (blank_lines(&mut rng), rest);
         let text = format!("{blanks}{first}\n{rest}");
         assert_eq!(parse_gate(&text), parse_gate(&first), "{text:?}");
         assert_eq!(parse_verdict(&text), parse_verdict(&first), "{text:?}");
+        assert_eq!(parse_blocked(&text), parse_blocked(&first), "{text:?}");
+    }
+}
+
+/// Blanks that end no line for str::lines, which ends one only at \n.
+const BLANKS_IN_A_LINE: &str = " \t\r\x0b\x0c\u{85}\u{a0}\u{2028}\u{2029}\u{3000}";
+
+/// Up to three characters of BLANKS_IN_A_LINE.
+fn blanks_in_a_line(rng: &mut Rng) -> String {
+    let blanks: Vec<char> = BLANKS_IN_A_LINE.chars().collect();
+    (0..rng.below(4)).map(|_| *rng.pick(&blanks)).collect()
+}
+
+#[test]
+fn read_the_question_on_the_first_non_blank_line() {
+    let mut rng = Rng::new(14);
+    for k in 0..300 {
+        // The first case has no question at all.
+        let question = if k == 0 { String::new() } else { rng.text(20, "\n") };
+        let (blanks, indent, before, after) =
+            (blank_lines(&mut rng), blanks_in_a_line(&mut rng), blanks_in_a_line(&mut rng), blanks_in_a_line(&mut rng));
+        let text = format!("{blanks}{indent}BLOCKED:{before}{question}{after}\n{}", rng.text(20, ""));
+        let expected = if question.trim().is_empty() { NO_QUESTION } else { question.trim() };
+        assert_eq!(parse_blocked(&text).as_deref(), Some(expected), "{text:?}");
+    }
+}
+
+#[test]
+fn find_no_question_where_the_first_non_blank_line_is_not_blocked() {
+    let mut rng = Rng::new(15);
+    // Lines that come close: the label in another case, emphasised, without its colon, or not leading the line.
+    let near_misses = ["", "blocked:", "**BLOCKED:**", "BLOCKED ", "> BLOCKED:", "Done. BLOCKED:", "\u{1c}BLOCKED:"];
+    for _ in 0..300 {
+        let first = format!("{}{}", rng.pick(&near_misses), rng.text(20, "\n"));
+        if first.trim().is_empty() || first.trim_start().starts_with(BLOCKED) {
+            continue;
+        }
+        let text = format!("{}{first}\nBLOCKED: why?\n", blank_lines(&mut rng));
+        assert_eq!(parse_blocked(&text), None, "{text:?}");
     }
 }

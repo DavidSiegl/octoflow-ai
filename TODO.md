@@ -197,8 +197,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   one.
 - **No coverage-guided fuzzing of the engine's parsers.** Decided against (the user's ruling, 2026-11-11): a
   cargo-fuzz pass over `handoff::first_line_word`, `parse_verdict`, `parse_gate`, `parse_blocked` and
-  `parse_env_file`, looking for panics. The seeded generated-input tests (`test_support::Rng`) cover them instead;
-  `parse_blocked`'s are GitHub #348 (`.scratch/todo/issues/06`).
+  `parse_env_file`, looking for panics. The seeded generated-input tests (`test_support::Rng`) cover them instead.
 - **A non-editing step between two verdict steps is refused, not tracked.** Decided against (the user's ruling,
   2026-11-11, GitHub #352, `.scratch/todo/issues/10`): tracking every step's rounds through its turn records, so that
   such a step's `again` prompt and `{prev_X_path}` name rounds it ran; `Pipeline::loop_problem` refuses the shape
