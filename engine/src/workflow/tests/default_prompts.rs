@@ -304,9 +304,9 @@ fn step_prompt_in(pipeline: &Pipeline, state: &RunState, host: &FakeHost, step: 
     view.step_prompt(pipeline.step(step).expect("a step of the workflow"), n).unwrap()
 }
 
-/// step_prompt_in the default workflow, worded by state's prompts as Workflow::new words it.
+/// step_prompt_in the run's own workflow (RunState::pipeline), as a resume takes it.
 fn step_prompt(state: &RunState, host: &FakeHost, step: &str, n: u32) -> (String, Option<String>) {
-    let pipeline = find_workflow("default", &state.prompts().unwrap()).unwrap();
+    let pipeline = state.pipeline().unwrap();
     step_prompt_in(&pipeline, state, host, step, n)
 }
 
@@ -670,9 +670,11 @@ fn a_resume_keeps_the_prompts_the_run_started_with() {
 
 
 #[test]
-fn a_run_an_earlier_release_started_with_its_fix_prompt_file_resumes() {
+fn a_run_an_earlier_release_started_with_its_fix_prompt_file_is_resumable_and_words_its_fix() {
     // Started before 0.58.0 with a FIX_PROMPT.md that named {prev_review_path}, which a prompt file read today may
-    // not (crate::prompts' EARLIER_PLACEHOLDERS), and saved in round 1's review, before RunState::verdicts.
+    // not (crate::prompts' EARLIER_PLACEHOLDERS), and saved in round 1's review, before RunState::verdicts. The
+    // resume itself is verdict_steps.rs's and a_resume_keeps_the_prompts_the_run_started_with's: this checks that
+    // the saved state passes resume's checks and that its fix prompt fills.
     let mut state = saved_run("review", 1, &["spec", "build", "review"]);
     state.prompt_overrides.insert("FIX_PROMPT", "Fix {prev_review_path}; report to {build_path}.".to_string());
     let Value::Object(mut saved) = state.to_json() else { unreachable!("a state is saved as an object") };

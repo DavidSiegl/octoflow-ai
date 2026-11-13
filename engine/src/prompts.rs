@@ -285,8 +285,9 @@ impl Prompts {
         &self.texts[p.index()]
     }
 
-    /// p's text with each placeholder replaced by its value in values, as (name, value) pairs. Errors: the text uses
-    /// a placeholder values has no value for (prompt_error).
+    /// p's text with each placeholder replaced by its value in values, as (name, value) pairs. Errors (prompt_error):
+    /// the text uses a placeholder values has no value for. A text that does not parse is none of Prompts', whose
+    /// texts were checked when read.
     pub fn fill(&self, p: Prompt, values: &[(&str, &str)]) -> Result<String, OrchestratorError> {
         let value = |name: &str| values.iter().find(|(n, _)| *n == name).map(|(_, v)| v.to_string());
         fill(self.text(p), &value).map_err(|e| prompt_error(p.name(), &e))

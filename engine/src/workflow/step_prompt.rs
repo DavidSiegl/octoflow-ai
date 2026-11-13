@@ -15,7 +15,9 @@ use crate::state::RunState;
 /// A run as its prompts read it. Reading only: nothing through it changes the state or writes a file.
 #[derive(Clone, Copy)]
 pub(crate) struct RunView<'a> {
+    /// The run: its round, phase, quality round and the records the notes read.
     pub state: &'a RunState,
+    /// The run's workflow, the one RunState::pipeline gives (Workflow holds it already loaded).
     pub pipeline: &'a Pipeline,
     /// Every prompt the workflow sends that its definition does not word: the follow-ups and notes.
     pub prompts: &'a Prompts,
