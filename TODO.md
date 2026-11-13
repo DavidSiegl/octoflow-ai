@@ -8,25 +8,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Planned
 
-- **The macOS app's name in Finder.** The product is Octoflow AI, but the Tauri bundle is `octoflow`, without a space
-  because Tauri names the `.deb`, `.app` and `.dmg` after it verbatim. The macOS app could show "Octoflow AI" in
-  Finder while staying `Octoflow.app`, with `CFBundleDisplayName` in a `ui/src-tauri/Info.plist`, unchecked on a Mac.
-  Agreed 2026-10-25.
-
-- **The desktop app as the terminal client too.** Started with arguments, the app, which links the engine, is the
-  orchestrator's CLI (`cli` in `ui/src-tauri/src/lib.rs`), so the AppImage is the CLI too and the README says how to
-  get the CLI from each download; on macOS, where a `.app` is a directory, the CLI is a symlink to
-  `Octoflow.app/Contents/MacOS/octoflow`. The plain CLI binaries stay released: 13 MB against the AppImage's 120 MB
-  of WebKit, and they start without FUSE on headless machines and in CI. Decided against: one file on every
-  platform, by embedding the orchestrator's bytes in the Rust executable and unpacking them at start (PyInstaller's
-  onefile done twice), or by Python hosting the window, which [ui-options.md](docs/ui-options.md) chose against.
-  Agreed 2026-10-24. Decided against too, 2026-11-11 (rust-engine/12, which made the app its own `serve` sidecar):
-  the window serving its runs in its own process, with or without the CLI there too. The AppImage's environment,
-  which GTK needs and the engine's children must not get, would then go through the engine as a parameter (herdr,
-  `ProcessHost`, `ConfigDir`, the HTTP clients, `current_dir`) where the sidecar takes the user's once at its start
-  (`UserShell::enter`); an engine panic would end the window; and `serve`'s signal handling needs the main thread.
-  Its one gain is the first-line handshake gone.
-
 - **The e2e scenarios: what they do not record.** `engine/e2e/` runs 43 scenarios against the engine as a program and
   compares each with its recording (docs/architecture.md, Tests). The recordings are the Python engine's, made before
   rust-engine ticket 11 removed it, by the Python harness octoflow-without-python ticket 02 removed; a scenario added
@@ -64,6 +45,17 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **The desktop app as the terminal client too: what was decided against.** The app, started with arguments, is the CLI
+  (`cli` in `ui/src-tauri/src/lib.rs`), and the plain CLI binaries stay released: 13 MB against the AppImage's 120 MB of
+  WebKit, and they start without FUSE on headless machines and in CI. Decided against (2026-10-24): one file on every
+  platform, by embedding the orchestrator's bytes in the Rust executable and unpacking them at start (PyInstaller's
+  onefile done twice), or by Python hosting the window, which [ui-options.md](docs/ui-options.md) chose against. Decided
+  against too, 2026-11-11 (rust-engine/12, which made the app its own `serve` sidecar): the window serving its runs in
+  its own process, with or without the CLI there too. The AppImage's environment, which GTK needs and the engine's
+  children must not get, would then go through the engine as a parameter (herdr, `ProcessHost`, `ConfigDir`, the HTTP
+  clients, `current_dir`) where the sidecar takes the user's once at its start (`UserShell::enter`); an engine panic
+  would end the window; and `serve`'s signal handling needs the main thread. Its one gain is the first-line handshake
+  gone.
 - **The local gate's report names an empty `judge/gate.toml` for a base without `gate.toml`.** Raised by
   cross-review 171 (F7): "the gate counts the file as there and reports `<…>/judge/gate.toml` as where the settings
   came from … It does not report 'the defaults (there is no …)', so quality.md hides that the defaults judged the
@@ -106,12 +98,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   and one they create is deleted, without a warning; a worktree run is not exposed. Ticketed as GitHub #384
   (`.scratch/todo/issues/42`): keep the human's version and warn. Decided against (the user's ruling, 2026-11-11):
   running proofs in a scratch worktree of the tree under test.
-- **A harness has two names in the engine: `kind` and `harness`.** Cross-review 180 F10: "One concept, two names:
-  `kind` (`AgentRecord::kind`, `agent_kinds`, `Workflow::agent_kind`) and `harness` (`TurnRecord::harness`,
-  `RunState::harness`); in `agent()` `kind = self.state.harness(role)` sits beside `target = self.agent_kind(role)`."
-  `AGENT_KINDS`, `--role-agent`'s kinds and the saved `agents.<role>.kind` and turn `agent` keys are on users' disks
-  and command lines, so only the engine's own names can follow. Closes with one name for the engine's identifiers
-  (and GLOSSARY.md defining it), the saved keys left as they are.
 - **No coverage-guided fuzzing of the engine's parsers.** Decided against (the user's ruling, 2026-11-11): a
   cargo-fuzz pass over `handoff::first_line_word`, `parse_verdict`, `parse_gate`, `parse_blocked` and
   `parse_env_file`, looking for panics. The seeded generated-input tests (`test_support::Rng`) cover them instead;
@@ -163,18 +149,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   and the telling reachable from `Host`, so that its origin reads retry themselves. Decided against (the user's
   ruling, 2026-11-11): the wrapped callers work, and a clock and a human in `Host`'s interface cost more than a new
   caller remembering to wrap.
-- **The npm notices' refusal of a multi-licensed package says it has no license text.** A package offered under a
-  license `packaging/about.toml` does not accept, whose one license file names none of the licenses, fails
-  `npmNotices` with "no one license text for MIT OR GPL-3.0-only", which sends the reader looking for a missing file;
-  the refusal is that the text may be the unaccepted license's alone, and `npmNotices`'s `@throws` does not name the
-  case. Raised, not recorded, by cross-review 131 (round 4, 2026-11-04). Closes with a message of its own for that
-  case ("one license text for an offer not every license of which about.toml accepts") and the `@throws` naming it.
-
-- **new-dependencies points a second source's finding at the package's first added line.** `compare_dependencies`
-  (`engine/src/checks/dependencies.rs`) gives each `NewPackage` and source-changed finding the first line the change
-  added to its manifest that names the package (`line_naming`), not the line of that source's entry: `foo = "1"` and
-  `foo = { git = ".." }` added to one Cargo.toml both point at the first. Found while implementing ticket
-  cargo-dependency-rules/01 (2026-11-04). Closes with the readers giving each source the line of its entry.
 
 - **The Rust engine reads some input no run writes otherwise than the Python engine.** Each is a difference only for a
   file a human edited, or a case no test of the Python engine pins (rust-engine ticket 04, 2026-10-28): a time is read
@@ -240,8 +214,8 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   /proc is hung up: the Interrupt is raised, the run released as interrupted", and `interrupt::exit`'s raise of the
   still-ignored signal returns, so the program exits 129 by `std::process::exit`). Part 6 had the gap for SIGINT;
   the follow-ups extend it to SIGTERM and SIGHUP. nix reads a signal's disposition only through `sigaction`, which
-  is `unsafe`. Closes with that query, the user's choice of a second `unsafe` block, or with refusing to start on a
-  Linux without `/proc`.
+  is `unsafe`. Decided against (the user's ruling, 2026-11-12): that query, a second `unsafe` block, or refusing to
+  start on a Linux without `/proc`; such a container under `nohup` is rare.
 - **The commands the Rust engine runs outlive an engine that is SIGKILLed.** Each command runs in a process group of its
   own (rust-engine tickets 05, 06), so a SIGKILL of the engine, or of its group, ends the engine and leaves a running
   `herdr agent wait`, `gh pr create` or push to finish unwatched, where the Python engine's children are in its group
@@ -254,10 +228,8 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   it starts); a SIGKILL allows no cleanup, and a resumed run takes over the agents it finds alive.
 - **The Rust engine talks to Jenkins and PyPI otherwise than urllib in a few cases.** Its transport is ureq
   (`HttpClient`, `engine/src/http.rs`, rust-engine ticket 07, 2026-10-28), which differs from `urlopen` where no test of
-  the Python engine pins it: ureq reaches an http URL through a proxy with CONNECT, as it does an https one, where
-  urllib sends the request itself to the proxy, so a proxy that allows CONNECT only to port 443, as squid does by
-  default, refuses a plain-http Jenkins that `http_proxy` sends through it; TLS trusts the certificates of the places
-  the environment names, else of the system's as openssl-probe finds them, each read by rustls-native-certs
+  the Python engine pins it (its CONNECT to a proxy for a plain-http URL is GitHub #410): TLS trusts the certificates of
+  the places the environment names, else of the system's as openssl-probe finds them, each read by rustls-native-certs
   (`root_certs`), which trusts otherwise than OpenSSL does for Python in five ways (the user's rulings, 2026-10-28,
   cross-review 93, F22 and F23): with `SSL_CERT_FILE` set non-empty and `SSL_CERT_DIR` unset, or the reverse, it reads
   only what is set, where OpenSSL adds the system's default directory or file (with the other set empty, OpenSSL adds
@@ -280,14 +252,13 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   one is not TOML is the toml crate's words with `(at line L, column C)`; and rustls refuses a server certificate that
   is a CA's own, as a self-signed one made by `openssl req -x509` with its default extensions is (`CaUsedAsEndEntity`),
   where OpenSSL accepts it when it is trusted, so the e2e scenarios' PyPI has a leaf under a CA of its own (found by
-  ticket 08's part 7, 2026-10-29). Closes, for the proxy, with a transport that sends an
-  http request through a proxy as urllib does, or with `no_proxy` naming Jenkins; the rest decided against unless a
-  setup is found that needs it. Decided against (2026-10-28, ticket 07, design-it-twice): `CI` and `PyPI` as traits of
-  their own with in-memory fakes. The engine's tests would then word every URL and error twice, in the code and in the
-  fake, and ticket 08's Workflow tests, which read the requests Jenkins got (`FakeCI.names`, `requests`, `auth`), would
-  port only by re-deriving them; with the seam at `Http`, as Python's at `urlopen`, `FakeJenkins` and `FakePyPI` play
-  the servers and every line of `Jenkins` and `PyPI` runs in those tests. The user kept the `Http` seam and amended the
-  spec's Lane to say so (2026-10-28, cross-review 93, F1), and issue 08 says which seam it is given.
+  ticket 08's part 7, 2026-10-29). The rest is decided against unless a setup is found that needs it. Decided against
+  (2026-10-28, ticket 07, design-it-twice): `CI` and `PyPI` as traits of their own with in-memory fakes. The engine's
+  tests would then word every URL and error twice, in the code and in the fake, and ticket 08's Workflow tests, which
+  read the requests Jenkins got (`FakeCI.names`, `requests`, `auth`), would port only by re-deriving them; with the seam
+  at `Http`, as Python's at `urlopen`, `FakeJenkins` and `FakePyPI` play the servers and every line of `Jenkins` and
+  `PyPI` runs in those tests. The user kept the `Http` seam and amended the spec's Lane to say so (2026-10-28,
+  cross-review 93, F1), and issue 08 says which seam it is given.
 - **No build runs the Rust doctests.** cargo-nextest does not run doctests, and since the Test stage's `cargo llvm-cov
   nextest` replaced the UI stage's `cargo test`, nothing does: `octoflow_ui_lib` is an `rlib` among its crate types
   (`ui/src-tauri/Cargo.toml`), so `cargo test` ran them. The crate has no doc example today. Raised by cross-review 72
@@ -333,27 +304,13 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   a link left there, not against an agent that means to show the app a file. Closes with an open that does not
   follow links (a helper on the host with `O_NOFOLLOW` per component), if a reason is found to want it.
 - **The e2e scenarios compare serve's event stream at checkpoints, not event by event.** `serve_endpoints_and_events`
-  keeps, at each point where the run waits on an agent and once it is done, the last `record` and `files` event of
-  each run (`engine/e2e/tests/e2e/scenarios.rs`, `last_by_run`). Raised by cross-review 65 (F10, 2026-10-27), against the
+  keeps, at each point where the run waits on an agent and once it is done, the last `record` and `files` event of each
+  run (`engine/e2e/tests/e2e/scenarios.rs`, `last_by_run`). Raised by cross-review 65 (F10, 2026-10-27), against the
   spec's "serve's JSON and SSE events" byte for byte: "missing, repeated or reordered intermediate events pass." How
-  many events a step sends depends on where serve's one-second poll falls among the run's saves, so the stream
-  between two checkpoints differs from run to run. Decided against (the user's ruling, 2026-11-11): a serve whose
-  poll the harness can step, a hook in the engine; the folded stream is the contract, as the desktop app reads it.
+  many events a step sends depends on where serve's one-second poll falls among the run's saves, so the stream between
+  two checkpoints differs from run to run. Decided against (the user's ruling, 2026-11-11): a serve whose poll the
+  harness can step, a hook in the engine; the folded stream is the contract, as the desktop app reads it.
 
-- **The quality file's format has two names for each part.** The engine's copies (`QUALITY_OK`,
-  `QUALITY_FAILED_CONDITIONS`, `QUALITY_FINDINGS_LIMIT` in `engine/src/quality.rs`, `Finding::numbered`,
-  `Finding::warning` and `Finding::error` in `engine/src/checks.rs`, `shortened` in `engine/src/error.rs`) and
-  the gate's (`GATE_OK`, `FAILED_CONDITIONS`, `QUALITY_ISSUE_LIMIT`, `_numbered`, `_finding`, `_clip`) differ, so a
-  grep for one misses its twin. Most date from gate-split ticket 01. Raised by cross-review 61 (F9, 2026-10-27).
-  Closes with one name per part on both sides, a change to both programs.
-- **`--machine` over SSH assumes a POSIX login shell and a server that takes several sessions.** Since `run_tool`
-  (`engine/src/cli/doctor.rs`), doctor takes a remote command's exit status 127 for not on PATH: a csh or tcsh login
-  shell exits 1 ("Command not found."), so a missing gh reads as `gh auth status fails` and a missing git as a failed
-  `--version`; and a tool on PATH that exits 127 itself, such as a shim whose target is gone, reads as not on PATH. And
-  `ssh_sharing_options` overrides a target's own `ControlMaster no`, so a server with `MaxSessions 1` refuses the second
-  of two commands run at once on the shared connection (the desktop app and `serve` run several), which ssh then fails.
-  Raised by cross-review 33 (F4, F6), neither reproduced. Closes with doctor asking through `sh -c`, as `on_path` does,
-  and with an explicit `ControlMaster`/`ControlPath` in `ssh -G <target>` left in place.
 - **unexpected-paths reads only the contract step's file.** `unexpected_paths` judges each path the change touches
   against `RunChange.spec`, the contract step's file, so a workflow whose contract is in business terms, such as
   `examples/workflows/product-team.toml`, whose requirements name no file and whose `design.md` lists the
@@ -448,11 +405,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   found not to work, secret-scan-gaps/02): scanning such changes as text with `--text`. Reopen it if such a secret is
   ever pushed; a check of file names (`.p12`, `.pfx`, `.jks`) would catch keystores but not the text-replaces-binary
   case.
-- **README and docs left over from the README rewrite (PR #90).** Raised by cross-review 50 (2026-10-26), in what
-  PR #90 brought, not in code: the README no longer says which commands take only `--machine`/`--cwd`.
-- **Each poll of a running build also asks for its quality.md.** Raised by cross-review 58 (F2, 2026-10-27, PR
-  #105): the request is a 404 until Gate has run; asking for `artifacts[relativePath]` in the result's `api/json`
-  tree would halve the requests.
 - **Four copies of the test writer of an executable script.** A test's script is written by a child process, so that
   no test thread's fork holds it open for writing when it runs (ETXTBSY; ui-test-text-file-busy/01, 2026-11-03). The
   same `sh` line is in `tool` (`engine/src/host/tests.rs`, which says why), `Dir::tool` (`engine/tests/program.rs`),
@@ -461,13 +413,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   the flake back in that crate." Decided against (the user's ruling, 2026-11-11): one writer in a test-support crate
   of the workspace's own; the copies of a scratch directory removed on drop are to go to the `tempfile` crate
   instead, so no such crate is made.
-- **`working_tree`'s copy of git's index resolves the index path twice.** From cross-review 167 round 2, raised and
-  not recorded as a finding (`engine/src/host.rs`, `working_tree`'s script): "`cp` and `touch -r "$i"` resolve the
-  index path twice. When another git process renames a new index into place between the two, a second or more after
-  the old one was written, the copy holds the old entries under the newer time and the racy check is off again for
-  that run"; the pass's remedy, not tried: `{ cat > "$t" && touch -r /dev/stdin -- "$t"; } < "$i"`. Not fixed with
-  gitignore-restore-flake/01: it needs a concurrent index write within microseconds. Closes when the copy's entries
-  and time come from one open file.
 - **The starter `gate.toml`'s Rust and npm tests name no failing test.** `starter_settings`
   (`engine/src/local_gate.rs`) guesses `cargo test --workspace` and `npm test` without a `junit` report: neither
   writes JUnit without configuration that `doctor --setup-gate` does not write (nextest's through a
@@ -481,3 +426,21 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   takes no environment. Decided against (the user's ruling, 2026-11-11): the engine typing an `unset` into the pane
   once the agent has exited; `Herdr::export` documents it, and it reaches only that pane. Revisit if herdr's
   `agent start` takes `--env`.
+- **FakeHost plays git command lines, not repository operations.** The Workflow tests' `FakeHost`
+  (`engine/src/host/fake.rs`) answers each git command `Host` sends, so a flag changed in `engine/src/host.rs` has to
+  change in the fake too. Decided against (the user's ruling, 2026-11-11, from the architecture review): moving the
+  fake's seam up to repository operations (fetch, fast-forward, merge, push). At command level `Host`'s own steps run
+  in every Workflow test, and since a command the fake has no arm for fails the test, a flag changed in one file and
+  not the other is caught.
+- **FakeHost's commits move HEAD, not a branch `branches` lists.** Cross-review 177 (round 2, raised and not
+  recorded): "a checked-out branch also listed in `branches` reads a stale commit after a commit; in git the ref is
+  HEAD's", and `branch --quiet -D` of a checked-out branch succeeds where git refuses it
+  (`engine/src/host/fake.rs`, `branch_commit`, `commit_head`). No test commits on and then pushes or deletes such a
+  branch today; the fake's own test pins a checked-out `main` at another commit than HEAD, which git cannot be in.
+  Closes with the checked-out branch's commit held in one place, `branches` or HEAD, that a commit moves.
+- **serve's `RunRequest` checks harness kinds and role flags that the command line checks again.** `RunRequest`
+  (`engine/src/serve/start.rs`, `parse`, `by_role`, `argv`) checks what `engine/src/cli/args.rs` checks
+  (`role_agent_arg`, `role_model_arg`). Decided against (the user's ruling, 2026-11-11): validating by running
+  `parse_args` on the built argv and returning clap's error. The desktop app shows serve's `error` text verbatim
+  (`ui/src/api.ts`), and clap's is several lines with `Usage:` and "try '--help'"; `serve/start/tests.rs`'s round
+  trip through `parse_args` already catches the two checks drifting apart.

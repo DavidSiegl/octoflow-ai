@@ -86,7 +86,7 @@ fn gate_passes_first_time() {
     assert!(seen.borrow()[0].contains(&format!("The Builder's report is in {}", state.build_path(1))));
     assert!(f.host.state().prs[0].body.contains("<summary>Quality gate (round 1)</summary>"));
     // done: the refs are gone.
-    assert!(f.host.state().remote.is_empty());
+    assert_eq!(ci_refs(&f.host), []);
     let saved = f.saved();
     assert_eq!(text(&saved, "phase").as_deref(), Some("done"));
     assert_eq!(saved.get("ci"), Some(&Value::Object(Object::new())));
@@ -531,9 +531,7 @@ fn done_deletes_only_this_runs_refs() {
 
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
     assert_eq!(text(&f.saved(), "phase").as_deref(), Some("done"));
-    let remote: Vec<(String, String)> =
-        f.host.state().remote.iter().map(|(b, c)| (b.to_string(), c.clone())).collect();
-    assert_eq!(remote, [("orchestrator-ci/ffffff-1-q1".to_string(), "another-run".to_string())]);
+    assert_eq!(ci_refs(&f.host), [("orchestrator-ci/ffffff-1-q1".to_string(), "another-run".to_string())]);
 }
 
 #[test]
@@ -557,7 +555,7 @@ fn cleanup_without_origin_listing_is_only_logged() {
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
     assert!(f.told.lines().iter().any(|l| l.contains("could not list the orchestrator-ci/ branches")));
     // The round deleted its own ref once judged, which the end could not.
-    assert!(f.host.state().remote.is_empty());
+    assert_eq!(ci_refs(&f.host), []);
 }
 
 #[test]
