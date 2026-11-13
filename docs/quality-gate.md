@@ -97,17 +97,18 @@ optional check `local quality gate`: Linux on x86_64, and on `PATH` curl, tar, s
 `-ww -o stat=,args= -p` (BusyBox's does not), sha256sum (or shasum), a writable cache, and gitleaks; and, unchecked,
 whatever the project's `gate.toml` has the gate run: its `[[test]]` commands, the Python a project with Python tests
 runs them in (`python3`, or `gate.toml`'s `python`) and the linters its files call for, such as pymarkdown,
-shellcheck or clippy, all from `PATH`. A linter the project runs through uv, as this repository runs pymarkdown, is
-there when the orchestrator itself runs under `uv run`.
+shellcheck, clippy or, for a project that tracks Go files, golangci-lint (without it every round fails, unless
+`gate.toml` sets `[linters] golangci-lint = []`), all from `PATH`. A linter the project runs through uv, as this
+repository runs pymarkdown, is there when the orchestrator itself runs under `uv run`.
 
 `orchestrator doctor --setup-gate`, or "Set up the quality gate" in the desktop app's setup dialog, writes at the top
 level of the project's checkout, on the machine its agents run on, whichever of these is missing: `ci/gate.pin`,
 naming `BUILT_IN_PIN`, and a starter `gate.toml` with a `[[test]]` for each kind of project it finds there
 (`Cargo.toml`: `cargo test --workspace`; pytest's settings, in `pytest.ini`, `conftest.py` or a `[tool.pytest…]`
 table of `pyproject.toml`: pytest, through `uv run` when there is a `uv.lock`, writing `junit.xml`; `package.json`:
-`npm test`; `go.mod`: `go test ./...`), or none, with a comment saying how to add one, when it finds no kind it
-knows. A `pyproject.toml` alone is not taken for tests, as it may configure only other tools. Check the guessed
-commands. A file already there is kept.
+`npm test`; `go.mod`: `go test ./...`, under a comment that the gate needs golangci-lint), or none, with a comment
+saying how to add one, when it finds no kind it knows. A `pyproject.toml` alone is not taken for tests, as it may
+configure only other tools. Check the guessed commands. A file already there is kept.
 Nothing is committed, and nothing makes the project's runs gated: commit the files for the gate to read them, and
 pass `--quality-gate local` to a run.
 

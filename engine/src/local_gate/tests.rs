@@ -601,6 +601,16 @@ fn starter_settings_guess_the_tests_from_the_projects_kind() {
 }
 
 #[test]
+fn a_go_project_s_starter_settings_name_golangci_lint() {
+    // The gate fails every round of a project that tracks Go files and lacks golangci-lint (octoflow-gate 0.9.0).
+    let go = starter_settings(&["go.mod"], None);
+    assert!(go.contains("golangci-lint, which must be on PATH"), "{go}");
+    assert!(go.contains("# [linters]\n# golangci-lint = []\n"), "{go}");
+    assert_eq!(tests_of(&go), [("go-test".to_string(), vec!["go".into(), "test".into(), "./...".into()], None)]);
+    assert!(!starter_settings(&["Cargo.toml"], None).contains("golangci-lint"));
+}
+
+#[test]
 fn a_pyproject_toml_without_pytest_settings_is_no_python_tests() {
     // As this repository's: it configures tools, and pytest would collect nothing.
     let tools = "[tool.pymarkdown]\nplugins.md013.enabled = false\n";
