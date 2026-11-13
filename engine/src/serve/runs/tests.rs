@@ -6,6 +6,7 @@ use super::*;
 use crate::constants::{APPROVE, HEARTBEAT_SECONDS, STALE_SECONDS};
 use crate::runs::STALE;
 use crate::serve::fake::{reached, FakeConsole, ServeHost};
+use crate::serve::{FINISHED_RUN_WRITES, SERVE_POLL};
 
 const SERVE_ID: &str = "20261024-120000-5e7e00";
 
@@ -95,7 +96,9 @@ fn a_finished_runs_files_are_read_until_they_settle_and_then_only_when_it_change
     let events = watch.poll();
     assert_eq!(kinds(&events), ["files"]);
     assert_eq!(events[0].payload.get("files").unwrap().to_string(), r#"[{"name":"summary.md","mtime":0}]"#);
-    // A poll that reads the same list as the one before settles it, and from then on nothing lists the run's files.
+    // Once the finishing save is FINISHED_RUN_WRITES old, a poll that reads the same list as the one before settles
+    // it, and from then on nothing lists the run's files.
+    w.save(FINISHED_RUN_WRITES.as_secs(), &done);
     assert_eq!(watch.poll(), vec![]);
     let listings = w.host.state().run_files_inside_calls;
     assert_eq!(watch.poll(), vec![]);
@@ -104,6 +107,27 @@ fn a_finished_runs_files_are_read_until_they_settle_and_then_only_when_it_change
     assert_eq!(kinds(&watch.poll()), ["record"]);
     w.host.state().files.insert(format!("{}/metrics.json", run_dir()), "{}".to_string());
     assert_eq!(kinds(&watch.poll()), ["files"]);
+}
+
+#[test]
+fn a_finished_runs_file_written_later_than_a_poll_interval_is_still_sent() {
+    let w = Watched::new();
+    let done = [("phase", Value::from("done")), ("verdict", Value::from(APPROVE))];
+    let late = SERVE_POLL.local.as_secs() * 3;
+    assert!(late < FINISHED_RUN_WRITES.as_secs());
+    w.save(0, &done);
+    let mut watch = RunWatch::new(&w.project);
+    watch.poll();
+    // Polls with the same record and the same files, while the engine is still writing summary.md.
+    for age in 1..late {
+        w.save(age, &done);
+        assert_eq!(watch.poll(), vec![]);
+    }
+    w.host.state().files.insert(format!("{}/summary.md", run_dir()), "done".to_string());
+    w.save(late, &done);
+    let events = watch.poll();
+    assert_eq!(kinds(&events), ["files"]);
+    assert_eq!(events[0].payload.get("files").unwrap().to_string(), r#"[{"name":"summary.md","mtime":0}]"#);
 }
 
 #[test]

@@ -39,6 +39,12 @@ mod workflows;
 /// on a --machine, each of them is an SSH round trip, so a machine's project is read less often.
 pub const SERVE_POLL: Polls = Polls { local: Duration::from_secs(1), remote: Duration::from_secs(5) };
 
+/// How long after the save that finishes a run the engine may still be writing the run's files: summary.md and
+/// metrics.json (workflow.rs, end_done_run; release writes summary.md), which on a --machine's project read the round
+/// results over SSH first. It must cover those writes on a slow machine, whatever SERVE_POLL is; an event stream lists
+/// a finished run's files on every poll until its state.json is this old (RunWatch::poll).
+pub const FINISHED_RUN_WRITES: Duration = Duration::from_secs(60);
+
 /// How often an event stream polls its project, by where the project is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Polls {
