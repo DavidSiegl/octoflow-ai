@@ -32,6 +32,8 @@ const SSH_SOCKET_PATH_MAX: usize = 103 - 17;
 /// refused it by the server, as one with `MaxSessions 1` refuses the second (mux.c, mux_session_confirm). The
 /// command has not started on the server then.
 const SSH_SESSION_REFUSED: &str = "Session open refused by peer";
+/// The ssh options of a command that neither uses nor becomes a shared connection, whatever ssh_config says.
+const SSH_UNSHARED: [&str; 2] = ["ControlMaster=no", "ControlPath=none"];
 /// The name of a control directory: this prefix, then 8 characters of its own, as mkdtemp names one.
 const SSH_DIR_PREFIX: &str = "octoflow-ssh-";
 
@@ -126,13 +128,14 @@ impl ProcessHost {
     /// last host that shares it is dropped.
     ///
     /// Empty when no such directory with a socket path ssh accepts can be made: ssh would fail the command, not
-    /// connect on its own (ssh_config(5), ControlPath), so the command runs unshared. Empty too for a target whose
-    /// server refused a session on a shared connection (SSH_SESSION_REFUSED).
+    /// connect on its own (ssh_config(5), ControlPath), so the command runs unshared. For a target whose server refused
+    /// a session on a shared connection (SSH_SESSION_REFUSED), SSH_UNSHARED: no connection of the user's own
+    /// ssh_config either.
     pub(super) fn ssh_sharing_options(&self) -> Vec<String> {
         // A poisoned lock only means another thread panicked while it held it; the control is still whole.
         let mut control = self.ssh.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if self.ssh_target.as_ref().is_some_and(|target| control.refused.contains(target)) {
-            return vec![];
+            return SSH_UNSHARED.into_iter().flat_map(|option| ["-o", option]).map(String::from).collect();
         }
         if control.dir.as_deref().is_some_and(private_dir) {
             return control.options.clone();
@@ -177,13 +180,12 @@ impl Host for ProcessHost {
         let Some(target) = &self.ssh_target else {
             return self.exec_here(argv.iter().map(|a| a.to_string()).collect(), stdin, timeout);
         };
-        let options = self.ssh_sharing_options();
-        let shared = !options.is_empty();
-        let exec = self.exec_here(ssh_argv(target, options, argv), stdin, timeout)?;
-        if shared && exec.status == 255 && String::from_utf8_lossy(&exec.stderr).contains(SSH_SESSION_REFUSED) {
-            // The command never started, so running it again runs it once.
-            self.ssh.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).refused.insert(target.clone());
-            return self.exec_here(ssh_argv(target, vec![], argv), stdin, timeout);
+        let exec = self.exec_here(ssh_argv(target, self.ssh_sharing_options(), argv), stdin, timeout)?;
+        let refused = exec.status == 255 && String::from_utf8_lossy(&exec.stderr).contains(SSH_SESSION_REFUSED);
+        // Once per target: a command refused on a connection of its own has nowhere better to go. ssh refuses before
+        // the command starts, so the rerun runs it once, unless the command itself relayed such a refusal.
+        if refused && self.ssh.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).refused.insert(target.clone()) {
+            return self.exec_here(ssh_argv(target, self.ssh_sharing_options(), argv), stdin, timeout);
         }
         Ok(exec)
     }

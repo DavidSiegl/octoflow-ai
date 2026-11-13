@@ -132,7 +132,7 @@ impl Repo {
 
 /// An ssh played by a script on the Host's PATH: it records each call's arguments, one file per call, NUL-separated,
 /// and runs the command it was given with sh, here, as sshd would run it there. With FAKE_SSH_REFUSES_SHARED set in
-/// the host's environment it fails a call that shares a connection (ControlMaster) as OpenSSH 10.0's client does when
+/// the host's environment it fails a call that shares a connection (ControlMaster=auto) as OpenSSH 10.0's client does when
 /// the server refuses the master another session (MaxSessions), running nothing.
 pub(crate) struct FakeSsh {
     dir: TempDir,
@@ -149,7 +149,7 @@ impl FakeSsh {
             "ssh",
             "#!/bin/sh\nd=$(dirname \"$0\")/calls; mkdir -p \"$d\"; n=$(ls \"$d\" | wc -l)\n\
              for a in \"$@\"; do printf '%s\\0' \"$a\"; done > \"$d/$n\"\n\
-             case \"$*\" in *ControlMaster=*) if [ -n \"$FAKE_SSH_REFUSES_SHARED\" ]; then\n\
+             case \"$*\" in *ControlMaster=auto*) if [ -n \"$FAKE_SSH_REFUSES_SHARED\" ]; then\n\
              echo 'mux_client_request_session: session request failed: Session open refused by peer' >&2; exit 255; fi;; esac\n\
              eval \"last=\\${$#}\"\nexec sh -c \"$last\"\n",
         );
@@ -227,10 +227,15 @@ fn a_command_the_server_refuses_on_the_shared_connection_runs_again_unshared_as_
     let ran = ssh.host.run(&["echo", "hi"], None, DEFAULT_TIMEOUT).unwrap();
     assert_eq!((ran.status, ran.stdout.as_str()), (0, "hi\n"));
     ssh.host.over_ssh("remote-host").run(&["true"], None, DEFAULT_TIMEOUT).unwrap();
-    let shares = |call: &Vec<String>| call.iter().any(|a| a.starts_with("ControlMaster="));
-    let shared: Vec<bool> = ssh.calls().iter().map(shares).collect();
-    assert_eq!(shared, [true, false, false]);
-    assert!(ssh.host.ssh_sharing_options().is_empty());
+    let unshared = ["-o", "ControlMaster=no", "-o", "ControlPath=none"].map(String::from).to_vec();
+    let calls = ssh.calls();
+    assert!(calls[0].iter().any(|a| a == "ControlMaster=auto"), "{calls:?}");
+    // On a connection of its own, also where the user's ssh_config would share one.
+    for call in &calls[1..] {
+        assert_eq!(call[SSH.len()..call.len() - 2], unshared, "{calls:?}");
+    }
+    assert_eq!(calls.len(), 3);
+    assert_eq!(ssh.host.ssh_sharing_options(), unshared);
 }
 
 #[test]
