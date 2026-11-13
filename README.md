@@ -85,7 +85,7 @@ there; `doctor --setup-gate` writes the gate's `ci/gate.pin` and a starter `gate
   `rust-toolchain.toml`; [uv](https://github.com/astral-sh/uv), with the Python it brings, only for
   [running the gate by hand](docs/quality-gate.md#the-gate)
 - For `--machine`: the machine saved in herdr and non-interactive SSH to it, which the orchestrator's
-  commands share one connection to (OpenSSH's `ControlMaster`); see
+  commands share one connection to (OpenSSH's `ControlMaster`), unless its server refuses a second session; see
   [Running the agents on another machine](docs/design.md#running-the-agents-on-another-machine)
 - For `--quality-gate JOB`: a Jenkins quality job set up as in [quality gate](docs/quality-gate.md), its
   credentials in `~/.config/ai-agents-orchestrator/ci.env` or the environment, and a git checkout with an
