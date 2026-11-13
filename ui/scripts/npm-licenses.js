@@ -75,8 +75,8 @@ export function npmNotices(ui, accepted) {
       continue;
     }
     const notice = licenseNotice(dir, offered, usable);
-    if (typeof notice === "string") {
-      problems.push(`${name}: ${notice} in ${path}`);
+    if (notice.problem !== undefined) {
+      problems.push(`${name}: ${notice.problem} in ${path}`);
       continue;
     }
     if (buildCode) notice.text = withThirdPartyNotices(dir, notice.text);
@@ -109,8 +109,8 @@ function offeredLicenses(expression) {
 // usable that exactly one file's name holds, as LICENSE-MIT does MIT and LICENSE-APACHE-2.0 Apache-2.0, gives that
 // file under that license. Otherwise, when the files hold one text (LICENSE and LICENSE.md may hold it twice) and
 // about.toml accepts every license offered, that text under all of them, since nothing says which it is. Otherwise,
-// why there is none, as a phrase about the expression: no file or files that differ, or one text of a package also
-// offered under a license about.toml does not accept, which may be that license's text alone.
+// { problem }: why there is none, as a phrase about the expression: no file or files that differ, or one text of a
+// package also offered under a license about.toml does not accept, which may be that license's text alone.
 function licenseNotice(dir, offered, usable) {
   const files = noticeFiles(dir, /^(licen[cs]e|copying)/i);
   for (const license of usable) {
@@ -119,9 +119,11 @@ function licenseNotice(dir, offered, usable) {
     if (named.length === 1) return { license, text: named[0].text };
   }
   const expression = offered.join(" OR ");
-  if (files.length === 0 || files.some((f) => f.text !== files[0].text)) return `no one license text for ${expression}`;
+  if (files.length === 0 || files.some((f) => f.text !== files[0].text)) {
+    return { problem: `no one license text for ${expression}` };
+  }
   if (usable.length < offered.length) {
-    return `one license text for ${expression}, not every license of which about.toml accepts`;
+    return { problem: `one license text for ${expression}, not every license of which about.toml accepts` };
   }
   return { license: expression, text: files[0].text };
 }
