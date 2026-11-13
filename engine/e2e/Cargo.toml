@@ -15,6 +15,9 @@ serde_json = { version = "1", features = ["preserve_order"] }
 # The ledger's lock (flock), the world's kill of an invocation (signals) and the host's name, which the normalizer
 # writes as <host>: the engine's own dependency, with the fs feature for flock.
 nix = { version = "0.31", default-features = false, features = ["fs", "hostname", "signal"] }
+# A scenario's directory under a name no other test run has (Scratch::new): the workspace's tempfile, as the engine's
+# tests use it. Decided for ticket 49, 2026-11-13.
+tempfile = "3"
 
 [dev-dependencies]
 # Writing a recording through serde_json's pretty printer with an indent of its own (tests/e2e/main.rs).
