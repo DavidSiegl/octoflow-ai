@@ -15,7 +15,7 @@ The gate is [octoflow-gate](https://github.com/DavidSiegl/octoflow-gate), a proj
 from a base commit to the working tree with linters, the tests and their coverage, and checks of what the change did,
 and writes the quality file, `quality.md`, and `quality.json`. What it checks, the settings it reads and how it reads
 Rust are its own docs'
-([docs/quality-gate.md](https://github.com/DavidSiegl/octoflow-gate/blob/v0.7.0/docs/quality-gate.md)).
+([docs/quality-gate.md](https://github.com/DavidSiegl/octoflow-gate/blob/v0.10.0/docs/quality-gate.md)).
 This repository was its home until 0.62.1.
 
 What this repository gives it:
@@ -67,7 +67,7 @@ Each round, the orchestrator:
    is not judged, and the round's file is `GATE: LEAK`;
 2. reads `ci/gate.pin`, `gate.toml` and `pyproject.toml` from the run's base commit, not from the working tree, so a
    change cannot loosen how it is itself judged, as a quality build judges by `main`'s; a base without `ci/gate.pin`
-   is judged by the release the engine was tested against (`BUILT_IN_PIN`, 0.7.0), one without `gate.toml` by the
+   is judged by the release the engine was tested against (`BUILT_IN_PIN`, 0.10.0), one without `gate.toml` by the
    gate's defaults and one without `pyproject.toml` by the linters' own, never by the change's;
 3. checks the snapshot out as a worktree of the run's repository into `gate-<n>-<q>/job-<k>/tree` under the run's
    directory, `k` counting the round's starts, as a resume starts it again: the gate judges the files the Builder
@@ -122,9 +122,9 @@ Jenkins job named `local` in flight is not resumed, as this release would take i
 
 The gate writes one report two ways, and the orchestrator reads both back from Jenkins after each quality round.
 `quality.json` is the contract: the gate's JSON Schema,
-[schema/quality-v1.json](https://github.com/DavidSiegl/octoflow-gate/blob/v0.7.0/schema/quality-v1.json), says what
+[schema/quality-v1.json](https://github.com/DavidSiegl/octoflow-gate/blob/v0.10.0/schema/quality-v1.json), says what
 each field holds, and the gate's own docs say when its `schema_version` is raised ([the report as a
-contract](https://github.com/DavidSiegl/octoflow-gate/blob/v0.7.0/docs/quality-gate.md#the-report-as-a-contract)).
+contract](https://github.com/DavidSiegl/octoflow-gate/blob/v0.10.0/docs/quality-gate.md#the-report-as-a-contract)).
 From it the orchestrator takes whether the gate passed and what failed it (`quality::read_report`): the failed
 conditions, the `fingerprint` of each finding that `fails`, under its `check`, and each failing test, which it
 compares with the last round's for a stuck loop (`GateFailures.repeats`). It reads only `schema_version` 1 and stops

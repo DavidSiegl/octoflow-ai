@@ -21,7 +21,7 @@ use crate::quality::last_lines;
 /// The release a base without ci/gate.pin is judged by, in ci/gate.pin's form: the octoflow-gate release this engine
 /// was tested against, whose quality.json schema crate::quality::read_report reads. Raise it with the repository's own
 /// ci/gate.pin.
-pub const BUILT_IN_PIN: &str = "0.7.0 9700f6072b5d6926b9ce32c01ed582fde7bf887424b62e9ec0ced868b24509e1";
+pub const BUILT_IN_PIN: &str = "0.10.0 8f6007f046be5fcf516496201a41bc7185a3af53c5e7778a9489a0d10414525a";
 
 /// Where a pin's release is downloaded from: the GitHub release `v<version>` of octoflow-gate, with {v} the version.
 const RELEASE_URL: &str = "https://github.com/DavidSiegl/octoflow-gate/releases/download/v{v}/octoflow-gate-{v}.tar.gz";
