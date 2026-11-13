@@ -2,7 +2,8 @@
 //! review that requests changes, then again each round until they pass, with what the review, the proof step and the
 //! step it loops back to are told of them.
 
-use super::{prompt_error, Outcome, Workflow};
+use super::step_prompt::RunView;
+use super::{Outcome, Workflow};
 use crate::constants::PROOF_COPIES_DIR;
 use crate::error::OrchestratorError;
 use crate::host::{checked, shlex_quote, DEFAULT_TIMEOUT, MISSING_FILE_STATUS};
@@ -13,7 +14,7 @@ use crate::proofs::{
     REMOVE_TREE_SCRIPT,
 };
 use crate::prompts::template::fill;
-use crate::prompts::Prompt;
+use crate::prompts::{prompt_error, Prompt};
 
 /// Runs "$2" with sh in the directory "$1", under GNU timeout's limit of "$3" seconds where there is a timeout: it runs
 /// the proof in a process group of its own and kills all of it, so nothing a proof started goes on writing to the
@@ -39,7 +40,7 @@ impl Workflow<'_> {
     pub(super) fn judge_proofs(&mut self, step: &Step, n: u32, review: &str) -> Outcome<()> {
         let Some(command) = self.pipeline.proof_command().map(String::from) else { return Ok(()) };
         let mut records: Vec<ProofRun> =
-            self.proof_runs()?.into_iter().filter(|p| p.round == n && p.written == n).collect();
+            self.view().proof_runs()?.into_iter().filter(|p| p.round == n && p.written == n).collect();
         if records.is_empty() {
             let mut files: Vec<String> = self
                 .host
@@ -71,11 +72,11 @@ impl Workflow<'_> {
     /// once round n's reruns are recorded. Errors: as judge_proofs'.
     pub(super) fn rerun_proofs(&mut self, step: &Step, n: u32) -> Outcome<()> {
         let Some(command) = self.pipeline.proof_command().map(String::from) else { return Ok(()) };
-        if !self.reruns(n)?.is_empty() {
+        if !self.view().reruns(n)?.is_empty() {
             return Ok(());
         }
         let mut records = vec![];
-        for p in self.carried_proofs(n)? {
+        for p in self.view().carried_proofs(n)? {
             let ProofOutcome { demonstrated, said, moved } = self.run_proof(&command, p.written, &p.file)?;
             records.push(ProofRun { round: n, demonstrated, said, moved, ..p });
         }
@@ -89,78 +90,6 @@ impl Workflow<'_> {
             records.len()
         ));
         Ok(())
-    }
-
-    /// The latest run before round n of each proof carried into it, in the order the proofs first ran: one that
-    /// failed when last run, or that a rerun found erroring rather than passing. A proof whose first run, in the round
-    /// that wrote it, errored is not carried: it never demonstrated its finding. Nor is one whose last run found its
-    /// file gone (ProofRun::moved): the Builder moved it into the project, which ends its carrying.
-    fn carried_proofs(&self, n: u32) -> Result<Vec<ProofRun>, OrchestratorError> {
-        let mut latest: Vec<ProofRun> = vec![];
-        for p in self.proof_runs()?.into_iter().filter(|p| p.round < n) {
-            match latest.iter_mut().find(|q| (q.written, &q.file) == (p.written, &p.file)) {
-                Some(q) => *q = p,
-                None => latest.push(p),
-            }
-        }
-        Ok(latest.into_iter().filter(|p| !p.moved && (p.demonstrated || (p.written < p.round && !p.passed()))).collect())
-    }
-
-    /// The runs of the proofs carried into round n, run again before its proof step's turn.
-    fn reruns(&self, n: u32) -> Result<Vec<ProofRun>, OrchestratorError> {
-        Ok(self.proof_runs()?.into_iter().filter(|p| p.round == n && p.written < n).collect())
-    }
-
-    /// Where the proof of a run lies: in the proofs directory of the round that wrote it.
-    fn proof_path(&self, proof: &ProofRun) -> String {
-        format!("{}/{}", self.state.proofs_dir(proof.written), proof.file)
-    }
-
-    /// What the proof step hears in round n of the proofs from earlier rounds run again before its turn:
-    /// CARRIED_PROOFS_NOTE after a blank line; "" when none was. A proof found gone in round n (ProofRun::moved) is
-    /// listed as moved into the project, and only in round n, since carried_proofs carries it no further. Errors: a
-    /// saved run is malformed (ProofRun::read), or the prompt cannot be filled in.
-    pub(super) fn carried_proofs_note(&self, n: u32) -> Result<String, OrchestratorError> {
-        let Some(command) = self.pipeline.proof_command() else { return Ok(String::new()) };
-        let records = self.reruns(n)?;
-        if records.is_empty() {
-            return Ok(String::new());
-        }
-        let items: Vec<String> = records
-            .iter()
-            .map(|p| {
-                if p.moved {
-                    return format!(
-                        "- `{}`: not run, as its file is gone from its directory, taken as moved into the project. \
-                         Check that the change holds it as a test that passes; \
-                         if it does not, the proof's finding stands.",
-                        self.proof_path(p)
-                    );
-                }
-                let passed = p.passed();
-                let how = if p.demonstrated {
-                    "still fails"
-                } else if passed {
-                    "now passes"
-                } else {
-                    "no longer fails but errors"
-                };
-                let (said, output) = if passed {
-                    (String::new(), vec![])
-                } else {
-                    (format!(", {}", proof_outcome(&p.said)), proof_output(&p.said))
-                };
-                let mut lines = vec![format!("- `{}`: {how}{said}.", self.proof_path(p))];
-                lines.extend(output);
-                lines.join("\n")
-            })
-            .collect();
-        let note = self.fill(Prompt::CarriedProofsNote, &[
-            ("command", command),
-            ("cwd", self.state.work_dir()),
-            ("proofs", &items.join("\n\n")),
-        ])?;
-        Ok(format!("\n\n{note}"))
     }
 
     /// Whether the proof file that round written's proof step wrote fails against the working tree, as command's
@@ -254,6 +183,85 @@ impl Workflow<'_> {
         }
     }
 
+    /// Add records to RunState::proofs and save it; how many of them failed. Errors: saving fails.
+    fn record_proof_runs(&mut self, records: &[ProofRun]) -> Outcome<usize> {
+        self.state.proofs.extend(records.iter().map(ProofRun::record));
+        self.save()?;
+        Ok(records.iter().filter(|p| p.demonstrated).count())
+    }
+
+}
+
+/// What a run's records say of its proofs, and what its steps are told of them.
+impl RunView<'_> {
+    /// The latest run before round n of each proof carried into it, in the order the proofs first ran: one that
+    /// failed when last run, or that a rerun found erroring rather than passing. A proof whose first run, in the round
+    /// that wrote it, errored is not carried: it never demonstrated its finding. Nor is one whose last run found its
+    /// file gone (ProofRun::moved): the Builder moved it into the project, which ends its carrying.
+    fn carried_proofs(&self, n: u32) -> Result<Vec<ProofRun>, OrchestratorError> {
+        let mut latest: Vec<ProofRun> = vec![];
+        for p in self.proof_runs()?.into_iter().filter(|p| p.round < n) {
+            match latest.iter_mut().find(|q| (q.written, &q.file) == (p.written, &p.file)) {
+                Some(q) => *q = p,
+                None => latest.push(p),
+            }
+        }
+        Ok(latest.into_iter().filter(|p| !p.moved && (p.demonstrated || (p.written < p.round && !p.passed()))).collect())
+    }
+    /// The runs of the proofs carried into round n, run again before its proof step's turn.
+    fn reruns(&self, n: u32) -> Result<Vec<ProofRun>, OrchestratorError> {
+        Ok(self.proof_runs()?.into_iter().filter(|p| p.round == n && p.written < n).collect())
+    }
+    /// Where the proof of a run lies: in the proofs directory of the round that wrote it.
+    fn proof_path(&self, proof: &ProofRun) -> String {
+        format!("{}/{}", self.state.proofs_dir(proof.written), proof.file)
+    }
+    /// What the proof step hears in round n of the proofs from earlier rounds run again before its turn:
+    /// CARRIED_PROOFS_NOTE after a blank line; "" when none was. A proof found gone in round n (ProofRun::moved) is
+    /// listed as moved into the project, and only in round n, since carried_proofs carries it no further. Errors: a
+    /// saved run is malformed (ProofRun::read), or the prompt cannot be filled in.
+    pub(super) fn carried_proofs_note(&self, n: u32) -> Result<String, OrchestratorError> {
+        let Some(command) = self.pipeline.proof_command() else { return Ok(String::new()) };
+        let records = self.reruns(n)?;
+        if records.is_empty() {
+            return Ok(String::new());
+        }
+        let items: Vec<String> = records
+            .iter()
+            .map(|p| {
+                if p.moved {
+                    return format!(
+                        "- `{}`: not run, as its file is gone from its directory, taken as moved into the project. \
+                         Check that the change holds it as a test that passes; \
+                         if it does not, the proof's finding stands.",
+                        self.proof_path(p)
+                    );
+                }
+                let passed = p.passed();
+                let how = if p.demonstrated {
+                    "still fails"
+                } else if passed {
+                    "now passes"
+                } else {
+                    "no longer fails but errors"
+                };
+                let (said, output) = if passed {
+                    (String::new(), vec![])
+                } else {
+                    (format!(", {}", proof_outcome(&p.said)), proof_output(&p.said))
+                };
+                let mut lines = vec![format!("- `{}`: {how}{said}.", self.proof_path(p))];
+                lines.extend(output);
+                lines.join("\n")
+            })
+            .collect();
+        let note = self.prompts.fill(Prompt::CarriedProofsNote, &[
+            ("command", command),
+            ("cwd", self.state.work_dir()),
+            ("proofs", &items.join("\n\n")),
+        ])?;
+        Ok(format!("\n\n{note}"))
+    }
     /// What the step hears in round n of the proofs carried into it (carried_proofs): PROOFS_NOTE after a blank line;
     /// "" when it is not the step the proof step (Pipeline::proof_step) loops back to, or none is carried. Errors: as
     /// carried_proofs_note's.
@@ -266,16 +274,8 @@ impl Workflow<'_> {
         if failing.is_empty() {
             return Ok(String::new());
         }
-        Ok(format!("\n\n{}", self.fill(Prompt::ProofsNote, &[("proofs", &failing.join(", "))])?))
+        Ok(format!("\n\n{}", self.prompts.fill(Prompt::ProofsNote, &[("proofs", &failing.join(", "))])?))
     }
-
-    /// Add records to RunState::proofs and save it; how many of them failed. Errors: saving fails.
-    fn record_proof_runs(&mut self, records: &[ProofRun]) -> Outcome<usize> {
-        self.state.proofs.extend(records.iter().map(ProofRun::record));
-        self.save()?;
-        Ok(records.iter().filter(|p| p.demonstrated).count())
-    }
-
     /// RunState::proofs, read. Errors: as ProofRun::read's.
     fn proof_runs(&self) -> Result<Vec<ProofRun>, OrchestratorError> {
         self.state.proofs.iter().map(ProofRun::read).collect()

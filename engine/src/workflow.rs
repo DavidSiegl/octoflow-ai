@@ -24,13 +24,11 @@ use crate::host::{git_status, Host, PushError, Scanned};
 use crate::interrupt::Interrupt;
 use crate::paths::file_name;
 use crate::pipeline::{is_built_in, Pipeline, Step, DONE, METRICS_FILE, PUBLISH, QUALITY, SUMMARY_FILE};
-use crate::prompts::template::{fill, TemplateError};
-use crate::prompts::{Prompt, Prompts};
+use crate::prompts::Prompts;
 use crate::proofs::PROOF_TIMEOUT;
 use crate::pull_request::{branch_name, commit_note, pr_body, provenance, spec_title, GateEvidence, QualityFile};
 use crate::package_index::PackageIndexes;
 use serde_json::Value;
-use crate::map::Map;
 use crate::json::{object, Object, ValueExt};
 use crate::quality::parse_gate;
 use crate::runs::{local_host, RUNNING};
@@ -38,12 +36,14 @@ use crate::spec_file::SpecFile;
 use crate::state::RunState;
 use crate::summary::{iso_utc, run_metrics, run_summary, turn_tokens};
 use crate::workflow_file::{run_pipeline, workflow_definition};
+use step_prompt::RunView;
 
 mod gate_switch;
 mod locks;
 mod origin;
 mod proof_runs;
 mod quality_rounds;
+mod step_prompt;
 mod system;
 mod turn;
 
@@ -306,6 +306,11 @@ impl<'a> Workflow<'a> {
     /// The run's state as it stands.
     pub fn state(&self) -> &RunState {
         &self.state
+    }
+
+    /// The run as it stands, to read prompts and records from.
+    fn view(&self) -> RunView<'_> {
+        RunView { state: &self.state, pipeline: &self.pipeline, prompts: &self.prompts, host: self.host }
     }
 
     /// Run every phase not yet done and return the final verdict: the run's (RunState::verdict), for a workflow
@@ -955,10 +960,10 @@ impl<'a> Workflow<'a> {
 
     /// The step's turn in round n: its handoff file, once written.
     fn step_turn(&mut self, step: &Step, n: u32) -> Outcome<String> {
-        let (text, fresh_text) = self.prompts(step, n)?;
+        let (text, fresh_text) = self.view().step_prompt(step, n)?;
         let turn = turn::Turn {
             role: step.role.clone(),
-            path: self.own_path(step, n),
+            path: self.view().own_path(step, n),
             text,
             fresh_text,
             // Paced by the human, so the turn has no deadline, and an idle agent is normal: it is waiting for the
@@ -975,160 +980,6 @@ impl<'a> Workflow<'a> {
             },
         };
         self.turn(turn)
-    }
-
-    /// The file the step's turn in round n writes: for the gated step, its answer to the quality round if any.
-    fn own_path(&self, step: &Step, n: u32) -> String {
-        let s = &self.state;
-        step.path(&s.dir(), n, if step.quality_gated { s.quality_round } else { 0 })
-    }
-
-    /// The step's prompt for its turn in round n, and the one for a fresh session that has not seen the turns before
-    /// it; each ends with BLOCKED_NOTE when the step can block.
-    fn prompts(&self, step: &Step, n: u32) -> Result<(String, Option<String>), OrchestratorError> {
-        let (text, fresh) = self.step_prompts(step, n)?;
-        if !step.can_block() {
-            return Ok((text, fresh));
-        }
-        // Formatted with nothing, as each prompt is a template (Prompts): an override may write a brace as {{.
-        let note = self.fill(Prompt::BlockedNote, &[])?;
-        Ok((format!("{text}\n\n{note}"), fresh.map(|f| if f.is_empty() { f } else { format!("{f}\n\n{note}") })))
-    }
-
-    /// prompts as the step's definition words them.
-    fn step_prompts(&self, step: &Step, n: u32) -> Result<(String, Option<String>), OrchestratorError> {
-        let s = &self.state;
-        let q = if step.quality_gated { s.quality_round } else { 0 };
-        let mut values = Map::new();
-        for name in step.placeholders() {
-            let value = self.placeholder(&name, step, n)?;
-            values.insert(name, value);
-        }
-        let template = |t: &str| fill(t, &|name| values.get(name).cloned()).map_err(|e| prompt_error(&step.id, &e));
-        // What a verdict step hears of its round besides its prompt: its last quality file and the locked files
-        // restored, and the proof step the proofs run again.
-        let mut notes = String::new();
-        if step.loop_to.is_some() {
-            notes = self.quality_note(n)? + &self.locks_note(n)?;
-        }
-        if self.pipeline.proves(step) {
-            notes += &self.carried_proofs_note(n)?;
-        }
-        let first = template(&step.prompt)? + &notes;
-        let follow = if q > 0 {
-            let report_path = self.own_path(step, n);
-            let quality_path = s.quality_path(n, q);
-            self.fill(Prompt::QualityFixPrompt, &[("quality_path", &quality_path), ("report_path", &report_path)])?
-        } else if n > 1 && self.judged_rounds(step, n).is_none_or(|rounds| !rounds.is_empty()) {
-            // A later round, for a step that has taken a turn before: a verdict step that earlier ones' requests for
-            // changes have skipped so far gets its first prompt.
-            template(step.again.as_deref().filter(|a| !a.is_empty()).unwrap_or(&step.prompt))? + &notes
-        } else {
-            return Ok((first, None));
-        };
-        let mut fresh = vec![first];
-        if let Some(note) = step.fresh_note.as_deref().filter(|f| !f.is_empty()) {
-            fresh.push(template(note)?);
-        }
-        // A quality fix always asks for work that the first prompt does not.
-        if q > 0 || step.fresh_repeats_again {
-            fresh.push(follow.clone());
-        }
-        // Last, so a fresh session hears it too, whatever its prompt repeats.
-        let proofs = if q > 0 { String::new() } else { self.proofs_note(step, n)? };
-        Ok((follow + &proofs, Some(fresh.join("\n\n") + &proofs)))
-    }
-
-    /// The value of a prompt placeholder (see Step) in the step's turn in round n.
-    fn placeholder(&self, name: &str, step: &Step, n: u32) -> Result<String, OrchestratorError> {
-        let s = &self.state;
-        match name {
-            "task" => return Ok(s.task.clone()),
-            "cwd" => return Ok(s.work_dir().to_string()),
-            "n" => return Ok(n.to_string()),
-            "approve" => return Ok(APPROVE.to_string()),
-            "changes" => return Ok(CHANGES_REQUESTED.to_string()),
-            "proofs_dir" => return Ok(s.proofs_dir(n)),
-            "change" => return Ok(self.state.change_description()),
-            "path" => return Ok(self.own_path(step, n)),
-            "findings" => return Ok(self.findings(n)),
-            _ => {}
-        }
-        let placeholders = self.pipeline.path_placeholders();
-        let (_, prefix, other) = placeholders
-            .iter()
-            .find(|(x, _, _)| x == name)
-            .ok_or_else(|| OrchestratorError(format!("step {} has no placeholder {name}", step.id)))?;
-        match *prefix {
-            // Round 0's previous round is -1, as Python's n - 1 gives it, whose file no turn writes.
-            "prev_" if n == 0 => Ok(other.path(&s.dir(), -1, 0)),
-            "prev_" => match self.judged_rounds(other, n) {
-                // A verdict step's last file before round n; round n-1's, which no turn wrote, before its first turn,
-                // as round 0's above.
-                Some(rounds) => Ok(other.path(&s.dir(), rounds.last().copied().unwrap_or(n - 1), 0)),
-                None => Ok(self.reports(other, n - 1)?.pop().unwrap_or_default()),
-            },
-            "earlier_" => {
-                let rounds = self.judged_rounds(other, n).unwrap_or_else(|| (1..n).collect());
-                let mut reports = vec![];
-                for i in rounds {
-                    reports.extend(self.reports(other, i)?);
-                }
-                if other.id == step.id && step.quality_gated {
-                    reports.extend((0..s.quality_round).map(|j| step.path(&s.dir(), n, j)));
-                }
-                Ok(reports.join(", "))
-            }
-            _ if other.id == step.id => Ok(self.own_path(step, n)),
-            _ => Ok(other.last_path(&s.dir(), n, s.quality_round)),
-        }
-    }
-
-    /// The verdict file whose request for changes sent the run into round n: the file of round n-1's last verdict
-    /// (RunState::verdicts), or for a run saved without those records the proof step's file of round n-1. "" before
-    /// round 2, and in a workflow without a verdict step.
-    fn findings(&self, n: u32) -> String {
-        let s = &self.state;
-        if n < 2 {
-            return String::new();
-        }
-        let judge = s.verdicts.iter().rev().find(|v| v.round == n - 1).and_then(|v| self.pipeline.step(&v.step));
-        judge.or(self.pipeline.proof_step()).map_or(String::new(), |st| st.path(&s.dir(), n - 1, 0))
-    }
-
-    /// The rounds before round n the verdict step judged, in order: those the run's records (RunState::verdicts) give
-    /// it a verdict in, as an earlier verdict step's request for changes may have skipped it, and for the first
-    /// verdict step every round before the run's first record too. A run saved before there were records, and resumed
-    /// since, has its records start at the resumed round, and its one verdict step judged every round before that.
-    /// None, every round before n, for a step that is not a verdict step.
-    fn judged_rounds(&self, step: &Step, n: u32) -> Option<Vec<u32>> {
-        step.loop_to.as_ref()?;
-        let s = &self.state;
-        let first_recorded = s.verdicts.iter().map(|v| v.round).min().unwrap_or(n);
-        let unrecorded = if self.pipeline.proves(step) { 1..first_recorded } else { 0..0 };
-        let recorded = s.verdicts.iter().filter(|v| v.step == step.id && v.round < n).map(|v| v.round);
-        Some(unrecorded.chain(recorded).collect())
-    }
-
-    /// The step's files of round n, oldest first; for the gated step, its answers to quality rounds too.
-    fn reports(&self, step: &Step, n: u32) -> Result<Vec<String>, OrchestratorError> {
-        let s = &self.state;
-        let mut reports = vec![step.path(&s.dir(), n, 0)];
-        // How many quality rounds an earlier round took is recorded only by the files it left.
-        while s.had_quality_gate() && step.quality_gated {
-            let next = step.path(&s.dir(), n, reports.len() as u32);
-            if self.host.read(&next)?.is_none() {
-                break;
-            }
-            reports.push(next);
-        }
-        Ok(reports)
-    }
-
-    /// One of the prompts the workflow's definition does not word, filled in with values.
-    fn fill(&self, p: Prompt, values: &[(&str, &str)]) -> Result<String, OrchestratorError> {
-        let value = |name: &str| values.iter().find(|(n, _)| *n == name).map(|(_, v)| v.to_string());
-        fill(self.prompts.text(p), &value).map_err(|e| prompt_error(p.name(), &e))
     }
 
     /// Before the first editing step: create the run's branch from the base branch, brought up to origin's, unless
@@ -1320,36 +1171,13 @@ impl<'a> Workflow<'a> {
         }
     }
 
-    /// Round n's last quality file that is written, as (its quality round, its text); None when there is none.
-    ///
-    /// It is the current quality round's, except when resume --no-quality-gate turned the gate off before that
-    /// round's analysis finished, or in the gated step's turn after it (take_turn): the one before then.
-    fn last_quality(&self, n: u32) -> Result<Option<(u32, String)>, OrchestratorError> {
-        let s = &self.state;
-        for q in [s.quality_round, s.quality_round.saturating_sub(1)] {
-            if q > 0 {
-                if let Some(text) = self.host.read(&s.quality_path(n, q))? {
-                    return Ok(Some((q, text)));
-                }
-            }
-        }
-        Ok(None)
-    }
-
-    /// Whether the current round's change went unjudged: resume --no-quality-gate turned the gate off, and last, the
-    /// round's last quality file as last_quality gives it, is older than the Builder's latest report in the round, or
-    /// is None: the gate was turned off before the round's first analysis finished, or in an earlier round.
-    fn unjudged(&self, last: Option<&(u32, String)>) -> bool {
-        let s = &self.state;
-        s.quality_gate_disabled && last.is_none_or(|(q, _)| *q < s.quality_round)
-    }
-
     /// What the quality gate said of round n's change, the run's final one: round n's last quality file, or for an
     /// unjudged change (unjudged) the run's last one from any round.
     fn gate_evidence(&self, n: u32) -> Result<GateEvidence, OrchestratorError> {
         let s = &self.state;
-        let last = self.last_quality(n)?;
-        let unjudged = self.unjudged(last.as_ref());
+        let view = self.view();
+        let last = view.last_quality(n)?;
+        let unjudged = view.unjudged(last.as_ref());
         if last.is_some() || !unjudged {
             let last = last.map(|(quality_round, text)| QualityFile { round: n, quality_round, text });
             return Ok(GateEvidence { last, unjudged });
@@ -1475,10 +1303,4 @@ impl Ending {
 /// that the human can tell a run's workspace in herdr's list. serve labels the workspace it starts a run in so too.
 pub fn workspace_label(run_id: &str, task: &str) -> String {
     format!("{} {task}", crate::state::run_key(run_id)).chars().take(40).collect()
-}
-
-/// The error of a prompt template named name that cannot be filled in, which the checks of Pipeline, of prompt files
-/// and of a run's saved prompts (saved_prompts) leave no case for.
-fn prompt_error(name: &str, e: &TemplateError) -> OrchestratorError {
-    OrchestratorError(format!("prompt {name} cannot be filled in: {e}"))
 }

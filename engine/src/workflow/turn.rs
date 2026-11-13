@@ -14,7 +14,7 @@ use crate::paths::{file_name, split_extension};
 use crate::prompts::Prompt;
 use serde_json::Value;
 use crate::json::{object, Object, ValueExt};
-use crate::state::{AgentRecord, TurnRecord};
+use crate::state::{AgentRecord, RunState, TurnRecord};
 use crate::summary::{epoch_seconds, iso_utc};
 
 /// What a turn does once its agent is ready, before any prompt.
@@ -268,7 +268,7 @@ impl Workflow<'_> {
     /// announces itself again, and prompts as prompt_for does, with BLOCKED_PROMPT in place of the step's.
     fn block_answer(&mut self, role: &str, path: &str, block: &Object) -> Outcome<String> {
         let blocked = blocked_path(path, block_number(block)?);
-        let prompt = self.fill(Prompt::BlockedPrompt, &[("path", path), ("blocked_path", &blocked)])?;
+        let prompt = self.prompts.fill(Prompt::BlockedPrompt, &[("path", path), ("blocked_path", &blocked)])?;
         let question = block_field(block, "question")?.text();
         let t = Turn {
             role: role.to_string(),
@@ -364,7 +364,7 @@ impl Workflow<'_> {
     fn retry_prompt(&self, path: &str) -> Result<String, OrchestratorError> {
         let rejected = rejected_path(path);
         let values = [("path", path), ("rejected_path", &rejected), ("approve", APPROVE), ("changes", CHANGES_REQUESTED)];
-        self.fill(Prompt::RetryVerdictPrompt, &values)
+        self.prompts.fill(Prompt::RetryVerdictPrompt, &values)
     }
 
     /// What to prompt an agent that is ready as how says with; None when it only has to be waited for.
@@ -383,7 +383,7 @@ impl Workflow<'_> {
             return Ok(Some(text.to_string()));
         }
         if how == How::Resumed {
-            return Ok(Some(self.fill(Prompt::ContinuePrompt, &[("path", path)])?));
+            return Ok(Some(self.prompts.fill(Prompt::ContinuePrompt, &[("path", path)])?));
         }
         // Alive and already prompted for this file.
         Ok(None)
@@ -723,6 +723,13 @@ impl Workflow<'_> {
     pub(super) fn label(&self, role: &str) -> String {
         self.pipeline.roles().get(role).cloned().unwrap_or_else(|| role.to_string())
     }
+}
+
+/// Whether the turn that writes the handoff file named file (a basename) has started, as state records it: its prompt
+/// was delivered, it is being asked again for its verdict, or it waits on the human's answer to its BLOCKED report. A
+/// turn with none of these has not been prompted, so has not yet seen the change.
+pub(super) fn turn_started(state: &RunState, file: &str) -> bool {
+    [state.prompted.as_deref(), state.retrying.as_deref(), state.blocked.as_ref().and_then(file_of)].contains(&Some(file))
 }
 
 /// The file the record of a block (RunState::blocked) is of; None for a record without one.

@@ -1,6 +1,8 @@
 //! TestDefaultWorkflowPrompts, TestWorkflowPromptsGolden and the Workflow-driven cases of TestPromptFiles: the
-//! prompts each workflow sends as Workflow fills them in, held to the Python engine's texts, and the prompt files that
-//! word them.
+//! prompts each workflow sends, held to the Python engine's texts, and the prompt files that word them. A case of a
+//! prompt's text alone asks RunView::step_prompt, on a run state and the files a FakeHost holds; the cases that run a
+//! Workflow show what it sends besides (a session's ContinuePrompt), what it saves with the prompts, and that its
+//! turns are prompted with step_prompt's texts.
 //!
 //! Not here: TestPromptFiles' cases of main (test_bad_files_stop_run_before_any_agent, test_workflows_*) are the
 //! CLI's (crate::cli's tests and crate::cli::workflows'), test_a_bad_file_stops_drain_before_any_run drain's (ticket
@@ -16,6 +18,7 @@ use crate::paths::file_name;
 use crate::pipeline::{find_workflow, Pipeline, DEFAULT_WORKFLOW};
 use crate::prompts::{load_prompts};
 use crate::test_support::{quick, TempDir, EXAMPLES};
+use crate::workflow::step_prompt::RunView;
 use crate::workflow_file::load_workflow_file;
 
 const D: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
@@ -293,25 +296,40 @@ const GOLDEN_PR_BODY: &str = concat!(
     "04:02:00 | 0s | review-2.md |\n\n</details>\n",
 );
 
+/// The prompts of the step with id step in round n of the run in state, of pipeline, its files those host holds:
+/// RunView::step_prompt's, the running session's and a fresh one's.
+fn step_prompt_in(pipeline: &Pipeline, state: &RunState, host: &FakeHost, step: &str, n: u32) -> (String, Option<String>) {
+    let prompts = state.prompts().unwrap();
+    let view = RunView { state, pipeline, prompts: &prompts, host };
+    view.step_prompt(pipeline.step(step).expect("a step of the workflow"), n).unwrap()
+}
+
+/// step_prompt_in the run's own workflow (RunState::pipeline), as a resume takes it.
+fn step_prompt(state: &RunState, host: &FakeHost, step: &str, n: u32) -> (String, Option<String>) {
+    let pipeline = state.pipeline().unwrap();
+    step_prompt_in(&pipeline, state, host, step, n)
+}
+
+/// A FakeHost holding each (path, text) of files.
+fn holding(files: &[(String, &str)]) -> FakeHost {
+    let host = FakeHost::default();
+    for (path, text) in files {
+        host.state().files.insert(path, text.to_string());
+    }
+    host
+}
+
 #[test]
 fn fresh_builder_in_round_two() {
-    let seen = seen();
-    let mut state = saved_run("build", 2, FULL);
-    state.prompted = Some("build-2.md".into());
-    let script = vec![("build", vec![recording(build_turn(2), &seen)]), ("review", vec![review_turn(2, APPROVE)])];
-    let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &["review"], &[]);
-    f.workflow(f.as_saved()).run().unwrap();
-    assert_eq!(*seen.borrow(), [FRESH_BUILD_2]);
+    let (_, fresh) = step_prompt(&saved_run("build", 2, FULL), &FakeHost::default(), "build", 2);
+    assert_eq!(fresh.unwrap(), FRESH_BUILD_2);
 }
 
 #[test]
 fn fresh_reviewer_in_round_two() {
-    let seen = seen();
-    let script = vec![("review", vec![recording(review_turn(2, APPROVE), &seen)])];
-    let f = Fixture::resume(Rc::new(FakeHost::default()), saved_run("review", 2, FULL), script, &[], &[]);
-    f.put(&f.state.build_path(2), "report 2");
-    f.workflow(f.as_saved()).run().unwrap();
-    assert_eq!(*seen.borrow(), [FRESH_REVIEW_2]);
+    let state = saved_run("review", 2, FULL);
+    let host = holding(&[(state.build_path(2), "report 2")]);
+    assert_eq!(step_prompt(&state, &host, "review", 2).1.unwrap(), FRESH_REVIEW_2);
 }
 
 #[test]
@@ -452,40 +470,34 @@ fn gated_run(phase: &str, rnd: u32) -> RunState {
 
 #[test]
 fn fresh_builder_in_round_two_after_quality_rounds() {
-    let seen = seen();
-    let script = vec![("build", vec![recording(build_turn(2), &seen)]), ("review", vec![review_turn(2, APPROVE)])];
-    let f = Fixture::resume_gated(Rc::new(FakeHost::default()), gated_run("build", 2), script, &["review"]);
-    f.put(&f.state.quality_build_path(1, 1), "r");
-    f.put(&f.state.quality_build_path(1, 2), "r");
-    f.workflow(f.as_saved_gated()).run().unwrap();
-    assert_eq!(*seen.borrow(), [FRESH_BUILD_2_AFTER_QUALITY_ROUNDS]);
+    let state = gated_run("build", 2);
+    let host = holding(&[
+        (state.build_path(1), "r"),
+        (state.quality_build_path(1, 1), "r"),
+        (state.quality_build_path(1, 2), "r"),
+    ]);
+    assert_eq!(step_prompt(&state, &host, "build", 2).1.unwrap(), FRESH_BUILD_2_AFTER_QUALITY_ROUNDS);
 }
 
 #[test]
 fn fresh_builder_answering_a_quality_round_in_round_two() {
-    let seen = seen();
     let mut state = gated_run("build", 2);
-    (state.quality_round, state.prompted) = (1, Some("build-2-q1.md".into()));
-    let script = vec![("build", vec![recording(fix_turn(2, 1), &seen)]), ("review", vec![review_turn(2, APPROVE)])];
-    let f = Fixture::resume_gated(Rc::new(FakeHost::default()), state, script, &["review"]);
-    f.put(&f.state.quality_build_path(1, 1), "r");
-    f.put(&f.state.build_path(2), "r");
-    f.put(&f.state.quality_path(2, 1), "GATE: ERROR\n");
-    f.workflow(f.as_saved_gated()).run().unwrap();
-    assert_eq!(*seen.borrow(), [FRESH_QUALITY_FIX_2_1]);
+    state.quality_round = 1;
+    let host = holding(&[
+        (state.build_path(1), "r"),
+        (state.quality_build_path(1, 1), "r"),
+        (state.build_path(2), "r"),
+        (state.quality_path(2, 1), "GATE: ERROR\n"),
+    ]);
+    assert_eq!(step_prompt(&state, &host, "build", 2).1.unwrap(), FRESH_QUALITY_FIX_2_1);
 }
 
 #[test]
 fn fresh_reviewer_in_round_two_with_the_gate() {
-    let seen = seen();
     let mut state = gated_run("review", 2);
     state.quality_round = 1;
-    let script = vec![("review", vec![recording(review_turn(2, APPROVE), &seen)])];
-    let f = Fixture::resume_gated(Rc::new(FakeHost::default()), state, script, &[]);
-    f.put(&f.state.build_path(2), "r");
-    f.put(&f.state.quality_path(2, 1), "GATE: OK\n");
-    f.workflow(f.as_saved_gated()).run().unwrap();
-    assert_eq!(*seen.borrow(), [FRESH_REVIEW_2_PASSED]);
+    let host = holding(&[(state.build_path(1), "r"), (state.build_path(2), "r"), (state.quality_path(2, 1), "GATE: OK\n")]);
+    assert_eq!(step_prompt(&state, &host, "review", 2).1.unwrap(), FRESH_REVIEW_2_PASSED);
 }
 
 // -- TestWorkflowPromptsGolden: each step's prompts in the built-in workflow and in each file of examples/workflows/,
@@ -493,11 +505,11 @@ fn fresh_reviewer_in_round_two_with_the_gate() {
 // the Python engine's test holds them to: round 1, and for the steps the verdict step loops back over, round 2 as the
 // running session and as a fresh one hears it. --------------------------------------------------------------------
 
-/// The prompts of pipeline's steps as the golden file has them.
+/// The prompts of pipeline's steps in a new run, past its base, as the golden file has them.
 fn rendered(pipeline: &Pipeline) -> String {
-    let f = Fixture::new(vec![]);
-    let mut wf = f.workflow(RunSettings { pipeline: Some(pipeline.clone()), ..RunSettings::default() });
-    wf.state.base = Some("abc123".into());
+    let mut state = new_run(pipeline);
+    state.base = Some("abc123".into());
+    let host = FakeHost::default();
     let steps = pipeline.steps();
     // The steps a later round runs: from the earliest loop target to the last verdict step.
     let at = |id: &str| steps.iter().position(|st| st.id == id).unwrap();
@@ -508,11 +520,11 @@ fn rendered(pipeline: &Pipeline) -> String {
     };
     let mut parts = vec![];
     for step in steps {
-        let (text, _) = wf.prompts(step, 1).unwrap();
+        let (text, _) = step_prompt_in(pipeline, &state, &host, &step.id, 1);
         parts.push(format!("## {}, round 1\n\n{text}", step.id));
     }
     for step in looped {
-        let (text, fresh) = wf.prompts(step, 2).unwrap();
+        let (text, fresh) = step_prompt_in(pipeline, &state, &host, &step.id, 2);
         let fresh = fresh.unwrap_or_else(|| "None".into());
         parts.push(format!("## {}, round 2\n\n{text}", step.id));
         parts.push(format!("## {}, round 2, a fresh session\n\n{fresh}", step.id));
@@ -596,29 +608,21 @@ fn a_build_prompt_file_words_the_builders_first_turn() {
 #[test]
 fn a_follow_up_file_reaches_the_turn_that_uses_it() {
     let (_dir, config) = config_with(&[("FIX_PROMPT.md", "Fix {findings}; report to {build_path}.")]);
-    let (state, pipeline) = started(&config);
-    let seen = seen();
-    let f = Fixture::on(Rc::new(FakeHost::default()), state, vec![
-        ("spec", vec![spec_turn()]),
-        ("build", vec![build_turn(1), recording(build_turn(2), &seen)]),
-        ("review", vec![review_turn(1, CHANGES_REQUESTED), review_turn(2, APPROVE)]),
-    ]);
-    assert_eq!(f.workflow(no_pr_of(pipeline)).run(), verdict(APPROVE));
-    assert_eq!(*seen.borrow(), [format!("Fix {D}/review-1.md; report to {D}/build-2.md.{}", note())]);
+    let (mut state, pipeline) = started(&config);
+    (state.phase, state.round) = ("build".into(), 2);
+    let (text, _) = step_prompt_in(&pipeline, &state, &FakeHost::default(), "build", 2);
+    assert_eq!(text, format!("Fix {D}/review-1.md; report to {D}/build-2.md.{}", note()));
 }
 
 #[test]
 fn a_note_file_reaches_the_turn_that_uses_it() {
     let (_dir, config) = config_with(&[("QUALITY_PASSED_NOTE.md", "Gate passed: {quality_path}.")]);
     let mut state = quality_state(1);
+    state.phase = "review".into();
     state.prompt_overrides = load_prompts(&config).unwrap().overrides();
-    let reviews = seen();
-    let script = vec![("review", vec![recording(review_turn(1, APPROVE), &reviews)])];
-    let f = Fixture::resume_gated(Rc::new(FakeHost::default()), state, script, &[]);
-    f.put(&f.state.quality_path(1, 1), "GATE: OK\n");
+    let host = holding(&[(state.build_path(1), "report 1"), (state.quality_path(1, 1), "GATE: OK\n")]);
 
-    assert_eq!(f.workflow(f.as_saved_gated()).run(), verdict(APPROVE));
-    let review = reviews.borrow()[0].clone();
+    let (review, _) = step_prompt(&state, &host, "review", 1);
     assert!(review.ends_with(&format!("\n\nGate passed: {D}/quality-1-1.md.")), "{review}");
     assert!(!review.contains("The quality gate passed"));
 }
@@ -629,14 +633,9 @@ fn a_note_file_reaches_every_workflow() {
     let quick = quick();
     let mut state = new_run(&quick);
     state.prompt_overrides = load_prompts(&config).unwrap().overrides();
-    let seen = seen();
-    let f = Fixture::on(Rc::new(FakeHost::default()), state, vec![
-        ("build", vec![recording(build_turn(1), &seen)]),
-        ("review", vec![review_turn(1, APPROVE)]),
-    ]);
-    assert_eq!(f.workflow(no_pr_of(quick)).run(), verdict(APPROVE));
+    let (text, _) = step_prompt_in(&quick, &state, &FakeHost::default(), "build", 1);
     let expected = format!("Build add a rate limiter in /proj; report to {D}/build-1.md.\n\nStuck? Write `BLOCKED: <question>` {{and stop}}.");
-    assert_eq!(*seen.borrow(), [expected]);
+    assert_eq!(text, expected);
 }
 
 #[test]
@@ -671,22 +670,19 @@ fn a_resume_keeps_the_prompts_the_run_started_with() {
 
 
 #[test]
-fn a_run_an_earlier_release_started_with_its_fix_prompt_file_resumes() {
+fn a_run_an_earlier_release_started_with_its_fix_prompt_file_is_resumable_and_words_its_fix() {
     // Started before 0.58.0 with a FIX_PROMPT.md that named {prev_review_path}, which a prompt file read today may
-    // not (crate::prompts' EARLIER_PLACEHOLDERS), and saved in round 1's review, before RunState::verdicts.
+    // not (crate::prompts' EARLIER_PLACEHOLDERS), and saved in round 1's review, before RunState::verdicts. The
+    // resume itself is verdict_steps.rs's and a_resume_keeps_the_prompts_the_run_started_with's: this checks that
+    // the saved state passes resume's checks and that its fix prompt fills.
     let mut state = saved_run("review", 1, &["spec", "build", "review"]);
     state.prompt_overrides.insert("FIX_PROMPT", "Fix {prev_review_path}; report to {build_path}.".to_string());
     let Value::Object(mut saved) = state.to_json() else { unreachable!("a state is saved as an object") };
     saved.shift_remove("verdicts");
     crate::test_support::resumable(&[], &saved).unwrap();
-    let seen = seen();
-    let f = Fixture::resume(Rc::new(FakeHost::default()), RunState::from_saved(&saved).unwrap(), vec![
-        ("review", vec![review_turn(1, CHANGES_REQUESTED), review_turn(2, APPROVE)]),
-        ("build", vec![recording(build_turn(2), &seen)]),
-    ], &[], &[]);
-    f.put(&format!("{D}/build-1.md"), "report 1");
-    assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
-    assert_eq!(seen.borrow().len(), 1);
-    let fix = &seen.borrow()[0];
+    // Its review then requested changes, and the Builder is to fix them.
+    let mut state = RunState::from_saved(&saved).unwrap();
+    (state.phase, state.round) = ("build".into(), 2);
+    let (fix, _) = step_prompt(&state, &FakeHost::default(), "build", 2);
     assert!(fix.contains(&format!("Fix {D}/review-1.md; report to {D}/build-2.md.")), "{fix}");
 }

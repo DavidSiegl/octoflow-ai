@@ -3,6 +3,7 @@
 
 use std::collections::BTreeSet;
 
+use super::step_prompt::RunView;
 use super::{Outcome, Stopped, Workflow};
 use crate::error::OrchestratorError;
 use crate::paths::{file_name, split_extension};
@@ -72,8 +73,8 @@ impl Workflow<'_> {
     ///
     /// Errors: git fails, saving fails, or the step locks before the run has a base, which goto rules out.
     pub(super) fn hold_locks(&mut self, step: &Step, n: u32) -> Outcome<()> {
-        let file = format!("locked-{}.diff", split_extension(file_name(&self.own_path(step, n))).0);
-        let saved = self.restored()?.into_iter().find(|r| r.file == file);
+        let file = format!("locked-{}.diff", split_extension(file_name(&self.view().own_path(step, n))).0);
+        let saved = self.view().restored()?.into_iter().find(|r| r.file == file);
         let record = match saved {
             Some(record) => Some(record),
             None => self.locked_changes(step, n, &file)?,
@@ -124,6 +125,22 @@ impl Workflow<'_> {
         Ok(Some(record))
     }
 
+    /// At the end of a run, delete its local refs; a failure is only logged.
+    pub(super) fn clean_up_locks(&self) {
+        let s = &self.state;
+        if s.locked.is_empty() {
+            return;
+        }
+        let prefix = refs_prefix(&s.run_id);
+        if let Err(e) = self.host.delete_refs(&s.cwd, &prefix) {
+            self.human.log(&format!("could not delete the refs under {prefix}: {e}"));
+        }
+    }
+
+}
+
+/// What a run's records say of the locked files restored.
+impl RunView<'_> {
     /// What a verdict step hears of the locked files restored in round n: LOCKED_NOTE after a blank line; "" when
     /// none was. Errors: a restored record is malformed (Restored::read), or the prompt cannot be filled in.
     pub(super) fn locks_note(&self, n: u32) -> Result<String, OrchestratorError> {
@@ -138,26 +155,13 @@ impl Workflow<'_> {
         let dir = self.state.dir();
         let diff_paths: Vec<String> = records.iter().map(|r| format!("{dir}/{}", r.file)).collect();
         let lockers: Vec<&str> = lockers.into_iter().collect();
-        let note = self.fill(Prompt::LockedNote, &[
+        let note = self.prompts.fill(Prompt::LockedNote, &[
             ("paths", &paths.join(", ")),
             ("steps", &lockers.join(", ")),
             ("diff_paths", &diff_paths.join(", ")),
         ])?;
         Ok(format!("\n\n{note}"))
     }
-
-    /// At the end of a run, delete its local refs; a failure is only logged.
-    pub(super) fn clean_up_locks(&self) {
-        let s = &self.state;
-        if s.locked.is_empty() {
-            return;
-        }
-        let prefix = refs_prefix(&s.run_id);
-        if let Err(e) = self.host.delete_refs(&s.cwd, &prefix) {
-            self.human.log(&format!("could not delete the refs under {prefix}: {e}"));
-        }
-    }
-
     /// RunState::restored, read. Errors: as Restored::read's.
     fn restored(&self) -> Result<Vec<Restored>, OrchestratorError> {
         self.state.restored.iter().map(Restored::read).collect()
