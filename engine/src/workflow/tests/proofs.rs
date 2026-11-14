@@ -820,6 +820,8 @@ fn what_a_proof_writes_in_the_tree_is_undone_and_stays_out_of_the_commit() {
         assert_eq!(std::fs::read_to_string(format!("{}/limiter.sh", run.path)).unwrap(), "RATE=change\n");
         wf.publish().unwrap();
         assert_eq!(committed(run.repo), (vec!["limiter.sh".to_string()], "RATE=change\n".to_string()));
+        // No human edits a run's worktree, so what was put back there is not told.
+        assert!(!run.told.lines().iter().any(|l| l.starts_with("a proof's run changed")), "{:?}", run.told.lines());
     });
 }
 
@@ -829,6 +831,34 @@ fn what_a_proof_that_errors_writes_is_undone() {
         write_script(wf, ": > stray.txt; exit 2\n");
         assert_eq!(wf.run_proof(COMMAND, 1, "test_1_rate.sh"), Ok(ran(false, "it errors, with exit status 2")));
         assert_eq!(run.repo.host.git(run.path, &["status", "--porcelain"]).unwrap(), " M limiter.sh\n");
+    });
+}
+
+#[test]
+fn an_in_place_run_names_each_file_a_proof_changed_with_the_way_back() {
+    // The proof's edit, file and deletion stand for a human's, saved in the checkout while the proof ran: nothing tells
+    // the two apart, so all are put back, and the log names each with the command that brings them back.
+    let interrupt = Interrupt::new();
+    let repo = Repo::with_host(&[("limiter.sh", "RATE=base\n"), ("gone.sh", "x\n")], ProcessHost::local(&interrupt));
+    let mut state = RunState::new(RUN_ID, TASK, &repo.path);
+    (state.base, state.pull_request) = (repo.base.clone(), false);
+    proving_on(&repo.host, &interrupt, state, |wf, told| {
+        write_script(wf, "echo RATE=proof > limiter.sh; : > stray.txt; rm gone.sh; exit 1\n");
+
+        assert_eq!(wf.run_proof(COMMAND, 1, "test_1_rate.sh"), Ok(ran(true, "it fails")));
+
+        assert_eq!(repo.host.git(&repo.path, &["status", "--porcelain"]).unwrap(), "");
+        let lines = told.lines();
+        let named = format!("{0}/gone.sh, {0}/limiter.sh, {0}/stray.txt; to have them as the proof left them, a nested repository's files aside: ", repo.path);
+        let warned: Vec<&String> = lines.iter().filter(|l| l.starts_with("a proof's run changed files, ")).collect();
+        let [warning] = warned[..] else { panic!("{lines:?}") };
+        let (_, undo) = warning.split_once(&named).unwrap_or_else(|| panic!("{warning}"));
+        repo.host.check(&["sh", "-c", undo], None, crate::host::DEFAULT_TIMEOUT).unwrap();
+        let file = |name: &str| std::fs::read_to_string(format!("{}/{name}", repo.path)).ok();
+        assert_eq!(
+            (file("limiter.sh"), file("stray.txt"), file("gone.sh")),
+            (Some("RATE=proof\n".into()), Some(String::new()), None)
+        );
     });
 }
 
@@ -884,7 +914,8 @@ fn what_a_proof_writes_in_a_repository_without_a_commit_is_undone() {
         assert_eq!(wf.run_proof(COMMAND, 1, "test_1_rate.sh"), Ok(ran(true, "it fails")));
         assert_eq!(std::fs::read_to_string(proj.join("mine.txt")).unwrap(), "mine\n");
         assert!(!std::path::Path::new(&proj.join("stray.txt")).exists());
-        assert_eq!(told.lines(), Vec::<String>::new());
+        let [warning] = &told.lines()[..] else { panic!("{:?}", told.lines()) };
+        assert!(warning.contains(&format!(": {0}/mine.txt, {0}/stray.txt; ", proj.path())), "{warning}");
     });
 }
 
