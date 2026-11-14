@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use super::{ChangedFile, Completed, Exec, ExecError, Host, Scanned, GIT_STATUS_ARGS};
+use super::{ChangedFile, Completed, Exec, ExecError, Host, PutBack, RestoreError, Scanned, GIT_STATUS_ARGS};
 use crate::quality::Leak;
 use crate::state::SavedRun;
 use crate::constants::WORKTREES_DIR;
@@ -250,8 +250,9 @@ pub(crate) struct FakeState {
     pub delete_refs_error: Option<String>,
     /// (ref, paths) of each restore.
     pub restores: Vec<(String, Vec<String>)>,
-    /// The files each tree_snapshot held, by path, its tree tree<n> the nth: those under its directory outside
-    /// .orchestrator/, the one directory the fake plays as ignored.
+    /// The files each tree object held, by path, tree<n> the nth: one per tree_snapshot, and one per restore_tree
+    /// that changed anything, of the tree as it found it; those under its directory outside .orchestrator/, the one
+    /// directory the fake plays as ignored.
     pub tree_snapshots: Vec<BTreeMap<String, String>>,
     /// What session_log reads, by (harness, session).
     pub session_logs: HashMap<(String, String), String>,
@@ -853,17 +854,28 @@ impl Host for FakeHost {
         Ok(Some(format!("tree{}", s.tree_snapshots.len())))
     }
 
-    fn restore_tree(&self, cwd: &str, tree: &str) -> Result<(), OrchestratorError> {
+    /// What it changed is one PutBack, cwd its top level, whose tree as found tree_snapshots then holds too.
+    fn restore_tree(&self, cwd: &str, tree: &str) -> Result<Vec<PutBack>, RestoreError> {
         let mut s = self.state();
         let n: usize = tree.strip_prefix("tree").and_then(|n| n.parse().ok()).unwrap_or(0);
         let held = s.tree_snapshots.get(n.wrapping_sub(1)).unwrap_or_else(|| panic!("FakeHost has no tree {tree}")).clone();
-        for path in s.files_in(cwd).into_keys().filter(|p| !held.contains_key(p)) {
-            s.files.remove(&path);
+        let found = s.files_in(cwd);
+        let keys: BTreeSet<&String> = held.keys().chain(found.keys()).collect();
+        let differ: Vec<&String> = keys.into_iter().filter(|p| held.get(*p) != found.get(*p)).collect();
+        if differ.is_empty() {
+            return Ok(vec![]);
+        }
+        let relative = |p: &&String| p[cwd.len() + 1..].to_string();
+        let paths: Vec<String> = differ.iter().map(relative).collect();
+        let absent: HashSet<String> = differ.iter().filter(|p| !found.contains_key(**p)).map(relative).collect();
+        for path in found.keys().filter(|p| !held.contains_key(*p)) {
+            s.files.remove(path);
         }
         for (path, text) in held {
             s.files.insert(path, text);
         }
-        Ok(())
+        s.tree_snapshots.push(found);
+        Ok(vec![PutBack::new(cwd, &format!("tree{}", s.tree_snapshots.len()), &paths, &absent)])
     }
 
     fn refs(&self, _cwd: &str, prefix: &str) -> Result<Vec<String>, OrchestratorError> {

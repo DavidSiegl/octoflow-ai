@@ -1679,7 +1679,7 @@ fn restore_tree_undoes_what_changed_since_but_ignored_files() {
     std::fs::remove_file(format!("{}/gone.py", r.path)).unwrap();
     r.put("new/stray.py", "added after\n");
     r.put("run.log", "ignored\n");
-    r.host.restore_tree(&format!("{}/new", r.path), &tree).unwrap();
+    let put_back = r.host.restore_tree(&format!("{}/new", r.path), &tree).unwrap();
 
     let file = |name: &str| text(&r.path, name);
     assert_eq!(
@@ -1687,6 +1687,21 @@ fn restore_tree_undoes_what_changed_since_but_ignored_files() {
         (Some("changed before\n".into()), Some("untracked before\n".into()), Some("x\n".into()), None, Some("ignored\n".into()))
     );
     assert_eq!(r.host.git(&r.path, &["status", "--porcelain"]).unwrap(), porcelain);
+    let [PutBack { paths, undo }] = &put_back[..] else { panic!("{put_back:?}") };
+    let names = ["gone.py", "kept.py", "mine.py", "new/stray.py"];
+    assert_eq!(*paths, names.map(|n| format!("{}/{n}", r.path)));
+    r.host.check(&["sh", "-c", undo], None, DEFAULT_TIMEOUT).unwrap();
+    assert_eq!(
+        (file("kept.py"), file("mine.py"), file("gone.py"), file("new/stray.py")),
+        (Some("changed after\n".into()), Some("changed after\n".into()), None, Some("added after\n".into()))
+    );
+}
+
+#[test]
+fn restore_tree_undoes_nothing_in_a_tree_unchanged_since() {
+    let r = Repo::new(&[("kept.py", "a\n")]);
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    assert_eq!(r.host.restore_tree(&r.path, &tree).unwrap(), vec![]);
 }
 
 #[test]
@@ -1711,8 +1726,21 @@ fn a_gitignore_changed_since_hides_nothing_added_since() {
     r.put("sub/.gitignore", "*.out\n");
     r.put("run.cov", "added\n");
     r.put("sub/run.out", "added\n");
-    r.host.restore_tree(&r.path, &tree).unwrap();
+    let put_back = r.host.restore_tree(&r.path, &tree).unwrap();
     assert_eq!(r.host.git(&r.path, &["status", "--porcelain", "--ignored"]).unwrap(), "!! old.tmp\n");
+
+    // The rules first, then the files only the added rules hid, each from the tree as found when put back.
+    let paths: Vec<&[String]> = put_back.iter().map(|p| &p.paths[..]).collect();
+    let abs = |names: &[&str]| names.iter().map(|n| format!("{}/{n}", r.path)).collect::<Vec<_>>();
+    assert_eq!(paths, [&abs(&[".gitignore", "sub/.gitignore"])[..], &abs(&["run.cov", "sub/run.out"])[..]]);
+    for p in &put_back {
+        r.host.check(&["sh", "-c", &p.undo], None, DEFAULT_TIMEOUT).unwrap();
+    }
+    let file = |name: &str| text(&r.path, name);
+    assert_eq!(
+        (file(".gitignore"), file("sub/.gitignore"), file("run.cov"), file("sub/run.out")),
+        (Some("*.cov\n".into()), Some("*.out\n".into()), Some("added\n".into()), Some("added\n".into()))
+    );
 }
 
 #[test]
@@ -1731,6 +1759,33 @@ fn a_tree_is_restored_over_a_directory_and_a_file_swapped_and_a_nested_repositor
     assert_eq!((text(&r.path, "x/y"), text(&r.path, "a")), (Some("in x\n".into()), Some("a file\n".into())));
     assert!(!std::path::Path::new(&nested).exists());
     assert_eq!(r.host.git(&r.path, &["status", "--porcelain"]).unwrap(), "");
+}
+
+#[test]
+fn the_way_back_swaps_a_directory_and_a_file_again() {
+    let r = Repo::new(&[("x/y", "in x\n"), ("a", "a file\n")]);
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    std::fs::remove_dir_all(format!("{}/x", r.path)).unwrap();
+    r.put("x", "now a file\n");
+    std::fs::remove_file(format!("{}/a", r.path)).unwrap();
+    r.put("a/b", "now in a directory\n");
+    let put_back = r.host.restore_tree(&r.path, &tree).unwrap();
+    let [PutBack { undo, .. }] = &put_back[..] else { panic!("{put_back:?}") };
+    r.host.check(&["sh", "-c", undo], None, DEFAULT_TIMEOUT).unwrap();
+    assert_eq!((text(&r.path, "x"), text(&r.path, "a/b")), (Some("now a file\n".into()), Some("now in a directory\n".into())));
+}
+
+#[test]
+fn a_restore_that_fails_names_what_it_put_back_before() {
+    // The added rule hides a nested repository without a commit, which git add -A refuses once the rule is put back.
+    let r = Repo::new(&[(".gitignore", "")]);
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    r.put(".gitignore", "fixture/\n");
+    r.git(&["init", "--quiet", &format!("{}/fixture", r.path)]);
+    let Err(RestoreError { put_back, cause }) = r.host.restore_tree(&r.path, &tree) else { panic!("it restored") };
+    assert!(cause.0.contains("fixture"), "{cause}");
+    let paths: Vec<&[String]> = put_back.iter().map(|p| &p.paths[..]).collect();
+    assert_eq!(paths, [&[format!("{}/.gitignore", r.path)][..]]);
 }
 
 #[test]

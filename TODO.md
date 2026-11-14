@@ -42,6 +42,17 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **A proof's undo line lists every file it put back on one command line.** `PutBack::new` (`engine/src/host.rs`)
+  writes each path as an argument of `rm` and `git restore`, where `Host::restore` passes them over stdin: cross-review
+  197 (F4): "a proof that writes thousands of unignored files (a build or vendor dir) produces an undo that fails with
+  'Argument list too long' … and a log line of that size." Only in-place runs log it, and a build directory is
+  usually ignored, which restore_tree leaves alone. Closed by an undo whose length does not grow with the files, such
+  as one that diffs the found tree against the working tree itself, with the log naming a count past some number.
+- **restore_tree does git work a worktree run throws away.** Each pass runs a whole-tree `git diff --diff-filter=D`
+  and `git rev-parse --show-toplevel` for its PutBack (`put_back`, `engine/src/host.rs`), which `run_proof` drops in
+  a worktree run. Cross-review 197 (F5, nit): "`--name-status` on restore_tree's existing names_between diff would
+  give the deleted set without the second diff." Closed by that.
+
 - **A gated run without a pull request is told it pushes when gitleaks is missing.** `Host::check_gitleaks`
   (`engine/src/host.rs:630`) opens "this run pushes, and every push is scanned for secrets first", and
   `Workflow::check_gate` (`engine/src/workflow.rs`) and `turn_quality_gate_on` (`engine/src/workflow/gate_switch.rs`)
@@ -97,12 +108,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   stuck rule misses that loop, so the Builder gets one more turn. Closes with recording the round before the quality
   file is written, or comparing only the first `QUALITY_FINDINGS_LIMIT` of a JSON-read round against a Markdown-read
   one.
-- **An in-place run puts back what the human changes in the checkout while a proof runs.** `Workflow::run_proof`
-  snapshots the working tree before each proof and `Host::restore_tree` puts back every path that differs afterwards,
-  whoever changed it (cross-review 143, F2): in an in-place run a file the human saves during a proof is overwritten
-  and one they create is deleted, without a warning; a worktree run is not exposed. Ticketed as GitHub #384
-  (`.scratch/todo/issues/42`): keep the human's version and warn. Decided against (the user's ruling, 2026-11-11):
-  running proofs in a scratch worktree of the tree under test.
 - **No coverage-guided fuzzing of the engine's parsers.** Decided against (the user's ruling, 2026-11-11): a
   cargo-fuzz pass over `handoff::first_line_word`, `parse_verdict`, `parse_gate`, `parse_blocked` and
   `parse_env_file`, looking for panics. The seeded generated-input tests (`test_support::Rng`) cover them instead;
@@ -408,6 +413,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `parse_args` on the built argv and returning clap's error. The desktop app shows serve's `error` text verbatim
   (`ui/src/api.ts`), and clap's is several lines with `Usage:` and "try '--help'"; `serve/start/tests.rs`'s round
   trip through `parse_args` already catches the two checks drifting apart.
+- **`http::tests::no_answer_is_worded_with_the_errno_and_the_system_s_words` can fail under parallel load.** It binds
+  a port, drops the listener and expects "[Errno 111] Connection refused" from it (`engine/src/http/tests.rs`), but
+  another process can take the freed port in between. Seen once, 2026-11-14, in a local workspace run beside other
+  sessions' cargo runs; it passed alone three times. Closes with a port nothing can take, such as a listener kept bound
+  without `listen`, or one on a socket whose backlog refuses.
 - **A crash right after the save that releases a finished run leaves its herdr workspace open.** Cross-review 196
   (F1): after that crash, "the 'Run finished' notice and the herdr `Close` calls are dropped"; on `resume --force`,
   `Workflow::ending_left` (`engine/src/workflow.rs`) returns None for a released run whose files exist, so
