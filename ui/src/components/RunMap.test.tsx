@@ -133,6 +133,14 @@ describe("RunMap", () => {
     expect(rows.map((row) => row.firstChild?.textContent)).toEqual(["·", "·", "·", "·"]);
   });
 
+  it("marks no turn when the run failed before its step's new turn started", () => {
+    // Back in build after the review's changes, the Builder would not start: build-1.md ended well in round 1.
+    const ended = record().turns.slice(0, 4);
+    render(<RunMap record={record({ error: "herdr refused", health: null, turns: ended })} now={NOW} />);
+    const rows = within(screen.getByRole("list", { name: "turns" })).getAllByRole("listitem");
+    expect(rows.map((row) => row.firstChild?.textContent)).toEqual(["·", "·", "·", "·"]);
+  });
+
   it("marks a failed run's turn that never ended as failed, not running", () => {
     render(<RunMap record={record({ error: "boom", health: null })} now={NOW} />);
     const [newest] = within(screen.getByRole("list", { name: "turns" })).getAllByRole("listitem");

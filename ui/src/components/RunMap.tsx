@@ -94,9 +94,11 @@ export function RunMap({ record, now }: Props) {
   const loopFloor = Math.max(...loops.flatMap((loop) => [loop.from.y, loop.to.y])) + 62 + 40;
   const tips = stages.map(stationAt);
   const face = record.error ? "failed" : stale ? "asleep" : "awake";
-  // A failed run failed in its phase: the newest turn of that phase is where, if one started (quality's turns are
-  // saved under the phase too).
-  const failedTurn = record.error ? [...record.turns].reverse().find((turn) => turn.step === record.phase) : undefined;
+  // A failed run failed in its phase, inside its newest turn if that is the phase's (quality's turns are saved under
+  // the phase too). A turn is saved only once its prompt is delivered, so a failure before then, a builder that would
+  // not start, say, leaves the newest turn another step's, or an earlier round's that ended well: none is marked.
+  const newest = record.turns.at(-1);
+  const failedTurn = record.error && newest?.step === record.phase ? newest : undefined;
   // The pupils look toward the working arm, or straight out at the viewer the run waits on.
   const look = waiting || !working ? { x: 0, y: 2 } : { x: Math.cos(working.angle) * 4, y: Math.sin(working.angle) * 4 };
 
