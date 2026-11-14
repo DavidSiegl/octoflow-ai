@@ -195,12 +195,16 @@ fn a_merged_or_closed_pull_request_forgets_the_conflict_and_leaves_it_to_a_drain
 }
 
 #[test]
-fn a_run_recording_conflicts_without_a_base_branch_is_refused_untouched() {
+fn a_run_recording_conflicts_without_a_base_branch_is_cleared_with_its_body_left() {
+    // Only a hand-edited state.json lacks the base its conflicts were found against, and the warning names it.
     let t = Refresh::new();
-    let saved = t.add(REFRESH_ID, REFRESH_URL, &["a.py"], APPROVE, Some("a body"), &[]);
+    let saved = t.add_run(&[]);
     t.resave(REFRESH_ID, &saved, &[("base_branch", Value::Null)]);
-    assert_eq!(t.error(&[REFRESH_ID]), format!("run {REFRESH_ID}: its state records conflicts but no base branch"));
-    assert_eq!(t.pr_edits(), []);
+    let (status, out) = t.refresh(&[REFRESH_ID]);
+    assert_eq!(status, 0);
+    assert_eq!(out, format!("{REFRESH_ID}: conflict cleared, ready for review  {REFRESH_URL}\n"));
+    assert_eq!(t.pr_edits(), [ready(REFRESH_URL)]);
+    assert_eq!(t.saved().get("conflicts"), Some(&Value::Array(vec![])));
 }
 
 #[test]
