@@ -91,9 +91,9 @@ pub fn close_run(world: &Connected, cwd: &str, run_ref: &str, dry_run: bool) -> 
 /// Close every run of the project at cwd as close_run does, in run id order, or with dry_run say what closing each
 /// would do, then print a count of the runs closed (or to close), skipped and already closed, and failed if any. A
 /// Decision::Refused run is skipped with a line saying why; one already closed is only counted. Each run is read again
-/// just before it is closed, so one that started running since the sweep began is skipped. A run whose close fails
-/// gets a line with the error, and the rest are still closed. A raised Interrupt starts no further run; the run being
-/// closed then finishes or fails as close_run would, and a second sweep finishes it.
+/// just before it is closed, so one that started running, or was removed, since the sweep began is skipped. A run
+/// whose close fails gets a line with the error, and the rest are still closed. A raised Interrupt starts no further
+/// run; the run being closed then finishes or fails as close_run would, and a second sweep finishes it.
 ///
 /// Returns the exit status: 0, or EXIT_ERROR when any run's close failed. Errors: the runs cannot be read at the start.
 pub fn close_all(world: &Connected, cwd: &str, dry_run: bool) -> Result<i32, OrchestratorError> {
@@ -132,10 +132,14 @@ pub fn close_all(world: &Connected, cwd: &str, dry_run: bool) -> Result<i32, Orc
 }
 
 /// Read the run of the project at cwd whose id is run_id again, and close it as close_all says, or with dry_run say
-/// what closing it would do. Errors: its state.json is gone, cannot be read, or its close fails.
+/// what closing it would do; a run whose state.json is gone is skipped, as nothing is left to close. Errors: its
+/// state.json cannot be read, or its close fails.
 fn sweep_run(world: &Connected, cwd: &str, run_id: &str, dry_run: bool) -> Result<Swept, OrchestratorError> {
-    let gone = || OrchestratorError(format!("its state.json is gone from {cwd}/{RUNS_DIR}"));
-    let run = world.with.host.run_state(cwd, run_id)?.ok_or_else(gone)?;
+    let Some(run) = world.with.host.run_state(cwd, run_id)? else {
+        return Ok(Swept::Skipped(OrchestratorError(format!(
+            "run {run_id} is gone: its state.json was removed from {cwd}/{RUNS_DIR} since the sweep began"
+        ))));
+    };
     Ok(match decide(world, cwd, &run)? {
         Decision::AlreadyClosed(_) => Swept::AlreadyClosed,
         Decision::Refused(why) => Swept::Skipped(why),
@@ -149,7 +153,7 @@ enum Swept {
     Closed,
     /// Closed since the sweep read the runs.
     AlreadyClosed,
-    /// Not closed, and why (Decision::Refused).
+    /// Not closed, and why: Decision::Refused, or the run is gone.
     Skipped(OrchestratorError),
 }
 

@@ -321,7 +321,8 @@ stale is no longer marked `stale` in `list`, and its line offers no `resume` com
 `close` first decides what closing the run would do, looking at herdr and git without changing anything, and then
 does it, so that `--dry-run` prints what each step would take, the worktree's uncommitted files included, and the
 line that would be recorded, from the same decision. `close --all` does this for every run of the project in run id
-order, deciding each just before closing it, so a run resumed since the sweep began is found running and skipped.
+order, deciding each just before closing it, so a run resumed since the sweep began is found running and skipped,
+as is one whose `state.json` was removed meanwhile.
 A run that is running, or whose `state.json` this engine does not read, is skipped with a line saying why; one
 already closed is only counted. A run whose close fails gets a line with the error and the sweep goes on, ending
 with exit status 1; as each step passes over what is already gone, running `close --all` again finishes it. A

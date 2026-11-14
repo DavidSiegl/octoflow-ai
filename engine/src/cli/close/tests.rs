@@ -794,6 +794,30 @@ fn a_run_that_started_running_since_the_sweep_began_is_skipped() {
 }
 
 #[test]
+fn a_run_removed_since_the_sweep_began_is_skipped_not_failed() {
+    // As the first run's workspace closes, the stale run's directory is removed, as prune or a human would.
+    let c = Close::project_of_five();
+    let host = Rc::clone(&c.cli.f.host);
+    let path = format!("/proj/.orchestrator/runs/{STALE}/state.json");
+    c.cli.f.herdr.state().before_call = Some(Box::new(move |call| {
+        if matches!(call, Call::Close { .. }) {
+            host.state().files.remove(&path);
+        }
+    }));
+    let (status, out) = c.close(&["--all"]);
+    assert_eq!(status, 0, "{out}");
+    assert!(
+        out.contains(&format!(
+            "skipped: run {STALE} is gone: its state.json was removed from /proj/.orchestrator/runs since the sweep \
+             began\n"
+        )),
+        "{out}"
+    );
+    assert!(out.ends_with("2 closed, 2 skipped, 1 already closed\n"), "{out}");
+    assert!(c.cli.f.herdr.state().workspaces.contains(&format!("w-{STALE}")));
+}
+
+#[test]
 fn an_unreadable_run_is_skipped_and_named_not_failed() {
     let c = Close::new();
     let mut saved = c.add(0, true, &[]);

@@ -51,6 +51,13 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `--pr` pushes nothing; what gitleaks scans there is each snapshot before it is judged. Raised while doing todo/53,
   which gave doctor its own wording. Closed by having the gate's preflight say why it needs gitleaks in its own words,
   leaving check_gitleaks's to a run that publishes.
+- **One state.json that is not JSON naming its run stops every command that lists the runs.** `parsed_run_states`
+  (`engine/src/host.rs`) fails the whole listing when one run's state.json is not JSON, or is JSON without a non-empty
+  `run_id` (`SavedRun::read`, `engine/src/state.rs`), so `close --all` closes nothing, and `list`, `refresh` and
+  `close RUN` fail too; the error, "corrupt run state under <cwd>/.orchestrator/runs", does not say which run's file it
+  is. Only a state.json of a format this engine does not read is an unreadable run that is skipped and named. Raised by
+  cross-review 194 (F1). Closed by listing such a file as an unreadable run named by its directory, which `SavedRun`
+  cannot hold today without a run id, and the desktop app's run list then showing it.
 - **Two engine test directories are still named by pid, removing what is there first.** `Dir::new`
   (`engine/tests/program.rs:23`) names its directory `octoflow-program-<name>-<pid>` and removes what is there, and
   `engine/tests/signals.rs:237` names one `octoflow-signals-<case>-<pid>`: two test runs over one `/tmp` whose
@@ -377,9 +384,9 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   taking only the paths `git status` reports changed.
 - **A run that is never closed keeps its local refs.** A locking step's commit stays under
   `refs/orchestrator/<key>/locked/` (`RunState::lock_ref`) until the run ends `done` (`Workflow::clean_up_locks`) or
-  is closed (`close_run`, `engine/src/cli/close.rs`). Left: the refs of a failed or stale run nobody closes (`close --all` closes them all in one command), of one
-  closed by a release whose `close` left them, and of one whose run directory was deleted by hand, which `close`
-  cannot find; their locked snapshots are never collected by `git gc`. `git for-each-ref refs/orchestrator/` lists
+  is closed (`close_run`, `engine/src/cli/close.rs`). Left: the refs of a failed or stale run nobody closes
+  (`close --all` closes them all in one command), of one closed by a release whose `close` left them, and of one
+  whose run directory was deleted by hand, which `close` cannot find; their locked snapshots are never collected by `git gc`. `git for-each-ref refs/orchestrator/` lists
   them, and `git update-ref -d` deletes one. Decided against on 2026-10-25: `prune` deleting them, and a sweep of
   `refs/orchestrator/<key>/` whose run directory is gone.
 - **An agent's pull request can reach `main` on rules it wrote itself, with no human.** Jenkins's App reports
