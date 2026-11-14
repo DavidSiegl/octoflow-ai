@@ -208,7 +208,8 @@ fn a_python_package_is_a_dependency_from_each_source_it_is_named_with() {
     assert_eq!(
         sourced(&deps.locked),
         [("foo", "uv.lock", None), ("bar", "uv.lock", None), ("bar", "uv.lock", index(mirror))]
-    );    // A requirement's own line, and for baz each of its [tool.uv.sources] entries' lines.
+    );
+    // A requirement's own line, and for baz each of its [tool.uv.sources] entries' lines.
     let lines: Vec<(&str, u64)> =
         deps.direct.iter().flat_map(|(key, sources)| sources.iter().map(move |d| (key, d.line))).collect();
     assert_eq!(lines, [("foo", 3), ("foo", 5), ("bar", 3), ("bar", 3), ("baz", 12), ("baz", 13)]);
@@ -516,8 +517,10 @@ fn a_manifest_unreadable_at_the_base_is_weighed_not_failed() {
 
 #[test]
 fn a_manifest_that_cannot_be_read_fails_unchecked() {
-    let cases: [(&[u8], &str); 4] = [
+    let cases: [(&[u8], &str); 5] = [
         (b"[project\n", "it is not TOML"),
+        // Beyond i64's range, in a table no reader visits.
+        (b"[tool.other]\nx = 99999999999999999999\n", "it is not TOML"),
         (b"[project]\ndependencies = \"x\"\n", "not a list"),
         (b"[project]\ndependencies = [\"=x\"]\n", "is not a requirement"),
         // As Host::file_at gives a file that is not UTF-8: TOML must be.
@@ -532,8 +535,7 @@ fn a_manifest_that_cannot_be_read_fails_unchecked() {
             spec: String::new(),
             base: "base".into(),
             commit: "new".into(),
-            changed: Default::default(),
-            files: vec![changed("pyproject.toml", "pyproject.toml", 1, 0)],
+                files: vec![changed("pyproject.toml", "pyproject.toml", 1, 0)],
             file_at: &file_at,
             now: 0.0,
             in_time: &always,
@@ -614,7 +616,6 @@ fn a_read_error_fails_the_check() {
         spec: String::new(),
         base: "base".into(),
         commit: "new".into(),
-        changed: Default::default(),
         files: vec![changed("uv.lock", "uv.lock", 1, 0)],
         file_at: &file_at,
         now: 0.0,

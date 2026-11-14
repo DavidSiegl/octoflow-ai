@@ -42,6 +42,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **`Host::change_diff` is called only by tests.** Its one engine caller filled `RunChange::changed` for
+  new-dependencies' line naming; todo/58 took the lines from the manifests' spans and removed the field, so the
+  quality round no longer runs the diff. `engine/src/host/tests.rs`'s snapshot tests still use it with
+  `crate::patch::added_lines` to look at a snapshot, and `host/fake.rs` answers it. Closed by moving those tests onto
+  `changed_line_counts` or plain `git diff`, then removing `change_diff` from `Host` and the fake.
 - **A gated run without a pull request is told it pushes when gitleaks is missing.** `Host::check_gitleaks`
   (`engine/src/host.rs:630`) opens "this run pushes, and every push is scanned for secrets first", and
   `Workflow::check_gate` (`engine/src/workflow.rs`) and `turn_quality_gate_on` (`engine/src/workflow/gate_switch.rs`)

@@ -201,28 +201,35 @@ fn add_named(packages: &mut Map<Vec<Dependency>>, sources: Sources, path: &str) 
     }
 }
 
-/// What reader makes of the TOML file at path, parsed, a file that does not exist being an empty one; why not, for one
-/// that is not UTF-8, as TOML must be, or not TOML, or that reader refuses. Errors: read's.
+/// What reader makes of the TOML file at path, as parse_manifest gives it, a file that does not exist being an empty
+/// one. Errors: read's.
 fn read_manifest<T>(
     read: &ReadFile,
     path: &str,
     reader: impl FnOnce(&Manifest) -> Result<T, String>,
 ) -> Result<Result<T, String>, OrchestratorError> {
-    let bytes = read(path)?.unwrap_or_default();
-    let text = match std::str::from_utf8(&bytes) {
-        Ok(text) => text,
-        Err(e) => return Ok(Err(format!("it is not UTF-8: {e}"))),
-    };
-    Ok(match DeTable::parse(text) {
-        Ok(table) => reader(&Manifest { text, table: table.into_inner() }),
-        Err(e) => Err(format!("it is not TOML: {}", toml_syntax_error(text, &e))),
-    })
+    Ok(parse_manifest(&read(path)?.unwrap_or_default(), reader))
+}
+
+/// What reader makes of the TOML file bytes, parsed; why not, for one that is not UTF-8, as TOML must be, or not TOML,
+/// or that reader refuses.
+fn parse_manifest<T>(bytes: &[u8], reader: impl FnOnce(&Manifest) -> Result<T, String>) -> Result<T, String> {
+    let text = std::str::from_utf8(bytes).map_err(|e| format!("it is not UTF-8: {e}"))?;
+    let not_toml = |e: ::toml::de::Error| format!("it is not TOML: {}", toml_syntax_error(text, &e));
+    // DeTable::parse leaves some checks, such as an integer's range, to the conversion of each value to a Value, which
+    // plain makes only of the values a reader visits: the whole file is converted once here, so that a file is TOML
+    // or not whichever of its values a reader visits, and plain cannot fail.
+    text.parse::<Table>().map_err(not_toml)?;
+    let table = DeTable::parse(text).map_err(not_toml)?.into_inner();
+    let line_starts = std::iter::once(0).chain(text.match_indices('\n').map(|(i, _)| i + 1)).collect();
+    reader(&Manifest { line_starts, table })
 }
 
 /// A parsed TOML manifest, whose values know where in its text they stand, so that a reader can say on which line an
 /// entry is.
 struct Manifest<'a> {
-    text: &'a str,
+    /// The byte offset in the manifest's text at which each of its lines starts, in order, the first being 0.
+    line_starts: Vec<usize>,
     /// Its top-level table.
     table: DeTable<'a>,
 }
@@ -233,22 +240,21 @@ type Node<'a> = Spanned<DeValue<'a>>;
 impl Manifest<'_> {
     /// The line of the manifest, from 1, that span starts on.
     fn line(&self, span: Range<usize>) -> u64 {
-        self.text[..span.start.min(self.text.len())].matches('\n').count() as u64 + 1
+        self.line_starts.partition_point(|&start| start <= span.start) as u64
     }
+}
 
-    /// node as a plain TOML value, without spans; why not, for one that a Value cannot hold, such as an integer
-    /// beyond i64's range.
-    fn plain(&self, node: &Node) -> Result<Value, String> {
-        Value::deserialize(ValueDeserializer::from(node.clone()))
-            .map_err(|e| format!("it is not TOML: {}", toml_syntax_error(self.text, &e)))
-    }
+/// node, a value of a Manifest, as a plain TOML value, without spans.
+fn plain(node: &Node) -> Value {
+    // parse_manifest has converted the whole manifest, so each of its values converts.
+    Value::deserialize(ValueDeserializer::from(node.clone())).expect("parse_manifest converted the whole manifest")
 }
 
 /// python_dependencies's direct dependencies of a pyproject.toml, parsed; why not, for one of another shape.
 fn pyproject_dependencies(pyproject: &Manifest) -> Result<Sources, String> {
     let project = toml_table(&pyproject.table, "project")?;
     let uv = toml_table(toml_table(&pyproject.table, "tool")?, "uv")?;
-    let indexes = uv_indexes(pyproject, uv)?;
+    let indexes = uv_indexes(uv)?;
     let sources = uv_sources(pyproject, uv, &indexes)?;
     let default = indexes
         .iter()
@@ -263,7 +269,7 @@ fn pyproject_dependencies(pyproject: &Manifest) -> Result<Sources, String> {
     for (place, requirements) in requirement_lists(project, &pyproject.table)? {
         let DeValue::Array(requirements) = requirements.get_ref() else { return Err(format!("{place} is not a list")) };
         for requirement in requirements.iter().filter(|r| !r.get_ref().is_table()) {
-            let (key, url) = requirement_of(&pyproject.plain(requirement)?)?;
+            let (key, url) = requirement_of(&plain(requirement))?;
             if key == own {
                 continue;
             }
@@ -300,11 +306,11 @@ fn requirement_lists<'t, 'a>(
     Ok(out)
 }
 
-/// `[tool.uv]`'s `[[index]]` tables, of the manifest whose `[tool.uv]` is uv.
-fn uv_indexes(manifest: &Manifest, uv: &DeTable) -> Result<Vec<Table>, String> {
+/// The `[[index]]` tables of uv, a manifest's `[tool.uv]`.
+fn uv_indexes(uv: &DeTable) -> Result<Vec<Table>, String> {
     let refused = || "[[tool.uv.index]] is not a list of tables".to_string();
     let Some(index) = uv.get("index") else { return Ok(Vec::new()) };
-    let Value::Array(items) = manifest.plain(index)? else { return Err(refused()) };
+    let Value::Array(items) = plain(index) else { return Err(refused()) };
     items.into_iter().map(|i| if let Value::Table(table) = i { Ok(table) } else { Err(refused()) }).collect()
 }
 
@@ -312,7 +318,8 @@ fn uv_indexes(manifest: &Manifest, uv: &DeTable) -> Result<Vec<Table>, String> {
 /// its order, its source None for one from PyPI's index. uv is the manifest's `[tool.uv]`, and indexes its
 /// `[[tool.uv.index]]`.
 fn uv_sources(manifest: &Manifest, uv: &DeTable, indexes: &[Table]) -> Result<Sources, String> {
-    let indexes: Vec<(Option<&Value>, Option<&Value>)> = indexes.iter().map(|i| (i.get("name"), i.get("url"))).collect();
+    let indexes: Vec<(Option<&Value>, Option<&Value>)> =
+        indexes.iter().map(|i| (i.get("name"), i.get("url"))).collect();
     let mut out = Vec::new();
     for (name, entry) in toml_table(uv, "sources")? {
         let entries: Vec<(&Node, Range<usize>)> = match entry.get_ref() {
@@ -320,7 +327,7 @@ fn uv_sources(manifest: &Manifest, uv: &DeTable, indexes: &[Table]) -> Result<So
             _ => vec![(entry, name.span())],
         };
         for (entry, span) in entries {
-            let Value::Table(entry) = manifest.plain(entry)? else {
+            let Value::Table(entry) = plain(entry) else {
                 return Err(format!("[tool.uv.sources] {} is not a table", name.get_ref()));
             };
             out.push((package_key(name.get_ref()), uv_source(&entry, &indexes), manifest.line(span)));
@@ -435,8 +442,7 @@ fn uv_lock_packages(lock: &Manifest) -> Result<Sources, String> {
     let DeValue::Array(packages) = packages.get_ref() else { return Err(refused()) };
     let mut out = Vec::new();
     for node in packages.iter() {
-        let package = lock.plain(node)?;
-        let (name, source) = locked_package(&package).ok_or_else(refused)?;
+        let (name, source) = locked_package(node.get_ref()).ok_or_else(refused)?;
         // editable and virtual: the project itself and its workspace members.
         if !source.contains_key("editable") && !source.contains_key("virtual") {
             out.push((package_key(&name), lock_source(&source), lock.line(node.span())));
@@ -447,14 +453,15 @@ fn uv_lock_packages(lock: &Manifest) -> Result<Sources, String> {
 
 /// The name and the source table, an empty one when it has none, of a uv.lock `[[package]]` entry; None for one of
 /// another shape.
-fn locked_package(package: &Value) -> Option<(String, Table)> {
-    let package = package.as_table()?;
-    let name = package.get("name")?.as_str()?.to_string();
-    let source = match package.get("source") {
+fn locked_package(package: &DeValue) -> Option<(String, Table)> {
+    let DeValue::Table(package) = package else { return None };
+    let DeValue::String(name) = package.get("name")?.get_ref() else { return None };
+    let source = match package.get("source").map(plain) {
         None => Table::new(),
-        Some(source) => source.as_table()?.clone(),
+        Some(Value::Table(source)) => source,
+        Some(_) => return None,
     };
-    Some((name, source))
+    Some((name.to_string(), source))
 }
 
 /// The PackageSource of a uv.lock package's source table.
@@ -567,7 +574,7 @@ pub fn cargo_dependencies(read: &ReadFile) -> Result<Dependencies, OrchestratorE
         let path = format!("{member}/Cargo.toml");
         let direct = match read(&path)? {
             None => Err("the workspace names it a member, but it does not exist".to_string()),
-            Some(_) => read_manifest(read, &path, |manifest| cargo_manifest_dependencies(manifest, &workspace.shared))?,
+            Some(bytes) => parse_manifest(&bytes, |manifest| cargo_manifest_dependencies(manifest, &workspace.shared)),
         };
         match direct {
             Ok(direct) => add_named(&mut found.direct, direct, &path),
@@ -591,12 +598,12 @@ fn workspace_of(root: &Manifest) -> Result<CargoWorkspace, String> {
     let workspace = toml_table(&root.table, "workspace")?;
     let mut shared = Map::new();
     for (name, entry) in toml_table(workspace, "dependencies")? {
-        let (key, source) = cargo_entry(name.get_ref(), &root.plain(entry)?, "[workspace.dependencies]")?;
+        let (key, source) = cargo_entry(name.get_ref(), &plain(entry), "[workspace.dependencies]")?;
         shared.insert(name.get_ref().as_ref(), (key, source, root.line(name.span())));
     }
-    let excluded = string_list(root, workspace, "exclude", "[workspace] exclude")?;
+    let excluded = string_list(workspace, "exclude", "[workspace] exclude")?;
     let mut members = Vec::new();
-    for member in string_list(root, workspace, "members", "[workspace] members")? {
+    for member in string_list(workspace, "members", "[workspace] members")? {
         if member.contains(['*', '?', '[']) {
             return Err(format!("its workspace member `{member}` is a glob, which this check does not expand"));
         }
@@ -608,12 +615,12 @@ fn workspace_of(root: &Manifest) -> Result<CargoWorkspace, String> {
     Ok(CargoWorkspace { members, shared })
 }
 
-/// The strings of the list table[key], table being one of manifest's, none when it has no such key; why not, naming
-/// it as place, when it is not a list of strings.
-fn string_list(manifest: &Manifest, table: &DeTable, key: &str, place: &str) -> Result<Vec<String>, String> {
+/// The strings of the list table[key], none when it has no such key; why not, naming it as place, when it is not a list
+/// of strings.
+fn string_list(table: &DeTable, key: &str, place: &str) -> Result<Vec<String>, String> {
     let refused = || format!("{place} is not a list of strings");
     let Some(list) = table.get(key) else { return Ok(Vec::new()) };
-    let Value::Array(items) = manifest.plain(list)? else { return Err(refused()) };
+    let Value::Array(items) = plain(list) else { return Err(refused()) };
     items.into_iter().map(|i| if let Value::String(s) = i { Ok(s) } else { Err(refused()) }).collect()
 }
 
@@ -637,7 +644,7 @@ fn cargo_manifest_dependencies(
     let mut out = Vec::new();
     for (place, table) in tables {
         for (name, entry) in table {
-            let (key, source) = cargo_member_entry(name.get_ref(), &manifest.plain(entry)?, &place, shared)?;
+            let (key, source) = cargo_member_entry(name.get_ref(), &plain(entry), &place, shared)?;
             out.push((key, source, manifest.line(name.span())));
         }
     }
@@ -657,9 +664,12 @@ fn cargo_member_entry(
 ) -> Result<(String, Option<PackageSource>), String> {
     match entry.as_table().and_then(|t| t.get("workspace")) {
         None => cargo_entry(name, entry, place),
-        Some(Value::Boolean(true)) => shared.get(name).map(|(key, source, _)| (key.clone(), source.clone())).ok_or_else(|| {
-            format!("`{name}` in {place} takes `workspace = true`, but [workspace.dependencies] has no `{name}`")
-        }),
+        Some(Value::Boolean(true)) => {
+            let (key, source, _) = shared.get(name).ok_or_else(|| {
+                format!("`{name}` in {place} takes `workspace = true`, but [workspace.dependencies] has no `{name}`")
+            })?;
+            Ok((key.clone(), source.clone()))
+        }
         Some(other) => Err(format!(
             "`{name}` in {place} takes `workspace = {}`, where Cargo takes only `workspace = true`",
             toml_text(other)
@@ -700,12 +710,13 @@ fn cargo_lock_packages(lock: &Manifest) -> Result<Sources, String> {
     let DeValue::Array(packages) = packages.get_ref() else { return Err(refused()) };
     let mut out = Vec::new();
     for node in packages.iter() {
-        let package = lock.plain(node)?;
-        let package = package.as_table().ok_or_else(refused)?;
-        let name = package.get("name").and_then(Value::as_str).ok_or_else(refused)?;
+        let DeValue::Table(package) = node.get_ref() else { return Err(refused()) };
+        let Some(DeValue::String(name)) = package.get("name").map(Spanned::get_ref) else { return Err(refused()) };
         // A package without a source is one of the workspace's own crates, or one it has from a path.
         let Some(source) = package.get("source") else { continue };
-        let Some(source) = source.as_str() else { return Err(format!("the source of `{name}` is not a string")) };
+        let DeValue::String(source) = source.get_ref() else {
+            return Err(format!("the source of `{name}` is not a string"));
+        };
         out.push((package_key(name), cargo_lock_source(source), lock.line(node.span())));
     }
     Ok(out)
