@@ -1,4 +1,4 @@
-//! TestHeartbeat: state.json kept fresh while a turn runs, the run's owner, a takeover, an interrupt and a failure.
+//! The heartbeat: state.json kept fresh while a turn runs, the run's owner, a takeover, an interrupt and a failure.
 
 use std::cell::RefCell;
 

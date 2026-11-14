@@ -1,5 +1,4 @@
-//! FakeHost plays what the Workflow tests of ticket 08 will ask of it as tests/test_orchestrator.py's FakeHost does,
-//! with Host's own steps running on its git.
+//! FakeHost plays what the Workflow tests ask of it, with Host's own steps running on its git.
 
 use super::*;
 use crate::host::{git_status, GhError, PullRequest, PushError};
@@ -83,18 +82,16 @@ fn a_conflicting_merge_is_aborted_on_the_fake_too() {
 #[test]
 fn pushes_scan_first_and_land_on_its_origin() {
     let host = FakeHost::default();
-    host.push_ref("/proj", "snap1", "orchestrator-ci/a1-1-q1", "abc123", "/r/leaks.json").unwrap();
-    assert_eq!(host.remote_branches("/proj", "orchestrator-ci/").unwrap(), ["orchestrator-ci/a1-1-q1"]);
+    host.state().branches.insert("orchestrator/x", "c1".to_string());
+    host.push_branch("/proj", "orchestrator/x", "abc123", "/r/leaks.json").unwrap();
     let scan = Scan {
-        commit: "snap1".into(),
+        commit: "c1".into(),
         base: "abc123".into(),
         scanned: Scanned::Unpublished,
         report_path: "/r/leaks.json".into(),
     };
     assert_eq!(host.state().scans, [scan]);
-    assert_eq!(host.remote_branch_commit("/proj", "orchestrator-ci/a1-1-q1").unwrap().as_deref(), Some("snap1"));
-    host.delete_remote_branch("/proj", "orchestrator-ci/a1-1-q1").unwrap();
-    assert!(host.delete_remote_branch("/proj", "orchestrator-ci/a1-1-q1").is_err());
+    assert_eq!(host.remote_branch_commit("/proj", "orchestrator/x").unwrap().as_deref(), Some("c1"));
     host.state().leaks = vec![Leak {
         rule: "github-pat".into(),
         file: "limiter.py".into(),
@@ -102,10 +99,11 @@ fn pushes_scan_first_and_land_on_its_origin() {
         commit: SCANNED.into(),
         fingerprint: "c0ffee:limiter.py:github-pat:3".into(),
     }];
-    let Err(PushError::Leaks(found)) = host.push_ref("/proj", "snap2", "b", "abc123", "/r/leaks.json") else {
+    host.state().branches.insert("b", "c2".to_string());
+    let Err(PushError::Leaks(found)) = host.push_branch("/proj", "b", "abc123", "/r/leaks.json") else {
         panic!("no leak")
     };
-    assert_eq!(found.leaks[0].commit, "snap2");
+    assert_eq!(found.leaks[0].commit, "c2");
     assert!(host.read("/r/leaks.json").unwrap().unwrap().contains(FAKE_TOKEN));
     assert!(host.remote_branch_commit("/proj", "b").unwrap().is_none());
     host.check_gitleaks().unwrap();

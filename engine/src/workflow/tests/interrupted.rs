@@ -1,12 +1,10 @@
-//! The Ctrl-C while the run waits on herdr, and once it is done: not in Python, whose herdr gets the terminal's SIGINT
-//! itself and whose tests raise KeyboardInterrupt in a fake. Here a real ProcessHerdr, running a herdr script, is what
+//! The Ctrl-C while the run waits on herdr, and once it is done. A real ProcessHerdr, running a herdr script, is what
 //! the Ctrl-C stops (TODO.md's Ctrl-C entry); the interrupted proof, the command case, is proofs.rs's.
 
 use super::*;
 use crate::herdr::{Herdr, ProcessHerdr};
 use crate::host::tests::{environment, tool};
 use crate::test_support::{ended, hearing_sigint, raise_once_written, TempDir};
-use crate::json::object;
 
 /// A ProcessHerdr of the fixture's Ctrl-C whose herdr is script, in a directory of its own.
 fn real_herdr(f: &Fixture, d: &TempDir, script: &str) -> ProcessHerdr {
@@ -42,7 +40,7 @@ fn a_ctrl_c_while_herdr_waits_stops_the_wait_and_the_run() {
 
 #[test]
 fn a_ctrl_c_during_a_prompt_herdr_delivered_records_no_prompt() {
-    // As Python's KeyboardInterrupt in herdr's prompt: no prompted, no turn record, whatever herdr did with the text.
+    // No prompted, no turn record, whatever herdr did with the text.
     let d = TempDir::new();
     let delivered = d.join("delivered");
     let f = Fixture::new(vec![("spec", vec![spec_turn()])]);
@@ -61,8 +59,8 @@ fn a_ctrl_c_during_a_prompt_herdr_delivered_records_no_prompt() {
 
 #[test]
 fn a_ctrl_c_once_the_run_is_done_stops_what_is_left_of_its_end() {
-    // As Python's KeyboardInterrupt after the run's last save: the run stays done. It is not released either, as its
-    // files come before its release (Workflow::end_done_run), so a resume finishes its ending.
+    // After the run's last save, the run stays done. It is not released either, as its files come before its release
+    // (Workflow::end_done_run), so a resume finishes its ending.
     let f = Fixture::new(approved());
     let (interrupt, summary) = (f.interrupt.clone(), format!("{}/summary.md", f.state.dir()));
     f.host.state().before_write = Some(Box::new(move |path, _| {
@@ -82,8 +80,8 @@ fn a_ctrl_c_once_the_run_is_done_stops_what_is_left_of_its_end() {
 
 #[test]
 fn a_ctrl_c_that_fails_the_done_runs_save_is_the_interrupt_not_a_failure() {
-    // On a ProcessHost the save is a command, which the Ctrl-C fails: that is the interrupt, as Python's
-    // KeyboardInterrupt in the save is, not an error the CLI would print.
+    // On a ProcessHost the save is a command, which the Ctrl-C fails: that is the interrupt, not an error the CLI
+    // would print.
     let f = Fixture::new(approved());
     let (interrupt, state) = (f.interrupt.clone(), format!("{}/state.json", f.state.dir()));
     f.host.state().before_write = Some(Box::new(move |path, text| {
@@ -97,15 +95,13 @@ fn a_ctrl_c_that_fails_the_done_runs_save_is_the_interrupt_not_a_failure() {
     assert_eq!(RunState::from_saved(&f.saved()).unwrap().error, None);
 }
 
-/// A run resumed at publish, with locked files, and with or without a quality gate that was on, whose human presses
-/// Ctrl-C at its first git_command; the fixture, once its run has stopped as interrupted.
-fn interrupted_at_the_end(had_gate: bool, git_command: &'static str) -> Fixture {
+/// A run resumed at publish, with locked files, whose human presses Ctrl-C at its first git_command; the fixture, once
+/// its run has stopped as interrupted.
+fn interrupted_at_the_end(git_command: &'static str) -> Fixture {
     let mut state = saved_run("publish", 1, &["build"]);
     state.pull_request = true;
     (state.base_branch, state.branch) = (Some("main".into()), Some("orchestrator/x-a1b2c3".into()));
     (state.verdict, state.workflow) = (Some(crate::constants::FINISHED.into()), "solo".into());
-    state.quality_gate_disabled = had_gate;
-    state.ci = object([("build", Value::from(41))]);
     state.locked = [("build", vec!["tests/test_x.py".to_string()])].into_iter().collect();
     let host = Rc::new(FakeHost::new(Some("def456"), "orchestrator/x-a1b2c3"));
     host.state().refs.insert(format!("{}build/1", crate::state::refs_prefix(&state.run_id)), "abc123".to_string());
@@ -123,15 +119,10 @@ fn interrupted_at_the_end(had_gate: bool, git_command: &'static str) -> Fixture 
 }
 
 #[test]
-fn a_ctrl_c_during_the_end_clean_ups_releases_the_run_and_keeps_its_build() {
-    // As Python's KeyboardInterrupt in _clean_up_quality, which its logged failures do not catch: the run is released
-    // as interrupted, with RunState::ci kept for a resume, and its local refs are not deleted.
-    let f = interrupted_at_the_end(true, "ls-remote");
-    assert_eq!(RunState::from_saved(&f.saved()).unwrap().ci, object([("build", Value::from(41))]));
-    assert_eq!(f.host.state().refs.len(), 1, "the local refs were deleted");
-    // And at publish's last command, which a FakeHost lets succeed where a ProcessHost fails it: the run is released
-    // as interrupted all the same.
-    interrupted_at_the_end(false, "switch");
+fn a_ctrl_c_at_publish_s_last_command_releases_the_run() {
+    // A FakeHost lets the command succeed where a ProcessHost fails it: the run is released as interrupted all the
+    // same.
+    interrupted_at_the_end("switch");
 }
 
 #[test]

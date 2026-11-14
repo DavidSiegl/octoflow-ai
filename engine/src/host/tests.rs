@@ -1,6 +1,5 @@
-//! Host's operations on a real machine: tests/test_orchestrator.py's TestHost, TestHostGit, TestHostSnapshot,
-//! TestAtomicWrite, TestRunFiles, TestHostPullRequest and TestChildEnvironment, ported case for case, against real git
-//! in temporary repositories, with gh, date and ssh played by scripts on the Host's PATH.
+//! Host's operations on a real machine, against real git in temporary repositories, with gh, date and ssh played by
+//! scripts on the Host's PATH.
 
 use std::ffi::OsString;
 use std::os::unix::fs::PermissionsExt;
@@ -69,8 +68,7 @@ pub(crate) fn set_mtime(path: &str, seconds: i64) {
 }
 
 /// A git repository of its own, on branch main, configured to commit as `t <t@example.com>` unsigned whatever the
-/// user's git configuration says, as tests/gitrepo.py's RepositoryTest makes it; its base commit holds base_files
-/// unless they are none.
+/// user's git configuration says; its base commit holds base_files unless they are none.
 pub(crate) struct Repo {
     /// Holds the repository and outside; removes both when dropped.
     pub _tmp: TempDir,
@@ -131,15 +129,17 @@ impl Repo {
 }
 
 /// An ssh played by a script on the Host's PATH: it records each call's arguments, one file per call, NUL-separated,
-/// and runs the command it was given with sh, here, as sshd would run it there.
-struct FakeSsh {
+/// and runs the command it was given with sh, here, as sshd would run it there. With FAKE_SSH_REFUSES_SHARED set in
+/// the host's environment it fails a call that shares a connection (ControlMaster=auto) as OpenSSH 10.0's client does
+/// when the server refuses the master another session (MaxSessions), running nothing.
+pub(crate) struct FakeSsh {
     dir: TempDir,
-    host: ProcessHost,
+    pub host: ProcessHost,
 }
 
 impl FakeSsh {
     /// A host over this fake ssh to remote-host, in the engine's environment with set added.
-    fn new(set: &[(&str, &str)]) -> FakeSsh {
+    pub fn new(set: &[(&str, &str)]) -> FakeSsh {
         let dir = TempDir::new();
         let bin = dir.join("bin");
         tool(
@@ -147,6 +147,8 @@ impl FakeSsh {
             "ssh",
             "#!/bin/sh\nd=$(dirname \"$0\")/calls; mkdir -p \"$d\"; n=$(ls \"$d\" | wc -l)\n\
              for a in \"$@\"; do printf '%s\\0' \"$a\"; done > \"$d/$n\"\n\
+             case \"$*\" in *ControlMaster=auto*) if [ -n \"$FAKE_SSH_REFUSES_SHARED\" ]; then\n\
+             echo 'mux_client_request_session: session request failed: Session open refused by peer' >&2; exit 255; fi;; esac\n\
              eval \"last=\\${$#}\"\nexec sh -c \"$last\"\n",
         );
         let host = ProcessHost::in_environment(environment(Some(&bin), set).into_iter(), &Interrupt::new()).over_ssh("remote-host");
@@ -154,7 +156,7 @@ impl FakeSsh {
     }
 
     /// The arguments of each call of ssh, in order.
-    fn calls(&self) -> Vec<Vec<String>> {
+    pub fn calls(&self) -> Vec<Vec<String>> {
         let dir = self.dir.join("bin/calls");
         let n = std::fs::read_dir(&dir).map(|d| d.count()).unwrap_or(0);
         (0..n)
@@ -175,7 +177,7 @@ impl FakeSsh {
 /// ["ssh", "-o", "BatchMode=yes"], the start of every command over SSH, before the sharing options.
 const SSH: [&str; 3] = ["ssh", "-o", "BatchMode=yes"];
 
-// -- TestHost --------------------------------------------------------------------------------------------------------
+// -- Commands, files and times, here and over SSH --------------------------------------------------------------------
 
 #[test]
 fn ssh_wraps_command() {
@@ -215,6 +217,33 @@ fn commands_over_ssh_share_one_connection_through_a_private_directory() {
     assert!(std::path::Path::new(path).exists());
     drop(copy);
     assert!(!std::path::Path::new(path).exists());
+}
+
+#[test]
+fn a_command_the_server_refuses_on_the_shared_connection_runs_again_unshared_as_do_the_next() {
+    let ssh = FakeSsh::new(&[("FAKE_SSH_REFUSES_SHARED", "1")]);
+    let ran = ssh.host.run(&["echo", "hi"], None, DEFAULT_TIMEOUT).unwrap();
+    assert_eq!((ran.status, ran.stdout.as_str()), (0, "hi\n"));
+    ssh.host.over_ssh("remote-host").run(&["true"], None, DEFAULT_TIMEOUT).unwrap();
+    let unshared = ["-o", "ControlMaster=no", "-o", "ControlPath=none"].map(String::from).to_vec();
+    let calls = ssh.calls();
+    assert!(calls[0].iter().any(|a| a == "ControlMaster=auto"), "{calls:?}");
+    // On a connection of its own, also where the user's ssh_config would share one.
+    for call in &calls[1..] {
+        assert_eq!(call[SSH.len()..call.len() - 2], unshared, "{calls:?}");
+    }
+    assert_eq!(calls.len(), 3);
+    assert_eq!(ssh.host.ssh_sharing_options(), unshared);
+}
+
+#[test]
+fn a_command_failing_with_255_for_another_reason_is_not_run_again() {
+    let ssh = FakeSsh::new(&[]);
+    let refused = "echo 'ssh: connect to host remote-host port 22: Connection refused' >&2; exit 255";
+    let ran = ssh.host.run(&["sh", "-c", refused], None, DEFAULT_TIMEOUT).unwrap();
+    assert_eq!(ran.status, 255);
+    assert_eq!(ssh.calls().len(), 1);
+    assert!(!ssh.host.ssh_sharing_options().is_empty());
 }
 
 /// A short directory under /tmp, for an XDG_RUNTIME_DIR whose control sockets' paths ssh accepts.
@@ -474,7 +503,7 @@ fn output_that_is_not_utf8_raises_naming_the_command() {
     assert_eq!(verbatim.stderr, "a\u{fffd}");
 }
 
-// -- How a command runs: the fixes the Python engine's process handling holds -----------------------------------------
+// -- How a command runs -----------------------------------------------------------------------------------------------
 
 #[test]
 fn line_ends_are_made_newlines_in_text_and_kept_verbatim() {
@@ -557,7 +586,7 @@ fn a_command_that_cannot_be_started_names_it() {
 
 #[test]
 fn exec_tells_a_command_not_on_path_from_one_that_cannot_be_started_otherwise() {
-    // As the doctor tells a tool missing here (cross-review 89, F9): Python's FileNotFoundError from subprocess.
+    // As the doctor tells a tool missing here (cross-review 89, F9).
     let host = ProcessHost::local(&Interrupt::new());
     let message = "no-such-command-here x: [Errno 2] No such file or directory: \"no-such-command-here\"";
     assert_eq!(host.exec(&["no-such-command-here", "x"], None, 60), Err(ExecError::NotFound(OrchestratorError::new(message))));
@@ -576,7 +605,7 @@ fn a_command_ended_by_a_signal_has_its_negative_number() {
     assert_eq!(proc.status, -15);
 }
 
-// -- The Ctrl-C (not in Python, whose commands get the terminal's SIGINT themselves) ----------------------------------
+// -- The Ctrl-C -------------------------------------------------------------------------------------------------------
 
 #[test]
 fn a_ctrl_c_stops_the_running_command_with_its_process_group() {
@@ -652,43 +681,37 @@ fn no_command_starts_while_the_ctrl_c_is_pending() {
     assert!(std::path::Path::new(&ran).exists());
 }
 
-// -- TestChildEnvironment --------------------------------------------------------------------------------------------
+// -- The environment a command gets ----------------------------------------------------------------------------------
 
-/// The engine's environment with the CI credentials, git's pathspec switches and KEEP_ME set.
-pub(crate) fn with_credentials() -> Vec<(&'static str, &'static str)> {
-    let mut set: Vec<(&str, &str)> = vec![
-        ("JENKINS_URL", "https://jenkins.example/"),
-        ("JENKINS_USER", "agents"),
-        ("JENKINS_TOKEN", "jenkins-secret-token"),
-        ("KEEP_ME", "1"),
-    ];
+/// The engine's environment with git's pathspec switches and KEEP_ME set.
+pub(crate) fn with_pathspec_switches() -> Vec<(&'static str, &'static str)> {
+    let mut set: Vec<(&str, &str)> = vec![("KEEP_ME", "1")];
     set.extend(crate::constants::GIT_PATHSPEC_ENV.iter().map(|k| (*k, "1")));
     set
 }
 
-/// Panics unless env, the output of `env`, keeps KEEP_ME and holds none of the credentials or switches.
+/// Panics unless env, the output of `env`, keeps KEEP_ME and holds none of the switches.
 pub(crate) fn assert_scrubbed(env: &str) {
     assert!(env.lines().any(|l| l == "KEEP_ME=1"), "{env}");
-    for k in crate::constants::CI_ENV.iter().chain(&crate::constants::GIT_PATHSPEC_ENV) {
+    for k in crate::constants::GIT_PATHSPEC_ENV {
         assert!(!env.lines().any(|l| l.starts_with(&format!("{k}="))), "{k} reached the process");
     }
-    assert!(!env.contains("jenkins-secret-token"));
 }
 
 #[test]
-fn a_real_process_sees_no_credentials() {
-    let host = ProcessHost::in_environment(environment(None, &with_credentials()).into_iter(), &Interrupt::new());
+fn a_real_process_sees_no_pathspec_switches() {
+    let host = ProcessHost::in_environment(environment(None, &with_pathspec_switches()).into_iter(), &Interrupt::new());
     assert_scrubbed(&host.check(&["env"], None, 60).unwrap());
 }
 
 #[test]
-fn host_commands_over_ssh_get_no_credentials() {
+fn host_commands_over_ssh_get_no_pathspec_switches() {
     // The fake ssh runs the command here, so env shows what ssh itself was started with.
-    let ssh = FakeSsh::new(&with_credentials());
+    let ssh = FakeSsh::new(&with_pathspec_switches());
     assert_scrubbed(&ssh.host.check(&["env"], None, 60).unwrap());
 }
 
-// -- TestAtomicWrite, TestRunFiles and the session logs --------------------------------------------------------------
+// -- Atomic writes, a run's files and the session logs ---------------------------------------------------------------
 
 #[test]
 fn real_filesystem_state() {
@@ -926,7 +949,7 @@ fn run_metrics_reads_each_run_s_line() {
     assert!(e.0.starts_with(&format!("corrupt metrics.json under {}/{RUNS_DIR}: ", d.path())), "{e}");
 }
 
-// -- TestHostPullRequest ---------------------------------------------------------------------------------------------
+// -- Pull requests ---------------------------------------------------------------------------------------------------
 
 const URL: &str = "https://github.com/o/r/pull/7";
 
@@ -1066,9 +1089,9 @@ fn a_failed_edit_raises() {
     assert!(e.0.contains("gh pr ready ") && e.0.ends_with(" failed: HTTP 422"), "{e}");
 }
 
-// -- TestHostGit: a bare origin, our checkout A and someone else's B -------------------------------------------------
+// -- git: a bare origin, our checkout A and someone else's B ---------------------------------------------------------
 
-/// TestHostGit's setup: a bare origin, our checkout a and someone else's b, both at its main, which holds app.py.
+/// The git cases' setup: a bare origin, our checkout a and someone else's b, both at its main, which holds app.py.
 struct Clones {
     tmp: TempDir,
     host: ProcessHost,
@@ -1319,7 +1342,6 @@ fn lease_guarded_delete_at_the_expected_commit() {
     let c = Clones::new();
     let head = c.pushed_run_branch();
     assert_eq!(c.host.remote_branch_commit(&c.a, "orchestrator/x-a1b2c3").unwrap(), Some(head.clone()));
-    assert_eq!(c.host.remote_branches(&c.a, "orchestrator/").unwrap(), ["orchestrator/x-a1b2c3"]);
     c.host.delete_remote_branch_at(&c.a, "orchestrator/x-a1b2c3", &head).unwrap();
     assert_eq!(c.host.remote_branch_commit(&c.a, "orchestrator/x-a1b2c3").unwrap(), None);
     assert_eq!(c.sh(&["git", "-C", &c.a, "for-each-ref", "refs/remotes/origin/orchestrator/"]), "");
@@ -1344,8 +1366,6 @@ fn remote_branch_commit_is_the_exact_name() {
     let c = Clones::new();
     c.pushed_run_branch();
     assert_eq!(c.host.remote_branch_commit(&c.a, "x-a1b2c3").unwrap(), None);
-    c.host.delete_remote_branch(&c.a, "orchestrator/x-a1b2c3").unwrap();
-    assert!(c.host.remote_branches(&c.a, "orchestrator/").unwrap().is_empty());
 }
 
 #[test]
@@ -1859,7 +1879,7 @@ fn a_tree_is_restored_over_more_paths_than_an_argv_holds() {
     assert_eq!(r.host.git(&r.path, &["status", "--porcelain"]).unwrap(), "");
 }
 
-// -- TestHostSnapshot ------------------------------------------------------------------------------------------------
+// -- Snapshots -------------------------------------------------------------------------------------------------------
 
 #[test]
 fn snapshot_of_the_working_tree() {
@@ -1910,6 +1930,51 @@ fn snapshot_holds_a_file_rewritten_at_its_size_within_the_second_git_staged_it()
     assert_eq!(r.git(&["show", &format!("{sha}:racy.py")]), "after!\n");
 }
 
+/// A Repo with a base commit, whose Host finds in bin a git that runs the system's git and makes its temporary files
+/// under tmp. At a `git add` given GIT_INDEX_FILE, the git writes bin/seen: the umask, then the modes of
+/// GIT_INDEX_FILE's directory and of the file, in octal, one to a line. After such a `git write-tree`, it leaves
+/// GIT_INDEX_FILE.lock behind, as a git killed while it held the lock would.
+fn repo_watching_the_index_copy(bin: &str, tmp: &str) -> Repo {
+    tool(
+        bin,
+        "git",
+        &format!(
+            "#!/bin/sh\ncase \"${{GIT_INDEX_FILE:+set}} $* \" in set*\" add \"*) {{ umask; stat -c %a -- \"${{GIT_INDEX_FILE%/*}}\" \
+             \"$GIT_INDEX_FILE\"; }} > '{bin}/seen' || exit 1;; esac\n\
+             for s in /usr/bin/git /bin/git; do [ -x \"$s\" ] && {{ \"$s\" \"$@\"; e=$?; break; }}; done\n\
+             case \"${{GIT_INDEX_FILE:+set}} $* \" in set*\" write-tree \"*) : > \"$GIT_INDEX_FILE.lock\" || exit 1;; esac\nexit \"${{e:-127}}\"\n"
+        ),
+    );
+    let host = ProcessHost::in_environment(environment(Some(bin), &[("TMPDIR", tmp)]).into_iter(), &Interrupt::new());
+    Repo::with_host(&[("a.py", "a\n")], host)
+}
+
+#[test]
+fn the_copy_of_the_index_git_stages_into_is_private_and_not_at_the_index_s_mode() {
+    let (bin, tmp) = (TempDir::new(), TempDir::new());
+    let r = repo_watching_the_index_copy(&bin.path(), &tmp.path());
+    // A mode with an execute bit, which no new file has whatever the umask, so that a copy at it was made by `cp -p`.
+    std::fs::set_permissions(format!("{}/.git/index", r.path), std::fs::Permissions::from_mode(0o641)).unwrap();
+    r.put("b.py", "b\n");
+    r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    let seen = read(&bin.join("seen"));
+    let octal: Vec<u32> = seen.lines().map(|l| u32::from_str_radix(l, 8).unwrap()).collect();
+    let [umask, dir, file] = octal[..] else { panic!("{seen}") };
+    // Only its owner can reach the copy, which is at a new file's mode, not at the index's, as `cp -p` would make it.
+    assert_eq!((dir, file), (0o700, 0o666 & !umask), "{seen}");
+}
+
+#[test]
+fn a_tree_snapshot_leaves_nothing_in_the_temporary_directory_not_even_a_lock() {
+    let (bin, tmp) = (TempDir::new(), TempDir::new());
+    let r = repo_watching_the_index_copy(&bin.path(), &tmp.path());
+    r.put("b.py", "b\n");
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    assert_eq!(r.git(&["ls-tree", "--name-only", &tree]).split_whitespace().collect::<Vec<_>>(), ["a.py", "b.py"]);
+    let left: Vec<_> = std::fs::read_dir(tmp.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert!(left.is_empty(), "{left:?}");
+}
+
 #[test]
 fn snapshot_of_a_repository_without_an_index() {
     let r = Repo::new(&[]);
@@ -1931,10 +1996,10 @@ fn a_snapshot_git_cannot_make_raises() {
     assert_eq!(e.0, format!("snapshot of {}: git commit-tree printed \"notacommit\", not a commit", r.path));
 }
 
-// -- What the Python engine's constants hold --------------------------------------------------------------------------
+// -- The constants host.json records ----------------------------------------------------------------------------------
 
 #[test]
-fn host_s_constants_are_the_python_engine_s() {
+fn host_s_constants_are_what_host_json_records() {
     let recorded = oracle("host.json");
     let constants = recorded.get("constants").unwrap();
     let int = |name: &str| constants.get(name).and_then(Value::as_i64).unwrap();

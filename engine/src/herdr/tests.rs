@@ -1,7 +1,6 @@
-//! herdr as the engine drives it: tests/test_orchestrator.py's TestHerdr, TestHerdrLookups and TestChildEnvironment's
-//! herdr case, ported case for case on a ProcessHerdr whose commands a closure answers, as Python's Herdr(run=...);
-//! real processes for what only they show; every herdr command the e2e scenarios recorded; and the FakeHerdr the
-//! Workflow tests of ticket 08 run on.
+//! herdr as the engine drives it: its commands, lookups and child environment on a ProcessHerdr whose commands a
+//! closure answers; real processes for what only they show; every herdr command the e2e scenarios recorded; and the
+//! FakeHerdr the Workflow tests run on.
 
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -11,7 +10,7 @@ use super::fake::{resumed_session, Call, FakeHerdr, Turn};
 use super::*;
 use crate::harness::harness;
 use crate::host::fake::FakeHost;
-use crate::host::tests::{assert_scrubbed, environment, tool, with_credentials};
+use crate::host::tests::{assert_scrubbed, environment, tool, with_pathspec_switches};
 use crate::host::Host;
 use crate::state::RunState;
 use crate::test_support::{ended, hearing_sigint, raise_once_written, recorded_state, recordings, TempDir};
@@ -55,7 +54,7 @@ fn argv(words: &[&str]) -> Vec<String> {
     words.iter().map(|w| w.to_string()).collect()
 }
 
-// -- TestHerdr -------------------------------------------------------------------------------------------------------
+// -- Commands --------------------------------------------------------------------------------------------------------
 
 #[test]
 fn call_returns_result_and_forwards_machine() {
@@ -63,7 +62,7 @@ fn call_returns_result_and_forwards_machine() {
     assert_eq!(herdr.agent("build-x").map(|a| a.map(|a| a.status)), Ok(Some("idle".to_string())));
     assert_eq!(last(&ran).0, argv(&["herdr", "--machine", "remote", "agent", "get", "build-x"]));
     assert_eq!(herdr.machine(), Some("remote"));
-    // An empty machine is none, as Python takes it.
+    // An empty machine is none.
     let (herdr, ran) = answering(Some(""), 0, &result("{}"), "");
     herdr.focus("x").unwrap();
     assert_eq!(last(&ran).0, argv(&["herdr", "agent", "focus", "x"]));
@@ -304,7 +303,7 @@ fn a_herdr_that_cannot_be_run_or_read_names_the_command() {
     let denied = || Err(ProcessError::Start(std::io::ErrorKind::PermissionDenied.into()));
     let herdr = ProcessHerdr::with_runner(None, move |_, _| denied());
     assert!(herdr.focus("x").unwrap_err().to_string().starts_with("herdr agent focus x: "));
-    // A prompt's text stays out of the error, as out of Python's OSError.
+    // A prompt's text stays out of the error.
     let e = herdr.prompt("spec-x", "a long prompt").unwrap_err().to_string();
     assert!(e.starts_with("herdr agent prompt spec-x: ") && !e.contains("long"), "{e}");
     let herdr = ProcessHerdr::with_runner(None, |_, _| Err(ProcessError::Io(std::io::ErrorKind::BrokenPipe.into())));
@@ -347,7 +346,7 @@ fn a_command_that_does_not_return_is_a_timeout() {
     let e = list(None);
     let expected = (Some("timeout"), "herdr timeout: herdr agent list did not return".to_string());
     assert_eq!((e.code(), e.to_string()), expected);
-    // Python names the first three words herdr was given, the machine's among them.
+    // The error names the first three words herdr was given, the machine's among them.
     let e = list(Some("box"));
     assert_eq!(e.to_string(), "herdr timeout: herdr --machine box agent did not return");
 }
@@ -376,8 +375,8 @@ fn the_ctrl_c_ends_an_unbounded_wait() {
 
 #[test]
 fn a_prompt_herdr_delivered_before_the_ctrl_c_fails() {
-    // herdr carries out the prompt and exits 0 at the SIGINT: the engine must not go on to record it as sent, as
-    // Python's KeyboardInterrupt in herdr's prompt records nothing (FakeHerdrState::interrupt plays the same).
+    // herdr carries out the prompt and exits 0 at the SIGINT: the engine must not go on to record it as sent, as a
+    // Ctrl-C during herdr's prompt records nothing (FakeHerdrState::interrupt plays the same).
     let d = TempDir::new();
     let (delivered, interrupt) = (d.join("delivered"), Interrupt::new());
     let script = hearing_sigint(&format!("trap 'exit 0' INT\necho \"$4\" > '{delivered}'\nwhile :; do sleep 0.05; done\n"));
@@ -521,7 +520,7 @@ fn the_server_herdr_reaches_is_its_environment_s() {
     assert_eq!(HerdrServer::of_environment(&odd), None);
 }
 
-// -- TestHerdrLookups ------------------------------------------------------------------------------------------------
+// -- Lookups ---------------------------------------------------------------------------------------------------------
 
 #[test]
 fn agent_record() {
@@ -566,14 +565,14 @@ fn other_errors_raise() {
     assert_eq!(herdr.agent("x").unwrap_err().code(), Some("server_unavailable"));
 }
 
-// -- TestChildEnvironment --------------------------------------------------------------------------------------------
+// -- The child environment -------------------------------------------------------------------------------------------
 
 #[test]
-fn herdr_gets_no_credentials() {
+fn herdr_gets_no_pathspec_switches() {
     let d = TempDir::new();
     let env = d.join("env");
     tool(&d.path(), "herdr", &format!("#!/bin/sh\nenv > '{env}'\necho '{{\"result\": {{}}}}'\n"));
-    let vars = environment(Some(&d.path()), &with_credentials());
+    let vars = environment(Some(&d.path()), &with_pathspec_switches());
     ProcessHerdr::in_environment(None, vars.into_iter(), &Interrupt::new()).focus("x").unwrap();
     assert_scrubbed(&std::fs::read_to_string(env).unwrap());
 }
@@ -703,7 +702,8 @@ esac
 "#
     );
     tool(&d.path(), "herdr", &script);
-    let mut vars = environment(Some(&d.path()), &[]);
+    // The server's output goes under the state directory; one of the test's own, not the user's.
+    let mut vars = environment(Some(&d.path()), &[("XDG_STATE_HOME", &d.join("state"))]);
     vars.retain(|(k, _)| !k.to_string_lossy().starts_with("HERDR_"));
     (d, vars)
 }
@@ -780,6 +780,78 @@ fn a_server_that_does_not_come_up_fails_the_launch_saying_so() {
 }
 
 #[test]
+fn a_server_that_exits_at_once_fails_the_launch_with_what_it_said() {
+    let d = TempDir::new();
+    let script = r#"#!/bin/sh
+case "$1 $2" in
+"server ") echo 'herdr: cannot parse config.toml: line 3' >&2; exit 1 ;;
+"status server") echo 'status: not running' ;;
+*) echo '{"error": {"code": "server_not_running", "message": "no herdr server is running at /s.sock"}}' >&2; exit 1 ;;
+esac
+"#;
+    tool(&d.path(), "herdr", script);
+    let state = d.join("state");
+    let vars = environment(Some(&d.path()), &[("XDG_STATE_HOME", &state)]);
+    let mut herdr = ProcessHerdr::in_environment(None, vars.into_iter(), &Interrupt::new());
+    herdr.server_start = Poll { limit: Duration::from_millis(1000), every: Duration::from_millis(50) };
+    let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
+    assert!(e.starts_with("cannot start a herdr server: it was not running after 1 seconds"), "{e}");
+    let log = format!("{state}/octoflow/herdr-server.log");
+    assert!(e.ends_with(&format!("; herdr server wrote to {log}:\nherdr: cannot parse config.toml: line 3")), "{e}");
+}
+
+#[test]
+fn a_server_that_says_nothing_fails_the_launch_naming_where_its_output_went() {
+    let (d, vars) = herdr_with_servers(&[], None, "");
+    let mut herdr = ProcessHerdr::in_environment(None, vars.into_iter(), &Interrupt::new());
+    herdr.server_start = Poll { limit: Duration::from_millis(1000), every: Duration::from_millis(50) };
+    let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
+    let log = format!("{}/octoflow/herdr-server.log", d.join("state"));
+    assert!(e.ends_with(&format!("; herdr server wrote nothing to {log}")), "{e}");
+}
+
+#[test]
+fn a_relative_xdg_state_home_is_ignored_as_the_xdg_spec_asks() {
+    let (d, vars) = herdr_with_servers(&[], None, "");
+    let vars = vars.into_iter().filter(|(k, _)| k != "XDG_STATE_HOME" && k != "HOME").collect::<Vec<_>>();
+    let home = d.join("home");
+    let mut herdr = ProcessHerdr::in_environment(None, with(&vars, &[("XDG_STATE_HOME", "state"), ("HOME", &home)]), &Interrupt::new());
+    herdr.server_start = Poll { limit: Duration::from_millis(1000), every: Duration::from_millis(50) };
+    let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
+    let log = format!("{home}/.local/state/octoflow/herdr-server.log");
+    assert!(e.ends_with(&format!("; herdr server wrote nothing to {log}")), "{e}");
+}
+
+#[test]
+fn a_log_directory_that_cannot_be_made_still_starts_the_server_and_says_its_output_was_not_kept() {
+    let (d, vars) = herdr_with_servers(&[], None, "");
+    let vars = vars.into_iter().filter(|(k, _)| k != "XDG_STATE_HOME").collect::<Vec<_>>();
+    // A regular file where the state directory should be: nothing can be made under it.
+    let state = d.join("not-a-directory");
+    std::fs::write(&state, "").unwrap();
+    let mut herdr = ProcessHerdr::in_environment(None, with(&vars, &[("XDG_STATE_HOME", &state)]), &Interrupt::new());
+    herdr.server_start = Poll { limit: Duration::from_millis(1000), every: Duration::from_millis(50) };
+    let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
+    assert!(given(&d).iter().any(|c| c == "octoflow: server"), "the server was not started: {:?}", given(&d));
+    assert!(e.contains("; herdr server's output was not kept: "), "{e}");
+    assert!(e.contains(&state), "{e}");
+}
+
+#[test]
+fn a_log_file_that_cannot_be_written_still_starts_the_server_and_says_its_output_was_not_kept() {
+    let (d, vars) = herdr_with_servers(&[], None, "");
+    // A directory where the log file should be: the directory exists, and the file cannot be opened for writing.
+    let log = format!("{}/octoflow/herdr-server.log", d.join("state"));
+    std::fs::create_dir_all(&log).unwrap();
+    let mut herdr = ProcessHerdr::in_environment(None, vars.into_iter(), &Interrupt::new());
+    herdr.server_start = Poll { limit: Duration::from_millis(1000), every: Duration::from_millis(50) };
+    let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
+    assert!(given(&d).iter().any(|c| c == "octoflow: server"), "the server was not started: {:?}", given(&d));
+    assert!(e.contains("; herdr server's output was not kept: "), "{e}");
+    assert!(e.contains(&log), "{e}");
+}
+
+#[test]
 fn a_look_herdr_answers_with_an_error_while_its_server_comes_up_is_not_the_end() {
     let created = r#"{"result": {"workspace": {"workspace_id": "w1"}, "root_pane": {"pane_id": "w1:p1"}}}"#;
     let no_server = error("server_not_running", "no herdr server is running at /s.sock");
@@ -812,12 +884,16 @@ fn a_server_that_never_answers_fails_the_launch_with_what_herdr_last_said() {
             Ok((0, b"status: not running\n".to_vec(), Vec::new()))
         }
         "status" => Ok((1, Vec::new(), b"connection refused\n".to_vec())),
+        // sh -c, which prints where the server's output goes; nothing is there.
+        "-c" => Ok((0, b"/gone/herdr-server.log\n".to_vec(), Vec::new())),
         _ => Ok((0, Vec::new(), Vec::new())),
     });
     herdr.server_start = Poll { limit: Duration::from_millis(100), every: Duration::from_millis(20) };
     let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
     assert!(e.starts_with("cannot start a herdr server: it was not running after 0.1 seconds; herdr status server"), "{e}");
     assert!(e.contains("connection refused"), "{e}");
+    let gone = r#"[Errno 2] No such file or directory: "/gone/herdr-server.log""#;
+    assert!(e.ends_with(&format!("; cannot read what herdr server wrote: {gone}")), "{e}");
 }
 
 #[test]
@@ -943,7 +1019,7 @@ fn writes(path_of: fn(&RunState) -> String, text: &'static str, status: &'static
 }
 
 #[test]
-fn fakeherdr_plays_each_role_s_turns_as_python_s_does() {
+fn fakeherdr_plays_each_role_s_scripted_turns() {
     let host = Rc::new(FakeHost::new(Some("abc123"), "main"));
     let run = RunState::new("20260929-120000-a1b2c3", "add a rate limiter", "/proj");
     let spec: Turn = writes(|s| s.spec_path(), "# Spec", "done");
@@ -987,7 +1063,7 @@ fn fakeherdr_plays_each_role_s_turns_as_python_s_does() {
     let e = herdr.wait("review-a1b2c3", Some(1000), &["working"]).unwrap_err();
     assert_eq!(e.code(), Some("agent_not_found"));
 
-    // Once the run's state.json is saved, a turn sees the state as the Workflow saved it, as Python's turns share it.
+    // Once the run's state.json is saved, a turn sees the state as the Workflow saved it.
     let mut saved = run.clone();
     saved.worktree = Some("/proj/.orchestrator/worktrees/a1b2c3".to_string());
     host.write(&format!("{}/state.json", run.dir()), &saved.to_text(), false).unwrap();

@@ -1,6 +1,5 @@
-//! The secret scan before a push: tests/test_orchestrator.py's TestScanUnpublished, ported case for case, over a real
-//! repository and a bare origin, with a fake gitleaks on the Host's PATH; and the scan's helpers against the Python
-//! engine's answers.
+//! The secret scan before a push, over a real repository and a bare origin, with a fake gitleaks on the Host's PATH;
+//! and the scan's helpers against the answers engine/tests/oracle/host.json records.
 
 use super::*;
 use crate::error::shortened;
@@ -47,7 +46,7 @@ sys.stderr.write("FTL unable to load gitleaks config\n")
 sys.exit(2 if mode == "crash" else 1)
 "#;
 
-/// TestScanUnpublished's setup: a repository whose base holds a.txt, pushed to a bare origin outside it, and a Host
+/// The scan's setup: a repository whose base holds a.txt, pushed to a bare origin outside it, and a Host
 /// with the fake gitleaks first on its PATH and the fake token in TOKEN.
 struct Scan {
     repo: Repo,
@@ -94,9 +93,13 @@ impl Scan {
         self.push_with(&self.repo.host, commit)
     }
 
+    /// Push commit to origin's branch ci-ref, as a publishing push does: only once host's scan of what it would
+    /// publish finds nothing.
     fn push_with(&self, host: &ProcessHost, commit: &str) -> Result<(), PushError> {
         let report = format!("{}/leaks-snapshot.json", self.run_dir);
-        host.push_ref(&self.repo.path, commit, "ci-ref", self.repo.base(), &report)
+        host.refuse_leaks(&self.repo.path, commit, self.repo.base(), Scanned::Unpublished, &report)?;
+        self.repo.git(&["push", "--quiet", "--force", "origin", &format!("{commit}:refs/heads/ci-ref")]);
+        Ok(())
     }
 
     /// The push's error, which must not be a LeaksFound.
@@ -489,21 +492,21 @@ fn push_branch_scans_the_branch_s_commit_and_tracks_it() {
     assert!(OrchestratorError::from(PushError::Leaks(found)).0.starts_with("gitleaks found 1 secret in"));
 }
 
-// -- The scan's helpers against the Python engine ---------------------------------------------------------------------
+// -- The scan's helpers against host.json -----------------------------------------------------------------------------
 
 fn recorded(kind: &str) -> Value {
     oracle("host.json").get(kind).cloned().unwrap_or_else(|| panic!("host.json has no {kind}"))
 }
 
 #[test]
-fn an_extended_file_is_found_as_the_python_engine_finds_it() {
+fn an_extended_file_is_found_as_host_json_records() {
     for case in recorded("extended_file").as_array().unwrap() {
         let case = case.as_array().unwrap();
         let config = case[0].as_str().unwrap();
         let ours = extended_file(config);
         match (case[1].get("ok"), case[1].get("error").and_then(Value::as_str)) {
             (Some(ok), _) => assert_eq!(ours, Ok(ok.as_str().map(String::from)), "{config:?}"),
-            // The TOML parser's own words differ from tomllib's; the rest is the Python engine's.
+            // Only that it is not TOML is held to host.json, not the TOML parser's own words.
             (_, Some(error)) if error.starts_with("is not TOML: ") => {
                 assert!(ours.unwrap_err().starts_with("is not TOML: "), "{config:?}");
             }
@@ -513,7 +516,7 @@ fn an_extended_file_is_found_as_the_python_engine_finds_it() {
 }
 
 #[test]
-fn a_leak_is_worded_as_the_python_engine_words_it() {
+fn a_leak_is_worded_as_host_json_records() {
     let leaks = [
         Leak {
             rule: "github-pat".into(),
@@ -545,7 +548,7 @@ fn a_leak_is_worded_as_the_python_engine_words_it() {
 }
 
 #[test]
-fn normpath_and_shortened_are_python_s() {
+fn normpath_and_shortened_give_what_host_json_records() {
     for case in recorded("normpath").as_array().unwrap() {
         let case = case.as_array().unwrap();
         assert_eq!(normpath(case[0].as_str().unwrap()), case[1].as_str().unwrap(), "{:?}", case[0]);
@@ -557,7 +560,7 @@ fn normpath_and_shortened_are_python_s() {
 }
 
 #[test]
-fn bytes_split_as_python_splits_them() {
+fn bytes_split_at_each_separator_keeping_empty_parts() {
     assert_eq!(split_bytes(b"\n\0a\n\0b", b"\n\0"), [&b""[..], b"a", b"b"]);
     assert_eq!(split_bytes(b"", b"\n\0"), [&b""[..]]);
     assert!(contains(b"x gitleaks:allow", b"gitleaks:allow") && !contains(b"gitleaks", b"gitleaks:allow"));

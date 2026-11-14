@@ -1,4 +1,4 @@
-//! The specs drain runs, as orchestrator.py reads and writes them: DIR/<slug>/spec.md, each with a header of
+//! The specs drain runs: DIR/<slug>/spec.md, each with a header of
 //! `<key>: <entry>` lines before its first `## ` heading (header_field, with_header_field), read into a queue ordered
 //! by slug whose blockers are checked (read_queue), and each spec's header changes written back as drain makes them
 //! (QueuedSpec).
@@ -24,7 +24,7 @@ const NO_BLOCKERS: [&str; 2] = ["-", "none"];
 /// Header lines to set, each a key of the header and its entry, in the order set; a key set again keeps its place.
 pub type Entries = Vec<(&'static str, String)>;
 
-/// Set each of more in entries, as Python's dict |= does: a key entries has keeps its place and takes the new entry.
+/// Set each of more in entries: a key entries has keeps its place and takes the new entry.
 pub fn merge(entries: &mut Entries, more: Entries) {
     for (key, entry) in more {
         match entries.iter_mut().find(|(k, _)| *k == key) {
@@ -104,7 +104,7 @@ pub fn blocker_slugs(line: Option<&str>) -> Vec<String> {
         .collect()
 }
 
-/// path's directory, as Python's os.path.dirname gives it: up to its last slash, trailing slashes removed unless it is
+/// path's directory: up to its last slash, trailing slashes removed unless it is
 /// all slashes.
 fn dirname(path: &str) -> &str {
     let head = &path[..path.rfind('/').map_or(0, |i| i + 1)];
@@ -224,8 +224,8 @@ impl QueuedSpec {
     /// The line drain prints for a spec it changed: its slug, old and new status, `gone` for a gone one, and pull
     /// request.
     pub fn change_line(&self) -> String {
-        let new = if self.gone.is_some() { "gone".to_string() } else { py_str(self.status()) };
-        let line = format!("{}: {} -> {new}", self.slug, py_str(self.was.clone()));
+        let new = if self.gone.is_some() { "gone".to_string() } else { status_text(self.status()) };
+        let line = format!("{}: {} -> {new}", self.slug, status_text(self.was.clone()));
         match self.pr() {
             Some(pr) if !pr.is_empty() => format!("{line}  {pr}"),
             _ => line,
@@ -233,8 +233,8 @@ impl QueuedSpec {
     }
 }
 
-/// value as Python's str of an optional text writes it: "None" for None.
-fn py_str(value: Option<String>) -> String {
+/// value as a change line writes it: "None" for no status.
+fn status_text(value: Option<String>) -> String {
     value.unwrap_or_else(|| "None".to_string())
 }
 
@@ -255,7 +255,7 @@ pub fn read_queue(spec_dir: &str) -> Result<Vec<QueuedSpec>, OrchestratorError> 
     names.sort();
     let mut specs: Vec<QueuedSpec> = Vec::new();
     for name in names {
-        // As os.path.join joins them.
+        // One slash between DIR and the name, none added after an empty DIR or one ending in a slash.
         let sep = if spec_dir.is_empty() || spec_dir.ends_with('/') { "" } else { "/" };
         let path = format!("{spec_dir}{sep}{name}/spec.md");
         if std::path::Path::new(&path).is_file() {

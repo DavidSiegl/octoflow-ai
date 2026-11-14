@@ -13,17 +13,27 @@
      "steps": [
       {
        "id": "spec",
-       "role": "spec"
+       "role": "spec",
+       "role_label": "Spec Collector",
+       "loop_to": null,
+       "quality_gated": false
       },
       {
        "id": "build",
-       "role": "build"
+       "role": "build",
+       "role_label": "Builder",
+       "loop_to": null,
+       "quality_gated": false
       },
       {
        "id": "review",
-       "role": "review"
+       "role": "review",
+       "role_label": "Reviewer",
+       "loop_to": "build",
+       "quality_gated": false
       }
      ],
+     "pull_request": true,
      "phase": "done",
      "round": 1,
      "quality_round": null,
@@ -167,17 +177,27 @@
      "steps": [
       {
        "id": "spec",
-       "role": "spec"
+       "role": "spec",
+       "role_label": "Spec Collector",
+       "loop_to": null,
+       "quality_gated": false
       },
       {
        "id": "build",
-       "role": "build"
+       "role": "build",
+       "role_label": "Builder",
+       "loop_to": null,
+       "quality_gated": false
       },
       {
        "id": "review",
-       "role": "review"
+       "role": "review",
+       "role_label": "Reviewer",
+       "loop_to": "build",
+       "quality_gated": false
       }
      ],
+     "pull_request": true,
      "phase": "spec",
      "round": 0,
      "quality_round": null,
@@ -245,17 +265,27 @@
      "steps": [
       {
        "id": "spec",
-       "role": "spec"
+       "role": "spec",
+       "role_label": "Spec Collector",
+       "loop_to": null,
+       "quality_gated": false
       },
       {
        "id": "build",
-       "role": "build"
+       "role": "build",
+       "role_label": "Builder",
+       "loop_to": null,
+       "quality_gated": false
       },
       {
        "id": "review",
-       "role": "review"
+       "role": "review",
+       "role_label": "Reviewer",
+       "loop_to": "build",
+       "quality_gated": false
       }
      ],
+     "pull_request": true,
      "phase": "build",
      "round": 1,
      "quality_round": null,
@@ -345,17 +375,27 @@
      "steps": [
       {
        "id": "spec",
-       "role": "spec"
+       "role": "spec",
+       "role_label": "Spec Collector",
+       "loop_to": null,
+       "quality_gated": false
       },
       {
        "id": "build",
-       "role": "build"
+       "role": "build",
+       "role_label": "Builder",
+       "loop_to": null,
+       "quality_gated": false
       },
       {
        "id": "review",
-       "role": "review"
+       "role": "review",
+       "role_label": "Reviewer",
+       "loop_to": "build",
+       "quality_gated": false
       }
      ],
+     "pull_request": true,
      "phase": "build",
      "round": 1,
      "quality_round": null,
@@ -467,17 +507,27 @@
      "steps": [
       {
        "id": "spec",
-       "role": "spec"
+       "role": "spec",
+       "role_label": "Spec Collector",
+       "loop_to": null,
+       "quality_gated": false
       },
       {
        "id": "build",
-       "role": "build"
+       "role": "build",
+       "role_label": "Builder",
+       "loop_to": null,
+       "quality_gated": false
       },
       {
        "id": "review",
-       "role": "review"
+       "role": "review",
+       "role_label": "Reviewer",
+       "loop_to": "build",
+       "quality_gated": false
       }
      ],
+     "pull_request": true,
      "phase": "review",
      "round": 1,
      "quality_round": null,

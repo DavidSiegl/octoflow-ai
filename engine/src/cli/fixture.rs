@@ -1,5 +1,5 @@
-//! What the CLI's tests run a command on, as tests/test_orchestrator.py runs main with Host and Herdr patched: a
-//! workflow Fixture's fakes, the program's standard output as text, and each quality job a Jenkins was made for.
+//! What the CLI's tests run a command on, in place of a real host and herdr: a workflow Fixture's fakes and the
+//! program's standard output as text.
 
 use std::cell::RefCell;
 use std::ffi::OsString;
@@ -9,7 +9,6 @@ use super::{
     ended_status, herdrless_command, parse_args, run_command, run_workflow, Command, Connected, Ended, Local,
     RunWorkflow, Stop,
 };
-use crate::ci::fake::jenkins_on;
 use crate::env::ConfigDir;
 use crate::error::OrchestratorError;
 use crate::herdr::fake::Turn;
@@ -28,8 +27,6 @@ pub(super) struct Cli {
     pub out: RefCell<String>,
     /// Everything a command printed on standard error itself, in order: not main's error or interrupted note.
     pub err: RefCell<String>,
-    /// The quality job of each Jenkins a command made, in order.
-    pub jobs: RefCell<Vec<String>>,
     /// The configuration directory: /nowhere unless a test gives one.
     pub config: ConfigDir,
 }
@@ -38,6 +35,12 @@ impl Cli {
     /// A world on a default FakeHost, for the default run's state.
     pub fn new() -> Cli {
         Cli::on(Rc::new(FakeHost::default()))
+    }
+
+    /// A world on a default FakeHost whose commands of the local gate Fixture::gated plays, for runs given
+    /// --quality-gate local.
+    pub fn gated() -> Cli {
+        Cli::of(Fixture::on(Rc::new(FakeHost::default()), new_state(), vec![]).gated())
     }
 
     /// A world on host.
@@ -51,30 +54,21 @@ impl Cli {
             f,
             out: RefCell::new(String::new()),
             err: RefCell::new(String::new()),
-            jobs: RefCell::new(vec![]),
             config: ConfigDir::at("/nowhere"),
         }
     }
 
-    /// Run f with the world: run_command's, on f's fakes, with a Jenkins on f.ci for each job, its runs driven by
-    /// run_workflow.
+    /// Run f with the world: run_command's, on f's fakes, its runs driven by run_workflow.
     pub fn with<T>(&self, f: impl FnOnce(&Connected) -> T) -> T {
         self.with_workflow(&run_workflow, f)
     }
 
-    /// with, its runs driven by workflow, as a Python test patches Workflow.run.
+    /// with, its runs driven by workflow, a script in place of Workflow::run.
     pub fn with_workflow<T>(&self, workflow: &RunWorkflow<'_>, f: impl FnOnce(&Connected) -> T) -> T {
-        let jenkins = |job: &str| {
-            self.jobs.borrow_mut().push(job.to_string());
-            Ok(jenkins_on(&self.f.ci))
-        };
         let print = |text: &str| self.out.borrow_mut().push_str(text);
         let stderr = |text: &str| self.err.borrow_mut().push_str(text);
-        let mut with = self.f.collaborators();
-        with.quality_gate = None;
         let world = Connected {
-            with,
-            jenkins: &jenkins,
+            with: self.f.collaborators(),
             config: &self.config,
             local_host: "here",
             stdout: &print,
@@ -93,10 +87,6 @@ impl Cli {
     /// ended, a command that needs no herdr pane run on host in the current directory cwd.
     pub fn ended_here(&self, argv: &[&str], host: &ProcessHost, cwd: &str) -> Result<Ended, Stop> {
         let command = self.command(argv);
-        let jenkins = |job: &str| {
-            self.jobs.borrow_mut().push(job.to_string());
-            Ok(jenkins_on(&self.f.ci))
-        };
         let print = |text: &str| self.out.borrow_mut().push_str(text);
         let stderr = |text: &str| self.err.borrow_mut().push_str(text);
         let cwd = || Ok(cwd.to_string());
@@ -105,7 +95,6 @@ impl Cli {
             host,
             herdr: &herdr,
             in_herdr_pane: true,
-            jenkins: &jenkins,
             cwd: &cwd,
             config: &self.config,
             stdout: &print,
@@ -162,9 +151,8 @@ impl Cli {
         host.ages.insert(run_id, age);
     }
 
-    /// A new run of argv (after `run`) in /proj, stopped at its first prompt as Python's tests stop one at
-    /// Workflow.__init__ or run: how main's command ended, and the state.json of the run it started, None when it
-    /// saved none.
+    /// A new run of argv (after `run`) in /proj, stopped at its first prompt: how main's command ended, and the
+    /// state.json of the run it started, None when it saved none.
     pub fn started(&self, argv: &[&str]) -> (Result<Ended, Stop>, Option<Value>) {
         let states = |host: &FakeHost| -> Vec<String> {
             host.state().files.keys().filter(|p| p.ends_with("/state.json")).map(String::from).collect()

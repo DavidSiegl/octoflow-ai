@@ -145,8 +145,7 @@ pub fn turn_lines(turns: &[TurnRecord], zone: &TimeZone) -> Vec<String> {
         .collect()
 }
 
-/// The start of each turn that has one, in seconds since the epoch; a start that is not a time is left out, where
-/// the Python engine would fail.
+/// The start of each turn that has one, in seconds since the epoch; a start that is not a time is left out.
 fn turn_starts(state: &RunState) -> Vec<i64> {
     state
         .turns
@@ -212,7 +211,7 @@ pub fn turn_tokens(turn: &TurnRecord, usage: Option<&[Usage]>) -> Value {
     };
     let time = |at: &Option<String>| at.as_deref().and_then(|at| epoch_seconds(at).ok());
     let (Some(start), Some(end)) = (time(&turn.started_at), time(&turn.ended_at)) else { return unknown() };
-    // The answers within [start, end + 1), compared as Python compares an int with a float.
+    // The answers within [start, end + 1), the whole seconds compared with an answer's fractional time as floats.
     let (start, end) = (start as f64, (end + 1) as f64);
     let total =
         usage.iter().filter(|u| start <= u.when && u.when < end).fold(Tokens::default(), |sum, u| sum.plus(u.tokens));
@@ -254,7 +253,7 @@ pub fn run_metrics(state: &RunState, now: i64) -> Value {
         .agents
         .iter()
         .map(|(role, agent)| {
-            (role.to_string(), json!({"harness": agent.kind, "model": s.models.get(role)}))
+            (role.to_string(), json!({"harness": agent.harness, "model": s.models.get(role)}))
         })
         .collect();
     let restored: usize = s

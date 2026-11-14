@@ -1,15 +1,9 @@
-//! What `list`, `list --json`, `show` and `metrics` print. Python's cases, by class: TestRunHealth's test_print_runs
-//! and test_print_closed_runs (its health cases are crate::runs'); TestRunRecord; TestListJSON;
-//! TestCLI.test_list_on_machine_uses_ssh_host; TestShow; TestQualityGateOffOnResume.test_show_names_the_gate;
-//! TestBlockedListing but test_status_tag, which is the GUI's (not ported, the rust-engine spec's Decisions); the
-//! print_runs half of TestBlocked.test_the_wait_is_saved_and_listed, on the state its Workflow half saves
-//! (crate::workflow's blocked tests), built here by hand; TestQualityCLI.test_list_shows_the_quality_phase;
-//! TestWorkflowFiles.test_list_reads_the_gated_step_from_the_saved_definition; and
-//! TestRunMetrics.test_the_metrics_command_prints_a_line_per_run_that_is_done.
+//! What `list`, `list --json`, `show` and `metrics` print. A run's health is crate::runs'; a blocked run's wait is
+//! listed here from a state built by hand like the one crate::workflow's blocked tests save.
 //!
-//! Where Python patches Host.resolve_dir to /proj, these give --cwd /proj, which the FakeHost resolves to itself.
-//! TestShow.test_on_a_machine_everything_goes_over_ssh runs show_run on a ProcessHost over an ssh that runs each
-//! command here, on a project in a TempDir, rather than through main, whose connect would ask herdr for the machine.
+//! These give --cwd /proj, which the FakeHost resolves to itself. The case of show on a machine runs show_run on a
+//! ProcessHost over an ssh that runs each command here, on a project in a TempDir, rather than through main, whose
+//! connect would ask herdr for the machine.
 
 use std::rc::Rc;
 
@@ -28,21 +22,29 @@ const PR_URL: &str = "https://github.com/o/r/pull/7";
 const QUESTION: &str = "which database?";
 const SHOW_ID: &str = "20260929-120000-a1b2c3";
 const SHOW_DIR: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
-const JOB: &str = crate::ci::fake::JOB;
+/// A Jenkins job a run saved before 0.72.0 removed the Jenkins quality gate; listings still show it.
+const JOB: &str = "Octoflow-AI/octoflow-ai-quality";
 
 /// The keys of a run record, in the order run_record gives them.
-const RUN_RECORD_KEYS: [&str; 24] = [
-    "id", "key", "task", "workflow", "steps", "phase", "round", "quality_round", "role", "pane", "agents", "health",
-    "health_reason", "heartbeat_age", "waiting", "verdict", "verdicts", "error", "closed", "branch", "worktree", "pr",
-    "turns", "resume_command",
+const RUN_RECORD_KEYS: [&str; 25] = [
+    "id", "key", "task", "workflow", "steps", "pull_request", "phase", "round", "quality_round", "role", "pane",
+    "agents", "health", "health_reason", "heartbeat_age", "waiting", "verdict", "verdicts", "error", "closed", "branch",
+    "worktree", "pr", "turns", "resume_command",
 ];
+
+/// The default workflow's steps as a run record gives them for a run without the quality gate.
+const DEFAULT_STEPS: &str = r#"[
+    {"id": "spec", "role": "spec", "role_label": "Spec Collector", "loop_to": null, "quality_gated": false},
+    {"id": "build", "role": "build", "role_label": "Builder", "loop_to": null, "quality_gated": false},
+    {"id": "review", "role": "review", "role_label": "Reviewer", "loop_to": "build", "quality_gated": false}
+]"#;
 
 /// JSON text as a value.
 fn json(text: &str) -> Value {
     serde_json::from_str::<Value>(text).unwrap_or_else(|e| panic!("{text}: {e}"))
 }
 
-/// Python's run_record helper: the state.json of a run of phase in round 1, its owner, error and verdict null.
+/// The state.json of a run of phase in round 1, its owner, error and verdict null.
 fn run(phase: &str) -> Value {
     let mut state = RunState::new(RUN_ID, "add a rate limiter", "/proj");
     (state.phase, state.round) = (phase.to_string(), 1);
@@ -54,7 +56,7 @@ fn saved_runs(runs: &[(u64, Value)]) -> Vec<SavedRun> {
     runs.iter().map(|(age, state)| SavedRun::read(*age, state.clone()).unwrap()).collect()
 }
 
-/// state with each of fields set, as Python's {**state, **fields}.
+/// state with each of fields set, replacing a field it has.
 fn with(state: Value, fields: &[(&str, Value)]) -> Value {
     let Value::Object(mut map) = state else { panic!("a state is an object") };
     for (key, value) in fields {
@@ -63,17 +65,17 @@ fn with(state: Value, fields: &[(&str, Value)]) -> Value {
     Value::Object(map)
 }
 
-/// The owner record of a run on this machine, "here": Python's ME.
+/// The owner record of a run on this machine, "here".
 fn me() -> Value {
     json(r#"{"host": "here", "pid": 4242, "started_at": "2026-09-30T07:00:00+00:00"}"#)
 }
 
-/// A run in build owned by ME.
+/// A run in build owned by me().
 fn mine() -> Value {
     with(run("build"), &[("owner", me())])
 }
 
-/// A BLOCKED report's wait, as the Workflow saves it: Python's BLOCK.
+/// A BLOCKED report's wait, as the Workflow saves it.
 fn block() -> Value {
     json(&format!(r#"{{"file": "build-1.md", "question": "{QUESTION}", "k": 1}}"#))
 }
@@ -105,7 +107,7 @@ fn listed(runs: &[(u64, Value)], target: &[&str]) -> Vec<String> {
     cli.lines().into_iter().step_by(2).collect()
 }
 
-// -- TestRunHealth's print_runs cases --------------------------------------------------------------------------------
+// -- How list prints runs --------------------------------------------------------------------------------------------
 
 #[test]
 fn print_runs_lists_each_run_and_its_task() {
@@ -145,9 +147,9 @@ fn print_closed_runs() {
     ]);
 }
 
-// -- TestRunRecord ---------------------------------------------------------------------------------------------------
+// -- A run's record --------------------------------------------------------------------------------------------------
 
-/// A human-paced turn of step by role that has not ended: Python's open_turn.
+/// A human-paced turn of step by role that has not ended.
 fn open_turn(step: &str, role: &str) -> Value {
     json(&format!(
         r#"{{"step": "{step}", "role": "{role}", "round": 1, "quality_round": 0, "file": "{step}.md",
@@ -165,10 +167,8 @@ fn every_key_is_present() {
     assert_eq!(key(&record, "id"), Value::from(RUN_ID));
     assert_eq!(key(&record, "key"), Value::from("c0ffee"));
     assert_eq!(key(&record, "workflow"), Value::from("default"));
-    assert_eq!(
-        key(&record, "steps"),
-        json(r#"[{"id": "spec", "role": "spec"}, {"id": "build", "role": "build"}, {"id": "review", "role": "review"}]"#)
-    );
+    assert_eq!(key(&record, "steps"), json(DEFAULT_STEPS));
+    assert_eq!(key(&record, "pull_request"), Value::from(false));
     assert_eq!([key(&record, "phase"), key(&record, "round"), key(&record, "role")], [
         Value::from("build"),
         Value::from(1),
@@ -184,6 +184,35 @@ fn every_key_is_present() {
     assert_eq!(key(&record, "turns"), json("[]"));
     assert_eq!((key(&record, "waiting"), key(&record, "resume_command")), (Value::Null, Value::Null));
     Value::Object(record).to_string();
+}
+
+#[test]
+fn each_step_has_its_role_label_loop_and_quality_gate() {
+    // A workflow file's own labels; its review step loops to impl, whose turns the quality loop follows only while the
+    // run has the gate, or once a quality turn followed them.
+    let state = with(run("impl"), &[("workflow", Value::from("impl")), ("workflow_definition", workflow_definition(&impl_()))]);
+    let steps = |fields: &[(&str, Value)]| key(&record(&with(state.clone(), fields), 40, true, &[]), "steps");
+    let expected = |impl_gated: bool| {
+        json(&format!(
+            r#"[{{"id": "impl", "role": "impl", "role_label": "Implementer", "loop_to": null, "quality_gated": {impl_gated}}},
+                {{"id": "review", "role": "review", "role_label": "Reviewer", "loop_to": "impl", "quality_gated": false}}]"#
+        ))
+    };
+    let disabled = ("quality_gate_disabled", Value::from(true));
+    let impl_turn = turn("impl", "build-1.md", Some(0), Some(10), &[]);
+    let quality_turn = turn("quality", "quality-1-1.json", Some(10), Some(20), &[]);
+    assert_eq!(steps(&[]), expected(false));
+    assert_eq!(steps(&[("quality_job", Value::from(JOB))]), expected(true));
+    assert_eq!(steps(&[disabled.clone(), ("turns", Value::Array(vec![impl_turn.clone()]))]), expected(false));
+    assert_eq!(steps(&[disabled, ("turns", Value::Array(vec![impl_turn, quality_turn]))]), expected(true));
+}
+
+#[test]
+fn pull_request_says_whether_the_run_opens_one() {
+    for opens in [true, false] {
+        let state = with(run("build"), &[("pull_request", Value::from(opens))]);
+        assert_eq!(key(&record(&state, 40, true, &[]), "pull_request"), Value::from(opens));
+    }
 }
 
 #[test]
@@ -434,7 +463,7 @@ fn a_lookup_the_interrupt_failed_stops_the_listing() {
     assert_eq!(records[0].get("pr").unwrap().get("error"), Some(&Value::Null));
 }
 
-// -- TestListJSON, and TestCLI.test_list_on_machine_uses_ssh_host ----------------------------------------------------
+// -- list --json, and list on a machine ------------------------------------------------------------------------------
 
 /// The document `list --json` with flags prints for runs, saved in /proj, checking it is one line of output, exit
 /// status 0 and no herdr call.
@@ -535,14 +564,14 @@ fn on_a_machine() {
     assert_eq!(cli.take_out(), "No runs.\n");
 }
 
-// -- TestShow --------------------------------------------------------------------------------------------------------
+// -- show ------------------------------------------------------------------------------------------------------------
 
 /// The task of the run show prints: longer than list's 100 characters.
 fn long_task() -> String {
     "add a token-bucket rate limiter to the API client ".repeat(4)
 }
 
-/// Python's show_state: a run of the default workflow, done with APPROVE, in workspace w1, with fields set.
+/// A run of the default workflow, done with APPROVE, in workspace w1, with fields set.
 fn show_state(fields: &[(&str, Value)]) -> Value {
     let mut state = RunState::new(SHOW_ID, &long_task(), "/proj");
     (state.phase, state.round, state.verdict, state.workspace_id) = ("done".into(), 1, Some(APPROVE.into()), "w1".into());
@@ -554,7 +583,7 @@ fn show_state(fields: &[(&str, Value)]) -> Value {
     with(with(state.to_json(), &[("agents", agents)]), fields)
 }
 
-/// A world whose /proj holds states, each saved 10^6 s ago: Python's ShowHost.
+/// A world whose /proj holds states, each saved 10^6 s ago.
 fn show_host(states: &[Value]) -> Cli {
     let cli = alive();
     for state in states {
@@ -664,7 +693,7 @@ fn closed_once_set() {
     }
 }
 
-/// Python's turn: a turn record of step, of round 1 unless change says otherwise, that started and ended at these
+/// A turn record of step, of round 1 unless change says otherwise, that started and ended at these
 /// readings of the host's clock, None for one not known.
 fn turn(step: &str, file: &str, start: Option<i64>, end: Option<i64>, fields: &[(&str, Value)]) -> Value {
     let at = |s: Option<i64>| s.map_or(Value::Null, |s| Value::from(iso_utc(HOST_EPOCH + s)));
@@ -751,8 +780,7 @@ fn a_run_an_earlier_release_started_with_its_fix_prompt_file_lists_and_shows_who
     ];
     let stale = with(mine(), &fields);
     let record = record(&stale, STALE_SECONDS + 1, true, &[]);
-    let steps =
-        json(r#"[{"id": "spec", "role": "spec"}, {"id": "build", "role": "build"}, {"id": "review", "role": "review"}]"#);
+    let steps = json(DEFAULT_STEPS);
     assert_eq!(
         [key(&record, "steps"), key(&record, "role"), key(&record, "pane"), key(&record, "resume_command")],
         [steps.clone(), Value::from("build"), Value::from("w1:p2"), Value::from("orchestrator resume c0ffee")]
@@ -908,12 +936,17 @@ fn help() {
     }
 }
 
-// -- TestQualityGateOffOnResume.test_show_names_the_gate -------------------------------------------------------------
+// -- show names the quality gate -------------------------------------------------------------------------------------
 
 #[test]
 fn show_names_the_gate() {
     let cases = [
-        (vec![("quality_job", Value::from(JOB))], Some(format!("quality    {JOB}"))),
+        (vec![("quality_job", Value::from("local"))], Some("quality    local".to_string())),
+        // A run a release before 0.72.0 started on a Jenkins job, which its resume will put on the local gate.
+        (
+            vec![("quality_job", Value::from(JOB))],
+            Some(format!("quality    local once resumed (Jenkins job {JOB}, removed in 0.72.0)")),
+        ),
         (vec![("quality_gate_disabled", Value::Bool(true))], Some("quality    off (turned off by resume)".to_string())),
         (vec![], None),
     ];
@@ -928,7 +961,7 @@ fn show_names_the_gate() {
     }
 }
 
-// -- TestBlockedListing, and TestBlocked.test_the_wait_is_saved_and_listed's print_runs half -------------------------
+// -- A blocked run's wait --------------------------------------------------------------------------------------------
 
 #[test]
 fn a_running_blocked_run_shows_its_question_and_pane() {
@@ -974,7 +1007,7 @@ fn the_wait_is_listed() {
     assert_eq!(cli.lines()[0], format!("20260929-120000-a1b2c3  build    round 1  blocked: {QUESTION} (pane w1:p2)"));
 }
 
-// -- TestQualityCLI.test_list_shows_the_quality_phase, TestWorkflowFiles' gated step ---------------------------------
+// -- The quality phase, and the gated step of a saved definition -----------------------------------------------------
 
 #[test]
 fn list_shows_the_quality_phase() {
@@ -993,7 +1026,7 @@ fn list_reads_the_gated_step_from_the_saved_definition() {
     assert!(lines[0].starts_with("20260930-070000-c0ffee  impl     round 1 q2"), "{}", lines[0]);
 }
 
-// -- TestRunMetrics.test_the_metrics_command_prints_a_line_per_run_that_is_done --------------------------------------
+// -- The metrics command ---------------------------------------------------------------------------------------------
 
 #[test]
 fn the_metrics_command_prints_a_line_per_run_that_is_done() {

@@ -182,7 +182,7 @@ fn agent_and_turn_records_keep_the_fields_they_do_not_know_after_their_own() {
     let text = saved_with(&[("agents", Some(agents)), ("turns", Some(&turns))]);
     let state = RunState::from_text(&text).unwrap();
     let (agent, turn) = (state.agents.get("build").unwrap(), &state.turns[0]);
-    assert_eq!((agent.kind.as_str(), agent.session.as_deref()), ("pi", None));
+    assert_eq!((agent.harness.as_str(), agent.session.as_deref()), ("pi", None));
     assert_eq!((turn.harness.as_deref(), turn.session.as_deref(), turn.under_way()), (Some("codex"), Some("s1"), true));
     assert_eq!(state.to_text(), text + "\n");
 }
@@ -217,11 +217,11 @@ fn an_empty_harness_name_is_refused() {
 #[test]
 fn a_roles_harness_is_its_agents_then_its_next_agents_then_the_default() {
     let mut state = RunState::new("r1", "t", "/p");
-    state.agent_kinds.insert("build", "codex".to_string());
-    state.agent_kinds.insert("review", "pi".to_string());
+    state.next_harnesses.insert("build", "codex".to_string());
+    state.next_harnesses.insert("review", "pi".to_string());
     state.agents.insert("build", AgentRecord::new("build-r1", "p2", "agy"));
     // build's agent runs in agy though its next one starts in codex: a resume's --role-agent changed it.
-    for (role, harness) in [("build", "agy"), ("review", "pi"), ("spec", DEFAULT_AGENT)] {
+    for (role, harness) in [("build", "agy"), ("review", "pi"), ("spec", DEFAULT_HARNESS)] {
         assert_eq!(state.harness(role), harness, "{role}");
     }
 }
@@ -263,13 +263,6 @@ fn the_runs_paths() {
     assert!(!s.had_quality_gate());
     s.quality_gate_disabled = true;
     assert!(s.had_quality_gate());
-    assert!(s.may_have_ci_refs());
-    s.quality_job = Some("local".into());
-    assert!(!s.may_have_ci_refs());
-    // A build in ci was of a Jenkins job named `local`, saved before `local` named the local gate.
-    s.ci.insert("ref".to_string(), Value::from("refs/orchestrator/a1b2c3/1-1"));
-    assert!(s.may_have_ci_refs());
-    s.ci = Object::new();
     s.worktree = Some("/proj/.orchestrator/worktrees/a1b2c3".into());
     assert_eq!(s.work_dir(), "/proj/.orchestrator/worktrees/a1b2c3");
     assert_eq!(s.prompts().unwrap(), Prompts::default());
@@ -373,7 +366,7 @@ fn a_state_names_its_workflow() {
     assert_eq!(state.pipeline().unwrap().step("build").unwrap().again.as_deref(), Some(fix));
 }
 
-// -- TestFindRun -----------------------------------------------------------------------------------------------------
+// -- Finding a run ---------------------------------------------------------------------------------------------------
 
 fn runs() -> Vec<SavedRun> {
     ["20260930-070000-c0ffee", "20260930-080000-beef00", "20260929-080000-beef00"]

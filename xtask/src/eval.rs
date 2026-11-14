@@ -36,7 +36,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::process::{command, interrupted, make_temp_dir, watch_interrupts};
+use crate::process::{command, interrupted, watch_interrupts};
 use crate::Error;
 
 /// Where the tasks are, and where the result lines go, relative to the checkout's top.
@@ -123,7 +123,7 @@ pub struct Trial {
     /// metrics.json's: the verdict, "error" or "unfinished".
     pub outcome: Option<String>,
     pub rounds: Option<u64>,
-    /// How many quality builds judged the change, over every round.
+    /// How many quality rounds judged the change, over every round.
     pub quality_rounds: Option<u64>,
     /// Summed over every agent turn; None also when a single turn's are unknown, so that a sum never stands for less
     /// than the whole run.
@@ -194,8 +194,8 @@ pub fn engine_command(eval_engine: Option<&str>, checkout: &Path) -> Result<Vec<
     }
 }
 
-/// command split into words as a POSIX shell splits it, quotes and backslashes removed, without expansions, as
-/// Python's shlex.split splits it; None when a quote is not closed or a backslash ends it.
+/// command split into words as a POSIX shell splits it, quotes and backslashes removed, without expansions; None when
+/// a quote is not closed or a backslash ends it.
 fn split_words(command: &str) -> Option<Vec<String>> {
     let mut words = vec![];
     let mut word: Option<String> = None;
@@ -307,10 +307,12 @@ pub fn config_name(run_args: &[String]) -> String {
 /// the result. Errors: [`Halt::Failed`] when the bundle cannot be cloned or the hidden test cannot be started;
 /// [`Halt::Interrupted`] after a Ctrl-C, once the command it reached has stopped, leaving the directory for a resume.
 pub fn run_trial(task: &Task, repeat: u32, engine: &[String], run_args: &[String], keep: bool) -> Result<Trial, Halt> {
-    let work = make_temp_dir(&format!("octoflow-eval-{}-", task.name))
+    let work = tempfile::Builder::new()
+        .prefix(&format!("octoflow-eval-{}-", task.name))
+        .tempdir()
         .map_err(|e| Error(format!("task {}: could not make its directory: {e}", task.name)))?;
-    let repo = work.join("repo");
-    let trial = match judged_trial(task, repeat, engine, run_args, &work, &repo) {
+    let repo = work.path().join("repo");
+    let trial = match judged_trial(task, repeat, engine, run_args, work.path(), &repo) {
         // A command the Ctrl-C reached failed by it.
         Err(Halt::Failed(_)) if interrupted() => Err(Halt::Interrupted),
         trial => trial,
@@ -318,11 +320,15 @@ pub fn run_trial(task: &Task, repeat: u32, engine: &[String], run_args: &[String
     if trial == Err(Halt::Interrupted) {
         eprintln!("interrupted: the run's clone stays in {}", repo.display());
     }
-    if keep {
-        eprintln!("{} #{repeat}: kept in {}", task.name, work.display());
-    } else if trial != Err(Halt::Interrupted) {
-        if let Err(e) = fs::remove_dir_all(&work) {
-            eprintln!("warning: could not remove {}: {e}", work.display());
+    if keep || trial == Err(Halt::Interrupted) {
+        let kept = work.keep();
+        if keep {
+            eprintln!("{} #{repeat}: kept in {}", task.name, kept.display());
+        }
+    } else {
+        let path = work.path().to_path_buf();
+        if let Err(e) = work.close() {
+            eprintln!("warning: could not remove {}: {e}", path.display());
         }
     }
     trial
@@ -416,8 +422,7 @@ fn cargo() -> std::process::Command {
     cargo
 }
 
-/// status as a number: the exit status, or minus the number of the signal that ended the process, as Python's
-/// subprocess gives it.
+/// status as a number: the exit status, or minus the number of the signal that ended the process.
 fn exit_code(status: ExitStatus) -> i32 {
     status.code().unwrap_or_else(|| -status.signal().unwrap_or(0))
 }
@@ -554,7 +559,7 @@ fn run_metrics(repo: &Path) -> RunMetrics {
     known
 }
 
-/// Whether value names something, as Python's truth test takes a harness: not null, false, "" or 0.
+/// Whether value names a harness: not null, false, "" or 0.
 fn is_truthy(value: &Value) -> bool {
     !matches!(value, Value::Null | Value::Bool(false)) && value != "" && value != 0
 }
@@ -788,7 +793,7 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
             Some((flag, value)) if flag.starts_with("--") => (flag, Some(value.to_string())),
             _ => (arg.as_str(), None),
         };
-        // As argparse takes them: a flag or any start of one, which no two of RUNNER_FLAGS share.
+        // A flag or any start of one, which no two of RUNNER_FLAGS share.
         let Some(&flag) = RUNNER_FLAGS.iter().find(|flag| given.len() > 2 && flag.starts_with(given)) else {
             return Err(format!("unrecognized argument: {arg}"));
         };
@@ -879,8 +884,8 @@ pub fn run(argv: &[String], checkout: &Path, eval_engine: Option<&str>, out: &mu
     exit
 }
 
-/// path relative to dir, both absolute, with `..` for each of dir's components path does not share, as Python's
-/// os.path.relpath writes it; path itself when they share no root.
+/// path relative to dir, both absolute, with `..` for each of dir's components path does not share; path itself
+/// when they share no root.
 fn relative(path: &Path, dir: &Path) -> PathBuf {
     let (path, dir): (Vec<_>, Vec<_>) = (path.components().collect(), dir.components().collect());
     let shared = path.iter().zip(&dir).take_while(|(a, b)| a == b).count();

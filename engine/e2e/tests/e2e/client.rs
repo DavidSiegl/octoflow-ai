@@ -1,6 +1,6 @@
 //! A client of serve, as the desktop app talks to it: one request and its answer (`request`), and the event stream
-//! read as it arrives (`EventStream`). HTTP/1.1 over a TcpStream, as Python's http.client sends it, which the
-//! recordings were made with: the Host header the URL gives unless the request names one, and `Accept-Encoding:
+//! read as it arrives (`EventStream`). HTTP/1.1 over a TcpStream, with the headers the recordings
+//! were made with: the Host header the URL gives unless the request names one, and `Accept-Encoding:
 //! identity`.
 
 use std::io::{BufRead, BufReader, Read, Write};

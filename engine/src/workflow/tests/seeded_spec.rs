@@ -1,8 +1,8 @@
-//! TestSeededSpec, and TestTurnTimings' test_a_seeded_spec_has_no_record: a run given its spec with run --spec skips
-//! the contract step's turn, its spec written as that step's file.
+//! A run given its spec with run --spec skips the contract step's turn, its spec written as that step's file, and
+//! records no turn for it.
 //!
-//! Not here: TestSpecCLI, main's (crate::cli's tests and crate::cli::args'), but for its read_spec_file cases, which
-//! are crate::spec_file's.
+//! Not here: run --spec's parsing and main, crate::cli's tests and crate::cli::args'; reading the spec file,
+//! crate::spec_file's.
 
 use std::cell::RefCell;
 
@@ -166,7 +166,7 @@ fn a_workflow_with_only_a_contract_step_cannot_take_a_spec() {
 
 #[test]
 fn a_seeded_spec_has_no_record() {
-    // TestTurnTimings.test_a_seeded_spec_has_no_record.
+    // The skipped turn leaves no turn record.
     let script = vec![("build", vec![build_turn(1)]), ("review", vec![review_turn(1, APPROVE)])];
     let f = Fixture::on(Rc::new(FakeHost::default()), seeded_run(&DEFAULT_WORKFLOW), script);
     let mut wf = f.workflow(given(&DEFAULT_WORKFLOW, GIVEN_SPEC));

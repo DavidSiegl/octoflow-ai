@@ -7,17 +7,16 @@ true as lines move.
 ## The quality gate
 
 The quality gate is not here: it is [octoflow-gate](https://github.com/DavidSiegl/octoflow-gate), a project of its own,
-whose release `ci/gate.pin` names. Jenkins runs it ([quality gate](quality-gate.md)); the engine never does, and reads
-the report it writes ([the report as a contract](quality-gate.md#the-report-as-a-contract)).
+whose release a project's `ci/gate.pin` names. The engine runs it on the project's host (`local_gate`, below;
+[quality gate](quality-gate.md)) and reads the report it writes
+([the report as a contract](quality-gate.md#the-report-as-a-contract)); this repository's Jenkins runs it on the
+engine's own changes.
 
 ## `engine/`: the engine
 
 The orchestrator, `octoflow-engine` in the top-level Cargo workspace: a library crate and the `orchestrator` binary
-(`engine/src/main.rs`). It is the port of the Python engine, `orchestrator.py`, which it replaced in 0.49.0
-(rust-engine ticket 11). It read and wrote every file, prompt and run state as that engine did until
-octoflow-without-python's tickets replaced each such imitation with Rust's own; `state.json` has had a format of its
-own since then, and a run an earlier release saved is refused (`state::format_problem`). Where a doc comment names a Python function or class, it is the one the Rust code was
-ported from. By module:
+(`engine/src/main.rs`). A `state.json` carries its format, and a run an earlier release saved in another format is
+refused (`state::format_problem`). By module:
 
 | Module | What it holds |
 |---|---|
@@ -27,32 +26,31 @@ ported from. By module:
 | `pipeline`, `workflow_file` | `Step`, `Pipeline` with all its checks, `default_workflow`, `find_workflow`, `is_built_in`; `parse_workflow`, `load_workflow_file`, `workflow_files`, `named_workflow`, `workflow_definition`, `workflow_toml` and `run_pipeline`. |
 | `state` | `RunState`, saved by serde with `"format": 2` (`STATE_FORMAT`) first and the fields of a `state.json` it does not know kept, after its own, with what every reader asks of a run (`done`, `pipeline`, `in_quality`, `harness`, a role's harness); its agent and turn records typed as `AgentRecord` and `TurnRecord`, every field required that the engine writes, and theirs it does not know kept as `RunState`'s are; `format_problem`, why a `state.json` of another format is not read; `SavedRun`, a [saved run](../GLOSSARY.md) as `Host::run_states` reads it back, whose `state` a command acts on and which refuses an unreadable one, and whose `shown` list and show print; `find_run`, the saved run a run reference names. |
 | `handoff`, `quality` | `parse_verdict` and `parse_blocked`; the quality-file reader, `parse_gate`, `gate_failures`, `finding_fingerprint`, and the engine's own quality files, `leak_report` and `build_failed_report`. |
-| `host`, `patch` | `Host`, a trait whose every operation is a provided method built on running one command (`exec`), so a fake overrides only what it plays: `ProcessHost`, the machine reached by real processes, here or over `ssh -o BatchMode=yes` with `ssh_sharing_options`' shared connection, each command in a process group of its own, its output read to the end on threads of their own, and the whole group killed with SIGKILL when it runs out of time; the secret scan (`scan_secrets`, of the commits a push would publish or of those since a base, as `Scanned` says, finding `quality`'s `Leak`s, `LeaksFound`); `ChangedFile`, `RunFile`, the pull request views with `GhError::Unusable` for `GhUnusable`, and `PushError::Leaks` for `LeaksFound`. Output kept verbatim is bytes, and a path git prints is refused when it is not UTF-8. `FakeHost` (`host/fake.rs`, tests only) is the Python tests' `FakeHost`, git played one command at a time through `git_run`, its other commands real processes when a test sets `processes`, as the Python tests' `host._run = subprocess.run` makes them, its time read from a `FakeClock` there, the Python tests' `FakeClock`. `added_lines` reads `change_diff`'s diffs. |
-| `harness`, `herdr` | The agent harnesses: `HARNESSES`, one row per harness of what the Python engine kept in four tables, its permission, resume and directory arguments and its session logs, found by `harness(kind)`, each `Harness` giving its `permission_args`, its `launch` (the arguments, and for opencode the environment its pane's shell exports first) and, from its `SessionLog`, `session_usage`; `AgentSettings`. `Herdr`, a trait of the commands a run gives herdr, `export` among them, which types variables into a pane's shell before its agent starts (the CLI's argv, JSON and error codes are `ProcessHerdr`'s alone, so a fake plays agents, not the protocol), `HerdrError` with herdr's code, `Agent` (herdr's record, its session included), `Direction`; `ProcessHerdr` runs the CLI here as `ProcessHost` runs a command, forwarding `--machine`, and has the commands no `Workflow` gives: `ssh_target`, `notify` and `machine`, and the `AgentConsole` serve reads and types into a run's agents through (`read`, `submit`, `send_keys`), each named by an `AgentAddress`, its herdr name and its run's server, and the `Launcher` serve starts a run's command by (`launch` in a new workspace's pane, `exited`). `HerdrServer` is which of this machine's herdr servers the CLI reaches, by `HERDR_SOCKET_PATH` and `HERDR_SESSION`: `Herdr::server` gives the one a run's agents are in, which the run saves as `RunState.herdr_server`. `FakeHerdr` (`herdr/fake.rs`, tests only) is the Python tests' `FakeHerdr`, a role's turns scripted as closures; a turn that raises the run's `Interrupt` fails its prompt, as Python's turn that raises KeyboardInterrupt. |
-| `http`, `ci`, `local_gate`, `pypi`, `crates_io`, `package_index` | `Http`, the one seam to Jenkins, PyPI and crates.io, as `urlopen` is the Python engine's: one request, its whole 2xx answer, or `HttpError` with the status or, for no answer, URLError's words; `quote` and `urlencode` write its URLs' parts and forms; `HttpClient` sends it with ureq, through the proxy `http_proxy` or `https_proxy` names unless `no_proxy` names the host, trusting the certificates of the places `SSL_CERT_FILE` and `SSL_CERT_DIR` name, else of the system's as openssl-probe finds them, each read by rustls-native-certs (`root_certs`), and leaves an `Authorization` header behind on a redirect. `Jenkins` is the Python engine's `CI` class: each call of the quality job, its errors a `CIError`, `Request` (Python's `CIError`, with `status` and `transient`) or `Refused` (its `OrchestratorError`), with the credentials only in the Authorization header and Jenkins's text masked (`mask`); `QualityGate`, a run's `--quality-gate`, is such a `Jenkins` job or `Local`, the gate `local_gate` runs on the host, and the one thing the quality round asks: its `preflight` (gitleaks, then for Jenkins `origin` and the job, for `Local` the gate's own), `check_resume`, and `start`, which snapshots the change (a Jenkins resume continues from the snapshot `ci` records instead), scans it for secrets and starts a `Judging` (`ci/judging.rs`) of it, or says what leaked (`Started::Leaked`). A `Judging`'s `verdict` goes along the judgement until it waits, has recorded a link of a Jenkins build's chain in `ci` (trigger or adopt, queue item, build, its reports or what failed it), or has a `Verdict`, `Judged` or `NotJudged`; a queue item or build that will give no verdict cuts `ci` back to the snapshot. `local_gate` has `set_up`, which writes a project's missing `ci/gate.pin` and starter `gate.toml` for `doctor --setup-gate` and serve, and its own `start`, which starts a job on the host, detached, that fetches the octoflow-gate release the run's base pins into the host's cache, checked against its sha256, and runs it on a checkout of the snapshot by the base's settings: a `local_gate::Judging`, whose `verdict` is None while the job runs and then a `LocalVerdict`, and whose `stop` ends it. `PyPI` is Python's, and `CratesIo` asks crates.io as it asks PyPI, with a User-Agent naming the project; both are a `PackageIndex`, which answers what it knows of a package as an `IndexedPackage`, and `PackageIndexes` holds one of each for the new-dependencies check. The tests' `FakeJenkins` (`ci/fake.rs`), `FakePyPI` (`pypi/fake.rs`) and `FakeCratesIo` (`crates_io/fake.rs`) play the servers behind `Http` as `FakeCI` and `FakePyPI` play them behind `urlopen`, so every URL, answer and error of `Jenkins`, `PyPI` and `CratesIo` runs in them; `http/tests.rs` runs `HttpClient` against a local server. |
+| `host`, `patch` | `Host`, a trait whose every operation is a provided method built on running one command (`exec`), so a fake overrides only what it plays: `ProcessHost`, the machine reached by real processes, here or over `ssh -o BatchMode=yes` with `ssh_sharing_options`' shared connection, each command again on a connection of its own once the target's server refuses a session on it, each command in a process group of its own, its output read to the end on threads of their own, and the whole group killed with SIGKILL when it runs out of time; the secret scan (`scan_secrets`, of the commits a push would publish or of those since a base, as `Scanned` says, finding `quality`'s `Leak`s, `LeaksFound`); `ChangedFile`, `RunFile`, the pull request views with `GhError::Unusable` when gh cannot be used where the project is, and `PushError::Leaks` with the `LeaksFound`. Output kept verbatim is bytes, and a path git prints is refused when it is not UTF-8. `FakeHost` (`host/fake.rs`, tests only) is the tests' `Host`, git played one command at a time through `git_run`, its other commands real processes when a test sets `processes`, its time read from a `FakeClock` there. `added_lines` reads `change_diff`'s diffs. |
+| `harness`, `herdr` | The agent harnesses: `HARNESSES`, one row per harness of all the engine knows of it: its permission, resume and directory arguments and its session logs, found by `harness(kind)`, each `Harness` giving its `permission_args`, its `launch` (the arguments, and for opencode the environment its pane's shell exports first) and, from its `SessionLog`, `session_usage`; `AgentSettings`. `Herdr`, a trait of the commands a run gives herdr, `export` among them, which types variables into a pane's shell before its agent starts (the CLI's argv, JSON and error codes are `ProcessHerdr`'s alone, so a fake plays agents, not the protocol), `HerdrError` with herdr's code, `Agent` (herdr's record, its session included), `Direction`; `ProcessHerdr` runs the CLI here as `ProcessHost` runs a command, forwarding `--machine`, and has the commands no `Workflow` gives: `ssh_target`, `notify` and `machine`, and the `AgentConsole` serve reads and types into a run's agents through (`read`, `submit`, `send_keys`), each named by an `AgentAddress`, its herdr name and its run's server, and the `Launcher` serve starts a run's command by (`launch` in a new workspace's pane, `exited`). `HerdrServer` is which of this machine's herdr servers the CLI reaches, by `HERDR_SOCKET_PATH` and `HERDR_SESSION`: `Herdr::server` gives the one a run's agents are in, which the run saves as `RunState.herdr_server`. `FakeHerdr` (`herdr/fake.rs`, tests only) is the tests' `Herdr`, a role's turns scripted as closures; a turn that raises the run's `Interrupt` fails its prompt, as the human's Ctrl-C does. |
+| `http`, `local_gate`, `pypi`, `crates_io`, `package_index` | `Http`, the one seam to PyPI and crates.io: one GET, its whole 2xx answer, or `HttpError` with the status or, for no answer, why none came; `quote` writes its URLs' parts; `HttpClient` sends it with ureq, through the proxy `http_proxy` or `https_proxy` names unless `no_proxy` names the host (with CONNECT, for an http URL too), trusting the certificates of the places `SSL_CERT_FILE` and `SSL_CERT_DIR` name, else of the system's as openssl-probe finds them, each read by rustls-native-certs (`root_certs`). `local_gate` is the quality gate a run with `--quality-gate local` has: its `preflight` (the host can fetch and run the gate), `set_up`, which writes a project's missing `ci/gate.pin` and starter `gate.toml` for `doctor --setup-gate` and serve, and `start`, which starts a job on the host, detached, that fetches the octoflow-gate release the run's base pins into the host's cache, checked against its sha256, and runs it on a checkout of the snapshot by the base's settings: a `Judging`, whose `verdict` is None while the job runs and then a `LocalVerdict`, and whose `stop` ends it. `PyPI` asks the Python Package Index, and `CratesIo` asks crates.io as it asks PyPI, with a User-Agent naming the project; both are a `PackageIndex`, which answers what it knows of a package as an `IndexedPackage`, and `PackageIndexes` holds one of each for the new-dependencies check. The tests' `FakePyPI` (`pypi/fake.rs`) and `FakeCratesIo` (`crates_io/fake.rs`) play the servers behind `Http`, so every URL, answer and error of `PyPI` and `CratesIo` runs in them; `http/tests.rs` runs `HttpClient` against a local server. |
 | `checks` | The orchestrator's checks: `RunChange`, `Finding`, `CheckFindings`, `OrchestratorCheck`, `orchestrator_checks`, `judge_run` with the `RunFindings` it adds to a build's report, `diff_budget`, `unexpected_paths`, and in `checks::dependencies` `new_dependencies` with `DEPENDENCY_ECOSYSTEMS`, `python_dependencies` (pyproject.toml's lists, uv's indexes and sources, `uv.lock`), `cargo_dependencies` (a Cargo workspace's manifests and `Cargo.lock`), `PackageSource`, `package_key` and `spec_names`. |
-| `workflow`, `runs`, `interrupt`, `spec_file` | `Workflow`, the phase machine (below): a run in the project's checkout or a worktree, blocked reports, a seeded spec, locked files (`workflow/locks.rs`), proofs (`workflow/proof_runs.rs`), a step's prompt (`workflow/step_prompt.rs`, `RunView`), calls that reach `origin` tried again through a short outage of it (`workflow/origin.rs`, `reaching_origin`, which `prune` uses too) and the quality gate's rounds (`workflow/quality_rounds.rs`: the gate started and its `Judging` polled to a verdict, saving `state.json` after each link it records, without naming the gate; the orchestrator's checks added, the loop back to the gated step and the refs deleted): given its `Collaborators` (`Host`, `Herdr`, `Clocks`, `Human`, which is Python's `notify` and `log`, the `Interrupt`, `pid_alive`, and the quality gate, `Option<&QualityGate>`, with the `PyPI` its checks ask) and `RunSettings`, `run` ends in a verdict or `Stopped` (`Failed`, `TakenOver` for `RunTakenOver`, `Interrupted` for a Ctrl-C). `RunState::health`, whether an orchestrator drives a run, which list shows and every command that acts on a run asks first, `pid_alive` and `local_host`; `Interrupt`, the Ctrl-C, which the Workflow checks at each pause and which stops the command a `ProcessHost` or `ProcessHerdr` waits on (its group gets SIGINT, then SIGKILL, in `run_process`), raised by the thread `by_signals` starts for SIGINT, SIGTERM and SIGHUP, each unless it was ignored at start, after which `interrupt::exit` ends the program by the first SIGTERM or SIGHUP, as the Python engine dies by it; `SystemClocks` and `LocalHuman` (`workflow/system.rs`), the real run's clocks, whose sleep a Ctrl-C ends, and human, Python's `notify_locally` and `log`; `SpecFile` and `read_spec_file`, run --spec's spec, which `RunSettings::spec` gives a run that starts at `Pipeline::seeded_start`. `workflow/fixture.rs` (tests only) is the Python tests' `make_workflow`, `saved_run` and `resume`, with `Told`, the human as the tests read it, and `host/fake.rs`'s `FakeClock` as the Workflow's `Clocks`. |
-| `cli` | The `orchestrator` program (`engine/src/main.rs`, which ends by `interrupt::exit`): `main`, which calls `by_signals` once it has read the arguments, for every command but `serve`, and its commands (the Python engine's `gui`, its tk window, was not ported); `run_command` dispatches them, and `herdrless_command` those that need no herdr pane, `workflows`, `judged-in-quality` and `doctor`, given a `Local` (this machine's `Host`, a herdr maker, Jenkins and the current directory). `cli::args` is `parse_args` on clap (`Command`, with `Target`, `Settings` and `Starts`, the flag groups argparse's parent parsers share), `check_flag_values` and `check_spec_args`; `cli::start` is `new_state`, `resumable_state` (with `resume_quality_limit`) and `resumed_state`, which turns the gate on or off by `turn_quality_gate_on` and `_off` (`workflow/gate_switch.rs`); `Connected` is what a command is given once `connect` has reached herdr and the host, the Workflow's `Collaborators`, how to make a run's `Jenkins`, standard output and error, and the `RunWorkflow` that drives a run (`run_workflow`), so the tests run commands on the fixture's fakes and script runs as Python patches `Workflow.run`; `finish`, `resume_command` and the interrupted note end it. `cli::listing` is `list`'s and `show`'s (`run_record`, `run_rows`, `run_outcome`, `run_round`, `print_runs`, `fill_pr_states`, `show_run`); `cli::prune` is `prune_branches`, `pull_request_pending`, `sweep_summary` and `sweep_branches`, which a `run` that opens a pull request calls first; `cli::close` is `close_run`; `cli::workflows` is `workflows_command`; `cli::refresh` is `ConflictCheck`, `has_conflict`, `refresh_conflict` and `refresh_command`; close, prune, refresh and drain leave an unreadable saved run alone and say why (`SavedRun::problem`); `cli::drain` is `drain_command` and `refreshed_headers`, and `cli::drain::queue` the spec queue (`QueuedSpec`, `read_queue`, `blocker_cycle`, `header_field`, `with_header_field`, `replace_local_file`); `cli::judged` is `judged_in_quality`; `cli::doctor` is `check_setup` and `report_checks`, without Python's tkinter check, and `doctor --setup-gate`'s call of `local_gate::set_up`. A Ctrl-C outside a Workflow fails the command it stops, which `main` takes for the interrupt (exit status 130). |
-| `serve` | `serve`, on tiny_http (below): `serve_command`, `RunServer` (Python's `RunServer` and `RunRequestHandler`, a thread per request), `project_host` and the `Reached` project it gives; in `serve::start` `RunRequest` (`POST /run`'s body and the `run` command it is), `StartWait`, `Started` and `offered_workflows`; in `serve::url` `urlsplit` and `parse_qsl`, a request target's path and query; in `serve::setup` `Setup`, the desktop app's setup checks and marker, and `project_checks`; in `serve::runs` `ProjectRuns`, `AgentInput`, `plain_name`, `RunReadError` (`RunPathRefused`), `RunWatch` and its `Event`s (`sse_event`). |
+| `workflow`, `runs`, `interrupt`, `spec_file` | `Workflow`, the phase machine (below): a run in the project's checkout or a worktree, blocked reports, a seeded spec, locked files (`workflow/locks.rs`), proofs (`workflow/proof_runs.rs`), a step's prompt (`workflow/step_prompt.rs`, `RunView`), calls that reach `origin` tried again through a short outage of it (`workflow/origin.rs`, `reaching_origin`, which `prune` uses too) and the quality gate's rounds (`workflow/quality_rounds.rs`: a snapshot of the change scanned for secrets, the local gate started on it and its `Judging` polled to a verdict, the orchestrator's checks added, and the loop back to the gated step): given its `Collaborators` (`Host`, `Herdr`, `Clocks`, `Human`, who is notified and told the run's progress, the `Interrupt`, `pid_alive`, and `quality_gate_on`, whether the run has the gate, with the `PyPI` its checks ask) and `RunSettings`, `run` ends in a verdict or `Stopped` (`Failed`, `TakenOver` when another orchestrator took the run over, `Interrupted` for a Ctrl-C). `RunState::health`, whether an orchestrator drives a run, which list shows and every command that acts on a run asks first, `pid_alive` and `local_host`; `Interrupt`, the Ctrl-C, which the Workflow checks at each pause and which stops the command a `ProcessHost` or `ProcessHerdr` waits on (its group gets SIGINT, then SIGKILL, in `run_process`), raised by the thread `by_signals` starts for SIGINT, SIGTERM and SIGHUP, each unless it was ignored at start, after which `interrupt::exit` ends the program by the first SIGTERM or SIGHUP; `SystemClocks` and `LocalHuman` (`workflow/system.rs`), the real run's clocks, whose sleep a Ctrl-C ends, and human, notified on this machine or the run's `--machine` and told on stderr; `SpecFile` and `read_spec_file`, run --spec's spec, which `RunSettings::spec` gives a run that starts at `Pipeline::seeded_start`. `workflow/fixture.rs` (tests only) is the tests' `Fixture`, which makes a `Workflow` on the fakes and resumes it, and `saved_run`, with `Told`, the human as the tests read it, and `host/fake.rs`'s `FakeClock` as the Workflow's `Clocks`. |
+| `cli` | The `orchestrator` program (`engine/src/main.rs`, which ends by `interrupt::exit`): `main`, which calls `by_signals` once it has read the arguments, for every command but `serve`, and its commands; `run_command` dispatches them, and `herdrless_command` those that need no herdr pane, `workflows` and `doctor`, given a `Local` (this machine's `Host`, a herdr maker and the current directory). `cli::args` is `parse_args` on clap (`Command`, with `Target`, `Settings` and `Starts`, the flag groups several commands share), `check_flag_values` and `check_spec_args`; `cli::start` is `new_state`, `resumable_state` (with `resume_quality_limit`) and `resumed_state`, which moves a run saved with the removed Jenkins gate onto the local one, saying so, and turns the gate on or off by `turn_quality_gate_on` and `_off` (`workflow/gate_switch.rs`); `Connected` is what a command is given once `connect` has reached herdr and the host, the Workflow's `Collaborators`, standard output and error, and the `RunWorkflow` that drives a run (`run_workflow`), so the tests run commands on the fixture's fakes and script runs in place of `Workflow::run`; `finish`, `resume_command` and the interrupted note end it. `cli::listing` is `list`'s and `show`'s (`run_record`, `run_rows`, `run_outcome`, `run_round`, `print_runs`, `fill_pr_states`, `show_run`); `cli::prune` is `prune_branches`, `pull_request_pending`, `sweep_summary` and `sweep_branches`, which a `run` that opens a pull request calls first; `cli::close` is `close_run`; `cli::workflows` is `workflows_command`; `cli::refresh` is `ConflictCheck`, `has_conflict`, `refresh_conflict` and `refresh_command`; close, prune, refresh and drain leave an unreadable saved run alone and say why (`SavedRun::problem`); `cli::drain` is `drain_command` and `refreshed_headers`, and `cli::drain::queue` the spec queue (`QueuedSpec`, `read_queue`, `blocker_cycle`, `header_field`, `with_header_field`, `replace_local_file`); `cli::doctor` is `check_setup` and `report_checks`, and `doctor --setup-gate`'s call of `local_gate::set_up`. A Ctrl-C outside a Workflow fails the command it stops, which `main` takes for the interrupt (exit status 130). |
+| `serve` | `serve`, on tiny_http (below): `serve_command`, `RunServer` (a thread per request), `project_host` and the `Reached` project it gives; in `serve::start` `RunRequest` (`POST /run`'s body and the `run` command it is), `StartWait`, `Started` and `offered_workflows`; in `serve::url` `urlsplit` and `parse_qsl`, a request target's path and query; in `serve::setup` `Setup`, the desktop app's setup checks and marker, and `project_checks`; in `serve::runs` `ProjectRuns`, `AgentInput`, `plain_name`, `RunReadError`, `RunWatch` and its `Event`s (`sse_event`). |
 | `pull_request`, `summary`, `proofs` | `spec_title`, `branch_name`, `verdict_line`, `commit_note`, `provenance`, `pr_body` and `without_conflict_warning`; `run_summary`, `run_metrics`, `turns_table`, `turn_lines`, `turn_tokens`, `format_duration`, `format_age`, `iso_utc`, `epoch_time` and `epoch_seconds`, times read and written by jiff; `ProofRun`, a `RunState.proofs` record as the Workflow reads and writes it, and `proofs_section`. |
 
-Its tests are each module's `<module>/tests.rs`, the Python tests of those parts ported case for case, and checks
-against the Python engine as the oracle: `engine/tests/oracle/` holds what the Python engine gave for the engine's
-inputs, each `.json` written by a generator that ran it, removed with it, and the e2e recordings (`engine/e2e/recorded/`) are read as they are: every `state.json` they hold
-reads into `RunState` and writes back byte for byte, every workflow the repository defines parses to the Python
-engine's definition, every recorded run's commit note, trailers, pull request body and `summary.md` come out as the
-Python engine wrote them, `metrics.json` as the recordings hold it, and every prompt the scenarios recorded is made of the
-engine's templates (`prompt_parity.rs`). `host/tests.rs` and `host/scan/tests.rs` run `Host` on real git in
-temporary repositories, with gh, gitleaks and ssh played by scripts on the `Host`'s `PATH`, which `ProcessHost`
-takes from the environment it is given rather than the process's. `harness/tests.rs` replays the Python engine's
-launch arguments for every harness but opencode, which takes its model and directory as config, and every permission
-mode, model, session and directory, and its token counts of sample
-session logs; `herdr/tests.rs` replays every herdr command the e2e scenarios recorded through `ProcessHerdr`, and
-checks each recorded agent start against the launch arguments of the run's state as last saved before it.
-`workflow/tests.rs` and its submodules, each holding one or more Python classes, run `Workflow` on `FakeHost`,
-`FakeHerdr`, `FakeClock`, `FakeJenkins` and `FakePyPI`, the Python tests of it ported case for case.
-`checks/tests.rs` runs `judge_run` on every quality file an e2e recording holds, from the build's quality.md its
-scenario's Jenkins served, gives the recorded file, and reads the same failures from the judgement it adds them to.
+Its tests are each module's `<module>/tests.rs`, and checks against fixed expectations: `engine/tests/oracle/` holds
+what the engine must give for a set of inputs, and the e2e recordings (`engine/e2e/recorded/`) are read as they are:
+every `state.json` they hold reads into `RunState` and writes back byte for byte, every workflow the repository
+defines parses to the definition `oracle/workflows.json` holds, every recorded run's commit note, trailers, pull
+request body and `summary.md` come out as recorded, `metrics.json` as the recordings hold it, and every prompt the
+scenarios recorded is made of the engine's templates (`prompt_parity.rs`). `host/tests.rs` and `host/scan/tests.rs`
+run `Host` on real git in temporary repositories, with gh, gitleaks and ssh played by scripts on the `Host`'s `PATH`,
+which `ProcessHost` takes from the environment it is given rather than the process's. `harness/tests.rs` holds the
+launch arguments of every harness but opencode, which takes its model and directory as config, for every permission
+mode, model, session and directory, and the token counts of sample session logs, to `oracle/harness.json`;
+`herdr/tests.rs` replays every herdr command the e2e scenarios recorded through `ProcessHerdr`, and checks each
+recorded agent start against the launch arguments of the run's state as last saved before it. `workflow/tests.rs`
+and its submodules run `Workflow` on `FakeHost`, `FakeHerdr`, `FakeClock` and `FakePyPI`; `workflow/fixture.rs`'s
+`FakeGate` plays the local gate's job on the `FakeHost`. `checks/tests.rs` runs `judge_run` on every quality file the
+e2e recordings held (the oracle's `checks.json`), from the quality.md the scenario's gate wrote, gives the recorded
+file, and reads the same failures from the judgement it adds them to.
 
 ## The phase machine
 
@@ -67,11 +65,9 @@ That is the default workflow's; in general a run's `phase` is the id of its curr
 first step. Before anything else, `check_start` checks that the run can finish: `check_alone` refuses a run
 in the checkout while another one there is live (a worktree run neither refuses nor counts); in round 0 (before
 its first editing step), a worktree run's `open_worktree` checks for a branch and an `origin`, fetches the base
-branch and adds the worktree at `origin`'s (or finds it from before), `check_gate` runs `CI::preflight` and
-checks the working tree, and for an in-place run `check_repo` fast-forwards the base branch; in a later round,
-a worktree run's `check_worktree` refuses a run whose worktree is gone unless `pr_url` is set, and a resume
-that starts in the gated step or in `quality` checks the CI credentials. Each fetch of the run, and the
-`ls-remote` that lists its CI refs, goes through `reaching_origin` (`workflow/origin.rs`), which waits out a short
+branch and adds the worktree at `origin`'s (or finds it from before), `check_gate` checks the working tree,
+gitleaks and `local_gate::preflight`, and for an in-place run `check_repo` fast-forwards the base branch; in a later round,
+a worktree run's `check_worktree` refuses a run whose worktree is gone unless `pr_url` is set. Each fetch of the run, and its merge of `origin`'s base branch, goes through `reaching_origin` (`workflow/origin.rs`), which waits out a short
 outage of `origin`. Then `walk` takes the steps in order, in `work_dir`:
 
 - Each step's turn is `take_turn` and `step_turn`, prompted with `RunView::step_prompt`'s texts
@@ -82,10 +78,10 @@ outage of `origin`. Then `walk` takes the steps in order, in `work_dir`:
   `origin`'s base branch fetched again, without touching the checkout), `base` is taken from HEAD and round 1
   starts.
 - `quality`, after each turn of the quality-gated step when the gate is on: `quality` writes `quality-N-Q.md`.
-  `judged_snapshot` has the gate (`QualityGate::start`) judge a snapshot of the change; a Jenkins judgement
-  saves each link of its build's chain in `ci` as it learns it, so a resume continues from the furthest one. The
-  round's quality file is the gate's `quality.md`, or the engine's when nothing judged the change or a secret
-  leaked. `poll` retries a failed request until `QUALITY_TIMEOUT` and keeps the heartbeat going.
+  `judged_snapshot` commits a snapshot of the change, has gitleaks scan what it adds to the base, and has the
+  local gate (`local_gate::start`) judge it; a resume judges a new snapshot. The round's quality file is the
+  gate's `quality.md`, or the engine's when the gate could not judge the change or a secret leaked. `poll` asks
+  the job until `QUALITY_TIMEOUT`, keeping the heartbeat going, and a Ctrl-C or a failure stops the job.
   A gate that does not pass goes back to the gated step, whose answer is `build-N-qQ.md` in the default.
 - The verdict step, the default's `review`, records `verdict`; `CHANGES_REQUESTED` goes back to its loop target
   in the next round until `max_rounds`, resetting `quality_round`. A workflow without a verdict step records
@@ -96,7 +92,7 @@ outage of `origin`. Then `walk` takes the steps in order, in `work_dir`:
   `conflicts` and aborting when it conflicts), pushes and records `pr_url`, skipping any step already done.
   Then `leave_work_dir` checks the base branch out again, or in a worktree run removes the worktree, only
   logging a failure.
-- `done`: `clean_up_quality` deletes the run's throwaway branches, `owner` is cleared,
+- `done`: `end_done_run` counts tokens and writes the summary and metrics, `owner` is cleared,
   and with a pull request `close_workspace` closes the workspace.
 
 A failure goes through `release`, which records `error`. Each role's turn is `turn`: it takes a handoff file that
@@ -201,7 +197,7 @@ whichever round wrote it.
 one by path; the README's [Your own workflows](../README.md#your-own-workflows) gives the format. A file's
 step can `use` a default step and override some of its fields; a role without a label keeps the default
 workflow's label for its key, or else is named after the key; a role's `model` sits under every model flag,
-and its `agent` (`Pipeline::agents`, one of `AGENT_KINDS`) under `--agent` and `--role-agent`. A
+and its `agent` (`Pipeline::agents`, one of `HARNESS_NAMES`) under `--agent` and `--role-agent`. A
 file cannot take a built-in workflow's name. `Pipeline` also rejects a prompt or file that is not a template of
 known placeholders (`template_problem`, by `crate::prompts::template`), and a handoff file outside the run
 directory or named like the run's own
@@ -306,13 +302,14 @@ started, as the human would start one from a herdr pane.
   shell, where a quote, a `$` or a control character such as ^U could make it a command of its own: the shell
   gets each one as an environment variable.
 - **Streams.** An event stream to an HTTP/1.1 client is chunked, so that it ends with its last chunk at a stop; to
-  an HTTP/1.0 client it ends with the connection. The requests tiny_http reads otherwise than the Python engine's
-  http.server did are `TODO.md`'s Open issue "serve answers some requests otherwise than Python's http.server".
+  an HTTP/1.0 client it ends with the connection. The malformed requests tiny_http answers abruptly or
+  silently are `TODO.md`'s Open issue "serve answers some malformed requests abruptly or silently".
 
 ## The desktop app: `ui/`
 
 A Vite + React + TypeScript frontend in `ui/src/`, in a Tauri 2 shell in `ui/src-tauri/` (`create-tauri-app`'s
-layout), with no Python of its own.
+layout). Tauri rather than Electron, as it shows the frontend in the system's own webview rather than bundling a
+browser, at a far smaller download.
 
 - **Shell.** `src-tauri/src/lib.rs` links the engine (`octoflow-engine`), so the app's executable, `octoflow`
   (`mainBinaryName` in `tauri.conf.json`), is the orchestrator too. In `setup` it starts its sidecar,
@@ -344,17 +341,20 @@ layout), with no Python of its own.
 - **Frontend.** `api.ts` types the protocol: `RunRecord` mirrors `run_record`, `RunRequest` is `POST /run`'s body, and
   `Api` builds the URLs and makes the requests. `hooks.ts`'s `useRunStream` opens the `EventSource` and folds its
   events into a `RunsState` with `runs.ts`'s `applyEvent`. Every opening starts from no runs, since the server sends
-  every run again. `runs.ts` also holds `progress` (the stages of a run's progress bar, with `quality` after the step
-  it judges) and the wording helpers, which follow `format_age` and `run_round`. A `RunEntry` keeps when its record
+  every run again. `runs.ts` also holds `progress` (every stage of a run from its start: its steps, `quality` after
+  each step the quality loop follows, `publish` when the run opens a pull request, each with its turns and its
+  state; the overview's `StepProgress` and the run detail's `RunMap` both draw it) and the wording helpers, which follow `format_age` and `run_round`. A `RunEntry` keeps when its record
   arrived, so `heartbeatAge` ticks with `useNow` between events. The components are `ProjectBar`, `RunsOverview`,
   `RunForm` (a new run, selected once `POST /run` answers) and `SetupDialog`, both a `Dialog`, `RunDetail`,
-  `AgentPanes`, `StepProgress` and `HandoffFile`, which renders a file with `react-markdown` and `remark-gfm`, raw
+  `AgentPanes`, `StepProgress`, `RunMap` (the run as an octopus, hand-written SVG: `runMap.ts` places the arms and
+  shapes them, and a `requestAnimationFrame` loop sways them unless the viewer prefers reduced motion) and
+  `HandoffFile`, which renders a file with `react-markdown` and `remark-gfm`, raw
   HTML skipped, and fetches it again whenever its mtime changes.
 - **Tests.** Vitest with React Testing Library in jsdom: `App.test.tsx` replays `test/recorded-stream.json`
   through `test/fakes.ts`'s `FakeEventSource`, with `fetch` stubbed. The recording is the events a real
   `serve` sent over a scripted run: the e2e test `app_event_stream` (below) fails when serve no longer sends them,
   and `recording.test.ts` when a record in them has other keys than `api.ts`'s `RunRecord` and the types in it, so a
-  key added or dropped on either side fails a build. `runs.test.ts` covers the pure helpers. `cargo test -p octoflow-ui` starts
+  key added or dropped on either side fails a build. `runs.test.ts` and `runMap.test.ts` cover the pure helpers, and `RunMap.test.tsx` the map as a reader gets it. `cargo test -p octoflow-ui` starts
   and stops a real sidecar.
 
 ## Tests
@@ -366,19 +366,17 @@ engine's (above), the desktop shell's and xtask's, among them `xtask/tests/fetch
 `engine/e2e/` (package `octoflow-e2e`) holds the e2e scenarios, which run the engine as a program, with nothing of
 it imported; they are the only test of a run from start to verdict. Each scenario in `tests/e2e/scenarios.rs`
 scripts a `World` (`tests/e2e/world.rs`): a git project on `main` with a bare `origin` beside it, the fake herdr, gh
-and ssh first on `PATH` and the real gitleaks after them (TODO.md says what a missing one does), and Jenkins, and PyPI
+and ssh first on `PATH` and the real gitleaks after them (TODO.md says what a missing one does), a fake octoflow-gate for the local gate's job, and PyPI
 behind an HTTPS proxy, served from the test process (`tests/e2e/servers.rs`). The fakes are `[[bin]]` targets of the
 package (`src/bin/`, their logic in `src/fakes.rs`), so that its test finds them by `CARGO_BIN_EXE_*`; they and the
 test share the ledger (`src/ledger.rs`, under `flock`). The World runs `E2E_ENGINE`'s binary when that is set, as
 Jenkins's Test stage sets it to the build it made for coverage, else builds the checkout's with cargo, killing and
 resuming it where the scenario says, and records, normalized by `src/normalize.rs` (times, run ids, pids, hashes, its
-own paths and ports): each invocation's exit status, the output programs read whole and other output only as its
-facts; the commands herdr and gh got and the requests Jenkins and PyPI got, in order, with `state.json` wherever it
-changed between them; the run directory's files; and both repositories' refs, commits and working trees. A scenario
-whose record differs from `recorded/<scenario>.json` fails, naming where. The recordings are the Python engine's,
-made by the Python harness this replaced (octoflow-without-python tickets 01 and 02) before rust-engine ticket 11
-removed that engine. `E2E_RECORD=1 cargo nextest run -p octoflow-e2e` writes recordings instead, from the Rust
-engine, for a scenario added since or a change to what the engine does, whose recording is then a review of it. One
+own paths and ports): each invocation's exit status, the output programs read whole and other output only as its facts;
+the commands herdr and gh got and the requests PyPI got, in order, with `state.json` wherever it changed between them;
+the run directory's files; and both repositories' refs, commits and working trees. A scenario whose record differs from
+`recorded/<scenario>.json` fails, naming where. `E2E_RECORD=1 cargo nextest run -p octoflow-e2e` writes recordings
+instead, for a scenario added since or a change to what the engine does, whose recording is then a review of it. One
 test beside the scenarios, `app_event_stream`, keeps a recording outside the package:
 `ui/src/test/recorded-stream.json`, the events the desktop app's tests replay, which `tests/e2e/app_recording.rs`
 folds from what a real `serve` sent after each step of two scripted runs, with fixed stand-ins for what the clock
@@ -392,21 +390,18 @@ from the help of the same binary the scenarios run (`src/engine.rs`), and the na
 `ui/src-tauri/src` with syn. Each failure names `file:line`.
 
 Golden files hold generated text to a reviewed copy of it under `tests/golden/`, so a change to that text is reviewed
-as the diff of its golden files. They hold the engine's prompts: each step's prompts in
-the built-in workflow and each example workflow, as `Workflow` renders them, to a file per workflow, round 1 and,
-for the steps the review loops over, round 2 as the running session and a fresh one hear it; the Python engine's
-tests wrote them, and the engine's `workflow/tests/default_prompts.rs` holds the Rust engine to them. The e2e scenarios
-record round 1 of each workflow as sent, so a reworded prompt fails both. Of round 2 of the examples and of a fresh
-session's prompts, the recordings hold only the templates, in `state.json`; the text as sent, placeholders filled in
-and a fresh session's prompt put together, only the golden files hold. The engine's
-other texts, its follow-up prompts, notes, commit messages and pull request bodies, have no golden files: the
-scenarios record them as sent, where one reaches them. GitHub #347 lists the texts neither reaches.
+as the diff of its golden files. They hold the engine's prompts: each step's prompts in the built-in workflow and each
+example workflow, as `Workflow` renders them, to a file per workflow, round 1 and, for the steps the review loops over,
+round 2 as the running session and a fresh one hear it; the engine's `workflow/tests/default_prompts.rs` holds the
+engine to them. The e2e scenarios record round 1 of each workflow as sent, so a reworded prompt fails both. Of round 2
+of the examples and of a fresh session's prompts, the recordings hold only the templates, in `state.json`; the text as
+sent, placeholders filled in and a fresh session's prompt put together, only the golden files hold. The engine's other
+texts, its follow-up prompts, notes, commit messages and pull request bodies, have no golden files: the scenarios record
+them as sent, where one reaches them. GitHub #347 lists the texts neither reaches.
 
 xtask's tests (`xtask/tests/`) cover the eval runner, `cargo xtask eval` ([Evals](design.md#evals)), with the
 `fake-engine` binary as its engine, a program that plays a scripted run in the clone, and the eval tasks: each bundle
-is of its source, and each hidden test rejects its task's starting point and accepts a solution of it. They run the
-Jenkins contract check, `cargo xtask contract` ([The calls](quality-gate.md#the-calls)), over a scripted Jenkins. No
-agent runs in the suite, and no request leaves the machine.
+is of its source, and each hidden test rejects its task's starting point and accepts a solution of it. No agent runs in the suite, and no request leaves the machine.
 
 ## Tooling
 
@@ -418,8 +413,7 @@ agent runs in the suite, and no request leaves the machine.
 - `Cargo.toml`: the Cargo workspace, whose members are the engine (`engine/`, `octoflow-engine`, whose version is the
   release's, as `ci/release-version.sh` reads it), its e2e scenarios (`engine/e2e/`), the desktop shell
   (`ui/src-tauri/`) and the repository's chores (`xtask/`, run as `cargo xtask <command>` through `.cargo/config.toml`'s
-  alias: `eval`, the eval set's runner, `bundles`, which builds its tasks' bundles, and `contract`, which checks the
-  engine's Jenkins client against the real Jenkins), with one `Cargo.lock`, the lints every member takes
+  alias: `eval`, the eval set's runner, and `bundles`, which builds its tasks' bundles), with one `Cargo.lock`, the lints every member takes
   (`[workspace.lints]`), and `rust-toolchain.toml`, the toolchain and components the Jenkins agent's image has.
 - `packaging/build-desktop.sh`: builds the desktop app with `tauri build`, at the release's version,
   through a release config the script writes and merges over `tauri.conf.json`, which bundles nothing. The app is
@@ -442,15 +436,13 @@ agent runs in the suite, and no request leaves the machine.
   license texts of the crates in the binary and the desktop app, by `packaging/about.toml` and `about.hbs`; a crate
   under a license `about.toml` does not accept fails the script.
 - `Jenkinsfile`: `uv sync --frozen` for the gate, the Cargo workspace's tests with line coverage (`cargo llvm-cov
-  nextest`), without the e2e scenarios in a quality build whose change touches nothing they judge (the Test stage lists
-  what), a UI stage that runs `ui/`'s `npm ci`, `typecheck`, `lint` and `test`, failing the build before the gate, a
+  nextest`), a UI stage that runs `ui/`'s `npm ci`, `typecheck`, `lint` and `test`, failing the build before the gate, a
   Gate stage that runs the octoflow-gate release `ci/gate.pin` names and archives `quality.md` and `quality.json` (see
   [quality gate](quality-gate.md)), and a Package stage that runs `packaging/build-binary.sh` and
-  `packaging/build-desktop.sh` on every build but a quality build (`GIT_REF` set). On `main` a Release stage publishes a
+  `packaging/build-desktop.sh`. On `main` a Release stage publishes a
   new version (`ci/release-version.sh`) as a GitHub release, with the Linux binary and the Linux desktop app, each with
   its `.sha256`, and `octoflow-third-party-licenses.html`, in one `gh release create`, and
-  `docs/releases/v<version>.md`, where there is one, before GitHub's generated notes. Its parameter `GIT_REF` builds
-  another branch; such a build never releases. A pull request build into `main` fails its Version stage unless the pull
+  `docs/releases/v<version>.md`, where there is one, before GitHub's generated notes. A pull request build into `main` fails its Version stage unless the pull
   request raises the version over `main`'s or changes only docs, tests, CI or repository tooling (`ci/version-raised.sh`
   lists those paths), so that every merge into `main` that reaches users is released.
 - `.github/workflows/automerge.yml`: keeps auto-merge on for a pull request into `main` from a branch of this

@@ -1,7 +1,7 @@
 [package]
 name = "xtask"
 version = "0.1.0"
-description = "The repository's chores in Rust, run as `cargo xtask <command>`: the eval set's runner and its bundles, and the Jenkins contract check"
+description = "The repository's chores in Rust, run as `cargo xtask <command>`: the eval set's runner and its bundles"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
@@ -14,11 +14,11 @@ jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-sy
 # Ctrl-C during an eval: the runner blocks SIGINT and waits for it on a thread, and unblocks it in each command it
 # starts (process.rs), so that the engine saves its run and the runner still prints its table.
 nix = { version = "0.31", default-features = false, features = ["signal"] }
-# The engine's Jenkins client and its HTTP seam, which `cargo xtask contract` checks against the real Jenkins
-# (contract.rs); a member of this workspace, so it adds no crate to Cargo.lock.
-octoflow-engine = { path = "../engine" }
 # cargo's build messages, a run's metrics.json, the eval's result lines and the fake engine's plan and log.
 serde_json = "1"
+# Scratch directories, removed when dropped: an eval's trial (eval.rs) and the bundles' repos (bundles.rs), and the
+# tests'. Approved by the user for ticket 48, 2026-11-13.
+tempfile = "3"
 
 # A stand-in for the engine, for tests/eval/: a binary of this package, so that its tests find it by
 # CARGO_BIN_EXE_fake-engine, which Cargo sets only for a test's own package.

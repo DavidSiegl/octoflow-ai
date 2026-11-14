@@ -1,10 +1,9 @@
 //! RunState: what a run has done so far, saved as state.json in its run directory.
 
 use crate::constants::{
-    CI_REF_PREFIX, DEFAULT_AGENT, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
+    DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
     LOCAL_REFS_PREFIX, RUNS_DIR,
 };
-use crate::ci::LOCAL_GATE;
 use crate::error::OrchestratorError;
 use crate::herdr::HerdrServer;
 use crate::prompts::{saved_prompts, Prompts};
@@ -58,9 +57,10 @@ pub struct RunState {
     /// The files that conflicted with the base branch when the pull request was opened, as a draft; empty again once
     /// refresh found the pull request merging cleanly, merged or closed (refresh_conflict).
     pub conflicts: Vec<String>,
-    /// The pull request, by URL, that refresh run by hand found open and merging cleanly when it emptied conflicts, and
-    /// that no drain has taken up since: its spec, held back by the conflict, may go to review, though conflicts no
-    /// longer shows why it was held (crate::cli::drain::forget_cleared). None for a run whose conflicts no such refresh
+    /// The pull request, by URL, that refresh run by hand found open and merging cleanly, merged or closed when it
+    /// emptied conflicts, and that no drain has taken up since: its spec, held back by the conflict, may go to review
+    /// or be settled by the pull request's state, though conflicts no longer shows why it was held
+    /// (crate::cli::drain::forget_cleared). None for a run whose conflicts no such refresh
     /// cleared, whose clearing a drain has taken up, or that a release before this field saved.
     pub conflict_cleared: Option<String>,
     pub error: Option<String>,
@@ -73,8 +73,9 @@ pub struct RunState {
     pub permission_mode: Option<String>,
     pub models: Map<String>,
     /// Per role: the harness its next agent starts in, which may differ from the one its agent runs in (harness).
-    /// A role missing here runs in DEFAULT_AGENT.
-    pub agent_kinds: Map<String>,
+    /// A role missing here runs in DEFAULT_HARNESS. Saved as "agent_kinds", the name earlier releases gave it.
+    #[serde(rename = "agent_kinds")]
+    pub next_harnesses: Map<String>,
     /// Whether the run works on a branch of its own and ends in a pull request; false for a --no-pr run.
     pub pull_request: bool,
     /// Basename of the handoff file whose prompt was delivered, so a resume does not prompt for it again.
@@ -86,7 +87,8 @@ pub struct RunState {
     /// The orchestrator process driving the run, {"host", "pid", "started_at"}; None while none does.
     pub owner: Option<Object>,
     pub heartbeat_at: Option<String>,
-    /// The Jenkins job that runs the quality gate; None for a run without the gate.
+    /// The quality gate's name, LOCAL_GATE (crate::local_gate), for a run with the gate; None for a run without it. A
+    /// release before 0.72.0 also saved a Jenkins job's name here, which a resume replaces (cli::start::resumed_state).
     pub quality_job: Option<String>,
     /// True once resume --no-quality-gate turned the gate off, for good: quality_job is None then, and the quality
     /// files written until then stay the run's (turn_quality_gate_off).
@@ -96,8 +98,8 @@ pub struct RunState {
     /// quality-fix turn that ends after resume --no-quality-gate leaves it one past the last quality round, which
     /// never runs.
     pub quality_round: u32,
-    /// The quality build in flight, {ref, sha, queue_url, build}, each saved as soon as it is known. rejected lists
-    /// builds of ref that ended without a verdict, so a resume does not adopt them again.
+    /// Empty but in a state.json a release before 0.72.0 saved, which kept a Jenkins quality build in flight here; a
+    /// resume drops it (cli::start::resumed_state). Still written, as those releases read no state.json without it.
     pub ci: Object,
     /// The name of the run's workflow.
     pub workflow: String,
@@ -168,10 +170,10 @@ pub struct AgentRecord {
     pub name: String,
     /// The herdr pane it runs in; empty once the run's workspace was found gone, until the role's next agent starts.
     pub pane: String,
-    /// The harness it runs in, never empty; one of AGENT_KINDS when this engine started it, though a run may hold a
-    /// kind this engine no longer runs, which Workflow::agent_kind refuses once the role's agent restarts.
-    #[serde(deserialize_with = "harness_name")]
-    pub kind: String,
+    /// The harness it runs in, never empty; one of HARNESS_NAMES when this engine started it, though a run may hold a
+    /// harness this engine no longer runs, which Workflow::next_harness refuses once the role's agent restarts.
+    #[serde(rename = "kind", deserialize_with = "harness_name")]
+    pub harness: String,
     /// The harness's session id, as herdr reports it; None until it does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
@@ -226,9 +228,10 @@ pub struct TurnRecord {
 }
 
 impl AgentRecord {
-    /// The record of an agent just started as name, in pane, in harness kind: its session not yet known.
-    pub fn new(name: &str, pane: &str, kind: &str) -> AgentRecord {
-        AgentRecord { name: name.into(), pane: pane.into(), kind: kind.into(), session: None, unknown: Object::new() }
+    /// The record of an agent just started as name, in pane, in harness: its session not yet known.
+    pub fn new(name: &str, pane: &str, harness: &str) -> AgentRecord {
+        let (name, pane, harness) = (name.into(), pane.into(), harness.into());
+        AgentRecord { name, pane, harness, session: None, unknown: Object::new() }
     }
 }
 
@@ -265,7 +268,7 @@ pub fn judged_by_several(verdicts: &[StepVerdict]) -> bool {
 
 /// The format of state.json this engine reads and writes, which its "format" field holds. A state.json written by a
 /// release before STATE_FORMAT_SINCE has no format, and is refused rather than read (RunState::from_saved): it was
-/// written in the Python engine's format.
+/// written in an earlier format no release reads any more.
 pub const STATE_FORMAT: u64 = 2;
 
 /// The release that first wrote STATE_FORMAT.
@@ -309,7 +312,7 @@ impl RunState {
             turn_timeout: DEFAULT_TURN_TIMEOUT,
             permission_mode: None,
             models: Map::new(),
-            agent_kinds: Map::new(),
+            next_harnesses: Map::new(),
             pull_request: false,
             prompted: None,
             retried: Vec::new(),
@@ -390,12 +393,12 @@ impl RunState {
         state
     }
 
-    /// The harness the role's agent runs in: its started agent's, else the one its next agent starts in (agent_kinds),
-    /// else DEFAULT_AGENT.
+    /// The harness the role's agent runs in: its started agent's, else the one its next agent starts in
+    /// (next_harnesses), else DEFAULT_HARNESS.
     pub fn harness(&self, role: &str) -> &str {
         match self.agents.get(role) {
-            Some(agent) => &agent.kind,
-            None => self.agent_kinds.get(role).map_or(DEFAULT_AGENT, String::as_str),
+            Some(agent) => &agent.harness,
+            None => self.next_harnesses.get(role).map_or(DEFAULT_HARNESS, String::as_str),
         }
     }
 
@@ -518,12 +521,6 @@ impl RunState {
         format!("{}/quality-{n}-{q}.md", self.dir())
     }
 
-    /// The branch on origin a Jenkins quality job builds quality round q of round n's snapshot from,
-    /// `<CI_REF_PREFIX><key>-<n>-q<q>`: one round of one run, which delete_ci_refs finds by its prefix.
-    pub fn ci_ref(&self, n: u32, q: u32) -> String {
-        format!("{CI_REF_PREFIX}{}-{n}-q{q}", self.key())
-    }
-
     /// Quality round q of round n, as a quality file's intro names it: "round 1, quality round 2 of 3".
     pub fn quality_place(&self, n: u32, q: u32) -> String {
         format!("round {n}, quality round {q} of {}", self.max_quality_rounds)
@@ -554,14 +551,6 @@ impl RunState {
     /// files.
     pub fn had_quality_gate(&self) -> bool {
         self.quality_job.is_some() || self.quality_gate_disabled
-    }
-
-    /// Whether the run may have quality snapshot refs on origin: it has or had the quality gate, and the gate is not
-    /// the local one, which pushes none. A run whose local gate resume turned off counts, as its state no longer names
-    /// the gate; deleting its refs then finds none. So does a run whose gate a release before 0.63.0 saved as `local`
-    /// with a build in ci: that was a Jenkins job of the name (cli::start::resumable_state).
-    pub fn may_have_ci_refs(&self) -> bool {
-        self.had_quality_gate() && (self.quality_job.as_deref() != Some(LOCAL_GATE) || !self.ci.is_empty())
     }
 
     /// The Builder's last report in round n, once its quality rounds are over: the one the Reviewer reads.

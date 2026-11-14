@@ -1,9 +1,8 @@
-//! TestBlocked and TestBlockedResume: a step that can block writes a BLOCKED report, the turn waits for the human's
-//! answer and then for the report again, and an orchestrator killed at each point of a block resumes from there.
+//! A step that can block writes a BLOCKED report, the turn waits for the human's answer and then for the report
+//! again, and an orchestrator killed at each point of a block resumes from there.
 //!
-//! Not here: the print_runs half of test_the_wait_is_saved_and_listed, in
-//! crate::cli::listing's tests, with TestBlockedListing; TestParseBlocked, crate::handoff's and crate::pipeline's
-//! (ticket 04).
+//! Not here: a blocked run as `list` prints it, in crate::cli::listing's tests; reading a BLOCKED report,
+//! crate::handoff's and crate::pipeline's.
 
 use std::cell::RefCell;
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
@@ -188,7 +187,7 @@ fn a_dropped_answer_prompt_is_sent_once_more() {
 
 #[test]
 fn the_wait_is_saved() {
-    // test_the_wait_is_saved_and_listed, without its print_runs half.
+    // How `list` prints the wait is crate::cli::listing's.
     let during = Rc::new(RefCell::new(vec![]));
     let (record, mut answer) = (Rc::clone(&during), answered(build_path(1), "report 1"));
     let wait: Turn = Box::new(move |prompt, state, host| {
@@ -276,7 +275,7 @@ fn a_blocked_quality_answer_waits_then_goes_back_to_the_quality_round() {
         ("review", vec![recording(review_turn(1, APPROVE), &reviews)]),
     ])
     .gated();
-    f.ci.state().outcomes = vec![red(), green()].into();
+    f.judging(vec![red(), green()]);
     bounded(&f);
 
     let mut wf = f.workflow(RunSettings::default());
@@ -307,7 +306,7 @@ fn the_note_is_in_every_prompt_of_the_steps_that_can_block_only() {
         ),
     ])
     .gated();
-    f.ci.state().outcomes = vec![red(), green(), green()].into();
+    f.judging(vec![red(), green(), green()]);
 
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
     // First, quality fix and again; the fresh prompts are in default_prompts.rs's golden texts.
@@ -425,10 +424,9 @@ fn a_state_saved_before_blocks_loads_and_resumes() {
     assert_eq!(prompts_to(&f, "build-a1b2c3"), 0);
 }
 
-// -- TestBlockedResume: the orchestrator dies at each point of a block, and a resume carries on from there. -------
+// -- The orchestrator dies at each point of a block, and a resume carries on from there. ---------------------------
 
-/// The orchestrator process dies here: unwound past every handler of the Workflow's, it saves nothing more. Python's
-/// Killed, a BaseException.
+/// The orchestrator process dies here: unwound past every handler of the Workflow's, it saves nothing more.
 struct Killed;
 
 /// Kill the orchestrator: unwind with Killed, past the panic hook, as nothing but the test's catch sees it.
@@ -440,7 +438,7 @@ fn die() -> ! {
 /// written text; true kills the orchestrator there.
 type KillAt = fn(&str, &str, Option<&str>) -> bool;
 
-/// A FakeHost whose orchestrator is killed at the first write or rename kill_at picks: Python's KillingHost.
+/// A FakeHost whose orchestrator is killed at the first write or rename kill_at picks.
 fn killing_host(kill_at: KillAt) -> Rc<FakeHost> {
     let host = Rc::new(FakeHost::default());
     let mut s = host.state();
@@ -621,8 +619,7 @@ fn a_report_written_while_no_orchestrator_watched_ends_the_wait() {
     assert_eq!(wf.state().blocked, None);
 }
 
-/// Not Python's: a block record without its k, as only a state.json edited by hand has, stops the resume naming it
-/// (Python's engine fails with a KeyError there).
+/// A block record without its k, as only a state.json edited by hand has, stops the resume naming it.
 #[test]
 fn a_block_without_its_number_stops_the_resume() {
     let mut state = saved_run("build", 1, &["spec", "build"]);

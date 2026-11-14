@@ -12,9 +12,9 @@
 //!
 //! The resume is cli::resumed_state for `resume --force a1b2c3` and cli::run_workflow, as main runs that command,
 //! on the same fakes, which play the world that outlives the orchestrator: the project (FakeHost), herdr and its
-//! agents (FakeHerdr), Jenkins (FakeJenkins) and time (FakeClock). Each agent works on its prompt for TURN_SECONDS of
-//! that time before its handoff file appears, so that a crash can land while it works and it finishes for the next
-//! orchestrator.
+//! agents (FakeHerdr), the local quality gate (FakeGate) and time (FakeClock). Each agent works on its prompt for
+//! TURN_SECONDS of that time before its handoff file appears, so that a crash can land while it works and it
+//! finishes for the next orchestrator.
 //!
 //! What the e2e scenarios cover instead: they kill the engine as a program, with SIGKILL at any moment, so also
 //! between two writes, on real git; but only once per phase. This harness crashes after every write of state.json
@@ -25,14 +25,13 @@ use std::collections::BTreeMap;
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 
 use super::*;
-use crate::ci::fake::{jenkins_on, Outcome, JOB};
 use crate::cli::{parse_args, resumed_state, run_workflow, Command, Connected, Ran};
-use crate::constants::{CI_REF_PREFIX, HEARTBEAT_SECONDS};
+use crate::constants::HEARTBEAT_SECONDS;
 use crate::env::ConfigDir;
 use crate::host::fake::FakeClock;
+use crate::local_gate::LOCAL_GATE;
 use crate::pipeline::{Pipeline, DONE};
 use crate::test_support::EXAMPLES;
-use crate::workflow::Collaborators;
 use crate::workflow_file::load_workflow_file;
 
 /// The run's state.json, which every scenario's run writes.
@@ -52,7 +51,7 @@ struct Scenario {
     verdicts: &'static [&'static str],
     /// Whether the run ends in a pull request.
     pull_request: bool,
-    /// The outcome of each quality build in turn, a green one once they run out; None for a run without the quality
+    /// What each run of the local gate judges in turn, green once they run out; None for a run without the quality
     /// gate.
     gate: Option<&'static [fn() -> Outcome]>,
     /// An example workflow's file name in EXAMPLES; None for the default workflow.
@@ -64,7 +63,7 @@ const APPROVED: Scenario = Scenario { verdicts: &[APPROVE], pull_request: true, 
 /// The orchestrator's death right after a write of state.json: the payload of the unwind that stops it.
 struct Crashed;
 
-/// One effect on the world, by kind: "prompt", "herdr", "git", "snapshot", "restore", "pull request", "jenkins" or
+/// One effect on the world, by kind: "prompt", "herdr", "git", "snapshot", "restore", "pull request", "gate" or
 /// "notification", and the effect as text.
 type Effects = BTreeMap<&'static str, Vec<String>>;
 
@@ -108,10 +107,11 @@ impl World {
         };
         let mut state = new_run(&pipeline);
         state.pull_request = scenario.pull_request;
-        state.quality_job = scenario.gate.map(|_| JOB.to_string());
-        let f = Fixture::on(Rc::new(FakeHost::default()), state, vec![]);
+        state.quality_job = scenario.gate.map(|_| LOCAL_GATE.to_string());
+        let mut f = Fixture::on(Rc::new(FakeHost::default()), state, vec![]);
         if let Some(outcomes) = scenario.gate {
-            f.ci.state().outcomes = outcomes.iter().map(|outcome| outcome()).collect();
+            f = f.gated();
+            f.judging(outcomes.iter().map(|outcome| outcome()).collect());
         }
         let work: Rc<RefCell<Vec<Work>>> = Rc::default();
         for role in pipeline.roles().keys() {
@@ -167,11 +167,9 @@ impl World {
 
     /// One orchestrator's run on the world's fakes, as main runs `run` or, with resume, `resume --force a1b2c3`.
     fn drive(&self, resume: bool) -> Result<Ran, Stopped> {
-        let jenkins = |_: &str| Ok(jenkins_on(&self.f.ci));
         let config = ConfigDir::at("/nowhere");
         let world = Connected {
-            with: Collaborators { quality_gate: None, ..self.f.collaborators() },
-            jenkins: &jenkins,
+            with: self.f.collaborators(),
             config: &config,
             local_host: "here",
             stdout: &|_| {},
@@ -201,7 +199,7 @@ impl World {
     /// Each effect the run had on the world so far, by kind, in order. Reads and checks are not effects: what the
     /// orchestrator only looks at, it may look at again.
     fn effects(&self) -> Effects {
-        let (h, herdr, ci) = (self.f.host.state(), self.f.herdr.state(), self.f.ci.state());
+        let (h, herdr) = (self.f.host.state(), self.f.herdr.state());
         let changes_git = ["commit", "push", "switch", "merge", "worktree", "branch", "update-ref"];
         let mut effects = Effects::new();
         effects.insert("prompt", herdr.prompts.iter().map(|(name, text)| format!("{name}: {text}")).collect());
@@ -213,8 +211,7 @@ impl World {
         effects.insert("restore", h.restores.iter().map(|r| format!("{r:?}")).collect());
         let opened = h.prs.iter().map(|pr| format!("{pr:?}"));
         effects.insert("pull request", opened.chain(h.pr_edits.iter().map(|e| format!("{e:?}"))).collect());
-        let triggers = ci.requests.iter().filter(|r| r.method == "POST" && r.url.ends_with("/buildWithParameters"));
-        effects.insert("jenkins", triggers.map(|r| r.form.get("GIT_REF").cloned().unwrap_or_default()).collect());
+        effects.insert("gate", self.f.gate.borrow().jobs.iter().map(|job| job.join(" ")).collect());
         let notes = self.f.told.notes.borrow();
         effects.insert("notification", notes.iter().map(|(title, body)| format!("{title}: {body}")).collect());
         effects
@@ -257,10 +254,6 @@ fn agent_turn(
 /// itself; any other repeat is a failure, or a known gap that `expected` names.
 fn idempotent(kind: &str, effect: &str) -> bool {
     match kind {
-        // The snapshot's push to its quality branch: --force replaces what a failed attempt left (Host::push_ref).
-        "git" if effect.contains(" push --quiet --force origin ") => {
-            effect.contains(&format!(":refs/heads/{CI_REF_PREFIX}"))
-        }
         // Workflow::check_repo fast-forwards the base branch (Host::fast_forward) at each start in round 0.
         "git" => effect.contains(" merge --ff-only "),
         // A snapshot moves no ref; a lock's snapshot, a resume before the run moves on takes again, harmlessly
@@ -363,6 +356,8 @@ fn changes_requested_then_approved() {
 #[test]
 fn quality_gate_fails_then_passes() {
     static SCENARIO: Scenario = Scenario { gate: Some(&[red, green]), ..APPROVED };
+    // Run uninterrupted, the gate judges twice: red, then green after the Builder's fix.
+    assert_eq!(uninterrupted(&SCENARIO).0.effects["gate"].len(), 2);
     crash_after_every_write(&SCENARIO);
 }
 

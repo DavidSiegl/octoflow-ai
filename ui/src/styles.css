@@ -1,4 +1,4 @@
-/* The Tk window's palette (orchestrator.py's NAVY to AMBER): the colors of docs/logo.svg. */
+/* The palette, from navy to amber: the colors of docs/logo.svg. */
 :root {
   --navy: #1e2a38;
   --navy-light: #283a4e;
@@ -204,6 +204,348 @@ ol.progress {
   color: var(--navy);
   background: var(--coral);
   font-weight: bold;
+}
+
+.stage.again {
+  border-style: dashed;
+  border-color: var(--muted-mint);
+}
+
+/* The run detail's octopus (RunMap): arms and stations by their stage's state, amber for the work under way. */
+.run-map {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.run-map svg {
+  display: block;
+  width: 100%;
+  max-width: 760px;
+  min-width: 340px;
+  height: auto;
+  background: var(--navy-dark);
+  border-radius: 10px;
+  font-family: "Roboto Mono", ui-monospace, monospace;
+}
+
+.run-map .arm path {
+  fill: var(--navy-raised);
+}
+
+.run-map .arm.spare path {
+  fill: var(--navy-light);
+  opacity: 0.9;
+}
+
+.run-map .arm.todo path {
+  fill: none;
+  stroke: var(--navy-raised);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+}
+
+.run-map .arm.done path {
+  fill: var(--teal);
+}
+
+.run-map .arm.again path {
+  fill: var(--navy-hover);
+}
+
+.run-map .arm.current path {
+  fill: var(--amber);
+}
+
+.run-map .arm.failed path {
+  fill: var(--coral);
+}
+
+.run-map svg.stale .arm,
+.run-map svg.stale .head {
+  opacity: 0.55;
+}
+
+.run-map .sucker {
+  fill: var(--navy-dark);
+  opacity: 0.55;
+}
+
+.run-map .glow-centre {
+  stop-color: var(--amber);
+  stop-opacity: 0.35;
+}
+
+.run-map .glow-edge {
+  stop-color: var(--amber);
+  stop-opacity: 0;
+}
+
+.run-map .glow {
+  fill: url(#run-map-glow);
+}
+
+.run-map .mantle {
+  fill: var(--teal);
+  stroke: var(--navy-dark);
+  stroke-width: 3;
+}
+
+.run-map .head.failed .mantle {
+  fill: var(--coral);
+}
+
+.run-map .shine {
+  fill: var(--mint);
+  opacity: 0.35;
+}
+
+.run-map .eye {
+  fill: var(--pale-mint);
+  stroke: var(--navy-dark);
+  stroke-width: 2.5;
+}
+
+.run-map .pupil {
+  fill: var(--navy-dark);
+}
+
+.run-map .lid {
+  fill: none;
+  stroke: var(--navy-dark);
+  stroke-width: 3.5;
+  stroke-linecap: round;
+}
+
+.run-map .head text {
+  fill: var(--navy-dark);
+}
+
+.run-map .head .round {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.run-map .head .key {
+  font-family: Roboto, system-ui, sans-serif;
+  font-size: 15px;
+  font-weight: bold;
+}
+
+.run-map .head .snore {
+  fill: var(--muted-mint);
+  font-size: 16px;
+}
+
+.run-map .bubble path {
+  fill: var(--navy-dark);
+  stroke: var(--amber);
+  stroke-width: 2;
+}
+
+.run-map .head .bubble text {
+  fill: var(--amber);
+  font-family: Roboto, system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.run-map .loop path {
+  fill: none;
+  stroke: var(--navy-raised);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 4;
+}
+
+.run-map .loop text {
+  fill: var(--navy-hover);
+  font-size: 10px;
+}
+
+.run-map .loop.taken path {
+  stroke: var(--muted-mint);
+  stroke-dasharray: none;
+}
+
+.run-map .loop.taken text {
+  fill: var(--muted-mint);
+}
+
+.run-map .loop-head {
+  fill: var(--muted-mint);
+}
+
+.run-map .station .ring {
+  fill: var(--navy-light);
+  stroke: var(--navy-hover);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+}
+
+.run-map .station.done .ring {
+  stroke: var(--teal);
+}
+
+.run-map .station.again .ring {
+  stroke: var(--teal);
+}
+
+.run-map .station.current .ring {
+  stroke: var(--amber);
+}
+
+.run-map .station.failed .ring {
+  stroke: var(--coral);
+}
+
+.run-map .station:is(.done, .current, .failed) .ring {
+  stroke-width: 2.5;
+  stroke-dasharray: none;
+}
+
+.run-map .station .label {
+  fill: var(--muted-mint);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.run-map .station:is(.done, .current, .failed) .label {
+  fill: var(--pale-mint);
+}
+
+.run-map .station .glyph {
+  font-family: Roboto, system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: bold;
+}
+
+.run-map .station.done .glyph {
+  fill: var(--teal);
+}
+
+.run-map .station.current .glyph {
+  fill: var(--amber);
+}
+
+.run-map .station.failed .glyph {
+  fill: var(--coral);
+}
+
+/* The holder and harness font sizes are also RunMap.tsx's HOLDER_PX and HARNESS_PX, which cut the texts to fit. */
+.run-map .station .holder {
+  fill: var(--pale-mint);
+  font-family: Roboto, system-ui, sans-serif;
+  font-size: 11.5px;
+}
+
+.run-map .station .harness {
+  fill: var(--muted-mint);
+  font-size: 10px;
+}
+
+.run-map .station .halo {
+  fill: none;
+  stroke: var(--amber);
+  stroke-width: 2;
+  opacity: 0.5;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: run-map-halo 2.4s ease-in-out infinite;
+}
+
+@keyframes run-map-halo {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1.33);
+    opacity: 0;
+  }
+}
+
+.run-map .rounds circle {
+  fill: var(--navy-dark);
+  stroke: var(--muted-mint);
+  stroke-width: 1.2;
+}
+
+.run-map .rounds text {
+  fill: var(--pale-mint);
+  font-size: 9.5px;
+}
+
+.run-map .verdict.approve rect {
+  fill: var(--teal);
+}
+
+.run-map .verdict.changes rect {
+  fill: var(--coral);
+}
+
+.run-map .verdict text {
+  fill: var(--navy-dark);
+  font-family: Roboto, system-ui, sans-serif;
+  font-size: 9.5px;
+  font-weight: bold;
+}
+
+.run-map .pulses circle {
+  fill: var(--amber);
+  stroke: var(--amber);
+  stroke-width: 2;
+}
+
+.run-map .pulses.back circle {
+  fill: none;
+}
+
+.run-map .now {
+  margin: 0;
+  font-family: "Roboto Mono", ui-monospace, monospace;
+  font-size: 13px;
+}
+
+.run-map ol.feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  font-family: "Roboto Mono", ui-monospace, monospace;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.run-map .feed li {
+  display: grid;
+  grid-template-columns: 1.2em 6.5em minmax(0, 1fr) auto;
+  gap: 8px;
+  color: var(--muted-mint);
+}
+
+.run-map .feed li > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.run-map .feed li.running {
+  color: var(--amber);
+}
+
+.run-map .feed li.failed {
+  color: var(--coral);
+}
+
+.run-map .feed .length {
+  text-align: right;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .run-map .station .halo {
+    animation: none;
+  }
 }
 
 .detail header {

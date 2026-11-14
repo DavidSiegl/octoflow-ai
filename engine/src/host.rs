@@ -1,4 +1,4 @@
-//! The machine the agents run on, as orchestrator.py's Host: its files, its clock and its git checkout, locally or
+//! The machine the agents run on: its files, its clock and its git checkout, locally or
 //! over `ssh -o BatchMode=yes`, and gh and gitleaks run there.
 //!
 //! [`Host`] is a trait so that the engine's tests can stand a fake in for the machine. Every operation is a provided
@@ -6,7 +6,7 @@
 //! implements only those, and a fake overrides what it plays in memory, as `FakeHost` (host/fake.rs) plays git one
 //! command at a time through [`Host::git_run`], so that Host's own git steps run on it.
 
-use crate::constants::{NETWORK_TIMEOUT, REMOTE, RUNS_DIR};
+use crate::constants::{CONSOLE_TAIL_LINES, NETWORK_TIMEOUT, REMOTE, RUNS_DIR};
 use crate::error::OrchestratorError;
 use crate::harness::{harness, SessionLog};
 use serde_json::Value;
@@ -82,9 +82,9 @@ fn run_dir_resolved() -> String {
 /// What one command printed, and how it ended, as [`Host::exec`] gives it: its output as the bytes it wrote.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Exec {
-    /// The command as it ran, as one line of sh (shlex.join): over SSH, the ssh command that carried it.
+    /// The command as it ran, as one line of sh (shlex_join): over SSH, the ssh command that carried it.
     pub command: String,
-    /// Its exit status, or minus the number of the signal that ended it, as Python's returncode.
+    /// Its exit status, or minus the number of the signal that ended it.
     pub status: i32,
     /// What the command wrote to its standard output; over SSH, the remote command's, which ssh passes on.
     pub stdout: Vec<u8>,
@@ -97,7 +97,7 @@ pub struct Exec {
 /// output kept verbatim ([`Host::run_verbatim`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Completed<T = String> {
-    /// The exit status, or minus the number of the signal that ended it, as Python's returncode.
+    /// The exit status, or minus the number of the signal that ended it.
     pub status: i32,
     /// What it wrote to its standard output, as Exec::stdout says.
     pub stdout: T,
@@ -173,7 +173,7 @@ pub struct PullRequestMerge {
 /// Why a gh command about a pull request failed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GhError {
-    /// gh is missing or logged out where the project is, so no gh call can succeed: Python's GhUnusable.
+    /// gh is missing or logged out where the project is, so no gh call can succeed.
     Unusable(OrchestratorError),
     /// Any other failure: gh failed, or printed what is not the pull request asked for.
     Failed(OrchestratorError),
@@ -190,8 +190,8 @@ impl From<GhError> for OrchestratorError {
 /// Why [`Host::exec`] gave no Exec.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExecError {
-    /// The command's program is not on this host's PATH, so it could not be started: Python's FileNotFoundError from
-    /// subprocess. Over SSH it is the remote shell that cannot find a program, which exits 127 as an Exec does.
+    /// The command's program is not on this host's PATH, so it could not be started. Over SSH it is the remote shell
+    /// that cannot find a program, which exits 127 as an Exec does.
     NotFound(OrchestratorError),
     /// Any other failure: the command could not be started otherwise, timed out, was interrupted, or its output could
     /// not be read.
@@ -215,7 +215,7 @@ impl From<OrchestratorError> for ExecError {
 /// Why a push of a run's work did not happen.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PushError {
-    /// The secret scan found secrets in what the push would publish: Python's LeaksFound.
+    /// The secret scan found secrets in what the push would publish.
     Leaks(LeaksFound),
     /// The scan could not judge, or the push failed.
     Failed(OrchestratorError),
@@ -340,12 +340,9 @@ pub trait Host {
     /// The absolute form of a directory's path, a leading ~ expanded to the home directory on this host. Errors:
     /// there is no such directory.
     fn resolve_dir(&self, path: &str) -> Result<String, OrchestratorError> {
-        let (script, arg) = if path == "~" || path.starts_with("~/") {
-            ("cd -- \"$HOME$1\" && pwd", &path[1..])
-        } else {
-            ("cd -- \"$1\" && pwd", path)
-        };
-        Ok(self.check(&["sh", "-c", script, "_", arg], None, DEFAULT_TIMEOUT)?.trim().to_string())
+        let (word, arg) = shell_path(path);
+        let script = format!("cd -- {word} && pwd");
+        Ok(self.check(&["sh", "-c", &script, "_", arg], None, DEFAULT_TIMEOUT)?.trim().to_string())
     }
 
     /// HEAD's commit, or None when cwd is not a git repository with a commit.
@@ -599,19 +596,9 @@ pub trait Host {
         numstat(&out)
     }
 
-    /// Push commit to origin's branch, replacing what is there, once scan_secrets finds no secret in what it would
-    /// publish; base and report_path are as scan_secrets takes them. Errors: PushError::Leaks with what the scan
-    /// found, or PushError::Failed when it cannot judge or the push fails; nothing is pushed then.
-    fn push_ref(&self, cwd: &str, commit: &str, branch: &str, base: &str, report_path: &str) -> Result<(), PushError> {
-        self.refuse_leaks(cwd, commit, base, Scanned::Unpublished, report_path)?;
-        // --force replaces what a failed attempt left under the same name.
-        let refspec = format!("{commit}:refs/heads/{branch}");
-        git_timed(self, cwd, &["push", "--quiet", "--force", REMOTE, &refspec], NETWORK_TIMEOUT)?;
-        Ok(())
-    }
-
     /// Push the local branch to origin's branch of that name and track it, once scan_secrets finds no secret in what
-    /// its commit would publish; base and report_path are as scan_secrets takes them. Errors: as push_ref's.
+    /// its commit would publish; base and report_path are as scan_secrets takes them. Errors: PushError::Leaks with
+    /// what the scan found, or PushError::Failed when it cannot judge or the push fails; nothing is pushed then.
     fn push_branch(&self, cwd: &str, branch: &str, base: &str, report_path: &str) -> Result<(), PushError> {
         let commit = self.git(cwd, &["rev-parse", "--verify", &format!("refs/heads/{branch}")])?;
         self.refuse_leaks(cwd, commit.trim(), base, Scanned::Unpublished, report_path)?;
@@ -693,24 +680,6 @@ pub trait Host {
         report_path: &str,
     ) -> Result<Vec<Leak>, OrchestratorError> {
         scan::scan_secrets(self, cwd, commit, base, scanned, report_path)
-    }
-
-    /// Delete origin's branch.
-    fn delete_remote_branch(&self, cwd: &str, branch: &str) -> Result<(), OrchestratorError> {
-        let git_ref = format!("refs/heads/{branch}");
-        git_timed(self, cwd, &["push", "--quiet", REMOTE, "--delete", &git_ref], NETWORK_TIMEOUT).map(drop)
-    }
-
-    /// origin's branches whose names start with prefix.
-    fn remote_branches(&self, cwd: &str, prefix: &str) -> Result<Vec<String>, OrchestratorError> {
-        let out = git_timed(self, cwd, &["ls-remote", "--heads", REMOTE], NETWORK_TIMEOUT)?;
-        let wanted = format!("refs/heads/{prefix}");
-        Ok(out
-            .lines()
-            .filter_map(|line| line.split_once('\t').map(|(_, name)| name))
-            .filter(|name| name.starts_with(&wanted))
-            .map(|name| name["refs/heads/".len()..].to_string())
-            .collect())
     }
 
     /// The commit origin's branch is at; None when origin has no such branch.
@@ -969,11 +938,11 @@ pub trait Host {
         parsed_run_states(cwd, &self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?)
     }
 
-    /// The log in which the harness kind keeps a session's token usage (crate::harness::SessionLog), found in the
-    /// home directory here, as it is on disk; None for a harness without one, a session id that is not a plain name,
-    /// or no such file.
-    fn session_log(&self, kind: &str, session: &str) -> Result<Option<Vec<u8>>, OrchestratorError> {
-        let Some(SessionLog { glob: pattern, .. }) = harness(kind).ok().and_then(|h| h.session_log) else {
+    /// The log in which the harness named name keeps a session's token usage (crate::harness::SessionLog), found in
+    /// the home directory here, as it is on disk; None for a harness without one, a session id that is not a plain
+    /// name, or no such file.
+    fn session_log(&self, name: &str, session: &str) -> Result<Option<Vec<u8>>, OrchestratorError> {
+        let Some(SessionLog { glob: pattern, .. }) = harness(name).ok().and_then(|h| h.session_log) else {
             return Ok(None);
         };
         if session.is_empty() || !session.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
@@ -1075,7 +1044,7 @@ fn parsed_run_states(cwd: &str, out: &str) -> Result<Vec<SavedRun>, Orchestrator
         let (age, text) = entry.split_once(' ').unwrap_or((entry, ""));
         let corrupt = |e: String| OrchestratorError(format!("corrupt run state under {cwd}/{RUNS_DIR}: {e}"));
         let not_int = || corrupt(format!("invalid literal for int() with base 10: {age:?}"));
-        let age: i64 = python_int(age).ok_or_else(not_int)?;
+        let age: i64 = decimal_int(age).ok_or_else(not_int)?;
         let saved = serde_json::from_str::<Value>(text).map_err(|e| corrupt(e.to_string()))?;
         runs.push(SavedRun::read(age.max(0).unsigned_abs(), saved).map_err(|e| corrupt(e.0))?);
     }
@@ -1098,7 +1067,7 @@ fn parsed_run_files(run_dir: &str, out: &str) -> Result<Vec<RunFile>, Orchestrat
     let mut files = vec![];
     for entry in out.split('\0').filter(|e| !e.is_empty()) {
         let (mtime, path) = entry.split_once(' ').unwrap_or((entry, ""));
-        let mtime = python_int(mtime).ok_or_else(|| {
+        let mtime = decimal_int(mtime).ok_or_else(|| {
             OrchestratorError(format!("listing {run_dir}: stat printed {mtime:?}, not a time"))
         })?;
         files.push((mtime, path.to_string()));
@@ -1118,8 +1087,8 @@ pub fn checked<H: Host + ?Sized, T>(host: &H, argv: &[&str], proc: Completed<T>)
 }
 
 /// text with each "\r\n" and each lone "\r" made "\n": how the engine reads what a program printed (Host::run,
-/// herdr, a Jenkins build's console) and a prompt file, so that what splits it into lines has one line end to split
-/// at, and a progress bar's updates, each ended by a lone "\r", are lines of their own.
+/// herdr) and a prompt file, so that what splits it into lines has one line end to split at, and a progress bar's
+/// updates, each ended by a lone "\r", are lines of their own.
 pub fn line_ends_as_lf(text: &str) -> String {
     if !text.contains('\r') {
         return text.to_string();
@@ -1127,12 +1096,20 @@ pub fn line_ends_as_lf(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
+/// The last CONSOLE_TAIL_LINES lines of text, each line ending at "\n", "\r\n" or a lone "\r" (line_ends_as_lf),
+/// joined by "\n": the end of a log that is shown.
+pub fn last_lines(text: &str) -> String {
+    let text = line_ends_as_lf(text);
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(CONSOLE_TAIL_LINES)..].join("\n")
+}
+
 /// argv as one line of sh that runs it, each word quoted by shlex_quote, between single spaces.
 pub fn shlex_join<S: AsRef<str>>(argv: &[S]) -> String {
     argv.iter().map(|word| shlex_quote(word.as_ref())).collect::<Vec<_>>().join(" ")
 }
 
-/// word as sh reads it back as one word, as Python's shlex.quote writes it: as it is when it is not empty and holds
+/// word as sh reads it back as one word: as it is when it is not empty and holds
 /// nothing but ASCII letters, digits and `_@%+=:,./-`, else in single quotes, a quote inside written `'"'"'`.
 pub fn shlex_quote(word: &str) -> String {
     if !word.is_empty() && word.chars().all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c)) {
@@ -1176,6 +1153,16 @@ pub fn decoded(exec: Exec) -> Result<Completed, OrchestratorError> {
     Ok(Completed { status, stdout, stderr: decode(stderr)? })
 }
 
+/// path, which may start with ~ for the home directory, as an `sh -c` script takes it: the word to write in the
+/// script where the path goes, and the argument to pass the script as its `$1`, which the word expands.
+pub(crate) fn shell_path(path: &str) -> (&'static str, &str) {
+    if path == "~" || path.starts_with("~/") {
+        ("\"$HOME$1\"", &path[1..])
+    } else {
+        ("\"$1\"", path)
+    }
+}
+
 /// git pathspecs that each match exactly one of paths, relative to the repository's top level, whatever directory git
 /// runs in, and with no glob in them.
 fn top_literal<S: AsRef<str>>(paths: &[S]) -> Vec<String> {
@@ -1186,17 +1173,19 @@ fn top_literal<S: AsRef<str>>(paths: &[S]) -> Vec<String> {
 /// fails.
 fn working_tree<H: Host + ?Sized>(host: &H, cwd: &str) -> Result<String, OrchestratorError> {
     // Through a copy of the index, in one sh -c script, because git -C cannot pass GIT_INDEX_FILE.
-    let script = "cd -- \"$1\" || exit 1; i=$(git rev-parse --git-path index) || exit 1; t=$(mktemp) || exit 1; \
-                  trap 'rm -f -- \"$t\"' EXIT; \
-                  if [ -f \"$i\" ]; then { cp -- \"$i\" \"$t\" && touch -r \"$i\" -- \"$t\"; } || exit 1; \
-                  else rm -f -- \"$t\"; fi; \
+    let script = "cd -- \"$1\" || exit 1; i=$(git rev-parse --git-path index) || exit 1; d=$(mktemp -d) || exit 1; \
+                  trap 'rm -rf -- \"$d\"' EXIT; t=$d/index; \
+                  if [ -f \"$i\" ]; then { cat > \"$t\" && touch -r /dev/stdin -- \"$t\"; } < \"$i\" || exit 1; fi; \
                   GIT_INDEX_FILE=$t git add -A && GIT_INDEX_FILE=$t git write-tree";
     // `touch -r`, which gives the copy the index's modification time: git reads a file whose size and times are its
     // entry's only when the index is no younger than the entry (https://git-scm.com/docs/racy-git), so a copy dated
     // now would have git add take a file rewritten at its size within the second it was staged as unchanged, and the
-    // tree hold the old one. Not `cp -p`, which carries owner and mode too: it fails where the owner cannot be kept,
-    // and widens the mode mktemp gave the copy.
-    // The `else`: a repository whose index was never written, from which git starts the copy afresh.
+    // tree hold the old one. Not `cp -p`, which carries owner and mode too: it fails where the owner cannot be kept.
+    // Entries and time come from the one open file on stdin: a git renaming a new index into place between two opens
+    // would leave the copy the old entries under the new time, which is the race again.
+    // The copy sits in a directory of its own, which only its owner can enter whatever mode the copy has once git
+    // rewrites it, and which goes whole on exit, with the index.lock a git killed mid-write leaves beside the copy.
+    // No index to copy: a repository whose index was never written, from which git starts the copy afresh.
     Ok(host.check(&["sh", "-c", script, "_", cwd], None, DEFAULT_TIMEOUT)?.trim().to_string())
 }
 
@@ -1313,8 +1302,7 @@ fn utf8_paths(out: &[u8]) -> Result<Vec<String>, OrchestratorError> {
     out.split(|&b| b == 0).filter(|p| !p.is_empty()).map(utf8_path).collect()
 }
 
-/// A path git printed verbatim, as text. Errors: it is not UTF-8, which the Python engine reads as os.fsdecode
-/// decodes it (TODO.md, "The Rust engine reads some input ... otherwise").
+/// A path git printed verbatim, as text. Errors: it is not UTF-8.
 fn utf8_path(bytes: &[u8]) -> Result<String, OrchestratorError> {
     String::from_utf8(bytes.to_vec()).map_err(|_| {
         OrchestratorError(format!("git printed a path that is not UTF-8: {:?}", String::from_utf8_lossy(bytes)))
@@ -1331,7 +1319,7 @@ fn numstat(out: &[u8]) -> Result<Vec<ChangedFile>, OrchestratorError> {
         if n == b"-" {
             return Ok(0);
         }
-        std::str::from_utf8(n).ok().and_then(python_int).and_then(|n| u64::try_from(n).ok()).ok_or_else(bad)
+        std::str::from_utf8(n).ok().and_then(decimal_int).and_then(|n| u64::try_from(n).ok()).ok_or_else(bad)
     };
     let mut files = vec![];
     let mut i = 0;
@@ -1407,17 +1395,16 @@ fn is_commit_id(text: &str) -> bool {
     (40..=64).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// The seconds a command printed, out, as int() reads them; what names what printed them. Errors: out is no whole
-/// number.
+/// The seconds a command printed, out, as decimal_int reads them; what names what printed them. Errors: out is no
+/// whole number.
 fn seconds(out: &str, what: &str) -> Result<i64, OrchestratorError> {
     let text = out.trim();
-    python_int(text).ok_or_else(|| OrchestratorError(format!("{what} printed {text:?}, not a time")))
+    decimal_int(text).ok_or_else(|| OrchestratorError(format!("{what} printed {text:?}, not a time")))
 }
 
-/// text as Python's int() reads a whole number in base 10, but for the blanks around it, which are what
-/// char::is_whitespace takes: an optional sign, and ASCII digits with single underscores between them; None for
-/// anything else, or a number beyond 64 bits.
-fn python_int(text: &str) -> Option<i64> {
+/// text as a whole number in base 10, blanks around it (what char::is_whitespace takes) allowed: an optional sign,
+/// and ASCII digits with single underscores between them; None for anything else, or a number beyond 64 bits.
+fn decimal_int(text: &str) -> Option<i64> {
     let text = text.trim();
     let digits = text.strip_prefix(['+', '-']).unwrap_or(text);
     let well_formed = !digits.is_empty()

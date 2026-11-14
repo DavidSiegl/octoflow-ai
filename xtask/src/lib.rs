@@ -1,18 +1,14 @@
 //! The repository's chores in Rust, run as `cargo xtask <command>` through `.cargo/config.toml`'s alias: the eval
-//! set's runner, `eval` ([`eval`]), the builder of its tasks' bundles, `bundles` ([`bundles`]), and the check of the
-//! engine's Jenkins client against the real Jenkins, `contract` ([`contract`]). src/main.rs reads
+//! set's runner, `eval` ([`eval`]), and the builder of its tasks' bundles, `bundles` ([`bundles`]). src/main.rs reads
 //! the command line and hands each command its arguments.
 
 pub mod bundles;
-pub mod contract;
 pub mod eval;
 mod process;
 pub mod toy_repos;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
-
-pub use process::TempDir;
 
 /// The checkout this xtask was built from: the workspace's top directory, which holds evals/.
 pub fn checkout() -> PathBuf {

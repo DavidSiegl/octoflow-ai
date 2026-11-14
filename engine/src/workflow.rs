@@ -1,21 +1,21 @@
-//! The phase machine: [`Workflow`] drives one run through the steps of its workflow in a herdr workspace, as
-//! orchestrator.py's Workflow does, and is the same code for a new run and a resumed one.
+//! The phase machine: [`Workflow`] drives one run through the steps of its workflow in a herdr workspace, and is the
+//! same code for a new run and a resumed one.
 //!
-//! How it is given what it talks to (design-it-twice, issue rust-engine/08's Plan): borrowed [`Collaborators`], the
+//! How it is given what it talks to (decided by design-it-twice): borrowed [`Collaborators`], the
 //! real ones from the CLI and the fakes from the tests, which keep the fakes and read them afterwards; the state it
 //! owns, read back through [`Workflow::state`]. An environment trait the Workflow is generic over, and a sans-IO
 //! machine a driver feeds, were weighed and not taken: the first needs a type per variant of a fake and forwards
-//! everything, the second has no Python counterpart to port case for case.
+//! everything, the second fits none of the tests, which script fakes rather than feed a machine events.
 
 use std::collections::HashSet;
 use std::fmt;
 use std::rc::Rc;
 
 use crate::constants::{
-    APPROVE, CHANGES_REQUESTED, DEFAULT_AGENT, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
+    APPROVE, CHANGES_REQUESTED, DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
     FINISHED, HEARTBEAT_SECONDS, QUALITY_GATE_FAILED, REMOTE, SUCCEEDED,
 };
-use crate::ci::QualityGate;
+use crate::local_gate::{self, LOCAL_GATE};
 use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
 use crate::harness::{harness, AgentSettings};
@@ -47,7 +47,7 @@ mod step_prompt;
 mod system;
 mod turn;
 
-pub use gate_switch::{turn_quality_gate_off, turn_quality_gate_on};
+pub use gate_switch::{check_gate_mid_run, turn_quality_gate_off, turn_quality_gate_on};
 pub(crate) use origin::{origin_unreachable, reaching_origin};
 pub use system::{machine_zone, LocalHuman, SystemClocks};
 
@@ -68,8 +68,7 @@ pub trait Clocks {
     fn zone(&self) -> jiff::tz::TimeZone;
 }
 
-/// The human watching the run: told what needs them in a notification, and everything else in log lines, as
-/// orchestrator.py's notify parameter and its log, which prints each line to stderr.
+/// The human watching the run: told what needs them in a notification, and everything else in log lines.
 pub trait Human {
     /// A notification, with its title and body.
     fn notify(&self, title: &str, body: &str);
@@ -94,16 +93,12 @@ pub struct Collaborators<'a> {
     /// Whether a process of a pid exists on this machine, for judging the checkout's other runs (RunState::health):
     /// crate::runs::pid_alive, which a test replaces.
     pub pid_alive: &'a dyn Fn(i64) -> bool,
-    /// Who judges the change in the quality rounds, a Jenkins job or the local gate: Some turns the run's quality
-    /// gate on, None leaves it off. Python's ci.
-    pub quality_gate: Option<&'a QualityGate>,
     /// The indexes the quality rounds' new-dependencies check asks about each package the change adds
     /// (crate::checks); a run without the quality gate never asks them.
     pub indexes: &'a PackageIndexes,
 }
 
-/// How a run is to go, as Workflow's keyword arguments in orchestrator.py: each but spec saved in the state, so that a
-/// resume starts from them.
+/// How a run is to go: each setting but spec saved in the state, so that a resume starts from them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RunSettings {
     /// How many rounds the verdict steps' loops take at most, together: a verdict other than APPROVE in a round
@@ -116,6 +111,9 @@ pub struct RunSettings {
     /// Whether the run ends in a pull request: the editing steps work on a branch of their own, which is committed,
     /// pushed and opened as a pull request against the branch the run started on, checked out again afterwards.
     pub pull_request: bool,
+    /// Whether the run has the quality gate: the local gate (crate::local_gate) judges the change in its quality
+    /// rounds.
+    pub quality_gate_on: bool,
     /// Analyses per round, with the quality gate.
     pub max_quality_rounds: u32,
     /// The run's workflow; None for the one the state names.
@@ -133,6 +131,7 @@ impl Default for RunSettings {
             turn_timeout: DEFAULT_TURN_TIMEOUT,
             agents: AgentSettings::default(),
             pull_request: true,
+            quality_gate_on: false,
             max_quality_rounds: DEFAULT_MAX_QUALITY_ROUNDS,
             pipeline: None,
             spec: None,
@@ -143,12 +142,11 @@ impl Default for RunSettings {
 /// Why a run stopped before it was done.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stopped {
-    /// It failed; state.json records why, and that no orchestrator drives it now. Python's OrchestratorError.
+    /// It failed; state.json records why, and that no orchestrator drives it now.
     Failed(OrchestratorError),
-    /// Another orchestrator took the run over, so this one stopped without saving anything more: Python's
-    /// RunTakenOver.
+    /// Another orchestrator took the run over, so this one stopped without saving anything more.
     TakenOver(OrchestratorError),
-    /// The human's Ctrl-C (Interrupt); state.json records "interrupted". Python's KeyboardInterrupt.
+    /// The human's Ctrl-C (Interrupt); state.json records "interrupted".
     Interrupted,
 }
 
@@ -203,7 +201,7 @@ enum How {
 /// opened as a pull request against the branch the run started on, which is checked out again afterwards. The
 /// workspace is then closed. A run that fails keeps its workspace and branch, to see what happened.
 ///
-/// With a quality gate (Collaborators::quality_gate), each turn of the quality-gated step is followed by a quality
+/// With the quality gate (RunSettings::quality_gate_on), each turn of the quality-gated step is followed by a quality
 /// round (phase quality) that has the gate judge a snapshot of the change; a gate that does not pass goes back to that step,
 /// up to max_quality_rounds analyses per round, before the next step.
 pub struct Workflow<'a> {
@@ -213,8 +211,8 @@ pub struct Workflow<'a> {
     human: &'a dyn Human,
     interrupt: &'a Interrupt,
     pid_alive: &'a dyn Fn(i64) -> bool,
-    /// Collaborators::quality_gate.
-    quality_gate: Option<&'a QualityGate>,
+    /// RunSettings::quality_gate_on.
+    quality_gate_on: bool,
     /// Collaborators::indexes.
     indexes: &'a PackageIndexes,
     state: RunState,
@@ -241,7 +239,7 @@ impl<'a> Workflow<'a> {
     /// state names (and its saved definition), is the run's.
     ///
     /// Errors: the state's prompt overrides or saved workflow cannot be read, the run has the quality gate
-    /// (with.quality_gate) and its workflow no quality-gated step, or the run is to end in a pull request and its workflow
+    /// (settings.quality_gate_on) and its workflow no quality-gated step, or the run is to end in a pull request and its workflow
     /// has no editing step.
     pub fn new(with: Collaborators<'a>, mut state: RunState, settings: RunSettings) -> Result<Workflow<'a>, OrchestratorError> {
         let prompts = state.prompts()?;
@@ -249,7 +247,7 @@ impl<'a> Workflow<'a> {
             Some(p) => p,
             None => run_pipeline(&state.workflow, state.workflow_definition.as_ref(), &prompts)?,
         };
-        if with.quality_gate.is_some() && pipeline.gated().is_none() {
+        if settings.quality_gate_on && pipeline.gated().is_none() {
             return Err(OrchestratorError(format!(
                 "workflow {} has no quality-gated step, so the quality gate does not apply",
                 pipeline.name()
@@ -270,13 +268,13 @@ impl<'a> Workflow<'a> {
         let agents = settings.agents;
         state.permission_mode = agents.permission_mode;
         state.models = agents.models;
-        state.agent_kinds = pipeline
+        state.next_harnesses = pipeline
             .roles()
             .keys()
-            .map(|role| (role, agents.kinds.get(role).cloned().unwrap_or_else(|| DEFAULT_AGENT.to_string())))
+            .map(|role| (role, agents.harnesses.get(role).cloned().unwrap_or_else(|| DEFAULT_HARNESS.to_string())))
             .collect();
         state.pull_request = settings.pull_request;
-        state.quality_job = with.quality_gate.map(|g| g.name().to_string());
+        state.quality_job = settings.quality_gate_on.then(|| LOCAL_GATE.to_string());
         state.max_quality_rounds = settings.max_quality_rounds;
         let me = object([
             ("host", Value::from(local_host())),
@@ -290,7 +288,7 @@ impl<'a> Workflow<'a> {
             human: with.human,
             interrupt: with.interrupt,
             pid_alive: with.pid_alive,
-            quality_gate: with.quality_gate,
+            quality_gate_on: settings.quality_gate_on,
             indexes: with.indexes,
             state,
             pipeline: Rc::new(pipeline),
@@ -321,7 +319,7 @@ impl<'a> Workflow<'a> {
     ///
     /// Errors: why the run stopped (Stopped); for a failure or an interrupt before the run was done, after recording
     /// it in state.json and writing summary.md, as far as saving still works. An interrupt once the run is done stops
-    /// what is left of its ending, as Python's KeyboardInterrupt there does, and the run stays done.
+    /// what is left of its ending, and the run stays done.
     pub fn run(&mut self) -> Result<Option<String>, Stopped> {
         if self.state.phase == DONE {
             let finished = match self.ending_left() {
@@ -443,8 +441,6 @@ impl<'a> Workflow<'a> {
         if self.state.pull_request {
             self.publish()?;
         }
-        // As Python's KeyboardInterrupt, which the clean-ups' logged failures do not catch.
-        self.clean_up_quality()?;
         self.clean_up_locks();
         self.check_interrupt()
     }
@@ -476,12 +472,6 @@ impl<'a> Workflow<'a> {
             self.check_worktree()?;
         }
         self.check_branch()?;
-        if let Some(gate) = self.quality_gate {
-            if self.state.in_quality(&self.pipeline) {
-                // Before a turn of the gated step that may take half an hour, not after it.
-                gate.check_resume()?;
-            }
-        }
         Ok(())
     }
 
@@ -491,11 +481,11 @@ impl<'a> Workflow<'a> {
         if self.state.worktree.is_some() {
             self.open_worktree()?;
         }
-        match self.quality_gate {
-            Some(gate) => self.check_gate(gate)?,
+        if self.quality_gate_on {
+            self.check_gate()?;
+        } else if self.state.pull_request {
             // Publishing scans what it pushes; the gate's preflight checks gitleaks itself.
-            None if self.state.pull_request => self.host.check_gitleaks()?,
-            None => {}
+            self.host.check_gitleaks()?;
         }
         if self.state.pull_request && self.state.worktree.is_none() {
             self.check_repo()?;
@@ -503,8 +493,10 @@ impl<'a> Workflow<'a> {
         Ok(())
     }
 
-    /// Fail before the interview if the quality gate could not run.
-    fn check_gate(&self, gate: &QualityGate) -> Result<(), OrchestratorError> {
+    /// Fail before the interview if the quality gate could not judge the run's change: cwd has no commit, a run in it
+    /// has changes the snapshots would take, gitleaks, which scans every snapshot first, cannot run, or the host fails
+    /// local_gate::preflight.
+    fn check_gate(&self) -> Result<(), OrchestratorError> {
         let cwd = &self.state.cwd;
         if self.host.git_head(cwd)?.is_none() {
             return Err(OrchestratorError(format!(
@@ -516,7 +508,8 @@ impl<'a> Workflow<'a> {
             // A snapshot takes every change in the tree, so the tree must start with none.
             self.require_clean()?;
         }
-        gate.preflight(self.host, cwd)
+        self.host.check_gitleaks()?;
+        local_gate::preflight(self.host)
     }
 
     /// Before the interview, check out origin's base branch, detached, in the run's worktree.
@@ -648,10 +641,9 @@ impl<'a> Workflow<'a> {
         Ok(())
     }
 
-    /// Record why the run stopped, with the quality job's credentials masked (Jenkins::mask), and that no process
-    /// drives it now, as far as saving still works.
+    /// Record why the run stopped, and that no process drives it now, as far as saving still works.
     fn release(&mut self, error: &str) {
-        self.state.error = Some(self.quality_gate.map_or_else(|| error.to_string(), |gate| gate.mask(error)));
+        self.state.error = Some(error.to_string());
         self.state.owner = None;
         if let Err(e) = self.save() {
             self.human.log(&format!("could not record the failure in state.json: {e}"));
@@ -906,11 +898,11 @@ impl<'a> Workflow<'a> {
             // Before the quality round, so the gate judges the locked files.
             self.hold_locks(step, n)?;
         }
-        if step.quality_gated && (self.quality_gate.is_some() || self.state.quality_round > 0) {
+        if step.quality_gated && (self.quality_gate_on || self.state.quality_round > 0) {
             // The report goes to the next quality round. A round whose gate resume turned off since its last quality
             // round never analyses it, and the next step reads the report all the same (Step::last_path).
             self.state.quality_round += 1;
-            if self.quality_gate.is_some() {
+            if self.quality_gate_on {
                 self.state.phase = QUALITY.to_string();
                 self.save()?;
                 return Ok(None);

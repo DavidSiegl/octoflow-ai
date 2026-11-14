@@ -1,13 +1,11 @@
-//! Pruning run branches. Python's cases, by class (tests/test_orchestrator.py): all of TestPrune, TestSweepSummary,
-//! TestPruneCLI and TestSweepOnRun, and TestHostPullRequest.test_closed_without_a_time, on PruneTest's FakeHost (runs
-//! in /proj, each with pull request #<n> on branch orchestrator/task-<key>); and TestHostGit.test_prune_on_real_git, on
-//! a real origin and clone. Where a Python case replaces a Host method, the Rust one scripts the FakeHost instead:
-//! TestSweepSummary.test_a_sweep_that_fails_is_one_line fails run_states (FakeState::run_states_with) where Python
-//! fails checked_out_branches, and test_state_saved_meanwhile_is_not_overwritten rewrites the state at the first git
-//! command after gh pr view (FakeState::before_git) where Python rewrites it in gh_run. TestPruneCLI.test_target_flags'
-//! usage error is engine/src/cli/args/tests.rs' kind of case, and is kept here with the rest of the class. Besides
-//! Python's: the Ctrl-C (a failure while the Interrupt is raised stops prune, the sweep and the run), and a closedAt
-//! without an offset read in the machine's zone.
+//! Pruning run branches: prune, the sweep's summary, prune's flags and the sweep a run makes, on PruneTest's FakeHost
+//! (runs in /proj, each with pull request #<n> on branch orchestrator/task-<key>); and prune in a real repository with
+//! an origin. A case that needs a Host operation to fail or the world to change meanwhile scripts the FakeHost: a sweep
+//! that fails fails run_states (FakeState::run_states_with), and a state saved meanwhile is rewritten at the first git
+//! command after gh pr view (FakeState::before_git). The usage error of prune's target flags is
+//! engine/src/cli/args/tests.rs' kind of case, kept here with the rest of prune's flags. Also the Ctrl-C (a failure
+//! while the Interrupt is raised stops prune, the sweep and the run), and a closedAt without an offset read in the
+//! machine's zone.
 
 use std::rc::Rc;
 
@@ -195,7 +193,7 @@ fn strings(argv: &[&str]) -> Vec<String> {
     argv.iter().map(|a| a.to_string()).collect()
 }
 
-// -- TestPrune -------------------------------------------------------------------------------------------------------
+// -- prune -----------------------------------------------------------------------------------------------------------
 
 #[test]
 fn merged_at_the_pull_requests_head() {
@@ -748,7 +746,7 @@ fn state_saved_meanwhile_is_not_overwritten() {
     assert_eq!(p.cleanup(&run_id), Value::Null);
 }
 
-// -- TestHostPullRequest.test_closed_without_a_time, and closedAt in the machine's zone ----------------------------
+// -- A pull request closed without a time, and closedAt in the machine's zone --------------------------------------
 
 fn closed_at(at: Option<&str>) -> PullRequest {
     PullRequest { state: "CLOSED".into(), head_ref_oid: PR_HEAD.into(), closed_at: at.map(String::from) }
@@ -769,7 +767,7 @@ fn a_closing_time_without_an_offset_is_not_a_time() {
     assert_eq!(e.0, "PR #7 is closed at \"2026-10-01T12:00:00\", which is not a time");
 }
 
-// -- TestSweepSummary ------------------------------------------------------------------------------------------------
+// -- The sweep's summary ---------------------------------------------------------------------------------------------
 
 impl Prune {
     /// sweep_branches, and what it logged.
@@ -852,7 +850,7 @@ fn a_failure_during_a_ctrl_c_stops_prune_and_the_sweep() {
     assert!(p.log().is_empty());
 }
 
-// -- TestPruneCLI ----------------------------------------------------------------------------------------------------
+// -- prune's flags ---------------------------------------------------------------------------------------------------
 
 #[test]
 fn prints_one_line_per_candidate_run() {
@@ -921,7 +919,7 @@ fn target_flags() {
     assert_eq!(refused.exit_code(), 2);
 }
 
-// -- TestSweepOnRun --------------------------------------------------------------------------------------------------
+// -- The sweep a run makes -------------------------------------------------------------------------------------------
 
 /// The new run's key, as the FakeHerdr's agents of a new run are named.
 fn key_of(name: &str) -> &str {
@@ -1031,7 +1029,7 @@ fn a_run_whose_sweep_a_ctrl_c_stopped_is_interrupted_before_its_state() {
     assert!(t.seen.borrow().is_none());
 }
 
-// -- TestHostGit.test_prune_on_real_git ------------------------------------------------------------------------------
+// -- prune in a real repository --------------------------------------------------------------------------------------
 
 #[test]
 fn prune_on_real_git() {

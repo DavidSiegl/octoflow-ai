@@ -1,5 +1,4 @@
-//! FakeHerdr, the herdr the Workflow tests run on: each role's agent played by a script of turns, as
-//! tests/test_orchestrator.py's FakeHerdr plays it.
+//! FakeHerdr, the herdr the Workflow tests run on: each role's agent played by a script of turns.
 
 use std::cell::{RefCell, RefMut};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -27,7 +26,7 @@ pub(crate) struct FakeHerdr {
     state: RefCell<FakeHerdrState>,
 }
 
-/// A command FakeHerdr was given, as Python's FakeHerdr records it in calls.
+/// A command FakeHerdr was given, as it records it in calls.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Call {
     Workspace { label: String },
@@ -40,13 +39,13 @@ pub(crate) enum Call {
     Close { workspace: String },
 }
 
-/// What a FakeHerdr holds and records. Each field is what Python's FakeHerdr has of that name.
+/// What a FakeHerdr holds and records.
 pub(crate) struct FakeHerdrState {
     /// The run's state as a turn is given it while the host holds no state.json of the run: the test's. Once it holds
     /// one, a turn is given that: the Workflow's state as the run last saved it (its claim, and each phase and step),
-    /// its worktree included, but behind the live state by whatever changed since, as Python's Workflow saves a turn's
-    /// prompted marker only after the prompt. Python's turns share the live state, and may change it; a port of a test
-    /// whose turn needs either needs the Workflow's own state handed to the fake (ticket 08).
+    /// its worktree included, but behind the live state by whatever changed since, as the Workflow saves a turn's
+    /// prompted marker only after the prompt. A test whose turn needs to read or change the live state needs the
+    /// Workflow's own state handed to the fake.
     pub run: RunState,
     /// By role, its agent's turns still to play, in order.
     pub script: HashMap<String, VecDeque<Turn>>,
@@ -80,16 +79,17 @@ pub(crate) struct FakeHerdrState {
     pub blocked_at_start: HashSet<String>,
     /// ("workspace" or "split", cwd) of each workspace created and pane split.
     pub cwds: Vec<(String, String)>,
-    /// What every wait does instead of the above, when set, given (name, timeout_ms, until): a Python test's own
-    /// FakeHerdr.wait.
+    /// What every wait does instead of the above, when set, given (name, timeout_ms, until): a test's own wait.
     pub wait_with: Option<WaitWith>,
     /// The error close_workspace fails with, when set.
     pub close_error: Option<HerdrError>,
-    /// Run before each command calls records, given it, when set: what a Python test does in its own
-    /// FakeHerdr.focus or create_workspace before the fake's.
+    /// The error agent, the look-up of an agent by name, fails with, when set.
+    pub agent_error: Option<HerdrError>,
+    /// Run before each command calls records, given it, when set: what a test does before the fake's own focus,
+    /// workspace or other command.
     pub before_call: Option<BeforeCall>,
     /// The run's Ctrl-C, when set: one a turn raises fails the prompt that played it, so that nothing after the
-    /// prompt runs, as after Python's raise KeyboardInterrupt in a turn, and as ProcessHerdr's prompt fails when the
+    /// prompt runs, as ProcessHerdr's prompt fails when the
     /// Ctrl-C comes while it runs, even once herdr has delivered it.
     pub interrupt: Option<Interrupt>,
     /// Run first by every prompt, given (name, text), when set: an error it gives is the prompt's, which then plays
@@ -132,6 +132,7 @@ impl FakeHerdr {
                 cwds: vec![],
                 wait_with: None,
                 close_error: None,
+                agent_error: None,
                 before_call: None,
                 interrupt: None,
                 prompt_with: None,
@@ -195,7 +196,7 @@ fn role(name: &str) -> &str {
 
 /// The session a harness's arguments resume, as each harness takes them; None for a fresh one.
 pub(crate) fn resumed_session(kind: &str, args: &[String]) -> Option<String> {
-    match harness(kind).expect("a harness of AGENT_KINDS").resume {
+    match harness(kind).expect("a harness of HARNESS_NAMES").resume {
         Resume::Subcommand(word) => (args.first().map(String::as_str) == Some(word)).then(|| args.get(1).cloned())?,
         Resume::Flag(flag) => args.get(args.iter().position(|a| a == flag)? + 1).cloned(),
     }
@@ -288,6 +289,9 @@ impl Herdr for FakeHerdr {
 
     fn agent(&self, name: &str) -> Result<Option<Agent>, HerdrError> {
         let s = self.state();
+        if let Some(e) = s.agent_error.clone() {
+            return Err(e);
+        }
         Ok(s.statuses.get(name).map(|status| Agent { status: status.clone(), session: s.sessions.get(name).cloned() }))
     }
 

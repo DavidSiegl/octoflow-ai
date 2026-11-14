@@ -189,8 +189,7 @@ for none). Commit that file with the change it measures.
 
 - `passed`: how many trials the hidden test accepted. This is the number that matters; the others explain it.
 - `rounds`: review rounds, from `metrics.json` ([Run metrics](#run-metrics)); 1 is approved at the first review.
-- `quality rounds`: quality builds over the run, 0 without `--quality-gate`. The toy repositories have no quality
-  job, and their origin is a bundle no snapshot can be pushed to, so the column stays 0 for the tasks as they are.
+- `quality rounds`: quality rounds over the run, 0 without `--quality-gate`.
 - `wall time`: the engine's run, as the runner measured it.
 - `tokens`: the four counts of [Token usage](#token-usage) summed, over every agent turn of a run, and only for a run
   whose every agent turn's tokens are known; cache reads make up most of a Claude Code run's.
@@ -332,7 +331,9 @@ and asks `gh` whether it merges cleanly now. If it does, `refresh`:
   next `drain` takes up the run's spec once, as though it had cleared the conflict itself
   ([Draining specs](#draining-specs)).
 
-A pull request merged or closed meanwhile only has its conflict forgotten. One that still conflicts, or whose
+A pull request merged or closed meanwhile has its conflict forgotten and the clearing recorded the same way, so
+that the next `drain` settles the run's spec by it: `done` for a merged one, `ready-for-human` for a closed one.
+`refresh` does not touch it otherwise. One that still conflicts, or whose
 mergeability GitHub is still computing, is left as it is, and `refresh` exits `5`; run it again later. It prints
 a line per run.
 
@@ -446,14 +447,13 @@ saves the texts it started with, so editing or deleting a file does not change a
 
 ## The GUI
 
-The Python engine had a window of its own, `gui`, a tk form over the CLI that started `run` and `resume` as child
-processes and listed a project's runs. It went with that engine in 0.49.0: the desktop app in `ui/` replaces it, as
-[ui-options.md](ui-options.md) decided, and is read-only so far.
+The desktop app in `ui/` ([architecture](architecture.md#the-desktop-app-ui)) is the orchestrator's window. It is
+read-only so far.
 
 ## Builds and releases
 
 Jenkins does the building and releasing: the tests, the Linux binary (on every pull request and `main` build, so
-a change that breaks it fails before it is merged; not in a quality build) and, on a merge into `main` that raises
+a change that breaks it fails before it is merged) and, on a merge into `main` that raises
 the version, the release with the Linux binary and desktop app. Jenkins has no Mac, so one GitHub Action
 builds the macOS binary when that release is published and uploads it there. It can only add files to a release
 that exists. It also builds, without uploading, every pull request that touches what goes into the binary, so a
@@ -524,11 +524,11 @@ or conflicts (`.github/workflows/automerge.yml` says which wait).
   | `auto`, `dontAsk`, any other | passed through | dropped | dropped | dropped |
 
 - **`state.json` says its format, and a run an earlier release saved is refused, not migrated.** `"format": 2`
-  leads the file since the engine stopped writing the Python engine's JSON (0.54.0); a `state.json` without it is
+  leads the file since 0.54.0; a `state.json` without it is
   refused by `resume` with what to do (finish or close the run with the release that started it, or remove its run
   directory), and `list` shows it as unreadable, the same hint as its error. `prune` and `close` read only the
   fields they need, so they work on such a run too. Migrating each earlier shape would keep code for states no run
-  writes any more (decided 2026-10-30, the octoflow-without-python spec).
+  writes any more (decided 2026-10-30).
 - **`state.json` saves the permission mode and the harnesses, not Claude Code's arguments.** The arguments
   depend on the harness, which `resume` can change, so they are built at each launch.
 - **Model names are passed as they are.** Every harness takes `--model`; translating names between providers

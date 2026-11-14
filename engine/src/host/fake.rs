@@ -1,5 +1,4 @@
-//! FakeHost, the machine the Workflow tests run on: an in-memory filesystem and git checkout, played as
-//! tests/test_orchestrator.py's FakeHost plays them.
+//! FakeHost, the machine the Workflow tests run on: an in-memory filesystem and git checkout.
 
 use std::cell::{RefCell, RefMut};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -94,7 +93,7 @@ impl FakeClock {
         self.now.advance(seconds);
     }
 
-    /// Set the time to seconds, as a Python test sets clock.now.
+    /// Set the time to seconds.
     pub fn set(&self, seconds: f64) {
         self.now.set(seconds);
     }
@@ -150,7 +149,7 @@ pub(crate) enum PrEdit {
     Ready { url: String },
 }
 
-/// What a FakeHost holds and records. Each field is what Python's FakeHost has of that name.
+/// What a FakeHost holds and records.
 pub(crate) struct FakeState {
     /// Each file's text, by path, in the order first written.
     pub files: Map<String>,
@@ -182,10 +181,9 @@ pub(crate) struct FakeState {
     pub merge_head: bool,
     /// (parent, message) of each snapshot, whose commit is snap<n>.
     pub snapshots: Vec<(String, String)>,
-    /// origin's branches, by name, with their commit: those `push --force` and `push --set-upstream` created, which
-    /// `ls-remote` lists.
+    /// origin's branches, by name, with their commit: those `push --set-upstream` created, which `ls-remote` reads.
     pub remote: Map<String>,
-    /// The stderr of a failing `ls-remote` of origin, which lists remote; None lists it.
+    /// The stderr of a failing `ls-remote` of origin, which reads remote; None reads it.
     pub list_remote_error: Option<String>,
     /// How many more `ls-remote`s fail with list_remote_error, the ones after them succeeding; None: every one.
     pub list_remote_failures_left: Option<u32>,
@@ -257,22 +255,21 @@ pub(crate) struct FakeState {
     pub tree_snapshots: Vec<BTreeMap<String, String>>,
     /// What session_log reads, by (harness, session).
     pub session_logs: HashMap<(String, String), String>,
-    /// Run before each write, given its path and text, when set: an error fails the write, as a Python test's own
-    /// FakeHost.write fails it.
+    /// Run before each write, given its path and text, when set: an error fails the write.
     pub before_write: Option<BeforeWrite>,
     /// Run after each write, given its path, once the file holds the text, when set: where a test stops the run
     /// right after a write, as a crash would (workflow::tests::crash_resume). A hook that unwinds is not put back.
     pub after_write: Option<AfterWrite>,
-    /// Run before each rename, given its path and new path, when set: what a Python test does in its own
-    /// FakeHost.rename before the fake's.
+    /// Run before each rename, given its path and new path, when set, before the fake renames: a test's own step,
+    /// such as changing the world meanwhile.
     pub before_rename: Option<BeforeRename>,
-    /// Run before each git command, given its directory and arguments, when set: what a Python test does in its own
-    /// FakeHost method, such as remove_worktree, before the fake's.
+    /// Run before each git command, given its directory and arguments, when set, before the fake plays it: a test's
+    /// own step, such as failing remove_worktree's command.
     pub before_git: Option<BeforeGit>,
-    /// What run_states answers instead, when set and it gives Some: a Python test's own FakeHost.run_states.
+    /// What run_states answers instead, when set and it gives Some.
     pub run_states_with: Option<RunStatesWith>,
     /// The real host a command the host runs other than git (Host::exec, so run, check and run_files) runs on, a
-    /// process on this machine, when set, as a Python test's `host._run = subprocess.run` makes it: a ProcessHost,
+    /// process on this machine, when set: a ProcessHost,
     /// given the Interrupt that is to stop its commands. Such a command, run_files included, sees the machine's real
     /// files, while read, write and rename stay in `files` and git stays played: a file a test puts there is not one
     /// a real command finds. None: such a command panics the test.
@@ -632,27 +629,16 @@ impl FakeState {
         ok("")
     }
 
-    /// `git push` to origin: a forced push of a commit to a branch, which remote then holds; a local branch pushed with
-    /// `--set-upstream`, which remote then holds at the branch's commit, with a tracking branch; or the delete of a
-    /// branch from remote, which fails when remote has none, and with a lease fails unless remote has it at the commit
-    /// the lease names ("None" for no branch), and drops its tracking branch too.
+    /// `git push` to origin: a local branch pushed with `--set-upstream`, which remote then holds at the branch's
+    /// commit, with a tracking branch; or the delete of a branch from remote with a lease, which fails unless remote
+    /// has it at the commit the lease names ("None" for no branch), and drops its tracking branch too.
     fn git_push(&mut self, args: &[&str]) -> Completed {
         match args {
-            ["push", "--quiet", "--force", "origin", refspec] => {
-                let (commit, git_ref) = refspec.split_once(':').unwrap_or((refspec, ""));
-                self.remote.insert(git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref), commit.to_string());
-            }
             ["push", "--quiet", "--set-upstream", "origin", b] => {
                 let commit = self.branch_commit(b).unwrap_or_else(|| panic!("FakeHost has no branch {b} to push"));
                 let commit = commit.to_string();
                 self.remote.insert(*b, commit);
                 self.tracking.insert(b.to_string());
-            }
-            ["push", "--quiet", "origin", "--delete", git_ref] => {
-                if self.remote.remove(git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref)).is_none() {
-                    let said = format!("error: unable to delete '{git_ref}': remote ref does not exist");
-                    return Completed::new(1, "", &said);
-                }
             }
             ["push", "--quiet", lease, "origin", "--delete", git_ref] if lease.starts_with("--force-with-lease=") => {
                 let b = git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref);
@@ -668,16 +654,13 @@ impl FakeState {
         ok("")
     }
 
-    /// `git ls-remote` of origin: every branch remote holds, which fails with list_remote_error when that is set; or
-    /// the one branch a ref names, nothing when remote has none.
+    /// `git ls-remote` of origin's one branch a ref names, nothing when remote has none; it fails with
+    /// list_remote_error when that is set.
     fn git_ls_remote(&mut self, args: &[&str]) -> Completed {
         if let Some(error) = self.list_remote_error.as_deref().filter(|_| fails(&mut self.list_remote_failures_left)) {
             return Completed::new(128, "", error);
         }
         match args {
-            ["ls-remote", "--heads", "origin"] => {
-                ok(&self.remote.iter().map(|(b, c)| format!("{c}\trefs/heads/{b}\n")).collect::<String>())
-            }
             ["ls-remote", "origin", git_ref] => {
                 let b = git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref);
                 ok(&self.remote.get(b).map(|c| format!("{c}\t{git_ref}\n")).unwrap_or_default())
@@ -718,7 +701,7 @@ impl Host for FakeHost {
         Ok(s.files.contains_key(path) || s.files.keys().any(|p| p.starts_with(&under)))
     }
 
-    /// The path as given, as Python's tests patch resolve_dir to give theirs: a fake's paths are absolute already,
+    /// The path as given: a fake's paths are absolute already,
     /// and none is a link.
     fn resolve_dir(&self, path: &str) -> Result<String, OrchestratorError> {
         Ok(path.to_string())
@@ -1032,7 +1015,7 @@ impl Host for FakeHost {
 
     /// The real host's listing when FakeState::processes is set; else the files of run_dir in `files`, as the real
     /// one lists them (no state.json, no temporary file), by their mtimes, those of one time, and those put straight
-    /// into files (time 0), in the order first written, as Python's ShowHost lists them.
+    /// into files (time 0), in the order first written.
     fn run_files(&self, run_dir: &str) -> Result<Vec<super::RunFile>, OrchestratorError> {
         let s = self.state();
         if let Some(real) = &s.processes {
@@ -1051,9 +1034,9 @@ impl Host for FakeHost {
         Ok(files)
     }
 
-    fn session_log(&self, kind: &str, session: &str) -> Result<Option<Vec<u8>>, OrchestratorError> {
+    fn session_log(&self, name: &str, session: &str) -> Result<Option<Vec<u8>>, OrchestratorError> {
         let s = self.state();
-        Ok(s.session_logs.get(&(kind.to_string(), session.to_string())).map(|log| log.clone().into_bytes()))
+        Ok(s.session_logs.get(&(name.to_string(), session.to_string())).map(|log| log.clone().into_bytes()))
     }
 }
 

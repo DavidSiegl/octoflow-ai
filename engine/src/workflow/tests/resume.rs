@@ -1,10 +1,7 @@
-//! TestResume: a run picked up from its state.json, the agents found alive, resumed into their sessions or started
-//! afresh, each prompted only for what it still owes.
+//! A run picked up from its state.json, the agents found alive, resumed into their sessions or started afresh, each
+//! prompted only for what it still owes.
 //!
-//! Not here: its two cases of RunState.from_dict, which are crate::state's: test_from_dict_incomplete
-//! (a_state_without_its_required_fields_or_with_a_wrong_type_is_refused_naming_the_run, ticket 04) and
-//! test_from_dict_ignores_unknown_keys_and_fills_new_ones
-//! (a_state_with_a_field_it_does_not_know_and_without_later_ones_reads_with_their_defaults).
+//! Not here: reading a state.json with missing, mistyped, unknown or later fields, which is crate::state's.
 
 use std::cell::RefCell;
 
@@ -29,7 +26,7 @@ fn spec_written_while_orchestrator_was_gone() {
     let mut state = RunState::new("20260929-120000-a1b2c3", "add a rate limiter", "/proj");
     state.machine = Some("remote".into());
     state.workspace_id = "w1".into();
-    state.agents.insert("spec", AgentRecord::new("spec-a1b2c3", "w1:p1", DEFAULT_AGENT));
+    state.agents.insert("spec", AgentRecord::new("spec-a1b2c3", "w1:p1", DEFAULT_HARNESS));
     let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![
         ("build", vec![build_turn(1)]),
         ("review", vec![review_turn(1, APPROVE)]),
@@ -83,6 +80,19 @@ fn a_live_agent_saved_without_its_session_has_it_noted_before_its_turn_is_record
     let review = wf.state().turns.iter().find(|t| t.role == "review").expect("a review turn");
     assert_eq!(review.session.as_deref(), Some("s-review"));
     assert_eq!(review.tokens, serde_json::json!({"input": 10, "output": 20, "cache_read": 7, "cache_write": 1}));
+}
+
+#[test]
+fn herdr_failing_to_look_up_a_known_agent_stops_the_run_without_starting_one() {
+    // A skip in place of the failure would start a second Reviewer next to the live one.
+    let state = prompted(saved_run("review", 1, FULL), "build-1.md");
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![("review", vec![review_turn(1, APPROVE)])], &[
+        "review",
+    ], &[]);
+    f.herdr.state().agent_error = Some(crate::herdr::HerdrError::new("server_error", "herdr is down"));
+    let e = failure(f.workflow(f.as_saved()).run());
+    assert!(e.contains("herdr is down"), "{e}");
+    assert!(names(&f, "start").is_empty(), "no agent is started: {:?}", names(&f, "start"));
 }
 
 #[test]

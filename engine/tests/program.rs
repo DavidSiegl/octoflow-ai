@@ -66,10 +66,19 @@ fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
-/// Wait until path exists; panics after PATIENCE.
-fn wait_for(path: &Path) {
+/// The text of path, once it ends with a newline; panics after PATIENCE, or at once when path cannot be read for a
+/// reason other than not existing yet. A script's `echo ... > path` creates the file before it writes the line, so the
+/// file existing does not mean the line is in it.
+fn wait_for_line(path: &Path) -> String {
     let start = Instant::now();
-    while !path.exists() {
+    loop {
+        // Not there yet, or a part of the line: the script is not done writing it.
+        match std::fs::read_to_string(path) {
+            Ok(text) if text.ends_with('\n') => return text,
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => panic!("reading {}: {e}", path.display()),
+        }
         assert!(start.elapsed() < PATIENCE, "{} was not written", path.display());
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -86,7 +95,7 @@ fn a_run_outside_a_herdr_pane_without_a_machine_is_refused() {
 
 #[test]
 fn a_command_about_runs_outside_a_herdr_pane_is_refused_but_workflows_is_not() {
-    // TestCLI.test_refuses_outside_herdr, and the workflows command, which needs no herdr.
+    // The workflows command needs no herdr.
     let dir = Dir::new("herdrless");
     let out = program(&dir, &["list"], Some("")).output().expect("the program runs");
     assert_eq!(out.status.code(), Some(1));
@@ -128,7 +137,7 @@ fn the_hints_and_the_usage_name_the_program_by_the_file_name_it_was_invoked_by()
 
 #[test]
 fn standard_output_that_takes_no_write_is_an_error() {
-    // As Python's print raising OSError ends orchestrator.py with status 1: what the command prints is its product.
+    // What the command prints is its product, so not printing it is an error.
     let dir = Dir::new("full");
     let full = std::fs::OpenOptions::new().write(true).open("/dev/full").expect("/dev/full opens");
     let out = program(&dir, &["workflows"], None).stdout(full).output().expect("the program runs");
@@ -138,8 +147,6 @@ fn standard_output_that_takes_no_write_is_an_error() {
 
 #[test]
 fn no_arguments_print_the_help_as_a_usage_error() {
-    // The tk GUI is not ported (the rust-engine spec's Decisions): the help, where Python without a display says the
-    // command is missing, both with exit status 2.
     let dir = Dir::new("no-args");
     let out = program(&dir, &[], None).output().expect("the program runs");
     assert_eq!(out.status.code(), Some(2));
@@ -167,13 +174,13 @@ fn a_ctrl_c_before_the_run_exits_130_with_the_interrupted_note() {
     let child = program(&dir, &["resume", "a1b2c3", "--machine", "box", "--cwd", "/p"], None)
         .spawn()
         .expect("the program starts");
-    wait_for(&asked);
+    let args = wait_for_line(&asked);
     let started = Instant::now();
     // The group the program leads, which this test made for it.
     killpg(Pid::from_raw(child.id() as i32), Signal::SIGINT).expect("the program's group is signalled");
     let out = child.wait_with_output().expect("the program ends");
     assert!(started.elapsed() < PATIENCE);
-    assert_eq!(std::fs::read_to_string(&asked).unwrap(), "machine list --json\n");
+    assert_eq!(args, "machine list --json\n");
     assert_eq!(out.status.code(), Some(130), "{}", stderr(&out));
     assert_eq!(stderr(&out), "interrupted; the role agents keep running in herdr\n");
 }
@@ -188,8 +195,7 @@ fn a_sigterm_or_a_sighup_before_the_run_ends_the_program_by_it_with_the_interrup
         let child = program(&dir, &["resume", "a1b2c3", "--machine", "box", "--cwd", "/p"], None)
             .spawn()
             .expect("the program starts");
-        wait_for(&pid);
-        let herdr = std::fs::read_to_string(&pid).expect("herdr's pid").trim().to_string();
+        let herdr: u32 = wait_for_line(&pid).trim().parse().expect("herdr's pid");
         let started = Instant::now();
         killpg(Pid::from_raw(child.id() as i32), signal).expect("the program's group is signalled");
         let out = child.wait_with_output().expect("the program ends");
@@ -233,7 +239,7 @@ fn a_run_is_named_by_the_time_in_the_machine_s_zone() {
     assert!(before.as_str() <= time && time <= after.as_str(), "{id} is not between {before} and {after}");
 }
 
-// -- serve: TestServeCommand's process cases, and project_host's (TestProjectHost) through it ---------------------
+// -- serve as a process, and project_host through it --------------------------------------------------------------
 
 /// A started serve, its first line read: the process, its url and token, and the rest of its standard output.
 struct Serving {
@@ -325,7 +331,7 @@ fn serve_prints_one_json_line_then_serves_until_a_sigint_or_sigterm() {
 
 #[test]
 fn serve_ends_at_a_sighup_by_it() {
-    // As SIGHUP's default action ends Python's serve, which handles only SIGINT and SIGTERM.
+    // serve handles only SIGINT and SIGTERM; SIGHUP's default action ends it.
     let dir = Dir::new("serve-hup");
     let (ended, _, err) = Serving::start(&dir, &[]).stop(Signal::SIGHUP);
     assert_eq!(ended.signal(), Some(Signal::SIGHUP as i32), "{ended:?}: {err}");
@@ -333,7 +339,7 @@ fn serve_ends_at_a_sighup_by_it() {
 
 #[test]
 fn serve_stops_at_a_sigint_it_started_with_ignored() {
-    // As Python's signal.signal replaces the disposition a Jenkins sh step's SIGINT has: ignored.
+    // serve installs its own SIGINT handling over the ignored disposition a Jenkins sh step starts it with.
     let dir = Dir::new("serve-ignored");
     let command = program(&dir, &["serve"], None);
     let args: Vec<_> = command.get_args().map(|a| a.to_os_string()).collect();
@@ -364,7 +370,7 @@ fn serve_with_a_closed_stdout_ends_naming_why() {
 
 #[test]
 fn serve_reaches_a_machine_by_its_saved_target() {
-    // TestProjectHost: herdr names the machine's SSH target, and ssh, played by a script here, runs each command
+    // herdr names the machine's SSH target, and ssh, played by a script here, runs each command
     // where the project is; with no machine, herdr is not asked.
     let dir = Dir::new("serve-machine");
     let asked = dir.0.join("asked");

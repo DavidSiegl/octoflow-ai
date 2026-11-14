@@ -1,12 +1,6 @@
 //! The command line: what parse_args reads, the usage errors of check_flag_values and check_spec_args, and the flags
-//! each command's help names, held to orchestrator.py's (the oracle engine/tests/oracle/cli.json). Python's cases of
-//! parse_args alone, by class: TestCLI's test_machine_requires_cwd, test_max_rounds_must_be_positive and
-//! test_model_flags_are_run_only; TestResumeCLI.test_machine_requires_cwd; TestWorkflowCLI's
-//! test_unknown_workflow_is_an_argparse_error and test_resume_has_no_workflow_flag; TestWorkflowFileCLI.test_bad_flags;
-//! TestSpecCLI's test_a_task_or_spec_is_needed, test_resume_takes_no_spec and test_run_help_lists_spec;
-//! TestHarnessFlags.test_unknown_kinds_are_argparse_errors; TestQualityCLI.test_flag_checks; the parse_args halves of
-//! TestResumePullRequest.test_no_pr_is_saved_with_the_run and TestWorktreeRun.test_a_run_flag; TestListJSON's
-//! test_pr_state_needs_json. Their cases of main are crate::cli's tests; the others here are the Rust engine's.
+//! each command's help names, held to the recorded set in engine/tests/oracle/cli.json. Cases that need main rather
+//! than parse_args alone are crate::cli's tests.
 
 use clap::error::ErrorKind;
 
@@ -51,7 +45,7 @@ fn a_run_with_nothing_but_its_task_has_every_flag_unset() {
     assert_eq!(args.task.as_deref(), Some("Add a subtract function"));
     assert_eq!((args.spec, args.no_pr, args.target), (None, false, Target::default()));
     assert_eq!(args.settings, Settings::default());
-    let starts = Starts { workflow: "default".into(), workflow_file: None, worktree: false, quality_gate: None };
+    let starts = Starts { workflow: "default".into(), workflow_file: None, worktree: false, quality_gate: false };
     assert_eq!(args.starts, starts);
 }
 
@@ -74,7 +68,7 @@ fn every_flag_of_run() {
         "--machine", "box", "--cwd", "/p", "--max-rounds", "4", "--timeout", "90", "--permission-mode", "plan",
         "--model", "m", "--spec-model", "s", "--review-model", "r", "--role-model", "build=b", "--role-model",
         "build=b2", "--agent", "codex", "--role-agent", "review=agy", "--max-quality-rounds", "2",
-        "--workflow-file", "/w.toml", "--worktree", "--quality-gate", "f/job", "--spec", "/s.md", "--no-pr", "task",
+        "--workflow-file", "/w.toml", "--worktree", "--quality-gate", "local", "--spec", "/s.md", "--no-pr", "task",
     ]);
     assert_eq!(args.target, Target { machine: Some("box".into()), cwd: Some("/p".into()) });
     assert_eq!(args.target.flags(), ["--machine", "box", "--cwd", "/p"]);
@@ -85,21 +79,17 @@ fn every_flag_of_run() {
     assert_eq!(s.role_model, [pair("build", "b"), pair("build", "b2")]);
     assert_eq!(s.role_agent, [pair("review", "agy")]);
     assert_eq!((args.starts.workflow_file.as_deref(), args.starts.worktree), (Some("/w.toml"), true));
-    assert_eq!(args.starts.quality_gate.as_deref(), Some("f/job"));
+    assert!(args.starts.quality_gate);
     assert_eq!((args.spec.as_deref(), args.no_pr, args.task.as_deref()), (Some("/s.md"), true, Some("task")));
 }
 
 #[test]
 fn every_flag_of_resume() {
-    let args = resume(&["a1b2c3", "--force", "--quality-gate", "job", "--max-rounds", "5"]);
-    assert_eq!((args.run_ref.as_str(), args.force, args.quality_gate.as_deref()), ("a1b2c3", true, Some("job")));
+    let args = resume(&["a1b2c3", "--force", "--quality-gate", "local", "--max-rounds", "5"]);
+    assert_eq!((args.run_ref.as_str(), args.force, args.quality_gate), ("a1b2c3", true, true));
     assert_eq!((args.no_quality_gate, args.settings.max_rounds), (false, Some(5)));
     assert!(resume(&["a1b2c3", "--no-quality-gate"]).no_quality_gate);
-    // `local` is the local gate, and `/local` the top-level job of that name: both reach crate::ci::QualityGate::named.
-    for gate in ["local", "/local"] {
-        assert_eq!(resume(&["a1b2c3", "--quality-gate", gate]).quality_gate.as_deref(), Some(gate));
-    }
-    // argparse takes an abbreviation that names one flag.
+    // An abbreviation that names one flag is that flag.
     assert_eq!(resume(&["a1b2c3", "--max-r", "2"]).settings.max_rounds, Some(2));
 }
 
@@ -129,21 +119,20 @@ fn usage_errors_exit_2_naming_the_problem() {
         (&["resume", "a1b2c3", "--machine", "box", "--cwd", ""], "--cwd is required with --machine"),
         (&["run", "--max-rounds", "0", "t"], "--max-rounds must be at least 1"),
         (&["resume", "a1b2c3", "--max-rounds", "-1"], "--max-rounds must be at least 1"),
-        (&["run", "--max-quality-rounds", "0", "--quality-gate", "j", "t"], "--max-quality-rounds must be at least 1"),
+        (&["run", "--max-quality-rounds", "0", "--quality-gate", "local", "t"], "--max-quality-rounds must be at least 1"),
         (&["run", "--max-quality-rounds", "2", "t"], "--max-quality-rounds needs --quality-gate"),
-        (&["run", "--max-quality-rounds", "2", "--quality-gate", "", "t"], "--max-quality-rounds needs --quality-gate"),
         (&["resume", "a1b2c3", "--max-quality-rounds", "2", "--no-quality-gate"], "does not apply with --no-quality-gate"),
-        (&["run", "--quality-gate", "a//b", "t"], "--quality-gate takes a Jenkins job's full name"),
-        (&["resume", "a1b2c3", "--quality-gate", "//a"], "--quality-gate takes a Jenkins job's full name"),
-        (&["run", "--quality-gate", "/", "t"], "--quality-gate takes a Jenkins job's full name"),
-        (&["judged-in-quality", "--quality-gate", "local", "--target", "main"], "a top-level job named local is /local"),
+        (&["run", "--quality-gate", "folder/job", "t"], "the Jenkins quality gate was removed in 0.72.0; use --quality-gate local"),
+        (&["drain", "--quality-gate", "folder/job", "dir"], "the Jenkins quality gate was removed in 0.72.0"),
+        (&["resume", "a1b2c3", "--quality-gate", "/local"], "the Jenkins quality gate was removed in 0.72.0"),
+        (&["run", "--quality-gate", "", "t"], "the Jenkins quality gate was removed in 0.72.0"),
         (&["run", "--role-model", "build", "t"], "expected ROLE=MODEL, not \"build\""),
         (&["run", "--role-model", "=m", "t"], "expected ROLE=MODEL"),
         (&["run", "--role-agent", "build=vim", "t"], "expected ROLE=KIND, where KIND is one of agy, claude, codex, opencode, pi; not \"build=vim\""),
         (&["run", "--agent", "vim", "t"], "vim"),
         (&["run", "--max-rounds", "two", "t"], "two"),
         (&["run", "--workflow", "default", "--workflow-file", "/w.toml", "t"], "--workflow-file"),
-        (&["resume", "a1b2c3", "--quality-gate", "j", "--no-quality-gate"], "--no-quality-gate"),
+        (&["resume", "a1b2c3", "--quality-gate", "local", "--no-quality-gate"], "--no-quality-gate"),
         (&["resume"], "RUN"),
         (&["list", "--pr-state"], "--pr-state needs --json"),
         (&["show"], "RUN"),
@@ -180,7 +169,7 @@ fn version_exits_0_with_the_engines_version() {
     }
 }
 
-// -- Python's cases of parse_args ------------------------------------------------------------------------------------
+// -- Usage errors and what each command takes ------------------------------------------------------------------------
 
 #[test]
 fn machine_requires_cwd() {
@@ -204,7 +193,6 @@ fn model_flags_are_run_only() {
 #[test]
 fn unknown_workflow_is_a_usage_error() {
     let (message, status) = refused(&["run", "task", "--workflow", "nope"]);
-    // clap's wording of argparse's "argument --workflow: invalid choice: 'nope' (choose from default)".
     assert!(message.contains("invalid value 'nope' for '--workflow"), "{message}");
     assert!(message.contains("[possible values: default]"), "{message}");
     assert_eq!(status, 2);
@@ -232,7 +220,7 @@ fn bad_workflow_file_flags() {
 fn a_task_or_spec_is_needed() {
     let (message, status) = refused(&["run"]);
     assert!(message.contains("a task or --spec FILE is needed"), "{message}");
-    // The run command's usage, as argparse's "orchestrator.py run: error: ...".
+    // The run command's usage, not the program's.
     assert!(message.contains("Usage: orchestrator run"), "{message}");
     assert_eq!(status, 2);
 }
@@ -280,15 +268,15 @@ fn quality_flag_checks() {
         &["run", "t", "--max-quality-rounds", "2"],
         &["run", "t", "--quality-gate", "/folder/"],
         &["resume", "a1b2c3", "--quality-gate", "/folder/"],
-        &["resume", "a1b2c3", "--quality-gate", "folder/job", "--no-quality-gate"],
+        &["resume", "a1b2c3", "--quality-gate", "local", "--no-quality-gate"],
         &["resume", "a1b2c3", "--no-quality-gate", "--max-quality-rounds", "2"],
         &["resume", "a1b2c3", "--max-quality-rounds", "0"],
     ];
     for argv in argvs {
         assert_eq!(refused(argv).1, 2, "{argv:?}");
     }
-    let args = run(&["t", "--quality-gate", "folder/job", "--max-quality-rounds", "2"]);
-    assert_eq!((args.starts.quality_gate.as_deref(), args.settings.max_quality_rounds), (Some("folder/job"), Some(2)));
+    let args = run(&["t", "--quality-gate", "local", "--max-quality-rounds", "2"]);
+    assert_eq!((args.starts.quality_gate, args.settings.max_quality_rounds), (true, Some(2)));
 }
 
 #[test]
@@ -312,9 +300,9 @@ fn the_commands_about_runs_and_workflows() {
     assert!(refused(&["workflows", "--cwd", "/p"]).0.contains("--cwd"));
 }
 
-// -- The flags each command's help names, as orchestrator.py's ------------------------------------------------------
+// -- The flags each command's help names -----------------------------------------------------------------------------
 
-/// The flags text names, as engine/tests/oracle/cli.py finds them: each long flag (two hyphens, lowercase words
+/// The flags text names, as cli.json's lists were found: each long flag (two hyphens, lowercase words
 /// joined by hyphens) or -h that stands alone, not part of a longer word.
 fn flags_in(text: &str) -> std::collections::BTreeSet<String> {
     let word = |c: char| c.is_alphanumeric() || c == '_' || c == '-';
@@ -332,48 +320,48 @@ fn flags_in(text: &str) -> std::collections::BTreeSet<String> {
 }
 
 #[test]
-fn help_names_the_flags_python_names() {
-    let oracle = crate::test_support::oracle("cli.json");
+fn each_help_names_the_flags_cli_json_records() {
+    let recorded = crate::test_support::oracle("cli.json");
     let names = |key: &str| -> Vec<String> {
-        oracle.get(key).and_then(Value::as_array).expect("the oracle lists them").iter().map(Value::text).collect()
+        recorded.get(key).and_then(Value::as_array).expect("cli.json lists them").iter().map(Value::text).collect()
     };
     let commands = names("commands");
-    let flags = oracle.get("flags").and_then(Value::as_object).expect("the oracle has the flags");
+    let flags = recorded.get("flags").and_then(Value::as_object).expect("cli.json has the flags");
     let p = parser(&ConfigDir::at("/nowhere"));
-    let ported: Vec<String> = p.get_subcommands().map(|c| c.get_name().to_string()).collect();
+    let subcommands: Vec<String> = p.get_subcommands().map(|c| c.get_name().to_string()).collect();
     // The program's own help, then each command's.
-    for (name, argv) in std::iter::once(("", vec!["--help"])).chain(ported.iter().map(|c| (c.as_str(), vec![c.as_str(), "--help"]))) {
+    for (name, argv) in std::iter::once(("", vec!["--help"])).chain(subcommands.iter().map(|c| (c.as_str(), vec![c.as_str(), "--help"]))) {
         let help = parse(&argv).unwrap_err().to_string();
-        let mut python: std::collections::BTreeSet<String> = flags
+        let mut expected: std::collections::BTreeSet<String> = flags
             .get(name)
             .and_then(Value::as_array)
             .unwrap_or_else(|| panic!("cli.json has no command {name}"))
             .iter()
             .map(Value::text)
             .collect();
-        // The Rust engine's own: orchestrator.py had no --version (run-usability/01), nor doctor's --setup-gate and
-        // the --quality-gate its help names (doctor-gate-setup/01).
+        // Flags added since cli.json was recorded: --version (run-usability/01), doctor's --setup-gate and the
+        // --quality-gate its help names (doctor-gate-setup/01).
         if name.is_empty() {
-            python.insert("--version".into());
+            expected.insert("--version".into());
         }
         if name == "doctor" {
-            python.extend(["--setup-gate".into(), "--quality-gate".into()]);
+            expected.extend(["--setup-gate".into(), "--quality-gate".into()]);
         }
-        // --permission-mode's help names agy's flags where Python's named gemini's (GitHub issue #125).
-        if python.remove("--approval-mode") {
-            python.extend(["--mode".into(), "--dangerously-skip-permissions".into()]);
+        // --permission-mode's help names agy's flags, which replaced gemini's (GitHub issue #125).
+        if expected.remove("--approval-mode") {
+            expected.extend(["--mode".into(), "--dangerously-skip-permissions".into()]);
         }
-        assert_eq!(flags_in(&help), python, "{name:?}'s help:\n{help}");
+        assert_eq!(flags_in(&help), expected, "{name:?}'s help:\n{help}");
     }
+    // cli.json's gui is no command of this program.
     let missing: Vec<&str> =
-        commands.iter().map(String::as_str).filter(|c| !ported.iter().any(|p| p == c) && *c != "gui").collect();
+        commands.iter().map(String::as_str).filter(|c| !subcommands.iter().any(|p| p == c) && *c != "gui").collect();
     assert_eq!(missing, Vec::<&str>::new());
-    assert!(ported.iter().all(|c| commands.contains(c)), "{ported:?}");
+    assert!(subcommands.iter().all(|c| commands.contains(c)), "{subcommands:?}");
 }
 
 #[test]
 fn a_flag_given_twice_takes_the_last() {
-    // As argparse's store action does.
     let args = run(&["--cwd", "/a", "--max-rounds", "2", "--cwd", "/b", "--max-rounds", "3", "--no-pr", "--no-pr", "t"]);
     assert_eq!((args.target.cwd.as_deref(), args.settings.max_rounds, args.no_pr), (Some("/b"), Some(3), true));
     let show = parse(&["show", "--machine", "a", "--machine", "b", "--cwd", "/p", "x"]).unwrap();
@@ -386,7 +374,7 @@ fn serve_takes_each_origin_given() {
     assert_eq!(parse(&["serve"]).unwrap(), Command::Serve(vec![]));
     let both = parse(&["serve", "--origin", "tauri://localhost", "--origin=http://localhost:1420"]).unwrap();
     assert_eq!(both, Command::Serve(vec!["tauri://localhost".to_string(), "http://localhost:1420".to_string()]));
-    // argparse takes an abbreviation of a long flag.
+    // An abbreviation of a long flag is that flag.
     assert_eq!(parse(&["serve", "--or", "x"]).unwrap(), Command::Serve(vec!["x".to_string()]));
     assert_eq!(parse(&["serve", "--origin"]).unwrap_err().exit_code(), 2);
     assert_eq!(parse(&["serve", "x"]).unwrap_err().exit_code(), 2);

@@ -5,7 +5,7 @@ use crate::json::object;
 use crate::state::AgentRecord;
 
 #[test]
-fn every_recorded_run_is_summed_up_as_the_python_engine_does() {
+fn every_recorded_run_is_summed_up_as_helpers_json_expects() {
     let cases = helper_cases();
     assert!(cases.len() >= 40, "helpers.json holds {} runs", cases.len());
     for case in cases {
@@ -14,7 +14,7 @@ fn every_recorded_run_is_summed_up_as_the_python_engine_does() {
         let pipeline = case.state.pipeline().ok();
         let rounds: Vec<String> = (1..=case.state.round).map(|k| format!("Round {k}: as recorded")).collect();
         assert_eq!(pipeline.map(|p| run_summary(&case.state, &p, &rounds, case.now)), expected("run_summary"), "{place}");
-        // The keys and values the Python engine wrote, its spacing aside.
+        // The keys and values helpers.json records, its spacing aside.
         let recorded = expected("run_metrics").map(|text| serde_json::from_str::<Value>(&text).unwrap());
         assert_eq!(Some(run_metrics(&case.state, case.now)), recorded, "{place}");
         let lines = Value::Array(turn_lines(&case.state.turns, &jiff::tz::TimeZone::UTC).into_iter().map(Value::from).collect());
@@ -51,8 +51,7 @@ fn times_are_written_and_read_as_rfc_3339() {
     }
 }
 
-/// A turn record that started and ended this many seconds after 2026-10-03T04:00:00, as tests/test_orchestrator.py's
-/// turn() makes one.
+/// A turn record that started and ended this many seconds after 2026-10-03T04:00:00.
 fn turn(step: &str, file: &str, start: Option<i64>, end: Option<i64>, change: impl FnOnce(&mut Object)) -> TurnRecord {
     let at = |s: Option<i64>| Value::from(s.map(|s| iso_utc(1_791_000_000 + s)));
     let mut t: Object = object([
@@ -117,7 +116,7 @@ fn a_run_without_turns_or_an_end_says_so() {
     assert!(summary.contains("- **Wall time:** ?, from the first turn's start to 1970-01-01T00:00:00+00:00\n"));
     assert!(summary.contains("## Task\n\nt\n") && summary.ends_with("## Turns\n\nNo turns were recorded.\n"));
     s.error = None;
-    s.agent_kinds.insert("build", "pi".to_string());
+    s.next_harnesses.insert("build", "pi".to_string());
     let summary = run_summary(&s, &DEFAULT_WORKFLOW, &[], 0);
     assert!(summary.contains("- **Outcome:** unfinished\n") && summary.contains("| Builder (build) | pi | default |"));
     let metrics = run_metrics(&s, 10);
@@ -146,12 +145,12 @@ fn turns_with_unknown_starts_and_ends_and_quality_rounds() {
 }
 
 #[test]
-fn turn_tokens_sums_the_answers_within_the_turn_as_the_python_engine_does() {
-    // TestRunMetrics.test_turn_tokens_needs_a_known_window_and_a_harness_it_reads, and more turns, over each Claude
-    // Code log of harness.json and over no log.
+fn turn_tokens_sums_the_answers_within_the_turn() {
+    // A turn needs a known window and a harness whose log it reads; over each Claude Code log of harness.json and
+    // over no log.
     let recorded = oracle("harness.json");
-    // Each log's usage, None for the one of Python's time forms, which this engine reads otherwise
-    // (crate::harness's a_time_is_read_only_with_its_offset): its expected sums are not compared.
+    // Each log's usage, None for the case of times in each form, which this engine reads otherwise than harness.json
+    // records (crate::harness's a_time_is_read_only_with_its_offset): its expected sums are not compared.
     let logs: Vec<Option<Vec<Usage>>> = recorded.get("session_usage").and_then(Value::as_array).unwrap().iter()
         .map(|case| case.as_array().unwrap())
         .filter(|case| case[0].as_str() == Some("claude"))

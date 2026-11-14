@@ -1,4 +1,4 @@
-//! TestOneRunPerCheckout: a run refuses to go on while another run in its checkout is live, since both would edit one
+//! A run refuses to go on while another run in its checkout is live, since both would edit one
 //! tree, and a worktree run neither refuses nor counts. Its resume --force cases, which go through resumable_state, are
 //! crate::cli's (cli/start/tests.rs).
 

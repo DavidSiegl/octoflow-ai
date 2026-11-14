@@ -5,8 +5,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use xtask::TempDir;
-
 /// An engine/Cargo.toml whose [package] has version, between tables whose own version lines must not be taken for it.
 fn manifest(version: &str) -> String {
     format!(
@@ -26,14 +24,15 @@ fn git(dir: &Path, args: &[&str]) -> String {
 /// origin's main does too; origin is a bare repository beside it. Removed when dropped.
 struct Repo {
     /// Holds the repository and its origin; kept for its Drop.
-    _dir: TempDir,
+    _dir: tempfile::TempDir,
     /// The repository's top level.
     path: PathBuf,
 }
 
 impl Repo {
     fn new() -> Repo {
-        let dir = TempDir::new("xtask-version-raised-test-").expect("a temporary directory");
+        let dir =
+            tempfile::Builder::new().prefix("xtask-version-raised-test-").tempdir().expect("a temporary directory");
         let path = dir.path().join("repo");
         let origin = dir.path().join("origin.git");
         git(dir.path(), &["init", "--quiet", "-b", "main", path.to_str().expect("UTF-8")]);

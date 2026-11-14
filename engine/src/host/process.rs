@@ -28,6 +28,12 @@ pub const SSH_ALIVE_COUNT: u64 = 3;
 /// The longest control socket path ssh can bind, in bytes: a Unix socket's path is at most 103 on macOS (sun_path holds
 /// 104 with its NUL; 108 on Linux), and ssh binds a temporary name 17 bytes longer before renaming it.
 const SSH_SOCKET_PATH_MAX: usize = 103 - 17;
+/// What OpenSSH's client prints, exiting 255, when the master of a shared connection asked for one more session is
+/// refused it by the server, as one with `MaxSessions 1` refuses the second (mux.c, mux_session_confirm). The
+/// command has not started on the server then.
+const SSH_SESSION_REFUSED: &str = "Session open refused by peer";
+/// The ssh options of a command that neither uses nor becomes a shared connection, whatever ssh_config says.
+const SSH_UNSHARED: [&str; 2] = ["ControlMaster=no", "ControlPath=none"];
 /// The name of a control directory: this prefix, then 8 characters of its own, as mkdtemp names one.
 const SSH_DIR_PREFIX: &str = "octoflow-ssh-";
 
@@ -36,7 +42,8 @@ const SSH_DIR_PREFIX: &str = "octoflow-ssh-";
 /// A command fails as interrupted when the Interrupt it was given is raised while it runs (run_process).
 ///
 /// Clones, and the hosts over_ssh makes, share their SSH control directory, which the last of them to be dropped
-/// removes.
+/// removes, and the targets whose servers refused a session on a shared connection: a command so refused runs again
+/// on a connection of its own, as do all later commands to that target.
 #[derive(Clone)]
 pub struct ProcessHost {
     /// The SSH target its commands run on; None for this machine. Never empty.
@@ -46,7 +53,7 @@ pub struct ProcessHost {
     env: Arc<Vec<(OsString, OsString)>>,
     /// Runs one command, over SSH the ssh that carries it: run_process, stopped by the host's Interrupt.
     run: Arc<RunCommand>,
-    /// This engine's SSH control sockets.
+    /// This engine's SSH control sockets, and the targets that cannot share them.
     ssh: Arc<Mutex<SshControl>>,
 }
 
@@ -71,7 +78,7 @@ impl ProcessHost {
     }
 
     /// As in_environment, each command run by run in place of a process, ssh included for a host over_ssh makes of
-    /// it: Python's Host(run=...), for the tests.
+    /// it, for the tests.
     pub(crate) fn with_runner(
         vars: impl Iterator<Item = (OsString, OsString)>,
         run: impl Fn(&[String], Option<&[u8]>, Option<Duration>, &[(OsString, OsString)]) -> Result<(i32, Vec<u8>, Vec<u8>), ProcessError>
@@ -88,7 +95,7 @@ impl ProcessHost {
     }
 
     /// A Host that runs its commands on ssh_target over SSH, starting them as this one does; on this machine when
-    /// ssh_target is empty, as Python's Host takes an empty target.
+    /// ssh_target is empty.
     pub fn over_ssh(&self, ssh_target: &str) -> ProcessHost {
         ProcessHost { ssh_target: (!ssh_target.is_empty()).then(|| ssh_target.to_string()), ..self.clone() }
     }
@@ -98,6 +105,22 @@ impl ProcessHost {
         self.env.iter().rev().find(|(k, _)| k == name).and_then(|(_, v)| v.to_str()).map(String::from)
     }
 
+    /// Host::exec of argv on this machine, ssh included.
+    fn exec_here(&self, argv: Vec<String>, stdin: Option<&[u8]>, timeout: u64) -> Result<Exec, ExecError> {
+        let command = shlex_join(&argv);
+        let failed = |why: String| ExecError::Failed(OrchestratorError(format!("{command}: {why}")));
+        match (self.run)(&argv, stdin, Some(Duration::from_secs(timeout)), &self.env) {
+            Ok((status, stdout, stderr)) => Ok(Exec { command, status, stdout, stderr }),
+            Err(ProcessError::Start(e)) if e.kind() == ErrorKind::NotFound => {
+                Err(ExecError::NotFound(OrchestratorError(format!("{command}: {}", os_error(&e, Some(&argv[0]))))))
+            }
+            Err(ProcessError::Start(e)) => Err(failed(os_error(&e, Some(&argv[0])))),
+            Err(ProcessError::Io(e)) => Err(failed(os_error(&e, None))),
+            Err(ProcessError::Timeout) => Err(failed(timed_out(&argv, timeout))),
+            Err(ProcessError::Interrupted) => Err(failed("interrupted".to_string())),
+        }
+    }
+
     /// The ssh options that let this host's commands to one target share a single connection (ssh_config(5),
     /// ControlMaster), which ends SSH_CONTROL_PERSIST_SECONDS after its last command, or once it stops answering
     /// (SSH_ALIVE_INTERVAL_SECONDS). Its socket is in a directory only the user can use, under $XDG_RUNTIME_DIR, else
@@ -105,10 +128,15 @@ impl ProcessHost {
     /// last host that shares it is dropped.
     ///
     /// Empty when no such directory with a socket path ssh accepts can be made: ssh would fail the command, not
-    /// connect on its own (ssh_config(5), ControlPath), so the command runs unshared.
+    /// connect on its own (ssh_config(5), ControlPath), so the command runs unshared. For a target whose server refused
+    /// a session on a shared connection (SSH_SESSION_REFUSED), SSH_UNSHARED: no connection of the user's own
+    /// ssh_config either.
     pub(super) fn ssh_sharing_options(&self) -> Vec<String> {
         // A poisoned lock only means another thread panicked while it held it; the control is still whole.
         let mut control = self.ssh.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if self.ssh_target.as_ref().is_some_and(|target| control.refused.contains(target)) {
+            return SSH_UNSHARED.into_iter().flat_map(|option| ["-o", option]).map(String::from).collect();
+        }
         if control.dir.as_deref().is_some_and(private_dir) {
             return control.options.clone();
         }
@@ -149,22 +177,17 @@ impl Host for ProcessHost {
     }
 
     fn exec(&self, argv: &[&str], stdin: Option<&[u8]>, timeout: u64) -> Result<Exec, ExecError> {
-        let argv: Vec<String> = match &self.ssh_target {
-            Some(target) => ssh_argv(target, self.ssh_sharing_options(), argv),
-            None => argv.iter().map(|a| a.to_string()).collect(),
+        let Some(target) = &self.ssh_target else {
+            return self.exec_here(argv.iter().map(|a| a.to_string()).collect(), stdin, timeout);
         };
-        let command = shlex_join(&argv);
-        let failed = |why: String| ExecError::Failed(OrchestratorError(format!("{command}: {why}")));
-        match (self.run)(&argv, stdin, Some(Duration::from_secs(timeout)), &self.env) {
-            Ok((status, stdout, stderr)) => Ok(Exec { command, status, stdout, stderr }),
-            Err(ProcessError::Start(e)) if e.kind() == ErrorKind::NotFound => {
-                Err(ExecError::NotFound(OrchestratorError(format!("{command}: {}", os_error(&e, Some(&argv[0]))))))
-            }
-            Err(ProcessError::Start(e)) => Err(failed(os_error(&e, Some(&argv[0])))),
-            Err(ProcessError::Io(e)) => Err(failed(os_error(&e, None))),
-            Err(ProcessError::Timeout) => Err(failed(timed_out(&argv, timeout))),
-            Err(ProcessError::Interrupted) => Err(failed("interrupted".to_string())),
+        let exec = self.exec_here(ssh_argv(target, self.ssh_sharing_options(), argv), stdin, timeout)?;
+        let refused = exec.status == 255 && String::from_utf8_lossy(&exec.stderr).contains(SSH_SESSION_REFUSED);
+        // Once per target: a command refused on a connection of its own has nowhere better to go. ssh refuses before
+        // the command starts, so the rerun runs it once, unless the command itself relayed such a refusal.
+        if refused && self.ssh.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).refused.insert(target.clone()) {
+            return self.exec_here(ssh_argv(target, self.ssh_sharing_options(), argv), stdin, timeout);
         }
+        Ok(exec)
     }
 }
 
@@ -175,7 +198,7 @@ fn ssh_argv(target: &str, options: Vec<String>, argv: &[&str]) -> Vec<String> {
     batch.into_iter().chain(options).chain([target.to_string(), shlex_join(argv)]).collect()
 }
 
-/// What Python's subprocess.TimeoutExpired says of argv, run with a timeout of seconds.
+/// What the error of argv's timeout says, run with a timeout of seconds.
 fn timed_out(argv: &[String], seconds: u64) -> String {
     let listed: Vec<String> = argv.iter().map(|a| format!("{a:?}")).collect();
     format!("Command '[{}]' timed out after {seconds} seconds", listed.join(", "))
@@ -196,11 +219,11 @@ pub(crate) enum ProcessError {
 }
 
 /// How long a command has after the SIGINT of an Interrupt to exit before its process group is killed (SIGKILL), in
-/// milliseconds: Python's subprocess waits as long (Popen._sigint_wait_secs) for a child to exit on the Ctrl-C it got
-/// too before it kills it. The SIGINT first lets git remove its lock files, as it does at a Ctrl-C.
+/// milliseconds. The SIGINT first lets git remove its lock files, as it does at a Ctrl-C, which takes it a few
+/// milliseconds; 250 leaves room for a loaded machine and still ends a run without a wait the human notices.
 const INTERRUPT_GRACE_MS: u64 = 250;
 
-/// argv's exit status, as Python's returncode gives it, and its standard output and error, once it has exited and
+/// argv's exit status (Exec::status), and its standard output and error, once it has exited and
 /// closed both: run with exactly env as its environment, argv[0] found on its PATH, stdin as its standard input (none
 /// when None), in a process group of its own, so that when it has not finished within timeout, it and every process it
 /// started that stayed in its group are killed (SIGKILL); a timeout of None lets it run as long as it takes. When
@@ -244,8 +267,7 @@ pub(crate) fn run_process(
         pending += 1;
         thread::spawn(move || {
             let written = match pipe.write_all(&data) {
-                // A command that stops reading its input is judged by its status and output, as Python's
-                // communicate judges it.
+                // A command that stops reading its input is judged by its status and output.
                 Err(e) if e.kind() == ErrorKind::BrokenPipe => Ok(()),
                 done => done,
             };
@@ -408,19 +430,22 @@ fn kill_group(child: &Child, signal: Signal) -> std::io::Result<()> {
     }
 }
 
-/// An engine's SSH control sockets, for ssh_sharing_options.
+/// An engine's SSH control sockets, and the targets that cannot share them, for ssh_sharing_options.
 #[derive(Debug, Default)]
 struct SshControl {
     /// The directory, made by this engine, they are in; None while there is none.
     dir: Option<String>,
     /// ssh_sharing_options' answer while dir is that directory.
     options: Vec<String>,
+    /// The SSH targets whose server refused a session on a shared connection (SSH_SESSION_REFUSED); none of their
+    /// commands shares one.
+    refused: std::collections::HashSet<String>,
 }
 
 impl Drop for SshControl {
     fn drop(&mut self) {
         if let Some(dir) = &self.dir {
-            // As Python's atexit rmtree(ignore_errors=True): a directory something else removed is no failure, and
+            // A directory something else removed is no failure, and
             // nothing is left to report another to.
             let _ = std::fs::remove_dir_all(dir);
         }

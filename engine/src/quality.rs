@@ -6,27 +6,26 @@
 //! report as a contract" says. From a quality file it reads them only where there is no quality.json (parse_gate,
 //! gate_failures): the files the engine writes itself, a build that archived none, and a quality file written before
 //! its round was recorded (Workflow::quality). That reading is the engine's copy of the quality file's format, the
-//! gate's QualityReport.markdown and its sections; engine/tests/oracle/quality.json, the Python engine's reading of
-//! the gate's files as recorded, holds it to that reading.
+//! gate's QualityReport.markdown and its sections; engine/tests/oracle/quality.json, the expected reading of recorded
+//! gate files, holds it to that format.
 
 use std::fmt;
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use crate::constants::CONSOLE_TAIL_LINES;
 use crate::error::OrchestratorError;
 use crate::handoff::first_line_word;
-use crate::host::line_ends_as_lf;
 use crate::map::Map;
 
-/// The words of the gate line, the file's first non-blank one. Only the engine writes BUILD_FAILED, for a build that
-/// ended before its Gate stage or a local gate that could not judge (build_failed_report, could_not_judge_report).
+/// The words of the gate line, the file's first non-blank one. Only the engine writes BUILD_FAILED, for a gate that
+/// could not judge (could_not_judge_report), as a release before 0.72.0 also wrote it for a Jenkins build that ended
+/// before its Gate stage.
 pub const QUALITY_OK: &str = "OK";
 pub const QUALITY_ERROR: &str = "ERROR";
 pub const QUALITY_BUILD_FAILED: &str = "BUILD_FAILED";
-/// Only the engine writes LEAK too: gitleaks found a secret in the quality round's snapshot, so it was not pushed and
-/// Jenkins did not judge it (leak_report).
+/// Only the engine writes LEAK too: gitleaks found a secret in the quality round's snapshot, so the gate did not judge
+/// it (leak_report).
 pub const QUALITY_LEAK: &str = "LEAK";
 /// The quality.json schema_version read_report reads: the gate's schema/quality-v1.json.
 pub const QUALITY_SCHEMA_VERSION: u64 = 1;
@@ -40,8 +39,9 @@ pub const QUALITY_TO_WEIGH_NOTE: &str = "These do not fail the gate. Fix each, o
 /// The most findings a quality file lists, numbered as one list, and the most failing tests; the rest are counted.
 pub const QUALITY_FINDINGS_LIMIT: usize = 50;
 
-/// The characters that end a line in some reader of the quality file, a Markdown renderer or Python's str.splitlines:
-/// the set the gate's _LINE_BREAK_ESCAPES escapes.
+/// The characters that end a line in some reader of the quality file: a Markdown renderer's line ends, and the
+/// vertical tab, form feed, file, group and record separators, NEL, U+2028 and U+2029, at which other readers break
+/// lines too; the set the gate's _LINE_BREAK_ESCAPES escapes.
 const LINE_BREAKS: [char; 10] = ['\n', '\r', '\x0b', '\x0c', '\x1c', '\x1d', '\x1e', '\u{85}', '\u{2028}', '\u{2029}'];
 
 /// text as a quality file writes it within one of its lines, such as one item of a list: each of LINE_BREAKS written
@@ -111,55 +111,14 @@ pub fn leak_report(leaks: &[Leak], intro: &str) -> String {
     lines.join("\n") + "\n"
 }
 
-/// The quality file of a build that ended before its Gate stage, so that nothing judged the change: GATE:
-/// BUILD_FAILED, then intro, then a section of tests, the (name, detail) of the failing tests Jenkins reported, None
-/// when it has no test report, and one of console, the end of the build's console, unless it is empty.
-pub fn build_failed_report(intro: &str, tests: Option<&[(String, String)]>, console: &str) -> String {
-    let mut out: Vec<String> = [&format!("GATE: {QUALITY_BUILD_FAILED}"), "", intro, "", QUALITY_FAILING_TESTS, ""]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    match tests {
-        None => out.push("Jenkins has no test report for this build.".into()),
-        Some(tests) => {
-            for (name, detail) in tests.iter().take(QUALITY_FINDINGS_LIMIT) {
-                let detail = detail.trim();
-                let first = detail.lines().next().unwrap_or("failed");
-                out.push(one_line(&format!("- `{name}`: {first}")));
-            }
-            if tests.is_empty() {
-                out.push("None.".into());
-            }
-            if tests.len() > QUALITY_FINDINGS_LIMIT {
-                out.push(format!("- and {} more.", tests.len() - QUALITY_FINDINGS_LIMIT));
-            }
-        }
-    }
-    if !console.is_empty() {
-        out.push(String::new());
-        out.push(format!("## The last {CONSOLE_TAIL_LINES} lines of the build's console"));
-        out.extend(["", "````", console, "````"].map(String::from));
-    }
-    out.join("\n") + "\n"
-}
-
 /// The quality file of a local gate that could not judge the change (crate::local_gate::LocalVerdict::CouldNotJudge):
-/// GATE: BUILD_FAILED, as for a Jenkins build whose gate could not judge, then intro, then said, the end of what the
-/// gate wrote on standard error, unless it is empty.
+/// GATE: BUILD_FAILED, then intro, then said, the end of what the gate wrote on standard error, unless it is empty.
 pub fn could_not_judge_report(intro: &str, said: &str) -> String {
     let mut out: Vec<String> = [&format!("GATE: {QUALITY_BUILD_FAILED}"), "", intro].map(|s| s.to_string()).to_vec();
     if !said.is_empty() {
         out.extend(["", "## What the gate said on standard error", "", "````", said, "````"].map(String::from));
     }
     out.join("\n") + "\n"
-}
-
-/// The last CONSOLE_TAIL_LINES lines of text, each line ending at "\n", "\r\n" or a lone "\r" (line_ends_as_lf),
-/// joined by "\n": the end of a log that is shown.
-pub fn last_lines(text: &str) -> String {
-    let text = line_ends_as_lf(text);
-    let lines: Vec<&str> = text.lines().collect();
-    lines[lines.len().saturating_sub(CONSOLE_TAIL_LINES)..].join("\n")
 }
 
 /// What a quality file says failed the gate, in a form two quality rounds can be compared by.
@@ -323,7 +282,7 @@ struct NumberedFinding<'a> {
     message: &'a str,
 }
 
-/// line as a numbered finding, where, then severity, rule and message: what Python's
+/// line as a numbered finding, where, then severity, rule and message: what the regular expression
 /// `\d+\. (?:`(?P<path>.+?)(?::\d+| \(the whole file\))`|The change as a whole:) \S+ (?P<rule>.+?): (?P<message>.*)`
 /// matches in all of it, the path as short as the rest allows; None for any other line.
 fn numbered_finding(line: &str) -> Option<NumberedFinding<'_>> {

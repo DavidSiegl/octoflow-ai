@@ -1,22 +1,16 @@
-//! TestProofs and TestProofInAWorktree: the verdict step's proofs, run for real by sh, in a scratch directory that
+//! The verdict step's proofs, run for real by sh, in a scratch directory that
 //! stands in for the project on a FakeHost whose other commands run for real (FakeState::processes), and in a real
 //! run's worktree.
 //!
-//! TestProofInAWorktree's proof is a shell script that finds its repository with git, which looks upwards from the
-//! proof as pytest does for its rootdir, rather than Python's pytest proof: the Rust tests have no pytest to run. So
-//! its one case, test_a_proof_imports_the_worktrees_code_and_the_commit_holds_no_copy_of_it, is
-//! a_proof_runs_on_the_worktrees_code_and_the_commit_holds_no_copy_of_it here.
-//! test_the_reviewers_own_proofs_heading_does_not_stop_the_run has the Reviewer write its own "## Proofs" section,
-//! where Python's adds it as the review is read.
+//! The worktree run's proof is a shell script that finds its repository with git, which looks upwards from the proof
+//! as pytest does for its rootdir: the tests have no pytest to run.
 //!
-//! test_a_carried_proof_runs_again_after_the_rounds_last_quality_round_and_before_the_review logs what happens in a
-//! file of the scratch project, which the proof appends to too, where Python wraps the Workflow's _judge_quality and
-//! _run_proof: a quality round is logged as its snapshot is pushed, and a proof without its round, which its place
-//! among the turns gives.
+//! The test of a carried proof running again after the round's last quality round and before the review logs what
+//! happens in a file of the scratch project, which the proof appends to too: a quality round is logged as the gate
+//! checks its snapshot out, and a proof without its round, which its place among the turns gives.
 //!
-//! Not here: test_proof_command_needs_a_verdict_step_and_names_the_proof_once, test_a_workflow_file_takes_proof_command_and_proofs_dir
-//! and test_proof_command_round_trips_through_a_workflow_file, which are crate::pipeline's and crate::workflow_file's
-//! (ticket 04).
+//! Not here: proof_command needing a verdict step, and proof_command and proofs_dir in a workflow file, which are
+//! crate::pipeline's and crate::workflow_file's.
 
 use std::cell::RefCell;
 
@@ -70,8 +64,7 @@ fn on_real_processes(state: RunState, script: Script) -> Fixture {
     f
 }
 
-/// A quick run in a scratch project whose Reviewer writes, per round, a review with a verdict and proofs: Python's
-/// run_proofs.
+/// A quick run in a scratch project whose Reviewer writes, per round, a review with a verdict and proofs.
 struct Proving {
     /// Per round, the Reviewer's verdict and its proofs, each a file name and how it exits.
     reviews: Vec<(&'static str, Vec<(&'static str, Exit)>)>,
@@ -542,7 +535,7 @@ fn the_reviewers_own_proofs_heading_does_not_stop_the_run() {
     assert_eq!(wf.run(), verdict(APPROVE));
     let demonstrated: Vec<bool> = runs(wf.state()).into_iter().filter(|r| r.0 == 1).map(|r| r.3).collect();
     assert_eq!(demonstrated, [true]);
-    // Beyond Python's case: the orchestrator's own section follows the Reviewer's.
+    // The orchestrator's own section follows the Reviewer's.
     let judged = review(&p.f, wf.state(), 1);
     assert!(judged.contains(&format!("## Proofs\n\n1. test_1.sh\n\n{PROOFS_HEADING}\n")), "{judged}");
 }
@@ -616,8 +609,7 @@ fn a_proof_whose_file_or_directory_is_gone_is_moved_and_not_run() {
 
 #[test]
 fn an_interrupted_proof_is_no_outcome() {
-    // Not in Python's TestProofs: a Ctrl-C is Python's KeyboardInterrupt, which stops the run before a proof's outcome
-    // is recorded, and starts no proof once raised.
+    // A Ctrl-C stops the run before a proof's outcome is recorded, and starts no proof once raised.
     let proj = TempDir::new();
     let p = unrun(&proj);
     let wf = p.f.workflow(p.settings.clone());
@@ -633,7 +625,7 @@ fn an_interrupted_proof_is_no_outcome() {
 
 #[test]
 fn a_ctrl_c_while_a_proof_runs_stops_it_with_what_it_started() {
-    // Not in Python's TestProofs: the proof runs under GNU timeout, which leads the process group ProcessHost started,
+    // The proof runs under GNU timeout, which leads the process group ProcessHost started,
     // so the group the Ctrl-C stops holds the proof and what it started; and the run records no outcome of it.
     let proj = TempDir::new();
     let (pid, background) = (proj.join("pid"), proj.join("background"));
@@ -651,16 +643,16 @@ fn a_ctrl_c_while_a_proof_runs_stops_it_with_what_it_started() {
     assert!(started.elapsed() < std::time::Duration::from_secs(60));
     assert!(ended(&pid), "the proof outlived the Ctrl-C");
     assert!(ended(&background), "what the proof started outlived the Ctrl-C");
-    // Removed as Python's finally removes them.
+    // The proof's copies are removed even so.
     assert!(!std::path::Path::new(&format!("{}/{PROOF_COPIES_DIR}", proj.path())).exists());
     let saved = RunState::from_saved(&p.f.saved()).unwrap();
     assert_eq!((saved.error.as_deref(), saved.phase.as_str(), saved.proofs.len()), (Some("interrupted"), "review", 0));
 }
 
-// -- TestProofInAWorktree ------------------------------------------------------------------------------------------
+// -- A proof in a worktree run -------------------------------------------------------------------------------------
 
 /// The repository's Host, but for publishing's secret scan, push and pull request, which find nothing, push nothing
-/// and open https://github.com/o/r/pull/1: Python's patch.object of the three.
+/// and open https://github.com/o/r/pull/1.
 struct Unpublished<'h>(&'h ProcessHost);
 
 impl Host for Unpublished<'_> {
@@ -714,7 +706,6 @@ fn proving_on(
         human: &told,
         interrupt,
         pid_alive: &crate::runs::pid_alive,
-        quality_gate: None,
         indexes: &crate::package_index::PackageIndexes::with_pypi(crate::pypi::fake::FakePyPI::from_json(
             Default::default(),
         )),
@@ -941,15 +932,15 @@ fn a_carried_proof_runs_again_after_the_rounds_last_quality_round_and_before_the
     (state.phase, state.workflow) = ("build".into(), pipeline.name().to_string());
     let host = Rc::new(FakeHost::default());
     // git ignores the scratch project's .orchestrator, as FakeHost has it ignore /proj's, for the gate's clean-tree
-    // check; and a quality round is logged as its snapshot is pushed.
-    let (weak, orchestrator_dir, pushed) = (Rc::downgrade(&host), format!("{dir}/.orchestrator/"), event.clone());
+    // check; and a quality round is logged as the local gate checks its snapshot out, in gate-<n>-<q>/job-1/tree.
+    let (weak, orchestrator_dir, judged) = (Rc::downgrade(&host), format!("{dir}/.orchestrator/"), event.clone());
     host.state().before_git = Some(Box::new(move |_, args| {
         if let Some(host) = weak.upgrade() {
             host.state().changed.retain(|p| !p.starts_with(&orchestrator_dir));
         }
-        if let ["push", "--quiet", "--force", "origin", refspec] = args {
-            let round = refspec.rsplit_once("a1b2c3-").map_or("", |(_, nq)| nq).replace("-q", " ");
-            pushed(format!("quality round {round}"));
+        if let ["worktree", "add", "--detach", tree, _] = args {
+            let round = tree.rsplit_once("/gate-").map_or("", |(_, nq)| nq).trim_end_matches("/job-1/tree").replace('-', " ");
+            judged(format!("quality round {round}"));
         }
     }));
     let f = Fixture::on(host, state, vec![
@@ -958,7 +949,7 @@ fn a_carried_proof_runs_again_after_the_rounds_last_quality_round_and_before_the
     ])
     .gated();
     f.run_processes();
-    f.ci.state().outcomes = vec![green(), red(), green()].into();
+    f.judging(vec![green(), red(), green()]);
 
     let mut wf = f.workflow(settings(&pipeline, 3));
     assert_eq!(wf.run(), verdict(APPROVE));

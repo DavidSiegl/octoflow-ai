@@ -1,11 +1,11 @@
-//! The Python Package Index's JSON API (https://docs.pypi.org/api/json/), as orchestrator.py's PyPI asks it: what
-//! the new-dependencies check (crate::checks) knows of a package from PyPI.
+//! The Python Package Index's JSON API (https://docs.pypi.org/api/json/): what the new-dependencies check
+//! (crate::checks) knows of a package from PyPI.
 
 use std::sync::Arc;
 
 use crate::constants::PYPI_TIMEOUT;
 use crate::error::shortened;
-use crate::http::{quote, Http, HttpError, Method, Request};
+use crate::http::{quote, Http, HttpError, Request};
 use crate::package_index::{IndexError, IndexedPackage, PackageIndex, Upload};
 use serde_json::Value;
 use crate::json::ValueExt;
@@ -28,10 +28,8 @@ impl PyPI {
     pub fn project(&self, name: &str) -> Result<Option<IndexedPackage>, IndexError> {
         let url = format!("https://pypi.org/pypi/{}/json", quote(name));
         let request = Request {
-            method: Method::Get,
             url: url.clone(),
             headers: vec![("Accept".to_string(), "application/json".to_string())],
-            form: None,
             timeout: PYPI_TIMEOUT,
         };
         let body = match self.http.send(&request) {
@@ -59,7 +57,7 @@ impl PackageIndex for PyPI {
     }
 }
 
-/// The project of PyPI's JSON answer; why not, as Python's error of the step that fails says it, for an answer of
+/// The project of PyPI's JSON answer; why not, as the step of reading it that fails says it, for an answer of
 /// another shape.
 fn project_of(body: &[u8]) -> Result<IndexedPackage, String> {
     let text = std::str::from_utf8(body).map_err(|e| e.to_string())?;

@@ -1,53 +1,117 @@
 import { describe, expect, it } from "vitest";
-import type { RunRecord, Turn } from "./api";
+import type { RunRecord, Step, Turn } from "./api";
 import { applyEvent, formatAge, formatRound, heartbeatAge, NO_RUNS, outcome, prLabel, progress } from "./runs";
 
-const STEPS = [
-  { id: "spec", role: "spec" },
-  { id: "build", role: "build" },
-  { id: "review", role: "review" },
+/** The default workflow's steps as a server since 0.71.0 gives them for a run with the quality gate. */
+const STEPS: Step[] = [
+  { id: "spec", role: "spec", role_label: "Spec Collector", loop_to: null, quality_gated: false },
+  { id: "build", role: "build", role_label: "Builder", loop_to: null, quality_gated: true },
+  { id: "review", role: "review", role_label: "Reviewer", loop_to: "build", quality_gated: false },
 ];
+
+/** The same steps as a server before 0.71.0 gives them. */
+const OLD_STEPS: Step[] = STEPS.map(({ id, role }) => ({ id, role }));
 
 function record(overrides: Partial<RunRecord> = {}): RunRecord {
   return {
-    id: "20261024-140000-c0ffee", key: "c0ffee", task: "t", workflow: "default", steps: STEPS, phase: "build",
-    round: 1, quality_round: null, role: "build", pane: null, health: "running", health_reason: "beat 4s ago",
-    heartbeat_age: 4, waiting: null, verdict: null, error: null, closed: null, branch: null, worktree: null, pr: null,
-    turns: [], resume_command: null, ...overrides,
+    id: "20261024-140000-c0ffee", key: "c0ffee", task: "t", workflow: "default", steps: STEPS, pull_request: true,
+    phase: "build", round: 1, quality_round: null, role: "build", pane: null, health: "running",
+    health_reason: "beat 4s ago", heartbeat_age: 4, waiting: null, verdict: null, error: null, closed: null,
+    branch: null, worktree: null, pr: null, turns: [], resume_command: null, ...overrides,
   };
 }
 
-const turn = (step: string): Turn => ({
-  step, role: step, round: 1, quality_round: 0, file: `${step}-1.md`, agent: "claude", model: null, session: null,
-  tokens: null, human_paced: false, started_at: null, ended_at: null, seconds: null,
+const turn = (step: string, round = 1, quality_round = 0): Turn => ({
+  step, role: step, round, quality_round, file: `${step}-${round}.md`, agent: step === "quality" ? null : "claude",
+  model: null, session: null, tokens: null, human_paced: false, started_at: null, ended_at: null, seconds: null,
 });
 
+/** Each stage of the record's progress as [label, state]. */
+const states = (r: RunRecord) => progress(r).map((s) => [s.label, s.state]);
+
 describe("progress", () => {
-  it("marks the steps before the phase done", () => {
-    expect(progress(record())).toEqual([
-      { label: "spec", state: "done" }, { label: "build", state: "current" }, { label: "review", state: "todo" },
+  it("gives every stage from the start, the steps before the phase done", () => {
+    expect(states(record())).toEqual([
+      ["spec", "done"], ["build", "current"], ["quality", "todo"], ["review", "todo"], ["publish", "todo"],
+    ]);
+  });
+
+  it("carries each stage's kind, step, role label and loop", () => {
+    const stages = progress(record());
+    expect(stages.map((s) => [s.kind, s.step, s.roleLabel, s.loopTo])).toEqual([
+      ["step", "spec", "Spec Collector", null], ["step", "build", "Builder", null], ["quality", "build", null, null],
+      ["step", "review", "Reviewer", "build"], ["publish", null, null, null],
+    ]);
+  });
+
+  it("gives the quality stage the analyses of its step's turns, and the step its own", () => {
+    const turns = [turn("spec"), turn("build"), turn("quality", 1, 1), turn("build", 1, 1), turn("quality", 1, 2)];
+    const stages = progress(record({ phase: "quality", quality_round: 2, turns }));
+    expect(stages.map((s) => s.turns.length)).toEqual([1, 2, 2, 0, 0]);
+    expect(stages[2]?.state).toBe("current");
+  });
+
+  it("has quality to do again while its step fixes what the gate found", () => {
+    const turns = [turn("spec"), turn("build"), turn("quality", 1, 1)];
+    expect(states(record({ phase: "build", quality_round: 1, turns })).slice(1, 3)).toEqual([
+      ["build", "current"], ["quality", "again"],
     ]);
   });
 
   it("puts quality after the step whose turn it judges", () => {
-    expect(progress(record({ phase: "quality", turns: [turn("spec"), turn("build")] })).map((s) => [s.label, s.state]))
-      .toEqual([["spec", "done"], ["build", "done"], ["quality", "current"], ["review", "todo"]]);
+    const steps = STEPS.map((s) => ({ ...s, quality_gated: s.id !== "spec" }));
+    const turns = [turn("spec"), turn("build"), turn("quality", 1, 1), turn("review"), turn("quality", 1, 1)];
+    expect(states(record({ steps, phase: "quality", turns }))).toEqual([
+      ["spec", "done"], ["build", "done"], ["quality", "done"], ["review", "done"], ["quality", "current"],
+      ["publish", "todo"],
+    ]);
   });
 
-  it("puts publish after every step", () => {
-    expect(progress(record({ phase: "publish" })).map((s) => s.state)).toEqual(["done", "done", "done", "current"]);
+  it("is in the quality stage of the step it just left, before the gate's first analysis is saved", () => {
+    const steps = STEPS.map((s) => ({ ...s, quality_gated: s.id !== "spec" }));
+    const turns = [turn("spec"), turn("build"), turn("quality", 1, 1), turn("review")];
+    expect(states(record({ steps, phase: "quality", turns })).at(-2)).toEqual(["quality", "current"]);
   });
 
-  it("marks every step done once the run is", () => {
-    expect(progress(record({ phase: "done" })).map((s) => s.state)).toEqual(["done", "done", "done"]);
+  it("marks a stage that ran before the run looped back", () => {
+    const turns = [turn("spec"), turn("build"), turn("quality", 1, 1), turn("review"), turn("build", 2)];
+    expect(states(record({ round: 2, turns }))).toEqual([
+      ["spec", "done"], ["build", "current"], ["quality", "again"], ["review", "again"], ["publish", "todo"],
+    ]);
+  });
+
+  it("ends in publish only for a run that opens a pull request", () => {
+    expect(states(record({ phase: "publish" })).map(([, state]) => state)).toEqual(["done", "done", "done", "done", "current"]);
+    expect(states(record({ pull_request: false })).map(([label]) => label)).toEqual(["spec", "build", "quality", "review"]);
+  });
+
+  it("marks every stage done once the run is", () => {
+    expect(states(record({ phase: "done" })).every(([, state]) => state === "done")).toBe(true);
   });
 
   it("marks a failed run's stage failed", () => {
-    expect(progress(record({ error: "boom" }))[1]).toEqual({ label: "build", state: "failed" });
+    expect(states(record({ error: "boom" }))[1]).toEqual(["build", "failed"]);
+  });
+
+  it("shows a record from a server before 0.71.0 as far as it says", () => {
+    const old = (overrides: Partial<RunRecord>) => {
+      const r = record({ steps: OLD_STEPS, ...overrides });
+      delete r.pull_request;
+      return r;
+    };
+    expect(progress(old({})).map((s) => [s.label, s.state, s.roleLabel, s.loopTo])).toEqual([
+      ["spec", "done", "spec", null], ["build", "current", "build", null], ["review", "todo", "review", null],
+    ]);
+    expect(states(old({ phase: "quality", turns: [turn("spec"), turn("build")] }))).toEqual([
+      ["spec", "done"], ["build", "done"], ["quality", "current"], ["review", "todo"],
+    ]);
+    expect(states(old({ phase: "publish" }))).toEqual([
+      ["spec", "done"], ["build", "done"], ["review", "done"], ["publish", "current"],
+    ]);
   });
 
   it("shows only the phase of a workflow that could not be loaded", () => {
-    expect(progress(record({ steps: null, phase: "impl" }))).toEqual([{ label: "impl", state: "current" }]);
+    expect(states(record({ steps: null, phase: "impl" }))).toEqual([["impl", "current"]]);
   });
 });
 

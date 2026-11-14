@@ -124,9 +124,9 @@ pub struct CheckFindings {
 /// What a check finds in a change; its only error is RunChange::file_at's.
 pub type Find<'a> = dyn Fn(&RunChange) -> Result<CheckFindings, OrchestratorError> + 'a;
 
-/// A check the orchestrator runs itself, in each quality round after the build's gate. find returns what it found
+/// A check the orchestrator runs itself, in each quality round after the gate. find returns what it found
 /// in a change; a check that cannot do its work says so in a finding, never by finding nothing. Its only error is
-/// RunChange::file_at's, which fails the round as a Jenkins failure does.
+/// RunChange::file_at's, which fails the round as a failure of the gate itself does.
 pub struct OrchestratorCheck<'a> {
     /// Its name, which prefixes the rule of each of its findings in the quality file.
     pub name: &'static str,

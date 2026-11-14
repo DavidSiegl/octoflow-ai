@@ -8,15 +8,15 @@ use crate::map::Map;
 /// The lines a file gains, by their line in the new tree, from 1, each one's bytes without the "+".
 pub type AddedLines = BTreeMap<u64, Vec<u8>>;
 
-/// For each file diff touches, by its path in the new tree and in the order the diff names them, the lines it gains:
-/// added_lines of orchestrator.py. A file the diff touches without adding a line, such as a pure rename, one that only
+/// For each file diff touches, by its path in the new tree and in the order the diff names them, the lines it gains.
+/// A file the diff touches without adding a line, such as a pure rename, one that only
 /// loses lines or an empty new file, maps to no lines; a deleted file is left out. Only `diff --git` and `@@` lines
 /// are read inside a hunk, since an added line can itself start with `+++ `. Only "\n" ends a line, as in git's
 /// output: an added line can hold a carriage return, a form feed or U+2028, and bytes that are not UTF-8.
 ///
 /// The gate's changed_lines (octoflow-gate, the release ci/gate.pin names) reads the same shape and is the home of
 /// how, so a fix to one belongs in both.
-/// Errors: a path, as git writes it or once its quoting is undone, that is not UTF-8, which Python reads.
+/// Errors: a path, as git writes it or once its quoting is undone, that is not UTF-8.
 pub fn added_lines(diff: &[u8]) -> Result<Map<AddedLines>, OrchestratorError> {
     let mut out: Map<AddedLines> = Map::new();
     let mut path: Option<String> = None;
@@ -123,7 +123,7 @@ fn quoted_len(text: &[u8]) -> Option<usize> {
     while i < text.len() {
         match text[i] {
             b'"' => return Some(i + 1),
-            // Python's `.` takes any character but "\n" after the backslash.
+            // A backslash escapes the character after it, any but "\n".
             b'\\' if text.get(i + 1).is_some_and(|&c| c != b'\n') => i += 1 + utf8_len(text[i + 1]),
             b'\\' => return None,
             _ => i += 1,
@@ -187,8 +187,7 @@ fn unquote(name: &[u8]) -> Vec<u8> {
     raw
 }
 
-/// bytes, a path, as text; refused when it is not UTF-8, which the Python engine reads as os.fsdecode decodes it
-/// (TODO.md, "The Rust engine reads some input ... otherwise").
+/// bytes, a path, as text; refused when it is not UTF-8.
 fn utf8_path(bytes: Vec<u8>) -> Result<String, OrchestratorError> {
     String::from_utf8(bytes).map_err(|e| {
         let shown = String::from_utf8_lossy(e.as_bytes()).into_owned();

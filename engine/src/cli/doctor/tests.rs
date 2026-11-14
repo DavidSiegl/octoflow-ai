@@ -1,7 +1,5 @@
-//! tests/test_orchestrator.py's TestCheckSetup and TestDoctorCommand, ported case for case, on FakeTools: the
-//! commands of a machine as ProcessHost and ProcessHerdr start them, played as Python's FakeTools plays them behind
-//! Host(run=...) and Herdr(run=...). Not ported: test_without_tkinter and the tkinter check of the others, since the
-//! Rust engine has no GUI and doctor checks no tkinter.
+//! check_setup and the doctor command, on FakeTools: the commands of a machine as ProcessHost and ProcessHerdr start
+//! them, played by the runner each is built with for tests.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -10,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::cli::{ended_status, herdrless_command, parse_args, Local};
-use crate::constants::AGENT_KINDS;
+use crate::constants::HARNESS_NAMES;
 use crate::env::ConfigDir;
 use crate::host::ProcessError;
 use crate::interrupt::Interrupt;
@@ -31,7 +29,7 @@ enum Answer {
     Ran(i32, String, String),
     /// It runs out of time.
     TimesOut,
-    /// Its program cannot be started, as Python's FileNotFoundError.
+    /// Its program is not on PATH, so it cannot be started.
     NotFound,
 }
 
@@ -62,6 +60,18 @@ struct Tools {
     envs: Vec<Vec<(OsString, OsString)>>,
     /// Answers in place of answers when it gives one, given the target and argv: a test's own.
     answer_with: Option<AnswerWith>,
+    /// What the login shell an SSH command runs in answers for a command, by its name, that is not on PATH.
+    missing_over_ssh: fn(&str) -> Answer,
+}
+
+/// A POSIX login shell's answer for a command not on PATH.
+fn sh_not_found(command: &str) -> Answer {
+    failing(&format!("sh: 1: {command}: not found\n"), 127)
+}
+
+/// A csh or tcsh login shell's answer for a command not on PATH.
+fn csh_not_found(command: &str) -> Answer {
+    failing(&format!("{command}: Command not found.\n"), 1)
 }
 
 /// A machine's commands with every tool doctor checks present; a test changes paths or answers to take one away.
@@ -75,7 +85,7 @@ impl FakeTools {
     }
 
     fn with_targets(targets: &[&str]) -> FakeTools {
-        let names = AGENT_KINDS.iter().copied().chain(["herdr", "git", "gh"]);
+        let names = HARNESS_NAMES.iter().copied().chain(["herdr", "git", "gh"]);
         let paths = names.map(|n| (n.to_string(), format!("/usr/bin/{n}"))).collect();
         let argv = |words: &str| words.split(' ').map(String::from).collect::<Vec<_>>();
         let machines = r#"[{"label": "box", "id": "m1", "enabled": true, "target": "me@box"}, {"label": "off", "id": "m2", "enabled": false, "target": "me@off"}]"#;
@@ -103,6 +113,7 @@ impl FakeTools {
             calls: vec![],
             envs: vec![],
             answer_with: None,
+            missing_over_ssh: sh_not_found,
         })))
     }
 
@@ -168,9 +179,9 @@ impl FakeTools {
             };
         }
         if !t.paths.contains_key(&argv[0]) && argv[0] != "gitleaks" {
-            // The remote shell answers for a command it cannot find; locally it cannot be started at all.
+            // The remote login shell answers for a command it cannot find; locally it cannot be started at all.
             if target.is_some() {
-                return ran(127, "", &format!("sh: 1: {}: not found\n", argv[0]));
+                return played(&(t.missing_over_ssh)(&argv[0]));
             }
             return Err(ProcessError::Start(std::io::ErrorKind::NotFound.into()));
         }
@@ -201,7 +212,7 @@ fn played(answer: &Answer) -> Result<(i32, Vec<u8>, Vec<u8>), ProcessError> {
     }
 }
 
-/// The words of a line of sh as shlex_join writes them: Python's shlex.split, for what the fake ssh is given.
+/// The words of a line of sh as shlex_join writes them, for what the fake ssh is given.
 fn shlex_split(line: &str) -> Vec<String> {
     let (mut words, mut word, mut in_word) = (vec![], String::new(), false);
     let mut chars = line.chars();
@@ -272,7 +283,7 @@ fn all_present() {
     let tools = FakeTools::new();
     let order = names(&tools, Some("/proj"));
     let mut want: Vec<String> = vec!["herdr".into(), "reaching herdr".into()];
-    for kind in AGENT_KINDS {
+    for kind in HARNESS_NAMES {
         want.extend([format!("{kind} CLI"), format!("{kind} integration")]);
     }
     want.extend(["git", "gh", "gitleaks", "local quality gate", "git checkout", "origin"].map(String::from));
@@ -400,7 +411,7 @@ fn integration_unlisted_or_unasked() {
     tools.answer("herdr integration status", failing("unknown command", 2));
     let checks = setup(&tools, None, None);
     assert!(checks["claude integration"].detail.contains("herdr integration status failed: unknown command"));
-    for kind in AGENT_KINDS {
+    for kind in HARNESS_NAMES {
         assert_eq!(
             checks[&format!("{kind} integration")].fix,
             "update herdr with `herdr update`, then check that `herdr integration status` runs"
@@ -426,7 +437,7 @@ fn integration_states_are_read_from_the_listing() {
             ("antigravity-cli", "outdated (v2, current is v3)")
         ])
     );
-    // The pattern's corners, as Python's re reads them.
+    // The pattern's corners: a colon in the name, an empty state, nested parentheses.
     let cases = [
         ("a:b: x", Some(("a:b", "x"))),
         ("k:  (p)", Some(("k", ""))),
@@ -482,21 +493,37 @@ fn gh_logged_out() {
 }
 
 #[test]
-fn a_missing_git_or_gh_is_found_by_running_it_once() {
+fn a_missing_git_or_gh_is_looked_up_through_sh_whatever_the_login_shell_and_not_run() {
+    let lookup = |tool: &str| ["sh", "-c", "command -v -- \"$1\"", "_", tool].map(String::from).to_vec();
     for (machine, target) in [(None, None), (Some("box"), Some("me@box"))] {
-        for (tool, argv) in [("git", &["git", "--version"][..]), ("gh", &["gh", "auth", "status"][..])] {
-            let tools = FakeTools::new();
-            tools.remove(tool);
-            assert_eq!(setup(&tools, machine, None)[tool].detail, format!("{tool} is not on PATH"));
-            let asked: Vec<Vec<String>> = tools
-                .tools()
-                .calls
-                .iter()
-                .filter(|(t, a)| t.as_deref() == target && (a.first().map(String::as_str) == Some(tool) || a.last().map(String::as_str) == Some(tool)))
-                .map(|(_, a)| a.clone())
-                .collect();
-            assert_eq!(asked, [argv.iter().map(|a| a.to_string()).collect::<Vec<_>>()], "{machine:?} {tool}");
+        for login_shell in [sh_not_found as fn(&str) -> Answer, csh_not_found] {
+            for tool in ["git", "gh"] {
+                let tools = FakeTools::new();
+                tools.tools().missing_over_ssh = login_shell;
+                tools.remove(tool);
+                assert_eq!(setup(&tools, machine, None)[tool].detail, format!("{tool} is not on PATH"), "{machine:?}");
+                let asked: Vec<Vec<String>> = tools
+                    .tools()
+                    .calls
+                    .iter()
+                    .filter(|(t, a)| t.as_deref() == target && (a[0] == tool || a.last().unwrap() == tool))
+                    .map(|(_, a)| a.clone())
+                    .collect();
+                assert_eq!(asked, [lookup(tool)], "{machine:?} {tool}");
+            }
         }
+    }
+}
+
+#[test]
+fn a_tool_on_path_that_exits_127_itself_fails_rather_than_being_missing() {
+    for machine in [None, Some("box")] {
+        let tools = FakeTools::new();
+        tools.answer("gh auth status", failing("gh: exec: /opt/gh/bin/gh: not found", 127));
+        tools.answer("git --version", failing("git: shim target gone", 127));
+        let checks = setup(&tools, machine, None);
+        assert_eq!(checks["gh"].detail, "gh auth status fails: gh: exec: /opt/gh/bin/gh: not found", "{machine:?}");
+        assert!(checks["git"].detail.starts_with("git --version failed"), "{machine:?}: {}", checks["git"].detail);
     }
 }
 
@@ -547,7 +574,10 @@ fn the_local_gate_check_needs_gitleaks_as_a_gated_run_does() {
     let tools = FakeTools::new();
     tools.answer("gitleaks git --help", failing("unknown command \"git\"", 1));
     let gate = setup(&tools, None, None)["local quality gate"].clone();
-    assert!(!gate.ok && gate.detail.contains("`gitleaks git` does not run"), "{}", gate.detail);
+    // In doctor's words, not a run's, with the install text once, as the fix.
+    let detail = "`gitleaks git` does not run, and the gate scans each snapshot for secrets with it; \
+                  needed only for --quality-gate local";
+    assert_eq!(gate, check_of("local quality gate", Level::Optional, false, detail, GITLEAKS_INSTALL));
 }
 
 #[test]
@@ -579,13 +609,11 @@ fn doctor_printed(tools: &FakeTools, argv: &[&str]) -> (Result<i32, Orchestrator
     let host = tools.host(&[]);
     let herdr = |machine: Option<&str>| tools.herdr(machine);
     let (interrupt, print) = (Interrupt::new(), |t: &str| out.borrow_mut().push_str(t));
-    let jenkins = |_: &str| -> Result<crate::ci::Jenkins, OrchestratorError> { panic!("doctor made a Jenkins") };
     let cwd = || -> Result<String, OrchestratorError> { panic!("doctor read the current directory") };
     let local = Local {
         host: &host,
         herdr: &herdr,
         in_herdr_pane: true,
-        jenkins: &jenkins,
         cwd: &cwd,
         config: &config,
         stdout: &print,
@@ -596,26 +624,38 @@ fn doctor_printed(tools: &FakeTools, argv: &[&str]) -> (Result<i32, Orchestrator
     (ended, out.into_inner())
 }
 
-/// Have tools play Host::exists, Host::read and Host::write on target's files, existing the paths in there, which
-/// read as empty.
+/// Have tools play local_gate::set_up's look and write on target (None: here), home being /home/u: the look finds the
+/// directory it is given to be a checkout's top level, holding no file it looks for; the write keeps each path from
+/// the top level that there names and writes the others.
 fn play_files(tools: &FakeTools, target: Option<&'static str>, there: &'static [&'static str]) {
     tools.tools().answer_with = Some(Box::new(move |t, argv| {
         if t != target || argv[0] != "sh" {
             return None;
         }
-        let path = argv.last().unwrap();
-        if argv[2].starts_with("[ -e") || argv[2].starts_with("[ -f") {
-            let status = if there.contains(&path.as_str()) { 0 } else { crate::host::MISSING_FILE_STATUS };
-            return Some(Answer::Ran(status, String::new(), String::new()));
+        if argv[2].ends_with(crate::local_gate::SET_UP_LOOK) {
+            let home = if argv[2].contains("$HOME") { "/home/u" } else { "" };
+            return Some(completed(&format!("{home}{}\0\0", argv[4])));
         }
-        argv[2].contains("cat >").then(|| completed(""))
+        (argv[2] == crate::local_gate::SET_UP_WRITE).then(|| {
+            let top = &argv[4];
+            let said: String = argv[5..]
+                .iter()
+                .step_by(2)
+                .map(|path| if there.contains(&format!("{top}/{path}").as_str()) { "kept\n" } else { "written\n" })
+                .collect();
+            completed(&said)
+        })
     }));
 }
 
-/// The paths tools wrote to on target, by Host::write, in order.
-fn written(tools: &FakeTools, target: Option<&str>) -> Vec<String> {
+/// The top level of each checkout local_gate::set_up wrote files into on target, in order.
+fn set_up_writes(tools: &FakeTools, target: Option<&str>) -> Vec<String> {
     let calls = tools.tools().calls.clone();
-    calls.into_iter().filter(|(t, a)| t.as_deref() == target && a[0] == "sh" && a[2].contains("cat >")).map(|(_, a)| a.last().unwrap().clone()).collect()
+    calls
+        .into_iter()
+        .filter(|(t, a)| t.as_deref() == target && a[0] == "sh" && a[2] == crate::local_gate::SET_UP_WRITE)
+        .map(|(_, a)| a[4].clone())
+        .collect()
 }
 
 #[test]
@@ -625,7 +665,7 @@ fn doctor_writes_nothing_unless_asked_to_set_up_the_gate() {
     let (status, out) = doctor_printed(&tools, &["doctor", "--cwd", "/proj"]);
     assert_eq!(status.unwrap(), 0);
     assert!(out.contains("ok      local quality gate: "), "{out}");
-    assert_eq!(written(&tools, None), Vec::<String>::new());
+    assert_eq!(set_up_writes(&tools, None), Vec::<String>::new());
 }
 
 #[test]
@@ -634,8 +674,8 @@ fn setup_gate_writes_the_missing_files_where_the_agents_run_and_keeps_the_rest()
     play_files(&tools, Some("me@box"), &["/home/u/proj/gate.toml"]);
     let (status, out) = doctor_printed(&tools, &["doctor", "--machine", "box", "--cwd", "~/proj", "--setup-gate"]);
     assert_eq!(status.unwrap(), 0);
-    assert_eq!(written(&tools, Some("me@box")), ["/home/u/proj/ci/gate.pin"]);
-    assert_eq!(written(&tools, None), Vec::<String>::new());
+    assert_eq!(set_up_writes(&tools, Some("me@box")), ["/home/u/proj"]);
+    assert_eq!(set_up_writes(&tools, None), Vec::<String>::new());
     let tail = "wrote   ci/gate.pin\nkept    gate.toml: already there\n\
                 --quality-gate local reads these from a run's base commit: commit them for a run to be judged by them.\n";
     assert!(out.ends_with(tail), "{out}");
@@ -644,13 +684,16 @@ fn setup_gate_writes_the_missing_files_where_the_agents_run_and_keeps_the_rest()
 #[test]
 fn setup_gate_outside_a_checkout_is_an_error_after_the_checks() {
     let tools = FakeTools::new();
-    play_files(&tools, None, &[]);
     tools.answer("git -C /proj rev-parse --show-toplevel", failing("fatal: not a git repository", 128));
+    tools.tools().answer_with = Some(Box::new(|_, argv| {
+        let look = argv[0] == "sh" && argv[2].ends_with(crate::local_gate::SET_UP_LOOK);
+        look.then(|| failing("fatal: not a git repository", 128))
+    }));
     let (status, out) = doctor_printed(&tools, &["doctor", "--cwd", "/proj", "--setup-gate"]);
     let e = status.unwrap_err().to_string();
-    assert!(e.starts_with("setting up the local quality gate: "), "{e}");
+    assert_eq!(e, "setting up the local quality gate: looking at /proj: fatal: not a git repository");
     assert!(out.contains("missing git checkout: /proj is not in a git checkout"), "{out}");
-    assert_eq!(written(&tools, None), Vec::<String>::new());
+    assert_eq!(set_up_writes(&tools, None), Vec::<String>::new());
 }
 
 #[test]
@@ -663,6 +706,9 @@ fn not_a_checkout() {
         checks["git checkout"].detail,
         "/proj is not in a git checkout: fatal: not a git repository (or any of the parent directories): .git"
     );
+    // Worded for the app's setup dialog too, where the project is chosen in the project bar.
+    let fix = "choose a git checkout as the project (--cwd), or make one with git clone or git init";
+    assert_eq!(checks["git checkout"].fix, fix);
     let origin = check_of("origin", Level::NeededForPr, false, "skipped: needs git checkout", "fix git checkout first");
     assert_eq!(checks["origin"], origin);
     assert!(!tools.ran(None, "git -C /proj remote get-url origin"));
@@ -706,13 +752,13 @@ fn outside_a_herdr_pane() {
         Level::Required,
         false,
         "not inside a herdr pane",
-        "run from a herdr pane, or pass --machine",
+        "run from a herdr pane, or choose a herdr machine (--machine)",
     );
     assert_eq!(checks["reaching herdr"], reach);
     assert_eq!(failed(&checks, &order), ["reaching herdr"]);
     let (out, status) = reported(&checks, &order);
     assert_eq!(status, EXIT_ERROR);
-    assert!(out.contains("missing reaching herdr: not inside a herdr pane\n        fix: run from a herdr pane, or pass --machine\n"), "{out}");
+    assert!(out.contains("missing reaching herdr: not inside a herdr pane\n        fix: run from a herdr pane, or choose a herdr machine (--machine)\n"), "{out}");
 }
 
 #[test]
@@ -751,23 +797,23 @@ fn on_a_machine() {
     let calls = tools.tools().calls.clone();
     let local: Vec<Vec<String>> = calls.iter().filter(|(t, _)| t.is_none()).map(|(_, a)| a.clone()).collect();
     let words = |w: &str| w.split(' ').map(String::from).collect::<Vec<_>>();
-    assert_eq!(local, [words("herdr --version"), words("herdr machine list --json")]);
+    let lookup = |tool: &str| ["sh", "-c", "command -v -- \"$1\"", "_", tool].map(String::from).to_vec();
+    assert_eq!(local, [lookup("herdr"), words("herdr --version"), words("herdr machine list --json")]);
     let remote: Vec<Vec<String>> = calls.iter().filter(|(t, _)| t.as_deref() == Some("me@box")).map(|(_, a)| a.clone()).collect();
-    // A tool whose version or login is checked is run, never first looked up; only the agent CLIs are.
+    // Every tool run for its version or login is looked up first, as the agent CLIs are.
     let mut looked_up: Vec<String> = remote
         .iter()
         .filter(|a| a.len() > 3 && a[..3] == ["sh", "-c", "command -v -- \"$1\""])
         .map(|a| a.last().unwrap().clone())
         .collect();
     looked_up.sort();
-    let mut kinds: Vec<String> = AGENT_KINDS.iter().map(|k| k.to_string()).collect();
-    kinds.sort();
-    assert_eq!(looked_up, kinds);
+    let mut tools_run: Vec<String> = HARNESS_NAMES.iter().copied().chain(["gh", "git", "herdr"]).map(String::from).collect();
+    tools_run.sort();
+    assert_eq!(looked_up, tools_run);
     for argv in ["herdr --version", "herdr integration status", "git --version", "gh auth status", "gitleaks git --help", "git -C /proj rev-parse --show-toplevel"] {
         assert!(remote.contains(&words(argv)), "{argv}");
     }
-    let codex = ["sh", "-c", "command -v -- \"$1\"", "_", "codex"].map(String::from).to_vec();
-    assert!(remote.contains(&codex));
+    assert!(remote.contains(&lookup("codex")));
 }
 
 #[test]
@@ -828,17 +874,17 @@ fn machine_herdr_versions_checked_apart() {
 #[test]
 fn commands_get_the_child_env() {
     let tools = FakeTools::new();
-    let host = tools.host(&[("JENKINS_TOKEN", "secret")]);
+    let host = tools.host(&[("GIT_LITERAL_PATHSPECS", "1")]);
     check_setup(&host, &tools.herdr(Some("box")), Some("/proj"), true, Level::Required);
     let envs = tools.tools().envs.clone();
     // The herdr runner's commands are not given theirs here; ProcessHerdr's own tests hold it to child_env.
     assert!(envs.iter().any(|env| !env.is_empty()));
     for env in envs {
-        assert!(!env.iter().any(|(k, _)| k == "JENKINS_TOKEN"), "{env:?}");
+        assert!(!env.iter().any(|(k, _)| k == "GIT_LITERAL_PATHSPECS"), "{env:?}");
     }
 }
 
-// -- TestDoctorCommand -----------------------------------------------------------------------------------------------
+// -- The doctor command ----------------------------------------------------------------------------------------------
 
 #[test]
 fn needs_no_herdr_pane() {
@@ -854,13 +900,11 @@ fn needs_no_herdr_pane() {
         tools.herdr(machine)
     };
     let (interrupt, print) = (Interrupt::new(), |t: &str| out.borrow_mut().push_str(t));
-    let jenkins = |_: &str| -> Result<crate::ci::Jenkins, OrchestratorError> { panic!("doctor made a Jenkins") };
     let cwd = || -> Result<String, OrchestratorError> { panic!("doctor read the current directory") };
     let local = Local {
         host: &host,
         herdr: &herdr,
         in_herdr_pane: false,
-        jenkins: &jenkins,
         cwd: &cwd,
         config: &config,
         stdout: &print,
@@ -901,7 +945,7 @@ fn the_report() {
 }
 
 #[test]
-fn a_version_number_is_found_as_python_finds_it() {
+fn a_version_number_is_the_first_run_of_dotted_digits() {
     let cases = [("herdr 0.9.1", Some("0.9.1")), ("git version 2.39.3 (Apple Git-145)", Some("2.39.3")), ("v12 then 1.2.", Some("1.2")), ("herdr dev", None), ("7", None)];
     for (text, want) in cases {
         assert_eq!(version_number(text), want, "{text}");

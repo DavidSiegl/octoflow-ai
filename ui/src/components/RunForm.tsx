@@ -1,12 +1,12 @@
 import { type FormEvent, useEffect, useState } from "react";
-import type { Api, OfferedRole, OfferedWorkflow, Project, RunOptions } from "../api";
+import type { Api, OfferedRole, OfferedWorkflow, Project, RunOptions, StartedRun } from "../api";
 import { Dialog } from "./Dialog";
 
 interface Props {
   api: Api;
   project: Project;
-  /** Gets the id of the run once the server has started it. */
-  onStarted: (run: string) => void;
+  /** Gets the run once the server has started it. */
+  onStarted: (started: StartedRun) => void;
   /** Called by Cancel, which is disabled while the run is being started. */
   onClose: () => void;
 }

@@ -1,17 +1,16 @@
-//! The harnesses as the Python engine knows them: tests/test_orchestrator.py's launch-argument cases of
-//! TestHarnessFlags, and harness.json's tables (engine/tests/oracle/harness.py), which hold every harness, permission
-//! mode, model, session and directory, and the token usage of sample session logs.
+//! The harnesses' launch arguments, held to harness.json's tables (engine/tests/oracle/), which hold every harness,
+//! permission mode, model, session and directory, and the token usage of sample session logs.
 
 use super::*;
-use crate::constants::DEFAULT_AGENT;
+use crate::constants::DEFAULT_HARNESS;
 use crate::test_support::{oracle, unhex};
 use crate::json::Object;
 
-/// The harness this engine has and the Python engine has not: agy, which replaced Python's gemini (GitHub issue #125).
-/// Each comparison with the oracle leaves it out, and PYTHON_ONLY; agy_takes_ticket_01_s_flags tests agy.
-const OURS_ONLY: &str = "agy";
-/// The harness the Python engine has and this one has not, as OURS_ONLY replaced it.
-const PYTHON_ONLY: &str = "gemini";
+/// The harness harness.json has no cases of: agy, which replaced gemini (GitHub issue #125). Each comparison with
+/// harness.json leaves it out, and DROPPED; agy_takes_ticket_01_s_flags tests agy.
+const UNRECORDED: &str = "agy";
+/// The harness harness.json records and this engine no longer offers, as UNRECORDED replaced it.
+const DROPPED: &str = "gemini";
 
 /// The cases harness.json holds of kind.
 fn cases(kind: &str) -> Vec<Vec<Value>> {
@@ -31,18 +30,18 @@ fn strings(value: &Value) -> Vec<String> {
 }
 
 #[test]
-fn every_harness_s_tables_are_the_python_engine_s() {
+fn every_harness_s_tables_are_harness_json_s() {
     let recorded = oracle("harness.json");
     let constants = recorded.get("constants").unwrap();
     let kinds: Vec<&str> = HARNESSES.iter().map(|h| h.kind).collect();
-    assert_eq!(kinds, AGENT_KINDS);
-    let mut python_kinds = strings(constants.get("AGENT_KINDS").unwrap());
-    python_kinds.retain(|k| k != PYTHON_ONLY);
-    assert_eq!(python_kinds, kinds.iter().filter(|k| **k != OURS_ONLY).copied().collect::<Vec<_>>());
-    assert_eq!(constants.get("DEFAULT_AGENT").and_then(Value::as_str), Some(DEFAULT_AGENT));
-    // Python's four tables, as the rows here make them.
+    assert_eq!(kinds, HARNESS_NAMES);
+    let mut recorded_kinds = strings(constants.get("AGENT_KINDS").unwrap());
+    recorded_kinds.retain(|k| k != DROPPED);
+    assert_eq!(recorded_kinds, kinds.iter().filter(|k| **k != UNRECORDED).copied().collect::<Vec<_>>());
+    assert_eq!(constants.get("DEFAULT_AGENT").and_then(Value::as_str), Some(DEFAULT_HARNESS));
+    // The four tables harness.json records, as the rows here make them.
     let (mut permissions, mut resume, mut add_dir, mut logs) = (Object::new(), Object::new(), Object::new(), Object::new());
-    for h in HARNESSES.iter().filter(|h| h.kind != OURS_ONLY) {
+    for h in HARNESSES.iter().filter(|h| h.kind != UNRECORDED) {
         if let Permissions::Equivalents(table) = h.permissions {
             let mut modes = Object::new();
             for (mode, args) in table {
@@ -59,25 +58,25 @@ fn every_harness_s_tables_are_the_python_engine_s() {
             logs.insert(h.kind.into(), Value::from(log.glob));
         }
     }
-    // The Python table of the name, without its PYTHON_ONLY row.
-    let python = |name: &str| {
+    // harness.json's table of the name, without its DROPPED row.
+    let table_of = |name: &str| {
         let mut table = constants.get(name).and_then(Value::as_object).cloned().unwrap();
-        table.remove(PYTHON_ONLY);
+        table.remove(DROPPED);
         Value::Object(table)
     };
-    assert_eq!(python("PERMISSION_ARGS"), Value::Object(permissions));
-    assert_eq!(python("RESUME_ARGS"), Value::Object(resume));
-    assert_eq!(python("ADD_DIR_ARGS"), Value::Object(add_dir));
-    assert_eq!(python("SESSION_LOGS"), Value::Object(logs));
+    assert_eq!(table_of("PERMISSION_ARGS"), Value::Object(permissions));
+    assert_eq!(table_of("RESUME_ARGS"), Value::Object(resume));
+    assert_eq!(table_of("ADD_DIR_ARGS"), Value::Object(add_dir));
+    assert_eq!(table_of("SESSION_LOGS"), Value::Object(logs));
     // Only codex resumes by a subcommand, and its arguments start with it (launch below).
     assert!(HARNESSES.iter().all(|h| matches!(h.resume, Resume::Subcommand(_)) == (h.kind == "codex")));
 }
 
 #[test]
-fn each_mode_s_arguments_in_each_harness_are_the_python_engine_s() {
+fn each_mode_s_arguments_in_each_harness_are_harness_json_s() {
     let cases = cases("permission_args");
     assert_eq!(cases.len(), 5 * 7);
-    for case in cases.iter().filter(|case| case[0] != PYTHON_ONLY) {
+    for case in cases.iter().filter(|case| case[0] != DROPPED) {
         let [kind, mode, expected] = &case[..] else { panic!("{case:?}") };
         let (kind, mode) = (kind.as_str().unwrap(), mode.as_str().unwrap());
         let expected = (!expected.is_null()).then(|| strings(expected));
@@ -86,12 +85,12 @@ fn each_mode_s_arguments_in_each_harness_are_the_python_engine_s() {
 }
 
 #[test]
-fn the_launch_of_every_combination_is_the_python_engine_s() {
-    // opencode's is this engine's own (opencode_takes_its_model_and_grant_as_config): Python passed it --model, which
+fn the_launch_of_every_combination_is_harness_json_s() {
+    // opencode's is left out (opencode_takes_its_model_and_grant_as_config): harness.json passes it --model, which
     // opencode 2.0.24's TUI does not take.
     let cases = cases("launch_args");
     assert_eq!(cases.len(), 5 * 9 * 3 * 3 * 3);
-    for case in cases.iter().filter(|case| case[0] != "opencode" && case[0] != PYTHON_ONLY) {
+    for case in cases.iter().filter(|case| case[0] != "opencode" && case[0] != DROPPED) {
         let [kind, mode, model, session, extra, expected] = &case[..] else { panic!("{case:?}") };
         let h = harness(kind.as_str().unwrap()).unwrap();
         let launch = h.launch(text(mode), text(model), text(session), text(extra));
@@ -133,8 +132,24 @@ fn opencode_takes_its_model_and_grant_as_config() {
 }
 
 #[test]
+fn opencode_grants_no_run_directory_its_matcher_would_read_as_more_than_itself() {
+    // opencode 2.0.24 reads `*` and `?` in a grant as wildcards, and `\` as `/`, so each would widen or move it.
+    let h = harness("opencode").unwrap();
+    for dir in ["/p*/.orchestrator/runs/r", "/p?/.orchestrator/runs/r", r"/p\q/.orchestrator/runs/r"] {
+        let expected = Launch {
+            args: vec!["--standalone".to_string()],
+            env: vec![("OPENCODE_CONFIG_CONTENT".to_string(), r#"{"model":"m"}"#.to_string())],
+        };
+        assert_eq!(h.launch(None, Some("m"), None, Some(dir)), expected, "{dir}");
+    }
+    // Other characters it takes as they are.
+    let launch = h.launch(None, None, None, Some("/p[1]{a,b}+/r"));
+    assert_eq!(launch.env[0].1, r#"{"permission":{"external_directory":{"/p[1]{a,b}+/r/*":"allow"}}}"#);
+}
+
+#[test]
 fn the_launch_is_the_same_each_time() {
-    // TestHarnessFlags.test_launch_args_leave_the_permission_table_alone: Python's extended its table's list in place.
+    // A launch must not change the table it reads its arguments from.
     for h in &HARNESSES {
         let first = h.launch(Some("acceptEdits"), Some("m"), None, Some("/run"));
         assert_eq!(h.launch(Some("acceptEdits"), Some("m"), None, Some("/run")), first, "{}", h.kind);
@@ -143,8 +158,8 @@ fn the_launch_is_the_same_each_time() {
 
 #[test]
 fn the_run_directory_is_granted_where_the_harness_can() {
-    // TestHarnessFlags.test_run_dir_granted_in_worktree_runs_only, its launch half for the harnesses that take a flag;
-    // the Workflow half is in workflow/tests/harnesses.rs, and opencode's grant in
+    // The launch half, for the harnesses that take a flag; the Workflow half is in workflow/tests/harnesses.rs, and
+    // opencode's grant in
     // opencode_takes_its_model_and_grant_as_config.
     let d = "/proj/.orchestrator/runs/r";
     let grants: [(&str, &[&str]); 4] = [
@@ -204,13 +219,14 @@ fn agy_takes_ticket_01_s_flags() {
 }
 
 #[test]
-fn every_session_log_reads_as_the_python_engine_reads_it() {
+fn every_session_log_reads_as_harness_json_records() {
     let cases = cases("session_usage");
     assert!(cases.len() >= 13);
     for case in cases {
         let [kind, name, log, expected] = &case[..] else { panic!("{case:?}") };
         if name == "times in each form" {
-            // Python's fromisoformat forms; the times this engine reads are a_time_is_read_only_with_its_offset's.
+            // Forms of a time this engine does not all read; the ones it reads are
+            // a_time_is_read_only_with_its_offset's.
             continue;
         }
         let usage = harness(kind.as_str().unwrap()).unwrap().session_usage(&unhex(log.as_str().unwrap()));

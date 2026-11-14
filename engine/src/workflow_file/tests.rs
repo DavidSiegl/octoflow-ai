@@ -38,7 +38,7 @@ fn example(name: &str) -> Pipeline {
 }
 
 #[test]
-fn every_workflow_parses_to_the_python_engines_definition() {
+fn every_workflow_parses_to_the_definition_workflows_json_records() {
     let cases = oracle("workflows.json");
     let cases = cases.as_array().unwrap();
     assert!(cases.len() >= 12, "workflows.json holds {} workflows", cases.len());
@@ -52,7 +52,7 @@ fn every_workflow_parses_to_the_python_engines_definition() {
             None => {
                 let p = parsed.unwrap_or_else(|e| panic!("{from}: {e}"));
                 let field = |key: &str| outcome.get(key).and_then(Value::as_str).unwrap();
-                // The keys and values the Python engine wrote, its spacing aside.
+                // The keys and values workflows.json records, its spacing aside.
                 let definition: Value = serde_json::from_str(field("definition")).unwrap();
                 assert_eq!(workflow_definition(&p), definition, "{from}");
                 assert_eq!(workflow_toml(&p), field("toml"), "{from}");
@@ -223,7 +223,6 @@ fn invalid_files_name_the_problem() {
         ("step 1 (a b): id may use only letters, digits, - and _", format!("[[steps]]\n{}", step.replace("\"build\"", "\"a b\""))),
         ("workflow bad: duplicate step id build", format!("[[steps]]\n{step}[[steps]]\n{step}")),
         ("workflow bad: role y has no step", format!("[roles]\ny = {{ model = \"m\" }}\n[[steps]]\n{step}")),
-        // tomllib says "Expected '=' after a key"; the toml crate words it its own way.
         ("(at line 1, column 6)", "this is not toml\n".into()),
         ("roles must be a table", format!("roles = 3\n[[steps]]\n{step}")),
         ("description must be a string", format!("description = 3\n[[steps]]\n{step}")),
@@ -271,7 +270,7 @@ fn invalid_files_name_the_problem() {
 }
 
 #[test]
-fn a_table_with_two_problems_names_the_first_in_the_file_as_python_does() {
+fn a_table_with_two_problems_names_the_first_in_the_file() {
     let config = Config::new();
     let step = "id = \"build\"\nfile = \"b-{n}.md\"\nprompt = \"{path}\"\nedits = true\n";
     for (message, text) in [

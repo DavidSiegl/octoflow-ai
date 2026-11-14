@@ -1,10 +1,7 @@
-//! `doctor`: what a run needs, checked before the first run fails on it, as orchestrator.py's check_setup and
-//! report_checks check and report it. Python's last check, tkinter for the GUI, is not made: the Rust engine has no
-//! GUI (the rust-engine spec's Decisions).
+//! `doctor`: what a run needs, checked before the first run fails on it (check_setup), and reported (report_checks).
 
 use super::{Local, Target};
-use crate::constants::{DEFAULT_AGENT, EXIT_ERROR, GITLEAKS_INSTALL, NETWORK_TIMEOUT, REMOTE};
-use crate::ci::QualityGate;
+use crate::constants::{DEFAULT_HARNESS, EXIT_ERROR, GITLEAKS_INSTALL, NETWORK_TIMEOUT, REMOTE};
 use crate::error::OrchestratorError;
 use crate::harness::{Harness, HARNESSES};
 use crate::herdr::ProcessHerdr;
@@ -15,8 +12,6 @@ use crate::local_gate;
 pub const HERDR_MIN_VERSION: [u64; 2] = [0, 9];
 /// The oldest git a run works with, by the numbers its --version prints.
 pub const GIT_MIN_VERSION: [u64; 2] = [2, 36];
-/// The exit status a POSIX shell gives a command it cannot find, as the shell an SSH command runs in does.
-const COMMAND_NOT_FOUND_EXIT: i32 = 127;
 
 /// A version as it is written, such as 0.9 for [0, 9].
 pub fn dotted(version: &[u64]) -> String {
@@ -35,7 +30,7 @@ pub enum Level {
 }
 
 impl Level {
-    /// The level as Python's REQUIRED, NEEDED_FOR_PR and OPTIONAL name it.
+    /// The level's name, in lower case with hyphens.
     pub fn as_str(self) -> &'static str {
         match self {
             Level::Required => "required",
@@ -59,7 +54,7 @@ pub struct Check {
 }
 
 /// A requirement a probe found unmet, or could not check: what it found, and the fix that replaces the check's own,
-/// when it has one. Python's _Unmet, and the OrchestratorError a probe raises.
+/// when it has one.
 #[derive(Debug)]
 struct Unmet {
     detail: String,
@@ -190,7 +185,7 @@ pub fn check_setup(
     }
     let mut integrations = IntegrationStatus::new(agents);
     for Harness { kind, integration, .. } in HARNESSES {
-        let (level, note) = if kind == DEFAULT_AGENT {
+        let (level, note) = if kind == DEFAULT_HARNESS {
             (Level::Required, String::new())
         } else {
             (Level::Optional, format!("needed only for a role that runs in {kind}"))
@@ -210,19 +205,25 @@ pub fn check_setup(
     });
     let fix = "install gh (https://cli.github.com)";
     check(&mut checks, "gh", Level::NeededForPr, fix, on_machine.as_ref(), "", &mut || gh_logged_in(agents));
-    check(&mut checks, "gitleaks", Level::NeededForPr, GITLEAKS_INSTALL, on_machine.as_ref(), "", &mut || {
+    let level = Level::NeededForPr;
+    let gitleaks = check(&mut checks, "gitleaks", level, GITLEAKS_INSTALL, on_machine.as_ref(), "", &mut || {
         agents.gitleaks_problem().map_or_else(|| Ok("`gitleaks git` runs".to_string()), |p| Err(Unmet::new(p)))
     });
-    // What a run with --quality-gate local checks before its interview (QualityGate::preflight), so the check cannot
-    // ask for less or more. The local gate's asks nothing of a checkout, so a project not given does not skip it.
+    // What a run with --quality-gate local checks before its interview (Workflow::check_gate's gitleaks and
+    // local_gate::preflight), so the check cannot ask for less or more. It asks nothing of a checkout, so a project
+    // not given does not skip it. gitleaks is told from the check above: the run's own check words it for a run.
     let fix = "install or fix what it names where the agents run (docs/quality-gate.md, \"The local gate\")";
     let note = "needed only for --quality-gate local";
     check(&mut checks, "local quality gate", Level::Optional, fix, on_machine.as_ref(), note, &mut || {
-        QualityGate::Local.preflight(agents, cwd.unwrap_or("."))?;
+        if !gitleaks.ok {
+            let detail = format!("{}, and the gate scans each snapshot for secrets with it", gitleaks.detail);
+            return Err(Unmet::with_fix(detail, GITLEAKS_INSTALL));
+        }
+        local_gate::preflight(agents)?;
         Ok("gitleaks, and all the gate's preflight asks for, are ready".to_string())
     });
     if let Some(cwd) = cwd {
-        let fix = "pass --cwd a git checkout, or make one with git clone or git init";
+        let fix = "choose a git checkout as the project (--cwd), or make one with git clone or git init";
         let checkout = check(&mut checks, "git checkout", Level::NeededForPr, fix, Some(&git), "", &mut || {
             top_level(agents, cwd)
         });
@@ -236,7 +237,7 @@ pub fn check_setup(
 
 /// Add to checks, and return, the Check of probe, named name at level, with fix its fix when the probe brings none;
 /// or, when needs is given and not ok, a Check skipped for it, probe not run. note is added to the detail of a Check
-/// that is not ok. Python's _check_unless_skipped.
+/// that is not ok.
 fn check(
     checks: &mut Vec<Check>,
     name: &str,
@@ -292,7 +293,10 @@ fn reach_herdr(
     let Some(machine) = herdr.machine() else {
         let check = match in_herdr_pane {
             true => reached(true, "inside a herdr pane".into(), String::new()),
-            false => reached(false, "not inside a herdr pane".into(), "run from a herdr pane, or pass --machine".into()),
+            false => {
+                let fix = "run from a herdr pane, or choose a herdr machine (--machine)";
+                reached(false, "not inside a herdr pane".into(), fix.into())
+            }
         };
         return (Some(host.clone()), Check { level: pane_level, ..check });
     };
@@ -325,20 +329,18 @@ fn on_path(host: &dyn Host, command: &str) -> Probed {
     Ok(path.to_string())
 }
 
-/// argv's exit status and output, as host.run gives them, run within timeout seconds. Unmet as on_path's, when argv[0]
-/// is not on host's PATH: it cannot be started here, or over SSH the remote shell exits COMMAND_NOT_FOUND_EXIT; and
-/// with the error for any other failure to run it.
+/// argv's exit status and output, as host.run gives them, run within timeout seconds once on_path finds argv[0] on
+/// host's PATH. Unmet as on_path's when it does not, or argv[0] is gone by the time it is started; and with the error
+/// for any other failure to look it up or run it. Looking it up first through `sh -c` keeps the answer the same
+/// whatever login shell an SSH command runs in (csh exits 1 for a missing command, not 127) and whatever status the
+/// tool itself exits with.
 fn run_tool(host: &dyn Host, argv: &[&str], timeout: u64) -> Result<Completed, Unmet> {
-    let not_on_path = || Unmet::new(format!("{} is not on PATH", argv[0]));
-    let proc = match host.exec(argv, None, timeout) {
-        Err(ExecError::NotFound(_)) => return Err(not_on_path()),
-        Err(ExecError::Failed(e)) => return Err(e.into()),
-        Ok(exec) => decoded(exec)?,
-    };
-    if host.ssh_target().is_some() && proc.status == COMMAND_NOT_FOUND_EXIT {
-        return Err(not_on_path());
+    on_path(host, argv[0])?;
+    match host.exec(argv, None, timeout) {
+        Err(ExecError::NotFound(_)) => Err(Unmet::new(format!("{} is not on PATH", argv[0]))),
+        Err(ExecError::Failed(e)) => Err(e.into()),
+        Ok(exec) => Ok(decoded(exec)?),
     }
-    Ok(proc)
 }
 
 /// What `command --version` prints, once command is on host's PATH and the first version number it prints is
@@ -356,7 +358,7 @@ fn tool_version(host: &dyn Host, command: &str, minimum: &[u64]) -> Probed {
     Ok(said)
 }
 
-/// The first version number in text, as Python's `\d+(?:\.\d+)+` finds it: ASCII digits, then one or more groups of
+/// The first version number in text, the first match of `\d+(?:\.\d+)+`: ASCII digits, then one or more groups of
 /// a dot and digits.
 fn version_number(text: &str) -> Option<&str> {
     let bytes = text.as_bytes();
@@ -418,7 +420,7 @@ impl<'h> IntegrationStatus<'h> {
 /// Each integration's state, by its name, from `herdr integration status`, whose lines read
 /// `<name>: current (vN) (<path>)`, `<name>: not installed (<path>)` or the like for another state, and a name may
 /// carry a note, as `letta (experimental): ...`. The state is what follows the colon, the path left out. A name listed
-/// twice has its last state. Python's integration_states and its pattern `(\S+)[^:]*: (.*?)(?: \([^()]*\))?`, a blank
+/// twice has its last state. A line is read as the pattern `(\S+)[^:]*: (.*?)(?: \([^()]*\))?` reads it, a blank
 /// (`\S`'s complement) being what char::is_whitespace takes.
 pub fn integration_states(listing: &str) -> Vec<(String, String)> {
     let mut states: Vec<(String, String)> = Vec::new();

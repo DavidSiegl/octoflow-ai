@@ -10,7 +10,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::process::{command, TempDir};
+use crate::process::command;
 use crate::toy_repos::{ToyRepo, TOY_REPOS};
 use crate::Error;
 
@@ -79,7 +79,10 @@ pub fn write_bundles(repos: &[ToyRepo], tasks_dir: &Path) -> Result<Vec<(PathBuf
 /// The bundles of repos, in their tasks' directories under tasks_dir, that are missing or not of repos' files, in
 /// repos' order. Errors: git failed, or a bundle there could not be read.
 pub fn stale_bundles(repos: &[ToyRepo], tasks_dir: &Path) -> Result<Vec<PathBuf>, Error> {
-    let tmp = TempDir::new("toy-bundle-").map_err(|e| Error(format!("could not make a temporary directory: {e}")))?;
+    let tmp = tempfile::Builder::new()
+        .prefix("toy-bundle-")
+        .tempdir()
+        .map_err(|e| Error(format!("could not make a temporary directory: {e}")))?;
     let mut stale = vec![];
     for repo in repos {
         let expected = make_bundle(repo.files, &tmp.path().join(repo.task), &message(repo.task))?;
@@ -95,7 +98,10 @@ pub fn stale_bundles(repos: &[ToyRepo], tasks_dir: &Path) -> Result<Vec<PathBuf>
 /// else, its HEAD on main, and return the commit's id, which depends only on files and message. An existing bundle is
 /// replaced. Errors: a file could not be written, or git failed.
 pub fn make_bundle(files: &[(&str, &str)], bundle: &Path, message: &str) -> Result<String, Error> {
-    let tmp = TempDir::new("toy-repo-").map_err(|e| Error(format!("could not make a temporary directory: {e}")))?;
+    let tmp = tempfile::Builder::new()
+        .prefix("toy-repo-")
+        .tempdir()
+        .map_err(|e| Error(format!("could not make a temporary directory: {e}")))?;
     let repo = tmp.path();
     git(repo, &["init", "--quiet", &format!("--initial-branch={BRANCH}")])?;
     for (path, text) in files {

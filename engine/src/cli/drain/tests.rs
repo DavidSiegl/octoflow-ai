@@ -1,14 +1,12 @@
-//! tests/test_orchestrator.py's TestDrain, TestDrainWorkflows and TestPromptFiles.test_a_bad_file_stops_drain_before_any_run,
-//! ported case for case: drain through main's dispatch (run_command), on the fixture's FakeHost, each run's
-//! Workflow::run played by a script through Connected's workflow, as Python patches Workflow.run.
+//! drain through main's dispatch (run_command), on the fixture's FakeHost, each run's Workflow::run played by a script
+//! through Connected's workflow.
 //!
-//! Where Python patches sweep_branches, a case that asks whether drain swept gives the project a run whose sweep
-//! asks gh about a pull request no other step asks about (Drain::sweepable). Two cases differ from Python's:
-//! test_a_spec_deleted_before_its_run_line_is_written_is_not_run, which patches QueuedSpec.reread to delete the spec
-//! between the reads, runs drain_spec on a spec deleted after it was read; and test_a_spec_that_cannot_be_written,
-//! which patches os.replace, blocks the file written aside with a directory of its name, which fails as a full disk
-//! would, for root too. test_a_relative_dir_is_the_shells is not ported: it changes the process's directory, which
-//! the tests share, and read_queue reads DIR with std::fs, relative to that directory as Python's os.listdir does.
+//! A case that asks whether drain swept gives the project a run whose sweep asks gh about a pull request no other step
+//! asks about (Drain::sweepable). a_spec_deleted_before_its_run_line_is_written_is_not_run runs drain_spec on a spec
+//! deleted after it was read; a_spec_that_cannot_be_written_stops_the_drain_and_keeps_the_old_file blocks the file
+//! written aside with a directory of its name, which fails as a full disk would, for root too. That a relative DIR is
+//! the shell's goes untested: read_queue reads DIR with std::fs, relative to the process's directory, which a test
+//! cannot change without changing it for the others.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -615,13 +613,13 @@ fn an_interrupted_run_keeps_its_spec_ready_with_its_run() {
     assert_eq!(d.header("a"), (some(SPEC_READY), Some(run_id.clone()), None));
     let key = run_id.rsplit('-').next().unwrap();
     assert!(r.err.contains(&format!("resume with: orchestrator resume {key} --machine m --cwd '~/p'")), "{}", r.err);
-    // Its Run: line is a change drain made, printed as Python's finally prints it.
+    // Its Run: line is a change drain made, printed though the drain was interrupted.
     assert_eq!(r.out, "a: ready-for-agent -> ready-for-agent\n");
 }
 
 #[test]
 fn a_ctrl_c_between_runs_stops_the_drain_with_the_changes_printed() {
-    // The Rust engine's own: a Ctrl-C that no run took, as Python's KeyboardInterrupt anywhere in main.
+    // A Ctrl-C that no run took.
     let d = Rc::new(Drain::new());
     d.spec("a", &ready("First"));
     d.spec("b", &ready("Second"));
@@ -844,6 +842,21 @@ fn a_spec_for_the_human_whose_conflict_refresh_cleared_stays_unless_its_run_succ
     }
 }
 
+#[test]
+fn a_spec_for_the_human_whose_pull_request_refresh_found_merged_or_closed_is_settled_by_the_next_drain() {
+    // The pull request's state as refresh finds it, and the spec's status the drain after it leaves.
+    for (pr_state, spec_after) in [("MERGED", SPEC_DONE), ("CLOSED", SPEC_FOR_HUMAN)] {
+        let d = Drain::new();
+        let run_id = conflicted_spec(&d, SPEC_FOR_HUMAN, APPROVE, &[("state", Value::from(pr_state))]);
+        d.cli.with(|world| crate::cli::refresh::refresh_command(world, "/proj", None)).unwrap();
+        assert_eq!(d.run_conflicts(&run_id), Value::Array(vec![]), "{pr_state}");
+        let r = d.drain(vec![], &[]);
+        assert_eq!(r.status, 0, "{}", r.err);
+        assert_eq!(d.header("a"), (some(spec_after), Some(run_id.clone()), some(PR_A)), "{pr_state}");
+        assert_eq!(d.cli.saved(&run_id).get("conflict_cleared"), Some(&Value::Null), "{pr_state}");
+    }
+}
+
 /// Spec a set back to SPEC_FOR_HUMAN by the human, its Run: and PR: lines kept.
 fn set_back_for_human(d: &Drain, run_id: &str) {
     d.spec("a", &spec_text("First", Some(SPEC_FOR_HUMAN), &[&format!("Run: {run_id}"), &format!("PR: {PR_A}")]));
@@ -995,7 +1008,7 @@ fn an_unfinished_run_on_the_run_line_stops_the_drain_before_any_run() {
     let run_id = "20261024-100000-aaaaaa";
     let stale = HEARTBEAT_SECONDS + STALE_SECONDS;
     let owner = serde_json::from_str::<Value>(r#"{"host": "elsewhere", "pid": 1}"#).unwrap();
-    // The project is --cwd /proj's, which the command repeats, where Python's test patches resolve_dir.
+    // The project is --cwd /proj's, which the command repeats.
     let resume = "resume it with `orchestrator resume aaaaaa --cwd /proj`";
     let cases: [(Option<Fields>, u64, &str, &str); 6] = [
         (
@@ -1247,7 +1260,7 @@ fn the_flags_reach_every_run() {
     d.spec("a", &ready("A"));
     d.spec("b", &ready("B"));
     let example = format!("{EXAMPLES}/spec-build-review.toml");
-    let job = crate::ci::fake::JOB;
+    let job = crate::local_gate::LOCAL_GATE;
     let argv = [
         "--workflow-file", &example, "--worktree", "--quality-gate", job, "--max-quality-rounds", "2",
         "--max-rounds", "5", "--timeout", "60", "--permission-mode", "auto", "--model", "m", "--review-model", "r",
@@ -1264,7 +1277,7 @@ fn the_flags_reach_every_run() {
         let models: Vec<(String, String)> = state.models.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         let want = [("spec", "m"), ("build", "m"), ("review", "r")].map(|(k, v)| (k.to_string(), v.to_string()));
         assert_eq!(models, want);
-        assert!(state.agent_kinds.values().all(|k| k == "codex"));
+        assert!(state.next_harnesses.values().all(|k| k == "codex"));
     }
 }
 
@@ -1297,7 +1310,7 @@ fn blocker_slugs_read_slugs_and_spec_paths() {
     assert_eq!(blocker_slugs(None), Vec::<String>::new());
 }
 
-// -- TestPromptFiles.test_a_bad_file_stops_drain_before_any_run ------------------------------------------------------
+// -- A bad prompt file stops drain before any run --------------------------------------------------------------------
 
 #[test]
 fn a_bad_prompt_file_stops_drain_before_any_run() {
@@ -1313,7 +1326,7 @@ fn a_bad_prompt_file_stops_drain_before_any_run() {
     assert_eq!(d.runs.borrow().len(), 0);
 }
 
-// -- TestDrainWorkflows ----------------------------------------------------------------------------------------------
+// -- drain's workflows -----------------------------------------------------------------------------------------------
 
 #[test]
 fn two_specs_end_as_two_pull_requests() {
@@ -1336,7 +1349,7 @@ fn two_specs_end_as_two_pull_requests() {
 
 #[test]
 fn a_blocker_with_an_empty_status_waits_as_one_with_none() {
-    // As Python's `blocker.status or 'no status'` reads an empty Status: (cross-review 104, F1).
+    // An empty Status: is no status (cross-review 104, F1).
     let d = Drain::new();
     d.spec("a", &spec_text("First", Some(""), &[&format!("PR: {PR_A}")]));
     d.spec("b", &spec_text("Second", Some(SPEC_READY), &["Blocked by: a"]));

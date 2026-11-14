@@ -1,11 +1,8 @@
-//! TestHarnesses, the Workflow's and resumable_state's cases of TestHarnessFlags, and TestWorkflowFileAgents'
-//! test_saved_with_the_run: each role's agent started, resumed and saved in its harness.
+//! Each role's agent started, resumed and saved in its harness, as the flags and a workflow file's agents choose it.
 //!
-//! Not here: TestHarnessFlags' cases of parse_args, new_state and main (test_precedence, test_flags_reach_the_workflow,
-//! test_role_agent_for_a_role_the_workflow_lacks, test_unknown_kinds_are_argparse_errors), crate::cli's tests' and
-//! crate::cli::args'; and TestWorkflowFileAgents' test_workflows_prints_it, crate::cli::workflows'.
-//! TestWorkflowFileAgents' other cases, and TestHarnessFlags' of launch_args and of reading a 0.3.0 state, are
-//! crate::workflow_file's, crate::harness's and crate::state's (tickets 04 and 06).
+//! Not here: how the flags are parsed and reach a run, crate::cli's tests and crate::cli::args'; `workflows` printing
+//! a file's agents, crate::cli::workflows'; reading a workflow file's agents, each harness's launch arguments and
+//! reading a 0.3.0 state, crate::workflow_file's, crate::harness's and crate::state's.
 
 use super::worktree::worktree_run;
 use crate::test_support::resumable;
@@ -43,11 +40,11 @@ fn every_role(kind: &str) -> Map<String> {
 }
 
 /// AgentSettings of a permission mode, the models and the harnesses by role.
-fn agent_settings(permission_mode: Option<&str>, models: &[(&str, &str)], kinds: Map<String>) -> AgentSettings {
+fn agent_settings(permission_mode: Option<&str>, models: &[(&str, &str)], harnesses: Map<String>) -> AgentSettings {
     AgentSettings {
         permission_mode: permission_mode.map(String::from),
         models: models.iter().map(|(r, m)| (*r, m.to_string())).collect(),
-        kinds,
+        harnesses,
     }
 }
 
@@ -124,7 +121,7 @@ fn without_a_harness_every_role_is_claude_as_before() {
 #[test]
 fn a_dropped_mode_is_logged_once_per_role() {
     let mut state = saved_run("build", 2, FULL);
-    state.agents.get_mut("build").unwrap().kind = "pi".to_string();
+    state.agents.get_mut("build").unwrap().harness = "pi".to_string();
     let script = vec![("build", vec![build_turn(2)]), ("review", vec![review_turn(2, APPROVE)])];
     let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &["review"], &[("build", "s-gone")]);
     f.herdr.state().lost_sessions.insert("s-gone".into());
@@ -151,7 +148,7 @@ fn an_exited_agent_resumes_in_its_own_harness() {
         let seen = seen();
         let mut state = saved_run("build", 2, FULL);
         state.prompted = Some("build-2.md".into());
-        state.agents.get_mut("build").unwrap().kind = kind.to_string();
+        state.agents.get_mut("build").unwrap().harness = kind.to_string();
         let script = vec![("build", vec![recording(build_turn(2), &seen)]), ("review", vec![review_turn(2, APPROVE)])];
         let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &["review"], &[("build", "s-build")]);
         let settings = RunSettings { agents: agent_settings(Some("acceptEdits"), &[("build", "m")], every_role(kind)), ..f.as_saved() };
@@ -160,7 +157,7 @@ fn an_exited_agent_resumes_in_its_own_harness() {
         assert_eq!(starts(&f), [("build-a1b2c3".into(), "w1:p2".into(), resumed(kind))], "{kind}");
         assert_eq!(f.herdr.state().kinds, [("build-a1b2c3".to_string(), kind.to_string())]);
         assert_eq!(*seen.borrow(), [continue_prompt(&wf.state().build_path(2))]);
-        assert_eq!(wf.state().agents.get("build").unwrap().kind, *kind);
+        assert_eq!(wf.state().agents.get("build").unwrap().harness, *kind);
     }
 }
 
@@ -168,7 +165,7 @@ fn an_exited_agent_resumes_in_its_own_harness() {
 fn a_saved_run_on_gemini_is_refused_naming_agy() {
     let mut state = saved_run("build", 2, FULL);
     state.prompted = Some("build-2.md".into());
-    state.agents.get_mut("build").unwrap().kind = "gemini".to_string();
+    state.agents.get_mut("build").unwrap().harness = "gemini".to_string();
     let script = vec![("build", vec![build_turn(2)])];
     let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &["review"], &[("build", "s-build")]);
     let settings = RunSettings { agents: agent_settings(None, &[], every_role("gemini")), ..f.as_saved() };
@@ -183,7 +180,7 @@ fn a_changed_harness_starts_fresh() {
         let seen = seen();
         let mut state = saved_run("build", 2, FULL);
         state.prompted = Some("build-2.md".into());
-        state.agents.get_mut("build").unwrap().kind = saved_kind.to_string();
+        state.agents.get_mut("build").unwrap().harness = saved_kind.to_string();
         let script = vec![("build", vec![recording(build_turn(2), &seen)]), ("review", vec![review_turn(2, APPROVE)])];
         let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &["review"], &[("build", "s-build")]);
         let kinds = [("build", kind.to_string())].into_iter().collect();
@@ -227,12 +224,11 @@ fn every_roles_harness_is_saved() {
     assert_eq!(recorded, [("spec", "claude"), ("build", "claude"), ("review", "pi")]);
 }
 
-// -- TestHarnessFlags, the Workflow's cases ------------------------------------------------------------------------
+// -- The harness flags ---------------------------------------------------------------------------------------------
 
 #[test]
 fn role_agent_starts_that_role_in_its_harness() {
-    // The harnesses new_state gives `run task --agent agy --role-agent review=pi`, as test_precedence (crate::cli's tests)
-    // checks.
+    // The harnesses new_state gives `run task --agent agy --role-agent review=pi`, as crate::cli's tests check.
     let expected = [("spec", "agy"), ("build", "agy"), ("review", "pi")];
     let f = Fixture::new(approved());
     let kinds = expected.iter().map(|(r, k)| (*r, k.to_string())).collect();
@@ -255,7 +251,7 @@ fn resume_keeps_or_overrides_the_saved_harnesses() {
         ),
     ];
     for (flags, kinds) in cases {
-        assert_eq!(resumable(flags, &saved).unwrap().agent_kinds, kinds, "{flags:?}");
+        assert_eq!(resumable(flags, &saved).unwrap().next_harnesses, kinds, "{flags:?}");
     }
 }
 
@@ -263,7 +259,7 @@ fn resume_keeps_or_overrides_the_saved_harnesses() {
 fn resume_with_a_new_harness_relaunches_in_it() {
     let saved = saved_run("review", 2, FULL).to_json().as_object().unwrap().clone();
     let state = resumable(&["--agent", "pi"], &saved).unwrap();
-    let agents = agent_settings(state.permission_mode.as_deref(), &[], state.agent_kinds.clone());
+    let agents = agent_settings(state.permission_mode.as_deref(), &[], state.next_harnesses.clone());
     let script = vec![("review", vec![review_turn(2, APPROVE)])];
     let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &[], &[]);
     f.put(&f.state.build_path(2), "report 2");
@@ -271,7 +267,7 @@ fn resume_with_a_new_harness_relaunches_in_it() {
     assert_eq!(f.herdr.state().kinds, [("review-a1b2c3".to_string(), "pi".to_string())]);
 }
 
-// -- TestWorkflowFileAgents ----------------------------------------------------------------------------------------
+// -- A workflow file's agents --------------------------------------------------------------------------------------
 
 #[test]
 fn saved_with_the_run() {
@@ -294,7 +290,7 @@ fn saved_with_the_run() {
 
 #[test]
 fn a_run_saved_with_gemini_resumes_only_moved_to_another_harness() {
-    // A run 0.67 saved: its workflow's review role and its agent_kinds name gemini (GitHub issue #125).
+    // A run 0.67 saved: its workflow's review role and its next_harnesses name gemini (GitHub issue #125).
     let quick = crate::test_support::quick();
     let mut settings = quick.settings().clone();
     settings.agents.insert("review", "codex".to_string());
@@ -318,13 +314,12 @@ fn a_run_saved_with_gemini_resumes_only_moved_to_another_harness() {
         )
     );
     let state = resumable(&["--role-agent", "review=agy"], &saved).unwrap();
-    assert_eq!(state.agent_kinds.get("review").map(String::as_str), Some("agy"));
+    assert_eq!(state.next_harnesses.get("review").map(String::as_str), Some("agy"));
 }
 
 #[test]
 fn run_dir_granted_in_worktree_runs_only() {
-    // TestHarnessFlags.test_run_dir_granted_in_worktree_runs_only, its Workflow half; the launch half is
-    // crate::harness's.
+    // The arguments the launch gives for a granted directory are crate::harness's.
     let f = worktree_run(Rc::new(FakeHost::default()), None);
     f.workflow(RunSettings::default()).run().unwrap();
     let args: Vec<Vec<String>> = starts(&f).into_iter().map(|(_, _, args)| args).collect();

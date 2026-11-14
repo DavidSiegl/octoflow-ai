@@ -1,13 +1,13 @@
-//! What the engine's unit tests share: a seeded generator of test inputs, in place of Python's Hypothesis, and a
-//! temporary directory.
+//! What the engine's unit tests share: a seeded generator of test inputs, for property tests, and a temporary
+//! directory.
 //!
 //! The generated inputs are the same on every run unless the environment gives a run seed in OCTOFLOW_TEST_SEED,
 //! which Jenkins's Test stage sets afresh for each build. A test that fails under a run seed prints it; run it
 //! again on the same cases with `OCTOFLOW_TEST_SEED=<seed> cargo test <test's name>`.
 
-use std::path::PathBuf;
-
-/// The environment variable that holds the run seed, a decimal u64; unset or empty, the run has none.
+/// The environment variable the engine's generated-input tests read their run seed from, a decimal u64 (unset or
+/// empty, a run has none), and which a failing one names on its standard error (Rng), so that the case can be
+/// generated again.
 const RUN_SEED_VARIABLE: &str = "OCTOFLOW_TEST_SEED";
 
 /// The run seed in var, which is what std::env::var gave for RUN_SEED_VARIABLE. Panics when the variable holds
@@ -73,7 +73,7 @@ impl Rng {
     }
 
     /// Text of up to max characters, none of them in excluded nor a NUL: mostly ASCII, with the characters that
-    /// Python's and sh's notions of a line, a blank and a word disagree on mixed in.
+    /// Unicode's and sh's notions of a line, a blank and a word disagree on mixed in.
     pub fn text(&mut self, max: usize, excluded: &str) -> String {
         const ODD: &[char] = &[
             '\n', '\r', '\t', '\x0b', '\x0c', '\x1c', '\x1d', '\x1e', '\x1f', '\u{85}', '\u{a0}', '\u{2028}',
@@ -104,40 +104,28 @@ impl Drop for Rng {
     }
 }
 
-/// A directory of its own under the system's temporary directory, removed with everything in it when dropped.
-pub struct TempDir(PathBuf);
+/// A directory of its own under the system's temporary directory, removed with everything in it when dropped; a
+/// removal that fails is ignored. Its paths come as Strings, which is what the engine's functions under test take.
+pub struct TempDir(tempfile::TempDir);
 
 impl TempDir {
     pub fn new() -> Self {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static COUNT: AtomicU64 = AtomicU64::new(0);
-        let n = COUNT.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("octoflow-engine-test-{}-{n}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("a temporary directory");
-        TempDir(dir)
+        TempDir(tempfile::Builder::new().prefix("octoflow-engine-test-").tempdir().expect("a temporary directory"))
     }
 
     /// The directory's path, as a str.
     pub fn path(&self) -> String {
-        self.0.to_str().expect("a UTF-8 path").to_string()
+        self.0.path().to_str().expect("a UTF-8 path").to_string()
     }
 
     /// The path of name in the directory, as a str.
     pub fn join(&self, name: &str) -> String {
-        self.0.join(name).to_str().expect("a UTF-8 path").to_string()
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        if let Err(e) = std::fs::remove_dir_all(&self.0) {
-            eprintln!("could not remove {}: {e}", self.0.display());
-        }
+        self.0.path().join(name).to_str().expect("a UTF-8 path").to_string()
     }
 }
 
 /// What starts a command with SIGINT at its default, so that a shell can trap it: one that the tests' process ignores,
-/// as Jenkins's does, stays ignored in what it starts, as in Python, and a shell cannot trap a signal ignored on entry.
+/// as Jenkins's does, stays ignored in what it starts, and a shell cannot trap a signal ignored on entry.
 pub const HEARS_SIGINT: [&str; 2] = ["env", "--default-signal=INT"];
 
 /// A shell script for a program the engine runs, such as a fake herdr, that runs body with SIGINT at its default,
@@ -188,12 +176,14 @@ pub fn eventually(mut done: impl FnMut() -> bool) -> bool {
 /// The repository's examples/workflows/.
 pub const EXAMPLES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/workflows");
 
-/// The bytes a string of hex digits stands for, as an oracle file writes bytes that are not UTF-8.
+/// The bytes a string of hex digits stands for, as an oracle file (engine/tests/oracle/) writes bytes that are not
+/// UTF-8.
 pub fn unhex(hex: &str) -> Vec<u8> {
     (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("hex digits")).collect()
 }
 
-/// An oracle file of engine/tests/oracle/, which its generator there wrote from the Python engine, parsed.
+/// An oracle file of engine/tests/oracle/, parsed: the recorded expected outputs of the engine's helpers, texts and
+/// parsers for given inputs, which the tests hold the engine to.
 pub fn oracle(file: &str) -> serde_json::Value {
     let text = match file {
         "texts.json" => include_str!("../tests/oracle/texts.json"),
@@ -209,7 +199,7 @@ pub fn oracle(file: &str) -> serde_json::Value {
     serde_json::from_str::<serde_json::Value>(text).unwrap_or_else(|e| panic!("{file}: {e}"))
 }
 
-// -- The workflows tests/test_orchestrator.py defines, by its names -------------------------------------------------
+// -- The workflows the tests share ----------------------------------------------------------------------------------
 
 use crate::pipeline::{Pipeline, PipelineSettings, Step};
 use crate::map::Map;
@@ -301,7 +291,7 @@ pub fn solo() -> Pipeline {
     Pipeline::new("solo", roles(&[("build", "Builder")]), vec![build]).unwrap()
 }
 
-/// p with other settings, validated again, as dataclasses.replace makes one.
+/// p with other settings, validated again.
 pub fn replaced(p: &Pipeline, change: impl FnOnce(&mut PipelineSettings)) -> Result<Pipeline, String> {
     let mut settings = p.settings().clone();
     change(&mut settings);
@@ -332,10 +322,10 @@ pub fn recorded_state(saved: &serde_json::Map<String, serde_json::Value>) -> cra
     crate::state::RunState::from_text(&text).unwrap_or_else(|e| panic!("{e}: {text}"))
 }
 
-/// A run of helpers.json's cases with the inputs engine/tests/oracle/helpers.py gives its helpers, read from its
-/// recording as that script reads them, and the outputs it recorded.
+/// A run of helpers.json's cases with the inputs its helpers are given, read from its recording, and the outputs
+/// helpers.json expects.
 pub struct HelperCase {
-    /// The case: its recording, run directory and conflicts, and the Python engine's outputs by helper.
+    /// The case: its recording, run directory and conflicts, and the expected outputs by helper.
     pub expected: serde_json::Value,
     pub state: crate::state::RunState,
     pub spec: String,
@@ -366,7 +356,7 @@ pub fn helper_cases() -> Vec<HelperCase> {
             saved.insert("conflicts".into(), Value::Array(conflicts.clone()));
         }
         let state = crate::state::RunState::from_saved(&saved).unwrap();
-        // helpers.py's last: the last of the run directory's files whose name matches, by name.
+        // The last of the run directory's files whose name matches, by name.
         let last = |matches: &dyn Fn(&str) -> bool| {
             let mut names: Vec<&str> = files.keys().filter_map(|n| n.strip_prefix(run_dir.as_str())).filter(|n| matches(n)).collect();
             names.sort();
@@ -393,7 +383,7 @@ pub fn helper_cases() -> Vec<HelperCase> {
     out
 }
 
-/// helpers.py's denormalized: text, a recording's state.json, with each "<time>" string in it a time as
+/// text, a recording's state.json, with each "<time>" string in it a time as
 /// crate::summary::iso_utc writes it, the first at epoch (Unix seconds) and each a minute after the one before, and
 /// each "<seconds>" string a count, 5 and then 7 more each time.
 pub fn denormalized(text: &str, epoch: i64) -> String {
@@ -421,7 +411,7 @@ pub fn denormalized(text: &str, epoch: i64) -> String {
     out
 }
 
-/// The summary of the default workflow approved in round 1, as TestTurnTimings has it: crate::summary's tests
+/// The summary of the default workflow approved in round 1: crate::summary's tests
 /// make it of a state, the Workflow's of a whole run.
 pub const GOLDEN_SUMMARY: &str = "\
 # Run 20260929-120000-a1b2c3
@@ -466,7 +456,7 @@ pub fn object(text: &str) -> Object {
 }
 
 /// resumable_state for `resume a1b2c3` with flags over one run, saved as saved 10^4 s ago, in /proj, on host "here",
-/// whose pids are all dead: Python's resumable helpers.
+/// whose pids are all dead.
 pub fn resumable(flags: &[&str], saved: &Object) -> Result<crate::state::RunState, crate::error::OrchestratorError> {
     let argv = ["resume", "a1b2c3"].iter().chain(flags).map(std::ffi::OsString::from);
     let Ok(crate::cli::Command::Resume(args)) = crate::cli::parse_args(argv, &crate::env::ConfigDir::at("/nowhere")) else {

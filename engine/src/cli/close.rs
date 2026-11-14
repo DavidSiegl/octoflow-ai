@@ -1,4 +1,4 @@
-//! Cleaning up after a run nothing drives any more, as orchestrator.py's close_run: the `close` command.
+//! Cleaning up after a run nothing drives any more: the `close` command.
 
 use super::{record_in_state, Connected};
 use crate::constants::RUNS_DIR;

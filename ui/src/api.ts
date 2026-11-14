@@ -16,9 +16,17 @@ export interface Project {
   machine: string;
 }
 
+/** One of the workflow's steps as the run record gives it. role_label, loop_to and quality_gated are absent from a
+ * server before 0.71.0. */
 export interface Step {
   id: string;
   role: string;
+  /** The workflow's label for the role, as its pane shows it. */
+  role_label?: string;
+  /** The step a CHANGES_REQUESTED sends the run back to; null for a step that gives no verdict. */
+  loop_to?: string | null;
+  /** true when the quality loop follows, or followed, this step's turns in this run. */
+  quality_gated?: boolean;
 }
 
 /** A role's agent that the run has started, by its herdr name and harness. */
@@ -75,6 +83,8 @@ export interface RunRecord {
   task: string;
   workflow: string;
   steps: Step[] | null;
+  /** Whether the run opens a pull request; absent from a server before 0.71.0. */
+  pull_request?: boolean;
   phase: string;
   round: number;
   quality_round: number | null;
@@ -172,6 +182,14 @@ export interface RunRequest {
   worktree: boolean;
 }
 
+/** A run POST /run started: its id, and the named herdr session its workspace is in, which
+ * `herdr session attach <herdrSession>` shows; null when it is in the herdr server the sidecar's environment
+ * reaches, which the user's own herdr shows. */
+export interface StartedRun {
+  run: string;
+  herdrSession: string | null;
+}
+
 /** A request the server did not answer as asked, with the HTTP status it answered and its error message. */
 export class HttpError extends Error {
   constructor(
@@ -252,21 +270,22 @@ export class Api {
   }
 
   /** Start the run request asks for in project, in a new workspace of this computer's herdr, and resolve to
-   * its id once it has saved its state or the server's 30 seconds of waiting for that have passed, whichever is
-   * first: the run may not be in the event stream yet, and one that exits after the wait never will be. Rejects with
+   * the run started (StartedRun) once it has saved its state or the server's 30 seconds of waiting for that have
+   * passed, whichever is first: the run may not be in the event stream yet, and one that exits after the wait never
+   * will be. Rejects with
    * the server's error message: status 400 for a request it refuses, 413 for one too long, 422 for a run that exited
    * before saving its state, the message ending with the last lines its pane showed, 500 when the server cannot tell
    * its own program or make a run id, and 502 for a project it cannot reach or a run herdr cannot start. */
-  async startRun(project: Project, request: RunRequest): Promise<string> {
+  async startRun(project: Project, request: RunRequest): Promise<StartedRun> {
     const body = (await this.json(this.url("/run", project, {}), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
-    })) as { run?: unknown };
+    })) as { run?: unknown; herdr_session?: unknown };
     if (typeof body.run !== "string") {
       throw new HttpError(200, "the answer has no run");
     }
-    return body.run;
+    return { run: body.run, herdrSession: typeof body.herdr_session === "string" ? body.herdr_session : null };
   }
 
   /** The text field of a GET of url's JSON; rejects with the server's error message, or the status. */

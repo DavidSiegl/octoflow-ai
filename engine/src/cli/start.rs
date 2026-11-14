@@ -3,17 +3,18 @@
 
 use super::args::{ResumeArgs, RunArgs, Settings};
 use super::Connected;
-use crate::ci::{QualityGate, LOCAL_GATE};
 use crate::constants::{DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT, RUNS_DIR, WORKTREES_DIR};
 use crate::error::OrchestratorError;
 use crate::harness::harness;
+use crate::json::Object;
+use crate::local_gate::LOCAL_GATE;
 use crate::pipeline::{Pipeline, DONE, QUALITY};
 use crate::prompts::{load_prompts, Prompts};
 use crate::map::Map;
 use crate::runs::RUNNING;
 use crate::spec_file::SpecFile;
 use crate::state::{find_run, RunState, SavedRun};
-use crate::workflow::{turn_quality_gate_off, turn_quality_gate_on};
+use crate::workflow::{check_gate_mid_run, turn_quality_gate_off, turn_quality_gate_on};
 use crate::workflow_file::{load_workflow_file, named_workflow};
 
 /// A new run's state from run's flags, and its workflow, for the project at cwd; with spec, run --spec's file, the run
@@ -55,11 +56,11 @@ pub fn new_state(
     state.turn_timeout = s.timeout.filter(|&t| t != 0).map_or(DEFAULT_TURN_TIMEOUT, |t| t.max(0).unsigned_abs());
     state.permission_mode = s.permission_mode.clone();
     state.models = merged(pipeline.models(), role_models(s, pipeline.roles())?);
-    state.agent_kinds = merged(pipeline.agents(), role_agents(s, pipeline.roles())?);
+    state.next_harnesses = merged(pipeline.agents(), role_agents(s, pipeline.roles())?);
     state.pull_request = !args.no_pr;
     // Its path from the start, so round 0 creates the worktree there.
     state.worktree = args.starts.worktree.then(|| format!("{cwd}/{WORKTREES_DIR}/{}", state.key()));
-    state.quality_job = args.starts.quality_gate.clone();
+    state.quality_job = args.starts.quality_gate.then(|| LOCAL_GATE.to_string());
     state.max_quality_rounds = s.max_quality_rounds.map_or(DEFAULT_MAX_QUALITY_ROUNDS, saturating_u32);
     Ok((state, pipeline))
 }
@@ -97,12 +98,17 @@ pub(crate) fn new_run_id(wall: f64, zone: &jiff::tz::TimeZone) -> Result<String,
 }
 
 /// The state of the run args.run_ref names among cwd's runs and its workflow, as resumable_state finds them, with the
-/// quality gate turned on or off as args asks (turn_quality_gate_on and _off: the gate's preflight, and the run's
-/// refs on origin deleted), and its herdr server world's herdr's (Herdr::server), where it starts its agents from
-/// now on; a done run's as resumable_state gives it. Changes nothing on disk.
+/// quality gate turned on or off as args asks (turn_quality_gate_on and _off), and its herdr server world's herdr's
+/// (Herdr::server), where it starts its agents from now on; a done run's as resumable_state gives it. Changes nothing
+/// on disk but the gate's job --no-quality-gate stops (turn_quality_gate_off), which stays stopped even when the resume
+/// fails later, before the run is saved; a resume after that judges the round again.
 ///
-/// Errors: the run cannot be resumed (resumable_state), its gate cannot be switched, or the job's credentials
-/// cannot be read.
+/// A run a release before 0.72.0 started on a Jenkins quality job goes on with the local gate, its human told which
+/// job it leaves, once host passes check_gate_mid_run, as for a run that gets the gate on resume; a quality build it
+/// had in flight is dropped, and its quality round judged again locally.
+///
+/// Errors: the run cannot be resumed (resumable_state), a Jenkins run fails check_gate_mid_run, or its gate cannot be
+/// switched.
 pub fn resumed_state(args: &ResumeArgs, cwd: &str, world: &Connected) -> Result<(RunState, Pipeline), OrchestratorError> {
     let w = &world.with;
     let runs = w.host.run_states(cwd)?;
@@ -111,8 +117,21 @@ pub fn resumed_state(args: &ResumeArgs, cwd: &str, world: &Connected) -> Result<
         return Ok((state, pipeline));
     }
     state.herdr_server = w.herdr.server();
-    if let Some(name) = args.quality_gate.as_deref().filter(|j| !j.is_empty()) {
-        turn_quality_gate_on(&mut state, &pipeline, w.host, w.human, &QualityGate::named(name, world.jenkins)?)?;
+    // A build kept in ci means a Jenkins job, even one named `local`, as a release before 0.63.0 took it.
+    let jenkins = !state.ci.is_empty();
+    if let Some(job) = state.quality_job.take_if(|job| !job.is_empty() && (job != LOCAL_GATE || jenkins)) {
+        w.human.log(&format!(
+            "run {}: the Jenkins quality gate was removed in 0.72.0, so the local gate replaces job {job}",
+            state.run_id
+        ));
+        state.quality_job = Some(LOCAL_GATE.to_string());
+        if !args.no_quality_gate {
+            check_gate_mid_run(&state, w.host)?;
+        }
+    }
+    state.ci = Object::new();
+    if args.quality_gate {
+        turn_quality_gate_on(&mut state, &pipeline, w.host, w.human)?;
     } else if args.no_quality_gate {
         turn_quality_gate_off(&mut state, &pipeline, w)?;
     }
@@ -140,15 +159,6 @@ pub fn resumable_state(
     if state.closed.is_some() {
         return Err(OrchestratorError(format!("run {} was closed; start a new run", state.run_id)));
     }
-    // A local gate never keeps a build in state.ci: this one is of a Jenkins job named `local`, as a release before
-    // 0.63.0 took that name, and this engine would read it as the local gate.
-    if state.quality_job.as_deref() == Some(LOCAL_GATE) && !state.ci.is_empty() {
-        return Err(OrchestratorError(format!(
-            "run {} has a quality build of the Jenkins job `{LOCAL_GATE}` in flight, saved by a release before 0.63.0; \
-             `{LOCAL_GATE}` now names the local gate, so resume the run with that release, or close it",
-            state.run_id
-        )));
-    }
     let pipeline = state.pipeline()?;
     if let Some((RUNNING, why)) = run.health(local_host, pid_alive) {
         if !args.force {
@@ -175,8 +185,9 @@ pub fn resumable_state(
     state.models = merged(&state.models, role_models(s, pipeline.roles())?);
     // Taken up by each role's next agent; one still running keeps its harness. Refused before any turn runs when a
     // role's is one this orchestrator no longer takes, as a run saved by an earlier release can name.
-    state.agent_kinds = merged(&state.agent_kinds, role_agents(s, pipeline.roles())?);
-    if let Some((role, e)) = state.agent_kinds.iter().find_map(|(role, kind)| harness(kind).err().map(|e| (role, e))) {
+    state.next_harnesses = merged(&state.next_harnesses, role_agents(s, pipeline.roles())?);
+    let unknown = state.next_harnesses.iter().find_map(|(role, name)| harness(name).err().map(|e| (role, e)));
+    if let Some((role, e)) = unknown {
         return Err(OrchestratorError(format!(
             "run {}: role {role}: {}; resume it with --role-agent {role}=KIND",
             state.run_id, e.0
@@ -199,8 +210,7 @@ pub fn resumable_state(
 /// is already past the limit.
 fn resume_quality_limit(state: &mut RunState, pipeline: &Pipeline, args: &ResumeArgs) -> Result<(), OrchestratorError> {
     if let Some(n) = args.settings.max_quality_rounds {
-        let gate_on = args.quality_gate.as_deref().is_some_and(|j| !j.is_empty());
-        if state.quality_job.as_deref().is_none_or(str::is_empty) && !gate_on {
+        if state.quality_job.as_deref().is_none_or(str::is_empty) && !args.quality_gate {
             return Err(OrchestratorError(format!(
                 "run {} has no quality gate, so --max-quality-rounds does not apply",
                 state.run_id
@@ -240,7 +250,7 @@ fn role_models(s: &Settings, roles: &Map<String>) -> Result<Map<String>, Orchest
         .collect())
 }
 
-/// The harness each of roles runs in by the flags, each one of AGENT_KINDS as the parser takes them: --role-agent's,
+/// The harness each of roles runs in by the flags, each one of HARNESS_NAMES as the parser takes them: --role-agent's,
 /// else --agent's; a role with none is left out,
 /// keeping its workflow's, or the saved one. Errors: a --role-agent names a role not among roles.
 fn role_agents(s: &Settings, roles: &Map<String>) -> Result<Map<String>, OrchestratorError> {
@@ -265,7 +275,7 @@ fn named_roles(flag: &str, pairs: &[(String, String)], roles: &Map<String>) -> R
     Ok(named)
 }
 
-/// base with each of over's entries put in, a key of base keeping its place: Python's {**base, **over}.
+/// base with each of over's entries put in, a key of base keeping its place.
 fn merged(base: &Map<String>, over: Map<String>) -> Map<String> {
     let mut out = base.clone();
     for (k, v) in over.iter() {

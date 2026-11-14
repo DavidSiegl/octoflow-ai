@@ -126,11 +126,11 @@ fn findings(text: &str) -> Result<Option<Vec<Leak>>, String> {
         .map(|f| {
             let field = |key: &str| f.get(key).ok_or_else(|| format!("{key:?}"));
             let string = |key: &str| field(key)?.as_str().map(String::from).ok_or(format!("{key} is no string"));
-            // In the order the Python engine reads them, so that the first field missing is the one named.
+            // RuleID, File, then StartLine: the first of them missing is the one named.
             let (rule, file) = (string("RuleID")?, string("File")?);
             let line = match field("StartLine")? {
                 Value::Number(n) => n.as_u64().or_else(|| n.as_f64().filter(|x| *x >= 0.0).map(|x| x.trunc() as u64)),
-                Value::String(s) => super::python_int(s).and_then(|n| u64::try_from(n).ok()),
+                Value::String(s) => super::decimal_int(s).and_then(|n| u64::try_from(n).ok()),
                 _ => None,
             };
             let line = line.ok_or("StartLine is no line number")?;
@@ -393,7 +393,7 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|w| w == needle)
 }
 
-/// bytes split at each occurrence of separator, as Python's bytes.split(separator).
+/// bytes split at each occurrence of separator, empty parts kept: empty bytes are one empty part.
 fn split_bytes<'a>(bytes: &'a [u8], separator: &[u8]) -> Vec<&'a [u8]> {
     let mut parts = vec![];
     let mut start = 0;

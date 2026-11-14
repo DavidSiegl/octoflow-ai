@@ -21,7 +21,7 @@ fn fingerprints_json(failures: &GateFailures) -> String {
 }
 
 #[test]
-fn every_quality_file_reads_as_the_python_engine_reads_it() {
+fn every_quality_file_reads_as_quality_json_records() {
     let quality = oracle("quality.json");
     let files = quality.get("files").and_then(Value::as_array).unwrap();
     assert!(files.len() >= 25, "quality.json holds {} files", files.len());
@@ -47,21 +47,11 @@ fn leak(value: &Value) -> Leak {
 }
 
 #[test]
-fn the_engines_quality_files_are_written_as_the_python_engine_writes_them() {
+fn the_engines_quality_files_are_written_as_quality_json_records() {
     let quality = oracle("quality.json");
     for case in quality.get("leak_reports").and_then(Value::as_array).unwrap() {
         let leaks: Vec<Leak> = case.get("leaks").and_then(Value::as_array).unwrap().iter().map(leak).collect();
         assert_eq!(leak_report(&leaks, &case_text(case, "intro")), case_text(case, "text"));
-    }
-    for case in quality.get("build_failed").and_then(Value::as_array).unwrap() {
-        let tests: Option<Vec<(String, String)>> = case.get("tests").and_then(Value::as_array).map(|tests| {
-            tests.iter().map(|t| {
-                let pair = t.as_array().unwrap();
-                (pair[0].as_str().unwrap().to_string(), pair[1].as_str().unwrap().to_string())
-            }).collect()
-        });
-        let text = build_failed_report(&case_text(case, "intro"), tests.as_deref(), &case_text(case, "console"));
-        assert_eq!(text, case_text(case, "text"));
     }
     for case in quality.get("one_line").and_then(Value::as_array).unwrap() {
         let pair = case.as_array().unwrap();
@@ -73,7 +63,7 @@ fn the_engines_quality_files_are_written_as_the_python_engine_writes_them() {
     }
 }
 
-/// LEAK of tests/test_orchestrator.py, with changes.
+/// A leak gitleaks reports, with changes.
 fn a_leak(change: impl FnOnce(&mut Leak)) -> Leak {
     let mut leak = Leak {
         rule: "github-pat".into(),
@@ -149,29 +139,11 @@ fn nothing_failed_repeats_nothing() {
 }
 
 #[test]
-fn build_failed_reports() {
-    let text = build_failed_report("intro", None, "last\nlines");
-    assert!(text.starts_with("GATE: BUILD_FAILED\n\nintro\n"));
-    assert!(text.contains("## Failing tests\n\nJenkins has no test report for this build.\n"));
-    assert!(text.contains(&format!("## The last {CONSOLE_TAIL_LINES} lines of the build's console\n\n````\nlast\nlines\n````\n")));
-    assert!(!text.contains("Issues on changed lines") && !text.contains("Findings to weigh"));
-    let tests = [("t.T.test_x".to_string(), "AssertionError\ntraceback".to_string())];
-    let text = build_failed_report("intro", Some(&tests), "");
-    assert!(text.contains("## Failing tests\n\n- `t.T.test_x`: AssertionError\n"));
-    assert!(!text.contains("console"));
-    assert!(build_failed_report("intro", Some(&[]), "").contains("## Failing tests\n\nNone.\n"));
-    let tests: Vec<(String, String)> = (0..QUALITY_FINDINGS_LIMIT + 3).map(|k| (format!("t.T.test_{k}"), String::new())).collect();
-    let text = build_failed_report("intro", Some(&tests), "");
-    assert!(text.contains("- `t.T.test_0`: failed\n") && text.contains("- and 3 more.\n"));
-    assert!(!text.contains(&format!("test_{QUALITY_FINDINGS_LIMIT}`")));
-}
-
-#[test]
-fn read_back_the_gate_of_a_build_failed_report() {
+fn read_back_the_gate_of_a_could_not_judge_report() {
     let mut rng = Rng::new(20);
     for _ in 0..200 {
-        let (intro, console) = (rng.text(20, ""), rng.text(20, ""));
-        let report = build_failed_report(&intro, None, &console);
+        let (intro, said) = (rng.text(20, ""), rng.text(20, ""));
+        let report = could_not_judge_report(&intro, &said);
         assert_eq!(parse_gate(&report), Some(QUALITY_BUILD_FAILED), "{report:?}");
     }
 }
@@ -185,7 +157,7 @@ fn lines_that_only_look_like_findings_are_not_read_as_them() {
         assert!(numbered_finding(line).is_none(), "{line}");
     }
     let found = numbered_finding("12. `a`b.py:3` (the whole file)` error ruff X: y: z").unwrap();
-    // The shortest path, as Python's re reads it.
+    // The shortest path the rest of the line allows.
     assert_eq!((found.path, found.rule, found.message), (Some("a`b.py"), "whole file)` error ruff X", "y: z"));
     assert_eq!(failing_test("- `a`: b`: c"), Some("a`: b"));
     assert_eq!(failing_test("- ``: c"), None);

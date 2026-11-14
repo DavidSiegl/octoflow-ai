@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Api, type Connection, type Project } from "./api";
+import { Api, type Connection, type Project, type StartedRun } from "./api";
 import { ProjectBar } from "./components/ProjectBar";
 import { RunDetail } from "./components/RunDetail";
 import { RunForm } from "./components/RunForm";
@@ -99,15 +99,15 @@ function Connected({ connection }: { connection: Connection }) {
 function ProjectRuns({ api, project }: { api: Api; project: Project }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
-  // The id of the run last started from the form; null before one is.
-  const [started, setStarted] = useState<string | null>(null);
+  // The run last started from the form; null before one is.
+  const [started, setStarted] = useState<StartedRun | null>(null);
   const state = useRunStream(api, project);
   const now = useNow();
   const entry = selected ? state.runs[selected] : undefined;
-  const openStarted = (run: string) => {
+  const openStarted = (run: StartedRun) => {
     setFormOpen(false);
     setStarted(run);
-    setSelected(run);
+    setSelected(run.run);
   };
   return (
     <>
@@ -121,11 +121,17 @@ function ProjectRuns({ api, project }: { api: Api; project: Project }) {
             <button type="button" onClick={() => setFormOpen(true)}>
               New run…
             </button>
-            {selected !== null && selected === started && (
+            {selected !== null && selected === started?.run && (
               <>
                 <p className="loading">
-                  Run {selected} has started but is not listed yet; it opens once it is. If it never is, its herdr
-                  workspace shows why.
+                  Run {selected} has started but is not listed yet; it opens once it is. If it never is,{" "}
+                  {started.herdrSession ? (
+                    <>
+                      <code>herdr session attach {started.herdrSession}</code> shows why.
+                    </>
+                  ) : (
+                    "its herdr workspace shows why."
+                  )}
                 </p>
                 <button type="button" onClick={() => setSelected(null)}>
                   Stop waiting

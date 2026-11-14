@@ -30,6 +30,12 @@ function stages(container: HTMLElement): [string | null, string | null][] {
   return [...container.querySelectorAll("li.stage")].map((li) => [li.textContent, li.getAttribute("data-state")]);
 }
 
+/** The run map's stations in the run detail, each as [stage name, state]. */
+function stations(detail: HTMLElement): [string | null, string | null][] {
+  const map = within(detail).getByRole("list", { name: "stages" });
+  return within(map).getAllByRole("listitem").map((g) => [g.querySelector(".label")?.textContent ?? null, g.getAttribute("data-state")]);
+}
+
 describe("the runs overview", () => {
   it("opens the checkout's project on the server's stream, with the token", async () => {
     const { source } = await openApp();
@@ -47,17 +53,17 @@ describe("the runs overview", () => {
     const done = row(DONE);
     expect(within(done).getByText("APPROVE")).toBeInTheDocument();
     expect(within(done).getByRole("link", { name: "#1" })).toHaveAttribute("href", "https://github.com/parity/project/pull/1");
-    expect(stages(done)).toEqual([["spec", "done"], ["build", "done"], ["review", "done"]]);
+    expect(stages(done)).toEqual([["spec", "done"], ["build", "done"], ["review", "done"], ["publish", "done"]]);
 
     act(() => source.replayOne("a run started its interview"));
-    expect(stages(row(RUN))).toEqual([["spec", "current"], ["build", "todo"], ["review", "todo"]]);
+    expect(stages(row(RUN))).toEqual([["spec", "current"], ["build", "todo"], ["review", "todo"], ["publish", "todo"]]);
     expect(within(row(RUN)).getByText("round 0")).toBeInTheDocument();
     expect(within(row(RUN)).getByText(/^running, beat \d+s ago$/)).toBeInTheDocument();
     // Newest first.
     expect([...document.querySelectorAll("tbody tr")].map((tr) => tr.getAttribute("data-run"))).toEqual([RUN, DONE]);
 
     act(() => source.replayOne("the spec was written and the build started"));
-    expect(stages(row(RUN))).toEqual([["spec", "done"], ["build", "current"], ["review", "todo"]]);
+    expect(stages(row(RUN))).toEqual([["spec", "done"], ["build", "current"], ["review", "todo"], ["publish", "todo"]]);
     expect(within(row(RUN)).getByText("round 1")).toBeInTheDocument();
     expect(row(RUN).querySelector(".role")).toHaveTextContent(/^build$/);
 
@@ -65,7 +71,7 @@ describe("the runs overview", () => {
     expect(within(row(RUN)).getByText("blocked: should the limit be per client or global?")).toBeInTheDocument();
 
     act(() => source.replayOne("the build was reported and the review started"));
-    expect(stages(row(RUN))).toEqual([["spec", "done"], ["build", "done"], ["review", "current"]]);
+    expect(stages(row(RUN))).toEqual([["spec", "done"], ["build", "done"], ["review", "current"], ["publish", "todo"]]);
     expect(within(row(RUN)).queryByText(/blocked/)).not.toBeInTheDocument();
 
     act(() => source.replay("the finished run was deleted"));
@@ -127,8 +133,8 @@ describe("the runs overview", () => {
   });
 
   it("says why the orchestrator could not start", async () => {
-    render(<App connect={() => Promise.reject(new Error("python3: not found"))} />);
-    expect(await screen.findByText(/Could not start the orchestrator: Error: python3: not found/)).toBeInTheDocument();
+    render(<App connect={() => Promise.reject(new Error("sidecar: not found"))} />);
+    expect(await screen.findByText(/Could not start the orchestrator: Error: sidecar: not found/)).toBeInTheDocument();
   });
 });
 
@@ -138,7 +144,7 @@ describe("the run detail", () => {
     act(() => source.replay("the spec was written and the build started"));
     fireEvent.click(row(RUN));
     const detail = screen.getByRole("region", { name: "run c0ffee" });
-    expect(stages(detail)).toEqual([["spec", "done"], ["build", "current"], ["review", "todo"]]);
+    expect(stations(detail)).toEqual([["spec", "done"], ["build", "current"], ["review", "todo"], ["publish", "todo"]]);
     expect(await within(detail).findByRole("heading", { name: "Add a token-bucket rate limiter" })).toBeInTheDocument();
     expect(within(detail).getByText("10").tagName).toBe("STRONG");
     expect(within(detail).getByRole("cell", { name: "20" })).toBeInTheDocument();
@@ -164,7 +170,7 @@ describe("the run detail", () => {
 
     act(() => source.replay("the build was reported and the review started"));
     expect(names()).toEqual(["spec.md", "build-1.blocked-1.md", "build-1.md"]);
-    expect(stages(detail)).toEqual([["spec", "done"], ["build", "done"], ["review", "current"]]);
+    expect(stations(detail)).toEqual([["spec", "done"], ["build", "done"], ["review", "current"], ["publish", "todo"]]);
     // The chosen file stays, and is not fetched again while it is unchanged.
     expect(within(detail).getByRole("heading", { name: "Add a token-bucket rate limiter" })).toBeInTheDocument();
     const fetches = fetch.mock.calls.length;
@@ -359,7 +365,7 @@ describe("the setup dialog", () => {
   const REPORT = {
     checks: [
       { name: "herdr", level: "required", ok: true, detail: "herdr 0.9.1", fix: "" },
-      { name: "reaching herdr", level: "optional", ok: false, detail: "not inside a herdr pane", fix: "run from a herdr pane, or pass --machine" },
+      { name: "reaching herdr", level: "optional", ok: false, detail: "not inside a herdr pane", fix: "run from a herdr pane, or choose a herdr machine (--machine)" },
       { name: "gh", level: "needed-for-pr", ok: false, detail: "gh auth status fails", fix: "gh auth login" },
     ],
     passed: true,
@@ -585,11 +591,21 @@ describe("the run form", () => {
     const { form, source } = await openForm({ runStatus: 202, runBody: { run: RUN, listed: false } });
     typeTask(form, "Add a rate limiter");
     fireEvent.click(within(form).getByRole("button", { name: "Start" }));
-    expect(await screen.findByText(new RegExp(`^Run ${RUN} has started but is not listed yet`))).toBeInTheDocument();
+    const hint = await screen.findByText(new RegExp(`^Run ${RUN} has started but is not listed yet`));
+    expect(hint).toHaveTextContent(/If it never is, its herdr workspace shows why\.$/);
     act(() => source.replay("a run started its interview"));
     expect(screen.getByRole("region", { name: "run c0ffee" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "‹ Runs" }));
     expect(screen.queryByText(/is not listed yet/)).not.toBeInTheDocument();
+  });
+
+  it("names the herdr session to attach to for a run not listed yet that is in one", async () => {
+    const { form } = await openForm({ runStatus: 202, runBody: { run: RUN, listed: false, herdr_session: "octoflow" } });
+    typeTask(form, "Add a rate limiter");
+    fireEvent.click(within(form).getByRole("button", { name: "Start" }));
+    const hint = await screen.findByText(new RegExp(`^Run ${RUN} has started but is not listed yet`));
+    expect(hint).toHaveTextContent(/If it never is, herdr session attach octoflow shows why\.$/);
+    expect(within(hint).getByText("herdr session attach octoflow").tagName).toBe("CODE");
   });
 
   it("stops waiting for a run that is not listed", async () => {

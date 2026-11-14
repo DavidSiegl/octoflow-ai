@@ -10,7 +10,6 @@
   "close",
   "refresh",
   "workflows",
-  "judged-in-quality",
   "doctor",
   "gui",
   "serve"
@@ -142,12 +141,6 @@
   "workflows": [
    "--help",
    "--workflow",
-   "-h"
-  ],
-  "judged-in-quality": [
-   "--help",
-   "--quality-gate",
-   "--target",
    "-h"
   ],
   "doctor": [

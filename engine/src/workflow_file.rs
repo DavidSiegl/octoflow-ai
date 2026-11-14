@@ -11,7 +11,7 @@
 //! [roles]                                  # optional
 //! build = "Builder"                        # a role's pane label,
 //! tests = { label = "Test Writer", model = "sonnet", agent = "codex" }   # or its label, default model
-//!                                                                       # and harness (AGENT_KINDS)
+//!                                                                       # and harness (HARNESS_NAMES)
 //! [[steps]]                                # one table per step, in order
 //! use = "build"                            # optional: start from that step of the default workflow
 //! id = "build"                             # and Step's fields; role defaults to id
@@ -159,7 +159,7 @@ pub fn parse_workflow(name: &str, definition: &Value, prompts: &Prompts) -> Resu
     let mut budget = [DEFAULT_MAX_FILES, DEFAULT_MAX_LINES];
     for (key, slot) in BUDGET_KEYS.iter().zip(budget.iter_mut()) {
         if let Some(value) = definition.get(*key) {
-            // A bool is no number of lines, though Python's isinstance takes true for an int.
+            // A bool is no number of lines: true is not taken for 1.
             let number = value.as_i64();
             *slot = number.ok_or_else(|| format!("{key} must be a whole number"))?;
         }
@@ -464,7 +464,7 @@ pub fn run_pipeline(name: &str, definition: Option<&Value>, prompts: &Prompts) -
 
 /// A saved workflow definition with each role's agent of a replaced kind (harness::replaced_by) as the kind that
 /// replaced it, so that a run saved before the replacement still has its workflow. A resumed role runs in the
-/// harness the run's agent_kinds name, never the definition's, and resume refuses a replaced one there
+/// harness the run's next_harnesses name, never the definition's, and resume refuses a replaced one there
 /// (crate::cli::start's resumable_state).
 fn with_replaced_agents(definition: &Value) -> std::borrow::Cow<'_, Value> {
     let named_replaced = |table: &Value| table.get("agent").and_then(Value::as_str).and_then(replaced_by).is_some();

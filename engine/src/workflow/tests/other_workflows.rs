@@ -1,18 +1,14 @@
-//! TestOtherWorkflows, TestWorkflowWithoutAVerdict, TestSavedBeforeWorkflows, TestSpecBuildReviewExample and the
-//! Workflow-driven cases of TestWorkflowDefinitions and TestWorkflowFiles: workflows other than the default, a run
-//! saved before workflows existed, and a workflow file's run.
+//! Workflows other than the default, one without a verdict step, a run saved before workflows existed, and a
+//! workflow file's run.
 //!
-//! Not here: the CLI's (crate::cli's tests): role_models' half of
-//! TestOtherWorkflows.test_model_reaches_a_role_without_its_own_flag, TestWorkflowWithoutAVerdict's
-//! test_a_failed_gate_exits_as_changes_requested and test_finished_exits_zero, and TestWorkflowFiles'
-//! test_list_reads_the_gated_step_from_the_saved_definition; resumable_state's, in crate::cli (cli/start/tests.rs): TestWorkflowFiles'
-//! test_a_saved_definition_that_cannot_be_filled_in_stops_the_resume and test_a_corrupt_saved_definition_is_an_error.
-//! The other cases of TestWorkflowDefinitions and TestWorkflowFiles, and TestSavedBeforeWorkflows'
-//! test_root_pane_comes_from_the_workflows_first_role, are crate::pipeline's, crate::workflow_file's and
-//! crate::state's (ticket 04).
+//! Not here: the CLI's (crate::cli's tests): role_models giving a role without a flag of its own the model, the exit
+//! status of a workflow without a verdict, and `list` reading the gated step from the saved definition;
+//! resumable_state's, in crate::cli (cli/start/tests.rs): a saved definition that cannot be filled in or is corrupt
+//! stopping the resume. Parsing workflow definitions and files, and an old run's root pane, are crate::pipeline's,
+//! crate::workflow_file's and crate::state's.
 
 use super::*;
-use crate::ci::fake::{credentials, Outcome, JOB};
+use crate::workflow::fixture::Outcome;
 use crate::constants::{FINISHED, QUALITY_GATE_FAILED};
 use crate::paths::file_name;
 use crate::prompts::QUALITY_PASSED_NOTE;
@@ -187,17 +183,19 @@ fn impl_turn(n: u32, q: u32) -> Turn {
     })
 }
 
-/// The files the run wrote to its run directory, but state.json, by name and in order.
+/// The files the run wrote to its run directory, but state.json and the local gate's in its own directories, by name
+/// and in order.
 fn written(f: &Fixture) -> Vec<String> {
     let h = f.host.state();
-    h.writes.iter().filter(|p| p.starts_with(D) && !p.ends_with("state.json")).map(|p| file_name(p).to_string()).collect()
+    let in_run_dir = |p: &&String| p.strip_prefix(D).is_some_and(|name| !name.trim_start_matches('/').contains('/'));
+    h.writes.iter().filter(in_run_dir).filter(|p| !p.ends_with("state.json")).map(|p| file_name(p).to_string()).collect()
 }
 
 /// A saved run of the impl workflow in round 1 of phase impl, with the gate's job and the Implementer's agent.
 fn impl_saved() -> RunState {
     let mut state = saved_run("impl", 1, &[]);
-    (state.quality_job, state.workflow) = (Some(JOB.to_string()), "impl".into());
-    state.agents.insert("impl", AgentRecord::new("impl-a1b2c3", "w1:p1", DEFAULT_AGENT));
+    (state.quality_job, state.workflow) = (Some("local".to_string()), "impl".into());
+    state.agents.insert("impl", AgentRecord::new("impl-a1b2c3", "w1:p1", DEFAULT_HARNESS));
     state
 }
 
@@ -210,7 +208,7 @@ fn gated_step_with_another_name() {
         ("review", vec![recording(review_turn(1, APPROVE), &reviews)]),
     ])
     .gated();
-    f.ci.state().outcomes = vec![red(), green()].into();
+    f.judging(vec![red(), green()]);
 
     assert_eq!(f.workflow(with_pipeline(&imp)).run(), verdict(APPROVE));
     let fix = filled(crate::prompts::QUALITY_FIX_PROMPT, &[
@@ -232,7 +230,7 @@ fn gated_step_with_another_name() {
     let file = |name: &str| f.host.state().files.get(&format!("{D}/{name}")).cloned().unwrap_or_default();
     assert!(file("quality-1-1.md").starts_with("GATE: ERROR\n"));
     assert!(file("quality-1-2.md").starts_with("GATE: OK\n"));
-    assert_eq!(f.ci.state().triggered(), [REF_1_1, "orchestrator-ci/a1b2c3-1-q2"]);
+    assert_eq!(f.gate.borrow().jobs.len(), 2);
     let pr = f.host.state().prs[0].clone();
     assert!(pr.body.contains("<summary>Builder report (round 1)</summary>\n\nimpl 1 q1"));
     assert!(pr.body.contains("<summary>Quality gate (round 1)</summary>\n\nGATE: OK"));
@@ -268,25 +266,13 @@ fn fresh_gated_step_answering_a_quality_round() {
 }
 
 #[test]
-fn resumed_gated_step_checks_the_credentials_first() {
-    let mut env = credentials();
-    env.remove("JENKINS_TOKEN");
-    let f = Fixture::resume(Rc::new(FakeHost::default()), impl_saved(), vec![("impl", vec![impl_turn(1, 0)])], &[], &[])
-        .gated_with(&env);
-
-    let e = failure(f.workflow(RunSettings { pipeline: Some(impl_()), ..f.as_saved() }).run());
-    assert!(e.contains("needs JENKINS_TOKEN"), "{e}");
-    assert!(names(&f, "prompt").is_empty());
-}
-
-#[test]
 fn phase_outside_the_workflow_is_refused() {
     let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&four()), vec![]);
     let error = failure(f.workflow(with_pipeline(&quick())).run());
     assert!(error.contains("phase spec, which workflow quick has no step for"), "{error}");
 }
 
-// -- TestWorkflowWithoutAVerdict --------------------------------------------------------------------------------
+// -- A workflow without a verdict -------------------------------------------------------------------------------
 
 #[test]
 fn a_run_finishes_and_opens_a_ready_pull_request() {
@@ -347,7 +333,7 @@ fn gated_solo(outcomes: Vec<Outcome>) -> (Result<Option<String>, Stopped>, Fixtu
     let solo = Pipeline::new("gsolo", roles(&[("impl", "Implementer")]), vec![step]).unwrap();
     let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&solo), vec![("impl", vec![impl_turn(1, 0), impl_turn(1, 1)])])
         .gated();
-    f.ci.state().outcomes = outcomes.into();
+    f.judging(outcomes);
     let ran = f.workflow(RunSettings { max_quality_rounds: 2, ..with_pipeline(&solo) }).run();
     (ran, f)
 }
@@ -395,7 +381,7 @@ fn a_gate_that_passes_is_finished() {
     assert!(pr.body.contains("<summary>Quality gate (round 1)</summary>\n\nGATE: OK"));
 }
 
-// -- The Workflow-driven cases of TestWorkflowDefinitions and TestWorkflowFiles, and TestSpecBuildReviewExample ------
+// -- Workflow definitions and files, as a run takes them, and the example spec-build-review.toml ------------------
 
 #[test]
 fn the_gate_needs_a_gated_step() {
@@ -456,8 +442,7 @@ fn a_built_in_workflow_is_saved_by_name_only() {
 
 #[test]
 fn spec_build_review_is_the_default_workflow() {
-    // TestSpecBuildReviewExample.test_it_is_the_default_workflow. Fails when a built-in prompt or step changes;
-    // regenerate the file with `workflows default`.
+    // Fails when a built-in prompt or step changes; regenerate the file with `workflows default`.
     let example = load_workflow_file(&format!("{EXAMPLES}/spec-build-review.toml"), &Default::default()).unwrap();
     assert_eq!(workflow_definition(&example), workflow_definition(&DEFAULT_WORKFLOW));
 }

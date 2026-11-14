@@ -1,8 +1,6 @@
-//! tests/test_orchestrator.py's TestNewDependencies, and the manifests, requirements, spec names and lines that name a
-//! package of checks.json, as the Python engine read them, but where a manifest holds a value Python read in its own
-//! terms: since octoflow-without-python ticket 06 such a value is compared and written as TOML; and where a package
-//! is named from several sources: since cargo-dependency-rules ticket 01 it is a dependency from each, where Python
-//! kept one.
+//! The new-dependencies check, and the manifests, requirements, spec names and lines that name a package of
+//! checks.json, read as checks.json records them. A manifest's value is compared and written as TOML, and a package
+//! named from several sources is a dependency from each.
 
 use std::sync::Arc;
 
@@ -673,7 +671,7 @@ fn manifests_read_as_checks_json_says() {
             let want = want.as_array().unwrap();
             assert_eq!(path, want[0].as_str().unwrap());
             let want = want[1].as_str().unwrap();
-            // tomllib's own words for what is not TOML are not the toml crate's.
+            // checks.json words what is not TOML otherwise than the toml crate does: only the prefix is compared.
             match want.strip_prefix("it is not TOML: ") {
                 Some(_) => assert!(why.starts_with("it is not TOML: ") && why.contains(" (at line "), "{why}"),
                 None => assert_eq!(why, want),

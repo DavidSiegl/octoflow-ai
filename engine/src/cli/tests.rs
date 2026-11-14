@@ -1,28 +1,18 @@
 //! main's dispatch on the fixture's fakes (run_command), its exit statuses (finish, ended_status) and the resume hint,
-//! with Python's cases of main that start or resume a run, by class: TestQualityGateOnResume's
-//! test_the_cli_refuses_with_exit_1_and_leaves_state_json_alone and test_the_cli_runs_the_workflow_with_the_new_job
-//! (the class's others are crate::workflow's gate_switch tests); TestCLI but test_list_on_machine_uses_ssh_host
-//! (crate::cli::listing's) and its parse_args cases (crate::cli::args'), test_refuses_outside_herdr being
-//! engine/tests/program.rs'; TestResumeCLI but test_machine_requires_cwd; TestWorkflowCLI but its parse_args cases;
-//! TestWorkflowFileCLI but test_bad_flags and its workflows cases (crate::cli::workflows'); TestSpecCLI but its
-//! parse_args cases, its read_spec_file halves being crate::spec_file's; TestHarnessFlags' test_precedence,
-//! test_flags_reach_the_workflow and test_role_agent_for_a_role_the_workflow_lacks; TestQualityCLI's
-//! test_gate_reaches_the_workflow; TestResumePullRequest's test_cli_exits_1_on_another_branch and
-//! test_no_pr_is_saved_with_the_run; TestWorktreeRun's test_a_run_flag and test_flag_reaches_the_workflow; the
-//! role_models half of TestOtherWorkflows.test_model_reaches_a_role_without_its_own_flag;
-//! TestWorkflowWithoutAVerdict's test_a_failed_gate_exits_as_changes_requested and test_finished_exits_zero; and
-//! TestPromptFiles.test_bad_files_stop_run_before_any_agent.
+//! with the cases of main that start or resume a run: what the flags, a spec, a workflow file and the quality gate
+//! hand the Workflow, and what stops a run before any agent. Parsing alone is crate::cli::args', the gate switch on
+//! resume crate::workflow's gate_switch tests', the list crate::cli::listing's, the workflows command
+//! crate::cli::workflows', reading a spec crate::spec_file's, and refusing outside herdr engine/tests/program.rs'.
 //!
-//! Where Python patches Workflow.__init__ or Workflow.run, a case here starts the run on the fakes and stops it at its
-//! first prompt (fixture's Cli::started), reading what reached the Workflow from the state.json it saved, or plays
-//! the run to its verdict (Cli::played). The program itself, parsed arguments to exit status, is
-//! engine/tests/program.rs's.
+//! A case here starts the run on the fakes and stops it at its first prompt (fixture's Cli::started), reading what
+//! reached the Workflow from the state.json it saved, or plays the run to its verdict (Cli::played). The program
+//! itself, parsed arguments to exit status, is engine/tests/program.rs's.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::*;
-use crate::ci::fake::{jenkins_on, FakeJenkins, JOB};
+use crate::local_gate::LOCAL_GATE;
 use crate::constants::APPROVE;
 use crate::host::fake::FakeHost;
 use serde_json::Value;
@@ -48,19 +38,11 @@ fn saved_on_host(state: RunState) -> (Fixture, String) {
     (Fixture::on(host, state, vec![]), text)
 }
 
-/// run_command of argv on f's fakes, a run's or a resume's; jobs records each quality job a Jenkins is made for, on
-/// ci.
-fn run_on(f: &Fixture, argv: &[&str], ci: &Arc<FakeJenkins>, jobs: &RefCell<Vec<String>>) -> Result<Ran, Stop> {
+/// run_command of argv on f's fakes, a run's or a resume's.
+fn run_on(f: &Fixture, argv: &[&str]) -> Result<Ran, Stop> {
     let config = ConfigDir::at("/nowhere");
-    let jenkins = |job: &str| {
-        jobs.borrow_mut().push(job.to_string());
-        Ok(jenkins_on(ci))
-    };
-    let mut with = f.collaborators();
-    with.quality_gate = None;
     let world = Connected {
-        with,
-        jenkins: &jenkins,
+        with: f.collaborators(),
         config: &config,
         local_host: "here",
         stdout: &|_| {},
@@ -78,18 +60,16 @@ fn ran_status(ran: Result<Ran, Stop>, command: &Command) -> i32 {
     ended_status(ran.map(|ran| Ended::Ran(Box::new(ran))), command, &|_| {})
 }
 
-use std::sync::Arc;
-
 #[test]
 fn the_cli_refuses_with_exit_1_and_leaves_state_json_alone() {
     let cases = [
-        (&["--quality-gate", JOB][..], "is a --no-pr run in /proj itself"),
+        (&["--quality-gate", LOCAL_GATE][..], "is a --no-pr run in /proj itself"),
         (&["--no-quality-gate"][..], "has no quality gate, so --no-quality-gate does not apply"),
     ];
     for (flags, why) in cases {
         let (f, saved) = saved_on_host(saved_run("build", 1, &["spec", "build"]));
         let argv: Vec<&str> = ["resume", "a1b2c3", "--cwd", "/proj"].iter().chain(flags).copied().collect();
-        let ended = run_on(&f, &argv, &FakeJenkins::new(), &RefCell::new(vec![]));
+        let ended = run_on(&f, &argv);
         let Err(Stop::Failed(e)) = &ended else { panic!("{flags:?} did not fail") };
         assert!(e.0.contains(why), "{e}");
         assert_eq!(ran_status(ended, &command(&argv)), EXIT_ERROR);
@@ -100,21 +80,19 @@ fn the_cli_refuses_with_exit_1_and_leaves_state_json_alone() {
 }
 
 #[test]
-fn the_cli_runs_the_workflow_with_the_new_job() {
+fn the_cli_runs_the_workflow_with_the_gate_turned_on() {
     let mut state = saved_run("build", 1, &["spec", "build", "review"]);
     state.pull_request = true;
     state.base_branch = Some("main".into());
     state.branch = Some("orchestrator/x-a1b2c3".into());
     let (f, _) = saved_on_host(state);
-    let (ci, jobs) = (FakeJenkins::new(), RefCell::new(vec![]));
+    let f = f.gated();
     // The Builder, played by no turn, exits: the run fails once its Workflow has saved its state.
-    let argv = ["resume", "a1b2c3", "--cwd", "/proj", "--quality-gate", JOB, "--max-quality-rounds", "2"];
-    assert!(matches!(run_on(&f, &argv, &ci, &jobs), Err(Stop::Failed(_))));
-    // One Jenkins to turn the gate on, which asks for the job's parameters, and the Workflow's own.
-    assert_eq!(*jobs.borrow(), [JOB, JOB]);
-    assert_eq!(ci.state().names.first().map(String::as_str), Some("parameters"));
+    let argv = ["resume", "a1b2c3", "--cwd", "/proj", "--quality-gate", LOCAL_GATE, "--max-quality-rounds", "2"];
+    assert!(matches!(run_on(&f, &argv), Err(Stop::Failed(_))));
     let saved = f.saved();
-    assert_eq!((saved.get("quality_job"), saved.get("max_quality_rounds")), (Some(&Value::from(JOB)), Some(&Value::from(2))));
+    let gate = (Some(&Value::from(LOCAL_GATE)), Some(&Value::from(2)));
+    assert_eq!((saved.get("quality_job"), saved.get("max_quality_rounds")), gate);
 }
 
 #[test]
@@ -123,7 +101,7 @@ fn a_run_ends_with_its_verdict_and_its_pull_request() {
     state.verdict = Some(APPROVE.into());
     state.pr_url = Some("https://github.com/o/r/pull/7".into());
     let (f, _) = saved_on_host(state);
-    let Ok(ran) = run_on(&f, &["resume", "a1b2c3", "--cwd", "/proj"], &FakeJenkins::new(), &RefCell::new(vec![])) else {
+    let Ok(ran) = run_on(&f, &["resume", "a1b2c3", "--cwd", "/proj"]) else {
         panic!("a done run resumes to its verdict")
     };
     assert_eq!((ran.verdict.as_deref(), ran.state.pr_url.as_deref()), (Some(APPROVE), Some("https://github.com/o/r/pull/7")));
@@ -136,11 +114,11 @@ fn a_ctrl_c_outside_the_workflow_is_the_interrupt() {
     let (f, _) = saved_on_host(saved_run("build", 1, &["spec", "build"]));
     f.interrupt.raise();
     let argv = ["resume", "b0b0b0", "--cwd", "/proj"];
-    let ended = run_on(&f, &argv, &FakeJenkins::new(), &RefCell::new(vec![]));
+    let ended = run_on(&f, &argv);
     assert!(matches!(ended, Err(Stop::Interrupted(None))));
     assert_eq!(ran_status(ended, &command(&argv)), EXIT_INTERRUPTED);
     // Once it exists, before its Workflow starts: the note names it.
-    let ended = run_on(&f, &["resume", "a1b2c3", "--cwd", "/proj"], &FakeJenkins::new(), &RefCell::new(vec![]));
+    let ended = run_on(&f, &["resume", "a1b2c3", "--cwd", "/proj"]);
     let Err(Stop::Interrupted(Some(run_id))) = ended else { panic!("not interrupted with its run") };
     assert_eq!(run_id, "20260929-120000-a1b2c3");
     assert!(f.herdr.state().calls.is_empty());
@@ -151,7 +129,7 @@ fn a_ctrl_c_in_the_workflow_names_the_run_it_stopped() {
     let (f, _) = saved_on_host(saved_run("build", 1, &["spec", "build"]));
     f.play("build", vec![then_interrupted(&f.interrupt, build_turn(1))]);
     let argv = ["resume", "a1b2c3", "--cwd", "/proj"];
-    let Err(Stop::Interrupted(Some(run_id))) = run_on(&f, &argv, &FakeJenkins::new(), &RefCell::new(vec![])) else {
+    let Err(Stop::Interrupted(Some(run_id))) = run_on(&f, &argv) else {
         panic!("the run was not interrupted")
     };
     assert_eq!(run_id, "20260929-120000-a1b2c3");
@@ -184,7 +162,7 @@ fn the_resume_hint() {
 }
 
 
-// -- Runs started through main, as Python's tests patch Workflow -----------------------------------------------------
+// -- Runs started through main ---------------------------------------------------------------------------------------
 
 /// The repository's example workflow file of name.
 fn example(name: &str) -> String {
@@ -286,8 +264,7 @@ fn run_exit_code_when_changes_remain() {
 
 #[test]
 fn a_run_without_a_verdict_step_finishes_with_its_last_file() {
-    // TestWorkflowWithoutAVerdict.test_finished_exits_zero, with --no-pr: Python's Workflow.run is patched to return
-    // FINISHED, where this run publishes nothing so that its last line names the Builder's file.
+    // With --no-pr this run publishes nothing, so its last line names the Builder's file.
     let d = TempDir::new();
     let cli = configured(&d, &[("solo.toml", &workflow_toml(&crate::test_support::solo()))]);
     let ended = cli.played(&["--no-pr", "--workflow-file", &d.join("solo.toml"), "task"], vec![("build", vec![solo_turn()])]);
@@ -299,7 +276,7 @@ fn a_run_without_a_verdict_step_finishes_with_its_last_file() {
 
 #[test]
 fn a_failed_gate_exits_as_changes_requested() {
-    // Python patches Workflow.run to return QUALITY_GATE_FAILED; the run's last line and status are finish's.
+    // A run that ends QUALITY_GATE_FAILED: its last line and status are finish's.
     let state = saved_run("done", 1, &[]);
     let pipeline = crate::pipeline::DEFAULT_WORKFLOW.clone();
     let line = RefCell::new(String::new());
@@ -388,7 +365,7 @@ fn resuming_an_unknown_workflow() {
 #[test]
 fn resume_limit_against_the_quality_round_of_another_gated_step() {
     let mut state = saved_run("impl", 1, &[]);
-    (state.quality_job, state.quality_round) = (Some(JOB.into()), 2);
+    (state.quality_job, state.quality_round) = (Some(LOCAL_GATE.into()), 2);
     let imp = crate::test_support::impl_();
     state.workflow = "impl".into();
     state.workflow_definition = Some(workflow_definition(&imp));
@@ -429,7 +406,7 @@ fn model_flags_override_the_files_models() {
     let d = TempDir::new();
     let cli = with_product_team(&d);
     let saved = started(&cli, &["task", "--workflow", "product-team", "--model", "X"]);
-    // The file's models first, then the flags', as Python's {**pipeline.models, **role_models(...)}.
+    // The file's models first, then the flags', a flag's replacing the file's for the same role.
     assert_eq!(field(&saved, "models"), r#"{"tests":"X","spec":"X","design":"X","build":"X","review":"X"}"#);
     let flags = ["task", "--workflow", "product-team", "--role-model", "tests=haiku", "--role-model", "spec=opus", "--build-model", "Y"];
     assert_eq!(field(&started(&cli, &flags), "models"), r#"{"tests":"haiku","spec":"opus","build":"Y"}"#);
@@ -460,7 +437,7 @@ fn resume_takes_role_model() {
     assert_eq!(serde_json::to_string(&resumed.models).unwrap(), r#"{"tests":"sonnet","review":"opus"}"#);
 }
 
-/// GIVEN_SPEC of TestSpecCLI: CRLF and trailing blanks, which the run's copy keeps.
+/// A given spec with CRLF and trailing blanks, which the run's copy keeps.
 const GIVEN_SPEC: &str = "# Add a token-bucket rate limiter\r\n\r\n## Goal\r\nlimit requests  \n\n";
 
 /// The spec the run of saved was seeded with, as the host holds it.
@@ -514,23 +491,21 @@ fn the_spec_combines_with_the_other_run_flags() {
     std::fs::write(d.join("spec.md"), GIVEN_SPEC).unwrap();
     let spec = d.join("spec.md");
     let example = example("spec-build-review");
-    let job = format!(r#""{JOB}""#);
+    let gate = format!(r#""{LOCAL_GATE}""#);
     let cases: [(&[&str], &str, &str); 5] = [
         (&["--no-pr"], "pull_request", "false"),
-        (&["--quality-gate", JOB], "quality_job", &job),
+        (&["--quality-gate", LOCAL_GATE], "quality_job", &gate),
         (&["--machine", "m", "--cwd", "/proj"], "machine", r#""m""#),
         (&["--workflow", "default"], "workflow", r#""default""#),
         (&["--workflow-file", &example], "workflow", r#""spec-build-review""#),
     ];
     for (flags, key, value) in cases {
-        let cli = Cli::new();
+        let cli = Cli::gated();
         let argv: Vec<&str> = ["--spec", &spec].iter().copied().chain(flags.iter().copied()).collect();
         let saved = started(&cli, &argv);
         assert_eq!((field(&saved, "phase"), field(&saved, key)), (r#""build""#.to_string(), value.to_string()), "{flags:?}");
         let dir = format!("{}/.orchestrator/runs/{}", saved.get("cwd").unwrap().text(), saved.get("run_id").unwrap().text());
         assert_eq!(cli.f.host.state().files.get(&format!("{dir}/spec.md")).map(String::as_str), Some(GIVEN_SPEC), "{flags:?}");
-        // The quality gate's job is had for the run.
-        assert_eq!(cli.jobs.borrow().len(), usize::from(key == "quality_job"), "{flags:?}");
     }
 }
 
@@ -585,12 +560,12 @@ fn harness_precedence() {
 
 #[test]
 fn the_gate_reaches_the_workflow() {
-    let cli = Cli::new();
+    let cli = Cli::gated();
     let plain = started(&cli, &["task"]);
-    assert_eq!((field(&plain, "quality_job"), cli.jobs.borrow().len()), ("null".to_string(), 0));
-    let gated = started(&cli, &["task", "--quality-gate", JOB, "--max-quality-rounds", "2"]);
-    assert_eq!((field(&gated, "quality_job"), field(&gated, "max_quality_rounds")), (format!(r#""{JOB}""#), "2".to_string()));
-    assert_eq!(*cli.jobs.borrow(), [JOB]);
+    assert_eq!(field(&plain, "quality_job"), "null");
+    let gated = started(&cli, &["task", "--quality-gate", LOCAL_GATE, "--max-quality-rounds", "2"]);
+    let gate = (format!(r#""{LOCAL_GATE}""#), "2".to_string());
+    assert_eq!((field(&gated, "quality_job"), field(&gated, "max_quality_rounds")), gate);
 }
 
 #[test]

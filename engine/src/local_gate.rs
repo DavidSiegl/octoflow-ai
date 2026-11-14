@@ -1,9 +1,8 @@
-//! `--quality-gate local`: the engine runs octoflow-gate itself on the project's host, in place of a Jenkins job
-//! (docs/quality-gate.md, "The local gate").
+//! `--quality-gate local`: the engine runs octoflow-gate itself on the project's host (docs/quality-gate.md).
 //!
 //! Each judgement is a job of its own on the host, started detached from the engine (start) and asked after until it
 //! ends (Judging::verdict), so the engine keeps its heartbeat while the project's tests run, and the job outlives an
-//! SSH connection that drops. The job judges a checkout of the snapshot, as a Jenkins build does, so the Builder's
+//! SSH connection that drops. The job judges a checkout of the snapshot, so the Builder's
 //! untracked files are judged and what the gate and the tests write never reaches the run's worktree.
 //!
 //! The release is the one the run's base pins in ci/gate.pin, else BUILT_IN_PIN. Its tarball is downloaded once per
@@ -11,12 +10,14 @@
 //! each time it is unpacked, fresh, into the job's directory. It is the release's `gate`, a program for Linux x86_64,
 //! which octoflow-gate has shipped since 0.7.0 (FIRST_WITH_GATE): a base that pins an earlier release cannot be
 //! judged. The gate judges by the base's gate.toml and pyproject.toml, never the change's, so a change cannot loosen
-//! how it is itself judged, as a Jenkins quality build judges by main's. Every step runs as a command on the host, so
+//! how it is itself judged. Every step runs as a command on the host, so
 //! a project on another machine is judged there, as its git steps are.
 
 use crate::error::OrchestratorError;
-use crate::host::{Host, DEFAULT_TIMEOUT};
-use crate::quality::last_lines;
+use crate::host::{last_lines, shell_path, Host, DEFAULT_TIMEOUT};
+
+/// The --quality-gate name of the local gate, the only gate there is, as state.json's quality_job keeps it.
+pub const LOCAL_GATE: &str = "local";
 
 /// The release a base without ci/gate.pin is judged by, in ci/gate.pin's form: the octoflow-gate release this engine
 /// was tested against, whose quality.json schema crate::quality::read_report reads. Raise it with the repository's own
@@ -158,8 +159,8 @@ enum Known {
 /// Fails, before a run's interview, if host could not run the local gate: it is not Linux on x86_64; curl, tar,
 /// setsid, or both sha256sum and shasum, are not on PATH, env cannot restore a signal's default, or ps does not show
 /// a process's state and command line; or
-/// the gate cache cannot be made or written to. What the project's own tests need, as a Python for the gate's
-/// `--python`, is not looked for: the gate reports a check it could not run.
+/// the gate cache cannot be made or written to. What the project's own tests need, such as a Python interpreter for
+/// the gate's `--python`, is not looked for: the gate reports a check it could not run.
 pub fn preflight(host: &dyn Host) -> Result<(), OrchestratorError> {
     let tools = host.run(&["sh", "-c", PREFLIGHT], None, DEFAULT_TIMEOUT)?;
     if tools.status != 0 {
@@ -174,8 +175,8 @@ pub fn preflight(host: &dyn Host) -> Result<(), OrchestratorError> {
 /// Start the gate judging snapshot, a commit of cwd's repository whose only parent is base, and return the job, which
 /// runs on, detached from the engine, until it ends or is stopped. Each start for out_dir, a quality round's directory,
 /// judges in a job directory of its own, out_dir/job-<k>, k counting the round's starts, so that what one start does to
-/// its files, as an engine since taken over still may, never touches another's. The jobs earlier starts left there that
-/// still run are stopped first (Known::Left), and what only a running job needs is removed. The job directory holds
+/// its files, as an engine since taken over still may, never touches another's. The jobs earlier starts left there are
+/// stopped first (stop_left). The job directory holds
 /// judge/ (base's gate.toml, an empty one for a base without, and base's pyproject.toml when it has one), job.log,
 /// gate.err and exit, and, once the gate has judged, quality.md and quality.json; while the job runs, also group (its
 /// process group), tree/ (a checkout of snapshot, a worktree of cwd's repository) and release/ (the release, unpacked),
@@ -200,18 +201,12 @@ pub fn start(host: &dyn Host, cwd: &str, snapshot: &str, base: &str, out_dir: &s
              {major}.{minor}.0 on"
         )));
     }
+    stop_left(host, cwd, out_dir)?;
     let made = host.check(&["sh", "-c", NEXT_JOB, "_", out_dir], None, DEFAULT_TIMEOUT)?;
     let k: u32 = made
         .trim()
         .parse()
         .map_err(|_| OrchestratorError(format!("making a job directory in {out_dir} printed {made:?}")))?;
-    for earlier in 1..k {
-        let dir = format!("{out_dir}/job-{earlier}");
-        if let (Some(group), None) = (host.read(&format!("{dir}/group"))?, host.read(&format!("{dir}/exit"))?) {
-            stop_job(host, group.trim(), &dir, Known::Left)?;
-        }
-        clean_up(host, cwd, &dir)?;
-    }
     let dir = format!("{out_dir}/job-{k}");
     let judge = format!("{dir}/judge");
     // The gate takes its settings from --config's gate.toml, an empty one being its defaults, and the linters' rules
@@ -286,6 +281,26 @@ impl Judging {
     }
 }
 
+/// Stop each job that starts for out_dir, a quality round's directory, left running, as after a crash, a takeover or a
+/// run killed while its gate judged, and remove what only a running job needs (clean_up) from every job directory
+/// there, cwd being the repository the snapshots' checkouts are worktrees of. What the jobs wrote, their reports and
+/// logs, stays. An out_dir that does not exist holds no job. Errors: a command or git fails; the jobs before the
+/// failing one are stopped.
+pub fn stop_left(host: &dyn Host, cwd: &str, out_dir: &str) -> Result<(), OrchestratorError> {
+    // NEXT_JOB makes job-<k> only once job-1 to job-<k-1> exist, so the first gap ends them.
+    for k in 1.. {
+        let dir = format!("{out_dir}/job-{k}");
+        if !host.exists(&dir)? {
+            return Ok(());
+        }
+        if let (Some(group), None) = (host.read(&format!("{dir}/group"))?, host.read(&format!("{dir}/exit"))?) {
+            stop_job(host, group.trim(), &dir, Known::Left)?;
+        }
+        clean_up(host, cwd, &dir)?;
+    }
+    unreachable!("a round has fewer than u32::MAX jobs")
+}
+
 /// Whether said, the end of the gate's standard error, is the gate's report of a change it could not judge.
 fn could_not_judge(said: &str) -> bool {
     said.lines().any(|line| line.starts_with("error: ")) && !said.lines().any(|line| line.starts_with("usage: "))
@@ -339,36 +354,87 @@ const SETTINGS_PATH: &str = "gate.toml";
 /// Make the project in cwd on host ready for `--quality-gate local`, as `doctor --setup-gate` and serve's
 /// `POST /setup/gate` ask: at the top level of the checkout cwd is in, write ci/gate.pin, naming BUILT_IN_PIN, and a
 /// starter gate.toml whose [[test]] commands are guessed from the project's kind (starter_settings), each only where
-/// nothing is at its path yet. Nothing is committed: a run's gate reads both from the run's base commit, so they count
-/// once committed. cwd may start with ~, host's home. Returns the pin's SetUpFile, then gate.toml's. The look and the
-/// write are two commands, so a file made between them is replaced.
+/// nothing is at its path yet; a file already there is kept, even one made while set_up runs. Nothing is committed: a
+/// run's gate reads both from the run's base commit, so they count once committed. cwd may start with ~, host's home.
+/// Returns the pin's SetUpFile, then gate.toml's. Two commands on host, so two round trips over SSH.
 ///
 /// Errors: cwd is no directory on host, or in no git checkout; a command fails, as a write to a read-only checkout.
 pub fn set_up(host: &dyn Host, cwd: &str) -> Result<Vec<SetUpFile>, OrchestratorError> {
-    let dir = host.resolve_dir(cwd)?;
-    let top = host.git(&dir, &["rev-parse", "--show-toplevel"])?.trim().to_string();
-    let mut kinds = Vec::new();
-    for marker in KIND_MARKERS {
-        if host.exists(&format!("{top}/{marker}"))? {
-            kinds.push(marker);
+    let (word, arg) = shell_path(cwd);
+    let look = format!("cd -- {word} && {SET_UP_LOOK}");
+    let mut argv = vec!["sh", "-c", &look, "_", arg];
+    argv.extend(KIND_MARKERS);
+    argv.push(PYPROJECT_PATH);
+    let looked = set_up_step(host, &argv, &format!("looking at {cwd}"))?;
+    let unread = || OrchestratorError(format!("looking at {cwd}: the look printed {looked:?}"));
+    let (top, mut rest) = looked.split_once('\0').ok_or_else(unread)?;
+    let mut present = Vec::new();
+    loop {
+        let (name, after) = rest.split_once('\0').ok_or_else(unread)?;
+        rest = after;
+        match KIND_MARKERS.iter().chain([&PYPROJECT_PATH]).find(|m| **m == name) {
+            Some(marker) => present.push(*marker),
+            None if name.is_empty() => break,
+            None => return Err(unread()),
         }
     }
-    let pyproject = host.read(&format!("{top}/pyproject.toml"))?;
-    let files = [(PIN_PATH, format!("{BUILT_IN_PIN}\n")), (SETTINGS_PATH, starter_settings(&kinds, pyproject.as_deref()))];
-    let mut done = Vec::new();
-    for (path, text) in files {
-        let at = format!("{top}/{path}");
-        let written = !host.exists(&at)?;
-        if written {
-            host.write(&at, &text, false)?;
-        }
-        done.push(SetUpFile { path, written });
+    let pyproject = present.contains(&PYPROJECT_PATH).then_some(rest);
+    let pin = format!("{BUILT_IN_PIN}\n");
+    let settings = starter_settings(&present, pyproject);
+    let argv = ["sh", "-c", SET_UP_WRITE, "_", top, PIN_PATH, &pin, SETTINGS_PATH, &settings];
+    let wrote = set_up_step(host, &argv, &format!("setting up the gate in {top}"))?;
+    match wrote.lines().collect::<Vec<_>>()[..] {
+        [a, b] if [a, b].iter().all(|w| ["written", "kept"].contains(w)) => Ok(vec![
+            SetUpFile { path: PIN_PATH, written: a == "written" },
+            SetUpFile { path: SETTINGS_PATH, written: b == "written" },
+        ]),
+        _ => Err(OrchestratorError(format!("setting up the gate in {top}: the write printed {wrote:?}"))),
     }
-    Ok(done)
 }
 
+/// The standard output of argv on host, a step of set_up. Errors: it exits non-zero, said as doing, then its standard
+/// error.
+fn set_up_step(host: &dyn Host, argv: &[&str], doing: &str) -> Result<String, OrchestratorError> {
+    let done = host.run(argv, None, DEFAULT_TIMEOUT)?;
+    match done.status {
+        0 => Ok(done.stdout),
+        _ => Err(OrchestratorError(format!("{doing}: {}", done.stderr.trim()))),
+    }
+}
+
+/// pyproject.toml's path from a checkout's top level, whose text starter_settings reads.
+const PYPROJECT_PATH: &str = "pyproject.toml";
+
+/// The rest of set_up's look, run where cwd is, given the files to look for as its arguments: the checkout's top level,
+/// then each of those files present there, each ended by a NUL, an empty name after the last, then pyproject.toml's
+/// text when it is present.
+pub(crate) const SET_UP_LOOK: &str = r#"top=$(git rev-parse --show-toplevel) && cd -- "$top" || exit 1
+shift
+printf '%s\0' "$top"
+for f; do if [ -e "$f" ] || [ -L "$f" ]; then printf '%s\0' "$f"; fi; done
+printf '\0'
+if [ -e pyproject.toml ]; then cat pyproject.toml || exit 1; fi"#;
+
+/// set_up's write: given the top level, then a path from it and its text for each file to write, writes each where
+/// nothing is at its path, making its directory, and prints a line for each: `written`, or `kept` for what was there.
+/// The text is written aside and hard-linked into place, which fails rather than replace what another process made
+/// meanwhile; a directory made there meanwhile, which ln puts the link in, gets it taken out again and is kept.
+pub(crate) const SET_UP_WRITE: &str = r#"cd -- "$1" || exit 1; shift
+while [ $# -ge 2 ]; do
+  if [ -e "$1" ] || [ -L "$1" ]; then echo kept; shift 2; continue; fi
+  t="$1.tmp.$$"
+  { mkdir -p -- "$(dirname -- "$1")" && printf %s "$2" > "$t"; } || { rm -f -- "$t"; exit 1; }
+  if e=$(ln -- "$t" "$1" 2>&1); then
+    if [ "$1" -ef "$t" ]; then echo written; else rm -f -- "$1/${t##*/}" || exit 1; echo kept; fi
+  elif [ -e "$1" ] || [ -L "$1" ]; then echo kept
+  else echo "$e" >&2; rm -f -- "$t"; exit 1
+  fi
+  rm -f -- "$t" || exit 1
+  shift 2
+done"#;
+
 /// The files at a checkout's top level whose presence starter_settings guesses a project's tests from; it also reads
-/// pyproject.toml's text, which set_up passes it apart.
+/// PYPROJECT_PATH's text, which set_up passes it apart.
 const KIND_MARKERS: [&str; 6] = ["Cargo.toml", "pytest.ini", "conftest.py", "uv.lock", "package.json", "go.mod"];
 
 /// The gate.toml set_up writes for a project whose top level holds the KIND_MARKERS in present, and pyproject.toml

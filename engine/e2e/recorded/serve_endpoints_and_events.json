@@ -1997,7 +1997,7 @@
     "headers": {
      "Content-Type": "application/json"
     },
-    "body": "{\"version\":1,\"runs\":[{\"id\":\"<run:1>\",\"key\":\"<key:1>\",\"task\":\"Add a subtract function\",\"workflow\":\"default\",\"steps\":[{\"id\":\"spec\",\"role\":\"spec\"},{\"id\":\"build\",\"role\":\"build\"},{\"id\":\"review\",\"role\":\"review\"}],\"phase\":\"done\",\"round\":1,\"quality_round\":null,\"role\":null,\"pane\":null,\"agents\":[{\"role\":\"spec\",\"name\":\"spec-<key:1>\",\"kind\":\"claude\"},{\"role\":\"build\",\"name\":\"build-<key:1>\",\"kind\":\"claude\"},{\"role\":\"review\",\"name\":\"review-<key:1>\",\"kind\":\"claude\"}],\"health\":null,\"health_reason\":null,\"heartbeat_age\":\"<seconds>\",\"waiting\":null,\"verdict\":\"APPROVE\",\"verdicts\":[{\"round\":1,\"step\":\"review\",\"verdict\":\"APPROVE\"}],\"error\":null,\"closed\":null,\"branch\":\"orchestrator/add-a-subtract-function-<key:1>\",\"worktree\":null,\"pr\":{\"url\":\"https://github.com/parity/project/pull/1\",\"state\":null,\"error\":null},\"turns\":[{\"step\":\"spec\",\"role\":\"spec\",\"round\":0,\"quality_round\":0,\"file\":\"spec.md\",\"agent\":\"claude\",\"model\":null,\"session\":\"session-1\",\"tokens\":\"unknown\",\"human_paced\":true,\"started_at\":\"<time>\",\"ended_at\":\"<time>\",\"seconds\":\"<seconds>\"},{\"step\":\"build\",\"role\":\"build\",\"round\":1,\"quality_round\":0,\"file\":\"build-1.md\",\"agent\":\"claude\",\"model\":null,\"session\":\"session-2\",\"tokens\":\"unknown\",\"human_paced\":false,\"started_at\":\"<time>\",\"ended_at\":\"<time>\",\"seconds\":\"<seconds>\"},{\"step\":\"review\",\"role\":\"review\",\"round\":1,\"quality_round\":0,\"file\":\"review-1.md\",\"agent\":\"claude\",\"model\":null,\"session\":\"session-3\",\"tokens\":\"unknown\",\"human_paced\":false,\"started_at\":\"<time>\",\"ended_at\":\"<time>\",\"seconds\":\"<seconds>\"}],\"resume_command\":null}]}"
+    "body": "{\"version\":1,\"runs\":[{\"id\":\"<run:1>\",\"key\":\"<key:1>\",\"task\":\"Add a subtract function\",\"workflow\":\"default\",\"steps\":[{\"id\":\"spec\",\"role\":\"spec\",\"role_label\":\"Spec Collector\",\"loop_to\":null,\"quality_gated\":false},{\"id\":\"build\",\"role\":\"build\",\"role_label\":\"Builder\",\"loop_to\":null,\"quality_gated\":false},{\"id\":\"review\",\"role\":\"review\",\"role_label\":\"Reviewer\",\"loop_to\":\"build\",\"quality_gated\":false}],\"pull_request\":true,\"phase\":\"done\",\"round\":1,\"quality_round\":null,\"role\":null,\"pane\":null,\"agents\":[{\"role\":\"spec\",\"name\":\"spec-<key:1>\",\"kind\":\"claude\"},{\"role\":\"build\",\"name\":\"build-<key:1>\",\"kind\":\"claude\"},{\"role\":\"review\",\"name\":\"review-<key:1>\",\"kind\":\"claude\"}],\"health\":null,\"health_reason\":null,\"heartbeat_age\":\"<seconds>\",\"waiting\":null,\"verdict\":\"APPROVE\",\"verdicts\":[{\"round\":1,\"step\":\"review\",\"verdict\":\"APPROVE\"}],\"error\":null,\"closed\":null,\"branch\":\"orchestrator/add-a-subtract-function-<key:1>\",\"worktree\":null,\"pr\":{\"url\":\"https://github.com/parity/project/pull/1\",\"state\":null,\"error\":null},\"turns\":[{\"step\":\"spec\",\"role\":\"spec\",\"round\":0,\"quality_round\":0,\"file\":\"spec.md\",\"agent\":\"claude\",\"model\":null,\"session\":\"session-1\",\"tokens\":\"unknown\",\"human_paced\":true,\"started_at\":\"<time>\",\"ended_at\":\"<time>\",\"seconds\":\"<seconds>\"},{\"step\":\"build\",\"role\":\"build\",\"round\":1,\"quality_round\":0,\"file\":\"build-1.md\",\"agent\":\"claude\",\"model\":null,\"session\":\"session-2\",\"tokens\":\"unknown\",\"human_paced\":false,\"started_at\":\"<time>\",\"ended_at\":\"<time>\",\"seconds\":\"<seconds>\"},{\"step\":\"review\",\"role\":\"review\",\"round\":1,\"quality_round\":0,\"file\":\"review-1.md\",\"agent\":\"claude\",\"model\":null,\"session\":\"session-3\",\"tokens\":\"unknown\",\"human_paced\":false,\"started_at\":\"<time>\",\"ended_at\":\"<time>\",\"seconds\":\"<seconds>\"}],\"resume_command\":null}]}"
    },
    {
     "request": "GET /files?cwd=<world>/project&run=<run:1>",
@@ -2095,17 +2095,27 @@
        "steps": [
         {
          "id": "spec",
-         "role": "spec"
+         "role": "spec",
+         "role_label": "Spec Collector",
+         "loop_to": null,
+         "quality_gated": false
         },
         {
          "id": "build",
-         "role": "build"
+         "role": "build",
+         "role_label": "Builder",
+         "loop_to": null,
+         "quality_gated": false
         },
         {
          "id": "review",
-         "role": "review"
+         "role": "review",
+         "role_label": "Reviewer",
+         "loop_to": "build",
+         "quality_gated": false
         }
        ],
+       "pull_request": true,
        "phase": "spec",
        "round": 0,
        "quality_round": null,
@@ -2167,17 +2177,27 @@
        "steps": [
         {
          "id": "spec",
-         "role": "spec"
+         "role": "spec",
+         "role_label": "Spec Collector",
+         "loop_to": null,
+         "quality_gated": false
         },
         {
          "id": "build",
-         "role": "build"
+         "role": "build",
+         "role_label": "Builder",
+         "loop_to": null,
+         "quality_gated": false
         },
         {
          "id": "review",
-         "role": "review"
+         "role": "review",
+         "role_label": "Reviewer",
+         "loop_to": "build",
+         "quality_gated": false
         }
        ],
+       "pull_request": true,
        "phase": "build",
        "round": 1,
        "quality_round": null,
@@ -2261,17 +2281,27 @@
        "steps": [
         {
          "id": "spec",
-         "role": "spec"
+         "role": "spec",
+         "role_label": "Spec Collector",
+         "loop_to": null,
+         "quality_gated": false
         },
         {
          "id": "build",
-         "role": "build"
+         "role": "build",
+         "role_label": "Builder",
+         "loop_to": null,
+         "quality_gated": false
         },
         {
          "id": "review",
-         "role": "review"
+         "role": "review",
+         "role_label": "Reviewer",
+         "loop_to": "build",
+         "quality_gated": false
         }
        ],
+       "pull_request": true,
        "phase": "review",
        "round": 1,
        "quality_round": null,
@@ -2379,17 +2409,27 @@
        "steps": [
         {
          "id": "spec",
-         "role": "spec"
+         "role": "spec",
+         "role_label": "Spec Collector",
+         "loop_to": null,
+         "quality_gated": false
         },
         {
          "id": "build",
-         "role": "build"
+         "role": "build",
+         "role_label": "Builder",
+         "loop_to": null,
+         "quality_gated": false
         },
         {
          "id": "review",
-         "role": "review"
+         "role": "review",
+         "role_label": "Reviewer",
+         "loop_to": "build",
+         "quality_gated": false
         }
        ],
+       "pull_request": true,
        "phase": "done",
        "round": 1,
        "quality_round": null,

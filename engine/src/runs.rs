@@ -54,7 +54,7 @@ impl SavedRun {
 }
 
 /// Whether a process of that id exists on this machine, under this user or another, as kill(pid, 0) tells; false for
-/// an id beyond a pid's range. As in Python, an id of 0 or below is not a process's: it names a process group (0 this
+/// an id beyond a pid's range. An id of 0 or below is not a process's: it names a process group (0 this
 /// one's, -1 every process but this one and init, -N group N), which counts as alive when kill finds a process in it.
 pub fn pid_alive(pid: i64) -> bool {
     use nix::errno::Errno;

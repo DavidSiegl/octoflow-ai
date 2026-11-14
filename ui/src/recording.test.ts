@@ -7,12 +7,12 @@ import { RECORDED } from "./test/fakes";
 type KeysOf<T> = Record<keyof T, true>;
 
 const RECORD: KeysOf<RunRecord> = {
-  id: true, key: true, task: true, workflow: true, steps: true, phase: true, round: true, quality_round: true,
-  role: true, pane: true, agents: true, health: true, health_reason: true, heartbeat_age: true, waiting: true,
-  verdict: true, verdicts: true, error: true, closed: true, branch: true, worktree: true, pr: true, turns: true,
-  resume_command: true,
+  id: true, key: true, task: true, workflow: true, steps: true, pull_request: true, phase: true, round: true,
+  quality_round: true, role: true, pane: true, agents: true, health: true, health_reason: true, heartbeat_age: true,
+  waiting: true, verdict: true, verdicts: true, error: true, closed: true, branch: true, worktree: true, pr: true,
+  turns: true, resume_command: true,
 };
-const STEP: KeysOf<Step> = { id: true, role: true };
+const STEP: KeysOf<Step> = { id: true, role: true, role_label: true, loop_to: true, quality_gated: true };
 const AGENT: KeysOf<AgentRef> = { role: true, name: true, kind: true };
 const WAITING: KeysOf<NonNullable<RunRecord["waiting"]>> = { reason: true, detail: true };
 const VERDICT: KeysOf<StepVerdict> = { round: true, step: true, verdict: true };
