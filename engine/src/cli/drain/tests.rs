@@ -491,12 +491,15 @@ fn a_gone_spec_change_line_ends_gone() {
 
 #[test]
 fn a_change_line_of_a_spec_without_a_status_says_so() {
-    let d = Drain::new();
-    let file = SpecFile { path: d.path("a"), text: ready("A") };
-    let mut spec = QueuedSpec { slug: "a".into(), file, blockers: vec![], was: None, changed: false, gone: None };
-    let told = crate::workflow::fixture::Told::default();
-    assert!(spec.update(&entries(&[(STATUS_KEY, SPEC_IN_REVIEW)]), false, &told).unwrap());
-    assert_eq!(spec.change_line(), "a: no status -> in-review");
+    // No Status: line, or an empty one.
+    for was in [None, some("")] {
+        let d = Drain::new();
+        let file = SpecFile { path: d.path("a"), text: ready("A") };
+        let mut spec = QueuedSpec { slug: "a".into(), file, blockers: vec![], was: was.clone(), changed: false, gone: None };
+        let told = crate::workflow::fixture::Told::default();
+        assert!(spec.update(&entries(&[(STATUS_KEY, SPEC_IN_REVIEW)]), false, &told).unwrap());
+        assert_eq!(spec.change_line(), "a: no status -> in-review", "{was:?}");
+    }
 }
 
 #[test]
