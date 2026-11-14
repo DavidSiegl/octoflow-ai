@@ -470,7 +470,7 @@ fn a_built_in_workflow_reads_without_a_file_and_cannot_be_saved_or_deleted() {
     assert_eq!(read, EditableWorkflow { definition: workflow_definition(&DEFAULT_WORKFLOW), file: None });
     let refused = save_workflow(&config.config, "default", &read.definition, None).unwrap_err();
     let error = "workflow default is built in; give the file another name".to_string();
-    assert_eq!(refused, WorkflowEditError::Invalid { error, path: None });
+    assert_eq!(refused, WorkflowEditError::Invalid { error, path: None, text: None });
     assert!(matches!(delete_workflow(&config.config, "default", ""), Err(WorkflowEditError::BuiltIn(_))));
     assert!(!std::path::Path::new(&config.dir.join("workflows/default.toml")).exists());
 }
@@ -482,8 +482,8 @@ fn reading_an_unknown_workflow_or_one_that_does_not_load() {
     assert_eq!(unknown, WorkflowEditError::Unknown("no workflow nope".into()));
     let path = config.file("broken", "not toml [");
     match read_workflow(&config.config, "broken").unwrap_err() {
-        WorkflowEditError::Invalid { error, path: Some(at) } => {
-            assert_eq!(at, path);
+        WorkflowEditError::Invalid { error, path: Some(at), text } => {
+            assert_eq!((at, text.as_deref()), (path.clone(), Some("not toml [")));
             assert!(error.starts_with(&format!("{path}: ")), "{error}");
         }
         other => panic!("{other:?}"),
@@ -569,4 +569,40 @@ fn a_check_names_the_first_problem_and_still_lists_the_placeholders() {
     assert_eq!(named("default"), "workflow default is built in; give the file another name");
     assert!(named("my flow").starts_with("a workflow's name, its file's, may use only letters"));
     assert!(named("../up").starts_with("a workflow's name"));
+}
+
+#[test]
+fn a_file_that_does_not_load_can_be_deleted_by_the_text_its_read_gave() {
+    let config = Config::new();
+    let path = config.file("broken", "steps = [");
+    let Err(WorkflowEditError::Invalid { text: Some(text), .. }) = read_workflow(&config.config, "broken") else {
+        panic!("a broken file reads as Invalid with its text");
+    };
+    assert_eq!(delete_workflow(&config.config, "broken", &text).unwrap(), path);
+    // Not UTF-8: its text has U+FFFD in place of the bad byte, and is still its base.
+    std::fs::write(&path, b"description = \"caf\xe9\"\n").unwrap();
+    let Err(WorkflowEditError::Invalid { text: Some(text), .. }) = read_workflow(&config.config, "broken") else {
+        panic!("a file that is not UTF-8 reads as Invalid with its text");
+    };
+    assert_eq!(text, "description = \"caf\u{fffd}\"\n");
+    assert_eq!(delete_workflow(&config.config, "broken", &text).unwrap(), path);
+}
+
+#[test]
+fn concurrent_saves_of_one_workflow_leave_one_whole_file_and_nothing_aside() {
+    let config = Config::new();
+    let definition = workflow_definition(&DEFAULT_WORKFLOW);
+    let path = save_workflow(&config.config, "mine", &definition, None).unwrap();
+    let base = std::fs::read_to_string(&path).unwrap();
+    let saves: Vec<_> = (0..32)
+        .map(|_| {
+            let (config, definition, base) = (config.config.clone(), definition.clone(), base.clone());
+            std::thread::spawn(move || save_workflow(&config, "mine", &definition, Some(&base)))
+        })
+        .collect();
+    let saved: Vec<_> = saves.into_iter().map(|t| t.join().unwrap()).collect();
+    // The saves write the same text, so each later one finds the base it was given.
+    assert!(saved.iter().all(Result::is_ok), "{saved:?}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), base);
+    assert_eq!(std::fs::read_dir(config.dir.join("workflows")).unwrap().count(), 1);
 }

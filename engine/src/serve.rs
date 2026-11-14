@@ -179,7 +179,8 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 ///   directory; 500 when its workflows directory cannot be listed.
 /// - /workflow?name=NAME: one workflow, to edit (workflow_file::read_workflow): {"name", "built_in", "path", "text",
 ///   "hand_written", "definition"}, path and text null for a built-in workflow; 400 for a name missing, 404 for no
-///   such workflow, 422 {"error", "path"} for a file that does not load, 500 when the directory cannot be listed.
+///   such workflow, 422 {"error", "path", "text"} for a file that does not load, text null when it cannot be read
+///   (the base a delete of it takes), 500 when the directory cannot be listed.
 /// - POST /workflow/check: {"problem", "placeholders"} for the JSON body's {"name", "definition"}
 ///   (workflow_file::check_workflow), problem null when there is none.
 /// - POST /workflow/save: saves the body's {"name", "definition", "base"} (workflow_file::save_workflow), base being
@@ -460,7 +461,7 @@ fn answer(shared: &Shared, request: Request) {
         "POST" if path == SETUP_CHECKED => post_checked(shared, request, &query),
         "POST" if path == SETUP_GATE => post_setup_gate(shared, request, &query),
         "POST" if path == RUN => post_run(shared, request, &query),
-        "POST" if path == WORKFLOW_CHECK => post_workflow(shared, request, &query, workflows::check),
+        "POST" if path == WORKFLOW_CHECK => post_workflow(shared, request, &query, |_, body| workflows::check(body)),
         "POST" if path == WORKFLOW_SAVE => post_workflow(shared, request, &query, workflows::save),
         "POST" if path == WORKFLOW_DELETE => post_workflow(shared, request, &query, workflows::delete),
         "OPTIONS" => preflight(shared, request),
@@ -690,8 +691,8 @@ fn post_run(shared: &Shared, mut request: Request, query: &HashMap<String, Strin
     send_json(request, code, &body);
 }
 
-/// Answer a POST of /workflow/check, /workflow/save or /workflow/delete with the query's parameters, as target gives
-/// them, with what endpoint answers to its body. These reach no project.
+/// Answer a POST of /workflow/check, /workflow/save or /workflow/delete, once refusal passes it with the query's
+/// parameters, with what endpoint answers to its body for serve's configuration directory. These reach no project.
 fn post_workflow(
     shared: &Shared,
     mut request: Request,

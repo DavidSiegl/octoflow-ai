@@ -266,7 +266,7 @@ started, as the human would start one from a herdr pane.
   | `/setup/checked`, `POST /setup/checked` | `{"checked"}`: whether the setup marker is there; the POST writes it |
   | `POST /setup/gate` | `{"files": [{"path", "written"}]}`: writes the project's missing `ci/gate.pin` and starter `gate.toml` (`local_gate::set_up`), `written` false for one it kept |
   | `/workflows` | `{"workflows", "agents"}`: each workflow `run --workflow` offers from serve's configuration directory, with its description and its roles' labels, harnesses and models, and the harnesses there are |
-  | `/workflow?name=NAME` | `{"name", "built_in", "path", "text", "hand_written", "definition"}`: one workflow to edit (`read_workflow`), `path` and `text` null for a built-in one; 404 for no such workflow, 422 `{"error", "path"}` for a file that does not load |
+  | `/workflow?name=NAME` | `{"name", "built_in", "path", "text", "hand_written", "definition"}`: one workflow to edit (`read_workflow`), `path` and `text` null for a built-in one; 404 for no such workflow, 422 `{"error", "path", "text"}` for a file that does not load, its text the `base` a delete of it takes |
   | `POST /workflow/check` | `{"problem", "placeholders"}` for the body's `{"name", "definition"}` (`check_workflow`), `problem` null when there is none |
   | `POST /workflow/save` | writes the body's `{"name", "definition", "base"}` in canonical form (`save_workflow`) and answers 201 `{"path"}`; 409 when the file is no longer `base`, the text the editor opened (null for a new workflow), 422 for a problem |
   | `POST /workflow/delete` | removes the file of the body's `{"name", "base"}` (`delete_workflow`) and answers `{"path"}`; 400 for a built-in workflow, 404, and 409 as for a save |

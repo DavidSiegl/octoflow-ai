@@ -95,9 +95,13 @@ pub fn load_workflow_file(path: &str, prompts: &Prompts) -> Result<Pipeline, Orc
 
 /// The text of the workflow file at path. Errors, naming the file: it cannot be read, or is not UTF-8.
 fn workflow_file_text(path: &str) -> Result<String, OrchestratorError> {
-    let bytes = std::fs::read(path)
-        .map_err(|e| OrchestratorError(format!("cannot read workflow file {path}: {}", strerror(&e))))?;
+    let bytes = std::fs::read(path).map_err(|e| unreadable(path, &e))?;
     String::from_utf8(bytes).map_err(|e| OrchestratorError(format!("{path}: {e}")))
+}
+
+/// The error of a workflow file at path that cannot be read, for e.
+fn unreadable(path: &str, e: &std::io::Error) -> OrchestratorError {
+    OrchestratorError(format!("cannot read workflow file {path}: {}", strerror(e)))
 }
 
 /// The workflow text, the contents of the workflow file at path, defines, as load_workflow_file gives it.
@@ -476,6 +480,7 @@ pub struct EditableWorkflow {
 /// A workflow file as read_workflow found it.
 #[derive(Debug, PartialEq)]
 pub struct DefinitionFile {
+    /// Where the file is: `{name}.toml` in the workflows directory, as workflow_files lists it.
     pub path: String,
     /// The file's text as read: what save_workflow and delete_workflow take as their base.
     pub text: String,
@@ -499,9 +504,10 @@ pub struct WorkflowCheck {
 pub enum WorkflowEditError {
     /// No workflow has the name, or for delete_workflow no workflow file.
     Unknown(String),
-    /// The definition, or its name, has a problem; path is the file whose workflow does not load, for read_workflow,
-    /// and None for a definition given.
-    Invalid { error: String, path: Option<String> },
+    /// The definition, or its name, has a problem. For read_workflow, path is the file whose workflow does not load,
+    /// and text its text when it can be read at all, each sequence that is not UTF-8 replaced by U+FFFD: the base
+    /// delete_workflow takes for it. Both are None for a definition given.
+    Invalid { error: String, path: Option<String>, text: Option<String> },
     /// The file is not the text the caller started from: it exists where the caller named none, or is gone, or
     /// changed since.
     Changed(String),
@@ -513,8 +519,8 @@ pub enum WorkflowEditError {
 
 /// The workflow of that name, as named_workflow finds it, for an editor: its definition with each `use` resolved by
 /// the built-in prompts, as start::offered_workflows words workflows, and its file. Errors: Unknown for no such
-/// workflow; Invalid, with the file's path, for a file that does not load; Failed when the workflows directory cannot
-/// be listed.
+/// workflow; Invalid, with the file's path and text, for a file that does not load; Failed when the workflows
+/// directory cannot be listed.
 pub fn read_workflow(config: &ConfigDir, name: &str) -> Result<EditableWorkflow, WorkflowEditError> {
     let built_in = Prompts::default();
     if WORKFLOWS.contains(&name) {
@@ -525,11 +531,17 @@ pub fn read_workflow(config: &ConfigDir, name: &str) -> Result<EditableWorkflow,
     let Some(path) = files.get(name) else {
         return Err(WorkflowEditError::Unknown(format!("no workflow {name}")));
     };
-    let invalid = |e: OrchestratorError| WorkflowEditError::Invalid { error: e.0, path: Some(path.clone()) };
-    let text = workflow_file_text(path).map_err(invalid)?;
-    let pipeline = workflow_from_text(path, &text, &built_in).map_err(invalid)?;
+    let invalid = |e: OrchestratorError, text: Option<&str>| WorkflowEditError::Invalid {
+        error: e.0,
+        path: Some(path.clone()),
+        text: text.map(str::to_string),
+    };
+    let bytes = std::fs::read(path).map_err(|e| invalid(unreadable(path, &e), None))?;
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|e| invalid(OrchestratorError(format!("{path}: {e}")), Some(&String::from_utf8_lossy(&bytes))))?;
+    let pipeline = workflow_from_text(path, text, &built_in).map_err(|e| invalid(e, Some(text)))?;
     let hand_written = text != workflow_toml(&pipeline);
-    let file = DefinitionFile { path: path.clone(), text, hand_written };
+    let file = DefinitionFile { path: path.clone(), text: text.to_string(), hand_written };
     Ok(EditableWorkflow { definition: workflow_definition(&pipeline), file: Some(file) })
 }
 
@@ -554,9 +566,11 @@ pub fn save_workflow(
     definition: &Value,
     base: Option<&str>,
 ) -> Result<String, WorkflowEditError> {
-    let pipeline = edited_workflow(name, definition).map_err(|error| WorkflowEditError::Invalid { error, path: None })?;
+    let pipeline =
+        edited_workflow(name, definition).map_err(|error| WorkflowEditError::Invalid { error, path: None, text: None })?;
     let dir = config.workflows_dir();
     let path = format!("{dir}/{name}.toml");
+    let _editing = lock_edits();
     expect_base(&path, base)?;
     std::fs::create_dir_all(&dir).map_err(|e| {
         WorkflowEditError::Failed(OrchestratorError(format!("cannot make the workflows directory {dir}: {}", strerror(&e))))
@@ -577,6 +591,7 @@ pub fn delete_workflow(config: &ConfigDir, name: &str, base: &str) -> Result<Str
     let Some(path) = files.get(name) else {
         return Err(WorkflowEditError::Unknown(format!("no workflow file {name}")));
     };
+    let _editing = lock_edits();
     expect_base(path, Some(base))?;
     std::fs::remove_file(path).map_err(|e| {
         WorkflowEditError::Failed(OrchestratorError(format!("cannot remove workflow file {path}: {}", strerror(&e))))
@@ -600,9 +615,18 @@ fn step_ids(definition: &Value) -> Vec<&str> {
     steps.iter().filter_map(|st| ["id", "use"].into_iter().find_map(|key| st.get(key)?.as_str())).collect()
 }
 
+/// This process's lock on its edits of workflow files, held from save_workflow's or delete_workflow's check of the
+/// base to the write or removal, so that two of serve's requests cannot both pass the check of one file, nor write
+/// the temporary file replace_local_file names after the process at once.
+fn lock_edits() -> std::sync::MutexGuard<'static, ()> {
+    static EDITS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // A panic while it was held left no edit half done that the lock guards: the file is replaced by a rename.
+    EDITS.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Refuse, as Changed, when the file at path is not base: None for no file. A file that is not UTF-8 is compared
-/// with its bytes that are not replaced by U+FFFD, so it is never a base read_workflow gave. Errors: Failed when the
-/// file cannot be read.
+/// with each sequence that is not UTF-8 replaced by U+FFFD, as read_workflow's Invalid gives its text. Errors: Failed when
+/// the file cannot be read.
 fn expect_base(path: &str, base: Option<&str>) -> Result<(), WorkflowEditError> {
     let current = match std::fs::read(path) {
         Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),

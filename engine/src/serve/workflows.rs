@@ -35,7 +35,7 @@ pub(super) fn read(config: &ConfigDir, query: &HashMap<String, String>) -> Answe
 }
 
 /// POST /workflow/check's answer to body.
-pub(super) fn check(_config: &ConfigDir, body: &[u8]) -> Answer {
+pub(super) fn check(body: &[u8]) -> Answer {
     let fields = match fields(body, r#"{"name": "...", "definition": {...}}"#, &[NAME, DEFINITION]) {
         Ok(fields) => fields,
         Err(answer) => return answer,
@@ -98,10 +98,10 @@ fn text<'f>(fields: &'f Object, key: &str) -> &'f str {
 fn failure(e: WorkflowEditError) -> Answer {
     match e {
         WorkflowEditError::Unknown(why) => (404, error(&why)),
-        WorkflowEditError::Invalid { error: why, path: Some(path) } => {
-            (422, object([("error", Value::from(why)), ("path", Value::from(path))]))
+        WorkflowEditError::Invalid { error: why, path: Some(path), text } => {
+            (422, object([("error", Value::from(why)), ("path", Value::from(path)), ("text", Value::from(text))]))
         }
-        WorkflowEditError::Invalid { error: why, path: None } => (422, error(&why)),
+        WorkflowEditError::Invalid { error: why, path: None, .. } => (422, error(&why)),
         WorkflowEditError::Changed(why) => (409, error(&why)),
         WorkflowEditError::BuiltIn(why) => (400, error(&why)),
         WorkflowEditError::Failed(e) => (500, error(&e.0)),

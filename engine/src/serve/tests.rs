@@ -1235,7 +1235,7 @@ fn a_workflow_reads_with_its_file_or_none_for_a_built_in_one() {
     let reply = served.get("/workflow?name=broken", &[]);
     let broken = d.join("workflows/broken.toml");
     assert_eq!(reply.status, Some(422), "{}", reply.body);
-    assert_eq!(reply.json()["path"], broken.as_str());
+    assert_eq!((reply.json()["path"].clone(), reply.json()["text"].clone()), (Value::from(broken.as_str()), Value::from("not toml [")));
     assert!(reply.error().starts_with(&format!("{broken}: ")), "{}", reply.body);
     let reply = served.get("/workflow?name=nope", &[]);
     assert_eq!((reply.status, reply.error()), (Some(404), "no workflow nope".to_string()));
