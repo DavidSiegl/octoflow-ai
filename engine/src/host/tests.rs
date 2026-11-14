@@ -400,6 +400,12 @@ fn run_states() {
     assert_eq!((states[1].age(), states[1].shown().run_id.as_str()), (0, "b"));
     assert_eq!(states.len(), 2);
     assert_eq!(host.run_states(&d.join("nosuch")).unwrap(), vec![]);
+    // One run, alone: a, as run_states reads it; none for a run without a state.json, or a name that globs.
+    let a = host.run_state(&cwd, "a").unwrap().unwrap();
+    assert_eq!((a.shown().run_id.as_str(), (12..15).contains(&a.age())), ("a", true));
+    for run_id in ["c", "d", "nosuch", "*"] {
+        assert_eq!(host.run_state(&cwd, run_id).unwrap(), None, "{run_id}");
+    }
 }
 
 #[test]
@@ -408,6 +414,12 @@ fn run_states_corrupt() {
     put(&d.join(&format!("{RUNS_DIR}/a/state.json")), "{\"run_id\": \n");
     let e = ProcessHost::local(&Interrupt::new()).run_states(&d.path()).unwrap_err();
     assert!(e.0.starts_with(&format!("corrupt run state under {}/{RUNS_DIR}: ", d.path())), "{e}");
+}
+
+#[test]
+fn a_run_state_whose_age_is_not_a_number_is_corrupt() {
+    let e = parsed_run_states("/p", "12x {}\0").unwrap_err();
+    assert_eq!(e.0, format!("corrupt run state under /p/{RUNS_DIR}: an age that is not a whole number: \"12x\""));
 }
 
 #[test]
@@ -539,8 +551,7 @@ fn a_command_that_runs_out_of_time_is_killed_with_its_process_group() {
     assert_eq!(
         e.0,
         format!(
-            "sh -c 'sleep 30 & echo $! > \"$1\"; wait' _ {pid_file}: Command '[\"sh\", \"-c\", \"sleep 30 & echo $! > \
-             \\\"$1\\\"; wait\", \"_\", {pid_file:?}]' timed out after 1 seconds"
+            "sh -c 'sleep 30 & echo $! > \"$1\"; wait' _ {pid_file}: timed out after 1 seconds"
         )
     );
     let pid = read(&pid_file).trim().to_string();
@@ -581,14 +592,14 @@ fn a_child_that_holds_the_output_open_ends_the_command_at_its_time() {
 #[test]
 fn a_command_that_cannot_be_started_names_it() {
     let e = ProcessHost::local(&Interrupt::new()).run(&["no-such-command-here", "x"], None, 60).unwrap_err();
-    assert_eq!(e.0, "no-such-command-here x: [Errno 2] No such file or directory: \"no-such-command-here\"");
+    assert_eq!(e.0, "no-such-command-here x: no-such-command-here: No such file or directory");
 }
 
 #[test]
 fn exec_tells_a_command_not_on_path_from_one_that_cannot_be_started_otherwise() {
     // As the doctor tells a tool missing here (cross-review 89, F9).
     let host = ProcessHost::local(&Interrupt::new());
-    let message = "no-such-command-here x: [Errno 2] No such file or directory: \"no-such-command-here\"";
+    let message = "no-such-command-here x: no-such-command-here: No such file or directory";
     assert_eq!(host.exec(&["no-such-command-here", "x"], None, 60), Err(ExecError::NotFound(OrchestratorError::new(message))));
     let dir = TempDir::new();
     let path = dir.join("not-executable");
@@ -1561,6 +1572,7 @@ fn locked_files_are_restored_and_the_index_is_left_alone() {
 
     let other = "refs/orchestrator/d4e5f6/locked/tests";
     c.sh(&["git", "-C", &c.a, "update-ref", other, &base]);
+    assert_eq!(c.host.refs(&c.a, "refs/orchestrator/d4e5f6/").unwrap(), [other]);
     assert!(c.host.delete_refs(&c.a, "refs/orchestrator/a1b2c3/").unwrap());
     let refs = c.sh(&["git", "-C", &c.a, "for-each-ref", "--format=%(refname)", "refs/orchestrator/"]);
     assert_eq!(refs, format!("{other}\n"));
@@ -1667,7 +1679,7 @@ fn restore_tree_undoes_what_changed_since_but_ignored_files() {
     std::fs::remove_file(format!("{}/gone.py", r.path)).unwrap();
     r.put("new/stray.py", "added after\n");
     r.put("run.log", "ignored\n");
-    r.host.restore_tree(&format!("{}/new", r.path), &tree).unwrap();
+    let put_back = r.host.restore_tree(&format!("{}/new", r.path), &tree).unwrap();
 
     let file = |name: &str| text(&r.path, name);
     assert_eq!(
@@ -1675,6 +1687,21 @@ fn restore_tree_undoes_what_changed_since_but_ignored_files() {
         (Some("changed before\n".into()), Some("untracked before\n".into()), Some("x\n".into()), None, Some("ignored\n".into()))
     );
     assert_eq!(r.host.git(&r.path, &["status", "--porcelain"]).unwrap(), porcelain);
+    let [PutBack { paths, undo }] = &put_back[..] else { panic!("{put_back:?}") };
+    let names = ["gone.py", "kept.py", "mine.py", "new/stray.py"];
+    assert_eq!(*paths, names.map(|n| format!("{}/{n}", r.path)));
+    r.host.check(&["sh", "-c", undo], None, DEFAULT_TIMEOUT).unwrap();
+    assert_eq!(
+        (file("kept.py"), file("mine.py"), file("gone.py"), file("new/stray.py")),
+        (Some("changed after\n".into()), Some("changed after\n".into()), None, Some("added after\n".into()))
+    );
+}
+
+#[test]
+fn restore_tree_undoes_nothing_in_a_tree_unchanged_since() {
+    let r = Repo::new(&[("kept.py", "a\n")]);
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    assert_eq!(r.host.restore_tree(&r.path, &tree).unwrap(), vec![]);
 }
 
 #[test]
@@ -1699,8 +1726,21 @@ fn a_gitignore_changed_since_hides_nothing_added_since() {
     r.put("sub/.gitignore", "*.out\n");
     r.put("run.cov", "added\n");
     r.put("sub/run.out", "added\n");
-    r.host.restore_tree(&r.path, &tree).unwrap();
+    let put_back = r.host.restore_tree(&r.path, &tree).unwrap();
     assert_eq!(r.host.git(&r.path, &["status", "--porcelain", "--ignored"]).unwrap(), "!! old.tmp\n");
+
+    // The rules first, then the files only the added rules hid, each from the tree as found when put back.
+    let paths: Vec<&[String]> = put_back.iter().map(|p| &p.paths[..]).collect();
+    let abs = |names: &[&str]| names.iter().map(|n| format!("{}/{n}", r.path)).collect::<Vec<_>>();
+    assert_eq!(paths, [&abs(&[".gitignore", "sub/.gitignore"])[..], &abs(&["run.cov", "sub/run.out"])[..]]);
+    for p in &put_back {
+        r.host.check(&["sh", "-c", &p.undo], None, DEFAULT_TIMEOUT).unwrap();
+    }
+    let file = |name: &str| text(&r.path, name);
+    assert_eq!(
+        (file(".gitignore"), file("sub/.gitignore"), file("run.cov"), file("sub/run.out")),
+        (Some("*.cov\n".into()), Some("*.out\n".into()), Some("added\n".into()), Some("added\n".into()))
+    );
 }
 
 #[test]
@@ -1719,6 +1759,33 @@ fn a_tree_is_restored_over_a_directory_and_a_file_swapped_and_a_nested_repositor
     assert_eq!((text(&r.path, "x/y"), text(&r.path, "a")), (Some("in x\n".into()), Some("a file\n".into())));
     assert!(!std::path::Path::new(&nested).exists());
     assert_eq!(r.host.git(&r.path, &["status", "--porcelain"]).unwrap(), "");
+}
+
+#[test]
+fn the_way_back_swaps_a_directory_and_a_file_again() {
+    let r = Repo::new(&[("x/y", "in x\n"), ("a", "a file\n")]);
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    std::fs::remove_dir_all(format!("{}/x", r.path)).unwrap();
+    r.put("x", "now a file\n");
+    std::fs::remove_file(format!("{}/a", r.path)).unwrap();
+    r.put("a/b", "now in a directory\n");
+    let put_back = r.host.restore_tree(&r.path, &tree).unwrap();
+    let [PutBack { undo, .. }] = &put_back[..] else { panic!("{put_back:?}") };
+    r.host.check(&["sh", "-c", undo], None, DEFAULT_TIMEOUT).unwrap();
+    assert_eq!((text(&r.path, "x"), text(&r.path, "a/b")), (Some("now a file\n".into()), Some("now in a directory\n".into())));
+}
+
+#[test]
+fn a_restore_that_fails_names_what_it_put_back_before() {
+    // The added rule hides a nested repository without a commit, which git add -A refuses once the rule is put back.
+    let r = Repo::new(&[(".gitignore", "")]);
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    r.put(".gitignore", "fixture/\n");
+    r.git(&["init", "--quiet", &format!("{}/fixture", r.path)]);
+    let Err(RestoreError { put_back, cause }) = r.host.restore_tree(&r.path, &tree) else { panic!("it restored") };
+    assert!(cause.0.contains("fixture"), "{cause}");
+    let paths: Vec<&[String]> = put_back.iter().map(|p| &p.paths[..]).collect();
+    assert_eq!(paths, [&[format!("{}/.gitignore", r.path)][..]]);
 }
 
 #[test]

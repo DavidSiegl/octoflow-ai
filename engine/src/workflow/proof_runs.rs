@@ -6,7 +6,7 @@ use super::step_prompt::RunView;
 use super::{Outcome, Workflow};
 use crate::constants::PROOF_COPIES_DIR;
 use crate::error::OrchestratorError;
-use crate::host::{checked, shlex_quote, DEFAULT_TIMEOUT, MISSING_FILE_STATUS};
+use crate::host::{checked, shlex_quote, RestoreError, DEFAULT_TIMEOUT, MISSING_FILE_STATUS};
 use crate::paths::file_name;
 use crate::pipeline::Step;
 use crate::proofs::{
@@ -108,7 +108,9 @@ impl Workflow<'_> {
     /// also when the proof fails, errors or is interrupted: what it writes elsewhere in the tree, such as a coverage
     /// file or the __pycache__ of a module it imports, never reaches the commit, and a file it edits is put back as it
     /// was. So is what anyone else changes in the tree while the proof runs, as a human may in an in-place run's
-    /// checkout (TODO.md). When the proof ran and its tree cannot be put back, that is logged and the outcome says the
+    /// checkout: nothing tells their writes from the proof's, so an in-place run logs each file it put back, with the
+    /// command that makes them all again what the proof left (PutBack::undo); a run in a worktree, which no human
+    /// edits, logs nothing. When the proof ran and its tree cannot be put back, that is logged and the outcome says the
     /// proof did not run cleanly; when it did not run, or was interrupted, it is only logged. Nothing is put back
     /// outside a git repository, which no run commits; nor where the tree cannot be snapshotted, as with a nested
     /// repository without a commit, which `git add -A` and so publishing refuse too: that is logged, and the proof runs.
@@ -144,11 +146,7 @@ impl Workflow<'_> {
         // The copies are removed and the tree put back also when the human's Ctrl-C stopped the proof's run.
         let put_back = self.interrupt.finally(|| {
             self.remove_proof_copies(&copies);
-            let restored = before.as_deref().map_or(Ok(()), |before| self.host.restore_tree(work_dir, before));
-            if let Err(e) = &restored {
-                self.human.log(&format!("could not undo what a proof wrote in {work_dir}: {e}"));
-            }
-            restored
+            before.as_deref().map_or(Ok(()), |before| self.put_back_tree(before))
         });
         // Nothing of a proof the Ctrl-C stopped is recorded.
         self.check_interrupt()?;
@@ -172,6 +170,36 @@ impl Workflow<'_> {
         };
         let said = if tail.is_empty() { how } else { format!("{how}:\n{tail}") };
         Ok(ProofOutcome { demonstrated: proc.status == 1, said, moved: false })
+    }
+
+    /// Put the working tree back as the git tree before has it, ignored files aside (Host::restore_tree), and, in an
+    /// in-place run, log each file put back with the command that makes them again what the proof left
+    /// (PutBack::undo), also when putting back fails partway. Errors: putting back fails, which is logged too.
+    fn put_back_tree(&self, before: &str) -> Result<(), OrchestratorError> {
+        let work_dir = self.state.work_dir();
+        let (put_back, failed) = match self.host.restore_tree(work_dir, before) {
+            Ok(put_back) => (put_back, None),
+            Err(RestoreError { put_back, cause }) => (put_back, Some(cause)),
+        };
+        if let Some(e) = &failed {
+            self.human.log(&format!("could not undo what a proof wrote in {work_dir}: {e}"));
+        }
+        // A worktree run's tree is the run's alone, so what it put back is the proof's own writes.
+        if self.state.worktree.is_none() {
+            let how = match failed {
+                None => "put back as they were before it",
+                Some(_) => "put back as they were before it, or some of them, before putting back failed",
+            };
+            for p in &put_back {
+                self.human.log(&format!(
+                    "a proof's run changed files, {how}, so a change saved in them meanwhile is undone too: {}; \
+                     to have them as the proof left them, a nested repository's files aside: {}",
+                    p.paths.join(", "),
+                    p.undo
+                ));
+            }
+        }
+        failed.map_or(Ok(()), Err)
     }
 
     /// Remove the directory copies and everything under it; a failure is only logged, since the next proof's run

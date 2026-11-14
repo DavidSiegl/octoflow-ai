@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 use std::io::Write;
 
-use crate::constants::{EXIT_CHANGES_REQUESTED, EXIT_CONFLICT, EXIT_ERROR, EXIT_INTERRUPTED, SUCCEEDED};
+use crate::constants::{EXIT_CHANGES_REQUESTED, EXIT_CONFLICT, EXIT_ERROR, EXIT_INTERRUPTED, NO_VERDICT, SUCCEEDED};
 use crate::env::ConfigDir;
 use crate::error::OrchestratorError;
 use crate::harness::AgentSettings;
@@ -111,7 +111,7 @@ pub(super) enum Ended {
 
 /// How a run a Workflow drove ended, for the program's last line and exit status (finish).
 pub struct Ran {
-    /// What Workflow::run returned: the run's verdict; None prints as "None".
+    /// What Workflow::run returned: the run's verdict; None when it ended without one.
     pub verdict: Option<String>,
     /// The run's state as the Workflow left it, at its end.
     pub state: RunState,
@@ -228,7 +228,7 @@ fn herdrless_command(command: &Command, local: &Local) -> Option<Result<Ended, S
 /// own for any other, else the error or the interrupted note, on stderr.
 fn ended_status(ended: Result<Ended, Stop>, command: &Command, print: &dyn Fn(&str)) -> i32 {
     match ended {
-        Ok(Ended::Ran(ran)) => finish(ran.verdict.as_deref().unwrap_or("None"), &ran.state, &ran.pipeline, print),
+        Ok(Ended::Ran(ran)) => finish(ran.verdict.as_deref(), &ran.state, &ran.pipeline, print),
         Ok(Ended::Status(status)) => status,
         // A line stderr does not take is lost, as after a hangup; the status still tells.
         Err(Stop::Failed(e)) => {
@@ -307,6 +307,14 @@ fn run_command(command: &Command, world: &Connected) -> Result<Ended, Stop> {
             let status = refresh::refresh_command(world, &cwd, run_ref.as_deref()).map_err(stopped)?;
             return if interrupt.is_raised() { Err(Stop::Interrupted(None)) } else { Ok(Ended::Status(status)) };
         }
+        Command::Close { run_ref, dry_run, .. } => {
+            let exit_status = match run_ref {
+                Some(run_ref) => close::close_run(world, &cwd, run_ref, *dry_run).map(|_| 0),
+                None => close::close_all(world, &cwd, *dry_run),
+            }
+            .map_err(stopped)?;
+            return if interrupt.is_raised() { Err(Stop::Interrupted(None)) } else { Ok(Ended::Status(exit_status)) };
+        }
         Command::Workflows(_) | Command::Doctor { .. } | Command::Serve(_) => {
             unreachable!("main runs {command:?} without herdr (herdrless_command, serve_command)")
         }
@@ -370,9 +378,6 @@ fn runs_command(runs: &RunsCommand, world: &Connected, cwd: &str, target: &[Stri
         }
         RunsCommand::List { json: false, .. } => listing::print_runs(world, &host.run_states(cwd)?, target),
         RunsCommand::Show(run_ref) => listing::show_run(world, cwd, run_ref, target)?,
-        RunsCommand::Close(run_ref) => {
-            close::close_run(world, cwd, run_ref)?;
-        }
         RunsCommand::Metrics => {
             for record in host.run_metrics(cwd)? {
                 world.say(&record.to_string());
@@ -460,15 +465,18 @@ fn current_dir() -> Result<String, OrchestratorError> {
         .map_err(|dir| OrchestratorError(format!("the current directory {} is not UTF-8", dir.to_string_lossy())))
 }
 
-/// Print how the run ended by print, its verdict and its pull request or result file, and return its exit status: 0
-/// for a verdict of SUCCEEDED, EXIT_CONFLICT for one whose pull request conflicts with its base,
-/// EXIT_CHANGES_REQUESTED for any other.
-fn finish(verdict: &str, state: &RunState, pipeline: &Pipeline, print: &dyn Fn(&str)) -> i32 {
+/// Print how the run ended by print, its verdict (NO_VERDICT for none) and its pull request or result file, and return
+/// its exit status: 0 for a verdict of SUCCEEDED, EXIT_CONFLICT for one whose pull request conflicts with its base,
+/// EXIT_CHANGES_REQUESTED for any other, or for none.
+fn finish(verdict: Option<&str>, state: &RunState, pipeline: &Pipeline, print: &dyn Fn(&str)) -> i32 {
     let conflict = if state.conflicts.is_empty() {
         String::new()
     } else {
-        format!(" (a draft: it conflicts with {})", state.base_branch.as_deref().unwrap_or("None"))
+        // A resume past its publish can finish a hand-edited state.json whose conflicts have no base (RunState::conflicts).
+        let base = state.base_branch.as_deref().unwrap_or("its base branch");
+        format!(" (a draft: it conflicts with {base})")
     };
+    let verdict = verdict.unwrap_or(NO_VERDICT);
     let judge = state.verdicts.last().map(|v| v.step.as_str());
     let result = pipeline.result(judge).last_path(&state.dir(), state.round, state.quality_round);
     print(&format!("{verdict}: {}{conflict}\n", state.pr_url.as_deref().filter(|u| !u.is_empty()).unwrap_or(&result)));

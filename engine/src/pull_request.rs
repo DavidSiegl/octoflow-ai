@@ -40,14 +40,14 @@ pub fn branch_name(title: &str, run_id: &str) -> String {
     }
 }
 
-/// A run's verdict as a text names it: "None" when it has none.
+/// The verdict of a run that publishes, which has one by then (Workflow::walk_to_the_end).
 fn verdict_text(state: &RunState) -> &str {
-    state.verdict.as_deref().unwrap_or("None")
+    state.verdict.as_deref().expect("a run publishes only once it has a verdict")
 }
 
 /// How the run ended, for its pull request, and why it is a draft if it is one for that. A run whose verdicts
 /// (RunState::verdicts) came from more than one verdict step names each verdict of the last round, by step; any
-/// other names only the run's verdict.
+/// other names only the run's verdict. The run must have a verdict, as every run that publishes has.
 pub fn verdict_line(state: &RunState) -> String {
     match state.verdict.as_deref() {
         Some(FINISHED) => format!("**{FINISHED}**: its workflow has no review step, so no agent reviewed this change."),
@@ -75,7 +75,7 @@ pub fn verdict_line(state: &RunState) -> String {
     }
 }
 
-/// How the run ended, for its commit message.
+/// How the run ended, for its commit message. The run must have a verdict, as every run that publishes has.
 pub fn commit_note(state: &RunState) -> String {
     match state.verdict.as_deref() {
         Some(FINISHED | QUALITY_GATE_FAILED) => {
@@ -138,11 +138,9 @@ pub fn provenance(state: &RunState, quality: &GateEvidence) -> Vec<(String, Stri
     trailers
 }
 
-/// The paragraph that opens the body of a pull request opened over conflicts with base_branch in the files
-/// conflicts, which must not be empty; without_conflict_warning takes it out again. A base branch that is None reads
-/// as "None".
-pub fn conflict_warning(base_branch: Option<&str>, conflicts: &[String]) -> String {
-    let base = base_branch.unwrap_or("None");
+/// The paragraph that opens the body of a pull request opened over conflicts with the branch base in the files
+/// conflicts, which must not be empty; without_conflict_warning takes it out again.
+pub fn conflict_warning(base: &str, conflicts: &[String]) -> String {
     let files: Vec<String> = conflicts.iter().map(|f| format!("> - `{f}`")).collect();
     format!(
         "> [!WARNING]\n> This branch conflicts with `{base}`, so this is a draft. Merge `{base}` into it and resolve \
@@ -212,11 +210,11 @@ fn without_closing_paragraph(body: &str, at: usize, lines: &[&str]) -> Option<St
     ends_body(body, end).then(|| format!("{}{}", &body[..at], &body[end..]))
 }
 
-/// body with its first conflict_warning paragraph for base_branch and conflicts removed, and the blank line after it,
+/// body with its first conflict_warning paragraph for base and conflicts removed, and the blank line after it,
 /// or before it when it ends the body; body unchanged when it has no such paragraph. Its lines may end in \r\n, as
 /// GitHub's editor leaves them, and the paragraph's own lines must be as conflict_warning wrote them.
-pub fn without_conflict_warning(body: &str, base_branch: Option<&str>, conflicts: &[String]) -> String {
-    let warning = conflict_warning(base_branch, conflicts);
+pub fn without_conflict_warning(body: &str, base: &str, conflicts: &[String]) -> String {
+    let warning = conflict_warning(base, conflicts);
     let lines: Vec<&str> = warning.split('\n').collect();
     // The earliest place either form of the paragraph stands, the paragraph of its own first where both do.
     (0..=body.len())
@@ -261,7 +259,7 @@ fn review_details(state: &RunState, reviews: &[(String, String)]) -> Vec<String>
 /// The pull request's body: the conflict warning and the note on a gate turned off where they apply, how the run
 /// ended, its provenance as a table, the spec, the last report, the last quality file, the reviews and the run's
 /// timings. reviews are the verdict files of the last round, as review_details takes them. quality is what the gate
-/// said of the change, as provenance takes it.
+/// said of the change, as provenance takes it. state must have a verdict, as every run that publishes has.
 pub fn pr_body(state: &RunState, spec: &str, report: &str, reviews: &[(String, String)], quality: &GateEvidence) -> String {
     let s = state;
     let head = format!("Opened by Octoflow AI run `{}`. {}", s.run_id, verdict_line(s));
@@ -269,7 +267,8 @@ pub fn pr_body(state: &RunState, spec: &str, report: &str, reviews: &[(String, S
     table.extend(provenance(s, quality).into_iter().map(|(key, said)| format!("| {key} | `{said}` |")));
     let mut parts = Vec::new();
     if !s.conflicts.is_empty() {
-        parts.push(conflict_warning(s.base_branch.as_deref(), &s.conflicts));
+        let base = s.base_branch.as_deref().expect("conflicts come with a base branch (RunState::conflicts)");
+        parts.push(conflict_warning(base, &s.conflicts));
     }
     if quality.unjudged {
         let when = if quality.last.is_some() {

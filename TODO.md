@@ -47,6 +47,17 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   quality round no longer runs the diff. `engine/src/host/tests.rs`'s snapshot tests still use it with
   `crate::patch::added_lines` to look at a snapshot, and `host/fake.rs` answers it. Closed by moving those tests onto
   `changed_line_counts` or plain `git diff`, then removing `change_diff` from `Host` and the fake.
+- **A proof's undo line lists every file it put back on one command line.** `PutBack::new` (`engine/src/host.rs`)
+  writes each path as an argument of `rm` and `git restore`, where `Host::restore` passes them over stdin: cross-review
+  197 (F4): "a proof that writes thousands of unignored files (a build or vendor dir) produces an undo that fails with
+  'Argument list too long' … and a log line of that size." Only in-place runs log it, and a build directory is
+  usually ignored, which restore_tree leaves alone. Closed by an undo whose length does not grow with the files, such
+  as one that diffs the found tree against the working tree itself, with the log naming a count past some number.
+- **restore_tree does git work a worktree run throws away.** Each pass runs a whole-tree `git diff --diff-filter=D`
+  and `git rev-parse --show-toplevel` for its PutBack (`put_back`, `engine/src/host.rs`), which `run_proof` drops in
+  a worktree run. Cross-review 197 (F5, nit): "`--name-status` on restore_tree's existing names_between diff would
+  give the deleted set without the second diff." Closed by that.
+
 - **A gated run without a pull request is told it pushes when gitleaks is missing.** `Host::check_gitleaks`
   (`engine/src/host.rs:630`) opens "this run pushes, and every push is scanned for secrets first", and
   `Workflow::check_gate` (`engine/src/workflow.rs`) and `turn_quality_gate_on` (`engine/src/workflow/gate_switch.rs`)
@@ -54,6 +65,13 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `--pr` pushes nothing; what gitleaks scans there is each snapshot before it is judged. Raised while doing todo/53,
   which gave doctor its own wording. Closed by having the gate's preflight say why it needs gitleaks in its own words,
   leaving check_gitleaks's to a run that publishes.
+- **One state.json that is not JSON naming its run stops every command that lists the runs.** `parsed_run_states`
+  (`engine/src/host.rs`) fails the whole listing when one run's state.json is not JSON, or is JSON without a non-empty
+  `run_id` (`SavedRun::read`, `engine/src/state.rs`), so `close --all` closes nothing, and `list`, `refresh` and
+  `close RUN` fail too; the error, "corrupt run state under <cwd>/.orchestrator/runs", does not say which run's file it
+  is. Only a state.json of a format this engine does not read is an unreadable run that is skipped and named. Raised by
+  cross-review 194 (F1). Closed by listing such a file as an unreadable run named by its directory, which `SavedRun`
+  cannot hold today without a run id, and the desktop app's run list then showing it.
 - **Two engine test directories are still named by pid, removing what is there first.** `Dir::new`
   (`engine/tests/program.rs:23`) names its directory `octoflow-program-<name>-<pid>` and removes what is there, and
   `engine/tests/signals.rs:237` names one `octoflow-signals-<case>-<pid>`: two test runs over one `/tmp` whose
@@ -95,12 +113,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   stuck rule misses that loop, so the Builder gets one more turn. Closes with recording the round before the quality
   file is written, or comparing only the first `QUALITY_FINDINGS_LIMIT` of a JSON-read round against a Markdown-read
   one.
-- **An in-place run puts back what the human changes in the checkout while a proof runs.** `Workflow::run_proof`
-  snapshots the working tree before each proof and `Host::restore_tree` puts back every path that differs afterwards,
-  whoever changed it (cross-review 143, F2): in an in-place run a file the human saves during a proof is overwritten
-  and one they create is deleted, without a warning; a worktree run is not exposed. Ticketed as GitHub #384
-  (`.scratch/todo/issues/42`): keep the human's version and warn. Decided against (the user's ruling, 2026-11-11):
-  running proofs in a scratch worktree of the tree under test.
 - **No coverage-guided fuzzing of the engine's parsers.** Decided against (the user's ruling, 2026-11-11): a
   cargo-fuzz pass over `handoff::first_line_word`, `parse_verdict`, `parse_gate`, `parse_blocked` and
   `parse_env_file`, looking for panics. The seeded generated-input tests (`test_support::Rng`) cover them instead;
@@ -335,9 +347,9 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   taking only the paths `git status` reports changed.
 - **A run that is never closed keeps its local refs.** A locking step's commit stays under
   `refs/orchestrator/<key>/locked/` (`RunState::lock_ref`) until the run ends `done` (`Workflow::clean_up_locks`) or
-  is closed (`close_run`, `engine/src/cli/close.rs`). Left: the refs of a failed or stale run nobody closes, of one
-  closed by a release whose `close` left them, and of one whose run directory was deleted by hand, which `close`
-  cannot find; their locked snapshots are never collected by `git gc`. `git for-each-ref refs/orchestrator/` lists
+  is closed (`close_run`, `engine/src/cli/close.rs`). Left: the refs of a failed or stale run nobody closes
+  (`close --all` closes them all in one command), of one closed by a release whose `close` left them, and of one
+  whose run directory was deleted by hand, which `close` cannot find; their locked snapshots are never collected by `git gc`. `git for-each-ref refs/orchestrator/` lists
   them, and `git update-ref -d` deletes one. Decided against on 2026-10-25: `prune` deleting them, and a sweep of
   `refs/orchestrator/<key>/` whose run directory is gone.
 - **An agent's pull request can reach `main` on rules it wrote itself, with no human.** Jenkins's App reports
@@ -406,3 +418,23 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `parse_args` on the built argv and returning clap's error. The desktop app shows serve's `error` text verbatim
   (`ui/src/api.ts`), and clap's is several lines with `Usage:` and "try '--help'"; `serve/start/tests.rs`'s round
   trip through `parse_args` already catches the two checks drifting apart.
+- **`http::tests::no_answer_is_worded_with_the_errno_and_the_system_s_words` can fail under parallel load.** It binds
+  a port, drops the listener and expects "[Errno 111] Connection refused" from it (`engine/src/http/tests.rs`), but
+  another process can take the freed port in between. Seen once, 2026-11-14, in a local workspace run beside other
+  sessions' cargo runs; it passed alone three times. Closes with a port nothing can take, such as a listener kept bound
+  without `listen`, or one on a socket whose backlog refuses.
+- **A crash right after the save that releases a finished run leaves its herdr workspace open.** Cross-review 196
+  (F1): after that crash, "the 'Run finished' notice and the herdr `Close` calls are dropped"; on `resume --force`,
+  `Workflow::ending_left` (`engine/src/workflow.rs`) returns None for a released run whose files exist, so
+  `Workflow::end_done_run` never reaches `close_workspace`, "and the published run's herdr workspace and agent panes
+  stay open for good". `end_done_run`'s comment accepts only the lost notice. The crash-resume test
+  (`engine/src/workflow/tests/crash_resume.rs`, `expected`) pins both as the gap. Closes with the close made safe to
+  repeat and recorded, or retried on a resume of a released, published run; the test's `expected` then keeps the
+  close.
+- **No crash-resume test crashes while a quality gate job judges.** Cross-review 196 (F2): `Outcome::gate`'s two
+  polls end a job after one `CI_POLL_SECONDS` pause, before any heartbeat save, so "the resume path for a run killed
+  while its gate judged (`stop_left`, then a new snapshot and a new job) is never exercised"
+  (`engine/src/workflow/tests/crash_resume.rs`, `quality_gate_fails_then_passes`; `local_gate::stop_left`). Polls past
+  `HEARTBEAT_SECONDS` give it such crashes, but their runs then differ from the uninterrupted one by design: a new
+  snapshot id in the PR body, the quality turn's times and every later timestamp, the job's worktree added and
+  removed again. Closes with `expected` normalising those for a crash that left a job, and adding its stop.

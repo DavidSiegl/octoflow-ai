@@ -126,6 +126,50 @@ pub struct ChangedFile {
     pub removed: u64,
 }
 
+/// What [`Host::restore_tree`] changed in a working tree, and the way back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PutBack {
+    /// The files it wrote or deleted, by absolute path.
+    pub paths: Vec<String>,
+    /// One line of sh that makes those files again what restore_tree found them, from any directory, all but the
+    /// files of a nested repository it removed, which comes back an empty directory. It reads a tree object that no
+    /// ref holds, so it works only until git gc prunes it, after two weeks by default (`gc.pruneExpire`).
+    pub undo: String,
+}
+
+impl PutBack {
+    /// What restore_tree changed in the repository whose top level is top, an absolute path: paths, relative to top,
+    /// the files it put back; found, a tree object of the working tree as restore_tree found it; absent, paths relative
+    /// to top that held no file in found, any of the repository's, not only of paths.
+    pub fn new(top: &str, found: &str, paths: &[String], absent: &HashSet<String>) -> PutBack {
+        let abs = |p: &String| format!("{top}/{p}");
+        let mut steps = vec![];
+        // Deleted first, as Host::restore does: a file absent then may be a directory now that found holds as a file.
+        let gone: Vec<String> = paths.iter().filter(|p| absent.contains(*p)).map(abs).collect();
+        if !gone.is_empty() {
+            steps.push(format!("rm -f -- {}", shlex_join(&gone)));
+        }
+        let held: Vec<&str> = paths.iter().filter(|p| !absent.contains(*p)).map(String::as_str).collect();
+        if !held.is_empty() {
+            let source = format!("--source={found}");
+            let mut argv = vec!["git", "--literal-pathspecs", "-C", top, "restore", &source, "--"];
+            argv.extend(held);
+            steps.push(shlex_join(&argv));
+        }
+        PutBack { paths: paths.iter().map(abs).collect(), undo: steps.join(" && ") }
+    }
+}
+
+/// Why [`Host::restore_tree`] failed, with what it had changed by then.
+#[derive(Debug)]
+pub struct RestoreError {
+    /// What it put back before it failed, each pass's PutBack in turn; the last may be of a pass that failed partway,
+    /// its paths then the files it was putting back, and its undo right for each of them, put back or not.
+    pub put_back: Vec<PutBack>,
+    /// What failed.
+    pub cause: OrchestratorError,
+}
+
 /// A file in a run directory, as [`Host::run_files`] lists it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunFile {
@@ -471,17 +515,18 @@ pub trait Host {
     /// included, that differs from tree's is written as tree has it, or deleted where tree has none, as restore does.
     /// Ignored files are left as they are, by the ignore rules tree holds: changed `.gitignore` files are put back
     /// first, so a rule added since hides nothing added since. A directory a deleted file leaves empty stays, which
-    /// git does not see. The index stays as it is. Errors: as tree_snapshot's and restore's, as for a nested
-    /// repository without a commit added since; the tree may then be partly restored.
-    fn restore_tree(&self, cwd: &str, tree: &str) -> Result<(), OrchestratorError> {
-        let differ = utf8_paths(&names_between(self, cwd, tree, &working_tree(self, cwd)?, &[])?)?;
-        let ignores: Vec<String> = differ.iter().filter(|p| file_name(p) == ".gitignore").cloned().collect();
-        if ignores.is_empty() {
-            return self.restore(cwd, tree, &differ);
+    /// git does not see. The index stays as it is.
+    ///
+    /// Returns what it changed, each PutBack with the way back to the tree as found: none when nothing differed, one
+    /// for the changed `.gitignore` files and one for the rest when both differed. Errors: RestoreError, its cause as
+    /// tree_snapshot's and restore's, as for a nested repository without a commit added since; the tree may then be
+    /// partly restored.
+    fn restore_tree(&self, cwd: &str, tree: &str) -> Result<Vec<PutBack>, RestoreError> {
+        let mut done = vec![];
+        match restore_passes(self, cwd, tree, &mut done) {
+            Ok(()) => Ok(done),
+            Err(cause) => Err(RestoreError { put_back: done, cause }),
         }
-        self.restore(cwd, tree, &ignores)?;
-        let differ = utf8_paths(&names_between(self, cwd, tree, &working_tree(self, cwd)?, &[])?)?;
-        self.restore(cwd, tree, &differ)
     }
 
     // Locked files (Step.locks). Their paths are relative to the repository's top level, whatever directory of the
@@ -560,12 +605,20 @@ pub trait Host {
         Ok(())
     }
 
-    /// Delete every local ref of cwd's repository whose name starts with prefix, such as `refs/orchestrator/<key>/`,
-    /// and return whether there was any; none is no error. Errors: a git command fails, cwd outside a repository git
-    /// will read included, some of the refs perhaps deleted already.
-    fn delete_refs(&self, cwd: &str, prefix: &str) -> Result<bool, OrchestratorError> {
+    /// The full names of the local refs of cwd's repository whose name starts with prefix, such as
+    /// `refs/orchestrator/<key>/`, in git's order; none is no error. Errors: git fails, cwd outside a repository git
+    /// will read included.
+    fn refs(&self, cwd: &str, prefix: &str) -> Result<Vec<String>, OrchestratorError> {
         let listed = self.git(cwd, &["for-each-ref", "--format=%(refname)", prefix])?;
-        for git_ref in listed.split_whitespace() {
+        Ok(listed.split_whitespace().map(String::from).collect())
+    }
+
+    /// Delete every local ref of cwd's repository whose name starts with prefix (refs), and return whether there was
+    /// any; none is no error. Errors: a git command fails, cwd outside a repository git will read included, some of
+    /// the refs perhaps deleted already.
+    fn delete_refs(&self, cwd: &str, prefix: &str) -> Result<bool, OrchestratorError> {
+        let listed = self.refs(cwd, prefix)?;
+        for git_ref in &listed {
             self.git(cwd, &["update-ref", "-d", git_ref])?;
         }
         Ok(!listed.is_empty())
@@ -921,8 +974,16 @@ pub trait Host {
     /// of a format this engine does not read is among them, as unreadable. Errors: a state.json that is still there
     /// cannot be stat'ed or read, or is not JSON naming its run (SavedRun::read).
     fn run_states(&self, cwd: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
-        let script = format!("now=$(date +%s) || exit 1; {}", run_states_loop("true"));
+        let script = format!("now=$(date +%s) || exit 1; {}", run_states_loop("*", "true"));
         parsed_run_states(cwd, &self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?)
+    }
+
+    /// The run of the project at cwd whose id is run_id, as run_states gives each, reading only its state.json; None
+    /// when it has none. Errors: as run_states'.
+    fn run_state(&self, cwd: &str, run_id: &str) -> Result<Option<SavedRun>, OrchestratorError> {
+        let script = format!("now=$(date +%s) || exit 1; {}", run_states_loop("\"$2\"", "true"));
+        let out = self.check(&["sh", "-c", &script, "_", cwd, run_id], None, DEFAULT_TIMEOUT)?;
+        Ok(parsed_run_states(cwd, &out)?.into_iter().next())
     }
 
     /// As run_states, but serve's view of the runs: a run whose directory, every link resolved, is not below the
@@ -933,7 +994,7 @@ pub trait Host {
         // Without a runs directory there are no runs; f becomes the resolved path, which is what is stat'ed and read.
         let script = format!(
             "{BELOW}now=$(date +%s) || exit 1; runs=$(cd -P -- \"$1/{RUNS_DIR}\" 2>/dev/null && pwd -P) || exit 0; {}",
-            run_states_loop("below \"${f%/*}\" \"$runs\" && below \"$f\" \"$r\" && f=$r")
+            run_states_loop("*", "below \"${f%/*}\" \"$runs\" && below \"$f\" \"$r\" && f=$r")
         );
         parsed_run_states(cwd, &self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?)
     }
@@ -1022,12 +1083,13 @@ pub trait Host {
     }
 }
 
-/// sh printing, for each state.json $f of a run under the project $1 for which the sh condition keep succeeds, its
-/// age in seconds by $now, a blank and its text, ended by a NUL, which no JSON text holds: what parsed_run_states
-/// reads. A state.json a human pretty-printed reads as well as the engine's one line.
-fn run_states_loop(keep: &str) -> String {
+/// sh printing, for each state.json $f of a run under the project $1 whose directory name matches the sh word runs,
+/// such as `*`, and for which the sh condition keep succeeds, its age in seconds by $now, a blank and its text, ended
+/// by a NUL, which no JSON text holds: what parsed_run_states reads. A state.json a human pretty-printed reads as well
+/// as the engine's one line.
+fn run_states_loop(runs: &str, keep: &str) -> String {
     format!(
-        "for f in \"$1\"/{RUNS_DIR}/*/state.json; do [ -f \"$f\" ] || continue; {keep} || continue; \
+        "for f in \"$1\"/{RUNS_DIR}/{runs}/state.json; do [ -f \"$f\" ] || continue; {keep} || continue; \
          {MTIME_OF_F} || {SKIP_F_IF_GONE}; s=$(cat -- \"$f\") || {SKIP_F_IF_GONE}; \
          printf \"%s %s\\000\" \"$((now - m))\" \"$s\"; done; true"
     )
@@ -1043,7 +1105,7 @@ fn parsed_run_states(cwd: &str, out: &str) -> Result<Vec<SavedRun>, Orchestrator
         }
         let (age, text) = entry.split_once(' ').unwrap_or((entry, ""));
         let corrupt = |e: String| OrchestratorError(format!("corrupt run state under {cwd}/{RUNS_DIR}: {e}"));
-        let not_int = || corrupt(format!("invalid literal for int() with base 10: {age:?}"));
+        let not_int = || corrupt(format!("an age that is not a whole number: {age:?}"));
         let age: i64 = decimal_int(age).ok_or_else(not_int)?;
         let saved = serde_json::from_str::<Value>(text).map_err(|e| corrupt(e.to_string()))?;
         runs.push(SavedRun::read(age.max(0).unsigned_abs(), saved).map_err(|e| corrupt(e.0))?);
@@ -1167,6 +1229,48 @@ pub(crate) fn shell_path(path: &str) -> (&'static str, &str) {
 /// runs in, and with no glob in them.
 fn top_literal<S: AsRef<str>>(paths: &[S]) -> Vec<String> {
     paths.iter().map(|p| format!(":(top,literal){}", p.as_ref())).collect()
+}
+
+/// Host::restore_tree's passes, each one's PutBack added to done before it changes anything. Errors: as restore_tree's.
+fn restore_passes<H: Host + ?Sized>(
+    host: &H,
+    cwd: &str,
+    tree: &str,
+    done: &mut Vec<PutBack>,
+) -> Result<(), OrchestratorError> {
+    let found = working_tree(host, cwd)?;
+    let differ = utf8_paths(&names_between(host, cwd, tree, &found, &[])?)?;
+    let ignores: Vec<String> = differ.iter().filter(|p| file_name(p) == ".gitignore").cloned().collect();
+    if ignores.is_empty() {
+        return put_back(host, cwd, tree, &found, &differ, done);
+    }
+    put_back(host, cwd, tree, &found, &ignores, done)?;
+    // Found again: with the rules put back, it holds the files only the added rules hid.
+    let found = working_tree(host, cwd)?;
+    let differ = utf8_paths(&names_between(host, cwd, tree, &found, &[])?)?;
+    put_back(host, cwd, tree, &found, &differ, done)
+}
+
+/// Make paths, relative to the repository's top level, in the working tree in cwd what they are in tree, as
+/// Host::restore does, where found is a tree object of them as they are now; adds to done the PutBack of that, before
+/// it changes anything, so that one that fails partway is in it; nothing for no paths. Errors: git fails.
+fn put_back<H: Host + ?Sized>(
+    host: &H,
+    cwd: &str,
+    tree: &str,
+    found: &str,
+    paths: &[String],
+    done: &mut Vec<PutBack>,
+) -> Result<(), OrchestratorError> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    // Over the whole trees, and filtered in PutBack::new, since an argv has a limit.
+    let args = ["--name-only", "-z", "--no-renames", "--no-ext-diff", "--diff-filter=D", tree, found];
+    let deleted: HashSet<String> = utf8_paths(&git_diff(host, cwd, &args)?)?.into_iter().collect();
+    let top = utf8_path(&host.git_verbatim(cwd, &["rev-parse", "--show-toplevel"])?)?;
+    done.push(PutBack::new(top.strip_suffix('\n').unwrap_or(&top), found, paths, &deleted));
+    host.restore(cwd, tree, paths)
 }
 
 /// The working tree in cwd as `git add -A` would stage it, as a tree object; the index stays as it was. Errors: git

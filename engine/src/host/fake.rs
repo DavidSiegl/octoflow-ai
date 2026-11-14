@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use super::{ChangedFile, Completed, Exec, ExecError, Host, Scanned, GIT_STATUS_ARGS};
+use super::{ChangedFile, Completed, Exec, ExecError, Host, PutBack, RestoreError, Scanned, GIT_STATUS_ARGS};
 use crate::quality::Leak;
 use crate::state::SavedRun;
 use crate::constants::WORKTREES_DIR;
@@ -250,13 +250,17 @@ pub(crate) struct FakeState {
     pub delete_refs_error: Option<String>,
     /// (ref, paths) of each restore.
     pub restores: Vec<(String, Vec<String>)>,
-    /// The files each tree_snapshot held, by path, its tree tree<n> the nth: those under its directory outside
-    /// .orchestrator/, the one directory the fake plays as ignored.
+    /// The files each tree object held, by path, tree<n> the nth: one per tree_snapshot, and one per restore_tree
+    /// that changed anything, of the tree as it found it; those under its directory outside .orchestrator/, the one
+    /// directory the fake plays as ignored.
     pub tree_snapshots: Vec<BTreeMap<String, String>>,
     /// What session_log reads, by (harness, session).
     pub session_logs: HashMap<(String, String), String>,
     /// Run before each write, given its path and text, when set: an error fails the write.
     pub before_write: Option<BeforeWrite>,
+    /// Run after each write, given its path, once the file holds the text, when set: where a test stops the run
+    /// right after a write, as a crash would (workflow::tests::crash_resume). A hook that unwinds is not put back.
+    pub after_write: Option<AfterWrite>,
     /// Run before each rename, given its path and new path, when set, before the fake renames: a test's own step,
     /// such as changing the world meanwhile.
     pub before_rename: Option<BeforeRename>,
@@ -280,6 +284,8 @@ pub(crate) struct FakeState {
 
 /// A test's hook on writes (FakeState::before_write).
 pub(crate) type BeforeWrite = Box<dyn FnMut(&str, &str) -> Result<(), OrchestratorError>>;
+/// A test's hook after writes (FakeState::after_write).
+pub(crate) type AfterWrite = Box<dyn FnMut(&str)>;
 /// A test's hook on renames (FakeState::before_rename).
 pub(crate) type BeforeRename = Box<dyn FnMut(&str, &str)>;
 /// A test's hook on git commands (FakeState::before_git).
@@ -343,6 +349,7 @@ impl FakeHost {
                 tree_snapshots: vec![],
                 session_logs: HashMap::new(),
                 before_write: None,
+                after_write: None,
                 before_rename: None,
                 before_git: None,
                 run_states_with: None,
@@ -723,6 +730,13 @@ impl Host for FakeHost {
         if !orchestrator_file {
             s.changed.insert(path.to_string());
         }
+        drop(s);
+        // Run with the host's state released, as before_write is.
+        let hook = self.state().after_write.take();
+        if let Some(mut hook) = hook {
+            hook(path);
+            self.state().after_write = Some(hook);
+        }
         Ok(())
     }
 
@@ -840,17 +854,32 @@ impl Host for FakeHost {
         Ok(Some(format!("tree{}", s.tree_snapshots.len())))
     }
 
-    fn restore_tree(&self, cwd: &str, tree: &str) -> Result<(), OrchestratorError> {
+    /// What it changed is one PutBack, cwd its top level, whose tree as found tree_snapshots then holds too.
+    fn restore_tree(&self, cwd: &str, tree: &str) -> Result<Vec<PutBack>, RestoreError> {
         let mut s = self.state();
         let n: usize = tree.strip_prefix("tree").and_then(|n| n.parse().ok()).unwrap_or(0);
         let held = s.tree_snapshots.get(n.wrapping_sub(1)).unwrap_or_else(|| panic!("FakeHost has no tree {tree}")).clone();
-        for path in s.files_in(cwd).into_keys().filter(|p| !held.contains_key(p)) {
-            s.files.remove(&path);
+        let found = s.files_in(cwd);
+        let keys: BTreeSet<&String> = held.keys().chain(found.keys()).collect();
+        let differ: Vec<&String> = keys.into_iter().filter(|p| held.get(*p) != found.get(*p)).collect();
+        if differ.is_empty() {
+            return Ok(vec![]);
+        }
+        let relative = |p: &&String| p[cwd.len() + 1..].to_string();
+        let paths: Vec<String> = differ.iter().map(relative).collect();
+        let absent: HashSet<String> = differ.iter().filter(|p| !found.contains_key(**p)).map(relative).collect();
+        for path in found.keys().filter(|p| !held.contains_key(*p)) {
+            s.files.remove(path);
         }
         for (path, text) in held {
             s.files.insert(path, text);
         }
-        Ok(())
+        s.tree_snapshots.push(found);
+        Ok(vec![PutBack::new(cwd, &format!("tree{}", s.tree_snapshots.len()), &paths, &absent)])
+    }
+
+    fn refs(&self, _cwd: &str, prefix: &str) -> Result<Vec<String>, OrchestratorError> {
+        Ok(self.state().refs.keys().filter(|r| r.starts_with(prefix)).map(String::from).collect())
     }
 
     fn delete_refs(&self, _cwd: &str, prefix: &str) -> Result<bool, OrchestratorError> {
@@ -998,6 +1027,10 @@ impl Host for FakeHost {
             }
         }
         Ok(states)
+    }
+
+    fn run_state(&self, cwd: &str, run_id: &str) -> Result<Option<SavedRun>, OrchestratorError> {
+        Ok(self.run_states(cwd)?.into_iter().find(|run| run.shown().run_id == run_id))
     }
 
     /// The real host's listing when FakeState::processes is set; else the files of run_dir in `files`, as the real
