@@ -285,7 +285,7 @@ impl<'a> Closer<'a> {
         }
     }
 
-    /// Say line, without its line end.
+    /// Print line on stdout; line has no line end, which this adds.
     fn say(&self, line: &str) {
         (self.stdout)(&format!("{line}\n"));
     }
