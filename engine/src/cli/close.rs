@@ -64,7 +64,8 @@ enum BranchFate {
 /// Clean up after the run of the project at cwd that run_ref names, by its id or key, on world's herdr and host,
 /// record what was done as the run's closed in its state.json, so that resume refuses it, and return that. Prints
 /// each step on world's standard output. With dry_run, change nothing: print what would be discarded with the
-/// worktree and the line closing would record, and return that line.
+/// worktree and a line naming each thing closing would close, delete or keep (Plan::preview), and return the line
+/// closing would record.
 ///
 /// Every run loses its workspace and its local refs (crate::state::refs_prefix), which hold the files its steps locked
 /// and which nothing else deletes once it is closed. A failed or stale --worktree run also loses its worktree, changes
@@ -252,6 +253,37 @@ impl Plan<'_> {
         done.join("; ")
     }
 
+    /// What closing would do, for a dry run: each step with what it acts on, such as "close workspace w1; delete
+    /// worktree /proj/.orchestrator/worktrees/a1b2c3; delete branch orchestrator/a1b2c3; delete the refs under
+    /// refs/orchestrator/a1b2c3/". summary is what closing records instead, once it is done.
+    fn preview(&self) -> String {
+        let mut steps = vec![];
+        if let Some(workspace) = self.workspace {
+            steps.push(format!("close workspace {workspace}"));
+        }
+        match &self.worktree {
+            WorktreeFate::None => {}
+            WorktreeFate::Kept(path) => steps.push(format!("keep worktree {path}")),
+            WorktreeFate::Discarded { path, changes, branch } => {
+                if changes.is_some() {
+                    steps.push(format!("delete worktree {path}"));
+                }
+                match branch {
+                    Some((branch, BranchFate::Deleted)) => steps.push(format!("delete branch {branch}")),
+                    Some((branch, BranchFate::Kept(why))) => steps.push(format!("keep branch {branch}: {why}")),
+                    None => {}
+                }
+            }
+        }
+        if self.refs {
+            steps.push(format!("delete the refs under {}", refs_prefix(&self.state.run_id)));
+        }
+        if steps.is_empty() {
+            steps.push("record it as closed; nothing else is left".to_string());
+        }
+        steps.join("; ")
+    }
+
     /// Carry out the plan on the run of the project at cwd, or with dry_run only say what it would do, as close_run
     /// says; return its summary. Errors: as close_run's for a step or the record.
     fn close(&self, world: &Connected, cwd: &str, dry_run: bool) -> Result<String, OrchestratorError> {
@@ -259,7 +291,7 @@ impl Plan<'_> {
         let closed = self.summary();
         if dry_run {
             self.say_changes(world, "would discard");
-            world.say(&format!("would close run {run_id}: {closed}"));
+            world.say(&format!("would close run {run_id}: {}", self.preview()));
             return Ok(closed);
         }
         if let Some(workspace) = self.workspace {

@@ -56,13 +56,18 @@
    "exit": 0,
    "stdout_facts": [
     "/project/.orchestrator/worktrees/<key:1>",
+    "/project/.orchestrator/worktrees/<key:1>",
     "0",
     "0",
     "2",
     "<run:1>",
     "<run:2>",
     "<world>",
-    "src/calc.py"
+    "<world>",
+    "orchestrator/add-a-subtract-function-<key:1>",
+    "src/calc.py",
+    "w1",
+    "w2"
    ],
    "stderr_facts": []
   },

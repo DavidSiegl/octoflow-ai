@@ -280,7 +280,7 @@ orchestrator metrics | jq -s 'map(.rounds) | add / length'
 | `--no-quality-gate` | `resume` only: turn the run's quality gate off for good. |
 | `--max-quality-rounds N` | With the gate: quality rounds per review round before the Reviewer gets the change anyway (default 3). |
 | `--force` | `resume` only: take over a run that still looks alive. |
-| `--dry-run` | `prune` and `drain`: print what would happen, and change nothing. |
+| `--dry-run` | `prune`, `drain` and `close`: print what would happen, and change nothing. |
 
 A run saves its settings. `resume` takes the same flags as `run` except `--no-pr`, `--worktree`, `--workflow`,
 `--workflow-file` and `--spec`; a flag given to `resume` overrides the saved value. Turning the quality gate on or

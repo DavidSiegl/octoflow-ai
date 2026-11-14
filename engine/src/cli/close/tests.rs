@@ -719,10 +719,11 @@ fn close_all_dry_run_says_what_each_would_lose_and_changes_nothing() {
     assert_eq!(
         out,
         format!(
-            "would close run {FINISHED}: workspace closed\n\
+            "would close run {FINISHED}: close workspace w-{FINISHED}\n\
              would discard in {wt}:\n    ?? {wt}/a.py\n\
-             would close run {CLOSE_ID}: workspace closed; worktree deleted; branch deleted; refs deleted\n\
-             would close run {STALE}: workspace closed\n\
+             would close run {CLOSE_ID}: close workspace w1; delete worktree {wt}; delete branch {CLOSE_BRANCH}; \
+             delete the refs under refs/orchestrator/a1b2c3/\n\
+             would close run {STALE}: close workspace w-{STALE}\n\
              {}\n\
              3 to close, 1 skipped, 1 already closed\n",
             running_skipped()
@@ -745,7 +746,7 @@ fn a_dry_run_of_one_run_changes_nothing() {
             0,
             format!(
                 "would discard in {wt}:\n    ?? {wt}/a.py\n\
-                 would close run {CLOSE_ID}: workspace closed; worktree deleted; branch deleted\n"
+                 would close run {CLOSE_ID}: close workspace w1; delete worktree {wt}; delete branch {CLOSE_BRANCH}\n"
             )
         )
     );
