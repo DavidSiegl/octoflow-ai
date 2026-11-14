@@ -324,6 +324,18 @@ fn finished_run_exit_status() {
 }
 
 #[test]
+fn a_finished_run_whose_conflicts_have_no_base_says_its_base_branch() {
+    // Only a hand-edited state.json records conflicts without the base they were found against.
+    let url = "https://github.com/o/r/pull/7";
+    let mut state = saved_run("done", 1, &["spec", "build", "review"]);
+    (state.pull_request, state.verdict, state.pr_url) = (true, Some(APPROVE.into()), Some(url.into()));
+    state.conflicts = vec!["a.py".into()];
+    let cli = Cli::of(saved_on_host(state).0);
+    assert_eq!(cli.main(&["resume", "a1b2c3", "--cwd", "/proj"]), EXIT_CONFLICT);
+    assert_eq!(cli.take_out(), format!("{APPROVE}: {url} (a draft: it conflicts with its base branch)\n"));
+}
+
+#[test]
 fn an_interrupted_run_names_its_resume_command() {
     let cli = Cli::new();
     let interrupted = then_interrupted(&cli.f.interrupt, spec_turn());

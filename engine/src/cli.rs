@@ -467,7 +467,8 @@ fn finish(verdict: Option<&str>, state: &RunState, pipeline: &Pipeline, print: &
     let conflict = if state.conflicts.is_empty() {
         String::new()
     } else {
-        let base = state.base_branch.as_deref().expect("conflicts come with a base branch (RunState::conflicts)");
+        // A resume past its publish can finish a hand-edited state.json whose conflicts have no base (RunState::conflicts).
+        let base = state.base_branch.as_deref().unwrap_or("its base branch");
         format!(" (a draft: it conflicts with {base})")
     };
     let verdict = verdict.unwrap_or(NO_VERDICT);

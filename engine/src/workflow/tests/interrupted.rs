@@ -154,3 +154,16 @@ fn a_publish_without_a_branch_fails_saying_so() {
         other => panic!("not failed: {other:?}"),
     }
 }
+
+#[test]
+fn a_publish_without_a_verdict_fails_saying_so() {
+    // Only a hand-edited state.json lacks one: a run reaches publish once its last verdict step has given one.
+    let mut state = saved_run("publish", 1, &["spec", "build", "review"]);
+    state.pull_request = true;
+    (state.base_branch, state.branch) = (Some("main".into()), Some("octoflow/x-a1b2c3".into()));
+    let f = Fixture::resume(Rc::new(FakeHost::new(Some("def456"), "octoflow/x-a1b2c3")), state, vec![], &[], &[]);
+    match f.workflow(f.as_saved()).run() {
+        Err(Stopped::Failed(e)) => assert_eq!(e.0, "a publish before the run has a verdict"),
+        other => panic!("not failed: {other:?}"),
+    }
+}

@@ -1022,6 +1022,10 @@ impl<'a> Workflow<'a> {
             let wd = self.state.work_dir().to_string();
             let branch = self.state.branch.clone();
             let branch = branch.ok_or_else(|| OrchestratorError("a publish before the run has a branch".into()))?;
+            // commit_note and pr_body word the verdict; only a hand-edited state.json reaches here without one.
+            if self.state.verdict.is_none() {
+                return Err(Stopped::Failed(OrchestratorError("a publish before the run has a verdict".into())));
+            }
             // Again: the human may have switched branches during a turn.
             self.check_branch()?;
             // An earlier orchestrator stopped mid-merge: committing now would commit the conflict markers.
