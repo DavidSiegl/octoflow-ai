@@ -308,8 +308,7 @@ fn run_command(command: &Command, world: &Connected) -> Result<Ended, Stop> {
             return if interrupt.is_raised() { Err(Stop::Interrupted(None)) } else { Ok(Ended::Status(status)) };
         }
         Command::Close { run_ref, dry_run, .. } => {
-            let say = |line: &str| world.say(line);
-            let closer = close::Closer::of(world, &say);
+            let closer = close::Closer::of(world);
             let failed = |run: &close::RunClosed| matches!(run.outcome, close::Outcome::Failed(_));
             let exit_status = match run_ref {
                 Some(run_ref) => close::close_run(&closer, &cwd, run_ref, *dry_run).map(|_| 0),

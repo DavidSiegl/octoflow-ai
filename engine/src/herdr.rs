@@ -264,7 +264,8 @@ pub trait Herdr: Workspaces {
 /// forwards to a herdr machine ignores server, as that machine's herdr picks its own. Every error names herdr's code
 /// where herdr gave one (HerdrError::code).
 pub trait Workspaces {
-    /// Whether the workspace is still there in server (herdr's workspace_not_found is false).
+    /// Whether the workspace is still there in server: false for herdr's workspace_not_found, and for
+    /// server_not_running, as a server that stopped (serve's session after a reboot) took its workspaces with it.
     fn workspace_exists(&self, workspace: &str, server: Option<&HerdrServer>) -> Result<bool, HerdrError>;
 
     /// Close the workspace in server, with its panes.
@@ -859,8 +860,11 @@ impl Herdr for ProcessHerdr {
 
 impl Workspaces for ProcessHerdr {
     fn workspace_exists(&self, workspace: &str, server: Option<&HerdrServer>) -> Result<bool, HerdrError> {
-        let answer = self.reaching_server(server).call(&["workspace", "get", workspace]);
-        Ok(unless_code("workspace_not_found", answer)?.is_some())
+        match self.reaching_server(server).call(&["workspace", "get", workspace]) {
+            Ok(_) => Ok(true),
+            Err(e) if matches!(e.code(), Some("workspace_not_found" | "server_not_running")) => Ok(false),
+            Err(e) => Err(e),
+        }
     }
 
     fn close_workspace(&self, workspace: &str, server: Option<&HerdrServer>) -> Result<(), HerdrError> {

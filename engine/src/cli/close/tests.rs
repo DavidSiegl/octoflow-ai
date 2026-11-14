@@ -167,20 +167,19 @@ fn the_sweep_gives_each_run_s_outcome() {
     c.add(STALE_SECONDS + 1, true, &[]);
     let out = |dry_run| {
         c.cli.with(|world| {
-            let say = |_: &str| {};
-            close_all(&Closer::of(world, &say), "/proj", dry_run).unwrap()
+            close_all(&Closer::of(world), "/proj", dry_run).unwrap()
         })
     };
     // FakeHost's git status names a change by its whole path.
     let discarded = vec![format!("?? {}/a.py", worktree())];
     let preview = format!("close workspace w1; delete worktree {}; delete branch {CLOSE_BRANCH}", worktree());
     let closed = |done: String| {
-        vec![RunClosed { run: CLOSE_ID.into(), outcome: Outcome::Closed { done, discarded: discarded.clone() } }]
+        vec![RunClosed { run_id: CLOSE_ID.into(), outcome: Outcome::Closed { done, discarded: discarded.clone() } }]
     };
     assert_eq!(out(true), closed(preview));
     let done = "workspace closed; worktree deleted; branch deleted".to_string();
     assert_eq!(out(false), closed(done.clone()));
-    assert_eq!(out(false), [RunClosed { run: CLOSE_ID.into(), outcome: Outcome::AlreadyClosed(done) }]);
+    assert_eq!(out(false), [RunClosed { run_id: CLOSE_ID.into(), outcome: Outcome::AlreadyClosed(done) }]);
 }
 
 #[test]
@@ -580,8 +579,7 @@ fn close_outside_a_repository(locked: &[(&str, Vec<String>)]) -> (Result<String,
     let mut cli = Cli::new();
     cli.f.pid_alive = Box::new(|_| false);
     let closed = cli.with(|world| {
-        let say = |line: &str| world.say(line);
-        close_run(&Closer { host: &host, ..Closer::of(world, &say) }, &tmp.path(), "a1b2c3", false)
+        close_run(&Closer { host: &host, ..Closer::of(world) }, &tmp.path(), "a1b2c3", false)
     });
     let saved = serde_json::from_str::<Value>(&host.read(&path).unwrap().unwrap()).unwrap();
     (closed, saved.get("closed").cloned().unwrap_or(Value::Null))
@@ -663,8 +661,7 @@ fn close_on_real_git() {
     cli.f.pid_alive = Box::new(|_| false);
     let closed = cli
         .with(|world| {
-            let say = |line: &str| world.say(line);
-            close_run(&Closer { host: &repo.host, ..Closer::of(world, &say) }, &repo.path, "a1b2c3", false)
+            close_run(&Closer { host: &repo.host, ..Closer::of(world) }, &repo.path, "a1b2c3", false)
         })
         .unwrap();
     assert_eq!(closed, "workspace already gone; worktree deleted; branch deleted; refs deleted");

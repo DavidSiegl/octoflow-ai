@@ -467,7 +467,7 @@ fn herdr_variables_of_console_commands(
     set: &[(&str, &str)],
     agent: &AgentAddress,
 ) -> Vec<String> {
-    herdr_variables_of_commands(machine, set, &|herdr| {
+    herdr_variables_of_commands(machine, set, 3, &|herdr| {
         AgentConsole::read(herdr, agent, 5).unwrap();
         herdr.submit(agent, "go").unwrap();
         herdr.send_keys(agent, &["enter"]).unwrap();
@@ -475,11 +475,12 @@ fn herdr_variables_of_console_commands(
 }
 
 /// The HERDR_ variables, sorted, as NAME=value, of the environment in which each herdr command commands runs on a
-/// ProcessHerdr forwarding to machine in an environment of set's HERDR_ variables; commands must run at least one,
-/// and every one must run herdr in the same environment.
+/// ProcessHerdr forwarding to machine in an environment of set's HERDR_ variables; commands must run herdr exactly n
+/// times, every time in the same environment.
 fn herdr_variables_of_commands(
     machine: Option<&str>,
     set: &[(&str, &str)],
+    n: usize,
     commands: &dyn Fn(&ProcessHerdr),
 ) -> Vec<String> {
     let d = TempDir::new();
@@ -495,7 +496,8 @@ fn herdr_variables_of_commands(
     commands(&herdr);
     let text = std::fs::read_to_string(env).unwrap();
     let ran: Vec<&str> = text.lines().collect();
-    assert!(!ran.is_empty() && ran.iter().all(|c| *c == ran[0]), "{text}");
+    assert_eq!(ran.len(), n, "{text}");
+    assert!(ran.iter().all(|c| *c == ran[0]), "{text}");
     ran[0].split_whitespace().map(String::from).collect()
 }
 
@@ -522,7 +524,7 @@ fn a_run_s_workspace_is_reached_in_the_server_its_run_saved() {
     let saved: HerdrServer = serde_json::from_str(r#"{"HERDR_SESSION": "work"}"#).unwrap();
     let pane = [("HERDR_SOCKET_PATH", "/other/herdr.sock"), ("HERDR_SESSION", "other")];
     let variables = |machine: Option<&str>, server: Option<&HerdrServer>| {
-        herdr_variables_of_commands(machine, &pane, &|herdr| {
+        herdr_variables_of_commands(machine, &pane, 2, &|herdr| {
             herdr.workspace_exists("w1", server).unwrap();
             herdr.close_workspace("w1", server).unwrap();
         })
@@ -591,6 +593,13 @@ fn workspace_and_pane_gone() {
     assert_eq!(herdr.workspace_exists("wA", None), Ok(false));
     let (herdr, _) = answering(None, 1, "", &error("pane_not_found", "x"));
     assert_eq!(herdr.pane_exists("wA:p1"), Ok(false));
+}
+
+#[test]
+fn a_server_that_is_not_running_holds_no_workspace() {
+    let saved: HerdrServer = serde_json::from_str(r#"{"HERDR_SESSION": "octoflow"}"#).unwrap();
+    let (herdr, _) = answering(None, 1, "", &error("server_not_running", "no herdr server is running at /s.sock"));
+    assert_eq!(herdr.workspace_exists("wA", Some(&saved)), Ok(false));
 }
 
 #[test]

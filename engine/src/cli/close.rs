@@ -24,15 +24,16 @@ pub struct Closer<'a> {
     pub pid_alive: &'a dyn Fn(i64) -> bool,
     /// This machine's name, which an owner record of a run here names (crate::runs::local_host).
     pub local_host: &'a str,
-    /// Takes each line close prints, without its line end.
-    pub say: &'a dyn Fn(&str),
+    /// Where close prints, which takes text as Connected::stdout does, a line with its line end.
+    pub stdout: &'a dyn Fn(&str),
 }
 
 /// One run close_all looked at, and what became of it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunClosed {
     /// The run's id.
-    pub run: String,
+    pub run_id: String,
+    /// What close_all did with the run, or with a dry run would do.
     pub outcome: Outcome,
 }
 
@@ -149,21 +150,21 @@ pub fn close_all(world: &Closer, cwd: &str, dry_run: bool) -> Result<Vec<RunClos
         world.host.run_states(cwd)?.iter().map(|run| (run.shown().run_id.clone(), closed_as_read(run))).collect();
     runs.sort();
     let mut looked_at = vec![];
-    for (run, closed) in runs {
+    for (run_id, recorded) in runs {
         if world.interrupt.is_raised() {
             break;
         }
         // A closed run stays closed: resume refuses it.
-        let outcome = match closed {
-            Some(closed) => Outcome::AlreadyClosed(closed),
-            None => sweep_run(world, cwd, &run, dry_run).unwrap_or_else(|e| Outcome::Failed(e.to_string())),
+        let outcome = match recorded {
+            Some(recorded) => Outcome::AlreadyClosed(recorded),
+            None => sweep_run(world, cwd, &run_id, dry_run).unwrap_or_else(|e| Outcome::Failed(e.to_string())),
         };
         match &outcome {
             Outcome::Skipped(why) => world.say(&format!("skipped: {why}")),
-            Outcome::Failed(e) => world.say(&format!("could not close run {run}: {e}")),
+            Outcome::Failed(e) => world.say(&format!("could not close run {run_id}: {e}")),
             Outcome::Closed { .. } | Outcome::AlreadyClosed(_) => {}
         }
-        looked_at.push(RunClosed { run, outcome });
+        looked_at.push(RunClosed { run_id, outcome });
     }
     let count = |of: fn(&Outcome) -> bool| looked_at.iter().filter(|r| of(&r.outcome)).count();
     let closed = count(|o| matches!(o, Outcome::Closed { .. }));
@@ -272,21 +273,21 @@ fn branch_fate<'r>(
 }
 
 impl<'a> Closer<'a> {
-    /// What close talks to when run from world, saying each line through say.
-    pub fn of(world: &Connected<'a>, say: &'a dyn Fn(&str)) -> Closer<'a> {
+    /// What close talks to when run from world, printing on its standard output.
+    pub fn of(world: &Connected<'a>) -> Closer<'a> {
         Closer {
             host: world.with.host,
             workspaces: world.with.herdr,
             interrupt: world.with.interrupt,
             pid_alive: world.with.pid_alive,
             local_host: world.local_host,
-            say,
+            stdout: world.stdout,
         }
     }
 
     /// Say line, without its line end.
     fn say(&self, line: &str) {
-        (self.say)(line);
+        (self.stdout)(&format!("{line}\n"));
     }
 }
 
