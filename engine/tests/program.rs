@@ -365,7 +365,7 @@ fn serve_with_a_closed_stdout_ends_naming_why() {
     let child = program(&dir, &["serve"], None).stdout(Stdio::from(writer)).spawn().expect("serve starts");
     let out = child.wait_with_output().expect("serve ends");
     assert_eq!(out.status.code(), Some(1), "{:?}", out.status);
-    assert_eq!(stderr(&out), "error: cannot print the server's address: [Errno 32] Broken pipe\n");
+    assert_eq!(stderr(&out), "error: cannot print the server's address: Broken pipe\n");
 }
 
 #[test]

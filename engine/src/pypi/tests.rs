@@ -81,8 +81,8 @@ fn any_other_failure_raises() {
     let cases = [
         (Err(HttpError::Status(503)), format!("GET {url}: HTTP 503")),
         (
-            Err(HttpError::NoAnswer("[Errno -3] name resolution".to_string())),
-            format!("GET {url}: [Errno -3] name resolution"),
+            Err(HttpError::NoAnswer("Temporary failure in name resolution".to_string())),
+            format!("GET {url}: Temporary failure in name resolution"),
         ),
         (Err(HttpError::NoAnswer("timed out".to_string())), format!("GET {url}: timed out")),
         (body("<html>"), format!("GET {url}: the answer is not PyPI's JSON")),

@@ -20,8 +20,8 @@ pub struct ConflictCheck {
     /// MERGEABLE, CONFLICTING, or UNKNOWN while GitHub has not computed it; it decides nothing for a pull request
     /// that is not OPEN.
     pub mergeable: String,
-    /// The pull request's body with the run's conflict warning removed; None when it is not OPEN and MERGEABLE, or
-    /// has no such warning left to remove.
+    /// The pull request's body with the run's conflict warning removed; None when it is not OPEN and MERGEABLE, has
+    /// no such warning left to remove, or the run's state records no base branch to find the warning by.
     pub body: Option<String>,
     /// Whether clearing the conflict takes the pull request out of draft: it is OPEN, MERGEABLE and a draft, and the
     /// run's verdict is one of SUCCEEDED.
@@ -80,7 +80,10 @@ pub fn refresh_conflict(
         let url = state.pr_url.clone().unwrap_or_default();
         let pr = host.pull_request_merge(cwd, &url)?;
         let clean = pr.state == "OPEN" && pr.mergeable == "MERGEABLE";
-        let body = clean.then(|| without_conflict_warning(&pr.body, state.base_branch.as_deref(), &state.conflicts));
+        // The warning names the base branch, so a state.json without one, hand-edited (RunState::conflicts), leaves
+        // the body as it is: the warning cannot be told apart from the human's own text.
+        let base = state.base_branch.as_deref().filter(|_| clean);
+        let body = base.map(|base| without_conflict_warning(&pr.body, base, &state.conflicts));
         let succeeded = state.verdict.as_deref().is_some_and(|v| SUCCEEDED.contains(&v));
         let check = ConflictCheck {
             run_id: run_id.clone(),

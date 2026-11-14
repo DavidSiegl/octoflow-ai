@@ -195,9 +195,22 @@ fn a_merged_or_closed_pull_request_forgets_the_conflict_and_leaves_it_to_a_drain
 }
 
 #[test]
+fn a_run_recording_conflicts_without_a_base_branch_is_cleared_with_its_body_left() {
+    // Only a hand-edited state.json lacks the base its conflicts were found against, and the warning names it.
+    let t = Refresh::new();
+    let saved = t.add_run(&[]);
+    t.resave(REFRESH_ID, &saved, &[("base_branch", Value::Null)]);
+    let (status, out) = t.refresh(&[REFRESH_ID]);
+    assert_eq!(status, 0);
+    assert_eq!(out, format!("{REFRESH_ID}: conflict cleared, ready for review  {REFRESH_URL}\n"));
+    assert_eq!(t.pr_edits(), [ready(REFRESH_URL)]);
+    assert_eq!(t.saved().get("conflicts"), Some(&Value::Array(vec![])));
+}
+
+#[test]
 fn human_edits_to_the_body_are_kept() {
     let t = Refresh::new();
-    let warning = conflict_warning(Some("main"), &["a.py".to_string()]);
+    let warning = conflict_warning("main", &["a.py".to_string()]);
     let body = format!("{warning}\n\nA human's note.\n\nOpened by run x.\n");
     t.add(REFRESH_ID, REFRESH_URL, &["a.py"], APPROVE, Some(&body), &[]);
     t.refresh(&[REFRESH_ID]);

@@ -275,6 +275,13 @@ fn ssh_target_unknown_machine() {
 }
 
 #[test]
+fn ssh_target_without_a_machine_asks_nothing() {
+    let (herdr, ran) = answering(None, 0, "[]", "");
+    assert_eq!(herdr.ssh_target().unwrap_err().to_string(), "no herdr machine chosen, so none to reach");
+    assert!(ran.lock().unwrap().is_empty());
+}
+
+#[test]
 fn ssh_target_of_a_disabled_or_unreadable_machine() {
     let (herdr, _) = answering(Some("box"), 0, r#"[{"label": "box", "target": "t", "enabled": false}]"#, "");
     assert_eq!(herdr.ssh_target().unwrap_err().to_string(), "herdr machine box is disabled");
@@ -892,7 +899,7 @@ fn a_server_that_never_answers_fails_the_launch_with_what_herdr_last_said() {
     let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
     assert!(e.starts_with("cannot start a herdr server: it was not running after 0.1 seconds; herdr status server"), "{e}");
     assert!(e.contains("connection refused"), "{e}");
-    let gone = r#"[Errno 2] No such file or directory: "/gone/herdr-server.log""#;
+    let gone = "/gone/herdr-server.log: No such file or directory";
     assert!(e.ends_with(&format!("; cannot read what herdr server wrote: {gone}")), "{e}");
 }
 
@@ -951,6 +958,8 @@ fn every_recorded_herdr_command_is_the_one_processherdr_gives() {
                 let args: Vec<String> = args.iter().map(|a| a.as_str().unwrap().to_string()).collect();
                 let (machine, command) = match &args[..] {
                     [flag, machine, rest @ ..] if flag == "--machine" => (Some(machine.as_str()), rest.to_vec()),
+                    // Never forwarded, and asked only by a herdr with a machine (ProcessHerdr::ssh_target).
+                    [machine, list, ..] if machine == "machine" && list == "list" => (Some("box"), args.clone()),
                     _ => (None, args.clone()),
                 };
                 let (herdr, ran) = answering(machine, 0, &result("{}"), "");

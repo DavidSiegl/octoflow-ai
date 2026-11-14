@@ -725,9 +725,9 @@ struct InAWorktree<'a> {
     interrupt: &'a Interrupt,
 }
 
-/// Call body with the Workflow of a quick run, in review in round 1, whose worktree holds the change: limiter.sh
-/// reads `RATE=change` there and `RATE=base` in the checkout, whose origin has its main. The run has claimed the
-/// checkout, as a run's start does.
+/// Call body with the Workflow of a quick run, in review in round 1 with changes requested, whose worktree holds the
+/// change: limiter.sh reads `RATE=change` there and `RATE=base` in the checkout, whose origin has its main. The run has
+/// claimed the checkout, as a run's start does.
 fn in_a_worktree(body: impl FnOnce(&mut crate::workflow::Workflow, &InAWorktree)) {
     let interrupt = Interrupt::new();
     let repo = Repo::with_host(&[("limiter.sh", "RATE=base\n")], ProcessHost::local(&interrupt));
@@ -742,6 +742,7 @@ fn in_a_worktree(body: impl FnOnce(&mut crate::workflow::Workflow, &InAWorktree)
     let mut state = RunState::new(RUN_ID, TASK, &repo.path);
     (state.base, state.base_branch, state.branch) = (repo.base.clone(), Some("main".into()), Some(BRANCH.into()));
     (state.pull_request, state.worktree) = (true, Some(worktree.clone()));
+    state.verdict = Some(crate::constants::CHANGES_REQUESTED.into());
     proving_on(&Unpublished(&repo.host), &interrupt, state, |wf, told| {
         wf.claim().unwrap();
         body(wf, &InAWorktree { repo: &repo, path: &worktree, told, interrupt: &interrupt });

@@ -411,6 +411,12 @@ fn run_states_corrupt() {
 }
 
 #[test]
+fn a_run_state_whose_age_is_not_a_number_is_corrupt() {
+    let e = parsed_run_states("/p", "12x {}\0").unwrap_err();
+    assert_eq!(e.0, format!("corrupt run state under /p/{RUNS_DIR}: an age that is not a whole number: \"12x\""));
+}
+
+#[test]
 fn real_filesystem_roundtrip() {
     let d = TempDir::new();
     let host = ProcessHost::local(&Interrupt::new());
@@ -539,8 +545,7 @@ fn a_command_that_runs_out_of_time_is_killed_with_its_process_group() {
     assert_eq!(
         e.0,
         format!(
-            "sh -c 'sleep 30 & echo $! > \"$1\"; wait' _ {pid_file}: Command '[\"sh\", \"-c\", \"sleep 30 & echo $! > \
-             \\\"$1\\\"; wait\", \"_\", {pid_file:?}]' timed out after 1 seconds"
+            "sh -c 'sleep 30 & echo $! > \"$1\"; wait' _ {pid_file}: timed out after 1 seconds"
         )
     );
     let pid = read(&pid_file).trim().to_string();
@@ -581,14 +586,14 @@ fn a_child_that_holds_the_output_open_ends_the_command_at_its_time() {
 #[test]
 fn a_command_that_cannot_be_started_names_it() {
     let e = ProcessHost::local(&Interrupt::new()).run(&["no-such-command-here", "x"], None, 60).unwrap_err();
-    assert_eq!(e.0, "no-such-command-here x: [Errno 2] No such file or directory: \"no-such-command-here\"");
+    assert_eq!(e.0, "no-such-command-here x: no-such-command-here: No such file or directory");
 }
 
 #[test]
 fn exec_tells_a_command_not_on_path_from_one_that_cannot_be_started_otherwise() {
     // As the doctor tells a tool missing here (cross-review 89, F9).
     let host = ProcessHost::local(&Interrupt::new());
-    let message = "no-such-command-here x: [Errno 2] No such file or directory: \"no-such-command-here\"";
+    let message = "no-such-command-here x: no-such-command-here: No such file or directory";
     assert_eq!(host.exec(&["no-such-command-here", "x"], None, 60), Err(ExecError::NotFound(OrchestratorError::new(message))));
     let dir = TempDir::new();
     let path = dir.join("not-executable");

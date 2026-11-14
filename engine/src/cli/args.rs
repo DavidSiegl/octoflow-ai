@@ -637,10 +637,10 @@ fn check_spec_args(matches: &ArgMatches, p: &mut clap::Command) -> Result<(), cl
             Err(subcommand_error(p, "run", "a task or --spec FILE is needed"))
         }
         Some(("resume", m)) if m.contains_id("spec") => {
-            Err(subcommand_error(p, "resume", "unrecognized arguments: --spec; a resumed run keeps the spec it has"))
+            Err(subcommand_error(p, "resume", "unexpected argument '--spec' found; a resumed run keeps the spec it has"))
         }
         Some(("drain", m)) if m.contains_id("spec") => {
-            Err(subcommand_error(p, "drain", "unrecognized arguments: --spec; drain runs the specs in DIR"))
+            Err(subcommand_error(p, "drain", "unexpected argument '--spec' found; drain runs the specs in DIR"))
         }
         _ => Ok(()),
     }

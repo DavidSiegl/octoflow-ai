@@ -454,7 +454,7 @@ describe("the setup dialog", () => {
   });
 
   it("shows a marker that cannot be written, and closes without it the next time", async () => {
-    const setup: FakeSetup = { checked: false, report: { ...REPORT, checks: [...REPORT.checks] }, markError: "cannot write /cfg/setup-checked: [Errno 13] Permission denied" };
+    const setup: FakeSetup = { checked: false, report: { ...REPORT, checks: [...REPORT.checks] }, markError: "cannot write /cfg/setup-checked: Permission denied" };
     await openWith(setup);
     const dialog = await screen.findByRole("dialog", { name: "setup" });
     await within(dialog).findByText("herdr 0.9.1", { exact: false });

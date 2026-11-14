@@ -757,7 +757,7 @@ fn closed_without_a_time() {
     let e = pull_request_pending(&closed_at(Some("yesterday")), "7", NOW).unwrap_err();
     assert_eq!(e.0, "PR #7 is closed at \"yesterday\", which is not a time");
     let e = pull_request_pending(&closed_at(None), "7", NOW).unwrap_err();
-    assert_eq!(e.0, "PR #7 is closed at None, which is not a time");
+    assert_eq!(e.0, "PR #7 is closed without a closing time");
 }
 
 /// What the zone test's child process checks, set to the test's name.

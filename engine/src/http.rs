@@ -54,7 +54,7 @@ pub enum HttpError {
     /// The server answered with this status, after following up to 10 redirects. A redirect
     /// beyond those is the status of its answer.
     Status(u16),
-    /// No answer came, and why, such as `timed out` or `[Errno 111] Connection refused` (no_answer).
+    /// No answer came, and why, such as `timed out` or `Connection refused` (no_answer).
     NoAnswer(String),
 }
 
@@ -131,32 +131,20 @@ impl Http for HttpClient {
     }
 }
 
-/// Why no answer came, from e: `timed out`, a resolver's error as resolver_error words it, the system's error as
+/// Why no answer came, from e: `timed out`, the resolver's error (getaddrinfo's words), the system's error as
 /// os_error words it, or ureq's own words.
 fn no_answer(e: &ureq::Error) -> HttpError {
     let reason = match e {
         ureq::Error::Timeout(_) => "timed out".to_string(),
         ureq::Error::Io(io) if io.kind() == std::io::ErrorKind::TimedOut => "timed out".to_string(),
         ureq::Error::Io(io) => match io.to_string().strip_prefix("failed to lookup address information: ") {
-            Some(why) => resolver_error(why),
+            Some(why) => why.to_string(),
             None => os_error(io, None),
         },
-        ureq::Error::HostNotFound => resolver_error("Name or service not known"),
+        ureq::Error::HostNotFound => "Name or service not known".to_string(),
         other => other.to_string(),
     };
     HttpError::NoAnswer(reason)
-}
-
-/// The reason a host name did not resolve, from why, getaddrinfo's message: prefixed by its error number in brackets
-/// when the message is one of the three this knows, as `[Errno -2] Name or service not known`, else why as it is.
-fn resolver_error(why: &str) -> String {
-    let number = match why {
-        "Name or service not known" => Some(-2),
-        "Temporary failure in name resolution" => Some(-3),
-        "No address associated with hostname" => Some(-5),
-        _ => None,
-    };
-    number.map_or_else(|| why.to_string(), |n| format!("[Errno {n}] {why}"))
 }
 
 /// The proxies the environment names: `http_proxy`, `https_proxy` and `no_proxy`, or their upper-case forms.

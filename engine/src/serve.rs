@@ -194,8 +194,8 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 /// GET and POST with an Authorization and a Content-Type header; a GET or POST then needs the server's token as an
 /// `Authorization: Bearer` header or, for an EventSource, which cannot set one, as ?token=, compared in constant time;
 /// else 401. 404 is an unknown endpoint, 400 a missing or malformed parameter, 502 a project that could not be read
-/// or herdr failing, each with {"error"}; a POST of any other endpoint, and any other method, gets 501 with an HTML
-/// error page. A request with a byte beyond ASCII in its request line or a header is not
+/// or herdr failing, each with {"error"}; a POST of any other endpoint, and any other method, gets 501 with
+/// {"error"} too. A request with a byte beyond ASCII in its request line or a header is not
 /// answered: tiny_http closes its connection. Nothing is logged.
 pub struct RunServer {
     /// What its request threads share.
@@ -445,8 +445,9 @@ fn answer(shared: &Shared, request: Request) {
         "POST" if path == RUN => post_run(shared, request, &query),
         "OPTIONS" => preflight(shared, request),
         method => {
-            let method = format!("{method:?}");
-            send(request, unsupported(&method));
+            // Made before send takes request, which method borrows.
+            let response = unsupported(method);
+            send(request, response);
         }
     }
 }
@@ -820,18 +821,11 @@ fn send_json(request: Request, code: u16, body: &Value) {
     send(request, response);
 }
 
-/// The 501 a request of method gets, an HTML error page naming it; the caller passes method already quoted.
+/// The 501 a request of method gets: {"error"} naming the method. It allows no origin, as no Host or Origin check came
+/// before it.
 fn unsupported(method: &str) -> Response<io::Cursor<Vec<u8>>> {
-    let escaped = method.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
-    let page = format!(
-        "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        <meta charset=\"utf-8\">\n        \
-         <style type=\"text/css\">\n            :root {{\n                color-scheme: light dark;\n            }}\n        \
-         </style>\n        <title>Error response</title>\n    </head>\n    <body>\n        <h1>Error response</h1>\n        \
-         <p>Error code: 501</p>\n        <p>Message: Unsupported method ({escaped}).</p>\n        \
-         <p>Error code explanation: 501 - Server does not support this operation.</p>\n    </body>\n</html>\n"
-    );
-    let response = with_header(Response::from_data(page).with_status_code(501), "Connection", "close");
-    with_header(response, "Content-Type", "text/html;charset=utf-8")
+    let body = error(&format!("unsupported method {method:?}")).to_string();
+    with_header(Response::from_data(body).with_status_code(501), "Content-Type", "application/json")
 }
 
 /// Answer request with response; a client that has gone is not told.

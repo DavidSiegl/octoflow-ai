@@ -165,8 +165,7 @@ fn drain_spec(args: &DrainArgs, world: &Connected, cwd: &str, spec: &mut QueuedS
             Ok(Some(EXIT_ERROR))
         }
         Ok(ran) => {
-            let verdict = ran.verdict.as_deref().unwrap_or("None");
-            let status = finish(verdict, &ran.state, &ran.pipeline, world.stdout);
+            let status = finish(ran.verdict.as_deref(), &ran.state, &ran.pipeline, world.stdout);
             let mut entries: Entries = vec![(STATUS_KEY, if status == 0 { SPEC_IN_REVIEW } else { SPEC_FOR_HUMAN }.into())];
             if let Some(pr) = ran.state.pr_url.as_ref().filter(|u| !u.is_empty()) {
                 entries.push((PR_KEY, pr.clone()));
@@ -203,8 +202,7 @@ fn drain_end(specs: &[QueuedSpec], by_slug: &HashMap<String, usize>, world: &Con
             if let Some(gone) = &blocker.gone {
                 world.say(&format!("    {b}: gone ({gone})"));
             } else {
-                // An empty Status: is none.
-                let status = blocker.status().filter(|s| !s.is_empty()).unwrap_or_else(|| "no status".to_string());
+                let status = queue::status_text(blocker.status());
                 let pr = blocker.pr().filter(|p| !p.is_empty()).map(|p| format!("  {p}")).unwrap_or_default();
                 world.say(&format!("    {b}: {status}{pr}"));
             }
