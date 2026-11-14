@@ -42,6 +42,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **`Host::change_diff` is called only by tests.** Its one engine caller filled `RunChange::changed` for
+  new-dependencies' line naming; todo/58 took the lines from the manifests' spans and removed the field, so the
+  quality round no longer runs the diff. `engine/src/host/tests.rs`'s snapshot tests still use it with
+  `crate::patch::added_lines` to look at a snapshot, and `host/fake.rs` answers it. Closed by moving those tests onto
+  `changed_line_counts` or plain `git diff`, then removing `change_diff` from `Host` and the fake.
 - **A proof's undo line lists every file it put back on one command line.** `PutBack::new` (`engine/src/host.rs`)
   writes each path as an argument of `rm` and `git restore`, where `Host::restore` passes them over stdin: cross-review
   197 (F4): "a proof that writes thousands of unignored files (a build or vendor dir) produces an undo that fails with

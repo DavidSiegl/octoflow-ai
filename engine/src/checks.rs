@@ -2,7 +2,7 @@
 //! build never sees, the run's spec and its workflow (docs/quality-gate.md, "The orchestrator's checks"), and how
 //! what they find is added to the build's report (RunFindings).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use crate::constants::{CRATES_IO_TIMEOUT, PYPI_TIMEOUT};
 use crate::error::OrchestratorError;
@@ -38,8 +38,6 @@ pub struct RunChange<'a> {
     pub base: String,
     /// The snapshot the round judges, whose only parent is base.
     pub commit: String,
-    /// The lines each file gains, by path: crate::patch::added_lines of Host::change_diff from base to commit.
-    pub changed: BTreeMap<String, BTreeSet<u64>>,
     /// Every file the change touches: Host::changed_line_counts from base to commit.
     pub files: Vec<ChangedFile>,
     /// The files of base and commit, as Host::file_at reads them.
