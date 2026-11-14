@@ -72,7 +72,8 @@ export function formatRound(record: RunRecord): string {
 }
 
 /** A stage's place in the run: done; current, or failed when the run failed there; to do; or "again", a stage after
- * the current one that already ran in an earlier round, before a verdict sent the run back. */
+ * the current one that already ran: a verdict sent the run back to an earlier step, or the quality gate sent it back
+ * to its step for a fix in the same round. */
 export type StageState = "done" | "current" | "todo" | "failed" | "again";
 
 /** One stage of a run's progress, in the order progress gives them. */
@@ -92,6 +93,7 @@ export interface Stage {
   /** The stage's turns, oldest first: a step's own turns, and for quality, the gate's analyses of that step's
    * turns. Empty for publish and phase. */
   turns: Turn[];
+  /** Where the run stands with the stage. */
   state: StageState;
 }
 

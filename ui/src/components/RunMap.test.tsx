@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { RunRecord, Step, Turn } from "../api";
 import { RunMap } from "./RunMap";
@@ -49,10 +49,10 @@ describe("RunMap", () => {
   it("gives each stage a station in order, named with who holds it and its state", () => {
     render(<RunMap record={record()} now={NOW} />);
     expect(stations().map((s) => s.getAttribute("aria-label"))).toEqual([
-      "spec, Spec Collector, done",
-      "build, Builder, working, 2 rounds",
-      "quality, quality gate, ran in an earlier round, to do again",
-      "review, Reviewer, ran in an earlier round, to do again, last verdict CHANGES_REQUESTED, loops to build",
+      "spec, Spec Collector, claude opus-5.5, done",
+      "build, Builder, claude opus-5.5, working, 2 rounds",
+      "quality, quality gate, ran before, to do again",
+      "review, Reviewer, codex gpt-5.3, ran before, to do again, last verdict CHANGES_REQUESTED, loops to build",
       "publish, pull request, to do",
     ]);
   });
@@ -65,6 +65,20 @@ describe("RunMap", () => {
     expect(review && within(review).getByText("codex gpt-5.3")).toBeInTheDocument();
     expect(review && within(review).getByText("changes")).toBeInTheDocument();
     expect(spec && within(spec).queryByText(/×/)).not.toBeInTheDocument();
+  });
+
+  it("cuts a harness too wide for the room between neighbouring stations, and names it whole", () => {
+    const steps: Step[] = ["a", "b", "c", "d", "e", "f", "g", "h"].map((id) => ({
+      id, role: id, role_label: id.toUpperCase(), loop_to: null, quality_gated: false,
+    }));
+    const turns = steps.map((st, i) => turn(st.id, 1, `${st.id}.md`, 900 - i * 100, 850 - i * 100, { model: "claude-opus-4-5-20251101" }));
+    render(<RunMap record={record({ steps, pull_request: false, phase: "done", health: null, turns })} now={NOW} />);
+    // d's station has e's beside it, about 106 units away; a's, at the left edge, has 180 units of room.
+    const [a, , , d] = stations();
+    expect(d?.querySelector(".harness")?.textContent).toMatch(/^claude .*…$/);
+    expect(d).toHaveAccessibleName("d, D, claude claude-opus-4-5-20251101, done");
+    expect(a?.querySelector(".harness")?.textContent).toMatch(/^claude .*…$/);
+    expect(a?.querySelector(".holder")?.textContent).toBe("A");
   });
 
   it("draws a verdict step's loop, solid once a verdict took it", () => {
@@ -112,6 +126,26 @@ describe("RunMap", () => {
     expect(container.querySelector(".head.failed")).not.toBeNull();
   });
 
+  it("marks the turn the run failed in, not an earlier step's", () => {
+    const ended = record().turns.slice(0, 4);
+    render(<RunMap record={record({ phase: "publish", error: "push refused", health: null, turns: ended })} now={NOW} />);
+    const rows = within(screen.getByRole("list", { name: "turns" })).getAllByRole("listitem");
+    expect(rows.map((row) => row.firstChild?.textContent)).toEqual(["·", "·", "·", "·"]);
+  });
+
+  it("marks a failed run's turn that never ended as failed, not running", () => {
+    render(<RunMap record={record({ error: "boom", health: null })} now={NOW} />);
+    const [newest] = within(screen.getByRole("list", { name: "turns" })).getAllByRole("listitem");
+    expect([...(newest?.children ?? [])].map((cell) => cell.textContent)).toEqual(["✕", "build", "build-2.md · claude opus-5.5", ""]);
+  });
+
+  it("does not count up a turn of a stale run, which nothing drives", () => {
+    render(<RunMap record={record({ health: "stale" })} now={NOW} />);
+    expect(screen.getByText("build · claude opus-5.5 · stale")).toBeInTheDocument();
+    const [newest] = within(screen.getByRole("list", { name: "turns" })).getAllByRole("listitem");
+    expect([newest?.firstChild?.textContent, newest?.lastChild?.textContent]).toEqual(["–", "unfinished"]);
+  });
+
   it("keeps eight arms, the spare ones curled", () => {
     const { container } = render(<RunMap record={record()} now={NOW} />);
     expect(container.querySelectorAll(".arm")).toHaveLength(8);
@@ -129,10 +163,41 @@ describe("RunMap", () => {
     expect(cancel).toHaveBeenCalledWith(7);
 
     request.mockClear();
-    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query === "(prefers-reduced-motion: reduce)" }));
+    const reduce = mediaQuery(true);
+    vi.stubGlobal("matchMedia", () => reduce);
     const { container } = render(<RunMap record={record()} now={NOW} />);
     expect(request).not.toHaveBeenCalled();
     expect(container.querySelector("[data-pulse]")).toBeNull();
     expect(stations()).toHaveLength(5);
   });
+
+  it("stops moving when the viewer turns on reduced motion while it shows", () => {
+    const cancel = vi.fn();
+    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 9));
+    vi.stubGlobal("cancelAnimationFrame", cancel);
+    const reduce = mediaQuery(false);
+    vi.stubGlobal("matchMedia", () => reduce);
+    const { container } = render(<RunMap record={record()} now={NOW} />);
+    expect(container.querySelector("[data-pulse]")).not.toBeNull();
+    act(() => reduce.set(true));
+    expect(cancel).toHaveBeenCalledWith(9);
+    expect(container.querySelector("[data-pulse]")).toBeNull();
+  });
 });
+
+/** A stand-in for the reduced-motion MediaQueryList, matching as matches says until set changes it and tells its
+ * listeners. */
+function mediaQuery(matches: boolean) {
+  const listeners = new Set<() => void>();
+  return {
+    get matches() {
+      return matches;
+    },
+    addEventListener: (_: string, listener: () => void) => listeners.add(listener),
+    removeEventListener: (_: string, listener: () => void) => listeners.delete(listener),
+    set(now: boolean) {
+      matches = now;
+      listeners.forEach((listener) => listener());
+    },
+  };
+}

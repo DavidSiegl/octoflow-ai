@@ -51,6 +51,13 @@ describe("progress", () => {
     expect(stages[2]?.state).toBe("current");
   });
 
+  it("has quality to do again while its step fixes what the gate found", () => {
+    const turns = [turn("spec"), turn("build"), turn("quality", 1, 1)];
+    expect(states(record({ phase: "build", quality_round: 1, turns })).slice(1, 3)).toEqual([
+      ["build", "current"], ["quality", "again"],
+    ]);
+  });
+
   it("puts quality after the step whose turn it judges", () => {
     const steps = STEPS.map((s) => ({ ...s, quality_gated: s.id !== "spec" }));
     const turns = [turn("spec"), turn("build"), turn("quality", 1, 1), turn("review"), turn("quality", 1, 1)];
