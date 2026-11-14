@@ -11,11 +11,16 @@ use super::*;
 use crate::cli::listing::run_record;
 use crate::constants::{APPROVE, RUNS_DIR, STALE_SECONDS};
 use crate::json::{Object, ValueExt};
-use crate::http::urlencode;
+use crate::http::quote;
 use crate::cli::doctor::{Check, Level};
 use crate::serve::fake::{reached, FakeConsole, ServeHost};
 use crate::herdr::{HerdrError, HerdrServer, OWN_SESSION};
 use crate::test_support::TempDir;
+
+/// The pairs as a query string, each name and value quoted (crate::http::quote), in the order given.
+fn urlencode(pairs: &[(&str, &str)]) -> String {
+    pairs.iter().map(|(name, value)| format!("{}={}", quote(name), quote(value))).collect::<Vec<_>>().join("&")
+}
 
 const SERVE_ID: &str = "20261024-120000-5e7e00";
 const TAURI_ORIGIN: &str = "tauri://localhost";

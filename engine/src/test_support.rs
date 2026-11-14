@@ -5,7 +5,10 @@
 //! which Jenkins's Test stage sets afresh for each build. A test that fails under a run seed prints it; run it
 //! again on the same cases with `OCTOFLOW_TEST_SEED=<seed> cargo test <test's name>`.
 
-use crate::quality::RUN_SEED_VARIABLE;
+/// The environment variable the engine's generated-input tests read their run seed from, a decimal u64 (unset or
+/// empty, a run has none), and which a failing one names on its standard error (Rng), so that the case can be
+/// generated again.
+const RUN_SEED_VARIABLE: &str = "OCTOFLOW_TEST_SEED";
 
 /// The run seed in var, which is what std::env::var gave for RUN_SEED_VARIABLE. Panics when the variable holds
 /// anything but a decimal u64 or nothing, blanks around a number included.

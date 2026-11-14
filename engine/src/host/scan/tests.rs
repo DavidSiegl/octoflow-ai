@@ -94,9 +94,13 @@ impl Scan {
         self.push_with(&self.repo.host, commit)
     }
 
+    /// Push commit to origin's branch ci-ref, as a publishing push does: only once host's scan of what it would
+    /// publish finds nothing.
     fn push_with(&self, host: &ProcessHost, commit: &str) -> Result<(), PushError> {
         let report = format!("{}/leaks-snapshot.json", self.run_dir);
-        host.push_ref(&self.repo.path, commit, "ci-ref", self.repo.base(), &report)
+        host.refuse_leaks(&self.repo.path, commit, self.repo.base(), Scanned::Unpublished, &report)?;
+        self.repo.git(&["push", "--quiet", "--force", "origin", &format!("{commit}:refs/heads/ci-ref")]);
+        Ok(())
     }
 
     /// The push's error, which must not be a LeaksFound.

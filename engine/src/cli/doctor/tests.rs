@@ -611,13 +611,11 @@ fn doctor_printed(tools: &FakeTools, argv: &[&str]) -> (Result<i32, Orchestrator
     let host = tools.host(&[]);
     let herdr = |machine: Option<&str>| tools.herdr(machine);
     let (interrupt, print) = (Interrupt::new(), |t: &str| out.borrow_mut().push_str(t));
-    let jenkins = |_: &str| -> Result<crate::ci::Jenkins, OrchestratorError> { panic!("doctor made a Jenkins") };
     let cwd = || -> Result<String, OrchestratorError> { panic!("doctor read the current directory") };
     let local = Local {
         host: &host,
         herdr: &herdr,
         in_herdr_pane: true,
-        jenkins: &jenkins,
         cwd: &cwd,
         config: &config,
         stdout: &print,
@@ -878,13 +876,13 @@ fn machine_herdr_versions_checked_apart() {
 #[test]
 fn commands_get_the_child_env() {
     let tools = FakeTools::new();
-    let host = tools.host(&[("JENKINS_TOKEN", "secret")]);
+    let host = tools.host(&[("GIT_LITERAL_PATHSPECS", "1")]);
     check_setup(&host, &tools.herdr(Some("box")), Some("/proj"), true, Level::Required);
     let envs = tools.tools().envs.clone();
     // The herdr runner's commands are not given theirs here; ProcessHerdr's own tests hold it to child_env.
     assert!(envs.iter().any(|env| !env.is_empty()));
     for env in envs {
-        assert!(!env.iter().any(|(k, _)| k == "JENKINS_TOKEN"), "{env:?}");
+        assert!(!env.iter().any(|(k, _)| k == "GIT_LITERAL_PATHSPECS"), "{env:?}");
     }
 }
 
@@ -904,13 +902,11 @@ fn needs_no_herdr_pane() {
         tools.herdr(machine)
     };
     let (interrupt, print) = (Interrupt::new(), |t: &str| out.borrow_mut().push_str(t));
-    let jenkins = |_: &str| -> Result<crate::ci::Jenkins, OrchestratorError> { panic!("doctor made a Jenkins") };
     let cwd = || -> Result<String, OrchestratorError> { panic!("doctor read the current directory") };
     let local = Local {
         host: &host,
         herdr: &herdr,
         in_herdr_pane: false,
-        jenkins: &jenkins,
         cwd: &cwd,
         config: &config,
         stdout: &print,

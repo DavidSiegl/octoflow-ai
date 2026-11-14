@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use super::*;
-use crate::ci::fake::Outcome;
+use crate::workflow::fixture::Outcome;
 use crate::http::Http;
 use crate::quality::gate_failures;
 use crate::package_index::PackageIndexes;
@@ -321,7 +321,7 @@ fn quality(change: &Change, pypi: &Arc<FakePyPI>, build: Outcome) -> String {
     let pipeline = default_workflow(&Prompts::default());
     let indexes = PackageIndexes::with_pypi(Arc::clone(pypi) as Arc<dyn Http>);
     let found = change.run(&always, |c| judge_run(&orchestrator_checks(&pipeline, &indexes), c).unwrap());
-    found.added_to_file(&build.quality.unwrap())
+    found.added_to_file(&build.quality)
 }
 
 fn limits() -> Arc<FakePyPI> {
@@ -471,7 +471,7 @@ fn the_budget_and_unexpected_paths_are_reported_and_never_change_the_gate() {
 
 #[test]
 fn a_change_the_checks_find_nothing_in_keeps_the_builds_file() {
-    let built = ok().quality.unwrap();
+    let built = ok().quality;
     assert_eq!(quality(&Change::new(""), &limits(), ok()), built);
 }
 
@@ -494,7 +494,7 @@ fn slow_pypi_stops_asking_at_the_rounds_deadline_and_keeps_the_heartbeat_between
     let pipeline = default_workflow(&Prompts::default());
     let indexes = PackageIndexes::with_pypi(Arc::clone(&pypi) as Arc<dyn Http>);
     let found = change.run(&in_time, |c| judge_run(&orchestrator_checks(&pipeline, &indexes), c).unwrap());
-    let q = found.added_to_file(&ok().quality.unwrap());
+    let q = found.added_to_file(&ok().quality);
     assert_eq!(pypi.state().asked, ["limits", "rich"]);
     assert_eq!(*beats.borrow(), [0, 1, 2], "a beat before each ask");
     assert!(

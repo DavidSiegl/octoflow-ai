@@ -1,7 +1,7 @@
 [package]
 name = "octoflow-e2e"
 version = "0.1.0"
-description = "The engine's end-to-end scenarios: the orchestrator program run against fakes of herdr, gh, ssh, Jenkins and PyPI"
+description = "The engine's end-to-end scenarios: the orchestrator program run against fakes of herdr, gh, ssh, octoflow-gate and PyPI"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
@@ -22,8 +22,6 @@ tempfile = "3"
 [dev-dependencies]
 # Writing a recording through serde_json's pretty printer with an indent of its own (tests/e2e/main.rs).
 serde = "1"
-# The world's fake Jenkins (tests/e2e/servers.rs): the engine's own HTTP server, as its http.rs and ci.rs tests use it.
-tiny_http = "0.12"
 # The world's fake PyPI, which the engine reaches over TLS through the world's HTTPS proxy: rustls and its key and
 # certificate types, the versions Cargo.lock had through ureq, with ureq's ring provider. Approved by the user for
 # octoflow-without-python ticket 02, 2026-10-31.
@@ -34,8 +32,9 @@ rustls-pki-types = { version = "1.15.1", features = ["std"] }
 # octoflow-without-python ticket 07, 2026-11-03.
 syn = { version = "2.0.119", features = ["full", "visit"] }
 
-# The programs a world puts on the engine's PATH as herdr, gh and ssh (src/fakes.rs). They are binaries of this
-# package so that its tests find them by CARGO_BIN_EXE_*, which Cargo sets only for a test's own package.
+# The programs a world puts on the engine's PATH as herdr, gh, ssh and octoflow-gate (src/fakes.rs). They are
+# binaries of this package so that its tests find them by CARGO_BIN_EXE_*, which Cargo sets only for a test's own
+# package.
 [[bin]]
 name = "fake-herdr"
 path = "src/bin/fake-herdr.rs"
@@ -47,6 +46,10 @@ path = "src/bin/fake-gh.rs"
 [[bin]]
 name = "fake-ssh"
 path = "src/bin/fake-ssh.rs"
+
+[[bin]]
+name = "fake-gate"
+path = "src/bin/fake-gate.rs"
 
 [lints]
 workspace = true

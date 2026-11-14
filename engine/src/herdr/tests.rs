@@ -11,7 +11,7 @@ use super::fake::{resumed_session, Call, FakeHerdr, Turn};
 use super::*;
 use crate::harness::harness;
 use crate::host::fake::FakeHost;
-use crate::host::tests::{assert_scrubbed, environment, tool, with_credentials};
+use crate::host::tests::{assert_scrubbed, environment, tool, with_pathspec_switches};
 use crate::host::Host;
 use crate::state::RunState;
 use crate::test_support::{ended, hearing_sigint, raise_once_written, recorded_state, recordings, TempDir};
@@ -569,11 +569,11 @@ fn other_errors_raise() {
 // -- TestChildEnvironment --------------------------------------------------------------------------------------------
 
 #[test]
-fn herdr_gets_no_credentials() {
+fn herdr_gets_no_pathspec_switches() {
     let d = TempDir::new();
     let env = d.join("env");
     tool(&d.path(), "herdr", &format!("#!/bin/sh\nenv > '{env}'\necho '{{\"result\": {{}}}}'\n"));
-    let vars = environment(Some(&d.path()), &with_credentials());
+    let vars = environment(Some(&d.path()), &with_pathspec_switches());
     ProcessHerdr::in_environment(None, vars.into_iter(), &Interrupt::new()).focus("x").unwrap();
     assert_scrubbed(&std::fs::read_to_string(env).unwrap());
 }

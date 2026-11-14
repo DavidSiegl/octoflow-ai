@@ -596,19 +596,9 @@ pub trait Host {
         numstat(&out)
     }
 
-    /// Push commit to origin's branch, replacing what is there, once scan_secrets finds no secret in what it would
-    /// publish; base and report_path are as scan_secrets takes them. Errors: PushError::Leaks with what the scan
-    /// found, or PushError::Failed when it cannot judge or the push fails; nothing is pushed then.
-    fn push_ref(&self, cwd: &str, commit: &str, branch: &str, base: &str, report_path: &str) -> Result<(), PushError> {
-        self.refuse_leaks(cwd, commit, base, Scanned::Unpublished, report_path)?;
-        // --force replaces what a failed attempt left under the same name.
-        let refspec = format!("{commit}:refs/heads/{branch}");
-        git_timed(self, cwd, &["push", "--quiet", "--force", REMOTE, &refspec], NETWORK_TIMEOUT)?;
-        Ok(())
-    }
-
     /// Push the local branch to origin's branch of that name and track it, once scan_secrets finds no secret in what
-    /// its commit would publish; base and report_path are as scan_secrets takes them. Errors: as push_ref's.
+    /// its commit would publish; base and report_path are as scan_secrets takes them. Errors: PushError::Leaks with
+    /// what the scan found, or PushError::Failed when it cannot judge or the push fails; nothing is pushed then.
     fn push_branch(&self, cwd: &str, branch: &str, base: &str, report_path: &str) -> Result<(), PushError> {
         let commit = self.git(cwd, &["rev-parse", "--verify", &format!("refs/heads/{branch}")])?;
         self.refuse_leaks(cwd, commit.trim(), base, Scanned::Unpublished, report_path)?;
@@ -690,24 +680,6 @@ pub trait Host {
         report_path: &str,
     ) -> Result<Vec<Leak>, OrchestratorError> {
         scan::scan_secrets(self, cwd, commit, base, scanned, report_path)
-    }
-
-    /// Delete origin's branch.
-    fn delete_remote_branch(&self, cwd: &str, branch: &str) -> Result<(), OrchestratorError> {
-        let git_ref = format!("refs/heads/{branch}");
-        git_timed(self, cwd, &["push", "--quiet", REMOTE, "--delete", &git_ref], NETWORK_TIMEOUT).map(drop)
-    }
-
-    /// origin's branches whose names start with prefix.
-    fn remote_branches(&self, cwd: &str, prefix: &str) -> Result<Vec<String>, OrchestratorError> {
-        let out = git_timed(self, cwd, &["ls-remote", "--heads", REMOTE], NETWORK_TIMEOUT)?;
-        let wanted = format!("refs/heads/{prefix}");
-        Ok(out
-            .lines()
-            .filter_map(|line| line.split_once('\t').map(|(_, name)| name))
-            .filter(|name| name.starts_with(&wanted))
-            .map(|name| name["refs/heads/".len()..].to_string())
-            .collect())
     }
 
     /// The commit origin's branch is at; None when origin has no such branch.
@@ -1115,8 +1087,8 @@ pub fn checked<H: Host + ?Sized, T>(host: &H, argv: &[&str], proc: Completed<T>)
 }
 
 /// text with each "\r\n" and each lone "\r" made "\n": how the engine reads what a program printed (Host::run,
-/// herdr, a Jenkins build's console) and a prompt file, so that what splits it into lines has one line end to split
-/// at, and a progress bar's updates, each ended by a lone "\r", are lines of their own.
+/// herdr) and a prompt file, so that what splits it into lines has one line end to split at, and a progress bar's
+/// updates, each ended by a lone "\r", are lines of their own.
 pub fn line_ends_as_lf(text: &str) -> String {
     if !text.contains('\r') {
         return text.to_string();

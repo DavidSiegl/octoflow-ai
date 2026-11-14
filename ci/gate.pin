@@ -1,9 +1,9 @@
 # The octoflow-gate release (https://github.com/DavidSiegl/octoflow-gate/releases) that judges this repository's
 # changes, as ci/fetch-gate.sh reads it: one line, the release's version and the sha256 of its
-# octoflow-gate-<version>.tar.gz, as the release's .sha256 asset gives it. A quality build reads this file from the main
-# commit it judges by, any other build from its own tree (the Jenkinsfile's Gate stage). Raise it to a new release
-# only after that release exists and its downloaded tarball has passed `sha256sum -c`; lower it to roll back to an
-# earlier one, 0.7.0 or later: the Gate stage runs a release's `gate`, which the ones before do not ship, so going
-# below 0.7.0 means reverting the commit that raised the pin to it with the Gate stage. The release named here must
+# octoflow-gate-<version>.tar.gz, as the release's .sha256 asset gives it. A build reads this file from its own tree
+# (the Jenkinsfile's Gate stage). Raise it to a new release only after that release exists and its downloaded tarball
+# has passed `sha256sum -c`; lower it to roll back to an earlier one, 0.7.0 or later: the Gate stage runs a release's
+# `gate`, which the ones before do not ship, so going below 0.7.0 means reverting the commit that raised the pin to it
+# with the Gate stage. The release named here must
 # read this commit's gate.toml, which refuses keys it does not know.
 0.10.0 8f6007f046be5fcf516496201a41bc7185a3af53c5e7778a9489a0d10414525a

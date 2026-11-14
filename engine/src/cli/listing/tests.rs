@@ -28,7 +28,8 @@ const PR_URL: &str = "https://github.com/o/r/pull/7";
 const QUESTION: &str = "which database?";
 const SHOW_ID: &str = "20260929-120000-a1b2c3";
 const SHOW_DIR: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
-const JOB: &str = crate::ci::fake::JOB;
+/// A Jenkins job a run saved before 0.72.0 removed the Jenkins quality gate; listings still show it.
+const JOB: &str = "Octoflow-AI/octoflow-ai-quality";
 
 /// The keys of a run record, in the order run_record gives them.
 const RUN_RECORD_KEYS: [&str; 25] = [
@@ -946,7 +947,12 @@ fn help() {
 #[test]
 fn show_names_the_gate() {
     let cases = [
-        (vec![("quality_job", Value::from(JOB))], Some(format!("quality    {JOB}"))),
+        (vec![("quality_job", Value::from("local"))], Some("quality    local".to_string())),
+        // A run a release before 0.72.0 started on a Jenkins job, which its resume will put on the local gate.
+        (
+            vec![("quality_job", Value::from(JOB))],
+            Some(format!("quality    local once resumed (Jenkins job {JOB}, removed in 0.72.0)")),
+        ),
         (vec![("quality_gate_disabled", Value::Bool(true))], Some("quality    off (turned off by resume)".to_string())),
         (vec![], None),
     ];

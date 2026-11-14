@@ -123,7 +123,7 @@ pub struct Trial {
     /// metrics.json's: the verdict, "error" or "unfinished".
     pub outcome: Option<String>,
     pub rounds: Option<u64>,
-    /// How many quality builds judged the change, over every round.
+    /// How many quality rounds judged the change, over every round.
     pub quality_rounds: Option<u64>,
     /// Summed over every agent turn; None also when a single turn's are unknown, so that a sum never stands for less
     /// than the whole run.

@@ -212,7 +212,7 @@ fn the_gate_judges_the_restored_tests() {
         ("review", vec![review_turn(1, APPROVE)]),
     ])
     .gated();
-    f.ci.state().outcomes = vec![red(), green()].into();
+    f.judging(vec![red(), green()]);
 
     let mut wf = f.workflow(with_pipeline(&pipeline, RunSettings::default()));
     assert_eq!(wf.run(), verdict(APPROVE));

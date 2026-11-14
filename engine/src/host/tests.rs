@@ -685,37 +685,31 @@ fn no_command_starts_while_the_ctrl_c_is_pending() {
 
 // -- TestChildEnvironment --------------------------------------------------------------------------------------------
 
-/// The engine's environment with the CI credentials, git's pathspec switches and KEEP_ME set.
-pub(crate) fn with_credentials() -> Vec<(&'static str, &'static str)> {
-    let mut set: Vec<(&str, &str)> = vec![
-        ("JENKINS_URL", "https://jenkins.example/"),
-        ("JENKINS_USER", "agents"),
-        ("JENKINS_TOKEN", "jenkins-secret-token"),
-        ("KEEP_ME", "1"),
-    ];
+/// The engine's environment with git's pathspec switches and KEEP_ME set.
+pub(crate) fn with_pathspec_switches() -> Vec<(&'static str, &'static str)> {
+    let mut set: Vec<(&str, &str)> = vec![("KEEP_ME", "1")];
     set.extend(crate::constants::GIT_PATHSPEC_ENV.iter().map(|k| (*k, "1")));
     set
 }
 
-/// Panics unless env, the output of `env`, keeps KEEP_ME and holds none of the credentials or switches.
+/// Panics unless env, the output of `env`, keeps KEEP_ME and holds none of the switches.
 pub(crate) fn assert_scrubbed(env: &str) {
     assert!(env.lines().any(|l| l == "KEEP_ME=1"), "{env}");
-    for k in crate::constants::CI_ENV.iter().chain(&crate::constants::GIT_PATHSPEC_ENV) {
+    for k in crate::constants::GIT_PATHSPEC_ENV {
         assert!(!env.lines().any(|l| l.starts_with(&format!("{k}="))), "{k} reached the process");
     }
-    assert!(!env.contains("jenkins-secret-token"));
 }
 
 #[test]
-fn a_real_process_sees_no_credentials() {
-    let host = ProcessHost::in_environment(environment(None, &with_credentials()).into_iter(), &Interrupt::new());
+fn a_real_process_sees_no_pathspec_switches() {
+    let host = ProcessHost::in_environment(environment(None, &with_pathspec_switches()).into_iter(), &Interrupt::new());
     assert_scrubbed(&host.check(&["env"], None, 60).unwrap());
 }
 
 #[test]
-fn host_commands_over_ssh_get_no_credentials() {
+fn host_commands_over_ssh_get_no_pathspec_switches() {
     // The fake ssh runs the command here, so env shows what ssh itself was started with.
-    let ssh = FakeSsh::new(&with_credentials());
+    let ssh = FakeSsh::new(&with_pathspec_switches());
     assert_scrubbed(&ssh.host.check(&["env"], None, 60).unwrap());
 }
 
@@ -1350,7 +1344,6 @@ fn lease_guarded_delete_at_the_expected_commit() {
     let c = Clones::new();
     let head = c.pushed_run_branch();
     assert_eq!(c.host.remote_branch_commit(&c.a, "orchestrator/x-a1b2c3").unwrap(), Some(head.clone()));
-    assert_eq!(c.host.remote_branches(&c.a, "orchestrator/").unwrap(), ["orchestrator/x-a1b2c3"]);
     c.host.delete_remote_branch_at(&c.a, "orchestrator/x-a1b2c3", &head).unwrap();
     assert_eq!(c.host.remote_branch_commit(&c.a, "orchestrator/x-a1b2c3").unwrap(), None);
     assert_eq!(c.sh(&["git", "-C", &c.a, "for-each-ref", "refs/remotes/origin/orchestrator/"]), "");
@@ -1375,8 +1368,6 @@ fn remote_branch_commit_is_the_exact_name() {
     let c = Clones::new();
     c.pushed_run_branch();
     assert_eq!(c.host.remote_branch_commit(&c.a, "x-a1b2c3").unwrap(), None);
-    c.host.delete_remote_branch(&c.a, "orchestrator/x-a1b2c3").unwrap();
-    assert!(c.host.remote_branches(&c.a, "orchestrator/").unwrap().is_empty());
 }
 
 #[test]

@@ -14,18 +14,18 @@ use std::fmt;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use crate::constants::CONSOLE_TAIL_LINES;
 use crate::error::OrchestratorError;
 use crate::handoff::first_line_word;
 use crate::map::Map;
 
-/// The words of the gate line, the file's first non-blank one. Only the engine writes BUILD_FAILED, for a build that
-/// ended before its Gate stage or a local gate that could not judge (build_failed_report, could_not_judge_report).
+/// The words of the gate line, the file's first non-blank one. Only the engine writes BUILD_FAILED, for a gate that
+/// could not judge (could_not_judge_report), as a release before 0.72.0 also wrote it for a Jenkins build that ended
+/// before its Gate stage.
 pub const QUALITY_OK: &str = "OK";
 pub const QUALITY_ERROR: &str = "ERROR";
 pub const QUALITY_BUILD_FAILED: &str = "BUILD_FAILED";
-/// Only the engine writes LEAK too: gitleaks found a secret in the quality round's snapshot, so it was not pushed and
-/// Jenkins did not judge it (leak_report).
+/// Only the engine writes LEAK too: gitleaks found a secret in the quality round's snapshot, so the gate did not judge
+/// it (leak_report).
 pub const QUALITY_LEAK: &str = "LEAK";
 /// The quality.json schema_version read_report reads: the gate's schema/quality-v1.json.
 pub const QUALITY_SCHEMA_VERSION: u64 = 1;
@@ -110,60 +110,8 @@ pub fn leak_report(leaks: &[Leak], intro: &str) -> String {
     lines.join("\n") + "\n"
 }
 
-/// The quality file of a build that ended before its Gate stage, so that nothing judged the change: GATE:
-/// BUILD_FAILED, then intro, then a section of tests, the (name, detail) of the failing tests Jenkins reported, None
-/// when it has no test report, and one of console, the end of the build's console, unless it is empty.
-pub fn build_failed_report(intro: &str, tests: Option<&[(String, String)]>, console: &str) -> String {
-    let mut out: Vec<String> = [&format!("GATE: {QUALITY_BUILD_FAILED}"), "", intro, "", QUALITY_FAILING_TESTS, ""]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    match tests {
-        None => out.push("Jenkins has no test report for this build.".into()),
-        Some(tests) => {
-            for (name, detail) in tests.iter().take(QUALITY_FINDINGS_LIMIT) {
-                out.push(one_line(&format!("- `{name}`: {}", failure_summary(detail))));
-            }
-            if tests.is_empty() {
-                out.push("None.".into());
-            }
-            if tests.len() > QUALITY_FINDINGS_LIMIT {
-                out.push(format!("- and {} more.", tests.len() - QUALITY_FINDINGS_LIMIT));
-            }
-        }
-    }
-    if !console.is_empty() {
-        out.push(String::new());
-        out.push(format!("## The last {CONSOLE_TAIL_LINES} lines of the build's console"));
-        out.extend(["", "````", console, "````"].map(String::from));
-    }
-    out.join("\n") + "\n"
-}
-
-/// The environment variable the engine's own generated-input tests read their run seed from, a decimal u64 (unset or
-/// empty, a run has none), and which a failing one names on its standard error (test_support's Rng), so that
-/// build_failed_report can keep the seed.
-pub const RUN_SEED_VARIABLE: &str = "OCTOFLOW_TEST_SEED";
-
-/// What a failing test's line in build_failed_report says of detail, the failure text Jenkins reported for it: its
-/// first line, "failed" when it has none; for a Rust panic, whose first line only says where, the message on the line
-/// after too; then every line that names RUN_SEED_VARIABLE, so that the case can be generated again. The parts are
-/// joined by spaces, still with any line breaks inside them (one_line escapes those).
-fn failure_summary(detail: &str) -> String {
-    let mut lines = detail.trim().lines();
-    let Some(first) = lines.next() else { return "failed".to_string() };
-    let mut parts = vec![first];
-    let rust_panic = first.starts_with("thread '") && first.contains("' panicked at ") && first.ends_with(':');
-    if rust_panic {
-        parts.extend(lines.next());
-    }
-    parts.extend(lines.filter(|line| line.contains(RUN_SEED_VARIABLE)));
-    parts.join(" ")
-}
-
 /// The quality file of a local gate that could not judge the change (crate::local_gate::LocalVerdict::CouldNotJudge):
-/// GATE: BUILD_FAILED, as for a Jenkins build whose gate could not judge, then intro, then said, the end of what the
-/// gate wrote on standard error, unless it is empty.
+/// GATE: BUILD_FAILED, then intro, then said, the end of what the gate wrote on standard error, unless it is empty.
 pub fn could_not_judge_report(intro: &str, said: &str) -> String {
     let mut out: Vec<String> = [&format!("GATE: {QUALITY_BUILD_FAILED}"), "", intro].map(|s| s.to_string()).to_vec();
     if !said.is_empty() {

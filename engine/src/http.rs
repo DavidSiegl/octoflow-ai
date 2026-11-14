@@ -1,8 +1,8 @@
-//! One HTTP request at a time, as orchestrator.py's `urlopen` makes it: the seam through which the engine talks to
-//! Jenkins (crate::ci) and PyPI (crate::pypi), and through which their tests stand in for both servers.
+//! One HTTP GET at a time, as orchestrator.py's `urlopen` makes it: the seam through which the engine asks PyPI
+//! (crate::pypi) and crates.io (crate::crates_io), and through which their tests stand in for both servers.
 //!
-//! [`Http`] is the trait; [`HttpClient`] sends over the network. A fake, such as the tests' `FakeJenkins` and
-//! `FakePyPI`, answers in memory, so that everything above the transport (each URL the engine builds, each answer it
+//! [`Http`] is the trait; [`HttpClient`] sends over the network. A fake, such as the tests' `FakePyPI`, answers in
+//! memory, so that everything above the transport (each URL the engine builds, each answer it
 //! reads, each error it words) runs in the tests as it runs for real.
 
 use std::path::PathBuf;
@@ -15,34 +15,14 @@ use ureq::{Agent, Proxy};
 
 use crate::error::os_error;
 
-/// The two methods the engine sends.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Method {
-    Get,
-    Post,
-}
-
-impl Method {
-    /// The method's name as a request line and an error message write it.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Method::Get => "GET",
-            Method::Post => "POST",
-        }
-    }
-}
-
-/// A request, as [`Http::send`] sends it.
+/// A GET request, as [`Http::send`] sends it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Request {
-    pub method: Method,
     /// The absolute http or https URL, its query included.
     pub url: String,
     /// Headers to send, by name and value. An `Authorization` header goes only to url's server: a redirect leaves it
     /// behind, as urllib's add_unredirected_header does.
     pub headers: Vec<(String, String)>,
-    /// The body, as `application/x-www-form-urlencoded` ([`urlencode`]); None for none.
-    pub form: Option<String>,
     /// Seconds that connecting, and then each read or write of the connection, may take, as urlopen's timeout.
     pub timeout: u64,
 }
@@ -50,33 +30,22 @@ pub struct Request {
 impl Request {
     /// The value of the header name, compared without regard to case; None when the request has none.
     pub fn header(&self, name: &str) -> Option<&str> {
-        find_header(&self.headers, name)
+        self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
     }
 }
 
-/// A 2xx answer: the status, the headers, and the whole body.
+/// A 2xx answer: the status and the whole body.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Response {
     pub status: u16,
-    /// By name and value, in the order the server sent them; a value that is not UTF-8 is left out.
-    pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
 }
 
 impl Response {
-    /// A 200 answer with body and no headers: what a fake answers most requests with.
+    /// A 200 answer with body: what a fake answers most requests with.
     pub fn ok(body: impl Into<Vec<u8>>) -> Response {
-        Response { status: 200, headers: Vec::new(), body: body.into() }
+        Response { status: 200, body: body.into() }
     }
-
-    /// The value of the header name, compared without regard to case; None when the answer has none.
-    pub fn header(&self, name: &str) -> Option<&str> {
-        find_header(&self.headers, name)
-    }
-}
-
-fn find_header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
-    headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
 }
 
 /// Why a request got no 2xx answer.
@@ -148,37 +117,17 @@ impl HttpClient {
 impl Http for HttpClient {
     fn send(&self, request: &Request) -> Result<Response, HttpError> {
         let agent = self.agent(request)?;
-        let answer = match (request.method, &request.form) {
-            (Method::Get, _) => {
-                let mut builder = agent.get(&request.url);
-                for (name, value) in &request.headers {
-                    builder = builder.header(name, value);
-                }
-                builder.call()
-            }
-            (Method::Post, form) => {
-                let mut builder = agent.post(&request.url);
-                for (name, value) in &request.headers {
-                    builder = builder.header(name, value);
-                }
-                match form {
-                    Some(form) => builder.content_type("application/x-www-form-urlencoded").send(form.as_bytes()),
-                    None => builder.send_empty(),
-                }
-            }
-        };
-        let mut answer = answer.map_err(|e| no_answer(&e))?;
+        let mut builder = agent.get(&request.url);
+        for (name, value) in &request.headers {
+            builder = builder.header(name, value);
+        }
+        let mut answer = builder.call().map_err(|e| no_answer(&e))?;
         let status = answer.status().as_u16();
         if !(200..300).contains(&status) {
             return Err(HttpError::Status(status));
         }
-        let headers = answer
-            .headers()
-            .iter()
-            .filter_map(|(k, v)| Some((k.as_str().to_string(), v.to_str().ok()?.to_string())))
-            .collect();
         let body = answer.body_mut().with_config().limit(u64::MAX).read_to_vec().map_err(|e| no_answer(&e))?;
-        Ok(Response { status, headers, body })
+        Ok(Response { status, body })
     }
 }
 
@@ -310,25 +259,10 @@ fn root_certs(env: &dyn Fn(&str) -> Option<String>) -> RootCerts {
 /// s with every byte of its UTF-8 that is not a letter, a digit or one of `_.-~` written as `%XX`, in upper case: a
 /// path segment or a query value that cannot end the part it is in.
 pub fn quote(s: &str) -> String {
-    escaped(s, false)
-}
-
-/// The pairs as a query string or a form body: each name and value quoted as [`quote`] quotes, but a blank written as
-/// `+`, joined by `=` and `&` in the order given.
-pub fn urlencode(pairs: &[(&str, &str)]) -> String {
-    pairs
-        .iter()
-        .map(|(name, value)| format!("{}={}", escaped(name, true), escaped(value, true)))
-        .collect::<Vec<_>>()
-        .join("&")
-}
-
-fn escaped(s: &str, plus_for_blank: bool) -> String {
     let mut out = String::with_capacity(s.len());
     for &b in s.as_bytes() {
         match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'.' | b'-' | b'~' => out.push(char::from(b)),
-            b' ' if plus_for_blank => out.push('+'),
             _ => out.push_str(&format!("%{b:02X}")),
         }
     }

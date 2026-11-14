@@ -2,21 +2,19 @@
 //! FakeHost, a FakeHerdr playing the roles' scripts, a FakeClock, the human as Told, and the turn helpers.
 
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use super::{Clocks, Collaborators, Human, RunSettings, Workflow};
-use crate::ci::fake::{jenkins_on, jenkins_with, FakeJenkins, Outcome};
-use crate::ci::QualityGate;
 use crate::herdr::fake::{FakeHerdr, Turn};
 use crate::http::Http;
 use crate::pypi::fake::FakePyPI;
 use crate::package_index::PackageIndexes;
 use crate::host::fake::{FakeClock, FakeHost};
-use crate::host::{Host, ProcessHost};
+use crate::host::{Exec, Host, ProcessHost};
 use crate::interrupt::Interrupt;
 use serde_json::Value;
-use crate::map::Map;
 use crate::json::Object;
 use crate::runs::pid_alive;
 use crate::state::{AgentRecord, RunState, TurnRecord};
@@ -87,11 +85,10 @@ pub(crate) struct Fixture {
     pub pid_alive: Box<dyn Fn(i64) -> bool>,
     /// The state the Workflow starts from.
     pub state: RunState,
-    /// The Jenkins behind a Jenkins quality_gate, Python's FakeCI: there for every fixture, so that a run without the quality gate
-    /// can be shown to ask it nothing.
-    pub ci: Arc<FakeJenkins>,
-    /// The quality gate the Workflow is given: None for a run without one, until gated or gated_locally gives it one.
-    pub quality_gate: Option<QualityGate>,
+    /// Whether the Workflow's settings turn the quality gate on, whatever a test's say: false until gated turns it on.
+    pub quality_gate_on: bool,
+    /// The local gate gated plays on the host: what each of its runs does, and what it was asked.
+    pub gate: Rc<RefCell<FakeGate>>,
     /// The PyPI behind the Workflow's indexes, with no project unless a test adds them.
     pub pypi: Arc<FakePyPI>,
     /// The indexes the Workflow is given: pypi, and a crates.io that knows no crate.
@@ -137,8 +134,8 @@ impl Fixture {
             interrupt,
             pid_alive: Box::new(pid_alive),
             state,
-            ci: FakeJenkins::new(),
-            quality_gate: None,
+            quality_gate_on: false,
+            gate: Rc::default(),
             pypi,
             indexes,
         }
@@ -149,24 +146,18 @@ impl Fixture {
         self.host.state().processes = Some(ProcessHost::local(&self.interrupt));
     }
 
-    /// The fixture with the quality gate on: the Workflow is given the quality job on ci, with every credential, as
-    /// Python's gated gives it.
+    /// The fixture with the quality gate on: the local gate (crate::local_gate), its commands played by the host as
+    /// gate says, ahead of any run_command the host had, which answers the rest.
     pub fn gated(mut self) -> Fixture {
-        self.quality_gate = Some(QualityGate::Jenkins(jenkins_on(&self.ci)));
+        self.quality_gate_on = true;
+        let earlier = self.host.state().run_command.take();
+        self.host.state().run_command = Some(plays(Rc::clone(&self.gate), self.interrupt.clone(), earlier));
         self
     }
 
-    /// The fixture with the local quality gate on (crate::local_gate), whose commands the host's run_command answers.
-    pub fn gated_locally(mut self) -> Fixture {
-        self.quality_gate = Some(QualityGate::Local);
-        self
-    }
-
-    /// The fixture with the quality gate on, asked with these credentials of CI_ENV, by name: Python's gated with
-    /// env.
-    pub fn gated_with(mut self, credentials: &Map<String>) -> Fixture {
-        self.quality_gate = Some(QualityGate::Jenkins(jenkins_with(&self.ci, credentials)));
-        self
+    /// Have the local gate's next runs judge as outcomes say, in order, and green ones after them.
+    pub fn judging(&self, outcomes: Vec<Outcome>) {
+        self.gate.borrow_mut().runs = outcomes.into_iter().map(GateRun::Judges).collect();
     }
 
     /// The fixture whose Workflow asks this PyPI instead.
@@ -209,7 +200,8 @@ impl Fixture {
     }
 
     pub fn try_workflow(&self, settings: RunSettings) -> Result<Workflow<'_>, crate::error::OrchestratorError> {
-        Workflow::new(self.collaborators(), self.state.clone(), settings)
+        let quality_gate_on = settings.quality_gate_on || self.quality_gate_on;
+        Workflow::new(self.collaborators(), self.state.clone(), RunSettings { quality_gate_on, ..settings })
     }
 
     /// The fixture's fakes as a Workflow is given them.
@@ -221,7 +213,6 @@ impl Fixture {
             human: &self.told,
             interrupt: &self.interrupt,
             pid_alive: &*self.pid_alive,
-            quality_gate: self.quality_gate.as_ref(),
             indexes: &self.indexes,
         }
     }
@@ -478,15 +469,49 @@ pub(crate) fn saved_run(phase: &str, rnd: u32, roles: &[&str]) -> RunState {
 
 // -- The quality gate's, by Python's names -----------------------------------------------------------------------
 
-/// The ref of round 1's first quality round.
-pub(crate) const REF_1_1: &str = "orchestrator-ci/a1b2c3-1-q1";
+/// What one judging run of the fake local gate leaves: Python's outcome().
+#[derive(Clone, Debug)]
+pub(crate) struct Outcome {
+    /// The quality.md it writes.
+    pub quality: String,
+    /// The quality.json it writes with quality.md.
+    pub quality_json: String,
+    /// The gate's exit status: 0 for a passing gate, 1 for a failing one.
+    pub exit: i32,
+    /// How many probes still see it running.
+    pub polls: u32,
+}
 
-/// origin's quality snapshot branches (`CI_REF_PREFIX`) with their commits, leaving out the run's own branch, which
-/// publishing pushes and the end keeps.
-pub(crate) fn ci_refs(host: &FakeHost) -> Vec<(String, String)> {
-    let s = host.state();
-    let snapshots = s.remote.iter().filter(|(b, _)| b.starts_with(crate::constants::CI_REF_PREFIX));
-    snapshots.map(|(b, c)| (b.to_string(), c.clone())).collect()
+impl Outcome {
+    /// A run whose quality.md says gate and the numbered findings, with a quality.json that says the same
+    /// (report_json), exiting as the gate does for such a verdict.
+    pub fn gate(gate: &str, findings: &[&str]) -> Outcome {
+        let numbered: Vec<String> = findings.iter().enumerate().map(|(k, f)| format!("{}. {f}", k + 1)).collect();
+        let numbered = if numbered.is_empty() { "None.".to_string() } else { numbered.join("\n") };
+        let quality = format!(
+            "GATE: {gate}\n\n`orchestrator.py gate` judged the working tree.\n\n## Issues on changed lines\n\n{numbered}\n"
+        );
+        Outcome { quality_json: report_json(&quality), quality, exit: i32::from(gate != "OK"), polls: 2 }
+    }
+}
+
+/// A quality.json that says what quality, a quality file, says as the engine reads it (parse_gate, gate_failures):
+/// its gate, its failed conditions, and a finding that fails it per fingerprint, a failing test's too, with only the
+/// fields the engine reads.
+pub(crate) fn report_json(quality: &str) -> String {
+    let failures = crate::quality::gate_failures(quality);
+    let findings: Vec<Value> = failures
+        .fingerprints
+        .iter()
+        .flat_map(|(check, found)| {
+            found.iter().map(move |f| serde_json::json!({"check": check, "fails": true, "fingerprint": f}))
+        })
+        .collect();
+    let report = serde_json::json!({
+        "schema_version": 1, "gate": crate::quality::parse_gate(quality), "failed_conditions": failures.conditions,
+        "findings": findings, "failing_tests": null,
+    });
+    report.to_string()
 }
 
 /// A build whose gate fails on an unused import: Python's outcome(**RED).
@@ -513,52 +538,152 @@ pub(crate) fn fix_turn(n: u32, q: u32) -> Turn {
     })
 }
 
-/// FakeJenkins's request names without repeats in a row, which polls make.
-pub(crate) fn collapsed(names: &[String]) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for name in names {
-        if out.last() != Some(name) {
-            out.push(name.clone());
-        }
-    }
-    out
-}
-
-/// Whether text holds the Jenkins token of the tests: Python's leaks.
-pub(crate) fn holds_token(text: &str) -> bool {
-    text.contains(crate::ci::fake::JENKINS_TOKEN)
-}
-
-/// A run saved in quality round q of round 1 of the default workflow, with the gate's job: Python's quality_state.
+/// A run saved in quality round q of round 1 of the default workflow, with the local gate: Python's quality_state.
 pub(crate) fn quality_state(q: u32) -> RunState {
     let mut state = saved_run("quality", 1, &["spec", "build"]);
-    state.quality_job = Some(crate::ci::fake::JOB.to_string());
+    state.quality_job = Some("local".to_string());
     state.quality_round = q;
     state
 }
 
-/// make_workflow with the quality gate, its builds playing outcomes, in order, and then green ones.
+/// make_workflow with the quality gate, its runs judging as outcomes say, in order, and then green ones.
 pub(crate) fn gated_building(script: Vec<(&str, Vec<Turn>)>, outcomes: Vec<Outcome>) -> Fixture {
     let f = Fixture::new(script).gated();
-    f.ci.state().outcomes = outcomes.into();
+    f.judging(outcomes);
     f
 }
 
-/// RunState::ci of a round in flight, as pairs of its fields.
-pub(crate) fn ci_of(fields: &[(&str, Value)]) -> Object {
-    object(fields.iter().cloned())
+/// What one run of the fake local gate does: judge, writing an Outcome's quality.md and quality.json and exiting
+/// with its exit status, once as many probes as the Outcome's polls have seen it running; not judge,
+/// exiting 2 at once with this on standard error; or run on until it is stopped.
+pub(crate) enum GateRun {
+    Judges(Outcome),
+    CannotJudge(&'static str),
+    Hangs,
+}
+
+/// The fake local gate: what its runs do, and what it was asked, in order.
+#[derive(Default)]
+pub(crate) struct FakeGate {
+    /// What the next runs do, in order; a run started with none left judges green().
+    pub runs: VecDeque<GateRun>,
+    /// The arguments of each job started, after LAUNCH's own: the round's directory, version, sha256, URL and base.
+    pub jobs: Vec<Vec<String>>,
+    /// How many times a job was stopped.
+    pub stops: usize,
+    /// The job running, if one is: its directory, what it does, and how many more probes see it running (None: all).
+    running: Option<(String, GateRun, Option<u32>)>,
+}
+
+impl FakeGate {
+    /// Start a job of the next run in directory job[0], job being its arguments after LAUNCH's own; a run that ends at
+    /// once leaves its files on host now.
+    fn start(&mut self, host: &FakeHost, job: &[&str]) {
+        let out = job[0].to_string();
+        self.jobs.push(job.iter().map(|a| a.to_string()).collect());
+        let run = self.runs.pop_front().unwrap_or(GateRun::Judges(green()));
+        let probes = match &run {
+            GateRun::Judges(outcome) => Some(outcome.polls),
+            GateRun::CannotJudge(_) => Some(0),
+            GateRun::Hangs => None,
+        };
+        if probes == Some(0) {
+            leave_files(host, &out, run);
+        } else {
+            self.running = Some((out, run, probes));
+        }
+    }
+
+    /// Whether a job is still running, as one probe sees it; the job that ends at this probe leaves its files on host.
+    fn probe(&mut self, host: &FakeHost) -> bool {
+        let running = match &mut self.running {
+            None => false,
+            Some((_, _, None)) => true,
+            Some((_, _, Some(left))) => {
+                *left -= 1;
+                *left > 0
+            }
+        };
+        if !running {
+            if let Some((out, run, _)) = self.running.take() {
+                leave_files(host, &out, run);
+            }
+        }
+        running
+    }
+}
+
+/// Leave on host the files the job of directory out writes once run ends: the job's, so no write of the engine's.
+fn leave_files(host: &FakeHost, out: &str, run: GateRun) {
+    let write = |name: &str, text: &str| host.state().files.insert(format!("{out}/{name}"), text.to_string());
+    match run {
+        GateRun::Judges(outcome) => {
+            write("quality.md", &outcome.quality);
+            write("quality.json", &outcome.quality_json);
+            write("exit", &format!("{}\n", outcome.exit));
+        }
+        GateRun::CannotJudge(said) => {
+            write("gate.err", said);
+            write("exit", "2\n");
+        }
+        GateRun::Hangs => unreachable!("a hanging job does not end"),
+    }
+}
+
+/// Remove host's files at paths and under them, as `rm -rf -- paths` does.
+fn remove_tree(host: &FakeHost, paths: &[&str]) {
+    let mut state = host.state();
+    let under = |file: &str| paths.iter().any(|p| file == *p || file.starts_with(&format!("{p}/")));
+    let gone: Vec<String> = state.files.keys().filter(|file| under(file)).map(String::from).collect();
+    for file in gone {
+        state.files.remove(&file);
+    }
+}
+
+/// A run_command playing the local gate's commands as gate says: the preflight passes, and each job started plays
+/// gate's next run. Commands that are not the gate's go to earlier, if given.
+fn plays(
+    gate: Rc<RefCell<FakeGate>>,
+    interrupt: Interrupt,
+    mut earlier: Option<crate::host::fake::RunCommand>,
+) -> crate::host::fake::RunCommand {
+    Box::new(move |host, argv| {
+        let exits = |code: i32, stdout: &str| {
+            let command = argv.join(" ");
+            Some(Ok(Exec { command, status: code, stdout: stdout.as_bytes().to_vec(), stderr: Vec::new() }))
+        };
+        match argv {
+            // The preflight, and the round's directory made.
+            ["sh", "-c", script] if script.contains("mkdir -p") => exits(0, ""),
+            // Each round's first start makes job-1.
+            ["sh", "-c", script, "_", _out] if script.contains("job-$k") => exits(0, "1\n"),
+            ["rm", "-rf", "--", paths @ ..] => {
+                remove_tree(host, paths);
+                exits(0, "")
+            }
+            ["sh", "-c", _, "_", _log, "sh", "-c", _, _name, job @ ..] => {
+                gate.borrow_mut().start(host, job);
+                exits(0, "4242\n")
+            }
+            ["sh", "-c", script, "_", "4242"] if script.starts_with("kill -0") => {
+                let running = gate.borrow_mut().probe(host);
+                exits(i32::from(!running), "")
+            }
+            ["sh", "-c", _, "_", "4242", _name, "tracked" | "left"] => {
+                assert!(!interrupt.is_raised(), "a stop started with a Ctrl-C pending, which ProcessHost refuses");
+                let mut gate = gate.borrow_mut();
+                gate.stops += 1;
+                gate.running = None;
+                exits(0, "")
+            }
+            _ => earlier.as_mut().and_then(|earlier| earlier(host, argv)),
+        }
+    })
 }
 
 impl Fixture {
-    /// Python's resume_gated: a resume of state with the gate on, the ref in flight, if any, on origin, and round 1's
-    /// build report written.
+    /// Python's resume_gated: a resume of state with the gate on, and round 1's build report written.
     pub fn resume_gated(host: Rc<FakeHost>, state: RunState, script: Vec<(&str, Vec<Turn>)>, alive: &[&str]) -> Fixture {
-        if let (Some(Value::String(git_ref)), Some(Value::String(sha))) = (state.ci.get("ref"), state.ci.get("sha")) {
-            let mut h = host.state();
-            if !h.remote.contains_key(git_ref) {
-                h.remote.insert(git_ref.as_str(), sha.clone());
-            }
-        }
         host.state().files.insert(state.build_path(1), "report 1".to_string());
         Fixture::resume(host, state, script, alive, &[]).gated()
     }
