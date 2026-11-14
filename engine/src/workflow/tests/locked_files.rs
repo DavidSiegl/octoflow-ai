@@ -1,8 +1,8 @@
-//! TestLockedFiles: the Test Writer locks the tests it writes, a later editing turn that changes them has them
-//! restored, and the Reviewer is told.
+//! The Test Writer locks the tests it writes, a later editing turn that changes them has them restored, and the
+//! Reviewer is told.
 //!
-//! Not here: test_only_an_editing_step_may_lock and test_locks_round_trip_through_a_workflow_file, which are
-//! crate::pipeline's and crate::workflow_file's (ticket 04).
+//! Not here: which steps may lock, and locks in a workflow file, which are crate::pipeline's and
+//! crate::workflow_file's.
 
 use super::*;
 use crate::pipeline::Pipeline;
@@ -182,7 +182,7 @@ fn a_record_saved_before_the_restore_is_restored_on_resume() {
 
 #[test]
 fn a_malformed_restored_record_stops_the_run_naming_it() {
-    // Python's engine fails on a KeyError when the Reviewer's prompt reads the record; no engine writes one so.
+    // Only a state.json edited by hand has such a record.
     let mut state = saved_run("build", 1, &["spec", "build"]);
     state.locked = tests_locked();
     state.restored = vec![record(r#"{"round": 1, "file": "locked-build-1.diff"}"#)];

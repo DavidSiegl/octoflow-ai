@@ -1,11 +1,10 @@
-//! The agent harnesses a role can run in (HARNESS_NAMES, herdr's `--kind`), as orchestrator.py's "Agent harnesses"
-//! section and its session logs know them, but for opencode's model and granted directory, which go in its config
-//! (Config::OpencodeEnv): how each harness's agent starts, resumes a saved session and is granted a directory
-//! ([`Harness::launch`]), and where and how it records the tokens a session used ([`SessionLog`],
-//! [`Harness::session_usage`]).
+//! The agent harnesses a role can run in (HARNESS_NAMES, herdr's `--kind`): how each harness's agent starts, resumes a
+//! saved session and is granted a directory ([`Harness::launch`]), and where and how it records the tokens a session
+//! used ([`SessionLog`], [`Harness::session_usage`]). opencode takes its model and granted directory from its config
+//! instead of its arguments (Config::OpencodeEnv).
 //!
-//! What Python keeps in four tables by harness (PERMISSION_ARGS, RESUME_ARGS, ADD_DIR_ARGS and SESSION_LOGS) is one
-//! row per harness here, in [`HARNESSES`], so that adding a harness is adding a row.
+//! Everything a harness differs in, its permission, resume and directory arguments and its session logs, is one row
+//! per harness, in [`HARNESSES`], so that adding a harness is adding a row.
 
 use std::collections::HashSet;
 
@@ -179,8 +178,7 @@ pub fn replaced_by(name: &str) -> Option<&'static str> {
 }
 
 /// The harness named name. Errors: name is not one of HARNESS_NAMES, as a saved run's state.json or a workflow file
-/// can name; for a name in REPLACED, the message names the harness that replaced it. The Python engine fails on such
-/// a name with a KeyError.
+/// can name; for a name in REPLACED, the message names the harness that replaced it.
 pub fn harness(name: &str) -> Result<&'static Harness, OrchestratorError> {
     HARNESSES.iter().find(|h| h.kind == name).ok_or_else(|| {
         OrchestratorError(match replaced_by(name) {
@@ -208,7 +206,7 @@ impl Harness {
 
     /// How a role's agent starts in this harness: with permission_mode's equivalent (none when the harness has none),
     /// into session if given one, on model if given one, and with access to extra_dir, and to every file under it,
-    /// where the harness can grant it. An empty string is none, as Python takes it.
+    /// where the harness can grant it. An empty string is none.
     ///
     /// opencode's grant is a pattern, in which it reads `*` and `?` as wildcards and `\` as `/`, with no escape for
     /// them; so an extra_dir holding any of them gets no grant, rather than one that also reaches other directories.
@@ -287,7 +285,7 @@ impl Harness {
 /// The tokens of one answer of the model, as a session log records them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Usage {
-    /// When it was written, in seconds since the epoch, as Python's datetime.timestamp() gives them.
+    /// When it was written, in seconds since the epoch, with the fraction of a second the log gives.
     pub when: f64,
     /// Its tokens, by kind.
     pub tokens: Tokens,
@@ -329,8 +327,8 @@ impl Tokens {
     }
 }
 
-/// A Claude Code message id as Python's set of them tells ids apart: a number equal to another is the same id, true
-/// being 1 and false 0, and a missing id the same as null.
+/// A Claude Code message id as session_usage tells ids apart: a number equal to another is the same id, true being 1
+/// and false 0, and a missing id the same as null.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum MessageId {
     None,
@@ -342,7 +340,7 @@ enum MessageId {
 }
 
 impl MessageId {
-    /// The id value is; None for a list or an object, which a set cannot hold (Python's TypeError).
+    /// The id value is; None for a list or an object, which is no id: the line it is on is not counted.
     fn of(value: Option<&Value>) -> Option<MessageId> {
         Some(match value {
             None | Some(Value::Null) => MessageId::None,
@@ -360,11 +358,11 @@ impl MessageId {
 }
 
 /// The usage one line of a session log in format records, as session_usage reads it: None for a line that is not a
-/// record of an answer, as Python's loop skips it. seen holds the ids of the Claude Code answers counted so far, and
-/// gains this line's, as Python's set does, before its counts are read.
+/// record of an answer, which session_usage skips. seen holds the ids of the Claude Code answers counted so far, and
+/// gains this line's before its counts are read, so a line whose counts are unreadable still marks its id as seen.
 fn answer_usage(format: LogFormat, line: &str, seen: &mut HashSet<MessageId>) -> Option<Usage> {
-    // Each step in the order Python's takes it: a step that fails skips the line, and the steps before it have had
-    // their effect on seen.
+    // Each step in this order: a step that fails skips the line, and the steps before it have had their effect on
+    // seen.
     let entry: Value = serde_json::from_str(&without_lone_surrogates(line)).ok()?;
     let entry = entry.as_object()?;
     let message = entry.get("message")?.as_object()?;
@@ -388,7 +386,7 @@ fn answer_usage(format: LogFormat, line: &str, seen: &mut HashSet<MessageId>) ->
         }
     };
     // The input and output counts must be there, and the cache counts are 0 when they are not; each is an int, not a
-    // bool or a float (Python's `type(v) is int`).
+    // bool or a float.
     let usage = usage.as_object()?;
     let (input, output) = (usage.get(keys[0])?, usage.get(keys[1])?);
     let cache = |key: &str| usage.get(key).map_or(Some(0), Value::as_i64);

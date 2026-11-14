@@ -78,7 +78,7 @@ impl ProcessHost {
     }
 
     /// As in_environment, each command run by run in place of a process, ssh included for a host over_ssh makes of
-    /// it: Python's Host(run=...), for the tests.
+    /// it, for the tests.
     pub(crate) fn with_runner(
         vars: impl Iterator<Item = (OsString, OsString)>,
         run: impl Fn(&[String], Option<&[u8]>, Option<Duration>, &[(OsString, OsString)]) -> Result<(i32, Vec<u8>, Vec<u8>), ProcessError>
@@ -95,7 +95,7 @@ impl ProcessHost {
     }
 
     /// A Host that runs its commands on ssh_target over SSH, starting them as this one does; on this machine when
-    /// ssh_target is empty, as Python's Host takes an empty target.
+    /// ssh_target is empty.
     pub fn over_ssh(&self, ssh_target: &str) -> ProcessHost {
         ProcessHost { ssh_target: (!ssh_target.is_empty()).then(|| ssh_target.to_string()), ..self.clone() }
     }
@@ -116,7 +116,7 @@ impl ProcessHost {
             }
             Err(ProcessError::Start(e)) => Err(failed(os_error(&e, Some(&argv[0])))),
             Err(ProcessError::Io(e)) => Err(failed(os_error(&e, None))),
-            Err(ProcessError::Timeout) => Err(failed(timed_out(&argv, timeout))),
+            Err(ProcessError::Timeout) => Err(failed(format!("timed out after {timeout} seconds"))),
             Err(ProcessError::Interrupted) => Err(failed("interrupted".to_string())),
         }
     }
@@ -198,12 +198,6 @@ fn ssh_argv(target: &str, options: Vec<String>, argv: &[&str]) -> Vec<String> {
     batch.into_iter().chain(options).chain([target.to_string(), shlex_join(argv)]).collect()
 }
 
-/// What Python's subprocess.TimeoutExpired says of argv, run with a timeout of seconds.
-fn timed_out(argv: &[String], seconds: u64) -> String {
-    let listed: Vec<String> = argv.iter().map(|a| format!("{a:?}")).collect();
-    format!("Command '[{}]' timed out after {seconds} seconds", listed.join(", "))
-}
-
 /// Why run_process gave no output.
 #[derive(Debug)]
 pub(crate) enum ProcessError {
@@ -219,11 +213,11 @@ pub(crate) enum ProcessError {
 }
 
 /// How long a command has after the SIGINT of an Interrupt to exit before its process group is killed (SIGKILL), in
-/// milliseconds: Python's subprocess waits as long (Popen._sigint_wait_secs) for a child to exit on the Ctrl-C it got
-/// too before it kills it. The SIGINT first lets git remove its lock files, as it does at a Ctrl-C.
+/// milliseconds. The SIGINT first lets git remove its lock files, as it does at a Ctrl-C, which takes it a few
+/// milliseconds; 250 leaves room for a loaded machine and still ends a run without a wait the human notices.
 const INTERRUPT_GRACE_MS: u64 = 250;
 
-/// argv's exit status, as Python's returncode gives it, and its standard output and error, once it has exited and
+/// argv's exit status (Exec::status), and its standard output and error, once it has exited and
 /// closed both: run with exactly env as its environment, argv[0] found on its PATH, stdin as its standard input (none
 /// when None), in a process group of its own, so that when it has not finished within timeout, it and every process it
 /// started that stayed in its group are killed (SIGKILL); a timeout of None lets it run as long as it takes. When
@@ -267,8 +261,7 @@ pub(crate) fn run_process(
         pending += 1;
         thread::spawn(move || {
             let written = match pipe.write_all(&data) {
-                // A command that stops reading its input is judged by its status and output, as Python's
-                // communicate judges it.
+                // A command that stops reading its input is judged by its status and output.
                 Err(e) if e.kind() == ErrorKind::BrokenPipe => Ok(()),
                 done => done,
             };
@@ -446,7 +439,7 @@ struct SshControl {
 impl Drop for SshControl {
     fn drop(&mut self) {
         if let Some(dir) = &self.dir {
-            // As Python's atexit rmtree(ignore_errors=True): a directory something else removed is no failure, and
+            // A directory something else removed is no failure, and
             // nothing is left to report another to.
             let _ = std::fs::remove_dir_all(dir);
         }

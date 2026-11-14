@@ -1,8 +1,8 @@
-//! The orchestrator program's command line, as orchestrator.py's main: [`main`] reads the arguments (crate::cli::args),
-//! connects to herdr and the project's host, runs the command and turns how it ended into the program's exit status
-//! and its last lines. A command joins as a [`Command`] arm of [`run_command`], given the same [`Connected`], or of
-//! [`herdrless_command`], given the same [`Local`], for one that needs no herdr pane: every command of Python's but
-//! gui, not ported, and serve, crate::serve's, which main runs before it starts the others' signal handling. `run`
+//! The orchestrator program's command line: [`main`] reads the arguments (crate::cli::args), connects to herdr and the
+//! project's host, runs the command and turns how it ended into the program's exit status and its last lines. A command
+//! joins as a [`Command`] arm of [`run_command`], given the same [`Connected`], or, when it needs no herdr pane, of
+//! [`herdrless_command`], given the same [`Local`]. serve is neither: it is crate::serve's, which main runs before it
+//! starts the other commands' signal handling. `run`
 //! and `resume` are here and in crate::cli::start; the commands about a project's runs in crate::cli::listing, prune
 //! and close; `workflows`, `drain`, `refresh` and `doctor` in modules of their names.
 
@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 use std::io::Write;
 
-use crate::constants::{EXIT_CHANGES_REQUESTED, EXIT_CONFLICT, EXIT_ERROR, EXIT_INTERRUPTED, SUCCEEDED};
+use crate::constants::{EXIT_CHANGES_REQUESTED, EXIT_CONFLICT, EXIT_ERROR, EXIT_INTERRUPTED, NO_VERDICT, SUCCEEDED};
 use crate::env::ConfigDir;
 use crate::error::OrchestratorError;
 use crate::harness::AgentSettings;
@@ -55,7 +55,7 @@ pub struct Connected<'a> {
     pub stdout: &'a dyn Fn(&str),
     /// The program's standard error, as stdout takes text: what a command prints there itself, not its log.
     pub stderr: &'a dyn Fn(&str),
-    /// How a run is driven to its verdict: run_workflow, which a test replaces as Python's patch Workflow.run.
+    /// How a run is driven to its verdict: run_workflow, which a test replaces to script the run.
     pub workflow: &'a RunWorkflow<'a>,
 }
 
@@ -64,17 +64,17 @@ pub struct Connected<'a> {
 pub type RunWorkflow<'w> = dyn Fn(&Connected, RunState, Pipeline, Option<SpecFile>) -> Result<Ran, Stopped> + 'w;
 
 impl Connected<'_> {
-    /// Print line and a line end on standard output, as Python's print(line).
+    /// Print line and a line end on standard output.
     pub fn say(&self, line: &str) {
         (self.stdout)(&format!("{line}\n"));
     }
 
-    /// Print text on standard output as it is, as Python's print(text, end="").
+    /// Print text on standard output as it is, adding no line end.
     pub fn print(&self, text: &str) {
         (self.stdout)(text);
     }
 
-    /// Print line and a line end on standard error, as Python's print(line, file=sys.stderr).
+    /// Print line and a line end on standard error.
     pub fn say_err(&self, line: &str) {
         (self.stderr)(&format!("{line}\n"));
     }
@@ -111,7 +111,7 @@ pub(super) enum Ended {
 
 /// How a run a Workflow drove ended, for the program's last line and exit status (finish).
 pub struct Ran {
-    /// What Workflow::run returned: the run's verdict; None prints as Python's str(None) does, "None".
+    /// What Workflow::run returned: the run's verdict; None when it ended without one.
     pub verdict: Option<String>,
     /// The run's state as the Workflow left it, at its end.
     pub state: RunState,
@@ -133,8 +133,8 @@ pub(super) enum Stop {
 /// EXIT_ERROR for an error, EXIT_INTERRUPTED once the Interrupt is raised (crate::interrupt::exit then ends a process
 /// that got a SIGTERM or SIGHUP by that signal), serve's (crate::serve::serve_command), or how the run ended
 /// (finish). Prints what the command prints and the run's last line on stdout, and its log, errors and the usage on
-/// stderr. Standard output that does not take a write (a full disk, a pipe closed early) makes it EXIT_ERROR, but for
-/// an interrupted command, as Python's print raising OSError ends the program with status 1; the command runs on,
+/// stderr. Standard output that does not take a write (a full disk, a pipe closed early) makes it EXIT_ERROR, since
+/// what a command prints is its product; an interrupted command keeps EXIT_INTERRUPTED. Either way the command runs on,
 /// the rest of what it prints lost.
 ///
 /// Must be called on the main thread before any other thread starts, since it starts the process's handling of
@@ -205,7 +205,7 @@ pub fn main(argv: impl IntoIterator<Item = OsString>) -> i32 {
 }
 
 /// Run command if it is one that needs no herdr pane, in local, and say how it ended; None for any other command,
-/// which main runs after connect. Python's herdrless_command.
+/// which main runs after connect.
 fn herdrless_command(command: &Command, local: &Local) -> Option<Result<Ended, Stop>> {
     let interrupt = local.interrupt;
     let ended = match command {
@@ -228,7 +228,7 @@ fn herdrless_command(command: &Command, local: &Local) -> Option<Result<Ended, S
 /// own for any other, else the error or the interrupted note, on stderr.
 fn ended_status(ended: Result<Ended, Stop>, command: &Command, print: &dyn Fn(&str)) -> i32 {
     match ended {
-        Ok(Ended::Ran(ran)) => finish(ran.verdict.as_deref().unwrap_or("None"), &ran.state, &ran.pipeline, print),
+        Ok(Ended::Ran(ran)) => finish(ran.verdict.as_deref(), &ran.state, &ran.pipeline, print),
         Ok(Ended::Status(status)) => status,
         // A line stderr does not take is lost, as after a hangup; the status still tells.
         Err(Stop::Failed(e)) => {
@@ -244,8 +244,7 @@ fn ended_status(ended: Result<Ended, Stop>, command: &Command, print: &dyn Fn(&s
 }
 
 /// Connect to the herdr and the host command names, on this machine (which must be a herdr pane) or over SSH to its
-/// --machine, reached from local's host, and run it, printing by local's stdout and stderr, telling human. Python's
-/// connect, then the rest of main.
+/// --machine, reached from local's host, and run it, printing by local's stdout and stderr, telling human.
 fn connect(command: &Command, local: &Local, human: &LocalHuman) -> Result<Ended, Stop> {
     let Local { interrupt, config, stdout, stderr, .. } = *local;
     let stopped = |e: OrchestratorError| stop(e, interrupt, None);
@@ -466,15 +465,18 @@ fn current_dir() -> Result<String, OrchestratorError> {
         .map_err(|dir| OrchestratorError(format!("the current directory {} is not UTF-8", dir.to_string_lossy())))
 }
 
-/// Print how the run ended by print, its verdict and its pull request or result file, and return its exit status: 0
-/// for a verdict of SUCCEEDED, EXIT_CONFLICT for one whose pull request conflicts with its base,
-/// EXIT_CHANGES_REQUESTED for any other.
-fn finish(verdict: &str, state: &RunState, pipeline: &Pipeline, print: &dyn Fn(&str)) -> i32 {
+/// Print how the run ended by print, its verdict (NO_VERDICT for none) and its pull request or result file, and return
+/// its exit status: 0 for a verdict of SUCCEEDED, EXIT_CONFLICT for one whose pull request conflicts with its base,
+/// EXIT_CHANGES_REQUESTED for any other, or for none.
+fn finish(verdict: Option<&str>, state: &RunState, pipeline: &Pipeline, print: &dyn Fn(&str)) -> i32 {
     let conflict = if state.conflicts.is_empty() {
         String::new()
     } else {
-        format!(" (a draft: it conflicts with {})", state.base_branch.as_deref().unwrap_or("None"))
+        // A resume past its publish can finish a hand-edited state.json whose conflicts have no base (RunState::conflicts).
+        let base = state.base_branch.as_deref().unwrap_or("its base branch");
+        format!(" (a draft: it conflicts with {base})")
     };
+    let verdict = verdict.unwrap_or(NO_VERDICT);
     let judge = state.verdicts.last().map(|v| v.step.as_str());
     let result = pipeline.result(judge).last_path(&state.dir(), state.round, state.quality_round);
     print(&format!("{verdict}: {}{conflict}\n", state.pr_url.as_deref().filter(|u| !u.is_empty()).unwrap_or(&result)));

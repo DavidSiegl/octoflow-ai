@@ -28,7 +28,7 @@ impl RunState {
         if !driven {
             return None;
         }
-        let field = |key: &str| owner.and_then(|o| o.get(key)).map_or("None".to_string(), Value::text);
+        let field = |key: &str| owner.and_then(|o| o.get(key)).map_or("unknown".to_string(), Value::text);
         let pid = owner.and_then(|o| o.get("pid")).and_then(Value::as_i64);
         let local = owner.and_then(|o| o.get("host")).and_then(Value::as_str) == Some(local_host);
         if local && age > HEARTBEAT_SECONDS && pid.is_some_and(|pid| !pid_alive(pid)) {
@@ -54,7 +54,7 @@ impl SavedRun {
 }
 
 /// Whether a process of that id exists on this machine, under this user or another, as kill(pid, 0) tells; false for
-/// an id beyond a pid's range. As in Python, an id of 0 or below is not a process's: it names a process group (0 this
+/// an id beyond a pid's range. An id of 0 or below is not a process's: it names a process group (0 this
 /// one's, -1 every process but this one and init, -N group N), which counts as alive when kill finds a process in it.
 pub fn pid_alive(pid: i64) -> bool {
     use nix::errno::Errno;

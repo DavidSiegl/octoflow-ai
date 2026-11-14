@@ -1,5 +1,5 @@
-//! What the Workflow tests run on, as tests/test_orchestrator.py's make_workflow, saved_run and resume build it: a
-//! FakeHost, a FakeHerdr playing the roles' scripts, a FakeClock, the human as Told, and the turn helpers.
+//! What the Workflow tests run on, as Fixture::new, saved_run and Fixture::resume build it: a FakeHost, a FakeHerdr
+//! playing the roles' scripts, a FakeClock, the human as Told, and the turn helpers.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -21,7 +21,7 @@ use crate::state::{AgentRecord, RunState, TurnRecord};
 use crate::constants::DEFAULT_HARNESS;
 use crate::json::object;
 
-/// The run every test starts unless it says otherwise: Python's RunState("20260929-120000-a1b2c3", ...).
+/// The id of the run every test starts unless it says otherwise.
 pub(crate) const RUN_ID: &str = "20260929-120000-a1b2c3";
 pub(crate) const TASK: &str = "add a rate limiter";
 
@@ -53,7 +53,7 @@ pub(crate) struct Told {
 }
 
 impl Told {
-    /// The notifications' titles, as Python's tests collect notes.
+    /// The notifications' titles, in the order they were sent.
     pub fn titles(&self) -> Vec<String> {
         self.notes.borrow().iter().map(|(title, _)| title.clone()).collect()
     }
@@ -100,7 +100,7 @@ pub(crate) fn new_state() -> RunState {
     RunState::new(RUN_ID, TASK, "/proj")
 }
 
-/// A new run's state of pipeline, as main makes it for the workflow: Python's new_run, in the workflow's first step.
+/// A new run's state of pipeline, as main makes it for the workflow: in the workflow's first step.
 pub(crate) fn new_run(pipeline: &crate::pipeline::Pipeline) -> RunState {
     let mut state = new_state();
     state.phase = pipeline.steps()[0].id.clone();
@@ -109,12 +109,12 @@ pub(crate) fn new_run(pipeline: &crate::pipeline::Pipeline) -> RunState {
 }
 
 impl Fixture {
-    /// make_workflow: a new run on a default FakeHost, the roles played by script.
+    /// A new run on a default FakeHost, the roles played by script.
     pub fn new(script: Vec<(&str, Vec<Turn>)>) -> Fixture {
         Fixture::on(Rc::new(FakeHost::default()), new_state(), script)
     }
 
-    /// make_workflow with host and state: the run state describes on host, the roles played by script. The host's
+    /// The run state describes on host, the roles played by script. The host's
     /// clock becomes the fixture's unless it has one.
     pub fn on(host: Rc<FakeHost>, state: RunState, script: Vec<(&str, Vec<Turn>)>) -> Fixture {
         let herdr = Rc::new(FakeHerdr::new(Rc::clone(&host), state.clone(), script));
@@ -224,12 +224,12 @@ impl Fixture {
     }
 
     /// The settings a resume of the fixture's state runs with: the defaults, the pull request as the state saved it,
-    /// as main gives a resumed run the choice it was started with (Python's resume).
+    /// as main gives a resumed run the choice it was started with.
     pub fn as_saved(&self) -> RunSettings {
         RunSettings { pull_request: self.state.pull_request, ..RunSettings::default() }
     }
 
-    /// Put text at path as Python's tests put a file straight into FakeHost.files: no write is recorded, and the
+    /// Put text at path straight into FakeHost.files: no write is recorded, and the
     /// file has no mtime of its own, so mtime() gives the time it is asked.
     pub fn put(&self, path: &str, text: &str) {
         self.host.state().files.insert(path, text.to_string());
@@ -245,7 +245,7 @@ impl Fixture {
     }
 }
 
-// -- The turns the tests script, by Python's names ---------------------------------------------------------------
+// -- The turns the tests script ----------------------------------------------------------------------------------
 
 /// A turn that writes text to the path path_of gives for the run's state, then shows status.
 pub(crate) fn writes(path_of: impl Fn(&RunState) -> String + 'static, text: &str, status: &str) -> Turn {
@@ -361,8 +361,7 @@ pub(crate) fn taking(seconds: u32, mut turn: Turn) -> Turn {
     })
 }
 
-/// turn, after which the human presses Ctrl-C, interrupting its prompt (FakeHerdrState::interrupt): Python's turn that
-/// plays turn and then raises KeyboardInterrupt.
+/// turn, after which the human presses Ctrl-C, interrupting its prompt (FakeHerdrState::interrupt).
 pub(crate) fn then_interrupted(interrupt: &Interrupt, mut turn: Turn) -> Turn {
     let interrupt = interrupt.clone();
     Box::new(move |prompt, state, host| {
@@ -382,9 +381,8 @@ pub(crate) fn at(seconds: i64) -> String {
     crate::summary::iso_utc(crate::host::fake::HOST_EPOCH + seconds)
 }
 
-/// The turn record of a step that started and ended at these host clock readings (None: not known), as Python's
-/// turn() makes it: equal to a record that holds each of its fields, whatever session and tokens that has unless
-/// with gives them.
+/// The turn record of a step that started and ended at these host clock readings (None: not known): equal to a record
+/// that holds each of its fields, whatever session and tokens that has unless with gives them.
 #[derive(Clone, Debug)]
 pub(crate) struct Record(Object);
 
@@ -419,8 +417,7 @@ impl Record {
         self
     }
 
-    /// The record as a saved run holds it, Python's dict(turn(...)): its fields, and a null session and tokens
-    /// unless with gave them.
+    /// The record as a saved run holds it: its fields, and a null session and tokens unless with gave them.
     pub fn map(&self) -> TurnRecord {
         let mut fields = object([("session", Value::Null), ("tokens", Value::Null)]);
         fields.extend(self.0.clone());
@@ -448,7 +445,7 @@ pub(crate) fn note() -> String {
 }
 
 /// A RunState saved by an earlier orchestrator in phase and round rnd, in workspace w1 whose root pane is w1:p1, with
-/// agents for roles: Python's saved_run. Its base is abc123 past the spec phase.
+/// agents for roles. Its base is abc123 past the spec phase.
 pub(crate) fn saved_run(phase: &str, rnd: u32, roles: &[&str]) -> RunState {
     let mut state = new_state();
     state.phase = phase.to_string();
@@ -467,9 +464,9 @@ pub(crate) fn saved_run(phase: &str, rnd: u32, roles: &[&str]) -> RunState {
     state
 }
 
-// -- The quality gate's, by Python's names -----------------------------------------------------------------------
+// -- The quality gate's ------------------------------------------------------------------------------------------
 
-/// What one judging run of the fake local gate leaves: Python's outcome().
+/// What one judging run of the fake local gate leaves.
 #[derive(Clone, Debug)]
 pub(crate) struct Outcome {
     /// The quality.md it writes.
@@ -489,7 +486,7 @@ impl Outcome {
         let numbered: Vec<String> = findings.iter().enumerate().map(|(k, f)| format!("{}. {f}", k + 1)).collect();
         let numbered = if numbered.is_empty() { "None.".to_string() } else { numbered.join("\n") };
         let quality = format!(
-            "GATE: {gate}\n\n`orchestrator.py gate` judged the working tree.\n\n## Issues on changed lines\n\n{numbered}\n"
+            "GATE: {gate}\n\n`gate` judged the working tree.\n\n## Issues on changed lines\n\n{numbered}\n"
         );
         Outcome { quality_json: report_json(&quality), quality, exit: i32::from(gate != "OK"), polls: 2 }
     }
@@ -514,7 +511,7 @@ pub(crate) fn report_json(quality: &str) -> String {
     report.to_string()
 }
 
-/// A build whose gate fails on an unused import: Python's outcome(**RED).
+/// A build whose gate fails on an unused import.
 pub(crate) fn red() -> Outcome {
     Outcome::gate("ERROR", &["`limiter.py:3` error ruff F401: `os` imported but unused"])
 }
@@ -538,7 +535,7 @@ pub(crate) fn fix_turn(n: u32, q: u32) -> Turn {
     })
 }
 
-/// A run saved in quality round q of round 1 of the default workflow, with the local gate: Python's quality_state.
+/// A run saved in quality round q of round 1 of the default workflow, with the local gate.
 pub(crate) fn quality_state(q: u32) -> RunState {
     let mut state = saved_run("quality", 1, &["spec", "build"]);
     state.quality_job = Some("local".to_string());
@@ -546,7 +543,7 @@ pub(crate) fn quality_state(q: u32) -> RunState {
     state
 }
 
-/// make_workflow with the quality gate, its runs judging as outcomes say, in order, and then green ones.
+/// Fixture::new with the quality gate, its runs judging as outcomes say, in order, and then green ones.
 pub(crate) fn gated_building(script: Vec<(&str, Vec<Turn>)>, outcomes: Vec<Outcome>) -> Fixture {
     let f = Fixture::new(script).gated();
     f.judging(outcomes);
@@ -682,7 +679,7 @@ fn plays(
 }
 
 impl Fixture {
-    /// Python's resume_gated: a resume of state with the gate on, and round 1's build report written.
+    /// A resume of state with the gate on, and round 1's build report written.
     pub fn resume_gated(host: Rc<FakeHost>, state: RunState, script: Vec<(&str, Vec<Turn>)>, alive: &[&str]) -> Fixture {
         host.state().files.insert(state.build_path(1), "report 1".to_string());
         Fixture::resume(host, state, script, alive, &[]).gated()
@@ -694,8 +691,7 @@ impl Fixture {
         self.host.state().files.get(&path).cloned().unwrap_or_else(|| panic!("no {path}"))
     }
 
-    /// The settings a resume with the gate runs with: as_saved's, with the saved limit of quality rounds, as Python's
-    /// resume_gated gives it.
+    /// The settings a resume with the gate runs with: as_saved's, with the saved limit of quality rounds.
     pub fn as_saved_gated(&self) -> RunSettings {
         RunSettings { max_quality_rounds: self.state.max_quality_rounds, ..self.as_saved() }
     }

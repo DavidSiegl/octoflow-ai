@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-/// A failure that ends the run; the message is shown to the user, as orchestrator.py's OrchestratorError.
+/// A failure that ends the run; the message is shown to the user.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OrchestratorError(pub String);
 
@@ -20,19 +20,28 @@ impl fmt::Display for OrchestratorError {
 
 impl std::error::Error for OrchestratorError {}
 
-/// An I/O error as Python's OSError writes itself: `[Errno 2] No such file or directory`, then `: "<path>"`, the path
-/// quoted as Rust's Debug quotes a str, for an error that names one, as opening a file's does and reading an open one's does not; an
+/// An I/O error as the engine's messages word it: the system's description (strerror), after `<path>: ` for an error
+/// that names a path, as opening a file's does and reading an open one's does not, the path as path_text shows it; an
 /// error that is not the system's as Rust words it.
 pub fn os_error(e: &std::io::Error, path: Option<&str>) -> String {
     match (e.raw_os_error(), path) {
-        (Some(errno), Some(path)) => format!("[Errno {errno}] {}: {path:?}", strerror(e)),
-        (Some(errno), None) => format!("[Errno {errno}] {}", strerror(e)),
+        (Some(_), Some(path)) => format!("{}: {}", path_text(path), strerror(e)),
+        (Some(_), None) => strerror(e),
         (None, _) => e.to_string(),
     }
 }
 
-/// What an I/O error says, without Rust's " (os error N)": Python's OSError.strerror, as the engine's messages quote
-/// it.
+/// A path as an error message shows it: as it is, or quoted as Rust's Debug quotes a str when it holds whitespace or a
+/// control character, so that where it starts and ends stays plain.
+pub fn path_text(path: &str) -> String {
+    if path.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        format!("{path:?}")
+    } else {
+        path.to_string()
+    }
+}
+
+/// What an I/O error says, without Rust's " (os error N)": the system's description of its errno alone.
 pub fn strerror(e: &std::io::Error) -> String {
     let text = e.to_string();
     match text.rfind(" (os error ") {

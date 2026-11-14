@@ -518,7 +518,7 @@ fn the_engine_is_eval_engine_split_as_a_shell_splits_it() {
     assert!(eval::engine_command(Some("x 'unclosed"), Path::new("/")).is_err());
     assert!(
         eval::engine_command(Some("x \\"), Path::new("/")).is_err(),
-        "a trailing backslash, as shlex.split refuses"
+        "a trailing backslash is refused"
     );
 }
 

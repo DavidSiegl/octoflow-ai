@@ -1,8 +1,7 @@
-//! The command line as orchestrator.py's parse_args reads it, on clap: the subcommands with their flags, and the
-//! checks argparse's types cannot make (check_flag_values, check_spec_args): every command of Python's but gui, which
-//! is not ported (the rust-engine spec's Decisions).
+//! The command line, on clap: the subcommands with their flags, and the checks a flag's parser cannot make
+//! (check_flag_values, check_spec_args).
 //!
-//! The flags come in groups that several subcommands share, as argparse's parent parsers: [`Target`] (where the
+//! The flags come in groups that several subcommands share: [`Target`] (where the
 //! project is), [`Settings`] (how a run goes, which resume may change) and [`Starts`] (what a run is started with).
 
 use std::ffi::OsString;
@@ -31,7 +30,7 @@ pub enum Command {
     Run(RunArgs),
     /// `resume`: go on with a run whose orchestrator has stopped.
     Resume(ResumeArgs),
-    /// A command about the runs of the project at the Target, which starts none: Python's RUNS_COMMANDS.
+    /// A command about the runs of the project at the Target, which starts none.
     Runs(Target, RunsCommand),
     /// `workflows`: list the workflows, or print the one named, a name or a file's path, as a workflow file.
     Workflows(Option<String>),
@@ -470,9 +469,9 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         .version(env!("CARGO_PKG_VERSION"))
         .subcommand_required(true)
         .arg_required_else_help(true)
-        // argparse takes an unambiguous abbreviation of a long flag.
+        // An unambiguous abbreviation of a long flag names that flag.
         .infer_long_args(true)
-        // argparse takes the last of a flag given twice, where clap would refuse it.
+        // The last of a flag given twice counts, where clap would refuse it.
         .subcommands(
             [run, resume, list, metrics, show, prune, drain, close, refresh, workflows, doctor, serve]
                 .map(|c| c.args_override_self(true)),
@@ -655,10 +654,10 @@ fn check_spec_args(matches: &ArgMatches, p: &mut clap::Command) -> Result<(), cl
             Err(subcommand_error(p, "run", "a task or --spec FILE is needed"))
         }
         Some(("resume", m)) if m.contains_id("spec") => {
-            Err(subcommand_error(p, "resume", "unrecognized arguments: --spec; a resumed run keeps the spec it has"))
+            Err(subcommand_error(p, "resume", "unexpected argument '--spec' found; a resumed run keeps the spec it has"))
         }
         Some(("drain", m)) if m.contains_id("spec") => {
-            Err(subcommand_error(p, "drain", "unrecognized arguments: --spec; drain runs the specs in DIR"))
+            Err(subcommand_error(p, "drain", "unexpected argument '--spec' found; drain runs the specs in DIR"))
         }
         _ => Ok(()),
     }

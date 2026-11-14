@@ -1,11 +1,8 @@
-//! TestHarnesses, the Workflow's and resumable_state's cases of TestHarnessFlags, and TestWorkflowFileAgents'
-//! test_saved_with_the_run: each role's agent started, resumed and saved in its harness.
+//! Each role's agent started, resumed and saved in its harness, as the flags and a workflow file's agents choose it.
 //!
-//! Not here: TestHarnessFlags' cases of parse_args, new_state and main (test_precedence, test_flags_reach_the_workflow,
-//! test_role_agent_for_a_role_the_workflow_lacks, test_unknown_kinds_are_argparse_errors), crate::cli's tests' and
-//! crate::cli::args'; and TestWorkflowFileAgents' test_workflows_prints_it, crate::cli::workflows'.
-//! TestWorkflowFileAgents' other cases, and TestHarnessFlags' of launch_args and of reading a 0.3.0 state, are
-//! crate::workflow_file's, crate::harness's and crate::state's (tickets 04 and 06).
+//! Not here: how the flags are parsed and reach a run, crate::cli's tests and crate::cli::args'; `workflows` printing
+//! a file's agents, crate::cli::workflows'; reading a workflow file's agents, each harness's launch arguments and
+//! reading a 0.3.0 state, crate::workflow_file's, crate::harness's and crate::state's.
 
 use super::worktree::worktree_run;
 use crate::test_support::resumable;
@@ -227,12 +224,11 @@ fn every_roles_harness_is_saved() {
     assert_eq!(recorded, [("spec", "claude"), ("build", "claude"), ("review", "pi")]);
 }
 
-// -- TestHarnessFlags, the Workflow's cases ------------------------------------------------------------------------
+// -- The harness flags ---------------------------------------------------------------------------------------------
 
 #[test]
 fn role_agent_starts_that_role_in_its_harness() {
-    // The harnesses new_state gives `run task --agent agy --role-agent review=pi`, as test_precedence (crate::cli's tests)
-    // checks.
+    // The harnesses new_state gives `run task --agent agy --role-agent review=pi`, as crate::cli's tests check.
     let expected = [("spec", "agy"), ("build", "agy"), ("review", "pi")];
     let f = Fixture::new(approved());
     let kinds = expected.iter().map(|(r, k)| (*r, k.to_string())).collect();
@@ -271,7 +267,7 @@ fn resume_with_a_new_harness_relaunches_in_it() {
     assert_eq!(f.herdr.state().kinds, [("review-a1b2c3".to_string(), "pi".to_string())]);
 }
 
-// -- TestWorkflowFileAgents ----------------------------------------------------------------------------------------
+// -- A workflow file's agents --------------------------------------------------------------------------------------
 
 #[test]
 fn saved_with_the_run() {
@@ -323,8 +319,7 @@ fn a_run_saved_with_gemini_resumes_only_moved_to_another_harness() {
 
 #[test]
 fn run_dir_granted_in_worktree_runs_only() {
-    // TestHarnessFlags.test_run_dir_granted_in_worktree_runs_only, its Workflow half; the launch half is
-    // crate::harness's.
+    // The arguments the launch gives for a granted directory are crate::harness's.
     let f = worktree_run(Rc::new(FakeHost::default()), None);
     f.workflow(RunSettings::default()).run().unwrap();
     let args: Vec<Vec<String>> = starts(&f).into_iter().map(|(_, _, args)| args).collect();

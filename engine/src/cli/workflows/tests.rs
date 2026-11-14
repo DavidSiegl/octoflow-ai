@@ -1,8 +1,5 @@
-//! The workflows command, through main as herdrless_command runs it. Python's cases, by class:
-//! TestWorkflowFileCLI's test_workflows_lists_them and test_workflows_prints_one_as_a_file,
-//! TestWorkflowFileAgents.test_workflows_prints_it, and TestPromptFiles' test_workflows_lists_the_prompt_files,
-//! test_workflows_says_why_the_prompt_files_would_stop_a_run and
-//! test_workflows_prints_the_default_as_the_prompt_files_word_it.
+//! The workflows command, through main as herdrless_command runs it: listing the workflows and the prompt files,
+//! printing one as a file, and saying why the prompt files would stop a run.
 
 use crate::cli::fixture::Cli;
 use crate::env::ConfigDir;

@@ -141,8 +141,7 @@ impl Workflow<'_> {
             let argv = ["sh", "-c", PROOF_SCRIPT, "_", work_dir, &cmd, &limit];
             self.host.run_verbatim(&argv, None, self.proof_timeout + 30).map(Some)
         });
-        // As Python's finally, which removed the copies also when the proof's run raised KeyboardInterrupt; the tree
-        // is put back likewise.
+        // The copies are removed and the tree put back also when the human's Ctrl-C stopped the proof's run.
         let put_back = self.interrupt.finally(|| {
             self.remove_proof_copies(&copies);
             let restored = before.as_deref().map_or(Ok(()), |before| self.host.restore_tree(work_dir, before));
@@ -151,7 +150,7 @@ impl Workflow<'_> {
             }
             restored
         });
-        // As Python's KeyboardInterrupt, which the proof's run raises: nothing of an interrupted proof is recorded.
+        // Nothing of a proof the Ctrl-C stopped is recorded.
         self.check_interrupt()?;
         let did_not_run = |said: String| ProofOutcome { demonstrated: false, said, moved: false };
         let proc = match ran {

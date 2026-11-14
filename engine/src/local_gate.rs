@@ -159,8 +159,8 @@ enum Known {
 /// Fails, before a run's interview, if host could not run the local gate: it is not Linux on x86_64; curl, tar,
 /// setsid, or both sha256sum and shasum, are not on PATH, env cannot restore a signal's default, or ps does not show
 /// a process's state and command line; or
-/// the gate cache cannot be made or written to. What the project's own tests need, as a Python for the gate's
-/// `--python`, is not looked for: the gate reports a check it could not run.
+/// the gate cache cannot be made or written to. What the project's own tests need, such as a Python interpreter for
+/// the gate's `--python`, is not looked for: the gate reports a check it could not run.
 pub fn preflight(host: &dyn Host) -> Result<(), OrchestratorError> {
     let tools = host.run(&["sh", "-c", PREFLIGHT], None, DEFAULT_TIMEOUT)?;
     if tools.status != 0 {

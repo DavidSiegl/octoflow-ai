@@ -153,8 +153,8 @@ pub fn write_atomically(path: &Path, text: &str) {
 /// A run counts only while engine_pids holds its owner's pid, or it has no owner: another engine process that talks
 /// to the world meanwhile, as a taken-over run's old orchestrator does, sees state.json change at times only the
 /// scheduler decides. heartbeat_at is left out of the comparison: it changes with time alone. A run with no state
-/// yet is passed over (run_state). Panics, naming the path, where the Python harness's `_changed_states` raised: when
-/// runs/ is there but cannot be listed, at a state run_state refuses, and at an owner that is no object.
+/// yet is passed over (run_state). Panics, naming the path, when runs/ is there but cannot be listed, at a state
+/// run_state refuses, and at an owner that is no object.
 fn changed_states(state: &mut Object, project: &Path, engine_pids: &BTreeSet<i32>) -> Vec<Value> {
     let runs = crate::runs_dir(project);
     let mut names: Vec<String> = match fs::read_dir(&runs) {
@@ -189,14 +189,14 @@ fn changed_states(state: &mut Object, project: &Path, engine_pids: &BTreeSet<i32
     changed
 }
 
-/// The text of the run state at path and the object it holds; None where the Python harness's `_changed_states`
-/// caught FileNotFoundError or ValueError: no state.json yet, in a run directory the engine has
-/// not saved in, or text that is not UTF-8 or not JSON. Panics, naming path, where Python raised: any other failure to
-/// read it (a state.json that is a directory, an entry of runs/ that is a file), and JSON that is no object.
+/// The text of the run state at path and the object it holds; None for no state.json yet, in a run directory the
+/// engine has not saved in, or text that is not UTF-8 or not JSON. Panics, naming
+/// path, at any other failure to read it (a state.json that is a directory, an entry of runs/ that is a file), and at
+/// JSON that is no object.
 fn run_state(path: &Path) -> Option<(String, Object)> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
-        // InvalidData: not UTF-8, which Python's read raises as UnicodeDecodeError, a ValueError.
+        // InvalidData: not UTF-8.
         Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::InvalidData) => return None,
         Err(e) => panic!("reading {}: {e}", path.display()),
     };
@@ -207,7 +207,7 @@ fn run_state(path: &Path) -> Option<(String, Object)> {
     }
 }
 
-/// json with every object's keys sorted, as json.dumps's sort_keys writes it.
+/// json with the keys of every object in it sorted.
 fn sorted(json: &Value) -> Value {
     match json {
         Value::Object(map) => {
@@ -319,7 +319,7 @@ mod tests {
         assert_eq!(project.changed(&mut Object::new(), &[7]), ["a", "c", "d"].map(|run| project.state_path(run)));
     }
 
-    /// The message changed_states panics with in project, as Python's _changed_states raises there.
+    /// The message changed_states panics with in project.
     fn failure(project: &Project) -> String {
         let failure = std::panic::catch_unwind(|| project.changed(&mut Object::new(), &[])).expect_err("a panic");
         failure.downcast_ref::<String>().cloned().unwrap_or_default()

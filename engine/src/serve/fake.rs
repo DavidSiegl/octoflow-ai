@@ -1,4 +1,4 @@
-//! The Python tests' ServeHost: a Host that serve's threads can share, its files in memory; and FakeConsole, the herdr
+//! ServeHost, a Host that serve's threads can share, its files in memory; and FakeConsole, the herdr
 //! its runs' agents are in, which also launches the runs serve starts.
 
 use std::collections::BTreeMap;

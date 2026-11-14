@@ -1,8 +1,8 @@
-//! TestResumePullRequest: a resumed run that ends in a pull request keeps its base branch, finishes publishing where
-//! an earlier orchestrator stopped, and refuses to go on while the checkout is on another branch than the run's.
+//! A resumed run that ends in a pull request keeps its base branch, finishes publishing where an earlier orchestrator
+//! stopped, and refuses to go on while the checkout is on another branch than the run's.
 //!
-//! Not here: test_cli_exits_1_on_another_branch and test_no_pr_is_saved_with_the_run, which drive main and parse_args
-//! (crate::cli's tests and crate::cli::args').
+//! Not here: the CLI's exit status 1 on another branch, and --no-pr saved with the run, which drive main and
+//! parse_args (crate::cli's tests and crate::cli::args').
 
 use super::pull_request::{git_calls, BRANCH, FAST_FORWARD, FETCH, MERGE};
 use super::*;

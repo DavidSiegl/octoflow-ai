@@ -1,6 +1,4 @@
-//! `doctor`: what a run needs, checked before the first run fails on it, as orchestrator.py's check_setup and
-//! report_checks check and report it. Python's last check, tkinter for the GUI, is not made: the Rust engine has no
-//! GUI (the rust-engine spec's Decisions).
+//! `doctor`: what a run needs, checked before the first run fails on it (check_setup), and reported (report_checks).
 
 use super::{Local, Target};
 use crate::constants::{DEFAULT_HARNESS, EXIT_ERROR, GITLEAKS_INSTALL, NETWORK_TIMEOUT, REMOTE};
@@ -32,7 +30,7 @@ pub enum Level {
 }
 
 impl Level {
-    /// The level as Python's REQUIRED, NEEDED_FOR_PR and OPTIONAL name it.
+    /// The level's name, in lower case with hyphens.
     pub fn as_str(self) -> &'static str {
         match self {
             Level::Required => "required",
@@ -56,7 +54,7 @@ pub struct Check {
 }
 
 /// A requirement a probe found unmet, or could not check: what it found, and the fix that replaces the check's own,
-/// when it has one. Python's _Unmet, and the OrchestratorError a probe raises.
+/// when it has one.
 #[derive(Debug)]
 struct Unmet {
     detail: String,
@@ -239,7 +237,7 @@ pub fn check_setup(
 
 /// Add to checks, and return, the Check of probe, named name at level, with fix its fix when the probe brings none;
 /// or, when needs is given and not ok, a Check skipped for it, probe not run. note is added to the detail of a Check
-/// that is not ok. Python's _check_unless_skipped.
+/// that is not ok.
 fn check(
     checks: &mut Vec<Check>,
     name: &str,
@@ -360,7 +358,7 @@ fn tool_version(host: &dyn Host, command: &str, minimum: &[u64]) -> Probed {
     Ok(said)
 }
 
-/// The first version number in text, as Python's `\d+(?:\.\d+)+` finds it: ASCII digits, then one or more groups of
+/// The first version number in text, the first match of `\d+(?:\.\d+)+`: ASCII digits, then one or more groups of
 /// a dot and digits.
 fn version_number(text: &str) -> Option<&str> {
     let bytes = text.as_bytes();
@@ -422,7 +420,7 @@ impl<'h> IntegrationStatus<'h> {
 /// Each integration's state, by its name, from `herdr integration status`, whose lines read
 /// `<name>: current (vN) (<path>)`, `<name>: not installed (<path>)` or the like for another state, and a name may
 /// carry a note, as `letta (experimental): ...`. The state is what follows the colon, the path left out. A name listed
-/// twice has its last state. Python's integration_states and its pattern `(\S+)[^:]*: (.*?)(?: \([^()]*\))?`, a blank
+/// twice has its last state. A line is read as the pattern `(\S+)[^:]*: (.*?)(?: \([^()]*\))?` reads it, a blank
 /// (`\S`'s complement) being what char::is_whitespace takes.
 pub fn integration_states(listing: &str) -> Vec<(String, String)> {
     let mut states: Vec<(String, String)> = Vec::new();

@@ -1,5 +1,4 @@
-//! Cleaning up after a run nothing drives any more, as orchestrator.py's close_run: the `close` command, for one run
-//! or every run of a project.
+//! Cleaning up after a run nothing drives any more: the `close` command, for one run or every run of a project.
 
 use super::{record_in_state, Connected};
 use crate::constants::{EXIT_ERROR, RUNS_DIR};

@@ -1,4 +1,4 @@
-//! TestPromptDelivery: a prompt counts as delivered only once its agent takes it, and is sent once more when it does
+//! A prompt counts as delivered only once its agent takes it, and is sent once more when it does
 //! not.
 
 use std::cell::RefCell;

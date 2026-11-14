@@ -64,7 +64,7 @@ jobs:
         with:
           tool: cargo-about@0.9.3
 
-      # The script Jenkins builds the Linux binary with, the Rust engine's, by the toolchain rust-toolchain.toml pins,
+      # The script Jenkins builds the Linux binary with, the engine's, by the toolchain rust-toolchain.toml pins,
       # which rustup installs; it smoke-tests --help and workflows.
       - run: packaging/build-binary.sh
 

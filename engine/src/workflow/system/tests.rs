@@ -1,4 +1,4 @@
-//! The real run's clocks and human: Python's Clocks defaults and notify_locally.
+//! The real run's clocks and human: SystemClocks and LocalHuman.
 
 use std::time::{Duration, Instant};
 

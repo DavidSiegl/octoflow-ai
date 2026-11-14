@@ -1,8 +1,7 @@
-//! The state a run starts from. Python's cases of resumable_state, by class: TestResumableState (TestFindRun's are
-//! crate::state's), TestOneRunPerCheckout's two resume --force cases, TestWorkflowFiles' and TestPromptFiles' saved
-//! definitions and prompts that stop a resume, and TestQualityCLI's resume limits. TestHarnessFlags' resumable_state
-//! halves are in crate::workflow's harnesses tests, beside the Workflow halves of the same cases. new_state has no
-//! Python test but through main (TestCLI, crate::cli's tests); its cases here are the Rust engine's.
+//! The state a run starts from: resumable_state (finding the run is crate::state's), resume --force against another
+//! run of the checkout, the saved definitions and prompts that stop a resume, and a resume's quality round limits;
+//! new_state; and resumed_state. The harness flags' resumable_state cases are in crate::workflow's harnesses tests,
+//! beside the Workflow halves of the same cases.
 
 use std::rc::Rc;
 
@@ -65,9 +64,9 @@ fn error(result: Result<RunState, OrchestratorError>) -> String {
     }
 }
 
-// -- TestResumableState --------------------------------------------------------------------------------------------
+// -- resumable_state -----------------------------------------------------------------------------------------------
 
-/// TestResumableState's saved run: in round 2 of build, with settings of its own, and the fields of more.
+/// The saved run of resumable_state's cases: in round 2 of build, with settings of its own, and the fields of more.
 fn saved_settings(more: &[(&str, Value)]) -> Object {
     let mut state = saved_run("build", 2, &["spec", "build"]);
     state.max_rounds = 3;
@@ -168,7 +167,7 @@ fn a_closed_run_is_not_resumed_even_with_force() {
     assert_eq!(error(resumable(&["--force"], &saved)), "run 20260929-120000-a1b2c3 was closed; start a new run");
 }
 
-// -- TestOneRunPerCheckout: resume --force -------------------------------------------------------------------------
+// -- resume --force against another run of the checkout ------------------------------------------------------------
 
 /// resume --force of run a1b2c3 on host, which looks alive: saved 30 s ago by a live pid on this host. The fixture of
 /// the state resumable_state gives, its pid_alive taking every pid for alive.
@@ -194,7 +193,7 @@ fn force_takes_over_the_run_itself() {
 
 #[test]
 fn force_does_not_override_another_live_run() {
-    // TestOneRunPerCheckout's other run, saved 16 s ago by a live orchestrator of this host.
+    // The checkout's other run, saved 16 s ago by a live orchestrator of this host.
     let other_id = "20261009-220151-537935";
     let host = Rc::new(FakeHost::default());
     let mut other = RunState::new(other_id, "another task", "/proj");
@@ -223,7 +222,7 @@ fn force_does_not_override_another_live_run() {
     assert_eq!(f.host.state().files.get(&other_path), Some(&other.to_text()));
 }
 
-// -- TestWorkflowFiles and TestPromptFiles: what a resume cannot read ------------------------------------------------
+// -- What a resume cannot read ---------------------------------------------------------------------------------------
 
 #[test]
 fn a_saved_definition_with_an_unreadable_template_stops_the_resume() {
@@ -254,7 +253,7 @@ fn a_state_that_replaces_an_unknown_prompt() {
     );
 }
 
-// -- TestQualityCLI: a resume's quality round limit ------------------------------------------------------------------
+// -- A resume's quality round limit ----------------------------------------------------------------------------------
 
 /// The state.json of a run in phase, round rnd and quality round q, with the quality gate.
 fn gated_run(phase: &str, rnd: u32, q: u32) -> Object {
@@ -333,7 +332,7 @@ fn a_new_run_takes_the_defaults_and_the_flags() {
     assert_eq!(dumps(&state.next_harnesses), r#"{"spec":"agy","build":"codex","review":"codex"}"#);
     assert_eq!((state.pull_request, state.quality_job.as_deref()), (false, Some(LOCAL_GATE)));
     assert_eq!(state.worktree, Some(format!("/proj/.orchestrator/worktrees/{}", state.key())));
-    // A timeout of 0 is none given, as Python's `args.timeout or DEFAULT_TURN_TIMEOUT` takes it.
+    // A timeout of 0 is none given: DEFAULT_TURN_TIMEOUT.
     let (state, _) = new_state(&run_args(&["--timeout", "0", "t"], &config), "/proj", None, &world).unwrap();
     assert_eq!(state.turn_timeout, 1800);
 }

@@ -1,8 +1,8 @@
-//! TestWorktreeRun: run --worktree, a run in a git worktree of its own that leaves the project's checkout alone.
-//! The worktree cases of TestOneRunPerCheckout and TestHarnessFlags are in one_run.rs and harnesses.rs, on
+//! run --worktree: a run in a git worktree of its own that leaves the project's checkout alone. A worktree run among
+//! other runs of the checkout, and the directories its harnesses are granted, are in one_run.rs and harnesses.rs, on
 //! worktree_run.
 //!
-//! Not here: test_a_run_flag and test_flag_reaches_the_workflow, parse_args', new_state's and main's (crate::cli's
+//! Not here: the --worktree flag parsed and reaching the workflow, parse_args', new_state's and main's (crate::cli's
 //! tests and crate::cli::args').
 
 use std::cell::RefCell;
@@ -12,7 +12,7 @@ use super::*;
 use crate::host::GIT_STATUS_ARGS;
 use crate::pull_request::commit_note;
 
-/// The worktree of a run --worktree run of the default run: Python's WORKTREE.
+/// The worktree of a run --worktree run of the default run.
 pub(super) const WORKTREE: &str = "/proj/.orchestrator/worktrees/a1b2c3";
 /// The default run's branch, for its spec's title.
 const RUN_BRANCH: &str = "orchestrator/add-a-token-bucket-rate-limiter-a1b2c3";
@@ -27,7 +27,7 @@ fn worktree_build_turn(n: u32) -> Turn {
 }
 
 /// A new run --worktree run on host, its roles played by script, by default one the Reviewer approves in round 1,
-/// with a Builder that writes in the worktree whatever the script says: Python's worktree_run.
+/// with a Builder that writes in the worktree whatever the script says.
 pub(super) fn worktree_run(host: Rc<FakeHost>, script: Option<Script>) -> Fixture {
     let mut state = new_state();
     state.worktree = Some(WORKTREE.to_string());

@@ -8,8 +8,6 @@
    "conflicts": [],
    "spec_title": "Add a subtract function",
    "branch_name": "orchestrator/add-a-subtract-function-<run:1>",
-   "verdict_line": "Reviewer verdict after 1 round: **None**.\n\nThe Reviewer still requested changes after the last round, so this is a draft.",
-   "commit_note": "Orchestrator run <run:1>: None after 1 review round(s).",
    "provenance": [
     [
      "Orchestrator-Run",
@@ -28,7 +26,6 @@
      "build=claude/default"
     ]
    ],
-   "pr_body": "Opened by Octoflow AI run `<run:1>`. Reviewer verdict after 1 round: **None**.\n\nThe Reviewer still requested changes after the last round, so this is a draft.\n\n| Commit trailer | Value |\n| --- | --- |\n| Orchestrator-Run | `<run:1>` |\n| Orchestrator-Workflow | `default` |\n| Orchestrator-Role | `spec=claude/default` |\n| Orchestrator-Role | `build=claude/default` |\n\n<details open>\n<summary>Spec</summary>\n\n# Add a subtract function\n\nAdd `subtract(a, b)` to `src/calc.py`, returning a - b, with a test.\n\n</details>\n\n<details>\n<summary>Builder report (round 1)</summary>\n\n\n\n</details>\n\n<details open>\n<summary>Review (round 1)</summary>\n\n\n\n</details>\n\n<details>\n<summary>Run timings</summary>\n\n| step | role | round | harness | model | start (UTC) | duration | file |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| spec (human-paced) | spec | 0 | claude | default | 2026-10-03 04:01:00 | 5s | spec.md |\n\n</details>\n",
    "turn_lines": [
     "spec  0  claude  2026-10-03 04:01:00  5s  spec.md"
    ],
@@ -370,8 +367,6 @@
    "conflicts": [],
    "spec_title": "Add a subtract function",
    "branch_name": "orchestrator/add-a-subtract-function-<run:1>",
-   "verdict_line": "Reviewer verdict after 1 round: **None**.\n\nThe Reviewer still requested changes after the last round, so this is a draft.",
-   "commit_note": "Orchestrator run <run:1>: None after 1 review round(s).",
    "provenance": [
     [
      "Orchestrator-Run",
@@ -390,7 +385,6 @@
      "build=claude/default"
     ]
    ],
-   "pr_body": "Opened by Octoflow AI run `<run:1>`. Reviewer verdict after 1 round: **None**.\n\nThe Reviewer still requested changes after the last round, so this is a draft.\n\n| Commit trailer | Value |\n| --- | --- |\n| Orchestrator-Run | `<run:1>` |\n| Orchestrator-Workflow | `default` |\n| Orchestrator-Role | `spec=claude/default` |\n| Orchestrator-Role | `build=claude/default` |\n\n<details open>\n<summary>Spec</summary>\n\n# Add a subtract function\n\nAdd `subtract(a, b)` to `src/calc.py`, returning a - b, with a test.\n\n</details>\n\n<details>\n<summary>Builder report (round 1)</summary>\n\n\n\n</details>\n\n<details open>\n<summary>Review (round 1)</summary>\n\n\n\n</details>\n\n<details>\n<summary>Run timings</summary>\n\n| step | role | round | harness | model | start (UTC) | duration | file |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| spec (human-paced) | spec | 0 | claude | default | 2026-10-03 04:01:00 | 5s | spec.md |\n| build | build | 1 | claude | default | 2026-10-03 04:03:00 | 12s | build-1.md |\n\n</details>\n",
    "turn_lines": [
     "spec   0  claude  2026-10-03 04:01:00  5s   spec.md",
     "build  1  claude  2026-10-03 04:03:00  12s  build-1.md"
@@ -1389,8 +1383,6 @@
    "conflicts": [],
    "spec_title": null,
    "branch_name": "orchestrator/add-a-multiply-function-<run:2>",
-   "verdict_line": "Reviewer verdict after 0 rounds: **None**.\n\nThe Reviewer still requested changes after the last round, so this is a draft.",
-   "commit_note": "Orchestrator run <run:2>: None after 0 review round(s).",
    "provenance": [
     [
      "Orchestrator-Run",
@@ -1405,7 +1397,6 @@
      "spec=claude/default"
     ]
    ],
-   "pr_body": "Opened by Octoflow AI run `<run:2>`. Reviewer verdict after 0 rounds: **None**.\n\nThe Reviewer still requested changes after the last round, so this is a draft.\n\n| Commit trailer | Value |\n| --- | --- |\n| Orchestrator-Run | `<run:2>` |\n| Orchestrator-Workflow | `default` |\n| Orchestrator-Role | `spec=claude/default` |\n\n<details open>\n<summary>Spec</summary>\n\nAdd a multiply function\n\n</details>\n\n<details>\n<summary>Builder report (round 0)</summary>\n\n\n\n</details>\n\n<details open>\n<summary>Review (round 0)</summary>\n\n\n\n</details>\n",
    "turn_lines": [],
    "run_summary": "# Run <run:2>\n\n- **Workflow:** default\n- **Outcome:** error: the Spec Collector exited without writing <world>/project/.orchestrator/runs/<run:2>/spec.md\n- **Pull request:** none\n- **Branch:** none\n- **Wall time:** ?, from the first turn's start to 2026-10-03T11:00:00+00:00\n\n## Task\n\nAdd a multiply function\n\n## Roles\n\n| role | harness | model |\n| --- | --- | --- |\n| Spec Collector (spec) | claude | default |\n| Builder (build) | claude | default |\n| Reviewer (review) | claude | default |\n\n## Turns\n\nNo turns were recorded.\n",
    "run_metrics": "{\"version\": 1, \"run_id\": \"<run:2>\", \"workflow\": \"default\", \"outcome\": \"error\", \"rounds\": 0, \"max_rounds\": 3, \"quality_gate\": false, \"max_quality_rounds\": null, \"pull_request\": null, \"started_at\": null, \"ended_at\": \"2026-10-03T11:00:00+00:00\", \"seconds\": null, \"roles\": {\"spec\": {\"harness\": \"claude\", \"model\": null}}, \"turns\": [], \"quality_rounds\": [], \"restored_locked_files\": 0}",

@@ -1,5 +1,5 @@
-//! The Clocks and the Human of a real run on this machine, which the CLI gives a Workflow: Python's default Clocks
-//! (time.sleep, time.monotonic, time.time), notify_locally and log.
+//! The Clocks and the Human of a real run on this machine, which the CLI gives a Workflow: the system's clocks, a
+//! notification through the local herdr, and log lines on stderr.
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -22,7 +22,7 @@ pub struct SystemClocks {
     /// What cuts a sleep short.
     interrupt: Interrupt,
     /// When the clocks were made, as an Instant and on CLOCK_MONOTONIC in seconds: monotonic reads the system's
-    /// monotonic clock, as Python's time.monotonic does, from Instant, which never fails.
+    /// monotonic clock from Instant, which never fails.
     made: (Instant, f64),
 }
 
@@ -44,7 +44,7 @@ impl Clocks for SystemClocks {
         self.interrupt.sleep(Duration::try_from_secs_f64(seconds).unwrap_or(Duration::ZERO));
     }
 
-    /// Seconds since a point the system chooses, such as its boot, as Python's time.monotonic counts them.
+    /// Seconds since a point the system chooses, such as its boot (CLOCK_MONOTONIC).
     fn monotonic(&self) -> f64 {
         self.made.1 + self.made.0.elapsed().as_secs_f64()
     }
@@ -63,8 +63,7 @@ impl Clocks for SystemClocks {
 }
 
 /// The human at this machine: notified through the herdr the orchestrator runs beside, where they are watching, never
-/// the run's --machine, and told everything else on stderr, each line indented by two spaces. Python's notify_locally
-/// and log.
+/// the run's --machine, and told everything else on stderr, each line indented by two spaces.
 #[derive(Clone, Debug)]
 pub struct LocalHuman {
     /// The herdr on this machine.

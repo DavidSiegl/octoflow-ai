@@ -27,8 +27,8 @@ struct Restored {
 }
 
 impl Restored {
-    /// The record's turn. Errors: a field missing or of another type than the engines write, as no engine's
-    /// state.json has, where the Python engine fails on a KeyError or a TypeError.
+    /// The record's turn. Errors: a field missing or of another type than the engine writes, as only a state.json
+    /// edited by hand has.
     fn read(record: &Object) -> Result<Restored, OrchestratorError> {
         let field = |key: &str| {
             record.get(key).ok_or_else(|| OrchestratorError(format!("a restored record in state.json has no {key}")))

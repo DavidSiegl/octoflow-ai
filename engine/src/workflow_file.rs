@@ -159,7 +159,7 @@ pub fn parse_workflow(name: &str, definition: &Value, prompts: &Prompts) -> Resu
     let mut budget = [DEFAULT_MAX_FILES, DEFAULT_MAX_LINES];
     for (key, slot) in BUDGET_KEYS.iter().zip(budget.iter_mut()) {
         if let Some(value) = definition.get(*key) {
-            // A bool is no number of lines, though Python's isinstance takes true for an int.
+            // A bool is no number of lines: true is not taken for 1.
             let number = value.as_i64();
             *slot = number.ok_or_else(|| format!("{key} must be a whole number"))?;
         }

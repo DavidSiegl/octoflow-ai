@@ -1,6 +1,6 @@
 //! resume's --quality-gate and --no-quality-gate: the quality gate of a stopped run turned on or off before a Workflow
 //! resumes it, its state changed in memory for the Workflow to save; turning it off also stops the gate's job a killed
-//! run left (turn_quality_gate_off). Python's turn_quality_gate_on and _off.
+//! run left (turn_quality_gate_off).
 
 use super::turn::turn_started;
 use super::{Collaborators, Human};
@@ -39,7 +39,7 @@ pub fn turn_quality_gate_on(
         let path = following.path(&s.dir(), s.round, 0);
         let file = file_name(&path);
         let started = turn_started(s, file);
-        // Read whether or not the turn started, as Python reads it first: a failed read stops the resume either way.
+        // Read whether or not the turn started: a failed read stops the resume either way.
         let missing = host.read(&format!("{}/{file}", s.dir()))?.is_none();
         judge_first = missing && !started;
     }

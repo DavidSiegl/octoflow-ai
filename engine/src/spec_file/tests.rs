@@ -1,10 +1,10 @@
-//! read_spec_file and SpecFile::task as TestSpecCLI's cases see them through main; the CLI half of each, and the
-//! class's other cases, are main's (crate::cli's tests and crate::cli::args').
+//! read_spec_file and SpecFile::task as run --spec reaches them through main; the CLI half of each, and the spec
+//! flags' other cases, are main's (crate::cli's tests and crate::cli::args').
 
 use super::*;
 use crate::test_support::TempDir;
 
-/// CRLF and trailing blanks, which the run's copy keeps: Python's GIVEN_SPEC.
+/// A spec with CRLF and trailing blanks, which the run's copy keeps.
 const GIVEN_SPEC: &str = "# Add a token-bucket rate limiter\r\n\r\n## Goal\r\nlimit requests  \n\n";
 
 fn file(dir: &TempDir, name: &str, bytes: &[u8]) -> String {
@@ -15,7 +15,7 @@ fn file(dir: &TempDir, name: &str, bytes: &[u8]) -> String {
 
 #[test]
 fn the_spec_is_read_with_its_line_ends() {
-    // test_the_spec_reaches_the_workflow, its SpecFile and task.
+    // The spec reaches the workflow: its SpecFile and task.
     let dir = TempDir::new();
     let path = file(&dir, "spec.md", GIVEN_SPEC.as_bytes());
     let spec = read_spec_file(&path).unwrap();

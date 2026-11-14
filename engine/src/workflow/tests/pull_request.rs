@@ -1,4 +1,4 @@
-//! TestPullRequest and TestUpToDateBase: the run's branch, its commit, the merge of the moved base and the pull
+//! The run's branch, its commit, the merge of the moved base and the pull
 //! request.
 
 use std::cell::RefCell;
@@ -153,7 +153,7 @@ fn no_pr_neither_fetches_nor_merges_even_when_origin_moved() {
     assert_eq!(wf.state().base.as_deref(), Some("abc123"));
 }
 
-// -- TestUpToDateBase: the base branch is brought up to origin's before the interview and the branch, and merged in
+// -- The base branch is brought up to origin's before the interview and the branch, and merged in
 // before the push. ------------------------------------------------------------------------------------------------
 
 pub(super) const FETCH: &[&str] = &["fetch", "--quiet", "origin", "main"];

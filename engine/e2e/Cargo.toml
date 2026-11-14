@@ -23,13 +23,12 @@ tempfile = "3"
 # Writing a recording through serde_json's pretty printer with an indent of its own (tests/e2e/main.rs).
 serde = "1"
 # The world's fake PyPI, which the engine reaches over TLS through the world's HTTPS proxy: rustls and its key and
-# certificate types, the versions Cargo.lock had through ureq, with ureq's ring provider. Approved by the user for
-# octoflow-without-python ticket 02, 2026-10-31.
+# certificate types, the versions Cargo.lock had through ureq, with ureq's ring provider. Approved by the user,
+# 2026-10-31.
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std"] }
 rustls-pki-types = { version = "1.15.1", features = ["std"] }
 # The docs check (tests/docs/) reads the names the engine's Rust defines by parsing it: syn 2, the version Cargo.lock
-# had through tauri-build, with full for items and visit to walk them. Decided with the user for
-# octoflow-without-python ticket 07, 2026-11-03.
+# had through tauri-build, with full for items and visit to walk them. Decided with the user, 2026-11-03.
 syn = { version = "2.0.119", features = ["full", "visit"] }
 
 # The programs a world puts on the engine's PATH as herdr, gh, ssh and octoflow-gate (src/fakes.rs). They are

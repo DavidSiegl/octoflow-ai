@@ -55,7 +55,7 @@ pub struct Invocation {
     output_recorded: bool,
     /// Whether the scenario killed it, rather than letting it end.
     killed: bool,
-    /// Its exit status once it ended, a signal's as minus its number, as Python's returncode gives it.
+    /// Its exit status once it ended, a signal's as minus its number.
     exit: Option<i32>,
     /// Whether the world's servers failed it, which wait checks as it polls.
     servers: ServerFailure,

@@ -275,7 +275,7 @@ fn named_roles(flag: &str, pairs: &[(String, String)], roles: &Map<String>) -> R
     Ok(named)
 }
 
-/// base with each of over's entries put in, a key of base keeping its place: Python's {**base, **over}.
+/// base with each of over's entries put in, a key of base keeping its place.
 fn merged(base: &Map<String>, over: Map<String>) -> Map<String> {
     let mut out = base.clone();
     for (k, v) in over.iter() {

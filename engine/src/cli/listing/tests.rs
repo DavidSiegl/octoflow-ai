@@ -1,15 +1,9 @@
-//! What `list`, `list --json`, `show` and `metrics` print. Python's cases, by class: TestRunHealth's test_print_runs
-//! and test_print_closed_runs (its health cases are crate::runs'); TestRunRecord; TestListJSON;
-//! TestCLI.test_list_on_machine_uses_ssh_host; TestShow; TestQualityGateOffOnResume.test_show_names_the_gate;
-//! TestBlockedListing but test_status_tag, which is the GUI's (not ported, the rust-engine spec's Decisions); the
-//! print_runs half of TestBlocked.test_the_wait_is_saved_and_listed, on the state its Workflow half saves
-//! (crate::workflow's blocked tests), built here by hand; TestQualityCLI.test_list_shows_the_quality_phase;
-//! TestWorkflowFiles.test_list_reads_the_gated_step_from_the_saved_definition; and
-//! TestRunMetrics.test_the_metrics_command_prints_a_line_per_run_that_is_done.
+//! What `list`, `list --json`, `show` and `metrics` print. A run's health is crate::runs'; a blocked run's wait is
+//! listed here from a state built by hand like the one crate::workflow's blocked tests save.
 //!
-//! Where Python patches Host.resolve_dir to /proj, these give --cwd /proj, which the FakeHost resolves to itself.
-//! TestShow.test_on_a_machine_everything_goes_over_ssh runs show_run on a ProcessHost over an ssh that runs each
-//! command here, on a project in a TempDir, rather than through main, whose connect would ask herdr for the machine.
+//! These give --cwd /proj, which the FakeHost resolves to itself. The case of show on a machine runs show_run on a
+//! ProcessHost over an ssh that runs each command here, on a project in a TempDir, rather than through main, whose
+//! connect would ask herdr for the machine.
 
 use std::rc::Rc;
 
@@ -50,7 +44,7 @@ fn json(text: &str) -> Value {
     serde_json::from_str::<Value>(text).unwrap_or_else(|e| panic!("{text}: {e}"))
 }
 
-/// Python's run_record helper: the state.json of a run of phase in round 1, its owner, error and verdict null.
+/// The state.json of a run of phase in round 1, its owner, error and verdict null.
 fn run(phase: &str) -> Value {
     let mut state = RunState::new(RUN_ID, "add a rate limiter", "/proj");
     (state.phase, state.round) = (phase.to_string(), 1);
@@ -62,7 +56,7 @@ fn saved_runs(runs: &[(u64, Value)]) -> Vec<SavedRun> {
     runs.iter().map(|(age, state)| SavedRun::read(*age, state.clone()).unwrap()).collect()
 }
 
-/// state with each of fields set, as Python's {**state, **fields}.
+/// state with each of fields set, replacing a field it has.
 fn with(state: Value, fields: &[(&str, Value)]) -> Value {
     let Value::Object(mut map) = state else { panic!("a state is an object") };
     for (key, value) in fields {
@@ -71,17 +65,17 @@ fn with(state: Value, fields: &[(&str, Value)]) -> Value {
     Value::Object(map)
 }
 
-/// The owner record of a run on this machine, "here": Python's ME.
+/// The owner record of a run on this machine, "here".
 fn me() -> Value {
     json(r#"{"host": "here", "pid": 4242, "started_at": "2026-09-30T07:00:00+00:00"}"#)
 }
 
-/// A run in build owned by ME.
+/// A run in build owned by me().
 fn mine() -> Value {
     with(run("build"), &[("owner", me())])
 }
 
-/// A BLOCKED report's wait, as the Workflow saves it: Python's BLOCK.
+/// A BLOCKED report's wait, as the Workflow saves it.
 fn block() -> Value {
     json(&format!(r#"{{"file": "build-1.md", "question": "{QUESTION}", "k": 1}}"#))
 }
@@ -113,7 +107,7 @@ fn listed(runs: &[(u64, Value)], target: &[&str]) -> Vec<String> {
     cli.lines().into_iter().step_by(2).collect()
 }
 
-// -- TestRunHealth's print_runs cases --------------------------------------------------------------------------------
+// -- How list prints runs --------------------------------------------------------------------------------------------
 
 #[test]
 fn print_runs_lists_each_run_and_its_task() {
@@ -153,9 +147,9 @@ fn print_closed_runs() {
     ]);
 }
 
-// -- TestRunRecord ---------------------------------------------------------------------------------------------------
+// -- A run's record --------------------------------------------------------------------------------------------------
 
-/// A human-paced turn of step by role that has not ended: Python's open_turn.
+/// A human-paced turn of step by role that has not ended.
 fn open_turn(step: &str, role: &str) -> Value {
     json(&format!(
         r#"{{"step": "{step}", "role": "{role}", "round": 1, "quality_round": 0, "file": "{step}.md",
@@ -469,7 +463,7 @@ fn a_lookup_the_interrupt_failed_stops_the_listing() {
     assert_eq!(records[0].get("pr").unwrap().get("error"), Some(&Value::Null));
 }
 
-// -- TestListJSON, and TestCLI.test_list_on_machine_uses_ssh_host ----------------------------------------------------
+// -- list --json, and list on a machine ------------------------------------------------------------------------------
 
 /// The document `list --json` with flags prints for runs, saved in /proj, checking it is one line of output, exit
 /// status 0 and no herdr call.
@@ -570,14 +564,14 @@ fn on_a_machine() {
     assert_eq!(cli.take_out(), "No runs.\n");
 }
 
-// -- TestShow --------------------------------------------------------------------------------------------------------
+// -- show ------------------------------------------------------------------------------------------------------------
 
 /// The task of the run show prints: longer than list's 100 characters.
 fn long_task() -> String {
     "add a token-bucket rate limiter to the API client ".repeat(4)
 }
 
-/// Python's show_state: a run of the default workflow, done with APPROVE, in workspace w1, with fields set.
+/// A run of the default workflow, done with APPROVE, in workspace w1, with fields set.
 fn show_state(fields: &[(&str, Value)]) -> Value {
     let mut state = RunState::new(SHOW_ID, &long_task(), "/proj");
     (state.phase, state.round, state.verdict, state.workspace_id) = ("done".into(), 1, Some(APPROVE.into()), "w1".into());
@@ -589,7 +583,7 @@ fn show_state(fields: &[(&str, Value)]) -> Value {
     with(with(state.to_json(), &[("agents", agents)]), fields)
 }
 
-/// A world whose /proj holds states, each saved 10^6 s ago: Python's ShowHost.
+/// A world whose /proj holds states, each saved 10^6 s ago.
 fn show_host(states: &[Value]) -> Cli {
     let cli = alive();
     for state in states {
@@ -699,7 +693,7 @@ fn closed_once_set() {
     }
 }
 
-/// Python's turn: a turn record of step, of round 1 unless change says otherwise, that started and ended at these
+/// A turn record of step, of round 1 unless change says otherwise, that started and ended at these
 /// readings of the host's clock, None for one not known.
 fn turn(step: &str, file: &str, start: Option<i64>, end: Option<i64>, fields: &[(&str, Value)]) -> Value {
     let at = |s: Option<i64>| s.map_or(Value::Null, |s| Value::from(iso_utc(HOST_EPOCH + s)));
@@ -942,7 +936,7 @@ fn help() {
     }
 }
 
-// -- TestQualityGateOffOnResume.test_show_names_the_gate -------------------------------------------------------------
+// -- show names the quality gate -------------------------------------------------------------------------------------
 
 #[test]
 fn show_names_the_gate() {
@@ -967,7 +961,7 @@ fn show_names_the_gate() {
     }
 }
 
-// -- TestBlockedListing, and TestBlocked.test_the_wait_is_saved_and_listed's print_runs half -------------------------
+// -- A blocked run's wait --------------------------------------------------------------------------------------------
 
 #[test]
 fn a_running_blocked_run_shows_its_question_and_pane() {
@@ -1013,7 +1007,7 @@ fn the_wait_is_listed() {
     assert_eq!(cli.lines()[0], format!("20260929-120000-a1b2c3  build    round 1  blocked: {QUESTION} (pane w1:p2)"));
 }
 
-// -- TestQualityCLI.test_list_shows_the_quality_phase, TestWorkflowFiles' gated step ---------------------------------
+// -- The quality phase, and the gated step of a saved definition -----------------------------------------------------
 
 #[test]
 fn list_shows_the_quality_phase() {
@@ -1032,7 +1026,7 @@ fn list_reads_the_gated_step_from_the_saved_definition() {
     assert!(lines[0].starts_with("20260930-070000-c0ffee  impl     round 1 q2"), "{}", lines[0]);
 }
 
-// -- TestRunMetrics.test_the_metrics_command_prints_a_line_per_run_that_is_done --------------------------------------
+// -- The metrics command ---------------------------------------------------------------------------------------------
 
 #[test]
 fn the_metrics_command_prints_a_line_per_run_that_is_done() {

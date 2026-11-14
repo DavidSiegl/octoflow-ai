@@ -67,8 +67,7 @@ impl ProofRun {
     /// The run record holds; one without moved is not moved (ProofRun::record).
     ///
     /// Errors: a field missing or of another type than the engines write, as no released engine's state.json has
-    /// (every record a format-2 state.json holds has each field, moved only when true), where the Python engine
-    /// fails on a KeyError or a TypeError.
+    /// (every record a format-2 state.json holds has each field, moved only when true).
     pub fn read(record: &Object) -> Result<ProofRun, OrchestratorError> {
         let field = |key: &str| {
             record.get(key).ok_or_else(|| OrchestratorError(format!("a proof run saved in state.json has no {key}")))

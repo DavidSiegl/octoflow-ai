@@ -1,7 +1,5 @@
-//! tests/test_orchestrator.py's TestCheckSetup and TestDoctorCommand, ported case for case, on FakeTools: the
-//! commands of a machine as ProcessHost and ProcessHerdr start them, played as Python's FakeTools plays them behind
-//! Host(run=...) and Herdr(run=...). Not ported: test_without_tkinter and the tkinter check of the others, since the
-//! Rust engine has no GUI and doctor checks no tkinter.
+//! check_setup and the doctor command, on FakeTools: the commands of a machine as ProcessHost and ProcessHerdr start
+//! them, played by the runner each is built with for tests.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -31,7 +29,7 @@ enum Answer {
     Ran(i32, String, String),
     /// It runs out of time.
     TimesOut,
-    /// Its program cannot be started, as Python's FileNotFoundError.
+    /// Its program is not on PATH, so it cannot be started.
     NotFound,
 }
 
@@ -214,7 +212,7 @@ fn played(answer: &Answer) -> Result<(i32, Vec<u8>, Vec<u8>), ProcessError> {
     }
 }
 
-/// The words of a line of sh as shlex_join writes them: Python's shlex.split, for what the fake ssh is given.
+/// The words of a line of sh as shlex_join writes them, for what the fake ssh is given.
 fn shlex_split(line: &str) -> Vec<String> {
     let (mut words, mut word, mut in_word) = (vec![], String::new(), false);
     let mut chars = line.chars();
@@ -439,7 +437,7 @@ fn integration_states_are_read_from_the_listing() {
             ("antigravity-cli", "outdated (v2, current is v3)")
         ])
     );
-    // The pattern's corners, as Python's re reads them.
+    // The pattern's corners: a colon in the name, an empty state, nested parentheses.
     let cases = [
         ("a:b: x", Some(("a:b", "x"))),
         ("k:  (p)", Some(("k", ""))),
@@ -886,7 +884,7 @@ fn commands_get_the_child_env() {
     }
 }
 
-// -- TestDoctorCommand -----------------------------------------------------------------------------------------------
+// -- The doctor command ----------------------------------------------------------------------------------------------
 
 #[test]
 fn needs_no_herdr_pane() {
@@ -947,7 +945,7 @@ fn the_report() {
 }
 
 #[test]
-fn a_version_number_is_found_as_python_finds_it() {
+fn a_version_number_is_the_first_run_of_dotted_digits() {
     let cases = [("herdr 0.9.1", Some("0.9.1")), ("git version 2.39.3 (Apple Git-145)", Some("2.39.3")), ("v12 then 1.2.", Some("1.2")), ("herdr dev", None), ("7", None)];
     for (text, want) in cases {
         assert_eq!(version_number(text), want, "{text}");

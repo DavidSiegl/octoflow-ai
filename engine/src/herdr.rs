@@ -1,8 +1,8 @@
-//! herdr, the terminal multiplexer the role agents run in, as orchestrator.py's Herdr drives it: the [`Herdr`] trait
-//! is the commands a run gives it, and [`ProcessHerdr`] gives them by running the `herdr` CLI.
+//! herdr, the terminal multiplexer the role agents run in: the [`Herdr`] trait is the commands a run gives it, and
+//! [`ProcessHerdr`] gives them by running the `herdr` CLI.
 //!
 //! The trait is the commands, not the CLI's protocol: a fake plays a role's agent at the level of a prompt and its
-//! handoff file, as tests/test_orchestrator.py's FakeHerdr does (`FakeHerdr`, herdr/fake.rs), and how herdr is
+//! handoff file (`FakeHerdr`, herdr/fake.rs), and how herdr is
 //! invoked and what it answers (its argv, its JSON, its error codes, the limit on its process) is ProcessHerdr's
 //! alone. A trait of one primitive, a herdr call that the commands are provided methods on, as Host is built on
 //! exec, was weighed and not taken: a fake would then have to read herdr's argv and write its JSON to play an agent,
@@ -42,9 +42,9 @@ const EXPORTED: &str = "octoflow: exported";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HerdrError {
     /// herdr answered with an error, by herdr's code (such as agent_not_found or timeout; `bad_response` for an
-    /// answer that is not one, and `exit_<status>` for a failure herdr gave no code for): Python's HerdrError.
+    /// answer that is not one, and `exit_<status>` for a failure herdr gave no code for).
     Herdr { code: String, message: String },
-    /// herdr could not be asked, or what it answered is not what was asked for: Python's OrchestratorError.
+    /// herdr could not be asked, or what it answered is not what was asked for.
     Failed(OrchestratorError),
 }
 
@@ -184,7 +184,7 @@ impl HerdrServer {
 pub struct Agent {
     /// Its lifecycle status, such as idle, working, blocked or done.
     pub status: String,
-    /// The id of the harness's session it runs in, once herdr knows it (Python's agent_session); None before, and
+    /// The id of the harness's session it runs in, once herdr knows it; None before, and
     /// when herdr reports an empty one.
     pub session: Option<String>,
 }
@@ -549,8 +549,7 @@ impl ProcessHerdr {
         }
     }
 
-    /// As new, each command run by run in place of a process, in an empty environment: Python's Herdr(run=...), for
-    /// the tests.
+    /// As new, each command run by run in place of a process, in an empty environment, for the tests.
     #[cfg(test)]
     pub(crate) fn with_runner(
         machine: Option<&str>,
@@ -591,36 +590,30 @@ impl ProcessHerdr {
     }
 
     /// The SSH target of the machine, for reaching its filesystem, from this machine's saved machines: machine
-    /// management is herdr's here, and is never forwarded. Errors: no saved machine is named so, or it is disabled.
+    /// management is herdr's here, and is never forwarded. Errors: this herdr has no machine, which herdr is then not
+    /// asked about; no saved machine is named so, or it is disabled.
     pub fn ssh_target(&self) -> Result<String, HerdrError> {
+        let no_machine = || HerdrError::Failed(OrchestratorError::new("no herdr machine chosen, so none to reach"));
+        let machine = self.machine.as_deref().ok_or_else(no_machine)?;
         let out = self.exec(&["machine", "list", "--json"], Some(Duration::from_secs(CALL_LIMIT_SECONDS)))?;
         let bad = |why: String| HerdrError::new("bad_response", format!("machine list: {why}"));
         let profiles = serde_json::from_str::<Value>(&out).map_err(|e| bad(e.to_string()))?;
         let profiles = profiles.as_array().ok_or_else(|| bad("not a list of machines".to_string()))?;
-        // A label or id that is missing or null is Python's None, which a run without a machine matches.
-        let names = |p: &Value, key: &str| match p.get(key) {
-            None | Some(Value::Null) => Some(None),
-            Some(Value::String(s)) => Some(Some(s.clone())),
-            Some(_) => None,
-        };
-        let machine = self.machine.clone();
         for p in profiles {
             if p.as_object().is_none() {
                 return Err(bad(format!("a machine is not an object: {}", p)));
             }
-            if [names(p, "label"), names(p, "id")].contains(&Some(machine.clone())) {
-                let name = machine.as_deref().unwrap_or("None");
+            if ["label", "id"].iter().any(|key| p.get(key).and_then(Value::as_str) == Some(machine)) {
                 if !p.get("enabled").is_some_and(Value::is_set) {
-                    return Err(HerdrError::Failed(OrchestratorError(format!("herdr machine {name} is disabled"))));
+                    return Err(HerdrError::Failed(OrchestratorError(format!("herdr machine {machine} is disabled"))));
                 }
                 return match p.get("target") {
                     Some(Value::String(target)) => Ok(target.clone()),
-                    _ => Err(bad(format!("machine {name} has no target"))),
+                    _ => Err(bad(format!("machine {machine} has no target"))),
                 };
             }
         }
-        let name = machine.as_deref().unwrap_or("None");
-        Err(HerdrError::Failed(OrchestratorError(format!("no saved herdr machine named {name}"))))
+        Err(HerdrError::Failed(OrchestratorError(format!("no saved herdr machine named {machine}"))))
     }
 
     /// Show a desktop notification with title and body, and a sound, from herdr.
@@ -663,8 +656,8 @@ impl ProcessHerdr {
     /// prints what is not UTF-8.
     fn exec(&self, args: &[&str], limit: Option<Duration>) -> Result<String, HerdrError> {
         let argv: Vec<String> = std::iter::once("herdr").chain(args.iter().copied()).map(String::from).collect();
-        // The command as an error names it: its first three words, as Python's timeout names it, never a prompt's
-        // text, which can be long and goes to the log and state.json with the error.
+        // The command as an error names it: its first three words, never a prompt's text, which can be long and goes
+        // to the log and state.json with the error.
         let command = args[..args.len().min(3)].join(" ");
         let failed = |why: String| HerdrError::Failed(OrchestratorError(format!("herdr {command}: {why}")));
         let (status, stdout, stderr) = match (self.run)(&argv, &self.env, limit) {

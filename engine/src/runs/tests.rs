@@ -1,4 +1,4 @@
-//! tests/test_orchestrator.py's TestRunHealth (its print_runs cases are crate::cli::listing's tests) and TestPidAlive.
+//! A run's health (how runs are printed is crate::cli::listing's tests) and pid_alive.
 
 use super::*;
 use crate::constants::APPROVE;
@@ -6,7 +6,7 @@ use crate::json::{object, Object};
 
 const ME_PID: i64 = 4242;
 
-/// Python's run_record: a run of 20260930-070000-c0ffee in round 1 of phase, with owner, error and verdict.
+/// A run of 20260930-070000-c0ffee in round 1 of phase, with owner, error and verdict.
 fn run_record(phase: &str, owner: Option<Object>, error: Option<&str>, verdict: Option<&str>) -> RunState {
     let mut state = RunState::new("20260930-070000-c0ffee", "add a rate limiter", "/proj");
     state.phase = phase.to_string();
@@ -72,6 +72,18 @@ fn a_done_run_not_yet_released_is_judged_by_its_owner_as_ending() {
     assert_eq!(health(&owned, 40, true), Some((RUNNING, "pid 4242 on here, beat 40s ago".to_string())));
     assert_eq!(health(&owned, HEARTBEAT_SECONDS + 1, false).unwrap().0, STALE);
     assert_eq!(health(&run_record("done", Some(Object::new()), None, Some(APPROVE)), 40, true), None);
+}
+
+#[test]
+fn an_owner_missing_its_pid_or_host_reads_as_unknown() {
+    let mut no_host = owner("laptop");
+    no_host.remove("host");
+    let got = health(&run_record("build", Some(no_host), None, None), 40, true);
+    assert_eq!(got, Some((RUNNING, "pid 4242 on unknown, beat 40s ago".to_string())));
+    let mut no_pid = owner("laptop");
+    no_pid.remove("pid");
+    let got = health(&run_record("build", Some(no_pid), None, None), 40, true);
+    assert_eq!(got, Some((RUNNING, "pid unknown on laptop, beat 40s ago".to_string())));
 }
 
 #[test]

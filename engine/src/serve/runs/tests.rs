@@ -1,4 +1,4 @@
-//! TestRunWatch, and plain_name and ProjectRuns' refusals as TestServeEndpoints holds them, without a server.
+//! RunWatch, and plain_name and ProjectRuns' refusals, without a server.
 
 use std::sync::atomic::{AtomicI64, Ordering};
 
@@ -13,7 +13,7 @@ fn run_dir() -> String {
     format!("/proj/{RUNS_DIR}/{SERVE_ID}")
 }
 
-/// serve_state(**kw) of the Python tests: the run's state with the extra keys.
+/// A run's state.json as serve's tests save it: a fresh run in round 1's build, with the extra keys.
 fn serve_state(extra: &[(&str, Value)]) -> String {
     let mut fresh = crate::state::RunState::new(SERVE_ID, "add a rate limiter", "/proj");
     (fresh.phase, fresh.round) = ("build".into(), 1);
@@ -197,7 +197,7 @@ fn state_json_and_names_outside_the_run_are_refused_unread() {
         other => panic!("{run:?} {name:?} gave {other:?}"),
     };
     assert_eq!(refused(SERVE_ID, "state.json"), "state.json is not a handoff file");
-    // The run id is checked first, as Python's f-string evaluates it first.
+    // The run id is checked first.
     assert_eq!(refused("..", "../secret"), "\"..\" is not a name in the run directory");
     assert_eq!(refused(SERVE_ID, "../../../secret"), "\"../../../secret\" is not a name in the run directory");
     assert!(matches!(w.project.files("../.."), Err(RunReadError::Refused(_))));

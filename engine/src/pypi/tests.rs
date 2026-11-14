@@ -1,4 +1,5 @@
-//! tests/test_orchestrator.py's TestPyPI, and the answers of other shapes it words as Python does.
+//! PyPI as the new-dependencies check asks it, through a FakePyPI: the URL asked, the answers read, and how an answer
+//! of another shape is worded.
 
 use std::sync::Mutex;
 
@@ -80,8 +81,8 @@ fn any_other_failure_raises() {
     let cases = [
         (Err(HttpError::Status(503)), format!("GET {url}: HTTP 503")),
         (
-            Err(HttpError::NoAnswer("[Errno -3] name resolution".to_string())),
-            format!("GET {url}: [Errno -3] name resolution"),
+            Err(HttpError::NoAnswer("Temporary failure in name resolution".to_string())),
+            format!("GET {url}: Temporary failure in name resolution"),
         ),
         (Err(HttpError::NoAnswer("timed out".to_string())), format!("GET {url}: timed out")),
         (body("<html>"), format!("GET {url}: the answer is not PyPI's JSON")),

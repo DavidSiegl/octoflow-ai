@@ -1,5 +1,5 @@
-//! FakePyPI, the index the new-dependencies tests ask: PyPI behind an [`Http`], played as tests/test_orchestrator.py's
-//! FakePyPI plays it behind urlopen, so that [`PyPI`](super::PyPI)'s URL, answers and errors run in those tests.
+//! FakePyPI, the index the new-dependencies tests ask: PyPI played behind an [`Http`], so that
+//! [`PyPI`](super::PyPI)'s URL, answers and errors run in those tests.
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -10,8 +10,7 @@ use serde_json::Value;
 use crate::json::Object;
 use crate::json::object;
 
-/// PyPI's JSON for a project with one early release and its latest, as https://docs.pypi.org/api/json/ has it:
-/// Python's pypi_project(). Each field is that function's argument of the name.
+/// PyPI's JSON for a project with one early release and its latest, as https://docs.pypi.org/api/json/ has it.
 #[derive(Clone, Debug)]
 pub(crate) struct ProjectJson {
     /// The day of its first release's files, YYYY-MM-DD.

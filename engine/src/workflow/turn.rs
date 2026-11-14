@@ -27,7 +27,7 @@ pub(super) enum Announce {
     Blocked { question: String },
 }
 
-/// The turn a step asks of a role: what Python's Workflow._turn takes.
+/// The turn a step asks of a role.
 pub(super) struct Turn {
     pub role: String,
     /// The handoff file that ends the turn.
@@ -752,7 +752,7 @@ fn block_number(block: &Object) -> Result<i64, OrchestratorError> {
 }
 
 /// The field key of a block, RunState::blocked. Errors: the record lacks it, as only a state.json edited by hand
-/// does, where Python's engine fails with a KeyError.
+/// does.
 fn block_field<'b>(block: &'b Object, key: &str) -> Result<&'b Value, OrchestratorError> {
     block.get(key).ok_or_else(|| OrchestratorError(format!("the block saved in state.json has no {key}")))
 }

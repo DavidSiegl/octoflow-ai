@@ -106,7 +106,7 @@ impl RunView<'_> {
             .find(|(x, _, _)| x == name)
             .ok_or_else(|| OrchestratorError(format!("step {} has no placeholder {name}", step.id)))?;
         match *prefix {
-            // Round 0's previous round is -1, as Python's n - 1 gives it, whose file no turn writes.
+            // Round 0's previous round is -1, whose file no turn writes.
             "prev_" if n == 0 => Ok(other.path(&s.dir(), -1, 0)),
             "prev_" => match self.judged_rounds(other, n) {
                 // A verdict step's last file before round n; round n-1's, which no turn wrote, before its first turn,

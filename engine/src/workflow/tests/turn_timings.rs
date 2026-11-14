@@ -1,13 +1,9 @@
-//! TestTurnTimings and TestRunMetrics: each turn's record on the host's clock, summary.md at every end and
-//! metrics.json at a run's end, with each agent turn's tokens.
+//! Each turn's record on the host's clock, summary.md at every end and metrics.json at a run's end, with each agent
+//! turn's tokens.
 //!
-//! The turn_tokens half of TestRunMetrics' test_a_gated_run_of_two_rounds_records_its_turns_and_quality_rounds, which
-//! calls turn_tokens on a log it makes, is crate::summary's (turn_tokens_sums_the_answers_within_the_turn_as_the_python_engine_does).
-//!
-//! Not here: test_a_seeded_spec_has_no_record, in seeded_spec.rs; test_the_metrics_command_prints_a_line_per_run_that_is_done,
-//! the metrics command's, in crate::cli::listing's tests. test_durations, test_a_pipe_in_a_cell_does_not_split_it,
-//! test_turn_tokens_needs_a_known_window_and_a_harness_it_reads and test_session_log_finds_the_file_under_home are
-//! crate::summary's and crate::host's (ticket 06).
+//! Not here: a seeded spec's missing record, in seeded_spec.rs; the metrics command, in crate::cli::listing's tests;
+//! turn_tokens on a session log, durations, summary.md's table cells and finding a session log, crate::summary's and
+//! crate::host's.
 
 use std::cell::RefCell;
 
@@ -313,7 +309,7 @@ fn a_summary_that_cannot_be_written_changes_no_outcome() {
     assert!(f.told.lines().contains(&"could not write summary.md: disk full".to_string()));
 }
 
-// -- TestRunMetrics ----------------------------------------------------------------------------------------------
+// -- metrics.json ------------------------------------------------------------------------------------------------
 
 #[test]
 fn a_failed_run_writes_no_metrics() {
@@ -327,8 +323,8 @@ fn a_failed_run_writes_no_metrics() {
 #[test]
 fn tokens_come_from_the_session_the_turn_ran_in() {
     let f = Fixture::new(vec![("spec", vec![spec_turn()]), ("build", vec![taking(100, build_turn(1))])]);
-    // The sessions are known once both agents have started: the logs are put in place during the review, which
-    // Python's test does just before publishing.
+    // The sessions are known once both agents have started: the logs are put in place during the review, before
+    // publishing reads them.
     let sessions = Rc::new(RefCell::new(Map::new()));
     let (herdr, known) = (Rc::clone(&f.herdr), Rc::clone(&sessions));
     let mut review = review_turn(1, APPROVE);

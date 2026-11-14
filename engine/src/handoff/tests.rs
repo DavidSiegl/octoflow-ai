@@ -44,7 +44,7 @@ fn a_labelled_word_says_where_it_stands() {
     assert_eq!(labelled_word("GATE:é OK", "GATE", &[QUALITY_OK]), None);
 }
 
-// -- tests/test_properties.py's TestFirstLineParsers, with a seeded generator in place of Hypothesis ---------------
+// -- The first-line parsers' properties, over seeded generated inputs ----------------------------------------------
 
 const GATES: [&str; 4] = [QUALITY_OK, QUALITY_ERROR, QUALITY_BUILD_FAILED, QUALITY_LEAK];
 const VERDICTS: [&str; 2] = [APPROVE, CHANGES_REQUESTED];

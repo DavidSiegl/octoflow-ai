@@ -21,7 +21,7 @@ fn fingerprints_json(failures: &GateFailures) -> String {
 }
 
 #[test]
-fn every_quality_file_reads_as_the_python_engine_reads_it() {
+fn every_quality_file_reads_as_quality_json_records() {
     let quality = oracle("quality.json");
     let files = quality.get("files").and_then(Value::as_array).unwrap();
     assert!(files.len() >= 25, "quality.json holds {} files", files.len());
@@ -47,7 +47,7 @@ fn leak(value: &Value) -> Leak {
 }
 
 #[test]
-fn the_engines_quality_files_are_written_as_the_python_engine_writes_them() {
+fn the_engines_quality_files_are_written_as_quality_json_records() {
     let quality = oracle("quality.json");
     for case in quality.get("leak_reports").and_then(Value::as_array).unwrap() {
         let leaks: Vec<Leak> = case.get("leaks").and_then(Value::as_array).unwrap().iter().map(leak).collect();
@@ -63,7 +63,7 @@ fn the_engines_quality_files_are_written_as_the_python_engine_writes_them() {
     }
 }
 
-/// LEAK of tests/test_orchestrator.py, with changes.
+/// A leak gitleaks reports, with changes.
 fn a_leak(change: impl FnOnce(&mut Leak)) -> Leak {
     let mut leak = Leak {
         rule: "github-pat".into(),
@@ -157,7 +157,7 @@ fn lines_that_only_look_like_findings_are_not_read_as_them() {
         assert!(numbered_finding(line).is_none(), "{line}");
     }
     let found = numbered_finding("12. `a`b.py:3` (the whole file)` error ruff X: y: z").unwrap();
-    // The shortest path, as Python's re reads it.
+    // The shortest path the rest of the line allows.
     assert_eq!((found.path, found.rule, found.message), (Some("a`b.py"), "whole file)` error ruff X", "y: z"));
     assert_eq!(failing_test("- `a`: b`: c"), Some("a`: b"));
     assert_eq!(failing_test("- ``: c"), None);

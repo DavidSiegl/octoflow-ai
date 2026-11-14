@@ -1,15 +1,11 @@
-//! TestOtherWorkflows, TestWorkflowWithoutAVerdict, TestSavedBeforeWorkflows, TestSpecBuildReviewExample and the
-//! Workflow-driven cases of TestWorkflowDefinitions and TestWorkflowFiles: workflows other than the default, a run
-//! saved before workflows existed, and a workflow file's run.
+//! Workflows other than the default, one without a verdict step, a run saved before workflows existed, and a
+//! workflow file's run.
 //!
-//! Not here: the CLI's (crate::cli's tests): role_models' half of
-//! TestOtherWorkflows.test_model_reaches_a_role_without_its_own_flag, TestWorkflowWithoutAVerdict's
-//! test_a_failed_gate_exits_as_changes_requested and test_finished_exits_zero, and TestWorkflowFiles'
-//! test_list_reads_the_gated_step_from_the_saved_definition; resumable_state's, in crate::cli (cli/start/tests.rs): TestWorkflowFiles'
-//! test_a_saved_definition_that_cannot_be_filled_in_stops_the_resume and test_a_corrupt_saved_definition_is_an_error.
-//! The other cases of TestWorkflowDefinitions and TestWorkflowFiles, and TestSavedBeforeWorkflows'
-//! test_root_pane_comes_from_the_workflows_first_role, are crate::pipeline's, crate::workflow_file's and
-//! crate::state's (ticket 04).
+//! Not here: the CLI's (crate::cli's tests): role_models giving a role without a flag of its own the model, the exit
+//! status of a workflow without a verdict, and `list` reading the gated step from the saved definition;
+//! resumable_state's, in crate::cli (cli/start/tests.rs): a saved definition that cannot be filled in or is corrupt
+//! stopping the resume. Parsing workflow definitions and files, and an old run's root pane, are crate::pipeline's,
+//! crate::workflow_file's and crate::state's.
 
 use super::*;
 use crate::workflow::fixture::Outcome;
@@ -276,7 +272,7 @@ fn phase_outside_the_workflow_is_refused() {
     assert!(error.contains("phase spec, which workflow quick has no step for"), "{error}");
 }
 
-// -- TestWorkflowWithoutAVerdict --------------------------------------------------------------------------------
+// -- A workflow without a verdict -------------------------------------------------------------------------------
 
 #[test]
 fn a_run_finishes_and_opens_a_ready_pull_request() {
@@ -385,7 +381,7 @@ fn a_gate_that_passes_is_finished() {
     assert!(pr.body.contains("<summary>Quality gate (round 1)</summary>\n\nGATE: OK"));
 }
 
-// -- The Workflow-driven cases of TestWorkflowDefinitions and TestWorkflowFiles, and TestSpecBuildReviewExample ------
+// -- Workflow definitions and files, as a run takes them, and the example spec-build-review.toml ------------------
 
 #[test]
 fn the_gate_needs_a_gated_step() {
@@ -446,8 +442,7 @@ fn a_built_in_workflow_is_saved_by_name_only() {
 
 #[test]
 fn spec_build_review_is_the_default_workflow() {
-    // TestSpecBuildReviewExample.test_it_is_the_default_workflow. Fails when a built-in prompt or step changes;
-    // regenerate the file with `workflows default`.
+    // Fails when a built-in prompt or step changes; regenerate the file with `workflows default`.
     let example = load_workflow_file(&format!("{EXAMPLES}/spec-build-review.toml"), &Default::default()).unwrap();
     assert_eq!(workflow_definition(&example), workflow_definition(&DEFAULT_WORKFLOW));
 }

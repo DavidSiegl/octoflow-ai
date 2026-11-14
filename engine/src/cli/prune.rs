@@ -1,4 +1,4 @@
-//! Deleting the branches of runs whose pull request is done, as orchestrator.py's prune_branches: the `prune`
+//! Deleting the branches of runs whose pull request is done: the `prune`
 //! command, and the sweep a run that opens a pull request makes first (sweep_branches). A branch is deleted only when
 //! its pull request's head commit holds all of it, so every deleted branch can be restored from its pull request
 //! (GitHub keeps refs/pull/<n>/head; docs/design.md). The same holds for the --worktree a run left behind, which
@@ -148,7 +148,7 @@ fn prune_run(
 ) -> Result<(), GhError> {
     let failed = GhError::Failed;
     let host = world.with.host;
-    // Before gh pr view, as Python reads wall() for prune_run's call.
+    // Read before gh pr view.
     let now = world.with.clocks.wall();
     // is_prune_candidate takes only runs with both.
     let (Some(url), Some(branch)) = (state.pr_url.as_deref(), state.branch.as_deref()) else {
@@ -198,10 +198,11 @@ pub fn pull_request_pending(pr: &PullRequest, number: &str, now: f64) -> Result<
     if pr.state != "CLOSED" {
         return Ok(Some(format!("PR #{number} is {}", pr.state.to_lowercase())));
     }
-    let closed = pr.closed_at.as_deref().map(crate::summary::epoch_time);
-    let Some(Ok(closed)) = closed else {
-        let at = pr.closed_at.as_deref().map_or("None".to_string(), |at| format!("{at:?}"));
-        return Err(OrchestratorError(format!("PR #{number} is closed at {at}, which is not a time")));
+    let Some(at) = pr.closed_at.as_deref() else {
+        return Err(OrchestratorError(format!("PR #{number} is closed without a closing time")));
+    };
+    let Ok(closed) = crate::summary::epoch_time(at) else {
+        return Err(OrchestratorError(format!("PR #{number} is closed at {at:?}, which is not a time")));
     };
     if now - closed > CLOSED_BRANCH_GRACE as f64 {
         return Ok(None);

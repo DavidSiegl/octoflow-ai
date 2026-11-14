@@ -1,5 +1,5 @@
-//! The engine's defaults, intervals, names and exit statuses: the constants at the top of orchestrator.py, each with
-//! its comment there. A constant that belongs to one part of the engine lives in that part's module instead.
+//! The engine's defaults, intervals, names and exit statuses that no one part of it owns. A constant that belongs to
+//! one part of the engine lives in that part's module instead.
 
 /// Where a project keeps its runs' directories, relative to it.
 pub const RUNS_DIR: &str = ".orchestrator/runs";
@@ -68,6 +68,9 @@ pub const FINISHED: &str = "FINISHED";
 pub const QUALITY_GATE_FAILED: &str = "QUALITY_GATE_FAILED";
 /// The outcomes that count as a run's success.
 pub const SUCCEEDED: [&str; 2] = [APPROVE, FINISHED];
+/// What the program's last line names in place of a verdict for a run that ended without one (cli::finish); never
+/// a run's verdict, and never saved.
+pub const NO_VERDICT: &str = "NO_VERDICT";
 /// The first line of a report whose agent cannot go on without the human (parse_blocked).
 pub const BLOCKED: &str = "BLOCKED:";
 /// How a BLOCKED line with nothing after the colon shows its question.

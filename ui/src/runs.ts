@@ -49,7 +49,7 @@ export function heartbeatAge(entry: RunEntry, now: number): number {
   return entry.record.heartbeat_age + Math.max(0, Math.floor((now - entry.receivedAt) / 1000));
 }
 
-/** seconds as `list` words an age (orchestrator.py's format_age): 42s, 5m, 2h3m. */
+/** seconds as `list` words an age (format_age in engine/src/summary.rs): 42s, 5m, 2h3m. */
 export function formatAge(seconds: number): string {
   if (seconds < 60) {
     return `${seconds}s`;

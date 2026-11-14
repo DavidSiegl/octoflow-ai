@@ -1,13 +1,11 @@
-//! The human's Ctrl-C, as the engine sees it: Python's KeyboardInterrupt, which the Rust engine cannot raise inside
-//! whatever happens to run, so it is a value that what waits checks instead, and that stops the commands the engine
-//! is waiting on (crate::host::run_process) when it is raised.
+//! The human's Ctrl-C, as the engine sees it: a value that what waits checks, since a signal cannot stop the engine's
+//! code wherever it happens to be, and that stops the commands the engine is waiting on (crate::host::run_process)
+//! when it is raised.
 //!
-//! In Python every command the engine runs is in the terminal's foreground group and gets the Ctrl-C's SIGINT too, and
-//! the SIGHUP of a closed terminal. The Rust engine runs each command in a process group of its own, which the
-//! terminal does not signal, so raising the Interrupt is what reaches them: [`by_signals`] has SIGINT raise it, from
-//! the terminal or from a kill of the engine's group, such as the desktop app's Stop, and SIGTERM and SIGHUP too, which
-//! end the Python engine at once, so that no command outlives the engine; [`exit`] then ends the process by the
-//! signal, as they end Python's.
+//! The engine runs each command in a process group of its own, which the terminal does not signal, so raising the
+//! Interrupt is what reaches them: [`by_signals`] has SIGINT raise it, from the terminal or from a kill of the
+//! engine's group, such as the desktop app's Stop, and SIGTERM and SIGHUP too, so that no command outlives the engine;
+//! [`exit`] then ends the process by the signal.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
@@ -15,11 +13,11 @@ use std::time::{Duration, Instant};
 
 use nix::sys::signal::{SigSet, Signal};
 
-/// The Ctrl-C a run may get. Raising it is the human's Ctrl-C: it is then *pending*, as Python's KeyboardInterrupt is
-/// from its raise until a handler catches it. While it is pending, every command a Host or herdr waits on fails
-/// (crate::host::run_process), one already running and one started meanwhile, and a sleep on it ends; the Workflow
-/// stops at its next pause, and catches it (Interrupt::catch) to release the run. Clones share one Interrupt, so the
-/// signal thread (by_signals) or a test playing the human raises what a Workflow and its commands see.
+/// The Ctrl-C a run may get. Raising it is the human's Ctrl-C: it is then *pending* until it is caught. While it is
+/// pending, every command a Host or herdr waits on fails (crate::host::run_process), one already running and one
+/// started meanwhile, and a sleep on it ends; the Workflow stops at its next pause, and catches it (Interrupt::catch)
+/// to release the run. Clones share one Interrupt, so the signal thread (by_signals) or a test playing the human raises
+/// what a Workflow and its commands see.
 #[derive(Clone, Debug, Default)]
 pub struct Interrupt(Arc<Shared>);
 
@@ -74,15 +72,15 @@ impl Interrupt {
         s.raised > s.caught
     }
 
-    /// Take it as handled, as Python's except KeyboardInterrupt does: no longer pending, so that the commands that
-    /// record why the run stopped can run, until it is raised again.
+    /// Take it as handled: no longer pending, so that the commands that record why the run stopped can run, until it
+    /// is raised again.
     pub fn catch(&self) {
         let mut s = self.lock();
         s.caught = s.raised;
     }
 
-    /// Run f as Python runs a finally block that a KeyboardInterrupt passes through: f's commands start, as if it
-    /// were caught, and afterwards it is pending again if it was before f or was raised during it.
+    /// Run f as clean-up the Interrupt must not stop: f's commands start, as if it were caught, and afterwards it is
+    /// pending again if it was before f or was raised during it.
     pub fn finally<T>(&self, f: impl FnOnce() -> T) -> T {
         let held = {
             let mut s = self.lock();
@@ -172,10 +170,10 @@ static ENDING: OnceLock<Signal> = OnceLock::new();
 /// and end the process. The commands the engine starts get them unblocked (crate::host::run_process).
 ///
 /// A signal the process started with ignored, as a Jenkins sh step's command ignores SIGINT and nohup's SIGHUP, stays
-/// ignored and never raises it, as Python then never raises KeyboardInterrupt, and nohup's Python is not hung up.
-/// That is read from Linux's /proc/self/status, since Linux keeps an ignored signal for a thread that blocks it; where
-/// it cannot be read, as on macOS, the kernel is taken to discard an ignored signal even while it is blocked, as the
-/// BSD kernels do, which a Linux without /proc does not (TODO.md, "The Rust engine's Ctrl-C, what is left").
+/// ignored and never raises it: a Jenkins step is not interrupted, and nohup's engine is not hung up. That is read from
+/// Linux's /proc/self/status, since Linux keeps an ignored signal for a thread that blocks it; where it cannot be read,
+/// as on macOS, the kernel is taken to discard an ignored signal even while it is blocked, as the BSD kernels do, which
+/// a Linux without /proc does not (TODO.md, "The engine's Ctrl-C, what is left").
 ///
 /// Errors: the signals could not be blocked, or the thread could not be started.
 pub fn by_signals() -> std::io::Result<Interrupt> {
@@ -211,7 +209,7 @@ pub fn by_signals() -> std::io::Result<Interrupt> {
 
 /// End the process with status, as std::process::exit does; but once a SIGTERM or SIGHUP has raised by_signals'
 /// Interrupt, by the first of them, as its default action ends a process, so that its parent sees the signal's death
-/// (a shell's $? 128 plus its number, 143 and 129), as the Python engine dies by it. stdout is flushed first, as at
+/// (a shell's $? 128 plus its number, 143 and 129). stdout is flushed first, as at
 /// the end of main.
 pub fn exit(status: i32) -> ! {
     use std::io::Write;
