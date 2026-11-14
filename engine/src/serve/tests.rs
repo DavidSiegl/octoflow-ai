@@ -9,7 +9,9 @@ use std::time::Instant;
 
 use super::*;
 use crate::cli::listing::run_record;
-use crate::constants::{APPROVE, RUNS_DIR, STALE_SECONDS};
+use crate::constants::{APPROVE, RUNS_DIR, STALE_SECONDS, WORKTREES_DIR};
+use crate::host::tests::Repo;
+use crate::state::RunState;
 use crate::json::{Object, ValueExt};
 use crate::http::quote;
 use crate::cli::doctor::{Check, Level};
@@ -1164,6 +1166,163 @@ fn a_run_needs_the_token_and_the_server_s_own_origin() {
     let headers = [("Authorization", bearer.as_str()), ("Origin", "http://evil.example"), ("Content-Length", &length)];
     assert_eq!(served.ask_with_body("POST", &target, &headers, body).status, Some(403));
     assert!(served.console.state().launches.is_empty());
+}
+
+// -- POST /close: closing a project's runs ---------------------------------------------------------------------
+
+/// The runs of closing()'s project, in run id order.
+const CLOSE_FINISHED: &str = "20261001-110000-aaaaa1";
+const CLOSE_FAILED: &str = "20261001-120000-a1b2c3";
+const CLOSE_RUNNING: &str = "20261001-130000-ccccc3";
+const CLOSE_CLOSED: &str = "20261001-140000-ddddd4";
+/// CLOSE_FAILED's branch, which holds no commit beyond its base.
+const CLOSE_BRANCH: &str = "orchestrator/x-a1b2c3";
+
+/// A git repository with four runs, and a server whose every project is that repository, with the server's console
+/// as its herdr: CLOSE_FINISHED, finished in place in workspace w-fin, which herdr has open; CLOSE_FAILED, failed in a
+/// worktree (the second value) on CLOSE_BRANCH, its app.py changed; CLOSE_RUNNING, just saved by a live run; and
+/// CLOSE_CLOSED, closed.
+fn closing() -> (Repo, String, Served) {
+    let repo = Repo::new(&[("app.py", "one\n"), (".orchestrator/.gitignore", "*\n")]);
+    let base = repo.base().to_string();
+    let wt = format!("{}/{WORKTREES_DIR}/a1b2c3", repo.path);
+    repo.host.add_worktree(&repo.path, &wt, &base).unwrap();
+    repo.host.git(&wt, &["switch", "--quiet", "-c", CLOSE_BRANCH]).unwrap();
+    crate::host::tests::put(&format!("{wt}/app.py"), "changed\n");
+    let save = |id: &str, set: &dyn Fn(&mut RunState)| {
+        let mut state = RunState::new(id, "a task", &repo.path);
+        (state.phase, state.round) = ("build".into(), 1);
+        set(&mut state);
+        repo.host.write(&format!("{}/state.json", state.dir()), &state.to_text(), false).unwrap();
+    };
+    save(CLOSE_FINISHED, &|s| (s.phase, s.verdict, s.workspace_id) = ("done".into(), Some(APPROVE.into()), "w-fin".into()));
+    save(CLOSE_FAILED, &|s| {
+        (s.error, s.worktree, s.branch) = (Some("interrupted".into()), Some(wt.clone()), Some(CLOSE_BRANCH.into()));
+        s.base = Some(base.clone());
+    });
+    save(CLOSE_RUNNING, &|_| {});
+    save(CLOSE_CLOSED, &|s| (s.error, s.closed) = (Some("interrupted".into()), Some("workspace closed".into())));
+    let console = Arc::new(FakeConsole::default());
+    console.state().workspaces.insert("w-fin".to_string());
+    let (herdr, dir) = (Arc::clone(&console), repo.path.clone());
+    let connect = move |_: &str, _: &str, stopping: &Interrupt| {
+        let host = Arc::new(ProcessHost::local(stopping));
+        let (console, workspaces, launcher) = (herdr.clone(), herdr.clone(), herdr.clone());
+        Ok(Reached { host, dir: dir.clone(), console, workspaces, launcher, launch_dir: dir.clone() })
+    };
+    let served = Served::start(Box::new(connect), &[], Arc::default(), Options::default());
+    (repo, wt, Served { console, ..served })
+}
+
+/// The runs of a 200 answer to POST /close, each as (run, outcome, detail, discarded).
+fn closed_runs(reply: &Reply) -> Vec<(String, String, String, Vec<String>)> {
+    assert_eq!(reply.status, Some(200), "{reply:?}");
+    let runs = reply.json().get("runs").and_then(Value::as_array).cloned().expect("runs");
+    let field = |run: &Value, key: &str| run.get(key).map(Value::text).expect(key);
+    let discarded = |run: &Value| run.get("discarded").and_then(Value::as_array).expect("discarded").iter().map(Value::text).collect();
+    runs.iter().map(|run| (field(run, "run"), field(run, "outcome"), field(run, "detail"), discarded(run))).collect()
+}
+
+/// The closed of the run of repo whose id is run_id, as its state.json saves it; None when it has none.
+fn saved_closed(repo: &Repo, run_id: &str) -> Option<String> {
+    let path = format!("{}/{RUNS_DIR}/{run_id}/state.json", repo.path);
+    let saved = serde_json::from_str::<Value>(&repo.host.read(&path).unwrap().unwrap()).unwrap();
+    saved.get("closed").filter(|c| !c.is_null()).map(Value::text)
+}
+
+#[test]
+fn a_dry_run_says_what_closing_each_run_would_do_and_changes_nothing() {
+    let (repo, wt, served) = closing();
+    let target = format!("/close?{}", urlencode(&[("cwd", &repo.path)]));
+    let mut runs = closed_runs(&served.post(&target, r#"{"dry_run": true}"#));
+    let running = runs.remove(2);
+    assert_eq!(
+        runs,
+        [
+            (CLOSE_FINISHED.into(), "closed".into(), "close workspace w-fin".into(), vec![]),
+            (CLOSE_FAILED.into(), "closed".into(), format!("delete worktree {wt}; delete branch {CLOSE_BRANCH}"), vec![" M app.py".into()]),
+            (CLOSE_CLOSED.into(), "already closed".into(), "workspace closed".into(), vec![]),
+        ]
+    );
+    assert_eq!((running.0.as_str(), running.1.as_str()), (CLOSE_RUNNING, "skipped"));
+    assert!(running.2.contains("is still running"), "{}", running.2);
+    assert!(std::path::Path::new(&wt).exists());
+    assert_eq!(repo.host.branch_commit(&repo.path, CLOSE_BRANCH).unwrap(), repo.base.clone());
+    assert_eq!(saved_closed(&repo, CLOSE_FINISHED), None);
+    assert_eq!(saved_closed(&repo, CLOSE_FAILED), None);
+    let s = served.console.state();
+    assert_eq!(s.workspace_calls, [("exists w-fin".to_string(), None)]);
+    assert!(s.workspaces.contains("w-fin"));
+}
+
+#[test]
+fn the_runs_are_closed_and_say_what_was_done_and_discarded() {
+    let (repo, wt, served) = closing();
+    let target = format!("/close?{}", urlencode(&[("cwd", &repo.path)]));
+    let runs = closed_runs(&served.post(&target, r#"{"dry_run": false}"#));
+    let outcomes: Vec<_> = runs.iter().map(|(run, outcome, _, _)| (run.as_str(), outcome.as_str())).collect();
+    let expected = [
+        (CLOSE_FINISHED, "closed"),
+        (CLOSE_FAILED, "closed"),
+        (CLOSE_RUNNING, "skipped"),
+        (CLOSE_CLOSED, "already closed"),
+    ];
+    assert_eq!(outcomes, expected);
+    let failed = ("workspace already gone; worktree deleted; branch deleted".to_string(), vec![" M app.py".to_string()]);
+    assert_eq!((runs[1].2.clone(), runs[1].3.clone()), failed);
+    assert_eq!(saved_closed(&repo, CLOSE_FINISHED).as_deref(), Some("workspace closed"));
+    assert_eq!(saved_closed(&repo, CLOSE_FAILED), Some(failed.0));
+    assert_eq!(saved_closed(&repo, CLOSE_RUNNING), None);
+    assert!(!std::path::Path::new(&wt).exists());
+    assert!(served.console.state().workspaces.is_empty());
+    // A second sweep finds only the running run to close.
+    let again = closed_runs(&served.post(&target, r#"{"dry_run": true}"#));
+    let outcomes: Vec<_> = again.iter().map(|(_, outcome, _, _)| outcome.as_str()).collect();
+    assert_eq!(outcomes, ["already closed", "already closed", "skipped", "already closed"]);
+}
+
+#[test]
+fn a_bad_close_body_is_refused_before_the_project_is_reached() {
+    let connects = Arc::new(Mutex::new(vec![]));
+    let seen = Arc::clone(&connects);
+    let connect = move |machine: &str, cwd: &str, _: &Interrupt| {
+        seen.lock().unwrap().push((machine.to_string(), cwd.to_string()));
+        Err(OrchestratorError::new("ssh: connection refused"))
+    };
+    let served = Served::start(Box::new(connect), &[], Arc::clone(&connects), Options::default());
+    let target = Served::query("/close", &[("machine", "box")]);
+    let wrong = r#"the body must be {"dry_run": true} or {"dry_run": false}"#;
+    for body in ["", "x", "[]", "{}", r#"{"dry_run": 1}"#, r#"{"dry_run": "true"}"#, r#"{"dry_run": true, "x": 1}"#] {
+        let reply = served.post(&target, body);
+        assert_eq!((reply.status, reply.error()), (Some(400), wrong.to_string()), "{body}");
+    }
+    let long = format!(r#"{{"dry_run": true, "x": "{}"}}"#, "x".repeat(MAX_BODY_BYTES));
+    assert_eq!(served.post(&target, &long).status, Some(413));
+    assert!(connects.lock().unwrap().is_empty(), "a bad body reached the project");
+    let reply = served.post(&target, r#"{"dry_run": true}"#);
+    assert_eq!((reply.status, reply.error()), (Some(502), "ssh: connection refused".to_string()));
+    assert_eq!(served.post("/close", r#"{"dry_run": true}"#).status, Some(400));
+}
+
+#[test]
+fn a_close_of_runs_that_cannot_be_read_is_a_bad_gateway() {
+    let project = Project::new();
+    project.write(&format!("{RUNS_DIR}/{SERVE_ID}/state.json"), "not JSON");
+    let reply = Served::real().post(&project.query("/close"), r#"{"dry_run": false}"#);
+    assert_eq!(reply.status, Some(502), "{reply:?}");
+}
+
+#[test]
+fn a_close_needs_the_token_and_the_server_s_own_origin() {
+    let host = Arc::new(ServeHost::on(None));
+    let served = Served::fake(&host, &[]);
+    let (target, body) = (Served::query("/close", &[]), r#"{"dry_run": false}"#);
+    let length = body.len().to_string();
+    assert_eq!(served.ask_with_body("POST", &target, &[("Content-Length", &length)], body).status, Some(401));
+    let bearer = format!("Bearer {}", served.token());
+    let headers = [("Authorization", bearer.as_str()), ("Origin", "http://evil.example"), ("Content-Length", &length)];
+    assert_eq!(served.ask_with_body("POST", &target, &headers, body).status, Some(403));
+    assert_eq!(host.state().run_states_inside_calls, 0);
 }
 
 #[test]

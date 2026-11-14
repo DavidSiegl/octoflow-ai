@@ -1,12 +1,12 @@
 //! ServeHost, a Host that serve's threads can share, its files in memory; and FakeConsole, the herdr
 //! its runs' agents are in, which also launches the runs serve starts.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::constants::RUNS_DIR;
 use crate::error::OrchestratorError;
-use crate::herdr::{AgentAddress, AgentConsole, HerdrError, HerdrServer, Launched, Launcher};
+use crate::herdr::{AgentAddress, AgentConsole, HerdrError, HerdrServer, Launched, Launcher, Workspaces};
 use crate::host::{Exec, ExecError, Host, RunFile, RunFileText};
 use crate::serve::Reached;
 use crate::state::SavedRun;
@@ -111,7 +111,8 @@ impl Host for ServeHost {
 
 /// An AgentConsole whose agents show `screens`, by herdr name, whatever server they are addressed in, and which
 /// records what is typed into them in `typed`, and the server of each in `servers`. An agent without a screen has
-/// exited (herdr's agent_not_found). As a Launcher, it records each launch in `launches`, plays it by `on_launch`, and
+/// exited (herdr's agent_not_found). As Workspaces, its open workspaces are `workspaces`, and it records each call in
+/// `workspace_calls`. As a Launcher, it records each launch in `launches`, plays it by `on_launch`, and
 /// gives every launch pane LAUNCHED_PANE, whose command has exited once `exited` is set.
 #[derive(Default)]
 pub struct FakeConsole {
@@ -129,6 +130,10 @@ pub struct Consoled {
     pub servers: Vec<Option<HerdrServer>>,
     /// While true, every command fails as herdr does when it cannot be reached (still recorded in `typed`).
     pub down: bool,
+    /// The herdr workspaces still open, by id, whatever server they are asked about in; closing one removes it.
+    pub workspaces: BTreeSet<String>,
+    /// Each workspace call, (`exists W` or `close W`, the server it was addressed to), in order.
+    pub workspace_calls: Vec<(String, Option<HerdrServer>)>,
     /// Each launch, (cwd, label, argv), in order.
     pub launches: Vec<(String, String, Vec<String>)>,
     /// What each launch then does, given its argv, as a run's command would: such as save a state.json.
@@ -152,7 +157,14 @@ pub const LAUNCHED_PANE: &str = "w9:p1";
 /// The project /proj on host, its agents in console and its runs launched by it there.
 pub fn reached(host: &Arc<ServeHost>, console: &Arc<FakeConsole>) -> Reached {
     let dir = "/proj".to_string();
-    Reached { host: host.clone(), launch_dir: dir.clone(), dir, console: console.clone(), launcher: console.clone() }
+    Reached {
+        host: host.clone(),
+        launch_dir: dir.clone(),
+        dir,
+        console: console.clone(),
+        workspaces: console.clone(),
+        launcher: console.clone(),
+    }
 }
 
 impl FakeConsole {
@@ -186,6 +198,21 @@ impl AgentConsole for FakeConsole {
 
     fn send_keys(&self, agent: &AgentAddress, keys: &[&str]) -> Result<(), HerdrError> {
         self.answer(agent, format!("keys {} {}", agent.name, keys.join(" "))).map(drop)
+    }
+}
+
+impl Workspaces for FakeConsole {
+    fn workspace_exists(&self, workspace: &str, server: Option<&HerdrServer>) -> Result<bool, HerdrError> {
+        let mut s = self.state();
+        s.workspace_calls.push((format!("exists {workspace}"), server.cloned()));
+        Ok(s.workspaces.contains(workspace))
+    }
+
+    fn close_workspace(&self, workspace: &str, server: Option<&HerdrServer>) -> Result<(), HerdrError> {
+        let mut s = self.state();
+        s.workspace_calls.push((format!("close {workspace}"), server.cloned()));
+        s.workspaces.remove(workspace);
+        Ok(())
     }
 }
 
