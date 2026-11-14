@@ -19,7 +19,7 @@ use crate::handoff::first_line_word;
 use crate::map::Map;
 
 /// The words of the gate line, the file's first non-blank one. Only the engine writes BUILD_FAILED, for a gate that
-/// could not judge (could_not_judge_report), as a release before 0.71.0 also wrote it for a Jenkins build that ended
+/// could not judge (could_not_judge_report), as a release before 0.72.0 also wrote it for a Jenkins build that ended
 /// before its Gate stage.
 pub const QUALITY_OK: &str = "OK";
 pub const QUALITY_ERROR: &str = "ERROR";

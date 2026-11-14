@@ -66,10 +66,19 @@ fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
-/// Wait until path exists; panics after PATIENCE.
-fn wait_for(path: &Path) {
+/// The text of path, once it ends with a newline; panics after PATIENCE, or at once when path cannot be read for a
+/// reason other than not existing yet. A script's `echo ... > path` creates the file before it writes the line, so the
+/// file existing does not mean the line is in it.
+fn wait_for_line(path: &Path) -> String {
     let start = Instant::now();
-    while !path.exists() {
+    loop {
+        // Not there yet, or a part of the line: the script is not done writing it.
+        match std::fs::read_to_string(path) {
+            Ok(text) if text.ends_with('\n') => return text,
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => panic!("reading {}: {e}", path.display()),
+        }
         assert!(start.elapsed() < PATIENCE, "{} was not written", path.display());
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -167,13 +176,13 @@ fn a_ctrl_c_before_the_run_exits_130_with_the_interrupted_note() {
     let child = program(&dir, &["resume", "a1b2c3", "--machine", "box", "--cwd", "/p"], None)
         .spawn()
         .expect("the program starts");
-    wait_for(&asked);
+    let args = wait_for_line(&asked);
     let started = Instant::now();
     // The group the program leads, which this test made for it.
     killpg(Pid::from_raw(child.id() as i32), Signal::SIGINT).expect("the program's group is signalled");
     let out = child.wait_with_output().expect("the program ends");
     assert!(started.elapsed() < PATIENCE);
-    assert_eq!(std::fs::read_to_string(&asked).unwrap(), "machine list --json\n");
+    assert_eq!(args, "machine list --json\n");
     assert_eq!(out.status.code(), Some(130), "{}", stderr(&out));
     assert_eq!(stderr(&out), "interrupted; the role agents keep running in herdr\n");
 }
@@ -188,8 +197,7 @@ fn a_sigterm_or_a_sighup_before_the_run_ends_the_program_by_it_with_the_interrup
         let child = program(&dir, &["resume", "a1b2c3", "--machine", "box", "--cwd", "/p"], None)
             .spawn()
             .expect("the program starts");
-        wait_for(&pid);
-        let herdr = std::fs::read_to_string(&pid).expect("herdr's pid").trim().to_string();
+        let herdr: u32 = wait_for_line(&pid).trim().parse().expect("herdr's pid");
         let started = Instant::now();
         killpg(Pid::from_raw(child.id() as i32), signal).expect("the program's group is signalled");
         let out = child.wait_with_output().expect("the program ends");

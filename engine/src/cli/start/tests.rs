@@ -23,7 +23,7 @@ use crate::json::object;
 use crate::state::SavedRun;
 use serde_json::Value;
 
-/// The Jenkins quality job a run saved by a release before 0.71.0 can name.
+/// The Jenkins quality job a run saved by a release before 0.72.0 can name.
 const JENKINS_JOB: &str = "Octoflow-AI/octoflow-ai-quality";
 
 /// resume's arguments in argv, after `resume`.
@@ -412,7 +412,7 @@ fn a_resume_finds_its_run_on_the_host_and_switches_its_gate() {
 
 #[test]
 fn a_run_of_the_jenkins_gate_resumes_on_the_local_gate() {
-    // A quality build in flight, as a release before 0.71.0 saved it: a Jenkins job of any name, `local` too, as a
+    // A quality build in flight, as a release before 0.72.0 saved it: a Jenkins job of any name, `local` too, as a
     // release before 0.63.0 took it.
     let ci = object([("ref", Value::from("orchestrator-ci/a1b2c3-1-q1")), ("sha", Value::from("snap1"))]);
     for job in [JENKINS_JOB, LOCAL_GATE] {
@@ -428,7 +428,7 @@ fn a_run_of_the_jenkins_gate_resumes_on_the_local_gate() {
         assert_eq!((resumed.quality_job.as_deref(), resumed.ci.is_empty()), (Some(LOCAL_GATE), true), "{job}");
         assert_eq!((resumed.phase.as_str(), resumed.quality_round), ("quality", 1), "{job}");
         let warning = format!(
-            "run 20260929-120000-a1b2c3: the Jenkins quality gate was removed in 0.71.0, so the local gate replaces \
+            "run 20260929-120000-a1b2c3: the Jenkins quality gate was removed in 0.72.0, so the local gate replaces \
              job {job}"
         );
         assert_eq!(f.told.lines(), [warning], "{job}");

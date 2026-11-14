@@ -70,7 +70,7 @@ impl<'a> Workflow<'a> {
     /// deleted to be judged again. They are read from the quality file instead (parse_gate, gate_failures) for a round
     /// with no quality.json: one the gate could not judge or whose snapshot held a secret, whose file only the engine
     /// writes; and one whose file an earlier orchestrator wrote but did not record, as a Jenkins build's quality file
-    /// may be, from a release before 0.71.0. A quality file already written is taken as it is.
+    /// may be, from a release before 0.72.0. A quality file already written is taken as it is.
     ///
     /// Errors: judged_snapshot's; the quality file does not start with a GATE line; a file or saving fails.
     fn quality(&mut self, n: u32, q: u32) -> Outcome<&'static str> {

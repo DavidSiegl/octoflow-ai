@@ -300,7 +300,7 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
             quality_gate_arg().conflicts_with("no-quality-gate").help(
                 "turn the local quality gate on, as run --quality-gate local has it, for a run started without it; \
                  a Builder report not yet judged is judged before the Reviewer starts, and otherwise the gate starts \
-                 at the Builder's next turn. A run started on the Jenkins gate, removed in 0.71.0, resumes on the \
+                 at the Builder's next turn. A run started on the Jenkins gate, removed in 0.72.0, resumes on the \
                  local gate without it",
             ),
         )
@@ -581,7 +581,7 @@ fn starts_args(config: &ConfigDir) -> Vec<Arg> {
         ),
         quality_gate_arg().help(
             "after each Builder turn, have the quality gate, octoflow-gate, judge the change and send the findings \
-             back to the Builder: `local`, the only value since the Jenkins gate was removed in 0.71.0, runs the \
+             back to the Builder: `local`, the only value since the Jenkins gate was removed in 0.72.0, runs the \
              release the run's base pins in ci/gate.pin here, on Linux x86_64, as you and with no sandbox",
         ),
     ]
@@ -594,7 +594,7 @@ fn quality_gate_arg() -> Arg {
         if text == LOCAL_GATE {
             Ok(text.to_string())
         } else {
-            Err(format!("the Jenkins quality gate was removed in 0.71.0; use --quality-gate {LOCAL_GATE}"))
+            Err(format!("the Jenkins quality gate was removed in 0.72.0; use --quality-gate {LOCAL_GATE}"))
         }
     })
 }

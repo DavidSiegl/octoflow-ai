@@ -56,7 +56,7 @@ differ between the two. Exit status 0 means `GATE: OK`, 1
 
 `--quality-gate local` has the orchestrator run octoflow-gate itself in each quality round, on the machine the run's
 project is on. It needs no credentials and no `origin`; nothing is pushed. `local` is the flag's only value: the
-Jenkins quality gate, which took a Jenkins job's name there, was removed in 0.71.0.
+Jenkins quality gate, which took a Jenkins job's name there, was removed in 0.72.0.
 
 Each round, the orchestrator:
 
@@ -113,7 +113,7 @@ pass `--quality-gate local` to a run.
 The gate runs the project's tests as you, with no sandbox: the same trust as running them by hand. A round keeps
 nothing in `state.json`'s `ci`: a resume in the middle of one stops the job the interrupted round left, if its
 process is still that job, and runs the round again. An orchestrator that `resume --force` took the run over from
-touches only its own job's files, never the new one's. A run saved by a release before 0.71.0 whose gate was a
+touches only its own job's files, never the new one's. A run saved by a release before 0.72.0 whose gate was a
 Jenkins job resumes on this gate, once it passes this gate's preflight, with a warning naming the job; a round that
 was in flight on Jenkins starts again here, and `show` names this gate for such a run before its resume.
 
@@ -133,7 +133,7 @@ the round, naming the version, on any other. `engine/tests/data/quality/` holds 
 The quality file, quality.md, is what the Builder and the Reviewer read: the orchestrator amends it with its own
 checks' findings (`judge_run`) and writes it into the run, its words unchanged, and rejects a quality.md whose gate
 line is not its quality.json's gate. It reads the parts below from it only where there is no quality.json: a quality
-file a run saved before 0.71.0 from a Jenkins build that archived none, and the files only it writes, for a gate that
+file a run saved before 0.72.0 from a Jenkins build that archived none, and the files only it writes, for a gate that
 could not judge or a snapshot holding a secret. For those the engine keeps its own copy of the
 parts in `engine/src/quality.rs` beside `parse_gate`, and its tests hold them to the release's golden quality files.
 
@@ -452,7 +452,7 @@ secret is rewritten out of it.
 
 `state.json` holds `quality_job` (None for a run without the gate, as for one saved before it; `local` for the
 [local gate](#the-local-gate)),
-`max_quality_rounds` and `quality_round`; `ci` held the build in flight of a Jenkins round, before 0.71.0, and a
+`max_quality_rounds` and `quality_round`; `ci` held the build in flight of a Jenkins round, before 0.72.0, and a
 resume empties it. Phase `build` with q = 0 goes to `quality` q = 1; `quality` q goes to `review` on `OK` or at q ≥
 `max_quality_rounds`, else to the fix turn, `build` with the same q, then `quality` q + 1; `CHANGES_REQUESTED`
 goes to `build`, round n + 1, q = 0. `list` shows the phase `quality` and, in `build` and `quality`, the quality

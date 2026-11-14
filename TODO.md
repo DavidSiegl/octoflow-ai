@@ -114,10 +114,10 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 - **A quality round's Reviewer is told to weigh a loosened lint config.** Decided against (the user's ruling,
   2026-11-11, GitHub #377, `.scratch/todo/issues/35`): having the gate take clippy's rule files from the base commit,
   which is a change in octoflow-gate; the Reviewer's quality notes say to weigh an edited one instead.
-- **No command removes the `orchestrator-ci/*` branches a release before 0.71.0 pushed.** With the Jenkins gate gone
+- **No command removes the `orchestrator-ci/*` branches a release before 0.72.0 pushed.** With the Jenkins gate gone
   (drop-jenkins-gate/02, 2026-11-13), so are `delete_ci_refs` and `clean_up_quality`, which deleted a run's snapshot
   branches on origin; a run that had one in flight when it stopped leaves it there for good. Raised by cross-review
-  191 (F6, nit). Decided against with the spec, which removed the snapshot refs whole: docs/releases/v0.71.0.md says to
+  191 (F6, nit). Decided against with the spec, which removed the snapshot refs whole: docs/releases/v0.72.0.md says to
   delete them with `git push origin --delete`. Reopens if a user reports many left.
 
 - **No `doctor` check that a harness can start in the project without asking.** Claude Code's folder-trust dialog

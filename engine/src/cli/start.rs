@@ -103,7 +103,7 @@ pub(crate) fn new_run_id(wall: f64, zone: &jiff::tz::TimeZone) -> Result<String,
 /// on disk but the gate's job --no-quality-gate stops (turn_quality_gate_off), which stays stopped even when the resume
 /// fails later, before the run is saved; a resume after that judges the round again.
 ///
-/// A run a release before 0.71.0 started on a Jenkins quality job goes on with the local gate, its human told which
+/// A run a release before 0.72.0 started on a Jenkins quality job goes on with the local gate, its human told which
 /// job it leaves, once host passes check_gate_mid_run, as for a run that gets the gate on resume; a quality build it
 /// had in flight is dropped, and its quality round judged again locally.
 ///
@@ -121,7 +121,7 @@ pub fn resumed_state(args: &ResumeArgs, cwd: &str, world: &Connected) -> Result<
     let jenkins = !state.ci.is_empty();
     if let Some(job) = state.quality_job.take_if(|job| !job.is_empty() && (job != LOCAL_GATE || jenkins)) {
         w.human.log(&format!(
-            "run {}: the Jenkins quality gate was removed in 0.71.0, so the local gate replaces job {job}",
+            "run {}: the Jenkins quality gate was removed in 0.72.0, so the local gate replaces job {job}",
             state.run_id
         ));
         state.quality_job = Some(LOCAL_GATE.to_string());
