@@ -140,13 +140,23 @@ fn a_ctrl_c_in_the_workflow_names_the_run_it_stopped() {
 fn finish_names_the_verdict_and_the_exit_status() {
     let mut state = saved_run("done", 2, &[]);
     let pipeline = crate::pipeline::DEFAULT_WORKFLOW.clone();
-    assert_eq!(finish(APPROVE, &state, &pipeline, &|_| {}), 0);
-    assert_eq!(finish("FINISHED", &state, &pipeline, &|_| {}), 0);
-    assert_eq!(finish("CHANGES_REQUESTED", &state, &pipeline, &|_| {}), EXIT_CHANGES_REQUESTED);
-    assert_eq!(finish("QUALITY_GATE_FAILED", &state, &pipeline, &|_| {}), EXIT_CHANGES_REQUESTED);
-    state.conflicts = vec!["calc.py".into()];
-    assert_eq!(finish(APPROVE, &state, &pipeline, &|_| {}), EXIT_CONFLICT);
-    assert_eq!(finish("CHANGES_REQUESTED", &state, &pipeline, &|_| {}), EXIT_CHANGES_REQUESTED);
+    assert_eq!(finish(Some(APPROVE), &state, &pipeline, &|_| {}), 0);
+    assert_eq!(finish(Some("FINISHED"), &state, &pipeline, &|_| {}), 0);
+    assert_eq!(finish(Some("CHANGES_REQUESTED"), &state, &pipeline, &|_| {}), EXIT_CHANGES_REQUESTED);
+    assert_eq!(finish(Some("QUALITY_GATE_FAILED"), &state, &pipeline, &|_| {}), EXIT_CHANGES_REQUESTED);
+    (state.base_branch, state.conflicts) = (Some("main".into()), vec!["calc.py".into()]);
+    assert_eq!(finish(Some(APPROVE), &state, &pipeline, &|_| {}), EXIT_CONFLICT);
+    assert_eq!(finish(Some("CHANGES_REQUESTED"), &state, &pipeline, &|_| {}), EXIT_CHANGES_REQUESTED);
+}
+
+#[test]
+fn a_run_without_a_verdict_finishes_as_no_verdict() {
+    let state = saved_run("done", 1, &[]);
+    let pipeline = crate::pipeline::DEFAULT_WORKFLOW.clone();
+    let line = RefCell::new(String::new());
+    let status = finish(None, &state, &pipeline, &|t| line.borrow_mut().push_str(t));
+    assert_eq!(status, EXIT_CHANGES_REQUESTED);
+    assert_eq!(*line.borrow(), format!("NO_VERDICT: {}/review-1.md\n", state.dir()));
 }
 
 #[test]
@@ -280,7 +290,7 @@ fn a_failed_gate_exits_as_changes_requested() {
     let state = saved_run("done", 1, &[]);
     let pipeline = crate::pipeline::DEFAULT_WORKFLOW.clone();
     let line = RefCell::new(String::new());
-    let status = finish(crate::constants::QUALITY_GATE_FAILED, &state, &pipeline, &|t| line.borrow_mut().push_str(t));
+    let status = finish(Some(crate::constants::QUALITY_GATE_FAILED), &state, &pipeline, &|t| line.borrow_mut().push_str(t));
     assert_eq!(status, EXIT_CHANGES_REQUESTED);
     assert_eq!(*line.borrow(), format!("QUALITY_GATE_FAILED: {}/review-1.md\n", state.dir()));
 }
@@ -311,6 +321,18 @@ fn finished_run_exit_status() {
         assert_eq!(cli.main(&["resume", "a1b2c3", "--cwd", "/proj"]), status, "{verdict} {conflicts:?}");
         assert_eq!(cli.take_out(), format!("{line}\n"));
     }
+}
+
+#[test]
+fn a_finished_run_whose_conflicts_have_no_base_says_its_base_branch() {
+    // Only a hand-edited state.json records conflicts without the base they were found against.
+    let url = "https://github.com/o/r/pull/7";
+    let mut state = saved_run("done", 1, &["spec", "build", "review"]);
+    (state.pull_request, state.verdict, state.pr_url) = (true, Some(APPROVE.into()), Some(url.into()));
+    state.conflicts = vec!["a.py".into()];
+    let cli = Cli::of(saved_on_host(state).0);
+    assert_eq!(cli.main(&["resume", "a1b2c3", "--cwd", "/proj"]), EXIT_CONFLICT);
+    assert_eq!(cli.take_out(), format!("{APPROVE}: {url} (a draft: it conflicts with its base branch)\n"));
 }
 
 #[test]

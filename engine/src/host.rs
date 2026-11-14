@@ -1043,7 +1043,7 @@ fn parsed_run_states(cwd: &str, out: &str) -> Result<Vec<SavedRun>, Orchestrator
         }
         let (age, text) = entry.split_once(' ').unwrap_or((entry, ""));
         let corrupt = |e: String| OrchestratorError(format!("corrupt run state under {cwd}/{RUNS_DIR}: {e}"));
-        let not_int = || corrupt(format!("invalid literal for int() with base 10: {age:?}"));
+        let not_int = || corrupt(format!("an age that is not a whole number: {age:?}"));
         let age: i64 = decimal_int(age).ok_or_else(not_int)?;
         let saved = serde_json::from_str::<Value>(text).map_err(|e| corrupt(e.to_string()))?;
         runs.push(SavedRun::read(age.max(0).unsigned_abs(), saved).map_err(|e| corrupt(e.0))?);

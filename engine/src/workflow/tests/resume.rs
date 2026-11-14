@@ -291,6 +291,15 @@ fn a_run_stopped_right_after_saving_done_finishes_its_whole_ending_on_resume() {
 }
 
 #[test]
+fn a_run_done_without_a_verdict_tells_the_human_so() {
+    let mut state = stopped_after_saving_done();
+    state.verdict = None;
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![], &[], &[]);
+    assert_eq!(f.workflow(f.as_saved()).run(), Ok(None));
+    assert_eq!(f.told.titles(), ["Run finished without a verdict"]);
+}
+
+#[test]
 fn a_run_stopped_before_its_release_writes_its_files_again_and_tells_the_human() {
     let f = Fixture::resume(Rc::new(FakeHost::default()), counted(), vec![], &[], &[]);
     // Its summary.md may be an earlier stop's (Workflow::release), as its metrics.json may be half written.

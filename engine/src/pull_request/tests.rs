@@ -12,16 +12,21 @@ fn every_recorded_run_is_published_as_helpers_json_expects() {
         assert_eq!(spec_title(&case.spec), expected("spec_title"), "{place}");
         let title = spec_title(&case.spec).unwrap_or(s.task.clone());
         assert_eq!(Some(branch_name(&title, &s.run_id)), expected("branch_name"), "{place}");
-        assert_eq!(Some(verdict_line(s)), expected("verdict_line"), "{place}");
-        assert_eq!(Some(commit_note(s)), expected("commit_note"), "{place}");
         let trailers = Value::Array(provenance(s, &case.evidence).into_iter().map(|(k, v)| Value::Array(vec![Value::from(k), Value::from(v)])).collect());
         assert_eq!(Some(&trailers), case.expected.get("provenance"), "{place}");
+        // A run that ended without a verdict never publishes, so nothing words how it ended.
+        if s.verdict.is_none() {
+            assert_eq!((expected("verdict_line"), expected("commit_note"), expected("pr_body")), (None, None, None), "{place}");
+            continue;
+        }
+        assert_eq!(Some(verdict_line(s)), expected("verdict_line"), "{place}");
+        assert_eq!(Some(commit_note(s)), expected("commit_note"), "{place}");
         let body = pr_body(s, &case.spec, &case.report, &one(&case.review), &case.evidence);
         assert_eq!(Some(body.clone()), expected("pr_body"), "{place}");
         if !s.conflicts.is_empty() {
             let mut clean = s.clone();
             clean.conflicts.clear();
-            let without = without_conflict_warning(&body, s.base_branch.as_deref(), &s.conflicts);
+            let without = without_conflict_warning(&body, s.base_branch.as_deref().unwrap(), &s.conflicts);
             assert_eq!(without, pr_body(&clean, &case.spec, &case.report, &one(&case.review), &case.evidence), "{place}");
         }
     }
@@ -125,7 +130,7 @@ fn the_conflict_warning_comes_first() {
 #[test]
 fn the_conflict_warning_is_removed_and_nothing_else() {
     let files = ["a.py".to_string(), "docs/b.md".to_string()];
-    let warning = conflict_warning(Some("main"), &files);
+    let warning = conflict_warning("main", &files);
     let cases: Vec<(String, Option<&str>)> = vec![
         (format!("{warning}\n\nOpened by run r.\n"), Some("Opened by run r.\n")),
         (format!("A note.\n\n{warning}\n\nOpened by run r.\n"), Some("A note.\n\nOpened by run r.\n")),
@@ -134,13 +139,13 @@ fn the_conflict_warning_is_removed_and_nothing_else() {
         (warning.clone(), Some("")),
         ("Opened by run r.\n".into(), Some("Opened by run r.\n")),
         // Not the run's own warning: another base, other files, or edited.
-        (format!("{}\n\nx", conflict_warning(Some("dev"), &files)), None),
-        (format!("{}\n\nx", conflict_warning(Some("main"), &files[..1])), None),
+        (format!("{}\n\nx", conflict_warning("dev", &files)), None),
+        (format!("{}\n\nx", conflict_warning("main", &files[..1])), None),
         (format!("{warning} Fixed it.\n\nx"), None),
         (format!("Text{warning}\n\nx"), None),
     ];
     for (body, without) in cases {
-        assert_eq!(without_conflict_warning(&body, Some("main"), &files), without.map_or(body.clone(), String::from), "{body:?}");
+        assert_eq!(without_conflict_warning(&body, "main", &files), without.map_or(body.clone(), String::from), "{body:?}");
     }
 }
 
@@ -183,9 +188,6 @@ fn the_notes_of_a_run_without_a_review_or_a_gate_turned_off() {
     assert_eq!(verdict_line(&changes), "Reviewer verdict after 2 rounds: **CHANGES_REQUESTED**.\n\nThe Reviewer still requested changes after the last round, so this is a draft.");
     assert_eq!(commit_note(&changes), "Orchestrator run r: CHANGES_REQUESTED after 2 review round(s).");
     assert!(pr_body(&changes, "s", "r", &one("VERDICT: CHANGES_REQUESTED"), &GateEvidence::default()).contains("<details open>\n<summary>Review (round 2)</summary>"));
-    let unset = state(|s| s.verdict = None);
-    assert_eq!(commit_note(&unset), "Orchestrator run r: None after 1 review round(s).");
-    assert_eq!(conflict_warning(None, &["a".into()]).lines().nth(1), Some("> This branch conflicts with `None`, so this is a draft. Merge `None` into it and resolve the conflicts in:"));
 }
 
 const CHANGES: &str = crate::constants::CHANGES_REQUESTED;
