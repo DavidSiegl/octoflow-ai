@@ -400,6 +400,12 @@ fn run_states() {
     assert_eq!((states[1].age(), states[1].shown().run_id.as_str()), (0, "b"));
     assert_eq!(states.len(), 2);
     assert_eq!(host.run_states(&d.join("nosuch")).unwrap(), vec![]);
+    // One run, alone: a, as run_states reads it; none for a run without a state.json, or a name that globs.
+    let a = host.run_state(&cwd, "a").unwrap().unwrap();
+    assert_eq!((a.shown().run_id.as_str(), (12..15).contains(&a.age())), ("a", true));
+    for run_id in ["c", "d", "nosuch", "*"] {
+        assert_eq!(host.run_state(&cwd, run_id).unwrap(), None, "{run_id}");
+    }
 }
 
 #[test]
@@ -1566,6 +1572,7 @@ fn locked_files_are_restored_and_the_index_is_left_alone() {
 
     let other = "refs/orchestrator/d4e5f6/locked/tests";
     c.sh(&["git", "-C", &c.a, "update-ref", other, &base]);
+    assert_eq!(c.host.refs(&c.a, "refs/orchestrator/d4e5f6/").unwrap(), [other]);
     assert!(c.host.delete_refs(&c.a, "refs/orchestrator/a1b2c3/").unwrap());
     let refs = c.sh(&["git", "-C", &c.a, "for-each-ref", "--format=%(refname)", "refs/orchestrator/"]);
     assert_eq!(refs, format!("{other}\n"));
