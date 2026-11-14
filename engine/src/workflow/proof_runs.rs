@@ -146,29 +146,7 @@ impl Workflow<'_> {
         // The copies are removed and the tree put back also when the human's Ctrl-C stopped the proof's run.
         let put_back = self.interrupt.finally(|| {
             self.remove_proof_copies(&copies);
-            let restored = before.as_deref().map_or(Ok(vec![]), |before| self.host.restore_tree(work_dir, before));
-            let (put_back, failed) = match restored {
-                Ok(put_back) => (put_back, None),
-                Err(RestoreError { put_back, cause }) => (put_back, Some(cause)),
-            };
-            if let Some(e) = &failed {
-                self.human.log(&format!("could not undo what a proof wrote in {work_dir}: {e}"));
-            }
-            if self.state.worktree.is_none() {
-                let how = match failed {
-                    None => "put back as they were before it",
-                    Some(_) => "put back as they were before it, or some of them, before putting back failed",
-                };
-                for p in &put_back {
-                    self.human.log(&format!(
-                        "a proof's run changed files, {how}, so a change saved in them meanwhile is undone too: {}; \
-                         to have them as the proof left them, a nested repository's files aside: {}",
-                        p.paths.join(", "),
-                        p.undo
-                    ));
-                }
-            }
-            failed.map_or(Ok(()), Err)
+            before.as_deref().map_or(Ok(()), |before| self.put_back_tree(before))
         });
         // Nothing of a proof the Ctrl-C stopped is recorded.
         self.check_interrupt()?;
@@ -192,6 +170,36 @@ impl Workflow<'_> {
         };
         let said = if tail.is_empty() { how } else { format!("{how}:\n{tail}") };
         Ok(ProofOutcome { demonstrated: proc.status == 1, said, moved: false })
+    }
+
+    /// Put the working tree back as the git tree before has it, ignored files aside (Host::restore_tree), and, in an
+    /// in-place run, log each file put back with the command that makes them again what the proof left
+    /// (PutBack::undo), also when putting back fails partway. Errors: putting back fails, which is logged too.
+    fn put_back_tree(&self, before: &str) -> Result<(), OrchestratorError> {
+        let work_dir = self.state.work_dir();
+        let (put_back, failed) = match self.host.restore_tree(work_dir, before) {
+            Ok(put_back) => (put_back, None),
+            Err(RestoreError { put_back, cause }) => (put_back, Some(cause)),
+        };
+        if let Some(e) = &failed {
+            self.human.log(&format!("could not undo what a proof wrote in {work_dir}: {e}"));
+        }
+        // A worktree run's tree is the run's alone, so what it put back is the proof's own writes.
+        if self.state.worktree.is_none() {
+            let how = match failed {
+                None => "put back as they were before it",
+                Some(_) => "put back as they were before it, or some of them, before putting back failed",
+            };
+            for p in &put_back {
+                self.human.log(&format!(
+                    "a proof's run changed files, {how}, so a change saved in them meanwhile is undone too: {}; \
+                     to have them as the proof left them, a nested repository's files aside: {}",
+                    p.paths.join(", "),
+                    p.undo
+                ));
+            }
+        }
+        failed.map_or(Ok(()), Err)
     }
 
     /// Remove the directory copies and everything under it; a failure is only logged, since the next proof's run
