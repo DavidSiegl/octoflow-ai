@@ -116,7 +116,7 @@ impl ProcessHost {
             }
             Err(ProcessError::Start(e)) => Err(failed(os_error(&e, Some(&argv[0])))),
             Err(ProcessError::Io(e)) => Err(failed(os_error(&e, None))),
-            Err(ProcessError::Timeout) => Err(failed(timed_out(&argv, timeout))),
+            Err(ProcessError::Timeout) => Err(failed(format!("timed out after {timeout} seconds"))),
             Err(ProcessError::Interrupted) => Err(failed("interrupted".to_string())),
         }
     }
@@ -196,11 +196,6 @@ fn ssh_argv(target: &str, options: Vec<String>, argv: &[&str]) -> Vec<String> {
     // BatchMode fails fast instead of hanging on a password prompt nobody can see.
     let batch = ["ssh", "-o", "BatchMode=yes"].map(String::from);
     batch.into_iter().chain(options).chain([target.to_string(), shlex_join(argv)]).collect()
-}
-
-/// What the error of argv's timeout says, run with a timeout of seconds.
-fn timed_out(argv: &[String], seconds: u64) -> String {
-    format!("`{}` timed out after {seconds} seconds", shlex_join(argv))
 }
 
 /// Why run_process gave no output.

@@ -234,7 +234,6 @@
   "gitleaks found 2 secrets in what the push would publish, so nothing was pushed (report: /r/leaks.json):\n- `cfg.py:1` github-pat in c0ffeec0ffee (fingerprint `c0ffee:cfg.py:github-pat:1`)\n- `a b.py:12` gitleaks-allow in abababababab (fingerprint `x:a b.py:gitleaks-allow:12`)",
   "gitleaks found 1 secret in what the push would publish, so nothing was pushed (report: /r/leaks.json):\n- `cfg.py:1` github-pat in c0ffeec0ffee (fingerprint `c0ffee:cfg.py:github-pat:1`)"
  ],
- "timeout": "`sh -c 'it'\"'\"'s' _ 'é\n'` timed out after 60 seconds",
  "shortened": [
   [
    "",

@@ -545,8 +545,7 @@ fn a_command_that_runs_out_of_time_is_killed_with_its_process_group() {
     assert_eq!(
         e.0,
         format!(
-            "sh -c 'sleep 30 & echo $! > \"$1\"; wait' _ {pid_file}: `sh -c 'sleep 30 & echo $! > \"$1\"; wait' _ \
-             {pid_file}` timed out after 1 seconds"
+            "sh -c 'sleep 30 & echo $! > \"$1\"; wait' _ {pid_file}: timed out after 1 seconds"
         )
     );
     let pid = read(&pid_file).trim().to_string();
