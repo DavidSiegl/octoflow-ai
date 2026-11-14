@@ -1,15 +1,14 @@
-//! TestDefaultWorkflowPrompts, TestWorkflowPromptsGolden and the Workflow-driven cases of TestPromptFiles: the
-//! prompts each workflow sends, held to the Python engine's texts, and the prompt files that word them. A case of a
+//! The prompts each workflow sends, held to recorded texts and golden files, and the prompt files that word them,
+//! as far as a Workflow is needed. A case of a
 //! prompt's text alone asks RunView::step_prompt, on a run state and the files a FakeHost holds; the cases that run a
 //! Workflow show what it sends besides (a session's ContinuePrompt), what it saves with the prompts, and that its
 //! turns are prompted with step_prompt's texts.
 //!
-//! Not here: TestPromptFiles' cases of main (test_bad_files_stop_run_before_any_agent, test_workflows_*) are the
-//! CLI's (crate::cli's tests and crate::cli::workflows'), test_a_bad_file_stops_drain_before_any_run drain's (ticket
-//! 09b), and
-//! test_a_state_that_replaces_an_unknown_prompt resumable_state's (crate::cli, cli/start/tests.rs); its other cases are crate::prompts' and
-//! crate::workflow_file's (ticket 04). The cases here that Python starts with new_state run on the state it would give,
-//! built by hand (new_state is the CLI's).
+//! Not here: bad prompt files stopping a run before any agent, and `workflows`, are the CLI's (crate::cli's tests and
+//! crate::cli::workflows'); a bad file stopping drain before any run is drain's; a saved state that replaces an
+//! unknown prompt is resumable_state's (crate::cli, cli/start/tests.rs); reading prompt files is crate::prompts' and
+//! crate::workflow_file's. The cases here that need a new run's state run on the state new_state would give, built
+//! by hand (new_state is the CLI's).
 
 use super::*;
 use crate::workflow::fixture::Outcome;
@@ -23,10 +22,10 @@ use crate::workflow_file::load_workflow_file;
 
 const D: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
 
-// The default workflow's prompts as commit d6bb100 sent them, recorded by running the scenarios of
-// TestDefaultWorkflowPrompts on that commit's code, as Python's GOLDEN holds them: since then, SPEC_PROMPT's "Separate
-// Claude Code sessions" became "Separate agent sessions", FIX_PROMPT's "The Reviewer requested changes" became "Changes
-// were requested", and every prompt the Builder gets ends with BLOCKED_NOTE.
+// The default workflow's prompts as commit d6bb100 sent them, recorded by running these scenarios on that commit's
+// code: since then, SPEC_PROMPT's "Separate Claude Code sessions" became "Separate agent sessions", FIX_PROMPT's "The
+// Reviewer requested changes" became "Changes were requested", and every prompt the Builder gets ends with
+// BLOCKED_NOTE.
 
 pub(super) const FRESH_BUILD_2: &str = concat!(
     "You are the Builder, the second of three roles (Spec Collector -> Builder -> Reviewer). The spec in ",
@@ -279,7 +278,7 @@ const GOLDEN_PR_BODY: &str = concat!(
     "requests\n\n</details>\n\n<details>\n<summary>Builder report (round 2)</summary>\n\nreport 2 ",
     "q1\n\n</details>\n\n<details>\n<summary>Quality gate (round 2)</summary>\n\nGATE: ",
     "ERROR\n\noctoflow-gate 0.10.0, run locally, judged snapshot `snap4` (round 2, quality round 2 of ",
-    "2).\n\n`orchestrator.py gate` judged the working tree.\n\n## Issues on changed lines\n\n1. ",
+    "2).\n\n`octoflow-gate` judged the working tree.\n\n## Issues on changed lines\n\n1. ",
     "`limiter.py:9` error mypy arg-type: Argument 1 has incompatible ",
     "type\n\n</details>\n\n<details>\n<summary>Review (round 2)</summary>\n\n**VERDICT: APPROVE**\n1. ",
     "finding\n\n</details>\n\n<details>\n<summary>Run timings</summary>\n\n| step | role | round | ",
@@ -502,10 +501,9 @@ fn fresh_reviewer_in_round_two_with_the_gate() {
     assert_eq!(step_prompt(&state, &host, "review", 2).1.unwrap(), FRESH_REVIEW_2_PASSED);
 }
 
-// -- TestWorkflowPromptsGolden: each step's prompts in the built-in workflow and in each file of examples/workflows/,
-// as Workflow renders them for a new run on the fakes, held to the golden file tests/golden/prompts_<name>.txt that
-// the Python engine's test holds them to: round 1, and for the steps the verdict step loops back over, round 2 as the
-// running session and as a fresh one hears it. --------------------------------------------------------------------
+// -- Each step's prompts in the built-in workflow and in each file of examples/workflows/, as Workflow renders them
+// for a new run on the fakes, held to the golden file tests/golden/prompts_<name>.txt: round 1, and for the steps
+// the verdict step loops back over, round 2 as the running session and as a fresh one hears it. --------------------
 
 /// The prompts of pipeline's steps in a new run, past its base, as the golden file has them.
 fn rendered(pipeline: &Pipeline) -> String {
@@ -551,7 +549,7 @@ fn each_example_workflow() {
     let mut names: Vec<String> =
         std::fs::read_dir(EXAMPLES).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
     names.sort();
-    // Not in Python's case: so that a wrong or empty EXAMPLES cannot pass it; a new example adds one here.
+    // So that a wrong or empty EXAMPLES cannot pass it; a new example adds one here.
     assert_eq!(names.len(), 3);
     for name in names {
         let pipeline = load_workflow_file(&format!("{EXAMPLES}/{name}"), &Default::default()).unwrap();
@@ -559,7 +557,7 @@ fn each_example_workflow() {
     }
 }
 
-// -- TestPromptFiles: prompt files in the config directory, in place of the built-in prompts. ------------------------
+// -- Prompt files in the config directory, in place of the built-in prompts. ---------------------------------------
 
 /// A configuration directory whose prompt files are files, each (name, text) written with the newline an editor
 /// ends it with.

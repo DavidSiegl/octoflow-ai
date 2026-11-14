@@ -6,8 +6,8 @@
 //! report as a contract" says. From a quality file it reads them only where there is no quality.json (parse_gate,
 //! gate_failures): the files the engine writes itself, a build that archived none, and a quality file written before
 //! its round was recorded (Workflow::quality). That reading is the engine's copy of the quality file's format, the
-//! gate's QualityReport.markdown and its sections; engine/tests/oracle/quality.json, the Python engine's reading of
-//! the gate's files as recorded, holds it to that reading.
+//! gate's QualityReport.markdown and its sections; engine/tests/oracle/quality.json, the expected reading of recorded
+//! gate files, holds it to that format.
 
 use std::fmt;
 
@@ -39,8 +39,9 @@ pub const QUALITY_TO_WEIGH_NOTE: &str = "These do not fail the gate. Fix each, o
 /// The most findings a quality file lists, numbered as one list, and the most failing tests; the rest are counted.
 pub const QUALITY_FINDINGS_LIMIT: usize = 50;
 
-/// The characters that end a line in some reader of the quality file, a Markdown renderer or Python's str.splitlines:
-/// the set the gate's _LINE_BREAK_ESCAPES escapes.
+/// The characters that end a line in some reader of the quality file: a Markdown renderer's line ends, and the
+/// vertical tab, form feed, file, group and record separators, NEL, U+2028 and U+2029, at which other readers break
+/// lines too; the set the gate's _LINE_BREAK_ESCAPES escapes.
 const LINE_BREAKS: [char; 10] = ['\n', '\r', '\x0b', '\x0c', '\x1c', '\x1d', '\x1e', '\u{85}', '\u{2028}', '\u{2029}'];
 
 /// text as a quality file writes it within one of its lines, such as one item of a list: each of LINE_BREAKS written
@@ -281,7 +282,7 @@ struct NumberedFinding<'a> {
     message: &'a str,
 }
 
-/// line as a numbered finding, where, then severity, rule and message: what Python's
+/// line as a numbered finding, where, then severity, rule and message: what the regular expression
 /// `\d+\. (?:`(?P<path>.+?)(?::\d+| \(the whole file\))`|The change as a whole:) \S+ (?P<rule>.+?): (?P<message>.*)`
 /// matches in all of it, the path as short as the rest allows; None for any other line.
 fn numbered_finding(line: &str) -> Option<NumberedFinding<'_>> {

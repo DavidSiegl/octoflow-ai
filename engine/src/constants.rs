@@ -1,5 +1,5 @@
-//! The engine's defaults, intervals, names and exit statuses: the constants at the top of orchestrator.py, each with
-//! its comment there. A constant that belongs to one part of the engine lives in that part's module instead.
+//! The engine's defaults, intervals, names and exit statuses that no one part of it owns. A constant that belongs to
+//! one part of the engine lives in that part's module instead.
 
 /// Where a project keeps its runs' directories, relative to it.
 pub const RUNS_DIR: &str = ".orchestrator/runs";

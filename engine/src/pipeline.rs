@@ -1,6 +1,6 @@
 //! Workflow definitions: a workflow is data, a Pipeline of Steps that roles take turns at, each turn ending when its
 //! role writes its handoff file. A Pipeline is valid once constructed: it refuses a definition the engine could not
-//! run, naming the problem as the Python engine does. docs/architecture.md, "Workflows", has the whole picture.
+//! run, naming the problem. docs/architecture.md, "Workflows", has the whole picture.
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::LazyLock;
@@ -118,9 +118,8 @@ impl Step {
         !self.human_paced && self.loop_to.is_none()
     }
 
-    /// The handoff file of round n in run_dir; with q other than 0, the answer to quality round q. n is a round as
-    /// Python's int holds it: -1, the round before round 0, names the file no turn writes that a prev_ placeholder
-    /// of round 0 gives.
+    /// The handoff file of round n in run_dir; with q other than 0, the answer to quality round q. n may be -1, the
+    /// round before round 0, which names the file no turn writes that a prev_ placeholder of round 0 gives.
     pub fn path(&self, run_dir: &str, n: impl Into<i64>, q: u32) -> String {
         format!("{run_dir}/{}", self.name(n, q))
     }
@@ -222,8 +221,7 @@ impl Default for PipelineSettings {
 /// A named workflow: roles that hand off through files, one step after another.
 ///
 /// A run is in round 0 until its first editing step, round 1 from there, and one round more each time a verdict
-/// step loops back. Two pipelines are equal when every part is, their role maps compared as Python's dicts are, in
-/// any order.
+/// step loops back. Two pipelines are equal when every part is, their role maps compared in any order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pipeline {
     name: String,

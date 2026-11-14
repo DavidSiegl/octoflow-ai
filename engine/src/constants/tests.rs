@@ -2,7 +2,7 @@ use super::*;
 use serde_json::Value;
 use crate::test_support::oracle;
 
-/// A constant as json.dumps writes the Python engine's: a number, a string, or a tuple of them as a list.
+/// A constant as texts.json records it: a number, a string, or a list of them.
 trait AsJson {
     fn as_json(&self) -> Value;
 }
@@ -43,8 +43,8 @@ macro_rules! constants {
 }
 
 #[test]
-fn every_constant_is_the_python_engines() {
-    let ported = constants![
+fn every_constant_is_the_value_texts_json_records() {
+    let compared = constants![
         RUNS_DIR, WORKTREES_DIR, PROOF_COPIES_DIR, DEFAULT_TURN_TIMEOUT, DEFAULT_MAX_ROUNDS, AGENT_START_TIMEOUT_MS,
         POLL_SECONDS, STALL_SECONDS, PROMPT_DELIVERY_SECONDS, HEARTBEAT_SECONDS, STALE_SECONDS, NETWORK_TIMEOUT,
         GITLEAKS_TIMEOUT, GITLEAKS_INSTALL, GITLEAKS_ALLOW, GITLEAKS_EXTEND_DEPTH, BRANCH_PREFIX, REMOTE,
@@ -54,17 +54,17 @@ fn every_constant_is_the_python_engines() {
         EXIT_ERROR, EXIT_CHANGES_REQUESTED, EXIT_CONFLICT, EXIT_WAITING, EXIT_INTERRUPTED,
     ];
     let texts = oracle("texts.json");
-    let python = texts.get("constants").and_then(Value::as_object).unwrap();
-    for (name, value) in &ported {
-        assert_eq!(python.get(*name).map(Value::to_string), Some(value.to_string()), "{name}");
+    let recorded = texts.get("constants").and_then(Value::as_object).unwrap();
+    for (name, value) in &compared {
+        assert_eq!(recorded.get(*name).map(Value::to_string), Some(value.to_string()), "{name}");
     }
-    // Renamed here: Python's names a harness an agent.
-    assert_eq!(python.get("DEFAULT_AGENT").map(Value::to_string), Some(DEFAULT_HARNESS.as_json().to_string()));
-    // ROLE_LABELS is a dict in Python, a list of pairs here.
-    let labels: Vec<(&str, &str)> = python.get("ROLE_LABELS").and_then(Value::as_object).unwrap()
+    // texts.json names DEFAULT_HARNESS DEFAULT_AGENT.
+    assert_eq!(recorded.get("DEFAULT_AGENT").map(Value::to_string), Some(DEFAULT_HARNESS.as_json().to_string()));
+    // texts.json records ROLE_LABELS as an object, here a list of pairs.
+    let labels: Vec<(&str, &str)> = recorded.get("ROLE_LABELS").and_then(Value::as_object).unwrap()
         .iter().map(|(k, v)| (k.as_str(), v.as_str().unwrap())).collect();
     assert_eq!(labels, ROLE_LABELS);
-    // HARNESS_NAMES differs from Python's AGENT_KINDS, agy in place of gemini; harness/tests.rs compares the rest of
+    // texts.json's AGENT_KINDS is HARNESS_NAMES with gemini in place of agy; harness/tests.rs compares the rest of
     // it.
-    assert_eq!(ported.len() + 3, python.len(), "a constant of texts.py's list is not compared here");
+    assert_eq!(compared.len() + 3, recorded.len(), "a constant of texts.json is not compared here");
 }

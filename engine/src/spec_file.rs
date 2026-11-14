@@ -1,5 +1,5 @@
 //! A spec given with run --spec: read on the orchestrator's machine, it becomes the contract step's file of a run
-//! that starts at the step after it (Pipeline::seeded_start), as orchestrator.py's SpecFile and read_spec_file.
+//! that starts at the step after it (Pipeline::seeded_start).
 
 use crate::error::{strerror, OrchestratorError};
 use crate::paths::{file_name, split_extension};

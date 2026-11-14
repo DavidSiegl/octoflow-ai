@@ -1,12 +1,6 @@
 //! The command line: what parse_args reads, the usage errors of check_flag_values and check_spec_args, and the flags
-//! each command's help names, held to orchestrator.py's (the oracle engine/tests/oracle/cli.json). Python's cases of
-//! parse_args alone, by class: TestCLI's test_machine_requires_cwd, test_max_rounds_must_be_positive and
-//! test_model_flags_are_run_only; TestResumeCLI.test_machine_requires_cwd; TestWorkflowCLI's
-//! test_unknown_workflow_is_an_argparse_error and test_resume_has_no_workflow_flag; TestWorkflowFileCLI.test_bad_flags;
-//! TestSpecCLI's test_a_task_or_spec_is_needed, test_resume_takes_no_spec and test_run_help_lists_spec;
-//! TestHarnessFlags.test_unknown_kinds_are_argparse_errors; TestQualityCLI.test_flag_checks; the parse_args halves of
-//! TestResumePullRequest.test_no_pr_is_saved_with_the_run and TestWorktreeRun.test_a_run_flag; TestListJSON's
-//! test_pr_state_needs_json. Their cases of main are crate::cli's tests; the others here are the Rust engine's.
+//! each command's help names, held to the recorded set in engine/tests/oracle/cli.json. Cases that need main rather
+//! than parse_args alone are crate::cli's tests.
 
 use clap::error::ErrorKind;
 
@@ -95,7 +89,7 @@ fn every_flag_of_resume() {
     assert_eq!((args.run_ref.as_str(), args.force, args.quality_gate), ("a1b2c3", true, true));
     assert_eq!((args.no_quality_gate, args.settings.max_rounds), (false, Some(5)));
     assert!(resume(&["a1b2c3", "--no-quality-gate"]).no_quality_gate);
-    // argparse takes an abbreviation that names one flag.
+    // An abbreviation that names one flag is that flag.
     assert_eq!(resume(&["a1b2c3", "--max-r", "2"]).settings.max_rounds, Some(2));
 }
 
@@ -175,7 +169,7 @@ fn version_exits_0_with_the_engines_version() {
     }
 }
 
-// -- Python's cases of parse_args ------------------------------------------------------------------------------------
+// -- Usage errors and what each command takes ------------------------------------------------------------------------
 
 #[test]
 fn machine_requires_cwd() {
@@ -199,7 +193,6 @@ fn model_flags_are_run_only() {
 #[test]
 fn unknown_workflow_is_a_usage_error() {
     let (message, status) = refused(&["run", "task", "--workflow", "nope"]);
-    // clap's wording of argparse's "argument --workflow: invalid choice: 'nope' (choose from default)".
     assert!(message.contains("invalid value 'nope' for '--workflow"), "{message}");
     assert!(message.contains("[possible values: default]"), "{message}");
     assert_eq!(status, 2);
@@ -227,7 +220,7 @@ fn bad_workflow_file_flags() {
 fn a_task_or_spec_is_needed() {
     let (message, status) = refused(&["run"]);
     assert!(message.contains("a task or --spec FILE is needed"), "{message}");
-    // The run command's usage, as argparse's "orchestrator.py run: error: ...".
+    // The run command's usage, not the program's.
     assert!(message.contains("Usage: orchestrator run"), "{message}");
     assert_eq!(status, 2);
 }
@@ -307,9 +300,9 @@ fn the_commands_about_runs_and_workflows() {
     assert!(refused(&["workflows", "--cwd", "/p"]).0.contains("--cwd"));
 }
 
-// -- The flags each command's help names, as orchestrator.py's ------------------------------------------------------
+// -- The flags each command's help names -----------------------------------------------------------------------------
 
-/// The flags text names, as engine/tests/oracle/cli.py finds them: each long flag (two hyphens, lowercase words
+/// The flags text names, as cli.json's lists were found: each long flag (two hyphens, lowercase words
 /// joined by hyphens) or -h that stands alone, not part of a longer word.
 fn flags_in(text: &str) -> std::collections::BTreeSet<String> {
     let word = |c: char| c.is_alphanumeric() || c == '_' || c == '-';
@@ -327,48 +320,48 @@ fn flags_in(text: &str) -> std::collections::BTreeSet<String> {
 }
 
 #[test]
-fn help_names_the_flags_python_names() {
-    let oracle = crate::test_support::oracle("cli.json");
+fn each_help_names_the_flags_cli_json_records() {
+    let recorded = crate::test_support::oracle("cli.json");
     let names = |key: &str| -> Vec<String> {
-        oracle.get(key).and_then(Value::as_array).expect("the oracle lists them").iter().map(Value::text).collect()
+        recorded.get(key).and_then(Value::as_array).expect("cli.json lists them").iter().map(Value::text).collect()
     };
     let commands = names("commands");
-    let flags = oracle.get("flags").and_then(Value::as_object).expect("the oracle has the flags");
+    let flags = recorded.get("flags").and_then(Value::as_object).expect("cli.json has the flags");
     let p = parser(&ConfigDir::at("/nowhere"));
-    let ported: Vec<String> = p.get_subcommands().map(|c| c.get_name().to_string()).collect();
+    let subcommands: Vec<String> = p.get_subcommands().map(|c| c.get_name().to_string()).collect();
     // The program's own help, then each command's.
-    for (name, argv) in std::iter::once(("", vec!["--help"])).chain(ported.iter().map(|c| (c.as_str(), vec![c.as_str(), "--help"]))) {
+    for (name, argv) in std::iter::once(("", vec!["--help"])).chain(subcommands.iter().map(|c| (c.as_str(), vec![c.as_str(), "--help"]))) {
         let help = parse(&argv).unwrap_err().to_string();
-        let mut python: std::collections::BTreeSet<String> = flags
+        let mut expected: std::collections::BTreeSet<String> = flags
             .get(name)
             .and_then(Value::as_array)
             .unwrap_or_else(|| panic!("cli.json has no command {name}"))
             .iter()
             .map(Value::text)
             .collect();
-        // The Rust engine's own: orchestrator.py had no --version (run-usability/01), nor doctor's --setup-gate and
-        // the --quality-gate its help names (doctor-gate-setup/01).
+        // Flags added since cli.json was recorded: --version (run-usability/01), doctor's --setup-gate and the
+        // --quality-gate its help names (doctor-gate-setup/01).
         if name.is_empty() {
-            python.insert("--version".into());
+            expected.insert("--version".into());
         }
         if name == "doctor" {
-            python.extend(["--setup-gate".into(), "--quality-gate".into()]);
+            expected.extend(["--setup-gate".into(), "--quality-gate".into()]);
         }
-        // --permission-mode's help names agy's flags where Python's named gemini's (GitHub issue #125).
-        if python.remove("--approval-mode") {
-            python.extend(["--mode".into(), "--dangerously-skip-permissions".into()]);
+        // --permission-mode's help names agy's flags, which replaced gemini's (GitHub issue #125).
+        if expected.remove("--approval-mode") {
+            expected.extend(["--mode".into(), "--dangerously-skip-permissions".into()]);
         }
-        assert_eq!(flags_in(&help), python, "{name:?}'s help:\n{help}");
+        assert_eq!(flags_in(&help), expected, "{name:?}'s help:\n{help}");
     }
+    // cli.json's gui is no command of this program.
     let missing: Vec<&str> =
-        commands.iter().map(String::as_str).filter(|c| !ported.iter().any(|p| p == c) && *c != "gui").collect();
+        commands.iter().map(String::as_str).filter(|c| !subcommands.iter().any(|p| p == c) && *c != "gui").collect();
     assert_eq!(missing, Vec::<&str>::new());
-    assert!(ported.iter().all(|c| commands.contains(c)), "{ported:?}");
+    assert!(subcommands.iter().all(|c| commands.contains(c)), "{subcommands:?}");
 }
 
 #[test]
 fn a_flag_given_twice_takes_the_last() {
-    // As argparse's store action does.
     let args = run(&["--cwd", "/a", "--max-rounds", "2", "--cwd", "/b", "--max-rounds", "3", "--no-pr", "--no-pr", "t"]);
     assert_eq!((args.target.cwd.as_deref(), args.settings.max_rounds, args.no_pr), (Some("/b"), Some(3), true));
     let show = parse(&["show", "--machine", "a", "--machine", "b", "--cwd", "/p", "x"]).unwrap();
@@ -381,7 +374,7 @@ fn serve_takes_each_origin_given() {
     assert_eq!(parse(&["serve"]).unwrap(), Command::Serve(vec![]));
     let both = parse(&["serve", "--origin", "tauri://localhost", "--origin=http://localhost:1420"]).unwrap();
     assert_eq!(both, Command::Serve(vec!["tauri://localhost".to_string(), "http://localhost:1420".to_string()]));
-    // argparse takes an abbreviation of a long flag.
+    // An abbreviation of a long flag is that flag.
     assert_eq!(parse(&["serve", "--or", "x"]).unwrap(), Command::Serve(vec!["x".to_string()]));
     assert_eq!(parse(&["serve", "--origin"]).unwrap_err().exit_code(), 2);
     assert_eq!(parse(&["serve", "x"]).unwrap_err().exit_code(), 2);

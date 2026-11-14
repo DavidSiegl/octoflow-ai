@@ -1,9 +1,8 @@
-//! TestQualityGateOnResume and TestQualityGateOffOnResume: resume's --quality-gate and --no-quality-gate, the quality
-//! gate of a stopped run turned on or off (turn_quality_gate_on, turn_quality_gate_off) and the run then resumed.
+//! resume's --quality-gate and --no-quality-gate: the quality gate of a stopped run turned on or off
+//! (turn_quality_gate_on, turn_quality_gate_off) and the run then resumed.
 //!
-//! Not here: test_the_cli_refuses_with_exit_1_and_leaves_state_json_alone and
-//! test_the_cli_runs_the_workflow_with_the_new_job, which drive main and are ported in engine/src/cli/tests.rs; and
-//! test_show_names_the_gate, as the engine has no `show` yet.
+//! Not here: the CLI refusing with exit status 1 and leaving state.json alone, and running the workflow with the new
+//! job, which drive main and are in engine/src/cli/tests.rs.
 
 use std::cell::RefCell;
 
@@ -125,7 +124,7 @@ fn gsolo_turn(n: u32, q: u32) -> Turn {
     })
 }
 
-// -- TestQualityGateOnResume -------------------------------------------------------------------------------------
+// -- Turned on at a resume -----------------------------------------------------------------------------------------
 
 #[test]
 fn on_in_the_builders_step_gates_its_turn() {
@@ -339,7 +338,7 @@ fn a_failed_preflight_refuses_before_any_turn() {
     }
 }
 
-// -- TestQualityGateOffOnResume ----------------------------------------------------------------------------------
+// -- Turned off at a resume ----------------------------------------------------------------------------------------
 
 #[test]
 fn off_in_quality_drops_the_analysis_and_goes_to_the_reviewer() {
@@ -377,8 +376,8 @@ fn off_in_quality_drops_the_analysis_and_goes_to_the_reviewer() {
     assert_eq!(commit[commit.len() - 2..], trailer);
 }
 
-/// Whether body's Orchestrator-Gate row gives a gate result after noted quality rounds: Python's regex
-/// `\| Orchestrator-Gate \| `\w+ after {noted} quality rounds?` \|`.
+/// Whether body's Orchestrator-Gate row gives a gate result after noted quality rounds, as the regular expression
+/// `\| Orchestrator-Gate \| `\w+ after {noted} quality rounds?` \|` matches it.
 fn gate_row_after(body: &str, noted: u32) -> bool {
     body.lines().any(|line| {
         let Some(cell) = line.strip_prefix("| Orchestrator-Gate | `").and_then(|l| l.strip_suffix("` |")) else {
@@ -546,7 +545,7 @@ fn refused_without_a_gate_or_once_done() {
     }
 }
 
-/// Python's last line, that finish exits 0 for the run, is the CLI's (cli::finish) and is not checked here.
+/// That finish exits 0 for the run is the CLI's (cli::finish) and is not checked here.
 #[test]
 fn turned_off_after_a_failed_round_a_workflow_without_a_verdict_finishes() {
     let solo = gsolo();
@@ -595,7 +594,7 @@ fn round_results_keep_the_quality_files() {
     assert!(summary.contains("Round 1: quality gate OK; review APPROVE"), "{summary}");
 }
 
-// -- Not Python's: the job a killed run left --------------------------------------------------------------------
+// -- The job a killed run left ---------------------------------------------------------------------------------
 
 #[test]
 fn off_in_quality_stops_the_job_a_killed_run_left_and_keeps_what_ended_jobs_wrote() {
@@ -647,7 +646,7 @@ fn off_in_quality_goes_on_when_the_left_job_cannot_be_cleared_saying_why() {
     assert!(lines.iter().any(|l| l.starts_with("could not stop the quality gate's job: ")), "{lines:?}");
 }
 
-// -- Not Python's: a failure after the checks ---------------------------------------------------------------------
+// -- A failure after the checks ---------------------------------------------------------------------------------
 
 /// A host whose every read fails, and which runs no command.
 struct Unreadable;

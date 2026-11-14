@@ -1,5 +1,4 @@
-//! FakeHost, the machine the Workflow tests run on: an in-memory filesystem and git checkout, played as
-//! tests/test_orchestrator.py's FakeHost plays them.
+//! FakeHost, the machine the Workflow tests run on: an in-memory filesystem and git checkout.
 
 use std::cell::{RefCell, RefMut};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -94,7 +93,7 @@ impl FakeClock {
         self.now.advance(seconds);
     }
 
-    /// Set the time to seconds, as a Python test sets clock.now.
+    /// Set the time to seconds.
     pub fn set(&self, seconds: f64) {
         self.now.set(seconds);
     }
@@ -150,7 +149,7 @@ pub(crate) enum PrEdit {
     Ready { url: String },
 }
 
-/// What a FakeHost holds and records. Each field is what Python's FakeHost has of that name.
+/// What a FakeHost holds and records.
 pub(crate) struct FakeState {
     /// Each file's text, by path, in the order first written.
     pub files: Map<String>,
@@ -256,19 +255,18 @@ pub(crate) struct FakeState {
     pub tree_snapshots: Vec<BTreeMap<String, String>>,
     /// What session_log reads, by (harness, session).
     pub session_logs: HashMap<(String, String), String>,
-    /// Run before each write, given its path and text, when set: an error fails the write, as a Python test's own
-    /// FakeHost.write fails it.
+    /// Run before each write, given its path and text, when set: an error fails the write.
     pub before_write: Option<BeforeWrite>,
-    /// Run before each rename, given its path and new path, when set: what a Python test does in its own
-    /// FakeHost.rename before the fake's.
+    /// Run before each rename, given its path and new path, when set, before the fake renames: a test's own step,
+    /// such as changing the world meanwhile.
     pub before_rename: Option<BeforeRename>,
-    /// Run before each git command, given its directory and arguments, when set: what a Python test does in its own
-    /// FakeHost method, such as remove_worktree, before the fake's.
+    /// Run before each git command, given its directory and arguments, when set, before the fake plays it: a test's
+    /// own step, such as failing remove_worktree's command.
     pub before_git: Option<BeforeGit>,
-    /// What run_states answers instead, when set and it gives Some: a Python test's own FakeHost.run_states.
+    /// What run_states answers instead, when set and it gives Some.
     pub run_states_with: Option<RunStatesWith>,
     /// The real host a command the host runs other than git (Host::exec, so run, check and run_files) runs on, a
-    /// process on this machine, when set, as a Python test's `host._run = subprocess.run` makes it: a ProcessHost,
+    /// process on this machine, when set: a ProcessHost,
     /// given the Interrupt that is to stop its commands. Such a command, run_files included, sees the machine's real
     /// files, while read, write and rename stay in `files` and git stays played: a file a test puts there is not one
     /// a real command finds. None: such a command panics the test.
@@ -697,7 +695,7 @@ impl Host for FakeHost {
         Ok(s.files.contains_key(path) || s.files.keys().any(|p| p.starts_with(&under)))
     }
 
-    /// The path as given, as Python's tests patch resolve_dir to give theirs: a fake's paths are absolute already,
+    /// The path as given: a fake's paths are absolute already,
     /// and none is a link.
     fn resolve_dir(&self, path: &str) -> Result<String, OrchestratorError> {
         Ok(path.to_string())
@@ -1004,7 +1002,7 @@ impl Host for FakeHost {
 
     /// The real host's listing when FakeState::processes is set; else the files of run_dir in `files`, as the real
     /// one lists them (no state.json, no temporary file), by their mtimes, those of one time, and those put straight
-    /// into files (time 0), in the order first written, as Python's ShowHost lists them.
+    /// into files (time 0), in the order first written.
     fn run_files(&self, run_dir: &str) -> Result<Vec<super::RunFile>, OrchestratorError> {
         let s = self.state();
         if let Some(real) = &s.processes {

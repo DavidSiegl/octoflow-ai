@@ -6,13 +6,13 @@ use crate::test_support::{oracle, TempDir};
 use crate::env::ConfigDir;
 
 #[test]
-fn every_built_in_text_is_the_python_engines() {
+fn every_built_in_text_is_the_one_texts_json_records() {
     let texts = oracle("texts.json");
-    let python = texts.get("prompts").and_then(Value::as_object).unwrap();
+    let recorded = texts.get("prompts").and_then(Value::as_object).unwrap();
     let names: Vec<&str> = Prompt::ALL.iter().map(|p| p.name()).collect();
-    assert_eq!(names, python.keys().collect::<Vec<_>>());
+    assert_eq!(names, recorded.keys().collect::<Vec<_>>());
     for p in Prompt::ALL {
-        assert_eq!(Some(p.built_in()), python.get(p.name()).and_then(Value::as_str), "{}", p.name());
+        assert_eq!(Some(p.built_in()), recorded.get(p.name()).and_then(Value::as_str), "{}", p.name());
     }
 }
 

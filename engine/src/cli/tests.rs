@@ -1,22 +1,12 @@
 //! main's dispatch on the fixture's fakes (run_command), its exit statuses (finish, ended_status) and the resume hint,
-//! with Python's cases of main that start or resume a run, by class: TestQualityGateOnResume's
-//! test_the_cli_refuses_with_exit_1_and_leaves_state_json_alone and test_the_cli_runs_the_workflow_with_the_new_job
-//! (the class's others are crate::workflow's gate_switch tests); TestCLI but test_list_on_machine_uses_ssh_host
-//! (crate::cli::listing's) and its parse_args cases (crate::cli::args'), test_refuses_outside_herdr being
-//! engine/tests/program.rs'; TestResumeCLI but test_machine_requires_cwd; TestWorkflowCLI but its parse_args cases;
-//! TestWorkflowFileCLI but test_bad_flags and its workflows cases (crate::cli::workflows'); TestSpecCLI but its
-//! parse_args cases, its read_spec_file halves being crate::spec_file's; TestHarnessFlags' test_precedence,
-//! test_flags_reach_the_workflow and test_role_agent_for_a_role_the_workflow_lacks; TestQualityCLI's
-//! test_gate_reaches_the_workflow; TestResumePullRequest's test_cli_exits_1_on_another_branch and
-//! test_no_pr_is_saved_with_the_run; TestWorktreeRun's test_a_run_flag and test_flag_reaches_the_workflow; the
-//! role_models half of TestOtherWorkflows.test_model_reaches_a_role_without_its_own_flag;
-//! TestWorkflowWithoutAVerdict's test_a_failed_gate_exits_as_changes_requested and test_finished_exits_zero; and
-//! TestPromptFiles.test_bad_files_stop_run_before_any_agent.
+//! with the cases of main that start or resume a run: what the flags, a spec, a workflow file and the quality gate
+//! hand the Workflow, and what stops a run before any agent. Parsing alone is crate::cli::args', the gate switch on
+//! resume crate::workflow's gate_switch tests', the list crate::cli::listing's, the workflows command
+//! crate::cli::workflows', reading a spec crate::spec_file's, and refusing outside herdr engine/tests/program.rs'.
 //!
-//! Where Python patches Workflow.__init__ or Workflow.run, a case here starts the run on the fakes and stops it at its
-//! first prompt (fixture's Cli::started), reading what reached the Workflow from the state.json it saved, or plays
-//! the run to its verdict (Cli::played). The program itself, parsed arguments to exit status, is
-//! engine/tests/program.rs's.
+//! A case here starts the run on the fakes and stops it at its first prompt (fixture's Cli::started), reading what
+//! reached the Workflow from the state.json it saved, or plays the run to its verdict (Cli::played). The program
+//! itself, parsed arguments to exit status, is engine/tests/program.rs's.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -172,7 +162,7 @@ fn the_resume_hint() {
 }
 
 
-// -- Runs started through main, as Python's tests patch Workflow -----------------------------------------------------
+// -- Runs started through main ---------------------------------------------------------------------------------------
 
 /// The repository's example workflow file of name.
 fn example(name: &str) -> String {
@@ -274,8 +264,7 @@ fn run_exit_code_when_changes_remain() {
 
 #[test]
 fn a_run_without_a_verdict_step_finishes_with_its_last_file() {
-    // TestWorkflowWithoutAVerdict.test_finished_exits_zero, with --no-pr: Python's Workflow.run is patched to return
-    // FINISHED, where this run publishes nothing so that its last line names the Builder's file.
+    // With --no-pr this run publishes nothing, so its last line names the Builder's file.
     let d = TempDir::new();
     let cli = configured(&d, &[("solo.toml", &workflow_toml(&crate::test_support::solo()))]);
     let ended = cli.played(&["--no-pr", "--workflow-file", &d.join("solo.toml"), "task"], vec![("build", vec![solo_turn()])]);
@@ -287,7 +276,7 @@ fn a_run_without_a_verdict_step_finishes_with_its_last_file() {
 
 #[test]
 fn a_failed_gate_exits_as_changes_requested() {
-    // Python patches Workflow.run to return QUALITY_GATE_FAILED; the run's last line and status are finish's.
+    // A run that ends QUALITY_GATE_FAILED: its last line and status are finish's.
     let state = saved_run("done", 1, &[]);
     let pipeline = crate::pipeline::DEFAULT_WORKFLOW.clone();
     let line = RefCell::new(String::new());
@@ -417,7 +406,7 @@ fn model_flags_override_the_files_models() {
     let d = TempDir::new();
     let cli = with_product_team(&d);
     let saved = started(&cli, &["task", "--workflow", "product-team", "--model", "X"]);
-    // The file's models first, then the flags', as Python's {**pipeline.models, **role_models(...)}.
+    // The file's models first, then the flags', a flag's replacing the file's for the same role.
     assert_eq!(field(&saved, "models"), r#"{"tests":"X","spec":"X","design":"X","build":"X","review":"X"}"#);
     let flags = ["task", "--workflow", "product-team", "--role-model", "tests=haiku", "--role-model", "spec=opus", "--build-model", "Y"];
     assert_eq!(field(&started(&cli, &flags), "models"), r#"{"tests":"haiku","spec":"opus","build":"Y"}"#);
@@ -448,7 +437,7 @@ fn resume_takes_role_model() {
     assert_eq!(serde_json::to_string(&resumed.models).unwrap(), r#"{"tests":"sonnet","review":"opus"}"#);
 }
 
-/// GIVEN_SPEC of TestSpecCLI: CRLF and trailing blanks, which the run's copy keeps.
+/// A given spec with CRLF and trailing blanks, which the run's copy keeps.
 const GIVEN_SPEC: &str = "# Add a token-bucket rate limiter\r\n\r\n## Goal\r\nlimit requests  \n\n";
 
 /// The spec the run of saved was seeded with, as the host holds it.

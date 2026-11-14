@@ -268,7 +268,7 @@ pub fn judged_by_several(verdicts: &[StepVerdict]) -> bool {
 
 /// The format of state.json this engine reads and writes, which its "format" field holds. A state.json written by a
 /// release before STATE_FORMAT_SINCE has no format, and is refused rather than read (RunState::from_saved): it was
-/// written in the Python engine's format.
+/// written in an earlier format no release reads any more.
 pub const STATE_FORMAT: u64 = 2;
 
 /// The release that first wrote STATE_FORMAT.

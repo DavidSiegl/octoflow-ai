@@ -1,4 +1,4 @@
-//! TestQualityResume: a run resumed in a quality round, or in the gated step's turn around one, picks the round up
+//! A run resumed in a quality round, or in the gated step's turn around one, picks the round up
 //! from its quality file, if written, and a resumed Builder or Reviewer hears of the quality rounds before it; on the
 //! local gate.
 
@@ -98,9 +98,8 @@ fn the_last_allowed_quality_round_goes_to_review() {
 
 #[test]
 fn a_change_the_gate_was_turned_off_before_judging_is_said_to_be_unjudged() {
-    // Not one of Python's cases here: resume --no-quality-gate turned the gate off after round 1's first quality round
-    // and the Builder's answer to it, so the Reviewer hears that nothing judged the final change (TestQualityGateOffOnResume,
-    // with turn_quality_gate_off, is gate_switch.rs's).
+    // resume --no-quality-gate turned the gate off after round 1's first quality round and the Builder's answer to
+    // it, so the Reviewer hears that nothing judged the final change (turning the gate off is gate_switch.rs's).
     let mut state = saved_run("review", 1, FULL);
     (state.quality_gate_disabled, state.quality_round) = (true, 2);
     let reviews = seen();

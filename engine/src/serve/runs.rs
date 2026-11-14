@@ -1,5 +1,5 @@
-//! What serve gives of a project's runs, as orchestrator.py's ProjectRuns, plain_name, RunWatch and sse_event: the
-//! run records `list --json` prints, each run's files and their text, and the events that tell a stream's client what
+//! What serve gives of a project's runs: the run records `list --json` prints, each run's files and their text, and
+//! the events that tell a stream's client what
 //! changed; and each run's agents, read and typed into through herdr, in the herdr server their run saved. Every path
 //! a client names is checked before anything is read, and an agent is named only by its run and role, never by its
 //! herdr name.
@@ -27,8 +27,7 @@ use super::Reached;
 /// event. The client ages heartbeat_age itself from when it got the record.
 pub const AGING_RECORD_KEYS: [&str; 2] = ["heartbeat_age", "health_reason"];
 
-/// Why serve did not give what a client asked of a run: Python's RunPathRefused, and the OrchestratorError it is a
-/// kind of.
+/// Why serve did not give what a client asked of a run: the variants say which.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunReadError {
     /// A run id or file name that is not one plain name in the run directory (plain_name), or that names

@@ -40,7 +40,7 @@ pub fn branch_name(title: &str, run_id: &str) -> String {
     }
 }
 
-/// A run's verdict as Python's str() writes it in a text: None when it has none.
+/// A run's verdict as a text names it: "None" when it has none.
 fn verdict_text(state: &RunState) -> &str {
     state.verdict.as_deref().unwrap_or("None")
 }
@@ -140,7 +140,7 @@ pub fn provenance(state: &RunState, quality: &GateEvidence) -> Vec<(String, Stri
 
 /// The paragraph that opens the body of a pull request opened over conflicts with base_branch in the files
 /// conflicts, which must not be empty; without_conflict_warning takes it out again. A base branch that is None reads
-/// as "None", as in the Python engine.
+/// as "None".
 pub fn conflict_warning(base_branch: Option<&str>, conflicts: &[String]) -> String {
     let base = base_branch.unwrap_or("None");
     let files: Vec<String> = conflicts.iter().map(|f| format!("> - `{f}`")).collect();

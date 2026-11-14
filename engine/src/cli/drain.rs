@@ -1,5 +1,5 @@
 //! `drain`: run each ready spec in a directory, one after another, each as run --spec runs it, recording each run and
-//! how it ended in its spec's header, as orchestrator.py's drain_command does. First it follows the pull requests and
+//! how it ended in its spec's header. First it follows the pull requests and
 //! runs that earlier drains left behind (refreshed_headers). The specs and their headers are crate::cli::drain::queue's.
 
 use std::collections::HashMap;
@@ -73,7 +73,7 @@ pub(super) fn drain_command(args: &DrainArgs, world: &Connected, cwd: &str) -> R
     }
     prune::sweep_branches(world, cwd).map_err(stopped)?;
     let drained = drain_ready(args, world, cwd, &mut specs, &by_slug);
-    // Whether the drain ended or failed, as Python's finally prints them.
+    // The specs it changed are printed whether the drain ended or failed.
     print_spec_changes(&specs, world);
     let status = match drained? {
         Some(status) => status,
@@ -203,7 +203,7 @@ fn drain_end(specs: &[QueuedSpec], by_slug: &HashMap<String, usize>, world: &Con
             if let Some(gone) = &blocker.gone {
                 world.say(&format!("    {b}: gone ({gone})"));
             } else {
-                // An empty Status: is none, as Python's `or` reads it.
+                // An empty Status: is none.
                 let status = blocker.status().filter(|s| !s.is_empty()).unwrap_or_else(|| "no status".to_string());
                 let pr = blocker.pr().filter(|p| !p.is_empty()).map(|p| format!("  {p}")).unwrap_or_default();
                 world.say(&format!("    {b}: {status}{pr}"));

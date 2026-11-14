@@ -1,10 +1,8 @@
-//! close, through main's command on the CLI fixture: a FakeHost and a FakeHerdr whose workspace w1 is open. Python's
-//! TestClose, case for case, but test_resume_refuses_a_closed_run_even_with_force, which is
-//! engine/src/cli/start/tests.rs' a_closed_run_is_not_resumed_even_with_force (resumable_state's); and
-//! TestHostGit.test_close_on_real_git, on a real repository with a worktree. test_on_a_machine, which checks that main
-//! connects to --machine's herdr, is a check of target parsing here: the fixture is the connection. Where Python
-//! replaces close_workspace, the Rust case scripts the FakeHerdr: its close_error, and its before_call to save the
-//! state meanwhile.
+//! close, through main's command on the CLI fixture: a FakeHost and a FakeHerdr whose workspace w1 is open, and on
+//! a real repository with a worktree. That a closed run is not resumed is resumable_state's, in
+//! engine/src/cli/start/tests.rs. That main connects to --machine's herdr is a check of target parsing here: the
+//! fixture is the connection. A case that needs the workspace's close to fail, or the state saved meanwhile, scripts
+//! the FakeHerdr: its close_error and its before_call.
 
 use std::rc::Rc;
 
@@ -36,7 +34,7 @@ fn worktree() -> String {
     format!("/proj/{WORKTREES_DIR}/a1b2c3")
 }
 
-/// TestClose's world: the CLI fixture, workspace w1 open, no live pid.
+/// The world of close's cases: the CLI fixture, workspace w1 open, no live pid.
 struct Close {
     cli: Cli,
 }
@@ -575,7 +573,7 @@ fn args() {
     }
 }
 
-// -- TestHostGit.test_close_on_real_git ------------------------------------------------------------------------------
+// -- close in a real repository --------------------------------------------------------------------------------------
 
 #[test]
 fn close_on_real_git() {

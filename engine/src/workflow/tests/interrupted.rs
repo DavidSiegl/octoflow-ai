@@ -1,5 +1,4 @@
-//! The Ctrl-C while the run waits on herdr, and once it is done: not in Python, whose herdr gets the terminal's SIGINT
-//! itself and whose tests raise KeyboardInterrupt in a fake. Here a real ProcessHerdr, running a herdr script, is what
+//! The Ctrl-C while the run waits on herdr, and once it is done. A real ProcessHerdr, running a herdr script, is what
 //! the Ctrl-C stops (TODO.md's Ctrl-C entry); the interrupted proof, the command case, is proofs.rs's.
 
 use super::*;
@@ -41,7 +40,7 @@ fn a_ctrl_c_while_herdr_waits_stops_the_wait_and_the_run() {
 
 #[test]
 fn a_ctrl_c_during_a_prompt_herdr_delivered_records_no_prompt() {
-    // As Python's KeyboardInterrupt in herdr's prompt: no prompted, no turn record, whatever herdr did with the text.
+    // No prompted, no turn record, whatever herdr did with the text.
     let d = TempDir::new();
     let delivered = d.join("delivered");
     let f = Fixture::new(vec![("spec", vec![spec_turn()])]);
@@ -60,8 +59,8 @@ fn a_ctrl_c_during_a_prompt_herdr_delivered_records_no_prompt() {
 
 #[test]
 fn a_ctrl_c_once_the_run_is_done_stops_what_is_left_of_its_end() {
-    // As Python's KeyboardInterrupt after the run's last save: the run stays done. It is not released either, as its
-    // files come before its release (Workflow::end_done_run), so a resume finishes its ending.
+    // After the run's last save, the run stays done. It is not released either, as its files come before its release
+    // (Workflow::end_done_run), so a resume finishes its ending.
     let f = Fixture::new(approved());
     let (interrupt, summary) = (f.interrupt.clone(), format!("{}/summary.md", f.state.dir()));
     f.host.state().before_write = Some(Box::new(move |path, _| {
@@ -81,8 +80,8 @@ fn a_ctrl_c_once_the_run_is_done_stops_what_is_left_of_its_end() {
 
 #[test]
 fn a_ctrl_c_that_fails_the_done_runs_save_is_the_interrupt_not_a_failure() {
-    // On a ProcessHost the save is a command, which the Ctrl-C fails: that is the interrupt, as Python's
-    // KeyboardInterrupt in the save is, not an error the CLI would print.
+    // On a ProcessHost the save is a command, which the Ctrl-C fails: that is the interrupt, not an error the CLI
+    // would print.
     let f = Fixture::new(approved());
     let (interrupt, state) = (f.interrupt.clone(), format!("{}/state.json", f.state.dir()));
     f.host.state().before_write = Some(Box::new(move |path, text| {

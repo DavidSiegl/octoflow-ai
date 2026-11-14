@@ -1,4 +1,4 @@
-//! TestQualityGate and TestStuckQualityLoop: the quality rounds of a gated run, on the local gate: the preflight,
+//! The quality rounds of a gated run, on the local gate: the preflight,
 //! the rounds, the heartbeat while the gate runs, the quality.json each round records, and a loop that stops when a
 //! quality round fails on just what the one before it failed on.
 
@@ -9,7 +9,7 @@ use crate::constants::{CI_POLL_SECONDS, HEARTBEAT_SECONDS};
 use crate::prompts::{QUALITY_PASSED_NOTE, QUALITY_STUCK_NOTE, QUALITY_UNRESOLVED_NOTE};
 use crate::quality::finding_fingerprint;
 
-/// make_workflow with the quality gate: Python's gated.
+/// Fixture::new with the quality gate.
 fn gated(script: Script) -> Fixture {
     Fixture::new(script).gated()
 }
@@ -45,7 +45,7 @@ fn gate_passes_first_time() {
     assert_eq!(
         f.quality_file(1, 1),
         "GATE: OK\n\noctoflow-gate 0.10.0, run locally, judged snapshot `snap1` (round 1, quality round 1 of 3).\n\
-         \n`orchestrator.py gate` judged the working tree.\n\n## Issues on changed lines\n\nNone.\n"
+         \n`octoflow-gate` judged the working tree.\n\n## Issues on changed lines\n\nNone.\n"
     );
     assert!(seen.borrow()[0].contains(&quality_note(QUALITY_PASSED_NOTE, &state.quality_path(1, 1))));
     assert!(seen.borrow()[0].contains(&format!("The Builder's report is in {}", state.build_path(1))));
@@ -186,7 +186,7 @@ fn quality_file_is_followed_whatever_the_exit_status() {
     assert!(f.quality_file(1, 1).starts_with("GATE: OK"));
 }
 
-// -- TestStuckQualityLoop ---------------------------------------------------------------------------------------
+// -- A stuck quality loop ----------------------------------------------------------------------------------------
 
 /// A gated run whose gate runs judge as outcomes say, with builds turns of the Builder in round 1; its fixture, run
 /// to APPROVE, and the reviews' prompts.

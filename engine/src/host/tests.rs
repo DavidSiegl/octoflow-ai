@@ -1,6 +1,5 @@
-//! Host's operations on a real machine: tests/test_orchestrator.py's TestHost, TestHostGit, TestHostSnapshot,
-//! TestAtomicWrite, TestRunFiles, TestHostPullRequest and TestChildEnvironment, ported case for case, against real git
-//! in temporary repositories, with gh, date and ssh played by scripts on the Host's PATH.
+//! Host's operations on a real machine, against real git in temporary repositories, with gh, date and ssh played by
+//! scripts on the Host's PATH.
 
 use std::ffi::OsString;
 use std::os::unix::fs::PermissionsExt;
@@ -69,8 +68,7 @@ pub(crate) fn set_mtime(path: &str, seconds: i64) {
 }
 
 /// A git repository of its own, on branch main, configured to commit as `t <t@example.com>` unsigned whatever the
-/// user's git configuration says, as tests/gitrepo.py's RepositoryTest makes it; its base commit holds base_files
-/// unless they are none.
+/// user's git configuration says; its base commit holds base_files unless they are none.
 pub(crate) struct Repo {
     /// Holds the repository and outside; removes both when dropped.
     pub _tmp: TempDir,
@@ -179,7 +177,7 @@ impl FakeSsh {
 /// ["ssh", "-o", "BatchMode=yes"], the start of every command over SSH, before the sharing options.
 const SSH: [&str; 3] = ["ssh", "-o", "BatchMode=yes"];
 
-// -- TestHost --------------------------------------------------------------------------------------------------------
+// -- Commands, files and times, here and over SSH --------------------------------------------------------------------
 
 #[test]
 fn ssh_wraps_command() {
@@ -505,7 +503,7 @@ fn output_that_is_not_utf8_raises_naming_the_command() {
     assert_eq!(verbatim.stderr, "a\u{fffd}");
 }
 
-// -- How a command runs: the fixes the Python engine's process handling holds -----------------------------------------
+// -- How a command runs -----------------------------------------------------------------------------------------------
 
 #[test]
 fn line_ends_are_made_newlines_in_text_and_kept_verbatim() {
@@ -588,7 +586,7 @@ fn a_command_that_cannot_be_started_names_it() {
 
 #[test]
 fn exec_tells_a_command_not_on_path_from_one_that_cannot_be_started_otherwise() {
-    // As the doctor tells a tool missing here (cross-review 89, F9): Python's FileNotFoundError from subprocess.
+    // As the doctor tells a tool missing here (cross-review 89, F9).
     let host = ProcessHost::local(&Interrupt::new());
     let message = "no-such-command-here x: [Errno 2] No such file or directory: \"no-such-command-here\"";
     assert_eq!(host.exec(&["no-such-command-here", "x"], None, 60), Err(ExecError::NotFound(OrchestratorError::new(message))));
@@ -607,7 +605,7 @@ fn a_command_ended_by_a_signal_has_its_negative_number() {
     assert_eq!(proc.status, -15);
 }
 
-// -- The Ctrl-C (not in Python, whose commands get the terminal's SIGINT themselves) ----------------------------------
+// -- The Ctrl-C -------------------------------------------------------------------------------------------------------
 
 #[test]
 fn a_ctrl_c_stops_the_running_command_with_its_process_group() {
@@ -683,7 +681,7 @@ fn no_command_starts_while_the_ctrl_c_is_pending() {
     assert!(std::path::Path::new(&ran).exists());
 }
 
-// -- TestChildEnvironment --------------------------------------------------------------------------------------------
+// -- The environment a command gets ----------------------------------------------------------------------------------
 
 /// The engine's environment with git's pathspec switches and KEEP_ME set.
 pub(crate) fn with_pathspec_switches() -> Vec<(&'static str, &'static str)> {
@@ -713,7 +711,7 @@ fn host_commands_over_ssh_get_no_pathspec_switches() {
     assert_scrubbed(&ssh.host.check(&["env"], None, 60).unwrap());
 }
 
-// -- TestAtomicWrite, TestRunFiles and the session logs --------------------------------------------------------------
+// -- Atomic writes, a run's files and the session logs ---------------------------------------------------------------
 
 #[test]
 fn real_filesystem_state() {
@@ -951,7 +949,7 @@ fn run_metrics_reads_each_run_s_line() {
     assert!(e.0.starts_with(&format!("corrupt metrics.json under {}/{RUNS_DIR}: ", d.path())), "{e}");
 }
 
-// -- TestHostPullRequest ---------------------------------------------------------------------------------------------
+// -- Pull requests ---------------------------------------------------------------------------------------------------
 
 const URL: &str = "https://github.com/o/r/pull/7";
 
@@ -1091,9 +1089,9 @@ fn a_failed_edit_raises() {
     assert!(e.0.contains("gh pr ready ") && e.0.ends_with(" failed: HTTP 422"), "{e}");
 }
 
-// -- TestHostGit: a bare origin, our checkout A and someone else's B -------------------------------------------------
+// -- git: a bare origin, our checkout A and someone else's B ---------------------------------------------------------
 
-/// TestHostGit's setup: a bare origin, our checkout a and someone else's b, both at its main, which holds app.py.
+/// The git cases' setup: a bare origin, our checkout a and someone else's b, both at its main, which holds app.py.
 struct Clones {
     tmp: TempDir,
     host: ProcessHost,
@@ -1881,7 +1879,7 @@ fn a_tree_is_restored_over_more_paths_than_an_argv_holds() {
     assert_eq!(r.host.git(&r.path, &["status", "--porcelain"]).unwrap(), "");
 }
 
-// -- TestHostSnapshot ------------------------------------------------------------------------------------------------
+// -- Snapshots -------------------------------------------------------------------------------------------------------
 
 #[test]
 fn snapshot_of_the_working_tree() {
@@ -1998,10 +1996,10 @@ fn a_snapshot_git_cannot_make_raises() {
     assert_eq!(e.0, format!("snapshot of {}: git commit-tree printed \"notacommit\", not a commit", r.path));
 }
 
-// -- What the Python engine's constants hold --------------------------------------------------------------------------
+// -- The constants host.json records ----------------------------------------------------------------------------------
 
 #[test]
-fn host_s_constants_are_the_python_engine_s() {
+fn host_s_constants_are_what_host_json_records() {
     let recorded = oracle("host.json");
     let constants = recorded.get("constants").unwrap();
     let int = |name: &str| constants.get(name).and_then(Value::as_i64).unwrap();

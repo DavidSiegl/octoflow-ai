@@ -1,4 +1,4 @@
-//! Deleting the branches of runs whose pull request is done, as orchestrator.py's prune_branches: the `prune`
+//! Deleting the branches of runs whose pull request is done: the `prune`
 //! command, and the sweep a run that opens a pull request makes first (sweep_branches). A branch is deleted only when
 //! its pull request's head commit holds all of it, so every deleted branch can be restored from its pull request
 //! (GitHub keeps refs/pull/<n>/head; docs/design.md). The same holds for the --worktree a run left behind, which
@@ -148,7 +148,7 @@ fn prune_run(
 ) -> Result<(), GhError> {
     let failed = GhError::Failed;
     let host = world.with.host;
-    // Before gh pr view, as Python reads wall() for prune_run's call.
+    // Read before gh pr view.
     let now = world.with.clocks.wall();
     // is_prune_candidate takes only runs with both.
     let (Some(url), Some(branch)) = (state.pr_url.as_deref(), state.branch.as_deref()) else {
