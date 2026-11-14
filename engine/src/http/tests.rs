@@ -141,11 +141,11 @@ fn endless_redirects_end_in_the_last_status() {
 }
 
 #[test]
-fn no_answer_is_worded_with_the_errno_and_the_system_s_words() {
+fn no_answer_is_worded_with_the_system_s_words() {
     let refusing = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/", refusing.local_addr().unwrap());
     drop(refusing);
-    assert_eq!(direct().send(&get(&url)), Err(HttpError::NoAnswer("[Errno 111] Connection refused".to_string())));
+    assert_eq!(direct().send(&get(&url)), Err(HttpError::NoAnswer("Connection refused".to_string())));
 
     // Accepted by the kernel, never answered.
     let silent = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -154,7 +154,8 @@ fn no_answer_is_worded_with_the_errno_and_the_system_s_words() {
 
     // getaddrinfo's own error: EAI_NONAME, or EAI_AGAIN on a machine that has no resolver to ask.
     let unknown = direct().send(&get("http://unknown-host.invalid/"));
-    assert!(matches!(&unknown, Err(HttpError::NoAnswer(why)) if why.starts_with("[Errno -")), "{unknown:?}");
+    let resolver = ["Name or service not known", "Temporary failure in name resolution", "No address associated with hostname"];
+    assert!(matches!(&unknown, Err(HttpError::NoAnswer(why)) if resolver.contains(&why.as_str())), "{unknown:?}");
     let bad = get("nonsense");
     assert!(matches!(direct().send(&bad), Err(HttpError::NoAnswer(_))));
 }
@@ -239,16 +240,6 @@ fn a_request_goes_through_the_proxy_its_scheme_names() {
         matches!(&answer, Err(HttpError::NoAnswer(m)) if m.starts_with("the proxy ") && !m.contains("s3cret")),
         "{answer:?}"
     );
-}
-
-#[test]
-fn a_resolver_error_has_its_number_when_its_text_gives_it() {
-    assert_eq!(
-        resolver_error("Temporary failure in name resolution"),
-        "[Errno -3] Temporary failure in name resolution"
-    );
-    assert_eq!(resolver_error("No address associated with hostname"), "[Errno -5] No address associated with hostname");
-    assert_eq!(resolver_error("something else"), "something else");
 }
 
 // A self-signed certificate for pypi.org.

@@ -66,7 +66,8 @@ pub fn has_conflict(s: &RunState) -> bool {
 ///
 /// for_later_drain is true for refresh run by hand, whose clearing a later drain is to take up, and false for drain's
 /// own refresh, which takes it up in the same pass. cwd is the project, where gh runs and the run's state is, on
-/// world's host. Errors, naming the run: gh fails, or its state.json changed since state was read (record_in_state).
+/// world's host. Errors, naming the run: its state records no base branch (RunState::conflicts), gh fails, or its
+/// state.json changed since state was read (record_in_state).
 pub fn refresh_conflict(
     world: &Connected,
     cwd: &str,
@@ -78,9 +79,11 @@ pub fn refresh_conflict(
     let refreshed = || -> Result<ConflictCheck, OrchestratorError> {
         let host = world.with.host;
         let url = state.pr_url.clone().unwrap_or_default();
+        let base = state.base_branch.as_deref();
+        let base = base.ok_or_else(|| OrchestratorError::new("its state records conflicts but no base branch"))?;
         let pr = host.pull_request_merge(cwd, &url)?;
         let clean = pr.state == "OPEN" && pr.mergeable == "MERGEABLE";
-        let body = clean.then(|| without_conflict_warning(&pr.body, state.base_branch.as_deref(), &state.conflicts));
+        let body = clean.then(|| without_conflict_warning(&pr.body, base, &state.conflicts));
         let succeeded = state.verdict.as_deref().is_some_and(|v| SUCCEEDED.contains(&v));
         let check = ConflictCheck {
             run_id: run_id.clone(),

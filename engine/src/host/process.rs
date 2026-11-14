@@ -200,8 +200,7 @@ fn ssh_argv(target: &str, options: Vec<String>, argv: &[&str]) -> Vec<String> {
 
 /// What the error of argv's timeout says, run with a timeout of seconds.
 fn timed_out(argv: &[String], seconds: u64) -> String {
-    let listed: Vec<String> = argv.iter().map(|a| format!("{a:?}")).collect();
-    format!("Command '[{}]' timed out after {seconds} seconds", listed.join(", "))
+    format!("`{}` timed out after {seconds} seconds", shlex_join(argv))
 }
 
 /// Why run_process gave no output.

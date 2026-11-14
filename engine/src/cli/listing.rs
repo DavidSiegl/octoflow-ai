@@ -177,7 +177,7 @@ pub fn run_rows(runs: &[SavedRun], local_host: &str, pid_alive: &dyn Fn(i64) -> 
     runs.iter()
         .map(|run| {
             let record = run_record(run, local_host, pid_alive, target);
-            let text = |key: &str| record.get(key).map_or("None".to_string(), Value::text);
+            let text = |key: &str| record.get(key).expect("run_record sets a run's id, phase and task").text();
             let task: String = text("task").chars().take(100).collect();
             [text("id"), text("phase"), run_round(&record), run_outcome(&record), task]
         })
@@ -188,7 +188,7 @@ pub fn run_rows(runs: &[SavedRun], local_host: &str, pid_alive: &dyn Fn(i64) -> 
 /// health, then what it has besides, its closing, pull request and a workflow other than the default.
 pub fn run_outcome(record: &Object) -> String {
     let truthy = |key: &str| record.get(key).filter(|v| v.is_set());
-    let text = |value: Option<&Value>| value.map_or("None".to_string(), Value::text);
+    let text = |value: Option<&Value>| value.expect("run_record sets each key an outcome reads").text();
     let waiting = truthy("waiting");
     let reason = waiting.and_then(|w| w.get("reason")).and_then(Value::as_str);
     let mut outcome = if let Some(error) = truthy("error") {
@@ -243,7 +243,7 @@ fn outcome_verdict(record: &Object) -> String {
 
 /// A run record's round, and its quality round when it has one.
 pub fn run_round(record: &Object) -> String {
-    let mut round = format!("round {}", record.get("round").map_or("None".to_string(), Value::text));
+    let mut round = format!("round {}", record.get("round").expect("run_record sets a run's round").text());
     if let Some(q) = record.get("quality_round").filter(|q| q.is_set()) {
         round += &format!(" q{}", q.text());
     }

@@ -139,3 +139,18 @@ fn a_ctrl_c_that_fails_a_heartbeat_is_the_interrupt_not_a_missed_beat() {
     assert_eq!(f.workflow(RunSettings::default()).run(), Err(Stopped::Interrupted));
     assert!(!f.told.lines().iter().any(|line| line.starts_with("heartbeat failed")), "{:?}", f.told.lines());
 }
+
+#[test]
+fn a_publish_without_a_branch_fails_saying_so() {
+    // Only a hand-edited state.json lacks one: the branch is recorded before the first editing step.
+    let mut state = saved_run("publish", 1, &["build"]);
+    state.pull_request = true;
+    (state.base_branch, state.verdict) = (Some("main".into()), Some(crate::constants::FINISHED.into()));
+    state.workflow = "solo".into();
+    let f = Fixture::resume(Rc::new(FakeHost::new(Some("def456"), "main")), state, vec![], &[], &[]);
+    let settings = RunSettings { pipeline: Some(crate::test_support::solo()), ..f.as_saved() };
+    match f.workflow(settings).run() {
+        Err(Stopped::Failed(e)) => assert_eq!(e.0, "a publish before the run has a branch"),
+        other => panic!("not failed: {other:?}"),
+    }
+}

@@ -75,6 +75,18 @@ fn a_done_run_not_yet_released_is_judged_by_its_owner_as_ending() {
 }
 
 #[test]
+fn an_owner_missing_its_pid_or_host_reads_as_unknown() {
+    let mut no_host = owner("laptop");
+    no_host.remove("host");
+    let got = health(&run_record("build", Some(no_host), None, None), 40, true);
+    assert_eq!(got, Some((RUNNING, "pid 4242 on unknown, beat 40s ago".to_string())));
+    let mut no_pid = owner("laptop");
+    no_pid.remove("pid");
+    let got = health(&run_record("build", Some(no_pid), None, None), 40, true);
+    assert_eq!(got, Some((RUNNING, "pid unknown on laptop, beat 40s ago".to_string())));
+}
+
+#[test]
 fn a_failed_run_with_an_empty_error_is_judged_by_its_heartbeat() {
     assert_eq!(health(&run_record("build", None, Some(""), None), 40, true).unwrap().0, RUNNING);
 }

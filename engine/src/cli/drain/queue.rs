@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 
-use crate::error::{os_error, strerror, OrchestratorError};
+use crate::error::{os_error, path_text, strerror, OrchestratorError};
 use crate::paths::file_name;
 use crate::spec_file::{read_spec_file, SpecFile};
 use crate::workflow::Human;
@@ -129,9 +129,7 @@ pub fn replace_local_file(path: &str, text: &str) -> Result<(), OrchestratorErro
         if let Ok(meta) = std::fs::metadata(&real) {
             std::fs::set_permissions(&tmp, meta.permissions()).map_err(|e| os_error(&e, Some(&tmp)))?;
         }
-        std::fs::rename(&tmp, &real).map_err(|e| {
-            format!("{}: {tmp:?} -> {real:?}", os_error(&e, None))
-        })
+        std::fs::rename(&tmp, &real).map_err(|e| format!("{} -> {}: {}", path_text(&tmp), path_text(&real), strerror(&e)))
     })();
     written.map_err(|why| {
         let _ = std::fs::remove_file(&tmp);
@@ -233,9 +231,9 @@ impl QueuedSpec {
     }
 }
 
-/// value as a change line writes it: "None" for no status.
+/// A spec's status as a change line writes it: "no status" for a spec without a Status: line.
 fn status_text(value: Option<String>) -> String {
-    value.unwrap_or_else(|| "None".to_string())
+    value.unwrap_or_else(|| "no status".to_string())
 }
 
 /// Every spec_dir/<slug>/spec.md on this machine, ordered by slug. A name in spec_dir that is not UTF-8 is left out.

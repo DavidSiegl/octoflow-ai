@@ -195,9 +195,18 @@ fn a_merged_or_closed_pull_request_forgets_the_conflict_and_leaves_it_to_a_drain
 }
 
 #[test]
+fn a_run_recording_conflicts_without_a_base_branch_is_refused_untouched() {
+    let t = Refresh::new();
+    let saved = t.add(REFRESH_ID, REFRESH_URL, &["a.py"], APPROVE, Some("a body"), &[]);
+    t.resave(REFRESH_ID, &saved, &[("base_branch", Value::Null)]);
+    assert_eq!(t.error(&[REFRESH_ID]), format!("run {REFRESH_ID}: its state records conflicts but no base branch"));
+    assert_eq!(t.pr_edits(), []);
+}
+
+#[test]
 fn human_edits_to_the_body_are_kept() {
     let t = Refresh::new();
-    let warning = conflict_warning(Some("main"), &["a.py".to_string()]);
+    let warning = conflict_warning("main", &["a.py".to_string()]);
     let body = format!("{warning}\n\nA human's note.\n\nOpened by run x.\n");
     t.add(REFRESH_ID, REFRESH_URL, &["a.py"], APPROVE, Some(&body), &[]);
     t.refresh(&[REFRESH_ID]);

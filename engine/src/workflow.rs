@@ -415,9 +415,9 @@ impl<'a> Workflow<'a> {
         if let (Some(worktree), false) = (&s.worktree, s.pull_request) {
             self.human.log(&format!("the change is in worktree {worktree}"));
         }
-        let verdict = s.verdict.clone().unwrap_or_else(|| "None".to_string());
+        let title = s.verdict.as_ref().map_or("Run finished without a verdict".to_string(), |v| format!("Run finished: {v}"));
         let body = s.pr_url.as_deref().filter(|url| !url.is_empty()).unwrap_or(&s.task);
-        self.human.notify(&format!("Run finished: {verdict}"), body);
+        self.human.notify(&title, body);
         self.check_interrupt()?;
         if self.state.pull_request {
             self.close_workspace();
@@ -1020,6 +1020,8 @@ impl<'a> Workflow<'a> {
         self.save()?;
         if self.state.pr_url.as_deref().is_none_or(str::is_empty) {
             let wd = self.state.work_dir().to_string();
+            let branch = self.state.branch.clone();
+            let branch = branch.ok_or_else(|| OrchestratorError("a publish before the run has a branch".into()))?;
             // Again: the human may have switched branches during a turn.
             self.check_branch()?;
             // An earlier orchestrator stopped mid-merge: committing now would commit the conflict markers.
@@ -1043,7 +1045,6 @@ impl<'a> Workflow<'a> {
                 args.extend(trailers.iter().map(String::as_str));
                 self.host.git(&wd, &args)?;
             } else if self.host.git_head(&wd)? == s.base {
-                let branch = s.branch.as_deref().unwrap_or("None");
                 return Err(Stopped::Failed(OrchestratorError(format!(
                     "the Builder changed no files; there is nothing to commit on {branch}"
                 ))));
@@ -1061,8 +1062,7 @@ impl<'a> Workflow<'a> {
             let s = &self.state;
             if !s.conflicts.is_empty() {
                 self.human.log(&format!(
-                    "{} conflicts with {REMOTE}/{base_branch} in {}; the pull request will be a draft",
-                    s.branch.as_deref().unwrap_or("None"),
+                    "{branch} conflicts with {REMOTE}/{base_branch} in {}; the pull request will be a draft",
                     s.conflicts.join(", ")
                 ));
             }
@@ -1074,8 +1074,7 @@ impl<'a> Workflow<'a> {
             let s = &self.state;
             let body = pr_body(s, &spec, &report, &reviews, &quality);
             let draft = !SUCCEEDED.contains(&s.verdict.as_deref().unwrap_or_default()) || !s.conflicts.is_empty();
-            let head = s.branch.clone().unwrap_or_default();
-            let url = self.host.create_pr(&wd, &base_branch, &head, &title, &body, draft)?;
+            let url = self.host.create_pr(&wd, &base_branch, &branch, &title, &body, draft)?;
             self.state.pr_url = Some(url.clone());
             self.save()?;
             self.human.log(&format!("opened {url}"));
@@ -1202,16 +1201,14 @@ impl<'a> Workflow<'a> {
                 Ok(Value::Object(saved)) => saved.get("owner").cloned().unwrap_or(Value::Null),
                 Ok(other) => {
                     let kind = other.kind();
-                    return Err(Stopped::Failed(OrchestratorError(format!(
-                        "corrupt {path}: '{kind}' object has no attribute 'get'"
-                    ))));
+                    return Err(Stopped::Failed(OrchestratorError(format!("corrupt {path}: {kind} where an object belongs"))));
                 }
                 Err(e) => return Err(Stopped::Failed(OrchestratorError(format!("corrupt {path}: {e}")))),
             };
             if owner != Value::Object(self.me.clone()) {
                 let who = match &owner {
                     o if o.is_set() => {
-                        let field = |key: &str| o.get(key).map_or("None".to_string(), Value::text);
+                        let field = |key: &str| o.get(key).map_or("unknown".to_string(), Value::text);
                         format!("pid {} on {}", field("pid"), field("host"))
                     }
                     _ => "another orchestrator".to_string(),

@@ -590,36 +590,29 @@ impl ProcessHerdr {
     }
 
     /// The SSH target of the machine, for reaching its filesystem, from this machine's saved machines: machine
-    /// management is herdr's here, and is never forwarded. Errors: no saved machine is named so, or it is disabled.
+    /// management is herdr's here, and is never forwarded. Only a herdr with a machine has one to ask for. Errors: no
+    /// saved machine is named so, or it is disabled.
     pub fn ssh_target(&self) -> Result<String, HerdrError> {
+        let machine = self.machine.as_deref().expect("ssh_target is asked only of a herdr with a machine");
         let out = self.exec(&["machine", "list", "--json"], Some(Duration::from_secs(CALL_LIMIT_SECONDS)))?;
         let bad = |why: String| HerdrError::new("bad_response", format!("machine list: {why}"));
         let profiles = serde_json::from_str::<Value>(&out).map_err(|e| bad(e.to_string()))?;
         let profiles = profiles.as_array().ok_or_else(|| bad("not a list of machines".to_string()))?;
-        // A label or id that is missing or null is None, which a run without a machine matches.
-        let names = |p: &Value, key: &str| match p.get(key) {
-            None | Some(Value::Null) => Some(None),
-            Some(Value::String(s)) => Some(Some(s.clone())),
-            Some(_) => None,
-        };
-        let machine = self.machine.clone();
         for p in profiles {
             if p.as_object().is_none() {
                 return Err(bad(format!("a machine is not an object: {}", p)));
             }
-            if [names(p, "label"), names(p, "id")].contains(&Some(machine.clone())) {
-                let name = machine.as_deref().unwrap_or("None");
+            if ["label", "id"].iter().any(|key| p.get(key).and_then(Value::as_str) == Some(machine)) {
                 if !p.get("enabled").is_some_and(Value::is_set) {
-                    return Err(HerdrError::Failed(OrchestratorError(format!("herdr machine {name} is disabled"))));
+                    return Err(HerdrError::Failed(OrchestratorError(format!("herdr machine {machine} is disabled"))));
                 }
                 return match p.get("target") {
                     Some(Value::String(target)) => Ok(target.clone()),
-                    _ => Err(bad(format!("machine {name} has no target"))),
+                    _ => Err(bad(format!("machine {machine} has no target"))),
                 };
             }
         }
-        let name = machine.as_deref().unwrap_or("None");
-        Err(HerdrError::Failed(OrchestratorError(format!("no saved herdr machine named {name}"))))
+        Err(HerdrError::Failed(OrchestratorError(format!("no saved herdr machine named {machine}"))))
     }
 
     /// Show a desktop notification with title and body, and a sound, from herdr.

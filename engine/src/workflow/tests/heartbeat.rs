@@ -135,6 +135,41 @@ fn takeover_stops_without_saving() {
     assert_eq!(saved.get("error"), Some(&Value::Null));
 }
 
+/// Run a workflow that waits on an idle Builder, its state.json replaced by text once the run has saved it and 30
+/// seconds have passed, as another orchestrator or a human would replace it, to where the run stops: the fixture, and
+/// what the run returned.
+fn run_with_state_replaced(text: &str) -> (Fixture, Result<Option<String>, Stopped>) {
+    let f = Fixture::new(vec![("spec", vec![spec_turn()]), ("build", vec![idle()])]);
+    let path = format!("{}/state.json", f.state.dir());
+    let (host, text, mut replaced) = (Rc::clone(&f.host), text.to_string(), false);
+    f.clock.hook(move |now| {
+        if now > 30.0 && !replaced {
+            host.state().files.insert(path.as_str(), text.clone());
+            replaced = true;
+        }
+    });
+    let ran = f.workflow(RunSettings::default()).run();
+    (f, ran)
+}
+
+#[test]
+fn a_takeover_by_an_owner_missing_its_pid_or_host_says_which_is_unknown() {
+    for (owner, who) in [(r#"{"host": "laptop"}"#, "pid unknown on laptop"), (r#"{"pid": 4242}"#, "pid 4242 on unknown")] {
+        match run_with_state_replaced(&format!(r#"{{"owner": {owner}}}"#)).1 {
+            Err(Stopped::TakenOver(e)) => assert!(e.0.contains(&format!("taken over by {who};")), "{e}"),
+            other => panic!("not taken over: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_heartbeat_over_a_state_json_that_is_not_an_object_finds_it_corrupt() {
+    let (f, _) = run_with_state_replaced("[1, 2]");
+    let path = format!("{}/state.json", f.state.dir());
+    let said = format!("heartbeat failed: corrupt {path}: array where an object belongs");
+    assert!(f.told.lines().contains(&said), "{:?}", f.told.lines());
+}
+
 #[test]
 fn interrupt_is_recorded() {
     let f = Fixture::new(vec![("spec", vec![spec_turn()])]);
