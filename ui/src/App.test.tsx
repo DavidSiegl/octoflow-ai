@@ -30,6 +30,12 @@ function stages(container: HTMLElement): [string | null, string | null][] {
   return [...container.querySelectorAll("li.stage")].map((li) => [li.textContent, li.getAttribute("data-state")]);
 }
 
+/** The run map's stations in the run detail, each as [stage name, state]. */
+function stations(detail: HTMLElement): [string | null, string | null][] {
+  const map = within(detail).getByRole("list", { name: "stages" });
+  return within(map).getAllByRole("listitem").map((g) => [g.querySelector(".label")?.textContent ?? null, g.getAttribute("data-state")]);
+}
+
 describe("the runs overview", () => {
   it("opens the checkout's project on the server's stream, with the token", async () => {
     const { source } = await openApp();
@@ -47,17 +53,17 @@ describe("the runs overview", () => {
     const done = row(DONE);
     expect(within(done).getByText("APPROVE")).toBeInTheDocument();
     expect(within(done).getByRole("link", { name: "#1" })).toHaveAttribute("href", "https://github.com/parity/project/pull/1");
-    expect(stages(done)).toEqual([["spec", "done"], ["build", "done"], ["review", "done"]]);
+    expect(stages(done)).toEqual([["spec", "done"], ["build", "done"], ["review", "done"], ["publish", "done"]]);
 
     act(() => source.replayOne("a run started its interview"));
-    expect(stages(row(RUN))).toEqual([["spec", "current"], ["build", "todo"], ["review", "todo"]]);
+    expect(stages(row(RUN))).toEqual([["spec", "current"], ["build", "todo"], ["review", "todo"], ["publish", "todo"]]);
     expect(within(row(RUN)).getByText("round 0")).toBeInTheDocument();
     expect(within(row(RUN)).getByText(/^running, beat \d+s ago$/)).toBeInTheDocument();
     // Newest first.
     expect([...document.querySelectorAll("tbody tr")].map((tr) => tr.getAttribute("data-run"))).toEqual([RUN, DONE]);
 
     act(() => source.replayOne("the spec was written and the build started"));
-    expect(stages(row(RUN))).toEqual([["spec", "done"], ["build", "current"], ["review", "todo"]]);
+    expect(stages(row(RUN))).toEqual([["spec", "done"], ["build", "current"], ["review", "todo"], ["publish", "todo"]]);
     expect(within(row(RUN)).getByText("round 1")).toBeInTheDocument();
     expect(row(RUN).querySelector(".role")).toHaveTextContent(/^build$/);
 
@@ -65,7 +71,7 @@ describe("the runs overview", () => {
     expect(within(row(RUN)).getByText("blocked: should the limit be per client or global?")).toBeInTheDocument();
 
     act(() => source.replayOne("the build was reported and the review started"));
-    expect(stages(row(RUN))).toEqual([["spec", "done"], ["build", "done"], ["review", "current"]]);
+    expect(stages(row(RUN))).toEqual([["spec", "done"], ["build", "done"], ["review", "current"], ["publish", "todo"]]);
     expect(within(row(RUN)).queryByText(/blocked/)).not.toBeInTheDocument();
 
     act(() => source.replay("the finished run was deleted"));
@@ -138,7 +144,7 @@ describe("the run detail", () => {
     act(() => source.replay("the spec was written and the build started"));
     fireEvent.click(row(RUN));
     const detail = screen.getByRole("region", { name: "run c0ffee" });
-    expect(stages(detail)).toEqual([["spec", "done"], ["build", "current"], ["review", "todo"]]);
+    expect(stations(detail)).toEqual([["spec", "done"], ["build", "current"], ["review", "todo"], ["publish", "todo"]]);
     expect(await within(detail).findByRole("heading", { name: "Add a token-bucket rate limiter" })).toBeInTheDocument();
     expect(within(detail).getByText("10").tagName).toBe("STRONG");
     expect(within(detail).getByRole("cell", { name: "20" })).toBeInTheDocument();
@@ -164,7 +170,7 @@ describe("the run detail", () => {
 
     act(() => source.replay("the build was reported and the review started"));
     expect(names()).toEqual(["spec.md", "build-1.blocked-1.md", "build-1.md"]);
-    expect(stages(detail)).toEqual([["spec", "done"], ["build", "done"], ["review", "current"]]);
+    expect(stations(detail)).toEqual([["spec", "done"], ["build", "done"], ["review", "current"], ["publish", "todo"]]);
     // The chosen file stays, and is not fetched again while it is unchanged.
     expect(within(detail).getByRole("heading", { name: "Add a token-bucket rate limiter" })).toBeInTheDocument();
     const fetches = fetch.mock.calls.length;

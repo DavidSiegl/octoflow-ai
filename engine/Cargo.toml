@@ -1,6 +1,6 @@
 [package]
 name = "octoflow-engine"
-version = "0.72.1"
+version = "0.73.1"
 description = "The orchestrator's engine: its library and the orchestrator program"
 edition = "2021"
 license = "MIT OR Apache-2.0"
