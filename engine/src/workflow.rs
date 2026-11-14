@@ -1023,9 +1023,8 @@ impl<'a> Workflow<'a> {
             let branch = self.state.branch.clone();
             let branch = branch.ok_or_else(|| OrchestratorError("a publish before the run has a branch".into()))?;
             // commit_note and pr_body word the verdict; only a hand-edited state.json reaches here without one.
-            if self.state.verdict.is_none() {
-                return Err(Stopped::Failed(OrchestratorError("a publish before the run has a verdict".into())));
-            }
+            let verdict = self.state.verdict.clone();
+            let verdict = verdict.ok_or_else(|| OrchestratorError("a publish before the run has a verdict".into()))?;
             // Again: the human may have switched branches during a turn.
             self.check_branch()?;
             // An earlier orchestrator stopped mid-merge: committing now would commit the conflict markers.
@@ -1077,7 +1076,7 @@ impl<'a> Workflow<'a> {
                 self.round_reviews(n)?.into_iter().map(|(step, text)| (step.name(n, 0), text)).collect();
             let s = &self.state;
             let body = pr_body(s, &spec, &report, &reviews, &quality);
-            let draft = !SUCCEEDED.contains(&s.verdict.as_deref().unwrap_or_default()) || !s.conflicts.is_empty();
+            let draft = !SUCCEEDED.contains(&verdict.as_str()) || !s.conflicts.is_empty();
             let url = self.host.create_pr(&wd, &base_branch, &branch, &title, &body, draft)?;
             self.state.pr_url = Some(url.clone());
             self.save()?;
