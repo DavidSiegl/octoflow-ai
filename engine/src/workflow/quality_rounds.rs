@@ -13,7 +13,6 @@ use crate::constants::{CI_POLL_SECONDS, QUALITY_TIMEOUT};
 use crate::error::OrchestratorError;
 use crate::host::{LeaksFound, PushError, Scanned};
 use crate::local_gate::{self, LocalVerdict};
-use crate::patch::added_lines;
 use crate::paths::file_name;
 use crate::pipeline::{Step, QUALITY};
 use crate::prompts::Prompt;
@@ -209,8 +208,6 @@ impl<'a> Workflow<'a> {
         let spec = Some(self.last_text(pipeline.contract(), 0)?).filter(|s| !s.is_empty());
         let spec = spec.unwrap_or_else(|| self.state.task.clone());
         let (host, work_dir) = (self.host, self.state.work_dir().to_string());
-        let added = added_lines(&host.change_diff(&work_dir, &base, Some(sha))?)?;
-        let changed = added.iter().map(|(path, lines)| (path.to_string(), lines.keys().copied().collect())).collect();
         let files = host.changed_line_counts(&work_dir, &base, sha)?;
         let file_at = |commit: &str, path: &str| host.file_at(&work_dir, commit, path);
         let now = self.clocks.wall();
@@ -231,7 +228,7 @@ impl<'a> Workflow<'a> {
             }
         };
         let change =
-            RunChange { spec, base, commit: sha.to_string(), changed, files, file_at: &file_at, now, in_time: &in_time };
+            RunChange { spec, base, commit: sha.to_string(), files, file_at: &file_at, now, in_time: &in_time };
         let found = judge_run(&checks, &change);
         if let Some(stop) = stopped.take() {
             return Err(stop);
