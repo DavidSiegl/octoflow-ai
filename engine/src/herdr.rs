@@ -208,8 +208,9 @@ impl Direction {
 
 /// The commands a run gives herdr: workspaces and panes to show the agents in, and the agents themselves. Every
 /// error names herdr's code where herdr gave one (HerdrError::code); each method says which codes it answers instead
-/// of failing.
-pub trait Herdr {
+/// of failing. A run's own workspace is told and closed through Workspaces, with no server: the one these commands
+/// reach.
+pub trait Herdr: Workspaces {
     /// Create a workspace labelled label whose root pane starts in cwd, without focusing it; gives (workspace id,
     /// root pane id).
     fn create_workspace(&self, cwd: &str, label: &str) -> Result<(String, String), HerdrError>;
@@ -246,21 +247,28 @@ pub trait Herdr {
     /// herdr's record of the agent; None once it has exited (herdr's agent_not_found).
     fn agent(&self, name: &str) -> Result<Option<Agent>, HerdrError>;
 
-    /// Whether the workspace is still there (herdr's workspace_not_found is false).
-    fn workspace_exists(&self, workspace: &str) -> Result<bool, HerdrError>;
-
     /// Whether the pane is still there (herdr's pane_not_found is false).
     fn pane_exists(&self, pane: &str) -> Result<bool, HerdrError>;
 
     /// Bring the agent's pane to the front.
     fn focus(&self, name: &str) -> Result<(), HerdrError>;
 
-    /// Close the workspace with its panes.
-    fn close_workspace(&self, workspace: &str) -> Result<(), HerdrError>;
-
     /// Which of this machine's herdr servers the commands reach, without asking herdr; None when they are forwarded
     /// to a herdr machine, or when the server cannot be told (HerdrServer::of_environment).
     fn server(&self) -> Option<HerdrServer>;
+}
+
+/// A run's herdr workspace, by its id and the server of this machine it is in: what close tells and closes after the
+/// run, and the run itself while it runs. server is RunState::herdr_server, the one the run saved; None for the one the
+/// implementer's own environment reaches, which is also where a run that saved none is looked for. A herdr that
+/// forwards to a herdr machine ignores server, as that machine's herdr picks its own. Every error names herdr's code
+/// where herdr gave one (HerdrError::code).
+pub trait Workspaces {
+    /// Whether the workspace is still there in server (herdr's workspace_not_found is false).
+    fn workspace_exists(&self, workspace: &str, server: Option<&HerdrServer>) -> Result<bool, HerdrError>;
+
+    /// Close the workspace in server, with its panes.
+    fn close_workspace(&self, workspace: &str, server: Option<&HerdrServer>) -> Result<(), HerdrError>;
 }
 
 /// A run's agent, as a console reaches it: its herdr name, and the herdr server it runs in.
@@ -390,7 +398,7 @@ impl ProcessHerdr {
         // `pane run` prints nothing on success; its errors are JSON as every command's.
         if let Err(e) = self.exec_forwarded(&["pane", "run", &pane, &line], Some(Duration::from_secs(CALL_LIMIT_SECONDS))) {
             // An idle shell nobody asked for; when the close fails too, the error that matters is still the run's.
-            let _ = self.close_workspace(&workspace);
+            let _ = self.close_workspace(&workspace, None);
             return Err(e);
         }
         Ok(pane)
@@ -833,10 +841,6 @@ impl Herdr for ProcessHerdr {
         Ok(Some(Agent { status, session }))
     }
 
-    fn workspace_exists(&self, workspace: &str) -> Result<bool, HerdrError> {
-        Ok(unless_code("workspace_not_found", self.call(&["workspace", "get", workspace]))?.is_some())
-    }
-
     fn pane_exists(&self, pane: &str) -> Result<bool, HerdrError> {
         Ok(unless_code("pane_not_found", self.call(&["pane", "get", pane]))?.is_some())
     }
@@ -845,15 +849,22 @@ impl Herdr for ProcessHerdr {
         self.call(&["agent", "focus", name]).map(drop)
     }
 
-    fn close_workspace(&self, workspace: &str) -> Result<(), HerdrError> {
-        self.call(&["workspace", "close", workspace]).map(drop)
-    }
-
     fn server(&self) -> Option<HerdrServer> {
         match self.machine {
             Some(_) => None,
             None => HerdrServer::of_environment(&self.env),
         }
+    }
+}
+
+impl Workspaces for ProcessHerdr {
+    fn workspace_exists(&self, workspace: &str, server: Option<&HerdrServer>) -> Result<bool, HerdrError> {
+        let answer = self.reaching_server(server).call(&["workspace", "get", workspace]);
+        Ok(unless_code("workspace_not_found", answer)?.is_some())
+    }
+
+    fn close_workspace(&self, workspace: &str, server: Option<&HerdrServer>) -> Result<(), HerdrError> {
+        self.reaching_server(server).call(&["workspace", "close", workspace]).map(drop)
     }
 }
 

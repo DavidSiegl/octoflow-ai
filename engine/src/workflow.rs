@@ -814,7 +814,7 @@ impl<'a> Workflow<'a> {
     fn prepare(&mut self) -> Outcome<()> {
         let s = &mut self.state;
         if !s.workspace_id.is_empty() {
-            if self.herdr.workspace_exists(&s.workspace_id)? {
+            if self.herdr.workspace_exists(&s.workspace_id, None)? {
                 self.human.log(&format!("run {} resumes in herdr workspace {}", s.run_id, s.workspace_id));
                 return Ok(());
             }
@@ -1160,7 +1160,7 @@ impl<'a> Workflow<'a> {
     /// it is only logged.
     fn close_workspace(&self) {
         let workspace = &self.state.workspace_id;
-        if let Err(e) = self.herdr.close_workspace(workspace) {
+        if let Err(e) = self.herdr.close_workspace(workspace, None) {
             self.human.log(&format!("could not close herdr workspace {workspace}: {e}"));
         }
     }
