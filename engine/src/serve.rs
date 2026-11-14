@@ -31,6 +31,7 @@ pub mod runs;
 pub mod setup;
 pub mod start;
 pub mod url;
+mod workflows;
 
 /// How often an event stream reads its project's runs again. A read of a local project starts a few short processes;
 /// on a --machine, each of them is an SSH round trip, so a machine's project is read less often.
@@ -150,8 +151,8 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 }
 
 /// serve's HTTP server, on a free port of 127.0.0.1, with its token, answering until it is dropped. Its endpoints
-/// but /setup/checked and /workflows each name the project by ?cwd= and an optional ?machine=, and answer JSON; each
-/// is a GET but the four POSTs:
+/// but /setup/checked and the workflow ones each name the project by ?cwd= and an optional ?machine=, and answer JSON;
+/// each is a GET but the seven POSTs:
 ///
 /// - /runs: {"version", "runs"}, as `list --json` prints it.
 /// - /files?run=ID: {"run", "files"}, the run's files as ProjectRuns::files lists them.
@@ -176,6 +177,18 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 ///   that cannot be reached or a setup that fails, as for a cwd in no git checkout.
 /// - /workflows: what a run can be started with, as start::offered_workflows gives it from the configuration
 ///   directory; 500 when its workflows directory cannot be listed.
+/// - /workflow?name=NAME: one workflow, to edit (workflow_file::read_workflow): {"name", "built_in", "path", "text",
+///   "hand_written", "definition"}, path and text null for a built-in workflow; 400 for a name missing, 404 for no
+///   such workflow, 422 {"error", "path"} for a file that does not load, 500 when the directory cannot be listed.
+/// - POST /workflow/check: {"problem", "placeholders"} for the JSON body's {"name", "definition"}
+///   (workflow_file::check_workflow), problem null when there is none.
+/// - POST /workflow/save: saves the body's {"name", "definition", "base"} (workflow_file::save_workflow), base being
+///   the file's text the editor started from, null for a new workflow, and answers 201 {"path"}; 422 for a problem,
+///   409 when the file is not base, 500 for a write that failed.
+/// - POST /workflow/delete: deletes the file of the body's {"name", "base"} (workflow_file::delete_workflow) and
+///   answers {"path"}; 400 for a built-in workflow, 404 for no such file, 409 when the file is not base, 500 for a
+///   removal that failed. Each of the three workflow POSTs answers 400 for a body of another shape and 413 for one
+///   over MAX_BODY_BYTES.
 /// - POST /run?cwd=DIR: starts the run the JSON body asks for (start::RunRequest::parse), as a new run id, in a new
 ///   herdr workspace of this machine (Reached::launcher) where its `run` command can be watched and interrupted, and
 ///   waits for it (start::START_WAIT, ProjectRuns::start). 201 {"run"} once it has saved its state.json; 422 {"error",
@@ -426,10 +439,14 @@ const AGENT_INPUT: &str = "/agent/input";
 const SETUP_CHECKED: &str = "/setup/checked";
 const SETUP_GATE: &str = "/setup/gate";
 const RUN: &str = "/run";
-/// The GET endpoints outside Endpoint, which reach no project (unreached_answer): the setup dialog's checks, and the
-/// workflows a run can be started with.
+const WORKFLOW_CHECK: &str = "/workflow/check";
+const WORKFLOW_SAVE: &str = "/workflow/save";
+const WORKFLOW_DELETE: &str = "/workflow/delete";
+/// The GET endpoints outside Endpoint, which reach no project (unreached_answer): the setup dialog's checks, the
+/// workflows a run can be started with, and one workflow to edit.
 const SETUP: &str = "/setup";
 const WORKFLOWS: &str = "/workflows";
+const WORKFLOW: &str = "/workflow";
 
 /// What a request answered with JSON gets: its status and body.
 type Answer = (u16, Value);
@@ -443,6 +460,9 @@ fn answer(shared: &Shared, request: Request) {
         "POST" if path == SETUP_CHECKED => post_checked(shared, request, &query),
         "POST" if path == SETUP_GATE => post_setup_gate(shared, request, &query),
         "POST" if path == RUN => post_run(shared, request, &query),
+        "POST" if path == WORKFLOW_CHECK => post_workflow(shared, request, &query, workflows::check),
+        "POST" if path == WORKFLOW_SAVE => post_workflow(shared, request, &query, workflows::save),
+        "POST" if path == WORKFLOW_DELETE => post_workflow(shared, request, &query, workflows::delete),
         "OPTIONS" => preflight(shared, request),
         method => {
             // Made before send takes request, which method borrows.
@@ -534,9 +554,9 @@ fn get(shared: &Shared, request: Request, path: &str, query: &HashMap<String, St
     send_json(request, code, &body);
 }
 
-/// The answer to a GET of /setup, /setup/checked or /workflows at path with the query's parameters, as RunServer's
-/// doc comment gives them; None for any other path. Unlike Endpoint's they reach no project: the setup checks check
-/// what one needs, and the workflows are this machine's, where a run serve starts runs.
+/// The answer to a GET of /setup, /setup/checked, /workflows or /workflow at path with the query's parameters, as
+/// RunServer's doc comment gives them; None for any other path. Unlike Endpoint's they reach no project: the setup
+/// checks check what one needs, and the workflows are this machine's, where a run serve starts runs.
 fn unreached_answer(shared: &Shared, path: &str, query: &HashMap<String, String>) -> Option<Answer> {
     Some(match path {
         SETUP => match query.get("cwd").map(String::as_str) {
@@ -555,6 +575,7 @@ fn unreached_answer(shared: &Shared, path: &str, query: &HashMap<String, String>
             Ok(workflows) => (200, workflows),
             Err(e) => (500, error(&e.0)),
         },
+        WORKFLOW => workflows::read(&shared.config, query),
         _ => return None,
     })
 }
@@ -664,6 +685,24 @@ fn post_run(shared: &Shared, mut request: Request, query: &HashMap<String, Strin
     };
     let (code, body) = match project_of(shared, query, &["cwd"]) {
         Ok(project) => start_answer(shared, &project, &run),
+        Err(answer) => answer,
+    };
+    send_json(request, code, &body);
+}
+
+/// Answer a POST of /workflow/check, /workflow/save or /workflow/delete with the query's parameters, as target gives
+/// them, with what endpoint answers to its body. These reach no project.
+fn post_workflow(
+    shared: &Shared,
+    mut request: Request,
+    query: &HashMap<String, String>,
+    endpoint: fn(&ConfigDir, &[u8]) -> Answer,
+) {
+    if let Some((code, body)) = refusal(shared, &request, query) {
+        return send_json(request, code, &body);
+    }
+    let (code, body) = match read_body(&mut request) {
+        Ok(body) => endpoint(&shared.config, &body),
         Err(answer) => answer,
     };
     send_json(request, code, &body);

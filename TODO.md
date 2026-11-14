@@ -42,6 +42,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **Two saves of one workflow at once in one serve can interleave.** `save_workflow` and `delete_workflow`
+  (`engine/src/workflow_file.rs`) compare the file to the editor's `base`, then write or remove it, with no lock
+  between, and `replace_local_file` (`engine/src/paths.rs`) writes aside at `<file>.tmp.<pid>`, a name two of serve's
+  request threads share. Two app windows saving the same workflow in the same instant could both pass the check, or
+  one could rename the other's half-written temporary file. Accepted as unlikely for one person's editor
+  (app-workflow-editor/01). Closed by a temporary name unique per call and a per-file lock around check and write.
 - **`Host::change_diff` is called only by tests.** Its one engine caller filled `RunChange::changed` for
   new-dependencies' line naming; todo/58 took the lines from the manifests' spans and removed the field, so the
   quality round no longer runs the diff. `engine/src/host/tests.rs`'s snapshot tests still use it with
