@@ -92,13 +92,15 @@ pub fn close_run(world: &Connected, cwd: &str, run_ref: &str, dry_run: bool) -> 
 /// would do, then print a count of the runs closed (or to close), skipped and already closed, and failed if any. A
 /// Decision::Refused run is skipped with a line saying why; one already closed is only counted. Each run is read again
 /// just before it is closed, so one that started running since the sweep began is skipped. A run whose close fails
-/// gets a line with the error, and the rest are still closed. A raised Interrupt stops the sweep between runs.
+/// gets a line with the error, and the rest are still closed. A raised Interrupt starts no further run; the run being
+/// closed then finishes or fails as close_run would, and a second sweep finishes it.
 ///
 /// Returns the exit status: 0, or EXIT_ERROR when any run's close failed. Errors: the runs cannot be read at the start.
 pub fn close_all(world: &Connected, cwd: &str, dry_run: bool) -> Result<i32, OrchestratorError> {
     let host = world.with.host;
+    let closed_as_read = |run: &SavedRun| run.state().is_ok_and(is_closed);
     let mut runs: Vec<(String, bool)> =
-        host.run_states(cwd)?.iter().map(|run| (run.shown().run_id.clone(), is_closed(run.shown()))).collect();
+        host.run_states(cwd)?.iter().map(|run| (run.shown().run_id.clone(), closed_as_read(run))).collect();
     runs.sort();
     let (mut closed, mut skipped, mut already, mut failed) = (0, 0, 0, 0);
     for (id, was_closed) in runs {
@@ -110,12 +112,7 @@ pub fn close_all(world: &Connected, cwd: &str, dry_run: bool) -> Result<i32, Orc
             already += 1;
             continue;
         }
-        let swept = host.run_states(cwd).and_then(|runs| match decide(world, cwd, find_run(&runs, &id, cwd)?)? {
-            Decision::AlreadyClosed(_) => Ok(Swept::AlreadyClosed),
-            Decision::Refused(why) => Ok(Swept::Skipped(why)),
-            Decision::Close(plan) => plan.close(world, cwd, dry_run).map(|_| Swept::Closed),
-        });
-        match swept {
+        match sweep_run(world, cwd, &id, dry_run) {
             Ok(Swept::Closed) => closed += 1,
             Ok(Swept::AlreadyClosed) => already += 1,
             Ok(Swept::Skipped(why)) => {
@@ -134,10 +131,25 @@ pub fn close_all(world: &Connected, cwd: &str, dry_run: bool) -> Result<i32, Orc
     Ok(if failed > 0 { EXIT_ERROR } else { 0 })
 }
 
+/// Read the run of the project at cwd whose id is run_id again, and close it as close_all says, or with dry_run say
+/// what closing it would do. Errors: its state.json is gone, cannot be read, or its close fails.
+fn sweep_run(world: &Connected, cwd: &str, run_id: &str, dry_run: bool) -> Result<Swept, OrchestratorError> {
+    let gone = || OrchestratorError(format!("its state.json is gone from {cwd}/{RUNS_DIR}"));
+    let run = world.with.host.run_state(cwd, run_id)?.ok_or_else(gone)?;
+    Ok(match decide(world, cwd, &run)? {
+        Decision::AlreadyClosed(_) => Swept::AlreadyClosed,
+        Decision::Refused(why) => Swept::Skipped(why),
+        Decision::Close(plan) => plan.close(world, cwd, dry_run).map(|_| Swept::Closed)?,
+    })
+}
+
 /// What became of one run of close_all that did not fail.
 enum Swept {
+    /// Closed, or with a dry run said what closing would do.
     Closed,
+    /// Closed since the sweep read the runs.
     AlreadyClosed,
+    /// Not closed, and why (Decision::Refused).
     Skipped(OrchestratorError),
 }
 

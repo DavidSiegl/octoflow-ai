@@ -309,12 +309,12 @@ fn run_command(command: &Command, world: &Connected) -> Result<Ended, Stop> {
             return if interrupt.is_raised() { Err(Stop::Interrupted(None)) } else { Ok(Ended::Status(status)) };
         }
         Command::Close { run_ref, dry_run, .. } => {
-            let status = match run_ref {
+            let exit_status = match run_ref {
                 Some(run_ref) => close::close_run(world, &cwd, run_ref, *dry_run).map(|_| 0),
                 None => close::close_all(world, &cwd, *dry_run),
-            };
-            let status = status.map_err(stopped)?;
-            return if interrupt.is_raised() { Err(Stop::Interrupted(None)) } else { Ok(Ended::Status(status)) };
+            }
+            .map_err(stopped)?;
+            return if interrupt.is_raised() { Err(Stop::Interrupted(None)) } else { Ok(Ended::Status(exit_status)) };
         }
         Command::Workflows(_) | Command::Doctor { .. } | Command::Serve(_) => {
             unreachable!("main runs {command:?} without herdr (herdrless_command, serve_command)")

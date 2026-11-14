@@ -1006,6 +1006,10 @@ impl Host for FakeHost {
         Ok(states)
     }
 
+    fn run_state(&self, cwd: &str, run_id: &str) -> Result<Option<SavedRun>, OrchestratorError> {
+        Ok(self.run_states(cwd)?.into_iter().find(|run| run.shown().run_id == run_id))
+    }
+
     /// The real host's listing when FakeState::processes is set; else the files of run_dir in `files`, as the real
     /// one lists them (no state.json, no temporary file), by their mtimes, those of one time, and those put straight
     /// into files (time 0), in the order first written, as Python's ShowHost lists them.

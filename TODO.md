@@ -377,7 +377,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   taking only the paths `git status` reports changed.
 - **A run that is never closed keeps its local refs.** A locking step's commit stays under
   `refs/orchestrator/<key>/locked/` (`RunState::lock_ref`) until the run ends `done` (`Workflow::clean_up_locks`) or
-  is closed (`close_run`, `engine/src/cli/close.rs`). Left: the refs of a failed or stale run nobody closes, of one
+  is closed (`close_run`, `engine/src/cli/close.rs`). Left: the refs of a failed or stale run nobody closes (`close --all` closes them all in one command), of one
   closed by a release whose `close` left them, and of one whose run directory was deleted by hand, which `close`
   cannot find; their locked snapshots are never collected by `git gc`. `git for-each-ref refs/orchestrator/` lists
   them, and `git update-ref -d` deletes one. Decided against on 2026-10-25: `prune` deleting them, and a sweep of

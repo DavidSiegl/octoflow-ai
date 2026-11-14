@@ -12,7 +12,7 @@ use super::*;
 use crate::state::format_problem;
 use serde_json::Value;
 use crate::cli::fixture::Cli;
-use crate::cli::{Command, RunsCommand, Target};
+use crate::cli::{Command, Target};
 use crate::constants::{APPROVE, EXIT_ERROR, EXIT_INTERRUPTED, HEARTBEAT_SECONDS, STALE_SECONDS, WORKTREES_DIR};
 use crate::herdr::fake::Call;
 use crate::herdr::HerdrError;
@@ -802,6 +802,17 @@ fn an_unreadable_run_is_skipped_and_named_not_failed() {
     let problem = format_problem(&c.saved()).unwrap();
     assert_eq!(c.close(&["--all"]), (0, format!("skipped: {problem}\n0 closed, 1 skipped, 0 already closed\n")));
     assert!(c.calls().is_empty() && c.cli.f.host.state().writes.is_empty());
+}
+
+#[test]
+fn an_unreadable_run_that_says_closed_is_skipped_not_counted_as_closed() {
+    // As a release after this one could save it: closed is only acted on in a state this engine reads.
+    let c = Close::new();
+    let mut saved = c.add(0, true, &[("closed", Value::from("workspace closed"))]);
+    saved.shift_remove("format");
+    c.cli.f.host.state().files.insert(close_state(), format!("{}\n", Value::Object(saved)));
+    let problem = format_problem(&c.saved()).unwrap();
+    assert_eq!(c.close(&["--all"]), (0, format!("skipped: {problem}\n0 closed, 1 skipped, 0 already closed\n")));
 }
 
 #[test]

@@ -325,7 +325,8 @@ order, deciding each just before closing it, so a run resumed since the sweep be
 A run that is running, or whose `state.json` this engine does not read, is skipped with a line saying why; one
 already closed is only counted. A run whose close fails gets a line with the error and the sweep goes on, ending
 with exit status 1; as each step passes over what is already gone, running `close --all` again finishes it. A
-Ctrl-C stops the sweep between runs, never inside one. Run directories stay, so `list` and `show` still show closed
+Ctrl-C starts no further run; the run being closed finishes, or fails as `close` would and is finished by the next
+sweep. Run directories stay, so `list` and `show` still show closed
 runs; `prune` is not part of it.
 
 ## Refreshing a conflicted pull request

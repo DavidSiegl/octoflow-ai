@@ -402,6 +402,12 @@ fn run_states() {
     assert_eq!((states[1].age(), states[1].shown().run_id.as_str()), (0, "b"));
     assert_eq!(states.len(), 2);
     assert_eq!(host.run_states(&d.join("nosuch")).unwrap(), vec![]);
+    // One run, alone: a, as run_states reads it; none for a run without a state.json, or a name that globs.
+    let a = host.run_state(&cwd, "a").unwrap().unwrap();
+    assert_eq!((a.shown().run_id.as_str(), (12..15).contains(&a.age())), ("a", true));
+    for run_id in ["c", "d", "nosuch", "*"] {
+        assert_eq!(host.run_state(&cwd, run_id).unwrap(), None, "{run_id}");
+    }
 }
 
 #[test]
