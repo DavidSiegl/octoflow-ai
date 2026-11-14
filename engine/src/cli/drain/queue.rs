@@ -231,9 +231,9 @@ impl QueuedSpec {
     }
 }
 
-/// A spec's status as a change line writes it: "no status" for a spec without a Status: line.
-fn status_text(value: Option<String>) -> String {
-    value.unwrap_or_else(|| "no status".to_string())
+/// A spec's status as drain writes it: "no status" for a spec without a Status: line, or with an empty one.
+pub(super) fn status_text(value: Option<String>) -> String {
+    value.filter(|s| !s.is_empty()).unwrap_or_else(|| "no status".to_string())
 }
 
 /// Every spec_dir/<slug>/spec.md on this machine, ordered by slug. A name in spec_dir that is not UTF-8 is left out.

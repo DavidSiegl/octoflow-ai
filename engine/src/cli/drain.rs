@@ -202,8 +202,7 @@ fn drain_end(specs: &[QueuedSpec], by_slug: &HashMap<String, usize>, world: &Con
             if let Some(gone) = &blocker.gone {
                 world.say(&format!("    {b}: gone ({gone})"));
             } else {
-                // An empty Status: is none.
-                let status = blocker.status().filter(|s| !s.is_empty()).unwrap_or_else(|| "no status".to_string());
+                let status = queue::status_text(blocker.status());
                 let pr = blocker.pr().filter(|p| !p.is_empty()).map(|p| format!("  {p}")).unwrap_or_default();
                 world.say(&format!("    {b}: {status}{pr}"));
             }
