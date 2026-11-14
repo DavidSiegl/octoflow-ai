@@ -15,6 +15,7 @@
 //! agents (FakeHerdr), the local quality gate (FakeGate) and time (FakeClock). Each agent works on its prompt for
 //! TURN_SECONDS of that time before its handoff file appears, so that a crash can land while it works and it
 //! finishes for the next orchestrator.
+//! A gate job ends before a heartbeat save, so no crash lands while it judges (TODO.md).
 //!
 //! What the e2e scenarios cover instead: they kill the engine as a program, with SIGKILL at any moment, so also
 //! between two writes, on real git; but only once per phase. This harness crashes after every write of state.json
@@ -41,6 +42,9 @@ const STATE_PATH: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3/state.
 /// a heartbeat save to crash after while the agent works.
 const TURN_SECONDS: f64 = 90.0;
 
+// A heartbeat save during each agent's turn is what lets a crash land while an agent works.
+const _: () = assert!(TURN_SECONDS > HEARTBEAT_SECONDS as f64);
+
 /// How many prompts each role's agent answers: more than any scenario sends it, so that an agent prompted again after
 /// a crash works again, as a real one would.
 const TURNS_PER_ROLE: usize = 16;
@@ -63,8 +67,8 @@ const APPROVED: Scenario = Scenario { verdicts: &[APPROVE], pull_request: true, 
 /// The orchestrator's death right after a write of state.json: the payload of the unwind that stops it.
 struct Crashed;
 
-/// One effect on the world, by kind: "prompt", "herdr", "git", "snapshot", "restore", "pull request", "gate" or
-/// "notification", and the effect as text.
+/// One effect on the world, by kind: "prompt", "herdr", "git", "snapshot", "restore", "pull request", "gate" (a job
+/// started), "gate stop" or "notification", and the effect as text.
 type Effects = BTreeMap<&'static str, Vec<String>>;
 
 /// What a run leaves behind.
@@ -118,8 +122,10 @@ impl World {
             let turns = (0..TURNS_PER_ROLE).map(|_| agent_turn(scenario, &pipeline, role, &f.clock, &work)).collect();
             f.play(role, turns);
         }
-        let (host, herdr) = (Rc::clone(&f.host), Rc::clone(&f.herdr));
+        // Weak: herdr's turns hold the clock, which holds this hook, and a strong reference would keep every World.
+        let (host, herdr) = (Rc::downgrade(&f.host), Rc::downgrade(&f.herdr));
         f.clock.hook(move |now| {
+            let (Some(host), Some(herdr)) = (host.upgrade(), herdr.upgrade()) else { return };
             let due: Vec<Work> = work.borrow_mut().extract_if(.., |(at, _, _)| *at <= now).collect();
             for (_, agent, files) in due {
                 for (path, text) in files {
@@ -211,7 +217,9 @@ impl World {
         effects.insert("restore", h.restores.iter().map(|r| format!("{r:?}")).collect());
         let opened = h.prs.iter().map(|pr| format!("{pr:?}"));
         effects.insert("pull request", opened.chain(h.pr_edits.iter().map(|e| format!("{e:?}"))).collect());
-        effects.insert("gate", self.f.gate.borrow().jobs.iter().map(|job| job.join(" ")).collect());
+        let gate = self.f.gate.borrow();
+        effects.insert("gate", gate.jobs.iter().map(|job| job.join(" ")).collect());
+        effects.insert("gate stop", vec!["stop".to_string(); gate.stops]);
         let notes = self.f.told.notes.borrow();
         effects.insert("notification", notes.iter().map(|(title, body)| format!("{title}: {body}")).collect());
         effects
@@ -273,7 +281,7 @@ fn without_repeats(effects: &Effects, may_repeat: fn(&str, &str) -> bool) -> Eff
 }
 
 /// What a run that crashed where each of crashes, the state.json each left, says leaves behind: uninterrupted's,
-/// but for the one gap the engine accepts, pinned here.
+/// but for the one gap pinned here, which TODO.md records.
 ///
 /// A crash after the save that released the finished run (phase done, no owner) costs the human the notice that it
 /// finished, and the closing of its workspace: both come once, after that save, and a resume of a released run whose
@@ -327,8 +335,8 @@ fn uninterrupted(scenario: &'static Scenario) -> (Aftermath, usize) {
 }
 
 /// For each k: crash scenario's run after write k of state.json, resume it once, and check it ends as `expected`
-/// says; every crash point's problems are reported together.
-fn crash_after_every_write(scenario: &'static Scenario) {
+/// says; every crash point's problems are reported together. Returns the uninterrupted run's aftermath.
+fn crash_after_every_write(scenario: &'static Scenario) -> Aftermath {
     let (reference, writes) = uninterrupted(scenario);
     let mut problems = vec![];
     for k in 1..=writes {
@@ -340,6 +348,7 @@ fn crash_after_every_write(scenario: &'static Scenario) {
         problems.extend(found.into_iter().map(|p| format!("crash after write {k}: {p}")));
     }
     assert!(problems.is_empty(), "over {writes} crash points:\n{}", problems.join("\n"));
+    reference
 }
 
 #[test]
@@ -356,9 +365,9 @@ fn changes_requested_then_approved() {
 #[test]
 fn quality_gate_fails_then_passes() {
     static SCENARIO: Scenario = Scenario { gate: Some(&[red, green]), ..APPROVED };
+    let reference = crash_after_every_write(&SCENARIO);
     // Run uninterrupted, the gate judges twice: red, then green after the Builder's fix.
-    assert_eq!(uninterrupted(&SCENARIO).0.effects["gate"].len(), 2);
-    crash_after_every_write(&SCENARIO);
+    assert_eq!(reference.effects["gate"].len(), 2);
 }
 
 #[test]
@@ -371,12 +380,6 @@ fn product_team_with_locked_tests() {
 fn no_pull_request() {
     static SCENARIO: Scenario = Scenario { pull_request: false, ..APPROVED };
     crash_after_every_write(&SCENARIO);
-}
-
-#[test]
-fn agents_work_past_a_heartbeat() {
-    // A heartbeat save during each agent's turn is what lets a crash land while an agent works.
-    assert!(TURN_SECONDS > HEARTBEAT_SECONDS as f64);
 }
 
 #[test]
