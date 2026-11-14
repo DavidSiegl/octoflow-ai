@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Api, type Connection, type Project, type StartedRun } from "./api";
+import { CleanUpDialog } from "./components/CleanUpDialog";
 import { ProjectBar } from "./components/ProjectBar";
 import { RunDetail } from "./components/RunDetail";
 import { RunForm } from "./components/RunForm";
@@ -93,12 +94,13 @@ function Connected({ connection }: { connection: Connection }) {
   );
 }
 
-/** One project's runs, live: the overview, with the form for a new run, or the run picked from it, or started, in
- * detail. A selected run the stream has not listed shows as the overview until it does, with a word on it when it
+/** One project's runs, live: the overview, with the form for a new run and the dialog that cleans up runs, or the run
+ * picked from it, or started, in detail. A selected run the stream has not listed shows as the overview until it does, with a word on it when it
  * is the run just started. */
 function ProjectRuns({ api, project }: { api: Api; project: Project }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [cleaningUp, setCleaningUp] = useState(false);
   // The run last started from the form; null before one is.
   const [started, setStarted] = useState<StartedRun | null>(null);
   const state = useRunStream(api, project);
@@ -113,6 +115,7 @@ function ProjectRuns({ api, project }: { api: Api; project: Project }) {
     <>
       {state.problem && <p className="problem">{state.problem}</p>}
       {formOpen && <RunForm api={api} project={project} onStarted={openStarted} onClose={() => setFormOpen(false)} />}
+      {cleaningUp && <CleanUpDialog api={api} project={project} runs={state.runs} onClose={() => setCleaningUp(false)} />}
       {entry ? (
         <RunDetail key={entry.record.id} api={api} project={project} entry={entry} now={now} onClose={() => setSelected(null)} />
       ) : (
@@ -120,6 +123,9 @@ function ProjectRuns({ api, project }: { api: Api; project: Project }) {
           <div className="runs-actions">
             <button type="button" onClick={() => setFormOpen(true)}>
               New run…
+            </button>
+            <button type="button" onClick={() => setCleaningUp(true)}>
+              Clean up runs…
             </button>
             {selected !== null && selected === started?.run && (
               <>

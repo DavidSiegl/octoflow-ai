@@ -663,7 +663,7 @@ ul.files time {
   flex: 1;
 }
 
-/* The setup dialog and the run form, over the rest of the window. */
+/* The dialogs (setup, the run form, cleaning up runs), over the rest of the window. */
 .dialog-backdrop {
   position: fixed;
   inset: 0;
@@ -723,6 +723,17 @@ ul.checks {
   margin: 2px 0 0 5em;
   font-family: ui-monospace, monospace;
   color: var(--muted-mint);
+}
+
+/* The uncommitted changes that go with a run's worktree, in the dialog that cleans up runs. */
+.checks pre.discarded {
+  margin: 2px 0 0 5em;
+  padding: 4px 8px;
+  white-space: pre-wrap;
+  font-family: ui-monospace, monospace;
+  color: var(--coral);
+  background: var(--navy-dark);
+  border-radius: 4px;
 }
 
 .dialog footer {

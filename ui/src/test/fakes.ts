@@ -1,5 +1,5 @@
 import { vi } from "vitest";
-import type { GateFile, RunOptions, RunRequest, SetupReport } from "../api";
+import type { ClosedRun, GateFile, RunOptions, RunRequest, SetupReport } from "../api";
 import recorded from "./recorded-stream.json";
 
 /** The events the engine's `serve` sent over a scripted run, recorded off the real server: each batch is what it
@@ -127,16 +127,28 @@ export interface FakeStart {
   requests?: { cwd: string | null; body: RunRequest }[];
 }
 
+/** What a stubbed server's POST /close answers: 200 with `preview`'s runs to a dry run and `closed`'s to a close (none
+ * unless given), or a 502 with `error`; a close is answered once `held`, if given, resolves. `requests` gets the
+ * query's cwd and the body of each POST /close, in order. */
+export interface FakeClose {
+  preview?: ClosedRun[];
+  closed?: ClosedRun[];
+  error?: string;
+  held?: Promise<void>;
+  requests?: { cwd: string | null; body: { dry_run: boolean } }[];
+}
+
 /** Stub EventSource, and fetch with a server whose /file answers the text of `files` by name, else 404; whose /agent
  * answers the screen of `agents` by role, else 404 as for an agent that has exited; whose POST /agent/input takes
  * any input; whose /setup endpoints answer as `setup` says, a POST of /setup/checked setting its `checked`, and a
  * POST of /setup/gate recording its cwd; and
- * whose /workflows and POST /run answer as `start` says. */
+ * whose /workflows and POST /run answer as `start` says, and POST /close as `close` says. */
 export function stubServer(
   files: Record<string, string>,
   agents: Record<string, string> = {},
   setup: FakeSetup = {},
   start: FakeStart = {},
+  close: FakeClose = {},
 ) {
   FakeEventSource.opened = [];
   vi.stubGlobal("EventSource", FakeEventSource);
@@ -172,6 +184,17 @@ export function stubServer(
       start.requests = [...(start.requests ?? []), { cwd: searchParams.get("cwd"), body: JSON.parse(String(init.body)) as RunRequest }];
       await start.held;
       return answer(start.runStatus ?? 201, start.runBody ?? { run: "20261024-140000-c0ffee" });
+    }
+    if (pathname === "/close" && init?.method === "POST") {
+      const body = JSON.parse(String(init.body)) as { dry_run: boolean };
+      close.requests = [...(close.requests ?? []), { cwd: searchParams.get("cwd"), body }];
+      if (!body.dry_run) {
+        await close.held;
+      }
+      if (close.error !== undefined) {
+        return answer(502, { error: close.error });
+      }
+      return answer(200, { runs: (body.dry_run ? close.preview : close.closed) ?? [] });
     }
     if (pathname === "/agent/input") {
       return init?.method === "POST" ? answer(200, { run: "r", role }) : answer(501, {});
