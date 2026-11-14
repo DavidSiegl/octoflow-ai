@@ -1,7 +1,7 @@
-//! serve: the runs of any project, and their agents, over HTTP on 127.0.0.1 for the desktop app, as orchestrator.py's
-//! RunServer, RunRequestHandler and serve_command. [`serve_command`] is the program's `serve`; [`RunServer`] is the
-//! server, on tiny_http, each request answered on a thread of its own; crate::serve::runs is what it serves of a
-//! project. docs/architecture.md's "serve" describes the protocol and its security checks.
+//! serve: the runs of any project, and their agents, over HTTP on 127.0.0.1 for the desktop app. [`serve_command`] is
+//! the program's `serve`; [`RunServer`] is the server, on tiny_http, each request answered on a thread of its own;
+//! crate::serve::runs is what it serves of a project. docs/architecture.md's "serve" describes the protocol and its
+//! security checks.
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
@@ -76,11 +76,11 @@ pub type Connect = dyn Fn(&str, &str, &Interrupt) -> Result<Reached, Orchestrato
 /// standard output, and serve until SIGINT or SIGTERM; returns 0 then, the server stopped. Returns EXIT_ERROR, with
 /// one line on standard error, when no port can be bound, or when the line cannot be printed, as when whoever
 /// started serve has stopped reading its standard output: nobody could reach the server then. SIGHUP keeps its
-/// default, ending the process, as it ends Python's serve.
+/// default, ending the process.
 ///
 /// Must be called on the main thread before any other thread starts, as crate::interrupt::by_signals must, and
 /// instead of it: SIGINT and SIGTERM are blocked in every thread and waited for here, also when the process started
-/// with one ignored, as Python's signal.signal replaces an ignored disposition (Linux delivers a blocked signal that
+/// with one ignored, which then stops serve too (Linux delivers a blocked signal that
 /// is ignored to sigwait; a BSD kernel, macOS's, discards it, so there serve does not stop at an ignored one).
 pub fn serve_command(origins: &[String], config: &ConfigDir) -> i32 {
     let signals: SigSet = [Signal::SIGINT, Signal::SIGTERM].into_iter().collect();
@@ -125,7 +125,7 @@ fn serve(
 
 /// The project on the saved herdr machine or, with machine empty, here: the Host that reaches it, its absolute
 /// directory, cwd's, which may start with ~, and the console that reaches its agents, this machine's herdr
-/// forwarding to machine. Each command is stopped by stopping. Python's project_host: without connect's check for a
+/// forwarding to machine. Each command is stopped by stopping. Unlike connect, it does not check for a
 /// herdr pane, since reading a project sends herdr no command, so a window started from a file manager reads it too.
 /// A run it starts is launched in this machine's herdr (Reached::launcher).
 /// On this machine, an agent's commands go to the herdr server its run saved (RunState::herdr_server), whatever
@@ -194,8 +194,8 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 /// GET and POST with an Authorization and a Content-Type header; a GET or POST then needs the server's token as an
 /// `Authorization: Bearer` header or, for an EventSource, which cannot set one, as ?token=, compared in constant time;
 /// else 401. 404 is an unknown endpoint, 400 a missing or malformed parameter, 502 a project that could not be read
-/// or herdr failing, each with {"error"}; a POST of any other endpoint, and any other method, gets 501, as
-/// http.server answers it. A request with a byte beyond ASCII in its request line or a header is not
+/// or herdr failing, each with {"error"}; a POST of any other endpoint, and any other method, gets 501 with an HTML
+/// error page. A request with a byte beyond ASCII in its request line or a header is not
 /// answered: tiny_http closes its connection. Nothing is logged.
 pub struct RunServer {
     /// What its request threads share.
@@ -204,7 +204,7 @@ pub struct RunServer {
     /// while the dispatcher waits to start another.
     /// The dispatcher starts another on the same port when tiny_http's stops accepting connections, which it does
     /// at the first error accept gives (tiny_http 0.12's lib.rs, `Err(e) => ... break`), so that a passing EMFILE does
-    /// not leave a server that answers nothing, as Python's socketserver goes on after it.
+    /// not leave a server that answers nothing.
     listening: Arc<Mutex<Option<Arc<tiny_http::Server>>>>,
     /// The thread that hands each request a thread of its own; None once it has been joined.
     dispatcher: Option<JoinHandle<()>>,
@@ -451,10 +451,10 @@ fn answer(shared: &Shared, request: Request) {
     }
 }
 
-/// The path of request's target and its query's parameters, a parameter given twice being the last one, as Python's
-/// dict of the pairs keeps it.
+/// The path of request's target and its query's parameters, a parameter given twice taking its last value.
 fn target(request: &Request) -> (String, HashMap<String, String>) {
-    // As http.server takes a path that starts with //, against open redirects (https://github.com/python/cpython/issues/87389).
+    // A target that starts with // is read with its leading slashes as one, never as a //host authority, so that
+    // no answer can redirect a client to another host.
     let target = request.url();
     let target = if target.starts_with("//") { format!("/{}", target.trim_start_matches('/')) } else { target.to_string() };
     let url = urlsplit(&target);
@@ -820,7 +820,7 @@ fn send_json(request: Request, code: u16, body: &Value) {
     send(request, response);
 }
 
-/// The 501 http.server's send_error gives a request of method, which the caller passes already quoted.
+/// The 501 a request of method gets, an HTML error page naming it; the caller passes method already quoted.
 fn unsupported(method: &str) -> Response<io::Cursor<Vec<u8>>> {
     let escaped = method.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
     let page = format!(
@@ -848,7 +848,7 @@ fn with_header<R: Read>(response: Response<R>, name: &str, value: &str) -> Respo
     }
 }
 
-/// The value of request's first header of that name, in any case, as Python's headers.get gives it; None without one.
+/// The value of request's first header of that name, in any case; None without one.
 fn header<'r>(request: &'r Request, name: &'static str) -> Option<&'r str> {
     request.headers().iter().find(|h| h.field.equiv(name)).map(|h| h.value.as_str())
 }
@@ -861,8 +861,7 @@ fn error(message: &str) -> Value {
     object([("error", Value::from(message))])
 }
 
-/// The --machine and --cwd flags a request's machine and cwd stand for, each left out when empty, as Python's
-/// target_args leaves them.
+/// The --machine and --cwd flags a request's machine and cwd stand for, each left out when empty.
 fn target_args(machine: &str, cwd: &str) -> Vec<String> {
     let given = |flag: &str| (!flag.is_empty()).then(|| flag.to_string());
     crate::cli::Target { machine: given(machine), cwd: given(cwd) }.flags()

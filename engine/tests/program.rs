@@ -95,7 +95,7 @@ fn a_run_outside_a_herdr_pane_without_a_machine_is_refused() {
 
 #[test]
 fn a_command_about_runs_outside_a_herdr_pane_is_refused_but_workflows_is_not() {
-    // TestCLI.test_refuses_outside_herdr, and the workflows command, which needs no herdr.
+    // The workflows command needs no herdr.
     let dir = Dir::new("herdrless");
     let out = program(&dir, &["list"], Some("")).output().expect("the program runs");
     assert_eq!(out.status.code(), Some(1));
@@ -137,7 +137,7 @@ fn the_hints_and_the_usage_name_the_program_by_the_file_name_it_was_invoked_by()
 
 #[test]
 fn standard_output_that_takes_no_write_is_an_error() {
-    // As Python's print raising OSError ends orchestrator.py with status 1: what the command prints is its product.
+    // What the command prints is its product, so not printing it is an error.
     let dir = Dir::new("full");
     let full = std::fs::OpenOptions::new().write(true).open("/dev/full").expect("/dev/full opens");
     let out = program(&dir, &["workflows"], None).stdout(full).output().expect("the program runs");
@@ -147,8 +147,6 @@ fn standard_output_that_takes_no_write_is_an_error() {
 
 #[test]
 fn no_arguments_print_the_help_as_a_usage_error() {
-    // The tk GUI is not ported (the rust-engine spec's Decisions): the help, where Python without a display says the
-    // command is missing, both with exit status 2.
     let dir = Dir::new("no-args");
     let out = program(&dir, &[], None).output().expect("the program runs");
     assert_eq!(out.status.code(), Some(2));
@@ -241,7 +239,7 @@ fn a_run_is_named_by_the_time_in_the_machine_s_zone() {
     assert!(before.as_str() <= time && time <= after.as_str(), "{id} is not between {before} and {after}");
 }
 
-// -- serve: TestServeCommand's process cases, and project_host's (TestProjectHost) through it ---------------------
+// -- serve as a process, and project_host through it --------------------------------------------------------------
 
 /// A started serve, its first line read: the process, its url and token, and the rest of its standard output.
 struct Serving {
@@ -333,7 +331,7 @@ fn serve_prints_one_json_line_then_serves_until_a_sigint_or_sigterm() {
 
 #[test]
 fn serve_ends_at_a_sighup_by_it() {
-    // As SIGHUP's default action ends Python's serve, which handles only SIGINT and SIGTERM.
+    // serve handles only SIGINT and SIGTERM; SIGHUP's default action ends it.
     let dir = Dir::new("serve-hup");
     let (ended, _, err) = Serving::start(&dir, &[]).stop(Signal::SIGHUP);
     assert_eq!(ended.signal(), Some(Signal::SIGHUP as i32), "{ended:?}: {err}");
@@ -341,7 +339,7 @@ fn serve_ends_at_a_sighup_by_it() {
 
 #[test]
 fn serve_stops_at_a_sigint_it_started_with_ignored() {
-    // As Python's signal.signal replaces the disposition a Jenkins sh step's SIGINT has: ignored.
+    // serve installs its own SIGINT handling over the ignored disposition a Jenkins sh step starts it with.
     let dir = Dir::new("serve-ignored");
     let command = program(&dir, &["serve"], None);
     let args: Vec<_> = command.get_args().map(|a| a.to_os_string()).collect();
@@ -372,7 +370,7 @@ fn serve_with_a_closed_stdout_ends_naming_why() {
 
 #[test]
 fn serve_reaches_a_machine_by_its_saved_target() {
-    // TestProjectHost: herdr names the machine's SSH target, and ssh, played by a script here, runs each command
+    // herdr names the machine's SSH target, and ssh, played by a script here, runs each command
     // where the project is; with no machine, herdr is not asked.
     let dir = Dir::new("serve-machine");
     let asked = dir.0.join("asked");

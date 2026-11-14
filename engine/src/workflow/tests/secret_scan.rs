@@ -1,4 +1,4 @@
-//! TestSecretScanWorkflow: the scan before each of a run's pushes, on FakeHost's scripted findings: a quality
+//! The secret scan before each of a run's pushes, on FakeHost's scripted findings: a quality
 //! snapshot holding a secret goes back to the Builder unjudged, and one on the run's branch (a secret in the run's
 //! base among them) stops publish until it is rewritten; and gitleaks needed only by a run that pushes.
 
@@ -12,7 +12,7 @@ use crate::quality::{finding_fingerprint, Leak, QUALITY_LEAK, QUALITY_OK};
 use crate::quality::parse_gate;
 use super::pull_request::MERGE;
 
-/// A secret in a commit of the human's: Python's LEAK.
+/// A secret in a commit of the human's.
 fn leak() -> Leak {
     Leak {
         rule: "github-pat".into(),
@@ -23,7 +23,7 @@ fn leak() -> Leak {
     }
 }
 
-/// leak() in the commit scanned: Python's SNAPSHOT_LEAK.
+/// leak() in the commit scanned.
 fn snapshot_leak() -> Leak {
     Leak { commit: SCANNED.into(), ..leak() }
 }

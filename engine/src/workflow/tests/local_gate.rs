@@ -9,7 +9,7 @@ use crate::local_gate;
 use crate::prompts::QUALITY_PASSED_NOTE;
 use crate::quality::{parse_gate, Leak, QUALITY_LEAK};
 
-/// make_workflow with the local gate, playing runs.
+/// Fixture::new with the local gate, playing runs.
 fn gated_locally(script: Script, runs: Vec<GateRun>) -> Fixture {
     let f = Fixture::new(script).gated();
     f.gate.borrow_mut().runs = runs.into();

@@ -1,5 +1,5 @@
-//! What the CLI's tests run a command on, as tests/test_orchestrator.py runs main with Host and Herdr patched: a
-//! workflow Fixture's fakes and the program's standard output as text.
+//! What the CLI's tests run a command on, in place of a real host and herdr: a workflow Fixture's fakes and the
+//! program's standard output as text.
 
 use std::cell::RefCell;
 use std::ffi::OsString;
@@ -63,7 +63,7 @@ impl Cli {
         self.with_workflow(&run_workflow, f)
     }
 
-    /// with, its runs driven by workflow, as a Python test patches Workflow.run.
+    /// with, its runs driven by workflow, a script in place of Workflow::run.
     pub fn with_workflow<T>(&self, workflow: &RunWorkflow<'_>, f: impl FnOnce(&Connected) -> T) -> T {
         let print = |text: &str| self.out.borrow_mut().push_str(text);
         let stderr = |text: &str| self.err.borrow_mut().push_str(text);
@@ -151,9 +151,8 @@ impl Cli {
         host.ages.insert(run_id, age);
     }
 
-    /// A new run of argv (after `run`) in /proj, stopped at its first prompt as Python's tests stop one at
-    /// Workflow.__init__ or run: how main's command ended, and the state.json of the run it started, None when it
-    /// saved none.
+    /// A new run of argv (after `run`) in /proj, stopped at its first prompt: how main's command ended, and the
+    /// state.json of the run it started, None when it saved none.
     pub fn started(&self, argv: &[&str]) -> (Result<Ended, Stop>, Option<Value>) {
         let states = |host: &FakeHost| -> Vec<String> {
             host.state().files.keys().filter(|p| p.ends_with("/state.json")).map(String::from).collect()

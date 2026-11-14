@@ -1,5 +1,5 @@
-//! The Python Package Index's JSON API (https://docs.pypi.org/api/json/), as orchestrator.py's PyPI asks it: what
-//! the new-dependencies check (crate::checks) knows of a package from PyPI.
+//! The Python Package Index's JSON API (https://docs.pypi.org/api/json/): what the new-dependencies check
+//! (crate::checks) knows of a package from PyPI.
 
 use std::sync::Arc;
 
@@ -57,7 +57,7 @@ impl PackageIndex for PyPI {
     }
 }
 
-/// The project of PyPI's JSON answer; why not, as Python's error of the step that fails says it, for an answer of
+/// The project of PyPI's JSON answer; why not, as the step of reading it that fails says it, for an answer of
 /// another shape.
 fn project_of(body: &[u8]) -> Result<IndexedPackage, String> {
     let text = std::str::from_utf8(body).map_err(|e| e.to_string())?;

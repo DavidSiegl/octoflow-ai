@@ -1,9 +1,9 @@
 //! The prompts the e2e scenarios recorded (engine/e2e/recorded/), checked against the templates this engine
 //! holds: each prompt an agent got must be made of the run's step templates and the built-in prompts, joined by
 //! blank lines, the step's own template first, with every placeholder whose value the run's state.json gives filled
-//! in with that value. That holds every template's text to the Python engine's byte for byte, and its placeholders
-//! to the values the Python engine filled in; which notes a prompt carries, and in what order, is Workflow's to
-//! decide and to be checked against these recordings when it is ported.
+//! in with that value. That holds every template's text byte for byte to what the recorded agents were sent, and its
+//! placeholders to the values the recorded runs filled in; which notes a prompt carries, and in what order, is
+//! Workflow's to decide, and its tests' to check.
 
 use std::collections::BTreeSet;
 
@@ -183,7 +183,7 @@ fn latest_states(events: &[Value], into: &mut Map<Object>) -> Vec<(String, Strin
 }
 
 #[test]
-fn every_recorded_prompt_is_made_of_this_engines_templates_filled_in_as_the_python_engine_did() {
+fn every_recorded_prompt_is_made_of_this_engines_templates_filled_in_with_the_runs_values() {
     let mut checked = 0;
     for (scenario, recording) in recordings() {
         let files: BTreeSet<String> = recording

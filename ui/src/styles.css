@@ -1,4 +1,4 @@
-/* The Tk window's palette (orchestrator.py's NAVY to AMBER): the colors of docs/logo.svg. */
+/* The palette, from navy to amber: the colors of docs/logo.svg. */
 :root {
   --navy: #1e2a38;
   --navy-light: #283a4e;

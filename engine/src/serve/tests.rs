@@ -1,5 +1,5 @@
-//! TestServeEndpoints, TestServeSecurity, TestServeEvents, TestServeEventsOnAMachine and TestServeCommand's in-process
-//! cases: a RunServer on a free port of 127.0.0.1, asked over a TCP connection of the test's own, so that each header
+//! serve's endpoints, security checks and events, here and on a machine, and serve_command's in-process cases: a
+//! RunServer on a free port of 127.0.0.1, asked over a TCP connection of the test's own, so that each header
 //! and byte on the wire is the test's. The process cases are engine/tests/program.rs'.
 
 use std::io::{BufRead, BufReader};
@@ -29,7 +29,7 @@ fn run_dir() -> String {
     format!("/proj/{RUNS_DIR}/{SERVE_ID}")
 }
 
-/// serve_state(**kw) of the Python tests, for run_id, as state.json's text.
+/// A run's state.json as serve's tests save it, for run_id: a fresh run in round 1's build, with the extra keys.
 fn serve_state(run_id: &str, extra: &[(&str, Value)]) -> String {
     let mut fresh = crate::state::RunState::new(run_id, "add a rate limiter", "/proj");
     (fresh.phase, fresh.round) = ("build".into(), 1);
@@ -137,7 +137,7 @@ impl Served {
     }
 
     /// The reply to method of target, with the server's Host header unless headers name one, and headers, each value's
-    /// characters sent as Latin-1 bytes, as http.client sends a header's str.
+    /// characters sent as Latin-1 bytes.
     fn ask(&self, method: &str, target: &str, headers: &[(&str, &str)]) -> Reply {
         self.ask_with_body(method, target, headers, "")
     }
@@ -270,7 +270,7 @@ fn without_aging(mut record: Object) -> Value {
     Value::Object(record)
 }
 
-// -- TestServeEndpoints ------------------------------------------------------------------------------------------
+// -- The endpoints -----------------------------------------------------------------------------------------------
 
 #[test]
 fn runs_are_list_json_records_on_a_machine() {
@@ -664,7 +664,7 @@ fn a_target_read_as_http_server_reads_it() {
     assert_eq!((reply.status, reply.error()), (Some(403), "\"../x\" is not a name in the run directory".to_string()));
 }
 
-// -- TestServeSecurity -------------------------------------------------------------------------------------------
+// -- The security checks -----------------------------------------------------------------------------------------
 
 #[test]
 fn no_token() {
@@ -698,9 +698,8 @@ fn wrong_token() {
 #[test]
 fn non_ascii_tokens() {
     let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
-    // é's UTF-8 bytes on the wire, as http.client sends a header's str as Latin-1. Python answers 401; tiny_http
-    // closes the connection of a request with a header beyond ASCII unanswered (TODO.md, "serve answers some requests
-    // otherwise than Python's http.server").
+    // é's UTF-8 bytes on the wire, each sent as a Latin-1 character. tiny_http closes the connection of a request with
+    // a header beyond ASCII unanswered (TODO.md, "serve answers some malformed requests abruptly or silently").
     for header in ["Bearer \u{c3}\u{a9}".to_string(), format!("Bearer {}\u{c3}\u{a9}", served.token())] {
         let reply = served.ask("GET", &Served::query("/runs", &[]), &[("Authorization", &header)]);
         assert_eq!(reply.status, None, "{header:?}");
@@ -1205,7 +1204,7 @@ fn workflows_are_the_configuration_s_with_their_roles_and_the_harnesses() {
     assert_eq!(served.ask("GET", "/workflows", &[]).status, Some(401));
 }
 
-// -- TestServeEvents and TestServeEventsOnAMachine ---------------------------------------------------------------
+// -- Events, here and on a machine -------------------------------------------------------------------------------
 
 /// An event stream as an EventSource reads it, with the token in the URL, its events parsed on a thread as they
 /// arrive. It ends when the server stops.
@@ -1482,7 +1481,7 @@ fn a_stream_is_refused_as_any_request() {
     assert_eq!(served.ask("GET", &with_token, &[("Host", "evil.example")]).status, Some(403));
 }
 
-// -- TestServeCommand's in-process cases -------------------------------------------------------------------------
+// -- serve_command's in-process cases ----------------------------------------------------------------------------
 
 /// A writer that hands each write to a channel, for a line printed while serve still runs.
 struct Lines(mpsc::Sender<Vec<u8>>);

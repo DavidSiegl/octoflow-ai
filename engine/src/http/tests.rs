@@ -141,7 +141,7 @@ fn endless_redirects_end_in_the_last_status() {
 }
 
 #[test]
-fn no_answer_is_worded_as_urllib_words_it() {
+fn no_answer_is_worded_with_the_errno_and_the_system_s_words() {
     let refusing = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/", refusing.local_addr().unwrap());
     drop(refusing);
@@ -201,8 +201,7 @@ fn no_proxy_names_hosts_and_their_domains() {
 
 #[test]
 fn a_request_goes_through_the_proxy_its_scheme_names() {
-    // A CONNECT proxy, which is the only kind ureq speaks, for http URLs too, where urllib would send the request
-    // itself to the proxy (TODO.md).
+    // A CONNECT proxy, which is the only kind ureq speaks, for http URLs too (TODO.md).
     let proxy = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", proxy.local_addr().unwrap());
     let tunnel = std::thread::spawn(move || {
@@ -252,7 +251,7 @@ fn a_resolver_error_has_its_number_when_its_text_gives_it() {
     assert_eq!(resolver_error("something else"), "something else");
 }
 
-// A self-signed certificate for pypi.org, as the Python harness the e2e scenarios replaced made one.
+// A self-signed certificate for pypi.org.
 const CERT: &str = include_str!("../../tests/data/pypi-cert.pem");
 
 // A second, for a store that holds two.

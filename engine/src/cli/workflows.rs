@@ -1,4 +1,4 @@
-//! The `workflows` command, as orchestrator.py's workflows_command: the workflows `run --workflow` offers and the
+//! The `workflows` command: the workflows `run --workflow` offers and the
 //! prompt files a new run would start with, or one workflow as a workflow file. It reads this machine's configuration
 //! directory only, so it needs no herdr.
 

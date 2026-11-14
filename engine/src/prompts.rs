@@ -1,5 +1,5 @@
-//! The texts a run sends agents besides a workflow file's own prompts, and the prompt files that replace them: each
-//! byte for byte the Python engine's, since the prompts are the product.
+//! The texts a run sends agents besides a workflow file's own prompts, and the prompt files that replace them. Their
+//! text is pinned byte for byte by the recorded expected texts (prompts/tests.rs), since the prompts are the product.
 
 use crate::env::ConfigDir;
 use crate::error::{closest_name, OrchestratorError};
@@ -196,7 +196,7 @@ macro_rules! prompts {
         }
 
         impl Prompt {
-            /// Every prompt, in the order orchestrator.py's Prompts declares them.
+            /// Every prompt, in the order they are declared.
             pub const ALL: &[Prompt] = &[$(Prompt::$variant,)*];
 
             /// The prompt's name: its constant's, and its prompt file's without `.md`.

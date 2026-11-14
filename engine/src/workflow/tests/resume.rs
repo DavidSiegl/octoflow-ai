@@ -1,10 +1,7 @@
-//! TestResume: a run picked up from its state.json, the agents found alive, resumed into their sessions or started
-//! afresh, each prompted only for what it still owes.
+//! A run picked up from its state.json, the agents found alive, resumed into their sessions or started afresh, each
+//! prompted only for what it still owes.
 //!
-//! Not here: its two cases of RunState.from_dict, which are crate::state's: test_from_dict_incomplete
-//! (a_state_without_its_required_fields_or_with_a_wrong_type_is_refused_naming_the_run, ticket 04) and
-//! test_from_dict_ignores_unknown_keys_and_fills_new_ones
-//! (a_state_with_a_field_it_does_not_know_and_without_later_ones_reads_with_their_defaults).
+//! Not here: reading a state.json with missing, mistyped, unknown or later fields, which is crate::state's.
 
 use std::cell::RefCell;
 

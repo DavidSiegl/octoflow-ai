@@ -1,9 +1,9 @@
-//! TestOrchestratorChecks' cases that need the Workflow: the checks a quality round runs itself after the build, with
-//! the run's spec, driven through a gated run.
+//! The orchestrator's checks as a quality round runs them itself after the build, with the run's spec, driven
+//! through a gated run.
 //!
-//! test_a_dependency_the_spec_names_passes_with_its_metadata is here too, through a run, to show that the round's spec
-//! is the contract step's file. Its other cases judge the build's quality file the same way whether a quality round or a test calls judge_run, and
-//! are crate::checks' (engine/src/checks/tests.rs, rust-engine ticket 07): they need nothing more here.
+//! A dependency the spec names passing with its metadata is checked here too, through a run, to show that the round's
+//! spec is the contract step's file. The other cases judge the build's quality file the same way whether a quality
+//! round or a test calls judge_run, and are crate::checks' (engine/src/checks/tests.rs): they need nothing more here.
 
 use std::sync::Arc;
 
@@ -15,7 +15,7 @@ use crate::pypi::fake::{FakePyPI, ProjectJson};
 use crate::test_support::impl_;
 
 /// The pyproject.toml of the run's base and of its first snapshot, without and with requirements, as FakeHost's
-/// committed files: Python's pyproject_files.
+/// committed files.
 fn pyproject_files(host: &FakeHost, requirements: &[&str]) {
     let mut h = host.state();
     h.committed.insert(("abc123".into(), "pyproject.toml".into()), pyproject_with(&[]));
@@ -27,8 +27,8 @@ fn limits() -> Arc<FakePyPI> {
     FakePyPI::with(&[("limits", ProjectJson::default())])
 }
 
-/// A gated fixture on host and pypi, its clocks reading TODAY, as Python's wf.wallclock = TODAY sets the time the
-/// round judges on; its one build plays build.
+/// A gated fixture on host and pypi, its clocks reading TODAY, the time the round judges on; its one build plays
+/// build.
 fn checked(host: FakeHost, script: Script, pypi: Arc<FakePyPI>, build: Outcome) -> Fixture {
     let f = Fixture::on(Rc::new(host), new_state(), script).gated().with_pypi(pypi);
     f.clock.set(TODAY);
@@ -106,7 +106,7 @@ fn slow_pypi_keeps_the_run_alive_and_stops_at_the_rounds_deadline() {
     let f = checked(host, script, Arc::clone(&pypi), green());
     // Each request takes half the round's time.
     pypi.state().clock = Some((f.clock.time(), QUALITY_TIMEOUT as f64 / 2.0));
-    // What Python's test logs on each heartbeat: one that saves state.json between the asks keeps the run alive.
+    // Logged on each heartbeat: one that saves state.json between the asks keeps the run alive.
     let beats = Arc::clone(&pypi);
     f.host.state().before_write = Some(Box::new(move |path, _| {
         if path.ends_with("/state.json") {
@@ -152,7 +152,7 @@ fn the_spec_is_the_runs_task_without_a_contract_step() {
     let pipeline = impl_();
     let mut state = new_run(&pipeline);
     state.task = "limit requests with limits in pyproject.toml".into();
-    // Python's impl_turn(1).
+    // The Implementer's turn of round 1.
     let impl_turn: Turn = Box::new(|_, state, host| {
         host.write("/proj/limiter.py", "version 1.0", false).expect("the fake host writes");
         host.write(&format!("{}/impl-1.md", state.dir()), "impl 1 q0", false).expect("the fake host writes");

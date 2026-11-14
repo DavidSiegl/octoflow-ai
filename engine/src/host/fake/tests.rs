@@ -1,5 +1,4 @@
-//! FakeHost plays what the Workflow tests of ticket 08 will ask of it as tests/test_orchestrator.py's FakeHost does,
-//! with Host's own steps running on its git.
+//! FakeHost plays what the Workflow tests ask of it, with Host's own steps running on its git.
 
 use super::*;
 use crate::host::{git_status, GhError, PullRequest, PushError};

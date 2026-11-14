@@ -1,7 +1,6 @@
-//! herdr as the engine drives it: tests/test_orchestrator.py's TestHerdr, TestHerdrLookups and TestChildEnvironment's
-//! herdr case, ported case for case on a ProcessHerdr whose commands a closure answers, as Python's Herdr(run=...);
-//! real processes for what only they show; every herdr command the e2e scenarios recorded; and the FakeHerdr the
-//! Workflow tests of ticket 08 run on.
+//! herdr as the engine drives it: its commands, lookups and child environment on a ProcessHerdr whose commands a
+//! closure answers; real processes for what only they show; every herdr command the e2e scenarios recorded; and the
+//! FakeHerdr the Workflow tests run on.
 
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -55,7 +54,7 @@ fn argv(words: &[&str]) -> Vec<String> {
     words.iter().map(|w| w.to_string()).collect()
 }
 
-// -- TestHerdr -------------------------------------------------------------------------------------------------------
+// -- Commands --------------------------------------------------------------------------------------------------------
 
 #[test]
 fn call_returns_result_and_forwards_machine() {
@@ -63,7 +62,7 @@ fn call_returns_result_and_forwards_machine() {
     assert_eq!(herdr.agent("build-x").map(|a| a.map(|a| a.status)), Ok(Some("idle".to_string())));
     assert_eq!(last(&ran).0, argv(&["herdr", "--machine", "remote", "agent", "get", "build-x"]));
     assert_eq!(herdr.machine(), Some("remote"));
-    // An empty machine is none, as Python takes it.
+    // An empty machine is none.
     let (herdr, ran) = answering(Some(""), 0, &result("{}"), "");
     herdr.focus("x").unwrap();
     assert_eq!(last(&ran).0, argv(&["herdr", "agent", "focus", "x"]));
@@ -304,7 +303,7 @@ fn a_herdr_that_cannot_be_run_or_read_names_the_command() {
     let denied = || Err(ProcessError::Start(std::io::ErrorKind::PermissionDenied.into()));
     let herdr = ProcessHerdr::with_runner(None, move |_, _| denied());
     assert!(herdr.focus("x").unwrap_err().to_string().starts_with("herdr agent focus x: "));
-    // A prompt's text stays out of the error, as out of Python's OSError.
+    // A prompt's text stays out of the error.
     let e = herdr.prompt("spec-x", "a long prompt").unwrap_err().to_string();
     assert!(e.starts_with("herdr agent prompt spec-x: ") && !e.contains("long"), "{e}");
     let herdr = ProcessHerdr::with_runner(None, |_, _| Err(ProcessError::Io(std::io::ErrorKind::BrokenPipe.into())));
@@ -347,7 +346,7 @@ fn a_command_that_does_not_return_is_a_timeout() {
     let e = list(None);
     let expected = (Some("timeout"), "herdr timeout: herdr agent list did not return".to_string());
     assert_eq!((e.code(), e.to_string()), expected);
-    // Python names the first three words herdr was given, the machine's among them.
+    // The error names the first three words herdr was given, the machine's among them.
     let e = list(Some("box"));
     assert_eq!(e.to_string(), "herdr timeout: herdr --machine box agent did not return");
 }
@@ -376,8 +375,8 @@ fn the_ctrl_c_ends_an_unbounded_wait() {
 
 #[test]
 fn a_prompt_herdr_delivered_before_the_ctrl_c_fails() {
-    // herdr carries out the prompt and exits 0 at the SIGINT: the engine must not go on to record it as sent, as
-    // Python's KeyboardInterrupt in herdr's prompt records nothing (FakeHerdrState::interrupt plays the same).
+    // herdr carries out the prompt and exits 0 at the SIGINT: the engine must not go on to record it as sent, as a
+    // Ctrl-C during herdr's prompt records nothing (FakeHerdrState::interrupt plays the same).
     let d = TempDir::new();
     let (delivered, interrupt) = (d.join("delivered"), Interrupt::new());
     let script = hearing_sigint(&format!("trap 'exit 0' INT\necho \"$4\" > '{delivered}'\nwhile :; do sleep 0.05; done\n"));
@@ -521,7 +520,7 @@ fn the_server_herdr_reaches_is_its_environment_s() {
     assert_eq!(HerdrServer::of_environment(&odd), None);
 }
 
-// -- TestHerdrLookups ------------------------------------------------------------------------------------------------
+// -- Lookups ---------------------------------------------------------------------------------------------------------
 
 #[test]
 fn agent_record() {
@@ -566,7 +565,7 @@ fn other_errors_raise() {
     assert_eq!(herdr.agent("x").unwrap_err().code(), Some("server_unavailable"));
 }
 
-// -- TestChildEnvironment --------------------------------------------------------------------------------------------
+// -- The child environment -------------------------------------------------------------------------------------------
 
 #[test]
 fn herdr_gets_no_pathspec_switches() {
@@ -1020,7 +1019,7 @@ fn writes(path_of: fn(&RunState) -> String, text: &'static str, status: &'static
 }
 
 #[test]
-fn fakeherdr_plays_each_role_s_turns_as_python_s_does() {
+fn fakeherdr_plays_each_role_s_scripted_turns() {
     let host = Rc::new(FakeHost::new(Some("abc123"), "main"));
     let run = RunState::new("20260929-120000-a1b2c3", "add a rate limiter", "/proj");
     let spec: Turn = writes(|s| s.spec_path(), "# Spec", "done");
@@ -1064,7 +1063,7 @@ fn fakeherdr_plays_each_role_s_turns_as_python_s_does() {
     let e = herdr.wait("review-a1b2c3", Some(1000), &["working"]).unwrap_err();
     assert_eq!(e.code(), Some("agent_not_found"));
 
-    // Once the run's state.json is saved, a turn sees the state as the Workflow saved it, as Python's turns share it.
+    // Once the run's state.json is saved, a turn sees the state as the Workflow saved it.
     let mut saved = run.clone();
     saved.worktree = Some("/proj/.orchestrator/worktrees/a1b2c3".to_string());
     host.write(&format!("{}/state.json", run.dir()), &saved.to_text(), false).unwrap();

@@ -3,7 +3,7 @@ use serde_json::Value;
 use crate::test_support::oracle;
 
 
-/// added_lines as host.json writes Python's: each line's number as a string, its text as a string.
+/// added_lines as host.json records it: each line's number as a string, its text as a string.
 fn as_recorded(added: &Map<AddedLines>) -> Value {
     Value::Object(
         added
@@ -20,7 +20,7 @@ fn as_recorded(added: &Map<AddedLines>) -> Value {
 }
 
 #[test]
-fn added_lines_reads_each_diff_as_the_python_engine_does() {
+fn added_lines_reads_each_diff_as_host_json_records() {
     for case in oracle("host.json").get("added_lines").cloned().unwrap().as_array().unwrap() {
         let case = case.as_array().unwrap();
         let diff = case[0].as_str().unwrap();

@@ -194,8 +194,8 @@ pub fn engine_command(eval_engine: Option<&str>, checkout: &Path) -> Result<Vec<
     }
 }
 
-/// command split into words as a POSIX shell splits it, quotes and backslashes removed, without expansions, as
-/// Python's shlex.split splits it; None when a quote is not closed or a backslash ends it.
+/// command split into words as a POSIX shell splits it, quotes and backslashes removed, without expansions; None when
+/// a quote is not closed or a backslash ends it.
 fn split_words(command: &str) -> Option<Vec<String>> {
     let mut words = vec![];
     let mut word: Option<String> = None;
@@ -422,8 +422,7 @@ fn cargo() -> std::process::Command {
     cargo
 }
 
-/// status as a number: the exit status, or minus the number of the signal that ended the process, as Python's
-/// subprocess gives it.
+/// status as a number: the exit status, or minus the number of the signal that ended the process.
 fn exit_code(status: ExitStatus) -> i32 {
     status.code().unwrap_or_else(|| -status.signal().unwrap_or(0))
 }
@@ -560,7 +559,7 @@ fn run_metrics(repo: &Path) -> RunMetrics {
     known
 }
 
-/// Whether value names something, as Python's truth test takes a harness: not null, false, "" or 0.
+/// Whether value names a harness: not null, false, "" or 0.
 fn is_truthy(value: &Value) -> bool {
     !matches!(value, Value::Null | Value::Bool(false)) && value != "" && value != 0
 }
@@ -794,7 +793,7 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
             Some((flag, value)) if flag.starts_with("--") => (flag, Some(value.to_string())),
             _ => (arg.as_str(), None),
         };
-        // As argparse takes them: a flag or any start of one, which no two of RUNNER_FLAGS share.
+        // A flag or any start of one, which no two of RUNNER_FLAGS share.
         let Some(&flag) = RUNNER_FLAGS.iter().find(|flag| given.len() > 2 && flag.starts_with(given)) else {
             return Err(format!("unrecognized argument: {arg}"));
         };
@@ -885,8 +884,8 @@ pub fn run(argv: &[String], checkout: &Path, eval_engine: Option<&str>, out: &mu
     exit
 }
 
-/// path relative to dir, both absolute, with `..` for each of dir's components path does not share, as Python's
-/// os.path.relpath writes it; path itself when they share no root.
+/// path relative to dir, both absolute, with `..` for each of dir's components path does not share; path itself
+/// when they share no root.
 fn relative(path: &Path, dir: &Path) -> PathBuf {
     let (path, dir): (Vec<_>, Vec<_>) = (path.components().collect(), dir.components().collect());
     let shared = path.iter().zip(&dir).take_while(|(a, b)| a == b).count();

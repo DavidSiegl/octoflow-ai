@@ -1,4 +1,4 @@
-//! The machine the agents run on, as orchestrator.py's Host: its files, its clock and its git checkout, locally or
+//! The machine the agents run on: its files, its clock and its git checkout, locally or
 //! over `ssh -o BatchMode=yes`, and gh and gitleaks run there.
 //!
 //! [`Host`] is a trait so that the engine's tests can stand a fake in for the machine. Every operation is a provided
@@ -82,9 +82,9 @@ fn run_dir_resolved() -> String {
 /// What one command printed, and how it ended, as [`Host::exec`] gives it: its output as the bytes it wrote.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Exec {
-    /// The command as it ran, as one line of sh (shlex.join): over SSH, the ssh command that carried it.
+    /// The command as it ran, as one line of sh (shlex_join): over SSH, the ssh command that carried it.
     pub command: String,
-    /// Its exit status, or minus the number of the signal that ended it, as Python's returncode.
+    /// Its exit status, or minus the number of the signal that ended it.
     pub status: i32,
     /// What the command wrote to its standard output; over SSH, the remote command's, which ssh passes on.
     pub stdout: Vec<u8>,
@@ -97,7 +97,7 @@ pub struct Exec {
 /// output kept verbatim ([`Host::run_verbatim`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Completed<T = String> {
-    /// The exit status, or minus the number of the signal that ended it, as Python's returncode.
+    /// The exit status, or minus the number of the signal that ended it.
     pub status: i32,
     /// What it wrote to its standard output, as Exec::stdout says.
     pub stdout: T,
@@ -173,7 +173,7 @@ pub struct PullRequestMerge {
 /// Why a gh command about a pull request failed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GhError {
-    /// gh is missing or logged out where the project is, so no gh call can succeed: Python's GhUnusable.
+    /// gh is missing or logged out where the project is, so no gh call can succeed.
     Unusable(OrchestratorError),
     /// Any other failure: gh failed, or printed what is not the pull request asked for.
     Failed(OrchestratorError),
@@ -190,8 +190,8 @@ impl From<GhError> for OrchestratorError {
 /// Why [`Host::exec`] gave no Exec.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExecError {
-    /// The command's program is not on this host's PATH, so it could not be started: Python's FileNotFoundError from
-    /// subprocess. Over SSH it is the remote shell that cannot find a program, which exits 127 as an Exec does.
+    /// The command's program is not on this host's PATH, so it could not be started. Over SSH it is the remote shell
+    /// that cannot find a program, which exits 127 as an Exec does.
     NotFound(OrchestratorError),
     /// Any other failure: the command could not be started otherwise, timed out, was interrupted, or its output could
     /// not be read.
@@ -215,7 +215,7 @@ impl From<OrchestratorError> for ExecError {
 /// Why a push of a run's work did not happen.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PushError {
-    /// The secret scan found secrets in what the push would publish: Python's LeaksFound.
+    /// The secret scan found secrets in what the push would publish.
     Leaks(LeaksFound),
     /// The scan could not judge, or the push failed.
     Failed(OrchestratorError),
@@ -1044,7 +1044,7 @@ fn parsed_run_states(cwd: &str, out: &str) -> Result<Vec<SavedRun>, Orchestrator
         let (age, text) = entry.split_once(' ').unwrap_or((entry, ""));
         let corrupt = |e: String| OrchestratorError(format!("corrupt run state under {cwd}/{RUNS_DIR}: {e}"));
         let not_int = || corrupt(format!("invalid literal for int() with base 10: {age:?}"));
-        let age: i64 = python_int(age).ok_or_else(not_int)?;
+        let age: i64 = decimal_int(age).ok_or_else(not_int)?;
         let saved = serde_json::from_str::<Value>(text).map_err(|e| corrupt(e.to_string()))?;
         runs.push(SavedRun::read(age.max(0).unsigned_abs(), saved).map_err(|e| corrupt(e.0))?);
     }
@@ -1067,7 +1067,7 @@ fn parsed_run_files(run_dir: &str, out: &str) -> Result<Vec<RunFile>, Orchestrat
     let mut files = vec![];
     for entry in out.split('\0').filter(|e| !e.is_empty()) {
         let (mtime, path) = entry.split_once(' ').unwrap_or((entry, ""));
-        let mtime = python_int(mtime).ok_or_else(|| {
+        let mtime = decimal_int(mtime).ok_or_else(|| {
             OrchestratorError(format!("listing {run_dir}: stat printed {mtime:?}, not a time"))
         })?;
         files.push((mtime, path.to_string()));
@@ -1109,7 +1109,7 @@ pub fn shlex_join<S: AsRef<str>>(argv: &[S]) -> String {
     argv.iter().map(|word| shlex_quote(word.as_ref())).collect::<Vec<_>>().join(" ")
 }
 
-/// word as sh reads it back as one word, as Python's shlex.quote writes it: as it is when it is not empty and holds
+/// word as sh reads it back as one word: as it is when it is not empty and holds
 /// nothing but ASCII letters, digits and `_@%+=:,./-`, else in single quotes, a quote inside written `'"'"'`.
 pub fn shlex_quote(word: &str) -> String {
     if !word.is_empty() && word.chars().all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c)) {
@@ -1302,8 +1302,7 @@ fn utf8_paths(out: &[u8]) -> Result<Vec<String>, OrchestratorError> {
     out.split(|&b| b == 0).filter(|p| !p.is_empty()).map(utf8_path).collect()
 }
 
-/// A path git printed verbatim, as text. Errors: it is not UTF-8, which the Python engine reads as os.fsdecode
-/// decodes it (TODO.md, "The Rust engine reads some input ... otherwise").
+/// A path git printed verbatim, as text. Errors: it is not UTF-8.
 fn utf8_path(bytes: &[u8]) -> Result<String, OrchestratorError> {
     String::from_utf8(bytes.to_vec()).map_err(|_| {
         OrchestratorError(format!("git printed a path that is not UTF-8: {:?}", String::from_utf8_lossy(bytes)))
@@ -1320,7 +1319,7 @@ fn numstat(out: &[u8]) -> Result<Vec<ChangedFile>, OrchestratorError> {
         if n == b"-" {
             return Ok(0);
         }
-        std::str::from_utf8(n).ok().and_then(python_int).and_then(|n| u64::try_from(n).ok()).ok_or_else(bad)
+        std::str::from_utf8(n).ok().and_then(decimal_int).and_then(|n| u64::try_from(n).ok()).ok_or_else(bad)
     };
     let mut files = vec![];
     let mut i = 0;
@@ -1396,17 +1395,16 @@ fn is_commit_id(text: &str) -> bool {
     (40..=64).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// The seconds a command printed, out, as int() reads them; what names what printed them. Errors: out is no whole
-/// number.
+/// The seconds a command printed, out, as decimal_int reads them; what names what printed them. Errors: out is no
+/// whole number.
 fn seconds(out: &str, what: &str) -> Result<i64, OrchestratorError> {
     let text = out.trim();
-    python_int(text).ok_or_else(|| OrchestratorError(format!("{what} printed {text:?}, not a time")))
+    decimal_int(text).ok_or_else(|| OrchestratorError(format!("{what} printed {text:?}, not a time")))
 }
 
-/// text as Python's int() reads a whole number in base 10, but for the blanks around it, which are what
-/// char::is_whitespace takes: an optional sign, and ASCII digits with single underscores between them; None for
-/// anything else, or a number beyond 64 bits.
-fn python_int(text: &str) -> Option<i64> {
+/// text as a whole number in base 10, blanks around it (what char::is_whitespace takes) allowed: an optional sign,
+/// and ASCII digits with single underscores between them; None for anything else, or a number beyond 64 bits.
+fn decimal_int(text: &str) -> Option<i64> {
     let text = text.trim();
     let digits = text.strip_prefix(['+', '-']).unwrap_or(text);
     let well_formed = !digits.is_empty()

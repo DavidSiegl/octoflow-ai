@@ -1,5 +1,4 @@
-//! What `list`, `list --json` and `show` print of a project's runs, as orchestrator.py's run_record, run_rows,
-//! run_outcome, print_runs, fill_pr_states and show_run word it. Each shows a run as far as its state reads
+//! What `list`, `list --json` and `show` print of a project's runs. Each shows a run as far as its state reads
 //! (SavedRun::shown), so a state saved by an older version, or one whose workflow this orchestrator cannot load, still
 //! lists.
 

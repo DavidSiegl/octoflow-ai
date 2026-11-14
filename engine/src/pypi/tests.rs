@@ -1,4 +1,5 @@
-//! tests/test_orchestrator.py's TestPyPI, and the answers of other shapes it words as Python does.
+//! PyPI as the new-dependencies check asks it, through a FakePyPI: the URL asked, the answers read, and how an answer
+//! of another shape is worded.
 
 use std::sync::Mutex;
 

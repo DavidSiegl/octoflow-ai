@@ -1,5 +1,5 @@
-//! tests/test_orchestrator.py's Workflow classes, case for case, on the fixture's fakes (fixture.rs): TestWorkflow
-//! here, and the others in submodules, each named after its first class and saying in its doc which it holds.
+//! The Workflow's tests, on the fixture's fakes (fixture.rs): a default run from spec to verdict here, and each other
+//! part of a run in a submodule, saying in its doc what it covers.
 
 use std::rc::Rc;
 
@@ -45,7 +45,7 @@ mod worktree;
 
 type Script = Vec<(&'static str, Vec<Turn>)>;
 
-/// The default workflow's roles, each with an agent: Python's FULL.
+/// The default workflow's roles, each with an agent.
 const FULL: &[&str] = &["spec", "build", "review"];
 
 /// The default workflow approved in round 1.
@@ -527,8 +527,8 @@ fn only_the_steps_that_can_block_hear_the_blocked_note() {
     assert!(!review.borrow()[0].ends_with(&note()));
 }
 
-/// A step before the first editing step is in round 0, so its prev_ placeholders name round -1's file, as Python's
-/// n - 1 does, and its earlier_ ones name none.
+/// A step before the first editing step is in round 0, so its prev_ placeholders name round -1's file, and its earlier_
+/// ones name none.
 #[test]
 fn a_step_before_round_1_names_round_minus_1() {
     use crate::pipeline::{Pipeline, Step};

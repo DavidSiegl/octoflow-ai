@@ -1,11 +1,11 @@
-//! The phase machine: [`Workflow`] drives one run through the steps of its workflow in a herdr workspace, as
-//! orchestrator.py's Workflow does, and is the same code for a new run and a resumed one.
+//! The phase machine: [`Workflow`] drives one run through the steps of its workflow in a herdr workspace, and is the
+//! same code for a new run and a resumed one.
 //!
-//! How it is given what it talks to (design-it-twice, issue rust-engine/08's Plan): borrowed [`Collaborators`], the
+//! How it is given what it talks to (decided by design-it-twice): borrowed [`Collaborators`], the
 //! real ones from the CLI and the fakes from the tests, which keep the fakes and read them afterwards; the state it
 //! owns, read back through [`Workflow::state`]. An environment trait the Workflow is generic over, and a sans-IO
 //! machine a driver feeds, were weighed and not taken: the first needs a type per variant of a fake and forwards
-//! everything, the second has no Python counterpart to port case for case.
+//! everything, the second fits none of the tests, which script fakes rather than feed a machine events.
 
 use std::collections::HashSet;
 use std::fmt;
@@ -68,8 +68,7 @@ pub trait Clocks {
     fn zone(&self) -> jiff::tz::TimeZone;
 }
 
-/// The human watching the run: told what needs them in a notification, and everything else in log lines, as
-/// orchestrator.py's notify parameter and its log, which prints each line to stderr.
+/// The human watching the run: told what needs them in a notification, and everything else in log lines.
 pub trait Human {
     /// A notification, with its title and body.
     fn notify(&self, title: &str, body: &str);
@@ -99,8 +98,7 @@ pub struct Collaborators<'a> {
     pub indexes: &'a PackageIndexes,
 }
 
-/// How a run is to go, as Workflow's keyword arguments in orchestrator.py: each but spec saved in the state, so that a
-/// resume starts from them.
+/// How a run is to go: each setting but spec saved in the state, so that a resume starts from them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RunSettings {
     /// How many rounds the verdict steps' loops take at most, together: a verdict other than APPROVE in a round
@@ -144,12 +142,11 @@ impl Default for RunSettings {
 /// Why a run stopped before it was done.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stopped {
-    /// It failed; state.json records why, and that no orchestrator drives it now. Python's OrchestratorError.
+    /// It failed; state.json records why, and that no orchestrator drives it now.
     Failed(OrchestratorError),
-    /// Another orchestrator took the run over, so this one stopped without saving anything more: Python's
-    /// RunTakenOver.
+    /// Another orchestrator took the run over, so this one stopped without saving anything more.
     TakenOver(OrchestratorError),
-    /// The human's Ctrl-C (Interrupt); state.json records "interrupted". Python's KeyboardInterrupt.
+    /// The human's Ctrl-C (Interrupt); state.json records "interrupted".
     Interrupted,
 }
 
@@ -322,7 +319,7 @@ impl<'a> Workflow<'a> {
     ///
     /// Errors: why the run stopped (Stopped); for a failure or an interrupt before the run was done, after recording
     /// it in state.json and writing summary.md, as far as saving still works. An interrupt once the run is done stops
-    /// what is left of its ending, as Python's KeyboardInterrupt there does, and the run stays done.
+    /// what is left of its ending, and the run stays done.
     pub fn run(&mut self) -> Result<Option<String>, Stopped> {
         if self.state.phase == DONE {
             let finished = match self.ending_left() {

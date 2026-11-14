@@ -4,7 +4,7 @@ use crate::test_support::{helper_cases, TempDir};
 use crate::state::AgentRecord;
 
 #[test]
-fn every_recorded_run_is_published_as_the_python_engine_does() {
+fn every_recorded_run_is_published_as_helpers_json_expects() {
     for case in helper_cases() {
         let expected = |key: &str| case.expected.get(key).and_then(Value::as_str).map(String::from);
         let place = format!("{} {} {}", expected("recording").unwrap(), expected("run_dir").unwrap(), case.expected.get("conflicts").unwrap());

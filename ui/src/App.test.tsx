@@ -133,8 +133,8 @@ describe("the runs overview", () => {
   });
 
   it("says why the orchestrator could not start", async () => {
-    render(<App connect={() => Promise.reject(new Error("python3: not found"))} />);
-    expect(await screen.findByText(/Could not start the orchestrator: Error: python3: not found/)).toBeInTheDocument();
+    render(<App connect={() => Promise.reject(new Error("sidecar: not found"))} />);
+    expect(await screen.findByText(/Could not start the orchestrator: Error: sidecar: not found/)).toBeInTheDocument();
   });
 });
 

@@ -1,5 +1,5 @@
-//! tests/test_orchestrator.py's TestRefresh, ported case for case: refresh through main's dispatch (run_command), on
-//! a FakeHost whose gh is scripted by pull_requests. test_args is the parse_args half of the class, here too.
+//! refresh through main's dispatch (run_command), on a FakeHost whose gh is scripted by pull_requests; and, in args,
+//! how parse_args reads refresh's arguments.
 
 use super::super::fixture::Cli;
 use crate::cli::{Command, Stop, Target};

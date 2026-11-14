@@ -115,8 +115,8 @@ fn log_request(ledger: &Ledger, event: Object) {
 
 // -- PyPI, behind its proxy ---------------------------------------------------------
 
-/// text with each `%XX` decoded to its byte, X a hex digit, the bytes read as UTF-8 with replacement, as
-/// urllib.parse.unquote does; a `%` before anything else stays as it is.
+/// text with each `%XX` decoded to its byte, X a hex digit, the bytes read as UTF-8 with replacement; a `%`
+/// before anything else stays as it is.
 ///
 /// Not the engine's `serve::url::unquote_plus`: the fake servers read the engine's requests with code of their own,
 /// so that a fault the engine's URL code shares between writing and reading still shows.
@@ -244,7 +244,7 @@ fn read_head(stream: &mut impl Read) -> Option<String> {
 }
 
 #[test]
-fn unquote_decodes_as_urllib_does() {
+fn unquote_decodes_each_escape_and_keeps_a_stray_percent() {
     assert_eq!(unquote("100%25%zz%e2%80%94"), "100%%zz\u{2014}");
     assert_eq!(unquote("a%+1%-1%"), "a%+1%-1%");
 }

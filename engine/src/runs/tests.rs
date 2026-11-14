@@ -1,4 +1,4 @@
-//! tests/test_orchestrator.py's TestRunHealth (its print_runs cases are crate::cli::listing's tests) and TestPidAlive.
+//! A run's health (how runs are printed is crate::cli::listing's tests) and pid_alive.
 
 use super::*;
 use crate::constants::APPROVE;
@@ -6,7 +6,7 @@ use crate::json::{object, Object};
 
 const ME_PID: i64 = 4242;
 
-/// Python's run_record: a run of 20260930-070000-c0ffee in round 1 of phase, with owner, error and verdict.
+/// A run of 20260930-070000-c0ffee in round 1 of phase, with owner, error and verdict.
 fn run_record(phase: &str, owner: Option<Object>, error: Option<&str>, verdict: Option<&str>) -> RunState {
     let mut state = RunState::new("20260930-070000-c0ffee", "add a rate limiter", "/proj");
     state.phase = phase.to_string();

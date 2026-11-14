@@ -1,4 +1,4 @@
-//! One HTTP GET at a time, as orchestrator.py's `urlopen` makes it: the seam through which the engine asks PyPI
+//! One HTTP GET at a time: the seam through which the engine asks PyPI
 //! (crate::pypi) and crates.io (crate::crates_io), and through which their tests stand in for both servers.
 //!
 //! [`Http`] is the trait; [`HttpClient`] sends over the network. A fake, such as the tests' `FakePyPI`, answers in
@@ -21,9 +21,9 @@ pub struct Request {
     /// The absolute http or https URL, its query included.
     pub url: String,
     /// Headers to send, by name and value. An `Authorization` header goes only to url's server: a redirect leaves it
-    /// behind, as urllib's add_unredirected_header does.
+    /// behind.
     pub headers: Vec<(String, String)>,
-    /// Seconds that connecting, and then each read or write of the connection, may take, as urlopen's timeout.
+    /// Seconds that connecting, and then each read or write of the connection, may take.
     pub timeout: u64,
 }
 
@@ -51,10 +51,10 @@ impl Response {
 /// Why a request got no 2xx answer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HttpError {
-    /// The server answered with this status, after following up to 10 redirects: urllib's HTTPError. A redirect
+    /// The server answered with this status, after following up to 10 redirects. A redirect
     /// beyond those is the status of its answer.
     Status(u16),
-    /// No answer came, worded as urllib's URLError reason words it: `timed out`, `[Errno 111] Connection refused`.
+    /// No answer came, and why, such as `timed out` or `[Errno 111] Connection refused` (no_answer).
     NoAnswer(String),
 }
 
@@ -65,7 +65,7 @@ pub trait Http: Send + Sync {
     fn send(&self, request: &Request) -> Result<Response, HttpError>;
 }
 
-/// The network, reached as urllib reaches it: through the proxy that the environment's `http_proxy` or
+/// The network, reached through the proxy that the environment's `http_proxy` or
 /// `https_proxy` names for the URL's scheme, unless `no_proxy` names its host, and over TLS trusting the certificates
 /// of the places the environment names, else of the system's, as OpenSSL finds them (root_certs).
 #[derive(Clone)]
@@ -131,7 +131,8 @@ impl Http for HttpClient {
     }
 }
 
-/// e as urllib's URLError words why no answer came.
+/// Why no answer came, from e: `timed out`, a resolver's error as resolver_error words it, the system's error as
+/// os_error words it, or ureq's own words.
 fn no_answer(e: &ureq::Error) -> HttpError {
     let reason = match e {
         ureq::Error::Timeout(_) => "timed out".to_string(),
@@ -146,8 +147,8 @@ fn no_answer(e: &ureq::Error) -> HttpError {
     HttpError::NoAnswer(reason)
 }
 
-/// Why a host name did not resolve, as Python's socket.gaierror writes it: with getaddrinfo's error number, for the
-/// errors whose text gives it away.
+/// The reason a host name did not resolve, from why, getaddrinfo's message: prefixed by its error number in brackets
+/// when the message is one of the three this knows, as `[Errno -2] Name or service not known`, else why as it is.
 fn resolver_error(why: &str) -> String {
     let number = match why {
         "Name or service not known" => Some(-2),
@@ -158,7 +159,7 @@ fn resolver_error(why: &str) -> String {
     number.map_or_else(|| why.to_string(), |n| format!("[Errno {n}] {why}"))
 }
 
-/// The proxies the environment names, as urllib's getproxies_environment and proxy_bypass_environment read them.
+/// The proxies the environment names: `http_proxy`, `https_proxy` and `no_proxy`, or their upper-case forms.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Proxies {
     /// The proxy of http URLs, as `http_proxy` names it; None for none.
@@ -220,13 +221,14 @@ impl Proxies {
     }
 }
 
-/// The certificates TLS trusts, from the places env names as OpenSSL takes them for Python's default context: when
+/// The certificates TLS trusts, from the places env names as OpenSSL takes them by default: when
 /// `SSL_CERT_FILE` or `SSL_CERT_DIR` (directories separated by colons) is set and not empty, that file's and those of
 /// every file in those directories, and none from the system; else the system's bundle and certificate directories,
 /// where openssl-probe finds them. rustls-native-certs reads each; a file that cannot be read, and an item that is not
 /// a certificate, adds none, as in OpenSSL, so a variable naming nothing usable trusts none. Mozilla's roots only when
-/// neither variable is set and the system has no certificate, where Python would trust none and fail every https
-/// request. TODO.md says where this trusts otherwise than Python.
+/// neither variable is set and the system has no certificate, where OpenSSL would trust none and fail every https
+/// request. TODO.md's "The engine's HTTP transport behaves otherwise than OpenSSL and curl in a few cases" says where
+/// else it differs.
 fn root_certs(env: &dyn Fn(&str) -> Option<String>) -> RootCerts {
     let file = env("SSL_CERT_FILE").filter(|path| !path.is_empty()).map(PathBuf::from);
     let dirs = env("SSL_CERT_DIR").unwrap_or_default();

@@ -1,6 +1,5 @@
-//! tests/test_orchestrator.py's TestJudgeRun (its quality files written by the gate, in checks.json), TestDiffBudget,
-//! and TestOrchestratorChecks without the Workflow that runs them in a quality round; and judge_run on every quality
-//! file the e2e recordings hold.
+//! judge_run (on the gate's quality files of checks.json), the diff budget, and the orchestrator's checks without the
+//! Workflow that runs them in a quality round; and judge_run on every quality file the e2e recordings hold.
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -61,7 +60,7 @@ pub(crate) fn changed(base_path: &str, path: &str, added: u64, removed: u64) -> 
     ChangedFile { base_path: base_path.to_string(), path: path.to_string(), added, removed }
 }
 
-/// The change of a quality round from base to new, as Python's run_change makes it: its diff, each file's text by
+/// The change of a quality round from base to new, as RunChange holds it: its diff, each file's text by
 /// (commit, path), its spec, and its ChangedFiles, by default each file the diff adds lines to, under its own path,
 /// with those lines and none removed.
 pub(crate) struct Change {
@@ -145,7 +144,7 @@ fn int(json: &Value, key: &str) -> i64 {
 }
 
 #[test]
-fn judge_run_adds_the_checks_findings_as_the_python_engine_does() {
+fn judge_run_adds_the_checks_findings_checks_json_records() {
     for case in oracle("checks.json").get("judge_run").and_then(Value::as_array).unwrap() {
         let checks: Vec<OrchestratorCheck> = case
             .get("checks")
@@ -313,7 +312,7 @@ fn severities_are_written_as_the_gate_writes_them() {
     );
 }
 
-// -- TestOrchestratorChecks: the checks of a quality round on the build's quality file -------------------------------
+// -- The orchestrator's checks of a quality round on the build's quality file ----------------------------------------
 
 /// The quality file of a quality round whose build played build and whose snapshot holds change, as the default
 /// workflow's orchestrator_checks judge it with pypi, on TODAY.

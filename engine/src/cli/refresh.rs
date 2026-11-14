@@ -1,6 +1,5 @@
 //! `refresh`: what became of the pull request a finished run opened over conflicts with its base, and the clean-up
-//! once it merges cleanly, is merged or is closed, as orchestrator.py's refresh_command, ConflictCheck and
-//! refresh_conflict do it. drain refreshes the runs of its specs so too (crate::cli::drain).
+//! once it merges cleanly, is merged or is closed. drain refreshes the runs of its specs so too (crate::cli::drain).
 
 use super::{record_in_state, Connected};
 use crate::constants::{EXIT_WAITING, RUNS_DIR, SUCCEEDED};

@@ -2,7 +2,7 @@ use super::*;
 use crate::test_support::{helper_cases, object as record};
 
 #[test]
-fn every_recorded_proof_run_is_reported_as_the_python_engine_does() {
+fn every_recorded_proof_run_is_reported_as_helpers_json_expects() {
     let mut compared = 0;
     for case in helper_cases() {
         let Some(expected) = case.expected.get("proofs_section").and_then(Value::as_str) else { continue };
@@ -55,7 +55,7 @@ fn a_moved_proof_is_saved_with_moved_and_one_saved_without_it_is_not_moved() {
 }
 
 #[test]
-fn a_proof_run_is_read_and_written_as_the_python_engine_saves_it() {
+fn a_proof_run_is_read_and_written_as_state_json_saves_it() {
     let saved = r#"{"round":3,"written":2,"file":"test_3.sh","finding":3,"demonstrated":true,"said":"it fails"}"#;
     assert_eq!(Value::Object(run(saved).record()).to_string(), saved);
     let refused = [

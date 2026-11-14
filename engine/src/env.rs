@@ -76,9 +76,9 @@ impl ConfigDir {
     }
 }
 
-/// The home directory /etc/passwd gives the user the engine runs as, which os.path.expanduser falls back on without
-/// HOME; None when either file cannot be read or names none. Unlike Python's pwd module, it reads the file alone, not
-/// whatever else the system's name service has.
+/// The home directory /etc/passwd gives the user the engine runs as, which ~ stands for without HOME; None when
+/// either file cannot be read or names none. It reads the file alone, not whatever else the system's name service
+/// has, such as LDAP.
 fn passwd_home() -> Option<String> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
     let uid = status.lines().find_map(|line| line.strip_prefix("Uid:"))?.split_whitespace().next()?.to_string();

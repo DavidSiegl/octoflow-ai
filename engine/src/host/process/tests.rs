@@ -2,7 +2,7 @@ use super::*;
 use crate::test_support::{oracle, TempDir};
 
 #[test]
-fn a_timeout_is_worded_as_python_words_it() {
+fn a_timeout_is_worded_as_host_json_records_it() {
     let argv: Vec<String> = ["sh", "-c", "it's", "_", "é\n"].map(String::from).into();
     let recorded = oracle("host.json");
     assert_eq!(timed_out(&argv, 60), recorded.get("timeout").and_then(serde_json::Value::as_str).unwrap());
@@ -34,7 +34,7 @@ fn names_differ_from_call_to_call() {
 #[test]
 fn without_a_usable_control_path_a_command_runs_on_a_connection_of_its_own() {
     // OpenSSH 10 fails a command whose ControlPath it cannot bind rather than connect without sharing, so then no
-    // option is passed (TestHost's case of the same name).
+    // option is passed.
     assert_eq!(ssh_argv("remote-host", vec![], &["true"]), ["ssh", "-o", "BatchMode=yes", "remote-host", "true"]);
     let options = vec!["-o".to_string(), "ControlMaster=auto".to_string()];
     let argv = ssh_argv("remote-host", options, &["sh", "-c", "a b"]);
@@ -46,7 +46,7 @@ fn a_host_over_ssh_says_where() {
     let host = ProcessHost::local(&Interrupt::new());
     assert_eq!(host.ssh_target(), None);
     assert_eq!(host.over_ssh("me@box").ssh_target(), Some("me@box"));
-    // An empty target is this machine, as Python's Host takes it.
+    // An empty target is this machine.
     assert_eq!(host.over_ssh("").ssh_target(), None);
     let secret = ProcessHost::in_environment([("GH_TOKEN".into(), "token-value".into())].into_iter(), &Interrupt::new());
     let shown = format!("{:?}", secret.over_ssh("box"));
