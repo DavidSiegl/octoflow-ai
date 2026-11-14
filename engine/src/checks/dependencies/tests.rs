@@ -535,7 +535,7 @@ fn a_manifest_that_cannot_be_read_fails_unchecked() {
             spec: String::new(),
             base: "base".into(),
             commit: "new".into(),
-                files: vec![changed("pyproject.toml", "pyproject.toml", 1, 0)],
+            files: vec![changed("pyproject.toml", "pyproject.toml", 1, 0)],
             file_at: &file_at,
             now: 0.0,
             in_time: &always,
