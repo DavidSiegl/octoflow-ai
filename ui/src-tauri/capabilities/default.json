@@ -1,7 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window: the app's own server command and Tauri's core, and nothing else",
+  "description": "The main window: the app's own server command, Tauri's core, and the opener for About's links, https URLs and the two bundled third-party license files, and nothing else",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    { "identifier": "opener:allow-open-url", "allow": [{ "url": "https://*" }] },
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [{ "path": "$RESOURCE/THIRD-PARTY-LICENSES.html" }, { "path": "$RESOURCE/THIRD-PARTY-LICENSES-NPM.html" }]
+    }
+  ]
 }

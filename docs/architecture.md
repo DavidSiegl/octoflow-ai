@@ -316,9 +316,14 @@ browser, at a far smaller download.
   `Sidecar::of_app`: its own executable as `serve --origin <the webview's origin>`, which is the CLI below. It
   reads the first line and keeps the URL, the token and the project, or why it failed, which is what the sidecar
   wrote to standard error when it wrote anything, for the `server` command; the project is the checkout the app
-  was built in for a development build (`tauri dev`), null otherwise. With no checkout and no project opened
-  before, the frontend asks for a project folder. It kills the sidecar on `RunEvent::Exit`. The webview's CSP
-  allows connections only to itself, Tauri's IPC and `http://127.0.0.1`.
+  was built in for a development build (`tauri dev`), null otherwise. That `Connection` also carries the release
+  version, the engine's `octoflow_engine::VERSION`, which `--version` prints too. With no checkout and no project
+  opened before, the frontend asks for a project folder. It kills the sidecar on `RunEvent::Exit`. The webview's CSP
+  allows connections only to itself, Tauri's IPC and `http://127.0.0.1`. Its capability
+  (`capabilities/default.json`) grants Tauri's core and `tauri-plugin-opener`, scoped to `https:` URLs and the two
+  bundled `$RESOURCE/THIRD-PARTY-LICENSES*.html` files: About opens its links in the system's browser through it,
+  calling the plugin's commands with `invoke` rather than through `@tauri-apps/plugin-opener`, which ships no license
+  text to bundle.
 - **CLI.** Started with arguments, `main.rs` runs none of that: before GTK or WebKit start a thread, `lib.rs`'s
   `cli` takes the command line and `Cli::run` runs the engine's `cli::main` with it in the app's own process, and
   ends as the engine's `orchestrator` does (`interrupt::exit`), so the terminal, the exit status and the signals
@@ -345,7 +350,8 @@ browser, at a far smaller download.
   each step the quality loop follows, `publish` when the run opens a pull request, each with its turns and its
   state; the overview's `StepProgress` and the run detail's `RunMap` both draw it) and the wording helpers, which follow `format_age` and `run_round`. A `RunEntry` keeps when its record
   arrived, so `heartbeatAge` ticks with `useNow` between events. The components are `ProjectBar`, `RunsOverview`,
-  `RunForm` (a new run, selected once `POST /run` answers) and `SetupDialog`, both a `Dialog`, `RunDetail`,
+  `RunForm` (a new run, selected once `POST /run` answers), `SetupDialog` and `About` (the logo's button opens it),
+  each a `Dialog`, `RunDetail`,
   `AgentPanes`, `StepProgress`, `RunMap` (the run as an octopus, hand-written SVG: `runMap.ts` places the arms and
   shapes them, and a `requestAnimationFrame` loop sways them unless the viewer prefers reduced motion) and
   `HandoffFile`, which renders a file with `react-markdown` and `remark-gfm`, raw

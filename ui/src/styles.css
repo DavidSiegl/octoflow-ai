@@ -74,14 +74,28 @@ a {
   margin-bottom: 12px;
 }
 
+/* The logo and name as one button, which opens About. */
+.app-badge {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+  padding: 0;
+  background: none;
+  border: none;
+}
+
+.app-badge:hover:not(:disabled) {
+  background: none;
+}
+
 .top-bar img {
-  width: 32px;
-  height: 32px;
+  width: 64px;
+  height: 64px;
 }
 
 .app-name {
-  font-size: 16px;
-  font-weight: 500;
+  font-size: 22px;
+  font-weight: 600;
   /* On the inputs' baseline rather than their labels'. */
   line-height: 32px;
 }
@@ -663,7 +677,7 @@ ul.files time {
   flex: 1;
 }
 
-/* The setup dialog and the run form, over the rest of the window. */
+/* The setup dialog, the run form and About, over the rest of the window. */
 .dialog-backdrop {
   position: fixed;
   inset: 0;
@@ -723,6 +737,19 @@ ul.checks {
   margin: 2px 0 0 5em;
   font-family: ui-monospace, monospace;
   color: var(--muted-mint);
+}
+
+.about .links {
+  padding-left: 1.2em;
+}
+
+/* A license file's link, which opens a path rather than a URL. */
+.about button.link {
+  padding: 0;
+  color: var(--mint);
+  text-decoration: underline;
+  background: none;
+  border: none;
 }
 
 .dialog footer {

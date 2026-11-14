@@ -8,6 +8,8 @@ export interface Connection {
   /** The project to show first: the checkout a development build of the app was built in; null for a release's
    * app, which belongs to none. */
   project: string | null;
+  /** The release version, as `orchestrator --version` prints it: the engine's, which the app links. */
+  version: string;
 }
 
 /** A project as the server takes it: a directory, on the saved herdr machine or, with machine empty, here. */

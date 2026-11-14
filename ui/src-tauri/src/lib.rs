@@ -284,6 +284,8 @@ struct Connection {
     /// The project the app opens first: the checkout a development build was built in (`Sidecar::of_app`); None for
     /// any other build, which belongs to no checkout.
     project: Option<String>,
+    /// The release version, the linked engine's (`octoflow_engine::VERSION`), as the About dialog shows it.
+    version: &'static str,
 }
 
 /// The sidecar: its process while it runs, and how to reach it, or why it could not be started.
@@ -315,7 +317,8 @@ impl Sidecar {
     fn start(program: &Path, origin: &str, project: Option<String>) -> Sidecar {
         match spawn(program, origin) {
             Ok((child, served)) => {
-                let connection = Connection { url: served.url, token: served.token, project };
+                let version = octoflow_engine::VERSION;
+                let connection = Connection { url: served.url, token: served.token, project, version };
                 Sidecar { child: Mutex::new(Some(child)), connection: Ok(connection) }
             }
             Err(reason) => Sidecar { child: Mutex::new(None), connection: Err(reason) },
@@ -397,6 +400,8 @@ fn server(sidecar: tauri::State<'_, Sidecar>) -> Result<Connection, String> {
 /// Run the app until its window closes, then stop the sidecar.
 pub fn run() {
     tauri::Builder::default()
+        // About's links: capabilities/default.json scopes what it may open.
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             app.manage(Sidecar::of_app(&webview_origin(app)));
             Ok(())
@@ -470,6 +475,21 @@ mod tests {
         let connection = sidecar.connection.clone().expect("the sidecar started");
         assert_eq!(connection.url, "http://127.0.0.1:9");
         assert_eq!(connection.project, None);
+        sidecar.stop();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn the_connection_s_version_is_the_release_s() {
+        let printed = Command::new(checkout().join("ci/release-version.sh")).output().expect("release-version.sh runs");
+        assert!(printed.status.success(), "{}", String::from_utf8_lossy(&printed.stderr));
+        let release = String::from_utf8(printed.stdout).expect("UTF-8");
+        let dir = scratch_dir();
+        let program = dir.path().join("octoflow");
+        put_executable(&program, "#!/bin/sh\necho '{\"url\": \"http://127.0.0.1:9\", \"token\": \"t\"}'\n");
+        let sidecar = Sidecar::start(&program, "tauri://localhost", None);
+        let connection = sidecar.connection.clone().expect("the sidecar started");
+        assert_eq!(connection.version, release.trim());
         sidecar.stop();
     }
 
