@@ -28,8 +28,7 @@ serde = "1"
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std"] }
 rustls-pki-types = { version = "1.15.1", features = ["std"] }
 # The docs check (tests/docs/) reads the names the engine's Rust defines by parsing it: syn 2, the version Cargo.lock
-# had through tauri-build, with full for items and visit to walk them. Decided with the user,
-# 2026-11-03.
+# had through tauri-build, with full for items and visit to walk them. Decided with the user, 2026-11-03.
 syn = { version = "2.0.119", features = ["full", "visit"] }
 
 # The programs a world puts on the engine's PATH as herdr, gh, ssh and octoflow-gate (src/fakes.rs). They are

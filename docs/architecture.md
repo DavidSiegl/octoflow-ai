@@ -369,11 +369,11 @@ package (`src/bin/`, their logic in `src/fakes.rs`), so that its test finds them
 test share the ledger (`src/ledger.rs`, under `flock`). The World runs `E2E_ENGINE`'s binary when that is set, as
 Jenkins's Test stage sets it to the build it made for coverage, else builds the checkout's with cargo, killing and
 resuming it where the scenario says, and records, normalized by `src/normalize.rs` (times, run ids, pids, hashes, its
-own paths and ports): each invocation's exit status, the output programs read whole and other output only as its
-facts; the commands herdr and gh got and the requests PyPI got, in order, with `state.json` wherever it
-changed between them; the run directory's files; and both repositories' refs, commits and working trees. A scenario
-whose record differs from `recorded/<scenario>.json` fails, naming where. `E2E_RECORD=1 cargo nextest run -p octoflow-e2e` writes
-recordings instead, for a scenario added since or a change to what the engine does, whose recording is then a review of it. One
+own paths and ports): each invocation's exit status, the output programs read whole and other output only as its facts;
+the commands herdr and gh got and the requests PyPI got, in order, with `state.json` wherever it changed between them;
+the run directory's files; and both repositories' refs, commits and working trees. A scenario whose record differs from
+`recorded/<scenario>.json` fails, naming where. `E2E_RECORD=1 cargo nextest run -p octoflow-e2e` writes recordings
+instead, for a scenario added since or a change to what the engine does, whose recording is then a review of it. One
 test beside the scenarios, `app_event_stream`, keeps a recording outside the package:
 `ui/src/test/recorded-stream.json`, the events the desktop app's tests replay, which `tests/e2e/app_recording.rs`
 folds from what a real `serve` sent after each step of two scripted runs, with fixed stand-ins for what the clock
@@ -387,15 +387,14 @@ from the help of the same binary the scenarios run (`src/engine.rs`), and the na
 `ui/src-tauri/src` with syn. Each failure names `file:line`.
 
 Golden files hold generated text to a reviewed copy of it under `tests/golden/`, so a change to that text is reviewed
-as the diff of its golden files. They hold the engine's prompts: each step's prompts in
-the built-in workflow and each example workflow, as `Workflow` renders them, to a file per workflow, round 1 and,
-for the steps the review loops over, round 2 as the running session and a fresh one hear it; the engine's `workflow/tests/default_prompts.rs` holds the
-engine to them. The e2e scenarios
-record round 1 of each workflow as sent, so a reworded prompt fails both. Of round 2 of the examples and of a fresh
-session's prompts, the recordings hold only the templates, in `state.json`; the text as sent, placeholders filled in
-and a fresh session's prompt put together, only the golden files hold. The engine's
-other texts, its follow-up prompts, notes, commit messages and pull request bodies, have no golden files: the
-scenarios record them as sent, where one reaches them. GitHub #347 lists the texts neither reaches.
+as the diff of its golden files. They hold the engine's prompts: each step's prompts in the built-in workflow and each
+example workflow, as `Workflow` renders them, to a file per workflow, round 1 and, for the steps the review loops over,
+round 2 as the running session and a fresh one hear it; the engine's `workflow/tests/default_prompts.rs` holds the
+engine to them. The e2e scenarios record round 1 of each workflow as sent, so a reworded prompt fails both. Of round 2
+of the examples and of a fresh session's prompts, the recordings hold only the templates, in `state.json`; the text as
+sent, placeholders filled in and a fresh session's prompt put together, only the golden files hold. The engine's other
+texts, its follow-up prompts, notes, commit messages and pull request bodies, have no golden files: the scenarios record
+them as sent, where one reaches them. GitHub #347 lists the texts neither reaches.
 
 xtask's tests (`xtask/tests/`) cover the eval runner, `cargo xtask eval` ([Evals](design.md#evals)), with the
 `fake-engine` binary as its engine, a program that plays a scripted run in the clone, and the eval tasks: each bundle

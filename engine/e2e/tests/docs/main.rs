@@ -99,8 +99,9 @@ fn assert_no_errors(errors: &[String]) {
     assert!(errors.is_empty(), "\n{}", errors.join("\n"));
 }
 
-/// (line, command, the text of its arguments) for each command the document shows being run, in a code span or a
-/// fenced line: after `orchestrator`; and, in a code span, a command opening it with a flag after, as in `run --spec`. Shell comments, and what follows a pipe, `&&` or `;`, are left out.
+/// (line, command, the text of its arguments) for each command the document shows being run, in a code span or a fenced
+/// line: after `orchestrator`; and, in a code span, a command opening it with a flag after, as in `run --spec`. Shell
+/// comments, and what follows a pipe, `&&` or `;`, are left out.
 fn invocations<'a>(doc: &'a Doc, commands: &BTreeMap<String, BTreeSet<String>>) -> Vec<(Line<'a>, String, String)> {
     let mut found = Vec::new();
     for line in doc.lines() {

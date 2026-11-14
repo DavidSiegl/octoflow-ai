@@ -223,7 +223,6 @@ fn invalid_files_name_the_problem() {
         ("step 1 (a b): id may use only letters, digits, - and _", format!("[[steps]]\n{}", step.replace("\"build\"", "\"a b\""))),
         ("workflow bad: duplicate step id build", format!("[[steps]]\n{step}[[steps]]\n{step}")),
         ("workflow bad: role y has no step", format!("[roles]\ny = {{ model = \"m\" }}\n[[steps]]\n{step}")),
-        // tomllib says "Expected '=' after a key"; the toml crate words it its own way.
         ("(at line 1, column 6)", "this is not toml\n".into()),
         ("roles must be a table", format!("roles = 3\n[[steps]]\n{step}")),
         ("description must be a string", format!("description = 3\n[[steps]]\n{step}")),

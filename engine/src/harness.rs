@@ -1,8 +1,7 @@
-//! The agent harnesses a role can run in (HARNESS_NAMES, herdr's `--kind`), but for opencode's model and granted
-//! directory, which go in its config (Config::OpencodeEnv): how each harness's agent starts, resumes a saved session
-//! and is granted a directory
-//! ([`Harness::launch`]), and where and how it records the tokens a session used ([`SessionLog`],
-//! [`Harness::session_usage`]).
+//! The agent harnesses a role can run in (HARNESS_NAMES, herdr's `--kind`): how each harness's agent starts, resumes a
+//! saved session and is granted a directory ([`Harness::launch`]), and where and how it records the tokens a session
+//! used ([`SessionLog`], [`Harness::session_usage`]). opencode takes its model and granted directory from its config
+//! instead of its arguments (Config::OpencodeEnv).
 //!
 //! Everything a harness differs in, its permission, resume and directory arguments and its session logs, is one row
 //! per harness, in [`HARNESSES`], so that adding a harness is adding a row.

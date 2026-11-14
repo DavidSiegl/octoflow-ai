@@ -1,8 +1,8 @@
-//! The orchestrator program's command line: [`main`] reads the arguments (crate::cli::args),
-//! connects to herdr and the project's host, runs the command and turns how it ended into the program's exit status
-//! and its last lines. A command joins as a [`Command`] arm of [`run_command`], given the same [`Connected`], or of
-//! [`herdrless_command`], given the same [`Local`], for one that needs no herdr pane: every command
-//! but serve, crate::serve's, which main runs before it starts the others' signal handling. `run`
+//! The orchestrator program's command line: [`main`] reads the arguments (crate::cli::args), connects to herdr and the
+//! project's host, runs the command and turns how it ended into the program's exit status and its last lines. A command
+//! joins as a [`Command`] arm of [`run_command`], given the same [`Connected`], or, when it needs no herdr pane, of
+//! [`herdrless_command`], given the same [`Local`]. serve is neither: it is crate::serve's, which main runs before it
+//! starts the other commands' signal handling. `run`
 //! and `resume` are here and in crate::cli::start; the commands about a project's runs in crate::cli::listing, prune
 //! and close; `workflows`, `drain`, `refresh` and `doctor` in modules of their names.
 
@@ -133,8 +133,8 @@ pub(super) enum Stop {
 /// EXIT_ERROR for an error, EXIT_INTERRUPTED once the Interrupt is raised (crate::interrupt::exit then ends a process
 /// that got a SIGTERM or SIGHUP by that signal), serve's (crate::serve::serve_command), or how the run ended
 /// (finish). Prints what the command prints and the run's last line on stdout, and its log, errors and the usage on
-/// stderr. Standard output that does not take a write (a full disk, a pipe closed early) makes it EXIT_ERROR, but for
-/// an interrupted command, since what a command prints is its product; the command runs on,
+/// stderr. Standard output that does not take a write (a full disk, a pipe closed early) makes it EXIT_ERROR, since
+/// what a command prints is its product; an interrupted command keeps EXIT_INTERRUPTED. Either way the command runs on,
 /// the rest of what it prints lost.
 ///
 /// Must be called on the main thread before any other thread starts, since it starts the process's handling of

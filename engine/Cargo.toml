@@ -26,8 +26,8 @@ serde = { version = "1", features = ["derive"] }
 # and what list and show print of it, keep the order it was written in.
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
-# PyPI and crates.io, over HTTP or HTTPS (http.rs): blocking, and with rustls rather than the system's TLS library, given
-# the certificates it trusts (root_certs; ureq's own Mozilla roots only as the fallback there); gzip and the other
+# PyPI and crates.io, over HTTP or HTTPS (http.rs): blocking, and with rustls rather than the system's TLS library,
+# given the certificates it trusts (root_certs; ureq's own Mozilla roots only as the fallback there); gzip and the other
 # extras are left out, since no server is asked for them.
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 # The certificates TLS trusts, found as OpenSSL finds them: SSL_CERT_FILE and SSL_CERT_DIR, else the
@@ -37,7 +37,7 @@ rustls-native-certs = "0.8.5"
 # 0.2.2 is from 2026-10-26, under two weeks old. Approved by the user for ticket 07, 2026-10-28.
 openssl-probe = "0.2.1"
 # serve's HTTP server on 127.0.0.1 (serve.rs), blocking, a thread per request; also the local server the tests of
-# http.rs and ci.rs answer requests from. Approved by the user for serve.
+# http.rs answer requests from. Approved by the user for serve.
 tiny_http = "0.12"
 # preserve_order: a table's keys come in the file's order, so a table with two problems is refused naming the first
 # in the file.

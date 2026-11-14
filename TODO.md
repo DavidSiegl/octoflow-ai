@@ -131,6 +131,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   has two places. Today's scenario holds no angle bracket of its own. Closes with a Normalizer that takes the
   replacements to write (the e2e placeholders, or the app's stand-ins) rather than text to parse again, and one
   fold both callers shape their output from.
+- **The e2e world still names its project, author, CA and proxy "Parity".** Raised by cross-review 193 (F12, nit):
+  "The e2e world still names its project, git author, CA and proxy "Parity" ("The project a parity scenario
+  changes."), port-era vocabulary" (`engine/e2e/tests/e2e/world.rs`, `servers.rs`, `src/fakes.rs`,
+  `scenarios.rs`). The names reach every recording under `engine/e2e/recorded/`, `engine/tests/oracle/helpers.json`
+  and `ui/src/test/recorded-stream.json`, so a rename rewrites them all; left out of drop-python-mentions for that.
+  Closes with neutral names in the World and the recordings rewritten with `E2E_RECORD=1`.
 - **Writes to origin are not tried again through an outage.** `reaching_origin` (`engine/src/workflow/origin.rs`)
   wraps the run's fetches and its `ls-remote` reads only; the pushes (`engine/src/host.rs`'s `push_ref`,
   `push_branch`), the remote branch deletions (`delete_remote_branch`, `delete_remote_branch_at`) and the `gh` calls
@@ -172,15 +178,15 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `waitid` there; unchecked on a Mac. Decided against (the user's ruling, 2026-11-11): `engine/tests/signals.rs`, which
   is Linux's (it reads `/proc` and starts the engine with GNU `env`), ported to macOS and run on one, since no Mac runs
   the tests; reopen when a Mac user reports a hang. A process that left the command's group, as a daemon does, is not
-  reached, as at a timeout; that is no gap, as the terminal's Ctrl-C does not reach one either. (3) On a Linux
-  whose `/proc/self/status` cannot be read, as in a container or sandbox without `/proc`, `ignored_signals` finds
-  nothing ignored, so `by_signals` waits for a signal the engine started with ignored and takes it, Linux queueing a
-  blocked signal whatever its disposition (cross-review 102, F2: "an engine under `nohup` in a container or sandbox
-  without
+  reached, as at a timeout; that is no gap, as the terminal's Ctrl-C does not reach one either. (3) On a Linux whose
+  `/proc/self/status` cannot be read, as in a container or sandbox without `/proc`, `ignored_signals` finds nothing
+  ignored, so `by_signals` waits for a signal the engine started with ignored and takes it, Linux queueing a blocked
+  signal whatever its disposition (cross-review 102, F2: "an engine under `nohup` in a container or sandbox without
   /proc is hung up: the Interrupt is raised, the run released as interrupted", and `interrupt::exit`'s raise of the
-  still-ignored signal returns, so the program exits 129 by `std::process::exit`). The gap is the same for SIGINT, SIGTERM and SIGHUP. nix reads a signal's disposition only through `sigaction`, which
-  is `unsafe`. Decided against (the user's ruling, 2026-11-12): that query, a second `unsafe` block, or refusing to
-  start on a Linux without `/proc`; such a container under `nohup` is rare.
+  still-ignored signal returns, so the program exits 129 by `std::process::exit`). The gap is the same for SIGINT,
+  SIGTERM and SIGHUP. nix reads a signal's disposition only through `sigaction`, which is `unsafe`. Decided against (the
+  user's ruling, 2026-11-12): that query, a second `unsafe` block, or refusing to start on a Linux without `/proc`; such
+  a container under `nohup` is rare.
 - **The commands the engine runs outlive an engine that is SIGKILLed.** Each command runs in a process group of its
   own, so a SIGKILL of the engine, or of its group, ends the engine and leaves a running
   `herdr agent wait`, `gh pr create` or push to finish unwatched. SIGINT, SIGTERM and SIGHUP stop them
@@ -190,7 +196,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   against (the user's ruling, 2026-11-11): the command's group killed when the engine dies, by a subreaper or a
   watchdog (Linux's `PR_SET_PDEATHSIG`, set in `run_process`'s `pre_exec`, reaches only the command itself, not what
   it starts); a SIGKILL allows no cleanup, and a resumed run takes over the agents it finds alive.
-- **The engine's TLS trusts certificates otherwise than OpenSSL in a few cases.** Its transport to PyPI and
+- **The engine's HTTP transport behaves otherwise than OpenSSL and curl in a few cases.** Its transport to PyPI and
   crates.io is ureq (`HttpClient`, `engine/src/http.rs`, 2026-10-28), which sends a request for a plain-http URL
   through a proxy with CONNECT (documented in README's Requirements: the user's ruling, 2026-11-12, GitHub #410). TLS
   trusts the certificates of the places the environment names, else of the system's as openssl-probe finds them, each

@@ -147,8 +147,8 @@ fn no_answer(e: &ureq::Error) -> HttpError {
     HttpError::NoAnswer(reason)
 }
 
-/// Why a host name did not resolve, why, after getaddrinfo's error number when why's text gives it away:
-/// `[Errno -2] Name or service not known`.
+/// The reason a host name did not resolve, from why, getaddrinfo's message: prefixed by its error number in brackets
+/// when the message is one of the three this knows, as `[Errno -2] Name or service not known`, else why as it is.
 fn resolver_error(why: &str) -> String {
     let number = match why {
         "Name or service not known" => Some(-2),
@@ -226,9 +226,9 @@ impl Proxies {
 /// every file in those directories, and none from the system; else the system's bundle and certificate directories,
 /// where openssl-probe finds them. rustls-native-certs reads each; a file that cannot be read, and an item that is not
 /// a certificate, adds none, as in OpenSSL, so a variable naming nothing usable trusts none. Mozilla's roots only when
-/// neither variable is set and the system has no certificate, rather than
-/// trusting none and failing every https request. TODO.md's "The engine's TLS trusts certificates otherwise than
-/// OpenSSL in a few cases" says where else it differs.
+/// neither variable is set and the system has no certificate, where OpenSSL would trust none and fail every https
+/// request. TODO.md's "The engine's HTTP transport behaves otherwise than OpenSSL and curl in a few cases" says where
+/// else it differs.
 fn root_certs(env: &dyn Fn(&str) -> Option<String>) -> RootCerts {
     let file = env("SSL_CERT_FILE").filter(|path| !path.is_empty()).map(PathBuf::from);
     let dirs = env("SSL_CERT_DIR").unwrap_or_default();

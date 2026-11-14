@@ -219,8 +219,8 @@ pub fn facts(text: &str) -> Vec<String> {
     found
 }
 
-/// s with each match of a matcher replaced, scanning from the left and resuming after each match: the matcher is given s's characters
-/// and a position, and answers the end of a match that starts there and its replacement, or None.
+/// s with each match of a matcher replaced, scanning from the left and resuming after each match: the matcher is given
+/// s's characters and a position, and answers the end of a match that starts there and its replacement, or None.
 fn substitute(s: &str, matcher: impl Fn(&[char], usize) -> Option<(usize, String)>) -> String {
     let c: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(s.len());

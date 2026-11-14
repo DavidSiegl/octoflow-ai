@@ -1,9 +1,9 @@
-//! The template language of prompts, handoff file names and proof commands: `{name}` is replaced by the value of
-//! the placeholder of that name, and `{{` and `}}` stand for a literal brace. That is all of it. A name is as is_name
-//! says, as the names of workflows, roles and steps are, since `{<step>_path}` holds a step's. Any other use of a
-//! brace is an error naming the placeholder and where it starts, so that a template written for a richer format
-//! syntax — with a conversion (`!r`), a format spec (`:>10`), an attribute (`.upper`), an index (`[0]`) or a positional
-//! field (`{}`, `{0}`) — is refused when the file holding it is read, not filled in some other way.
+//! The template language of prompts, handoff file names and proof commands: `{name}` is replaced by the value of the
+//! placeholder of that name, and `{{` and `}}` stand for a literal brace. That is all of it. A name is as is_name says,
+//! as the names of workflows, roles and steps are, since `{<step>_path}` holds a step's. Any other use of a brace is an
+//! error naming the placeholder and where it starts, so that a template written for a richer format syntax — with a
+//! conversion (`!r`), a format spec (`:>10`), an attribute (`.upper`), an index (`[0]`) or a positional field (`{}`,
+//! `{0}`) — is refused when the file holding it is read, not filled in some other way.
 
 use std::fmt;
 

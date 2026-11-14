@@ -219,7 +219,8 @@ pub(crate) enum ProcessError {
 }
 
 /// How long a command has after the SIGINT of an Interrupt to exit before its process group is killed (SIGKILL), in
-/// milliseconds. The SIGINT first lets git remove its lock files, as it does at a Ctrl-C.
+/// milliseconds. The SIGINT first lets git remove its lock files, as it does at a Ctrl-C, which takes it a few
+/// milliseconds; 250 leaves room for a loaded machine and still ends a run without a wait the human notices.
 const INTERRUPT_GRACE_MS: u64 = 250;
 
 /// argv's exit status (Exec::status), and its standard output and error, once it has exited and

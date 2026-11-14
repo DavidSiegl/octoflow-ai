@@ -1,7 +1,7 @@
-//! serve: the runs of any project, and their agents, over HTTP on 127.0.0.1 for the desktop app.
-//! [`serve_command`] is the program's `serve`; [`RunServer`] is the
-//! server, on tiny_http, each request answered on a thread of its own; crate::serve::runs is what it serves of a
-//! project. docs/architecture.md's "serve" describes the protocol and its security checks.
+//! serve: the runs of any project, and their agents, over HTTP on 127.0.0.1 for the desktop app. [`serve_command`] is
+//! the program's `serve`; [`RunServer`] is the server, on tiny_http, each request answered on a thread of its own;
+//! crate::serve::runs is what it serves of a project. docs/architecture.md's "serve" describes the protocol and its
+//! security checks.
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};

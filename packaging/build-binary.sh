@@ -1,9 +1,9 @@
 #!/bin/sh
-# Build dist/octoflow-<os>-<arch>, the engine's orchestrator binary (engine/, a release build), write its
-# .sha256 beside it, and smoke-test it; and write dist/octoflow-third-party-licenses.html, the licenses of the crates
-# in it and in the desktop app, which every release ships beside them (packaging/about.toml). Jenkins's Package stage
-# builds the Linux binary with it, and .github/workflows/macos-binary.yml the macOS one, so the two builds cannot
-# drift apart. The binary links the C library of the machine it was built on. Needs cargo-about on PATH, as ci/install-tools.sh pins it.
+# Build dist/octoflow-<os>-<arch>, the engine's orchestrator binary (engine/, a release build), write its .sha256 beside
+# it, and smoke-test it; and write dist/octoflow-third-party-licenses.html, the licenses of the crates in it and in the
+# desktop app, which every release ships beside them (packaging/about.toml). Jenkins's Package stage builds the Linux
+# binary with it, and .github/workflows/macos-binary.yml the macOS one, so the two builds cannot drift apart. The binary
+# links the C library of the machine it was built on. Needs cargo-about on PATH, as ci/install-tools.sh pins it.
 set -eu
 
 cd "$(dirname "$0")/.."
