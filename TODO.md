@@ -90,12 +90,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   stuck rule misses that loop, so the Builder gets one more turn. Closes with recording the round before the quality
   file is written, or comparing only the first `QUALITY_FINDINGS_LIMIT` of a JSON-read round against a Markdown-read
   one.
-- **An in-place run puts back what the human changes in the checkout while a proof runs.** `Workflow::run_proof`
-  snapshots the working tree before each proof and `Host::restore_tree` puts back every path that differs afterwards,
-  whoever changed it (cross-review 143, F2): in an in-place run a file the human saves during a proof is overwritten
-  and one they create is deleted, without a warning; a worktree run is not exposed. Ticketed as GitHub #384
-  (`.scratch/todo/issues/42`): keep the human's version and warn. Decided against (the user's ruling, 2026-11-11):
-  running proofs in a scratch worktree of the tree under test.
 - **No coverage-guided fuzzing of the engine's parsers.** Decided against (the user's ruling, 2026-11-11): a
   cargo-fuzz pass over `handoff::first_line_word`, `parse_verdict`, `parse_gate`, `parse_blocked` and
   `parse_env_file`, looking for panics. The seeded generated-input tests (`test_support::Rng`) cover them instead;

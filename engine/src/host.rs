@@ -126,6 +126,37 @@ pub struct ChangedFile {
     pub removed: u64,
 }
 
+/// What [`Host::restore_tree`] changed in a working tree, and the way back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PutBack {
+    /// The files it wrote or deleted, by absolute path.
+    pub paths: Vec<String>,
+    /// One line of sh that makes those files again what restore_tree found them, from any directory: git restores
+    /// them from a tree object of the working tree as found, which git gc keeps for two weeks, and rm deletes the
+    /// ones there were none of.
+    pub undo: String,
+}
+
+impl PutBack {
+    /// What restore_tree changed in the repository at top, an absolute path: the files at paths, relative to top,
+    /// found the tree object of them as restore_tree found them, and of those paths the ones that held no file then.
+    pub fn new(top: &str, found: &str, paths: &[String], absent: &[String]) -> PutBack {
+        let abs = |p: &String| format!("{top}/{p}");
+        let held: Vec<&String> = paths.iter().filter(|p| !absent.contains(p)).collect();
+        let mut steps = vec![];
+        if !held.is_empty() {
+            let source = format!("--source={found}");
+            let mut argv = vec!["git", "--literal-pathspecs", "-C", top, "restore", &source, "--"];
+            argv.extend(held.iter().map(|p| p.as_str()));
+            steps.push(shlex_join(&argv));
+        }
+        if !absent.is_empty() {
+            steps.push(format!("rm -f -- {}", shlex_join(&absent.iter().map(abs).collect::<Vec<_>>())));
+        }
+        PutBack { paths: paths.iter().map(abs).collect(), undo: steps.join(" && ") }
+    }
+}
+
 /// A file in a run directory, as [`Host::run_files`] lists it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunFile {
@@ -471,17 +502,24 @@ pub trait Host {
     /// included, that differs from tree's is written as tree has it, or deleted where tree has none, as restore does.
     /// Ignored files are left as they are, by the ignore rules tree holds: changed `.gitignore` files are put back
     /// first, so a rule added since hides nothing added since. A directory a deleted file leaves empty stays, which
-    /// git does not see. The index stays as it is. Errors: as tree_snapshot's and restore's, as for a nested
-    /// repository without a commit added since; the tree may then be partly restored.
-    fn restore_tree(&self, cwd: &str, tree: &str) -> Result<(), OrchestratorError> {
-        let differ = utf8_paths(&names_between(self, cwd, tree, &working_tree(self, cwd)?, &[])?)?;
+    /// git does not see. The index stays as it is.
+    ///
+    /// Returns what it changed, each PutBack with the way back to the tree as found: none when nothing differed, one
+    /// for the changed `.gitignore` files and one for the rest when both differed. Errors: as tree_snapshot's and
+    /// restore's, as for a nested repository without a commit added since; the tree may then be partly restored.
+    fn restore_tree(&self, cwd: &str, tree: &str) -> Result<Vec<PutBack>, OrchestratorError> {
+        let found = working_tree(self, cwd)?;
+        let differ = utf8_paths(&names_between(self, cwd, tree, &found, &[])?)?;
         let ignores: Vec<String> = differ.iter().filter(|p| file_name(p) == ".gitignore").cloned().collect();
         if ignores.is_empty() {
-            return self.restore(cwd, tree, &differ);
+            return Ok(put_back(self, cwd, tree, &found, &differ)?.into_iter().collect());
         }
-        self.restore(cwd, tree, &ignores)?;
-        let differ = utf8_paths(&names_between(self, cwd, tree, &working_tree(self, cwd)?, &[])?)?;
-        self.restore(cwd, tree, &differ)
+        let mut done: Vec<PutBack> = put_back(self, cwd, tree, &found, &ignores)?.into_iter().collect();
+        // Found again: with the rules put back, it holds the files only the added rules hid.
+        let found = working_tree(self, cwd)?;
+        let differ = utf8_paths(&names_between(self, cwd, tree, &found, &[])?)?;
+        done.extend(put_back(self, cwd, tree, &found, &differ)?);
+        Ok(done)
     }
 
     // Locked files (Step.locks). Their paths are relative to the repository's top level, whatever directory of the
@@ -1167,6 +1205,28 @@ pub(crate) fn shell_path(path: &str) -> (&'static str, &str) {
 /// runs in, and with no glob in them.
 fn top_literal<S: AsRef<str>>(paths: &[S]) -> Vec<String> {
     paths.iter().map(|p| format!(":(top,literal){}", p.as_ref())).collect()
+}
+
+/// Make paths, relative to the repository's top level, in the working tree in cwd what they are in tree, as
+/// Host::restore does, where found is a tree object of them as they are now; what that changed, None for no paths.
+/// Errors: git fails.
+fn put_back<H: Host + ?Sized>(
+    host: &H,
+    cwd: &str,
+    tree: &str,
+    found: &str,
+    paths: &[String],
+) -> Result<Option<PutBack>, OrchestratorError> {
+    if paths.is_empty() {
+        return Ok(None);
+    }
+    // Over the whole trees, and filtered here, since an argv has a limit.
+    let args = ["--name-only", "-z", "--no-renames", "--no-ext-diff", "--diff-filter=D", tree, found];
+    let deleted: HashSet<String> = utf8_paths(&git_diff(host, cwd, &args)?)?.into_iter().collect();
+    let absent: Vec<String> = paths.iter().filter(|p| deleted.contains(*p)).cloned().collect();
+    let top = utf8_path(&host.git_verbatim(cwd, &["rev-parse", "--show-toplevel"])?)?;
+    host.restore(cwd, tree, paths)?;
+    Ok(Some(PutBack::new(top.strip_suffix('\n').unwrap_or(&top), found, paths, &absent)))
 }
 
 /// The working tree in cwd as `git add -A` would stage it, as a tree object; the index stays as it was. Errors: git

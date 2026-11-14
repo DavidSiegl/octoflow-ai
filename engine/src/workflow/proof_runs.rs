@@ -108,7 +108,9 @@ impl Workflow<'_> {
     /// also when the proof fails, errors or is interrupted: what it writes elsewhere in the tree, such as a coverage
     /// file or the __pycache__ of a module it imports, never reaches the commit, and a file it edits is put back as it
     /// was. So is what anyone else changes in the tree while the proof runs, as a human may in an in-place run's
-    /// checkout (TODO.md). When the proof ran and its tree cannot be put back, that is logged and the outcome says the
+    /// checkout: nothing tells their writes from the proof's, so an in-place run logs each file it put back, with the
+    /// command that makes them all again what the proof left (PutBack::undo); a run in a worktree, which no human
+    /// edits, logs nothing. When the proof ran and its tree cannot be put back, that is logged and the outcome says the
     /// proof did not run cleanly; when it did not run, or was interrupted, it is only logged. Nothing is put back
     /// outside a git repository, which no run commits; nor where the tree cannot be snapshotted, as with a nested
     /// repository without a commit, which `git add -A` and so publishing refuse too: that is logged, and the proof runs.
@@ -144,11 +146,22 @@ impl Workflow<'_> {
         // The copies are removed and the tree put back also when the human's Ctrl-C stopped the proof's run.
         let put_back = self.interrupt.finally(|| {
             self.remove_proof_copies(&copies);
-            let restored = before.as_deref().map_or(Ok(()), |before| self.host.restore_tree(work_dir, before));
-            if let Err(e) = &restored {
-                self.human.log(&format!("could not undo what a proof wrote in {work_dir}: {e}"));
+            let restored = before.as_deref().map_or(Ok(vec![]), |before| self.host.restore_tree(work_dir, before));
+            match &restored {
+                Err(e) => self.human.log(&format!("could not undo what a proof wrote in {work_dir}: {e}")),
+                Ok(put_back) if self.state.worktree.is_none() => {
+                    for p in put_back {
+                        self.human.log(&format!(
+                            "a proof's run changed files in {work_dir}, put back as they were before it, so a change \
+                             saved there meanwhile is undone too: {}; to have them as the proof left them: {}",
+                            p.paths.join(", "),
+                            p.undo
+                        ));
+                    }
+                }
+                Ok(_) => {}
             }
-            restored
+            restored.map(drop)
         });
         // Nothing of a proof the Ctrl-C stopped is recorded.
         self.check_interrupt()?;
