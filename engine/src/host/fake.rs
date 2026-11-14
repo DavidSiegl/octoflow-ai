@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use super::{ChangedFile, Completed, Exec, ExecError, Host, PutBack, Scanned, GIT_STATUS_ARGS};
+use super::{ChangedFile, Completed, Exec, ExecError, Host, PutBack, RestoreError, Scanned, GIT_STATUS_ARGS};
 use crate::quality::Leak;
 use crate::state::SavedRun;
 use crate::constants::WORKTREES_DIR;
@@ -842,7 +842,7 @@ impl Host for FakeHost {
     }
 
     /// What it changed is one PutBack, cwd its top level, whose tree as found tree_snapshots then holds too.
-    fn restore_tree(&self, cwd: &str, tree: &str) -> Result<Vec<PutBack>, OrchestratorError> {
+    fn restore_tree(&self, cwd: &str, tree: &str) -> Result<Vec<PutBack>, RestoreError> {
         let mut s = self.state();
         let n: usize = tree.strip_prefix("tree").and_then(|n| n.parse().ok()).unwrap_or(0);
         let held = s.tree_snapshots.get(n.wrapping_sub(1)).unwrap_or_else(|| panic!("FakeHost has no tree {tree}")).clone();
@@ -854,7 +854,7 @@ impl Host for FakeHost {
         }
         let relative = |p: &&String| p[cwd.len() + 1..].to_string();
         let paths: Vec<String> = differ.iter().map(relative).collect();
-        let absent: Vec<String> = differ.iter().filter(|p| !found.contains_key(**p)).map(relative).collect();
+        let absent: HashSet<String> = differ.iter().filter(|p| !found.contains_key(**p)).map(relative).collect();
         for path in found.keys().filter(|p| !held.contains_key(*p)) {
             s.files.remove(path);
         }

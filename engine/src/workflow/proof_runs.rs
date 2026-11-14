@@ -6,7 +6,7 @@ use super::step_prompt::RunView;
 use super::{Outcome, Workflow};
 use crate::constants::PROOF_COPIES_DIR;
 use crate::error::OrchestratorError;
-use crate::host::{checked, shlex_quote, DEFAULT_TIMEOUT, MISSING_FILE_STATUS};
+use crate::host::{checked, shlex_quote, RestoreError, DEFAULT_TIMEOUT, MISSING_FILE_STATUS};
 use crate::paths::file_name;
 use crate::pipeline::Step;
 use crate::proofs::{
@@ -147,21 +147,28 @@ impl Workflow<'_> {
         let put_back = self.interrupt.finally(|| {
             self.remove_proof_copies(&copies);
             let restored = before.as_deref().map_or(Ok(vec![]), |before| self.host.restore_tree(work_dir, before));
-            match &restored {
-                Err(e) => self.human.log(&format!("could not undo what a proof wrote in {work_dir}: {e}")),
-                Ok(put_back) if self.state.worktree.is_none() => {
-                    for p in put_back {
-                        self.human.log(&format!(
-                            "a proof's run changed files in {work_dir}, put back as they were before it, so a change \
-                             saved there meanwhile is undone too: {}; to have them as the proof left them: {}",
-                            p.paths.join(", "),
-                            p.undo
-                        ));
-                    }
-                }
-                Ok(_) => {}
+            let (put_back, failed) = match restored {
+                Ok(put_back) => (put_back, None),
+                Err(RestoreError { put_back, cause }) => (put_back, Some(cause)),
+            };
+            if let Some(e) = &failed {
+                self.human.log(&format!("could not undo what a proof wrote in {work_dir}: {e}"));
             }
-            restored.map(drop)
+            if self.state.worktree.is_none() {
+                let how = match failed {
+                    None => "put back as they were before it",
+                    Some(_) => "put back as they were before it, or some of them, before putting back failed",
+                };
+                for p in &put_back {
+                    self.human.log(&format!(
+                        "a proof's run changed files, {how}, so a change saved in them meanwhile is undone too: {}; \
+                         to have them as the proof left them, a nested repository's files aside: {}",
+                        p.paths.join(", "),
+                        p.undo
+                    ));
+                }
+            }
+            failed.map_or(Ok(()), Err)
         });
         // Nothing of a proof the Ctrl-C stopped is recorded.
         self.check_interrupt()?;

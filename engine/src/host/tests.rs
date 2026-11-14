@@ -1750,6 +1750,33 @@ fn a_tree_is_restored_over_a_directory_and_a_file_swapped_and_a_nested_repositor
 }
 
 #[test]
+fn the_way_back_swaps_a_directory_and_a_file_again() {
+    let r = Repo::new(&[("x/y", "in x\n"), ("a", "a file\n")]);
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    std::fs::remove_dir_all(format!("{}/x", r.path)).unwrap();
+    r.put("x", "now a file\n");
+    std::fs::remove_file(format!("{}/a", r.path)).unwrap();
+    r.put("a/b", "now in a directory\n");
+    let put_back = r.host.restore_tree(&r.path, &tree).unwrap();
+    let [PutBack { undo, .. }] = &put_back[..] else { panic!("{put_back:?}") };
+    r.host.check(&["sh", "-c", undo], None, DEFAULT_TIMEOUT).unwrap();
+    assert_eq!((text(&r.path, "x"), text(&r.path, "a/b")), (Some("now a file\n".into()), Some("now in a directory\n".into())));
+}
+
+#[test]
+fn a_restore_that_fails_names_what_it_put_back_before() {
+    // The added rule hides a nested repository without a commit, which git add -A refuses once the rule is put back.
+    let r = Repo::new(&[(".gitignore", "")]);
+    let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
+    r.put(".gitignore", "fixture/\n");
+    r.git(&["init", "--quiet", &format!("{}/fixture", r.path)]);
+    let Err(RestoreError { put_back, cause }) = r.host.restore_tree(&r.path, &tree) else { panic!("it restored") };
+    assert!(cause.0.contains("fixture"), "{cause}");
+    let paths: Vec<&[String]> = put_back.iter().map(|p| &p.paths[..]).collect();
+    assert_eq!(paths, [&[format!("{}/.gitignore", r.path)][..]]);
+}
+
+#[test]
 fn a_nested_repository_made_since_goes_but_the_ignored_files_it_holds() {
     // d held only an ignored file, so the tree before has no d, and the one after has d as a gitlink.
     let r = Repo::new(&[(".gitignore", "*.env\n")]);

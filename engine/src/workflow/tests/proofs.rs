@@ -848,8 +848,8 @@ fn an_in_place_run_names_each_file_a_proof_changed_with_the_way_back() {
 
         assert_eq!(repo.host.git(&repo.path, &["status", "--porcelain"]).unwrap(), "");
         let lines = told.lines();
-        let named = format!("{0}/gone.sh, {0}/limiter.sh, {0}/stray.txt; to have them as the proof left them: ", repo.path);
-        let warned: Vec<&String> = lines.iter().filter(|l| l.starts_with("a proof's run changed files in ")).collect();
+        let named = format!("{0}/gone.sh, {0}/limiter.sh, {0}/stray.txt; to have them as the proof left them, a nested repository's files aside: ", repo.path);
+        let warned: Vec<&String> = lines.iter().filter(|l| l.starts_with("a proof's run changed files, ")).collect();
         let [warning] = warned[..] else { panic!("{lines:?}") };
         let (_, undo) = warning.split_once(&named).unwrap_or_else(|| panic!("{warning}"));
         repo.host.check(&["sh", "-c", undo], None, crate::host::DEFAULT_TIMEOUT).unwrap();
