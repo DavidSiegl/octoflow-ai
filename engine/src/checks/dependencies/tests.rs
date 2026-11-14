@@ -1,4 +1,4 @@
-//! The new-dependencies check, and the manifests, requirements, spec names and lines that name a package of
+//! The new-dependencies check, and the manifests, requirements and spec names of
 //! checks.json, read as checks.json records them. A manifest's value is compared and written as TOML, and a package
 //! named from several sources is a dependency from each.
 
@@ -181,8 +181,8 @@ fn a_python_package_is_a_dependency_from_each_source_it_is_named_with() {
     let pyproject = "[project]\nname = \"limiter\"\ndependencies = [\"foo\", \"bar\", \"baz\"]\n\
         [dependency-groups]\ndev = [\"foo @ https://example.com/foo.whl\"]\n\
         [[tool.uv.index]]\nname = \"corp\"\nurl = \"https://corp.example/simple\"\nexplicit = true\n\
-        [tool.uv.sources]\nbaz = [{ index = \"corp\", marker = \"sys_platform == 'win32'\" }, \
-        { git = \"https://example.com/baz.git\", marker = \"sys_platform != 'win32'\" }]\n";
+        [tool.uv.sources]\nbaz = [\n{ index = \"corp\", marker = \"sys_platform == 'win32'\" },\n\
+        { git = \"https://example.com/baz.git\", marker = \"sys_platform != 'win32'\" },\n]\n";
     let (pypi, mirror) = ("https://pypi.org/simple", "https://mirror.example/simple");
     let lock = lock(&[("foo", pypi), ("bar", pypi), ("bar", mirror)]);
     let deps = python_dependencies(&|path: &str| {
@@ -208,7 +208,10 @@ fn a_python_package_is_a_dependency_from_each_source_it_is_named_with() {
     assert_eq!(
         sourced(&deps.locked),
         [("foo", "uv.lock", None), ("bar", "uv.lock", None), ("bar", "uv.lock", index(mirror))]
-    );
+    );    // A requirement's own line, and for baz each of its [tool.uv.sources] entries' lines.
+    let lines: Vec<(&str, u64)> =
+        deps.direct.iter().flat_map(|(key, sources)| sources.iter().map(move |d| (key, d.line))).collect();
+    assert_eq!(lines, [("foo", 3), ("foo", 5), ("bar", 3), ("bar", 3), ("baz", 12), ("baz", 13)]);
 }
 
 #[test]
@@ -362,7 +365,7 @@ fn a_dependency_moved_to_another_source_is_reported() {
             ),
             Finding::warning(
                 Some("uv.lock"),
-                None,
+                Some(8),
                 "source-changed",
                 format!("`idna`: at the base, from PyPI; in the change, {whence}.")
             ),
@@ -681,7 +684,7 @@ fn manifests_read_as_checks_json_says() {
 }
 
 #[test]
-fn requirements_names_and_lines_read_as_checks_json_says() {
+fn requirements_and_names_read_as_checks_json_says() {
     for case in cases("requirements") {
         let case = case.as_array().unwrap();
         let got = match requirement_of(&::toml::Value::String(case[0].as_str().unwrap().to_string())) {
@@ -698,12 +701,6 @@ fn requirements_names_and_lines_read_as_checks_json_says() {
         let case = case.as_array().unwrap();
         let got: Vec<Value> = spec_names(case[0].as_str().unwrap()).into_iter().map(Value::from).collect();
         assert_eq!(Value::Array(got), case[1]);
-    }
-    for case in cases("line_naming") {
-        let case = case.as_array().unwrap();
-        let lines = case[1].as_array().unwrap().iter().map(|n| n.as_i64().unwrap() as u64).collect();
-        let got = line_naming(case[0].as_str().unwrap(), &lines, case[2].as_str().unwrap());
-        assert_eq!(got.map(Value::from).unwrap_or(Value::Null), case[3], "{case:?}");
     }
 }
 
@@ -1041,6 +1038,16 @@ fn a_new_crate_named_from_several_sources_is_judged_from_each() {
 }
 
 #[test]
+fn each_source_of_a_new_crate_is_found_on_its_own_entry_s_line() {
+    let crates = FakeCratesIo::with(&[("foo", CrateJson::default())]);
+    let found = find_foo_twice(&crates, "");
+    assert_eq!(
+        rules(&found.issues),
+        [(Some("engine/Cargo.toml"), Some(6), "not-in-spec"), (Some("engine/Cargo.toml"), Some(9), "not-in-spec")]
+    );
+}
+
+#[test]
 fn a_source_beside_one_crates_io_does_not_know_is_not_judged_by_crates_io() {
     let crates = FakeCratesIo::with(&[]);
     let found = find_foo_twice(&crates, "foo");
@@ -1233,7 +1240,7 @@ fn a_cargo_manifest_anywhere_starts_the_check_and_one_untouched_does_not() {
         .files(cargo_files(&["tokio = \"1\""]));
     assert_eq!(
         rules(&find_crates(&member, &crates).issues),
-        [(Some("Cargo.toml"), None, "not-in-spec")]
+        [(Some("Cargo.toml"), Some(6), "not-in-spec")]
     );
 }
 
