@@ -1,4 +1,4 @@
-import type { RunEvent, RunFile, RunRecord } from "./api";
+import type { RunEvent, RunFile, RunRecord, Turn } from "./api";
 
 /** A run as the app last heard of it. */
 export interface RunEntry {
@@ -71,42 +71,80 @@ export function formatRound(record: RunRecord): string {
   return record.quality_round ? `round ${record.round} q${record.quality_round}` : `round ${record.round}`;
 }
 
-export type StageState = "done" | "current" | "todo" | "failed";
+/** A stage's place in the run: done; current, or failed when the run failed there; to do; or "again", a stage after
+ * the current one that already ran: a verdict sent the run back to an earlier step, or the quality gate sent it back
+ * to its step for a fix in the same round. */
+export type StageState = "done" | "current" | "todo" | "failed" | "again";
 
-/** One stage of a run's progress: a step of its workflow, or one of the reserved phases quality and publish. */
+/** One stage of a run's progress, in the order progress gives them. */
 export interface Stage {
+  /** "step", a step of the workflow; "quality", the quality loop after a quality-gated step; "publish", the pull
+   * request; "phase", the phase alone, of a run whose workflow the server could not load. */
+  kind: "step" | "quality" | "publish" | "phase";
+  /** The step's id; for quality, the id of the gated step its loop judges; null for publish and phase. */
+  step: string | null;
+  /** The stage's name as the run words it: the step id, "quality", "publish", or the phase. */
   label: string;
+  /** The workflow's label for the step's role, the role itself from a server before 0.71.0; null but for a step. */
+  roleLabel: string | null;
+  /** The step a CHANGES_REQUESTED from this step sends the run back to; null for a step that gives no verdict, and
+   * for every stage of a record from a server before 0.71.0. */
+  loopTo: string | null;
+  /** The stage's turns, oldest first: a step's own turns, and for quality, the gate's analyses of that step's
+   * turns. Empty for publish and phase. */
+  turns: Turn[];
+  /** Where the run stands with the stage. */
   state: StageState;
 }
 
-/** The run's way through its workflow, by its steps and its phase.
+/** The run's way through its workflow, every stage of it from the start: each step, quality after each step the
+ * quality loop follows in this run, and publish last when the run opens a pull request.
  *
- * The current stage is the phase's step; in quality, a stage of its own after the step whose turn it judges, the
- * last one taken; in publish, a stage after every step. A failed run's current stage is "failed". A workflow this
- * orchestrator could not load has no steps, and its progress is its phase alone.
+ * The current stage is the phase's step; in quality, the quality stage after the step whose turn it judges, the last
+ * one taken; in publish, publish. A failed run's current stage is "failed". A record from a server before 0.71.0 does
+ * not say which steps are quality-gated or whether the run publishes, so its quality and publish stages appear only
+ * while the run is in them. A workflow the server could not load has no steps, and its progress is its phase alone.
  */
 export function progress(record: RunRecord): Stage[] {
   const current: StageState = record.error ? "failed" : "current";
   if (!record.steps) {
-    return [{ label: record.phase, state: current }];
+    return [{ kind: "phase", step: null, label: record.phase, roleLabel: null, loopTo: null, turns: [], state: current }];
   }
   const ids = record.steps.map((step) => step.id);
-  const stages = (doneBefore: number): Stage[] =>
-    ids.map((id, i) => ({ label: id, state: i < doneBefore ? "done" : "todo" }));
-  if (record.phase === "done") {
-    return stages(ids.length);
+  // A quality analysis is saved under the phase, quality; it judges the step whose turn came last before it.
+  const judged = new Map<Turn, string>();
+  let lastStep = ids.at(-1) ?? "";
+  for (const turn of record.turns) {
+    if (ids.includes(turn.step)) {
+      lastStep = turn.step;
+    } else if (turn.step === "quality") {
+      judged.set(turn, lastStep);
+    }
   }
-  if (record.phase === "publish") {
-    return [...stages(ids.length), { label: "publish", state: current }];
+  const inQualityAfter = record.phase === "quality" ? lastStep : null;
+  const stages: Omit<Stage, "state">[] = [];
+  for (const step of record.steps) {
+    stages.push({
+      kind: "step", step: step.id, label: step.id, roleLabel: step.role_label ?? step.role, loopTo: step.loop_to ?? null,
+      turns: record.turns.filter((turn) => turn.step === step.id),
+    });
+    if (step.quality_gated || inQualityAfter === step.id) {
+      const turns = record.turns.filter((turn) => judged.get(turn) === step.id);
+      stages.push({ kind: "quality", step: step.id, label: "quality", roleLabel: null, loopTo: null, turns });
+    }
   }
-  if (record.phase === "quality") {
-    const lastTurn = [...record.turns].reverse().find((turn) => ids.includes(turn.step));
-    const judged = lastTurn ? ids.indexOf(lastTurn.step) : ids.length - 1;
-    const all = stages(judged + 1);
-    return [...all.slice(0, judged + 1), { label: "quality", state: current }, ...all.slice(judged + 1)];
+  if (record.pull_request || record.phase === "publish") {
+    stages.push({ kind: "publish", step: null, label: "publish", roleLabel: null, loopTo: null, turns: [] });
   }
-  const at = ids.indexOf(record.phase);
-  return stages(at).map((stage, i) => (i === at ? { ...stage, state: current } : stage));
+  const at =
+    record.phase === "done" ? stages.length
+    : record.phase === "quality" ? stages.findIndex((st) => st.kind === "quality" && st.step === inQualityAfter)
+    : record.phase === "publish" ? stages.length - 1
+    : stages.findIndex((st) => st.kind === "step" && st.step === record.phase);
+  return stages.map((stage, i): Stage => {
+    const after: StageState = stage.turns.length > 0 ? "again" : "todo";
+    return { ...stage, state: at === -1 ? "todo" : i < at ? "done" : i === at ? current : after };
+  });
 }
 
 /** How the run is doing, as the overview words it: its error, verdict, block, or health with a ticking beat. */

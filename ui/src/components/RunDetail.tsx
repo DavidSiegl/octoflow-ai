@@ -4,7 +4,7 @@ import type { RunEntry } from "../runs";
 import { formatRound, heartbeatAge, outcome } from "../runs";
 import { AgentPanes } from "./AgentPanes";
 import { HandoffFile } from "./HandoffFile";
-import { StepProgress } from "./StepProgress";
+import { RunMap } from "./RunMap";
 
 interface Props {
   api: Api;
@@ -15,7 +15,7 @@ interface Props {
   onClose: () => void;
 }
 
-/** One run: its progress, its files, and the selected one rendered, the newest file until one is chosen; and its
+/** One run: its map, its files, and the selected one rendered, the newest file until one is chosen; and its
  * agents. */
 export function RunDetail({ api, project, entry, now, onClose }: Props) {
   const { record, files } = entry;
@@ -40,7 +40,7 @@ export function RunDetail({ api, project, entry, now, onClose }: Props) {
           </a>
         )}
       </header>
-      <StepProgress record={record} />
+      <RunMap record={record} now={now} />
       <div className="files-and-file">
         <ul className="files" aria-label="files">
           {(files ?? []).map((f) => (
