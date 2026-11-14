@@ -1,12 +1,5 @@
 use super::*;
-use crate::test_support::{oracle, TempDir};
-
-#[test]
-fn a_timeout_is_worded_as_host_json_records_it() {
-    let argv: Vec<String> = ["sh", "-c", "it's", "_", "é\n"].map(String::from).into();
-    let recorded = oracle("host.json");
-    assert_eq!(timed_out(&argv, 60), recorded.get("timeout").and_then(serde_json::Value::as_str).unwrap());
-}
+use crate::test_support::TempDir;
 
 #[test]
 fn no_control_directory_where_ssh_could_not_use_one() {

@@ -113,7 +113,7 @@ fn a_workflow_by_name_is_one_the_configuration_offers() {
 fn usage_errors_exit_2_naming_the_problem() {
     let cases: &[(&[&str], &str)] = &[
         (&["run"], "a task or --spec FILE is needed"),
-        (&["resume", "a1b2c3", "--spec"], "unrecognized arguments: --spec; a resumed run keeps the spec it has"),
+        (&["resume", "a1b2c3", "--spec"], "unexpected argument '--spec' found; a resumed run keeps the spec it has"),
         (&["resume", "a1b2c3", "--spec", "x.md"], "a resumed run keeps the spec it has"),
         (&["run", "--machine", "box", "t"], "--cwd is required with --machine"),
         (&["resume", "a1b2c3", "--machine", "box", "--cwd", ""], "--cwd is required with --machine"),
@@ -232,7 +232,7 @@ fn resume_takes_no_spec() {
     for flags in [&["--spec", "spec.md"][..], &["--spec"], &[spec]] {
         let argv: Vec<&str> = ["resume", "a1b2c3"].iter().chain(flags).copied().collect();
         let (message, status) = refused(&argv);
-        assert!(message.contains("unrecognized arguments: --spec"), "{flags:?}: {message}");
+        assert!(message.contains("unexpected argument '--spec' found;"), "{flags:?}: {message}");
         assert_eq!(status, 2);
     }
     assert_eq!(resume(&["a1b2c3", "--spec-model", "opus"]).settings.label_models, [pair("spec", "opus")]);

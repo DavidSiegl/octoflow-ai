@@ -869,9 +869,9 @@ fn writes_are_not_served() {
         let bearer = format!("Bearer {}", served.token());
         let reply = served.ask(method, &Served::query("/runs", &[]), &[("Authorization", &bearer)]);
         assert_eq!(reply.status, Some(501), "{method}");
-        assert_eq!(reply.header("Content-Type"), Some("text/html;charset=utf-8"));
+        assert_eq!(reply.header("Content-Type"), Some("application/json"));
         if method != "HEAD" {
-            assert!(reply.body.contains(&format!("<p>Message: Unsupported method (\"{method}\").</p>")), "{}", reply.body);
+            assert_eq!(reply.body, format!(r#"{{"error":"unsupported method \"{method}\""}}"#), "{method}");
         }
     }
     assert_eq!(*served.connects.lock().unwrap(), [(String::new(), "~/proj".to_string())]);
@@ -1552,7 +1552,7 @@ fn an_unprintable_line_ends_it() {
     let mut err = vec![];
     let status = serve(Ok(started), &mut BrokenPipe, &mut err, || -> io::Result<()> { panic!("serve waited") });
     assert_eq!(status, EXIT_ERROR);
-    assert_eq!(String::from_utf8(err).unwrap(), "error: cannot print the server's address: [Errno 32] Broken pipe\n");
+    assert_eq!(String::from_utf8(err).unwrap(), "error: cannot print the server's address: Broken pipe\n");
     assert_eq!(status_at(port), None, "the stopped server still answers");
 }
 
@@ -1562,7 +1562,7 @@ fn no_port() {
     let unbound = Err(io::Error::from_raw_os_error(98));
     let status = serve(unbound, &mut Vec::new(), &mut err, || -> io::Result<()> { panic!("serve waited") });
     assert_eq!(status, EXIT_ERROR);
-    assert_eq!(String::from_utf8(err).unwrap(), "error: cannot serve on 127.0.0.1: [Errno 98] Address already in use\n");
+    assert_eq!(String::from_utf8(err).unwrap(), "error: cannot serve on 127.0.0.1: Address already in use\n");
 }
 
 #[test]
@@ -1574,7 +1574,7 @@ fn a_wait_for_the_signals_that_fails_ends_it() {
     let status = serve(Ok(started), &mut out, &mut err, || Err(io::Error::from_raw_os_error(22)));
     assert_eq!(status, EXIT_ERROR);
     assert!(String::from_utf8(out).unwrap().starts_with(r#"{"url":"http://127.0.0.1:"#));
-    assert_eq!(String::from_utf8(err).unwrap(), "error: cannot wait for SIGINT and SIGTERM: [Errno 22] Invalid argument\n");
+    assert_eq!(String::from_utf8(err).unwrap(), "error: cannot wait for SIGINT and SIGTERM: Invalid argument\n");
     assert_eq!(status_at(port), None, "the stopped server still answers");
 }
 

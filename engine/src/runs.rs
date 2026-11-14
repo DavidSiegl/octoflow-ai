@@ -28,7 +28,7 @@ impl RunState {
         if !driven {
             return None;
         }
-        let field = |key: &str| owner.and_then(|o| o.get(key)).map_or("None".to_string(), Value::text);
+        let field = |key: &str| owner.and_then(|o| o.get(key)).map_or("unknown".to_string(), Value::text);
         let pid = owner.and_then(|o| o.get("pid")).and_then(Value::as_i64);
         let local = owner.and_then(|o| o.get("host")).and_then(Value::as_str) == Some(local_host);
         if local && age > HEARTBEAT_SECONDS && pid.is_some_and(|pid| !pid_alive(pid)) {

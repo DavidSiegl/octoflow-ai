@@ -55,7 +55,8 @@ pub struct RunState {
     #[serde(default)]
     pub verdicts: Vec<StepVerdict>,
     /// The files that conflicted with the base branch when the pull request was opened, as a draft; empty again once
-    /// refresh found the pull request merging cleanly, merged or closed (refresh_conflict).
+    /// refresh found the pull request merging cleanly, merged or closed (refresh_conflict). Not empty only with a
+    /// base_branch, the one publish merged to find them.
     pub conflicts: Vec<String>,
     /// The pull request, by URL, that refresh run by hand found open and merging cleanly, merged or closed when it
     /// emptied conflicts, and that no drain has taken up since: its spec, held back by the conflict, may go to review

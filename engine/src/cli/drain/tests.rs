@@ -66,11 +66,12 @@ type Fields = Vec<(&'static str, Value)>;
 /// How one scripted run ends, given its state to change as the run would.
 type Outcome = Box<dyn FnOnce(&mut RunState) -> Result<Option<String>, Stopped>>;
 
-/// A run that opened the pull request pr, with conflicts, and approved.
+/// A run that opened the pull request pr against main, with conflicts, and approved.
 fn approved(pr: &str, conflicts: &[&str]) -> Outcome {
     let (pr, conflicts): (String, Vec<String>) = (pr.into(), conflicts.iter().map(|c| c.to_string()).collect());
     Box::new(move |state| {
-        (state.pr_url, state.conflicts, state.phase) = (Some(pr), conflicts, DONE.into());
+        (state.pr_url, state.base_branch, state.conflicts) = (Some(pr), Some("main".into()), conflicts);
+        state.phase = DONE.into();
         Ok(Some(APPROVE.into()))
     })
 }
@@ -489,6 +490,19 @@ fn a_gone_spec_change_line_ends_gone() {
 }
 
 #[test]
+fn a_change_line_of_a_spec_without_a_status_says_so() {
+    // No Status: line, or an empty one.
+    for was in [None, some("")] {
+        let d = Drain::new();
+        let file = SpecFile { path: d.path("a"), text: ready("A") };
+        let mut spec = QueuedSpec { slug: "a".into(), file, blockers: vec![], was: was.clone(), changed: false, gone: None };
+        let told = crate::workflow::fixture::Told::default();
+        assert!(spec.update(&entries(&[(STATUS_KEY, SPEC_IN_REVIEW)]), false, &told).unwrap());
+        assert_eq!(spec.change_line(), "a: no status -> in-review", "{was:?}");
+    }
+}
+
+#[test]
 fn a_blocked_by_line_naming_no_blocker() {
     for line in ["Blocked by: -", "Blocked by: none", "Blocked by: None"] {
         let d = Drain::new();
@@ -702,7 +716,7 @@ fn conflicted_spec(d: &Drain, status: &str, verdict: &str, pr: &[(&str, Value)])
         ("conflicts", Value::Array(vec![Value::from("x.py")])),
     ];
     d.saved_run("a", run_id, 10_000, &fields);
-    let body = format!("{}\n\nOpened by run {run_id}.\n", conflict_warning(Some("main"), &["x.py".to_string()]));
+    let body = format!("{}\n\nOpened by run {run_id}.\n", conflict_warning("main", &["x.py".to_string()]));
     let mut all = vec![("isDraft", Value::Bool(true)), ("mergeable", Value::from("MERGEABLE")), ("body", Value::from(body))];
     all.extend(pr.iter().cloned());
     let state = pr.iter().find(|(k, _)| *k == "state").map_or("OPEN".to_string(), |(_, v)| v.text());
@@ -1203,7 +1217,8 @@ fn a_spec_that_cannot_be_written_stops_the_drain_and_keeps_the_old_file() {
     std::fs::create_dir(format!("{}.tmp.{}", real.display(), std::process::id())).unwrap();
     let r = d.drain(vec![], &[]);
     assert_eq!(r.status, EXIT_ERROR);
-    assert!(r.err.contains(&format!("error: cannot write {}: [Errno 21] Is a directory", d.path("a"))), "{}", r.err);
+    let aside = format!("{}.tmp.{}", real.display(), std::process::id());
+    assert!(r.err.contains(&format!("error: cannot write {}: {aside}: Is a directory\n", d.path("a"))), "{}", r.err);
     assert_eq!(d.text("a"), before);
     let names = std::fs::read_dir(format!("{}/a", d.dir())).unwrap().count();
     assert_eq!(names, 2, "spec.md and the directory in the way, and nothing else");
@@ -1243,7 +1258,7 @@ fn drain_takes_no_task_spec_or_no_pr() {
         assert_eq!(parse(&argv).unwrap_err().exit_code(), 2, "{argv:?}");
     }
     let e = parse(&["drain", "--spec"]).unwrap_err().to_string();
-    assert!(e.contains("unrecognized arguments: --spec; drain runs the specs in DIR"), "{e}");
+    assert!(e.contains("unexpected argument '--spec' found; drain runs the specs in DIR"), "{e}");
     match parse(&["drain", "--spec-model", "opus"]).unwrap() {
         crate::cli::Command::Drain(args) => {
             assert_eq!(args.run.settings.label_models, [("spec".to_string(), "opus".to_string())]);

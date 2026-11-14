@@ -198,10 +198,11 @@ pub fn pull_request_pending(pr: &PullRequest, number: &str, now: f64) -> Result<
     if pr.state != "CLOSED" {
         return Ok(Some(format!("PR #{number} is {}", pr.state.to_lowercase())));
     }
-    let closed = pr.closed_at.as_deref().map(crate::summary::epoch_time);
-    let Some(Ok(closed)) = closed else {
-        let at = pr.closed_at.as_deref().map_or("None".to_string(), |at| format!("{at:?}"));
-        return Err(OrchestratorError(format!("PR #{number} is closed at {at}, which is not a time")));
+    let Some(at) = pr.closed_at.as_deref() else {
+        return Err(OrchestratorError(format!("PR #{number} is closed without a closing time")));
+    };
+    let Ok(closed) = crate::summary::epoch_time(at) else {
+        return Err(OrchestratorError(format!("PR #{number} is closed at {at:?}, which is not a time")));
     };
     if now - closed > CLOSED_BRANCH_GRACE as f64 {
         return Ok(None);
