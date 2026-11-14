@@ -866,6 +866,10 @@ impl Host for FakeHost {
         Ok(())
     }
 
+    fn refs(&self, _cwd: &str, prefix: &str) -> Result<Vec<String>, OrchestratorError> {
+        Ok(self.state().refs.keys().filter(|r| r.starts_with(prefix)).map(String::from).collect())
+    }
+
     fn delete_refs(&self, _cwd: &str, prefix: &str) -> Result<bool, OrchestratorError> {
         let mut s = self.state();
         if let Some(error) = &s.delete_refs_error {
@@ -1011,6 +1015,10 @@ impl Host for FakeHost {
             }
         }
         Ok(states)
+    }
+
+    fn run_state(&self, cwd: &str, run_id: &str) -> Result<Option<SavedRun>, OrchestratorError> {
+        Ok(self.run_states(cwd)?.into_iter().find(|run| run.shown().run_id == run_id))
     }
 
     /// The real host's listing when FakeState::processes is set; else the files of run_dir in `files`, as the real

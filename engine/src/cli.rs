@@ -307,6 +307,14 @@ fn run_command(command: &Command, world: &Connected) -> Result<Ended, Stop> {
             let status = refresh::refresh_command(world, &cwd, run_ref.as_deref()).map_err(stopped)?;
             return if interrupt.is_raised() { Err(Stop::Interrupted(None)) } else { Ok(Ended::Status(status)) };
         }
+        Command::Close { run_ref, dry_run, .. } => {
+            let exit_status = match run_ref {
+                Some(run_ref) => close::close_run(world, &cwd, run_ref, *dry_run).map(|_| 0),
+                None => close::close_all(world, &cwd, *dry_run),
+            }
+            .map_err(stopped)?;
+            return if interrupt.is_raised() { Err(Stop::Interrupted(None)) } else { Ok(Ended::Status(exit_status)) };
+        }
         Command::Workflows(_) | Command::Doctor { .. } | Command::Serve(_) => {
             unreachable!("main runs {command:?} without herdr (herdrless_command, serve_command)")
         }
@@ -370,9 +378,6 @@ fn runs_command(runs: &RunsCommand, world: &Connected, cwd: &str, target: &[Stri
         }
         RunsCommand::List { json: false, .. } => listing::print_runs(world, &host.run_states(cwd)?, target),
         RunsCommand::Show(run_ref) => listing::show_run(world, cwd, run_ref, target)?,
-        RunsCommand::Close(run_ref) => {
-            close::close_run(world, cwd, run_ref)?;
-        }
         RunsCommand::Metrics => {
             for record in host.run_metrics(cwd)? {
                 world.say(&record.to_string());

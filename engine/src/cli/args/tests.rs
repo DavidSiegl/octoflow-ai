@@ -288,7 +288,7 @@ fn the_commands_about_runs_and_workflows() {
         (&["metrics"], Command::Runs(Target::default(), RunsCommand::Metrics)),
         (&["show", "a1b2c3"], Command::Runs(Target::default(), RunsCommand::Show("a1b2c3".into()))),
         (&["prune", "--dry-run"], Command::Runs(Target::default(), RunsCommand::Prune { dry_run: true })),
-        (&["close", "--cwd", "~/p", "a1b2c3"], Command::Runs(Target { machine: None, cwd: Some("~/p".into()) }, RunsCommand::Close("a1b2c3".into()))),
+        (&["close", "--cwd", "~/p", "a1b2c3"], Command::Close { target: Target { machine: None, cwd: Some("~/p".into()) }, run_ref: Some("a1b2c3".into()), dry_run: false }),
         (&["workflows"], Command::Workflows(None)),
         (&["workflows", "quick"], Command::Workflows(Some("quick".into()))),
     ];
@@ -340,12 +340,15 @@ fn each_help_names_the_flags_cli_json_records() {
             .map(Value::text)
             .collect();
         // Flags added since cli.json was recorded: --version (run-usability/01), doctor's --setup-gate and the
-        // --quality-gate its help names (doctor-gate-setup/01).
+        // --quality-gate its help names (doctor-gate-setup/01), close's --all and --dry-run (close-all-runs/01).
         if name.is_empty() {
             expected.insert("--version".into());
         }
         if name == "doctor" {
             expected.extend(["--setup-gate".into(), "--quality-gate".into()]);
+        }
+        if name == "close" {
+            expected.extend(["--all".into(), "--dry-run".into()]);
         }
         // --permission-mode's help names agy's flags, which replaced gemini's (GitHub issue #125).
         if expected.remove("--approval-mode") {

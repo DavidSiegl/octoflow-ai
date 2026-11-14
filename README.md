@@ -243,6 +243,9 @@ orchestrator resume e292fb
 # worktree and branch
 orchestrator close e292fb
 
+# What closing every finished, failed and stale run would do, uncommitted files included; drop --dry-run to do it
+orchestrator close --all --dry-run
+
 # After you resolved a pull request's conflict and pushed: drop its warning, and its draft if it was approved
 orchestrator refresh e292fb
 
@@ -277,7 +280,7 @@ orchestrator metrics | jq -s 'map(.rounds) | add / length'
 | `--no-quality-gate` | `resume` only: turn the run's quality gate off for good. |
 | `--max-quality-rounds N` | With the gate: quality rounds per review round before the Reviewer gets the change anyway (default 3). |
 | `--force` | `resume` only: take over a run that still looks alive. |
-| `--dry-run` | `prune` and `drain`: print what would happen, and change nothing. |
+| `--dry-run` | `prune`, `drain` and `close`: print what would happen, and change nothing. |
 
 A run saves its settings. `resume` takes the same flags as `run` except `--no-pr`, `--worktree`, `--workflow`,
 `--workflow-file` and `--spec`; a flag given to `resume` overrides the saved value. Turning the quality gate on or
@@ -367,8 +370,8 @@ share its working tree, so a run refuses to start or resume while another run th
 
 A failed run keeps its workspace open and stays on its branch, and so does a `--no-pr` run. `resume` continues a
 stopped run where `state.json` says ([Resuming a run](docs/design.md#resuming-a-run)), and `close` cleans up after
-one you are done with, the local refs that keep its locked files included
-([Closing a run](docs/design.md#closing-a-run)). `list` marks a run `stale` after five
+one you are done with, the local refs that keep its locked files included, or with `--all` after every run that is
+not running ([Closing a run](docs/design.md#closing-a-run)). `list` marks a run `stale` after five
 minutes without a heartbeat ([Stale runs](docs/design.md#stale-runs)).
 
 See also [design decisions](docs/design.md), [architecture](docs/architecture.md), [roadmap](docs/roadmap.md)
