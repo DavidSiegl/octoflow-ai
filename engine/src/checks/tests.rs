@@ -93,7 +93,6 @@ impl Change {
     /// f's answer for the RunChange on TODAY, its in_time answering with in_time.
     pub fn run<R>(&self, in_time: &dyn Fn() -> bool, f: impl FnOnce(&RunChange) -> R) -> R {
         let added = added_lines(self.diff.as_bytes()).unwrap();
-        let changed = added.iter().map(|(path, lines)| (path.to_string(), lines.keys().copied().collect())).collect();
         let files = self
             .counts
             .clone()
@@ -110,7 +109,6 @@ impl Change {
             spec: self.spec.clone(),
             base: "base".into(),
             commit: "new".into(),
-            changed,
             files,
             file_at: &file_at,
             now: TODAY,
