@@ -575,6 +575,71 @@ pub(crate) struct FakeGate {
     running: Option<(String, GateRun, Option<u32>)>,
 }
 
+impl FakeGate {
+    /// Start a job of the next run in directory job[0], job being its arguments after LAUNCH's own; a run that ends at
+    /// once leaves its files on host now.
+    fn start(&mut self, host: &FakeHost, job: &[&str]) {
+        let out = job[0].to_string();
+        self.jobs.push(job.iter().map(|a| a.to_string()).collect());
+        let run = self.runs.pop_front().unwrap_or(GateRun::Judges(green()));
+        let probes = match &run {
+            GateRun::Judges(outcome) => Some(outcome.polls),
+            GateRun::CannotJudge(_) => Some(0),
+            GateRun::Hangs => None,
+        };
+        if probes == Some(0) {
+            leave_files(host, &out, run);
+        } else {
+            self.running = Some((out, run, probes));
+        }
+    }
+
+    /// Whether a job is still running, as one probe sees it; the job that ends at this probe leaves its files on host.
+    fn probe(&mut self, host: &FakeHost) -> bool {
+        let running = match &mut self.running {
+            None => false,
+            Some((_, _, None)) => true,
+            Some((_, _, Some(left))) => {
+                *left -= 1;
+                *left > 0
+            }
+        };
+        if !running {
+            if let Some((out, run, _)) = self.running.take() {
+                leave_files(host, &out, run);
+            }
+        }
+        running
+    }
+}
+
+/// Leave on host the files the job of directory out writes once run ends: the job's, so no write of the engine's.
+fn leave_files(host: &FakeHost, out: &str, run: GateRun) {
+    let write = |name: &str, text: &str| host.state().files.insert(format!("{out}/{name}"), text.to_string());
+    match run {
+        GateRun::Judges(outcome) => {
+            write("quality.md", &outcome.quality);
+            write("quality.json", &outcome.quality_json);
+            write("exit", &format!("{}\n", outcome.exit));
+        }
+        GateRun::CannotJudge(said) => {
+            write("gate.err", said);
+            write("exit", "2\n");
+        }
+        GateRun::Hangs => unreachable!("a hanging job does not end"),
+    }
+}
+
+/// Remove host's files at paths and under them, as `rm -rf -- paths` does.
+fn remove_tree(host: &FakeHost, paths: &[&str]) {
+    let mut state = host.state();
+    let under = |file: &str| paths.iter().any(|p| file == *p || file.starts_with(&format!("{p}/")));
+    let gone: Vec<String> = state.files.keys().filter(|file| under(file)).map(String::from).collect();
+    for file in gone {
+        state.files.remove(&file);
+    }
+}
+
 /// A run_command playing the local gate's commands as gate says: the preflight passes, and each job started plays
 /// gate's next run. Commands that are not the gate's go to earlier, if given.
 fn plays(
@@ -587,77 +652,22 @@ fn plays(
             let command = argv.join(" ");
             Some(Ok(Exec { command, status: code, stdout: stdout.as_bytes().to_vec(), stderr: Vec::new() }))
         };
-        // Leave the files the job of directory out writes once run ends: the job's, so no write of the engine's.
-        let end = |out: &str, run: GateRun| {
-            let write = |name: &str, text: &str| host.state().files.insert(format!("{out}/{name}"), text.to_string());
-            match run {
-                GateRun::Judges(outcome) => {
-                    write("quality.md", &outcome.quality);
-                    write("quality.json", &outcome.quality_json);
-                    write("exit", &format!("{}\n", outcome.exit));
-                }
-                GateRun::CannotJudge(said) => {
-                    write("gate.err", said);
-                    write("exit", "2\n");
-                }
-                GateRun::Hangs => unreachable!("a hanging job does not end"),
-            }
-        };
         match argv {
             // The preflight, and the round's directory made.
             ["sh", "-c", script] if script.contains("mkdir -p") => exits(0, ""),
             // Each round's first start makes job-1.
             ["sh", "-c", script, "_", _out] if script.contains("job-$k") => exits(0, "1\n"),
             ["rm", "-rf", "--", paths @ ..] => {
-                let mut state = host.state();
-                let gone: Vec<String> = state
-                    .files
-                    .keys()
-                    .filter(|file| paths.iter().any(|p| file == p || file.starts_with(&format!("{p}/"))))
-                    .map(String::from)
-                    .collect();
-                for file in gone {
-                    state.files.remove(&file);
-                }
-                drop(state);
+                remove_tree(host, paths);
                 exits(0, "")
             }
             ["sh", "-c", _, "_", _log, "sh", "-c", _, _name, job @ ..] => {
-                let out = job[0].to_string();
-                let run = {
-                    let mut gate = gate.borrow_mut();
-                    gate.jobs.push(job.iter().map(|a| a.to_string()).collect());
-                    gate.runs.pop_front().unwrap_or(GateRun::Judges(green()))
-                };
-                let probes = match &run {
-                    GateRun::Judges(outcome) => Some(outcome.polls),
-                    GateRun::CannotJudge(_) => Some(0),
-                    GateRun::Hangs => None,
-                };
-                if probes == Some(0) {
-                    end(&out, run);
-                } else {
-                    gate.borrow_mut().running = Some((out, run, probes));
-                }
+                gate.borrow_mut().start(host, job);
                 exits(0, "4242\n")
             }
             ["sh", "-c", script, "_", "4242"] if script.starts_with("kill -0") => {
-                let mut gate = gate.borrow_mut();
-                let ended = match &mut gate.running {
-                    None => true,
-                    Some((_, _, None)) => false,
-                    Some((_, _, Some(left))) => {
-                        *left -= 1;
-                        *left == 0
-                    }
-                };
-                if ended {
-                    if let Some((out, run, _)) = gate.running.take() {
-                        drop(gate);
-                        end(&out, run);
-                    }
-                }
-                exits(i32::from(ended), "")
+                let running = gate.borrow_mut().probe(host);
+                exits(i32::from(!running), "")
             }
             ["sh", "-c", _, "_", "4242", _name, "tracked" | "left"] => {
                 assert!(!interrupt.is_raised(), "a stop started with a Ctrl-C pending, which ProcessHost refuses");
