@@ -319,11 +319,11 @@ browser, at a far smaller download.
   was built in for a development build (`tauri dev`), null otherwise. That `Connection` also carries the release
   version, the engine's `octoflow_engine::VERSION`, which `--version` prints too. With no checkout and no project
   opened before, the frontend asks for a project folder. It kills the sidecar on `RunEvent::Exit`. The webview's CSP
-  allows connections only to itself, Tauri's IPC and `http://127.0.0.1`. Its capability
-  (`capabilities/default.json`) grants Tauri's core and `tauri-plugin-opener`, scoped to `https:` URLs and the two
-  bundled `$RESOURCE/THIRD-PARTY-LICENSES*.html` files: About opens its links in the system's browser through it,
-  calling the plugin's commands with `invoke` rather than through `@tauri-apps/plugin-opener`, which ships no license
-  text to bundle.
+  allows connections only to itself, Tauri's IPC and `http://127.0.0.1`. About opens its links through the shell's
+  `open_about` command, which takes the name of one of five `AboutLink`s, never a URL or a path, and runs `xdg-open`
+  (on macOS `open`) in the user's shell's environment (`UserShell`): run in the window's, an AppImage's would start
+  the browser against the bundle's libraries. That is also why no opener plugin is used: it opens in the window's
+  process's environment.
 - **CLI.** Started with arguments, `main.rs` runs none of that: before GTK or WebKit start a thread, `lib.rs`'s
   `cli` takes the command line and `Cli::run` runs the engine's `cli::main` with it in the app's own process, and
   ends as the engine's `orchestrator` does (`interrupt::exit`), so the terminal, the exit status and the signals

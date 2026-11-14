@@ -1,29 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
-import { resolveResource } from "@tauri-apps/api/path";
-import { useEffect, useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Dialog } from "./Dialog";
 
-// tauri-plugin-opener's commands (ui/src-tauri/src/lib.rs registers the plugin), called as its npm package,
-// @tauri-apps/plugin-opener, calls them. The package itself is not used: it ships no license text, so
-// scripts/npm-licenses.js could not ship it with the app.
-const openUrl = (url: string) => invoke("plugin:opener|open_url", { url });
-const openPath = (path: string) => invoke("plugin:opener|open_path", { path });
-
-const REPOSITORY = "https://github.com/DavidSiegl/octoflow-ai";
-
-// The pages About links to, opened in the system's browser. capabilities/default.json lets the opener open https
-// URLs only.
-const LINKS = [
-  { label: "Source code", url: REPOSITORY },
-  { label: "Releases", url: `${REPOSITORY}/releases` },
-  { label: "Support on Ko-fi", url: "https://ko-fi.com/davidsiegl" },
+// What each entry opens is the Tauri shell's: `open_about` takes the name of an AboutLink (ui/src-tauri/src/lib.rs),
+// never a URL or a path.
+const PAGES = [
+  { label: "Source code", link: "source" },
+  { label: "Releases", link: "releases" },
+  { label: "Support on Ko-fi", link: "ko-fi" },
 ];
-
-// The third-party license files a packaged app bundles among its resources (packaging/build-desktop.sh), opened in
-// the system's HTML viewer. capabilities/default.json lets the opener open these two and no other path.
 const LICENSE_FILES = [
-  { label: "Third-party licenses: crates", file: "THIRD-PARTY-LICENSES.html" },
-  { label: "Third-party licenses: npm packages", file: "THIRD-PARTY-LICENSES-NPM.html" },
+  { label: "Third-party licenses: crates", link: "crate-licenses" },
+  { label: "Third-party licenses: npm packages", link: "npm-licenses" },
 ];
 
 /** The About dialog: the app's version, copyright and license, and links to the repository, its releases, Ko-fi and
@@ -31,46 +19,40 @@ const LICENSE_FILES = [
  * it says so in their place. version is the release version (`Connection.version`); onClose is called on Close or
  * Escape. */
 export function About({ version, onClose }: { version: string; onClose: () => void }) {
-  // Why the last link clicked could not be opened; null while none has failed.
+  // Why the link clicked last could not be opened; null while it has not failed.
   const [failure, setFailure] = useState<string | null>(null);
+  // How many links have been clicked: an open that fails after a later click says nothing.
+  const clicks = useRef(0);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
-  const opened = (opening: Promise<unknown>, what: string) => {
+  const open = (link: string, label: string) => {
+    const click = ++clicks.current;
     setFailure(null);
-    opening.catch((error: unknown) => setFailure(`Could not open ${what}: ${String(error)}`));
+    invoke("open_about", { link }).catch((error: unknown) => {
+      if (click === clicks.current) setFailure(`Could not open ${label}: ${String(error)}`);
+    });
   };
-  const openLink = (event: MouseEvent, url: string) => {
-    event.preventDefault();
-    opened(openUrl(url), url);
-  };
-  const openLicenses = (file: string) => opened(resolveResource(file).then((path) => openPath(path)), file);
+  // Buttons rather than <a href>: a link's href is one the webview could follow itself, into the app's own window.
+  const entry = ({ label, link }: { label: string; link: string }) => (
+    <button type="button" className="link" onClick={() => open(link, label)}>
+      {label}
+    </button>
+  );
   return (
     <Dialog label="about" title="Octoflow AI" className="about">
       <p>Version {version}</p>
       <p>© 2026 David Siegl</p>
       <p>Licensed under MIT OR Apache-2.0.</p>
       <ul className="links">
-        {LINKS.map(({ label, url }) => (
-          <li key={url}>
-            <a href={url} onClick={(event) => openLink(event, url)}>
-              {label}
-            </a>
-          </li>
+        {PAGES.map((page) => (
+          <li key={page.link}>{entry(page)}</li>
         ))}
-        {LICENSE_FILES.map(({ label, file }) => (
-          <li key={file}>
-            {import.meta.env.DEV ? (
-              <>
-                {label}: not bundled in a development build
-              </>
-            ) : (
-              <button type="button" className="link" onClick={() => openLicenses(file)}>
-                {label}
-              </button>
-            )}
+        {LICENSE_FILES.map((file) => (
+          <li key={file.link}>
+            {import.meta.env.DEV ? <>{file.label}: not bundled in a development build</> : entry(file)}
           </li>
         ))}
       </ul>

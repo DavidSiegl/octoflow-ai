@@ -743,7 +743,7 @@ ul.checks {
   padding-left: 1.2em;
 }
 
-/* A license file's link, which opens a path rather than a URL. */
+/* About's entries: buttons, which the shell opens by name, drawn as links. */
 .about button.link {
   padding: 0;
   color: var(--mint);

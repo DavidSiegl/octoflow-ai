@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Api, type Connection, type Project, type StartedRun } from "./api";
 import { About } from "./components/About";
 import { ProjectBar } from "./components/ProjectBar";
@@ -52,6 +52,12 @@ function Connected({ connection }: { connection: Connection }) {
   const [project, setProject] = useState(() => savedProject(connection.project));
   const [settingUp, setSettingUp] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  // The logo's button, which gets the focus back when About closes.
+  const badge = useRef<HTMLButtonElement>(null);
+  const closeAbout = () => {
+    setAboutOpen(false);
+    badge.current?.focus();
+  };
   // On start, with a project, the setup dialog opens by itself until it has been closed with every required check
   // passed. When the server cannot tell whether it has, the dialog stays closed: "Check setup…" still opens it.
   const [startedWithProject] = useState(project.cwd !== "");
@@ -75,7 +81,13 @@ function Connected({ connection }: { connection: Connection }) {
   return (
     <main>
       <header className="top-bar">
-        <button type="button" className="app-badge" aria-label="About Octoflow AI" onClick={() => setAboutOpen(true)}>
+        <button
+          ref={badge}
+          type="button"
+          className="app-badge"
+          aria-label="About Octoflow AI"
+          onClick={() => setAboutOpen(true)}
+        >
           {/* public/logo.svg is docs/logo.svg, held equal by logo.test.tsx; alt is that file's <title>. */}
           <img src="/logo.svg" alt="An octopus holding a terminal, a robot and a chat bubble" />
           <span className="app-name">Octoflow AI</span>
@@ -93,7 +105,7 @@ function Connected({ connection }: { connection: Connection }) {
         // another one while it is open checks that one.
         <SetupDialog key={`setup:${project.machine}:${project.cwd}`} api={api} project={project} onClose={() => setSettingUp(false)} />
       )}
-      {aboutOpen && <About version={connection.version} onClose={() => setAboutOpen(false)} />}
+      {aboutOpen && <About version={connection.version} onClose={closeAbout} />}
     </main>
   );
 }

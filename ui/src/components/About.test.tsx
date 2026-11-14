@@ -5,10 +5,6 @@ import { CONNECTION, stubServer } from "../test/fakes";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-vi.mock("@tauri-apps/api/path", () => ({
-  resolveResource: (file: string) => Promise.resolve(`/opt/octoflow/${file}`),
-}));
-const LICENSES = "/opt/octoflow/THIRD-PARTY-LICENSES";
 
 beforeEach(() => {
   invoke.mockReset().mockResolvedValue(undefined);
@@ -34,27 +30,23 @@ describe("About", () => {
     expect(about).toHaveTextContent("MIT OR Apache-2.0");
   });
 
-  it("opens each page in the system's browser", async () => {
+  it("asks the shell to open each page by its name", async () => {
     await openAbout();
-    const pages = {
-      "Source code": "https://github.com/DavidSiegl/octoflow-ai",
-      Releases: "https://github.com/DavidSiegl/octoflow-ai/releases",
-      "Support on Ko-fi": "https://ko-fi.com/davidsiegl",
-    };
-    for (const [name, url] of Object.entries(pages)) {
-      fireEvent.click(screen.getByRole("link", { name }));
-      expect(invoke).toHaveBeenLastCalledWith("plugin:opener|open_url", { url });
+    const pages = { "Source code": "source", Releases: "releases", "Support on Ko-fi": "ko-fi" };
+    for (const [name, link] of Object.entries(pages)) {
+      fireEvent.click(screen.getByRole("button", { name }));
+      expect(invoke).toHaveBeenLastCalledWith("open_about", { link });
     }
     expect(invoke).toHaveBeenCalledTimes(3);
   });
 
-  it("opens the bundled license files in a packaged build", async () => {
+  it("asks the shell to open the bundled license files in a packaged build", async () => {
     vi.stubEnv("DEV", false);
     await openAbout();
-    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Third-party licenses: crates" })));
-    expect(invoke).toHaveBeenLastCalledWith("plugin:opener|open_path", { path: `${LICENSES}.html` });
-    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Third-party licenses: npm packages" })));
-    expect(invoke).toHaveBeenLastCalledWith("plugin:opener|open_path", { path: `${LICENSES}-NPM.html` });
+    fireEvent.click(screen.getByRole("button", { name: "Third-party licenses: crates" }));
+    expect(invoke).toHaveBeenLastCalledWith("open_about", { link: "crate-licenses" });
+    fireEvent.click(screen.getByRole("button", { name: "Third-party licenses: npm packages" }));
+    expect(invoke).toHaveBeenLastCalledWith("open_about", { link: "npm-licenses" });
   });
 
   it("says a development build bundles no license files", async () => {
@@ -68,17 +60,29 @@ describe("About", () => {
   it("says why a link could not be opened", async () => {
     invoke.mockRejectedValue("no browser");
     await openAbout();
-    await act(async () => fireEvent.click(screen.getByRole("link", { name: "Releases" })));
-    const reason = "Could not open https://github.com/DavidSiegl/octoflow-ai/releases: no browser";
-    expect(await screen.findByText(reason)).toBeInTheDocument();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Releases" })));
+    expect(await screen.findByText("Could not open Releases: no browser")).toBeInTheDocument();
   });
 
-  it("closes on Escape and on Close", async () => {
+  it("says nothing of a failure that comes after a later click", async () => {
+    let fail: (why: string) => void = () => {};
+    invoke.mockReturnValueOnce(new Promise((_, reject) => (fail = reject))).mockResolvedValueOnce(undefined);
+    await openAbout();
+    fireEvent.click(screen.getByRole("button", { name: "Releases" }));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Source code" })));
+    await act(async () => fail("no browser"));
+    expect(screen.queryByText(/Could not open/)).not.toBeInTheDocument();
+  });
+
+  it("closes on Escape and on Close, giving the focus back to the logo's button", async () => {
     await openAbout();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "about" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "About Octoflow AI" }));
+    const badge = screen.getByRole("button", { name: "About Octoflow AI" });
+    expect(badge).toHaveFocus();
+    fireEvent.click(badge);
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("dialog", { name: "about" })).not.toBeInTheDocument();
+    expect(badge).toHaveFocus();
   });
 });

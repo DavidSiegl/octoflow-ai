@@ -1,14 +1,15 @@
 //! The desktop shell: a window over the orchestrator's `serve`, and the orchestrator itself, whose engine it links
 //! (`octoflow_engine`). Started with arguments, the app is the orchestrator's CLI: see `cli`. Started with none, it
 //! opens its window and starts itself, as `serve`, as its sidecar, which it kills when it exits. The webview talks to
-//! the sidecar's server over HTTP; the shell only hands it the server's address and token, through the `server`
-//! command.
+//! the sidecar's server over HTTP; the shell hands it the server's address and token, through the `server` command,
+//! and opens About's links outside the app, through `open_about`.
 
 use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, RunEvent};
@@ -276,7 +277,8 @@ struct Served {
     token: String,
 }
 
-/// What the webview needs to reach the sidecar, as the `server` command gives it.
+/// What the webview is given by the `server` command: how to reach the sidecar, the project to open first, and the
+/// release version.
 #[derive(Clone, Serialize)]
 struct Connection {
     url: String,
@@ -391,22 +393,101 @@ fn webview_origin(app: &tauri::App) -> String {
     if cfg!(windows) { "http://tauri.localhost" } else { "tauri://localhost" }.to_string()
 }
 
-/// The sidecar's address and token, or why it could not be started.
+/// The sidecar's Connection, or why it could not be started.
 #[tauri::command]
 fn server(sidecar: tauri::State<'_, Sidecar>) -> Result<Connection, String> {
     sidecar.connection.clone()
 }
 
+/// The repository About links to, and its releases below it.
+const REPOSITORY: &str = "https://github.com/DavidSiegl/octoflow-ai";
+
+/// What About opens outside the app, as the window names it to `open_about` (kebab-case, such as `ko-fi`): pages in
+/// the system's browser, and the third-party license files a packaged app bundles among its resources
+/// (packaging/build-desktop.sh) in its HTML viewer. These are all the window can have opened: it names a link, never
+/// a URL or a path.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+enum AboutLink {
+    Source,
+    Releases,
+    KoFi,
+    CrateLicenses,
+    NpmLicenses,
+}
+
+impl AboutLink {
+    /// What the opener is given for it: a page's URL, or a license file's path in resources, the app's resource
+    /// directory. Errors, saying so, for a license file resources does not hold, as in any build but a packaged one.
+    fn target(self, resources: &Path) -> Result<OsString, String> {
+        let file = match self {
+            AboutLink::Source => return Ok(REPOSITORY.into()),
+            AboutLink::Releases => return Ok(format!("{REPOSITORY}/releases").into()),
+            AboutLink::KoFi => return Ok("https://ko-fi.com/davidsiegl".into()),
+            AboutLink::CrateLicenses => "THIRD-PARTY-LICENSES.html",
+            AboutLink::NpmLicenses => "THIRD-PARTY-LICENSES-NPM.html",
+        };
+        let path = resources.join(file);
+        if !path.is_file() {
+            return Err(format!("{file} is not bundled with this build"));
+        }
+        Ok(path.into_os_string())
+    }
+}
+
+/// Open link outside the app, with the system's default handler, as the user's own shell would: in the user's
+/// environment (`UserShell`), not the window's, whose AppImage variables would start the browser against the bundle's
+/// libraries. Errors, as a line for the window to show: AboutLink::target's, the app's resource directory cannot be
+/// told, or open_outside's.
+#[tauri::command(async)]
+fn open_about(app: tauri::AppHandle, link: AboutLink) -> Result<(), String> {
+    let resources = app.path().resource_dir().map_err(|e| format!("cannot tell where the app's resources are: {e}"))?;
+    open_outside(Path::new(OPENER), &link.target(&resources)?, &UserShell::current())
+}
+
+/// The program that opens a URL or a file with the system's default handler.
+const OPENER: &str = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+
+/// How long open_outside waits for the opener to fail. `xdg-open` and `open` exit once they have handed the target
+/// over, but `xdg-open` on a desktop it does not know runs `$BROWSER` itself and waits for it.
+const OPENER_CHECK: Duration = Duration::from_secs(2);
+
+/// Run opener on target in shell's environment, its standard input closed and its output the app's, and return once
+/// it has exited successfully or OPENER_CHECK has passed; one still running then is waited for in the background, so
+/// it leaves no zombie. Errors, naming the target: opener cannot be started, or exits failing within OPENER_CHECK.
+fn open_outside(opener: &Path, target: &OsStr, shell: &UserShell) -> Result<(), String> {
+    let shown = target.to_string_lossy();
+    let mut child = Command::new(opener)
+        .arg(target)
+        .env_clear()
+        .envs(shell.vars.iter().map(|(name, value)| (name, value)))
+        .stdin(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("cannot run {} to open {shown}: {e}", opener.display()))?;
+    let started = Instant::now();
+    while started.elapsed() < OPENER_CHECK {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) => {
+                return Err(format!("{} could not open {shown}: it exited with {status}", opener.display()))
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Err(e) => return Err(format!("cannot tell whether {} opened {shown}: {e}", opener.display())),
+        }
+    }
+    // What the reaper fails to wait for is lost to no one: the opener runs on.
+    std::thread::spawn(move || child.wait());
+    Ok(())
+}
+
 /// Run the app until its window closes, then stop the sidecar.
 pub fn run() {
     tauri::Builder::default()
-        // About's links: capabilities/default.json scopes what it may open.
-        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             app.manage(Sidecar::of_app(&webview_origin(app)));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![server])
+        .invoke_handler(tauri::generate_handler![server, open_about])
         .build(tauri::generate_context!())
         .expect("error while building the app")
         .run(|app, event| {
@@ -491,6 +572,64 @@ mod tests {
         let connection = sidecar.connection.clone().expect("the sidecar started");
         assert_eq!(connection.version, release.trim());
         sidecar.stop();
+    }
+
+    #[test]
+    fn a_page_opens_by_its_url_and_a_license_file_only_when_bundled() {
+        let resources = scratch_dir();
+        assert_eq!(AboutLink::KoFi.target(resources.path()), Ok("https://ko-fi.com/davidsiegl".into()));
+        assert_eq!(AboutLink::Releases.target(resources.path()), Ok(format!("{REPOSITORY}/releases").into()));
+        let missing = AboutLink::NpmLicenses.target(resources.path());
+        assert_eq!(missing, Err("THIRD-PARTY-LICENSES-NPM.html is not bundled with this build".to_string()));
+        let bundled = resources.path().join("THIRD-PARTY-LICENSES.html");
+        std::fs::write(&bundled, "<html></html>").expect("the license file is written");
+        assert_eq!(AboutLink::CrateLicenses.target(resources.path()), Ok(bundled.into_os_string()));
+    }
+
+    #[test]
+    fn the_window_names_links_in_kebab_case() {
+        let link: AboutLink = serde_json::from_str("\"ko-fi\"").expect("a link's name");
+        assert_eq!(link, AboutLink::KoFi);
+        assert!(serde_json::from_str::<AboutLink>("\"https://example.com\"").is_err());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn the_opener_runs_in_the_user_s_shell_only() {
+        let dir = scratch_dir();
+        let (opener, out) = (dir.path().join("opener"), dir.path().join("out"));
+        let record = format!("printf '%s|%s|%s' \"$1\" \"$MARK\" \"${{HOME-unset}}\" > '{}'", out.display());
+        let script = format!("#!/bin/sh\n{record}\n");
+        put_executable(&opener, &script);
+        let shell = shell_of(vars(&[("PATH", "/usr/bin:/bin"), ("MARK", "user")]));
+        assert_eq!(open_outside(&opener, OsStr::new("https://example.com"), &shell), Ok(()));
+        // HOME is the test process's own, which the window's environment stands for.
+        assert_eq!(std::fs::read_to_string(&out).expect("the opener ran"), "https://example.com|user|unset");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn an_opener_that_fails_or_is_not_there_is_an_error() {
+        let dir = scratch_dir();
+        let opener = dir.path().join("opener");
+        put_executable(&opener, "#!/bin/sh\nexit 3\n");
+        let shell = shell_of(vars(&[("PATH", "/usr/bin:/bin")]));
+        let failed = open_outside(&opener, OsStr::new("/x.html"), &shell).expect_err("exit 3 fails");
+        assert!(failed.ends_with("could not open /x.html: it exited with exit status: 3"), "{failed}");
+        let missing = open_outside(&dir.path().join("gone"), OsStr::new("/x.html"), &shell).expect_err("no opener");
+        assert!(missing.starts_with("cannot run ") && missing.contains("to open /x.html"), "{missing}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn an_opener_still_running_is_left_to_run() {
+        let dir = scratch_dir();
+        let opener = dir.path().join("opener");
+        put_executable(&opener, "#!/bin/sh\nexec sleep 5\n");
+        let shell = shell_of(vars(&[("PATH", "/usr/bin:/bin")]));
+        let started = Instant::now();
+        assert_eq!(open_outside(&opener, OsStr::new("https://example.com"), &shell), Ok(()));
+        assert!(started.elapsed() < OPENER_CHECK + Duration::from_secs(1));
     }
 
     #[test]
