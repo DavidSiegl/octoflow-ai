@@ -447,9 +447,8 @@ saves the texts it started with, so editing or deleting a file does not change a
 
 ## The GUI
 
-The Python engine had a window of its own, `gui`, a tk form over the CLI that started `run` and `resume` as child
-processes and listed a project's runs. It went with that engine in 0.49.0: the desktop app in `ui/` replaces it, as
-[ui-options.md](ui-options.md) decided, and is read-only so far.
+The desktop app in `ui/` ([architecture](architecture.md#the-desktop-app-ui)) is the orchestrator's window. It is
+read-only so far.
 
 ## Builds and releases
 
@@ -525,11 +524,11 @@ or conflicts (`.github/workflows/automerge.yml` says which wait).
   | `auto`, `dontAsk`, any other | passed through | dropped | dropped | dropped |
 
 - **`state.json` says its format, and a run an earlier release saved is refused, not migrated.** `"format": 2`
-  leads the file since the engine stopped writing the Python engine's JSON (0.54.0); a `state.json` without it is
+  leads the file since 0.54.0; a `state.json` without it is
   refused by `resume` with what to do (finish or close the run with the release that started it, or remove its run
   directory), and `list` shows it as unreadable, the same hint as its error. `prune` and `close` read only the
   fields they need, so they work on such a run too. Migrating each earlier shape would keep code for states no run
-  writes any more (decided 2026-10-30, the octoflow-without-python spec).
+  writes any more (decided 2026-10-30).
 - **`state.json` saves the permission mode and the harnesses, not Claude Code's arguments.** The arguments
   depend on the harness, which `resume` can change, so they are built at each launch.
 - **Model names are passed as they are.** Every harness takes `--model`; translating names between providers

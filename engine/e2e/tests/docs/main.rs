@@ -37,22 +37,18 @@ const OTHER_PROGRAMS_NAMES: &[(&str, &str)] = &[
     ("PYTEST_ADDOPTS", "pytest's environment variable"),
     ("CARGO_HOME", "cargo's environment variable"),
     ("HERDR_SESSION", "the herdr CLI's environment variable, which picks its session"),
-    ("SSL_CERT_FILE", "OpenSSL's environment variable, which the Rust engine's HttpClient reads too"),
-    ("SSL_CERT_DIR", "OpenSSL's environment variable, which the Rust engine's HttpClient reads too"),
+    ("SSL_CERT_FILE", "OpenSSL's environment variable, which the engine's HttpClient reads too"),
+    ("SSL_CERT_DIR", "OpenSSL's environment variable, which the engine's HttpClient reads too"),
     ("E2E_ENGINE", "the e2e package's environment variable, engine/e2e/src/engine.rs"),
     ("E2E_RECORD", "the e2e scenarios' environment variable, engine/e2e/tests/e2e/main.rs"),
     ("EVAL_ENGINE", "the eval runner's environment variable, xtask/src/eval.rs"),
     ("OCTOFLOW_TEST_SEED", "the engine's tests' environment variable, engine/src/test_support.rs"),
-    ("HARNESSES", "the Rust engine's table of the agent harnesses, engine/src/harness.rs"),
+    ("HARNESSES", "the engine's table of the agent harnesses, engine/src/harness.rs"),
     ("PR_STATUS_CREATOR", "the Jenkinsfile's"),
     ("CHANGE_TARGET", "an environment variable Jenkins sets"),
     ("OPTIONS", "an HTTP method"),
     ("NAME", "the README's placeholder for a prompt's name"),
 ];
-
-/// Documents that describe the code as it was, whose commands and names are not checked against today's, with why.
-const HISTORICAL_DOCS: &[(&str, &str)] =
-    &[("ui-options.md", "an assessment of 2026-10-24 of the Python engine's tk window, which 0.49.0 removed")];
 
 /// Backticked names the docs give that read as Type.member but are file names, with whose files they are.
 const FILE_NAMES: &[(&str, &str)] = &[("Cargo.toml", "cargo's manifest"), ("Cargo.lock", "cargo's lock file")];
@@ -68,10 +64,6 @@ struct Doc {
 impl Doc {
     fn name(&self) -> &str {
         self.path.file_name().and_then(|n| n.to_str()).unwrap_or("")
-    }
-
-    fn historical(&self) -> bool {
-        HISTORICAL_DOCS.iter().any(|(name, _)| *name == self.name())
     }
 
     fn lines(&self) -> Vec<Line<'_>> {
@@ -108,7 +100,7 @@ fn assert_no_errors(errors: &[String]) {
 }
 
 /// (line, command, the text of its arguments) for each command the document shows being run, in a code span or a
-/// fenced line: after `orchestrator` or the Python engine's `orchestrator.py`; and, in a code span, a command opening
+/// fenced line: after `orchestrator` or `orchestrator.py`; and, in a code span, a command opening
 /// it with a flag after, as in `run --spec`. Shell comments, and what follows a pipe, `&&` or `;`, are left out.
 fn invocations<'a>(doc: &'a Doc, commands: &BTreeMap<String, BTreeSet<String>>) -> Vec<(Line<'a>, String, String)> {
     let mut found = Vec::new();
@@ -174,7 +166,7 @@ fn orchestrator_command(text: &str) -> Option<(&str, &str)> {
 fn each_command_the_docs_run_takes_the_flags_they_give_it() {
     let commands = cli::commands();
     let mut errors = Vec::new();
-    for doc in docs().iter().filter(|d| !d.historical()) {
+    for doc in &docs() {
         for (line, command, rest) in invocations(doc, commands) {
             let excused = |flag: Option<&str>| {
                 NOT_IN_THE_PARSER.iter().any(|&(d, c, f, _)| d == doc.name() && c == command && f == flag)
@@ -339,7 +331,7 @@ fn the_names_the_docs_give_exist_in_the_orchestrator() {
     let types: BTreeSet<&str> = names.members.iter().filter_map(|m| m.split_once('.')).map(|(t, _)| t).collect();
     let methods: BTreeSet<&str> = names.members.iter().filter_map(|m| m.split_once('.')).map(|(_, m)| m).collect();
     let mut errors = Vec::new();
-    for doc in docs().iter().filter(|d| !d.historical()) {
+    for doc in &docs() {
         for line in doc.lines() {
             for code in code_spans(line.text) {
                 let at = doc.at(&line);

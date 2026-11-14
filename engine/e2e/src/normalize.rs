@@ -3,15 +3,15 @@
 //! Times, run ids, pids and git object names, the world's directory and the host's name. Everything else in a record
 //! is compared as it is.
 //!
-//! The recordings were normalized by the Python harness's regular expressions (normalize.py), which this module matches by
-//! hand, with their semantics: `\b` is a change between a word character (a letter, a digit or `_`, as Python's
-//! Unicode `\w`) and any other, `\d` an ASCII digit (the records hold no other), and hex is `[0-9a-f]`.
+//! Patterns are matched by hand, in the terms of regular expressions: `\b` is a change between a word character (a
+//! letter or a digit in Unicode's sense, or `_`) and any other, `\d` an ASCII digit (the records hold no other), and
+//! hex is `[0-9a-f]`.
 
 use serde_json::Value;
 use octoflow_engine::map::Map;
 
 /// The JSON keys whose numbers are times measured by a clock: a turn's or a run's seconds, a state's age, a file's
-/// modification time. Sorted, as normalize.py's alternation of them is.
+/// modification time. Sorted.
 const TIMED_KEYS: [&str; 3] = ["heartbeat_age", "mtime", "seconds"];
 /// The JSON keys whose strings word a time measured by a clock, such as run_health's "beat 3s ago".
 const TIMED_TEXT_KEYS: [&str; 1] = ["health_reason"];
@@ -219,7 +219,7 @@ pub fn facts(text: &str) -> Vec<String> {
     found
 }
 
-/// s with each match of a matcher replaced, scanning from the left as re.sub does: the matcher is given s's characters
+/// s with each match of a matcher replaced, scanning from the left and resuming after each match: the matcher is given s's characters
 /// and a position, and answers the end of a match that starts there and its replacement, or None.
 fn substitute(s: &str, matcher: impl Fn(&[char], usize) -> Option<(usize, String)>) -> String {
     let c: Vec<char> = s.chars().collect();
@@ -498,8 +498,8 @@ mod tests {
         assert_eq!(got, ["3", "<run:1>", "VERDICT_X", "build_path", "https://x.example/a", "src/calc.py"]);
     }
 
-    /// What the Python harness's normalizer gave for these inputs, made by it before octoflow-without-python ticket 02
-    /// removed it, with the normalizer oracle_normalizer makes.
+    /// The expected normalizations of fixed inputs (normalize/oracle.json), by the normalizer oracle_normalizer
+    /// makes.
     fn oracle() -> Value {
         serde_json::from_str::<Value>(include_str!("normalize/oracle.json")).expect("oracle.json is JSON")
     }
@@ -528,7 +528,7 @@ mod tests {
     }
 
     #[test]
-    fn text_writes_placeholders_as_python_did() {
+    fn text_replaces_what_differs_between_runs_with_placeholders() {
         let oracle = oracle();
         let n = oracle_normalizer(&oracle);
         for case in oracle_items(&oracle, "texts") {
@@ -539,7 +539,7 @@ mod tests {
     }
 
     #[test]
-    fn json_replaces_timed_numbers_and_pids_as_python_did() {
+    fn json_replaces_timed_numbers_and_pids_with_placeholders() {
         let oracle = oracle();
         let n = oracle_normalizer(&oracle);
         let json_in = oracle.get("json_in").expect("oracle.json has json_in");
@@ -549,7 +549,7 @@ mod tests {
     }
 
     #[test]
-    fn facts_are_found_as_python_found_them() {
+    fn facts_are_the_placeholders_names_and_numbers_a_text_holds() {
         for case in oracle_items(&oracle(), "facts") {
             let want = case.as_array().and_then(|a| a.get(1)).and_then(Value::as_array).expect("a list of facts");
             let want: Vec<&str> = want.iter().map(|f| f.as_str().expect("a fact")).collect();

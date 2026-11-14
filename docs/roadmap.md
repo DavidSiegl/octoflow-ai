@@ -5,9 +5,9 @@ Ideas for what comes next, in no particular order. The designs behind what has s
 
 - **Per-role permission mode**: give each role its own permission mode. Today one `--permission-mode` applies to
   every role.
-- **A reactive UI**: a successor to the Tk window that shows every run's progress and handoff files live, lets
-  you answer the agents in it, and starts and watches several runs from one window. The options and the
-  decision, a Tauri app, are in [ui-options.md](ui-options.md); its first, read-only step is in [`ui/`](../ui).
+- **A reactive UI**: a desktop app that shows every run's progress and handoff files live, lets you answer the
+  agents in it, and starts and watches several runs from one window. Its first, read-only step is in
+  [`ui/`](../ui).
 
 ## Workflows
 

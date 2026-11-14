@@ -9,13 +9,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 ## Planned
 
 - **The e2e scenarios: what they do not record.** `engine/e2e/` runs 43 scenarios against the engine as a program and
-  compares each with its recording (docs/architecture.md, Tests). The recordings are the Python engine's, made before
-  rust-engine ticket 11 removed it, by the Python harness octoflow-without-python ticket 02 removed; a scenario added
-  since records the Rust engine, and its recording is a review of the engine's behaviour. Not covered, and accepted
+  compares each with its recording (docs/architecture.md, Tests); a scenario's recording is a review of the engine's
+  behaviour. Not covered, and accepted
   as known gaps (the user's ruling, 2026-11-11), since unit tests cover each harness's arguments and its token
   parsing: the harnesses other than claude and codex starting
   an agent (only their arguments differ); a session log's token counts (every turn records `unknown`); `--timeout` and
-  the stall notice, which take real minutes; the GUI, which the Rust engine drops; round 2 of the example workflows and
+  the stall notice, which take real minutes; round 2 of the example workflows and
   a fresh session's prompts as sent, whose templates only the recorded `state.json` holds and whose text only golden
   files hold (docs/architecture.md, Tests). Where gitleaks or openssl is not on PATH, every scenario fails naming it: a
   skip would pass a machine that checked nothing, and the gate's test-integrity check fails an added skip (the user's
@@ -23,7 +22,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   holds by design, each a choice a later ticket may revisit: output a human reads (logs, errors, `show`, `list`,
   `prune`) as its facts (`normalize::facts`), not its words; a run's files listed by modification time, as `/files` and
   the event stream list them, sorted by name, since seconds of the clock decide that order; ssh's commands not at all,
-  only what they did; doctor's lines without git's and Tk's, which are the host's. Two more are recorded as decided
+  only what they did; doctor's lines without git's, which is the host's. Two more are recorded as decided
   against below: the `state.json` saves between two commands, and serve's events between two checkpoints. One engine run
   takes 2 to 25 seconds a scenario (25 for serve's event stream). Decided against (2026-10-27): scenarios as data files the harness interprets, which needed a
   language of their
@@ -33,10 +32,9 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   follow-up prompts, notes, commit messages and pull request bodies, which the recordings hold as sent where a scenario
   reaches them.
 
-- **The eval set: what it does not cover.** `cargo xtask eval` (live-checks/04, octoflow-without-python/08,
-  docs/design.md, Evals) runs the engine as a program, `run --no-pr --spec`, rather than being the `orchestrator.py
-  eval` command the ticket named, since the Python engine was frozen then; it runs `EVAL_ENGINE`, else the checkout's
-  own build. Decided against (the user's ruling, 2026-11-11): an `eval` command of the engine's own, since evals are a
+- **The eval set: what it does not cover.** `cargo xtask eval` (live-checks/04, docs/design.md, Evals) runs
+  the engine as a program, `run --no-pr --spec`; it runs `EVAL_ENGINE`, else the checkout's own build. Decided
+  against (the user's ruling, 2026-11-11): an `eval` command of the engine's own, since evals are a
   developer's chore, not a user's feature. Not covered: the quality gate, which a trial
   runs only given `--quality-gate local` after `--`, and then by an empty `gate.toml`, since the toy repositories have
   none, so `quality rounds` stays 0; a `--worktree` or `--machine` run, which the runner refuses; and an interview, which `--spec` skips.
@@ -59,10 +57,8 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `tempfile::Builder`, as `Scratch::new` is.
 - **The desktop app as the terminal client too: what was decided against.** The app, started with arguments, is the CLI
   (`cli` in `ui/src-tauri/src/lib.rs`), and the plain CLI binaries stay released: 13 MB against the AppImage's 120 MB of
-  WebKit, and they start without FUSE on headless machines and in CI. Decided against (2026-10-24): one file on every
-  platform, by embedding the orchestrator's bytes in the Rust executable and unpacking them at start (PyInstaller's
-  onefile done twice), or by Python hosting the window, which [ui-options.md](docs/ui-options.md) chose against. Decided
-  against too, 2026-11-11 (rust-engine/12, which made the app its own `serve` sidecar): the window serving its runs in
+  WebKit, and they start without FUSE on headless machines and in CI. Decided against
+  (2026-11-11, when the app became its own `serve` sidecar): the window serving its runs in
   its own process, with or without the CLI there too. The AppImage's environment, which GTK needs and the engine's
   children must not get, would then go through the engine as a parameter (herdr, `ProcessHost`, `ConfigDir`, the HTTP
   clients, `current_dir`) where the sidecar takes the user's once at its start (`UserShell::enter`); an engine panic
@@ -158,112 +154,70 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   ruling, 2026-11-11): the wrapped callers work, and a clock and a human in `Host`'s interface cost more than a new
   caller remembering to wrap.
 
-- **The Rust engine reads some input no run writes otherwise than the Python engine.** Each is a difference only for a
-  file a human edited, or a case no test of the Python engine pins (rust-engine ticket 04, 2026-10-28): a time is read
-  only with its offset, as jiff's `Timestamp` reads an ISO 8601 time (`crate::summary::epoch_time`, since
-  octoflow-without-python ticket 04), where Python's `fromisoformat` takes one without an offset in the machine's zone
-  and reads hour 24 and week dates, so a session log's line or a `closedAt` of such a time is skipped or refused; and a
-  turn whose start is not a time is left out of `summary.md` and `metrics.json`, where the Python engine fails
-  (`epoch_seconds` and `turn_starts` in `engine/src/summary.rs`). And from the machine the agents run on (rust-engine
-  ticket 05, 2026-10-28): a path git prints that is not UTF-8 is refused, naming it, by `Host::lock`, `locked_changes`,
-  `restore`, `changed_line_counts` and `crate::patch::added_lines` (so by the secret scan too), where Python reads it as
-  `os.fsdecode` does, and a base's gitleaks rules file that is not UTF-8 fails the scan closed, where the Python engine
-  crashes writing it (`engine/src/host.rs`, `utf8_path`; `engine/src/host/scan.rs`, `base_rules_file`). And from the
-  agents' session logs and herdr (rust-engine ticket 06, 2026-10-28): a session log's line that holds `NaN` or
-  `Infinity` is skipped, as serde_json refuses it, and a count beyond 64 bits is not an integer, where Python counts its
-  tokens, and a lone surrogate in a line, as an escape or as a byte that is not UTF-8, is read as U+FFFD, so that two
-  Claude Code message ids that differ only there count as one answer, where Python counts two (`Harness::session_usage`
-  in `engine/src/harness.rs`, `without_lone_surrogates`); a harness that is not one of `HARNESS_NAMES`, as a hand-edited
-  `state.json` can name, is refused naming those there are (`crate::harness::harness`), where the Python engine fails on
-  a KeyError; and an answer of herdr's that lacks what its command gives, or is not UTF-8, is a `bad_response` naming
-  the command or a failure naming it (`engine/src/herdr.rs`), where Python fails on a KeyError or a UnicodeDecodeError.
-  And from the Workflow's locks and proofs (rust-engine ticket 08, part 4, 2026-10-29): a `restored` or `proofs` record
-  of `state.json` without a field the engines write, or with one of another type, stops the run naming it
-  (`Restored::read` in `engine/src/workflow/locks.rs`, `ProofRun::read` in `engine/src/proofs.rs`), where Python fails
-  on a KeyError or a TypeError, or, for a `proofs` record
-  without `said`, reads it only where it needs `said` (no release wrote one: v0.24.0, the first with proofs, writes
-  `said` in every record, and only commits before it on main did not; cross-review 98, F1); and a proof's output that is
-  not UTF-8 is quoted with each such byte as U+FFFD (`Workflow::run_proof`), where Python keeps it as a lone surrogate,
-  which `state.json` holds as an escape and the write of the review then fails on (a UnicodeEncodeError, uncaught). And
-  from drain (rust-engine ticket 09b, 2026-10-29): a name in drain's DIR that is not UTF-8 is left out of the queue
-  (`crate::cli::drain::queue`, `read_queue`), where Python reads its spec.md through os.fsdecode. And from the manifests
-  the new-dependencies check reads (octoflow-without-python ticket 06, 2026-11-03): their values are compared and
-  written as TOML (`crate::checks::dependencies`), so a `[tool.uv.sources]` entry's `index` names only an index whose
-  `name` is the same TOML value, where Python's `==` took 1, 1.0 and true for one name and datetimes for one by their
-  instant; a source of a shape the check does not know is written as an inline TOML table, one holding a datetime too,
-  where Python's `json.dumps` refused it and the manifest was unreadable; and a `[project] name` that is not a string is
-  refused, where Python took 0, false or an empty list for no name; and an index's `url` of false, 0, an empty list or
-  an empty table names that index, where Python took it for no URL and named the index by the entry's `index`. Decided
-  against unless a run is found that writes such input.
-- **The Rust engine's Ctrl-C, what is left.** Rust-engine ticket 08's part 6 (2026-10-29) has a SIGINT raise the
-  `Interrupt`, which stops the command the engine waits on (`crate::interrupt`), and since ticket 10 every command of
-  the binary takes it. Not closed: (1) A
-  Ctrl-C during a PyPI or crates.io request (`crate::http`, ureq) waits for the request to end, up to its timeout, where
-  Python's KeyboardInterrupt stops `urlopen` at once: there is no process to stop, and ureq has no way to abandon a
-  request from another thread. The user accepted that wait for a Ctrl-C (2026-10-29, review 100). Since ticket 08's
-  follow-ups a SIGTERM or a SIGHUP waits so too (cross-review 102, F4: "a `kill <pid>` or a service manager's stop
+- **The engine's Ctrl-C, what is left.** A SIGINT raises the `Interrupt` (2026-10-29), which stops the command the
+  engine waits on (`crate::interrupt`), and every command of the binary takes it. Not closed: (1) A
+  Ctrl-C during a PyPI or crates.io request (`crate::http`, ureq) waits for the request to end, up to its timeout:
+  there is no process to stop, and ureq has no way to abandon a
+  request from another thread. The user accepted that wait for a Ctrl-C (2026-10-29, review 100). A SIGTERM or a
+  SIGHUP waits so too (cross-review 102, F4: "a `kill <pid>` or a service manager's stop
   during the dependency check's PyPI request waits up to the request
-  timeout"), where it ended the Python engine at once; a service manager that sends SIGKILL after a shorter grace
+  timeout"); a service manager that sends SIGKILL after a shorter grace
   kills the engine with the run unreleased. Decided against (the user's ruling, 2026-11-11): a request the Interrupt
   can cut short, by slices of the timeout or a thread nobody waits for; the wait is accepted for SIGTERM and SIGHUP
   too, since the timeout bounds it. (2) Under macOS, `by_signals`
   reads no `/proc/self/status` and takes the kernel to discard a signal that was ignored when the engine started, even
   while blocked, as the BSD kernels do, so `serve`, which waits for SIGINT and SIGTERM also when it started with one
-  ignored, as Python's `signal.signal` replaces an ignored disposition (ticket 10, `crate::serve::serve_command`), does
+  ignored (`crate::serve::serve_command`), does
   not stop at one it started ignoring there, and `run_process` gives a command the whole 250 ms grace, nix having no
   `waitid` there; unchecked on a Mac. Decided against (the user's ruling, 2026-11-11): `engine/tests/signals.rs`, which
   is Linux's (it reads `/proc` and starts the engine with GNU `env`), ported to macOS and run on one, since no Mac runs
   the tests; reopen when a Mac user reports a hang. A process that left the command's group, as a daemon does, is not
-  reached, as at a timeout; that is no gap, as the terminal's Ctrl-C does not reach one in Python either. (3) On a Linux
+  reached, as at a timeout; that is no gap, as the terminal's Ctrl-C does not reach one either. (3) On a Linux
   whose `/proc/self/status` cannot be read, as in a container or sandbox without `/proc`, `ignored_signals` finds
   nothing ignored, so `by_signals` waits for a signal the engine started with ignored and takes it, Linux queueing a
   blocked signal whatever its disposition (cross-review 102, F2: "an engine under `nohup` in a container or sandbox
   without
   /proc is hung up: the Interrupt is raised, the run released as interrupted", and `interrupt::exit`'s raise of the
-  still-ignored signal returns, so the program exits 129 by `std::process::exit`). Part 6 had the gap for SIGINT;
-  the follow-ups extend it to SIGTERM and SIGHUP. nix reads a signal's disposition only through `sigaction`, which
+  still-ignored signal returns, so the program exits 129 by `std::process::exit`). The gap is the same for SIGINT, SIGTERM and SIGHUP. nix reads a signal's disposition only through `sigaction`, which
   is `unsafe`. Decided against (the user's ruling, 2026-11-12): that query, a second `unsafe` block, or refusing to
   start on a Linux without `/proc`; such a container under `nohup` is rare.
-- **The commands the Rust engine runs outlive an engine that is SIGKILLed.** Each command runs in a process group of its
-  own (rust-engine tickets 05, 06), so a SIGKILL of the engine, or of its group, ends the engine and leaves a running
-  `herdr agent wait`, `gh pr create` or push to finish unwatched, where the Python engine's children are in its group
-  and end with it when the group is killed. SIGINT, SIGTERM and SIGHUP now stop them (`interrupt::SIGNALS`, rust-engine
-  ticket 08's follow-ups, 2026-10-29); a SIGKILL cannot be caught. The e2e scenarios' kill
+- **The commands the engine runs outlive an engine that is SIGKILLed.** Each command runs in a process group of its
+  own, so a SIGKILL of the engine, or of its group, ends the engine and leaves a running
+  `herdr agent wait`, `gh pr create` or push to finish unwatched. SIGINT, SIGTERM and SIGHUP stop them
+  (`interrupt::SIGNALS`, 2026-10-29); a SIGKILL cannot be caught. The e2e scenarios' kill
   kills each process below the engine too (`Invocation::kill`, `engine/e2e/tests/e2e/world.rs`), as "a crash or a lost
-  machine" does; before, `kill_in_publish` against the Rust binary got a pull request from the orphaned `gh`. Decided
+  machine" does; before, `kill_in_publish` got a pull request from the orphaned `gh`. Decided
   against (the user's ruling, 2026-11-11): the command's group killed when the engine dies, by a subreaper or a
   watchdog (Linux's `PR_SET_PDEATHSIG`, set in `run_process`'s `pre_exec`, reaches only the command itself, not what
   it starts); a SIGKILL allows no cleanup, and a resumed run takes over the agents it finds alive.
-- **The Rust engine talks to PyPI otherwise than urllib in a few cases.** Its transport is ureq
-  (`HttpClient`, `engine/src/http.rs`, rust-engine ticket 07, 2026-10-28), which differs from `urlopen` where no test of
-  the Python engine pins it (its CONNECT to a proxy for a plain-http URL stays, documented in README's Requirements:
-  the user's ruling, 2026-11-12, GitHub #410): TLS trusts the certificates of the places the environment names, else of
-  the system's as openssl-probe finds them, each read by rustls-native-certs
-  (`root_certs`), which trusts otherwise than OpenSSL does for Python in five ways (the user's rulings, 2026-10-28,
-  cross-review 93, F22 and F23): with `SSL_CERT_FILE` set non-empty and `SSL_CERT_DIR` unset, or the reverse, it reads
-  only what is set, where OpenSSL adds the system's default directory or file (with the other set empty, OpenSSL adds
-  nothing either), so an `SSL_CERT_FILE` that cannot be read, such as a removed virtualenv's, trusts none where Python
-  still trusts `/etc/ssl/certs`; a variable set empty counts as unset, which departs from OpenSSL only where the other
-  is unset or empty too: with `SSL_CERT_FILE` empty and `SSL_CERT_DIR` unset the system's bundle is trusted too, where
-  OpenSSL reads no file for it, with `SSL_CERT_DIR` empty and `SSL_CERT_FILE` unset the system's directories are, where
-  OpenSSL reads no directory for it, and with both empty the whole system store is, or Mozilla's roots on a machine with
-  no certificate, where Python loads no certificate at all; it reads every file of a certificate directory, where
-  OpenSSL opens only the files named by a subject's hash, from `.0` up to the first missing or broken one, so a
-  certificate under another name, or behind a broken link, is trusted here only; without either variable it takes the
-  system's bundle and directories from openssl-probe's list of places, not from OpenSSL's compiled-in ones, also on
-  macOS, where neither engine reads the keychain; and without either variable, on a machine with no certificate at all,
-  it trusts Mozilla's roots (webpki-roots), where Python trusts none and fails every https request; and the timeout
-  bounds the connect and each read and write, as urllib's does, but not name resolution. In what it reads
-  (`engine/src/pypi.rs`, `engine/src/checks/dependencies.rs`): a manifest is read as TOML 1.1, which tomllib before Python 3.15 refuses in part, and why
-  one is not TOML is the toml crate's words with `(at line L, column C)`; and rustls refuses a server certificate that
-  is a CA's own, as a self-signed one made by `openssl req -x509` with its default extensions is (`CaUsedAsEndEntity`),
-  where OpenSSL accepts it when it is trusted, so the e2e scenarios' PyPI has a leaf under a CA of its own (found by
-  ticket 08's part 7, 2026-10-29). The rest is decided against unless a setup is found that needs it. Decided against
-  (2026-10-28, ticket 07, design-it-twice): `PyPI` as a trait of its own with an in-memory fake. The engine's tests
-  would then word every URL and error twice, in the code and in the fake; with the seam at `Http`, as Python's at
-  `urlopen`, `FakePyPI` and `FakeCratesIo` play the servers and every line of `PyPI` and `CratesIo` runs in those
-  tests. The user kept the `Http` seam and amended the spec's Lane to say so (2026-10-28,
-  cross-review 93, F1), and issue 08 says which seam it is given.
+- **The engine's TLS trusts certificates otherwise than OpenSSL in a few cases.** Its transport to PyPI and
+  crates.io is ureq (`HttpClient`, `engine/src/http.rs`, 2026-10-28), which sends a request for a plain-http URL
+  through a proxy with CONNECT (documented in README's Requirements: the user's ruling, 2026-11-12, GitHub #410). TLS
+  trusts the certificates of the places the environment names, else of the system's as openssl-probe finds them, each
+  read by rustls-native-certs (`root_certs`), which trusts otherwise than OpenSSL in five ways (the user's rulings,
+  2026-10-28, cross-review 93, F22 and F23): with `SSL_CERT_FILE` set non-empty and `SSL_CERT_DIR` unset, or the
+  reverse, it reads only what is set, where OpenSSL adds the system's default directory or file (with the other set
+  empty, OpenSSL adds nothing either), so an `SSL_CERT_FILE` that cannot be read, such as a removed virtualenv's,
+  trusts none where OpenSSL still trusts `/etc/ssl/certs`; a variable set empty counts as unset, which departs from
+  OpenSSL only where the other is unset or empty too: with `SSL_CERT_FILE` empty and `SSL_CERT_DIR` unset the system's
+  bundle is trusted too, where OpenSSL reads no file for it, with `SSL_CERT_DIR` empty and `SSL_CERT_FILE` unset the
+  system's directories are, where OpenSSL reads no directory for it, and with both empty the whole system store is,
+  or Mozilla's roots on a machine with no certificate, where OpenSSL loads no certificate at all; it reads every file
+  of a certificate directory, where OpenSSL opens only the files named by a subject's hash, from `.0` up to the first
+  missing or broken one, so a certificate under another name, or behind a broken link, is trusted here only; without
+  either variable it takes the system's bundle and directories from openssl-probe's list of places, not from
+  OpenSSL's compiled-in ones, also on macOS, where it does not read the keychain; and without either variable, on a
+  machine with no certificate at all, it trusts Mozilla's roots (webpki-roots), where OpenSSL trusts none and fails
+  every https request. The timeout bounds the connect and each read and write, but not name resolution. In what it
+  reads (`engine/src/pypi.rs`, `engine/src/checks/dependencies.rs`): a manifest is read as TOML 1.1, which Python's
+  tomllib before Python 3.15 refuses in part, and why one is not TOML is the toml crate's words with `(at line L,
+  column C)`; and rustls refuses a server certificate that is a CA's own, as a self-signed one made by `openssl req
+  -x509` with its default extensions is (`CaUsedAsEndEntity`), where OpenSSL accepts it when it is trusted, so the e2e
+  scenarios' PyPI has a leaf under a CA of its own (2026-10-29). The rest is decided against unless a setup is found
+  that needs it. Decided against (2026-10-28, design-it-twice): `PyPI` as a trait of its own with an in-memory fake.
+  The engine's tests would then word every URL and error twice, in the code and in the fake; with the seam at `Http`,
+  `FakePyPI` and `FakeCratesIo` play the servers and every line of `PyPI` and `CratesIo` runs in those tests. The user
+  kept the `Http` seam (2026-10-28, cross-review 93, F1).
 - **No build runs the Rust doctests.** cargo-nextest does not run doctests, and since the Test stage's `cargo llvm-cov
   nextest` replaced the UI stage's `cargo test`, nothing does: `octoflow_ui_lib` is an `rlib` among its crate types
   (`ui/src-tauri/Cargo.toml`), so `cargo test` ran them. The crate has no doc example today. Raised by cross-review 72
@@ -271,29 +225,22 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   Decided against for now: a `cargo test --doc` beside it, which builds the dependencies a third time, uninstrumented,
   under the agent's 3 GB, for no example. Closes with `cargo test --doc --locked` in the Test stage once a doc example
   lands, or with cargo-llvm-cov's `--doctests` once it runs on a stable toolchain.
-- **The e2e scenarios record `state.json` at each command the fakes get, not after each save.** Ticket
-  rust-engine/01 asks for "`state.json` after each save"; the ledger reads it only when herdr, gh or PyPI gets
-  a call, and leaves out a change to `heartbeat_at` alone (`engine/e2e/src/ledger.rs`, `changed_states`). Raised
-  by cross-review 65 (F2, 2026-10-27): "a Rust engine that skips or reorders saves between two of those calls, or
-  writes a wrong intermediate state that a later save overwrites, still passes." Only the engine's own process sees
-  every save: for the Python engine an audit hook through `sitecustomize`, or a `mv` on PATH that `Host.write` calls,
-  would catch them, and the Rust engine could be held to neither. Decided against (the user's ruling, 2026-11-11):
+- **The e2e scenarios record `state.json` at each command the fakes get, not after each save.** The ledger reads it
+  only when herdr, gh or PyPI gets a call, and leaves out a change to `heartbeat_at` alone
+  (`engine/e2e/src/ledger.rs`, `changed_states`). Raised by cross-review 65 (F2, 2026-10-27): an engine that skips or
+  reorders saves between two of those calls, or writes a wrong intermediate state that a later save overwrites, still
+  passes. Only the engine's own process sees every save. Decided against (the user's ruling, 2026-11-11):
   a way to see each write of `state.json` from outside the process (inotify has no stdlib binding, so a new
   dev-dependency); `state.json` at each command the fakes get is the contract.
-- **serve answers some requests otherwise than Python's http.server.** The Rust engine's serve is on tiny_http
-  (rust-engine ticket 10, `engine/src/serve.rs`), which reads a request otherwise in a few cases no client of serve's
-  sends: a request line or header with a byte beyond ASCII gets no answer, its connection closed, where Python reads
-  it as Latin-1 and answers, a token so 401 (`non_ascii_tokens`); a header's value loses its trailing blanks, so a
-  `Host` or `Authorization` header with one passes where Python's fails it; a header continued on a folded line is
-  refused with 400, where Python joins the lines; a netloc with one square bracket in an absolute request target is
-  read as it is (`crate::serve::url::urlsplit`), where Python's handler fails on urlsplit's ValueError and answers
-  nothing; tiny_http answers a bad request line, an `Expect` other than `100-continue` and HTTP/2 itself (400, 417,
-  505), and neither those nor the 501 to another method are logged on stderr, where http.server logs each error it
-  sends; and a reply names tiny_http in its `Server` header. An event stream to an HTTP/1.1 client is chunked, ending
-  with its last chunk, where Python's HTTP/1.0 stream ends with the connection: tiny_http keeps the connection, so a
-  close-delimited stream would not end for a client at a server's stop. The e2e scenarios' `EventStream` reads the
-  chunked stream chunk by chunk (`engine/e2e/tests/e2e/client.rs`). Every security check refuses
-  what Python's refuses; these change only how. Decided against unless a client is found that sends such a request.
+- **serve answers some malformed requests abruptly or silently.** serve is on tiny_http (`engine/src/serve.rs`),
+  which handles a few requests no client of serve's sends in ways serve does not choose: a request line or header with
+  a byte beyond ASCII gets no answer, its connection closed, rather than a 400, or a 401 for such a token
+  (`non_ascii_tokens`); a header's value loses its trailing blanks, so a `Host` or `Authorization` header with one is
+  judged without them; a header continued on a folded line is refused with 400; a netloc with one square bracket in an
+  absolute request target is read as it is (`crate::serve::url::urlsplit`); tiny_http answers a bad request line, an
+  `Expect` other than `100-continue` and HTTP/2 itself (400, 417, 505), and neither those nor the 501 to another
+  method are logged on stderr; and a reply names tiny_http in its `Server` header. Every security check still refuses
+  what it is for; these change only how. Decided against unless a client is found that sends such a request.
 - **serve has no limit on its threads, and no timeout for a client that sends nothing.** The engine's serve answers
   each request on a thread of its own, and tiny_http keeps a thread for each open connection, kept alive between
   requests (`engine/src/serve.rs`); cross-review 105, F3: "A client that sends a partial request or idles holds it for
