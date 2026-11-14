@@ -275,6 +275,13 @@ fn ssh_target_unknown_machine() {
 }
 
 #[test]
+fn ssh_target_without_a_machine_asks_nothing() {
+    let (herdr, ran) = answering(None, 0, "[]", "");
+    assert_eq!(herdr.ssh_target().unwrap_err().to_string(), "no herdr machine chosen, so none to reach");
+    assert!(ran.lock().unwrap().is_empty());
+}
+
+#[test]
 fn ssh_target_of_a_disabled_or_unreadable_machine() {
     let (herdr, _) = answering(Some("box"), 0, r#"[{"label": "box", "target": "t", "enabled": false}]"#, "");
     assert_eq!(herdr.ssh_target().unwrap_err().to_string(), "herdr machine box is disabled");

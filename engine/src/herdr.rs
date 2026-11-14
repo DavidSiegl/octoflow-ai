@@ -590,10 +590,11 @@ impl ProcessHerdr {
     }
 
     /// The SSH target of the machine, for reaching its filesystem, from this machine's saved machines: machine
-    /// management is herdr's here, and is never forwarded. Only a herdr with a machine has one to ask for. Errors: no
-    /// saved machine is named so, or it is disabled.
+    /// management is herdr's here, and is never forwarded. Errors: this herdr has no machine, which herdr is then not
+    /// asked about; no saved machine is named so, or it is disabled.
     pub fn ssh_target(&self) -> Result<String, HerdrError> {
-        let machine = self.machine.as_deref().expect("ssh_target is asked only of a herdr with a machine");
+        let no_machine = || HerdrError::Failed(OrchestratorError::new("no herdr machine chosen, so none to reach"));
+        let machine = self.machine.as_deref().ok_or_else(no_machine)?;
         let out = self.exec(&["machine", "list", "--json"], Some(Duration::from_secs(CALL_LIMIT_SECONDS)))?;
         let bad = |why: String| HerdrError::new("bad_response", format!("machine list: {why}"));
         let profiles = serde_json::from_str::<Value>(&out).map_err(|e| bad(e.to_string()))?;
