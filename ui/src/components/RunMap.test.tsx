@@ -81,6 +81,17 @@ describe("RunMap", () => {
     expect(a?.querySelector(".holder")?.textContent).toBe("A");
   });
 
+  it("lets a station's texts take the room a neighbour's shorter texts leave", () => {
+    // Three stations, as an ungated run without a pull request has, its turns on the harness's own model:
+    // "Spec Collector" is wider than the gap to the build station, but "Builder" and "claude" leave it the rest.
+    const steps = STEPS.map((st) => ({ ...st, quality_gated: false }));
+    const turns = record().turns.filter((t) => t.step !== "quality").map((t) => ({ ...t, agent: "claude", model: null }));
+    render(<RunMap record={record({ steps, pull_request: false, turns })} now={NOW} />);
+    const [spec, build] = stations();
+    expect(spec?.querySelector(".holder")?.textContent).toBe("Spec Collector");
+    expect(build?.querySelector(".holder")?.textContent).toBe("Builder");
+  });
+
   it("draws a verdict step's loop, solid once a verdict took it", () => {
     const { container, rerender } = render(<RunMap record={record()} now={NOW} />);
     expect(screen.getByText("changes → build")).toBeInTheDocument();

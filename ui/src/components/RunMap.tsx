@@ -93,10 +93,12 @@ export function RunMap({ record, now }: Props) {
   }).sort((a, b) => a.from.y - b.from.y);
   const loopFloor = Math.max(...loops.flatMap((loop) => [loop.from.y, loop.to.y])) + 62 + 40;
   const tips = stages.map(stationAt);
+  const texts = stages.map((stage) => stationTexts(stage, record));
+  const wants = texts.map(({ holder, harness }) => Math.max(textWidth(holder, HOLDER_PX), textWidth(harness, HARNESS_PX)));
   const face = record.error ? "failed" : stale ? "asleep" : "awake";
   // A failed run failed in its phase, inside its newest turn if that is the phase's (quality's turns are saved under
   // the phase too). A turn is saved only once its prompt is delivered, so a failure before then, a builder that would
-  // not start, say, leaves the newest turn another step's, or an earlier round's that ended well: none is marked.
+  // not start, say, leaves the newest turn another step's: none is marked.
   const newest = record.turns.at(-1);
   const failedTurn = record.error && newest?.step === record.phase ? newest : undefined;
   // The pupils look toward the working arm, or straight out at the viewer the run waits on.
@@ -187,8 +189,9 @@ export function RunMap({ record, now }: Props) {
             stage={stage}
             record={record}
             waiting={waiting !== null}
+            texts={texts[i] ?? { holder: "", harness: "" }}
             at={tips[i] ?? HEAD}
-            room={textRoom(tips, i)}
+            room={textRoom(tips, wants, i)}
           />
         ))}
         {!reduced && working && !stale && (
@@ -284,19 +287,51 @@ function reducedMotionQuery(): MediaQueryList | null {
 }
 
 /** The width, in viewBox units, the texts centred under the station at tips[i] may take without reaching a
- * neighbour's or the map's edge: the gap to the nearest station whose texts sit at about the same height, and twice
- * the distance to the nearer side, less a margin. */
-function textRoom(tips: { x: number; y: number }[], i: number): number {
+ * neighbour's texts or the map's edge, less a margin; wants[j] is the width station j's texts take uncut. Of the gap
+ * to a station whose texts sit at about the same height, each side's texts have half; a side whose texts need less
+ * leaves the rest to the other. So two stations whose texts both overflow get the gap each, and the map's edge
+ * allows twice the distance to it. */
+function textRoom(tips: { x: number; y: number }[], wants: number[], i: number): number {
   const tip = tips[i] ?? HEAD;
-  const gaps = tips.filter((other, j) => j !== i && Math.abs(other.y - tip.y) < 60).map((other) => Math.abs(other.x - tip.x));
-  return Math.min(2 * tip.x, 2 * (MAP_WIDTH - tip.x), ...gaps) - 4;
+  const limits = tips.flatMap((other, j) => {
+    const gap = Math.abs(other.x - tip.x);
+    return j !== i && Math.abs(other.y - tip.y) < 60 ? [2 * gap - Math.min(wants[j] ?? 0, gap)] : [];
+  });
+  return Math.min(2 * tip.x, 2 * (MAP_WIDTH - tip.x), ...limits) - 4;
 }
 
-/** text cut to fit width viewBox units at a font size of px, ending in "…" when cut; a character is taken as 0.6em
- * wide, as Roboto Mono's are and wider than most of Roboto's. */
+/** The font sizes, in viewBox units, of a station's holder and harness lines; styles.css sets the same. */
+const HOLDER_PX = 11.5;
+const HARNESS_PX = 10;
+
+/** The width, in viewBox units, text takes at a font size of px; a character is taken as 0.6em wide, as Roboto
+ * Mono's are and wider than most of Roboto's. */
+function textWidth(text: string, px: number): number {
+  return text.length * px * 0.6;
+}
+
+/** text cut to fit width viewBox units at a font size of px, ending in "…" when cut (textWidth's measure). */
 function fit(text: string, width: number, px: number): string {
-  const most = Math.max(1, Math.floor(width / (px * 0.6)));
+  const most = Math.max(1, Math.floor(width / textWidth("m", px)));
   return text.length <= most ? text : `${text.slice(0, most - 1)}…`;
+}
+
+/** What a station says under its ring: who holds its stage, and the harness and model of the stage's last turn;
+ * an empty string for a line it leaves out. */
+interface StationTexts {
+  holder: string;
+  harness: string;
+}
+
+/** The texts stage's station shows; record names a publish stage's pull request. */
+function stationTexts(stage: Stage, record: RunRecord): StationTexts {
+  const holder =
+    stage.kind === "step" ? (stage.roleLabel ?? "")
+    : stage.kind === "quality" ? "quality gate"
+    : stage.kind === "publish" ? (record.pr ? prLabel(record.pr.url) : "pull request")
+    : "";
+  const last = stage.turns.at(-1);
+  return { holder, harness: last ? harnessOf(last) : "" };
 }
 
 const { x: HX, y: HY } = HEAD;
@@ -334,20 +369,13 @@ const STATE_WORDS: Record<StageState, string> = {
   again: "ran before, to do again",
 };
 
-/** The station at the tip at of a stage's arm: the stage's name and state, who holds it and the harness and model of
- * its last turn, cut to room viewBox units (the station's accessible label has them whole), a rounds badge for a
- * step that ran in several rounds, and a verdict step's last verdict. */
-function Station({ stage, record, waiting, at, room }: {
-  stage: Stage; record: RunRecord; waiting: boolean; at: { x: number; y: number }; room: number;
+/** The station at the tip at of a stage's arm: the stage's name and state, its texts cut to room viewBox units (the
+ * station's accessible label has them whole), a rounds badge for a step that ran in several rounds, and a verdict
+ * step's last verdict. */
+function Station({ stage, record, texts: { holder, harness }, waiting, at, room }: {
+  stage: Stage; record: RunRecord; texts: StationTexts; waiting: boolean; at: { x: number; y: number }; room: number;
 }) {
   const radius = 27;
-  const holder =
-    stage.kind === "step" ? stage.roleLabel
-    : stage.kind === "quality" ? "quality gate"
-    : stage.kind === "publish" ? (record.pr ? prLabel(record.pr.url) : "pull request")
-    : null;
-  const last = stage.turns.at(-1);
-  const harness = last ? harnessOf(last) : "";
   const rounds = stage.kind === "step" ? new Set(stage.turns.map((turn) => turn.round)).size : 0;
   const verdict = (record.verdicts ?? []).filter((v) => v.step === stage.step && stage.kind === "step").at(-1)?.verdict;
   const glyph =
@@ -379,12 +407,12 @@ function Station({ stage, record, waiting, at, room }: {
       )}
       {holder && (
         <text className="holder" y={radius + 15} textAnchor="middle">
-          {fit(holder, room, 11.5)}
+          {fit(holder, room, HOLDER_PX)}
         </text>
       )}
       {harness && (
         <text className="harness" y={radius + 28} textAnchor="middle">
-          {fit(harness, room, 10)}
+          {fit(harness, room, HARNESS_PX)}
         </text>
       )}
       {rounds > 1 && (

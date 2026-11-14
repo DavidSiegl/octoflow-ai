@@ -431,6 +431,7 @@ ol.progress {
   fill: var(--coral);
 }
 
+/* The holder and harness font sizes are also RunMap.tsx's HOLDER_PX and HARNESS_PX, which cut the texts to fit. */
 .run-map .station .holder {
   fill: var(--pale-mint);
   font-family: Roboto, system-ui, sans-serif;
