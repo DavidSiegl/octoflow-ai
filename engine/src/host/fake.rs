@@ -257,6 +257,9 @@ pub(crate) struct FakeState {
     pub session_logs: HashMap<(String, String), String>,
     /// Run before each write, given its path and text, when set: an error fails the write.
     pub before_write: Option<BeforeWrite>,
+    /// Run after each write, given its path, once the file holds the text, when set: where a test stops the run
+    /// right after a write, as a crash would (workflow::tests::crash_resume). A hook that unwinds is not put back.
+    pub after_write: Option<AfterWrite>,
     /// Run before each rename, given its path and new path, when set, before the fake renames: a test's own step,
     /// such as changing the world meanwhile.
     pub before_rename: Option<BeforeRename>,
@@ -280,6 +283,8 @@ pub(crate) struct FakeState {
 
 /// A test's hook on writes (FakeState::before_write).
 pub(crate) type BeforeWrite = Box<dyn FnMut(&str, &str) -> Result<(), OrchestratorError>>;
+/// A test's hook after writes (FakeState::after_write).
+pub(crate) type AfterWrite = Box<dyn FnMut(&str)>;
 /// A test's hook on renames (FakeState::before_rename).
 pub(crate) type BeforeRename = Box<dyn FnMut(&str, &str)>;
 /// A test's hook on git commands (FakeState::before_git).
@@ -343,6 +348,7 @@ impl FakeHost {
                 tree_snapshots: vec![],
                 session_logs: HashMap::new(),
                 before_write: None,
+                after_write: None,
                 before_rename: None,
                 before_git: None,
                 run_states_with: None,
@@ -722,6 +728,13 @@ impl Host for FakeHost {
             path.starts_with("/proj/.orchestrator/") && !path.starts_with(&format!("/proj/{WORKTREES_DIR}/"));
         if !orchestrator_file {
             s.changed.insert(path.to_string());
+        }
+        drop(s);
+        // Run with the host's state released, as before_write is.
+        let hook = self.state().after_write.take();
+        if let Some(mut hook) = hook {
+            hook(path);
+            self.state().after_write = Some(hook);
         }
         Ok(())
     }

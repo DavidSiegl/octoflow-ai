@@ -401,3 +401,18 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `parse_args` on the built argv and returning clap's error. The desktop app shows serve's `error` text verbatim
   (`ui/src/api.ts`), and clap's is several lines with `Usage:` and "try '--help'"; `serve/start/tests.rs`'s round
   trip through `parse_args` already catches the two checks drifting apart.
+- **A crash right after the save that releases a finished run leaves its herdr workspace open.** Cross-review 196
+  (F1): after that crash, "the 'Run finished' notice and the herdr `Close` calls are dropped"; on `resume --force`,
+  `Workflow::ending_left` (`engine/src/workflow.rs`) returns None for a released run whose files exist, so
+  `Workflow::end_done_run` never reaches `close_workspace`, "and the published run's herdr workspace and agent panes
+  stay open for good". `end_done_run`'s comment accepts only the lost notice. The crash-resume test
+  (`engine/src/workflow/tests/crash_resume.rs`, `expected`) pins both as the gap. Closes with the close made safe to
+  repeat and recorded, or retried on a resume of a released, published run; the test's `expected` then keeps the
+  close.
+- **No crash-resume test crashes while a quality gate job judges.** Cross-review 196 (F2): `Outcome::gate`'s two
+  polls end a job after one `CI_POLL_SECONDS` pause, before any heartbeat save, so "the resume path for a run killed
+  while its gate judged (`stop_left`, then a new snapshot and a new job) is never exercised"
+  (`engine/src/workflow/tests/crash_resume.rs`, `quality_gate_fails_then_passes`; `local_gate::stop_left`). Polls past
+  `HEARTBEAT_SECONDS` give it such crashes, but their runs then differ from the uninterrupted one by design: a new
+  snapshot id in the PR body, the quality turn's times and every later timestamp, the job's worktree added and
+  removed again. Closes with `expected` normalising those for a crash that left a job, and adding its stop.
