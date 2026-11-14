@@ -16,9 +16,17 @@ export interface Project {
   machine: string;
 }
 
+/** One of the workflow's steps as the run record gives it. role_label, loop_to and quality_gated are absent from a
+ * server before 0.71.0. */
 export interface Step {
   id: string;
   role: string;
+  /** The workflow's label for the role, as its pane shows it. */
+  role_label?: string;
+  /** The step a CHANGES_REQUESTED sends the run back to; null for a step that gives no verdict. */
+  loop_to?: string | null;
+  /** true when the quality loop follows, or followed, this step's turns in this run. */
+  quality_gated?: boolean;
 }
 
 /** A role's agent that the run has started, by its herdr name and harness. */
@@ -75,6 +83,8 @@ export interface RunRecord {
   task: string;
   workflow: string;
   steps: Step[] | null;
+  /** Whether the run opens a pull request; absent from a server before 0.71.0. */
+  pull_request?: boolean;
   phase: string;
   round: number;
   quality_round: number | null;
