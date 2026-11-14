@@ -45,7 +45,7 @@ fn gate_passes_first_time() {
     assert_eq!(
         f.quality_file(1, 1),
         "GATE: OK\n\noctoflow-gate 0.10.0, run locally, judged snapshot `snap1` (round 1, quality round 1 of 3).\n\
-         \n`octoflow-gate` judged the working tree.\n\n## Issues on changed lines\n\nNone.\n"
+         \n`gate` judged the working tree.\n\n## Issues on changed lines\n\nNone.\n"
     );
     assert!(seen.borrow()[0].contains(&quality_note(QUALITY_PASSED_NOTE, &state.quality_path(1, 1))));
     assert!(seen.borrow()[0].contains(&format!("The Builder's report is in {}", state.build_path(1))));

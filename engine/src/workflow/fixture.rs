@@ -486,7 +486,7 @@ impl Outcome {
         let numbered: Vec<String> = findings.iter().enumerate().map(|(k, f)| format!("{}. {f}", k + 1)).collect();
         let numbered = if numbered.is_empty() { "None.".to_string() } else { numbered.join("\n") };
         let quality = format!(
-            "GATE: {gate}\n\n`octoflow-gate` judged the working tree.\n\n## Issues on changed lines\n\n{numbered}\n"
+            "GATE: {gate}\n\n`gate` judged the working tree.\n\n## Issues on changed lines\n\n{numbered}\n"
         );
         Outcome { quality_json: report_json(&quality), quality, exit: i32::from(gate != "OK"), polls: 2 }
     }

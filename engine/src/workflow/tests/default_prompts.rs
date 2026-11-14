@@ -278,7 +278,7 @@ const GOLDEN_PR_BODY: &str = concat!(
     "requests\n\n</details>\n\n<details>\n<summary>Builder report (round 2)</summary>\n\nreport 2 ",
     "q1\n\n</details>\n\n<details>\n<summary>Quality gate (round 2)</summary>\n\nGATE: ",
     "ERROR\n\noctoflow-gate 0.10.0, run locally, judged snapshot `snap4` (round 2, quality round 2 of ",
-    "2).\n\n`octoflow-gate` judged the working tree.\n\n## Issues on changed lines\n\n1. ",
+    "2).\n\n`gate` judged the working tree.\n\n## Issues on changed lines\n\n1. ",
     "`limiter.py:9` error mypy arg-type: Argument 1 has incompatible ",
     "type\n\n</details>\n\n<details>\n<summary>Review (round 2)</summary>\n\n**VERDICT: APPROVE**\n1. ",
     "finding\n\n</details>\n\n<details>\n<summary>Run timings</summary>\n\n| step | role | round | ",

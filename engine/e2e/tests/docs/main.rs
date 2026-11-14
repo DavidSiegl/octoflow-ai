@@ -100,8 +100,7 @@ fn assert_no_errors(errors: &[String]) {
 }
 
 /// (line, command, the text of its arguments) for each command the document shows being run, in a code span or a
-/// fenced line: after `orchestrator` or `orchestrator.py`; and, in a code span, a command opening
-/// it with a flag after, as in `run --spec`. Shell comments, and what follows a pipe, `&&` or `;`, are left out.
+/// fenced line: after `orchestrator`; and, in a code span, a command opening it with a flag after, as in `run --spec`. Shell comments, and what follows a pipe, `&&` or `;`, are left out.
 fn invocations<'a>(doc: &'a Doc, commands: &BTreeMap<String, BTreeSet<String>>) -> Vec<(Line<'a>, String, String)> {
     let mut found = Vec::new();
     for line in doc.lines() {
@@ -145,14 +144,12 @@ fn starts_word(text: &str, i: usize) -> bool {
     !text[..i].chars().next_back().is_some_and(word_char)
 }
 
-/// The first `orchestrator <command>` or `orchestrator.py <command>` in text, where orchestrator starts a word and the
-/// command, a lowercase letter then lowercase letters and hyphens, follows after whitespace: the command and the rest
-/// of text after it.
+/// The first `orchestrator <command>` in text, where orchestrator starts a word and the command, a lowercase letter
+/// then lowercase letters and hyphens, follows after whitespace: the command and the rest of text after it.
 fn orchestrator_command(text: &str) -> Option<(&str, &str)> {
     const PROGRAM: &str = "orchestrator";
     text.match_indices(PROGRAM).filter(|&(i, _)| starts_word(text, i)).find_map(|(i, _)| {
         let rest = &text[i + PROGRAM.len()..];
-        let rest = rest.strip_prefix(".py").unwrap_or(rest);
         let args = rest.trim_start();
         if args.len() == rest.len() || !args.starts_with(|c: char| c.is_ascii_lowercase()) {
             return None;
