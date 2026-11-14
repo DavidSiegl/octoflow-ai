@@ -26,8 +26,8 @@ use crate::constants::{BUDGET_KEYS, DEFAULT_MAX_FILES, DEFAULT_MAX_LINES};
 use crate::env::ConfigDir;
 use crate::error::{closest_name, strerror, OrchestratorError};
 use crate::harness::replaced_by;
-use crate::paths::{file_name, split_extension};
-use crate::pipeline::{default_workflow, find_workflow, Pipeline, PipelineSettings, Step, DEFAULT_WORKFLOW, WORKFLOWS};
+use crate::paths::{file_name, replace_local_file, split_extension};
+use crate::pipeline::{default_workflow, find_workflow, prompt_placeholders, Pipeline, PipelineSettings, Step, DEFAULT_WORKFLOW, WORKFLOWS};
 use crate::prompts::template::{is_name, placeholders};
 use crate::prompts::{files_with_extension, Prompts};
 use serde_json::Value;
@@ -90,22 +90,36 @@ pub fn named_workflow(config: &ConfigDir, name: &str, prompts: &Prompts) -> Resu
 /// taking its texts from prompts. Errors, naming the file: it cannot be read, is not TOML, takes a built-in
 /// workflow's name or one that is not a name, or defines no valid workflow (parse_workflow).
 pub fn load_workflow_file(path: &str, prompts: &Prompts) -> Result<Pipeline, OrchestratorError> {
-    let name = split_extension(file_name(path)).0;
+    workflow_from_text(path, &workflow_file_text(path)?, prompts)
+}
+
+/// The text of the workflow file at path. Errors, naming the file: it cannot be read, or is not UTF-8.
+fn workflow_file_text(path: &str) -> Result<String, OrchestratorError> {
     let bytes = std::fs::read(path)
         .map_err(|e| OrchestratorError(format!("cannot read workflow file {path}: {}", strerror(&e))))?;
-    let definition = String::from_utf8(bytes)
-        .map_err(|e| e.to_string())
-        .and_then(|text| parse_toml(&text))
-        .map_err(|e| OrchestratorError(format!("{path}: {e}")))?;
-    if WORKFLOWS.contains(&name) {
-        return Err(OrchestratorError(format!("{path}: workflow {name} is built in; give the file another name")));
-    }
-    if !is_name(name) {
-        return Err(OrchestratorError(format!(
-            "{path}: a workflow's name, its file's, may use only letters, digits, - and _"
-        )));
+    String::from_utf8(bytes).map_err(|e| OrchestratorError(format!("{path}: {e}")))
+}
+
+/// The workflow text, the contents of the workflow file at path, defines, as load_workflow_file gives it.
+fn workflow_from_text(path: &str, text: &str, prompts: &Prompts) -> Result<Pipeline, OrchestratorError> {
+    let name = split_extension(file_name(path)).0;
+    let definition = parse_toml(text).map_err(|e| OrchestratorError(format!("{path}: {e}")))?;
+    if let Some(problem) = name_problem(name) {
+        return Err(OrchestratorError(format!("{path}: {problem}")));
     }
     parse_workflow(name, &definition, prompts).map_err(|e| OrchestratorError(format!("{path}: {e}")))
+}
+
+/// What is wrong with name as the name of a workflow file's workflow: it is built in, or not a name (is_name); None
+/// when nothing is.
+fn name_problem(name: &str) -> Option<String> {
+    if WORKFLOWS.contains(&name) {
+        return Some(format!("workflow {name} is built in; give the file another name"));
+    }
+    if !is_name(name) {
+        return Some("a workflow's name, its file's, may use only letters, digits, - and _".into());
+    }
+    None
 }
 
 /// The table TOML text holds, as Value; the parser's error, with its line and column, for text that is not TOML.
@@ -448,6 +462,163 @@ fn toml_string(s: &str) -> String {
     }
     // serde_json escapes the control characters, as \u and four hex digits, but not DEL.
     serde_json::to_string(s).expect("a string serializes").replace('\u{7f}', "\\u007f")
+}
+
+/// A workflow as an editor opens it (read_workflow).
+#[derive(Debug, PartialEq)]
+pub struct EditableWorkflow {
+    /// Its canonical definition (workflow_definition), each `use` resolved with the built-in prompts.
+    pub definition: Value,
+    /// The file that defines it; None for a built-in workflow, which has none.
+    pub file: Option<DefinitionFile>,
+}
+
+/// A workflow file as read_workflow found it.
+#[derive(Debug, PartialEq)]
+pub struct DefinitionFile {
+    pub path: String,
+    /// The file's text as read: what save_workflow and delete_workflow take as their base.
+    pub text: String,
+    /// Whether text is not workflow_toml of the workflow it defines, as when it has a comment or a `use`, so that
+    /// saving it again loses something of its text.
+    pub hand_written: bool,
+}
+
+/// What a workflow definition an editor holds would give: the first thing wrong with it, and the placeholders its
+/// prompts may use (check_workflow).
+#[derive(Debug, PartialEq)]
+pub struct WorkflowCheck {
+    /// The first problem, as `run` would give it, of the definition or its name; None when there is none.
+    pub problem: Option<String>,
+    /// prompt_placeholders of its steps' ids, as far as they can be read.
+    pub placeholders: Vec<String>,
+}
+
+/// Why reading, saving or deleting a workflow for an editor failed. Each message says which workflow or file.
+#[derive(Debug, PartialEq)]
+pub enum WorkflowEditError {
+    /// No workflow has the name, or for delete_workflow no workflow file.
+    Unknown(String),
+    /// The definition, or its name, has a problem; path is the file whose workflow does not load, for read_workflow,
+    /// and None for a definition given.
+    Invalid { error: String, path: Option<String> },
+    /// The file is not the text the caller started from: it exists where the caller named none, or is gone, or
+    /// changed since.
+    Changed(String),
+    /// delete_workflow was given a built-in workflow's name, which has no file.
+    BuiltIn(String),
+    /// The workflows directory or a file in it could not be listed, read, written or removed.
+    Failed(OrchestratorError),
+}
+
+/// The workflow of that name, as named_workflow finds it, for an editor: its definition with each `use` resolved by
+/// the built-in prompts, as start::offered_workflows words workflows, and its file. Errors: Unknown for no such
+/// workflow; Invalid, with the file's path, for a file that does not load; Failed when the workflows directory cannot
+/// be listed.
+pub fn read_workflow(config: &ConfigDir, name: &str) -> Result<EditableWorkflow, WorkflowEditError> {
+    let built_in = Prompts::default();
+    if WORKFLOWS.contains(&name) {
+        let pipeline = find_workflow(name, &built_in).map_err(WorkflowEditError::Failed)?;
+        return Ok(EditableWorkflow { definition: workflow_definition(&pipeline), file: None });
+    }
+    let files = workflow_files(config).map_err(WorkflowEditError::Failed)?;
+    let Some(path) = files.get(name) else {
+        return Err(WorkflowEditError::Unknown(format!("no workflow {name}")));
+    };
+    let invalid = |e: OrchestratorError| WorkflowEditError::Invalid { error: e.0, path: Some(path.clone()) };
+    let text = workflow_file_text(path).map_err(invalid)?;
+    let pipeline = workflow_from_text(path, &text, &built_in).map_err(invalid)?;
+    let hand_written = text != workflow_toml(&pipeline);
+    let file = DefinitionFile { path: path.clone(), text, hand_written };
+    Ok(EditableWorkflow { definition: workflow_definition(&pipeline), file: Some(file) })
+}
+
+/// What saving definition as workflow name would refuse, and the placeholders its prompts may use. The steps' ids
+/// are read from the definition as parse_workflow reads them, so the placeholders are there even when it has a
+/// problem.
+pub fn check_workflow(name: &str, definition: &Value) -> WorkflowCheck {
+    WorkflowCheck {
+        problem: edited_workflow(name, definition).err(),
+        placeholders: prompt_placeholders(step_ids(definition)),
+    }
+}
+
+/// Save definition as workflow name's file in config's workflows_dir, in canonical form (workflow_toml), making the
+/// directory if need be, and return the file's path. base is the file's text the caller started from, as
+/// read_workflow gave it, or None for a workflow that must have no file yet. The file is written aside and renamed
+/// into place (replace_local_file). Errors, with nothing written: Invalid for what check_workflow finds; Changed
+/// when the file is not base; Failed when it cannot be read or written, the old file left as it was.
+pub fn save_workflow(
+    config: &ConfigDir,
+    name: &str,
+    definition: &Value,
+    base: Option<&str>,
+) -> Result<String, WorkflowEditError> {
+    let pipeline = edited_workflow(name, definition).map_err(|error| WorkflowEditError::Invalid { error, path: None })?;
+    let dir = config.workflows_dir();
+    let path = format!("{dir}/{name}.toml");
+    expect_base(&path, base)?;
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        WorkflowEditError::Failed(OrchestratorError(format!("cannot make the workflows directory {dir}: {}", strerror(&e))))
+    })?;
+    replace_local_file(&path, &workflow_toml(&pipeline)).map_err(WorkflowEditError::Failed)?;
+    Ok(path)
+}
+
+/// Remove workflow name's file from config's workflows_dir and return its path; base is its text the caller
+/// started from, as read_workflow gave it. A run that saved its workflow's definition (run_pipeline) still has it.
+/// Errors, with nothing removed: BuiltIn for a built-in workflow; Unknown for no such file; Changed when the file is
+/// not base; Failed when it cannot be listed, read or removed.
+pub fn delete_workflow(config: &ConfigDir, name: &str, base: &str) -> Result<String, WorkflowEditError> {
+    if WORKFLOWS.contains(&name) {
+        return Err(WorkflowEditError::BuiltIn(format!("workflow {name} is built in; it has no file to delete")));
+    }
+    let files = workflow_files(config).map_err(WorkflowEditError::Failed)?;
+    let Some(path) = files.get(name) else {
+        return Err(WorkflowEditError::Unknown(format!("no workflow file {name}")));
+    };
+    expect_base(path, Some(base))?;
+    std::fs::remove_file(path).map_err(|e| {
+        WorkflowEditError::Failed(OrchestratorError(format!("cannot remove workflow file {path}: {}", strerror(&e))))
+    })?;
+    Ok(path.clone())
+}
+
+/// The workflow definition describes under name, `use` resolved with the built-in prompts; what is wrong with the
+/// name, as load_workflow_file has it, or with the definition, as parse_workflow has it.
+fn edited_workflow(name: &str, definition: &Value) -> Result<Pipeline, String> {
+    if let Some(problem) = name_problem(name) {
+        return Err(problem);
+    }
+    parse_workflow(name, definition, &Prompts::default())
+}
+
+/// The ids definition's steps have, as parse_step reads them: a step's id, else that of the default workflow's step
+/// its use names, which is the use. A step with neither as a string, or that is not a table, has none.
+fn step_ids(definition: &Value) -> Vec<&str> {
+    let steps = definition.get("steps").and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
+    steps.iter().filter_map(|st| ["id", "use"].into_iter().find_map(|key| st.get(key)?.as_str())).collect()
+}
+
+/// Refuse, as Changed, when the file at path is not base: None for no file. A file that is not UTF-8 is compared
+/// with its bytes that are not replaced by U+FFFD, so it is never a base read_workflow gave. Errors: Failed when the
+/// file cannot be read.
+fn expect_base(path: &str, base: Option<&str>) -> Result<(), WorkflowEditError> {
+    let current = match std::fs::read(path) {
+        Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            let why = format!("cannot read workflow file {path}: {}", strerror(&e));
+            return Err(WorkflowEditError::Failed(OrchestratorError(why)));
+        }
+    };
+    let why = match (current.as_deref(), base) {
+        (current, base) if current == base => return Ok(()),
+        (Some(_), None) => format!("{path} already exists"),
+        (None, _) => format!("{path} was removed since it was opened"),
+        (Some(_), Some(_)) => format!("{path} changed since it was opened"),
+    };
+    Err(WorkflowEditError::Changed(why))
 }
 
 /// A run's workflow: the definition saved with it, or the built-in workflow of its name worded by the run's prompts.

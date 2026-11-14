@@ -426,3 +426,147 @@ fn a_workflow_files_own_prompt_is_not_replaced() {
     assert!(build.prompt.starts_with("You are the Builder, the first of two roles"), "{}", build.prompt);
     assert_eq!(build.again.as_deref(), Some(prompts.text(Prompt::FixPrompt)));
 }
+
+// -- Editing a workflow: read_workflow, check_workflow, save_workflow, delete_workflow -------------------------------
+
+/// A workflow file of default's steps by use, with a comment: a workflow not in canonical form.
+fn by_use() -> String {
+    let steps: Vec<String> = DEFAULT_WORKFLOW.steps().iter().map(|st| format!("[[steps]]\nuse = \"{}\"\n", st.id)).collect();
+    format!("# default's steps, by name\n{}", steps.join("\n"))
+}
+
+#[test]
+fn a_saved_definition_is_the_workflow_run_loads_and_reads_back_canonical() {
+    let config = Config::new();
+    let definition = workflow_definition(&example("product-team"));
+    let path = save_workflow(&config.config, "mine", &definition, None).unwrap();
+    assert_eq!(path, config.dir.join("workflows/mine.toml"));
+    let loaded = named_workflow(&config.config, "mine", &built_in()).unwrap();
+    assert_eq!(workflow_definition(&loaded), definition);
+    let read = read_workflow(&config.config, "mine").unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(read, EditableWorkflow { definition, file: Some(DefinitionFile { path, text, hand_written: false }) });
+}
+
+#[test]
+fn a_file_with_a_comment_and_uses_reads_as_hand_written_and_saves_canonical() {
+    let config = Config::new();
+    let path = config.file("mine", &by_use());
+    let read = read_workflow(&config.config, "mine").unwrap();
+    assert_eq!(read.definition, workflow_definition(&DEFAULT_WORKFLOW));
+    let file = read.file.unwrap();
+    assert!(file.hand_written);
+    assert_eq!(file.text, by_use());
+    save_workflow(&config.config, "mine", &read.definition, Some(&file.text)).unwrap();
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(saved, workflow_toml(&named_workflow(&config.config, "mine", &built_in()).unwrap()));
+    assert!(!read_workflow(&config.config, "mine").unwrap().file.unwrap().hand_written);
+}
+
+#[test]
+fn a_built_in_workflow_reads_without_a_file_and_cannot_be_saved_or_deleted() {
+    let config = Config::new();
+    let read = read_workflow(&config.config, "default").unwrap();
+    assert_eq!(read, EditableWorkflow { definition: workflow_definition(&DEFAULT_WORKFLOW), file: None });
+    let refused = save_workflow(&config.config, "default", &read.definition, None).unwrap_err();
+    let error = "workflow default is built in; give the file another name".to_string();
+    assert_eq!(refused, WorkflowEditError::Invalid { error, path: None });
+    assert!(matches!(delete_workflow(&config.config, "default", ""), Err(WorkflowEditError::BuiltIn(_))));
+    assert!(!std::path::Path::new(&config.dir.join("workflows/default.toml")).exists());
+}
+
+#[test]
+fn reading_an_unknown_workflow_or_one_that_does_not_load() {
+    let config = Config::new();
+    let unknown = read_workflow(&config.config, "nope").unwrap_err();
+    assert_eq!(unknown, WorkflowEditError::Unknown("no workflow nope".into()));
+    let path = config.file("broken", "not toml [");
+    match read_workflow(&config.config, "broken").unwrap_err() {
+        WorkflowEditError::Invalid { error, path: Some(at) } => {
+            assert_eq!(at, path);
+            assert!(error.starts_with(&format!("{path}: ")), "{error}");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_save_or_delete_is_refused_when_the_file_is_not_the_text_it_started_from() {
+    let config = Config::new();
+    let definition = workflow_definition(&DEFAULT_WORKFLOW);
+    let changed = |r: Result<String, WorkflowEditError>| match r {
+        Err(WorkflowEditError::Changed(why)) => why,
+        other => panic!("{other:?}"),
+    };
+    // A new workflow under a name a file already has.
+    let path = config.file("mine", &by_use());
+    assert_eq!(changed(save_workflow(&config.config, "mine", &definition, None)), format!("{path} already exists"));
+    // A file changed since it was read.
+    let opened = read_workflow(&config.config, "mine").unwrap().file.unwrap().text;
+    std::fs::write(&path, format!("{opened}\n# edited elsewhere\n")).unwrap();
+    let why = changed(save_workflow(&config.config, "mine", &definition, Some(&opened)));
+    assert_eq!(why, format!("{path} changed since it was opened"));
+    changed(delete_workflow(&config.config, "mine", &opened));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), format!("{opened}\n# edited elsewhere\n"));
+    // A file removed since it was read.
+    std::fs::remove_file(&path).unwrap();
+    let why = changed(save_workflow(&config.config, "mine", &definition, Some(&opened)));
+    assert_eq!(why, format!("{path} was removed since it was opened"));
+    assert!(!std::path::Path::new(&path).exists());
+}
+
+#[test]
+fn a_write_that_fails_leaves_the_old_file_and_nothing_aside() {
+    use std::os::unix::fs::PermissionsExt;
+    let config = Config::new();
+    let path = config.file("mine", &by_use());
+    let dir = config.dir.join("workflows");
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let saved = save_workflow(&config.config, "mine", &workflow_definition(&quick()), Some(&by_use()));
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    if saved.is_ok() {
+        return; // Run as root, which writes anywhere.
+    }
+    match saved.unwrap_err() {
+        WorkflowEditError::Failed(e) => assert!(e.0.starts_with(&format!("cannot write {path}: ")), "{}", e.0),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), by_use());
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+}
+
+#[test]
+fn a_save_makes_the_workflows_directory() {
+    let dir = TempDir::new();
+    let config = ConfigDir::at(&dir.join("config"));
+    let path = save_workflow(&config, "mine", &workflow_definition(&quick()), None).unwrap();
+    assert_eq!(path, dir.join("config/workflows/mine.toml"));
+    assert_eq!(named_workflow(&config, "mine", &built_in()).unwrap().steps(), quick().steps());
+}
+
+#[test]
+fn a_delete_removes_the_file_it_was_given() {
+    let config = Config::new();
+    let path = config.file("mine", &by_use());
+    assert_eq!(delete_workflow(&config.config, "mine", &by_use()).unwrap(), path);
+    assert!(!std::path::Path::new(&path).exists());
+    let gone = delete_workflow(&config.config, "mine", &by_use()).unwrap_err();
+    assert_eq!(gone, WorkflowEditError::Unknown("no workflow file mine".into()));
+}
+
+#[test]
+fn a_check_names_the_first_problem_and_still_lists_the_placeholders() {
+    let definition = serde_json::json!({"steps": [
+        {"use": "spec"},
+        {"id": "build", "file": "build-{n}.md", "prompt": "Build {spec_path}; {nope}.", "edits": true},
+    ]});
+    let checked = check_workflow("mine", &definition);
+    assert!(checked.problem.as_deref().is_some_and(|p| p.contains("nope")), "{checked:?}");
+    assert_eq!(checked.placeholders, crate::pipeline::prompt_placeholders(["spec", "build"]));
+    let fine = check_workflow("mine", &workflow_definition(&DEFAULT_WORKFLOW));
+    assert_eq!(fine.problem, None);
+    let named = |name: &str| check_workflow(name, &workflow_definition(&DEFAULT_WORKFLOW)).problem.unwrap();
+    assert_eq!(named("default"), "workflow default is built in; give the file another name");
+    assert!(named("my flow").starts_with("a workflow's name, its file's, may use only letters"));
+    assert!(named("../up").starts_with("a workflow's name"));
+}
