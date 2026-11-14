@@ -9,6 +9,7 @@ use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
 use crate::pipeline::{workflow_shape, Pipeline, Step, QUALITY};
 use crate::json::{object, Object, ValueExt};
+use crate::local_gate::LOCAL_GATE;
 use crate::map::Map;
 use crate::runs::{RUNNING, STALE};
 use crate::state::{find_run, judged_by_several, AgentRecord, RunState, SavedRun, StepVerdict, TurnRecord};
@@ -268,13 +269,18 @@ pub fn print_runs(world: &Connected, runs: &[SavedRun], target: &[String]) {
     }
 }
 
-/// The quality gate of the run s, as show prints it: its job, or that resume turned it off; None for a run that never
+/// The quality gate of the run s, as show prints it: its gate, the local one its resume gives a run a release before
+/// 0.72.0 started on a Jenkins job (cli::start::resumed_state), or that resume turned it off; None for a run that never
 /// had one.
 fn quality_gate_line(s: &RunState) -> Option<String> {
     if s.quality_gate_disabled {
         return Some("off (turned off by resume)".to_string());
     }
-    s.quality_job.clone()
+    let job = s.quality_job.as_deref().filter(|job| !job.is_empty())?;
+    if job == LOCAL_GATE {
+        return Some(job.to_string());
+    }
+    Some(format!("{LOCAL_GATE} once resumed (Jenkins job {job}, removed in 0.72.0)"))
 }
 
 /// Print one run of the project at cwd on world's standard output, by its id or its key run_ref: its list line and

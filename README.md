@@ -26,9 +26,9 @@ Spec Collector ──spec.md──▶ Builder ──build-N.md──▶ Reviewer
 
 Each role is a separate interactive agent session in its own herdr pane, so you can watch or step into any of
 them. The agents run on this machine or on another one saved in herdr. Each feature is built on its own branch
-and ends as a pull request on GitHub, where you review it. With `--quality-gate`, a Jenkins build, or with
-`--quality-gate local` the gate run on the project's own machine, judges the Builder's change (linters, tests,
-coverage of new code) before the Reviewer sees it ([quality gate](docs/quality-gate.md)).
+and ends as a pull request on GitHub, where you review it. With `--quality-gate local`, a quality gate run on the
+project's own machine judges the Builder's change (linters, tests, coverage of new code) before the Reviewer sees it
+([quality gate](docs/quality-gate.md)).
 
 ## Five coding agents, in any mix
 
@@ -87,12 +87,7 @@ there; `doctor --setup-gate` writes the gate's `ci/gate.pin` and a starter `gate
 - For `--machine`: the machine saved in herdr and non-interactive SSH to it, which the orchestrator's
   commands share one connection to (OpenSSH's `ControlMaster`), unless its server refuses a second session; see
   [Running the agents on another machine](docs/design.md#running-the-agents-on-another-machine)
-- For `--quality-gate JOB`: a Jenkins quality job set up as in [quality gate](docs/quality-gate.md), its
-  credentials in `~/.config/ai-agents-orchestrator/ci.env` or the environment, and a git checkout with an
-  `origin`, also with `--no-pr`. The orchestrator reaches an `http://` `JENKINS_URL` through `http_proxy` with
-  CONNECT, which a proxy allowing it only to port 443, as squid does by default, refuses: name such a Jenkins in
-  `no_proxy`, or reach it over https
-- For `--quality-gate local`, a project on a Linux x86_64 machine, which the gate is built for, with curl, tar,
+- For `--quality-gate local`: a project on a Linux x86_64 machine, which the gate is built for, with curl, tar,
   setsid, ps, sha256sum (or shasum) and gitleaks, and the tools the project's `gate.toml` has the gate run, its test
   commands and linters, all on `PATH`
   ([the local gate](docs/quality-gate.md#the-local-gate))
@@ -226,9 +221,6 @@ orchestrator run --workflow product-team "add a token-bucket rate limiter"
 orchestrator run --workflow-file examples/workflows/quick.toml "fix the off-by-one in the pager"
 
 # With the quality gate after each Builder turn
-orchestrator run --quality-gate AI-Agents-Orchestrator/py-ai-agents-orchestrator-quality "add a token-bucket rate limiter"
-
-# The same gate, run on this machine instead of by Jenkins
 orchestrator run --quality-gate local "add a token-bucket rate limiter"
 
 # Run every ready spec under .scratch/<slug>/spec.md, one pull request each; see Draining specs
@@ -277,9 +269,9 @@ orchestrator metrics | jq -s 'map(.rounds) | add / length'
 | `--spec FILE` | `run` only: skip the interview. `FILE` is read on this machine, a relative path from the current directory, not `--cwd`. It becomes the first step's handoff file, and the run starts at the step after it. Without a task, the task is the spec's first line, when that is a level-one heading, or else `FILE`'s name. Needs a workflow whose first step writes the spec, such as `default` or `product-team`. |
 | `--no-pr` | `run` only: leave the change uncommitted and the workspace open instead of opening a pull request. Works outside git. |
 | `--worktree` | `run` and `drain`: work in a git worktree of the run's own; see [Worktree runs](#worktree-runs). |
-| `--quality-gate JOB` | `run`, `drain` and `resume`: after each Builder turn, have this Jenkins job, by its full name with folders, judge the change. Needs `JENKINS_URL`, `JENKINS_USER` and `JENKINS_TOKEN`, from the environment or `~/.config/ai-agents-orchestrator/ci.env`. `local` instead runs the octoflow-gate release the run's base pins in `ci/gate.pin`, cached in `~/.cache/octoflow/gate/`, on a checkout of the change, with the project's tests run as you and with no sandbox; a top-level job named local is `/local`. |
+| `--quality-gate local` | `run`, `drain` and `resume`: after each Builder turn, have the quality gate judge the change: the octoflow-gate release the run's base pins in `ci/gate.pin`, cached in `~/.cache/octoflow/gate/`, run on a checkout of the change, with the project's tests run as you and with no sandbox. `local` is the flag's only value; the Jenkins job names it took before 0.72.0 are refused. |
 | `--no-quality-gate` | `resume` only: turn the run's quality gate off for good. |
-| `--max-quality-rounds N` | With the gate: quality builds per review round before the Reviewer gets the change anyway (default 3). |
+| `--max-quality-rounds N` | With the gate: quality rounds per review round before the Reviewer gets the change anyway (default 3). |
 | `--force` | `resume` only: take over a run that still looks alive. |
 | `--dry-run` | `prune` and `drain`: print what would happen, and change nothing. |
 
@@ -348,11 +340,10 @@ configuration instead.
    created from it. The Builder implements the spec, verifies it, and writes `build-N.md` without committing. If
    it needs a decision from you, it writes `BLOCKED: <question>` instead, and the run notifies you and waits for
    your answer in its pane ([When the orchestrator needs you](docs/design.md#when-the-orchestrator-needs-you)).
-4. **Quality gate**, with `--quality-gate`. A snapshot of the working tree is pushed to a throwaway branch and
-   judged by the Jenkins job, or, with `--quality-gate local`, judged where the project is, with nothing pushed. If
-   the gate does not pass, the Builder answers its findings, up to `--max-quality-rounds` times; then the change
-   goes to the Reviewer either way, who is told whether the gate passed. A snapshot holding a secret is never pushed
-   or judged. See [quality gate](docs/quality-gate.md).
+4. **Quality gate**, with `--quality-gate local`. A snapshot of the working tree is judged where the project is,
+   with nothing pushed. If the gate does not pass, the Builder answers its findings, up to `--max-quality-rounds`
+   times; then the change goes to the Reviewer either way, who is told whether the gate passed. A snapshot holding a
+   secret is never judged. See [quality gate](docs/quality-gate.md).
 5. **Reviewer.** A fresh session checks the change against the spec and writes `review-N.md`, which starts with
    `VERDICT: APPROVE` or `VERDICT: CHANGES_REQUESTED`; requested changes go back to the Builder.
 6. **Pull request.** The change is committed as one commit, the base branch is merged in if it moved on, and the

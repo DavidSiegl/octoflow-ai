@@ -53,16 +53,6 @@ fn the_engines_quality_files_are_written_as_the_python_engine_writes_them() {
         let leaks: Vec<Leak> = case.get("leaks").and_then(Value::as_array).unwrap().iter().map(leak).collect();
         assert_eq!(leak_report(&leaks, &case_text(case, "intro")), case_text(case, "text"));
     }
-    for case in quality.get("build_failed").and_then(Value::as_array).unwrap() {
-        let tests: Option<Vec<(String, String)>> = case.get("tests").and_then(Value::as_array).map(|tests| {
-            tests.iter().map(|t| {
-                let pair = t.as_array().unwrap();
-                (pair[0].as_str().unwrap().to_string(), pair[1].as_str().unwrap().to_string())
-            }).collect()
-        });
-        let text = build_failed_report(&case_text(case, "intro"), tests.as_deref(), &case_text(case, "console"));
-        assert_eq!(text, case_text(case, "text"));
-    }
     for case in quality.get("one_line").and_then(Value::as_array).unwrap() {
         let pair = case.as_array().unwrap();
         assert_eq!(one_line(pair[0].as_str().unwrap()), pair[1].as_str().unwrap());
@@ -149,49 +139,11 @@ fn nothing_failed_repeats_nothing() {
 }
 
 #[test]
-fn build_failed_reports() {
-    let text = build_failed_report("intro", None, "last\nlines");
-    assert!(text.starts_with("GATE: BUILD_FAILED\n\nintro\n"));
-    assert!(text.contains("## Failing tests\n\nJenkins has no test report for this build.\n"));
-    assert!(text.contains(&format!("## The last {CONSOLE_TAIL_LINES} lines of the build's console\n\n````\nlast\nlines\n````\n")));
-    assert!(!text.contains("Issues on changed lines") && !text.contains("Findings to weigh"));
-    let tests = [("t.T.test_x".to_string(), "AssertionError\ntraceback".to_string())];
-    let text = build_failed_report("intro", Some(&tests), "");
-    assert!(text.contains("## Failing tests\n\n- `t.T.test_x`: AssertionError\n"));
-    assert!(!text.contains("console"));
-    assert!(build_failed_report("intro", Some(&[]), "").contains("## Failing tests\n\nNone.\n"));
-    let tests: Vec<(String, String)> = (0..QUALITY_FINDINGS_LIMIT + 3).map(|k| (format!("t.T.test_{k}"), String::new())).collect();
-    let text = build_failed_report("intro", Some(&tests), "");
-    assert!(text.contains("- `t.T.test_0`: failed\n") && text.contains("- and 3 more.\n"));
-    assert!(!text.contains(&format!("test_{QUALITY_FINDINGS_LIMIT}`")));
-}
-
-#[test]
-fn a_failing_rust_test_s_line_keeps_its_panic_message_and_its_run_seed() {
-    let panic = "thread 'gen::tests::splits' panicked at engine/src/gen/tests.rs:41:5:\nassertion `left == right` failed\n  left: 1\n right: 2\nnote: run with `RUST_BACKTRACE=1`";
-    let seeded = format!("{panic}\nOCTOFLOW_TEST_SEED=8150 was this failing test's run seed; set it to generate the same cases again");
-    let tests = [("gen::tests::splits".to_string(), panic.to_string()), ("gen::tests::joins".to_string(), seeded)];
-    let text = build_failed_report("intro", Some(&tests), "");
-    let header = "thread 'gen::tests::splits' panicked at engine/src/gen/tests.rs:41:5:";
-    assert!(text.contains(&format!("- `gen::tests::splits`: {header} assertion `left == right` failed\n")), "{text}");
-    let seed = "OCTOFLOW_TEST_SEED=8150 was this failing test's run seed; set it to generate the same cases again";
-    assert!(text.contains(&format!("- `gen::tests::joins`: {header} assertion `left == right` failed {seed}\n")), "{text}");
-}
-
-#[test]
-fn a_seed_on_the_second_line_after_a_first_that_is_no_panic_is_kept() {
-    let seed = "OCTOFLOW_TEST_SEED=7 was this failing test's run seed; set it to generate the same cases again";
-    let tests = [("gen::tests::joins".to_string(), format!("cases differ\n{seed}"))];
-    let text = build_failed_report("intro", Some(&tests), "");
-    assert!(text.contains(&format!("- `gen::tests::joins`: cases differ {seed}\n")), "{text}");
-}
-
-#[test]
-fn read_back_the_gate_of_a_build_failed_report() {
+fn read_back_the_gate_of_a_could_not_judge_report() {
     let mut rng = Rng::new(20);
     for _ in 0..200 {
-        let (intro, console) = (rng.text(20, ""), rng.text(20, ""));
-        let report = build_failed_report(&intro, None, &console);
+        let (intro, said) = (rng.text(20, ""), rng.text(20, ""));
+        let report = could_not_judge_report(&intro, &said);
         assert_eq!(parse_gate(&report), Some(QUALITY_BUILD_FAILED), "{report:?}");
     }
 }

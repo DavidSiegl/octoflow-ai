@@ -189,8 +189,7 @@ for none). Commit that file with the change it measures.
 
 - `passed`: how many trials the hidden test accepted. This is the number that matters; the others explain it.
 - `rounds`: review rounds, from `metrics.json` ([Run metrics](#run-metrics)); 1 is approved at the first review.
-- `quality rounds`: quality builds over the run, 0 without `--quality-gate`. The toy repositories have no quality
-  job, and their origin is a bundle no snapshot can be pushed to, so the column stays 0 for the tasks as they are.
+- `quality rounds`: quality rounds over the run, 0 without `--quality-gate`.
 - `wall time`: the engine's run, as the runner measured it.
 - `tokens`: the four counts of [Token usage](#token-usage) summed, over every agent turn of a run, and only for a run
   whose every agent turn's tokens are known; cache reads make up most of a Claude Code run's.
@@ -455,7 +454,7 @@ processes and listed a project's runs. It went with that engine in 0.49.0: the d
 ## Builds and releases
 
 Jenkins does the building and releasing: the tests, the Linux binary (on every pull request and `main` build, so
-a change that breaks it fails before it is merged; not in a quality build) and, on a merge into `main` that raises
+a change that breaks it fails before it is merged) and, on a merge into `main` that raises
 the version, the release with the Linux binary and desktop app. Jenkins has no Mac, so one GitHub Action
 builds the macOS binary when that release is published and uploads it there. It can only add files to a release
 that exists. It also builds, without uploading, every pull request that touches what goes into the binary, so a

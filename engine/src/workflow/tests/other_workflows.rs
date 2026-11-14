@@ -12,7 +12,7 @@
 //! crate::state's (ticket 04).
 
 use super::*;
-use crate::ci::fake::{credentials, Outcome, JOB};
+use crate::workflow::fixture::Outcome;
 use crate::constants::{FINISHED, QUALITY_GATE_FAILED};
 use crate::paths::file_name;
 use crate::prompts::QUALITY_PASSED_NOTE;
@@ -187,16 +187,18 @@ fn impl_turn(n: u32, q: u32) -> Turn {
     })
 }
 
-/// The files the run wrote to its run directory, but state.json, by name and in order.
+/// The files the run wrote to its run directory, but state.json and the local gate's in its own directories, by name
+/// and in order.
 fn written(f: &Fixture) -> Vec<String> {
     let h = f.host.state();
-    h.writes.iter().filter(|p| p.starts_with(D) && !p.ends_with("state.json")).map(|p| file_name(p).to_string()).collect()
+    let in_run_dir = |p: &&String| p.strip_prefix(D).is_some_and(|name| !name.trim_start_matches('/').contains('/'));
+    h.writes.iter().filter(in_run_dir).filter(|p| !p.ends_with("state.json")).map(|p| file_name(p).to_string()).collect()
 }
 
 /// A saved run of the impl workflow in round 1 of phase impl, with the gate's job and the Implementer's agent.
 fn impl_saved() -> RunState {
     let mut state = saved_run("impl", 1, &[]);
-    (state.quality_job, state.workflow) = (Some(JOB.to_string()), "impl".into());
+    (state.quality_job, state.workflow) = (Some("local".to_string()), "impl".into());
     state.agents.insert("impl", AgentRecord::new("impl-a1b2c3", "w1:p1", DEFAULT_HARNESS));
     state
 }
@@ -210,7 +212,7 @@ fn gated_step_with_another_name() {
         ("review", vec![recording(review_turn(1, APPROVE), &reviews)]),
     ])
     .gated();
-    f.ci.state().outcomes = vec![red(), green()].into();
+    f.judging(vec![red(), green()]);
 
     assert_eq!(f.workflow(with_pipeline(&imp)).run(), verdict(APPROVE));
     let fix = filled(crate::prompts::QUALITY_FIX_PROMPT, &[
@@ -232,7 +234,7 @@ fn gated_step_with_another_name() {
     let file = |name: &str| f.host.state().files.get(&format!("{D}/{name}")).cloned().unwrap_or_default();
     assert!(file("quality-1-1.md").starts_with("GATE: ERROR\n"));
     assert!(file("quality-1-2.md").starts_with("GATE: OK\n"));
-    assert_eq!(f.ci.state().triggered(), [REF_1_1, "orchestrator-ci/a1b2c3-1-q2"]);
+    assert_eq!(f.gate.borrow().jobs.len(), 2);
     let pr = f.host.state().prs[0].clone();
     assert!(pr.body.contains("<summary>Builder report (round 1)</summary>\n\nimpl 1 q1"));
     assert!(pr.body.contains("<summary>Quality gate (round 1)</summary>\n\nGATE: OK"));
@@ -265,18 +267,6 @@ fn fresh_gated_step_answering_a_quality_round() {
     // The second role goes to the right of the first.
     assert_eq!(calls_of(&f, "split"), [split("w1:p1", Direction::Right)]);
     assert_eq!(wf.state().quality_round, 2);
-}
-
-#[test]
-fn resumed_gated_step_checks_the_credentials_first() {
-    let mut env = credentials();
-    env.remove("JENKINS_TOKEN");
-    let f = Fixture::resume(Rc::new(FakeHost::default()), impl_saved(), vec![("impl", vec![impl_turn(1, 0)])], &[], &[])
-        .gated_with(&env);
-
-    let e = failure(f.workflow(RunSettings { pipeline: Some(impl_()), ..f.as_saved() }).run());
-    assert!(e.contains("needs JENKINS_TOKEN"), "{e}");
-    assert!(names(&f, "prompt").is_empty());
 }
 
 #[test]
@@ -347,7 +337,7 @@ fn gated_solo(outcomes: Vec<Outcome>) -> (Result<Option<String>, Stopped>, Fixtu
     let solo = Pipeline::new("gsolo", roles(&[("impl", "Implementer")]), vec![step]).unwrap();
     let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&solo), vec![("impl", vec![impl_turn(1, 0), impl_turn(1, 1)])])
         .gated();
-    f.ci.state().outcomes = outcomes.into();
+    f.judging(outcomes);
     let ran = f.workflow(RunSettings { max_quality_rounds: 2, ..with_pipeline(&solo) }).run();
     (ran, f)
 }

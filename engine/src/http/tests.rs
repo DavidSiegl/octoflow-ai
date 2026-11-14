@@ -11,12 +11,11 @@ pub(crate) struct Seen {
     /// The path and the query.
     pub url: String,
     pub headers: Vec<(String, String)>,
-    pub body: String,
 }
 
 impl Seen {
     pub fn header(&self, name: &str) -> Option<&str> {
-        find_header(&self.headers, name)
+        self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
     }
 }
 
@@ -55,14 +54,11 @@ impl LocalServer {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let (server_, seen_) = (Arc::clone(&server), Arc::clone(&seen));
         let thread = std::thread::spawn(move || {
-            for mut request in server_.incoming_requests() {
-                let mut body = String::new();
-                std::io::Read::read_to_string(request.as_reader(), &mut body).expect("a UTF-8 body");
+            for request in server_.incoming_requests() {
                 let req = Seen {
                     method: request.method().as_str().to_string(),
                     url: request.url().to_string(),
                     headers: request.headers().iter().map(|h| (h.field.to_string(), h.value.to_string())).collect(),
-                    body,
                 };
                 let out = answer(&req);
                 seen_.lock().unwrap().push(req);
@@ -97,36 +93,22 @@ pub(crate) fn direct() -> HttpClient {
 }
 
 fn get(url: &str) -> Request {
-    Request { method: Method::Get, url: url.to_string(), headers: Vec::new(), form: None, timeout: 5 }
+    Request { url: url.to_string(), headers: Vec::new(), timeout: 5 }
 }
 
 #[test]
-fn a_2xx_answer_is_its_status_headers_and_whole_body() {
+fn a_2xx_answer_is_its_status_and_whole_body() {
     let big = "x".repeat(11 << 20);
     let body = big.clone();
-    let server = LocalServer::start(move |_| Answer::new(201, body.clone()).with_header("Location", "/queue/item/7/"));
+    let server = LocalServer::start(move |_| Answer::new(201, body.clone()));
     let mut request = get(&format!("{}/a?tree=b%2Cc", server.url));
     request.headers.push(("Accept".to_string(), "application/json".to_string()));
     let answer = direct().send(&request).unwrap();
     assert_eq!(answer.status, 201);
-    assert_eq!(answer.header("location"), Some("/queue/item/7/"));
     assert_eq!(answer.body.len(), big.len());
     let seen = server.seen();
     assert_eq!((seen[0].method.as_str(), seen[0].url.as_str()), ("GET", "/a?tree=b%2Cc"));
     assert_eq!(seen[0].header("accept"), Some("application/json"));
-}
-
-#[test]
-fn a_post_sends_its_form() {
-    let server = LocalServer::start(|_| Answer::new(200, ""));
-    let request = Request { method: Method::Post, form: Some("GIT_REF=a%2Fb".to_string()), ..get(&server.url) };
-    direct().send(&request).unwrap();
-    let empty = Request { method: Method::Post, ..get(&server.url) };
-    direct().send(&empty).unwrap();
-    let seen = server.seen();
-    assert_eq!((seen[0].method.as_str(), seen[0].body.as_str()), ("POST", "GIT_REF=a%2Fb"));
-    assert_eq!(seen[0].header("content-type"), Some("application/x-www-form-urlencoded"));
-    assert_eq!((seen[1].method.as_str(), seen[1].body.as_str()), ("POST", ""));
 }
 
 #[test]
@@ -189,14 +171,14 @@ fn the_proxy_is_the_schemes_and_the_lower_case_variable_wins() {
         ("HTTP_PROXY", "http://plain:3"),
     ]));
     assert_eq!(proxies.for_url("https://pypi.org/pypi/x/json"), Some("http://lower:2"));
-    assert_eq!(proxies.for_url("http://jenkins:8080/job/"), Some("http://plain:3"));
+    assert_eq!(proxies.for_url("http://index:8080/simple/"), Some("http://plain:3"));
     assert_eq!(proxies.for_url("ftp://x/"), None);
     assert_eq!(proxies.for_url("nonsense"), None);
 
     let cancelled = Proxies::from_env(&env(&[("HTTPS_PROXY", "http://upper:1"), ("https_proxy", "")]));
     assert_eq!(cancelled.for_url("https://pypi.org/"), None);
     let cgi = Proxies::from_env(&env(&[("HTTP_PROXY", "http://header:1"), ("REQUEST_METHOD", "GET")]));
-    assert_eq!(cgi.for_url("http://jenkins/"), None);
+    assert_eq!(cgi.for_url("http://index/"), None);
 }
 
 #[test]
@@ -245,15 +227,15 @@ fn a_request_goes_through_the_proxy_its_scheme_names() {
         (connect[0].clone(), tunnelled[0].clone())
     });
     let client = HttpClient::with_env(&env(&[("http_proxy", &url)]));
-    let answer = client.send(&get("http://jenkins.invalid/job/x/api/json")).unwrap();
+    let answer = client.send(&get("http://index.invalid/simple/x/")).unwrap();
     assert_eq!(answer.body, b"from the proxy");
     assert_eq!(
         tunnel.join().unwrap(),
-        ("CONNECT jenkins.invalid:80 HTTP/1.1".to_string(), "GET /job/x/api/json HTTP/1.1".to_string())
+        ("CONNECT index.invalid:80 HTTP/1.1".to_string(), "GET /simple/x/ HTTP/1.1".to_string())
     );
 
     let broken = HttpClient::with_env(&env(&[("http_proxy", "http://alice:s3cret@[::1")]));
-    let answer = broken.send(&get("http://jenkins.invalid/"));
+    let answer = broken.send(&get("http://index.invalid/"));
     assert!(
         matches!(&answer, Err(HttpError::NoAnswer(m)) if m.starts_with("the proxy ") && !m.contains("s3cret")),
         "{answer:?}"
@@ -292,7 +274,7 @@ fn tls_trusts_the_certificates_ssl_cert_file_and_ssl_cert_dir_name() {
     std::fs::create_dir(&certs).unwrap();
     std::fs::create_dir(&more).unwrap();
     // Any name, as rustls-native-certs reads every file of a directory; a file of no certificate adds none.
-    std::fs::write(format!("{certs}/jenkins-ca.pem"), OTHER_CERT).unwrap();
+    std::fs::write(format!("{certs}/index-ca.pem"), OTHER_CERT).unwrap();
     std::fs::write(format!("{certs}/5ed36f99.0"), CERT).unwrap();
     std::fs::write(format!("{more}/notes.txt"), "not a certificate\n").unwrap();
     let roots = |vars: &[(&str, &str)]| count(root_certs(&env(vars)));
@@ -361,13 +343,12 @@ fn without_either_variable_tls_trusts_this_machine_s_certificates() {
 }
 
 #[test]
-fn methods_and_headers_read_as_named() {
-    assert_eq!((Method::Get.as_str(), Method::Post.as_str()), ("GET", "POST"));
+fn headers_read_as_named() {
     let mut request = get("http://x/");
     request.headers.push(("Authorization".to_string(), "Basic x".to_string()));
     assert_eq!(request.header("AUTHORIZATION"), Some("Basic x"));
     assert_eq!(request.header("Accept"), None);
-    assert_eq!(Response::ok("b"), Response { status: 200, headers: Vec::new(), body: b"b".to_vec() });
+    assert_eq!(Response::ok("b"), Response { status: 200, body: b"b".to_vec() });
 }
 
 #[test]
@@ -375,11 +356,4 @@ fn quote_keeps_only_the_unreserved_characters() {
     assert_eq!(quote("a b/c?d=e&f~g_h.i-j"), "a%20b%2Fc%3Fd%3De%26f~g_h.i-j");
     assert_eq!(quote("Folder é"), "Folder%20%C3%A9");
     assert_eq!(quote(""), "");
-}
-
-#[test]
-fn urlencode_writes_a_blank_as_a_plus() {
-    assert_eq!(urlencode(&[("tree", "building,result")]), "tree=building%2Cresult");
-    assert_eq!(urlencode(&[("GIT_REF", "a b+c"), ("x y", "")]), "GIT_REF=a+b%2Bc&x+y=");
-    assert_eq!(urlencode(&[]), "");
 }

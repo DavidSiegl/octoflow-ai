@@ -22,7 +22,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::*;
-use crate::ci::fake::{jenkins_on, FakeJenkins, JOB};
+use crate::local_gate::LOCAL_GATE;
 use crate::constants::APPROVE;
 use crate::host::fake::FakeHost;
 use serde_json::Value;
@@ -48,19 +48,11 @@ fn saved_on_host(state: RunState) -> (Fixture, String) {
     (Fixture::on(host, state, vec![]), text)
 }
 
-/// run_command of argv on f's fakes, a run's or a resume's; jobs records each quality job a Jenkins is made for, on
-/// ci.
-fn run_on(f: &Fixture, argv: &[&str], ci: &Arc<FakeJenkins>, jobs: &RefCell<Vec<String>>) -> Result<Ran, Stop> {
+/// run_command of argv on f's fakes, a run's or a resume's.
+fn run_on(f: &Fixture, argv: &[&str]) -> Result<Ran, Stop> {
     let config = ConfigDir::at("/nowhere");
-    let jenkins = |job: &str| {
-        jobs.borrow_mut().push(job.to_string());
-        Ok(jenkins_on(ci))
-    };
-    let mut with = f.collaborators();
-    with.quality_gate = None;
     let world = Connected {
-        with,
-        jenkins: &jenkins,
+        with: f.collaborators(),
         config: &config,
         local_host: "here",
         stdout: &|_| {},
@@ -78,18 +70,16 @@ fn ran_status(ran: Result<Ran, Stop>, command: &Command) -> i32 {
     ended_status(ran.map(|ran| Ended::Ran(Box::new(ran))), command, &|_| {})
 }
 
-use std::sync::Arc;
-
 #[test]
 fn the_cli_refuses_with_exit_1_and_leaves_state_json_alone() {
     let cases = [
-        (&["--quality-gate", JOB][..], "is a --no-pr run in /proj itself"),
+        (&["--quality-gate", LOCAL_GATE][..], "is a --no-pr run in /proj itself"),
         (&["--no-quality-gate"][..], "has no quality gate, so --no-quality-gate does not apply"),
     ];
     for (flags, why) in cases {
         let (f, saved) = saved_on_host(saved_run("build", 1, &["spec", "build"]));
         let argv: Vec<&str> = ["resume", "a1b2c3", "--cwd", "/proj"].iter().chain(flags).copied().collect();
-        let ended = run_on(&f, &argv, &FakeJenkins::new(), &RefCell::new(vec![]));
+        let ended = run_on(&f, &argv);
         let Err(Stop::Failed(e)) = &ended else { panic!("{flags:?} did not fail") };
         assert!(e.0.contains(why), "{e}");
         assert_eq!(ran_status(ended, &command(&argv)), EXIT_ERROR);
@@ -100,21 +90,19 @@ fn the_cli_refuses_with_exit_1_and_leaves_state_json_alone() {
 }
 
 #[test]
-fn the_cli_runs_the_workflow_with_the_new_job() {
+fn the_cli_runs_the_workflow_with_the_gate_turned_on() {
     let mut state = saved_run("build", 1, &["spec", "build", "review"]);
     state.pull_request = true;
     state.base_branch = Some("main".into());
     state.branch = Some("orchestrator/x-a1b2c3".into());
     let (f, _) = saved_on_host(state);
-    let (ci, jobs) = (FakeJenkins::new(), RefCell::new(vec![]));
+    let f = f.gated();
     // The Builder, played by no turn, exits: the run fails once its Workflow has saved its state.
-    let argv = ["resume", "a1b2c3", "--cwd", "/proj", "--quality-gate", JOB, "--max-quality-rounds", "2"];
-    assert!(matches!(run_on(&f, &argv, &ci, &jobs), Err(Stop::Failed(_))));
-    // One Jenkins to turn the gate on, which asks for the job's parameters, and the Workflow's own.
-    assert_eq!(*jobs.borrow(), [JOB, JOB]);
-    assert_eq!(ci.state().names.first().map(String::as_str), Some("parameters"));
+    let argv = ["resume", "a1b2c3", "--cwd", "/proj", "--quality-gate", LOCAL_GATE, "--max-quality-rounds", "2"];
+    assert!(matches!(run_on(&f, &argv), Err(Stop::Failed(_))));
     let saved = f.saved();
-    assert_eq!((saved.get("quality_job"), saved.get("max_quality_rounds")), (Some(&Value::from(JOB)), Some(&Value::from(2))));
+    let gate = (Some(&Value::from(LOCAL_GATE)), Some(&Value::from(2)));
+    assert_eq!((saved.get("quality_job"), saved.get("max_quality_rounds")), gate);
 }
 
 #[test]
@@ -123,7 +111,7 @@ fn a_run_ends_with_its_verdict_and_its_pull_request() {
     state.verdict = Some(APPROVE.into());
     state.pr_url = Some("https://github.com/o/r/pull/7".into());
     let (f, _) = saved_on_host(state);
-    let Ok(ran) = run_on(&f, &["resume", "a1b2c3", "--cwd", "/proj"], &FakeJenkins::new(), &RefCell::new(vec![])) else {
+    let Ok(ran) = run_on(&f, &["resume", "a1b2c3", "--cwd", "/proj"]) else {
         panic!("a done run resumes to its verdict")
     };
     assert_eq!((ran.verdict.as_deref(), ran.state.pr_url.as_deref()), (Some(APPROVE), Some("https://github.com/o/r/pull/7")));
@@ -136,11 +124,11 @@ fn a_ctrl_c_outside_the_workflow_is_the_interrupt() {
     let (f, _) = saved_on_host(saved_run("build", 1, &["spec", "build"]));
     f.interrupt.raise();
     let argv = ["resume", "b0b0b0", "--cwd", "/proj"];
-    let ended = run_on(&f, &argv, &FakeJenkins::new(), &RefCell::new(vec![]));
+    let ended = run_on(&f, &argv);
     assert!(matches!(ended, Err(Stop::Interrupted(None))));
     assert_eq!(ran_status(ended, &command(&argv)), EXIT_INTERRUPTED);
     // Once it exists, before its Workflow starts: the note names it.
-    let ended = run_on(&f, &["resume", "a1b2c3", "--cwd", "/proj"], &FakeJenkins::new(), &RefCell::new(vec![]));
+    let ended = run_on(&f, &["resume", "a1b2c3", "--cwd", "/proj"]);
     let Err(Stop::Interrupted(Some(run_id))) = ended else { panic!("not interrupted with its run") };
     assert_eq!(run_id, "20260929-120000-a1b2c3");
     assert!(f.herdr.state().calls.is_empty());
@@ -151,7 +139,7 @@ fn a_ctrl_c_in_the_workflow_names_the_run_it_stopped() {
     let (f, _) = saved_on_host(saved_run("build", 1, &["spec", "build"]));
     f.play("build", vec![then_interrupted(&f.interrupt, build_turn(1))]);
     let argv = ["resume", "a1b2c3", "--cwd", "/proj"];
-    let Err(Stop::Interrupted(Some(run_id))) = run_on(&f, &argv, &FakeJenkins::new(), &RefCell::new(vec![])) else {
+    let Err(Stop::Interrupted(Some(run_id))) = run_on(&f, &argv) else {
         panic!("the run was not interrupted")
     };
     assert_eq!(run_id, "20260929-120000-a1b2c3");
@@ -388,7 +376,7 @@ fn resuming_an_unknown_workflow() {
 #[test]
 fn resume_limit_against_the_quality_round_of_another_gated_step() {
     let mut state = saved_run("impl", 1, &[]);
-    (state.quality_job, state.quality_round) = (Some(JOB.into()), 2);
+    (state.quality_job, state.quality_round) = (Some(LOCAL_GATE.into()), 2);
     let imp = crate::test_support::impl_();
     state.workflow = "impl".into();
     state.workflow_definition = Some(workflow_definition(&imp));
@@ -514,23 +502,21 @@ fn the_spec_combines_with_the_other_run_flags() {
     std::fs::write(d.join("spec.md"), GIVEN_SPEC).unwrap();
     let spec = d.join("spec.md");
     let example = example("spec-build-review");
-    let job = format!(r#""{JOB}""#);
+    let gate = format!(r#""{LOCAL_GATE}""#);
     let cases: [(&[&str], &str, &str); 5] = [
         (&["--no-pr"], "pull_request", "false"),
-        (&["--quality-gate", JOB], "quality_job", &job),
+        (&["--quality-gate", LOCAL_GATE], "quality_job", &gate),
         (&["--machine", "m", "--cwd", "/proj"], "machine", r#""m""#),
         (&["--workflow", "default"], "workflow", r#""default""#),
         (&["--workflow-file", &example], "workflow", r#""spec-build-review""#),
     ];
     for (flags, key, value) in cases {
-        let cli = Cli::new();
+        let cli = Cli::gated();
         let argv: Vec<&str> = ["--spec", &spec].iter().copied().chain(flags.iter().copied()).collect();
         let saved = started(&cli, &argv);
         assert_eq!((field(&saved, "phase"), field(&saved, key)), (r#""build""#.to_string(), value.to_string()), "{flags:?}");
         let dir = format!("{}/.orchestrator/runs/{}", saved.get("cwd").unwrap().text(), saved.get("run_id").unwrap().text());
         assert_eq!(cli.f.host.state().files.get(&format!("{dir}/spec.md")).map(String::as_str), Some(GIVEN_SPEC), "{flags:?}");
-        // The quality gate's job is had for the run.
-        assert_eq!(cli.jobs.borrow().len(), usize::from(key == "quality_job"), "{flags:?}");
     }
 }
 
@@ -585,12 +571,12 @@ fn harness_precedence() {
 
 #[test]
 fn the_gate_reaches_the_workflow() {
-    let cli = Cli::new();
+    let cli = Cli::gated();
     let plain = started(&cli, &["task"]);
-    assert_eq!((field(&plain, "quality_job"), cli.jobs.borrow().len()), ("null".to_string(), 0));
-    let gated = started(&cli, &["task", "--quality-gate", JOB, "--max-quality-rounds", "2"]);
-    assert_eq!((field(&gated, "quality_job"), field(&gated, "max_quality_rounds")), (format!(r#""{JOB}""#), "2".to_string()));
-    assert_eq!(*cli.jobs.borrow(), [JOB]);
+    assert_eq!(field(&plain, "quality_job"), "null");
+    let gated = started(&cli, &["task", "--quality-gate", LOCAL_GATE, "--max-quality-rounds", "2"]);
+    let gate = (format!(r#""{LOCAL_GATE}""#), "2".to_string());
+    assert_eq!((field(&gated, "quality_job"), field(&gated, "max_quality_rounds")), gate);
 }
 
 #[test]

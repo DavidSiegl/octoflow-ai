@@ -80,21 +80,15 @@ pub const DEFAULT_MAX_FILES: i64 = 15;
 pub const DEFAULT_MAX_LINES: i64 = 600;
 /// The workflow keys that hold them; a workflow file sets each to a whole number of at least 1.
 pub const BUDGET_KEYS: [&str; 2] = ["max_files", "max_lines"];
-/// Seconds an HTTP request to Jenkins may take.
-pub const HTTP_TIMEOUT: u64 = 30;
 /// Seconds each blocking step of a request to PyPI may take, to connect or to read, so one request can take it more
 /// than once. What bounds the new-dependencies check as a whole is the quality round's deadline (SLOW_STEP_MARGIN).
 pub const PYPI_TIMEOUT: u64 = 15;
 /// The same for a request to crates.io.
 pub const CRATES_IO_TIMEOUT: u64 = 15;
-/// Seconds between two looks at a quality build.
+/// Seconds between two looks at the local gate's job.
 pub const CI_POLL_SECONDS: u64 = 10;
-/// How long one quality round may wait on Jenkins, failed requests retried, before the run fails. Seconds.
+/// How long one quality round may wait on the local gate's job before the run fails. Seconds.
 pub const QUALITY_TIMEOUT: u64 = 1200;
-/// The orchestrator's own environment variables that hold the credentials; no process it starts inherits them.
-pub const CI_ENV: [&str; 3] = ["JENKINS_URL", "JENKINS_USER", "JENKINS_TOKEN"];
-/// The ones of CI_ENV that are secret, which CI.mask hides in text from Jenkins.
-pub const CI_TOKENS: [&str; 1] = ["JENKINS_TOKEN"];
 /// git's switches for how it reads every pathspec, which no process the orchestrator starts inherits: its pathspecs
 /// are written in git's default syntax, and each switch changes what one matches without an error, as under ICASE a
 /// `:(literal)` path such as _top_literal's matches a file whose name differs in case. The gate leaves them out of
@@ -102,14 +96,10 @@ pub const CI_TOKENS: [&str; 1] = ["JENKINS_TOKEN"];
 /// names.
 pub const GIT_PATHSPEC_ENV: [&str; 4] =
     ["GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS"];
-/// The parameters of the Jenkins quality job.
-pub const JOB_PARAMETERS: [&str; 1] = ["GIT_REF"];
-/// Snapshots are pushed to orchestrator-ci/<key>-<round>-q<quality round>.
-pub const CI_REF_PREFIX: &str = "orchestrator-ci/";
 /// A run's local refs are under refs/orchestrator/<key>/ (crate::state::refs_prefix).
 pub const LOCAL_REFS_PREFIX: &str = "refs/orchestrator/";
-/// How many lines crate::host::last_lines keeps of a log it shows: the console of a build that failed before its Gate
-/// stage, in the quality file; herdr server's log, when it fails to start; the local gate's output.
+/// How many lines crate::host::last_lines keeps of a log it shows: herdr server's log, when it fails to start; the
+/// local gate's output.
 pub const CONSOLE_TAIL_LINES: usize = 60;
 
 /// The default workflow's roles, key and label, in pane order. Each has its own --ROLE-model flag; another workflow's

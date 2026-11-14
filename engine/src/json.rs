@@ -1,6 +1,6 @@
 //! JSON as the engine reads and writes it: serde_json's Value, an object keeping its keys in the order they came
 //! (serde_json's preserve_order), and what callers ask of a value read from a file they do not control, such as a
-//! state.json an earlier step wrote or an answer from Jenkins.
+//! state.json an earlier step wrote or an answer from PyPI.
 
 use serde_json::Value;
 

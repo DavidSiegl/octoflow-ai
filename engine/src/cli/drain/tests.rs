@@ -1262,7 +1262,7 @@ fn the_flags_reach_every_run() {
     d.spec("a", &ready("A"));
     d.spec("b", &ready("B"));
     let example = format!("{EXAMPLES}/spec-build-review.toml");
-    let job = crate::ci::fake::JOB;
+    let job = crate::local_gate::LOCAL_GATE;
     let argv = [
         "--workflow-file", &example, "--worktree", "--quality-gate", job, "--max-quality-rounds", "2",
         "--max-rounds", "5", "--timeout", "60", "--permission-mode", "auto", "--model", "m", "--review-model", "r",

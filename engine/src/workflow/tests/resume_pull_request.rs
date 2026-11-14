@@ -167,7 +167,7 @@ fn resume_on_another_branch_fails_before_any_turn() {
             let saved = assert_refused(&f, current);
             assert_eq!(text(&saved, "phase").as_deref(), Some(phase));
             assert_eq!(f.herdr.state().calls, []);
-            assert!(f.ci.state().requests.is_empty(), "{phase}: {:?}", f.ci.state().requests);
+            assert!(f.gate.borrow().jobs.is_empty(), "{phase}: {:?}", f.gate.borrow().jobs);
             assert_eq!(git_calls(&f), [strings(ON_BRANCH)]);
         }
     }

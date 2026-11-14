@@ -1,5 +1,5 @@
-//! The programs a world puts on the engine's PATH in place of herdr, gh and ssh (`src/bin/`), each run as
-//! `fake-PROGRAM WORLD ARGS...` by a shim of the program's name in the world's `bin/`. Each plays its part of the
+//! The programs a world puts on the engine's PATH in place of herdr, gh, ssh and octoflow-gate (`src/bin/`), each run
+//! as `fake-PROGRAM WORLD ARGS...` by a shim of the program's name in the world's `bin/`. Each plays its part of the
 //! world from the scenario's script (Ledger::script):
 //!
 //! - herdr keeps workspaces, panes and agents, and plays each role's agent from `script["agents"][role]`, one action
@@ -9,6 +9,10 @@
 //!   which the world changes between invocations; a head commit is read from the origin repository.
 //! - ssh runs its command here with sh, so that `--machine` reaches this machine's files through the engine's remote
 //!   code.
+//! - gate is octoflow-gate's `gate`, which the release World::local_gate pins runs from its shim: it plays one of
+//!   `script["gate"]["judgements"]` per run, in order (`gate` says what a judgement holds). Unlike the others it logs
+//!   nothing: it runs detached from the engine, so where its runs fell among the engine's commands would differ from
+//!   run to run.
 //!
 //! Every herdr and gh command, and each state.json a command finds changed, goes into the ledger. gitleaks is the
 //! real one.
@@ -482,6 +486,39 @@ fn origin_commit(origin: &str, branch: &str) -> String {
     } else {
         sha
     }
+}
+
+/// Judge as octoflow-gate's `gate` does, playing the next of `script["gate"]["judgements"]`, one per run; returns the
+/// exit status.
+///
+/// A judgement is an object of "quality" and "quality_json", the texts written to `--out`'s path and to quality.json
+/// beside it; "exit", the exit status, 0 for a gate that passed and 1 for one that failed; and "hold", which the world
+/// releases. A held run waits until then, its hold reached once the engine has written the job's `group` file
+/// (octoflow_engine::local_gate::start), after which the engine does nothing but ask after the job, and the state it
+/// saves is what it saved before the job started. A run beyond the last judgement scripted writes nothing and exits
+/// 3, which the engine reports as a gate that failed.
+pub fn gate(ledger: &Ledger, args: &[String]) -> i32 {
+    let words: Vec<&str> = args.iter().map(String::as_str).collect();
+    let out = Path::new(flag(&words, "--out"));
+    let n = ledger.change(|state| next_id(state, "judgement"));
+    let script = ledger.script();
+    let judgements = script.get("gate").and_then(|g| g.get("judgements")).and_then(Value::as_array);
+    let Some(judgement) = usize::try_from(n - 1).ok().and_then(|k| judgements?.get(k)) else {
+        eprintln!("the fake gate has no judgement {n} scripted");
+        return 3;
+    };
+    if let Some(hold) = judgement.get("hold").and_then(Value::as_str).filter(|h| !h.is_empty()) {
+        let group = out.parent().expect("--out names a file in the job's directory").join("group");
+        while !group.exists() {
+            std::thread::sleep(crate::ledger::POLL);
+        }
+        ledger.change(|state| array_at(state, "reached").push(Value::from(hold)));
+        wait_until(ledger, |state| holds(state, "released", hold));
+    }
+    put(out, crate::at(judgement, "quality"));
+    put(&out.with_extension("json"), crate::at(judgement, "quality_json"));
+    let exit = crate::at(judgement, "exit").as_i64().expect("a judgement's exit is a number");
+    i32::try_from(exit).expect("a judgement's exit is an exit status")
 }
 
 /// Run ssh's command, the arguments after its options and target joined by spaces as ssh joins them, with sh on this
