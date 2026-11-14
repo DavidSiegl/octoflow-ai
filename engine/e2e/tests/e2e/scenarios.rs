@@ -620,6 +620,20 @@ pub fn finished_run_closed(w: &mut World) {
     w.run(&["close", &key]);
 }
 
+/// close --all over a failed --worktree run and a finished --no-pr one: --dry-run lists what each would lose, the
+/// failed run's uncommitted file included, and changes nothing; then both are closed; then a second sweep only counts
+/// them as closed.
+pub fn runs_closed_all(w: &mut World) {
+    w.agent("spec", [spec_written()]);
+    w.agent("build", [writes("build-1.md", "").edit(&[("src/calc.py", CALC_WITH_SUBTRACT)]).exit()]);
+    w.run(&["run", "--worktree", "--", TASK]);
+    approved_roles(w);
+    w.run(&["run", "--no-pr", "--", TASK]);
+    w.run(&["close", "--all", "--dry-run"]);
+    w.run(&["close", "--all"]);
+    w.run(&["close", "--all"]);
+}
+
 /// workflows: the list, with a workflow file and a prompt file installed; the default printed as a file; an example by
 /// its path; and a workflow file that does not load.
 pub fn workflows_listed(w: &mut World) {

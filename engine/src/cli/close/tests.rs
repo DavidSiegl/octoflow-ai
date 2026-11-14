@@ -13,11 +13,11 @@ use crate::state::format_problem;
 use serde_json::Value;
 use crate::cli::fixture::Cli;
 use crate::cli::{Command, RunsCommand, Target};
-use crate::constants::{APPROVE, EXIT_ERROR, HEARTBEAT_SECONDS, STALE_SECONDS, WORKTREES_DIR};
+use crate::constants::{APPROVE, EXIT_ERROR, EXIT_INTERRUPTED, HEARTBEAT_SECONDS, STALE_SECONDS, WORKTREES_DIR};
 use crate::herdr::fake::Call;
 use crate::herdr::HerdrError;
 use crate::host::tests::Repo;
-use crate::host::Host;
+use crate::host::{Host, GIT_STATUS_ARGS};
 use crate::map::Map;
 use crate::json::Object;
 use crate::test_support::resumable;
@@ -108,6 +108,14 @@ impl Close {
     fn project(&self) -> String {
         let h = self.cli.f.host.state();
         format!("{:?}", (h.files.clone(), h.worktrees.clone(), h.branches.clone(), h.changed.clone()))
+    }
+
+    /// The git commands close ran that change a repository, as all but what it reads to decide do.
+    fn changing_git_calls(&self) -> Vec<Vec<String>> {
+        let reads = |args: &&Vec<String>| {
+            args.as_slice() == GIT_STATUS_ARGS || matches!(args.first().map(String::as_str), Some("rev-parse" | "rev-list"))
+        };
+        self.cli.f.host.state().git_calls.iter().filter(|args| !reads(args)).cloned().collect()
     }
 
     fn calls(&self) -> Vec<Call> {
@@ -377,7 +385,8 @@ fn herdr_failure_records_nothing() {
     c.cli.f.herdr.state().close_error = Some(HerdrError::new("server_error", "herdr is down"));
     assert_eq!(c.close(&[]).0, EXIT_ERROR);
     assert!(c.error().contains("herdr is down"));
-    assert!(c.cli.f.host.state().git_calls.is_empty() && c.cli.f.host.state().writes.is_empty());
+    assert_eq!(c.changing_git_calls(), Vec::<Vec<String>>::new());
+    assert!(c.cli.f.host.state().writes.is_empty() && c.cli.f.host.state().worktrees.contains_key(&worktree()));
     assert_eq!(c.closed(), Value::Null);
 }
 
@@ -528,7 +537,7 @@ fn close_outside_a_repository(locked: &[(&str, Vec<String>)]) -> (Result<String,
     let closed = cli.with(|world| {
         let mut world = *world;
         world.with.host = &host;
-        close_run(&world, &tmp.path(), "a1b2c3")
+        close_run(&world, &tmp.path(), "a1b2c3", false)
     });
     let saved = serde_json::from_str::<Value>(&host.read(&path).unwrap().unwrap()).unwrap();
     (closed, saved.get("closed").cloned().unwrap_or(Value::Null))
@@ -567,7 +576,7 @@ fn args() {
     let target = Target { machine: Some("m".into()), cwd: Some("~/proj".into()) };
     assert_eq!(
         c.command(&["close", "a1b2c3", "--machine", "m", "--cwd", "~/proj"]),
-        Command::Runs(target, RunsCommand::Close("a1b2c3".into()))
+        Command::Close { target, run_ref: Some("a1b2c3".into()), dry_run: false }
     );
     for argv in [&["close", "a1b2c3", "--machine", "m"][..], &["close"][..]] {
         let refused = crate::cli::parse_args(argv.iter().map(std::ffi::OsString::from), &c.config).unwrap_err();
@@ -612,7 +621,7 @@ fn close_on_real_git() {
         .with(|world| {
             let mut world = *world;
             world.with.host = &repo.host;
-            close_run(&world, &repo.path, "a1b2c3")
+            close_run(&world, &repo.path, "a1b2c3", false)
         })
         .unwrap();
     assert_eq!(closed, "workspace already gone; worktree deleted; branch deleted; refs deleted");
@@ -626,4 +635,197 @@ fn close_on_real_git() {
     assert_eq!(saved.get("closed"), Some(&Value::from(closed.as_str())));
     assert_eq!(repo.host.mtime(&path).unwrap(), 1_000_000_000);
     assert!(cli.f.herdr.state().calls.is_empty());
+}
+
+// -- close --all ----------------------------------------------------------------------------------------------------
+
+/// The five runs of the spec's project, in run id order: finished in place, failed in a worktree (CLOSE_ID's, with
+/// a.py uncommitted), stale in place, running, and closed. Each but the closed one has a workspace of its own.
+const FINISHED: &str = "20261001-110000-aaaaa1";
+const STALE: &str = "20261001-130000-ccccc3";
+const LIVE: &str = "20261001-140000-ddddd4";
+const CLOSED: &str = "20261001-150000-eeeee5";
+
+impl Close {
+    /// Save an in-place run of id in workspace w-<id>, open in herdr, saved age seconds ago with fields over a failed
+    /// run's.
+    fn add_in_place(&self, id: &str, age: u64, fields: Fields) {
+        let mut state = RunState::new(id, "a task", "/proj");
+        (state.phase, state.round, state.error) = ("build".into(), 1, Some("interrupted".into()));
+        state.workspace_id = format!("w-{id}");
+        self.cli.f.herdr.state().workspaces.insert(state.workspace_id.clone());
+        let Value::Object(mut saved) = state.to_json() else { unreachable!("a state is saved as an object") };
+        for (key, value) in fields {
+            saved.insert(key.to_string(), value.clone());
+        }
+        self.cli.save(&Value::Object(saved), age);
+    }
+
+    /// The five runs.
+    fn project_of_five() -> Close {
+        let c = Close::new();
+        let finished = [("phase", Value::from("done")), ("error", Value::Null), ("verdict", Value::from(APPROVE))];
+        c.add_in_place(FINISHED, 0, &finished);
+        c.add(0, true, &[]);
+        c.add_in_place(STALE, STALE_SECONDS + 1, &[("error", Value::Null)]);
+        c.add_in_place(LIVE, 0, &[("error", Value::Null), ("owner", me())]);
+        c.add_in_place(CLOSED, 0, &[("closed", Value::from("workspace closed"))]);
+        c
+    }
+
+    fn closed_of(&self, id: &str) -> Value {
+        self.cli.saved(id).get("closed").cloned().unwrap_or(Value::Null)
+    }
+}
+
+fn running_skipped() -> String {
+    format!("skipped: run {LIVE} is still running (pid 4242 on here, beat 0s ago); stop it before closing it")
+}
+
+#[test]
+fn close_all_closes_what_close_would_and_skips_the_running_run() {
+    let c = Close::project_of_five();
+    let (status, out) = c.close(&["--all"]);
+    assert_eq!(status, 0);
+    let wt = worktree();
+    assert_eq!(
+        out,
+        format!(
+            "closed workspace w-{FINISHED}\nclosed run {FINISHED}: workspace closed\n\
+             closed workspace w1\ndiscarding in {wt}:\n    ?? {wt}/a.py\ndeleted worktree {wt}\n\
+             deleted branch {CLOSE_BRANCH}\nclosed run {CLOSE_ID}: workspace closed; worktree deleted; branch deleted\n\
+             closed workspace w-{STALE}\nclosed run {STALE}: workspace closed\n\
+             {}\n\
+             3 closed, 1 skipped, 1 already closed\n",
+            running_skipped()
+        )
+    );
+    for id in [FINISHED, STALE] {
+        assert_eq!(c.closed_of(id), Value::from("workspace closed"));
+    }
+    assert_eq!(c.closed_of(CLOSE_ID), Value::from("workspace closed; worktree deleted; branch deleted"));
+    assert_eq!((c.closed_of(LIVE), c.closed_of(CLOSED)), (Value::Null, Value::from("workspace closed")));
+    assert!(c.cli.f.herdr.state().workspaces.contains(&format!("w-{LIVE}")));
+}
+
+#[test]
+fn close_all_dry_run_says_what_each_would_lose_and_changes_nothing() {
+    let c = Close::project_of_five();
+    c.add_refs();
+    let before = (c.project(), c.refs());
+    let (status, out) = c.close(&["--all", "--dry-run"]);
+    assert_eq!(status, 0);
+    let wt = worktree();
+    assert_eq!(
+        out,
+        format!(
+            "would close run {FINISHED}: workspace closed\n\
+             would discard in {wt}:\n    ?? {wt}/a.py\n\
+             would close run {CLOSE_ID}: workspace closed; worktree deleted; branch deleted; refs deleted\n\
+             would close run {STALE}: workspace closed\n\
+             {}\n\
+             3 to close, 1 skipped, 1 already closed\n",
+            running_skipped()
+        )
+    );
+    assert_eq!((c.project(), c.refs()), before);
+    assert!(c.calls().is_empty() && c.cli.f.host.state().writes.is_empty());
+    assert_eq!(c.changing_git_calls(), Vec::<Vec<String>>::new());
+}
+
+#[test]
+fn a_dry_run_of_one_run_changes_nothing() {
+    let c = Close::new();
+    c.add(0, true, &[]);
+    let before = c.project();
+    let wt = worktree();
+    assert_eq!(
+        c.close(&["a1b2c3", "--dry-run"]),
+        (
+            0,
+            format!(
+                "would discard in {wt}:\n    ?? {wt}/a.py\n\
+                 would close run {CLOSE_ID}: workspace closed; worktree deleted; branch deleted\n"
+            )
+        )
+    );
+    assert_eq!(c.project(), before);
+    assert!(c.calls().is_empty() && c.cli.f.host.state().writes.is_empty());
+    assert_eq!(c.changing_git_calls(), Vec::<Vec<String>>::new());
+}
+
+#[test]
+fn one_failing_close_does_not_stop_the_others_and_fails_the_sweep() {
+    let c = Close::project_of_five();
+    c.cli.f.host.state().remove_error = Some("fatal: cannot remove a locked working tree".into());
+    let (status, out) = c.close(&["--all"]);
+    assert_eq!(status, EXIT_ERROR);
+    assert!(out.contains(&format!("could not close run {CLOSE_ID}: ")), "{out}");
+    assert!(out.contains("cannot remove a locked working tree"), "{out}");
+    assert!(out.ends_with("2 closed, 1 skipped, 1 already closed, 1 failed\n"), "{out}");
+    assert_eq!(c.closed_of(CLOSE_ID), Value::Null);
+    for id in [FINISHED, STALE] {
+        assert_eq!(c.closed_of(id), Value::from("workspace closed"));
+    }
+}
+
+#[test]
+fn a_run_that_started_running_since_the_sweep_began_is_skipped() {
+    // As the first run's workspace closes, the stale run is resumed: its owner is this process, its beat now.
+    let c = Close::project_of_five();
+    let host = Rc::clone(&c.cli.f.host);
+    let path = format!("/proj/.orchestrator/runs/{STALE}/state.json");
+    c.cli.f.herdr.state().before_call = Some(Box::new(move |call| {
+        if matches!(call, Call::Close { .. }) {
+            let mut s = host.state();
+            let text = s.files.get(&path).cloned().unwrap();
+            let Ok(Value::Object(mut saved)) = serde_json::from_str::<Value>(&text) else { unreachable!() };
+            saved.insert("owner".into(), me());
+            s.files.insert(path.clone(), Value::Object(saved).to_string());
+            s.ages.insert(STALE.into(), 0);
+        }
+    }));
+    let (status, out) = c.close(&["--all"]);
+    assert_eq!(status, 0);
+    assert!(out.contains(&format!("skipped: run {STALE} is still running")), "{out}");
+    assert!(out.ends_with("2 closed, 2 skipped, 1 already closed\n"), "{out}");
+    assert_eq!(c.closed_of(STALE), Value::Null);
+    assert!(c.cli.f.herdr.state().workspaces.contains(&format!("w-{STALE}")));
+}
+
+#[test]
+fn an_unreadable_run_is_skipped_and_named_not_failed() {
+    let c = Close::new();
+    let mut saved = c.add(0, true, &[]);
+    saved.shift_remove("format");
+    c.cli.f.host.state().files.insert(close_state(), format!("{}\n", Value::Object(saved)));
+    let problem = format_problem(&c.saved()).unwrap();
+    assert_eq!(c.close(&["--all"]), (0, format!("skipped: {problem}\n0 closed, 1 skipped, 0 already closed\n")));
+    assert!(c.calls().is_empty() && c.cli.f.host.state().writes.is_empty());
+}
+
+#[test]
+fn ctrl_c_stops_the_sweep_between_runs() {
+    // Raised as the first run's workspace closes: that run is closed in full, the next is not touched.
+    let c = Close::project_of_five();
+    let interrupt = c.cli.f.interrupt.clone();
+    c.cli.f.herdr.state().before_call = Some(Box::new(move |_| interrupt.raise()));
+    assert_eq!(c.cli.main(&["close", "--cwd", "/proj", "--all"]), EXIT_INTERRUPTED);
+    assert_eq!(c.closed_of(FINISHED), Value::from("workspace closed"));
+    assert_eq!(c.closed_of(CLOSE_ID), Value::Null);
+    assert!(c.cli.f.host.state().worktrees.contains_key(&worktree()));
+}
+
+#[test]
+fn all_and_a_run_exclude_each_other() {
+    let c = Cli::new();
+    let target = Target { machine: None, cwd: Some("/proj".into()) };
+    assert_eq!(
+        c.command(&["close", "--cwd", "/proj", "--all", "--dry-run"]),
+        Command::Close { target, run_ref: None, dry_run: true }
+    );
+    for argv in [&["close", "--all", "a1b2c3"][..], &["close", "--dry-run"][..]] {
+        let refused = crate::cli::parse_args(argv.iter().map(std::ffi::OsString::from), &c.config).unwrap_err();
+        assert_eq!(refused.exit_code(), 2, "{argv:?}");
+    }
 }

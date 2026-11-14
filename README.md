@@ -243,6 +243,9 @@ orchestrator resume e292fb
 # worktree and branch
 orchestrator close e292fb
 
+# What closing every finished, failed and stale run would do, uncommitted files included; drop --dry-run to do it
+orchestrator close --all --dry-run
+
 # After you resolved a pull request's conflict and pushed: drop its warning, and its draft if it was approved
 orchestrator refresh e292fb
 
@@ -367,8 +370,8 @@ share its working tree, so a run refuses to start or resume while another run th
 
 A failed run keeps its workspace open and stays on its branch, and so does a `--no-pr` run. `resume` continues a
 stopped run where `state.json` says ([Resuming a run](docs/design.md#resuming-a-run)), and `close` cleans up after
-one you are done with, the local refs that keep its locked files included
-([Closing a run](docs/design.md#closing-a-run)). `list` marks a run `stale` after five
+one you are done with, the local refs that keep its locked files included, or with `--all` after every run that is
+not running ([Closing a run](docs/design.md#closing-a-run)). `list` marks a run `stale` after five
 minutes without a heartbeat ([Stale runs](docs/design.md#stale-runs)).
 
 See also [design decisions](docs/design.md), [architecture](docs/architecture.md), [roadmap](docs/roadmap.md)

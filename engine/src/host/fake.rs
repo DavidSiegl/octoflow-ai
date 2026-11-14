@@ -855,6 +855,10 @@ impl Host for FakeHost {
         Ok(())
     }
 
+    fn refs(&self, _cwd: &str, prefix: &str) -> Result<Vec<String>, OrchestratorError> {
+        Ok(self.state().refs.keys().filter(|r| r.starts_with(prefix)).map(String::from).collect())
+    }
+
     fn delete_refs(&self, _cwd: &str, prefix: &str) -> Result<bool, OrchestratorError> {
         let mut s = self.state();
         if let Some(error) = &s.delete_refs_error {

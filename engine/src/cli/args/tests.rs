@@ -295,7 +295,7 @@ fn the_commands_about_runs_and_workflows() {
         (&["metrics"], Command::Runs(Target::default(), RunsCommand::Metrics)),
         (&["show", "a1b2c3"], Command::Runs(Target::default(), RunsCommand::Show("a1b2c3".into()))),
         (&["prune", "--dry-run"], Command::Runs(Target::default(), RunsCommand::Prune { dry_run: true })),
-        (&["close", "--cwd", "~/p", "a1b2c3"], Command::Runs(Target { machine: None, cwd: Some("~/p".into()) }, RunsCommand::Close("a1b2c3".into()))),
+        (&["close", "--cwd", "~/p", "a1b2c3"], Command::Close { target: Target { machine: None, cwd: Some("~/p".into()) }, run_ref: Some("a1b2c3".into()), dry_run: false }),
         (&["workflows"], Command::Workflows(None)),
         (&["workflows", "quick"], Command::Workflows(Some("quick".into()))),
     ];
@@ -353,6 +353,10 @@ fn help_names_the_flags_python_names() {
         }
         if name == "doctor" {
             python.extend(["--setup-gate".into(), "--quality-gate".into()]);
+        }
+        // close's --all and --dry-run are the Rust engine's own (close-all-runs/01).
+        if name == "close" {
+            python.extend(["--all".into(), "--dry-run".into()]);
         }
         // --permission-mode's help names agy's flags where Python's named gemini's (GitHub issue #125).
         if python.remove("--approval-mode") {

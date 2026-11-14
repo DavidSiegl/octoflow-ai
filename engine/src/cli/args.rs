@@ -9,7 +9,7 @@ use std::ffi::OsString;
 
 use clap::builder::PossibleValuesParser;
 use clap::error::ErrorKind;
-use clap::{Arg, ArgAction, ArgMatches};
+use clap::{Arg, ArgAction, ArgGroup, ArgMatches};
 
 use crate::constants::{
     HARNESS_NAMES, CLOSED_BRANCH_GRACE, DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS,
@@ -46,6 +46,9 @@ pub enum Command {
         /// --setup-gate: then write what the local quality gate reads into the project (crate::local_gate::set_up).
         setup_gate: bool,
     },
+    /// `close`: clean up after the finished, failed or stale run run_ref names, by its id or key, or after every such
+    /// run of the project when None (--all); with dry_run, only say what closing would do.
+    Close { target: Target, run_ref: Option<String>, dry_run: bool },
     /// `serve`: serve the runs of any project, and start new ones, over HTTP on 127.0.0.1, also answering the origins
     /// given with --origin, in their order.
     Serve(Vec<String>),
@@ -63,8 +66,6 @@ pub enum RunsCommand {
     Show(String),
     /// `prune`: delete the branches of runs whose pull request is done; with dry_run, only say what would go.
     Prune { dry_run: bool },
-    /// `close`: clean up after a run that is finished, failed or stale, by its id or key.
-    Close(String),
 }
 
 /// Where the project is: `--machine` and `--cwd`.
@@ -170,7 +171,10 @@ impl Command {
             Command::Run(a) => Some(&a.target),
             Command::Resume(a) => Some(&a.target),
             Command::Drain(a) => Some(&a.run.target),
-            Command::Runs(target, _) | Command::Refresh(target, _) | Command::Doctor { target, .. } => Some(target),
+            Command::Runs(target, _)
+            | Command::Refresh(target, _)
+            | Command::Close { target, .. }
+            | Command::Doctor { target, .. } => Some(target),
             Command::Workflows(_) | Command::Serve(_) => None,
         }
     }
@@ -247,7 +251,9 @@ pub fn parse_args(argv: impl IntoIterator<Item = OsString>, config: &ConfigDir) 
         Some(("metrics", m)) => Command::Runs(target(m), RunsCommand::Metrics),
         Some(("show", m)) => Command::Runs(target(m), RunsCommand::Show(string(m, "run_ref").unwrap_or_default())),
         Some(("prune", m)) => Command::Runs(target(m), RunsCommand::Prune { dry_run: m.get_flag("dry-run") }),
-        Some(("close", m)) => Command::Runs(target(m), RunsCommand::Close(string(m, "run_ref").unwrap_or_default())),
+        Some(("close", m)) => {
+            Command::Close { target: target(m), run_ref: string(m, "run_ref"), dry_run: m.get_flag("dry-run") }
+        }
         Some(("workflows", m)) => Command::Workflows(string(m, "workflow")),
         Some(("serve", m)) => Command::Serve(m.get_many::<String>("origin").into_iter().flatten().cloned().collect()),
         _ => unreachable!("clap requires one of the subcommands parser defines"),
@@ -355,16 +361,27 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
                 .help("print what would be deleted, and delete nothing"),
         );
     let close = clap::Command::new("close")
-        .about("clean up after a finished or failed run: its workspace, worktree and branch")
+        .about("clean up after a finished or failed run, or all of them: workspace, worktree and branch")
         .long_about(
             "Clean up after a run that is finished, failed or stale, and record it in the run's state, so that \
-             resume refuses it. Closes the run's herdr workspace. A failed or stale --worktree run also loses its \
-             worktree, uncommitted changes included, which are listed first, and its branch, unless that has \
-             commits beyond the run's base. A finished run keeps its worktree; an in-place run keeps its checkout \
-             and branch. A running run is refused.",
+             resume refuses it. Closes the run's herdr workspace and deletes its local refs. A failed or stale \
+             --worktree run also loses its worktree, uncommitted changes included, which are listed first, and its \
+             branch, unless that has commits beyond the run's base. A finished run keeps its worktree; an in-place \
+             run keeps its checkout and branch. A running run is refused. With --all, every run of the project in \
+             turn: a running run, or one whose state cannot be read, is skipped and named, one already closed is \
+             counted, and a run that fails to close does not stop the others but makes the exit status 1. Run \
+             directories stay, so list and show still show closed runs.",
         )
         .args(target_args())
-        .arg(run_ref());
+        .arg(Arg::new("run_ref").value_name("RUN").help(RUN_REF_HELP))
+        .arg(Arg::new("all").long("all").action(ArgAction::SetTrue).help("every finished, failed and stale run"))
+        .group(ArgGroup::new("runs").args(["run_ref", "all"]).required(true))
+        .arg(
+            Arg::new("dry-run")
+                .long("dry-run")
+                .action(ArgAction::SetTrue)
+                .help("print what closing would do, the worktree's uncommitted files included, and change nothing"),
+        );
     let workflows = clap::Command::new("workflows")
         .about("list the workflows, or print one as a workflow file")
         .long_about(format!(

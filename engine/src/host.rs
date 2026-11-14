@@ -560,12 +560,20 @@ pub trait Host {
         Ok(())
     }
 
-    /// Delete every local ref of cwd's repository whose name starts with prefix, such as `refs/orchestrator/<key>/`,
-    /// and return whether there was any; none is no error. Errors: a git command fails, cwd outside a repository git
-    /// will read included, some of the refs perhaps deleted already.
-    fn delete_refs(&self, cwd: &str, prefix: &str) -> Result<bool, OrchestratorError> {
+    /// The full names of the local refs of cwd's repository whose name starts with prefix, such as
+    /// `refs/orchestrator/<key>/`, in git's order; none is no error. Errors: git fails, cwd outside a repository git
+    /// will read included.
+    fn refs(&self, cwd: &str, prefix: &str) -> Result<Vec<String>, OrchestratorError> {
         let listed = self.git(cwd, &["for-each-ref", "--format=%(refname)", prefix])?;
-        for git_ref in listed.split_whitespace() {
+        Ok(listed.split_whitespace().map(String::from).collect())
+    }
+
+    /// Delete every local ref of cwd's repository whose name starts with prefix (refs), and return whether there was
+    /// any; none is no error. Errors: a git command fails, cwd outside a repository git will read included, some of
+    /// the refs perhaps deleted already.
+    fn delete_refs(&self, cwd: &str, prefix: &str) -> Result<bool, OrchestratorError> {
+        let listed = self.refs(cwd, prefix)?;
+        for git_ref in &listed {
             self.git(cwd, &["update-ref", "-d", git_ref])?;
         }
         Ok(!listed.is_empty())

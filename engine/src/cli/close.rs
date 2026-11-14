@@ -1,140 +1,296 @@
-//! Cleaning up after a run nothing drives any more, as orchestrator.py's close_run: the `close` command.
+//! Cleaning up after a run nothing drives any more, as orchestrator.py's close_run: the `close` command, for one run
+//! or every run of a project.
 
 use super::{record_in_state, Connected};
-use crate::constants::RUNS_DIR;
+use crate::constants::{EXIT_ERROR, RUNS_DIR};
 use crate::error::OrchestratorError;
-use crate::herdr::Herdr;
 use crate::host::git_status;
 use crate::runs::RUNNING;
-use crate::state::{find_run, refs_prefix, RunState};
+use crate::state::{find_run, refs_prefix, RunState, SavedRun};
+
+/// What close does to one run, decided just before it is done (decide), so that a dry run says what closing would do.
+enum Decision<'r> {
+    /// The run is closed already; its state, whose closed says how.
+    AlreadyClosed(&'r RunState),
+    /// The run must not be closed now, and why, naming it: its state cannot be read (SavedRun::problem), or it is still
+    /// running or done but still ending (RunState::health, as a done run still ending may be deleting its refs itself,
+    /// Workflow::clean_up_locks).
+    Refused(OrchestratorError),
+    /// The run is to be closed as the plan says.
+    Close(Plan<'r>),
+}
+
+/// What closing a run would do to it, each step's object as it stood when decided.
+struct Plan<'r> {
+    /// The run's state as read.
+    state: &'r RunState,
+    /// The herdr workspace to close; None when the run never had one or herdr no longer has it.
+    workspace: Option<&'r str>,
+    /// What becomes of the run's worktree.
+    worktree: WorktreeFate<'r>,
+    /// True when the run's local refs (crate::state::refs_prefix) are to be deleted: it locked files, so it has or had
+    /// refs, which a close that failed part way may have deleted already, or it has refs nonetheless (its first lock
+    /// failed after making one).
+    refs: bool,
+}
+
+/// What close does to a run's worktree.
+enum WorktreeFate<'r> {
+    /// Nothing: the run has none (an in-place run, whose checkout is the human's), or a finished run's went with its
+    /// pull request.
+    None,
+    /// A finished run's worktree, at this path, holds a --no-pr run's change, so it stays.
+    Kept(&'r str),
+    /// A failed or stale run's worktree, at path, goes, and so may its branch.
+    Discarded {
+        path: &'r str,
+        /// What goes with the worktree, one line of git status each, none for a clean one; None when the worktree is
+        /// already gone.
+        changes: Option<Vec<String>>,
+        /// The run's branch and what becomes of it; None when the run has none or it is already gone. Looked at even
+        /// with the worktree gone, as a close that failed at the branch must find it again.
+        branch: Option<(&'r str, BranchFate)>,
+    },
+}
+
+/// What close does to a discarded worktree's branch.
+enum BranchFate {
+    /// It is deleted: it holds no commit beyond the run's base, and the Builder never commits, so it has nothing to lose.
+    Deleted,
+    /// It stays, and why: it has commits beyond the base, or the run has no base to tell.
+    Kept(String),
+}
 
 /// Clean up after the run of the project at cwd that run_ref names, by its id or key, on world's herdr and host,
 /// record what was done as the run's closed in its state.json, so that resume refuses it, and return that. Prints
-/// each step on world's standard output.
+/// each step on world's standard output. With dry_run, change nothing: print what would be discarded with the
+/// worktree and the line closing would record, and return that line.
 ///
 /// Every run loses its workspace and its local refs (crate::state::refs_prefix), which hold the files its steps locked
 /// and which nothing else deletes once it is closed. A failed or stale --worktree run also loses its worktree, changes
-/// and all (listed first), and its branch if that holds no commit beyond the run's base: the Builder never commits, so
-/// such a branch has nothing to lose. A finished run's worktree is a --no-pr run's change, and an in-place run's
-/// checkout and branch are the human's to sort out, so both stay. Each step skips what is already gone, so a close that
-/// failed part way can be run again; closed is recorded only once every step has succeeded. A run already closed is
-/// left as it is, and its closed returned.
+/// and all (listed first), and its branch if that holds no commit beyond the run's base. A finished run's worktree is a
+/// --no-pr run's change, and an in-place run's checkout and branch are the human's to sort out, so both stay. Each step
+/// skips what is already gone, so a close that failed part way can be run again; closed is recorded only once every
+/// step has succeeded. A run already closed is left as it is, and its closed returned.
 ///
-/// Errors: no run or several match run_ref; the run's state cannot be read (SavedRun::problem, which says to close it
-/// with the release that saved it); the run is still running, or done but still ending (RunState::health, as a done
-/// run still ending may be deleting its refs itself, Workflow::clean_up_locks); a step fails; or the state.json
-/// changed since it was read.
-pub fn close_run(world: &Connected, cwd: &str, run_ref: &str) -> Result<String, OrchestratorError> {
+/// Errors: no run or several match run_ref; the run is Decision::Refused; herdr or git cannot tell what is there; a
+/// step fails; or the state.json changed since it was read.
+pub fn close_run(world: &Connected, cwd: &str, run_ref: &str, dry_run: bool) -> Result<String, OrchestratorError> {
+    let runs = world.with.host.run_states(cwd)?;
+    match decide(world, cwd, find_run(&runs, run_ref, cwd)?)? {
+        Decision::AlreadyClosed(state) => {
+            let closed = state.closed.clone().unwrap_or_default();
+            world.say(&format!("run {} is already closed: {closed}", state.run_id));
+            Ok(closed)
+        }
+        Decision::Refused(e) => Err(e),
+        Decision::Close(plan) => plan.close(world, cwd, dry_run),
+    }
+}
+
+/// Close every run of the project at cwd as close_run does, in run id order, or with dry_run say what closing each
+/// would do, then print a count of the runs closed (or to close), skipped and already closed, and failed if any. A
+/// Decision::Refused run is skipped with a line saying why; one already closed is only counted. Each run is read again
+/// just before it is closed, so one that started running since the sweep began is skipped. A run whose close fails
+/// gets a line with the error, and the rest are still closed. A raised Interrupt stops the sweep between runs.
+///
+/// Returns the exit status: 0, or EXIT_ERROR when any run's close failed. Errors: the runs cannot be read at the start.
+pub fn close_all(world: &Connected, cwd: &str, dry_run: bool) -> Result<i32, OrchestratorError> {
     let host = world.with.host;
-    let runs = host.run_states(cwd)?;
-    let run = find_run(&runs, run_ref, cwd)?;
-    let state = run.state()?;
-    if let Some(closed) = state.closed.as_deref().filter(|c| !c.is_empty()) {
-        world.say(&format!("run {} is already closed: {closed}", state.run_id));
-        return Ok(closed.to_string());
+    let mut runs: Vec<(String, bool)> =
+        host.run_states(cwd)?.iter().map(|run| (run.shown().run_id.clone(), is_closed(run.shown()))).collect();
+    runs.sort();
+    let (mut closed, mut skipped, mut already, mut failed) = (0, 0, 0, 0);
+    for (id, was_closed) in runs {
+        if world.with.interrupt.is_raised() {
+            break;
+        }
+        // A closed run stays closed: resume refuses it.
+        if was_closed {
+            already += 1;
+            continue;
+        }
+        let swept = host.run_states(cwd).and_then(|runs| match decide(world, cwd, find_run(&runs, &id, cwd)?)? {
+            Decision::AlreadyClosed(_) => Ok(Swept::AlreadyClosed),
+            Decision::Refused(why) => Ok(Swept::Skipped(why)),
+            Decision::Close(plan) => plan.close(world, cwd, dry_run).map(|_| Swept::Closed),
+        });
+        match swept {
+            Ok(Swept::Closed) => closed += 1,
+            Ok(Swept::AlreadyClosed) => already += 1,
+            Ok(Swept::Skipped(why)) => {
+                world.say(&format!("skipped: {why}"));
+                skipped += 1;
+            }
+            Err(e) => {
+                world.say(&format!("could not close run {id}: {e}"));
+                failed += 1;
+            }
+        }
+    }
+    let verb = if dry_run { "to close" } else { "closed" };
+    let failures = if failed > 0 { format!(", {failed} failed") } else { String::new() };
+    world.say(&format!("{closed} {verb}, {skipped} skipped, {already} already closed{failures}"));
+    Ok(if failed > 0 { EXIT_ERROR } else { 0 })
+}
+
+/// What became of one run of close_all that did not fail.
+enum Swept {
+    Closed,
+    AlreadyClosed,
+    Skipped(OrchestratorError),
+}
+
+/// Whether state records that the run was closed.
+fn is_closed(state: &RunState) -> bool {
+    state.closed.as_deref().is_some_and(|c| !c.is_empty())
+}
+
+/// What closing run, of the project at cwd, would do now, as world's herdr and host find it; changes nothing.
+/// Errors: herdr or git cannot tell what is there.
+fn decide<'r>(world: &Connected, cwd: &str, run: &'r SavedRun) -> Result<Decision<'r>, OrchestratorError> {
+    let host = world.with.host;
+    let state = match run.state() {
+        Ok(state) => state,
+        Err(e) => return Ok(Decision::Refused(e)),
+    };
+    if is_closed(state) {
+        return Ok(Decision::AlreadyClosed(state));
     }
     let health = run.health(world.local_host, world.with.pid_alive);
     if let Some((RUNNING, why)) = &health {
-        return Err(OrchestratorError(format!(
+        return Ok(Decision::Refused(OrchestratorError(format!(
             "run {} is still running ({why}); stop it before closing it",
             state.run_id
-        )));
+        ))));
     }
     // Stale and not done: its orchestrator died mid-run. A done run stale while ending finished its change.
     let failed = state.error.as_deref().is_some_and(|e| !e.is_empty()) || (health.is_some() && !state.done());
-    let mut done = vec![close_run_workspace(world, &state.workspace_id)?];
-    match state.worktree.as_deref().filter(|w| !w.is_empty()) {
-        Some(_) if failed => done.extend(discard_run_worktree(world, cwd, state)?),
-        Some(worktree) if host.is_worktree(cwd, worktree)? => done.push(format!("worktree kept: {worktree}")),
-        _ => {}
-    }
-    done.extend(delete_run_refs(world, cwd, state)?);
-    let closed = done.join("; ");
-    let path = format!("{cwd}/{RUNS_DIR}/{}/state.json", state.run_id);
-    record_in_state(host, &path, state, |s| s.closed = Some(closed.clone()), "the run was closed")?;
-    world.say(&format!("closed run {}: {closed}", state.run_id));
-    Ok(closed)
+    let workspace = match Some(state.workspace_id.as_str()).filter(|w| !w.is_empty()) {
+        Some(w) if world.with.herdr.workspace_exists(w)? => Some(w),
+        _ => None,
+    };
+    let worktree = match state.worktree.as_deref().filter(|w| !w.is_empty()) {
+        Some(path) if failed => {
+            let changes = match host.is_worktree(cwd, path)? {
+                true => Some(git_status(host, path)?.lines().map(String::from).collect()),
+                false => None,
+            };
+            WorktreeFate::Discarded { path, changes, branch: branch_fate(world, cwd, state)? }
+        }
+        Some(path) if host.is_worktree(cwd, path)? => WorktreeFate::Kept(path),
+        _ => WorktreeFate::None,
+    };
+    // A run that locked nothing, in a cwd that is no git repository with a commit, such as a --no-pr run's, has no
+    // refs, and no git command runs for them.
+    let refs = !state.locked.is_empty() || {
+        let prefix = refs_prefix(&state.run_id);
+        let unreadable = |e: OrchestratorError| OrchestratorError(format!("could not read the refs under {prefix}: {e}"));
+        host.git_head(cwd)?.is_some() && !host.refs(cwd, &prefix).map_err(unreadable)?.is_empty()
+    };
+    Ok(Decision::Close(Plan { state, workspace, worktree, refs }))
 }
 
-/// Close the herdr workspace, unless it is already gone or the run never had one, and say which.
-fn close_run_workspace(world: &Connected, workspace: &str) -> Result<String, OrchestratorError> {
-    let herdr: &dyn Herdr = world.with.herdr;
-    if !workspace.is_empty() && herdr.workspace_exists(workspace)? {
-        herdr.close_workspace(workspace)?;
-        world.say(&format!("closed workspace {workspace}"));
-        return Ok("workspace closed".to_string());
-    }
-    Ok("workspace already gone".to_string())
-}
-
-/// Delete the local refs of the run of state from cwd's repository, which its worktree shares, and say so if there
-/// were any. "refs deleted" when the run locked files, the refs a close that failed part way deleted counting, or
-/// when it had refs nonetheless (its first lock failed after making one); None for a run with none. A run that locked
-/// nothing in a cwd that is no git repository with a commit, such as a --no-pr run's, has none, and no git command
-/// runs. Errors: a ref could not be deleted, or the run locked files and git cannot read cwd's repository, the error
-/// naming the run's refs prefix.
-fn delete_run_refs(world: &Connected, cwd: &str, state: &RunState) -> Result<Option<String>, OrchestratorError> {
+/// The branch in cwd of the failed run of state and what close does to it; None when it has none or it is gone.
+fn branch_fate<'r>(
+    world: &Connected,
+    cwd: &str,
+    state: &'r RunState,
+) -> Result<Option<(&'r str, BranchFate)>, OrchestratorError> {
     let host = world.with.host;
-    if state.locked.is_empty() && host.git_head(cwd)?.is_none() {
+    let Some(branch) = state.branch.as_deref().filter(|b| !b.is_empty()) else { return Ok(None) };
+    if host.branch_commit(cwd, branch)?.is_none() {
         return Ok(None);
     }
-    let prefix = refs_prefix(&state.run_id);
-    let deleted = host
-        .delete_refs(cwd, &prefix)
-        .map_err(|e| OrchestratorError(format!("could not delete the refs under {prefix}: {e}")))?;
-    if deleted {
-        world.say(&format!("deleted the refs under {prefix}"));
-    }
-    Ok((deleted || !state.locked.is_empty()).then(|| "refs deleted".to_string()))
-}
-
-/// Force-remove the worktree of cwd that the failed run of state built in, after listing the changes that go with
-/// it, then its branch (discard_run_branch); say what became of each.
-fn discard_run_worktree(world: &Connected, cwd: &str, state: &RunState) -> Result<Vec<String>, OrchestratorError> {
-    let host = world.with.host;
-    let worktree = state.worktree.as_deref().unwrap_or_default();
-    let mut done = vec![];
-    if host.is_worktree(cwd, worktree)? {
-        let status = git_status(host, worktree)?;
-        let changes: Vec<&str> = status.lines().collect();
-        if !changes.is_empty() {
-            world.say(&format!("discarding in {worktree}:"));
-            for line in changes {
-                world.say(&format!("    {line}"));
-            }
-        }
-        host.remove_worktree(cwd, worktree, true)?;
-        world.say(&format!("deleted worktree {worktree}"));
-        done.push("worktree deleted".to_string());
-    } else {
-        done.push("worktree already gone".to_string());
-    }
-    // Even with the worktree gone: a close that failed at the branch must find it again.
-    if let Some(branch) = state.branch.as_deref().filter(|b| !b.is_empty()) {
-        if host.branch_commit(cwd, branch)?.is_some() {
-            done.push(discard_run_branch(world, cwd, state, branch)?);
-        }
-    }
-    Ok(done)
-}
-
-/// Delete the run of state's branch of cwd unless it has commits beyond the run's base, or the run has no base to
-/// tell; say which.
-fn discard_run_branch(world: &Connected, cwd: &str, state: &RunState, branch: &str) -> Result<String, OrchestratorError> {
-    let host = world.with.host;
-    let why = match state.base.as_deref() {
-        None => "the run has no base to compare it with".to_string(),
+    let fate = match state.base.as_deref() {
+        None => BranchFate::Kept("the run has no base to compare it with".to_string()),
         Some(base) => match host.commits_beyond(cwd, base, branch)? {
-            0 => {
-                host.delete_branch(cwd, branch)?;
-                world.say(&format!("deleted branch {branch}"));
-                return Ok("branch deleted".to_string());
-            }
-            n => format!("{n} commit{} beyond base", if n == 1 { "" } else { "s" }),
+            0 => BranchFate::Deleted,
+            n => BranchFate::Kept(format!("{n} commit{} beyond base", if n == 1 { "" } else { "s" })),
         },
     };
-    world.say(&format!("kept branch {branch}: {why}"));
-    Ok(format!("branch kept: {why}"))
+    Ok(Some((branch, fate)))
+}
+
+impl Plan<'_> {
+    /// What closing records as the run's closed, the steps in order, such as "workspace closed; worktree deleted;
+    /// branch deleted; refs deleted".
+    fn summary(&self) -> String {
+        let workspace = if self.workspace.is_some() { "workspace closed" } else { "workspace already gone" };
+        let mut done = vec![workspace.to_string()];
+        match &self.worktree {
+            WorktreeFate::None => {}
+            WorktreeFate::Kept(path) => done.push(format!("worktree kept: {path}")),
+            WorktreeFate::Discarded { changes, branch, .. } => {
+                done.push(if changes.is_some() { "worktree deleted" } else { "worktree already gone" }.to_string());
+                match branch {
+                    Some((_, BranchFate::Deleted)) => done.push("branch deleted".to_string()),
+                    Some((_, BranchFate::Kept(why))) => done.push(format!("branch kept: {why}")),
+                    None => {}
+                }
+            }
+        }
+        if self.refs {
+            done.push("refs deleted".to_string());
+        }
+        done.join("; ")
+    }
+
+    /// Carry out the plan on the run of the project at cwd, or with dry_run only say what it would do, as close_run
+    /// says; return its summary. Errors: as close_run's for a step or the record.
+    fn close(&self, world: &Connected, cwd: &str, dry_run: bool) -> Result<String, OrchestratorError> {
+        let (host, run_id) = (world.with.host, &self.state.run_id);
+        let closed = self.summary();
+        if dry_run {
+            self.say_changes(world, "would discard");
+            world.say(&format!("would close run {run_id}: {closed}"));
+            return Ok(closed);
+        }
+        if let Some(workspace) = self.workspace {
+            world.with.herdr.close_workspace(workspace)?;
+            world.say(&format!("closed workspace {workspace}"));
+        }
+        if let WorktreeFate::Discarded { path, changes, branch } = &self.worktree {
+            if changes.is_some() {
+                self.say_changes(world, "discarding");
+                host.remove_worktree(cwd, path, true)?;
+                world.say(&format!("deleted worktree {path}"));
+            }
+            match branch {
+                Some((branch, BranchFate::Deleted)) => {
+                    host.delete_branch(cwd, branch)?;
+                    world.say(&format!("deleted branch {branch}"));
+                }
+                Some((branch, BranchFate::Kept(why))) => world.say(&format!("kept branch {branch}: {why}")),
+                None => {}
+            }
+        }
+        if self.refs {
+            let prefix = refs_prefix(run_id);
+            let deleted = host
+                .delete_refs(cwd, &prefix)
+                .map_err(|e| OrchestratorError(format!("could not delete the refs under {prefix}: {e}")))?;
+            if deleted {
+                world.say(&format!("deleted the refs under {prefix}"));
+            }
+        }
+        let path = format!("{cwd}/{RUNS_DIR}/{run_id}/state.json");
+        record_in_state(host, &path, self.state, |s| s.closed = Some(closed.clone()), "the run was closed")?;
+        world.say(&format!("closed run {run_id}: {closed}"));
+        Ok(closed)
+    }
+
+    /// Print what goes with a discarded worktree, if anything does, under a line "<doing> in <worktree>:".
+    fn say_changes(&self, world: &Connected, doing: &str) {
+        if let WorktreeFate::Discarded { path, changes: Some(changes), .. } = &self.worktree {
+            if !changes.is_empty() {
+                world.say(&format!("{doing} in {path}:"));
+                for line in changes {
+                    world.say(&format!("    {line}"));
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
