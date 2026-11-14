@@ -5,7 +5,7 @@ import type { Connection } from "./api";
 import { App } from "./App";
 import "./styles.css";
 
-// The Tauri shell's `server` command: the sidecar's address and token, once `serve` printed them.
+// The Tauri shell's `server` command: the Connection, once the sidecar's `serve` printed its address and token.
 const connect = () => invoke<Connection>("server");
 
 createRoot(document.getElementById("root") as HTMLElement).render(
