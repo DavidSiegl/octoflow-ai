@@ -452,16 +452,20 @@ const OPENER: &str = if cfg!(target_os = "macos") { "open" } else { "xdg-open" }
 /// over, but `xdg-open` on a desktop it does not know runs `$BROWSER` itself and waits for it.
 const OPENER_CHECK: Duration = Duration::from_secs(2);
 
-/// Run opener on target in shell's environment, its standard input closed and its output the app's, and return once
+/// Run opener on target in shell's environment and directory (the app's own when shell names none, or one that is no
+/// longer a directory), its standard input closed and its output the app's, and return once
 /// it has exited successfully or OPENER_CHECK has passed; one still running then is waited for in the background, so
 /// it leaves no zombie. Errors, naming the target: opener cannot be started, or exits failing within OPENER_CHECK.
 fn open_outside(opener: &Path, target: &OsStr, shell: &UserShell) -> Result<(), String> {
     let shown = target.to_string_lossy();
-    let mut child = Command::new(opener)
-        .arg(target)
-        .env_clear()
-        .envs(shell.vars.iter().map(|(name, value)| (name, value)))
-        .stdin(Stdio::null())
+    let mut command = Command::new(opener);
+    command.arg(target).env_clear().envs(shell.vars.iter().map(|(name, value)| (name, value))).stdin(Stdio::null());
+    // Under an AppImage the app's own directory is in the bundle's mount, which goes when the app quits, while a
+    // browser the opener starts lives on.
+    if let Some(dir) = shell.dir.as_ref().filter(|dir| dir.is_dir()) {
+        command.current_dir(dir);
+    }
+    let mut child = command
         .spawn()
         .map_err(|e| format!("cannot run {} to open {shown}: {e}", opener.display()))?;
     let started = Instant::now();
@@ -598,13 +602,19 @@ mod tests {
     fn the_opener_runs_in_the_user_s_shell_only() {
         let dir = scratch_dir();
         let (opener, out) = (dir.path().join("opener"), dir.path().join("out"));
-        let record = format!("printf '%s|%s|%s' \"$1\" \"$MARK\" \"${{HOME-unset}}\" > '{}'", out.display());
+        let fields = "\"$1\" \"$MARK\" \"${HOME-unset}\" \"$(pwd)\"";
+        let record = format!("printf '%s|%s|%s|%s' {fields} > '{}'", out.display());
         let script = format!("#!/bin/sh\n{record}\n");
         put_executable(&opener, &script);
-        let shell = shell_of(vars(&[("PATH", "/usr/bin:/bin"), ("MARK", "user")]));
+        let users = scratch_dir();
+        let shell = UserShell {
+            vars: vars(&[("PATH", "/usr/bin:/bin"), ("MARK", "user")]),
+            dir: Some(canonical(users.path().to_path_buf())),
+        };
         assert_eq!(open_outside(&opener, OsStr::new("https://example.com"), &shell), Ok(()));
         // HOME is the test process's own, which the window's environment stands for.
-        assert_eq!(std::fs::read_to_string(&out).expect("the opener ran"), "https://example.com|user|unset");
+        let ran = std::fs::read_to_string(&out).expect("the opener ran");
+        assert_eq!(ran, format!("https://example.com|user|unset|{}", canonical(users.path().to_path_buf()).display()));
     }
 
     #[test]
