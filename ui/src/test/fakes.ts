@@ -10,7 +10,12 @@ import recorded from "./recorded-stream.json";
  * `engine/e2e/tests/e2e/app_recording.rs` says what of it is a stand-in for the clock's values. */
 export const RECORDED: { after: string; events: ({ kind: string } & Record<string, unknown>)[] }[] = recorded;
 
-export const CONNECTION = { url: "http://127.0.0.1:4242", token: "s3cret", project: "/home/me/proj" };
+export const CONNECTION = {
+  url: "http://127.0.0.1:4242",
+  token: "s3cret",
+  project: "/home/me/proj",
+  version: "0.75.0",
+};
 
 /** An EventSource the test drives; every one the app opens is in `opened`. */
 export class FakeEventSource {

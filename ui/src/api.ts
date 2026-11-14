@@ -1,13 +1,16 @@
 // The protocol of `orchestrator serve`: its run records, file lists, events and agents, and the setup checks. The engine's RunServer
 // (engine/src/serve.rs) and RunWatch document the endpoints and the events, and run_record every key of a record.
 
-/** Where the sidecar's server listens, as the Tauri shell got it from `serve`'s first line. */
+/** What the Tauri shell's `server` command gives: where the sidecar's server listens and its token, from `serve`'s
+ * first line, the project to show first, and the release version. */
 export interface Connection {
   url: string;
   token: string;
   /** The project to show first: the checkout a development build of the app was built in; null for a release's
    * app, which belongs to none. */
   project: string | null;
+  /** The release version, as `orchestrator --version` prints it: the engine's, which the app links. */
+  version: string;
 }
 
 /** A project as the server takes it: a directory, on the saved herdr machine or, with machine empty, here. */

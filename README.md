@@ -157,6 +157,8 @@ first time when a browser downloaded it, as it does the binary.
   two seconds, with a box to type a message to it and keys (Esc, Enter, ↑, ↓, Ctrl+C), as you would in the pane:
   to answer a question it asked, or stop it. The window reaches each agent in the herdr session its run was
   started or last resumed in, wherever the window was opened, in herdr or not.
+- **About:** the logo and name at the top open it: the release version, the copyright and the license, with links to
+  this repository, its releases, Ko-fi, and the third-party licenses the app bundles, each opened in your browser.
 - **Project bar:** a project folder and, for agents on another machine, a saved herdr machine. The app reopens
   the project you opened last.
 - **Setup:** "Check setup…" shows what `orchestrator doctor --machine --cwd` checks for the open project, with
