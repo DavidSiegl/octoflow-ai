@@ -395,3 +395,8 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `parse_args` on the built argv and returning clap's error. The desktop app shows serve's `error` text verbatim
   (`ui/src/api.ts`), and clap's is several lines with `Usage:` and "try '--help'"; `serve/start/tests.rs`'s round
   trip through `parse_args` already catches the two checks drifting apart.
+- **`http::tests::no_answer_is_worded_with_the_errno_and_the_system_s_words` can fail under parallel load.** It binds
+  a port, drops the listener and expects "[Errno 111] Connection refused" from it (`engine/src/http/tests.rs`), but
+  another process can take the freed port in between. Seen once, 2026-11-14, in a local workspace run beside other
+  sessions' cargo runs; it passed alone three times. Closes with a port nothing can take, such as a listener kept bound
+  without `listen`, or one on a socket whose backlog refuses.
