@@ -42,6 +42,14 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **A resumed run looks its old workspace up in the new herdr server.** `resumed_state` (`engine/src/cli/start.rs`)
+  saves the resuming environment's server as `RunState::herdr_server`, then `Workflow::prepare`
+  (`engine/src/workflow.rs`) asks that server for the saved `workspace_id`: a run started in the app (session
+  `octoflow`) and resumed from a shell finds no workspace and opens a new one, leaving the old one open, and a
+  workspace with the same id in the new server would be taken for the run's. Raised while doing close-all-runs/03,
+  which made `close` reach the saved server. Closed by `prepare` checking the old workspace in the server the state
+  saved before the resume replaces it.
+
 - **Two processes saving one workflow at once can both pass its base check.** `save_workflow` and
   `delete_workflow` (`engine/src/workflow_file.rs`) hold a lock from the check of the editor's `base` to the write
   only within their process (`lock_edits`), so two serve processes, or serve and a hand edit, saving the same file in

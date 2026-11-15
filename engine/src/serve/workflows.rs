@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-use super::{error, object, Answer};
+use super::{error, json_object, object, Answer};
 use crate::env::ConfigDir;
 use crate::json::Object;
 use crate::workflow_file::{check_workflow, delete_workflow, read_workflow, save_workflow, WorkflowEditError};
@@ -80,8 +80,7 @@ const DEFINITION: Key = ("definition", Value::is_object);
 /// expected form, for any other body.
 fn fields(body: &[u8], shape: &str, keys: &[Key]) -> Result<Object, Answer> {
     let refused = || (400, error(&format!("the body must be {shape}")));
-    let parsed = std::str::from_utf8(body).ok().and_then(|t| serde_json::from_str::<Value>(t).ok());
-    let Some(Value::Object(fields)) = parsed else { return Err(refused()) };
+    let fields = json_object(body).ok_or_else(refused)?;
     let fits = |(key, fits): &Key| fields.get(*key).is_some_and(fits);
     if fields.len() != keys.len() || !keys.iter().all(fits) {
         return Err(refused());

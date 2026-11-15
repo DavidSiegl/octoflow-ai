@@ -147,13 +147,17 @@ export function progress(record: RunRecord): Stage[] {
   });
 }
 
-/** How the run is doing, as the overview words it: its error, verdict, block, or health with a ticking beat. */
+/** How the run is doing, as the overview words it and as `list` does (engine/src/cli/listing.rs, run_outcome): its
+ * error, verdict, or health with a ticking beat, then its closing once closed. */
 export function outcome(record: RunRecord, age: number): string {
-  if (record.error) {
-    return `error: ${record.error}`;
+  const was =
+    record.error ? `error: ${record.error}`
+    : record.health === null ? (record.verdict ?? "")
+    // Stale by its beat, but closed: resume refuses it, so its health is not worth showing.
+    : record.closed ? ""
+    : `${record.health}, beat ${formatAge(age)} ago`;
+  if (!record.closed) {
+    return was;
   }
-  if (record.health === null) {
-    return record.verdict ?? "";
-  }
-  return `${record.health}, beat ${formatAge(age)} ago`;
+  return was ? `${was}; closed: ${record.closed}` : `closed: ${record.closed}`;
 }

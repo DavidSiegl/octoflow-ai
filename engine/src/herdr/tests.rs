@@ -410,7 +410,7 @@ fn the_other_commands_and_their_answers() {
     assert_eq!(last(&ran).0[7], "down");
     herdr.rename_pane("w1:p2", "Builder").unwrap();
     assert_eq!(last(&ran).0, with(&["pane", "rename", "w1:p2", "Builder"]));
-    herdr.close_workspace("w1").unwrap();
+    herdr.close_workspace("w1", None).unwrap();
     assert_eq!(last(&ran).0, with(&["workspace", "close", "w1"]));
     herdr.notify("Run finished: APPROVE", "the task").unwrap();
     let expected = ["notification", "show", "Run finished: APPROVE", "--body", "the task", "--sound", "request"];
@@ -467,6 +467,22 @@ fn herdr_variables_of_console_commands(
     set: &[(&str, &str)],
     agent: &AgentAddress,
 ) -> Vec<String> {
+    herdr_variables_of_commands(machine, set, 3, &|herdr| {
+        AgentConsole::read(herdr, agent, 5).unwrap();
+        herdr.submit(agent, "go").unwrap();
+        herdr.send_keys(agent, &["enter"]).unwrap();
+    })
+}
+
+/// The HERDR_ variables, sorted, as NAME=value, of the environment in which each herdr command commands runs on a
+/// ProcessHerdr forwarding to machine in an environment of set's HERDR_ variables; commands must run herdr exactly n
+/// times, every time in the same environment.
+fn herdr_variables_of_commands(
+    machine: Option<&str>,
+    set: &[(&str, &str)],
+    n: usize,
+    commands: &dyn Fn(&ProcessHerdr),
+) -> Vec<String> {
     let d = TempDir::new();
     let env = d.join("env");
     let record = format!("env | grep '^HERDR_' | sort | tr '\\n' ' ' >> '{env}'; echo >> '{env}'");
@@ -477,14 +493,12 @@ fn herdr_variables_of_console_commands(
     vars.retain(|(k, _)| !k.to_string_lossy().starts_with("HERDR_"));
     vars.extend(set.iter().map(|(k, v)| (OsString::from(k), OsString::from(v))));
     let herdr = ProcessHerdr::in_environment(machine, vars.into_iter(), &Interrupt::new());
-    AgentConsole::read(&herdr, agent, 5).unwrap();
-    herdr.submit(agent, "go").unwrap();
-    herdr.send_keys(agent, &["enter"]).unwrap();
+    commands(&herdr);
     let text = std::fs::read_to_string(env).unwrap();
-    let commands: Vec<&str> = text.lines().collect();
-    assert_eq!(commands.len(), 3, "{text}");
-    assert!(commands.iter().all(|c| *c == commands[0]), "{text}");
-    commands[0].split_whitespace().map(String::from).collect()
+    let ran: Vec<&str> = text.lines().collect();
+    assert_eq!(ran.len(), n, "{text}");
+    assert!(ran.iter().all(|c| *c == ran[0]), "{text}");
+    ran[0].split_whitespace().map(String::from).collect()
 }
 
 #[test]
@@ -503,6 +517,23 @@ fn the_console_reaches_an_agent_in_the_server_its_run_saved() {
     assert_eq!(herdr_variables_of_console_commands(None, &pane, &unsaved), own);
     // Forwarded to a machine, whose herdr serves the agent, the environment stays serve's.
     assert_eq!(herdr_variables_of_console_commands(Some("box"), &pane, &agent), own);
+}
+
+#[test]
+fn a_run_s_workspace_is_reached_in_the_server_its_run_saved() {
+    let saved: HerdrServer = serde_json::from_str(r#"{"HERDR_SESSION": "work"}"#).unwrap();
+    let pane = [("HERDR_SOCKET_PATH", "/other/herdr.sock"), ("HERDR_SESSION", "other")];
+    let variables = |machine: Option<&str>, server: Option<&HerdrServer>| {
+        herdr_variables_of_commands(machine, &pane, 2, &|herdr| {
+            herdr.workspace_exists("w1", server).unwrap();
+            herdr.close_workspace("w1", server).unwrap();
+        })
+    };
+    assert_eq!(variables(None, Some(&saved)), ["HERDR_SESSION=work"]);
+    let own = ["HERDR_SESSION=other", "HERDR_SOCKET_PATH=/other/herdr.sock"];
+    assert_eq!(variables(None, None), own);
+    // Forwarded to a machine, whose herdr picks its own server.
+    assert_eq!(variables(Some("box"), Some(&saved)), own);
 }
 
 #[test]
@@ -550,7 +581,7 @@ fn agent_record() {
 #[test]
 fn workspace_and_pane_exist() {
     let (herdr, ran) = answering(None, 0, &result("{}"), "");
-    assert_eq!(herdr.workspace_exists("wA"), Ok(true));
+    assert_eq!(herdr.workspace_exists("wA", None), Ok(true));
     assert_eq!(last(&ran).0, argv(&["herdr", "workspace", "get", "wA"]));
     assert_eq!(herdr.pane_exists("wA:p1"), Ok(true));
     assert_eq!(last(&ran).0, argv(&["herdr", "pane", "get", "wA:p1"]));
@@ -559,16 +590,23 @@ fn workspace_and_pane_exist() {
 #[test]
 fn workspace_and_pane_gone() {
     let (herdr, _) = answering(None, 1, "", &error("workspace_not_found", "x"));
-    assert_eq!(herdr.workspace_exists("wA"), Ok(false));
+    assert_eq!(herdr.workspace_exists("wA", None), Ok(false));
     let (herdr, _) = answering(None, 1, "", &error("pane_not_found", "x"));
     assert_eq!(herdr.pane_exists("wA:p1"), Ok(false));
+}
+
+#[test]
+fn a_server_that_is_not_running_holds_no_workspace() {
+    let saved: HerdrServer = serde_json::from_str(r#"{"HERDR_SESSION": "octoflow"}"#).unwrap();
+    let (herdr, _) = answering(None, 1, "", &error("server_not_running", "no herdr server is running at /s.sock"));
+    assert_eq!(herdr.workspace_exists("wA", Some(&saved)), Ok(false));
 }
 
 #[test]
 fn other_errors_raise() {
     let (herdr, _) = answering(None, 1, "", &error("server_unavailable", "x"));
     assert_eq!(herdr.pane_exists("wA:p1").unwrap_err().code(), Some("server_unavailable"));
-    assert_eq!(herdr.workspace_exists("wA").unwrap_err().code(), Some("server_unavailable"));
+    assert_eq!(herdr.workspace_exists("wA", None).unwrap_err().code(), Some("server_unavailable"));
     assert_eq!(herdr.agent("x").unwrap_err().code(), Some("server_unavailable"));
 }
 
@@ -938,9 +976,9 @@ fn replay(herdr: &ProcessHerdr, args: &[String]) -> Option<()> {
         }
         ["agent", "get", name] => drop(herdr.agent(name)),
         ["pane", "get", pane] => drop(herdr.pane_exists(pane)),
-        ["workspace", "get", workspace] => drop(herdr.workspace_exists(workspace)),
+        ["workspace", "get", workspace] => drop(herdr.workspace_exists(workspace, None)),
         ["agent", "focus", name] => drop(herdr.focus(name)),
-        ["workspace", "close", workspace] => drop(herdr.close_workspace(workspace)),
+        ["workspace", "close", workspace] => drop(herdr.close_workspace(workspace, None)),
         ["notification", "show", title, ..] => drop(herdr.notify(title, after("--body")?)),
         ["machine", "list", "--json"] => drop(herdr.ssh_target()),
         _ => return None,
@@ -1042,7 +1080,7 @@ fn fakeherdr_plays_each_role_s_scripted_turns() {
 
     let (workspace, root) = herdr.create_workspace("/proj", "a1b2c3 task").unwrap();
     assert_eq!((workspace.as_str(), root.as_str()), ("w1", "w1:p1"));
-    assert!(herdr.workspace_exists("w1").unwrap() && herdr.pane_exists("w1:p1").unwrap());
+    assert!(herdr.workspace_exists("w1", None).unwrap() && herdr.pane_exists("w1:p1").unwrap());
     let pane = herdr.split(&root, Direction::Right, "/proj").unwrap();
     assert_eq!(pane, "w1:p2");
     herdr.rename_pane(&pane, "Builder").unwrap();
@@ -1083,8 +1121,8 @@ fn fakeherdr_plays_each_role_s_scripted_turns() {
     assert_eq!(herdr.agent("review-b").map(|a| a.map(|a| a.status)), Ok(Some("/proj/.orchestrator/worktrees/a1b2c3".to_string())));
 
     herdr.focus("build-a1b2c3").unwrap();
-    herdr.close_workspace("w1").unwrap();
-    assert!(!herdr.workspace_exists("w1").unwrap());
+    herdr.close_workspace("w1", None).unwrap();
+    assert!(!herdr.workspace_exists("w1", None).unwrap());
     let s = herdr.state();
     let start = |name: &str, pane: &str, args: Vec<String>| Call::Start { name: name.into(), pane: pane.into(), args };
     let prompt = |name: &str| Call::Prompt { name: name.into() };

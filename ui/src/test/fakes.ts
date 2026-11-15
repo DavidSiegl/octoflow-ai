@@ -1,5 +1,5 @@
 import { vi } from "vitest";
-import type { GateFile, RunOptions, RunRequest, SetupReport } from "../api";
+import type { ClosedRun, GateFile, RunOptions, RunRequest, SetupReport } from "../api";
 import recorded from "./recorded-stream.json";
 
 /** The events the engine's `serve` sent over a scripted run, recorded off the real server: each batch is what it
@@ -10,7 +10,12 @@ import recorded from "./recorded-stream.json";
  * `engine/e2e/tests/e2e/app_recording.rs` says what of it is a stand-in for the clock's values. */
 export const RECORDED: { after: string; events: ({ kind: string } & Record<string, unknown>)[] }[] = recorded;
 
-export const CONNECTION = { url: "http://127.0.0.1:4242", token: "s3cret", project: "/home/me/proj" };
+export const CONNECTION = {
+  url: "http://127.0.0.1:4242",
+  token: "s3cret",
+  project: "/home/me/proj",
+  version: "0.75.0",
+};
 
 /** An EventSource the test drives; every one the app opens is in `opened`. */
 export class FakeEventSource {
@@ -127,16 +132,31 @@ export interface FakeStart {
   requests?: { cwd: string | null; body: RunRequest }[];
 }
 
+/** The body of a POST /close: a dry run, or the runs of one to close (RunServer's doc comment in engine/src/serve.rs). */
+export type CloseBody = { dry_run: true } | { close: Pick<ClosedRun, "run" | "detail" | "discarded">[] };
+
+/** What a stubbed server's POST /close answers: 200 with `preview`'s runs to a dry run and `closed`'s to a close (none
+ * unless given), or a 502 with `error`; a close is answered once `held`, if given, resolves. `requests` gets the
+ * query's cwd and the body of each POST /close, in order. */
+export interface FakeClose {
+  preview?: ClosedRun[];
+  closed?: ClosedRun[];
+  error?: string;
+  held?: Promise<void>;
+  requests?: { cwd: string | null; body: CloseBody }[];
+}
+
 /** Stub EventSource, and fetch with a server whose /file answers the text of `files` by name, else 404; whose /agent
  * answers the screen of `agents` by role, else 404 as for an agent that has exited; whose POST /agent/input takes
  * any input; whose /setup endpoints answer as `setup` says, a POST of /setup/checked setting its `checked`, and a
  * POST of /setup/gate recording its cwd; and
- * whose /workflows and POST /run answer as `start` says. */
+ * whose /workflows and POST /run answer as `start` says, and POST /close as `close` says. */
 export function stubServer(
   files: Record<string, string>,
   agents: Record<string, string> = {},
   setup: FakeSetup = {},
   start: FakeStart = {},
+  close: FakeClose = {},
 ) {
   FakeEventSource.opened = [];
   vi.stubGlobal("EventSource", FakeEventSource);
@@ -172,6 +192,18 @@ export function stubServer(
       start.requests = [...(start.requests ?? []), { cwd: searchParams.get("cwd"), body: JSON.parse(String(init.body)) as RunRequest }];
       await start.held;
       return answer(start.runStatus ?? 201, start.runBody ?? { run: "20261024-140000-c0ffee" });
+    }
+    if (pathname === "/close" && init?.method === "POST") {
+      const body = JSON.parse(String(init.body)) as CloseBody;
+      close.requests = [...(close.requests ?? []), { cwd: searchParams.get("cwd"), body }];
+      const dryRun = "dry_run" in body;
+      if (!dryRun) {
+        await close.held;
+      }
+      if (close.error !== undefined) {
+        return answer(502, { error: close.error });
+      }
+      return answer(200, { runs: (dryRun ? close.preview : close.closed) ?? [] });
     }
     if (pathname === "/agent/input") {
       return init?.method === "POST" ? answer(200, { run: "r", role }) : answer(501, {});

@@ -1,8 +1,8 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { AGENT_POLL_MS } from "./components/AgentPanes";
-import { CONNECTION, FakeEventSource, OPTIONS, RECORDED, stubServer, type FakeSetup, type FakeStart } from "./test/fakes";
+import { CONNECTION, FakeEventSource, OPTIONS, RECORDED, stubServer, type FakeClose, type FakeSetup, type FakeStart } from "./test/fakes";
 
 const RUN = "20261024-140000-c0ffee";
 const DONE = "20261024-090000-beef00";
@@ -725,5 +725,115 @@ describe("the run form", () => {
       no_pr: false,
       worktree: true,
     });
+  });
+});
+
+describe("cleaning up runs", () => {
+  const LOST = "20261024-100000-dead00";
+  const OLD = "20261023-080000-0ld000";
+  const PREVIEW = [
+    { run: DONE, outcome: "closed", detail: "close workspace w1", discarded: [] },
+    { run: LOST, outcome: "closed", detail: "delete worktree /wt/dead00; delete branch orchestrator/x-dead00", discarded: [" M app.py", "?? new.py"] },
+    { run: RUN, outcome: "skipped", detail: `run ${RUN} is still running (beat 3s ago); stop it before closing it`, discarded: [] },
+    { run: OLD, outcome: "already closed", detail: "workspace closed", discarded: [] },
+  ] as const;
+
+  /** The app, its stream having listed DONE, with the dialog open once its dry run is answered. */
+  async function openCleanUp(close: FakeClose) {
+    stubServer({}, {}, {}, {}, close);
+    render(<App connect={connect} />);
+    await waitFor(() => expect(FakeEventSource.opened).toHaveLength(1));
+    act(() => FakeEventSource.last.replay("the stream opened"));
+    fireEvent.click(screen.getByRole("button", { name: "Clean up runs…" }));
+    const dialog = screen.getByRole("dialog", { name: "clean up runs" });
+    await waitFor(() => expect(within(dialog).queryByText("Looking at the runs…")).not.toBeInTheDocument());
+    return dialog;
+  }
+
+  /** The dialog's line for run. */
+  function line(dialog: HTMLElement, run: string): HTMLElement {
+    const element = dialog.querySelector<HTMLElement>(`li[data-run="${run}"]`);
+    if (!element) {
+      throw new Error(`no line for ${run}`);
+    }
+    return element;
+  }
+
+  it("lists what closing each run would do, by its task, and the changes that go with a worktree", async () => {
+    const close: FakeClose = { preview: [...PREVIEW].map((r) => ({ ...r, discarded: [...r.discarded] })) };
+    const dialog = await openCleanUp(close);
+    expect(line(dialog, DONE).textContent).toBe("close add a token-bucket rate limiter to the API client: close workspace w1");
+    expect(line(dialog, LOST)).toHaveAttribute("data-state", "ok");
+    expect(within(line(dialog, LOST)).getByText(LOST)).toBeInTheDocument();
+    expect(within(line(dialog, LOST)).getByText("Uncommitted changes that go with the worktree:")).toBeInTheDocument();
+    expect(line(dialog, LOST).querySelector("pre")?.textContent).toBe(" M app.py\n?? new.py");
+    expect(line(dialog, RUN).textContent).toContain("skip");
+    expect(line(dialog, RUN).textContent).toContain("is still running");
+    expect(dialog.querySelector(`li[data-run="${OLD}"]`)).toBeNull();
+    expect(within(dialog).getByText("1 run was closed before.")).toBeInTheDocument();
+    expect(close.requests).toEqual([{ cwd: "/home/me/proj", body: { dry_run: true } }]);
+  });
+
+  it("closes the runs on Close, and shows each one's result, a failure with its run", async () => {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const closed = [
+      { run: DONE, outcome: "closed", detail: "workspace closed", discarded: [] },
+      { run: LOST, outcome: "failed", detail: "git worktree remove failed: permission denied", discarded: [] },
+      { run: RUN, outcome: "skipped", detail: "still running", discarded: [] },
+    ] as FakeClose["closed"];
+    const close: FakeClose = { preview: [...PREVIEW].map((r) => ({ ...r, discarded: [...r.discarded] })), closed, held };
+    const dialog = await openCleanUp(close);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close 2 runs" }));
+    expect(within(dialog).getByText("Closing…")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Done" })).toBeDisabled();
+    expect(within(dialog).queryByRole("button", { name: /^Close/ })).not.toBeInTheDocument();
+    release();
+    await waitFor(() => expect(within(dialog).queryByText("Closing…")).not.toBeInTheDocument());
+    // Close sends the runs the preview would close, as it showed them, so that the server closes no other.
+    expect(close.requests?.map((r) => r.body)).toEqual([
+      { dry_run: true },
+      { close: [PREVIEW[0], PREVIEW[1]].map(({ run, detail, discarded }) => ({ run, detail, discarded: [...discarded] })) },
+    ]);
+    expect(line(dialog, DONE).textContent).toContain("closed");
+    expect(line(dialog, LOST)).toHaveAttribute("data-state", "missing");
+    expect(line(dialog, LOST).textContent).toBe(`failed ${LOST}: git worktree remove failed: permission denied`);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    // The overview follows the close through its stream, which sends the run's state.json as closing recorded it.
+    const done = RECORDED[0]?.events.find((e) => e.kind === "record")?.record as Record<string, unknown>;
+    act(() => FakeEventSource.last.emit("record", { run: DONE, record: { ...done, closed: "workspace closed" } }));
+    expect(row(DONE).textContent).toContain("closed: workspace closed");
+  });
+
+  it("says there is nothing to close, and offers no Close", async () => {
+    const close: FakeClose = { preview: [{ ...PREVIEW[2], discarded: [] }, { ...PREVIEW[3], discarded: [] }] };
+    const dialog = await openCleanUp(close);
+    expect(within(dialog).getByText("Nothing to close.")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /^Close/ })).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(close.requests).toHaveLength(1);
+  });
+
+  it("says which runs could not be looked at, and offers Close only for the others", async () => {
+    const unread = { run: LOST, outcome: "failed", detail: "herdr server_error: herdr is down", discarded: [] } as const;
+    const alone = await openCleanUp({ preview: [{ ...unread, discarded: [] }] });
+    expect(within(alone).getByText("1 run could not be looked at, so it stays open.")).toHaveClass("problem");
+    expect(within(alone).queryByText("Nothing to close.")).not.toBeInTheDocument();
+    expect(within(alone).queryByRole("button", { name: /^Close/ })).not.toBeInTheDocument();
+    cleanup();
+
+    const beside = await openCleanUp({ preview: [{ ...PREVIEW[0], discarded: [] }, { ...unread, discarded: [] }] });
+    expect(within(beside).getByText("1 run could not be looked at, so it stays open.")).toBeInTheDocument();
+    expect(within(beside).getByRole("button", { name: "Close 1 run" })).toBeInTheDocument();
+  });
+
+  it("shows why the runs could not be looked at", async () => {
+    const dialog = await openCleanUp({ error: "ssh: connection refused" });
+    expect(within(dialog).getByText("ssh: connection refused")).toHaveClass("problem");
+    expect(within(dialog).queryByText("Nothing to close.")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /^Close/ })).not.toBeInTheDocument();
   });
 });

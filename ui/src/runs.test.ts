@@ -136,6 +136,14 @@ describe("wording", () => {
     expect(outcome(record({ health: null, verdict: "APPROVE" }), 0)).toBe("APPROVE");
     expect(outcome(record({ error: "boom" }), 0)).toBe("error: boom");
   });
+
+  it("words a closed run's outcome as list does: what it was, then its closing, and no health once stale", () => {
+    expect(outcome(record({ error: "boom", closed: "workspace closed" }), 0)).toBe("error: boom; closed: workspace closed");
+    expect(outcome(record({ health: null, verdict: "APPROVE", closed: "refs deleted" }), 0)).toBe(
+      "APPROVE; closed: refs deleted",
+    );
+    expect(outcome(record({ health: "stale", closed: "workspace closed" }), 400)).toBe("closed: workspace closed");
+  });
 });
 
 describe("applyEvent", () => {

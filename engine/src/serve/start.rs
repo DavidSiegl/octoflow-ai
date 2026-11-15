@@ -88,8 +88,7 @@ impl RunRequest {
     /// without `=`; and "no_pr" and "worktree", each a boolean; null for any of them but "task" is leaving it out.
     /// Errors: why the body is not so, in words a client can show, naming the first field that is wrong.
     pub fn parse(body: &[u8]) -> Result<RunRequest, String> {
-        let parsed = std::str::from_utf8(body).ok().and_then(|text| serde_json::from_str::<Value>(text).ok());
-        let Some(Value::Object(fields)) = parsed else { return Err("the body must be a JSON object".to_string()) };
+        let Some(fields) = super::json_object(body) else { return Err("the body must be a JSON object".to_string()) };
         if let Some(unknown) = fields.keys().find(|k| !FIELDS.contains(&k.as_str())) {
             return Err(format!("unknown field {unknown:?}; the fields are {}", FIELDS.join(", ")));
         }
