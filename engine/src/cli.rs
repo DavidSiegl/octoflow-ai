@@ -28,7 +28,7 @@ use crate::state::RunState;
 use crate::workflow::{Collaborators, LocalHuman, RunSettings, Stopped, SystemClocks, Workflow};
 
 pub mod args;
-mod close;
+pub mod close;
 pub mod doctor;
 pub mod drain;
 pub mod refresh;

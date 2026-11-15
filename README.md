@@ -121,7 +121,8 @@ says which release it is.
 ### Desktop app
 
 A desktop app shows your runs: one project's runs, their handoff files and their agents, live. It starts new
-ones, and of a run it changes nothing but what you type to its agents. It is a Tauri 2 app in [`ui/`](ui). Each release has it
+ones and closes those no longer running, and of a running run it changes nothing but what you type to its agents.
+It is a Tauri 2 app in [`ui/`](ui). Each release has it
 for Linux x86_64, as `octoflow-desktop-linux-x86_64.deb` and `.AppImage`, and for Apple Silicon macOS, as
 `octoflow-desktop-macos-arm64.dmg`, each with its `.sha256`. The app is the orchestrator too, so it needs no
 checkout. The macOS app is signed ad hoc only, not notarized, so macOS refuses to open it the
@@ -142,6 +143,11 @@ first time when a browser downloaded it, as it does the binary.
   output goes to `octoflow/herdr-server.log` under `$XDG_STATE_HOME` (`~/.local/state` when that is unset or not
   an absolute path), whose last lines the form shows when it does not come up. A run that fails before it starts,
   such as one the checkout already holds, shows the last lines of its pane in the form.
+- **Clean up runs:** "Clean up runs…" above the overview shows what `orchestrator close --all` would do to each
+  run: the workspace, refs, worktree and branch it would close, delete or keep, the uncommitted changes that would
+  go with a failed run's worktree, and why a run that is still running is skipped. Close closes the runs it showed,
+  skipping any that changed since, and shows how each went; the overview then shows them closed. With nothing to
+  close it says so.
 - **Run detail:** the run as an octopus map: the head is the run, with its round, and each stage of its workflow
   (its steps, the quality gate after each gated step, and the pull request) is an arm ending in a station that shows
   who holds it, the harness and model of its last turn, its rounds and a verdict step's last verdict. The working

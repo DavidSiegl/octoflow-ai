@@ -193,6 +193,18 @@ export interface StartedRun {
   herdrSession: string | null;
 }
 
+/** One run a sweep of POST /close looked at, as `close --all` would: its outcome "closed" (for a dry run: would be
+ * closed), "already closed" (closed before; it stays so), "skipped" (it must not be closed now, such as one still
+ * running) or "failed". detail is what was or would be done, what was recorded when it was closed before, or why it
+ * was skipped or failed. discarded is the uncommitted changes, one line of `git status --short` each, that went or
+ * would go with a failed run's worktree, a run whose close failed after removing it too; empty for any other run. */
+export interface ClosedRun {
+  run: string;
+  outcome: "closed" | "already closed" | "skipped" | "failed";
+  detail: string;
+  discarded: string[];
+}
+
 /** A request the server did not answer as asked, with the HTTP status it answered and its error message. */
 export class HttpError extends Error {
   constructor(
@@ -289,6 +301,38 @@ export class Api {
       throw new HttpError(200, "the answer has no run");
     }
     return { run: body.run, herdrSession: typeof body.herdr_session === "string" ? body.herdr_session : null };
+  }
+
+  /** What closing each run of the project that `close --all` closes would do, as its dry run says, changing
+   * nothing. Resolves to each run, in run id order. Rejects with the server's error message, status 502 for a project
+   * it cannot reach or whose runs cannot be read. */
+  previewClose(project: Project): Promise<ClosedRun[]> {
+    return this.sweep(project, { dry_run: true });
+  }
+
+  /** Close the runs of preview, a previewClose of the project, whose outcome is "closed", as `close` does: each one's
+   * workspace and refs, and a failed run's worktree with its branch when that has no commit of its own. A run is
+   * closed only while closing it would still do what preview says, discarding the same changes; one that changed
+   * since is skipped (Sweep::Previewed in engine/src/cli/close.rs says how closely it is compared). No other run is
+   * touched.
+   * Resolves to each of those runs, in preview's order; a run that fails does not stop the others. Rejects as
+   * previewClose does. */
+  closeRuns(project: Project, preview: ClosedRun[]): Promise<ClosedRun[]> {
+    const close = preview.filter((r) => r.outcome === "closed").map(({ run, detail, discarded }) => ({ run, detail, discarded }));
+    return this.sweep(project, { close });
+  }
+
+  /** The runs of a POST /close of the project with body, as previewClose and closeRuns resolve to them. */
+  private async sweep(project: Project, body: unknown): Promise<ClosedRun[]> {
+    const answer = (await this.json(this.url("/close", project, {}), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })) as { runs?: unknown };
+    if (!Array.isArray(answer.runs)) {
+      throw new HttpError(200, "the answer has no runs");
+    }
+    return answer.runs as ClosedRun[];
   }
 
   /** The text field of a GET of url's JSON; rejects with the server's error message, or the status. */

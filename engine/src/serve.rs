@@ -12,16 +12,17 @@ use std::time::Duration;
 use nix::sys::signal::{SigSet, Signal};
 use tiny_http::{Header, Request, Response};
 
+use crate::cli::close::{Outcome, RunClosed, Sweep};
 use crate::cli::listing::RUN_RECORD_VERSION;
 use crate::constants::EXIT_ERROR;
 use crate::env::ConfigDir;
 use crate::error::{os_error, OrchestratorError};
-use crate::herdr::{AgentConsole, Launcher, ProcessHerdr};
+use crate::herdr::{AgentConsole, Launcher, ProcessHerdr, Workspaces};
 use crate::host::{Host, ProcessHost};
 use crate::interrupt::Interrupt;
 use serde_json::Value;
 use url::{parse_qsl, urlsplit};
-use runs::{AgentInput, Event, ProjectRuns, RunReadError, RunWatch};
+use runs::{plain_name, AgentInput, Event, ProjectRuns, RunReadError, RunWatch};
 use setup::Setup;
 use start::{RunRequest, StartWait, Started, START_WAIT};
 
@@ -59,6 +60,8 @@ pub struct Reached {
     pub dir: String,
     /// Reaches its runs' agents, each by its AgentAddress.
     pub console: Arc<dyn AgentConsole>,
+    /// Tells and closes its runs' herdr workspaces, each in the server its run saved, for POST /close.
+    pub workspaces: Arc<dyn Workspaces + Send + Sync>,
     /// Starts a run's process for POST /run, in a pane of this machine's herdr (Launcher::launch says which server),
     /// for a project here and one on a machine alike: a machine's run is driven from here, as from the CLI.
     pub launcher: Arc<dyn Launcher>,
@@ -140,7 +143,8 @@ pub fn project_host(machine: &str, cwd: &str, stopping: &Interrupt) -> Result<Re
     let dir = host.resolve_dir(cwd)?;
     let launch_dir = if machine.is_empty() { dir.clone() } else { serve_dir()? };
     let launcher = Arc::new(ProcessHerdr::new(None, stopping));
-    Ok(Reached { host: Arc::new(host), dir, console: Arc::new(herdr), launcher, launch_dir })
+    let herdr = Arc::new(herdr);
+    Ok(Reached { host: Arc::new(host), dir, console: herdr.clone(), workspaces: herdr, launcher, launch_dir })
 }
 
 /// serve's working directory. Errors: it cannot be told, or is not UTF-8.
@@ -151,7 +155,7 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 
 /// serve's HTTP server, on a free port of 127.0.0.1, with its token, answering until it is dropped. Its endpoints
 /// but /setup/checked and /workflows each name the project by ?cwd= and an optional ?machine=, and answer JSON; each
-/// is a GET but the four POSTs:
+/// is a GET but the five POSTs:
 ///
 /// - /runs: {"version", "runs"}, as `list --json` prints it.
 /// - /files?run=ID: {"run", "files"}, the run's files as ProjectRuns::files lists them.
@@ -185,6 +189,18 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 ///   is in the herdr server serve's own environment reaches. 400 for a body RunRequest::parse refuses and 413 as for
 ///   /agent/input, both before the project is reached; 502 when herdr cannot launch it, as when it has
 ///   no server running here and none can be started.
+/// - POST /close?cwd=DIR: with the JSON body {"dry_run": true}, says what closing each run of the project that
+///   `close --all` closes would do, changing nothing; with {"close": [{"run", "detail", "discarded"}, ...]}, the
+///   "closed" runs of such a dry run's answer, closes those runs and no other, each only while closing it would still
+///   do what detail says and discard what discarded lists (crate::cli::close::Sweep::Previewed says how closely).
+///   Answers {"runs": [{"run", "outcome", "detail", "discarded"}, ...]}, a run for each the sweep looked at:
+///   outcome "closed" (with a dry run: to be closed), "already closed", "skipped" (as is a run that changed since the
+///   dry run) or "failed"; detail what was or would be done (`close`'s closed line or its dry run's), what close
+///   recorded before, or why the run was skipped or failed; discarded the uncommitted changes, one line of git status
+///   each, that went or would go with the run's worktree, a failed run's too. A run that fails does not stop the
+///   others. 400 for a body of another shape and 413 as for /agent/input, both before the project is reached; 502 for
+///   a project that cannot be reached, or with a dry run one whose runs cannot be read (a close reads each run in its
+///   turn, and one it cannot read is "failed").
 /// - /events: a text/event-stream of RunWatch's events, polled every SERVE_POLL.local, every SERVE_POLL.remote for a
 ///   --machine project, until the client goes or the server stops. An HTTP/1.1 client gets it chunked, so that the
 ///   end of the stream is the end of the response; an HTTP/1.0 client's ends when the connection closes.
@@ -426,6 +442,7 @@ const AGENT_INPUT: &str = "/agent/input";
 const SETUP_CHECKED: &str = "/setup/checked";
 const SETUP_GATE: &str = "/setup/gate";
 const RUN: &str = "/run";
+const CLOSE: &str = "/close";
 /// The GET endpoints outside Endpoint, which reach no project (unreached_answer): the setup dialog's checks, and the
 /// workflows a run can be started with.
 const SETUP: &str = "/setup";
@@ -443,6 +460,7 @@ fn answer(shared: &Shared, request: Request) {
         "POST" if path == SETUP_CHECKED => post_checked(shared, request, &query),
         "POST" if path == SETUP_GATE => post_setup_gate(shared, request, &query),
         "POST" if path == RUN => post_run(shared, request, &query),
+        "POST" if path == CLOSE => post_close(shared, request, &query),
         "OPTIONS" => preflight(shared, request),
         method => {
             // Made before send takes request, which method borrows.
@@ -669,6 +687,77 @@ fn post_run(shared: &Shared, mut request: Request, query: &HashMap<String, Strin
     send_json(request, code, &body);
 }
 
+/// Answer a POST of /close with the query's parameters, as target gives them: say what closing the project's runs
+/// would do, or close the runs a dry run gave, as RunServer's doc comment says. The body is read and checked before the
+/// project is reached, as post_input's.
+///
+/// serve closes in its own process, by the sweep `close --all` runs (ProjectRuns::close_all), rather than by starting
+/// its program as `close --all`, as POST /run starts `run`: the sweep's outcomes come back as values, with no output
+/// format of the CLI's to keep for serve to parse, and a close needs no pane for a human to watch.
+fn post_close(shared: &Shared, mut request: Request, query: &HashMap<String, String>) {
+    if let Some((code, body)) = refusal(shared, &request, query) {
+        return send_json(request, code, &body);
+    }
+    let previewed = match read_body(&mut request).and_then(|body| previewed_runs(&body)) {
+        Ok(previewed) => previewed,
+        Err((code, body)) => return send_json(request, code, &body),
+    };
+    let sweep = previewed.as_deref().map_or(Sweep::DryRun, Sweep::Previewed);
+    let closed = project_of(shared, query, &["cwd"])
+        .and_then(|project| project.close_all(sweep, &shared.stopping).map_err(|e| (502, error(&e.0))));
+    let (code, body) = match closed {
+        Ok(runs) => (200, object([("runs", Value::Array(runs.iter().map(run_closed).collect()))])),
+        Err(answer) => answer,
+    };
+    send_json(request, code, &body);
+}
+
+/// The runs a POST /close body asks to close, each as the dry run gave it (an Outcome::Closed); None for a dry run.
+/// The shapes are RunServer's doc comment's. Errors: 400 for a body of another shape, or a run that is not a plain
+/// name (runs::plain_name).
+fn previewed_runs(body: &[u8]) -> Result<Option<Vec<RunClosed>>, Answer> {
+    let shape = || {
+        (400, error(r#"the body must be {"dry_run": true} or {"close": [{"run": "...", "detail": "...", "discarded": ["...", ...]}, ...]}"#))
+    };
+    let fields = json_object(body).filter(|o| o.len() == 1).ok_or_else(shape)?;
+    if fields.get("dry_run") == Some(&Value::Bool(true)) {
+        return Ok(None);
+    }
+    let previewed = |run: &Value| -> Option<RunClosed> {
+        let text = |key: &str| run.get(key).and_then(Value::as_str).map(String::from);
+        let discarded = run.get("discarded")?.as_array()?;
+        let discarded = discarded.iter().map(|line| line.as_str().map(String::from)).collect::<Option<Vec<_>>>()?;
+        let run_id = text("run").filter(|id| plain_name(id).is_ok())?;
+        Some(RunClosed { run_id, outcome: Outcome::Closed { done: text("detail")?, discarded } })
+    };
+    let runs = fields.get("close").and_then(Value::as_array).ok_or_else(shape)?;
+    runs.iter().map(previewed).collect::<Option<Vec<_>>>().map(Some).ok_or_else(shape)
+}
+
+/// The fields of body, when it is a JSON object in UTF-8, as every POST's body is; None otherwise.
+fn json_object(body: &[u8]) -> Option<serde_json::Map<String, Value>> {
+    match serde_json::from_slice::<Value>(body).ok()? {
+        Value::Object(fields) => Some(fields),
+        _ => None,
+    }
+}
+
+/// One run of a POST /close answer: {"run", "outcome", "detail", "discarded"}, as RunServer's doc comment says.
+fn run_closed(run: &RunClosed) -> Value {
+    let (outcome, detail, discarded): (&str, &str, &[String]) = match &run.outcome {
+        Outcome::Closed { done, discarded } => ("closed", done, discarded),
+        Outcome::AlreadyClosed(closed) => ("already closed", closed, &[]),
+        Outcome::Skipped(why) => ("skipped", why, &[]),
+        Outcome::Failed { error, discarded } => ("failed", error, discarded),
+    };
+    object([
+        ("run", Value::from(run.run_id.as_str())),
+        ("outcome", Value::from(outcome)),
+        ("detail", Value::from(detail)),
+        ("discarded", Value::from(discarded.to_vec())),
+    ])
+}
+
 /// The answer to POST /run once its body is run and its project project: the run started, by this program, as a new
 /// run id, and waited for.
 fn start_answer(shared: &Shared, project: &ProjectRuns, run: &RunRequest) -> Answer {
@@ -738,8 +827,7 @@ fn read_body(request: &mut Request) -> Result<Vec<u8>, Answer> {
 fn agent_input(request: &mut Request) -> Result<AgentInput, Answer> {
     let body = read_body(request)?;
     let shape = || (400, error(r#"the body must be {"text": "..."} or {"keys": ["...", ...]}"#));
-    let parsed = std::str::from_utf8(&body).ok().and_then(|text| serde_json::from_str::<Value>(text).ok()).ok_or_else(shape)?;
-    let fields = parsed.as_object().filter(|o| o.len() == 1).ok_or_else(shape)?;
+    let fields = json_object(&body).filter(|o| o.len() == 1).ok_or_else(shape)?;
     if let Some(text) = fields.get("text").and_then(Value::as_str).filter(|t| !t.is_empty()) {
         return Ok(AgentInput::Text(text.to_string()));
     }

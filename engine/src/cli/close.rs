@@ -51,11 +51,36 @@ pub enum Outcome {
     },
     /// Closed before, by close or since the sweep began: what close recorded then.
     AlreadyClosed(String),
-    /// Not closed, and why: Decision::Refused's reason, or the run is gone.
+    /// Not closed, and why: Decision::Refused's reason, the run is gone, or it changed since the preview of a
+    /// Sweep::Previewed.
     Skipped(String),
-    /// Its close failed, with this error; what it did before the failure stays done.
-    Failed(String),
+    /// Its close failed; what it did before the failure stays done.
+    Failed {
+        /// Why it failed.
+        error: String,
+        /// The uncommitted changes that went with the run's worktree before the failure, one line of git status each;
+        /// empty when the worktree is still there, or the run had none to lose.
+        discarded: Vec<String>,
+    },
 }
+
+/// Which runs close_all closes, and whether it closes them at all.
+#[derive(Clone, Copy)]
+pub enum Sweep<'p> {
+    /// Close none: say what closing each run would do.
+    DryRun,
+    /// Close every run as it stands when its turn comes.
+    Close,
+    /// Close only the runs that this earlier DryRun of the project gave as Outcome::Closed, each only while closing it
+    /// would still do just what the dry run said, discarding the same changes, so that what goes is what was shown; a
+    /// run that changed since is skipped, saying what closing it would now do. No other run is looked at. The changes
+    /// are compared line by line of git status (crate::host::GIT_STATUS_ARGS), so a file listed may have changed
+    /// further, and ignored files, which git status does not list, go with the worktree unshown.
+    Previewed(&'p [RunClosed]),
+}
+
+/// What a dry run said closing a run would do and discard: its Plan::preview and Plan::discarded.
+type Preview<'p> = (&'p str, &'p [String]);
 
 /// What close does to one run, decided just before it is done (decide), so that a dry run says what closing would do.
 enum Decision<'r> {
@@ -118,8 +143,8 @@ pub fn close_command(world: &Connected, cwd: &str, run_ref: Option<&str>, dry_ru
     match run_ref {
         Some(run_ref) => close_run(&closer, cwd, run_ref, dry_run).map(|_| 0),
         None => {
-            let runs = close_all(&closer, cwd, dry_run)?;
-            Ok(if runs.iter().any(|run| matches!(run.outcome, Outcome::Failed(_))) { EXIT_ERROR } else { 0 })
+            let runs = close_all(&closer, cwd, if dry_run { Sweep::DryRun } else { Sweep::Close })?;
+            Ok(if runs.iter().any(|run| matches!(run.outcome, Outcome::Failed { .. })) { EXIT_ERROR } else { 0 })
         }
     }
 }
@@ -151,31 +176,55 @@ pub fn close_run(world: &Closer, cwd: &str, run_ref: &str, dry_run: bool) -> Res
     }
 }
 
-/// Close every run of the project at cwd as close_run does, in run id order, or with dry_run say what closing each
-/// would do, then say a count of the runs closed (or to close), skipped and already closed, and failed if any. A
+/// Close the runs of the project at cwd that sweep names as close_run does, or with Sweep::DryRun say what closing
+/// each would do, then say a count of the runs closed (or to close), skipped and already closed, and failed if any.
+/// The runs are every run of the project, in run id order, or a Sweep::Previewed's, in the preview's order. A
 /// Decision::Refused run is skipped with a line saying why; one already closed is only counted. Each run is read again
 /// just before it is closed, so one that started running, or was removed, since the sweep began is skipped. A run
 /// whose close fails gets a line with the error, and the rest are still closed. A raised Interrupt starts no further
 /// run; the run being closed then finishes or fails as close_run would, and a second sweep finishes it.
 ///
-/// Returns each run looked at, in that order; none after an Interrupt. Errors: the runs cannot be read at the start.
-pub fn close_all(world: &Closer, cwd: &str, dry_run: bool) -> Result<Vec<RunClosed>, OrchestratorError> {
-    let mut runs: Vec<(String, Option<String>)> =
-        world.host.run_states(cwd)?.iter().map(|run| (run.shown().run_id.clone(), closed_as_read(run))).collect();
-    runs.sort();
+/// Returns each run looked at, in that order; none after an Interrupt. Errors: for Sweep::DryRun and Sweep::Close,
+/// the project's runs cannot be read at the start. A Sweep::Previewed reads each run only at its turn: one whose
+/// state.json cannot be read, or is not a JSON object naming its run, is Outcome::Failed; one whose format or fields
+/// do not read (SavedRun::problem) is skipped as Decision::Refused.
+pub fn close_all(world: &Closer, cwd: &str, sweep: Sweep) -> Result<Vec<RunClosed>, OrchestratorError> {
+    // Each run to look at: its id, what its state.json records as its closed when first read, and for a
+    // Sweep::Previewed what the preview said closing it would do and discard.
+    let runs: Vec<(String, Option<String>, Option<Preview>)> = match sweep {
+        Sweep::Previewed(preview) => preview
+            .iter()
+            .filter_map(|run| match &run.outcome {
+                Outcome::Closed { done, discarded } => Some((run.run_id.clone(), None, Some((done.as_str(), &discarded[..])))),
+                _ => None,
+            })
+            .collect(),
+        Sweep::DryRun | Sweep::Close => {
+            let mut runs: Vec<_> = world
+                .host
+                .run_states(cwd)?
+                .iter()
+                .map(|run| (run.shown().run_id.clone(), closed_as_read(run), None))
+                .collect();
+            runs.sort_by(|a, b| a.0.cmp(&b.0));
+            runs
+        }
+    };
+    let dry_run = matches!(sweep, Sweep::DryRun);
     let mut looked_at = vec![];
-    for (run_id, recorded) in runs {
+    for (run_id, recorded, previewed) in runs {
         if world.interrupt.is_raised() {
             break;
         }
         // A closed run stays closed: resume refuses it.
         let outcome = match recorded {
             Some(recorded) => Outcome::AlreadyClosed(recorded),
-            None => sweep_run(world, cwd, &run_id, dry_run).unwrap_or_else(|e| Outcome::Failed(e.to_string())),
+            None => sweep_run(world, cwd, &run_id, dry_run, previewed)
+                .unwrap_or_else(|e| Outcome::Failed { error: e.to_string(), discarded: vec![] }),
         };
         match &outcome {
             Outcome::Skipped(why) => world.say(&format!("skipped: {why}")),
-            Outcome::Failed(e) => world.say(&format!("could not close run {run_id}: {e}")),
+            Outcome::Failed { error, .. } => world.say(&format!("could not close run {run_id}: {error}")),
             Outcome::Closed { .. } | Outcome::AlreadyClosed(_) => {}
         }
         looked_at.push(RunClosed { run_id, outcome });
@@ -184,7 +233,7 @@ pub fn close_all(world: &Closer, cwd: &str, dry_run: bool) -> Result<Vec<RunClos
     let closed = count(|o| matches!(o, Outcome::Closed { .. }));
     let skipped = count(|o| matches!(o, Outcome::Skipped(_)));
     let already = count(|o| matches!(o, Outcome::AlreadyClosed(_)));
-    let failed = count(|o| matches!(o, Outcome::Failed(_)));
+    let failed = count(|o| matches!(o, Outcome::Failed { .. }));
     let verb = if dry_run { "to close" } else { "closed" };
     let failures = if failed > 0 { format!(", {failed} failed") } else { String::new() };
     world.say(&format!("{closed} {verb}, {skipped} skipped, {already} already closed{failures}"));
@@ -198,9 +247,16 @@ fn closed_as_read(run: &SavedRun) -> Option<String> {
 }
 
 /// Read the run of the project at cwd whose id is run_id again, and close it as close_all says, or with dry_run say
-/// what closing it would do; a run whose state.json is gone is skipped, as nothing is left to close. Errors: its
-/// state.json cannot be read, or its close fails.
-fn sweep_run(world: &Closer, cwd: &str, run_id: &str, dry_run: bool) -> Result<Outcome, OrchestratorError> {
+/// what closing it would do; a run whose state.json is gone is skipped, as nothing is left to close. With previewed,
+/// a run whose plan is no longer what the dry run said is skipped. A close that
+/// fails is Outcome::Failed. Errors: its state.json cannot be read, or herdr or git cannot tell what is there.
+fn sweep_run(
+    world: &Closer,
+    cwd: &str,
+    run_id: &str,
+    dry_run: bool,
+    previewed: Option<Preview>,
+) -> Result<Outcome, OrchestratorError> {
     let Some(run) = world.host.run_state(cwd, run_id)? else {
         return Ok(Outcome::Skipped(format!(
             "run {run_id} is gone: its state.json was removed from {cwd}/{RUNS_DIR} since the sweep began"
@@ -210,8 +266,16 @@ fn sweep_run(world: &Closer, cwd: &str, run_id: &str, dry_run: bool) -> Result<O
         Decision::AlreadyClosed(state) => Outcome::AlreadyClosed(state.closed.clone().unwrap_or_default()),
         Decision::Refused(why) => Outcome::Skipped(why.to_string()),
         Decision::Close(plan) => {
-            let done = plan.close(world, cwd, dry_run)?;
-            Outcome::Closed { done, discarded: plan.discarded().to_vec() }
+            if previewed.is_some_and(|(done, discarded)| plan.preview() != done || plan.discarded() != discarded) {
+                return Ok(Outcome::Skipped(format!(
+                    "run {run_id} changed since the preview: closing it would now {}",
+                    plan.preview()
+                )));
+            }
+            match plan.close(world, cwd, dry_run) {
+                Ok(done) => Outcome::Closed { done, discarded: plan.discarded().to_vec() },
+                Err(e) => Outcome::Failed { error: e.to_string(), discarded: plan.discarded_by_now(world.host, cwd) },
+            }
         }
     })
 }
@@ -411,6 +475,18 @@ impl Plan<'_> {
         match &self.worktree {
             WorktreeFate::Discarded { changes: Some(changes), .. } => changes,
             _ => &[],
+        }
+    }
+
+    /// What went with a discarded worktree by now, as discarded says, for a close that failed part way: empty while
+    /// the worktree is still one.
+    fn discarded_by_now(&self, host: &dyn Host, cwd: &str) -> Vec<String> {
+        let WorktreeFate::Discarded { path, changes: Some(changes), .. } = &self.worktree else { return vec![] };
+        // When git cannot tell, the changes are given as gone: a warning of a loss that did not happen costs less
+        // than silence about one that did.
+        match host.is_worktree(cwd, path) {
+            Ok(true) => vec![],
+            Ok(false) | Err(_) => changes.clone(),
         }
     }
 

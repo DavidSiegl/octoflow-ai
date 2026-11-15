@@ -165,21 +165,67 @@ fn a_run_that_saved_no_server_is_closed_in_the_environment_s() {
 fn the_sweep_gives_each_run_s_outcome() {
     let c = Close::new();
     c.add(STALE_SECONDS + 1, true, &[]);
-    let out = |dry_run| {
-        c.cli.with(|world| {
-            close_all(&Closer::of(world), "/proj", dry_run).unwrap()
-        })
-    };
+    let out = |sweep| c.cli.with(|world| close_all(&Closer::of(world), "/proj", sweep).unwrap());
     // FakeHost's git status names a change by its whole path.
     let discarded = vec![format!("?? {}/a.py", worktree())];
     let preview = format!("close workspace w1; delete worktree {}; delete branch {CLOSE_BRANCH}", worktree());
     let closed = |done: String| {
         vec![RunClosed { run_id: CLOSE_ID.into(), outcome: Outcome::Closed { done, discarded: discarded.clone() } }]
     };
-    assert_eq!(out(true), closed(preview));
+    assert_eq!(out(Sweep::DryRun), closed(preview));
     let done = "workspace closed; worktree deleted; branch deleted".to_string();
-    assert_eq!(out(false), closed(done.clone()));
-    assert_eq!(out(false), [RunClosed { run_id: CLOSE_ID.into(), outcome: Outcome::AlreadyClosed(done) }]);
+    assert_eq!(out(Sweep::Close), closed(done.clone()));
+    assert_eq!(out(Sweep::Close), [RunClosed { run_id: CLOSE_ID.into(), outcome: Outcome::AlreadyClosed(done) }]);
+}
+
+#[test]
+fn a_sweep_of_a_preview_closes_only_what_it_showed() {
+    let c = Close::new();
+    c.add(STALE_SECONDS + 1, true, &[]);
+    let sweep = |sweep| c.cli.with(|world| close_all(&Closer::of(world), "/proj", sweep).unwrap());
+    let preview = sweep(Sweep::DryRun);
+
+    // Not in the preview, as a run the preview found running: not looked at.
+    assert_eq!(sweep(Sweep::Previewed(&[])), []);
+    assert_eq!(c.closed(), Value::Null);
+
+    // Changed since: its worktree holds a change the preview did not show.
+    let wt = worktree();
+    c.cli.f.host.state().changed.insert(format!("{wt}/b.py"));
+    let now = format!("close workspace w1; delete worktree {wt}; delete branch {CLOSE_BRANCH}");
+    let skipped = format!("run {CLOSE_ID} changed since the preview: closing it would now {now}");
+    assert_eq!(sweep(Sweep::Previewed(&preview)), [RunClosed { run_id: CLOSE_ID.into(), outcome: Outcome::Skipped(skipped) }]);
+    assert_eq!(c.closed(), Value::Null);
+    assert!(c.cli.f.host.state().worktrees.contains_key(&wt));
+
+    // As previewed: closed.
+    let preview = sweep(Sweep::DryRun);
+    let Outcome::Closed { discarded, .. } = &preview[0].outcome else { panic!("{preview:?}") };
+    let closed = sweep(Sweep::Previewed(&preview));
+    let done = "workspace closed; worktree deleted; branch deleted".to_string();
+    assert_eq!(closed, [RunClosed { run_id: CLOSE_ID.into(), outcome: Outcome::Closed { done, discarded: discarded.clone() } }]);
+}
+
+#[test]
+fn a_sweep_s_close_that_fails_after_the_worktree_went_gives_what_went_with_it() {
+    let c = Close::new();
+    c.add(STALE_SECONDS + 1, true, &[locked()]);
+    c.cli.f.host.state().delete_refs_error = Some("fatal: cannot lock ref".into());
+    let runs = c.cli.with(|world| close_all(&Closer::of(world), "/proj", Sweep::Close).unwrap());
+    let error = "could not delete the refs under refs/orchestrator/a1b2c3/: fatal: cannot lock ref".to_string();
+    let discarded = vec![format!("?? {}/a.py", worktree())];
+    assert_eq!(runs, [RunClosed { run_id: CLOSE_ID.into(), outcome: Outcome::Failed { error, discarded } }]);
+}
+
+#[test]
+fn a_sweep_s_close_that_fails_with_the_worktree_still_there_discarded_nothing() {
+    let c = Close::new();
+    c.add(STALE_SECONDS + 1, true, &[]);
+    c.cli.f.host.state().remove_error = Some("fatal: cannot remove a locked working tree".into());
+    let runs = c.cli.with(|world| close_all(&Closer::of(world), "/proj", Sweep::Close).unwrap());
+    let Outcome::Failed { error, discarded } = &runs[0].outcome else { panic!("{runs:?}") };
+    assert!(error.contains("cannot remove a locked working tree"), "{error}");
+    assert_eq!(discarded, &Vec::<String>::new());
 }
 
 #[test]
