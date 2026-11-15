@@ -796,6 +796,11 @@ describe("cleaning up runs", () => {
     expect(line(dialog, LOST).textContent).toBe(`failed ${LOST}: git worktree remove failed: permission denied`);
     fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    // The overview follows the close through its stream, which sends the run's state.json as closing recorded it.
+    const done = RECORDED[0]?.events.find((e) => e.kind === "record")?.record as Record<string, unknown>;
+    act(() => FakeEventSource.last.emit("record", { run: DONE, record: { ...done, closed: "workspace closed" } }));
+    expect(row(DONE).textContent).toContain("closed: workspace closed");
   });
 
   it("says there is nothing to close, and offers no Close", async () => {
