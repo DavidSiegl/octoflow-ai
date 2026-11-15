@@ -148,8 +148,8 @@ parts in `engine/src/quality.rs` beside `parse_gate`, and its tests hold them to
   `(the whole file)` in backticks for a finding on no line, or `The change as a whole:` for one on no file. The
   rule's first word names the check, or the linter, that raised it.
 - **Findings to weigh.** In a section, the line `These do not fail the gate. Fix each, or say in your report why
-  it should stand.` (`TO_WEIGH_NOTE`) comes before its findings to weigh; the numbered findings above it fail the
-  gate.
+  it should stand.` (`QUALITY_TO_WEIGH_NOTE`) comes before its findings to weigh; the numbered findings above it
+  fail the gate.
 - **Failing tests.** Under `## Failing tests`, one bullet per test, `` - `name`: detail ``.
 - **One line per item.** A character that ends a line in some reader, such as `\r` or U+2028, is written as an
   escape, `\x0d` or `\u2028`, in every list item and name (`one_line`), so each item is read back as the one line
