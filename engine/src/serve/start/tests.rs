@@ -96,7 +96,7 @@ fn run_reads_the_command_back_as_the_request() {
         no_pr: true,
         worktree: true,
     };
-    let argv = request.argv("orchestrator", "20261103-120000-abcdef", &["--cwd".to_string(), "/p".to_string()]);
+    let argv = request.argv("octoflow", "20261103-120000-abcdef", &["--cwd".to_string(), "/p".to_string()]);
     let parsed = crate::cli::parse_args(argv[1..].iter().map(std::ffi::OsString::from), &ConfigDir::at("/nowhere"));
     let Ok(crate::cli::Command::Run(args)) = parsed else { panic!("not a run: {parsed:?}") };
     assert_eq!((args.task.as_deref(), args.run_id.as_deref()), (Some("--x"), Some("20261103-120000-abcdef")));

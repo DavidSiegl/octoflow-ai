@@ -521,7 +521,7 @@ mod tests {
     fn built_orchestrator() -> PathBuf {
         let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
         let built = Command::new(cargo)
-            .args(["build", "--locked", "--quiet", "-p", "octoflow-engine", "--bin", "orchestrator"])
+            .args(["build", "--locked", "--quiet", "-p", "octoflow-engine", "--bin", "octoflow"])
             .args(["--message-format", "json"])
             .current_dir(checkout())
             .output()

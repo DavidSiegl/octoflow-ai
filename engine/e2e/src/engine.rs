@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 use serde_json::Value;
 
 /// The orchestrator binary the tests run: E2E_ENGINE's, when it is set; else this checkout's, `cargo build --locked
-/// -p octoflow-engine --bin orchestrator` run once per test process, in `e2e-engine/` beside this test's `deps/`. It is
+/// -p octoflow-engine --bin octoflow` run once per test process, in `e2e-engine/` beside this test's `deps/`. It is
 /// built rather than found beside this test, since `cargo nextest run -p octoflow-e2e` builds no binary of another
 /// package, and a stale one would be tested in its place. Panics when cargo is missing or the build fails, so that a
 /// machine without cargo fails the tests rather than skipping them.
@@ -26,12 +26,12 @@ fn build() -> PathBuf {
     // A target directory of its own: the engine built alone resolves its dependencies' features without the other
     // members' (nix's fs from this package; serde's derive and serde_json's raw_value from the desktop shell), and the
     // workspace's test build with them, so in the one target directory each build would relink
-    // <target>/<profile>/orchestrator, which the engine's own program tests run meanwhile.
+    // <target>/<profile>/octoflow, which the engine's own program tests run meanwhile.
     let exe = std::env::current_exe().unwrap_or_else(|e| panic!("finding this test's program: {e}"));
     // The test runs from <target>/<profile>/deps/.
     let target = exe.ancestors().nth(2).expect("a target directory above this test's program").join("e2e-engine");
     let out = Command::new(&cargo)
-        .args(["build", "--locked", "--quiet", "-p", "octoflow-engine", "--bin", "orchestrator", "--message-format=json"])
+        .args(["build", "--locked", "--quiet", "-p", "octoflow-engine", "--bin", "octoflow", "--message-format=json"])
         .arg("--target-dir")
         .arg(&target)
         .current_dir(env!("CARGO_MANIFEST_DIR"))

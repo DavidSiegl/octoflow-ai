@@ -569,7 +569,7 @@
     }
    },
    {
-    "stdin": "Opened by Octoflow AI run `<run:1>`. **QUALITY_GATE_FAILED**: its workflow has no review step, and the quality gate still did not pass after the last quality round, so this is a draft.\n\n| Commit trailer | Value |\n| --- | --- |\n| Orchestrator-Run | `<run:1>` |\n| Orchestrator-Workflow | `solo` |\n| Orchestrator-Role | `build=claude/default` |\n| Orchestrator-Gate | `ERROR after 1 quality round` |\n\n<details open>\n<summary>Spec</summary>\n\n\n\n</details>\n\n<details>\n<summary>Builder report (round 1)</summary>\n\nAdded subtract and its test (round 1). `pytest` passes.\n\n</details>\n\n<details>\n<summary>Quality gate (round 1)</summary>\n\nGATE: ERROR\n\noctoflow-gate 9.9.9, run locally, judged snapshot `<sha:2>` (round 1, quality round 1 of 1).\n\n## Failed conditions\n\n- 1 findings of the `ruff` check; each is listed below.\n\n## Findings\n\n1. `src/calc.py:7` error ruff F821: undefined name `c`\n\n## The orchestrator's checks\n\nThe orchestrator ran these itself after the build, with what the build does not see: the run's spec and its workflow.\n\nThese do not fail the gate. Fix each, or say in your report why it should stand.\n\n2. `src/calc.py (the whole file)` warning unexpected-paths: the spec mentions neither this path nor its file name.\n3. `tests/test_calc.py (the whole file)` warning unexpected-paths: the spec mentions neither this path nor its file name.\n\n</details>\n\n<details>\n<summary>Run timings</summary>\n\n| step | role | round | harness | model | start (UTC) | duration | file |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| build | build | 1 | claude | default | <time> | <duration> | build-1.md |\n| quality | quality | 1 q1 | - | - | <time> | <duration> | quality-1-1.md |\n\n</details>\n",
+    "stdin": "Opened by Octoflow AI run `<run:1>`. **QUALITY_GATE_FAILED**: its workflow has no review step, and the quality gate still did not pass after the last quality round, so this is a draft.\n\n| Commit trailer | Value |\n| --- | --- |\n| Octoflow-Run | `<run:1>` |\n| Octoflow-Workflow | `solo` |\n| Octoflow-Role | `build=claude/default` |\n| Octoflow-Gate | `ERROR after 1 quality round` |\n\n<details open>\n<summary>Spec</summary>\n\n\n\n</details>\n\n<details>\n<summary>Builder report (round 1)</summary>\n\nAdded subtract and its test (round 1). `pytest` passes.\n\n</details>\n\n<details>\n<summary>Quality gate (round 1)</summary>\n\nGATE: ERROR\n\noctoflow-gate 9.9.9, run locally, judged snapshot `<sha:2>` (round 1, quality round 1 of 1).\n\n## Failed conditions\n\n- 1 findings of the `ruff` check; each is listed below.\n\n## Findings\n\n1. `src/calc.py:7` error ruff F821: undefined name `c`\n\n## The orchestrator's checks\n\nThe orchestrator ran these itself after the build, with what the build does not see: the run's spec and its workflow.\n\nThese do not fail the gate. Fix each, or say in your report why it should stand.\n\n2. `src/calc.py (the whole file)` warning unexpected-paths: the spec mentions neither this path nor its file name.\n3. `tests/test_calc.py (the whole file)` warning unexpected-paths: the spec mentions neither this path nor its file name.\n\n</details>\n\n<details>\n<summary>Run timings</summary>\n\n| step | role | round | harness | model | start (UTC) | duration | file |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| build | build | 1 | claude | default | <time> | <duration> | build-1.md |\n| quality | quality | 1 q1 | - | - | <time> | <duration> | quality-1-1.md |\n\n</details>\n",
     "gh": [
      "pr",
      "create",
@@ -803,7 +803,7 @@
       "<sha:1>"
      ],
      "author": "Parity <parity@example.com>",
-     "message": "Add a subtract function\n\nOrchestrator run <run:1>: QUALITY_GATE_FAILED, unreviewed.\n\nOrchestrator-Run: <run:1>\nOrchestrator-Workflow: solo\nOrchestrator-Role: build=claude/default\nOrchestrator-Gate: ERROR after 1 quality round\n\n",
+     "message": "Add a subtract function\n\nOrchestrator run <run:1>: QUALITY_GATE_FAILED, unreviewed.\n\nOctoflow-Run: <run:1>\nOctoflow-Workflow: solo\nOctoflow-Role: build=claude/default\nOctoflow-Gate: ERROR after 1 quality round\n\n",
      "changes": [
       "M\tsrc/calc.py",
       "M\ttests/test_calc.py"
@@ -868,7 +868,7 @@
       "<sha:1>"
      ],
      "author": "Parity <parity@example.com>",
-     "message": "Add a subtract function\n\nOrchestrator run <run:1>: QUALITY_GATE_FAILED, unreviewed.\n\nOrchestrator-Run: <run:1>\nOrchestrator-Workflow: solo\nOrchestrator-Role: build=claude/default\nOrchestrator-Gate: ERROR after 1 quality round\n\n",
+     "message": "Add a subtract function\n\nOrchestrator run <run:1>: QUALITY_GATE_FAILED, unreviewed.\n\nOctoflow-Run: <run:1>\nOctoflow-Workflow: solo\nOctoflow-Role: build=claude/default\nOctoflow-Gate: ERROR after 1 quality round\n\n",
      "changes": [
       "M\tsrc/calc.py",
       "M\ttests/test_calc.py"

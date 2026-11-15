@@ -1,4 +1,4 @@
-// The protocol of `orchestrator serve`: its run records, file lists, events and agents, and the setup checks. The engine's RunServer
+// The protocol of `octoflow serve`: its run records, file lists, events and agents, and the setup checks. The engine's RunServer
 // (engine/src/serve.rs) and RunWatch document the endpoints and the events, and run_record every key of a record.
 
 /** What the Tauri shell's `server` command gives: where the sidecar's server listens and its token, from `serve`'s
@@ -9,7 +9,7 @@ export interface Connection {
   /** The project to show first: the checkout a development build of the app was built in; null for a release's
    * app, which belongs to none. */
   project: string | null;
-  /** The release version, as `orchestrator --version` prints it: the engine's, which the app links. */
+  /** The release version, as `octoflow --version` prints it: the engine's, which the app links. */
   version: string;
 }
 
@@ -126,7 +126,7 @@ export type RunEvent =
 
 export const EVENT_KINDS = ["record", "files", "problem"] as const;
 
-/** One thing a run needs, as `orchestrator doctor` checks it: `required` for any run, `needed-for-pr` for a run
+/** One thing a run needs, as `octoflow doctor` checks it: `required` for any run, `needed-for-pr` for a run
  * that opens a pull request, `optional` for some runs only. When not ok, detail says why and fix what to run or do;
  * fix is empty when ok. */
 export interface SetupCheck {
@@ -168,7 +168,7 @@ export interface OfferedRole {
  * has none. */
 export type OfferedWorkflow = { name: string; description: string; roles: OfferedRole[] } | { name: string; error: string };
 
-/** What a run can be started with: the workflows, in the order `orchestrator workflows` lists them, and the
+/** What a run can be started with: the workflows, in the order `octoflow workflows` lists them, and the
  * harnesses an agent can run in. */
 export interface RunOptions {
   workflows: OfferedWorkflow[];

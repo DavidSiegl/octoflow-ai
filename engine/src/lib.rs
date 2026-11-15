@@ -1,8 +1,8 @@
-//! The orchestrator's engine: the workflows, run state, agents and checks the `orchestrator` program and the desktop
+//! The orchestrator's engine: the workflows, run state, agents and checks the `octoflow` program and the desktop
 //! app's `serve` drive (docs/architecture.md).
 
 /// The engine's version, `[package] version` of engine/Cargo.toml, which is the release's (ci/release-version.sh):
-/// what `orchestrator --version` prints and the desktop app's About shows.
+/// what `octoflow --version` prints and the desktop app's About shows.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod cli;

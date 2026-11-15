@@ -100,7 +100,7 @@ fn assert_no_errors(errors: &[String]) {
 }
 
 /// (line, command, the text of its arguments) for each command the document shows being run, in a code span or a fenced
-/// line: after `orchestrator`; and, in a code span, a command opening it with a flag after, as in `run --spec`. Shell
+/// line: after `octoflow`; and, in a code span, a command opening it with a flag after, as in `run --spec`. Shell
 /// comments, and what follows a pipe, `&&` or `;`, are left out.
 fn invocations<'a>(doc: &'a Doc, commands: &BTreeMap<String, BTreeSet<String>>) -> Vec<(Line<'a>, String, String)> {
     let mut found = Vec::new();
@@ -140,15 +140,16 @@ fn first_command(text: &str) -> &str {
     &text[..end]
 }
 
-/// Whether the word at byte i of text starts there: no word character before it.
+/// Whether the word at byte i of text starts there: no word character before it, nor a `/`, which makes it the last
+/// part of a path (`target/release/octoflow`), not a command.
 fn starts_word(text: &str, i: usize) -> bool {
-    !text[..i].chars().next_back().is_some_and(word_char)
+    !text[..i].chars().next_back().is_some_and(|c| word_char(c) || c == '/')
 }
 
-/// The first `orchestrator <command>` in text, where orchestrator starts a word and the command, a lowercase letter
-/// then lowercase letters and hyphens, follows after whitespace: the command and the rest of text after it.
+/// The first `octoflow <command>` in text, where octoflow starts a word (starts_word) and the command, a lowercase
+/// letter then lowercase letters and hyphens, follows after whitespace: the command and the rest of text after it.
 fn orchestrator_command(text: &str) -> Option<(&str, &str)> {
-    const PROGRAM: &str = "orchestrator";
+    const PROGRAM: &str = "octoflow";
     text.match_indices(PROGRAM).filter(|&(i, _)| starts_word(text, i)).find_map(|(i, _)| {
         let rest = &text[i + PROGRAM.len()..];
         let args = rest.trim_start();

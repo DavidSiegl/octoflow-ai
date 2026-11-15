@@ -50,7 +50,7 @@ fn workflows_lists_them() {
             .into(),
         String::new(),
         format!(
-            "Add one as {workflows}/NAME.toml; `orchestrator workflows default` prints the default as a file to \
+            "Add one as {workflows}/NAME.toml; `octoflow workflows default` prints the default as a file to \
              start from."
         ),
     ]);

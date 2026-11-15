@@ -17,7 +17,7 @@ cd "$(dirname "$0")/.."
 # The e2e scenarios and the docs check (engine/e2e) run the orchestrator binary this command builds, instrumented,
 # so that their runs of it count to its coverage and they build no engine of their own; they pass it this run's
 # LLVM_PROFILE_FILE. Without it they would build an engine of their own that nothing measures.
-E2E_ENGINE="${CARGO_TARGET_DIR:-$PWD/target}/llvm-cov-target/debug/orchestrator"
+E2E_ENGINE="${CARGO_TARGET_DIR:-$PWD/target}/llvm-cov-target/debug/octoflow"
 export E2E_ENGINE
 exec cargo llvm-cov nextest --locked --workspace --ignore-run-fail --profile ci --config-file ci/nextest.toml \
     --cobertura --output-path coverage-rust.xml "$@"

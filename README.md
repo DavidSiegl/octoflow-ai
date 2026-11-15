@@ -54,12 +54,12 @@ that wrote it:
   resume syntax.
 
 ```bash
-orchestrator run "add a token-bucket rate limiter" --role-agent review=codex --role-agent spec=agy
+octoflow run "add a token-bucket rate limiter" --role-agent review=codex --role-agent spec=agy
 ```
 
 ## Requirements
 
-`orchestrator doctor` checks these, here and where the agents run, and says how to fix each one that
+`octoflow doctor` checks these, here and where the agents run, and says how to fix each one that
 is missing. It also checks, as optional, what [the local quality gate](docs/quality-gate.md#the-local-gate) needs
 there; `doctor --setup-gate` writes the gate's `ci/gate.pin` and a starter `gate.toml` into the project.
 
@@ -112,10 +112,10 @@ straight away.
 Everywhere else, build it from a checkout with cargo, by the toolchain `rust-toolchain.toml` pins:
 
 ```bash
-cargo build --release --locked -p octoflow-engine   # target/release/orchestrator
+cargo build --release --locked -p octoflow-engine   # target/release/octoflow
 ```
 
-The examples below call it `orchestrator`: put the binary on your `PATH` under that name. `orchestrator --version`
+The examples below call it `octoflow`: put the binary on your `PATH` under that name. `octoflow --version`
 says which release it is.
 
 ### Desktop app
@@ -138,7 +138,7 @@ first time when a browser downloaded it, as it does the binary.
   workflow for its own agent and model (each `--role-agent` and `--role-model`, with what an empty
   one falls back to shown greyed; a role the next workflow you pick also has keeps its row's values), and two
   boxes: "No pull request", off as on the CLI, and "Separate worktree", on, so that runs started side by side do
-  not share the checkout. Start runs `orchestrator run` with them in a new workspace of the herdr server on this
+  not share the checkout. Start runs `octoflow run` with them in a new workspace of the herdr server on this
   computer, where you can watch and interrupt it as one you started by hand; the app then opens the run. That is
   so for a project on a machine too, whose agents then run there. With no herdr server running here, the app
   starts one of its own without a window, the herdr session `octoflow`, which stays up after the app closes:
@@ -146,12 +146,12 @@ first time when a browser downloaded it, as it does the binary.
   output goes to `octoflow/herdr-server.log` under `$XDG_STATE_HOME` (`~/.local/state` when that is unset or not
   an absolute path), whose last lines the form shows when it does not come up. A run that fails before it starts,
   such as one the checkout already holds, shows the last lines of its pane in the form.
-- **Clean up runs:** "Clean up runs…" above the overview shows what `orchestrator close --all` would do to each
+- **Clean up runs:** "Clean up runs…" above the overview shows what `octoflow close --all` would do to each
   run: the workspace, refs, worktree and branch it would close, delete or keep, the uncommitted changes that would
   go with a failed run's worktree, and why a run that is still running is skipped. Close closes the runs it showed,
   skipping any that changed since, and shows how each went; the overview then leaves them out. With nothing to
   close it says so.
-- **Workflows:** "Workflows…" in the top bar lists every workflow `orchestrator workflows` lists, with its file and
+- **Workflows:** "Workflows…" in the top bar lists every workflow `octoflow workflows` lists, with its file and
   description, or the error of one that does not load, which you fix by hand or delete. New starts from a copy of
   `default`, Duplicate from a copy of the one picked, and Edit opens a workflow's file (View a built-in one,
   read-only). The editor has a field for every key in [Your own workflows](#your-own-workflows): the roles as a
@@ -173,7 +173,7 @@ first time when a browser downloaded it, as it does the binary.
   this repository, its releases, Ko-fi, and the third-party licenses the app bundles, each opened in your browser.
 - **Project bar:** a project folder and, for agents on another machine, a saved herdr machine. The app reopens
   the project you opened last.
-- **Setup:** "Check setup…" shows what `orchestrator doctor --machine --cwd` checks for the open project, with
+- **Setup:** "Check setup…" shows what `octoflow doctor --machine --cwd` checks for the open project, with
   the fix for each problem. It opens by itself when the app starts, until you have closed it once with everything
   a run needs present. Its "Set up the quality gate" button does what `doctor --setup-gate` does.
 
@@ -222,62 +222,62 @@ security checks are in [serve](docs/architecture.md#serve).
 
 ```bash
 # Check what a run needs, and print a fix for each missing piece; exit status 1 if any is missing
-orchestrator doctor --machine <machine> --cwd ~/GitHub/myproject
+octoflow doctor --machine <machine> --cwd ~/GitHub/myproject
 
 # The same, then write what --quality-gate local reads into the project, where it is missing; commit it yourself
-orchestrator doctor --cwd ~/GitHub/myproject --setup-gate
+octoflow doctor --cwd ~/GitHub/myproject --setup-gate
 
 # From a herdr pane, on the project in the current directory
-orchestrator run "add a token-bucket rate limiter to the API client"
+octoflow run "add a token-bucket rate limiter to the API client"
 
 # Agents on a machine saved in herdr, driven from anywhere; --cwd is a path on that machine
-orchestrator run "add a token-bucket rate limiter" --machine <machine> --cwd ~/GitHub/myproject
+octoflow run "add a token-bucket rate limiter" --machine <machine> --cwd ~/GitHub/myproject
 
 # In a git worktree of the run's own, so the checkout stays yours and several runs can work at once
-orchestrator run --worktree "add a token-bucket rate limiter"
+octoflow run --worktree "add a token-bucket rate limiter"
 
 # Skip the interview: a spec you already have is the contract
-orchestrator run --spec docs/specs/rate-limiter.md
+octoflow run --spec docs/specs/rate-limiter.md
 
 # Another workflow: one of yours by name, or a workflow file anywhere; `workflows` lists them
-orchestrator run --workflow product-team "add a token-bucket rate limiter"
-orchestrator run --workflow-file examples/workflows/quick.toml "fix the off-by-one in the pager"
+octoflow run --workflow product-team "add a token-bucket rate limiter"
+octoflow run --workflow-file examples/workflows/quick.toml "fix the off-by-one in the pager"
 
 # With the quality gate after each Builder turn
-orchestrator run --quality-gate local "add a token-bucket rate limiter"
+octoflow run --quality-gate local "add a token-bucket rate limiter"
 
 # Run every ready spec under .scratch/<slug>/spec.md, one pull request each; see Draining specs
-orchestrator drain --worktree
+octoflow drain --worktree
 
 # A project's runs and whether each is still running; --json for scripts, --pr-state adds each PR's state
-orchestrator list --machine <machine> --cwd ~/GitHub/myproject
+octoflow list --machine <machine> --cwd ~/GitHub/myproject
 
 # One run in full, by its run id or the six-character key at its end
-orchestrator show e292fb
+octoflow show e292fb
 
 # Continue a stopped run
-orchestrator resume e292fb
+octoflow resume e292fb
 
 # Done with a failed or finished run: close its workspace, delete its local refs, and a failed --worktree run's
 # worktree and branch
-orchestrator close e292fb
+octoflow close e292fb
 
 # What closing every finished, failed and stale run would do, uncommitted files included; drop --dry-run to do it
-orchestrator close --all --dry-run
+octoflow close --all --dry-run
 
 # Delete every closed run's directory, so that list no longer shows it; metrics still prints its line. A run whose
 # branch prune has yet to delete stays until it has
-orchestrator forget --all
+octoflow forget --all
 
 # After you resolved a pull request's conflict and pushed: drop its warning, and its draft if it was approved
-orchestrator refresh e292fb
+octoflow refresh e292fb
 
 # Delete the branches of runs whose pull request is merged, or closed 14 days ago, and a leftover clean worktree
-orchestrator prune --dry-run
+octoflow prune --dry-run
 
 # Every finished run's metrics.json, forgotten runs' included, one JSON line each: outcome, roles, turns with times
 # and tokens
-orchestrator metrics | jq -s 'map(.rounds) | add / length'
+octoflow metrics | jq -s 'map(.rounds) | add / length'
 ```
 
 `--machine` and `--cwd` work the same way for every command, and `doctor` checks a project only when given
@@ -456,7 +456,7 @@ how it treats specs you edit while it runs.
 
 The roles, their prompts and their order are a workflow. Besides the built-in `default`, add your own as a TOML
 file in `~/.config/octoflow-ai/workflows/`, named after the workflow, or anywhere with
-`--workflow-file`. `orchestrator workflows` lists them and says why one does not load, and
+`--workflow-file`. `octoflow workflows` lists them and says why one does not load, and
 `workflows default` prints the default's full definition to start from. [`examples/workflows/`](examples/workflows)
 has three more: `spec-build-review` (the default as a file), `quick` (Builder ⇄ Reviewer, the task as the
 contract) and `product-team` (Product Manager → Architect → QA Engineer → Engineer ⇄ Tech Lead, then the Product

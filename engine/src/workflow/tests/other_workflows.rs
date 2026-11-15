@@ -290,8 +290,8 @@ fn a_run_finishes_and_opens_a_ready_pull_request() {
     );
     assert_eq!(
         parts[1],
-        "| Commit trailer | Value |\n| --- | --- |\n| Orchestrator-Run | `20260929-120000-a1b2c3` |\n| \
-         Orchestrator-Workflow | `solo` |\n| Orchestrator-Role | `build=claude/default` |"
+        "| Commit trailer | Value |\n| --- | --- |\n| Octoflow-Run | `20260929-120000-a1b2c3` |\n| \
+         Octoflow-Workflow | `solo` |\n| Octoflow-Role | `build=claude/default` |"
     );
     assert!(parts[2].starts_with("<details open>\n<summary>Spec</summary>"));
     assert!(pr.body.contains("<summary>Builder report (round 1)</summary>\n\nsolo report"));
@@ -302,11 +302,11 @@ fn a_run_finishes_and_opens_a_ready_pull_request() {
         strings(&[
             "Orchestrator run 20260929-120000-a1b2c3: FINISHED, unreviewed.",
             "--trailer",
-            "Orchestrator-Run: 20260929-120000-a1b2c3",
+            "Octoflow-Run: 20260929-120000-a1b2c3",
             "--trailer",
-            "Orchestrator-Workflow: solo",
+            "Octoflow-Workflow: solo",
             "--trailer",
-            "Orchestrator-Role: build=claude/default",
+            "Octoflow-Role: build=claude/default",
         ])
     );
     assert!(f.told.titles().contains(&"Run finished: FINISHED".to_string()));
@@ -351,7 +351,7 @@ fn a_gate_that_still_fails_is_not_finished() {
         "Opened by Octoflow AI run `20260929-120000-a1b2c3`. **QUALITY_GATE_FAILED**: its workflow has no review step, \
          and the quality gate still did not pass after the last quality round, so this is a draft."
     );
-    assert!(parts[1].split('\n').any(|l| l == "| Orchestrator-Gate | `ERROR after 2 quality rounds` |"), "{}", parts[1]);
+    assert!(parts[1].split('\n').any(|l| l == "| Octoflow-Gate | `ERROR after 2 quality rounds` |"), "{}", parts[1]);
     assert!(parts[2].starts_with("<details open>"));
     assert!(!pr.body.contains("Reviewer"));
     assert!(pr.body.contains("<summary>Quality gate (round 1)</summary>\n\nGATE: ERROR"));

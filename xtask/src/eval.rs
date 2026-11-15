@@ -2,7 +2,7 @@
 //! task under evals/tasks/ goes to the engine, a hidden test judges what its agents made, and the numbers are printed
 //! and kept. docs/design.md, Evals, says when to run it and what the numbers mean.
 //!
-//! Run it from a herdr pane, as `orchestrator run`: every trial is a real run, with real agents. RUN_ARGS, after `--`,
+//! Run it from a herdr pane, as `octoflow run`: every trial is a real run, with real agents. RUN_ARGS, after `--`,
 //! are given to the engine's `run` unchanged, such as `--model sonnet`; a workflow given there must start with a spec
 //! step (docs/design.md, Evals). The runner sets `--no-pr`, `--spec` and `--cwd` itself, and refuses those,
 //! `--machine` and `--worktree` there ([`OWN_FLAGS`]).
@@ -248,14 +248,14 @@ fn double_quoted(chars: &mut std::str::Chars, word: &mut String) -> Option<()> {
     }
 }
 
-/// The path of checkout's orchestrator binary, `cargo build --locked -p octoflow-engine --bin orchestrator` run there
+/// The path of checkout's orchestrator binary, `cargo build --locked -p octoflow-engine --bin octoflow` run there
 /// first, into checkout's target/xtask-engine. Errors: cargo is missing or fails, or reports no such binary.
 pub fn built_engine(checkout: &Path) -> Result<PathBuf, Error> {
     // A target directory of its own, as engine/e2e/src/engine.rs's build() has: the engine built alone resolves
     // its dependencies' features without the other members', so in the workspace's target directory it would relink
     // the orchestrator the engine's own tests run meanwhile.
     let output = cargo()
-        .args(["build", "--locked", "--quiet", "-p", "octoflow-engine", "--bin", "orchestrator"])
+        .args(["build", "--locked", "--quiet", "-p", "octoflow-engine", "--bin", "octoflow"])
         .arg("--message-format=json")
         .arg("--target-dir")
         .arg(checkout.join("target/xtask-engine"))

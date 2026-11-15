@@ -165,7 +165,7 @@ fn version_exits_0_with_the_engines_version() {
     for argv in [&["--version"][..], &["-V"]] {
         let e = parse(argv).unwrap_err();
         assert_eq!((e.kind(), e.exit_code()), (ErrorKind::DisplayVersion, 0), "{argv:?}");
-        assert_eq!(e.to_string(), format!("orchestrator {}\n", env!("CARGO_PKG_VERSION")), "{argv:?}");
+        assert_eq!(e.to_string(), format!("octoflow {}\n", env!("CARGO_PKG_VERSION")), "{argv:?}");
     }
 }
 
@@ -221,7 +221,7 @@ fn a_task_or_spec_is_needed() {
     let (message, status) = refused(&["run"]);
     assert!(message.contains("a task or --spec FILE is needed"), "{message}");
     // The run command's usage, not the program's.
-    assert!(message.contains("Usage: orchestrator run"), "{message}");
+    assert!(message.contains("Usage: octoflow run"), "{message}");
     assert_eq!(status, 2);
 }
 

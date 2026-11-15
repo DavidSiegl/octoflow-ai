@@ -489,7 +489,7 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         .arg(Arg::new("origin").long("origin").value_name("ORIGIN").action(ArgAction::Append).help(
             "Also answer requests from this origin, such as the desktop app's webview, tauri://localhost; repeatable",
         ));
-    clap::Command::new("orchestrator")
+    clap::Command::new("octoflow")
         .about(
             "Role-based handoff between agent sessions in herdr, each role in the harness of its choice; by default \
              Spec Collector -> Builder -> Reviewer, all in Claude Code.",
@@ -567,7 +567,7 @@ fn settings_args() -> Vec<Arg> {
             format!(
                 "Agent harness for every role, one of {}; overrides the agent key of a role in the workflow file \
                  (default {DEFAULT_HARNESS}). Each harness a run uses needs its CLI on PATH and its herdr \
-                 integration (`orchestrator doctor` names it) where the agents run",
+                 integration (`octoflow doctor` names it) where the agents run",
                 HARNESS_NAMES.join(", ")
             ),
         ),

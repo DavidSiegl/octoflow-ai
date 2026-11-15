@@ -448,7 +448,7 @@ fn starter_settings(present: &[&str], pyproject: Option<&str>) -> String {
     let has = |marker: &str| present.contains(&marker);
     let mut text = String::from(
         "# octoflow-gate's settings for judging this project (docs/quality-gate.md, \"The gate's settings\", in\n\
-         # https://github.com/DavidSiegl/octoflow-gate): written by `orchestrator doctor --setup-gate` or the desktop\n\
+         # https://github.com/DavidSiegl/octoflow-gate): written by `octoflow doctor --setup-gate` or the desktop\n\
          # app's \"Set up the quality gate\". A run with --quality-gate local reads this file from the run's base commit,\n\
          # so an edit counts once it is committed.\n\
          #\n\

@@ -496,10 +496,10 @@ fn finish(verdict: Option<&str>, state: &RunState, pipeline: &Pipeline, print: &
 static INVOKED_AS: OnceLock<String> = OnceLock::new();
 
 /// The program's name, as the usage and a hint that names a command to run give it: the file name it was invoked by
-/// (`orchestrator`, or a link's or a copy's own name), or `orchestrator`, the binary's, before main runs or when it was
+/// (`octoflow`, or a link's or a copy's own name), or `octoflow`, the binary's, before main runs or when it was
 /// invoked by none.
 pub fn program_name() -> &'static str {
-    INVOKED_AS.get().map_or("orchestrator", String::as_str)
+    INVOKED_AS.get().map_or("octoflow", String::as_str)
 }
 
 /// The command that resumes the run run_id names, by its key, with target's --machine and --cwd flags.

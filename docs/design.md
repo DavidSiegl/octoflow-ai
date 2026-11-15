@@ -112,9 +112,9 @@ until a resume finishes it. Its keys:
 So `jq` answers "which check fails most" and "how many rounds does a run take":
 
 ```sh
-orchestrator metrics | jq -c -s '[.[].quality_rounds[].fingerprints_by_check | keys[]]
+octoflow metrics | jq -c -s '[.[].quality_rounds[].fingerprints_by_check | keys[]]
                                     | group_by(.) | map({check: .[0], rounds: length})'
-orchestrator metrics | jq -s 'map(.rounds) | add / length'
+octoflow metrics | jq -s 'map(.rounds) | add / length'
 ```
 
 ### Token usage
@@ -233,16 +233,16 @@ The commit a run publishes ends with git trailers that say what made it, after t
 
 | Trailer | Value |
 | --- | --- |
-| `Orchestrator-Run` | the run id, which names the run directory and the run's `summary.md` |
-| `Orchestrator-Workflow` | the workflow's name |
-| `Orchestrator-Role` | one per role whose agent ran, in the order they first started: `role=harness/model`, the model `default` when no flag or workflow file set one; a role that ran in two harnesses over resumes names the one it ended in |
-| `Orchestrator-Gate` | with `--quality-gate` only: the last quality round's gate and how many quality rounds its review round took, such as `OK after 2 quality rounds`; `, then turned off` appended, as in `ERROR after 1 quality round, then turned off`, when `resume --no-quality-gate` turned the gate off after that quality round and the Builder changed the code since, so nothing judged the final change; no trailer when the gate was turned off before any analysis finished |
+| `Octoflow-Run` | the run id, which names the run directory and the run's `summary.md` |
+| `Octoflow-Workflow` | the workflow's name |
+| `Octoflow-Role` | one per role whose agent ran, in the order they first started: `role=harness/model`, the model `default` when no flag or workflow file set one; a role that ran in two harnesses over resumes names the one it ended in |
+| `Octoflow-Gate` | with `--quality-gate` only: the last quality round's gate and how many quality rounds its review round took, such as `OK after 2 quality rounds`; `, then turned off` appended, as in `ERROR after 1 quality round, then turned off`, when `resume --no-quality-gate` turned the gate off after that quality round and the Builder changed the code since, so nothing judged the final change; no trailer when the gate was turned off before any analysis finished |
 
 So which harness and model built and reviewed a change can be read from history:
 
 ```sh
-git log --format='%h %(trailers:key=Orchestrator-Role,valueonly,separator=%x2C )'
-git log --format='%(trailers:key=Orchestrator-Gate,valueonly,separator=%x2C )' | sort | uniq -c
+git log --format='%h %(trailers:key=Octoflow-Role,valueonly,separator=%x2C )'
+git log --format='%(trailers:key=Octoflow-Gate,valueonly,separator=%x2C )' | sort | uniq -c
 ```
 
 The commit is made once: a resume in `publish` whose commit already exists does not amend it. Signing agents'

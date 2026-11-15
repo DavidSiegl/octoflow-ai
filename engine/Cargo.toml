@@ -49,9 +49,9 @@ toml = { version = "1", default-features = false, features = ["parse", "preserve
 # 2026-11-13.
 tempfile = "3"
 
-# The orchestrator program: crate::cli::main.
+# The octoflow program: crate::cli::main.
 [[bin]]
-name = "orchestrator"
+name = "octoflow"
 path = "src/main.rs"
 
 # The engine's SIGINT, SIGTERM and SIGHUP, in processes of its own, which need a main of their own (the test's

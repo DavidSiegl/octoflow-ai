@@ -1,6 +1,6 @@
 # Quality gate
 
-The quality gate, and how `orchestrator run --quality-gate local` uses it: the [gate](#the-gate), the release this
+The quality gate, and how `octoflow run --quality-gate local` uses it: the [gate](#the-gate), the release this
 repository pins and how to run it by hand, [how a run judges its changes with it](#the-local-gate), the
 [report as a contract](#the-report-as-a-contract) between the gate and the orchestrator, the
 [Jenkins setup](#jenkins-setup) that judges this repository's own pull requests, the
@@ -90,7 +90,7 @@ Each round, the orchestrator:
    run with an error: nothing the Builder changes would mend the release or the machine. So does a download that
    fails or does not match the pin.
 
-What it needs on that machine, which the preflight checks before the interview, and `orchestrator doctor` as its
+What it needs on that machine, which the preflight checks before the interview, and `octoflow doctor` as its
 optional check `local quality gate`: Linux on x86_64, and on `PATH` curl, tar, setsid, a `ps` that takes
 `-ww -o stat=,args= -p` (BusyBox's does not), sha256sum (or shasum), a writable cache, and gitleaks; and, unchecked,
 whatever the project's `gate.toml` has the gate run: its `[[test]]` commands, the Python a project with Python tests
@@ -99,7 +99,7 @@ shellcheck, clippy or, for a project that tracks Go files, golangci-lint (withou
 `gate.toml` sets `[linters] golangci-lint = []`), all from `PATH`. A linter the project runs through uv, as this
 repository runs pymarkdown, is there when the orchestrator itself runs under `uv run`.
 
-`orchestrator doctor --setup-gate`, or "Set up the quality gate" in the desktop app's setup dialog, writes at the top
+`octoflow doctor --setup-gate`, or "Set up the quality gate" in the desktop app's setup dialog, writes at the top
 level of the project's checkout, on the machine its agents run on, whichever of these is missing: `ci/gate.pin`,
 naming `BUILT_IN_PIN`, and a starter `gate.toml` with a `[[test]]` for each kind of project it finds there
 (`Cargo.toml`: `cargo test --workspace`; pytest's settings, in `pytest.ini`, `conftest.py` or a `[tool.pytest…]`
@@ -500,7 +500,7 @@ written; with `QUALITY_OFF_NOTE`, naming the round's quality files, when the Bui
 with nothing when the round has none. The pull request carries that file. When no quality file judges the code it
 publishes, because the Builder changed the code after the last one or the gate was turned off before any analysis
 finished, it says so in a note and cites the run's last quality file from any round, if there is one, as `Quality
-gate (round R, before the last change)`, its `Orchestrator-Gate` trailer ending `, then turned off`. A workflow
+gate (round R, before the last change)`, its `Octoflow-Gate` trailer ending `, then turned off`. A workflow
 without a verdict step ends `FINISHED`. `show` prints the job on a `quality` line, or `off (turned off by resume)`.
 
 ### Edge cases
