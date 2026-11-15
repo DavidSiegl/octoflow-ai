@@ -1,7 +1,7 @@
 //! Cleaning up after a run nothing drives any more: the `close` command, for one run or every run of a project.
 
 use super::{record_in_state, Connected};
-use crate::constants::RUNS_DIR;
+use crate::constants::{EXIT_ERROR, RUNS_DIR};
 use crate::error::OrchestratorError;
 use crate::herdr::Workspaces;
 use crate::host::{git_status, Host};
@@ -108,6 +108,20 @@ enum BranchFate {
     Deleted,
     /// It stays, and why: it has commits beyond the base, or the run has no base to tell.
     Kept(String),
+}
+
+/// The `close` command in the project at cwd, run from world: close_run of the run run_ref names, or without one
+/// close_all, each with dry_run changing nothing. Returns the exit status: EXIT_ERROR when a run of close_all failed,
+/// else 0. Errors: as close_run's, or close_all's.
+pub fn close_command(world: &Connected, cwd: &str, run_ref: Option<&str>, dry_run: bool) -> Result<i32, OrchestratorError> {
+    let closer = Closer::of(world);
+    match run_ref {
+        Some(run_ref) => close_run(&closer, cwd, run_ref, dry_run).map(|_| 0),
+        None => {
+            let runs = close_all(&closer, cwd, dry_run)?;
+            Ok(if runs.iter().any(|run| matches!(run.outcome, Outcome::Failed(_))) { EXIT_ERROR } else { 0 })
+        }
+    }
 }
 
 /// Clean up after the run of the project at cwd that run_ref names, by its id or key, on world's host and in its
