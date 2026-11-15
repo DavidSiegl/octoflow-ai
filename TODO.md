@@ -457,3 +457,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `HEARTBEAT_SECONDS` give it such crashes, but their runs then differ from the uninterrupted one by design: a new
   snapshot id in the PR body, the quality turn's times and every later timestamp, the job's worktree added and
   removed again. Closes with `expected` normalising those for a crash that left a job, and adding its stop.
+- **Six places build a run directory's path by hand.** `crate::state::run_dir` is the one home for
+  `<cwd>/.orchestrator/runs/<run_id>`, which `forget` and `Host::forget_run` use; `cli::start` (`:79`), `cli::listing`
+  (`:298`), and the state.json paths of `refresh`, `close`, `drain` and `prune` still format it themselves. Raised by
+  cross-review 207 (F7). Closed by those calling `run_dir`.

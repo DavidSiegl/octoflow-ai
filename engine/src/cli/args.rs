@@ -49,7 +49,8 @@ pub enum Command {
     /// run of the project when None (--all); with dry_run, only say what closing would do.
     Close { target: Target, run_ref: Option<String>, dry_run: bool },
     /// `forget`: delete the directory of the closed run run_ref names, by its id or key, or of every closed run of the
-    /// project when None (--all), keeping their metrics; with dry_run, only say what would go.
+    /// project when None (--all), keeping their metrics, but not of one whose branch prune has yet to delete; with
+    /// dry_run, only say what would go.
     Forget { target: Target, run_ref: Option<String>, dry_run: bool },
     /// `serve`: serve the runs of any project, and start new ones, over HTTP on 127.0.0.1, also answering the origins
     /// given with --origin, in their order.
@@ -393,9 +394,11 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         .long_about(
             "Delete the run directory of a closed run, so that list, show and the app no longer show it. Its line of \
              metrics is kept first, in .orchestrator/metrics-archive.jsonl, so metrics prints the same as before. A \
-             run that is not closed is refused: close it first. With --all, every closed run in turn: a run that is \
-             not closed is counted and left, one whose state cannot be read is skipped and named, and a run whose \
-             directory cannot be deleted does not stop the others but makes the exit status 1.",
+             run that is not closed is refused: close it first. So is a closed run whose branch and worktree prune \
+             has yet to delete, as its state is how prune finds them: run prune after its pull request is merged or \
+             closed. With --all, every closed run in turn: a run refused alone is counted and left, one whose state \
+             cannot be read is skipped and named, and a run whose directory cannot be deleted does not stop the \
+             others but makes the exit status 1.",
         )
         .args(target_args())
         .arg(Arg::new("run_ref").value_name("RUN").help(RUN_REF_HELP))

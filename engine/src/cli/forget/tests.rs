@@ -5,7 +5,9 @@
 use serde_json::{json, Value};
 
 use crate::cli::fixture::Cli;
-use crate::constants::{EXIT_ERROR, RUNS_DIR};
+use crate::cli::Target;
+use crate::constants::{BRANCH_PREFIX, EXIT_ERROR, RUNS_DIR};
+use crate::json::object;
 use crate::state::RunState;
 
 const CLOSED: &str = "20261001-120000-a1b2c3";
@@ -21,10 +23,16 @@ fn cli() -> Cli {
 
 /// Save a run of /proj with id, closed when closed says how, with a metrics.json when done.
 fn add(cli: &Cli, id: &str, closed: Option<&str>, done: bool) {
+    add_with(cli, id, closed, done, |_| {});
+}
+
+/// add, with the state changed by edit before it is saved.
+fn add_with(cli: &Cli, id: &str, closed: Option<&str>, done: bool, edit: impl FnOnce(&mut RunState)) {
     let mut state = RunState::new(id, &format!("task of {id}"), "/proj");
     state.phase = if done { "done".into() } else { "build".into() };
     state.verdict = done.then(|| "APPROVE".into());
     state.closed = closed.map(String::from);
+    edit(&mut state);
     let mut host = cli.f.host.state();
     host.files.insert(format!("{}/state.json", dir(id)), format!("{}\n", state.to_json()));
     if done {
@@ -140,4 +148,62 @@ fn a_run_whose_state_cannot_be_read_is_skipped_and_named() {
     assert!(lines[1].starts_with("skipped: ") && lines[1].contains(FINISHED), "{out}");
     assert_eq!(lines[2], "1 forgotten, 0 not closed, 1 skipped");
     assert!(kept(&cli, FINISHED));
+}
+
+/// A finished --worktree run whose pull request close left open: its branch and worktree wait for prune.
+fn awaiting_prune(state: &mut RunState) {
+    state.branch = Some(format!("{BRANCH_PREFIX}add-a-rate-limiter-a1b2c3"));
+    state.pr_url = Some("https://github.com/o/r/pull/7".into());
+}
+
+#[test]
+fn a_closed_run_whose_branch_waits_for_prune_is_kept_until_prune_records_it() {
+    let cli = cli();
+    add_with(&cli, CLOSED, Some("workspace closed"), true, awaiting_prune);
+    let e = cli.error(&["forget", "--cwd", "/proj", CLOSED]);
+    assert_eq!(
+        e,
+        format!(
+            "run {CLOSED} keeps its branch and worktree for prune, which deletes them once its pull request is merged \
+             or closed: forget it after that"
+        )
+    );
+    let (status, out) = run(&cli, &["forget", "--all"]);
+    assert_eq!((status, out.as_str()), (0, "0 forgotten, 0 not closed, 1 waiting for prune, 0 skipped\n"));
+    assert!(kept(&cli, CLOSED));
+
+    // Once prune has recorded what it did with the branch, deleted or kept, the run may go.
+    for cleanup in ["deleted", "kept: the pull request is open"] {
+        add_with(&cli, CLOSED, Some("workspace closed"), true, |s| {
+            awaiting_prune(s);
+            s.branch_cleanup = Some(cleanup.into());
+        });
+        assert_eq!(run(&cli, &["forget", CLOSED]).0, 0, "{cleanup}");
+        assert!(!kept(&cli, CLOSED), "{cleanup}");
+    }
+}
+
+#[test]
+fn a_live_run_is_refused_and_left() {
+    let mut cli = cli();
+    cli.f.pid_alive = Box::new(|pid| pid == 4242);
+    add_with(&cli, RUNNING, None, false, |s| {
+        s.owner = Some(object([("host", Value::from("here")), ("pid", Value::from(4242)), ("started_at", Value::from("2026-10-01T12:02:00+00:00"))]));
+    });
+    assert!(run(&cli, &["list"]).1.contains("running: pid 4242 on here"));
+    let e = cli.error(&["forget", "--cwd", "/proj", RUNNING]);
+    assert_eq!(e, format!("run {RUNNING} is not closed: close it before forgetting it"));
+    assert_eq!(run(&cli, &["forget", "--all"]), (0, "0 forgotten, 1 not closed, 0 skipped\n".to_string()));
+    assert!(kept(&cli, RUNNING));
+}
+
+#[test]
+fn on_a_machine() {
+    let cli = cli();
+    add(&cli, CLOSED, Some("workspace closed"), true);
+    let (status, out) = run(&cli, &["forget", "--all", "--machine", "m"]);
+    assert_eq!((status, out), (0, format!("forgot run {CLOSED}: deleted {}\n1 forgotten, 0 not closed, 0 skipped\n", dir(CLOSED))));
+    assert!(!kept(&cli, CLOSED));
+    let target = Target { machine: Some("m".into()), cwd: Some("/proj".into()) };
+    assert_eq!(cli.command(&["forget", "--cwd", "/proj", CLOSED, "--machine", "m"]).target(), Some(&target));
 }

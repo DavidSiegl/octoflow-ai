@@ -1009,11 +1009,34 @@ fn forget_refuses_a_run_id_that_leads_out_of_the_runs_directory() {
     let d = TempDir::new();
     let host = ProcessHost::local(&Interrupt::new());
     put(&d.join(".orchestrator/keep"), "");
+    // A metrics.json that ".." would lead to: refused before it is read, so that nothing is archived either.
+    put(&d.join(".orchestrator/metrics.json"), "{\"run_id\": \"x\"}");
     for id in ["..", ".", "", "../x", "a/b"] {
         let e = host.forget_run(&d.path(), id).unwrap_err();
         assert!(e.0.contains("is not a name in the run directory"), "{id:?}: {e}");
     }
     assert!(std::path::Path::new(&d.join(".orchestrator/keep")).exists());
+    assert!(!std::path::Path::new(&d.join(".orchestrator/metrics-archive.jsonl")).exists());
+}
+
+#[test]
+fn a_run_the_archive_holds_twice_is_given_once() {
+    // As two forgets of the run at once can leave it.
+    let d = TempDir::new();
+    let host = ProcessHost::local(&Interrupt::new());
+    put(&d.join(".orchestrator/metrics-archive.jsonl"), "{\"run_id\":\"a\"}\n{\"run_id\":\"b\"}\n{\"run_id\":\"a\"}\n");
+    let ids: Vec<Value> = host.run_metrics(&d.path()).unwrap().into_iter().map(|m| m["run_id"].clone()).collect();
+    assert_eq!(ids, ["a", "b"]);
+}
+
+#[test]
+fn append_adds_to_the_end_of_a_file_and_makes_a_missing_one() {
+    let d = TempDir::new();
+    let host = ProcessHost::local(&Interrupt::new());
+    let path = d.join("new/dir/log");
+    host.append(&path, "one\n").unwrap();
+    host.append(&path, "two\n").unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "one\ntwo\n");
 }
 
 #[test]

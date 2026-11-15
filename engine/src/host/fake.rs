@@ -698,6 +698,12 @@ impl Host for FakeHost {
         Ok(self.state().files.get(path).cloned())
     }
 
+    /// write of the file's text in `files` with text at its end, as one write.
+    fn append(&self, path: &str, text: &str) -> Result<(), OrchestratorError> {
+        let old = self.read(path)?.unwrap_or_default();
+        self.write(path, &format!("{old}{text}"), false)
+    }
+
     /// Whether a file is at path, or under it as its directory: a fake holds files only.
     fn exists(&self, path: &str) -> Result<bool, OrchestratorError> {
         let s = self.state();
@@ -1058,7 +1064,7 @@ impl Host for FakeHost {
             return real.remove_run_dir(cwd, run_id);
         }
         crate::serve::runs::plain_name(run_id).map_err(|e| OrchestratorError(e.to_string()))?;
-        let dir = format!("{cwd}/{}/{run_id}", crate::constants::RUNS_DIR);
+        let dir = crate::state::run_dir(cwd, run_id);
         let mut s = self.state();
         if s.undeletable_run_dirs.contains(&dir) {
             return Err(OrchestratorError(format!("could not delete {dir}: rm: Permission denied")));

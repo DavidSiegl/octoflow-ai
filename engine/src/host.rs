@@ -23,7 +23,7 @@ pub use scan::{LeaksFound, Scanned};
 pub(crate) use process::{run_process, ProcessError};
 
 use crate::quality::Leak;
-use crate::state::SavedRun;
+use crate::state::{run_dir, SavedRun};
 
 #[cfg(test)]
 pub(crate) mod fake;
@@ -362,6 +362,15 @@ pub trait Host {
              || {{ rm -f -- \"$t\"; exit 1; }}"
         );
         self.check(&["sh", "-c", &script, "_", path], Some(text), DEFAULT_TIMEOUT).map(drop)
+    }
+
+    /// Add text at the end of the file at path, making the file and its directory when they are missing. Unlike
+    /// write, this does not read the file first, so an append made at the same time by another process is kept, not
+    /// overwritten; a text up to a few KiB goes in one write(2) to a file opened O_APPEND, which on a local Linux file
+    /// system does not interleave with another's. Errors: the file cannot be written.
+    fn append(&self, path: &str, text: &str) -> Result<(), OrchestratorError> {
+        let script = "mkdir -p -- \"$(dirname -- \"$1\")\" && cat >> \"$1\"";
+        self.check(&["sh", "-c", script, "_", path], Some(text), DEFAULT_TIMEOUT).map(drop)
     }
 
     /// Move the file at path to new_path, replacing what is there.
@@ -1050,7 +1059,7 @@ pub trait Host {
     /// directory outside the runs directory; or the directory cannot be deleted, part of it then perhaps gone.
     fn remove_run_dir(&self, cwd: &str, run_id: &str) -> Result<(), OrchestratorError> {
         crate::serve::runs::plain_name(run_id).map_err(|e| OrchestratorError(e.to_string()))?;
-        let dir = format!("{cwd}/{RUNS_DIR}/{run_id}");
+        let dir = run_dir(cwd, run_id);
         self.check(&["rm", "-rf", "--", &dir], None, DEFAULT_TIMEOUT)
             .map(drop)
             .map_err(|e| OrchestratorError(format!("could not delete {dir}: {e}")))
@@ -1059,20 +1068,21 @@ pub trait Host {
     /// Delete the directory of the run of the project at cwd whose id is run_id, keeping its metrics: run_metrics
     /// gives the same records before and after. The run's metrics.json, when it has one, is added to an archive in
     /// the project first, unless a forget_run interrupted after that step already added it, so that forgetting a run
-    /// again finishes the job. Whether the run may be deleted is the caller's to decide. Errors: the metrics.json or
-    /// the archive cannot be read, the metrics.json is not JSON, or the archive cannot be written (the directory then
-    /// stays), or remove_run_dir's.
+    /// again finishes the job. Forgets of other runs of the project at the same time keep their lines too. Whether
+    /// the run may be deleted is the caller's to decide. Errors: run_id is not a plain name, before anything is read;
+    /// the metrics.json or the archive cannot be read, the metrics.json is not JSON, or the archive cannot be written
+    /// (the directory then stays); or remove_run_dir's.
     fn forget_run(&self, cwd: &str, run_id: &str) -> Result<(), OrchestratorError> {
-        let metrics_path = format!("{cwd}/{RUNS_DIR}/{run_id}/{METRICS_FILE}");
+        crate::serve::runs::plain_name(run_id).map_err(|e| OrchestratorError(e.to_string()))?;
+        let metrics_path = format!("{}/{METRICS_FILE}", run_dir(cwd, run_id));
         if let Some(text) = self.read(&metrics_path)? {
             let metrics = serde_json::from_str::<Value>(&text)
                 .map_err(|e| OrchestratorError(format!("corrupt {metrics_path}: {e}")))?;
             let archive_path = format!("{cwd}/{METRICS_ARCHIVE}");
-            let archive = self.read(&archive_path)?.unwrap_or_default();
-            let archived = archived_metrics(&archive, &archive_path)?;
+            let archived = archived_metrics(&self.read(&archive_path)?.unwrap_or_default(), &archive_path)?;
             if !archived.iter().any(|m| m.get("run_id") == metrics.get("run_id")) {
                 // One line per run: a metrics.json a human pretty-printed is written back compact.
-                self.write(&archive_path, &format!("{archive}{metrics}\n"), false)?;
+                self.append(&archive_path, &format!("{metrics}\n"))?;
             }
         }
         self.remove_run_dir(cwd, run_id)
@@ -1165,13 +1175,15 @@ fn run_files_loop(keep: &str) -> String {
 /// live, the metrics of the runs of the project at cwd that still have a directory, with those of the runs forget_run
 /// deleted, as host's run_metrics gives them: ordered by run id, the order of the runs' directories, so that forgetting
 /// a run does not move its line. A run archived whose directory is still there, as after a forget_run that failed to
-/// delete it, is given once, from its directory. Errors: the archive cannot be read, or holds a line that is not JSON.
+/// delete it, is given once, from its directory, and so is a run the archive holds twice. Errors: the archive cannot be read, or holds a line that is not JSON.
 pub(crate) fn with_archived_metrics(host: &(impl Host + ?Sized), cwd: &str, live: Vec<Value>) -> Result<Vec<Value>, OrchestratorError> {
     let path = format!("{cwd}/{METRICS_ARCHIVE}");
     let run_id = |m: &Value| m.get("run_id").and_then(Value::as_str).unwrap_or_default().to_string();
     let live_ids: HashSet<String> = live.iter().map(run_id).collect();
     let mut all = archived_metrics(&host.read(&path)?.unwrap_or_default(), &path)?;
-    all.retain(|m| !live_ids.contains(&run_id(m)));
+    // Two forgets of one run at once can both find its line missing and both append it (Host::forget_run).
+    let mut seen = HashSet::new();
+    all.retain(|m| !live_ids.contains(&run_id(m)) && seen.insert(run_id(m)));
     all.extend(live);
     all.sort_by_key(run_id);
     Ok(all)

@@ -282,7 +282,7 @@ fn quality_flag_checks() {
 #[test]
 fn the_commands_about_runs_and_workflows() {
     let target = Target { machine: Some("m".into()), cwd: Some("~/p".into()) };
-    let cases: [(&[&str], Command); 9] = [
+    let cases: [(&[&str], Command); 10] = [
         (&["list"], Command::Runs(Target::default(), RunsCommand::List { json: false, pr_state: false })),
         (&["list", "--json", "--pr-state", "--machine", "m", "--cwd", "~/p"], Command::Runs(target.clone(), RunsCommand::List { json: true, pr_state: true })),
         (&["metrics"], Command::Runs(Target::default(), RunsCommand::Metrics)),
@@ -290,6 +290,7 @@ fn the_commands_about_runs_and_workflows() {
         (&["prune", "--dry-run"], Command::Runs(Target::default(), RunsCommand::Prune { dry_run: true })),
         (&["close", "--cwd", "~/p", "a1b2c3"], Command::Close { target: Target { machine: None, cwd: Some("~/p".into()) }, run_ref: Some("a1b2c3".into()), dry_run: false }),
         (&["forget", "--all", "--dry-run"], Command::Forget { target: Target::default(), run_ref: None, dry_run: true }),
+        (&["forget", "a1b2c3", "--machine", "m", "--cwd", "~/p"], Command::Forget { target: target.clone(), run_ref: Some("a1b2c3".into()), dry_run: false }),
         (&["workflows"], Command::Workflows(None)),
         (&["workflows", "quick"], Command::Workflows(Some("quick".into()))),
     ];

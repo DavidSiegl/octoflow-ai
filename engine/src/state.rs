@@ -14,6 +14,12 @@ use crate::workflow_file::run_pipeline;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// The directory that holds what the run whose id is run_id writes, its state.json among it, in the project whose
+/// checkout is at cwd.
+pub fn run_dir(cwd: &str, run_id: &str) -> String {
+    format!("{cwd}/{RUNS_DIR}/{run_id}")
+}
+
 /// What a run has done so far, saved as state.json in its run directory.
 ///
 /// state.json is one line of JSON, an object: "format", STATE_FORMAT, then these fields in this order, then the fields
@@ -471,7 +477,7 @@ impl RunState {
 
     /// The run directory, in the project's checkout.
     pub fn dir(&self) -> String {
-        format!("{}/{RUNS_DIR}/{}", self.cwd, self.run_id)
+        run_dir(&self.cwd, &self.run_id)
     }
 
     /// Where the agents work and the run's git steps run: its worktree, or else the project's checkout.
