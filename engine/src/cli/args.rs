@@ -466,6 +466,8 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
              Spec Collector -> Builder -> Reviewer, all in Claude Code.",
         )
         .version(crate::VERSION)
+        // Help wraps to the terminal's width, but no wider: longer lines are hard to read.
+        .max_term_width(100)
         .subcommand_required(true)
         .arg_required_else_help(true)
         // An unambiguous abbreviation of a long flag names that flag.

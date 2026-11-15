@@ -391,19 +391,28 @@ fn every_command(p: &clap::Command) -> Vec<&clap::Command> {
     std::iter::once(p).chain(p.get_subcommands().flat_map(every_command)).collect()
 }
 
+/// Each help, short and long, of command and every command under it, as [command name, help].
+fn every_help(command: &mut clap::Command) -> Vec<(String, String)> {
+    let name = command.get_name().to_string();
+    let mut helps = vec![
+        (name.clone(), command.render_help().to_string()),
+        (name, command.render_long_help().to_string()),
+    ];
+    for sub in command.get_subcommands_mut() {
+        helps.extend(every_help(sub));
+    }
+    helps
+}
+
 #[test]
 fn help_wraps_to_the_terminal_width() {
     let mut p = parser(&ConfigDir::at("/nowhere")).term_width(80);
     p.build();
-    let names: Vec<String> = every_command(&p).iter().map(|c| c.get_name().to_string()).collect();
-    for name in names {
-        let command = if name == p.get_name() { &mut p } else { p.find_subcommand_mut(&name).expect("listed") };
-        for help in [command.render_help().to_string(), command.render_long_help().to_string()] {
-            for line in help.lines() {
-                // A line may run over only when it is one word, such as a long path, that cannot be broken.
-                let one_word = line.split_whitespace().count() == 1;
-                assert!(line.chars().count() <= 80 || one_word, "{name}'s help has a line over 80 columns:\n{line}");
-            }
+    for (name, help) in every_help(&mut p) {
+        for line in help.lines() {
+            // A line may run over only when it is one word, such as a long path, that cannot be broken.
+            let one_word = line.split_whitespace().count() == 1;
+            assert!(line.chars().count() <= 80 || one_word, "{name}'s help has a line over 80 columns:\n{line}");
         }
     }
 }
