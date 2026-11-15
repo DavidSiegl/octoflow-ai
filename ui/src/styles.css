@@ -851,3 +851,157 @@ ul.checks {
   white-space: pre-wrap;
   font-family: ui-monospace, monospace;
 }
+
+/* The top bar's Workflows… button, at the end of the bar. */
+.workflows-button {
+  margin-left: auto;
+}
+
+/* The workflows dialog's list: each workflow's name, file, description or error, and its actions. */
+ul.workflow-list {
+  list-style: none;
+  padding: 0;
+}
+
+.workflow-list li {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--navy-hover);
+}
+
+.workflow-list .name {
+  font-weight: bold;
+}
+
+/* The workflow saved last. */
+.workflow-list li[aria-current="true"] .name {
+  color: var(--mint);
+}
+
+.workflow-list p {
+  margin: 2px 0;
+}
+
+.workflow-list .description {
+  color: var(--muted-mint);
+}
+
+.workflow-list .actions,
+.workflow-editor .actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* The workflow editor: wider than the other dialogs, for a prompt beside its placeholders. */
+.dialog.workflow-editor {
+  width: min(64em, 95vw);
+}
+
+.workflow-editor fieldset {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workflow-editor h3 {
+  margin: 8px 0 0;
+}
+
+.workflow-editor label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--muted-mint);
+}
+
+.workflow-editor .row {
+  display: flex;
+  gap: 12px;
+}
+
+.workflow-editor .row label {
+  flex: 1;
+}
+
+.workflow-editor table.roles input,
+.workflow-editor table.roles select {
+  width: 100%;
+}
+
+.workflow-editor th {
+  text-align: left;
+  color: var(--muted-mint);
+  font-weight: normal;
+}
+
+/* The steps by id, the selected one pressed. */
+.workflow-editor .steps ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.workflow-editor .steps button[aria-pressed="true"] {
+  border-color: var(--mint);
+  color: var(--mint);
+}
+
+.workflow-editor .step {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--navy-hover);
+  border-radius: 4px;
+}
+
+.workflow-editor .prompts {
+  display: flex;
+  gap: 12px;
+}
+
+.workflow-editor .texts {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workflow-editor textarea {
+  font-family: ui-monospace, monospace;
+}
+
+.workflow-editor .placeholders {
+  width: 14em;
+  color: var(--muted-mint);
+}
+
+.workflow-editor .placeholders ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.workflow-editor .flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.workflow-editor label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  color: var(--pale-mint);
+}
+
+.workflow-editor pre {
+  white-space: pre-wrap;
+  font-family: ui-monospace, monospace;
+}
