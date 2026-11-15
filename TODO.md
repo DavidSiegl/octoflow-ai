@@ -50,6 +50,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   which made `close` reach the saved server. Closed by `prepare` checking the old workspace in the server the state
   saved before the resume replaces it.
 
+- **Two processes saving one workflow at once can both pass its base check.** `save_workflow` and
+  `delete_workflow` (`engine/src/workflow_file.rs`) hold a lock from the check of the editor's `base` to the write
+  only within their process (`lock_edits`), so two serve processes, or serve and a hand edit, saving the same file in
+  the same instant could both pass, the later rename winning. Accepted as unlikely for one person's editor
+  (app-workflow-editor/01, cross-review 201 F2). Closed by a lock file beside the workflow, taken around check and
+  write.
 - **`Host::change_diff` is called only by tests.** Its one engine caller filled `RunChange::changed` for
   new-dependencies' line naming; todo/58 took the lines from the manifests' spans and removed the field, so the
   quality round no longer runs the diff. `engine/src/host/tests.rs`'s snapshot tests still use it with

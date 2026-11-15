@@ -24,6 +24,24 @@ pub const PROMPT_FIELDS: [&str; 9] =
 /// The per-step paths: (prefix, suffix) around a step's id.
 pub const PATH_FIELDS: [(&str, &str); 3] = [("", "_path"), ("prev_", "_path"), ("earlier_", "_paths")];
 
+/// The placeholders a prompt of a workflow whose steps have these ids may use: PROMPT_FIELDS, then each step's
+/// PATH_FIELDS names in step order (Step says what each holds), an id given twice adding its names once. Pipeline
+/// refuses a prompt that uses any other.
+pub fn prompt_placeholders<'a>(step_ids: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut names: Vec<String> = PROMPT_FIELDS.iter().map(|field| field.to_string()).collect();
+    for (name, _) in step_ids.into_iter().flat_map(path_names) {
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// Step id's per-step path placeholders, each with its PATH_FIELDS prefix, in PATH_FIELDS' order.
+fn path_names(id: &str) -> impl Iterator<Item = (String, &'static str)> + '_ {
+    PATH_FIELDS.iter().map(move |(pre, post)| (format!("{pre}{id}{post}"), *pre))
+}
+
 /// The run's state, RunState, in the run directory.
 pub const STATE_FILE: &str = "state.json";
 /// Written into the run directory whenever the run ends: what it did, and where its time went.
@@ -393,7 +411,8 @@ impl Pipeline {
         if let Some(dup) = names.iter().find(|x| names.iter().filter(|y| y == x).count() > 1) {
             return Some(format!("prompt placeholder {dup} names the files of two steps"));
         }
-        let known: BTreeSet<&str> = PROMPT_FIELDS.iter().copied().chain(names.iter().map(String::as_str)).collect();
+        let known_names = prompt_placeholders(self.steps.iter().map(|st| st.id.as_str()));
+        let known: BTreeSet<&str> = known_names.iter().map(String::as_str).collect();
         let first_edit = self.steps.iter().position(|st| st.edits).unwrap_or(self.steps.len());
         for (i, st) in self.steps.iter().enumerate() {
             if !self.roles.contains_key(&st.role) {
@@ -478,7 +497,7 @@ impl Pipeline {
     pub fn path_placeholders(&self) -> Vec<(String, &'static str, &Step)> {
         self.steps
             .iter()
-            .flat_map(|st| PATH_FIELDS.iter().map(move |(pre, post)| (format!("{pre}{}{post}", st.id), *pre, st)))
+            .flat_map(|st| path_names(&st.id).map(move |(name, pre)| (name, pre, st)))
             .collect()
     }
 
