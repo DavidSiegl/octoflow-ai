@@ -14,6 +14,8 @@ pub fn commands() -> &'static BTreeMap<String, BTreeSet<String>> {
         let top = help(&[]);
         section(&top, "Commands:")
             .iter()
+            // A command's own line is indented two spaces; a description wrapped onto the next line, further.
+            .filter(|line| line.starts_with("  ") && !line.starts_with("   "))
             .filter_map(|line| line.split_whitespace().next())
             .filter(|&name| name != "help")
             .map(|name| (name.to_string(), option_flags(&help(&[name]))))
