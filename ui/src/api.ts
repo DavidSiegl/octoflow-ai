@@ -355,7 +355,8 @@ export class Api {
   async workflow(name: string): Promise<EditableWorkflow> {
     const url = `${this.connection.url}/workflow?${new URLSearchParams({ name })}`;
     const { status, body } = await this.request(url);
-    const answer = body as {
+    // An answer that is not JSON reads as one with no keys.
+    const answer = (body ?? {}) as {
       definition?: WorkflowDefinition;
       path?: string | null;
       text?: string | null;
@@ -368,7 +369,7 @@ export class Api {
     if (status < 200 || status > 299) {
       throw new HttpError(status, answer.error ?? `HTTP ${status}`);
     }
-    if (typeof answer.definition !== "object") {
+    if (typeof answer.definition !== "object" || answer.definition === null) {
       throw new HttpError(status, "the answer has no definition");
     }
     const file =

@@ -40,7 +40,6 @@ export function WorkflowsDialog({ api, onClose }: { api: Api; onClose: () => voi
           return;
         }
         setOffered({ options });
-        setEntries({});
         for (const { name } of options.workflows) {
           api.workflow(name).then(
             (workflow) => current && setEntries((old) => ({ ...old, [name]: workflow })),
@@ -55,13 +54,19 @@ export function WorkflowsDialog({ api, onClose }: { api: Api; onClose: () => voi
     };
   }, [api, generation]);
   const options = offered && "options" in offered ? offered.options : null;
+  // Read the list again, its entries shown as being read, with no action, until they are: one offered before would
+  // act on the text read before the change.
+  const reread = () => {
+    setEntries({});
+    setGeneration((g) => g + 1);
+  };
   const confirmDelete = (target: Deleting) => {
     setDeleting(null);
     setFailure(null);
     api.deleteWorkflow(target.name, target.text).then(
       () => {
         setSaved((name) => (name === target.name ? null : name));
-        setGeneration((g) => g + 1);
+        reread();
       },
       (error: Error) => setFailure(error.message),
     );
@@ -69,7 +74,7 @@ export function WorkflowsDialog({ api, onClose }: { api: Api; onClose: () => voi
   const onSaved = (name: string) => {
     setEditing(null);
     setSaved(name);
-    setGeneration((g) => g + 1);
+    reread();
   };
   return (
     <>

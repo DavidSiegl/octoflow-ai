@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import type { WorkflowDefinition } from "../api";
 import { App } from "../App";
 import { CONNECTION, DEFAULT_DEFINITION, FakeEventSource, stubServer, workflowAnswers, type Answer, type FakeEdit } from "../test/fakes";
 
@@ -47,6 +48,27 @@ function changeAnswer(answers: Record<string, Answer>, name: string, change: Rec
   answers[name] = { status: old.status, body: { ...(old.body as object), ...change } };
 }
 
+/** Pick the option of select that shows text. */
+function choose(select: HTMLElement, text: string): void {
+  const option = within(select).getByRole("option", { name: text }) as HTMLOptionElement;
+  fireEvent.change(select, { target: { value: option.value } });
+}
+
+/** The editor on a copy of default, named mine, once its check passed; the editor. */
+async function newMine(edit: FakeEdit = {}): Promise<HTMLElement> {
+  await openWorkflows(edit);
+  fireEvent.click(within(screen.getByRole("dialog", { name: "workflows" })).getByRole("button", { name: "New…" }));
+  const form = await editor();
+  type(form, "Name", "mine");
+  await saveable(form);
+  return form;
+}
+
+/** The definition the last check or save sent. */
+function lastSent(edit: FakeEdit): WorkflowDefinition {
+  return edit.posts?.at(-1)?.body.definition as WorkflowDefinition;
+}
+
 function posts(edit: FakeEdit, path: string) {
   return (edit.posts ?? []).filter((p) => p.path === path).map((p) => p.body);
 }
@@ -80,7 +102,7 @@ describe("the workflows dialog", () => {
     fireEvent.click(within(form).getByRole("button", { name: "Add step" }));
     const step = within(form).getByRole("group", { name: "step step3" });
     type(step, "id", "test");
-    fireEvent.change(within(form).getByLabelText("role", { selector: "select" }), { target: { value: "test" } });
+    choose(within(form).getByLabelText("role", { selector: "select" }), "test");
     type(form, "file", "test.md");
     type(form, "prompt", "Test {build_path}.");
     fireEvent.click(within(form).getByLabelText("human_paced"));
@@ -124,6 +146,80 @@ describe("the workflows dialog", () => {
     expect(within(form).getByRole("button", { name: "Save" })).toBeDisabled();
     await new Promise((resolve) => setTimeout(resolve, 400));
     expect(posts(edit, "/workflow/check")).toHaveLength(checks);
+  });
+
+  it("keeps a loop on its step while the step's id is retyped, through empty and through another step's id", async () => {
+    const edit: FakeEdit = {};
+    const form = await newMine(edit);
+    fireEvent.click(within(form).getByRole("button", { name: "build" }));
+    for (const id of ["", "c", "review", "built"]) {
+      type(form, "id", id);
+    }
+    await saveable(form);
+    expect(lastSent(edit).steps.map((s) => [s.id, s.loop_to])).toEqual([["built", undefined], ["review", "built"]]);
+  });
+
+  it("keeps each role's steps while a role key is retyped through another's", async () => {
+    const edit: FakeEdit = {};
+    const form = await newMine(edit);
+    type(form, "role 2 key", "build");
+    expect(within(form).getByText("two roles have the key build")).toBeInTheDocument();
+    type(form, "role 2 key", "check");
+    await saveable(form);
+    expect(lastSent(edit).steps.map((s) => [s.id, s.role])).toEqual([["build", "build"], ["review", "check"]]);
+  });
+
+  it("names a loop back to a removed step, shown as removed, until another target is picked", async () => {
+    const form = await newMine();
+    fireEvent.click(within(form).getByRole("button", { name: "build" }));
+    fireEvent.click(within(form).getByRole("button", { name: "Remove step" }));
+    expect(within(form).getByText(/step review loops back to a step that was removed/)).toBeInTheDocument();
+    const loop = within(form).getByLabelText("loop_to");
+    expect((loop as HTMLSelectElement).selectedOptions[0]?.textContent).toBe("(removed)");
+    expect(within(form).getByRole("button", { name: "Save" })).toBeDisabled();
+    choose(loop, "none");
+    await saveable(form);
+  });
+
+  it("names a step whose role was removed, until another role is picked", async () => {
+    const form = await newMine();
+    const removes = within(form).getAllByRole("button", { name: "Remove" });
+    fireEvent.click(removes[1] as HTMLElement);
+    expect(within(form).getByText(/has no role: pick one/)).toBeInTheDocument();
+    fireEvent.click(within(form).getByRole("button", { name: "review" }));
+    choose(within(form).getByLabelText("role", { selector: "select" }), "build");
+    await saveable(form);
+  });
+
+  it("gives an added step an id no step has", async () => {
+    const form = await newMine();
+    fireEvent.click(within(form).getByRole("button", { name: "Add step" }));
+    fireEvent.click(within(form).getByRole("button", { name: "Add step" }));
+    fireEvent.click(within(form).getByRole("button", { name: "step3" }));
+    fireEvent.click(within(form).getByRole("button", { name: "Remove step" }));
+    fireEvent.click(within(form).getByRole("button", { name: "Add step" }));
+    expect(within(form).getAllByRole("button", { name: /^step\d$/ }).map((b) => b.textContent)).toEqual(["step4", "step5"]);
+  });
+
+  it("shows the server's problem with the name, a built-in one", async () => {
+    await openWorkflows({ problem: ({ name }) => (name === "default" ? "workflow default is built in; give the file another name" : null) });
+    fireEvent.click(within(screen.getByRole("dialog", { name: "workflows" })).getByRole("button", { name: "New…" }));
+    const form = await editor();
+    type(form, "Name", "default");
+    expect(await within(form).findByText("workflow default is built in; give the file another name")).toBeInTheDocument();
+    expect(within(form).getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("shows a new workflow's name that is taken, with no Reload", async () => {
+    const form = await newMine({ save: { status: 409, body: { error: "workflow mine exists already" } } });
+    fireEvent.click(within(form).getByRole("button", { name: "Save" }));
+    expect(await within(form).findByText("workflow mine exists already")).toBeInTheDocument();
+    expect(within(form).queryByRole("button", { name: "Reload" })).not.toBeInTheDocument();
+  });
+
+  it("shows an error answer that is not JSON by its status", async () => {
+    const dialog = await openWorkflows({ workflows: { ...workflowAnswers(), tdd: { status: 502, body: undefined } } });
+    expect(entry(dialog, "tdd")).toHaveTextContent("HTTP 502");
   });
 
   it("opens a built-in workflow read-only, with Duplicate… in place of Save, which makes it a new one", async () => {

@@ -42,6 +42,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **The Workflows dialog reads each workflow twice.** `WorkflowsDialog` (`ui/src/components/WorkflowsDialog.tsx`)
+  sends a `GET /workflow` for each workflow `/workflows` lists, for its file's path and text, though `/workflows` has
+  parsed every file already, and the editor reads its workflow again when it opens. Harmless for a handful of files
+  (app-workflow-editor/02, cross-review 203 R1-8). Closed by `/workflows` giving each file's path, and the list
+  reading a file's text only for Delete.
 - **A resumed run looks its old workspace up in the new herdr server.** `resumed_state` (`engine/src/cli/start.rs`)
   saves the resuming environment's server as `RunState::herdr_server`, then `Workflow::prepare`
   (`engine/src/workflow.rs`) asks that server for the saved `workspace_id`: a run started in the app (session

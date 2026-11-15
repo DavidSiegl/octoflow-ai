@@ -4,7 +4,6 @@ import {
   type EditableWorkflow,
   HttpError,
   STEP_FLAGS,
-  type StepDefinition,
   type WorkflowCheck,
   type WorkflowDefinition,
   type WorkflowFile,
@@ -18,16 +17,35 @@ export const CHECK_DELAY_MS = 300;
  * under a name still to choose, which is saved as a new file. */
 export type Opening = { edit: string } | { copy: string };
 
-/** A role as its row edits it: its key and every field, an empty agent or model for none. */
+/** The number of the last row made: each role and step row gets the next, which names it for as long as the editor
+ * holds it, whatever its key or id is edited to. */
+let lastRow = 0;
+const nextRow = () => ++lastRow;
+
+/** A role as its row edits it: the row's number, its key and every field, an empty agent or model for none. */
 interface DraftRole {
+  row: number;
   key: string;
   label: string;
   agent: string;
   model: string;
 }
 
-/** A step as the editor edits it: every field present, an empty again, fresh_note or loop_to for not set. */
-type DraftStep = Required<StepDefinition>;
+type Flags = Record<(typeof STEP_FLAGS)[number], boolean>;
+
+/** A step as the editor edits it: its row's number, and every field, an empty again or fresh_note for not set. Its
+ * role and the step it loops back to are named by their rows, not by key and id, so that renaming one does not lose
+ * the steps that name it; a row no longer in the draft is one that was removed. loopTo null is no loop. */
+type DraftStep = {
+  row: number;
+  id: string;
+  role: number;
+  file: string;
+  prompt: string;
+  again: string;
+  fresh_note: string;
+  loopTo: number | null;
+} & Flags;
 
 /** A workflow as the form holds it: every field as its widget holds it, text where a definition has a number. */
 interface Draft {
@@ -48,49 +66,75 @@ interface Opened {
   initial: Draft;
 }
 
-function draftStep(step: StepDefinition): DraftStep {
-  const flags = Object.fromEntries(STEP_FLAGS.map((flag) => [flag, step[flag] === true]));
-  return { ...step, again: step.again ?? "", fresh_note: step.fresh_note ?? "", loop_to: step.loop_to ?? "", ...flags } as DraftStep;
+/** A step of no flags and no texts, its own row, its role's row role and id id. */
+function newStep(id: string, role: number): DraftStep {
+  const flags = Object.fromEntries(STEP_FLAGS.map((flag) => [flag, false])) as Flags;
+  return { row: nextRow(), id, role, file: "", prompt: "", again: "", fresh_note: "", loopTo: null, ...flags };
 }
 
-/** definition under name, as the form holds it. */
+/** definition under name, as the form holds it. A step's role that the definition's roles lack, which a definition
+ * read from the server never has, gets a row of its own. */
 function draftOf(name: string, definition: WorkflowDefinition): Draft {
+  const roles = Object.entries(definition.roles).map(([key, r]) => ({
+    row: nextRow(),
+    key,
+    label: r.label,
+    agent: r.agent ?? "",
+    model: r.model ?? "",
+  }));
+  const roleRow = (key: string) => {
+    const found = roles.find((r) => r.key === key) ?? { row: nextRow(), key, label: key, agent: "", model: "" };
+    if (!roles.includes(found)) {
+      roles.push(found);
+    }
+    return found.row;
+  };
+  const steps = definition.steps.map((s) => {
+    const flags = Object.fromEntries(STEP_FLAGS.map((flag) => [flag, s[flag] === true])) as Flags;
+    return { ...newStep(s.id, roleRow(s.role)), file: s.file, prompt: s.prompt, again: s.again ?? "", fresh_note: s.fresh_note ?? "", ...flags };
+  });
+  definition.steps.forEach((s, i) => {
+    const step = steps[i];
+    if (step) {
+      step.loopTo = steps.find((t) => s.loop_to !== undefined && t.id === s.loop_to)?.row ?? null;
+    }
+  });
   return {
     name,
     description: definition.description ?? "",
     maxFiles: definition.max_files?.toString() ?? "",
     maxLines: definition.max_lines?.toString() ?? "",
     proofCommand: definition.proof_command ?? "",
-    roles: Object.entries(definition.roles).map(([key, r]) => ({ key, label: r.label, agent: r.agent ?? "", model: r.model ?? "" })),
-    steps: definition.steps.map(draftStep),
+    roles,
+    steps,
   };
 }
 
-/** A budget field's text as a definition holds it: absent when empty, a number when it is one, else the text, for
- * the server to name as the problem. */
+/** A budget field's text as a definition holds it: absent when empty, a number when it is a whole one JSON carries
+ * exactly, else the text, for the server to name as the problem. */
 function budget(text: string): number | string | undefined {
   const trimmed = text.trim();
   if (!trimmed) {
     return undefined;
   }
-  return /^\d+$/.test(trimmed) ? Number(trimmed) : trimmed;
+  return /^\d+$/.test(trimmed) && Number.isSafeInteger(Number(trimmed)) ? Number(trimmed) : trimmed;
 }
 
 /** The definition draft holds, in the canonical form a save writes: a field at its default left out. A role key given
- * twice keeps its last row, which draftProblem names first. */
+ * twice keeps its last row, and a removed role or loop target is written as none; draftProblem names both first. */
 function definitionOf(draft: Draft): WorkflowDefinition {
   const optional = <T,>(key: string, value: T | undefined | "") => (value === undefined || value === "" ? {} : { [key]: value });
   const steps = draft.steps.map((s) => {
     const flags = Object.fromEntries(STEP_FLAGS.filter((flag) => s[flag]).map((flag) => [flag, true]));
     return {
       id: s.id,
-      role: s.role,
+      role: draft.roles.find((r) => r.row === s.role)?.key ?? "",
       file: s.file,
       prompt: s.prompt,
       ...optional("again", s.again),
       ...optional("fresh_note", s.fresh_note),
       ...flags,
-      ...optional("loop_to", s.loop_to),
+      ...optional("loop_to", draft.steps.find((t) => t.row === s.loopTo)?.id),
     };
   });
   return {
@@ -105,8 +149,9 @@ function definitionOf(draft: Draft): WorkflowDefinition {
   } as WorkflowDefinition;
 }
 
-/** What the server cannot be asked about, since a definition's roles, a JSON object, cannot hold it: two roles under
- * one key. null when there is none. */
+/** What the server cannot be asked about, since a definition cannot hold it: two roles under one key, which its
+ * roles' JSON object would merge, and a step whose role or loop target was removed, which it would name by a key or
+ * id that may since have been given to another. null when there is none. */
 function draftProblem(draft: Draft): string | null {
   const seen = new Set<string>();
   for (const { key } of draft.roles) {
@@ -114,6 +159,14 @@ function draftProblem(draft: Draft): string | null {
       return `two roles have the key ${key || "(empty)"}`;
     }
     seen.add(key);
+  }
+  for (const s of draft.steps) {
+    if (!draft.roles.some((r) => r.row === s.role)) {
+      return `step ${s.id || "(no id)"} has no role: pick one`;
+    }
+    if (s.loopTo !== null && !draft.steps.some((t) => t.row === s.loopTo)) {
+      return `step ${s.id || "(no id)"} loops back to a step that was removed: pick another, or none`;
+    }
   }
   return null;
 }
@@ -219,33 +272,16 @@ export function WorkflowEditor({ api, agents, opening, onSaved, onClose }: Props
   const changed = JSON.stringify(draft) !== JSON.stringify(opened.initial);
 
   const edit = (change: Partial<Draft>) => setDraft({ ...draft, ...change });
-  const editRole = (i: number, change: Partial<DraftRole>) => {
-    const old = draft.roles[i];
-    if (!old) {
-      return;
-    }
-    const roles = draft.roles.map((r, j) => (j === i ? { ...r, ...change } : r));
-    // A renamed role takes its steps along.
-    const renamed = change.key !== undefined && change.key !== old.key;
-    const steps = renamed ? draft.steps.map((s) => (s.role === old.key ? { ...s, role: change.key as string } : s)) : draft.steps;
-    edit({ roles, steps });
-  };
-  const editStep = (change: Partial<DraftStep>) => {
-    const old = draft.steps[current];
-    if (!old) {
-      return;
-    }
-    // A renamed step takes the loops back to it along.
-    const renamed = change.id !== undefined && change.id !== old.id;
-    const steps = draft.steps.map((s, j) => {
-      const next = j === current ? { ...s, ...change } : s;
-      return renamed && next.loop_to === old.id ? { ...next, loop_to: change.id as string } : next;
-    });
-    edit({ steps });
-  };
+  const editRole = (i: number, change: Partial<DraftRole>) =>
+    edit({ roles: draft.roles.map((r, j) => (j === i ? { ...r, ...change } : r)) });
+  const editStep = (change: Partial<DraftStep>) => edit({ steps: draft.steps.map((s, j) => (j === current ? { ...s, ...change } : s)) });
   const addStep = () => {
-    const step = draftStep({ id: `step${draft.steps.length + 1}`, role: draft.roles[0]?.key ?? "", file: "", prompt: "" });
-    edit({ steps: [...draft.steps, step] });
+    let n = draft.steps.length + 1;
+    while (draft.steps.some((s) => s.id === `step${n}`)) {
+      n++;
+    }
+    // Row 0 is no role's, when there is none to give it.
+    edit({ steps: [...draft.steps, newStep(`step${n}`, draft.roles[0]?.row ?? 0)] });
     setCurrent(draft.steps.length);
   };
   const removeStep = () => {
@@ -288,13 +324,10 @@ export function WorkflowEditor({ api, agents, opening, onSaved, onClose }: Props
   };
   const reload = () => {
     setAsking(null);
-    if ("edit" in opening || draft.name) {
-      load({ edit: draft.name });
-    }
+    load(opening);
   };
 
   const step = draft.steps[current];
-  const roleKeys = draft.roles.map((r) => r.key);
   const placeholders = (checked ?? check)?.placeholders ?? [];
   const nameFixed = opened.file !== null || readOnly;
   return (
@@ -344,8 +377,7 @@ export function WorkflowEditor({ api, agents, opening, onSaved, onClose }: Props
             </thead>
             <tbody>
               {draft.roles.map((r, i) => (
-                // By index: the key is what the row edits.
-                <tr key={i}>
+                <tr key={r.row}>
                   <td>
                     <input aria-label={`role ${i + 1} key`} value={r.key} onChange={(e) => editRole(i, { key: e.target.value })} />
                   </td>
@@ -380,7 +412,7 @@ export function WorkflowEditor({ api, agents, opening, onSaved, onClose }: Props
             </tbody>
           </table>
           <div className="actions">
-            <button type="button" onClick={() => edit({ roles: [...draft.roles, { key: "", label: "", agent: "", model: "" }] })}>
+            <button type="button" onClick={() => edit({ roles: [...draft.roles, { row: nextRow(), key: "", label: "", agent: "", model: "" }] })}>
               Add role
             </button>
           </div>
@@ -389,7 +421,7 @@ export function WorkflowEditor({ api, agents, opening, onSaved, onClose }: Props
           <div className="steps">
             <ul aria-label="steps">
               {draft.steps.map((s, i) => (
-                <li key={i}>
+                <li key={s.row}>
                   <button type="button" aria-pressed={i === current} onClick={() => setCurrent(i)}>
                     {s.id || "(no id)"}
                   </button>
@@ -420,10 +452,11 @@ export function WorkflowEditor({ api, agents, opening, onSaved, onClose }: Props
                 </label>
                 <label>
                   role
-                  <select value={step.role} onChange={(e) => editStep({ role: e.target.value })}>
-                    {[...new Set([...roleKeys, step.role])].map((key) => (
-                      <option key={key} value={key}>
-                        {key || "(none)"}
+                  <select value={step.role} onChange={(e) => editStep({ role: Number(e.target.value) })}>
+                    {!draft.roles.some((r) => r.row === step.role) && <option value={step.role}>(removed)</option>}
+                    {draft.roles.map((r) => (
+                      <option key={r.row} value={r.row}>
+                        {r.key || "(no key)"}
                       </option>
                     ))}
                   </select>
@@ -434,15 +467,17 @@ export function WorkflowEditor({ api, agents, opening, onSaved, onClose }: Props
                 </label>
                 <label>
                   loop_to
-                  <select value={step.loop_to} onChange={(e) => editStep({ loop_to: e.target.value })}>
+                  <select
+                    value={step.loopTo ?? ""}
+                    onChange={(e) => editStep({ loopTo: e.target.value === "" ? null : Number(e.target.value) })}
+                  >
                     <option value="">none</option>
-                    {draft.steps
-                      .filter((s, i) => i !== current && s.id)
-                      .map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.id}
-                        </option>
-                      ))}
+                    {step.loopTo !== null && !draft.steps.some((s) => s.row === step.loopTo) && <option value={step.loopTo}>(removed)</option>}
+                    {draft.steps.map((s) => (
+                      <option key={s.row} value={s.row}>
+                        {s.id || "(no id)"}
+                      </option>
+                    ))}
                   </select>
                 </label>
               </div>
