@@ -383,3 +383,52 @@ fn serve_takes_each_origin_given() {
     assert_eq!(parse(&["serve", "x"]).unwrap_err().exit_code(), 2);
     assert_eq!(parse(&["serve", "--cwd", "/p"]).unwrap_err().exit_code(), 2);
 }
+
+// -- How the help reads ----------------------------------------------------------------------------------------------
+
+/// Every command, the program's own first, each with its subcommands.
+fn every_command(p: &clap::Command) -> Vec<&clap::Command> {
+    std::iter::once(p).chain(p.get_subcommands().flat_map(every_command)).collect()
+}
+
+/// Each help, short and long, of command and every command under it, as [command name, help].
+fn every_help(command: &mut clap::Command) -> Vec<(String, String)> {
+    let name = command.get_name().to_string();
+    let mut helps = vec![
+        (name.clone(), command.render_help().to_string()),
+        (name, command.render_long_help().to_string()),
+    ];
+    for sub in command.get_subcommands_mut() {
+        helps.extend(every_help(sub));
+    }
+    helps
+}
+
+#[test]
+fn help_wraps_to_the_terminal_width() {
+    let mut p = parser(&ConfigDir::at("/nowhere")).term_width(80);
+    p.build();
+    for (name, help) in every_help(&mut p) {
+        for line in help.lines() {
+            // A line may run over only when it is one word, such as a long path, that cannot be broken.
+            let one_word = line.split_whitespace().count() == 1;
+            assert!(line.chars().count() <= 80 || one_word, "{name}'s help has a line over 80 columns:\n{line}");
+        }
+    }
+}
+
+#[test]
+fn each_description_starts_with_a_capital() {
+    let p = parser(&ConfigDir::at("/nowhere"));
+    let lowercase = |text: Option<&clap::builder::StyledStr>| {
+        text.is_some_and(|t| t.to_string().starts_with(|c: char| c.is_lowercase()))
+    };
+    for command in every_command(&p) {
+        let name = command.get_name();
+        assert!(!lowercase(command.get_about()) && !lowercase(command.get_long_about()), "{name}'s description");
+        for arg in command.get_arguments() {
+            let id = arg.get_id();
+            assert!(!lowercase(arg.get_help()) && !lowercase(arg.get_long_help()), "{name} {id}'s description");
+        }
+    }
+}
