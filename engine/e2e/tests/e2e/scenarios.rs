@@ -8,7 +8,6 @@ use std::time::Instant;
 
 use octoflow_e2e::{array_at, checkout, object, object_at};
 use serde_json::Value;
-use octoflow_engine::env::CONFIG_DIR_NAME;
 use octoflow_engine::json::Object;
 
 use crate::app_recording::Batch;
@@ -168,7 +167,7 @@ pub fn workflow_quick(w: &mut World) {
 /// examples/workflows/spec-build-review.toml installed as a workflow file and run by --workflow, with --role-model and
 /// --agent.
 pub fn workflow_spec_build_review(w: &mut World) {
-    w.write(&format!("config/{CONFIG_DIR_NAME}/workflows/sbr.toml"), &read(&example("spec-build-review.toml")));
+    w.write_config("workflows/sbr.toml", &read(&example("spec-build-review.toml")));
     approved_roles(w);
     w.run(&[
         "run", "--workflow", "sbr", "--agent", "codex", "--role-model", "review=opus", "--permission-mode", "acceptEdits",
@@ -638,11 +637,8 @@ pub fn runs_closed_all(w: &mut World) {
 /// workflows: the list, with a workflow file and a prompt file installed; the default printed as a file; an example by
 /// its path; and a workflow file that does not load.
 pub fn workflows_listed(w: &mut World) {
-    w.write(&format!("config/{CONFIG_DIR_NAME}/workflows/quick.toml"), &read(&example("quick.toml")));
-    w.write(
-        &format!("config/{CONFIG_DIR_NAME}/prompts/BUILD_PROMPT.md"),
-        "Build {spec_path} in {cwd}; follow the conventions. Report to {build_path}.\n",
-    );
+    w.write_config("workflows/quick.toml", &read(&example("quick.toml")));
+    w.write_config("prompts/BUILD_PROMPT.md", "Build {spec_path} in {cwd}; follow the conventions. Report to {build_path}.\n");
     w.run(&["workflows"]);
     w.run(&["workflows", "default"]);
     w.run(&["workflows", &example("product-team.toml")]);
@@ -652,10 +648,7 @@ pub fn workflows_listed(w: &mut World) {
 
 /// A run with a prompt file: the Builder gets its text, the run saves it, and the commit says so.
 pub fn prompt_file_run(w: &mut World) {
-    w.write(
-        &format!("config/{CONFIG_DIR_NAME}/prompts/BUILD_PROMPT.md"),
-        "Build what {spec_path} says, in {cwd}. As your last step, report to {build_path}.\n",
-    );
+    w.write_config("prompts/BUILD_PROMPT.md", "Build what {spec_path} says, in {cwd}. As your last step, report to {build_path}.\n");
     approved_run(w);
 }
 
