@@ -4,7 +4,7 @@ use std::cell::{RefCell, RefMut};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
-use super::{Agent, Direction, Herdr, HerdrError, HerdrServer};
+use super::{Agent, Direction, Herdr, HerdrError, HerdrServer, Workspaces};
 use crate::error::OrchestratorError;
 use crate::harness::{harness, Resume};
 use crate::host::fake::FakeHost;
@@ -97,6 +97,9 @@ pub(crate) struct FakeHerdrState {
     pub prompt_with: Option<PromptWith>,
     /// What server answers: the herdr server the fake stands for. None, as for a herdr machine, unless a test sets it.
     pub server: Option<HerdrServer>,
+    /// (workspace, server) of each Workspaces call, in order, the server being the one the call reached: the one it
+    /// was given, else server's.
+    pub reached: Vec<(String, Option<HerdrServer>)>,
 }
 
 /// A test's own wait (FakeHerdrState::wait_with).
@@ -137,6 +140,7 @@ impl FakeHerdr {
                 interrupt: None,
                 prompt_with: None,
                 server: None,
+                reached: vec![],
             }),
         }
     }
@@ -176,6 +180,13 @@ impl FakeHerdr {
             self.state().before_call = Some(hook);
         }
         self.state().calls.push(call);
+    }
+
+    /// Record in reached that a call about workspace reached server, or the fake's own when None.
+    fn reach(&self, workspace: &str, server: Option<&HerdrServer>) {
+        let mut s = self.state();
+        let reached = server.cloned().or_else(|| s.server.clone());
+        s.reached.push((workspace.to_string(), reached));
     }
 }
 
@@ -295,10 +306,6 @@ impl Herdr for FakeHerdr {
         Ok(s.statuses.get(name).map(|status| Agent { status: status.clone(), session: s.sessions.get(name).cloned() }))
     }
 
-    fn workspace_exists(&self, workspace: &str) -> Result<bool, HerdrError> {
-        Ok(self.state().workspaces.contains(workspace))
-    }
-
     fn pane_exists(&self, pane: &str) -> Result<bool, HerdrError> {
         Ok(self.state().live_panes.contains(pane))
     }
@@ -308,7 +315,20 @@ impl Herdr for FakeHerdr {
         Ok(())
     }
 
-    fn close_workspace(&self, workspace: &str) -> Result<(), HerdrError> {
+    fn server(&self) -> Option<HerdrServer> {
+        self.state().server.clone()
+    }
+}
+
+/// The workspaces are one set, whatever server a call reaches; each call's server is recorded in reached.
+impl Workspaces for FakeHerdr {
+    fn workspace_exists(&self, workspace: &str, server: Option<&HerdrServer>) -> Result<bool, HerdrError> {
+        self.reach(workspace, server);
+        Ok(self.state().workspaces.contains(workspace))
+    }
+
+    fn close_workspace(&self, workspace: &str, server: Option<&HerdrServer>) -> Result<(), HerdrError> {
+        self.reach(workspace, server);
         self.record(Call::Close { workspace: workspace.to_string() });
         let mut s = self.state();
         if let Some(e) = s.close_error.clone() {
@@ -316,9 +336,5 @@ impl Herdr for FakeHerdr {
         }
         s.workspaces.remove(workspace);
         Ok(())
-    }
-
-    fn server(&self) -> Option<HerdrServer> {
-        self.state().server.clone()
     }
 }

@@ -42,6 +42,14 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **A resumed run looks its old workspace up in the new herdr server.** `resumed_state` (`engine/src/cli/start.rs`)
+  saves the resuming environment's server as `RunState::herdr_server`, then `Workflow::prepare`
+  (`engine/src/workflow.rs`) asks that server for the saved `workspace_id`: a run started in the app (session
+  `octoflow`) and resumed from a shell finds no workspace and opens a new one, leaving the old one open, and a
+  workspace with the same id in the new server would be taken for the run's. Raised while doing close-all-runs/03,
+  which made `close` reach the saved server. Closed by `prepare` checking the old workspace in the server the state
+  saved before the resume replaces it.
+
 - **`Host::change_diff` is called only by tests.** Its one engine caller filled `RunChange::changed` for
   new-dependencies' line naming; todo/58 took the lines from the manifests' spans and removed the field, so the
   quality round no longer runs the diff. `engine/src/host/tests.rs`'s snapshot tests still use it with

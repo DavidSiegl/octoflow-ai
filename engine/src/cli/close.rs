@@ -3,9 +3,59 @@
 use super::{record_in_state, Connected};
 use crate::constants::{EXIT_ERROR, RUNS_DIR};
 use crate::error::OrchestratorError;
-use crate::host::git_status;
+use crate::herdr::Workspaces;
+use crate::host::{git_status, Host};
+use crate::interrupt::Interrupt;
 use crate::runs::RUNNING;
 use crate::state::{find_run, refs_prefix, RunState, SavedRun};
+
+/// What close talks to: the project's host, its runs' herdr workspaces, this machine's processes, and where it says
+/// what it does: the CLI's from its Connected (Closer::of), or any other caller's from what it reaches a project
+/// with.
+#[derive(Clone, Copy)]
+pub struct Closer<'a> {
+    /// The machine the project is on: its runs' state, worktrees, branches and refs.
+    pub host: &'a dyn Host,
+    /// Where each run's herdr workspace is told and closed, in the server the run saved.
+    pub workspaces: &'a dyn Workspaces,
+    /// Once raised, close_all starts no further run.
+    pub interrupt: &'a Interrupt,
+    /// Whether a process of a pid exists on this machine, for telling a run still running (RunState::health).
+    pub pid_alive: &'a dyn Fn(i64) -> bool,
+    /// This machine's name, which an owner record of a run here names (crate::runs::local_host).
+    pub local_host: &'a str,
+    /// Where close prints, which takes text as Connected::stdout does, a line with its line end.
+    pub stdout: &'a dyn Fn(&str),
+}
+
+/// One run close_all looked at, and what became of it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunClosed {
+    /// The run's id.
+    pub run_id: String,
+    /// What close_all did with the run, or with a dry run would do.
+    pub outcome: Outcome,
+}
+
+/// What became of one run of close_all.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    /// Closed, or with a dry run to be closed.
+    Closed {
+        /// What closing recorded as the run's closed (Plan::summary), or with a dry run what it would do
+        /// (Plan::preview).
+        done: String,
+        /// What went, or would go, with the run's discarded worktree: its uncommitted changes, one line of git status
+        /// each; empty when the worktree is kept, clean or gone, or the run has none.
+        discarded: Vec<String>,
+    },
+    /// Closed before, by close or since the sweep began: what close recorded then.
+    AlreadyClosed(String),
+    /// Not closed, and why: Decision::Refused's reason, or the run is gone.
+    Skipped(String),
+    /// Its close failed, with this error; what it did before the failure stays done.
+    Failed(String),
+}
 
 /// What close does to one run, decided just before it is done (decide), so that a dry run says what closing would do.
 enum Decision<'r> {
@@ -60,11 +110,24 @@ enum BranchFate {
     Kept(String),
 }
 
-/// Clean up after the run of the project at cwd that run_ref names, by its id or key, on world's herdr and host,
-/// record what was done as the run's closed in its state.json, so that resume refuses it, and return that. Prints
-/// each step on world's standard output. With dry_run, change nothing: print what would be discarded with the
-/// worktree and a line naming each thing closing would close, delete or keep (Plan::preview), and return the line
-/// closing would record.
+/// The `close` command in the project at cwd, run from world: close_run of the run run_ref names, or without one
+/// close_all, each with dry_run changing nothing. Returns the exit status: EXIT_ERROR when a run of close_all failed,
+/// else 0. Errors: as close_run's, or close_all's.
+pub fn close_command(world: &Connected, cwd: &str, run_ref: Option<&str>, dry_run: bool) -> Result<i32, OrchestratorError> {
+    let closer = Closer::of(world);
+    match run_ref {
+        Some(run_ref) => close_run(&closer, cwd, run_ref, dry_run).map(|_| 0),
+        None => {
+            let runs = close_all(&closer, cwd, dry_run)?;
+            Ok(if runs.iter().any(|run| matches!(run.outcome, Outcome::Failed(_))) { EXIT_ERROR } else { 0 })
+        }
+    }
+}
+
+/// Clean up after the run of the project at cwd that run_ref names, by its id or key, on world's host and in its
+/// workspace's herdr server, record what was done as the run's closed in its state.json, so that resume refuses it,
+/// and return that. Says each step through world. With dry_run, change nothing: say what would be discarded with the
+/// worktree and a line naming each thing closing would close, delete or keep (Plan::preview), and return that line.
 ///
 /// Every run loses its workspace and its local refs (crate::state::refs_prefix), which hold the files its steps locked
 /// and which nothing else deletes once it is closed. A failed or stale --worktree run also loses its worktree, changes
@@ -75,8 +138,8 @@ enum BranchFate {
 ///
 /// Errors: no run or several match run_ref; the run is Decision::Refused; herdr or git cannot tell what is there; a
 /// step fails; or the state.json changed since it was read.
-pub fn close_run(world: &Connected, cwd: &str, run_ref: &str, dry_run: bool) -> Result<String, OrchestratorError> {
-    let runs = world.with.host.run_states(cwd)?;
+pub fn close_run(world: &Closer, cwd: &str, run_ref: &str, dry_run: bool) -> Result<String, OrchestratorError> {
+    let runs = world.host.run_states(cwd)?;
     match decide(world, cwd, find_run(&runs, run_ref, cwd)?)? {
         Decision::AlreadyClosed(state) => {
             let closed = state.closed.clone().unwrap_or_default();
@@ -89,72 +152,68 @@ pub fn close_run(world: &Connected, cwd: &str, run_ref: &str, dry_run: bool) -> 
 }
 
 /// Close every run of the project at cwd as close_run does, in run id order, or with dry_run say what closing each
-/// would do, then print a count of the runs closed (or to close), skipped and already closed, and failed if any. A
+/// would do, then say a count of the runs closed (or to close), skipped and already closed, and failed if any. A
 /// Decision::Refused run is skipped with a line saying why; one already closed is only counted. Each run is read again
 /// just before it is closed, so one that started running, or was removed, since the sweep began is skipped. A run
 /// whose close fails gets a line with the error, and the rest are still closed. A raised Interrupt starts no further
 /// run; the run being closed then finishes or fails as close_run would, and a second sweep finishes it.
 ///
-/// Returns the exit status: 0, or EXIT_ERROR when any run's close failed. Errors: the runs cannot be read at the start.
-pub fn close_all(world: &Connected, cwd: &str, dry_run: bool) -> Result<i32, OrchestratorError> {
-    let host = world.with.host;
-    let closed_as_read = |run: &SavedRun| run.state().is_ok_and(is_closed);
-    let mut runs: Vec<(String, bool)> =
-        host.run_states(cwd)?.iter().map(|run| (run.shown().run_id.clone(), closed_as_read(run))).collect();
+/// Returns each run looked at, in that order; none after an Interrupt. Errors: the runs cannot be read at the start.
+pub fn close_all(world: &Closer, cwd: &str, dry_run: bool) -> Result<Vec<RunClosed>, OrchestratorError> {
+    let mut runs: Vec<(String, Option<String>)> =
+        world.host.run_states(cwd)?.iter().map(|run| (run.shown().run_id.clone(), closed_as_read(run))).collect();
     runs.sort();
-    let (mut closed, mut skipped, mut already, mut failed) = (0, 0, 0, 0);
-    for (id, was_closed) in runs {
-        if world.with.interrupt.is_raised() {
+    let mut looked_at = vec![];
+    for (run_id, recorded) in runs {
+        if world.interrupt.is_raised() {
             break;
         }
         // A closed run stays closed: resume refuses it.
-        if was_closed {
-            already += 1;
-            continue;
+        let outcome = match recorded {
+            Some(recorded) => Outcome::AlreadyClosed(recorded),
+            None => sweep_run(world, cwd, &run_id, dry_run).unwrap_or_else(|e| Outcome::Failed(e.to_string())),
+        };
+        match &outcome {
+            Outcome::Skipped(why) => world.say(&format!("skipped: {why}")),
+            Outcome::Failed(e) => world.say(&format!("could not close run {run_id}: {e}")),
+            Outcome::Closed { .. } | Outcome::AlreadyClosed(_) => {}
         }
-        match sweep_run(world, cwd, &id, dry_run) {
-            Ok(Swept::Closed) => closed += 1,
-            Ok(Swept::AlreadyClosed) => already += 1,
-            Ok(Swept::Skipped(why)) => {
-                world.say(&format!("skipped: {why}"));
-                skipped += 1;
-            }
-            Err(e) => {
-                world.say(&format!("could not close run {id}: {e}"));
-                failed += 1;
-            }
-        }
+        looked_at.push(RunClosed { run_id, outcome });
     }
+    let count = |of: fn(&Outcome) -> bool| looked_at.iter().filter(|r| of(&r.outcome)).count();
+    let closed = count(|o| matches!(o, Outcome::Closed { .. }));
+    let skipped = count(|o| matches!(o, Outcome::Skipped(_)));
+    let already = count(|o| matches!(o, Outcome::AlreadyClosed(_)));
+    let failed = count(|o| matches!(o, Outcome::Failed(_)));
     let verb = if dry_run { "to close" } else { "closed" };
     let failures = if failed > 0 { format!(", {failed} failed") } else { String::new() };
     world.say(&format!("{closed} {verb}, {skipped} skipped, {already} already closed{failures}"));
-    Ok(if failed > 0 { EXIT_ERROR } else { 0 })
+    Ok(looked_at)
+}
+
+/// What run's state.json, as close_all first read it, records as its closed; None when it records none or cannot be
+/// read.
+fn closed_as_read(run: &SavedRun) -> Option<String> {
+    run.state().ok().filter(|state| is_closed(state)).and_then(|state| state.closed.clone())
 }
 
 /// Read the run of the project at cwd whose id is run_id again, and close it as close_all says, or with dry_run say
 /// what closing it would do; a run whose state.json is gone is skipped, as nothing is left to close. Errors: its
 /// state.json cannot be read, or its close fails.
-fn sweep_run(world: &Connected, cwd: &str, run_id: &str, dry_run: bool) -> Result<Swept, OrchestratorError> {
-    let Some(run) = world.with.host.run_state(cwd, run_id)? else {
-        return Ok(Swept::Skipped(OrchestratorError(format!(
+fn sweep_run(world: &Closer, cwd: &str, run_id: &str, dry_run: bool) -> Result<Outcome, OrchestratorError> {
+    let Some(run) = world.host.run_state(cwd, run_id)? else {
+        return Ok(Outcome::Skipped(format!(
             "run {run_id} is gone: its state.json was removed from {cwd}/{RUNS_DIR} since the sweep began"
-        ))));
+        )));
     };
     Ok(match decide(world, cwd, &run)? {
-        Decision::AlreadyClosed(_) => Swept::AlreadyClosed,
-        Decision::Refused(why) => Swept::Skipped(why),
-        Decision::Close(plan) => plan.close(world, cwd, dry_run).map(|_| Swept::Closed)?,
+        Decision::AlreadyClosed(state) => Outcome::AlreadyClosed(state.closed.clone().unwrap_or_default()),
+        Decision::Refused(why) => Outcome::Skipped(why.to_string()),
+        Decision::Close(plan) => {
+            let done = plan.close(world, cwd, dry_run)?;
+            Outcome::Closed { done, discarded: plan.discarded().to_vec() }
+        }
     })
-}
-
-/// What became of one run of close_all that did not fail.
-enum Swept {
-    /// Closed, or with a dry run said what closing would do.
-    Closed,
-    /// Closed since the sweep read the runs.
-    AlreadyClosed,
-    /// Not closed, and why: Decision::Refused, or the run is gone.
-    Skipped(OrchestratorError),
 }
 
 /// Whether state records that the run was closed.
@@ -162,10 +221,10 @@ fn is_closed(state: &RunState) -> bool {
     state.closed.as_deref().is_some_and(|c| !c.is_empty())
 }
 
-/// What closing run, of the project at cwd, would do now, as world's herdr and host find it; changes nothing.
-/// Errors: herdr or git cannot tell what is there.
-fn decide<'r>(world: &Connected, cwd: &str, run: &'r SavedRun) -> Result<Decision<'r>, OrchestratorError> {
-    let host = world.with.host;
+/// What closing run, of the project at cwd, would do now, as world's host and the run's herdr server find it; changes
+/// nothing. Errors: herdr or git cannot tell what is there.
+fn decide<'r>(world: &Closer, cwd: &str, run: &'r SavedRun) -> Result<Decision<'r>, OrchestratorError> {
+    let host = world.host;
     let state = match run.state() {
         Ok(state) => state,
         Err(e) => return Ok(Decision::Refused(e)),
@@ -173,7 +232,7 @@ fn decide<'r>(world: &Connected, cwd: &str, run: &'r SavedRun) -> Result<Decisio
     if is_closed(state) {
         return Ok(Decision::AlreadyClosed(state));
     }
-    let health = run.health(world.local_host, world.with.pid_alive);
+    let health = run.health(world.local_host, world.pid_alive);
     if let Some((RUNNING, why)) = &health {
         return Ok(Decision::Refused(OrchestratorError(format!(
             "run {} is still running ({why}); stop it before closing it",
@@ -183,7 +242,7 @@ fn decide<'r>(world: &Connected, cwd: &str, run: &'r SavedRun) -> Result<Decisio
     // Stale and not done: its orchestrator died mid-run. A done run stale while ending finished its change.
     let failed = state.error.as_deref().is_some_and(|e| !e.is_empty()) || (health.is_some() && !state.done());
     let workspace = match Some(state.workspace_id.as_str()).filter(|w| !w.is_empty()) {
-        Some(w) if world.with.herdr.workspace_exists(w)? => Some(w),
+        Some(w) if world.workspaces.workspace_exists(w, state.herdr_server.as_ref())? => Some(w),
         _ => None,
     };
     let worktree = match state.worktree.as_deref().filter(|w| !w.is_empty()) {
@@ -192,7 +251,7 @@ fn decide<'r>(world: &Connected, cwd: &str, run: &'r SavedRun) -> Result<Decisio
                 true => Some(git_status(host, path)?.lines().map(String::from).collect()),
                 false => None,
             };
-            WorktreeFate::Discarded { path, changes, branch: branch_fate(world, cwd, state)? }
+            WorktreeFate::Discarded { path, changes, branch: branch_fate(host, cwd, state)? }
         }
         Some(path) if host.is_worktree(cwd, path)? => WorktreeFate::Kept(path),
         _ => WorktreeFate::None,
@@ -209,11 +268,10 @@ fn decide<'r>(world: &Connected, cwd: &str, run: &'r SavedRun) -> Result<Decisio
 
 /// The branch in cwd of the failed run of state and what close does to it; None when it has none or it is gone.
 fn branch_fate<'r>(
-    world: &Connected,
+    host: &dyn Host,
     cwd: &str,
     state: &'r RunState,
 ) -> Result<Option<(&'r str, BranchFate)>, OrchestratorError> {
-    let host = world.with.host;
     let Some(branch) = state.branch.as_deref().filter(|b| !b.is_empty()) else { return Ok(None) };
     if host.branch_commit(cwd, branch)?.is_none() {
         return Ok(None);
@@ -226,6 +284,25 @@ fn branch_fate<'r>(
         },
     };
     Ok(Some((branch, fate)))
+}
+
+impl<'a> Closer<'a> {
+    /// What close talks to when run from world, printing on its standard output.
+    pub fn of(world: &Connected<'a>) -> Closer<'a> {
+        Closer {
+            host: world.with.host,
+            workspaces: world.with.herdr,
+            interrupt: world.with.interrupt,
+            pid_alive: world.with.pid_alive,
+            local_host: world.local_host,
+            stdout: world.stdout,
+        }
+    }
+
+    /// Print line on stdout; line has no line end, which this adds.
+    fn say(&self, line: &str) {
+        (self.stdout)(&format!("{line}\n"));
+    }
 }
 
 impl Plan<'_> {
@@ -284,17 +361,18 @@ impl Plan<'_> {
     }
 
     /// Carry out the plan on the run of the project at cwd, or with dry_run only say what it would do, as close_run
-    /// says; return its summary. Errors: as close_run's for a step or the record.
-    fn close(&self, world: &Connected, cwd: &str, dry_run: bool) -> Result<String, OrchestratorError> {
-        let (host, run_id) = (world.with.host, &self.state.run_id);
-        let closed = self.summary();
+    /// says; return its summary, or with dry_run its preview. Errors: as close_run's for a step or the record.
+    fn close(&self, world: &Closer, cwd: &str, dry_run: bool) -> Result<String, OrchestratorError> {
+        let (host, run_id) = (world.host, &self.state.run_id);
         if dry_run {
+            let preview = self.preview();
             self.say_changes(world, "would discard");
-            world.say(&format!("would close run {run_id}: {}", self.preview()));
-            return Ok(closed);
+            world.say(&format!("would close run {run_id}: {preview}"));
+            return Ok(preview);
         }
+        let closed = self.summary();
         if let Some(workspace) = self.workspace {
-            world.with.herdr.close_workspace(workspace)?;
+            world.workspaces.close_workspace(workspace, self.state.herdr_server.as_ref())?;
             world.say(&format!("closed workspace {workspace}"));
         }
         if let WorktreeFate::Discarded { path, changes, branch } = &self.worktree {
@@ -327,14 +405,21 @@ impl Plan<'_> {
         Ok(closed)
     }
 
-    /// Print what goes with a discarded worktree, if anything does, under a line "<doing> in <worktree>:".
-    fn say_changes(&self, world: &Connected, doing: &str) {
-        if let WorktreeFate::Discarded { path, changes: Some(changes), .. } = &self.worktree {
-            if !changes.is_empty() {
-                world.say(&format!("{doing} in {path}:"));
-                for line in changes {
-                    world.say(&format!("    {line}"));
-                }
+    /// What goes with a discarded worktree: its uncommitted changes, one line of git status each; empty when the
+    /// worktree is kept, clean or already gone, or the run has none.
+    fn discarded(&self) -> &[String] {
+        match &self.worktree {
+            WorktreeFate::Discarded { changes: Some(changes), .. } => changes,
+            _ => &[],
+        }
+    }
+
+    /// Say what goes with a discarded worktree, if anything does, under a line "<doing> in <worktree>:".
+    fn say_changes(&self, world: &Closer, doing: &str) {
+        if let (WorktreeFate::Discarded { path, .. }, [_, ..]) = (&self.worktree, self.discarded()) {
+            world.say(&format!("{doing} in {path}:"));
+            for line in self.discarded() {
+                world.say(&format!("    {line}"));
             }
         }
     }

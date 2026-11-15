@@ -13,7 +13,7 @@ use crate::cli::fixture::Cli;
 use crate::cli::{Command, Target};
 use crate::constants::{APPROVE, EXIT_ERROR, EXIT_INTERRUPTED, HEARTBEAT_SECONDS, STALE_SECONDS, WORKTREES_DIR};
 use crate::herdr::fake::Call;
-use crate::herdr::HerdrError;
+use crate::herdr::{HerdrError, HerdrServer, OWN_SESSION};
 use crate::host::tests::Repo;
 use crate::host::{Host, GIT_STATUS_ARGS};
 use crate::map::Map;
@@ -134,6 +134,52 @@ fn me() -> Value {
     Value::Object(
         object([("host", Value::from("here")), ("pid", Value::from(4242)), ("started_at", Value::from("2026-09-30T07:00:00+00:00"))]),
     )
+}
+
+#[test]
+fn the_workspace_is_told_and_closed_in_the_server_the_run_saved() {
+    let c = Close::new();
+    let pane: HerdrServer = serde_json::from_str(r#"{"HERDR_SESSION": "work"}"#).unwrap();
+    c.cli.f.herdr.state().server = Some(pane);
+    let saved = serde_json::json!({"HERDR_SOCKET_PATH": null, "HERDR_SESSION": OWN_SESSION});
+    c.add(STALE_SECONDS + 1, true, &[("herdr_server", saved.clone())]);
+    assert_eq!(c.close(&[]).0, 0);
+    let run_s = serde_json::from_value::<HerdrServer>(saved).ok();
+    let reached = c.cli.f.herdr.state().reached.clone();
+    assert_eq!(reached, [("w1".to_string(), run_s.clone()), ("w1".to_string(), run_s)]);
+    assert_eq!(c.calls(), closing_w1());
+}
+
+#[test]
+fn a_run_that_saved_no_server_is_closed_in_the_environment_s() {
+    let c = Close::new();
+    let pane: HerdrServer = serde_json::from_str(r#"{"HERDR_SESSION": "work"}"#).unwrap();
+    c.cli.f.herdr.state().server = Some(pane.clone());
+    c.add(STALE_SECONDS + 1, true, &[]);
+    assert_eq!(c.close(&[]).0, 0);
+    let reached = c.cli.f.herdr.state().reached.clone();
+    assert_eq!(reached, [("w1".to_string(), Some(pane.clone())), ("w1".to_string(), Some(pane))]);
+}
+
+#[test]
+fn the_sweep_gives_each_run_s_outcome() {
+    let c = Close::new();
+    c.add(STALE_SECONDS + 1, true, &[]);
+    let out = |dry_run| {
+        c.cli.with(|world| {
+            close_all(&Closer::of(world), "/proj", dry_run).unwrap()
+        })
+    };
+    // FakeHost's git status names a change by its whole path.
+    let discarded = vec![format!("?? {}/a.py", worktree())];
+    let preview = format!("close workspace w1; delete worktree {}; delete branch {CLOSE_BRANCH}", worktree());
+    let closed = |done: String| {
+        vec![RunClosed { run_id: CLOSE_ID.into(), outcome: Outcome::Closed { done, discarded: discarded.clone() } }]
+    };
+    assert_eq!(out(true), closed(preview));
+    let done = "workspace closed; worktree deleted; branch deleted".to_string();
+    assert_eq!(out(false), closed(done.clone()));
+    assert_eq!(out(false), [RunClosed { run_id: CLOSE_ID.into(), outcome: Outcome::AlreadyClosed(done) }]);
 }
 
 #[test]
@@ -533,9 +579,7 @@ fn close_outside_a_repository(locked: &[(&str, Vec<String>)]) -> (Result<String,
     let mut cli = Cli::new();
     cli.f.pid_alive = Box::new(|_| false);
     let closed = cli.with(|world| {
-        let mut world = *world;
-        world.with.host = &host;
-        close_run(&world, &tmp.path(), "a1b2c3", false)
+        close_run(&Closer { host: &host, ..Closer::of(world) }, &tmp.path(), "a1b2c3", false)
     });
     let saved = serde_json::from_str::<Value>(&host.read(&path).unwrap().unwrap()).unwrap();
     (closed, saved.get("closed").cloned().unwrap_or(Value::Null))
@@ -617,9 +661,7 @@ fn close_on_real_git() {
     cli.f.pid_alive = Box::new(|_| false);
     let closed = cli
         .with(|world| {
-            let mut world = *world;
-            world.with.host = &repo.host;
-            close_run(&world, &repo.path, "a1b2c3", false)
+            close_run(&Closer { host: &repo.host, ..Closer::of(world) }, &repo.path, "a1b2c3", false)
         })
         .unwrap();
     assert_eq!(closed, "workspace already gone; worktree deleted; branch deleted; refs deleted");
