@@ -265,13 +265,18 @@ orchestrator close e292fb
 # What closing every finished, failed and stale run would do, uncommitted files included; drop --dry-run to do it
 orchestrator close --all --dry-run
 
+# Delete every closed run's directory, so that list no longer shows it; metrics still prints its line. A run whose
+# branch prune has yet to delete stays until it has
+orchestrator forget --all
+
 # After you resolved a pull request's conflict and pushed: drop its warning, and its draft if it was approved
 orchestrator refresh e292fb
 
 # Delete the branches of runs whose pull request is merged, or closed 14 days ago, and a leftover clean worktree
 orchestrator prune --dry-run
 
-# Every finished run's metrics.json, one JSON line each: outcome, roles, turns with times and tokens
+# Every finished run's metrics.json, forgotten runs' included, one JSON line each: outcome, roles, turns with times
+# and tokens
 orchestrator metrics | jq -s 'map(.rounds) | add / length'
 ```
 
@@ -299,7 +304,7 @@ orchestrator metrics | jq -s 'map(.rounds) | add / length'
 | `--no-quality-gate` | `resume` only: turn the run's quality gate off for good. |
 | `--max-quality-rounds N` | With the gate: quality rounds per review round before the Reviewer gets the change anyway (default 3). |
 | `--force` | `resume` only: take over a run that still looks alive. |
-| `--dry-run` | `prune`, `drain` and `close`: print what would happen, and change nothing. |
+| `--dry-run` | `prune`, `drain`, `close` and `forget`: print what would happen, and change nothing. |
 
 A run saves its settings. `resume` takes the same flags as `run` except `--no-pr`, `--worktree`, `--workflow`,
 `--workflow-file` and `--spec`; a flag given to `resume` overrides the saved value. Turning the quality gate on or
@@ -383,15 +388,16 @@ configuration instead.
    writes `metrics.json`, which `metrics` prints
    ([Turn timings and the summary](docs/design.md#turn-timings-and-the-summary)).
 
-Everything a run writes stays in `<project>/.orchestrator/runs/<run-id>/`, which git ignores. Runs in one checkout
-share its working tree, so a run refuses to start or resume while another run there is `running`; use
-`--worktree`, or a clone per run, to run in parallel.
+Everything a run writes stays in `<project>/.orchestrator/runs/<run-id>/`, which git ignores, until `forget` deletes
+it. Runs in one checkout share its working tree, so a run refuses to start or resume while another run there is
+`running`; use `--worktree`, or a clone per run, to run in parallel.
 
 A failed run keeps its workspace open and stays on its branch, and so does a `--no-pr` run. `resume` continues a
 stopped run where `state.json` says ([Resuming a run](docs/design.md#resuming-a-run)), and `close` cleans up after
 one you are done with, the local refs that keep its locked files included, or with `--all` after every run that is
-not running ([Closing a run](docs/design.md#closing-a-run)). `list` marks a run `stale` after five
-minutes without a heartbeat ([Stale runs](docs/design.md#stale-runs)).
+not running ([Closing a run](docs/design.md#closing-a-run)). `forget` then deletes a closed run's directory, keeping
+its line in `metrics`. `list` marks a run `stale` after five minutes without a heartbeat
+([Stale runs](docs/design.md#stale-runs)).
 
 See also [design decisions](docs/design.md), [architecture](docs/architecture.md), [roadmap](docs/roadmap.md)
 and [quality gate](docs/quality-gate.md).

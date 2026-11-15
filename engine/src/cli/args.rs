@@ -48,6 +48,10 @@ pub enum Command {
     /// `close`: clean up after the finished, failed or stale run run_ref names, by its id or key, or after every such
     /// run of the project when None (--all); with dry_run, only say what closing would do.
     Close { target: Target, run_ref: Option<String>, dry_run: bool },
+    /// `forget`: delete the directory of the closed run run_ref names, by its id or key, or of every closed run of the
+    /// project when None (--all), keeping their metrics, but not of one whose branch prune has yet to delete; with
+    /// dry_run, only say what would go.
+    Forget { target: Target, run_ref: Option<String>, dry_run: bool },
     /// `serve`: serve the runs of any project, and start new ones, over HTTP on 127.0.0.1, also answering the origins
     /// given with --origin, in their order.
     Serve(Vec<String>),
@@ -173,6 +177,7 @@ impl Command {
             Command::Runs(target, _)
             | Command::Refresh(target, _)
             | Command::Close { target, .. }
+            | Command::Forget { target, .. }
             | Command::Doctor { target, .. } => Some(target),
             Command::Workflows(_) | Command::Serve(_) => None,
         }
@@ -252,6 +257,9 @@ pub fn parse_args(argv: impl IntoIterator<Item = OsString>, config: &ConfigDir) 
         Some(("prune", m)) => Command::Runs(target(m), RunsCommand::Prune { dry_run: m.get_flag("dry-run") }),
         Some(("close", m)) => {
             Command::Close { target: target(m), run_ref: string(m, "run_ref"), dry_run: m.get_flag("dry-run") }
+        }
+        Some(("forget", m)) => {
+            Command::Forget { target: target(m), run_ref: string(m, "run_ref"), dry_run: m.get_flag("dry-run") }
         }
         Some(("workflows", m)) => Command::Workflows(string(m, "workflow")),
         Some(("serve", m)) => Command::Serve(m.get_many::<String>("origin").into_iter().flatten().cloned().collect()),
@@ -369,7 +377,7 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
              run keeps its checkout and branch. A running run is refused. With --all, every run of the project in \
              turn: a running run, or one whose state cannot be read, is skipped and named, one already closed is \
              counted, and a run that fails to close does not stop the others but makes the exit status 1. Run \
-             directories stay, so list and show still show closed runs.",
+             directories stay, so list and show still show closed runs until forget deletes them.",
         )
         .args(target_args())
         .arg(Arg::new("run_ref").value_name("RUN").help(RUN_REF_HELP))
@@ -380,6 +388,27 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
                 .long("dry-run")
                 .action(ArgAction::SetTrue)
                 .help("Print what closing would do, the worktree's uncommitted files included, and change nothing"),
+        );
+    let forget = clap::Command::new("forget")
+        .about("Delete a closed run's directory, or every closed run's, keeping their metrics")
+        .long_about(
+            "Delete the run directory of a closed run, so that list, show and the app no longer show it. Its line of \
+             metrics is kept first, in .orchestrator/metrics-archive.jsonl, so metrics prints the same as before. A \
+             run that is not closed is refused: close it first. So is a closed run whose branch and worktree prune \
+             has yet to delete, as its state is how prune finds them: run prune after its pull request is merged or \
+             closed. With --all, every closed run in turn: a run refused alone is counted and left, one whose state \
+             cannot be read is skipped and named, and a run whose directory cannot be deleted does not stop the \
+             others but makes the exit status 1.",
+        )
+        .args(target_args())
+        .arg(Arg::new("run_ref").value_name("RUN").help(RUN_REF_HELP))
+        .arg(Arg::new("all").long("all").action(ArgAction::SetTrue).help("Every closed run"))
+        .group(ArgGroup::new("runs").args(["run_ref", "all"]).required(true))
+        .arg(
+            Arg::new("dry-run")
+                .long("dry-run")
+                .action(ArgAction::SetTrue)
+                .help("Print which run directories would be deleted, and delete nothing"),
         );
     let workflows = clap::Command::new("workflows")
         .about("List the workflows, or print one as a workflow file")
@@ -474,7 +503,7 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         .infer_long_args(true)
         // The last of a flag given twice counts, where clap would refuse it.
         .subcommands(
-            [run, resume, list, metrics, show, prune, drain, close, refresh, workflows, doctor, serve]
+            [run, resume, list, metrics, show, prune, drain, close, forget, refresh, workflows, doctor, serve]
                 .map(|c| c.args_override_self(true)),
         )
 }

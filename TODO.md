@@ -42,6 +42,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **Whether a run is closed is still told in three more places.** `RunState::is_closed` (`engine/src/state.rs`) is
+  the rule close and forget use, but `resumable_state` (`engine/src/cli/start.rs`, `closed.is_some()`, which also
+  takes an empty `closed` for closed), `run_record`'s resume hint (`engine/src/cli/listing.rs`) and drain's check
+  (`engine/src/cli/drain.rs`) each test the field themselves. Closed when all three call `is_closed`, and the empty
+  string's meaning is decided once.
 - **The Workflows dialog reads each workflow twice.** `WorkflowsDialog` (`ui/src/components/WorkflowsDialog.tsx`)
   sends a `GET /workflow` for each workflow `/workflows` lists, for its file's path and text, though `/workflows` has
   parsed every file already, and the editor reads its workflow again when it opens. Harmless for a handful of files
@@ -457,6 +462,10 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `HEARTBEAT_SECONDS` give it such crashes, but their runs then differ from the uninterrupted one by design: a new
   snapshot id in the PR body, the quality turn's times and every later timestamp, the job's worktree added and
   removed again. Closes with `expected` normalising those for a crash that left a job, and adding its stop.
+- **Six places build a run directory's path by hand.** `crate::state::run_dir` is the one home for
+  `<cwd>/.orchestrator/runs/<run_id>`, which `forget` and `Host::forget_run` use; `cli::start` (`:79`), `cli::listing`
+  (`:298`), and the state.json paths of `refresh`, `close`, `drain` and `prune` still format it themselves. Raised by
+  cross-review 207 (F7). Closed by those calling `run_dir`.
 - **Runs started within one second list in random order.** A run id orders by its start only to the second, then by
   a random key (`new_run_id`, `engine/src/cli/start.rs`), and `close --all` (`engine/src/cli/close.rs`), `list`,
   prune and refresh take runs in run id order. close-all-order-flake/01 made `runs_closed_all`

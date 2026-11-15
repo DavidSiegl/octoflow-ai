@@ -1,5 +1,6 @@
 //! The parts of a path the engine names files by, for paths it holds as text: the last component, and that split
-//! before its extension; and replacing a file's contents so that a failure leaves the old ones.
+//! before its extension; whether a name stays inside the directory it is joined to; and replacing a file's contents
+//! so that a failure leaves the old ones.
 
 use std::path::Path;
 
@@ -9,6 +10,16 @@ use crate::error::{os_error, path_text, strerror, OrchestratorError};
 /// one.
 pub fn file_name(path: &str) -> &str {
     &path[path.rfind('/').map_or(0, |i| i + 1)..]
+}
+
+/// name, if it names an entry of a directory itself, so that joined to the directory's path it names nothing outside
+/// it: not empty, `.` or `..`, and without a slash or NUL. Errors: otherwise, naming it quoted as Rust's Debug quotes
+/// a str, "… is not a name in the run directory", as the engine checks only run ids and the names of run files.
+pub fn plain_name(name: &str) -> Result<&str, OrchestratorError> {
+    if matches!(name, "" | "." | "..") || name.contains(['/', '\0']) {
+        return Err(OrchestratorError(format!("{name:?} is not a name in the run directory")));
+    }
+    Ok(name)
 }
 
 /// path split before the extension of its last component (file_name): what comes before the extension's dot, and

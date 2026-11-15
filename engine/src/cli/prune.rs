@@ -115,22 +115,27 @@ pub fn prune_branches(
     Ok(pruned)
 }
 
-/// Whether prune may touch the branch of run, as far as its state reads: one the orchestrator made and opened a pull
-/// request for, and that no orchestrator drives now, as world tells (RunState::health). A run without a pull request
-/// may hold the Builder's uncommitted work. One with a branch_cleanup is done with, or with revisit, only one whose
-/// branch was kept.
+/// Whether prune has yet to look at the branch of the run state describes: one the orchestrator made and opened a
+/// pull request for, with no branch_cleanup recorded. Until prune records one, the run's state is all that leads it to
+/// the branch, origin's and the worktree, so the run directory must stay (crate::cli::forget).
+pub fn awaits_prune(state: &RunState) -> bool {
+    opened_pull_request(state) && state.branch_cleanup.as_deref().is_none_or(str::is_empty)
+}
+
+/// Whether the orchestrator made the run's branch and opened a pull request for it.
+fn opened_pull_request(state: &RunState) -> bool {
+    state.branch.as_deref().is_some_and(|b| b.starts_with(BRANCH_PREFIX))
+        && state.pr_url.as_deref().is_some_and(|url| !url.is_empty())
+}
+
+/// Whether prune may touch the branch of run, as far as its state reads: one that awaits_prune, or with revisit one
+/// whose branch it kept, and that no orchestrator drives now, as world tells (RunState::health). A run without a pull
+/// request may hold the Builder's uncommitted work.
 fn is_prune_candidate(run: &SavedRun, world: &Connected, revisit: bool) -> bool {
     let s = run.shown();
-    let branch = s.branch.as_deref().is_some_and(|b| b.starts_with(BRANCH_PREFIX));
-    if !(branch && s.pr_url.as_deref().is_some_and(|url| !url.is_empty())) {
-        return false;
-    }
-    if let Some(cleanup) = s.branch_cleanup.as_deref().filter(|c| !c.is_empty()) {
-        if !(revisit && cleanup.starts_with(BRANCH_KEPT)) {
-            return false;
-        }
-    }
-    !run.health(world.local_host, world.with.pid_alive).is_some_and(|(h, _)| h == RUNNING)
+    let kept = || opened_pull_request(s) && s.branch_cleanup.as_deref().is_some_and(|c| c.starts_with(BRANCH_KEPT));
+    (awaits_prune(s) || revisit && kept())
+        && !run.health(world.local_host, world.with.pid_alive).is_some_and(|(h, _)| h == RUNNING)
 }
 
 /// Decide the run's worktree and each side of its branch, as state says, delete what may go, unless dry_run, and
