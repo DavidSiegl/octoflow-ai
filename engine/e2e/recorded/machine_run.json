@@ -186,31 +186,6 @@
     ]
    },
    {
-    "herdr": [
-     "--machine",
-     "box",
-     "pane",
-     "rename",
-     "p1",
-     "Spec Collector"
-    ]
-   },
-   {
-    "herdr": [
-     "--machine",
-     "box",
-     "agent",
-     "start",
-     "spec-<key:1>",
-     "--kind",
-     "claude",
-     "--pane",
-     "p1",
-     "--timeout",
-     "60000"
-    ]
-   },
-   {
     "state": {
      "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
      "saved": {
@@ -279,6 +254,31 @@
       "proofs": []
      }
     }
+   },
+   {
+    "herdr": [
+     "--machine",
+     "box",
+     "pane",
+     "rename",
+     "p1",
+     "Spec Collector"
+    ]
+   },
+   {
+    "herdr": [
+     "--machine",
+     "box",
+     "agent",
+     "start",
+     "spec-<key:1>",
+     "--kind",
+     "claude",
+     "--pane",
+     "p1",
+     "--timeout",
+     "60000"
+    ]
    },
    {
     "herdr": [
@@ -500,31 +500,6 @@
     ]
    },
    {
-    "herdr": [
-     "--machine",
-     "box",
-     "pane",
-     "rename",
-     "p2",
-     "Builder"
-    ]
-   },
-   {
-    "herdr": [
-     "--machine",
-     "box",
-     "agent",
-     "start",
-     "build-<key:1>",
-     "--kind",
-     "claude",
-     "--pane",
-     "p2",
-     "--timeout",
-     "60000"
-    ]
-   },
-   {
     "state": {
      "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
      "saved": {
@@ -615,6 +590,31 @@
       "proofs": []
      }
     }
+   },
+   {
+    "herdr": [
+     "--machine",
+     "box",
+     "pane",
+     "rename",
+     "p2",
+     "Builder"
+    ]
+   },
+   {
+    "herdr": [
+     "--machine",
+     "box",
+     "agent",
+     "start",
+     "build-<key:1>",
+     "--kind",
+     "claude",
+     "--pane",
+     "p2",
+     "--timeout",
+     "60000"
+    ]
    },
    {
     "herdr": [
@@ -859,31 +859,6 @@
     ]
    },
    {
-    "herdr": [
-     "--machine",
-     "box",
-     "pane",
-     "rename",
-     "p3",
-     "Reviewer"
-    ]
-   },
-   {
-    "herdr": [
-     "--machine",
-     "box",
-     "agent",
-     "start",
-     "review-<key:1>",
-     "--kind",
-     "claude",
-     "--pane",
-     "p3",
-     "--timeout",
-     "60000"
-    ]
-   },
-   {
     "state": {
      "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
      "saved": {
@@ -995,6 +970,31 @@
       "proofs": []
      }
     }
+   },
+   {
+    "herdr": [
+     "--machine",
+     "box",
+     "pane",
+     "rename",
+     "p3",
+     "Reviewer"
+    ]
+   },
+   {
+    "herdr": [
+     "--machine",
+     "box",
+     "agent",
+     "start",
+     "review-<key:1>",
+     "--kind",
+     "claude",
+     "--pane",
+     "p3",
+     "--timeout",
+     "60000"
+    ]
    },
    {
     "herdr": [

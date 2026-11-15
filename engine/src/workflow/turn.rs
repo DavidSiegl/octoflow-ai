@@ -553,21 +553,32 @@ impl Workflow<'_> {
     /// so the turn recorded next is in it and its tokens can be counted. The record holds none when an orchestrator
     /// stopped between `start`'s two saves, and an older one when the agent moved to a new session (a human's
     /// `/clear` in its pane, say) while no orchestrator watched it, `await_handoff` noting sessions only while one does.
-    /// An agent found alive that has not yet taken a prompt (AgentRecord::unprompted) is waited for until it is past
-    /// any startup dialog, and is then prompted as the start that launched it would have.
+    /// An agent found alive that is marked as not yet prompted (AgentRecord::unprompted) is prompted as the start
+    /// that launched it would have, once the human has answered any startup dialog it is blocked on; found working,
+    /// it took a prompt the stopped orchestrator sent but did not record, and is only waited on.
     fn agent(&mut self, role: &str) -> Outcome<How> {
         let known = self.state.agents.get(role).cloned();
         if let Some(known) = &known {
             let mut found = self.herdr.agent(&known.name)?;
-            // Idle or done, it is past any startup dialog; otherwise, never prompted, it can only be in one.
-            let in_dialog = found.as_ref().is_some_and(|r| !matches!(r.status.as_str(), "idle" | "done"));
-            if known.unprompted.is_some() && in_dialog {
-                self.wait_for_startup(role, &known.name)?;
-                found = self.herdr.agent(&known.name)?;
+            let mut how = known.unprompted.map_or(How::Alive, How::Started);
+            if known.unprompted.is_some() {
+                match found.as_ref().map(|r| r.status.as_str()) {
+                    // A startup dialog, or a question about a prompt taken but not recorded; both need the human.
+                    Some("blocked") => {
+                        self.wait_for_startup(role, &known.name)?;
+                        found = self.herdr.agent(&known.name)?;
+                    }
+                    Some("working") => {
+                        how = How::Alive;
+                        self.state.agents.get_mut(role).expect("the record just read").unprompted = None;
+                        self.save()?;
+                    }
+                    _ => {}
+                }
             }
             if let Some(record) = found {
                 self.note_session(role, &record)?;
-                return Ok(known.unprompted.map_or(How::Alive, How::Started));
+                return Ok(how);
             }
         }
         let pane = self.pane_for(role)?;
@@ -592,7 +603,11 @@ impl Workflow<'_> {
                 self.human.log(&format!("[{role}] session {session} is gone; starting a fresh one"));
             }
         }
-        let start = if known.is_some() { AgentStart::Restarted } else { AgentStart::New };
+        // A role whose last agent never took a prompt lost no conversation with it.
+        let start = match known.map(|k| k.unprompted) {
+            None | Some(Some(AgentStart::New)) => AgentStart::New,
+            Some(_) => AgentStart::Restarted,
+        };
         self.start(role, &pane, start)?;
         Ok(How::Started(start))
     }
@@ -651,9 +666,9 @@ impl Workflow<'_> {
     /// Start the role's agent in the pane as start says: Resumed relaunches it into the session its record holds,
     /// which must hold one. False when it exited at once.
     ///
-    /// The agent's record is saved, marked with start until its first prompt is taken (AgentRecord::unprompted),
-    /// before any startup dialog its harness shows is waited out with the human; so an orchestrator stopped during
-    /// that wait leaves an agent the resume finds, waits for and prompts, never one unknown to the run.
+    /// The agent's record is saved, in the session it resumes and marked with start until its first prompt is taken
+    /// (AgentRecord::unprompted), before herdr starts it; so an orchestrator stopped while herdr or the human is
+    /// past a startup dialog leaves an agent the resume finds, waits for and prompts, never one unknown to the run.
     fn start(&mut self, role: &str, pane: &str, start: AgentStart) -> Result<bool, StartFailure> {
         let name = format!("{role}-{}", self.state.key());
         let session = match start {
@@ -670,6 +685,11 @@ impl Workflow<'_> {
                 ));
             }
         }
+        let mut record = AgentRecord::new(&name, pane, h.kind);
+        record.session.clone_from(&session);
+        record.unprompted = Some(start);
+        self.state.agents.insert(role, record);
+        self.save()?;
         self.herdr.rename_pane(pane, &self.label(role))?;
         // The handoff files are outside a worktree run's working directory.
         let extra_dir = self.state.worktree.as_ref().map(|_| self.state.dir());
@@ -680,10 +700,6 @@ impl Workflow<'_> {
             self.herdr.export(pane, &launch.env)?;
         }
         let ready = self.herdr.start_agent(&name, pane, h.kind, &launch.args)?;
-        let mut record = AgentRecord::new(&name, pane, h.kind);
-        record.unprompted = Some(start);
-        self.state.agents.insert(role, record);
-        self.save()?;
         if !ready {
             self.wait_for_startup(role, &name)?;
         }
@@ -692,7 +708,8 @@ impl Workflow<'_> {
         Ok(true)
     }
 
-    /// Wait for the startup dialog of the role's agent, named name, to be answered, having asked the human to.
+    /// Wait for the startup dialog of the role's agent, named name, to be answered, having asked the human to; or for
+    /// the agent to exit, as it does when the human refuses what the dialog asks.
     ///
     /// The human decides how long that takes, as with the interview, so there is no deadline; the wait is cut into
     /// steps so the heartbeat keeps the run from looking stale.
@@ -705,6 +722,7 @@ impl Workflow<'_> {
         loop {
             match self.herdr.wait(name, Some(HEARTBEAT_SECONDS * 1000), &["idle", "done"]) {
                 Ok(_) => return Ok(()),
+                Err(e) if e.code() == Some("agent_not_found") => return Ok(()),
                 Err(e) if e.code() == Some("timeout") => {}
                 Err(e) => return Err(e.into()),
             }

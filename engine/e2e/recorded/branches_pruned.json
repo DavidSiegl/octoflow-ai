@@ -234,27 +234,6 @@
     ]
    },
    {
-    "herdr": [
-     "pane",
-     "rename",
-     "p1",
-     "Spec Collector"
-    ]
-   },
-   {
-    "herdr": [
-     "agent",
-     "start",
-     "spec-<key:1>",
-     "--kind",
-     "claude",
-     "--pane",
-     "p1",
-     "--timeout",
-     "60000"
-    ]
-   },
-   {
     "state": {
      "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
      "saved": {
@@ -326,6 +305,27 @@
       "proofs": []
      }
     }
+   },
+   {
+    "herdr": [
+     "pane",
+     "rename",
+     "p1",
+     "Spec Collector"
+    ]
+   },
+   {
+    "herdr": [
+     "agent",
+     "start",
+     "spec-<key:1>",
+     "--kind",
+     "claude",
+     "--pane",
+     "p1",
+     "--timeout",
+     "60000"
+    ]
    },
    {
     "herdr": [
@@ -543,27 +543,6 @@
     ]
    },
    {
-    "herdr": [
-     "pane",
-     "rename",
-     "p2",
-     "Builder"
-    ]
-   },
-   {
-    "herdr": [
-     "agent",
-     "start",
-     "build-<key:1>",
-     "--kind",
-     "claude",
-     "--pane",
-     "p2",
-     "--timeout",
-     "60000"
-    ]
-   },
-   {
     "state": {
      "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
      "saved": {
@@ -657,6 +636,27 @@
       "proofs": []
      }
     }
+   },
+   {
+    "herdr": [
+     "pane",
+     "rename",
+     "p2",
+     "Builder"
+    ]
+   },
+   {
+    "herdr": [
+     "agent",
+     "start",
+     "build-<key:1>",
+     "--kind",
+     "claude",
+     "--pane",
+     "p2",
+     "--timeout",
+     "60000"
+    ]
    },
    {
     "herdr": [
@@ -899,27 +899,6 @@
     ]
    },
    {
-    "herdr": [
-     "pane",
-     "rename",
-     "p3",
-     "Reviewer"
-    ]
-   },
-   {
-    "herdr": [
-     "agent",
-     "start",
-     "review-<key:1>",
-     "--kind",
-     "claude",
-     "--pane",
-     "p3",
-     "--timeout",
-     "60000"
-    ]
-   },
-   {
     "state": {
      "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
      "saved": {
@@ -1034,6 +1013,27 @@
       "proofs": []
      }
     }
+   },
+   {
+    "herdr": [
+     "pane",
+     "rename",
+     "p3",
+     "Reviewer"
+    ]
+   },
+   {
+    "herdr": [
+     "agent",
+     "start",
+     "review-<key:1>",
+     "--kind",
+     "claude",
+     "--pane",
+     "p3",
+     "--timeout",
+     "60000"
+    ]
    },
    {
     "herdr": [
@@ -1789,27 +1789,6 @@
     ]
    },
    {
-    "herdr": [
-     "pane",
-     "rename",
-     "p4",
-     "Spec Collector"
-    ]
-   },
-   {
-    "herdr": [
-     "agent",
-     "start",
-     "spec-<key:2>",
-     "--kind",
-     "claude",
-     "--pane",
-     "p4",
-     "--timeout",
-     "60000"
-    ]
-   },
-   {
     "state": {
      "path": "<world>/project/.orchestrator/runs/<run:2>/state.json",
      "saved": {
@@ -1881,6 +1860,27 @@
       "proofs": []
      }
     }
+   },
+   {
+    "herdr": [
+     "pane",
+     "rename",
+     "p4",
+     "Spec Collector"
+    ]
+   },
+   {
+    "herdr": [
+     "agent",
+     "start",
+     "spec-<key:2>",
+     "--kind",
+     "claude",
+     "--pane",
+     "p4",
+     "--timeout",
+     "60000"
+    ]
    },
    {
     "herdr": [
@@ -2098,27 +2098,6 @@
     ]
    },
    {
-    "herdr": [
-     "pane",
-     "rename",
-     "p5",
-     "Builder"
-    ]
-   },
-   {
-    "herdr": [
-     "agent",
-     "start",
-     "build-<key:2>",
-     "--kind",
-     "claude",
-     "--pane",
-     "p5",
-     "--timeout",
-     "60000"
-    ]
-   },
-   {
     "state": {
      "path": "<world>/project/.orchestrator/runs/<run:2>/state.json",
      "saved": {
@@ -2212,6 +2191,27 @@
       "proofs": []
      }
     }
+   },
+   {
+    "herdr": [
+     "pane",
+     "rename",
+     "p5",
+     "Builder"
+    ]
+   },
+   {
+    "herdr": [
+     "agent",
+     "start",
+     "build-<key:2>",
+     "--kind",
+     "claude",
+     "--pane",
+     "p5",
+     "--timeout",
+     "60000"
+    ]
    },
    {
     "herdr": [
@@ -2454,27 +2454,6 @@
     ]
    },
    {
-    "herdr": [
-     "pane",
-     "rename",
-     "p6",
-     "Reviewer"
-    ]
-   },
-   {
-    "herdr": [
-     "agent",
-     "start",
-     "review-<key:2>",
-     "--kind",
-     "claude",
-     "--pane",
-     "p6",
-     "--timeout",
-     "60000"
-    ]
-   },
-   {
     "state": {
      "path": "<world>/project/.orchestrator/runs/<run:2>/state.json",
      "saved": {
@@ -2589,6 +2568,27 @@
       "proofs": []
      }
     }
+   },
+   {
+    "herdr": [
+     "pane",
+     "rename",
+     "p6",
+     "Reviewer"
+    ]
+   },
+   {
+    "herdr": [
+     "agent",
+     "start",
+     "review-<key:2>",
+     "--kind",
+     "claude",
+     "--pane",
+     "p6",
+     "--timeout",
+     "60000"
+    ]
    },
    {
     "herdr": [
