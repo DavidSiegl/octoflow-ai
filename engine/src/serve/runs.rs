@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::cli::close::{close_all, Closer, RunClosed};
+use crate::cli::close::{close_all, Closer, RunClosed, Sweep};
 use crate::cli::listing::run_record;
 use crate::constants::RUNS_DIR;
 use crate::error::OrchestratorError;
@@ -113,10 +113,10 @@ impl ProjectRuns {
         crate::local_gate::set_up(&*self.host, &self.cwd)
     }
 
-    /// Close every run of the project that `close --all` would close, or with dry_run decide only, as
-    /// crate::cli::close::close_all does, and give each run's outcome; the lines close prints are dropped, as the
-    /// outcomes hold what they say. A raised stopping starts no further run. Errors: the runs cannot be read.
-    pub fn close_all(&self, dry_run: bool, stopping: &Interrupt) -> Result<Vec<RunClosed>, OrchestratorError> {
+    /// Close the project's runs that sweep names, as crate::cli::close::close_all does, and give each run's outcome;
+    /// the lines close prints are dropped, as the outcomes hold what they say. A raised stopping starts no further
+    /// run. Errors: the runs cannot be read.
+    pub fn close_all(&self, sweep: Sweep, stopping: &Interrupt) -> Result<Vec<RunClosed>, OrchestratorError> {
         let here = local_host();
         let closer = Closer {
             host: &*self.host,
@@ -126,7 +126,7 @@ impl ProjectRuns {
             local_host: &here,
             stdout: &|_| {},
         };
-        close_all(&closer, &self.cwd, dry_run)
+        close_all(&closer, &self.cwd, sweep)
     }
 
     /// Whether the project is on another machine, read over SSH.

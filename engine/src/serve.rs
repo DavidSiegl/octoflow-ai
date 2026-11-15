@@ -12,7 +12,7 @@ use std::time::Duration;
 use nix::sys::signal::{SigSet, Signal};
 use tiny_http::{Header, Request, Response};
 
-use crate::cli::close::{Outcome, RunClosed};
+use crate::cli::close::{Outcome, RunClosed, Sweep};
 use crate::cli::listing::RUN_RECORD_VERSION;
 use crate::constants::EXIT_ERROR;
 use crate::env::ConfigDir;
@@ -22,7 +22,7 @@ use crate::host::{Host, ProcessHost};
 use crate::interrupt::Interrupt;
 use serde_json::Value;
 use url::{parse_qsl, urlsplit};
-use runs::{AgentInput, Event, ProjectRuns, RunReadError, RunWatch};
+use runs::{plain_name, AgentInput, Event, ProjectRuns, RunReadError, RunWatch};
 use setup::Setup;
 use start::{RunRequest, StartWait, Started, START_WAIT};
 
@@ -189,13 +189,16 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 ///   is in the herdr server serve's own environment reaches. 400 for a body RunRequest::parse refuses and 413 as for
 ///   /agent/input, both before the project is reached; 502 when herdr cannot launch it, as when it has
 ///   no server running here and none can be started.
-/// - POST /close?cwd=DIR: closes every run of the project that `close --all` closes, or with the JSON body
-///   {"dry_run": true} only says what closing each would do, changing nothing; the body is {"dry_run": false} to
-///   close. Answers {"runs": [{"run", "outcome", "detail", "discarded"}, ...]}, a run for each the sweep looked at:
-///   outcome "closed" (with a dry run: to be closed), "already closed", "skipped" or "failed"; detail what was or
-///   would be done (`close`'s closed line or its dry run's), what close recorded before, or why the run was skipped
-///   or failed; discarded the uncommitted changes, one line of git status each, that went or would go with a closed
-///   run's worktree. A run that fails does not stop the others. 400 for a body of another shape and 413 as for
+/// - POST /close?cwd=DIR: with the JSON body {"dry_run": true}, says what closing each run of the project that
+///   `close --all` closes would do, changing nothing; with {"close": [{"run", "detail", "discarded"}, ...]}, the
+///   "closed" runs of such a dry run's answer, closes those runs and no other, each only while closing it would still
+///   do what detail says and discard what discarded lists (crate::cli::close::Sweep::Previewed): nothing goes that
+///   the client did not show. Answers {"runs": [{"run", "outcome", "detail", "discarded"}, ...]}, a run for each the
+///   sweep looked at: outcome "closed" (with a dry run: to be closed), "already closed", "skipped" (as is a run that
+///   changed since the dry run) or "failed"; detail what was or would be done (`close`'s closed line or its dry
+///   run's), what close recorded before, or why the run was skipped or failed; discarded the uncommitted changes, one
+///   line of git status each, that went or would go with the run's worktree, a failed run's too. A run that fails
+///   does not stop the others. 400 for a body of another shape and 413 as for
 ///   /agent/input, both before the project is reached; 502 for a project that cannot be reached or whose runs cannot
 ///   be read.
 /// - /events: a text/event-stream of RunWatch's events, polled every SERVE_POLL.local, every SERVE_POLL.remote for a
@@ -684,8 +687,8 @@ fn post_run(shared: &Shared, mut request: Request, query: &HashMap<String, Strin
     send_json(request, code, &body);
 }
 
-/// Answer a POST of /close with the query's parameters, as target gives them: close the project's runs, or with the
-/// body's dry_run say what closing would do, as RunServer's doc comment says. The body is read and checked before the
+/// Answer a POST of /close with the query's parameters, as target gives them: say what closing the project's runs
+/// would do, or close the runs a dry run gave, as RunServer's doc comment says. The body is read and checked before the
 /// project is reached, as post_input's.
 ///
 /// serve closes in its own process, by the sweep `close --all` runs (ProjectRuns::close_all), rather than by starting
@@ -695,12 +698,13 @@ fn post_close(shared: &Shared, mut request: Request, query: &HashMap<String, Str
     if let Some((code, body)) = refusal(shared, &request, query) {
         return send_json(request, code, &body);
     }
-    let dry_run = match read_body(&mut request).and_then(|body| close_dry_run(&body)) {
-        Ok(dry_run) => dry_run,
+    let previewed = match read_body(&mut request).and_then(|body| previewed_runs(&body)) {
+        Ok(previewed) => previewed,
         Err((code, body)) => return send_json(request, code, &body),
     };
+    let sweep = previewed.as_deref().map_or(Sweep::DryRun, Sweep::Previewed);
     let closed = project_of(shared, query, &["cwd"])
-        .and_then(|project| project.close_all(dry_run, &shared.stopping).map_err(|e| (502, error(&e.0))));
+        .and_then(|project| project.close_all(sweep, &shared.stopping).map_err(|e| (502, error(&e.0))));
     let (code, body) = match closed {
         Ok(runs) => (200, object([("runs", Value::Array(runs.iter().map(run_closed).collect()))])),
         Err(answer) => answer,
@@ -708,14 +712,34 @@ fn post_close(shared: &Shared, mut request: Request, query: &HashMap<String, Str
     send_json(request, code, &body);
 }
 
-/// The dry_run of a POST /close body, {"dry_run": bool}. Errors: 400 for a body of another shape.
-fn close_dry_run(body: &[u8]) -> Result<bool, Answer> {
-    let parsed = std::str::from_utf8(body).ok().and_then(|text| serde_json::from_str::<Value>(text).ok());
-    let fields = parsed.as_ref().and_then(Value::as_object).filter(|o| o.len() == 1);
-    fields
-        .and_then(|o| o.get("dry_run"))
-        .and_then(Value::as_bool)
-        .ok_or_else(|| (400, error(r#"the body must be {"dry_run": true} or {"dry_run": false}"#)))
+/// The runs a POST /close body asks to close, each as the dry run gave it (an Outcome::Closed); None for a dry run.
+/// The shapes are RunServer's doc comment's. Errors: 400 for a body of another shape, or a run that is not a plain
+/// name (runs::plain_name).
+fn previewed_runs(body: &[u8]) -> Result<Option<Vec<RunClosed>>, Answer> {
+    let shape = || {
+        (400, error(r#"the body must be {"dry_run": true} or {"close": [{"run": "...", "detail": "...", "discarded": ["...", ...]}, ...]}"#))
+    };
+    let fields = json_object(body).filter(|o| o.len() == 1).ok_or_else(shape)?;
+    if fields.get("dry_run") == Some(&Value::Bool(true)) {
+        return Ok(None);
+    }
+    let previewed = |run: &Value| -> Option<RunClosed> {
+        let text = |key: &str| run.get(key).and_then(Value::as_str).map(String::from);
+        let discarded = run.get("discarded")?.as_array()?;
+        let discarded = discarded.iter().map(|line| line.as_str().map(String::from)).collect::<Option<Vec<_>>>()?;
+        let run_id = text("run").filter(|id| plain_name(id).is_ok())?;
+        Some(RunClosed { run_id, outcome: Outcome::Closed { done: text("detail")?, discarded } })
+    };
+    let runs = fields.get("close").and_then(Value::as_array).ok_or_else(shape)?;
+    runs.iter().map(previewed).collect::<Option<Vec<_>>>().map(Some).ok_or_else(shape)
+}
+
+/// The fields of body, when it is a JSON object in UTF-8, as every POST's body is; None otherwise.
+fn json_object(body: &[u8]) -> Option<serde_json::Map<String, Value>> {
+    match serde_json::from_slice::<Value>(body).ok()? {
+        Value::Object(fields) => Some(fields),
+        _ => None,
+    }
 }
 
 /// One run of a POST /close answer: {"run", "outcome", "detail", "discarded"}, as RunServer's doc comment says.
@@ -724,7 +748,7 @@ fn run_closed(run: &RunClosed) -> Value {
         Outcome::Closed { done, discarded } => ("closed", done, discarded),
         Outcome::AlreadyClosed(closed) => ("already closed", closed, &[]),
         Outcome::Skipped(why) => ("skipped", why, &[]),
-        Outcome::Failed(e) => ("failed", e, &[]),
+        Outcome::Failed { error, discarded } => ("failed", error, discarded),
     };
     object([
         ("run", Value::from(run.run_id.as_str())),
@@ -803,8 +827,7 @@ fn read_body(request: &mut Request) -> Result<Vec<u8>, Answer> {
 fn agent_input(request: &mut Request) -> Result<AgentInput, Answer> {
     let body = read_body(request)?;
     let shape = || (400, error(r#"the body must be {"text": "..."} or {"keys": ["...", ...]}"#));
-    let parsed = std::str::from_utf8(&body).ok().and_then(|text| serde_json::from_str::<Value>(text).ok()).ok_or_else(shape)?;
-    let fields = parsed.as_object().filter(|o| o.len() == 1).ok_or_else(shape)?;
+    let fields = json_object(&body).filter(|o| o.len() == 1).ok_or_else(shape)?;
     if let Some(text) = fields.get("text").and_then(Value::as_str).filter(|t| !t.is_empty()) {
         return Ok(AgentInput::Text(text.to_string()));
     }

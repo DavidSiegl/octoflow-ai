@@ -1223,6 +1223,13 @@ fn closed_runs(reply: &Reply) -> Vec<(String, String, String, Vec<String>)> {
     runs.iter().map(|run| (field(run, "run"), field(run, "outcome"), field(run, "detail"), discarded(run))).collect()
 }
 
+/// The body of a POST /close that closes the runs of closed_runs' dry run whose outcome is "closed", as it gave them.
+fn close_body(preview: &[(String, String, String, Vec<String>)]) -> String {
+    let closing = preview.iter().filter(|(_, outcome, _, _)| outcome == "closed");
+    let runs: Vec<Value> = closing.map(|(run, _, detail, discarded)| serde_json::json!({"run": run, "detail": detail, "discarded": discarded})).collect();
+    serde_json::json!({ "close": runs }).to_string()
+}
+
 /// The closed of the run of repo whose id is run_id, as its state.json saves it; None when it has none.
 fn saved_closed(repo: &Repo, run_id: &str) -> Option<String> {
     let path = format!("{}/{RUNS_DIR}/{run_id}/state.json", repo.path);
@@ -1256,18 +1263,13 @@ fn a_dry_run_says_what_closing_each_run_would_do_and_changes_nothing() {
 }
 
 #[test]
-fn the_runs_are_closed_and_say_what_was_done_and_discarded() {
+fn the_previewed_runs_are_closed_and_say_what_was_done_and_discarded() {
     let (repo, wt, served) = closing();
     let target = format!("/close?{}", urlencode(&[("cwd", &repo.path)]));
-    let runs = closed_runs(&served.post(&target, r#"{"dry_run": false}"#));
+    let preview = closed_runs(&served.post(&target, r#"{"dry_run": true}"#));
+    let runs = closed_runs(&served.post(&target, &close_body(&preview)));
     let outcomes: Vec<_> = runs.iter().map(|(run, outcome, _, _)| (run.as_str(), outcome.as_str())).collect();
-    let expected = [
-        (CLOSE_FINISHED, "closed"),
-        (CLOSE_FAILED, "closed"),
-        (CLOSE_RUNNING, "skipped"),
-        (CLOSE_CLOSED, "already closed"),
-    ];
-    assert_eq!(outcomes, expected);
+    assert_eq!(outcomes, [(CLOSE_FINISHED, "closed"), (CLOSE_FAILED, "closed")]);
     let failed = ("workspace already gone; worktree deleted; branch deleted".to_string(), vec![" M app.py".to_string()]);
     assert_eq!((runs[1].2.clone(), runs[1].3.clone()), failed);
     assert_eq!(saved_closed(&repo, CLOSE_FINISHED).as_deref(), Some("workspace closed"));
@@ -1275,10 +1277,28 @@ fn the_runs_are_closed_and_say_what_was_done_and_discarded() {
     assert_eq!(saved_closed(&repo, CLOSE_RUNNING), None);
     assert!(!std::path::Path::new(&wt).exists());
     assert!(served.console.state().workspaces.is_empty());
-    // A second sweep finds only the running run to close.
+    // A second dry run finds only the running run to close.
     let again = closed_runs(&served.post(&target, r#"{"dry_run": true}"#));
     let outcomes: Vec<_> = again.iter().map(|(_, outcome, _, _)| outcome.as_str()).collect();
     assert_eq!(outcomes, ["already closed", "already closed", "skipped", "already closed"]);
+}
+
+#[test]
+fn a_run_that_changed_since_the_preview_is_skipped_and_one_not_previewed_is_not_looked_at() {
+    // CLOSE_FAILED's worktree gains a change the preview did not list; the body leaves CLOSE_FINISHED out, as a client
+    // whose preview found it running would.
+    let (repo, wt, served) = closing();
+    let target = format!("/close?{}", urlencode(&[("cwd", &repo.path)]));
+    let preview = closed_runs(&served.post(&target, r#"{"dry_run": true}"#));
+    crate::host::tests::put(&format!("{wt}/new.py"), "new\n");
+    let failed_only: Vec<_> = preview.into_iter().filter(|(run, _, _, _)| run == CLOSE_FAILED).collect();
+    let runs = closed_runs(&served.post(&target, &close_body(&failed_only)));
+    let now = format!("delete worktree {wt}; delete branch {CLOSE_BRANCH}");
+    let skipped = format!("run {CLOSE_FAILED} changed since the preview: closing it would now {now}");
+    assert_eq!(runs, [(CLOSE_FAILED.to_string(), "skipped".to_string(), skipped, vec![])]);
+    assert!(std::path::Path::new(&wt).exists());
+    assert_eq!((saved_closed(&repo, CLOSE_FAILED), saved_closed(&repo, CLOSE_FINISHED)), (None, None));
+    assert!(served.console.state().workspaces.contains("w-fin"));
 }
 
 #[test]
@@ -1291,8 +1311,23 @@ fn a_bad_close_body_is_refused_before_the_project_is_reached() {
     };
     let served = Served::start(Box::new(connect), &[], Arc::clone(&connects), Options::default());
     let target = Served::query("/close", &[("machine", "box")]);
-    let wrong = r#"the body must be {"dry_run": true} or {"dry_run": false}"#;
-    for body in ["", "x", "[]", "{}", r#"{"dry_run": 1}"#, r#"{"dry_run": "true"}"#, r#"{"dry_run": true, "x": 1}"#] {
+    let wrong = r#"the body must be {"dry_run": true} or {"close": [{"run": "...", "detail": "...", "discarded": ["...", ...]}, ...]}"#;
+    let bad = [
+        "",
+        "x",
+        "[]",
+        "{}",
+        r#"{"dry_run": 1}"#,
+        r#"{"dry_run": "true"}"#,
+        r#"{"dry_run": true, "x": 1}"#,
+        // A close needs the preview it closes: closing whatever is there now could discard what no one was shown.
+        r#"{"dry_run": false}"#,
+        r#"{"close": {}}"#,
+        r#"{"close": [{"run": "r1", "detail": "d"}]}"#,
+        r#"{"close": [{"run": "r1", "detail": "d", "discarded": [1]}]}"#,
+        r#"{"close": [{"run": "../r1", "detail": "d", "discarded": []}]}"#,
+    ];
+    for body in bad {
         let reply = served.post(&target, body);
         assert_eq!((reply.status, reply.error()), (Some(400), wrong.to_string()), "{body}");
     }
@@ -1308,7 +1343,7 @@ fn a_bad_close_body_is_refused_before_the_project_is_reached() {
 fn a_close_of_runs_that_cannot_be_read_is_a_bad_gateway() {
     let project = Project::new();
     project.write(&format!("{RUNS_DIR}/{SERVE_ID}/state.json"), "not JSON");
-    let reply = Served::real().post(&project.query("/close"), r#"{"dry_run": false}"#);
+    let reply = Served::real().post(&project.query("/close"), r#"{"dry_run": true}"#);
     assert_eq!(reply.status, Some(502), "{reply:?}");
 }
 
@@ -1316,7 +1351,7 @@ fn a_close_of_runs_that_cannot_be_read_is_a_bad_gateway() {
 fn a_close_needs_the_token_and_the_server_s_own_origin() {
     let host = Arc::new(ServeHost::on(None));
     let served = Served::fake(&host, &[]);
-    let (target, body) = (Served::query("/close", &[]), r#"{"dry_run": false}"#);
+    let (target, body) = (Served::query("/close", &[]), r#"{"dry_run": true}"#);
     let length = body.len().to_string();
     assert_eq!(served.ask_with_body("POST", &target, &[("Content-Length", &length)], body).status, Some(401));
     let bearer = format!("Bearer {}", served.token());
