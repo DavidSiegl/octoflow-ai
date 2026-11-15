@@ -42,6 +42,27 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **Two POST /forget requests that list the same run at once can both forget it.** Each listed run is read at its
+  turn (`forget_all`, `engine/src/cli/forget.rs`), but serve answers each request on its own thread: two requests
+  (two app windows, a double submit) can both read run X as closed before either deletes it, and both answer
+  "forgotten"; if both read its metrics before either appends, `Host::forget_run`'s check-then-append
+  (`engine/src/host.rs`) archives them twice (cross-review 211 F1). Closed by serve holding a per-project lock around a
+  forget sweep, or `forget_run` taking a lock file around its check and append.
+- **POST /close and POST /forget act on runs the app's overview does not show.** Serve's overview reads the runs
+  through `Host::run_states_inside`, which leaves out a run whose directory or `state.json` resolves outside the runs
+  directory; `close_all` and `forget_all` read them through `Host::run_states` and `Host::run_state`, so a dry run
+  lists, and Close or Delete acts on, such a run: Delete reads its `metrics.json` through the link into the archive and
+  removes the link (cross-review 211 F3). Closed by serve's sweeps reading the runs as the overview does.
+- **A sweep stopped by serve's shutdown answers 200 with part of its runs.** When `stopping` is raised partway
+  through a POST /close or POST /forget sweep, `close_all`/`forget_all` return only the runs reached and serve answers
+  200 with that list (`post_close`, `post_forget` in `engine/src/serve.rs`); the dialog shows them with an enabled
+  Done and nothing says the rest were never tried (cross-review 211 F7). Small, as serve is going away. Closed by
+  serve answering an interrupted sweep with an error naming the runs it did not reach.
+- **`ForgetDialog` copies `CleanUpDialog`'s shape.** `ui/src/components/ForgetDialog.tsx` repeats
+  `CleanUpDialog.tsx`'s Sweep type, preview effect, action handler, Cancel/action/Done footer and list; only the
+  endpoint, the words and the counted outcomes differ, plus close's discarded changes and unread runs (cross-review
+  211 F5). Closed by one sweep dialog both use, if a third sweep comes or the two drift; for two, a shared component
+  would need render props for close's extras.
 - **Whether a run is closed is still told in three more places.** `RunState::is_closed` (`engine/src/state.rs`) is
   the rule close and forget use, but `resumable_state` (`engine/src/cli/start.rs`, `closed.is_some()`, which also
   takes an empty `closed` for closed), `run_record`'s resume hint (`engine/src/cli/listing.rs`) and drain's check

@@ -825,11 +825,9 @@ fn run_forgotten(run: &RunForgotten) -> Value {
     let (outcome, detail) = match &run.outcome {
         forget::Outcome::Forgotten => ("forgotten", ""),
         forget::Outcome::Left(Left::NotClosed) => ("not closed", ""),
-        forget::Outcome::Left(Left::AwaitsPrune) => {
-            ("waiting for prune", "prune deletes its branch and worktree once its pull request is merged or closed")
-        }
+        forget::Outcome::Left(Left::AwaitsPrune) => ("waiting for prune", forget::AWAITS_PRUNE),
         forget::Outcome::Left(Left::Unreadable(why)) => ("skipped", why.as_str()),
-        forget::Outcome::Left(Left::Gone) => ("skipped", "there is no such run any more"),
+        forget::Outcome::Gone => ("skipped", "there is no such run any more"),
         forget::Outcome::Failed(error) => ("failed", error.as_str()),
     };
     object([

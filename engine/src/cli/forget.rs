@@ -25,8 +25,8 @@ pub enum Sweep<'p> {
     DryRun,
     /// Every run of the project.
     All,
-    /// Only the runs with these ids, in this order, as an earlier DryRun gave them; a run that is not there (forgotten
-    /// since, say) is Left::Gone. Each is still forgotten only if decide lets it.
+    /// Only the runs with these ids, in this order, as an earlier DryRun gave them, each read only at its turn: a run
+    /// that is not there then (forgotten since, say) is Outcome::Gone. Each is still forgotten only if decide lets it.
     Listed(&'p [String]),
 }
 
@@ -46,9 +46,15 @@ pub enum Outcome {
     Forgotten,
     /// Left as it is, and why.
     Left(Left),
-    /// Its forget failed, and why; part of its directory may be gone.
+    /// A Sweep::Listed run the project did not have at its turn.
+    Gone,
+    /// Its forget failed, and why; part of its directory may be gone. For a Sweep::Listed run, also its state.json
+    /// that could not be read at its turn, or is not a JSON object naming its run.
     Failed(String),
 }
+
+/// Why a closed run waits for prune, as forget and serve's POST /forget give it.
+pub const AWAITS_PRUNE: &str = "prune deletes its branch and worktree once its pull request is merged or closed";
 
 /// Why a run is not forgotten, as it was read.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,8 +66,6 @@ pub enum Left {
     AwaitsPrune,
     /// Its state cannot be read (SavedRun::problem), so that neither is known; why.
     Unreadable(String),
-    /// A Sweep::Listed run that the project does not have.
-    Gone,
 }
 
 impl<'a> Forgetter<'a> {
@@ -98,12 +102,10 @@ pub fn forget_command(world: &Connected, cwd: &str, run_ref: Option<&str>, dry_r
         Err(Left::NotClosed) => {
             Err(OrchestratorError(format!("run {run_id} is not closed: close it before forgetting it")))
         }
-        Err(Left::AwaitsPrune) => Err(OrchestratorError(format!(
-            "run {run_id} keeps its branch and worktree for prune, which deletes them once its pull request is \
-             merged or closed: forget it after that"
-        ))),
+        Err(Left::AwaitsPrune) => {
+            Err(OrchestratorError(format!("run {run_id} is closed, but {AWAITS_PRUNE}: forget it after that")))
+        }
         Err(Left::Unreadable(why)) => Err(OrchestratorError(why)),
-        Err(Left::Gone) => unreachable!("find_run found run {run_id}"),
     }
 }
 
@@ -111,26 +113,32 @@ pub fn forget_command(world: &Connected, cwd: &str, run_ref: Option<&str>, dry_r
 /// forgotten (or to be), skipped or failed, then a count of each outcome. The runs are every run of the project, in
 /// run id order, or a Sweep::Listed's, in its order. A raised Interrupt starts no further run.
 ///
-/// Returns each run looked at, in that order; none after an Interrupt. Errors: the project's runs cannot be read.
+/// Returns each run looked at, in that order; none after an Interrupt. Errors: for Sweep::DryRun and Sweep::All, the
+/// project's runs cannot be read at the start (a Sweep::Listed run that cannot be read at its turn is Outcome::Failed).
 pub fn forget_all(world: &Forgetter, cwd: &str, sweep: Sweep) -> Result<Vec<RunForgotten>, OrchestratorError> {
-    let mut runs = world.host.run_states(cwd)?;
-    runs.sort_by(|a, b| a.shown().run_id.cmp(&b.shown().run_id));
-    // Each run to look at, by its id, and the project's run of that id; None for a listed run the project lacks.
-    let looked_at: Vec<(&str, Option<&SavedRun>)> = match sweep {
-        Sweep::DryRun | Sweep::All => runs.iter().map(|run| (run.shown().run_id.as_str(), Some(run))).collect(),
-        Sweep::Listed(ids) => {
-            ids.iter().map(|id| (id.as_str(), runs.iter().find(|run| run.shown().run_id == *id))).collect()
-        }
+    // Every run of the project, read once here; none for a Sweep::Listed, whose runs are read at their turns.
+    let mut every = match sweep {
+        Sweep::DryRun | Sweep::All => world.host.run_states(cwd)?,
+        Sweep::Listed(_) => vec![],
+    };
+    every.sort_by(|a, b| a.shown().run_id.cmp(&b.shown().run_id));
+    let ids: Vec<&str> = match sweep {
+        Sweep::DryRun | Sweep::All => every.iter().map(|run| run.shown().run_id.as_str()).collect(),
+        Sweep::Listed(ids) => ids.iter().map(String::as_str).collect(),
     };
     let dry_run = matches!(sweep, Sweep::DryRun);
     let mut outcomes = vec![];
-    for (run_id, run) in looked_at {
+    for (i, run_id) in ids.into_iter().enumerate() {
         if world.interrupt.is_raised() {
             break;
         }
-        let outcome = match run {
+        let outcome = match every.get(i) {
             Some(run) => sweep_one(world, cwd, run, dry_run),
-            None => Outcome::Left(Left::Gone),
+            None => match world.host.run_state(cwd, run_id) {
+                Ok(Some(run)) => sweep_one(world, cwd, &run, dry_run),
+                Ok(None) => Outcome::Gone,
+                Err(e) => Outcome::Failed(e.0),
+            },
         };
         outcomes.push(RunForgotten { run_id: run_id.to_string(), outcome });
     }
@@ -152,7 +160,7 @@ fn sweep_one(world: &Forgetter, cwd: &str, run: &SavedRun, dry_run: bool) -> Out
     match &outcome {
         Outcome::Left(Left::Unreadable(why)) => world.say(&format!("skipped: {why}")),
         Outcome::Failed(why) => world.say(&format!("could not forget run {run_id}: {why}")),
-        Outcome::Forgotten | Outcome::Left(Left::NotClosed | Left::AwaitsPrune | Left::Gone) => {}
+        Outcome::Forgotten | Outcome::Gone | Outcome::Left(Left::NotClosed | Left::AwaitsPrune) => {}
     }
     outcome
 }
@@ -164,7 +172,7 @@ fn say_counts(world: &Forgetter, outcomes: &[RunForgotten], dry_run: bool) {
     let forgotten = count(|o| *o == Outcome::Forgotten);
     let open = count(|o| *o == Outcome::Left(Left::NotClosed));
     let pruning = count(|o| *o == Outcome::Left(Left::AwaitsPrune));
-    let skipped = count(|o| matches!(o, Outcome::Left(Left::Unreadable(_) | Left::Gone)));
+    let skipped = count(|o| matches!(o, Outcome::Left(Left::Unreadable(_)) | Outcome::Gone));
     let failed = count(|o| matches!(o, Outcome::Failed(_)));
     let verb = if dry_run { "to forget" } else { "forgotten" };
     let pruning = if pruning > 0 { format!(", {pruning} waiting for prune") } else { String::new() };
