@@ -300,7 +300,7 @@ fn runs_are_list_json_records_on_a_machine() {
     assert_eq!(doc, object([("version", Value::from(1)), ("runs", Value::Array(listed))]));
     assert_eq!(
         doc.get("runs").and_then(Value::as_array).and_then(|r| r[0].get("resume_command")),
-        Some(&Value::from("orchestrator resume 5e7e00 --machine remote --cwd '~/proj'"))
+        Some(&Value::from("octoflow resume 5e7e00 --machine remote --cwd '~/proj'"))
     );
 }
 
@@ -1065,10 +1065,10 @@ fn a_look_that_fails_once_the_run_is_launched_is_no_answer() {
 
 #[test]
 fn a_replaced_program_is_started_as_the_one_now_at_its_path() {
-    let there = |p: &str| p == "/bin/orchestrator";
-    assert_eq!(live_program("/bin/orchestrator (deleted)".into(), there), "/bin/orchestrator");
-    assert_eq!(live_program("/gone/orchestrator (deleted)".into(), there), "/gone/orchestrator (deleted)");
-    assert_eq!(live_program("/bin/orchestrator".into(), there), "/bin/orchestrator");
+    let there = |p: &str| p == "/bin/octoflow";
+    assert_eq!(live_program("/bin/octoflow (deleted)".into(), there), "/bin/octoflow");
+    assert_eq!(live_program("/gone/octoflow (deleted)".into(), there), "/gone/octoflow (deleted)");
+    assert_eq!(live_program("/bin/octoflow".into(), there), "/bin/octoflow");
 }
 
 #[test]

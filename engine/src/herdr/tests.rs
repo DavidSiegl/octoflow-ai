@@ -651,12 +651,12 @@ fn in_the_environment_s_server(pane: &str) -> Launched {
 #[test]
 fn launch_gives_each_word_to_the_new_shell_as_a_variable_and_types_only_their_names() {
     let (herdr, ran) = launching("");
-    let argv = argv(&["/bin/orchestrator", "run", "--model=--session", "--", "x\u{15}touch /tmp/pwned #"]);
+    let argv = argv(&["/bin/octoflow", "run", "--model=--session", "--", "x\u{15}touch /tmp/pwned #"]);
     assert_eq!(herdr.launch("/proj", "a1b2c3 a task", &argv).unwrap(), in_the_environment_s_server("w1:p1"));
     let ran: Vec<Vec<String>> = ran.lock().unwrap().iter().map(|(argv, _)| argv.clone()).collect();
     let create = [
         "herdr", "workspace", "create", "--cwd", "/proj", "--label", "a1b2c3 a task", "--no-focus",
-        "--env", "OCTOFLOW_ARG_0=/bin/orchestrator", "--env", "OCTOFLOW_ARG_1=run",
+        "--env", "OCTOFLOW_ARG_0=/bin/octoflow", "--env", "OCTOFLOW_ARG_1=run",
         "--env", "OCTOFLOW_ARG_2=--model=--session", "--env", "OCTOFLOW_ARG_3=--",
         "--env", "OCTOFLOW_ARG_4=x\u{15}touch /tmp/pwned #",
     ];

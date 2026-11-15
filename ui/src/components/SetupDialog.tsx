@@ -89,7 +89,7 @@ export function SetupDialog({ api, project, onClose }: Props) {
   );
 }
 
-/** The checks of one level, each with ok, missing or warn as `orchestrator doctor` words them; nothing without any. */
+/** The checks of one level, each with ok, missing or warn as `octoflow doctor` words them; nothing without any. */
 function CheckGroup({ heading, checks }: { heading: string; checks: SetupCheck[] }) {
   if (checks.length === 0) {
     return null;
@@ -112,7 +112,7 @@ function CheckGroup({ heading, checks }: { heading: string; checks: SetupCheck[]
   );
 }
 
-/** What setting up the local quality gate gave: a line for each file, wrote or kept as `orchestrator doctor
+/** What setting up the local quality gate gave: a line for each file, wrote or kept as `octoflow doctor
  * --setup-gate` words them, and that they count once committed; the error it failed with; or that it runs. */
 function GateSetup({ outcome }: { outcome: GateOutcome }) {
   return (

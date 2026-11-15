@@ -372,15 +372,15 @@ fn off_in_quality_drops_the_analysis_and_goes_to_the_reviewer() {
         "{body}"
     );
     let commit = commit_args(&f);
-    let trailer = ["--trailer", "Orchestrator-Gate: ERROR after 1 quality round, then turned off"];
+    let trailer = ["--trailer", "Octoflow-Gate: ERROR after 1 quality round, then turned off"];
     assert_eq!(commit[commit.len() - 2..], trailer);
 }
 
-/// Whether body's Orchestrator-Gate row gives a gate result after noted quality rounds, as the regular expression
-/// `\| Orchestrator-Gate \| `\w+ after {noted} quality rounds?` \|` matches it.
+/// Whether body's Octoflow-Gate row gives a gate result after noted quality rounds, as the regular expression
+/// `\| Octoflow-Gate \| `\w+ after {noted} quality rounds?` \|` matches it.
 fn gate_row_after(body: &str, noted: u32) -> bool {
     body.lines().any(|line| {
-        let Some(cell) = line.strip_prefix("| Orchestrator-Gate | `").and_then(|l| l.strip_suffix("` |")) else {
+        let Some(cell) = line.strip_prefix("| Octoflow-Gate | `").and_then(|l| l.strip_suffix("` |")) else {
             return false;
         };
         let Some((gate, rest)) = cell.split_once(' ') else { return false };
@@ -445,7 +445,7 @@ fn off_in_quality_tells_the_reviewer_what_the_round_last_found() {
                 assert!(!review.to_lowercase().contains("quality gate"), "{name}: {review}");
                 assert!(!body.contains("Quality gate"), "{name}: {body}");
                 assert!(body.contains(&format!("{OFF_BEFORE_ANALYSIS}\n\nOpened by")), "{name}: {body}");
-                assert!(!commit_and_body.contains("Orchestrator-Gate"), "{name}: {commit_and_body}");
+                assert!(!commit_and_body.contains("Octoflow-Gate"), "{name}: {commit_and_body}");
             }
             Some(note) => {
                 assert!(review.contains(&quality_note(note, &f.state.quality_path(1, noted))), "{name}: {review}");
@@ -477,9 +477,9 @@ fn off_in_round_1_and_published_in_round_2_cites_round_1() {
     assert_eq!((wf.state().round, wf.state().quality_round), (2, 0));
     let body = pr_body(&f);
     assert!(body.contains(&format!("{OFF_AFTER_ANALYSIS}\n\nOpened by")), "{body}");
-    assert!(body.contains("| Orchestrator-Gate | `OK after 2 quality rounds, then turned off` |"), "{body}");
+    assert!(body.contains("| Octoflow-Gate | `OK after 2 quality rounds, then turned off` |"), "{body}");
     assert!(body.contains("<summary>Quality gate (round 1, before the last change)</summary>\n\nGATE: OK"), "{body}");
-    let trailer = "Orchestrator-Gate: OK after 2 quality rounds, then turned off";
+    let trailer = "Octoflow-Gate: OK after 2 quality rounds, then turned off";
     assert_eq!(commit_args(&f).last().map(String::as_str), Some(trailer));
 }
 
@@ -578,7 +578,7 @@ fn turned_off_in_its_quality_fix_a_workflow_without_a_verdict_finishes_unjudged(
     let pr = f.host.state().prs[0].clone();
     assert!(!pr.draft);
     assert!(pr.body.contains(&format!("{OFF_AFTER_ANALYSIS}\n\nOpened by")), "{}", pr.body);
-    assert!(pr.body.contains("| Orchestrator-Gate | `ERROR after 1 quality round, then turned off` |"), "{}", pr.body);
+    assert!(pr.body.contains("| Octoflow-Gate | `ERROR after 1 quality round, then turned off` |"), "{}", pr.body);
 }
 
 #[test]

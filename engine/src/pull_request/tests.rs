@@ -165,11 +165,11 @@ fn evidence(round: u32, q: u32, text: &str, unjudged: bool) -> GateEvidence {
 fn the_gate_trailer_says_how_the_last_quality_round_ended() {
     let s = state(|s| s.agents.insert("build", AgentRecord::new("build-r", "p1", "claude")));
     let last = |e: &GateEvidence| provenance(&s, e).last().cloned().unwrap();
-    assert_eq!(last(&evidence(2, 1, "GATE: OK\n", false)), ("Orchestrator-Gate".into(), "OK after 1 quality round".into()));
-    assert_eq!(last(&evidence(2, 3, "garbled", false)), ("Orchestrator-Gate".into(), "? after 3 quality rounds".into()));
-    assert_eq!(last(&evidence(1, 1, "GATE: ERROR\n", true)), ("Orchestrator-Gate".into(), "ERROR after 1 quality round, then turned off".into()));
+    assert_eq!(last(&evidence(2, 1, "GATE: OK\n", false)), ("Octoflow-Gate".into(), "OK after 1 quality round".into()));
+    assert_eq!(last(&evidence(2, 3, "garbled", false)), ("Octoflow-Gate".into(), "? after 3 quality rounds".into()));
+    assert_eq!(last(&evidence(1, 1, "GATE: ERROR\n", true)), ("Octoflow-Gate".into(), "ERROR after 1 quality round, then turned off".into()));
     let keys: Vec<String> = provenance(&s, &GateEvidence { last: None, unjudged: true }).into_iter().map(|(k, _)| k).collect();
-    assert_eq!(keys, ["Orchestrator-Run", "Orchestrator-Workflow", "Orchestrator-Role"]);
+    assert_eq!(keys, ["Octoflow-Run", "Octoflow-Workflow", "Octoflow-Role"]);
 }
 
 #[test]
@@ -239,8 +239,8 @@ fn git_reads_them_as_trailers() {
     let message = git(&d, &["log", "-1", "--format=%B"], None);
     assert_eq!(
         git(&d, &["interpret-trailers", "--parse"], Some(&message)),
-        "Orchestrator-Run: 20260929-120000-a1b2c3\nOrchestrator-Workflow: default\nOrchestrator-Role: spec=claude/default\n\
-         Orchestrator-Role: build=claude/default\nOrchestrator-Role: review=codex/gpt-5\nOrchestrator-Gate: OK after 2 quality rounds\n"
+        "Octoflow-Run: 20260929-120000-a1b2c3\nOctoflow-Workflow: default\nOctoflow-Role: spec=claude/default\n\
+         Octoflow-Role: build=claude/default\nOctoflow-Role: review=codex/gpt-5\nOctoflow-Gate: OK after 2 quality rounds\n"
     );
     assert!(message.contains(&note));
 }

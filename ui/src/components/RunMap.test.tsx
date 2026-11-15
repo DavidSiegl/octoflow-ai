@@ -113,7 +113,7 @@ describe("RunMap", () => {
     expect(screen.getByText("your answer?")).toBeInTheDocument();
     rerender(<RunMap record={record({ waiting: { reason: "blocked", detail: "which key?" } })} now={NOW} />);
     expect(screen.getByText("blocked")).toBeInTheDocument();
-    rerender(<RunMap record={record({ waiting: { reason: "stale", detail: "orchestrator resume fea142" } })} now={NOW} />);
+    rerender(<RunMap record={record({ waiting: { reason: "stale", detail: "octoflow resume fea142" } })} now={NOW} />);
     expect(screen.queryByText("blocked")).not.toBeInTheDocument();
   });
 

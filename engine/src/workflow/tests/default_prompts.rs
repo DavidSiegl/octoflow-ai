@@ -270,10 +270,10 @@ const FRESH_REVIEW_2_PASSED: &str = concat!(
 
 const GOLDEN_PR_BODY: &str = concat!(
     "Opened by Octoflow AI run `20260929-120000-a1b2c3`. Reviewer verdict after 2 rounds: ",
-    "**APPROVE**.\n\n| Commit trailer | Value |\n| --- | --- |\n| Orchestrator-Run | ",
-    "`20260929-120000-a1b2c3` |\n| Orchestrator-Workflow | `default` |\n| Orchestrator-Role | ",
-    "`spec=claude/default` |\n| Orchestrator-Role | `build=claude/default` |\n| Orchestrator-Role | ",
-    "`review=claude/default` |\n| Orchestrator-Gate | `ERROR after 2 quality rounds` |\n\n<details ",
+    "**APPROVE**.\n\n| Commit trailer | Value |\n| --- | --- |\n| Octoflow-Run | ",
+    "`20260929-120000-a1b2c3` |\n| Octoflow-Workflow | `default` |\n| Octoflow-Role | ",
+    "`spec=claude/default` |\n| Octoflow-Role | `build=claude/default` |\n| Octoflow-Role | ",
+    "`review=claude/default` |\n| Octoflow-Gate | `ERROR after 2 quality rounds` |\n\n<details ",
     "open>\n<summary>Spec</summary>\n\n# Add a token-bucket rate limiter\n\n## Goal\nlimit ",
     "requests\n\n</details>\n\n<details>\n<summary>Builder report (round 2)</summary>\n\nreport 2 ",
     "q1\n\n</details>\n\n<details>\n<summary>Quality gate (round 2)</summary>\n\nGATE: ",

@@ -211,8 +211,9 @@ impl Target {
 /// What the human wrote after the program's name, read: the Command, or the clap error that ends the program instead.
 ///
 /// The error is a usage error (exit status 2, its text naming the problem, for clap's print), or the help a --help
-/// or the version a --version asked for (exit status 0); both name the program as super::program_name does. config is where the workflow files
-/// that --workflow offers are.
+/// or the version a --version asked for (exit status 0). The usage error and the help name the program as
+/// super::program_name does, the version as super::PROGRAM. config is where the workflow files that --workflow offers
+/// are.
 pub fn parse_args(argv: impl IntoIterator<Item = OsString>, config: &ConfigDir) -> Result<Command, clap::Error> {
     let mut p = parser(config);
     let matches = p.try_get_matches_from_mut(std::iter::once(OsString::from(super::program_name())).chain(argv))?;
@@ -489,7 +490,7 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         .arg(Arg::new("origin").long("origin").value_name("ORIGIN").action(ArgAction::Append).help(
             "Also answer requests from this origin, such as the desktop app's webview, tauri://localhost; repeatable",
         ));
-    clap::Command::new("orchestrator")
+    clap::Command::new(super::PROGRAM)
         .about(
             "Role-based handoff between agent sessions in herdr, each role in the harness of its choice; by default \
              Spec Collector -> Builder -> Reviewer, all in Claude Code.",
@@ -567,7 +568,7 @@ fn settings_args() -> Vec<Arg> {
             format!(
                 "Agent harness for every role, one of {}; overrides the agent key of a role in the workflow file \
                  (default {DEFAULT_HARNESS}). Each harness a run uses needs its CLI on PATH and its herdr \
-                 integration (`orchestrator doctor` names it) where the agents run",
+                 integration (`octoflow doctor` names it) where the agents run",
                 HARNESS_NAMES.join(", ")
             ),
         ),

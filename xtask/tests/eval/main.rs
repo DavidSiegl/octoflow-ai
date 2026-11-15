@@ -401,7 +401,7 @@ fn evaluation() -> Eval {
         date: "2026-10-28".to_string(),
         config: "workflow-quick".to_string(),
         run_args: strings(&["--workflow", "quick"]),
-        engine: "target/debug/orchestrator".to_string(),
+        engine: "target/debug/octoflow".to_string(),
         commit: "abc".to_string(),
     }
 }
@@ -527,7 +527,7 @@ fn the_checkouts_engine_is_built_when_eval_engine_is_unset_or_empty() {
     let engine = eval::engine_command(Some(""), &xtask::checkout()).expect("the engine builds");
     let [path] = engine.as_slice() else { panic!("not one path: {engine:?}") };
     assert!(Path::new(path).is_file(), "{path}");
-    assert_eq!(Path::new(path).file_name().and_then(|n| n.to_str()), Some("orchestrator"));
+    assert_eq!(Path::new(path).file_name().and_then(|n| n.to_str()), Some("octoflow"));
 }
 
 /// A checkout of its own with the real task named, and nothing else.

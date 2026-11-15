@@ -32,11 +32,11 @@ cargo about generate --workspace --locked --fail -c packaging/about.toml -o "$no
 # sets one, is where cargo puts the build, so the binary's path is asked of cargo rather than assumed.
 report=$(mktemp)
 trap 'rm -f "$report"' EXIT
-cargo build --release --locked -p octoflow-engine --bin orchestrator --message-format=json-render-diagnostics \
+cargo build --release --locked -p octoflow-engine --bin octoflow --message-format=json-render-diagnostics \
     > "$report"
-built=$(sed -n 's/.*"executable":"\([^"]*\/orchestrator\)".*/\1/p' "$report" | tail -n 1)
+built=$(sed -n 's/.*"executable":"\([^"]*\/octoflow\)".*/\1/p' "$report" | tail -n 1)
 if [ -z "$built" ]; then
-    echo "build-binary.sh: cargo did not report the orchestrator binary it built" >&2
+    echo "build-binary.sh: cargo did not report the octoflow binary it built" >&2
     exit 1
 fi
 cp "$built" "$bin"

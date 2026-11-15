@@ -491,15 +491,18 @@ fn finish(verdict: Option<&str>, state: &RunState, pipeline: &Pipeline, print: &
     }
 }
 
+/// The binary's name, as engine/Cargo.toml's `[[bin]]` gives it: what --version names, and what program_name gives
+/// when the program was invoked by no file name.
+pub const PROGRAM: &str = "octoflow";
+
 /// The file name of the program's command line's first word, as main was given it; unset until main runs, and when that
 /// word is empty or names no file.
 static INVOKED_AS: OnceLock<String> = OnceLock::new();
 
 /// The program's name, as the usage and a hint that names a command to run give it: the file name it was invoked by
-/// (`orchestrator`, or a link's or a copy's own name), or `orchestrator`, the binary's, before main runs or when it was
-/// invoked by none.
+/// (`octoflow`, or a link's or a copy's own name), or PROGRAM before main runs or when it was invoked by none.
 pub fn program_name() -> &'static str {
-    INVOKED_AS.get().map_or("orchestrator", String::as_str)
+    INVOKED_AS.get().map_or(PROGRAM, String::as_str)
 }
 
 /// The command that resumes the run run_id names, by its key, with target's --machine and --cwd flags.

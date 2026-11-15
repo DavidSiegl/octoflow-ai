@@ -52,7 +52,7 @@ impl Drop for Dir {
 /// its PATH beginning with dir's bin, and HERDR_ENV as herdr_env gives it.
 fn program(dir: &Dir, args: &[&str], herdr_env: Option<&str>) -> Command {
     let mut command = Command::new("env");
-    command.arg("--default-signal=INT,TERM,HUP").arg(env!("CARGO_BIN_EXE_orchestrator")).args(args);
+    command.arg("--default-signal=INT,TERM,HUP").arg(env!("CARGO_BIN_EXE_octoflow")).args(args);
     let path = format!("{}:{}", dir.0.join("bin").display(), std::env::var("PATH").unwrap_or_default());
     command.env("PATH", path).env("XDG_CONFIG_HOME", dir.0.join("config")).env_remove("HERDR_ENV");
     if let Some(value) = herdr_env {
@@ -113,18 +113,18 @@ fn the_hints_and_the_usage_name_the_program_by_the_file_name_it_was_invoked_by()
         stdout.lines().find(|l| l.contains(" workflows default`")).map(String::from)
     };
     let out = program(&dir, &["workflows"], None).output().expect("the program runs");
-    assert!(hint(&out).is_some_and(|l| l.contains("`orchestrator workflows default`")), "{:?}", hint(&out));
-    let out = Command::new(env!("CARGO_BIN_EXE_orchestrator"))
-        .arg0("/opt/octoflow/bin/octoflow")
+    assert!(hint(&out).is_some_and(|l| l.contains("`octoflow workflows default`")), "{:?}", hint(&out));
+    let out = Command::new(env!("CARGO_BIN_EXE_octoflow"))
+        .arg0("/usr/local/bin/orchestrator")
         .arg("workflows")
         .env("XDG_CONFIG_HOME", dir.0.join("config"))
         .current_dir(&dir.0)
         .stdin(Stdio::null())
         .output()
         .expect("the program runs");
-    assert!(hint(&out).is_some_and(|l| l.contains("`octoflow workflows default`")), "{:?}", hint(&out));
-    let out = Command::new(env!("CARGO_BIN_EXE_orchestrator"))
-        .arg0("octoflow")
+    assert!(hint(&out).is_some_and(|l| l.contains("`orchestrator workflows default`")), "{:?}", hint(&out));
+    let out = Command::new(env!("CARGO_BIN_EXE_octoflow"))
+        .arg0("orchestrator")
         .arg("--bogus")
         .env("XDG_CONFIG_HOME", dir.0.join("config"))
         .current_dir(&dir.0)
@@ -132,7 +132,7 @@ fn the_hints_and_the_usage_name_the_program_by_the_file_name_it_was_invoked_by()
         .output()
         .expect("the program runs");
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("Usage: octoflow "), "{}", stderr(&out));
+    assert!(stderr(&out).contains("Usage: orchestrator "), "{}", stderr(&out));
 }
 
 #[test]

@@ -111,29 +111,29 @@ pub struct GateEvidence {
     pub unjudged: bool,
 }
 
-/// The git trailers of the run's commit, (key, value) in order: Orchestrator-Run, Orchestrator-Workflow, an
-/// Orchestrator-Role per role whose agent ran, in the order they first started, as role=harness/model, the model
-/// "default" where none was set, and with a quality file to cite Orchestrator-Gate, how its quality round ended,
+/// The git trailers of the run's commit, (key, value) in order: Octoflow-Run, Octoflow-Workflow, an
+/// Octoflow-Role per role whose agent ran, in the order they first started, as role=harness/model, the model
+/// "default" where none was set, and with a quality file to cite Octoflow-Gate, how its quality round ended,
 /// with ", then turned off" for an unjudged change.
 ///
 /// A role that ran in two harnesses over resumes names the last. docs/design.md says what each trailer means.
 pub fn provenance(state: &RunState, quality: &GateEvidence) -> Vec<(String, String)> {
     let s = state;
     let mut trailers = vec![
-        ("Orchestrator-Run".to_string(), s.run_id.clone()),
-        ("Orchestrator-Workflow".to_string(), s.workflow.clone()),
+        ("Octoflow-Run".to_string(), s.run_id.clone()),
+        ("Octoflow-Workflow".to_string(), s.workflow.clone()),
     ];
     for (role, agent) in s.agents.iter() {
         let kind = &agent.harness;
         let model = s.models.get(role).filter(|m| !m.is_empty()).map_or("default", String::as_str);
-        trailers.push(("Orchestrator-Role".to_string(), format!("{role}={kind}/{model}")));
+        trailers.push(("Octoflow-Role".to_string(), format!("{role}={kind}/{model}")));
     }
     if let Some(last) = &quality.last {
         let q = last.quality_round;
         let rounds = format!("{q} quality round{}", if q != 1 { "s" } else { "" });
         let off = if quality.unjudged { ", then turned off" } else { "" };
         let gate = parse_gate(&last.text).unwrap_or("?");
-        trailers.push(("Orchestrator-Gate".to_string(), format!("{gate} after {rounds}{off}")));
+        trailers.push(("Octoflow-Gate".to_string(), format!("{gate} after {rounds}{off}")));
     }
     trailers
 }

@@ -25,6 +25,7 @@ static ROOT: LazyLock<PathBuf> = LazyLock::new(octoflow_e2e::checkout);
 const NOT_IN_THE_PARSER: &[(&str, &str, Option<&str>, &str)] = &[
     ("roadmap.md", "resume", Some("--workflow"), "a planned feature, K"),
     ("architecture.md", "run", Some("--run-id"), "hidden from run's help: serve's, for the runs POST /run starts"),
+    ("design.md", "cargo", None, "`EVAL_ENGINE=target/release/octoflow cargo xtask eval`: the program's path, then cargo's"),
 ];
 
 /// Backticked ALL_CAPS names the docs give that are not the Rust's, with where they come from.
@@ -100,7 +101,7 @@ fn assert_no_errors(errors: &[String]) {
 }
 
 /// (line, command, the text of its arguments) for each command the document shows being run, in a code span or a fenced
-/// line: after `orchestrator`; and, in a code span, a command opening it with a flag after, as in `run --spec`. Shell
+/// line: after `octoflow`; and, in a code span, a command opening it with a flag after, as in `run --spec`. Shell
 /// comments, and what follows a pipe, `&&` or `;`, are left out.
 fn invocations<'a>(doc: &'a Doc, commands: &BTreeMap<String, BTreeSet<String>>) -> Vec<(Line<'a>, String, String)> {
     let mut found = Vec::new();
@@ -113,7 +114,7 @@ fn invocations<'a>(doc: &'a Doc, commands: &BTreeMap<String, BTreeSet<String>>) 
             vec![line.text]
         };
         for text in texts.into_iter().map(first_command) {
-            if let Some((command, rest)) = orchestrator_command(text) {
+            if let Some((command, rest)) = octoflow_command(text) {
                 found.push((line, command.to_string(), rest.to_string()));
             }
             let mut words = text.split_whitespace();
@@ -145,10 +146,10 @@ fn starts_word(text: &str, i: usize) -> bool {
     !text[..i].chars().next_back().is_some_and(word_char)
 }
 
-/// The first `orchestrator <command>` in text, where orchestrator starts a word and the command, a lowercase letter
-/// then lowercase letters and hyphens, follows after whitespace: the command and the rest of text after it.
-fn orchestrator_command(text: &str) -> Option<(&str, &str)> {
-    const PROGRAM: &str = "orchestrator";
+/// The first `octoflow <command>` in text, where octoflow starts a word (starts_word) and the command, a lowercase
+/// letter then lowercase letters and hyphens, follows after whitespace: the command and the rest of text after it.
+fn octoflow_command(text: &str) -> Option<(&str, &str)> {
+    const PROGRAM: &str = "octoflow";
     text.match_indices(PROGRAM).filter(|&(i, _)| starts_word(text, i)).find_map(|(i, _)| {
         let rest = &text[i + PROGRAM.len()..];
         let args = rest.trim_start();

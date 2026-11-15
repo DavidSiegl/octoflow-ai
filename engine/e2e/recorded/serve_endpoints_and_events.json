@@ -1642,7 +1642,7 @@
     }
    },
    {
-    "stdin": "Opened by Octoflow AI run `<run:1>`. Reviewer verdict after 1 round: **APPROVE**.\n\n| Commit trailer | Value |\n| --- | --- |\n| Orchestrator-Run | `<run:1>` |\n| Orchestrator-Workflow | `default` |\n| Orchestrator-Role | `spec=claude/default` |\n| Orchestrator-Role | `build=claude/default` |\n| Orchestrator-Role | `review=claude/default` |\n\n<details open>\n<summary>Spec</summary>\n\n# Add a subtract function\n\nAdd `subtract(a, b)` to `src/calc.py`, returning a - b, with a test.\n\n</details>\n\n<details>\n<summary>Builder report (round 1)</summary>\n\nAdded subtract and its test (round 1). `pytest` passes.\n\n</details>\n\n<details>\n<summary>Review (round 1)</summary>\n\nVERDICT: APPROVE\n\nNone.\n\n</details>\n\n<details>\n<summary>Run timings</summary>\n\n| step | role | round | harness | model | start (UTC) | duration | file |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| spec (human-paced) | spec | 0 | claude | default | <time> | <duration> | spec.md |\n| build | build | 1 | claude | default | <time> | <duration> | build-1.md |\n| review | review | 1 | claude | default | <time> | <duration> | review-1.md |\n\n</details>\n",
+    "stdin": "Opened by Octoflow AI run `<run:1>`. Reviewer verdict after 1 round: **APPROVE**.\n\n| Commit trailer | Value |\n| --- | --- |\n| Octoflow-Run | `<run:1>` |\n| Octoflow-Workflow | `default` |\n| Octoflow-Role | `spec=claude/default` |\n| Octoflow-Role | `build=claude/default` |\n| Octoflow-Role | `review=claude/default` |\n\n<details open>\n<summary>Spec</summary>\n\n# Add a subtract function\n\nAdd `subtract(a, b)` to `src/calc.py`, returning a - b, with a test.\n\n</details>\n\n<details>\n<summary>Builder report (round 1)</summary>\n\nAdded subtract and its test (round 1). `pytest` passes.\n\n</details>\n\n<details>\n<summary>Review (round 1)</summary>\n\nVERDICT: APPROVE\n\nNone.\n\n</details>\n\n<details>\n<summary>Run timings</summary>\n\n| step | role | round | harness | model | start (UTC) | duration | file |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| spec (human-paced) | spec | 0 | claude | default | <time> | <duration> | spec.md |\n| build | build | 1 | claude | default | <time> | <duration> | build-1.md |\n| review | review | 1 | claude | default | <time> | <duration> | review-1.md |\n\n</details>\n",
     "gh": [
      "pr",
      "create",
@@ -1855,7 +1855,7 @@
       "<sha:1>"
      ],
      "author": "Parity <parity@example.com>",
-     "message": "Add a subtract function\n\nOrchestrator run <run:1>: APPROVE after 1 review round(s).\n\nOrchestrator-Run: <run:1>\nOrchestrator-Workflow: default\nOrchestrator-Role: spec=claude/default\nOrchestrator-Role: build=claude/default\nOrchestrator-Role: review=claude/default\n\n",
+     "message": "Add a subtract function\n\nOrchestrator run <run:1>: APPROVE after 1 review round(s).\n\nOctoflow-Run: <run:1>\nOctoflow-Workflow: default\nOctoflow-Role: spec=claude/default\nOctoflow-Role: build=claude/default\nOctoflow-Role: review=claude/default\n\n",
      "changes": [
       "M\tsrc/calc.py",
       "M\ttests/test_calc.py"
@@ -1906,7 +1906,7 @@
       "<sha:1>"
      ],
      "author": "Parity <parity@example.com>",
-     "message": "Add a subtract function\n\nOrchestrator run <run:1>: APPROVE after 1 review round(s).\n\nOrchestrator-Run: <run:1>\nOrchestrator-Workflow: default\nOrchestrator-Role: spec=claude/default\nOrchestrator-Role: build=claude/default\nOrchestrator-Role: review=claude/default\n\n",
+     "message": "Add a subtract function\n\nOrchestrator run <run:1>: APPROVE after 1 review round(s).\n\nOctoflow-Run: <run:1>\nOctoflow-Workflow: default\nOctoflow-Role: spec=claude/default\nOctoflow-Role: build=claude/default\nOctoflow-Role: review=claude/default\n\n",
      "changes": [
       "M\tsrc/calc.py",
       "M\ttests/test_calc.py"

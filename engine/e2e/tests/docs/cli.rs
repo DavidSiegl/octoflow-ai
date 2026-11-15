@@ -23,7 +23,7 @@ pub fn commands() -> &'static BTreeMap<String, BTreeSet<String>> {
     })
 }
 
-/// What the orchestrator prints for `orchestrator <command...> --help`; panics when it cannot be run or fails.
+/// What the orchestrator prints for `octoflow <command...> --help`; panics when it cannot be run or fails.
 fn help(command: &[&str]) -> String {
     let binary = engine::binary();
     let out = Command::new(&binary)
