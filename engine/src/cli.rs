@@ -309,10 +309,10 @@ fn run_command(command: &Command, world: &Connected) -> Result<Ended, Stop> {
         }
         Command::Close { run_ref, dry_run, .. } => {
             let closer = close::Closer::of(world);
-            let failed = |run: &close::RunClosed| matches!(run.outcome, close::Outcome::Failed(_));
+            let failed = |run: &close::RunClosed| matches!(run.outcome, close::Outcome::Failed { .. });
             let exit_status = match run_ref {
                 Some(run_ref) => close::close_run(&closer, &cwd, run_ref, *dry_run).map(|_| 0),
-                None => close::close_all(&closer, &cwd, *dry_run)
+                None => close::close_all(&closer, &cwd, if *dry_run { close::Sweep::DryRun } else { close::Sweep::Close })
                     .map(|runs| if runs.iter().any(failed) { EXIT_ERROR } else { 0 }),
             }
             .map_err(stopped)?;
