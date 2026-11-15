@@ -31,6 +31,7 @@ pub mod args;
 pub mod close;
 pub mod doctor;
 pub mod drain;
+mod forget;
 pub mod refresh;
 pub mod listing;
 pub mod prune;
@@ -309,6 +310,10 @@ fn run_command(command: &Command, world: &Connected) -> Result<Ended, Stop> {
         }
         Command::Close { run_ref, dry_run, .. } => {
             let status = close::close_command(world, &cwd, run_ref.as_deref(), *dry_run).map_err(stopped)?;
+            return if interrupt.is_raised() { Err(Stop::Interrupted(None)) } else { Ok(Ended::Status(status)) };
+        }
+        Command::Forget { run_ref, dry_run, .. } => {
+            let status = forget::forget_command(world, &cwd, run_ref.as_deref(), *dry_run).map_err(stopped)?;
             return if interrupt.is_raised() { Err(Stop::Interrupted(None)) } else { Ok(Ended::Status(status)) };
         }
         Command::Workflows(_) | Command::Doctor { .. } | Command::Serve(_) => {

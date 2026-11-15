@@ -255,13 +255,17 @@ orchestrator close e292fb
 # What closing every finished, failed and stale run would do, uncommitted files included; drop --dry-run to do it
 orchestrator close --all --dry-run
 
+# Delete every closed run's directory, so that list no longer shows it; metrics still prints its line
+orchestrator forget --all
+
 # After you resolved a pull request's conflict and pushed: drop its warning, and its draft if it was approved
 orchestrator refresh e292fb
 
 # Delete the branches of runs whose pull request is merged, or closed 14 days ago, and a leftover clean worktree
 orchestrator prune --dry-run
 
-# Every finished run's metrics.json, one JSON line each: outcome, roles, turns with times and tokens
+# Every finished run's metrics.json, forgotten runs' included, one JSON line each: outcome, roles, turns with times
+# and tokens
 orchestrator metrics | jq -s 'map(.rounds) | add / length'
 ```
 
@@ -289,7 +293,7 @@ orchestrator metrics | jq -s 'map(.rounds) | add / length'
 | `--no-quality-gate` | `resume` only: turn the run's quality gate off for good. |
 | `--max-quality-rounds N` | With the gate: quality rounds per review round before the Reviewer gets the change anyway (default 3). |
 | `--force` | `resume` only: take over a run that still looks alive. |
-| `--dry-run` | `prune`, `drain` and `close`: print what would happen, and change nothing. |
+| `--dry-run` | `prune`, `drain`, `close` and `forget`: print what would happen, and change nothing. |
 
 A run saves its settings. `resume` takes the same flags as `run` except `--no-pr`, `--worktree`, `--workflow`,
 `--workflow-file` and `--spec`; a flag given to `resume` overrides the saved value. Turning the quality gate on or

@@ -42,6 +42,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **Whether a run is closed is still told in three more places.** `RunState::is_closed` (`engine/src/state.rs`) is
+  the rule close and forget use, but `resumable_state` (`engine/src/cli/start.rs`, `closed.is_some()`, which also
+  takes an empty `closed` for closed), `run_record`'s resume hint (`engine/src/cli/listing.rs`) and drain's check
+  (`engine/src/cli/drain.rs`) each test the field themselves. Closed when all three call `is_closed`, and the empty
+  string's meaning is decided once.
 - **A resumed run looks its old workspace up in the new herdr server.** `resumed_state` (`engine/src/cli/start.rs`)
   saves the resuming environment's server as `RunState::herdr_server`, then `Workflow::prepare`
   (`engine/src/workflow.rs`) asks that server for the saved `workspace_id`: a run started in the app (session

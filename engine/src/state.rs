@@ -464,6 +464,11 @@ impl RunState {
         run_key(&self.run_id)
     }
 
+    /// Whether close recorded that it closed the run (closed is set and not empty).
+    pub fn is_closed(&self) -> bool {
+        self.closed.as_deref().is_some_and(|c| !c.is_empty())
+    }
+
     /// The run directory, in the project's checkout.
     pub fn dir(&self) -> String {
         format!("{}/{RUNS_DIR}/{}", self.cwd, self.run_id)

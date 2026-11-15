@@ -248,6 +248,8 @@ pub(crate) struct FakeState {
     pub refs: Map<String>,
     /// The error of a failing delete_refs, which then deletes nothing; None deletes.
     pub delete_refs_error: Option<String>,
+    /// Run directories, by path, that remove_run_dir fails to delete, leaving them whole.
+    pub undeletable_run_dirs: BTreeSet<String>,
     /// (ref, paths) of each restore.
     pub restores: Vec<(String, Vec<String>)>,
     /// The files each tree object held, by path, tree<n> the nth: one per tree_snapshot, and one per restore_tree
@@ -345,6 +347,7 @@ impl FakeHost {
                 trees: HashMap::new(),
                 refs: Map::new(),
                 delete_refs_error: None,
+                undeletable_run_dirs: BTreeSet::new(),
                 restores: vec![],
                 tree_snapshots: vec![],
                 session_logs: HashMap::new(),
@@ -1027,6 +1030,35 @@ impl Host for FakeHost {
             }
         }
         Ok(states)
+    }
+
+    /// The run directories' metrics.json in `files`, with the archive's, as the real host gives them.
+    fn run_metrics(&self, cwd: &str) -> Result<Vec<Value>, OrchestratorError> {
+        let runs = format!("{cwd}/{}/", crate::constants::RUNS_DIR);
+        let live = self
+            .state()
+            .files
+            .iter()
+            .filter(|(path, _)| path.strip_prefix(&runs).and_then(|rest| rest.split_once('/')).is_some_and(|(_, name)| name == "metrics.json"))
+            .map(|(path, text)| serde_json::from_str::<Value>(text).map_err(|e| OrchestratorError(format!("corrupt {path}: {e}"))))
+            .collect::<Result<Vec<_>, _>>()?;
+        super::with_archived_metrics(self, cwd, live)
+    }
+
+    /// Drops the files under the run directory from `files`, or fails for one of undeletable_run_dirs.
+    fn remove_run_dir(&self, cwd: &str, run_id: &str) -> Result<(), OrchestratorError> {
+        crate::serve::runs::plain_name(run_id).map_err(|e| OrchestratorError(e.to_string()))?;
+        let dir = format!("{cwd}/{}/{run_id}", crate::constants::RUNS_DIR);
+        let mut s = self.state();
+        if s.undeletable_run_dirs.contains(&dir) {
+            return Err(OrchestratorError(format!("could not delete {dir}: rm: Permission denied")));
+        }
+        let under = format!("{dir}/");
+        let gone: Vec<String> = s.files.keys().filter(|path| path.starts_with(&under)).map(String::from).collect();
+        for path in gone {
+            s.files.remove(&path);
+        }
+        Ok(())
     }
 
     fn run_state(&self, cwd: &str, run_id: &str) -> Result<Option<SavedRun>, OrchestratorError> {

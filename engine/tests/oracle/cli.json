@@ -8,6 +8,7 @@
   "prune",
   "drain",
   "close",
+  "forget",
   "refresh",
   "workflows",
   "doctor",
@@ -130,6 +131,14 @@
    "--help",
    "--machine",
    "--worktree",
+   "-h"
+  ],
+  "forget": [
+   "--all",
+   "--cwd",
+   "--dry-run",
+   "--help",
+   "--machine",
    "-h"
   ],
   "refresh": [

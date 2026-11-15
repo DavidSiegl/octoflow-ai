@@ -40,6 +40,9 @@ pub const GH_UNUSABLE_STATUS: [i32; 2] = [4, 127];
 pub const IN_DIR: &str = "cd -- \"$1\" && shift && exec \"$@\"";
 /// The name of a run directory's file that the engine's metrics command reads (crate::summary::run_metrics).
 const METRICS_FILE: &str = "metrics.json";
+/// Where, relative to a project, forget_run keeps the metrics of the runs it deleted: one line of JSON per run, each
+/// its METRICS_FILE's object, in the order they were forgotten.
+const METRICS_ARCHIVE: &str = ".orchestrator/metrics-archive.jsonl";
 
 /// sh, inside a loop over files $f: what ends that pass when the command before it failed. A file gone since the loop
 /// found it is skipped, as a running run removes some of its files and prune a whole run (serve-run-files/03); one
@@ -1021,8 +1024,9 @@ pub trait Host {
         checked(self, &["sh", "-c", &script], proc).map(Some)
     }
 
-    /// The metrics.json of each run of the project at cwd that has one, oldest run first. Errors: one that is not
-    /// JSON.
+    /// The metrics.json of each run of the project at cwd that has one, and of each run forget_run deleted that had
+    /// one, oldest run first (by run id). Errors: one that is not JSON, or the archive of the forgotten runs' cannot be
+    /// read or holds a line that is not JSON.
     fn run_metrics(&self, cwd: &str) -> Result<Vec<Value>, OrchestratorError> {
         // Each file ends at a NUL, which no JSON text holds, so one a human pretty-printed reads as well.
         let script = format!(
@@ -1030,13 +1034,48 @@ pub trait Host {
              done; true"
         );
         let out = self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?;
-        out.split('\0')
+        let live = out
+            .split('\0')
             .filter(|text| !text.trim().is_empty())
             .map(|text| {
                 serde_json::from_str::<Value>(text)
                     .map_err(|e| OrchestratorError(format!("corrupt {METRICS_FILE} under {cwd}/{RUNS_DIR}: {e}")))
             })
-            .collect()
+            .collect::<Result<Vec<_>, _>>()?;
+        with_archived_metrics(self, cwd, live)
+    }
+
+    /// Delete the directory of the run of the project at cwd whose id is run_id, and everything in it; nothing when
+    /// it is not there. Errors: run_id is not a plain name (crate::serve::runs::plain_name), so that it could name a
+    /// directory outside the runs directory; or the directory cannot be deleted, part of it then perhaps gone.
+    fn remove_run_dir(&self, cwd: &str, run_id: &str) -> Result<(), OrchestratorError> {
+        crate::serve::runs::plain_name(run_id).map_err(|e| OrchestratorError(e.to_string()))?;
+        let dir = format!("{cwd}/{RUNS_DIR}/{run_id}");
+        self.check(&["rm", "-rf", "--", &dir], None, DEFAULT_TIMEOUT)
+            .map(drop)
+            .map_err(|e| OrchestratorError(format!("could not delete {dir}: {e}")))
+    }
+
+    /// Delete the directory of the run of the project at cwd whose id is run_id, keeping its metrics: run_metrics
+    /// gives the same records before and after. The run's metrics.json, when it has one, is added to an archive in
+    /// the project first, unless a forget_run interrupted after that step already added it, so that forgetting a run
+    /// again finishes the job. Whether the run may be deleted is the caller's to decide. Errors: the metrics.json or
+    /// the archive cannot be read, the metrics.json is not JSON, or the archive cannot be written (the directory then
+    /// stays), or remove_run_dir's.
+    fn forget_run(&self, cwd: &str, run_id: &str) -> Result<(), OrchestratorError> {
+        let metrics_path = format!("{cwd}/{RUNS_DIR}/{run_id}/{METRICS_FILE}");
+        if let Some(text) = self.read(&metrics_path)? {
+            let metrics = serde_json::from_str::<Value>(&text)
+                .map_err(|e| OrchestratorError(format!("corrupt {metrics_path}: {e}")))?;
+            let archive_path = format!("{cwd}/{METRICS_ARCHIVE}");
+            let archive = self.read(&archive_path)?.unwrap_or_default();
+            let archived = archived_metrics(&archive, &archive_path)?;
+            if !archived.iter().any(|m| m.get("run_id") == metrics.get("run_id")) {
+                // One line per run: a metrics.json a human pretty-printed is written back compact.
+                self.write(&archive_path, &format!("{archive}{metrics}\n"), false)?;
+            }
+        }
+        self.remove_run_dir(cwd, run_id)
     }
 
     /// The files in a run directory, oldest first, those of one time by name, except state.json and write's temporary
@@ -1121,6 +1160,29 @@ fn run_files_loop(keep: &str) -> String {
          case \"${{f##*/}}\" in state.json|*.tmp.*) continue;; esac; \
          {keep} || continue; {MTIME_OF_F} || {SKIP_F_IF_GONE}; printf \"%s %s\\0\" \"$m\" \"$f\"; done; true"
     )
+}
+
+/// live, the metrics of the runs of the project at cwd that still have a directory, with those of the runs forget_run
+/// deleted, as host's run_metrics gives them: ordered by run id, the order of the runs' directories, so that forgetting
+/// a run does not move its line. A run archived whose directory is still there, as after a forget_run that failed to
+/// delete it, is given once, from its directory. Errors: the archive cannot be read, or holds a line that is not JSON.
+pub(crate) fn with_archived_metrics(host: &(impl Host + ?Sized), cwd: &str, live: Vec<Value>) -> Result<Vec<Value>, OrchestratorError> {
+    let path = format!("{cwd}/{METRICS_ARCHIVE}");
+    let run_id = |m: &Value| m.get("run_id").and_then(Value::as_str).unwrap_or_default().to_string();
+    let live_ids: HashSet<String> = live.iter().map(run_id).collect();
+    let mut all = archived_metrics(&host.read(&path)?.unwrap_or_default(), &path)?;
+    all.retain(|m| !live_ids.contains(&run_id(m)));
+    all.extend(live);
+    all.sort_by_key(run_id);
+    Ok(all)
+}
+
+/// The records of text, a METRICS_ARCHIVE read from path, one per line. Errors: a line that is not JSON.
+fn archived_metrics(text: &str, path: &str) -> Result<Vec<Value>, OrchestratorError> {
+    text.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str::<Value>(line).map_err(|e| OrchestratorError(format!("corrupt {path}: {e}"))))
+        .collect()
 }
 
 /// The files run_files_loop printed as out, listing run_dir, oldest first, those of one time by name. Errors: an

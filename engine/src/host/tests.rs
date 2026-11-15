@@ -960,6 +960,73 @@ fn run_metrics_reads_each_run_s_line() {
     assert!(e.0.starts_with(&format!("corrupt metrics.json under {}/{RUNS_DIR}: ", d.path())), "{e}");
 }
 
+#[test]
+fn a_forgotten_run_s_directory_goes_and_its_metrics_stay_in_place() {
+    let d = TempDir::new();
+    let host = ProcessHost::local(&Interrupt::new());
+    let runs = d.join(RUNS_DIR);
+    for id in ["a", "b", "c"] {
+        put(&format!("{runs}/{id}/state.json"), "{}");
+    }
+    put(&format!("{runs}/a/metrics.json"), "{\"run_id\": \"a\"}");
+    // Pretty-printed, as by a human: archived as one line all the same.
+    put(&format!("{runs}/b/metrics.json"), "{\n  \"run_id\": \"b\"\n}\n");
+    put(&format!("{runs}/c/metrics.json"), "{\"run_id\": \"c\"}\n");
+    let before = host.run_metrics(&d.path()).unwrap();
+    host.forget_run(&d.path(), "b").unwrap();
+    host.forget_run(&d.path(), "a").unwrap();
+    assert!(!std::path::Path::new(&format!("{runs}/b")).exists());
+    assert!(!std::path::Path::new(&format!("{runs}/a")).exists());
+    assert!(std::path::Path::new(&format!("{runs}/c/state.json")).exists());
+    assert_eq!(host.run_metrics(&d.path()).unwrap(), before);
+    let archive = std::fs::read_to_string(d.join(".orchestrator/metrics-archive.jsonl")).unwrap();
+    assert_eq!(archive, "{\"run_id\":\"b\"}\n{\"run_id\":\"a\"}\n");
+}
+
+#[test]
+fn a_forget_after_its_archive_line_was_written_does_not_write_it_twice() {
+    let d = TempDir::new();
+    let host = ProcessHost::local(&Interrupt::new());
+    let runs = d.join(RUNS_DIR);
+    put(&format!("{runs}/a/metrics.json"), "{\"run_id\": \"a\"}");
+    put(&d.join(".orchestrator/metrics-archive.jsonl"), "{\"run_id\":\"a\"}\n");
+    host.forget_run(&d.path(), "a").unwrap();
+    assert_eq!(host.run_metrics(&d.path()).unwrap(), [serde_json::json!({"run_id": "a"})]);
+}
+
+#[test]
+fn a_run_without_metrics_is_forgotten_without_an_archive_line() {
+    let d = TempDir::new();
+    let host = ProcessHost::local(&Interrupt::new());
+    put(&format!("{}/a/state.json", d.join(RUNS_DIR)), "{}");
+    host.forget_run(&d.path(), "a").unwrap();
+    assert!(!std::path::Path::new(&d.join(".orchestrator/metrics-archive.jsonl")).exists());
+    assert!(!std::path::Path::new(&format!("{}/a", d.join(RUNS_DIR))).exists());
+}
+
+#[test]
+fn forget_refuses_a_run_id_that_leads_out_of_the_runs_directory() {
+    let d = TempDir::new();
+    let host = ProcessHost::local(&Interrupt::new());
+    put(&d.join(".orchestrator/keep"), "");
+    for id in ["..", ".", "", "../x", "a/b"] {
+        let e = host.forget_run(&d.path(), id).unwrap_err();
+        assert!(e.0.contains("is not a name in the run directory"), "{id:?}: {e}");
+    }
+    assert!(std::path::Path::new(&d.join(".orchestrator/keep")).exists());
+}
+
+#[test]
+fn a_corrupt_metrics_file_stops_the_forget_before_anything_goes() {
+    let d = TempDir::new();
+    let host = ProcessHost::local(&Interrupt::new());
+    let runs = d.join(RUNS_DIR);
+    put(&format!("{runs}/a/metrics.json"), "{");
+    let e = host.forget_run(&d.path(), "a").unwrap_err();
+    assert!(e.0.starts_with(&format!("corrupt {runs}/a/metrics.json: ")), "{e}");
+    assert!(std::path::Path::new(&format!("{runs}/a/metrics.json")).exists());
+}
+
 // -- Pull requests ---------------------------------------------------------------------------------------------------
 
 const URL: &str = "https://github.com/o/r/pull/7";
