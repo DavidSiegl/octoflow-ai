@@ -127,7 +127,12 @@ describe("the runs overview", () => {
 
     fireEvent.click(show);
     expect(within(row(DONE)).getByText("APPROVE; closed: workspace closed")).toBeInTheDocument();
-    fireEvent.click(show);
+    // A closed run's detail, and back: the closed runs are still shown.
+    fireEvent.click(row(DONE));
+    fireEvent.click(screen.getByRole("button", { name: "‹ Runs" }));
+    expect(screen.getByRole("checkbox", { name: "Show closed runs (1)" })).toBeChecked();
+    expect(row(DONE)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Show closed runs (1)" }));
     expect(document.querySelector(`tr[data-run="${DONE}"]`)).toBeNull();
 
     // Every run closed: the overview says so rather than that there are none.
