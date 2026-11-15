@@ -24,6 +24,7 @@ use octoflow_e2e::{array_at, checkout, object, object_at, procs, str_at, strings
 use serde_json::Value;
 use octoflow_engine::map::Map;
 use octoflow_engine::json::Object;
+use octoflow_engine::env::CONFIG_DIR_NAME;
 use octoflow_engine::host::shlex_quote;
 
 /// Who the world's commits are by: the harness's own, and the engine's, through the git configuration it is given.
@@ -165,11 +166,20 @@ fn read_lossy(path: &Path) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
+/// The engine's XDG_CONFIG_HOME, relative to the world's directory.
+const CONFIG_HOME: &str = "config";
+
+/// The engine's configuration directory, relative to the world's directory: CONFIG_DIR_NAME in CONFIG_HOME, as
+/// ConfigDir finds it.
+fn config_dir() -> String {
+    format!("{CONFIG_HOME}/{CONFIG_DIR_NAME}")
+}
+
 /// A temporary world a scenario runs the engine in, and what it did there.
 ///
 /// The directory holds `project/` (the git checkout the engine runs in, on main, with origin at `origin.git/`),
-/// `home/` and `config/` (the engine's HOME and XDG_CONFIG_HOME, so that its configuration directory is
-/// `config/ai-agents-orchestrator/`), `bin/` (the fakes' shims), `fakes/` (their ledger) and `out/` (each invocation's
+/// `home/` and `config/` (the engine's HOME and XDG_CONFIG_HOME, so that its configuration directory is the one
+/// config_dir names), `bin/` (the fakes' shims), `fakes/` (their ledger) and `out/` (each invocation's
 /// output). Dropping it kills any invocation still running and removes the directory, unless the scenario failed,
 /// when the directory is kept for a look and its path printed.
 pub struct World {
@@ -231,7 +241,7 @@ impl World {
             ("gate", object([("judgements", Value::Array(Vec::new()))])),
             ("pypi", object([])),
         ]);
-        for d in ["home", "config/ai-agents-orchestrator", "bin", "fakes", "out", "tmp"] {
+        for d in ["home", &config_dir(), "bin", "fakes", "out", "tmp"] {
             let path = root.join(d);
             fs::create_dir_all(&path).unwrap_or_else(|e| panic!("making {}: {e}", path.display()));
         }
@@ -381,6 +391,12 @@ impl World {
         full.to_string_lossy().into_owned()
     }
 
+    /// write, with path relative to the engine's configuration directory (config_dir), as a user puts a workflow or
+    /// prompt file there.
+    pub fn write_config(&self, path: &str, text: &str) -> String {
+        self.write(&format!("{}/{path}", config_dir()), text)
+    }
+
     /// Commit files, path to text, on origin's main, as another developer's push would, without touching the project's
     /// checkout.
     pub fn push_to_origin(&self, files: &[(&str, &str)], message: &str) {
@@ -497,7 +513,7 @@ impl World {
         let mut env = vec![
             ("PATH".to_string(), format!("{}:{path}", self.root().join("bin").display())),
             ("HOME".to_string(), self.root().join("home").display().to_string()),
-            ("XDG_CONFIG_HOME".to_string(), self.root().join("config").display().to_string()),
+            ("XDG_CONFIG_HOME".to_string(), self.root().join(CONFIG_HOME).display().to_string()),
             ("TMPDIR".to_string(), self.root().join("tmp").display().to_string()),
             ("LC_ALL".to_string(), "C.UTF-8".to_string()),
             ("TZ".to_string(), "UTC".to_string()),
