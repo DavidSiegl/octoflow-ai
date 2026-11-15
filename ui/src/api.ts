@@ -197,7 +197,7 @@ export interface StartedRun {
  * closed), "already closed" (closed before; it stays so), "skipped" (it must not be closed now, such as one still
  * running) or "failed". detail is what was or would be done, what was recorded when it was closed before, or why it
  * was skipped or failed. discarded is the uncommitted changes, one line of `git status --short` each, that went or
- * would go with a failed run's worktree; empty for any other run. */
+ * would go with a failed run's worktree, a run whose close failed after removing it too; empty for any other run. */
 export interface ClosedRun {
   run: string;
   outcome: "closed" | "already closed" | "skipped" | "failed";
@@ -303,21 +303,35 @@ export class Api {
     return { run: body.run, herdrSession: typeof body.herdr_session === "string" ? body.herdr_session : null };
   }
 
-  /** Close every run of the project that `close --all` closes, as it does: its workspace and refs, and a failed
-   * run's worktree with its branch when that has no commit of its own; or with dryRun change nothing and resolve to
-   * what closing each would do.
-   * Resolves to each run the sweep looked at, in run id order; a run that fails does not stop the others. Rejects
-   * with the server's error message, status 502 for a project it cannot reach or whose runs cannot be read. */
-  async closeRuns(project: Project, dryRun: boolean): Promise<ClosedRun[]> {
-    const body = (await this.json(this.url("/close", project, {}), {
+  /** What closing each run of the project that `close --all` closes would do, as its dry run says, changing
+   * nothing. Resolves to each run, in run id order. Rejects with the server's error message, status 502 for a project
+   * it cannot reach or whose runs cannot be read. */
+  previewClose(project: Project): Promise<ClosedRun[]> {
+    return this.sweep(project, { dry_run: true });
+  }
+
+  /** Close the runs of preview, a previewClose of the project, whose outcome is "closed", as `close` does: each one's
+   * workspace and refs, and a failed run's worktree with its branch when that has no commit of its own. A run is
+   * closed only while closing it would still do what preview says, discarding the same changes; one that changed
+   * since is skipped, so nothing goes that preview did not show. No other run is touched.
+   * Resolves to each of those runs, in preview's order; a run that fails does not stop the others. Rejects as
+   * previewClose does. */
+  closeRuns(project: Project, preview: ClosedRun[]): Promise<ClosedRun[]> {
+    const close = preview.filter((r) => r.outcome === "closed").map(({ run, detail, discarded }) => ({ run, detail, discarded }));
+    return this.sweep(project, { close });
+  }
+
+  /** The runs of a POST /close of the project with body, as previewClose and closeRuns resolve to them. */
+  private async sweep(project: Project, body: unknown): Promise<ClosedRun[]> {
+    const answer = (await this.json(this.url("/close", project, {}), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dry_run: dryRun }),
+      body: JSON.stringify(body),
     })) as { runs?: unknown };
-    if (!Array.isArray(body.runs)) {
+    if (!Array.isArray(answer.runs)) {
       throw new HttpError(200, "the answer has no runs");
     }
-    return body.runs as ClosedRun[];
+    return answer.runs as ClosedRun[];
   }
 
   /** The text field of a GET of url's JSON; rejects with the server's error message, or the status. */

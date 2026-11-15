@@ -266,7 +266,7 @@ started, as the human would start one from a herdr pane.
   | `POST /setup/gate` | `{"files": [{"path", "written"}]}`: writes the project's missing `ci/gate.pin` and starter `gate.toml` (`local_gate::set_up`), `written` false for one it kept |
   | `/workflows` | `{"workflows", "agents"}`: each workflow `run --workflow` offers from serve's configuration directory, with its description and its roles' labels, harnesses and models, and the harnesses there are |
   | `POST /run` | starts the run its JSON body asks for (task, workflow, agent, model, role_agents, role_models, no_pr, worktree) and answers `{"run"}`; see Starting a run above |
-  | `POST /close` | closes the project's runs as `close --all` does, or with the body `{"dry_run": true}` says what closing each would do, and answers `{"runs": [{"run", "outcome", "detail", "discarded"}]}`, from `close_all`'s `RunClosed`s (`ProjectRuns::close_all`, in serve's own process, not a `close` command) |
+  | `POST /close` | with the body `{"dry_run": true}` says what closing each of the project's runs would do, as `close --all --dry-run` does; with `{"close": [{"run", "detail", "discarded"}]}`, that dry run's `closed` runs, closes those and no other, each only while it would still close as previewed (`Sweep::Previewed`); answers `{"runs": [{"run", "outcome", "detail", "discarded"}]}`, from `close_all`'s `RunClosed`s (`ProjectRuns::close_all`, in serve's own process, not a `close` command) |
 
   `RunServer`'s doc comment is the authority on them.
 - **Events.** Each `/events` stream has its own `RunWatch`. It polls `run_states_inside` every second, and every 5 for

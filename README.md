@@ -145,8 +145,9 @@ first time when a browser downloaded it, as it does the binary.
   such as one the checkout already holds, shows the last lines of its pane in the form.
 - **Clean up runs:** "Clean up runs…" above the overview shows what `orchestrator close --all` would do to each
   run: the workspace, refs, worktree and branch it would close, delete or keep, the uncommitted changes that would
-  go with a failed run's worktree, and why a run that is still running is skipped. Close closes them and shows how
-  each went. With nothing to close it says so.
+  go with a failed run's worktree, and why a run that is still running is skipped. Close closes the runs it showed,
+  skipping any that changed since, and shows how each went; the overview then shows them closed. With nothing to
+  close it says so.
 - **Run detail:** the run as an octopus map: the head is the run, with its round, and each stage of its workflow
   (its steps, the quality gate after each gated step, and the pull request) is an arm ending in a station that shows
   who holds it, the harness and model of its last turn, its rounds and a verdict step's last verdict. The working

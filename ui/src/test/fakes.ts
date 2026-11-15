@@ -132,6 +132,9 @@ export interface FakeStart {
   requests?: { cwd: string | null; body: RunRequest }[];
 }
 
+/** The body of a POST /close: a dry run, or the runs of one to close (RunServer's doc comment in engine/src/serve.rs). */
+export type CloseBody = { dry_run: true } | { close: Pick<ClosedRun, "run" | "detail" | "discarded">[] };
+
 /** What a stubbed server's POST /close answers: 200 with `preview`'s runs to a dry run and `closed`'s to a close (none
  * unless given), or a 502 with `error`; a close is answered once `held`, if given, resolves. `requests` gets the
  * query's cwd and the body of each POST /close, in order. */
@@ -140,7 +143,7 @@ export interface FakeClose {
   closed?: ClosedRun[];
   error?: string;
   held?: Promise<void>;
-  requests?: { cwd: string | null; body: { dry_run: boolean } }[];
+  requests?: { cwd: string | null; body: CloseBody }[];
 }
 
 /** Stub EventSource, and fetch with a server whose /file answers the text of `files` by name, else 404; whose /agent
@@ -191,15 +194,16 @@ export function stubServer(
       return answer(start.runStatus ?? 201, start.runBody ?? { run: "20261024-140000-c0ffee" });
     }
     if (pathname === "/close" && init?.method === "POST") {
-      const body = JSON.parse(String(init.body)) as { dry_run: boolean };
+      const body = JSON.parse(String(init.body)) as CloseBody;
       close.requests = [...(close.requests ?? []), { cwd: searchParams.get("cwd"), body }];
-      if (!body.dry_run) {
+      const dryRun = "dry_run" in body;
+      if (!dryRun) {
         await close.held;
       }
       if (close.error !== undefined) {
         return answer(502, { error: close.error });
       }
-      return answer(200, { runs: (body.dry_run ? close.preview : close.closed) ?? [] });
+      return answer(200, { runs: (dryRun ? close.preview : close.closed) ?? [] });
     }
     if (pathname === "/agent/input") {
       return init?.method === "POST" ? answer(200, { run: "r", role }) : answer(501, {});

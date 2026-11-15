@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { AGENT_POLL_MS } from "./components/AgentPanes";
@@ -790,7 +790,11 @@ describe("cleaning up runs", () => {
     expect(within(dialog).queryByRole("button", { name: /^Close/ })).not.toBeInTheDocument();
     release();
     await waitFor(() => expect(within(dialog).queryByText("Closing…")).not.toBeInTheDocument());
-    expect(close.requests?.map((r) => r.body)).toEqual([{ dry_run: true }, { dry_run: false }]);
+    // Close sends the runs the preview would close, as it showed them, so that the server closes no other.
+    expect(close.requests?.map((r) => r.body)).toEqual([
+      { dry_run: true },
+      { close: [PREVIEW[0], PREVIEW[1]].map(({ run, detail, discarded }) => ({ run, detail, discarded: [...discarded] })) },
+    ]);
     expect(line(dialog, DONE).textContent).toContain("closed");
     expect(line(dialog, LOST)).toHaveAttribute("data-state", "missing");
     expect(line(dialog, LOST).textContent).toBe(`failed ${LOST}: git worktree remove failed: permission denied`);
@@ -811,6 +815,19 @@ describe("cleaning up runs", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(close.requests).toHaveLength(1);
+  });
+
+  it("says which runs could not be looked at, and offers Close only for the others", async () => {
+    const unread = { run: LOST, outcome: "failed", detail: "herdr server_error: herdr is down", discarded: [] } as const;
+    const alone = await openCleanUp({ preview: [{ ...unread, discarded: [] }] });
+    expect(within(alone).getByText("1 run could not be looked at, so it stays open.")).toHaveClass("problem");
+    expect(within(alone).queryByText("Nothing to close.")).not.toBeInTheDocument();
+    expect(within(alone).queryByRole("button", { name: /^Close/ })).not.toBeInTheDocument();
+    cleanup();
+
+    const beside = await openCleanUp({ preview: [{ ...PREVIEW[0], discarded: [] }, { ...unread, discarded: [] }] });
+    expect(within(beside).getByText("1 run could not be looked at, so it stays open.")).toBeInTheDocument();
+    expect(within(beside).getByRole("button", { name: "Close 1 run" })).toBeInTheDocument();
   });
 
   it("shows why the runs could not be looked at", async () => {
