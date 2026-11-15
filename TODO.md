@@ -446,3 +446,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `HEARTBEAT_SECONDS` give it such crashes, but their runs then differ from the uninterrupted one by design: a new
   snapshot id in the PR body, the quality turn's times and every later timestamp, the job's worktree added and
   removed again. Closes with `expected` normalising those for a crash that left a job, and adding its stop.
+- **Runs started within one second list in random order.** A run id orders by its start only to the second, then by
+  a random key (`new_run_id`, `engine/src/cli/start.rs`), and `close --all` (`engine/src/cli/close.rs`), `list`,
+  prune and refresh take runs in run id order. close-all-order-flake/01 made `runs_closed_all`
+  (`engine/e2e/tests/e2e/scenarios.rs`) wait for the next second between its runs, which costs that scenario up to a
+  second per run. Cross-review 206 (R1-2): "a later scenario that starts two runs and records one of those listings
+  can flake the same way"; (R1-1): "the hidden `run --run-id` flag would fix the order with no wait", at the price of
+  testing the given-id path rather than `new_run_id`. Closed by the engine ordering runs by their start time (a saved
+  start instant that sorts below the second), after which the scenario's wait goes.
