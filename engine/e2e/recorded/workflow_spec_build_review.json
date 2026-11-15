@@ -323,7 +323,8 @@
        "spec": {
         "name": "spec-<key:1>",
         "pane": "p1",
-        "kind": "codex"
+        "kind": "codex",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -446,7 +447,8 @@
         "name": "spec-<key:1>",
         "pane": "p1",
         "kind": "codex",
-        "session": "session-1"
+        "session": "session-1",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -767,7 +769,8 @@
        "build": {
         "name": "build-<key:1>",
         "pane": "p2",
-        "kind": "codex"
+        "kind": "codex",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -912,7 +915,8 @@
         "name": "build-<key:1>",
         "pane": "p2",
         "kind": "codex",
-        "session": "session-2"
+        "session": "session-2",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -1260,7 +1264,8 @@
        "review": {
         "name": "review-<key:1>",
         "pane": "p3",
-        "kind": "codex"
+        "kind": "codex",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -1426,7 +1431,8 @@
         "name": "review-<key:1>",
         "pane": "p3",
         "kind": "codex",
-        "session": "session-3"
+        "session": "session-3",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,

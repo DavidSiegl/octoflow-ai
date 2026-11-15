@@ -401,7 +401,8 @@
        "spec": {
         "name": "spec-<key:1>",
         "pane": "p1",
-        "kind": "claude"
+        "kind": "claude",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -557,7 +558,8 @@
         "name": "spec-<key:1>",
         "pane": "p1",
         "kind": "claude",
-        "session": "session-1"
+        "session": "session-1",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -942,7 +944,8 @@
        "design": {
         "name": "design-<key:1>",
         "pane": "p2",
-        "kind": "claude"
+        "kind": "claude",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -1120,7 +1123,8 @@
         "name": "design-<key:1>",
         "pane": "p2",
         "kind": "claude",
-        "session": "session-2"
+        "session": "session-2",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -1934,7 +1938,8 @@
        "tests": {
         "name": "tests-<key:1>",
         "pane": "p3",
-        "kind": "claude"
+        "kind": "claude",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -2133,7 +2138,8 @@
         "name": "tests-<key:1>",
         "pane": "p3",
         "kind": "claude",
-        "session": "session-3"
+        "session": "session-3",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -2589,7 +2595,8 @@
        "build": {
         "name": "build-<key:1>",
         "pane": "p4",
-        "kind": "claude"
+        "kind": "claude",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -2813,7 +2820,8 @@
         "name": "build-<key:1>",
         "pane": "p4",
         "kind": "claude",
-        "session": "session-4"
+        "session": "session-4",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -3315,7 +3323,8 @@
        "review": {
         "name": "review-<key:1>",
         "pane": "p5",
-        "kind": "claude"
+        "kind": "claude",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -3560,7 +3569,8 @@
         "name": "review-<key:1>",
         "pane": "p5",
         "kind": "claude",
-        "session": "session-5"
+        "session": "session-5",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,

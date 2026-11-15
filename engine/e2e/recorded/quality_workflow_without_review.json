@@ -266,7 +266,8 @@
        "build": {
         "name": "build-<key:1>",
         "pane": "p1",
-        "kind": "claude"
+        "kind": "claude",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -364,7 +365,8 @@
         "name": "build-<key:1>",
         "pane": "p1",
         "kind": "claude",
-        "session": "session-1"
+        "session": "session-1",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
