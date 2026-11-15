@@ -66,20 +66,7 @@ fn forget_all(world: &Connected, cwd: &str, mut runs: Vec<SavedRun>, dry_run: bo
         if world.with.interrupt.is_raised() {
             break;
         }
-        let run_id = &run.shown().run_id;
-        let outcome = match decide(run) {
-            Ok(()) => match forget(world, cwd, run_id, dry_run) {
-                Ok(()) => Outcome::Forgotten,
-                Err(e) => Outcome::Failed(e.0),
-            },
-            Err(left) => Outcome::Left(left),
-        };
-        match &outcome {
-            Outcome::Left(Left::Unreadable(why)) => world.say(&format!("skipped: {why}")),
-            Outcome::Failed(why) => world.say(&format!("could not forget run {run_id}: {why}")),
-            Outcome::Forgotten | Outcome::Left(Left::NotClosed | Left::AwaitsPrune) => {}
-        }
-        outcomes.push(outcome);
+        outcomes.push(sweep_one(world, cwd, run, dry_run));
     }
     let count = |of: fn(&Outcome) -> bool| outcomes.iter().filter(|o| of(o)).count();
     let forgotten = count(|o| *o == Outcome::Forgotten);
@@ -92,6 +79,25 @@ fn forget_all(world: &Connected, cwd: &str, mut runs: Vec<SavedRun>, dry_run: bo
     let failures = if failed > 0 { format!(", {failed} failed") } else { String::new() };
     world.say(&format!("{forgotten} {verb}, {open} not closed{pruning}, {skipped} skipped{failures}"));
     failed > 0
+}
+
+/// forget_all's step for one run: forget run if decide lets it, saying why when it is skipped as unreadable or its
+/// forget fails, and silent when it is left for being open or awaiting prune, which only the count reports.
+fn sweep_one(world: &Connected, cwd: &str, run: &SavedRun, dry_run: bool) -> Outcome {
+    let run_id = &run.shown().run_id;
+    let outcome = match decide(run) {
+        Ok(()) => match forget(world, cwd, run_id, dry_run) {
+            Ok(()) => Outcome::Forgotten,
+            Err(e) => Outcome::Failed(e.0),
+        },
+        Err(left) => Outcome::Left(left),
+    };
+    match &outcome {
+        Outcome::Left(Left::Unreadable(why)) => world.say(&format!("skipped: {why}")),
+        Outcome::Failed(why) => world.say(&format!("could not forget run {run_id}: {why}")),
+        Outcome::Forgotten | Outcome::Left(Left::NotClosed | Left::AwaitsPrune) => {}
+    }
+    outcome
 }
 
 /// Whether run may be forgotten, as it was read, or why not: only a closed run may, as nothing drives it and resume

@@ -1055,10 +1055,10 @@ pub trait Host {
     }
 
     /// Delete the directory of the run of the project at cwd whose id is run_id, and everything in it; nothing when
-    /// it is not there. Errors: run_id is not a plain name (crate::serve::runs::plain_name), so that it could name a
+    /// it is not there. Errors: run_id is not a plain name (crate::paths::plain_name), so that it could name a
     /// directory outside the runs directory; or the directory cannot be deleted, part of it then perhaps gone.
     fn remove_run_dir(&self, cwd: &str, run_id: &str) -> Result<(), OrchestratorError> {
-        crate::serve::runs::plain_name(run_id).map_err(|e| OrchestratorError(e.to_string()))?;
+        crate::paths::plain_name(run_id)?;
         let dir = run_dir(cwd, run_id);
         self.check(&["rm", "-rf", "--", &dir], None, DEFAULT_TIMEOUT)
             .map(drop)
@@ -1073,7 +1073,7 @@ pub trait Host {
     /// the metrics.json or the archive cannot be read, the metrics.json is not JSON, or the archive cannot be written
     /// (the directory then stays); or remove_run_dir's.
     fn forget_run(&self, cwd: &str, run_id: &str) -> Result<(), OrchestratorError> {
-        crate::serve::runs::plain_name(run_id).map_err(|e| OrchestratorError(e.to_string()))?;
+        crate::paths::plain_name(run_id)?;
         let metrics_path = format!("{}/{METRICS_FILE}", run_dir(cwd, run_id));
         if let Some(text) = self.read(&metrics_path)? {
             let metrics = serde_json::from_str::<Value>(&text)

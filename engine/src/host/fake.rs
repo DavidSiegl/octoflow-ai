@@ -1063,7 +1063,7 @@ impl Host for FakeHost {
         if let Some(real) = real {
             return real.remove_run_dir(cwd, run_id);
         }
-        crate::serve::runs::plain_name(run_id).map_err(|e| OrchestratorError(e.to_string()))?;
+        crate::paths::plain_name(run_id)?;
         let dir = crate::state::run_dir(cwd, run_id);
         let mut s = self.state();
         if s.undeletable_run_dirs.contains(&dir) {
