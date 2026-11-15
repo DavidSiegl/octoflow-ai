@@ -268,28 +268,28 @@ pub fn parse_args(argv: impl IntoIterator<Item = OsString>, config: &ConfigDir) 
 /// The program's parser: its subcommands with their flags and help.
 pub fn parser(config: &ConfigDir) -> clap::Command {
     let run = clap::Command::new("run")
-        .about("run the handoff workflow for a task")
+        .about("Run the handoff workflow for a task")
         .args(target_args())
         .args(settings_args())
         .args(starts_args(config))
         .arg(Arg::new("task").help(
-            "what to build, as you would tell the Spec Collector; optional with --spec, which then takes the \
+            "What to build, as you would tell the Spec Collector; optional with --spec, which then takes the \
              spec's title",
         ))
         // Run only: a resumed run already has its spec.
         .arg(Arg::new("spec").long("spec").value_name("FILE").help(
-            "skip the interview: copy the spec at FILE, on this machine, into the run as the first step's file, and \
+            "Skip the interview: copy the spec at FILE, on this machine, into the run as the first step's file, and \
              start at the step after it. Needs a workflow whose first step writes the spec, as default's does",
         ))
         // Run only: a resumed run may already be on its own branch, so whether it ends in a pull request is fixed.
         .arg(Arg::new("no-pr").long("no-pr").action(ArgAction::SetTrue).help(
-            "leave the change uncommitted in the working tree and the workspace open, instead of opening a pull \
+            "Leave the change uncommitted in the working tree and the workspace open, instead of opening a pull \
              request",
         ))
         // Hidden: serve's, so that it knows the id of the run it starts (crate::serve, POST /run).
         .arg(Arg::new("run-id").long("run-id").value_name("ID").value_parser(run_id_arg).hide(true));
     let resume = clap::Command::new("resume")
-        .about("continue a run whose orchestrator has stopped")
+        .about("Continue a run whose orchestrator has stopped")
         .long_about(
             "Continue a run whose orchestrator has stopped. A settings flag overrides what the run was started \
              with; an unset one keeps it, not the default shown.",
@@ -297,39 +297,39 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         .args(target_args())
         .args(settings_args())
         .arg(Arg::new("run_ref").value_name("RUN").required(true).help(RUN_REF_HELP))
-        .arg(Arg::new("force").long("force").action(ArgAction::SetTrue).help("take over a run that still looks alive"))
+        .arg(Arg::new("force").long("force").action(ArgAction::SetTrue).help("Take over a run that still looks alive"))
         // Hidden and refused by check_spec_args: a resumed run keeps its spec, and an abbreviation of --spec-model
         // must not be taken for it.
         .arg(Arg::new("spec").long("spec").num_args(0..=1).default_missing_value("").hide(true))
         .arg(
             quality_gate_arg().conflicts_with("no-quality-gate").help(
-                "turn the local quality gate on, as run --quality-gate local has it, for a run started without it; \
+                "Turn the local quality gate on, as run --quality-gate local has it, for a run started without it; \
                  a Builder report not yet judged is judged before the Reviewer starts, and otherwise the gate starts \
                  at the Builder's next turn. A run started on the Jenkins gate, removed in 0.72.0, resumes on the \
                  local gate without it",
             ),
         )
         .arg(Arg::new("no-quality-gate").long("no-quality-gate").action(ArgAction::SetTrue).help(
-            "turn the run's quality gate off for good; an analysis under way is dropped, and the Reviewer is told \
+            "Turn the run's quality gate off for good; an analysis under way is dropped, and the Reviewer is told \
              what the gate last found",
         ));
     let run_ref = || Arg::new("run_ref").value_name("RUN").required(true).help(RUN_REF_HELP);
     let list = clap::Command::new("list")
-        .about("list the runs in the project directory")
+        .about("List the runs in the project directory")
         .long_about("List the runs in the project directory: each run's id, phase, round and outcome, and its task.")
         .args(target_args())
         .arg(Arg::new("json").long("json").action(ArgAction::SetTrue).help(format!(
-            "print one JSON document instead, {{\"version\": {RUN_RECORD_VERSION}, \"runs\": [...]}}, with a record \
+            "Print one JSON document instead, {{\"version\": {RUN_RECORD_VERSION}, \"runs\": [...]}}, with a record \
              of each run's state"
         )))
         .arg(
             Arg::new("pr-state")
                 .long("pr-state")
                 .action(ArgAction::SetTrue)
-                .help("with --json, ask gh for the state of each run's pull request, one call per run"),
+                .help("With --json, ask gh for the state of each run's pull request, one call per run"),
         );
     let metrics = clap::Command::new("metrics")
-        .about("print the metrics of every run that is done, a JSON line each")
+        .about("Print the metrics of every run that is done, a JSON line each")
         .long_about(format!(
             "Print the {METRICS_FILE} of every run in the project directory that is done, one JSON object per line, \
              oldest run first, for jq or a spreadsheet: its outcome, roles, turns with their times and tokens, and \
@@ -337,7 +337,7 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         ))
         .args(target_args());
     let show = clap::Command::new("show")
-        .about("print one run in full: its state, files and last review")
+        .about("Print one run in full: its state, files and last review")
         .long_about(
             "Print one run: its line as list shows it and its whole task, its workflow, branch and pull request, \
              each role's agent, the files in its run directory, and the last review.",
@@ -345,7 +345,7 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         .args(target_args())
         .arg(run_ref());
     let prune = clap::Command::new("prune")
-        .about("delete the branches of runs whose pull request is done")
+        .about("Delete the branches of runs whose pull request is done")
         .long_about(format!(
             "Delete the branch of each run whose pull request is merged, or closed for {} days, locally and on \
              {REMOTE}, and print what became of each. A branch with commits its pull request lacks, or one checked \
@@ -357,10 +357,10 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
             Arg::new("dry-run")
                 .long("dry-run")
                 .action(ArgAction::SetTrue)
-                .help("print what would be deleted, and delete nothing"),
+                .help("Print what would be deleted, and delete nothing"),
         );
     let close = clap::Command::new("close")
-        .about("clean up after a finished or failed run, or all of them: workspace, worktree and branch")
+        .about("Clean up after a finished or failed run, or all of them: workspace, worktree and branch")
         .long_about(
             "Clean up after a run that is finished, failed or stale, and record it in the run's state, so that \
              resume refuses it. Closes the run's herdr workspace and deletes its local refs. A failed or stale \
@@ -373,25 +373,25 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         )
         .args(target_args())
         .arg(Arg::new("run_ref").value_name("RUN").help(RUN_REF_HELP))
-        .arg(Arg::new("all").long("all").action(ArgAction::SetTrue).help("every finished, failed and stale run"))
+        .arg(Arg::new("all").long("all").action(ArgAction::SetTrue).help("Every finished, failed and stale run"))
         .group(ArgGroup::new("runs").args(["run_ref", "all"]).required(true))
         .arg(
             Arg::new("dry-run")
                 .long("dry-run")
                 .action(ArgAction::SetTrue)
-                .help("print what closing would do, the worktree's uncommitted files included, and change nothing"),
+                .help("Print what closing would do, the worktree's uncommitted files included, and change nothing"),
         );
     let workflows = clap::Command::new("workflows")
-        .about("list the workflows, or print one as a workflow file")
+        .about("List the workflows, or print one as a workflow file")
         .long_about(format!(
             "Without WORKFLOW, list the workflows `run --workflow` offers: the built-in ones and the workflow files \
              in {}. With it, print that workflow, or the file at that path, as a workflow file, a starting point \
              for your own.",
             config.workflows_dir()
         ))
-        .arg(Arg::new("workflow").value_name("WORKFLOW").help("a workflow's name, or a file's path"));
+        .arg(Arg::new("workflow").value_name("WORKFLOW").help("A workflow's name, or a file's path"));
     let drain = clap::Command::new("drain")
-        .about("run every ready spec in a directory, one pull request each")
+        .about("Run every ready spec in a directory, one pull request each")
         .long_about(format!(
             "Run each DIR/<slug>/spec.md whose header says {SPEC_READY} and whose blockers are {SPEC_DONE}, one after \
              another, as run --spec runs it, and record each in the spec's header: {SPEC_IN_REVIEW} with its pull \
@@ -407,16 +407,16 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         .arg(
             Arg::new("dir")
                 .value_name("DIR")
-                .help(format!("the directory of specs, on this machine; default {DRAIN_DIR}")),
+                .help(format!("The directory of specs, on this machine; default {DRAIN_DIR}")),
         )
         .arg(Arg::new("dry-run").long("dry-run").action(ArgAction::SetTrue).help(
-            "print the changes to the specs' status and the specs it would run, in order, and write, run and delete \
+            "Print the changes to the specs' status and the specs it would run, in order, and write, run and delete \
              nothing",
         ))
         // Hidden and refused by check_spec_args, as for resume.
         .arg(Arg::new("spec").long("spec").num_args(0..=1).default_missing_value("").hide(true));
     let refresh = clap::Command::new("refresh")
-        .about("clear a resolved conflict from a run's pull request")
+        .about("Clear a resolved conflict from a run's pull request")
         .long_about(format!(
             "For a finished run whose pull request was opened as a draft over conflicts with its base, ask gh whether \
              it merges cleanly now. If it does, remove the conflict warning from its description, keeping every \
@@ -429,7 +429,7 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         .args(target_args())
         .arg(Arg::new("run_ref").value_name("RUN").help(format!("{RUN_REF_HELP}; default: every such run")));
     let doctor = clap::Command::new("doctor")
-        .about("check what a run needs, and say what to run for each that is missing")
+        .about("Check what a run needs, and say what to run for each that is missing")
         .long_about(format!(
             "Check what a run needs where the agents run, on this machine or with --machine on that one: herdr {} or \
              later and a way to reach it, each harness's CLI and herdr integration, git {} or later, gh logged in, \
@@ -442,13 +442,13 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         ))
         .args(target_args())
         .arg(Arg::new("setup-gate").long("setup-gate").action(ArgAction::SetTrue).help(
-            "after the checks, write at the project's top level what --quality-gate local reads, where missing: \
+            "After the checks, write at the project's top level what --quality-gate local reads, where missing: \
              ci/gate.pin, naming the gate release this engine was tested with, and a gate.toml whose test commands \
              are guessed from the project's kind. A file already there is kept. Nothing is committed: a run's gate \
              reads them from its base commit",
         ));
     let serve = clap::Command::new("serve")
-        .about("serve the runs of any project over HTTP on 127.0.0.1, and start new ones, for the desktop app")
+        .about("Serve the runs of any project over HTTP on 127.0.0.1, and start new ones, for the desktop app")
         .long_about(
             "Serve the runs of any project, local or on a saved herdr machine: the run records list --json prints, \
              each run's files and their contents, and a stream of events as they change; type into a run's agents; \
@@ -458,7 +458,7 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
              free port of 127.0.0.1 until SIGINT or SIGTERM, and exits 0. Every request needs the token.",
         )
         .arg(Arg::new("origin").long("origin").value_name("ORIGIN").action(ArgAction::Append).help(
-            "also answer requests from this origin, such as the desktop app's webview, tauri://localhost; repeatable",
+            "Also answer requests from this origin, such as the desktop app's webview, tauri://localhost; repeatable",
         ));
     clap::Command::new("orchestrator")
         .about(
@@ -478,13 +478,13 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
 }
 
 /// What a RUN argument takes.
-const RUN_REF_HELP: &str = "the run id, or the six-character key at its end";
+const RUN_REF_HELP: &str = "The run id, or the six-character key at its end";
 
 /// --machine and --cwd.
 fn target_args() -> Vec<Arg> {
     vec![
-        Arg::new("machine").long("machine").help("saved herdr machine to run the agents on"),
-        Arg::new("cwd").long("cwd").help("project directory (on the machine, if --machine is given)"),
+        Arg::new("machine").long("machine").help("Saved herdr machine to run the agents on"),
+        Arg::new("cwd").long("cwd").help("Project directory (on the machine, if --machine is given)"),
     ]
 }
 
@@ -496,14 +496,14 @@ fn settings_args() -> Vec<Arg> {
             .long("max-rounds")
             .value_parser(number())
             .allow_negative_numbers(true)
-            .help(format!("review rounds before giving up (default {DEFAULT_MAX_ROUNDS})")),
+            .help(format!("Review rounds before giving up (default {DEFAULT_MAX_ROUNDS})")),
         Arg::new("timeout")
             .long("timeout")
             .value_parser(number())
             .allow_negative_numbers(true)
-            .help(format!("seconds a Builder or Reviewer turn may take (default {DEFAULT_TURN_TIMEOUT})")),
+            .help(format!("Seconds a Builder or Reviewer turn may take (default {DEFAULT_TURN_TIMEOUT})")),
         Arg::new("permission-mode").long("permission-mode").help(
-            "permission mode for every role, by Claude Code's names, e.g. auto or acceptEdits. claude takes any as \
+            "Permission mode for every role, by Claude Code's names, e.g. auto or acceptEdits. claude takes any as \
              it is. agy gets nothing for default, --mode accept-edits for acceptEdits, \
              --dangerously-skip-permissions for bypassPermissions and --mode plan for plan; codex nothing for \
              default, --full-auto for acceptEdits, --dangerously-bypass-approvals-and-sandbox for bypassPermissions \
@@ -512,14 +512,14 @@ fn settings_args() -> Vec<Arg> {
         ),
         Arg::new("model")
             .long("model")
-            .help("model for every role, passed to its harness as --model, e.g. sonnet or claude-opus-5-5"),
+            .help("Model for every role, passed to its harness as --model, e.g. sonnet or claude-opus-5-5"),
     ];
     for (role, label) in ROLE_LABELS {
         args.push(
             Arg::new(format!("{role}-model"))
                 .long(format!("{role}-model"))
                 .value_name("MODEL")
-                .help(format!("model for the {label}; overrides --model")),
+                .help(format!("Model for the {label}; overrides --model")),
         );
     }
     args.extend([
@@ -529,12 +529,12 @@ fn settings_args() -> Vec<Arg> {
             .action(ArgAction::Append)
             .value_parser(role_model_arg)
             .help(
-                "model for one role of the workflow, by its key; overrides --model and the workflow's own model for \
+                "Model for one role of the workflow, by its key; overrides --model and the workflow's own model for \
                  it; repeatable",
             ),
         Arg::new("agent").long("agent").value_name("KIND").value_parser(PossibleValuesParser::new(HARNESS_NAMES)).help(
             format!(
-                "agent harness for every role, one of {}; overrides the agent key of a role in the workflow file \
+                "Agent harness for every role, one of {}; overrides the agent key of a role in the workflow file \
                  (default {DEFAULT_HARNESS}). Each harness a run uses needs its CLI on PATH and its herdr \
                  integration (`orchestrator doctor` names it) where the agents run",
                 HARNESS_NAMES.join(", ")
@@ -545,14 +545,14 @@ fn settings_args() -> Vec<Arg> {
             .value_name("ROLE=KIND")
             .action(ArgAction::Append)
             .value_parser(role_agent_arg)
-            .help("agent harness for one role of the workflow, by its key; overrides --agent; repeatable"),
+            .help("Agent harness for one role of the workflow, by its key; overrides --agent; repeatable"),
         Arg::new("max-quality-rounds")
             .long("max-quality-rounds")
             .value_name("N")
             .value_parser(number())
             .allow_negative_numbers(true)
             .help(format!(
-                "with --quality-gate: quality gate analyses per review round before the Reviewer gets the change anyway \
+                "With --quality-gate: quality gate analyses per review round before the Reviewer gets the change anyway \
                  (default {DEFAULT_MAX_QUALITY_ROUNDS})"
             )),
     ]);
@@ -580,22 +580,22 @@ fn starts_args(config: &ConfigDir) -> Vec<Arg> {
             .value_parser(PossibleValuesParser::new(offered))
             .conflicts_with("workflow-file")
             .help(format!(
-                "the roles and handoffs the run goes through: a built-in workflow or one in {workflows_dir} \
+                "The roles and handoffs the run goes through: a built-in workflow or one in {workflows_dir} \
                  (default default); see the workflows command. With --spec, and for drain, its first step must write \
                  the spec"
             )),
         Arg::new("workflow-file")
             .long("workflow-file")
             .value_name("FILE")
-            .help("like --workflow, for the workflow file at FILE, on this machine"),
+            .help("Like --workflow, for the workflow file at FILE, on this machine"),
         Arg::new("worktree").long("worktree").action(ArgAction::SetTrue).help(
-            "build in a git worktree of the run's own, .orchestrator/worktrees/<key>, from origin's version of the \
+            "Build in a git worktree of the run's own, .orchestrator/worktrees/<key>, from origin's version of the \
              checked-out branch, instead of in the checkout itself, which then need not be clean and stays free to \
              use. Needs a branch checked out and an origin. The worktree is removed once the pull request is open; \
              when the run fails, or for run --no-pr, it stays",
         ),
         quality_gate_arg().help(
-            "after each Builder turn, have the quality gate, octoflow-gate, judge the change and send the findings \
+            "After each Builder turn, have the quality gate, octoflow-gate, judge the change and send the findings \
              back to the Builder: `local`, the only value since the Jenkins gate was removed in 0.72.0, runs the \
              release the run's base pins in ci/gate.pin here, on Linux x86_64, as you and with no sandbox",
         ),

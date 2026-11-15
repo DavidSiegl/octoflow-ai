@@ -931,7 +931,7 @@ fn help() {
         let help = e.to_string();
         assert!(help.contains(text), "{help}");
         if argv[0] == "show" {
-            assert!(help.contains("the run id, or the six-character key at its end"), "{help}");
+            assert!(help.contains("The run id, or the six-character key at its end"), "{help}");
         }
     }
 }
