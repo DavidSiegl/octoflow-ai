@@ -192,10 +192,10 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 /// - POST /close?cwd=DIR: with the JSON body {"dry_run": true}, says what closing each run of the project that
 ///   `close --all` closes would do, changing nothing; with {"close": [{"run", "detail", "discarded"}, ...]}, the
 ///   "closed" runs of such a dry run's answer, closes those runs and no other, each only while closing it would still
-///   do what detail says and discard what discarded lists (crate::cli::close::Sweep::Previewed): no run
-///   is closed, and no changed file goes, that the client did not show. Answers {"runs": [{"run", "outcome", "detail", "discarded"}, ...]}, a run for each the
-///   sweep looked at: outcome "closed" (with a dry run: to be closed), "already closed", "skipped" (as is a run that
-///   changed since the dry run) or "failed"; detail what was or would be done (`close`'s closed line or its dry
+///   do what detail says and discard what discarded lists (crate::cli::close::Sweep::Previewed says how closely).
+///   Answers {"runs": [{"run", "outcome", "detail", "discarded"}, ...]}, a run for each the sweep looked at:
+///   outcome "closed" (with a dry run: to be closed), "already closed", "skipped" (as is a run that changed since the
+///   dry run) or "failed"; detail what was or would be done (`close`'s closed line or its dry
 ///   run's), what close recorded before, or why the run was skipped or failed; discarded the uncommitted changes, one
 ///   line of git status each, that went or would go with the run's worktree, a failed run's too. A run that fails
 ///   does not stop the others. 400 for a body of another shape and 413 as for

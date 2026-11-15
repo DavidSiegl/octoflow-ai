@@ -313,8 +313,8 @@ export class Api {
   /** Close the runs of preview, a previewClose of the project, whose outcome is "closed", as `close` does: each one's
    * workspace and refs, and a failed run's worktree with its branch when that has no commit of its own. A run is
    * closed only while closing it would still do what preview says, discarding the same changes; one that changed
-   * since is skipped, so no run is closed, and no changed file goes, that preview did not show (a file it listed may
-   * have changed further). No other run is touched.
+   * since is skipped (Sweep::Previewed in engine/src/cli/close.rs says how closely it is compared). No other run is
+   * touched.
    * Resolves to each of those runs, in preview's order; a run that fails does not stop the others. Rejects as
    * previewClose does. */
   closeRuns(project: Project, preview: ClosedRun[]): Promise<ClosedRun[]> {

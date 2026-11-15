@@ -72,9 +72,10 @@ pub enum Sweep<'p> {
     /// Close every run as it stands when its turn comes.
     Close,
     /// Close only the runs that this earlier DryRun of the project gave as Outcome::Closed, each only while closing it
-    /// would still do just what the dry run said, discarding the same changes (the same lines of git status: a file
-    /// listed as changed may have changed further), so that no run is closed, and no changed file goes, that was not
-    /// shown; a run that changed since is skipped, saying what closing it would now do. No other run is looked at.
+    /// would still do just what the dry run said, discarding the same changes, so that what goes is what was shown; a
+    /// run that changed since is skipped, saying what closing it would now do. No other run is looked at. The changes
+    /// are compared line by line of git status, so a file listed may have changed further, and a directory listed
+    /// whole (`?? dir/`) may hold new files, which go with it.
     Previewed(&'p [RunClosed]),
 }
 
@@ -184,8 +185,8 @@ pub fn close_run(world: &Closer, cwd: &str, run_ref: &str, dry_run: bool) -> Res
 /// run; the run being closed then finishes or fails as close_run would, and a second sweep finishes it.
 ///
 /// Returns each run looked at, in that order; none after an Interrupt. Errors: for Sweep::DryRun and Sweep::Close,
-/// the project's runs cannot be read at the start; a Sweep::Previewed reads each run only at its turn, and one that
-/// cannot be read is Outcome::Failed.
+/// the project's runs cannot be read at the start. A Sweep::Previewed reads each run only at its turn: one whose
+/// state.json cannot be read is Outcome::Failed, one that does not parse is skipped as Decision::Refused.
 pub fn close_all(world: &Closer, cwd: &str, sweep: Sweep) -> Result<Vec<RunClosed>, OrchestratorError> {
     // Each run to look at: its id, what its state.json records as its closed when first read, and for a
     // Sweep::Previewed what the preview said closing it would do and discard.
