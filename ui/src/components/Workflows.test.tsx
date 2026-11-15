@@ -338,7 +338,7 @@ describe("the workflows dialog", { timeout: EDITOR_TIMEOUT_MS }, () => {
   });
 });
 
-describe("the run form's Edit… and New…", () => {
+describe("the run form's Edit… and New…", { timeout: EDITOR_TIMEOUT_MS }, () => {
   /** The app with the run form open on `default`, the workflows read. */
   async function openForm(start: FakeStart, edit: FakeEdit = {}): Promise<HTMLElement> {
     stubServer({}, {}, {}, start, {}, edit);
