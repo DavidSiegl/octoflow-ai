@@ -931,7 +931,9 @@ fn help() {
         let help = e.to_string();
         assert!(help.contains(text), "{help}");
         if argv[0] == "show" {
-            assert!(help.contains("the run id, or the six-character key at its end"), "{help}");
+            // Words alone: where the help wraps depends on the terminal the tests run in.
+            let words = help.split_whitespace().collect::<Vec<_>>().join(" ");
+            assert!(words.contains("The run id, or the six-character key at its end"), "{help}");
         }
     }
 }
