@@ -455,7 +455,7 @@ how it treats specs you edit while it runs.
 ## Your own workflows
 
 The roles, their prompts and their order are a workflow. Besides the built-in `default`, add your own as a TOML
-file in `~/.config/ai-agents-orchestrator/workflows/`, named after the workflow, or anywhere with
+file in `~/.config/octoflow-ai/workflows/`, named after the workflow, or anywhere with
 `--workflow-file`. `orchestrator workflows` lists them and says why one does not load, and
 `workflows default` prints the default's full definition to start from. [`examples/workflows/`](examples/workflows)
 has three more: `spec-build-review` (the default as a file), `quick` (Builder ⇄ Reviewer, the task as the
@@ -518,7 +518,7 @@ before it rewrites a file written by hand.
 
 ## Prompt files
 
-To change only some of the texts the agents get, put `NAME.md` in `~/.config/ai-agents-orchestrator/prompts/`,
+To change only some of the texts the agents get, put `NAME.md` in `~/.config/octoflow-ai/prompts/`,
 where `NAME` is the text's name in the engine's `engine/src/prompts.rs`. Its content, less its trailing newline, is sent in its
 place, with exactly the placeholders of the text it replaces.
 

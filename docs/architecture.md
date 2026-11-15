@@ -194,7 +194,7 @@ whichever round wrote it.
 
 `WORKFLOWS` holds only `DEFAULT_WORKFLOW`, worded by the built-in prompts; a run with prompt files gets it from
 `find_workflow`, worded by its own. Other workflows are TOML files: `run --workflow NAME` finds
-`NAME::toml` in `workflows_dir` (`~/.config/ai-agents-orchestrator/workflows/`), and `run --workflow-file` takes
+`NAME::toml` in `workflows_dir` (`~/.config/octoflow-ai/workflows/`), and `run --workflow-file` takes
 one by path; the README's [Your own workflows](../README.md#your-own-workflows) gives the format. A file's
 step can `use` a default step and override some of its fields; a role without a label keeps the default
 workflow's label for its key, or else is named after the key; a role's `model` sits under every model flag,

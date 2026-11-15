@@ -1,5 +1,5 @@
 # Builder <-> Reviewer with no interview: the task itself is the contract.
-# Copy to ~/.config/ai-agents-orchestrator/workflows/ and run with --workflow quick,
+# Copy to ~/.config/octoflow-ai/workflows/ and run with --workflow quick,
 # or run it from here with --workflow-file examples/workflows/quick.toml.
 
 description = "Builder <-> Reviewer, with the task as the contract: no interview"
