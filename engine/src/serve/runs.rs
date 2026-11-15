@@ -9,6 +9,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::cli::close::{close_all, Closer, RunClosed, Sweep};
+use crate::cli::forget::{self, forget_all, Forgetter, RunForgotten};
 use crate::cli::listing::run_record;
 use crate::constants::RUNS_DIR;
 use crate::error::OrchestratorError;
@@ -124,6 +125,14 @@ impl ProjectRuns {
             stdout: &|_| {},
         };
         close_all(&closer, &self.cwd, sweep)
+    }
+
+    /// Forget the project's closed runs that sweep names, as crate::cli::forget::forget_all does, and give each run's
+    /// outcome; the lines forget prints are dropped, as the outcomes hold what they say. A raised stopping starts no
+    /// further run. Errors: as forget_all's.
+    pub fn forget_all(&self, sweep: forget::Sweep, stopping: &Interrupt) -> Result<Vec<RunForgotten>, OrchestratorError> {
+        let forgetter = Forgetter { host: &*self.host, interrupt: stopping, stdout: &|_| {} };
+        forget_all(&forgetter, &self.cwd, sweep)
     }
 
     /// Whether the project is on another machine, read over SSH.

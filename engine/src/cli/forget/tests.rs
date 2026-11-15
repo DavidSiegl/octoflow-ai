@@ -164,8 +164,8 @@ fn a_closed_run_whose_branch_waits_for_prune_is_kept_until_prune_records_it() {
     assert_eq!(
         e,
         format!(
-            "run {CLOSED} keeps its branch and worktree for prune, which deletes them once its pull request is merged \
-             or closed: forget it after that"
+            "run {CLOSED} is closed, but prune deletes its branch and worktree once its pull request is merged or \
+             closed: forget it after that"
         )
     );
     let (status, out) = run(&cli, &["forget", "--all"]);
@@ -206,4 +206,17 @@ fn on_a_machine() {
     assert!(!kept(&cli, CLOSED));
     let target = Target { machine: Some("m".into()), cwd: Some("/proj".into()) };
     assert_eq!(cli.command(&["forget", "--cwd", "/proj", CLOSED, "--machine", "m"]).target(), Some(&target));
+}
+
+#[test]
+fn a_listed_run_is_read_at_its_turn_so_one_forgotten_since_is_gone() {
+    use crate::cli::forget::{forget_all, Forgetter, Outcome, RunForgotten, Sweep};
+    let cli = cli();
+    add(&cli, CLOSED, Some("workspace closed"), true);
+    // The second CLOSED is read after the first forgot it, as a run another request forgot meanwhile would be.
+    let ids = [CLOSED, CLOSED, "20261001-130000-ffffff"].map(String::from);
+    let runs = cli.with(|world| forget_all(&Forgetter::of(world), "/proj", Sweep::Listed(&ids))).unwrap();
+    let outcome = |id: &str, outcome| RunForgotten { run_id: id.to_string(), outcome };
+    assert_eq!(runs, [outcome(CLOSED, Outcome::Forgotten), outcome(CLOSED, Outcome::Gone), outcome(&ids[2], Outcome::Gone)]);
+    assert_eq!(cli.take_out(), format!("forgot run {CLOSED}: deleted {}\n1 forgotten, 0 not closed, 2 skipped\n", dir(CLOSED)));
 }
