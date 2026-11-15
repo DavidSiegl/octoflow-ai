@@ -20,6 +20,10 @@ pub(crate) fn without_withheld(vars: impl Iterator<Item = (OsString, OsString)>)
     vars.filter(|(k, _)| !GIT_PATHSPEC_ENV.iter().any(|w| k == w)).collect()
 }
 
+/// The name of the configuration directory ConfigDir::from_env finds in $XDG_CONFIG_HOME or ~/.config. Only this
+/// name is read: a directory under the product's earlier name is not a fallback (docs/releases has the move).
+pub const CONFIG_DIR_NAME: &str = "octoflow-ai";
+
 /// The orchestrator's own configuration directory, on the machine it runs on, and where in it each of its files is:
 /// the prompt files, the workflow files and the desktop app's setup marker.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,7 +33,7 @@ pub struct ConfigDir {
 }
 
 impl ConfigDir {
-    /// The configuration directory of the user running the engine: ai-agents-orchestrator in $XDG_CONFIG_HOME when
+    /// The configuration directory of the user running the engine: CONFIG_DIR_NAME in $XDG_CONFIG_HOME when
     /// that is an absolute path, else in ~/.config, ~ being $HOME, or without it the user's home in /etc/passwd.
     pub fn from_env() -> ConfigDir {
         ConfigDir::for_env(&|name| std::env::var(name).ok(), &passwd_home)
@@ -42,7 +46,7 @@ impl ConfigDir {
             Some(home) => format!("{}/.config", home.trim_end_matches('/')),
             None => "~/.config".to_string(),
         });
-        ConfigDir::at(&format!("{}/ai-agents-orchestrator", config.trim_end_matches('/')))
+        ConfigDir::at(&format!("{}/{CONFIG_DIR_NAME}", config.trim_end_matches('/')))
     }
 
     /// The configuration directory at path.

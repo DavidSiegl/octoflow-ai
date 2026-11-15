@@ -24,6 +24,7 @@ use octoflow_e2e::{array_at, checkout, object, object_at, procs, str_at, strings
 use serde_json::Value;
 use octoflow_engine::map::Map;
 use octoflow_engine::json::Object;
+use octoflow_engine::env::CONFIG_DIR_NAME;
 use octoflow_engine::host::shlex_quote;
 
 /// Who the world's commits are by: the harness's own, and the engine's, through the git configuration it is given.
@@ -169,7 +170,7 @@ fn read_lossy(path: &Path) -> String {
 ///
 /// The directory holds `project/` (the git checkout the engine runs in, on main, with origin at `origin.git/`),
 /// `home/` and `config/` (the engine's HOME and XDG_CONFIG_HOME, so that its configuration directory is
-/// `config/ai-agents-orchestrator/`), `bin/` (the fakes' shims), `fakes/` (their ledger) and `out/` (each invocation's
+/// `config/CONFIG_DIR_NAME/`), `bin/` (the fakes' shims), `fakes/` (their ledger) and `out/` (each invocation's
 /// output). Dropping it kills any invocation still running and removes the directory, unless the scenario failed,
 /// when the directory is kept for a look and its path printed.
 pub struct World {
@@ -231,7 +232,7 @@ impl World {
             ("gate", object([("judgements", Value::Array(Vec::new()))])),
             ("pypi", object([])),
         ]);
-        for d in ["home", "config/ai-agents-orchestrator", "bin", "fakes", "out", "tmp"] {
+        for d in ["home", &format!("config/{CONFIG_DIR_NAME}"), "bin", "fakes", "out", "tmp"] {
             let path = root.join(d);
             fs::create_dir_all(&path).unwrap_or_else(|e| panic!("making {}: {e}", path.display()));
         }
