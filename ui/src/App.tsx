@@ -7,6 +7,7 @@ import { RunDetail } from "./components/RunDetail";
 import { RunForm } from "./components/RunForm";
 import { RunsOverview } from "./components/RunsOverview";
 import { SetupDialog } from "./components/SetupDialog";
+import { WorkflowsDialog } from "./components/WorkflowsDialog";
 import { useNow, useRunStream } from "./hooks";
 import { runsNewestFirst } from "./runs";
 
@@ -34,7 +35,7 @@ function saveProject(project: Project): void {
   }
 }
 
-/** The app: the top bar (logo and name, which open About, and the project bar), and the project's runs or one run
+/** The app: the top bar (logo and name, which open About, the project bar, and Workflows…), and the project's runs or one run
  * in detail. connect resolves to the sidecar's server, or rejects with why it could not be started. */
 export function App({ connect }: { connect: () => Promise<Connection> }) {
   const [connection, setConnection] = useState<Connection | null>(null);
@@ -53,6 +54,7 @@ function Connected({ connection }: { connection: Connection }) {
   const [project, setProject] = useState(() => savedProject(connection.project));
   const [settingUp, setSettingUp] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [workflowsOpen, setWorkflowsOpen] = useState(false);
   // The logo's button, which gets the focus back when About closes.
   const badge = useRef<HTMLButtonElement>(null);
   const closeAbout = () => {
@@ -94,6 +96,10 @@ function Connected({ connection }: { connection: Connection }) {
           <span className="app-name">Octoflow AI</span>
         </button>
         <ProjectBar project={project} onOpen={open} onCheckSetup={() => setSettingUp(true)} />
+        {/* Beside the project bar, not in it: workflows are this computer's, not a project's. */}
+        <button type="button" className="workflows-button" onClick={() => setWorkflowsOpen(true)}>
+          Workflows…
+        </button>
       </header>
       {project.cwd ? (
         // Keyed by the project, so opening another one starts from its overview.
@@ -106,6 +112,7 @@ function Connected({ connection }: { connection: Connection }) {
         // another one while it is open checks that one.
         <SetupDialog key={`setup:${project.machine}:${project.cwd}`} api={api} project={project} onClose={() => setSettingUp(false)} />
       )}
+      {workflowsOpen && <WorkflowsDialog api={api} onClose={() => setWorkflowsOpen(false)} />}
       {aboutOpen && <About version={connection.version} onClose={closeAbout} />}
     </main>
   );

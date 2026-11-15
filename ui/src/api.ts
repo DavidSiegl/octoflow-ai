@@ -205,6 +205,71 @@ export interface ClosedRun {
   discarded: string[];
 }
 
+/** A role of a workflow definition, keyed by its role key in WorkflowDefinition.roles: the label its pane shows, and
+ * the harness and model it runs in unless a run names others; agent and model absent for the run's, else the
+ * built-in harness's and that harness's own model. */
+export interface RoleDefinition {
+  label: string;
+  agent?: string;
+  model?: string;
+}
+
+/** A step of a workflow definition, each field the engine's Step field of its name (engine/src/pipeline.rs says what
+ * each holds). A field absent is its default: again and fresh_note not set, loop_to none (a step that gives no
+ * verdict), each flag false. */
+export interface StepDefinition {
+  id: string;
+  role: string;
+  file: string;
+  prompt: string;
+  again?: string;
+  fresh_note?: string;
+  fresh_repeats_again?: boolean;
+  human_paced?: boolean;
+  edits?: boolean;
+  loop_to?: string;
+  quality_gated?: boolean;
+  locks?: boolean;
+}
+
+/** The step flags, which a definition leaves out where false, in the order the editor shows them. */
+export const STEP_FLAGS = ["fresh_repeats_again", "human_paced", "edits", "quality_gated", "locks"] as const;
+
+/** A workflow's definition as a workflow file holds it, in JSON: the keys the engine's WORKFLOW_KEYS
+ * (engine/src/workflow_file.rs) lists. A key absent is its default: no description, the engine's diff budget, no
+ * proof command. */
+export interface WorkflowDefinition {
+  description?: string;
+  max_files?: number;
+  max_lines?: number;
+  proof_command?: string;
+  roles: Record<string, RoleDefinition>;
+  steps: StepDefinition[];
+}
+
+/** A workflow file as GET /workflow read it: its path, its text, which a save or delete of it takes as its base, and
+ * whether that text was written by hand rather than by a save, so that saving rewrites it without its comments and
+ * with its `use` lines resolved. */
+export interface WorkflowFile {
+  path: string;
+  text: string;
+  handWritten: boolean;
+}
+
+/** A workflow as an editor opens it: its definition, canonical, each `use` resolved with the built-in prompts, and
+ * its file, null for a built-in workflow; or, for a file that does not load, why, with its path and text (null when
+ * the file cannot be read), the base a delete of it takes. */
+export type EditableWorkflow =
+  | { name: string; definition: WorkflowDefinition; file: WorkflowFile | null }
+  | { name: string; error: string; path: string; text: string | null };
+
+/** What the server finds in a definition under a name: the first problem a save would refuse, null for none, and the
+ * placeholders its prompts may use, `task` and the like first, then each step's paths. */
+export interface WorkflowCheck {
+  problem: string | null;
+  placeholders: string[];
+}
+
 /** A request the server did not answer as asked, with the HTTP status it answered and its error message. */
 export class HttpError extends Error {
   constructor(
@@ -284,6 +349,57 @@ export class Api {
     return this.json(`${this.connection.url}/workflows`) as Promise<RunOptions>;
   }
 
+  /** The workflow of that name, to edit, from this computer's configuration as workflows() lists it. Rejects with the
+   * server's error message, status 404 for no such workflow and 500 for a workflows directory that cannot be
+   * listed. */
+  async workflow(name: string): Promise<EditableWorkflow> {
+    const url = `${this.connection.url}/workflow?${new URLSearchParams({ name })}`;
+    const { status, body } = await this.request(url);
+    const answer = body as {
+      definition?: WorkflowDefinition;
+      path?: string | null;
+      text?: string | null;
+      hand_written?: boolean;
+      error?: string;
+    };
+    if (status === 422 && typeof answer.error === "string" && typeof answer.path === "string") {
+      return { name, error: answer.error, path: answer.path, text: answer.text ?? null };
+    }
+    if (status < 200 || status > 299) {
+      throw new HttpError(status, answer.error ?? `HTTP ${status}`);
+    }
+    if (typeof answer.definition !== "object") {
+      throw new HttpError(status, "the answer has no definition");
+    }
+    const file =
+      typeof answer.path === "string" && typeof answer.text === "string"
+        ? { path: answer.path, text: answer.text, handWritten: answer.hand_written === true }
+        : null;
+    return { name, definition: answer.definition, file };
+  }
+
+  /** What saving definition as workflow name would refuse, and the placeholders its prompts may use, as `run` would
+   * read the file; nothing is written. Rejects with the server's error message. */
+  async checkWorkflow(name: string, definition: WorkflowDefinition): Promise<WorkflowCheck> {
+    return this.post("/workflow/check", { name, definition }) as Promise<WorkflowCheck>;
+  }
+
+  /** Write definition as workflow name's file, in the canonical form a save writes, and resolve to its path. base is
+   * the file's text the editor opened (WorkflowFile.text), null for a workflow that has no file yet. Rejects with the
+   * server's error message, nothing written: status 409 when the file is not base (one exists under a new name, or it
+   * changed or went since it was opened), 422 for a problem checkWorkflow would name, 500 for a failed write. */
+  async saveWorkflow(name: string, definition: WorkflowDefinition, base: string | null): Promise<string> {
+    return this.path(await this.post("/workflow/save", { name, definition, base }));
+  }
+
+  /** Remove workflow name's file, base being its text as it was read (WorkflowFile.text, or that of a file that does
+   * not load), and resolve to its path. Runs already started with it keep their own copy. Rejects with the server's
+   * error message, nothing removed: status 400 for a built-in workflow, 404 for none of that name, 409 when the file
+   * is no longer base. */
+  async deleteWorkflow(name: string, base: string): Promise<string> {
+    return this.path(await this.post("/workflow/delete", { name, base }));
+  }
+
   /** Start the run request asks for in project, in a new workspace of this computer's herdr, and resolve to
    * the run started (StartedRun) once it has saved its state or the server's 30 seconds of waiting for that have
    * passed, whichever is first: the run may not be in the event stream yet, and one that exits after the wait never
@@ -344,20 +460,44 @@ export class Api {
     return body.text;
   }
 
+  /** The JSON answer to a POST of body, as JSON, to the server's path, which names no project; rejects as json does. */
+  private async post(path: string, body: unknown): Promise<unknown> {
+    return this.json(`${this.connection.url}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  /** The path field of a workflow file's save or delete answer. */
+  private path(answer: unknown): string {
+    const { path } = answer as { path?: unknown };
+    if (typeof path !== "string") {
+      throw new HttpError(200, "the answer has no path");
+    }
+    return path;
+  }
+
   /** The JSON body of a request of url, with the token and init; rejects with an HttpError carrying the server's
    * error message, or the status, for any answer but a 2xx, and for a 2xx whose body is not JSON. */
   private async json(url: string, init: RequestInit = {}): Promise<unknown> {
-    const headers = { ...init.headers, Authorization: `Bearer ${this.connection.token}` };
-    const response = await fetch(url, { ...init, headers });
-    // undefined: the body is not JSON, which an error answer may be, but no 2xx one.
-    const body = (await response.json().catch(() => undefined)) as { error?: string } | undefined;
-    if (!response.ok) {
-      throw new HttpError(response.status, body?.error ?? `HTTP ${response.status}`);
+    const { status, body } = await this.request(url, init);
+    const answer = body as { error?: string } | undefined;
+    if (status < 200 || status > 299) {
+      throw new HttpError(status, answer?.error ?? `HTTP ${status}`);
     }
     if (body === undefined) {
-      throw new HttpError(response.status, "the answer is not JSON");
+      throw new HttpError(status, "the answer is not JSON");
     }
     return body;
+  }
+
+  /** The status and JSON body of a request of url, with the token and init, whatever the status; body undefined when
+   * it is not JSON, which an error answer may be. Rejects only when no answer comes. */
+  private async request(url: string, init: RequestInit = {}): Promise<{ status: number; body: unknown }> {
+    const headers = { ...init.headers, Authorization: `Bearer ${this.connection.token}` };
+    const response = await fetch(url, { ...init, headers });
+    return { status: response.status, body: await response.json().catch(() => undefined) };
   }
 
   private url(path: string, project: Project, params: Record<string, string>): string {
