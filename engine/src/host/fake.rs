@@ -1032,8 +1032,13 @@ impl Host for FakeHost {
         Ok(states)
     }
 
-    /// The run directories' metrics.json in `files`, with the archive's, as the real host gives them.
+    /// The real host's records when FakeState::processes is set; else the run directories' metrics.json in `files`,
+    /// with the archive's, as the real host gives them.
     fn run_metrics(&self, cwd: &str) -> Result<Vec<Value>, OrchestratorError> {
+        let real = self.state().processes.clone();
+        if let Some(real) = real {
+            return real.run_metrics(cwd);
+        }
         let runs = format!("{cwd}/{}/", crate::constants::RUNS_DIR);
         let live = self
             .state()
@@ -1045,8 +1050,13 @@ impl Host for FakeHost {
         super::with_archived_metrics(self, cwd, live)
     }
 
-    /// Drops the files under the run directory from `files`, or fails for one of undeletable_run_dirs.
+    /// The real host's deletion when FakeState::processes is set; else drops the files under the run directory from
+    /// `files`, or fails for one of undeletable_run_dirs.
     fn remove_run_dir(&self, cwd: &str, run_id: &str) -> Result<(), OrchestratorError> {
+        let real = self.state().processes.clone();
+        if let Some(real) = real {
+            return real.remove_run_dir(cwd, run_id);
+        }
         crate::serve::runs::plain_name(run_id).map_err(|e| OrchestratorError(e.to_string()))?;
         let dir = format!("{cwd}/{}/{run_id}", crate::constants::RUNS_DIR);
         let mut s = self.state();
