@@ -42,6 +42,16 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **Whether a run is closed is still told in three more places.** `RunState::is_closed` (`engine/src/state.rs`) is
+  the rule close and forget use, but `resumable_state` (`engine/src/cli/start.rs`, `closed.is_some()`, which also
+  takes an empty `closed` for closed), `run_record`'s resume hint (`engine/src/cli/listing.rs`) and drain's check
+  (`engine/src/cli/drain.rs`) each test the field themselves. Closed when all three call `is_closed`, and the empty
+  string's meaning is decided once.
+- **The Workflows dialog reads each workflow twice.** `WorkflowsDialog` (`ui/src/components/WorkflowsDialog.tsx`)
+  sends a `GET /workflow` for each workflow `/workflows` lists, for its file's path and text, though `/workflows` has
+  parsed every file already, and the editor reads its workflow again when it opens. Harmless for a handful of files
+  (app-workflow-editor/02, cross-review 203 R1-8). Closed by `/workflows` giving each file's path, and the list
+  reading a file's text only for Delete.
 - **A resumed run looks its old workspace up in the new herdr server.** `resumed_state` (`engine/src/cli/start.rs`)
   saves the resuming environment's server as `RunState::herdr_server`, then `Workflow::prepare`
   (`engine/src/workflow.rs`) asks that server for the saved `workspace_id`: a run started in the app (session
@@ -308,10 +318,10 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   terms by design". The example's header says so. Decided against (the user's ruling, 2026-11-11): the check reading
   every non-editing step's file that precedes the first editing step, or a workflow key naming the file that holds
   the paths; only the contract step names paths in the example workflows, and the finding is one to weigh.
-- **Removing a tree of read-only directories is written out twice.** `chmod -R u+rwX "$dir" && rm -rf "$dir"`,
-  with a warning when it fails, is in the Jenkinsfile's Test stage (emptying `TMPDIR` before the tests) and in
-  `packaging/build-desktop.sh`'s `remove_temporaries`, for the AppImage extractions it removes; a fix to one does
-  not reach the other. `engine/src/proofs.rs`'s `REMOVE_TREE_SCRIPT` is a looser third (`rm` runs even when `chmod`
+- **Removing a tree of read-only directories is written out twice.** `chmod -R u+rwX "$dir" && rm -rf "$dir"`, with a
+  warning when it fails, is in the Jenkinsfile's Checkout stage (emptying `TMPDIR` before any stage uses it) and in
+  `packaging/build-desktop.sh`'s `remove_temporaries`, for the AppImage extractions it removes; a fix to one does not
+  reach the other. `engine/src/proofs.rs`'s `REMOVE_TREE_SCRIPT` is a looser third (`rm` runs even when `chmod`
   fails, with no warning). Raised by cross-review 132 (F6, nit, 2026-11-04): "Record or share it, as the implementer
   judges". Closes with one script both call, should a third copy be needed or the idiom change.
 - **No build has yet been seen waiting for `ci/cargo-lock.sh` on the Jenkins agent.** PR #88's builds ran both
@@ -452,3 +462,15 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `HEARTBEAT_SECONDS` give it such crashes, but their runs then differ from the uninterrupted one by design: a new
   snapshot id in the PR body, the quality turn's times and every later timestamp, the job's worktree added and
   removed again. Closes with `expected` normalising those for a crash that left a job, and adding its stop.
+- **Six places build a run directory's path by hand.** `crate::state::run_dir` is the one home for
+  `<cwd>/.orchestrator/runs/<run_id>`, which `forget` and `Host::forget_run` use; `cli::start` (`:79`), `cli::listing`
+  (`:298`), and the state.json paths of `refresh`, `close`, `drain` and `prune` still format it themselves. Raised by
+  cross-review 207 (F7). Closed by those calling `run_dir`.
+- **Runs started within one second list in random order.** A run id orders by its start only to the second, then by
+  a random key (`new_run_id`, `engine/src/cli/start.rs`), and `close --all` (`engine/src/cli/close.rs`), `list`,
+  prune and refresh take runs in run id order. close-all-order-flake/01 made `runs_closed_all`
+  (`engine/e2e/tests/e2e/scenarios.rs`) wait for the next second between its runs, which costs that scenario up to a
+  second per run. Cross-review 206 (R1-2): "a later scenario that starts two runs and records one of those listings
+  can flake the same way"; (R1-1): "the hidden `run --run-id` flag would fix the order with no wait", at the price of
+  testing the given-id path rather than `new_run_id`. Closed by the engine ordering runs by their start time (a saved
+  start instant that sorts below the second), after which the scenario's wait goes.

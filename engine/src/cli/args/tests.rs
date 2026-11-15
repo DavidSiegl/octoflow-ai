@@ -282,13 +282,15 @@ fn quality_flag_checks() {
 #[test]
 fn the_commands_about_runs_and_workflows() {
     let target = Target { machine: Some("m".into()), cwd: Some("~/p".into()) };
-    let cases: [(&[&str], Command); 8] = [
+    let cases: [(&[&str], Command); 10] = [
         (&["list"], Command::Runs(Target::default(), RunsCommand::List { json: false, pr_state: false })),
         (&["list", "--json", "--pr-state", "--machine", "m", "--cwd", "~/p"], Command::Runs(target.clone(), RunsCommand::List { json: true, pr_state: true })),
         (&["metrics"], Command::Runs(Target::default(), RunsCommand::Metrics)),
         (&["show", "a1b2c3"], Command::Runs(Target::default(), RunsCommand::Show("a1b2c3".into()))),
         (&["prune", "--dry-run"], Command::Runs(Target::default(), RunsCommand::Prune { dry_run: true })),
         (&["close", "--cwd", "~/p", "a1b2c3"], Command::Close { target: Target { machine: None, cwd: Some("~/p".into()) }, run_ref: Some("a1b2c3".into()), dry_run: false }),
+        (&["forget", "--all", "--dry-run"], Command::Forget { target: Target::default(), run_ref: None, dry_run: true }),
+        (&["forget", "a1b2c3", "--machine", "m", "--cwd", "~/p"], Command::Forget { target: target.clone(), run_ref: Some("a1b2c3".into()), dry_run: false }),
         (&["workflows"], Command::Workflows(None)),
         (&["workflows", "quick"], Command::Workflows(Some("quick".into()))),
     ];
@@ -431,4 +433,12 @@ fn each_description_starts_with_a_capital() {
             assert!(!lowercase(arg.get_help()) && !lowercase(arg.get_long_help()), "{name} {id}'s description");
         }
     }
+}
+
+#[test]
+fn forget_takes_a_run_or_all_and_not_both() {
+    assert_eq!(refused(&["forget", "--all", "a1b2c3"]).1, 2);
+    assert_eq!(refused(&["forget"]).1, 2);
+    let one = parse(&["forget", "a1b2c3"]).unwrap();
+    assert_eq!(one, Command::Forget { target: Target::default(), run_ref: Some("a1b2c3".into()), dry_run: false });
 }

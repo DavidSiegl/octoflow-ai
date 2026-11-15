@@ -243,7 +243,7 @@ pub fn close_all(world: &Closer, cwd: &str, sweep: Sweep) -> Result<Vec<RunClose
 /// What run's state.json, as close_all first read it, records as its closed; None when it records none or cannot be
 /// read.
 fn closed_as_read(run: &SavedRun) -> Option<String> {
-    run.state().ok().filter(|state| is_closed(state)).and_then(|state| state.closed.clone())
+    run.state().ok().filter(|state| state.is_closed()).and_then(|state| state.closed.clone())
 }
 
 /// Read the run of the project at cwd whose id is run_id again, and close it as close_all says, or with dry_run say
@@ -280,11 +280,6 @@ fn sweep_run(
     })
 }
 
-/// Whether state records that the run was closed.
-fn is_closed(state: &RunState) -> bool {
-    state.closed.as_deref().is_some_and(|c| !c.is_empty())
-}
-
 /// What closing run, of the project at cwd, would do now, as world's host and the run's herdr server find it; changes
 /// nothing. Errors: herdr or git cannot tell what is there.
 fn decide<'r>(world: &Closer, cwd: &str, run: &'r SavedRun) -> Result<Decision<'r>, OrchestratorError> {
@@ -293,7 +288,7 @@ fn decide<'r>(world: &Closer, cwd: &str, run: &'r SavedRun) -> Result<Decision<'
         Ok(state) => state,
         Err(e) => return Ok(Decision::Refused(e)),
     };
-    if is_closed(state) {
+    if state.is_closed() {
         return Ok(Decision::AlreadyClosed(state));
     }
     let health = run.health(world.local_host, world.pid_alive);

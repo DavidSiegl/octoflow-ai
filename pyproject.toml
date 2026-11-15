@@ -3,6 +3,11 @@
 # gate, the octoflow-gate release ci/gate.pin names, reads from here beside gate.toml. The gate itself needs no Python.
 # The release version is engine/Cargo.toml's (ci/release-version.sh).
 
+[tool.uv]
+# `uv lock --check`, which the Jenkinsfile's Install stage runs, refuses a pyproject.toml without a [project] table
+# before uv 0.12, though `uv sync --frozen` takes it; an older uv now stops naming this bound instead.
+required-version = ">=0.12"
+
 [dependency-groups]
 dev = [
     "pymarkdownlnt>=0.9.41",

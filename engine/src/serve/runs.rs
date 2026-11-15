@@ -55,13 +55,10 @@ impl From<OrchestratorError> for RunReadError {
     }
 }
 
-/// name, if it names an entry of a directory itself: not empty, `.` or `..`, and without a slash or NUL. Errors:
-/// RunReadError::Refused otherwise, naming it quoted as Rust's Debug quotes a str.
+/// name, if it names an entry of a directory itself (crate::paths::plain_name). Errors: RunReadError::Refused
+/// otherwise, with paths::plain_name's message.
 pub fn plain_name(name: &str) -> Result<&str, RunReadError> {
-    if matches!(name, "" | "." | "..") || name.contains(['/', '\0']) {
-        return Err(RunReadError::Refused(format!("{name:?} is not a name in the run directory")));
-    }
-    Ok(name)
+    crate::paths::plain_name(name).map_err(|e| RunReadError::Refused(e.0))
 }
 
 /// What a client types into a run's agent (ProjectRuns::type_into).
