@@ -258,7 +258,7 @@ started, as the human would start one from a herdr pane.
   | Endpoint | Gives |
   |---|---|
   | `/runs` | `{"version": 1, "runs": [...]}`, `list --json`'s document (`run_record` of each of `Host::run_states_inside`, Security below) |
-  | `/files?run=ID` | the files in the run's directory that stay inside it (`Host::run_files_inside`, Security below), oldest first, each `{"name", "mtime"}` |
+  | `/files?run=ID` | `{"run", "files"}`: the files in the run's directory that stay inside it (`Host::run_files_inside`, Security below), oldest first, each `{"name", "mtime"}` |
   | `/file?run=ID&name=NAME` | `{"run", "name", "text"}` for one of them, read through `Host::read_inside` |
   | `/agent?run=ID&role=ROLE` | `{"run", "role", "text"}`: the last lines (`&lines=N`, 200 by default) of what the run's agent of the role shows, through `herdr agent read` |
   | `POST /agent/input?run=ID&role=ROLE` | types the JSON body's `{"text"}` into that agent as a prompt (`herdr agent prompt`), or presses its `{"keys"}` (`herdr agent send-keys`) |
@@ -357,8 +357,9 @@ browser, at a far smaller download.
   each step the quality loop follows, `publish` when the run opens a pull request, each with its turns and its
   state; the overview's `StepProgress` and the run detail's `RunMap` both draw it) and the wording helpers, which follow `format_age` and `run_round`. A `RunEntry` keeps when its record
   arrived, so `heartbeatAge` ticks with `useNow` between events. The components are `ProjectBar`, `RunsOverview`,
-  `RunForm` (a new run, selected once `POST /run` answers), `SetupDialog` and `About` (the logo's button opens it),
-  each a `Dialog`, `RunDetail`,
+  `RunForm` (a new run, selected once `POST /run` answers; its Edit… and New… open `WorkflowEditor`), `SetupDialog`, `About` (the logo's button opens it),
+  `CleanUpDialog`, and `WorkflowsDialog` (the top bar's "Workflows…", which reaches no project) with its
+  `WorkflowEditor`, each a `Dialog`, `RunDetail`,
   `AgentPanes`, `StepProgress`, `RunMap` (the run as an octopus, hand-written SVG: `runMap.ts` places the arms and
   shapes them, and a `requestAnimationFrame` loop sways them unless the viewer prefers reduced motion) and
   `HandoffFile`, which renders a file with `react-markdown` and `remark-gfm`, raw
@@ -367,7 +368,8 @@ browser, at a far smaller download.
   through `test/fakes.ts`'s `FakeEventSource`, with `fetch` stubbed. The recording is the events a real
   `serve` sent over a scripted run: the e2e test `app_event_stream` (below) fails when serve no longer sends them,
   and `recording.test.ts` when a record in them has other keys than `api.ts`'s `RunRecord` and the types in it, so a
-  key added or dropped on either side fails a build. `runs.test.ts` and `runMap.test.ts` cover the pure helpers, and `RunMap.test.tsx` the map as a reader gets it. `cargo test -p octoflow-ui` starts
+  key added or dropped on either side fails a build. `runs.test.ts` and `runMap.test.ts` cover the pure helpers, `RunMap.test.tsx` the map as a reader gets it, and
+  `Workflows.test.tsx` the workflow list and editor against `stubServer`'s workflow endpoints. `cargo test -p octoflow-ui` starts
   and stops a real sidecar.
 
 ## Tests

@@ -1,5 +1,5 @@
 import { vi } from "vitest";
-import type { ClosedRun, GateFile, RunOptions, RunRequest, SetupReport } from "../api";
+import type { ClosedRun, GateFile, RunOptions, RunRequest, SetupReport, WorkflowDefinition } from "../api";
 import recorded from "./recorded-stream.json";
 
 /** The events the engine's `serve` sent over a scripted run, recorded off the real server: each batch is what it
@@ -146,17 +146,67 @@ export interface FakeClose {
   requests?: { cwd: string | null; body: CloseBody }[];
 }
 
+/** The definition of the built-in workflow `default` a stubbed server reads: two roles, each with a step, the review
+ * looping back to the build. */
+export const DEFAULT_DEFINITION: WorkflowDefinition = {
+  description: "Spec, build and review.",
+  roles: { build: { label: "Builder", agent: "claude" }, review: { label: "Reviewer", agent: "codex", model: "o3" } },
+  steps: [
+    { id: "build", role: "build", file: "build.md", prompt: "Build {task}.", edits: true },
+    { id: "review", role: "review", file: "review.md", prompt: "Review {build_path}.", again: "Look again.", loop_to: "build" },
+  ],
+};
+
+/** A GET /workflow answer: its status and body. */
+export interface Answer {
+  status: number;
+  body: unknown;
+}
+
+/** What a stubbed server's GET /workflow answers for OPTIONS' workflows: `default` built in, `tdd` from a file a save
+ * wrote, and `broken`, a file that does not load. */
+export function workflowAnswers(): Record<string, Answer> {
+  const tdd: WorkflowDefinition = {
+    description: "Tests first, then the code.",
+    roles: { test: { label: "Test Writer", agent: "claude" }, build: { label: "Builder", agent: "claude", model: "sonnet" } },
+    steps: [
+      { id: "test", role: "test", file: "test.md", prompt: "Test {task}." },
+      { id: "build", role: "build", file: "build.md", prompt: "Pass {test_path}." },
+    ],
+  };
+  return {
+    default: { status: 200, body: { name: "default", built_in: true, path: null, text: null, hand_written: false, definition: DEFAULT_DEFINITION } },
+    tdd: { status: 200, body: { name: "tdd", built_in: false, path: "/cfg/workflows/tdd.toml", text: "tdd's text", hand_written: false, definition: tdd } },
+    broken: { status: 422, body: { error: "/cfg/workflows/broken.toml: workflow broken: no steps", path: "/cfg/workflows/broken.toml", text: "broken's text" } },
+  };
+}
+
+/** What a stubbed server's workflow endpoints answer: GET /workflow by `workflows` (workflowAnswers() unless given,
+ * 404 for a name it lacks); POST /workflow/check with `problem`'s answer to its body (none unless given) and the
+ * placeholders `task`, `cwd` and `{id}_path` of each step; POST /workflow/save with `save` (201 and
+ * /cfg/workflows/NAME.toml unless given) and POST /workflow/delete with `remove` (200 and the file's path unless
+ * given). `posts` gets each POST's path and body, in order. */
+export interface FakeEdit {
+  workflows?: Record<string, Answer>;
+  problem?: (body: { name: string; definition: WorkflowDefinition }) => string | null;
+  save?: Answer;
+  remove?: Answer;
+  posts?: { path: string; body: Record<string, unknown> }[];
+}
+
 /** Stub EventSource, and fetch with a server whose /file answers the text of `files` by name, else 404; whose /agent
  * answers the screen of `agents` by role, else 404 as for an agent that has exited; whose POST /agent/input takes
  * any input; whose /setup endpoints answer as `setup` says, a POST of /setup/checked setting its `checked`, and a
  * POST of /setup/gate recording its cwd; and
- * whose /workflows and POST /run answer as `start` says, and POST /close as `close` says. */
+ * whose /workflows and POST /run answer as `start` says, POST /close as `close` says, and the workflow endpoints as
+ * `edit` says. */
 export function stubServer(
   files: Record<string, string>,
   agents: Record<string, string> = {},
   setup: FakeSetup = {},
   start: FakeStart = {},
   close: FakeClose = {},
+  edit: FakeEdit = {},
 ) {
   FakeEventSource.opened = [];
   vi.stubGlobal("EventSource", FakeEventSource);
@@ -187,6 +237,24 @@ export function stubServer(
     }
     if (pathname === "/workflows") {
       return start.optionsError === undefined ? answer(200, start.options ?? OPTIONS) : answer(500, { error: start.optionsError });
+    }
+    if (pathname === "/workflow") {
+      const name = searchParams.get("name") ?? "";
+      const found = (edit.workflows ?? workflowAnswers())[name];
+      return found ? answer(found.status, found.body) : answer(404, { error: `no workflow ${name}` });
+    }
+    if (pathname.startsWith("/workflow/") && init?.method === "POST") {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      edit.posts = [...(edit.posts ?? []), { path: pathname, body }];
+      const name = String(body.name);
+      if (pathname === "/workflow/check") {
+        const definition = body.definition as WorkflowDefinition;
+        const steps = definition.steps.map((step) => `${step.id}_path`);
+        return answer(200, { problem: edit.problem?.({ name, definition }) ?? null, placeholders: ["task", "cwd", ...steps] });
+      }
+      const path = `/cfg/workflows/${name}.toml`;
+      const reply = pathname === "/workflow/save" ? (edit.save ?? { status: 201, body: { path } }) : (edit.remove ?? { status: 200, body: { path } });
+      return answer(reply.status, reply.body);
     }
     if (pathname === "/run" && init?.method === "POST") {
       start.requests = [...(start.requests ?? []), { cwd: searchParams.get("cwd"), body: JSON.parse(String(init.body)) as RunRequest }];
