@@ -1,5 +1,5 @@
-import { type FormEvent, useEffect, useState } from "react";
-import type { Api, OfferedRole, OfferedWorkflow, Project, RunOptions, StartedRun } from "../api";
+import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type Api, DEFAULT_WORKFLOW, type OfferedRole, type OfferedWorkflow, type Project, type RunOptions, type StartedRun } from "../api";
 import { Dialog } from "./Dialog";
 import { type Opening, WorkflowEditor } from "./WorkflowEditor";
 
@@ -11,9 +11,6 @@ interface Props {
   /** Called by Cancel, which is disabled while the run is being started. */
   onClose: () => void;
 }
-
-/** The workflow a run takes unless another is chosen, as `run` takes it without --workflow. */
-const DEFAULT_WORKFLOW = "default";
 
 /** DEFAULT_WORKFLOW where it is among workflows and loads; null, for one to be picked, where not. */
 function defaultIfLoads(workflows: OfferedWorkflow[]): string | null {
@@ -34,18 +31,22 @@ function rolesOf(workflows: OfferedWorkflow[] | undefined, name: string | null):
   return found && "roles" in found ? found.roles : [];
 }
 
-/** The value of field that choices set, by role, a model trimmed; undefined where none is set, for the request to
- * leave it out. */
-function setByRole(choices: Map<string, RoleChoice>, field: keyof RoleChoice): Record<string, string> | undefined {
-  const set = [...choices].flatMap(([role, choice]) => (choice[field].trim() ? [[role, choice[field].trim()]] : []));
+/** The value of field that choices set, by role, for each of roles, a model trimmed; undefined where none is set, for
+ * the request to leave it out. A choice for a role not in roles, which a workflow read again may have dropped, is
+ * left out too: `run` would refuse it. */
+function setByRole(choices: Map<string, RoleChoice>, roles: OfferedRole[], field: keyof RoleChoice): Record<string, string> | undefined {
+  const set = roles.flatMap(({ role }) => {
+    const value = choices.get(role)?.[field].trim();
+    return value ? [[role, value]] : [];
+  });
   return set.length > 0 ? Object.fromEntries(set) : undefined;
 }
 
 /** A form for a new run in project: its task, workflow, agent and model, an agent and a model for each role of the
- * workflow, and whether it opens a pull request and runs in a worktree of its own. Beside the workflow, Edit… and
- * New… open the workflow editor on the one picked or on a copy of the default one; a workflow saved there is picked
- * once the workflows are read again. Start starts it; an error the server answers stays in the form, with what was
- * entered, until the next Start. */
+ * workflow, and whether it opens a pull request and runs in a worktree of its own. Under the workflow, Edit… and
+ * New… open the workflow editor on the one picked or on a copy of the default one; the form waits while it is open,
+ * and after a save reads the workflows again and picks the one saved, where it loads. Start starts it; an error the
+ * server answers stays in the form, with what was entered, until the next Start. */
 export function RunForm({ api, project, onStarted, onClose }: Props) {
   // What /workflows gave, the error that kept it from giving it, or null until it answers.
   const [offered, setOffered] = useState<{ options: RunOptions } | { error: string } | null>(null);
@@ -72,9 +73,10 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
   }
   // What the workflow editor is open on; null while it is closed.
   const [editing, setEditing] = useState<Opening | null>(null);
-  // The workflow saved last in the editor, which the workflows read again after it are to pick; a new object for
-  // each save, so that each reads them again. null until one is saved.
-  const [saved, setSaved] = useState<{ name: string } | null>(null);
+  // Bumped to read the workflows again, after a save in the editor.
+  const [generation, setGeneration] = useState(0);
+  // The workflow saved in the editor that the read under way is to pick; null when it is to pick none.
+  const toPick = useRef<string | null>(null);
   useEffect(() => {
     let current = true;
     api.workflows().then(
@@ -83,8 +85,15 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
           return;
         }
         setOffered({ options });
-        if (saved) {
-          pickAmong(options.workflows, saved.name);
+        const name = toPick.current;
+        toPick.current = null;
+        if (name !== null) {
+          // One that does not load now falls back as on the first read.
+          if (options.workflows.some((w) => w.name === name && "roles" in w)) {
+            pickAmong(options.workflows, name);
+          } else {
+            setPicked(null);
+          }
         }
       },
       (error: Error) => current && setOffered({ error: error.message }),
@@ -92,7 +101,7 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
     return () => {
       current = false;
     };
-  }, [api, saved]);
+  }, [api, generation]);
   const options = offered && "options" in offered ? offered.options : null;
   // The workflow Start sends: the one picked, else DEFAULT_WORKFLOW where it loads. When /workflows failed, which a
   // workflows directory that cannot be listed makes it do, DEFAULT_WORKFLOW, as `run`, which still offers the built-in
@@ -108,7 +117,10 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
   const pick = (name: string) => pickAmong(options?.workflows, name);
   const onSaved = (name: string) => {
     setEditing(null);
-    setSaved({ name });
+    toPick.current = name;
+    // Until the workflows are read again, the form shows them being read, and cannot start a run on the old ones.
+    setOffered(null);
+    setGeneration((g) => g + 1);
   };
   const choose = (role: string, change: Partial<RoleChoice>) =>
     setChoices((old) => new Map(old).set(role, { agent: "", model: "", ...old.get(role), ...change }));
@@ -127,7 +139,7 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
       {kind}
     </option>
   ));
-  const ready = task.trim() !== "" && workflow !== null && !starting;
+  const ready = task.trim() !== "" && workflow !== null && !starting && editing === null;
   const submit = (event: FormEvent) => {
     event.preventDefault();
     // workflow's test narrows it for the request; ready holds it too.
@@ -141,8 +153,8 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
       workflow,
       agent: agent || undefined,
       model: model.trim() || undefined,
-      role_agents: setByRole(choices, "agent"),
-      role_models: setByRole(choices, "model"),
+      role_agents: setByRole(choices, roles, "agent"),
+      role_models: setByRole(choices, roles, "model"),
       no_pr: noPr,
       worktree,
     };
@@ -155,7 +167,7 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
     <>
       <Dialog label="new run" title="New run" project={project} className="run-form">
         <form onSubmit={submit}>
-          <fieldset disabled={starting}>
+          <fieldset disabled={starting || editing !== null}>
             <label>
               Task
               <textarea value={task} onChange={(e) => setTask(e.target.value)} rows={4} />
@@ -239,7 +251,7 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
           {starting && <p className="loading">Starting the run…</p>}
           {problem !== null && <pre className="problem">{problem}</pre>}
           <footer>
-            <button type="button" onClick={onClose} disabled={starting}>
+            <button type="button" onClick={onClose} disabled={starting || editing !== null}>
               Cancel
             </button>
             <button type="submit" disabled={!ready}>

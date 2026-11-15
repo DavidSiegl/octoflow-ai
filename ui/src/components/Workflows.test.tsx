@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { WorkflowDefinition } from "../api";
 import { App } from "../App";
 import { CONNECTION, DEFAULT_DEFINITION, FakeEventSource, OPTIONS, stubServer, workflowAnswers, type Answer, type FakeEdit, type FakeStart } from "../test/fakes";
@@ -406,6 +406,74 @@ describe("the run form's Edit… and New…", () => {
     await waitFor(() => expect(within(form).getByRole("button", { name: "Edit…" })).toBeDisabled());
     expect(within(form).getByRole("button", { name: "New…" })).toBeDisabled();
     release();
+  });
+
+  /** Edit… on the workflow picked in form, a change of its description, and Save, once enabled. */
+  async function editAndSave(form: HTMLElement): Promise<void> {
+    fireEvent.click(within(form).getByRole("button", { name: "Edit…" }));
+    const editor = await screen.findByRole("dialog", { name: "workflow" });
+    await waitFor(() => expect(within(editor).getByLabelText("Description")).toBeEnabled());
+    fireEvent.change(within(editor).getByLabelText("Description"), { target: { value: "Changed." } });
+    const save = within(editor).getByRole("button", { name: "Save" });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "workflow" })).not.toBeInTheDocument());
+  }
+
+  it("keeps the form, Start and Cancel off while the editor is open", async () => {
+    const form = await openForm({});
+    fireEvent.change(within(form).getByLabelText("Task"), { target: { value: "a task" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Edit…" }));
+    await screen.findByRole("dialog", { name: "workflow" });
+    expect(within(form).getByLabelText("Task")).toBeDisabled();
+    expect(within(form).getByRole("button", { name: "Start" })).toBeDisabled();
+    expect(within(form).getByRole("button", { name: "Cancel" })).toBeDisabled();
+  });
+
+  it("cannot start until the workflows are read again after a save", async () => {
+    let answer = () => {};
+    const start: FakeStart = {};
+    const form = await openForm(start);
+    fireEvent.change(within(form).getByLabelText("Task"), { target: { value: "a task" } });
+    fireEvent.change(within(form).getByLabelText("Workflow"), { target: { value: "tdd" } });
+    // The read after the save waits for answer.
+    const fetch = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (new URL(url).pathname === "/workflows") {
+        await new Promise<void>((resolve) => (answer = resolve));
+      }
+      return fetch(url, init);
+    });
+    await editAndSave(form);
+    expect(within(form).getByText("Reading the workflows…")).toBeInTheDocument();
+    expect(within(form).getByRole("button", { name: "Start" })).toBeDisabled();
+    answer();
+    await waitFor(() => expect(within(form).getByRole("button", { name: "Start" })).toBeEnabled());
+    expect(within(form).getByLabelText("Workflow")).toHaveValue("tdd");
+  });
+
+  it("sends only the rows of the workflow it runs when the read after a save fails", async () => {
+    const start: FakeStart = {};
+    const form = await openForm(start);
+    fireEvent.change(within(form).getByLabelText("Task"), { target: { value: "a task" } });
+    fireEvent.change(within(form).getByLabelText("Workflow"), { target: { value: "tdd" } });
+    fireEvent.change(within(form).getByLabelText("Test Writer agent"), { target: { value: "pi" } });
+    start.optionsError = "cannot list workflows";
+    await editAndSave(form);
+    await waitFor(() => expect(within(form).getByText(/cannot list workflows/)).toBeInTheDocument());
+    fireEvent.click(within(form).getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(start.requests).toHaveLength(1));
+    expect(start.requests?.[0]?.body).toMatchObject({ workflow: "default" });
+    expect(start.requests?.[0]?.body.role_agents).toBeUndefined();
+  });
+
+  it("falls back to default when the workflow saved does not load when read again", async () => {
+    const start: FakeStart = { options: structuredClone(OPTIONS) };
+    const form = await openForm(start);
+    fireEvent.change(within(form).getByLabelText("Workflow"), { target: { value: "tdd" } });
+    start.options = { ...OPTIONS, workflows: [...OPTIONS.workflows.filter((w) => w.name !== "tdd"), { name: "tdd", error: "tdd: no steps" }] };
+    await editAndSave(form);
+    await waitFor(() => expect(within(form).getByLabelText("Workflow")).toHaveValue("default"));
   });
 
   it("returns to the form unchanged when the editor closes without saving", async () => {
