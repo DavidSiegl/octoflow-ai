@@ -179,6 +179,7 @@ describe("the workflows dialog", () => {
     expect(within(form).getByRole("button", { name: "Save" })).toBeDisabled();
     choose(loop, "none");
     await saveable(form);
+    expect(within(loop).getAllByRole("option").map((o) => o.textContent)).toEqual(["none"]);
   });
 
   it("names a step whose role was removed, until another role is picked", async () => {

@@ -473,11 +473,14 @@ export function WorkflowEditor({ api, agents, opening, onSaved, onClose }: Props
                   >
                     <option value="">none</option>
                     {step.loopTo !== null && !draft.steps.some((s) => s.row === step.loopTo) && <option value={step.loopTo}>(removed)</option>}
-                    {draft.steps.map((s) => (
-                      <option key={s.row} value={s.row}>
-                        {s.id || "(no id)"}
-                      </option>
-                    ))}
+                    {/* Another step: a step cannot loop back to itself. */}
+                    {draft.steps
+                      .filter((s) => s.row !== step.row)
+                      .map((s) => (
+                        <option key={s.row} value={s.row}>
+                          {s.id || "(no id)"}
+                        </option>
+                      ))}
                   </select>
                 </label>
               </div>
