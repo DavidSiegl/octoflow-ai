@@ -555,7 +555,8 @@ impl Workflow<'_> {
     /// `/clear` in its pane, say) while no orchestrator watched it, `await_handoff` noting sessions only while one does.
     /// An agent found alive that is marked as not yet prompted (AgentRecord::unprompted) is prompted as the start
     /// that launched it would have, once the human has answered any startup dialog it is blocked on; found working,
-    /// it took a prompt the stopped orchestrator sent but did not record, and is only waited on.
+    /// it took a prompt the stopped orchestrator sent but did not record, and goes on as one found alive (waited on if
+    /// prompted already names its file, else sent its prompt once more, the duplicate `written` accepts).
     fn agent(&mut self, role: &str) -> Outcome<How> {
         let known = self.state.agents.get(role).cloned();
         if let Some(known) = &known {
