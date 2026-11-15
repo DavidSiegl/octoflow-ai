@@ -1,10 +1,7 @@
 import { useEffect, useState } from "react";
-import type { Api, EditableWorkflow, RunOptions } from "../api";
+import { type Api, DEFAULT_WORKFLOW, type EditableWorkflow, type RunOptions } from "../api";
 import { Dialog } from "./Dialog";
 import { type Opening, WorkflowEditor } from "./WorkflowEditor";
-
-/** The workflow New copies, which `run` takes without --workflow. */
-const NEW_FROM = "default";
 
 /** A workflow of the list, as GET /workflow read it, or the error that kept it from being read; undefined while it
  * is. */
@@ -100,7 +97,7 @@ export function WorkflowsDialog({ api, onClose }: { api: Api; onClose: () => voi
           <button type="button" onClick={onClose}>
             Close
           </button>
-          <button type="button" onClick={() => setEditing({ copy: NEW_FROM })} disabled={!options}>
+          <button type="button" onClick={() => setEditing({ copy: DEFAULT_WORKFLOW })} disabled={!options}>
             New…
           </button>
         </footer>

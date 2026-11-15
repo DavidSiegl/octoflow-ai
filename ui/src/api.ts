@@ -150,6 +150,10 @@ export interface GateFile {
   written: boolean;
 }
 
+/** The workflow a run takes unless another is chosen, as `run` takes it without --workflow, and the one a new
+ * workflow starts as a copy of. */
+export const DEFAULT_WORKFLOW = "default";
+
 /** A role of a workflow as /workflows offers it: the harness it runs in unless the run names another, and its
  * workflow's model for it, null for the harness's own. */
 export interface OfferedRole {
