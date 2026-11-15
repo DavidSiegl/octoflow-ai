@@ -8,7 +8,7 @@ interface Props {
   project: Project;
   /** Gets the run once the server has started it. */
   onStarted: (started: StartedRun) => void;
-  /** Called by Cancel, which is disabled while the run is being started. */
+  /** Called by Cancel, which is disabled while the run is being started and while the workflow editor is open. */
   onClose: () => void;
 }
 
@@ -32,8 +32,8 @@ function rolesOf(workflows: OfferedWorkflow[] | undefined, name: string | null):
 }
 
 /** The value of field that choices set, by role, for each of roles, a model trimmed; undefined where none is set, for
- * the request to leave it out. A choice for a role not in roles, which a workflow read again may have dropped, is
- * left out too: `run` would refuse it. */
+ * the request to leave it out. A choice for a role not in roles is left out too, as `run` would refuse it: choices
+ * can hold one after the workflows read again drop the workflow picked. */
 function setByRole(choices: Map<string, RoleChoice>, roles: OfferedRole[], field: keyof RoleChoice): Record<string, string> | undefined {
   const set = roles.flatMap(({ role }) => {
     const value = choices.get(role)?.[field].trim();
@@ -56,9 +56,10 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
   // An agent and a model for the run's roles that their rows leave empty; empty for each role's default.
   const [agent, setAgent] = useState("");
   const [model, setModel] = useState("");
-  // What each role's row sets, by role key; only roles of the workflow chosen have an entry, so that a change of
-  // workflow keeps the rows of the roles both share and empties the others. A Map, since a role key such as
-  // `constructor` names a member every object has.
+  // What each role's row sets, by role key. A pick of a workflow keeps the entries of the roles it shares with the
+  // one before and drops the others; a workflow read again that falls back to the default keeps them all, so an entry
+  // may be for a role no row shows, which setByRole leaves out. A Map, since a role key such as `constructor` names a
+  // member every object has.
   const [choices, setChoices] = useState<Map<string, RoleChoice>>(new Map());
   const [noPr, setNoPr] = useState(false);
   const [worktree, setWorktree] = useState(true);
@@ -73,7 +74,7 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
   }
   // What the workflow editor is open on; null while it is closed.
   const [editing, setEditing] = useState<Opening | null>(null);
-  // Bumped to read the workflows again, after a save in the editor.
+  // How many times the workflows were read again after a save in the editor; each change reads them again.
   const [generation, setGeneration] = useState(0);
   // The workflow saved in the editor that the read under way is to pick; null when it is to pick none.
   const toPick = useRef<string | null>(null);

@@ -132,9 +132,9 @@ first time when a browser downloaded it, as it does the binary.
   running or stale, the question it is blocked on, its verdict and its pull request.
 - **New run:** "New run…" above the overview asks for the task, the workflow (`default` unless you pick another,
   with its description; "Edit…" under it opens the workflow editor, described under Workflows below, on it, and
-  "New…" on a copy of `default`, after which the form picks the workflow saved), an agent and a model for the whole
-  run (the workflow's own unless you pick them), one row
-  per role of the workflow for its own agent and model (each `--role-agent` and `--role-model`, with what an empty
+  "New…" on a copy of `default`; the form waits while the editor is open, and then picks the workflow saved, if it
+  loads), an agent and a model for the whole run (the workflow's own unless you pick them), one row per role of the
+  workflow for its own agent and model (each `--role-agent` and `--role-model`, with what an empty
   one falls back to shown greyed; a role the next workflow you pick also has keeps its row's values), and two
   boxes: "No pull request", off as on the CLI, and "Separate worktree", on, so that runs started side by side do
   not share the checkout. Start runs `orchestrator run` with them in a new workspace of the herdr server on this
