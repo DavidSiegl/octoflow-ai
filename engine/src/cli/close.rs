@@ -74,8 +74,8 @@ pub enum Sweep<'p> {
     /// Close only the runs that this earlier DryRun of the project gave as Outcome::Closed, each only while closing it
     /// would still do just what the dry run said, discarding the same changes, so that what goes is what was shown; a
     /// run that changed since is skipped, saying what closing it would now do. No other run is looked at. The changes
-    /// are compared line by line of git status, so a file listed may have changed further, and a directory listed
-    /// whole (`?? dir/`) may hold new files, which go with it.
+    /// are compared line by line of git status (crate::host::GIT_STATUS_ARGS), so a file listed may have changed
+    /// further, and ignored files, which git status does not list, go with the worktree unshown.
     Previewed(&'p [RunClosed]),
 }
 
@@ -186,7 +186,8 @@ pub fn close_run(world: &Closer, cwd: &str, run_ref: &str, dry_run: bool) -> Res
 ///
 /// Returns each run looked at, in that order; none after an Interrupt. Errors: for Sweep::DryRun and Sweep::Close,
 /// the project's runs cannot be read at the start. A Sweep::Previewed reads each run only at its turn: one whose
-/// state.json cannot be read is Outcome::Failed, one that does not parse is skipped as Decision::Refused.
+/// state.json cannot be read, or is not a JSON object naming its run, is Outcome::Failed; one whose format or fields
+/// do not read (SavedRun::problem) is skipped as Decision::Refused.
 pub fn close_all(world: &Closer, cwd: &str, sweep: Sweep) -> Result<Vec<RunClosed>, OrchestratorError> {
     // Each run to look at: its id, what its state.json records as its closed when first read, and for a
     // Sweep::Previewed what the preview said closing it would do and discard.

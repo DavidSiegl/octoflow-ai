@@ -195,12 +195,12 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 ///   do what detail says and discard what discarded lists (crate::cli::close::Sweep::Previewed says how closely).
 ///   Answers {"runs": [{"run", "outcome", "detail", "discarded"}, ...]}, a run for each the sweep looked at:
 ///   outcome "closed" (with a dry run: to be closed), "already closed", "skipped" (as is a run that changed since the
-///   dry run) or "failed"; detail what was or would be done (`close`'s closed line or its dry
-///   run's), what close recorded before, or why the run was skipped or failed; discarded the uncommitted changes, one
-///   line of git status each, that went or would go with the run's worktree, a failed run's too. A run that fails
-///   does not stop the others. 400 for a body of another shape and 413 as for
-///   /agent/input, both before the project is reached; 502 for a project that cannot be reached, or with a dry run one
-///   whose runs cannot be read (a close reads each run in its turn, and one it cannot read is "failed").
+///   dry run) or "failed"; detail what was or would be done (`close`'s closed line or its dry run's), what close
+///   recorded before, or why the run was skipped or failed; discarded the uncommitted changes, one line of git status
+///   each, that went or would go with the run's worktree, a failed run's too. A run that fails does not stop the
+///   others. 400 for a body of another shape and 413 as for /agent/input, both before the project is reached; 502 for
+///   a project that cannot be reached, or with a dry run one whose runs cannot be read (a close reads each run in its
+///   turn, and one it cannot read is "failed").
 /// - /events: a text/event-stream of RunWatch's events, polled every SERVE_POLL.local, every SERVE_POLL.remote for a
 ///   --machine project, until the client goes or the server stops. An HTTP/1.1 client gets it chunked, so that the
 ///   end of the stream is the end of the response; an HTTP/1.0 client's ends when the connection closes.
