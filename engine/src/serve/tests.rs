@@ -1398,6 +1398,138 @@ fn workflows_are_the_configuration_s_with_their_roles_and_the_harnesses() {
     assert_eq!(served.ask("GET", "/workflows", &[]).status, Some(401));
 }
 
+/// A server whose workflow files are in dir's workflows directory, and whose projects are none it should reach.
+fn editing(dir: &TempDir) -> Served {
+    Served::fake_with(&Arc::new(ServeHost::on(None)), &[], Options { config: ConfigDir::at(&dir.path()), ..Options::default() })
+}
+
+#[test]
+fn a_workflow_reads_with_its_file_or_none_for_a_built_in_one() {
+    let d = TempDir::new();
+    std::fs::create_dir_all(d.join("workflows")).unwrap();
+    let mine = "# default's steps, by name\n[[steps]]\nuse = \"spec\"\n\n[[steps]]\nuse = \"build\"\n";
+    std::fs::write(d.join("workflows/mine.toml"), mine).unwrap();
+    std::fs::write(d.join("workflows/broken.toml"), "not toml [").unwrap();
+    let served = editing(&d);
+    let reply = served.get("/workflow?name=default", &[]);
+    assert_eq!(reply.status, Some(200), "{}", reply.body);
+    let default = reply.json();
+    assert_eq!((default["name"].clone(), default["built_in"].clone()), (Value::from("default"), Value::from(true)));
+    assert_eq!((default["path"].clone(), default["text"].clone()), (Value::Null, Value::Null));
+    assert_eq!(default["hand_written"], false);
+    let definition = crate::workflow_file::workflow_definition(&crate::pipeline::DEFAULT_WORKFLOW);
+    assert_eq!(default["definition"], definition);
+    let reply = served.get("/workflow?name=mine", &[]);
+    assert_eq!(reply.status, Some(200), "{}", reply.body);
+    let read = reply.json();
+    assert_eq!(read["built_in"], false);
+    assert_eq!((read["path"].clone(), read["text"].clone()), (Value::from(d.join("workflows/mine.toml")), Value::from(mine)));
+    assert_eq!(read["hand_written"], true);
+    assert_eq!(read["definition"]["steps"].as_array().map(Vec::len), Some(2), "{read}");
+    let reply = served.get("/workflow?name=broken", &[]);
+    let broken = d.join("workflows/broken.toml");
+    assert_eq!(reply.status, Some(422), "{}", reply.body);
+    assert_eq!((reply.json()["path"].clone(), reply.json()["text"].clone()), (Value::from(broken.as_str()), Value::from("not toml [")));
+    assert!(reply.error().starts_with(&format!("{broken}: ")), "{}", reply.body);
+    let reply = served.get("/workflow?name=nope", &[]);
+    assert_eq!((reply.status, reply.error()), (Some(404), "no workflow nope".to_string()));
+    assert_eq!(served.get("/workflow", &[]).status, Some(400));
+    assert_eq!(served.ask("GET", "/workflow?name=default", &[]).status, Some(401));
+    assert!(served.connects.lock().unwrap().is_empty(), "a project was reached");
+}
+
+#[test]
+fn a_check_answers_the_problem_and_the_placeholders() {
+    let d = TempDir::new();
+    let served = editing(&d);
+    let definition = crate::workflow_file::workflow_definition(&crate::pipeline::DEFAULT_WORKFLOW);
+    let body = serde_json::json!({"name": "mine", "definition": definition}).to_string();
+    let reply = served.post("/workflow/check", &body);
+    assert_eq!(reply.status, Some(200), "{}", reply.body);
+    let ids = crate::pipeline::DEFAULT_WORKFLOW.steps().iter().map(|st| st.id.as_str());
+    let placeholders = Value::from(crate::pipeline::prompt_placeholders(ids));
+    assert_eq!(reply.json(), serde_json::json!({"problem": null, "placeholders": placeholders}));
+    let body = serde_json::json!({"name": "default", "definition": definition}).to_string();
+    let checked = served.post("/workflow/check", &body).json();
+    assert_eq!(checked["problem"], "workflow default is built in; give the file another name");
+    assert_eq!(checked["placeholders"], placeholders);
+    for bad in [
+        "not json".to_string(),
+        r#"{"name": "mine"}"#.to_string(),
+        serde_json::json!({"name": "mine", "definition": []}).to_string(),
+        serde_json::json!({"name": "mine", "definition": definition, "base": null}).to_string(),
+    ] {
+        let reply = served.post("/workflow/check", &bad);
+        assert_eq!(reply.status, Some(400), "{bad}: {}", reply.body);
+        assert!(reply.error().starts_with("the body must be {"), "{}", reply.body);
+    }
+    assert!(served.connects.lock().unwrap().is_empty(), "a project was reached");
+}
+
+#[test]
+fn a_save_writes_the_file_once_it_is_still_what_the_editor_opened() {
+    let d = TempDir::new();
+    let served = editing(&d);
+    let definition = crate::workflow_file::workflow_definition(&crate::pipeline::DEFAULT_WORKFLOW);
+    let save = |base: Value| serde_json::json!({"name": "mine", "definition": definition, "base": base}).to_string();
+    let path = d.join("workflows/mine.toml");
+    let reply = served.post("/workflow/save", &save(Value::Null));
+    assert_eq!((reply.status, reply.json()), (Some(201), serde_json::json!({"path": path})), "{}", reply.body);
+    let saved = std::fs::read_to_string(&path).unwrap();
+    // A new workflow under a name a file has, and a base that is not the file.
+    let reply = served.post("/workflow/save", &save(Value::Null));
+    assert_eq!((reply.status, reply.error()), (Some(409), format!("{path} already exists")));
+    let reply = served.post("/workflow/save", &save(Value::from("# another text\n")));
+    assert_eq!((reply.status, reply.error()), (Some(409), format!("{path} changed since it was opened")));
+    assert_eq!(served.post("/workflow/save", &save(Value::from(saved.as_str()))).status, Some(201));
+    // A problem, and bodies of another shape: base missing or not a string.
+    let invalid = serde_json::json!({"name": "mine", "definition": {"steps": []}, "base": saved}).to_string();
+    let reply = served.post("/workflow/save", &invalid);
+    assert_eq!(reply.status, Some(422), "{}", reply.body);
+    assert_eq!(reply.json().as_object().map(|o| o.len()), Some(1), "{}", reply.body);
+    let missing = serde_json::json!({"name": "mine", "definition": definition}).to_string();
+    assert_eq!(served.post("/workflow/save", &missing).status, Some(400));
+    assert_eq!(served.post("/workflow/save", &save(Value::from(1))).status, Some(400));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
+    assert!(served.connects.lock().unwrap().is_empty(), "a project was reached");
+}
+
+#[test]
+fn a_delete_removes_the_file_the_editor_opened() {
+    let d = TempDir::new();
+    std::fs::create_dir_all(d.join("workflows")).unwrap();
+    let text = "[[steps]]\nuse = \"build\"\n";
+    let path = d.join("workflows/mine.toml");
+    std::fs::write(&path, text).unwrap();
+    let served = editing(&d);
+    let delete = |name: &str, base: &str| serde_json::json!({"name": name, "base": base}).to_string();
+    let reply = served.post("/workflow/delete", &delete("mine", "# another text\n"));
+    assert_eq!((reply.status, reply.error()), (Some(409), format!("{path} changed since it was opened")));
+    let reply = served.post("/workflow/delete", &delete("mine", text));
+    assert_eq!((reply.status, reply.json()), (Some(200), serde_json::json!({"path": path})), "{}", reply.body);
+    assert!(!std::path::Path::new(&path).exists());
+    let reply = served.post("/workflow/delete", &delete("mine", text));
+    assert_eq!((reply.status, reply.error()), (Some(404), "no workflow file mine".to_string()));
+    assert_eq!(served.post("/workflow/delete", &delete("default", "")).status, Some(400));
+    assert_eq!(served.post("/workflow/delete", r#"{"name": "mine", "base": null}"#).status, Some(400));
+    assert!(served.connects.lock().unwrap().is_empty(), "a project was reached");
+}
+
+#[test]
+fn a_workflow_post_needs_the_token_and_a_body_within_bounds() {
+    let d = TempDir::new();
+    let served = editing(&d);
+    let body = r#"{"name": "mine", "base": "x"}"#;
+    let length = body.len().to_string();
+    for target in ["/workflow/check", "/workflow/save", "/workflow/delete"] {
+        assert_eq!(served.ask_with_body("POST", target, &[("Content-Length", &length)], body).status, Some(401), "{target}");
+        let long = format!(r#"{{"name": "{}"}}"#, "x".repeat(MAX_BODY_BYTES));
+        assert_eq!(served.post(target, &long).status, Some(413), "{target}");
+    }
+    assert!(!std::path::Path::new(&d.join("workflows")).exists());
+    assert!(served.connects.lock().unwrap().is_empty(), "a project was reached");
+}
+
 // -- Events, here and on a machine -------------------------------------------------------------------------------
 
 /// An event stream as an EventSource reads it, with the token in the URL, its events parsed on a thread as they

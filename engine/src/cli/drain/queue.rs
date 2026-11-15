@@ -5,8 +5,8 @@
 
 use std::collections::HashSet;
 
-use crate::error::{os_error, path_text, strerror, OrchestratorError};
-use crate::paths::file_name;
+use crate::error::{strerror, OrchestratorError};
+use crate::paths::{file_name, replace_local_file};
 use crate::spec_file::{read_spec_file, SpecFile};
 use crate::workflow::Human;
 
@@ -114,27 +114,6 @@ fn dirname(path: &str) -> &str {
     } else {
         trimmed
     }
-}
-
-/// Make text, line endings as they are, the contents of the file at path on this machine.
-///
-/// Written aside and renamed into place, so a failed write leaves the old file, not half a new one. A symlink at path
-/// is followed, so the link stays and its target changes, and an existing file keeps its permissions. Errors: it
-/// cannot be written, naming path.
-pub fn replace_local_file(path: &str, text: &str) -> Result<(), OrchestratorError> {
-    let real = std::fs::canonicalize(path).map_or_else(|_| path.to_string(), |p| p.to_string_lossy().into_owned());
-    let tmp = format!("{real}.tmp.{}", std::process::id());
-    let written = (|| {
-        std::fs::write(&tmp, text).map_err(|e| os_error(&e, Some(&tmp)))?;
-        if let Ok(meta) = std::fs::metadata(&real) {
-            std::fs::set_permissions(&tmp, meta.permissions()).map_err(|e| os_error(&e, Some(&tmp)))?;
-        }
-        std::fs::rename(&tmp, &real).map_err(|e| format!("{} -> {}: {}", path_text(&tmp), path_text(&real), strerror(&e)))
-    })();
-    written.map_err(|why| {
-        let _ = std::fs::remove_file(&tmp);
-        OrchestratorError(format!("cannot write {path}: {why}"))
-    })
 }
 
 /// A spec that drain found, DIR/<slug>/spec.md, with what drain has done to it.
