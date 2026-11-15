@@ -91,7 +91,7 @@ line per turn.
 
 ## Run metrics
 
-A run that is done writes `metrics.json` in its run directory, one JSON object on one line, and `orchestrator
+A run that is done writes `metrics.json` in its run directory, one JSON object on one line, and `octoflow
 metrics` prints every run's of a project, a line each, oldest first; a run that failed or was interrupted has none
 until a resume finishes it. Its keys:
 
@@ -244,6 +244,9 @@ So which harness and model built and reviewed a change can be read from history:
 git log --format='%h %(trailers:key=Octoflow-Role,valueonly,separator=%x2C )'
 git log --format='%(trailers:key=Octoflow-Gate,valueonly,separator=%x2C )' | sort | uniq -c
 ```
+
+Commits made before 0.84.0 carry the same trailers under the keys `Orchestrator-Run`, `Orchestrator-Workflow`,
+`Orchestrator-Role` and `Orchestrator-Gate`, which these queries do not match.
 
 The commit is made once: a resume in `publish` whose commit already exists does not amend it. Signing agents'
 commits is a separate question.

@@ -115,7 +115,8 @@ Everywhere else, build it from a checkout with cargo, by the toolchain `rust-too
 cargo build --release --locked -p octoflow-engine   # target/release/octoflow
 ```
 
-The examples below call it `octoflow`: put the binary on your `PATH` under that name. `octoflow --version`
+The examples below call it `octoflow`: put the binary on your `PATH` under that name. The desktop app's build
+(below) writes the same path, as the app runs these commands too, so build the engine after it. `octoflow --version`
 says which release it is.
 
 ### Desktop app
@@ -209,7 +210,7 @@ sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev
 cd ui
 npm ci
 npm run tauri dev     # the window, rebuilt as you edit
-npm run tauri build   # an optimized build, ../target/release/octoflow
+npm run tauri build   # an optimized build, ../target/release/octoflow, in place of the engine's binary there
 npm test              # the frontend's tests; npm run typecheck and npm run lint check it too
 cargo test -p octoflow-ui     # the shell's, which start and stop a real serve
 ```

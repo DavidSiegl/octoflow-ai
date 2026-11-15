@@ -132,6 +132,13 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   clients, `current_dir`) where the sidecar takes the user's once at its start (`UserShell::enter`); an engine panic
   would end the window; and `serve`'s signal handling needs the main thread. Its one gain is the first-line handshake
   gone.
+- **A run resumed across 0.84.0 in `publish` opens a pull request that names trailers its commit does not have.**
+  A pre-0.84 binary that made the run's commit wrote `Orchestrator-*` trailers, and a resume does not amend that commit
+  (docs/design.md, Run metrics); but `pr_body`'s "Commit trailer" table (`engine/src/pull_request.rs`) is built from
+  `provenance()`, which now gives `Octoflow-*`, so the pull request misstates its commit's trailers and the queries
+  design.md points to find nothing on it (cross-review 212 F6). Only an upgrade in the middle of a run hits it.
+  Closed by `pr_body` reading the trailers back from the commit it publishes.
+
 - **The local gate's report names an empty `judge/gate.toml` for a base without `gate.toml`.** Raised by
   cross-review 171 (F7): "the gate counts the file as there and reports `<…>/judge/gate.toml` as where the settings
   came from … It does not report 'the defaults (there is no …)', so quality.md hides that the defaults judged the

@@ -25,6 +25,7 @@ static ROOT: LazyLock<PathBuf> = LazyLock::new(octoflow_e2e::checkout);
 const NOT_IN_THE_PARSER: &[(&str, &str, Option<&str>, &str)] = &[
     ("roadmap.md", "resume", Some("--workflow"), "a planned feature, K"),
     ("architecture.md", "run", Some("--run-id"), "hidden from run's help: serve's, for the runs POST /run starts"),
+    ("design.md", "cargo", None, "`EVAL_ENGINE=target/release/octoflow cargo xtask eval`: the program's path, then cargo's"),
 ];
 
 /// Backticked ALL_CAPS names the docs give that are not the Rust's, with where they come from.
@@ -113,7 +114,7 @@ fn invocations<'a>(doc: &'a Doc, commands: &BTreeMap<String, BTreeSet<String>>) 
             vec![line.text]
         };
         for text in texts.into_iter().map(first_command) {
-            if let Some((command, rest)) = orchestrator_command(text) {
+            if let Some((command, rest)) = octoflow_command(text) {
                 found.push((line, command.to_string(), rest.to_string()));
             }
             let mut words = text.split_whitespace();
@@ -140,15 +141,14 @@ fn first_command(text: &str) -> &str {
     &text[..end]
 }
 
-/// Whether the word at byte i of text starts there: no word character before it, nor a `/`, which makes it the last
-/// part of a path (`target/release/octoflow`), not a command.
+/// Whether the word at byte i of text starts there: no word character before it.
 fn starts_word(text: &str, i: usize) -> bool {
-    !text[..i].chars().next_back().is_some_and(|c| word_char(c) || c == '/')
+    !text[..i].chars().next_back().is_some_and(word_char)
 }
 
 /// The first `octoflow <command>` in text, where octoflow starts a word (starts_word) and the command, a lowercase
 /// letter then lowercase letters and hyphens, follows after whitespace: the command and the rest of text after it.
-fn orchestrator_command(text: &str) -> Option<(&str, &str)> {
+fn octoflow_command(text: &str) -> Option<(&str, &str)> {
     const PROGRAM: &str = "octoflow";
     text.match_indices(PROGRAM).filter(|&(i, _)| starts_word(text, i)).find_map(|(i, _)| {
         let rest = &text[i + PROGRAM.len()..];
