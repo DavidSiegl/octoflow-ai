@@ -4,7 +4,7 @@
 //! commands run, in which order, with which stopped midway. What the engine did in return is the world's record,
 //! compared with the recording by main.rs.
 
-use std::time::Instant;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use octoflow_e2e::{array_at, checkout, object, object_at};
 use serde_json::Value;
@@ -627,11 +627,24 @@ pub fn runs_closed_all(w: &mut World) {
     w.agent("spec", [spec_written()]);
     w.agent("build", [writes("build-1.md", "").edit(&[("src/calc.py", CALC_WITH_SUBTRACT)]).exit()]);
     w.run(&["run", "--worktree", "--", TASK]);
+    // close --all takes the runs in run id order, and an id orders by its start only to the second, then by a random
+    // key (cli::start::new_run_id); the recording holds the order the runs started in.
+    wait_for_the_next_second();
     approved_roles(w);
     w.run(&["run", "--no-pr", "--", TASK]);
     w.run(&["close", "--all", "--dry-run"]);
     w.run(&["close", "--all"]);
     w.run(&["close", "--all"]);
+}
+
+/// Return once the wall clock has passed into its next whole second, so that a run started after this has a later run
+/// id than one started before it.
+fn wait_for_the_next_second() {
+    let now = || SystemTime::now().duration_since(UNIX_EPOCH).expect("the clock is past 1970").as_secs();
+    let second = now();
+    while now() == second {
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 /// workflows: the list, with a workflow file and a prompt file installed; the default printed as a file; an example by
