@@ -275,7 +275,7 @@ struct ReportTest {
     name: String,
 }
 
-/// A numbered finding of a quality file, as the gate's `numbered` writes it.
+/// A numbered finding of a quality file, as the gate's `report::numbered` writes it.
 struct NumberedFinding<'a> {
     path: Option<&'a str>,
     rule: &'a str,

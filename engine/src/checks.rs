@@ -98,7 +98,7 @@ impl Finding {
         finding_fingerprint(path.as_deref(), &one_line(&self.rule), &one_line(&self.message))
     }
 
-    /// The finding as the k-th of the quality file's numbered list, as the gate's `numbered` writes it and
+    /// The finding as the k-th of the quality file's numbered list, as the gate's `report::numbered` writes it and
     /// crate::quality::gate_failures reads it.
     fn numbered(&self, k: u128) -> String {
         let place = match (&self.path, self.line) {
