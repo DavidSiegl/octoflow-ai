@@ -131,6 +131,14 @@ fn unknown_placeholder() {
 }
 
 #[test]
+fn a_prompt_may_use_the_prompt_fields_and_each_step_s_paths_once() {
+    let names = prompt_placeholders(["spec", "build", "spec"]);
+    let paths = ["spec_path", "prev_spec_path", "earlier_spec_paths", "build_path", "prev_build_path", "earlier_build_paths"];
+    let expected: Vec<String> = PROMPT_FIELDS.iter().chain(paths.iter()).map(|n| n.to_string()).collect();
+    assert_eq!(names, expected);
+}
+
+#[test]
 fn quality_fix_report_names() {
     assert_eq!(Step::new("b", "b", "build-{n}.md", "go").path("/d", 2, 3), "/d/build-2-q3.md");
     assert_eq!(Step::new("b", "b", "impl-{n}", "go").path("/d", 1, 1), "/d/impl-1-q1");

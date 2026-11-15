@@ -1,7 +1,9 @@
 //! The parts of a path the engine names files by, for paths it holds as text: the last component, and that split
-//! before its extension.
+//! before its extension; and replacing a file's contents so that a failure leaves the old ones.
 
 use std::path::Path;
+
+use crate::error::{os_error, path_text, strerror, OrchestratorError};
 
 /// The last component of path: what follows its last `/`, all of path when it has none, and empty when it ends in
 /// one.
@@ -15,6 +17,27 @@ pub fn file_name(path: &str) -> &str {
 pub fn split_extension(path: &str) -> (&str, &str) {
     let dotted = Path::new(file_name(path)).extension().map_or(0, |ext| ext.len() + 1);
     path.split_at(path.len() - dotted)
+}
+
+/// Make text, line endings as they are, the contents of the file at path on this machine.
+///
+/// Written aside and renamed into place, so a failed write leaves the old file, not half a new one. A symlink at path
+/// is followed, so the link stays and its target changes, and an existing file keeps its permissions. Errors: it
+/// cannot be written, naming path.
+pub fn replace_local_file(path: &str, text: &str) -> Result<(), OrchestratorError> {
+    let real = std::fs::canonicalize(path).map_or_else(|_| path.to_string(), |p| p.to_string_lossy().into_owned());
+    let tmp = format!("{real}.tmp.{}", std::process::id());
+    let written = (|| {
+        std::fs::write(&tmp, text).map_err(|e| os_error(&e, Some(&tmp)))?;
+        if let Ok(meta) = std::fs::metadata(&real) {
+            std::fs::set_permissions(&tmp, meta.permissions()).map_err(|e| os_error(&e, Some(&tmp)))?;
+        }
+        std::fs::rename(&tmp, &real).map_err(|e| format!("{} -> {}: {}", path_text(&tmp), path_text(&real), strerror(&e)))
+    })();
+    written.map_err(|why| {
+        let _ = std::fs::remove_file(&tmp);
+        OrchestratorError(format!("cannot write {path}: {why}"))
+    })
 }
 
 #[cfg(test)]
