@@ -116,8 +116,8 @@ cargo build --release --locked -p octoflow-engine   # target/release/octoflow
 ```
 
 The examples below call it `octoflow`: put the binary on your `PATH` under that name. The desktop app's build
-(below) writes the same path, as the app runs these commands too, so build the engine after it. `octoflow --version`
-says which release it is.
+(below) puts the app at the same path; it takes these commands too but needs the desktop's libraries, so build the
+engine after it. `octoflow --version` says which release it is.
 
 ### Desktop app
 
