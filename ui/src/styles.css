@@ -780,11 +780,17 @@ ul.checks {
   margin: 0;
 }
 
-.show-closed {
+.closed-runs {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.closed-runs label {
   display: flex;
   gap: 6px;
   align-items: center;
-  margin-bottom: 12px;
   color: var(--muted-mint);
 }
 

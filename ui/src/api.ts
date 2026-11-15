@@ -209,6 +209,16 @@ export interface ClosedRun {
   discarded: string[];
 }
 
+/** One run a sweep of POST /forget looked at, as `forget --all` would: its outcome "forgotten" (for a dry run: would
+ * be; its directory deleted, its metrics kept), "not closed" (an open run; it stays), "waiting for prune" (closed, but
+ * prune has yet to delete its branch, which needs the run's state), "skipped" (its state cannot be read, or a listed run
+ * is gone) or "failed". detail says why for "waiting for prune", "skipped" and "failed"; empty for the others. */
+export interface ForgottenRun {
+  run: string;
+  outcome: "forgotten" | "not closed" | "waiting for prune" | "skipped" | "failed";
+  detail: string;
+}
+
 /** A role of a workflow definition, keyed by its role key in WorkflowDefinition.roles: the label its pane shows, and
  * the harness and model it runs in unless a run names others; agent and model absent for the run's, else the
  * built-in harness's and that harness's own model. */
@@ -428,7 +438,7 @@ export class Api {
    * nothing. Resolves to each run, in run id order. Rejects with the server's error message, status 502 for a project
    * it cannot reach or whose runs cannot be read. */
   previewClose(project: Project): Promise<ClosedRun[]> {
-    return this.sweep(project, { dry_run: true });
+    return this.sweep("/close", project, { dry_run: true });
   }
 
   /** Close the runs of preview, a previewClose of the project, whose outcome is "closed", as `close` does: each one's
@@ -440,12 +450,29 @@ export class Api {
    * previewClose does. */
   closeRuns(project: Project, preview: ClosedRun[]): Promise<ClosedRun[]> {
     const close = preview.filter((r) => r.outcome === "closed").map(({ run, detail, discarded }) => ({ run, detail, discarded }));
-    return this.sweep(project, { close });
+    return this.sweep("/close", project, { close });
   }
 
-  /** The runs of a POST /close of the project with body, as previewClose and closeRuns resolve to them. */
-  private async sweep(project: Project, body: unknown): Promise<ClosedRun[]> {
-    const answer = (await this.json(this.url("/close", project, {}), {
+  /** What forgetting each run of the project would do, as `forget --all --dry-run` says, changing nothing. Resolves to
+   * each run, in run id order. Rejects with the server's error message, status 502 for a project it cannot reach or
+   * whose runs cannot be read. */
+  previewForget(project: Project): Promise<ForgottenRun[]> {
+    return this.sweep("/forget", project, { dry_run: true });
+  }
+
+  /** Forget the runs of preview, a previewForget of the project, whose outcome is "forgotten": delete each one's
+   * directory, keeping its metrics, as `forget` does. A run is forgotten only while it is still one forget may delete;
+   * no other run is touched. Resolves to each of those runs, in preview's order; a run that fails does not stop the
+   * others. Rejects as previewForget does. */
+  forgetRuns(project: Project, preview: ForgottenRun[]): Promise<ForgottenRun[]> {
+    const forget = preview.filter((r) => r.outcome === "forgotten").map((r) => r.run);
+    return this.sweep("/forget", project, { forget });
+  }
+
+  /** The runs of a POST of body to path, /close or /forget, for the project, as the methods that sweep through it
+   * resolve to them. */
+  private async sweep<Run>(path: "/close" | "/forget", project: Project, body: unknown): Promise<Run[]> {
+    const answer = (await this.json(this.url(path, project, {}), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -453,7 +480,7 @@ export class Api {
     if (!Array.isArray(answer.runs)) {
       throw new HttpError(200, "the answer has no runs");
     }
-    return answer.runs as ClosedRun[];
+    return answer.runs as Run[];
   }
 
   /** The text field of a GET of url's JSON; rejects with the server's error message, or the status. */

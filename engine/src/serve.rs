@@ -13,6 +13,7 @@ use nix::sys::signal::{SigSet, Signal};
 use tiny_http::{Header, Request, Response};
 
 use crate::cli::close::{Outcome, RunClosed, Sweep};
+use crate::cli::forget::{self, Left, RunForgotten};
 use crate::cli::listing::RUN_RECORD_VERSION;
 use crate::constants::EXIT_ERROR;
 use crate::env::ConfigDir;
@@ -215,6 +216,15 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 ///   others. 400 for a body of another shape and 413 as for /agent/input, both before the project is reached; 502 for
 ///   a project that cannot be reached, or with a dry run one whose runs cannot be read (a close reads each run in its
 ///   turn, and one it cannot read is "failed").
+/// - POST /forget?cwd=DIR: with the JSON body {"dry_run": true}, says what `forget --all` would do with each run of
+///   the project, changing nothing; with {"forget": ["RUN", ...]}, the "forgotten" runs of such a dry run's answer,
+///   forgets those runs and no other, each only while it is still one forget may delete (crate::cli::forget::Sweep).
+///   Answers {"runs": [{"run", "outcome", "detail"}, ...]}, a run for each the sweep looked at: outcome "forgotten"
+///   (with a dry run: to be forgotten; its directory deleted, its metrics kept), "not closed", "waiting for prune"
+///   (closed, but prune has yet to delete its branch), "skipped" (its state cannot be read, or a listed run is gone)
+///   or "failed"; detail why, for "waiting for prune", "skipped" and "failed", else empty. A run that fails does not
+///   stop the others. 400 for a body of another shape or a run id that is not a plain name, and 413 as for
+///   /agent/input, both before the project is reached; 502 for a project whose runs cannot be read.
 /// - /events: a text/event-stream of RunWatch's events, polled every SERVE_POLL.local, every SERVE_POLL.remote for a
 ///   --machine project, until the client goes or the server stops. An HTTP/1.1 client gets it chunked, so that the
 ///   end of the stream is the end of the response; an HTTP/1.0 client's ends when the connection closes.
@@ -457,6 +467,7 @@ const SETUP_CHECKED: &str = "/setup/checked";
 const SETUP_GATE: &str = "/setup/gate";
 const RUN: &str = "/run";
 const CLOSE: &str = "/close";
+const FORGET: &str = "/forget";
 const WORKFLOW_CHECK: &str = "/workflow/check";
 const WORKFLOW_SAVE: &str = "/workflow/save";
 const WORKFLOW_DELETE: &str = "/workflow/delete";
@@ -479,6 +490,7 @@ fn answer(shared: &Shared, request: Request) {
         "POST" if path == SETUP_GATE => post_setup_gate(shared, request, &query),
         "POST" if path == RUN => post_run(shared, request, &query),
         "POST" if path == CLOSE => post_close(shared, request, &query),
+        "POST" if path == FORGET => post_forget(shared, request, &query),
         "POST" if path == WORKFLOW_CHECK => post_workflow(shared, request, &query, |_, body| workflows::check(body)),
         "POST" if path == WORKFLOW_SAVE => post_workflow(shared, request, &query, workflows::save),
         "POST" if path == WORKFLOW_DELETE => post_workflow(shared, request, &query, workflows::delete),
@@ -772,6 +784,57 @@ fn previewed_runs(body: &[u8]) -> Result<Option<Vec<RunClosed>>, Answer> {
     };
     let runs = fields.get("close").and_then(Value::as_array).ok_or_else(shape)?;
     runs.iter().map(previewed).collect::<Option<Vec<_>>>().map(Some).ok_or_else(shape)
+}
+
+/// Answer a POST of /forget with the query's parameters, as target gives them: say what forgetting the project's runs
+/// would do, or forget the runs a dry run gave, as RunServer's doc comment says. The body is read and checked before
+/// the project is reached, as post_close's, and serve forgets in its own process, as post_close says why it closes so.
+fn post_forget(shared: &Shared, mut request: Request, query: &HashMap<String, String>) {
+    if let Some((code, body)) = refusal(shared, &request, query) {
+        return send_json(request, code, &body);
+    }
+    let listed = match read_body(&mut request).and_then(|body| listed_runs(&body)) {
+        Ok(listed) => listed,
+        Err((code, body)) => return send_json(request, code, &body),
+    };
+    let sweep = listed.as_deref().map_or(forget::Sweep::DryRun, forget::Sweep::Listed);
+    let forgotten = project_of(shared, query, &["cwd"])
+        .and_then(|project| project.forget_all(sweep, &shared.stopping).map_err(|e| (502, error(&e.0))));
+    let (code, body) = match forgotten {
+        Ok(runs) => (200, object([("runs", Value::Array(runs.iter().map(run_forgotten).collect()))])),
+        Err(answer) => answer,
+    };
+    send_json(request, code, &body);
+}
+
+/// The run ids a POST /forget body asks to forget; None for a dry run. The shapes are RunServer's doc comment's.
+/// Errors: 400 for a body of another shape, or a run id that is not a plain name (runs::plain_name).
+fn listed_runs(body: &[u8]) -> Result<Option<Vec<String>>, Answer> {
+    let shape = || (400, error(r#"the body must be {"dry_run": true} or {"forget": ["...", ...]}"#));
+    let fields = json_object(body).filter(|o| o.len() == 1).ok_or_else(shape)?;
+    if fields.get("dry_run") == Some(&Value::Bool(true)) {
+        return Ok(None);
+    }
+    let runs = fields.get("forget").and_then(Value::as_array).ok_or_else(shape)?;
+    let run_id = |run: &Value| run.as_str().filter(|id| plain_name(id).is_ok()).map(String::from);
+    runs.iter().map(run_id).collect::<Option<Vec<_>>>().map(Some).ok_or_else(shape)
+}
+
+/// One run of a POST /forget answer: {"run", "outcome", "detail"}, as RunServer's doc comment says.
+fn run_forgotten(run: &RunForgotten) -> Value {
+    let (outcome, detail) = match &run.outcome {
+        forget::Outcome::Forgotten => ("forgotten", ""),
+        forget::Outcome::Left(Left::NotClosed) => ("not closed", ""),
+        forget::Outcome::Left(Left::AwaitsPrune) => ("waiting for prune", forget::AWAITS_PRUNE),
+        forget::Outcome::Left(Left::Unreadable(why)) => ("skipped", why.as_str()),
+        forget::Outcome::Gone => ("skipped", "there is no such run any more"),
+        forget::Outcome::Failed(error) => ("failed", error.as_str()),
+    };
+    object([
+        ("run", Value::from(run.run_id.as_str())),
+        ("outcome", Value::from(outcome)),
+        ("detail", Value::from(detail)),
+    ])
 }
 
 /// The fields of body, when it is a JSON object in UTF-8, as every POST's body is; None otherwise.

@@ -1360,6 +1360,72 @@ fn a_close_needs_the_token_and_the_server_s_own_origin() {
     assert_eq!(host.state().run_states_inside_calls, 0);
 }
 
+const FORGET_CLOSED: &str = "20261001-120000-a1b2c3";
+const FORGET_OPEN: &str = "20261001-120100-d4e5f6";
+
+/// A project with FORGET_CLOSED, closed, with a metrics.json, and FORGET_OPEN, not closed; and a server that reaches it.
+fn forgetting() -> (Project, Served) {
+    let project = Project::new();
+    project.save(FORGET_CLOSED, &[("closed", Value::from("workspace closed"))]);
+    project.write(&format!("{RUNS_DIR}/{FORGET_CLOSED}/metrics.json"), &format!("{{\"run_id\": \"{FORGET_CLOSED}\"}}\n"));
+    project.save(FORGET_OPEN, &[]);
+    (project, Served::real())
+}
+
+/// The runs of a 200 answer to POST /forget, each as (run, outcome, detail).
+fn forgotten_runs(reply: &Reply) -> Vec<(String, String, String)> {
+    assert_eq!(reply.status, Some(200), "{reply:?}");
+    let runs = reply.json().get("runs").and_then(Value::as_array).cloned().expect("runs");
+    let field = |run: &Value, key: &str| run.get(key).map(Value::text).expect(key);
+    runs.iter().map(|run| (field(run, "run"), field(run, "outcome"), field(run, "detail"))).collect()
+}
+
+#[test]
+fn a_forget_dry_run_names_the_closed_run_and_a_listed_forget_deletes_it_keeping_its_metrics() {
+    let (project, served) = forgetting();
+    let target = project.query("/forget");
+    let closed_dir = project.0.join(&format!("{RUNS_DIR}/{FORGET_CLOSED}"));
+    let preview = forgotten_runs(&served.post(&target, r#"{"dry_run": true}"#));
+    let expected = [(FORGET_CLOSED, "forgotten"), (FORGET_OPEN, "not closed")].map(|(r, o)| (r.into(), o.into(), String::new()));
+    assert_eq!(preview, expected);
+    assert!(std::path::Path::new(&closed_dir).exists(), "a dry run deleted nothing");
+
+    let body = serde_json::json!({ "forget": [FORGET_CLOSED] }).to_string();
+    assert_eq!(forgotten_runs(&served.post(&target, &body)), [(FORGET_CLOSED.into(), "forgotten".into(), String::new())]);
+    assert!(!std::path::Path::new(&closed_dir).exists());
+    let archive = std::fs::read_to_string(project.0.join(".orchestrator/metrics-archive.jsonl")).unwrap();
+    assert!(archive.contains(FORGET_CLOSED), "{archive}");
+    assert!(std::path::Path::new(&project.0.join(&format!("{RUNS_DIR}/{FORGET_OPEN}"))).exists());
+
+    // Forgotten since the dry run, as by a second client: skipped, and nothing else is looked at.
+    let again = forgotten_runs(&served.post(&target, &body));
+    assert_eq!(again, [(FORGET_CLOSED.into(), "skipped".into(), "there is no such run any more".into())]);
+}
+
+#[test]
+fn a_bad_forget_body_is_refused_before_the_project_is_reached() {
+    let connects = Arc::new(Mutex::new(vec![]));
+    let seen = Arc::clone(&connects);
+    let connect = move |machine: &str, cwd: &str, _: &Interrupt| {
+        seen.lock().unwrap().push((machine.to_string(), cwd.to_string()));
+        Err(OrchestratorError::new("ssh: connection refused"))
+    };
+    let served = Served::start(Box::new(connect), &[], Arc::clone(&connects), Options::default());
+    let target = Served::query("/forget", &[("machine", "box")]);
+    let wrong = r#"the body must be {"dry_run": true} or {"forget": ["...", ...]}"#;
+    let bad = ["", "[]", "{}", r#"{"dry_run": false}"#, r#"{"forget": "r1"}"#, r#"{"forget": [1]}"#, r#"{"forget": ["../r1"]}"#,
+               r#"{"forget": ["r1"], "x": 1}"#];
+    for body in bad {
+        let reply = served.post(&target, body);
+        assert_eq!((reply.status, reply.error()), (Some(400), wrong.to_string()), "{body}");
+    }
+    let long = format!(r#"{{"dry_run": true, "x": "{}"}}"#, "x".repeat(MAX_BODY_BYTES));
+    assert_eq!(served.post(&target, &long).status, Some(413));
+    assert!(connects.lock().unwrap().is_empty(), "a bad body reached the project");
+    let reply = served.post(&target, r#"{"dry_run": true}"#);
+    assert_eq!((reply.status, reply.error()), (Some(502), "ssh: connection refused".to_string()));
+}
+
 #[test]
 fn workflows_are_the_configuration_s_with_their_roles_and_the_harnesses() {
     let d = TempDir::new();
