@@ -151,6 +151,9 @@ first time when a browser downloaded it, as it does the binary.
   go with a failed run's worktree, and why a run that is still running is skipped. Close closes the runs it showed,
   skipping any that changed since, and shows how each went; the overview then leaves them out. With nothing to
   close it says so.
+- **Delete closed runs:** "Delete closed runs…", beside "Show closed runs" while some run is closed, lists by task
+  the closed runs `orchestrator forget --all` would delete, and counts those waiting for `prune`. Delete deletes
+  them, keeping their metrics, and shows how each went; the overview and the count then drop them.
 - **Workflows:** "Workflows…" in the top bar lists every workflow `orchestrator workflows` lists, with its file and
   description, or the error of one that does not load, which you fix by hand or delete. New starts from a copy of
   `default`, Duplicate from a copy of the one picked, and Edit opens a workflow's file (View a built-in one,

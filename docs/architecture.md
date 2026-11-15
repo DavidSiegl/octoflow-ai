@@ -273,6 +273,7 @@ started, as the human would start one from a herdr pane.
   | `POST /workflow/delete` | removes the file of the body's `{"name", "base"}` (`delete_workflow`) and answers `{"path"}`; 400 for a built-in workflow, 404, and 409 as for a save |
   | `POST /run` | starts the run its JSON body asks for (task, workflow, agent, model, role_agents, role_models, no_pr, worktree) and answers `{"run"}`; see Starting a run above |
   | `POST /close` | with the body `{"dry_run": true}` says what closing each of the project's runs would do, as `close --all --dry-run` does; with `{"close": [{"run", "detail", "discarded"}]}`, that dry run's `closed` runs, closes those and no other, each only while it would still close as previewed (`Sweep::Previewed`); answers `{"runs": [{"run", "outcome", "detail", "discarded"}]}`, from `close_all`'s `RunClosed`s (`ProjectRuns::close_all`, in serve's own process, not a `close` command) |
+  | `POST /forget` | with the body `{"dry_run": true}` says what forgetting each of the project's runs would do, as `forget --all --dry-run` does; with `{"forget": ["RUN", ...]}`, that dry run's `forgotten` runs, forgets those and no other, each only while forget may still delete it (`Sweep::Listed`); answers `{"runs": [{"run", "outcome", "detail"}]}`, from `forget_all`'s `RunForgotten`s (`ProjectRuns::forget_all`, in serve's own process) |
 
   `RunServer`'s doc comment is the authority on them.
 - **Events.** Each `/events` stream has its own `RunWatch`. It polls `run_states_inside` every second, and every 5 for
@@ -358,7 +359,7 @@ browser, at a far smaller download.
   state; the overview's `StepProgress` and the run detail's `RunMap` both draw it) and the wording helpers, which follow `format_age` and `run_round`. A `RunEntry` keeps when its record
   arrived, so `heartbeatAge` ticks with `useNow` between events. The components are `ProjectBar`, `RunsOverview`,
   `RunForm` (a new run, selected once `POST /run` answers; its Edit… and New… open `WorkflowEditor`), `SetupDialog`, `About` (the logo's button opens it),
-  `CleanUpDialog`, and `WorkflowsDialog` (the top bar's "Workflows…", which reaches no project) with its
+  `CleanUpDialog`, `ForgetDialog` (the overview's "Delete closed runs…"), and `WorkflowsDialog` (the top bar's "Workflows…", which reaches no project) with its
   `WorkflowEditor`, each a `Dialog`, `RunDetail`,
   `AgentPanes`, `StepProgress`, `RunMap` (the run as an octopus, hand-written SVG: `runMap.ts` places the arms and
   shapes them, and a `requestAnimationFrame` loop sways them unless the viewer prefers reduced motion) and
