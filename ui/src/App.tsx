@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Api, type Connection, type Project, type StartedRun } from "./api";
 import { About } from "./components/About";
 import { CleanUpDialog } from "./components/CleanUpDialog";
+import { ForgetDialog } from "./components/ForgetDialog";
 import { ProjectBar } from "./components/ProjectBar";
 import { RunDetail } from "./components/RunDetail";
 import { RunForm } from "./components/RunForm";
@@ -118,13 +119,14 @@ function Connected({ connection }: { connection: Connection }) {
   );
 }
 
-/** One project's runs, live: the overview, with the form for a new run and the dialog that cleans up runs, or the run
- * picked from it, or started, in detail. A selected run the stream has not listed shows as the overview until it does, with a word on it when it
- * is the run just started. */
+/** One project's runs, live: the overview, with the form for a new run and the dialogs that clean up runs and delete
+ * closed ones, or the run picked from it, or started, in detail. A selected run the stream has not listed shows as the
+ * overview until it does, with a word on it when it is the run just started. */
 function ProjectRuns({ api, project }: { api: Api; project: Project }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [cleaningUp, setCleaningUp] = useState(false);
+  const [forgetting, setForgetting] = useState(false);
   // Whether the overview lists closed runs. Kept here, not in the overview, so that it lasts while a run is shown in
   // detail; it starts false each time a project opens, as ProjectRuns is keyed by the project.
   const [showClosed, setShowClosed] = useState(false);
@@ -143,6 +145,7 @@ function ProjectRuns({ api, project }: { api: Api; project: Project }) {
       {state.problem && <p className="problem">{state.problem}</p>}
       {formOpen && <RunForm api={api} project={project} onStarted={openStarted} onClose={() => setFormOpen(false)} />}
       {cleaningUp && <CleanUpDialog api={api} project={project} runs={state.runs} onClose={() => setCleaningUp(false)} />}
+      {forgetting && <ForgetDialog api={api} project={project} runs={state.runs} onClose={() => setForgetting(false)} />}
       {entry ? (
         <RunDetail key={entry.record.id} api={api} project={project} entry={entry} now={now} onClose={() => setSelected(null)} />
       ) : (
@@ -179,6 +182,7 @@ function ProjectRuns({ api, project }: { api: Api; project: Project }) {
             onSelect={setSelected}
             showClosed={showClosed}
             onShowClosed={setShowClosed}
+            onForget={() => setForgetting(true)}
           />
         </>
       )}

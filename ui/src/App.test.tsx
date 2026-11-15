@@ -2,7 +2,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { AGENT_POLL_MS } from "./components/AgentPanes";
-import { CONNECTION, FakeEventSource, OPTIONS, RECORDED, stubServer, type FakeClose, type FakeSetup, type FakeStart } from "./test/fakes";
+import type { ForgottenRun } from "./api";
+import { CONNECTION, FakeEventSource, OPTIONS, RECORDED, stubServer, type FakeClose, type FakeForget, type FakeSetup, type FakeStart } from "./test/fakes";
 
 const RUN = "20261024-140000-c0ffee";
 const DONE = "20261024-090000-beef00";
@@ -873,5 +874,118 @@ describe("cleaning up runs", () => {
     expect(within(dialog).getByText("ssh: connection refused")).toHaveClass("problem");
     expect(within(dialog).queryByText("Nothing to close.")).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: /^Close/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("deleting closed runs", () => {
+  const OLD = "20261023-080000-0ld000";
+  const WAITING = "20261022-070000-5a1700";
+  const PREVIEW: ForgottenRun[] = [
+    { run: DONE, outcome: "forgotten", detail: "" },
+    { run: OLD, outcome: "forgotten", detail: "" },
+    { run: WAITING, outcome: "waiting for prune", detail: "prune deletes its branch and worktree once its pull request is merged or closed" },
+    { run: RUN, outcome: "not closed", detail: "" },
+  ];
+
+  /** The app, its stream having listed DONE and OLD, both closed, OLD with a task of its own. */
+  async function openClosedRuns(forget: FakeForget) {
+    stubServer({}, {}, {}, {}, {}, {}, forget);
+    render(<App connect={connect} />);
+    await waitFor(() => expect(FakeEventSource.opened).toHaveLength(1));
+    const source = FakeEventSource.last;
+    act(() => source.replay("the stream opened"));
+    expect(screen.queryByRole("button", { name: "Delete closed runs…" })).not.toBeInTheDocument();
+    const done = RECORDED[0]?.events.find((e) => e.kind === "record")?.record as Record<string, unknown>;
+    act(() => source.emit("record", { run: DONE, record: { ...done, closed: "workspace closed" } }));
+    act(() => source.emit("record", { run: OLD, record: { ...done, id: OLD, task: "retry failed uploads", closed: "workspace closed" } }));
+    return source;
+  }
+
+  /** The dialog, opened from the overview once its dry run is answered. */
+  async function openDialog() {
+    fireEvent.click(screen.getByRole("button", { name: "Delete closed runs…" }));
+    const dialog = screen.getByRole("dialog", { name: "delete closed runs" });
+    await waitFor(() => expect(within(dialog).queryByText("Looking at the runs…")).not.toBeInTheDocument());
+    return dialog;
+  }
+
+  /** The dialog's line for run. */
+  function line(dialog: HTMLElement, run: string): HTMLElement {
+    const element = dialog.querySelector<HTMLElement>(`li[data-run="${run}"]`);
+    if (!element) {
+      throw new Error(`no line for ${run}`);
+    }
+    return element;
+  }
+
+  it("lists the closed runs it would delete by task, and counts those waiting for prune", async () => {
+    const forget: FakeForget = { preview: [...PREVIEW, { run: "20261021-060000-bad000", outcome: "skipped", detail: "state.json: unexpected end of file" }] };
+    await openClosedRuns(forget);
+    const dialog = await openDialog();
+    expect(line(dialog, DONE).textContent).toBe("delete add a token-bucket rate limiter to the API client");
+    expect(line(dialog, OLD).textContent).toBe("delete retry failed uploads");
+    expect(line(dialog, "20261021-060000-bad000")).toHaveAttribute("data-state", "warn");
+    expect(line(dialog, "20261021-060000-bad000").textContent).toBe("skip 20261021-060000-bad000: state.json: unexpected end of file");
+    expect(dialog.querySelector(`li[data-run="${RUN}"]`)).toBeNull();
+    expect(dialog.querySelector(`li[data-run="${WAITING}"]`)).toBeNull();
+    expect(within(dialog).getByText("1 run waits for prune to delete its branch first.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Delete 2 runs" })).toBeInTheDocument();
+    expect(forget.requests).toEqual([{ cwd: "/home/me/proj", body: { dry_run: true } }]);
+  });
+
+  it("deletes the runs on Delete, shows how each went, and the overview drops them as its stream does", async () => {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const forgotten: ForgottenRun[] = [
+      { run: DONE, outcome: "forgotten", detail: "" },
+      { run: OLD, outcome: "failed", detail: "remove /proj/.orchestrator/runs/x: permission denied" },
+    ];
+    const forget: FakeForget = { preview: PREVIEW, forgotten, held };
+    const source = await openClosedRuns(forget);
+    expect(screen.getByRole("checkbox", { name: "Show closed runs (2)" })).toBeInTheDocument();
+    const dialog = await openDialog();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete 2 runs" }));
+    expect(within(dialog).getByText("Deleting…")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Done" })).toBeDisabled();
+    expect(within(dialog).queryByRole("button", { name: /^Delete/ })).not.toBeInTheDocument();
+
+    // The stream reports the deleted run gone before the answer comes; the dialog still names it by its task.
+    act(() => source.emit("record", { run: DONE, record: null }));
+    release();
+    await waitFor(() => expect(within(dialog).queryByText("Deleting…")).not.toBeInTheDocument());
+    expect(forget.requests?.map((r) => r.body)).toEqual([{ dry_run: true }, { forget: [DONE, OLD] }]);
+    expect(line(dialog, DONE).textContent).toBe("deleted add a token-bucket rate limiter to the API client");
+    expect(line(dialog, OLD)).toHaveAttribute("data-state", "missing");
+    expect(line(dialog, OLD).textContent).toBe("failed retry failed uploads: remove /proj/.orchestrator/runs/x: permission denied");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    // The deleted run has left the overview and the checkbox's count; once no closed run is left, so have both.
+    expect(screen.getByRole("checkbox", { name: "Show closed runs (1)" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Show closed runs (1)" }));
+    expect(document.querySelector(`tr[data-run="${DONE}"]`)).toBeNull();
+    expect(row(OLD)).toBeInTheDocument();
+    act(() => source.emit("record", { run: OLD, record: null }));
+    expect(screen.queryByRole("checkbox", { name: /closed runs/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete closed runs…" })).not.toBeInTheDocument();
+  });
+
+  it("says there is nothing to delete, and offers no Delete", async () => {
+    const forget: FakeForget = { preview: [PREVIEW[2], PREVIEW[3]] as ForgottenRun[] };
+    await openClosedRuns(forget);
+    const dialog = await openDialog();
+    expect(within(dialog).getByText("Nothing to delete.")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /^Delete/ })).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(forget.requests).toHaveLength(1);
+  });
+
+  it("shows why the runs could not be looked at", async () => {
+    await openClosedRuns({ error: "ssh: connection refused" });
+    const dialog = await openDialog();
+    expect(within(dialog).getByText("ssh: connection refused")).toHaveClass("problem");
+    expect(within(dialog).queryByText("Nothing to delete.")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /^Delete/ })).not.toBeInTheDocument();
   });
 });

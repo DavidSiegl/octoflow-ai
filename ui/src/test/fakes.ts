@@ -1,5 +1,5 @@
 import { vi } from "vitest";
-import type { ClosedRun, GateFile, RunOptions, RunRequest, SetupReport, WorkflowDefinition } from "../api";
+import type { ClosedRun, ForgottenRun, GateFile, RunOptions, RunRequest, SetupReport, WorkflowDefinition } from "../api";
 import recorded from "./recorded-stream.json";
 
 /** The events the engine's `serve` sent over a scripted run, recorded off the real server: each batch is what it
@@ -146,6 +146,21 @@ export interface FakeClose {
   requests?: { cwd: string | null; body: CloseBody }[];
 }
 
+/** The body of a POST /forget: a dry run, or the ids of the runs to forget (RunServer's doc comment in
+ * engine/src/serve.rs). */
+export type ForgetBody = { dry_run: true } | { forget: string[] };
+
+/** What a stubbed server's POST /forget answers: 200 with `preview`'s runs to a dry run and `forgotten`'s to a forget
+ * (none unless given), or a 502 with `error`; a forget is answered once `held`, if given, resolves. `requests` gets the
+ * query's cwd and the body of each POST /forget, in order. */
+export interface FakeForget {
+  preview?: ForgottenRun[];
+  forgotten?: ForgottenRun[];
+  error?: string;
+  held?: Promise<void>;
+  requests?: { cwd: string | null; body: ForgetBody }[];
+}
+
 /** The definition of the built-in workflow `default` a stubbed server reads: two roles, each with a step, the review
  * looping back to the build. */
 export const DEFAULT_DEFINITION: WorkflowDefinition = {
@@ -198,8 +213,8 @@ export interface FakeEdit {
  * answers the screen of `agents` by role, else 404 as for an agent that has exited; whose POST /agent/input takes
  * any input; whose /setup endpoints answer as `setup` says, a POST of /setup/checked setting its `checked`, and a
  * POST of /setup/gate recording its cwd; and
- * whose /workflows and POST /run answer as `start` says, POST /close as `close` says, and the workflow endpoints as
- * `edit` says. */
+ * whose /workflows and POST /run answer as `start` says, POST /close as `close` says, the workflow endpoints as
+ * `edit` says, and POST /forget as `forget` says. */
 export function stubServer(
   files: Record<string, string>,
   agents: Record<string, string> = {},
@@ -207,10 +222,18 @@ export function stubServer(
   start: FakeStart = {},
   close: FakeClose = {},
   edit: FakeEdit = {},
+  forget: FakeForget = {},
 ) {
   FakeEventSource.opened = [];
   vi.stubGlobal("EventSource", FakeEventSource);
   const answer = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
+  // The answer of POST /close or /forget, as FakeClose and FakeForget say: runs, once held unless a dry run, or error.
+  const swept = async (fake: { error?: string; held?: Promise<void> }, dryRun: boolean, runs: unknown[] | undefined) => {
+    if (!dryRun) {
+      await fake.held;
+    }
+    return fake.error === undefined ? answer(200, { runs: runs ?? [] }) : answer(502, { error: fake.error });
+  };
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     const { pathname, searchParams } = new URL(url);
     const role = searchParams.get("role") ?? "";
@@ -265,13 +288,13 @@ export function stubServer(
       const body = JSON.parse(String(init.body)) as CloseBody;
       close.requests = [...(close.requests ?? []), { cwd: searchParams.get("cwd"), body }];
       const dryRun = "dry_run" in body;
-      if (!dryRun) {
-        await close.held;
-      }
-      if (close.error !== undefined) {
-        return answer(502, { error: close.error });
-      }
-      return answer(200, { runs: (dryRun ? close.preview : close.closed) ?? [] });
+      return swept(close, dryRun, dryRun ? close.preview : close.closed);
+    }
+    if (pathname === "/forget" && init?.method === "POST") {
+      const body = JSON.parse(String(init.body)) as ForgetBody;
+      forget.requests = [...(forget.requests ?? []), { cwd: searchParams.get("cwd"), body }];
+      const dryRun = "dry_run" in body;
+      return swept(forget, dryRun, dryRun ? forget.preview : forget.forgotten);
     }
     if (pathname === "/agent/input") {
       return init?.method === "POST" ? answer(200, { run: "r", role }) : answer(501, {});
