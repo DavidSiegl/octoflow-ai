@@ -136,21 +136,24 @@ line is not its quality.json's gate. It reads the parts below from it only where
 file a run saved before 0.72.0 from a Jenkins build that archived none, and the files only it writes, for a gate that
 could not judge or a snapshot holding a secret. For those the engine keeps its own copy of the
 parts in `engine/src/quality.rs` beside `parse_gate`, and its tests hold them to the release's golden quality files.
+The names in parentheses are its constants and functions for each part, which octoflow-gate gives its own the same.
 
-- **The gate line.** The first non-blank line is `GATE: OK` or `GATE: ERROR`; the reader tolerates Markdown
-  emphasis around it. Only the orchestrator writes `GATE: BUILD_FAILED`, for a gate that could not judge, and
-  `GATE: LEAK`, for a snapshot holding a secret.
+- **The gate line.** The first non-blank line is `GATE: OK` or `GATE: ERROR` (`QUALITY_OK`, `QUALITY_ERROR`);
+  the reader tolerates Markdown emphasis around it. Only the orchestrator writes `GATE: BUILD_FAILED`
+  (`QUALITY_BUILD_FAILED`), for a gate that could not judge, and `GATE: LEAK` (`QUALITY_LEAK`), for a snapshot
+  holding a secret.
 - **Sections.** Each starts with a level-2 heading, a line that starts with `##` and a space, and runs to the next.
-- **Failed conditions.** Under `## Failed conditions`, one bullet per condition, as the file words it.
+- **Failed conditions.** Under `## Failed conditions` (`QUALITY_FAILED_CONDITIONS`), one bullet per condition, as
+  the file words it.
 - **Numbered findings.** Issues and findings to weigh, numbered as one list over the whole file, at most
   `QUALITY_FINDINGS_LIMIT` (50), the rest counted. Each is a line `N.`, then where, then its severity, its rule, a
   colon and its message; where is the path and line in backticks, as `` `a.py:3` ``, the path and
-  `(the whole file)` in backticks for a finding on no line, or `The change as a whole:` for one on no file. The
-  rule's first word names the check, or the linter, that raised it.
+  `(the whole file)` in backticks for a finding on no line, or `The change as a whole:` for one on no file
+  (`numbered`). The rule's first word names the check, or the linter, that raised it.
 - **Findings to weigh.** In a section, the line `These do not fail the gate. Fix each, or say in your report why
-  it should stand.` (`TO_WEIGH_NOTE`) comes before its findings to weigh; the numbered findings above it fail the
-  gate.
-- **Failing tests.** Under `## Failing tests`, one bullet per test, `` - `name`: detail ``.
+  it should stand.` (`QUALITY_TO_WEIGH_NOTE`) comes before its findings to weigh; the numbered findings above it
+  fail the gate.
+- **Failing tests.** Under `## Failing tests` (`QUALITY_FAILING_TESTS`), one bullet per test, `` - `name`: detail ``.
 - **One line per item.** A character that ends a line in some reader, such as `\r` or U+2028, is written as an
   escape, `\x0d` or `\u2028`, in every list item and name (`one_line`), so each item is read back as the one line
   it was written as.

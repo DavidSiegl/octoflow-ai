@@ -94,7 +94,7 @@ pub const CI_POLL_SECONDS: u64 = 10;
 pub const QUALITY_TIMEOUT: u64 = 1200;
 /// git's switches for how it reads every pathspec, which no process the orchestrator starts inherits: its pathspecs
 /// are written in git's default syntax, and each switch changes what one matches without an error, as under ICASE a
-/// `:(literal)` path such as _top_literal's matches a file whose name differs in case. The gate leaves them out of
+/// `:(literal)` path such as top_literal's matches a file whose name differs in case. The gate leaves them out of
 /// its own processes' environment for its own pathspecs, as tool_env says in octoflow-gate, the release ci/gate.pin
 /// names.
 pub const GIT_PATHSPEC_ENV: [&str; 4] =

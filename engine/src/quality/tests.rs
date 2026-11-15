@@ -221,7 +221,8 @@ fn the_engine_reads_what_the_gate_writes() {
 
 #[test]
 fn the_engine_reads_a_cut_list_as_the_gate_cuts_it() {
-    // quality_report lists QUALITY_ISSUE_LIMIT issues, here all of them `f.py:<n>` with rule r, and counts the rest.
+    // The golden quality_report_error_over_limit lists QUALITY_FINDINGS_LIMIT issues, here all of them `f.py:<n>`
+    // with rule r, and counts the rest.
     let failures = gate_failures(&gate_golden("quality_report_error_over_limit", "txt"));
     let issues = failures.fingerprints.get("r").expect("the issues, under their rule");
     assert_eq!(issues.len(), QUALITY_FINDINGS_LIMIT);

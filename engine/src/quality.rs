@@ -41,11 +41,11 @@ pub const QUALITY_FINDINGS_LIMIT: usize = 50;
 
 /// The characters that end a line in some reader of the quality file: a Markdown renderer's line ends, and the
 /// vertical tab, form feed, file, group and record separators, NEL, U+2028 and U+2029, at which other readers break
-/// lines too; the set the gate's _LINE_BREAK_ESCAPES escapes.
+/// lines too; the gate's `text::LINE_BREAKS`.
 const LINE_BREAKS: [char; 10] = ['\n', '\r', '\x0b', '\x0c', '\x1c', '\x1d', '\x1e', '\u{85}', '\u{2028}', '\u{2029}'];
 
 /// text as a quality file writes it within one of its lines, such as one item of a list: each of LINE_BREAKS written
-/// as an escape, `\x` and two hex digits up to U+00FF, `\u` and four beyond, as the gate's _LINE_BREAK_ESCAPES
+/// as an escape, `\x` and two hex digits up to U+00FF, `\u` and four beyond, as the gate's `text::one_line`
 /// writes it, so a list item the engine adds reads back as the one line the gate's would; anything else as it is.
 pub fn one_line(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -275,7 +275,7 @@ struct ReportTest {
     name: String,
 }
 
-/// A numbered finding of a quality file, as the gate's _numbered writes it.
+/// A numbered finding of a quality file, as the gate's `report::numbered` writes it.
 struct NumberedFinding<'a> {
     path: Option<&'a str>,
     rule: &'a str,
