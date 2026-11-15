@@ -129,7 +129,8 @@ checkout. The macOS app is signed ad hoc only, not notarized, so macOS refuses t
 first time when a browser downloaded it, as it does the binary.
 
 - **Overview:** each run's task, its progress through the workflow, its round, the current role, whether it is
-  running or stale, the question it is blocked on, its verdict and its pull request.
+  running or stale, the question it is blocked on, its verdict and its pull request. Closed runs are left out
+  until "Show closed runs" is checked.
 - **New run:** "New run…" above the overview asks for the task, the workflow (`default` unless you pick another,
   with its description), an agent and a model for the whole run (the workflow's own unless you pick them), one row
   per role of the workflow for its own agent and model (each `--role-agent` and `--role-model`, with what an empty
@@ -146,7 +147,7 @@ first time when a browser downloaded it, as it does the binary.
 - **Clean up runs:** "Clean up runs…" above the overview shows what `orchestrator close --all` would do to each
   run: the workspace, refs, worktree and branch it would close, delete or keep, the uncommitted changes that would
   go with a failed run's worktree, and why a run that is still running is skipped. Close closes the runs it showed,
-  skipping any that changed since, and shows how each went; the overview then shows them closed. With nothing to
+  skipping any that changed since, and shows how each went; the overview then leaves them out. With nothing to
   close it says so.
 - **Run detail:** the run as an octopus map: the head is the run, with its round, and each stage of its workflow
   (its steps, the quality gate after each gated step, and the pull request) is an arm ending in a station that shows
