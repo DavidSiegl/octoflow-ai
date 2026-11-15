@@ -110,6 +110,36 @@ describe("the runs overview", () => {
     expect(screen.getByText("No runs.")).toBeInTheDocument();
   });
 
+  it("leaves closed runs out until they are asked for", async () => {
+    const { source } = await openApp();
+    act(() => source.replay("the stream opened"));
+    expect(screen.queryByRole("checkbox", { name: /closed runs/ })).not.toBeInTheDocument();
+    act(() => source.replayOne("a run started its interview"));
+    const batch = RECORDED.find((b) => b.after === "the stream opened");
+    const done = batch?.events.find((e) => e.kind === "record" && e.run === DONE)?.record as Record<string, unknown>;
+
+    // Closed as a clean-up's records arrive: the row goes, and the checkbox counts it.
+    act(() => source.emit("record", { run: DONE, record: { ...done, closed: "workspace closed" } }));
+    expect(document.querySelector(`tr[data-run="${DONE}"]`)).toBeNull();
+    expect(row(RUN)).toBeInTheDocument();
+    const show = screen.getByRole("checkbox", { name: "Show closed runs (1)" });
+    expect(show).not.toBeChecked();
+
+    fireEvent.click(show);
+    expect(within(row(DONE)).getByText("APPROVE; closed: workspace closed")).toBeInTheDocument();
+    fireEvent.click(show);
+    expect(document.querySelector(`tr[data-run="${DONE}"]`)).toBeNull();
+
+    // Every run closed: the overview says so rather than that there are none.
+    act(() => source.replay("the finished run was deleted"));
+    act(() => source.emit("record", { run: DONE, record: { ...done, closed: "workspace closed" } }));
+    const running = RECORDED.find((b) => b.after === "a run started its interview")?.events.find((e) => e.kind === "record")?.record as Record<string, unknown>;
+    act(() => source.emit("record", { run: RUN, record: { ...running, closed: "workspace closed" } }));
+    expect(screen.getByText("No open runs.")).toBeInTheDocument();
+    expect(screen.queryByText("No runs.")).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Show closed runs (2)" })).toBeInTheDocument();
+  });
+
   it("opens another project, on a machine, and remembers it", async () => {
     const { source } = await openApp();
     fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: " ~/other " } });
@@ -801,9 +831,12 @@ describe("cleaning up runs", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
-    // The overview follows the close through its stream, which sends the run's state.json as closing recorded it.
+    // The overview follows the close through its stream, which sends the run's state.json as closing recorded it:
+    // the closed run leaves the overview, and shows again among the closed ones.
     const done = RECORDED[0]?.events.find((e) => e.kind === "record")?.record as Record<string, unknown>;
     act(() => FakeEventSource.last.emit("record", { run: DONE, record: { ...done, closed: "workspace closed" } }));
+    expect(document.querySelector(`tr[data-run="${DONE}"]`)).toBeNull();
+    fireEvent.click(screen.getByRole("checkbox", { name: /^Show closed runs/ }));
     expect(row(DONE).textContent).toContain("closed: workspace closed");
   });
 
