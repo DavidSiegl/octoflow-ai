@@ -31,7 +31,7 @@ pub mod args;
 pub mod close;
 pub mod doctor;
 pub mod drain;
-mod forget;
+pub mod forget;
 pub mod refresh;
 pub mod listing;
 pub mod prune;
