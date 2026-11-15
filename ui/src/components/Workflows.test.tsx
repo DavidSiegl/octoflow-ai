@@ -73,7 +73,11 @@ function posts(edit: FakeEdit, path: string) {
   return (edit.posts ?? []).filter((p) => p.path === path).map((p) => p.body);
 }
 
-describe("the workflows dialog", () => {
+// The editor's form is large, and each query by role computes the accessible name of every element in it, which in
+// jsdom takes the longest of these tests about 2 s, and past the default 5 s when the machine is busy.
+const EDITOR_TIMEOUT_MS = 15_000;
+
+describe("the workflows dialog", { timeout: EDITOR_TIMEOUT_MS }, () => {
   it("lists every workflow, a built-in one to view and one that does not load with its path, to delete only", async () => {
     const dialog = await openWorkflows();
     const builtIn = entry(dialog, "default");

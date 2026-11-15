@@ -125,6 +125,9 @@ function ProjectRuns({ api, project }: { api: Api; project: Project }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [cleaningUp, setCleaningUp] = useState(false);
+  // Whether the overview lists closed runs. Kept here, not in the overview, so that it lasts while a run is shown in
+  // detail; it starts false each time a project opens, as ProjectRuns is keyed by the project.
+  const [showClosed, setShowClosed] = useState(false);
   // The run last started from the form; null before one is.
   const [started, setStarted] = useState<StartedRun | null>(null);
   const state = useRunStream(api, project);
@@ -169,7 +172,14 @@ function ProjectRuns({ api, project }: { api: Api; project: Project }) {
               </>
             )}
           </div>
-          <RunsOverview runs={runsNewestFirst(state)} now={now} selected={selected} onSelect={setSelected} />
+          <RunsOverview
+            runs={runsNewestFirst(state)}
+            now={now}
+            selected={selected}
+            onSelect={setSelected}
+            showClosed={showClosed}
+            onShowClosed={setShowClosed}
+          />
         </>
       )}
     </>
