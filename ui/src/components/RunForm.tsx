@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useState } from "react";
 import type { Api, OfferedRole, OfferedWorkflow, Project, RunOptions, StartedRun } from "../api";
 import { Dialog } from "./Dialog";
+import { type Opening, WorkflowEditor } from "./WorkflowEditor";
 
 interface Props {
   api: Api;
@@ -41,8 +42,10 @@ function setByRole(choices: Map<string, RoleChoice>, field: keyof RoleChoice): R
 }
 
 /** A form for a new run in project: its task, workflow, agent and model, an agent and a model for each role of the
- * workflow, and whether it opens a pull request and runs in a worktree of its own. Start starts it; an error the
- * server answers stays in the form, with what was entered, until the next Start. */
+ * workflow, and whether it opens a pull request and runs in a worktree of its own. Beside the workflow, Edit… and
+ * New… open the workflow editor on the one picked or on a copy of the default one; a workflow saved there is picked
+ * once the workflows are read again. Start starts it; an error the server answers stays in the form, with what was
+ * entered, until the next Start. */
 export function RunForm({ api, project, onStarted, onClose }: Props) {
   // What /workflows gave, the error that kept it from giving it, or null until it answers.
   const [offered, setOffered] = useState<{ options: RunOptions } | { error: string } | null>(null);
@@ -61,16 +64,35 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
   // True from Start until the server answers: the form can then be neither changed, sent again nor closed.
   const [starting, setStarting] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  // Pick workflow name among workflows, keeping the rows of the roles it shares with the one picked before.
+  function pickAmong(workflows: OfferedWorkflow[] | undefined, name: string) {
+    setPicked(name);
+    const shared = new Set(rolesOf(workflows, name).map((r) => r.role));
+    setChoices((old) => new Map([...old].filter(([role]) => shared.has(role))));
+  }
+  // What the workflow editor is open on; null while it is closed.
+  const [editing, setEditing] = useState<Opening | null>(null);
+  // The workflow saved last in the editor, which the workflows read again after it are to pick; a new object for
+  // each save, so that each reads them again. null until one is saved.
+  const [saved, setSaved] = useState<{ name: string } | null>(null);
   useEffect(() => {
     let current = true;
     api.workflows().then(
-      (options) => current && setOffered({ options }),
+      (options) => {
+        if (!current) {
+          return;
+        }
+        setOffered({ options });
+        if (saved) {
+          pickAmong(options.workflows, saved.name);
+        }
+      },
       (error: Error) => current && setOffered({ error: error.message }),
     );
     return () => {
       current = false;
     };
-  }, [api]);
+  }, [api, saved]);
   const options = offered && "options" in offered ? offered.options : null;
   // The workflow Start sends: the one picked, else DEFAULT_WORKFLOW where it loads. When /workflows failed, which a
   // workflows directory that cannot be listed makes it do, DEFAULT_WORKFLOW, as `run`, which still offers the built-in
@@ -83,10 +105,10 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
   }
   const chosen = options?.workflows.find((w) => w.name === workflow);
   const roles = rolesOf(options?.workflows, workflow);
-  const pick = (name: string) => {
-    setPicked(name);
-    const shared = new Set(rolesOf(options?.workflows, name).map((r) => r.role));
-    setChoices((old) => new Map([...old].filter(([role]) => shared.has(role))));
+  const pick = (name: string) => pickAmong(options?.workflows, name);
+  const onSaved = (name: string) => {
+    setEditing(null);
+    setSaved({ name });
   };
   const choose = (role: string, change: Partial<RoleChoice>) =>
     setChoices((old) => new Map(old).set(role, { agent: "", model: "", ...old.get(role), ...change }));
@@ -130,92 +152,106 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
     });
   };
   return (
-    <Dialog label="new run" title="New run" project={project} className="run-form">
-      <form onSubmit={submit}>
-        <fieldset disabled={starting}>
-          <label>
-            Task
-            <textarea value={task} onChange={(e) => setTask(e.target.value)} rows={4} />
-          </label>
-          <label>
-            Workflow
-            <select value={workflow ?? ""} onChange={(e) => pick(e.target.value)} disabled={!options}>
-              {workflow === null && (
-                <option value="" disabled>
-                  {options ? "pick one" : ""}
-                </option>
-              )}
-              {!options && workflow !== null && <option value={workflow}>{workflow}</option>}
-              {options?.workflows.map((w) => (
-                <option key={w.name} value={w.name} disabled={!("roles" in w)} title={"error" in w ? w.error : undefined}>
-                  {"error" in w ? `${w.name} (does not load)` : w.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          {offered === null && <p className="loading">Reading the workflows…</p>}
-          {offered && "error" in offered && (
-            <p className="problem">
-              {offered.error}; the run takes the {DEFAULT_WORKFLOW} workflow
-            </p>
-          )}
-          {chosen && "description" in chosen && chosen.description && <p className="description">{chosen.description}</p>}
-          <div className="row">
+    <>
+      <Dialog label="new run" title="New run" project={project} className="run-form">
+        <form onSubmit={submit}>
+          <fieldset disabled={starting}>
             <label>
-              Agent
-              <select value={agent} onChange={(e) => setAgent(e.target.value)}>
-                <option value="">the workflow&apos;s</option>
-                {kinds}
+              Task
+              <textarea value={task} onChange={(e) => setTask(e.target.value)} rows={4} />
+            </label>
+            <label>
+              Workflow
+              <select value={workflow ?? ""} onChange={(e) => pick(e.target.value)} disabled={!options}>
+                {workflow === null && (
+                  <option value="" disabled>
+                    {options ? "pick one" : ""}
+                  </option>
+                )}
+                {!options && workflow !== null && <option value={workflow}>{workflow}</option>}
+                {options?.workflows.map((w) => (
+                  <option key={w.name} value={w.name} disabled={!("roles" in w)} title={"error" in w ? w.error : undefined}>
+                    {"error" in w ? `${w.name} (does not load)` : w.name}
+                  </option>
+                ))}
               </select>
             </label>
-            <label>
-              Model
-              <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="the workflow's" />
-            </label>
-          </div>
-          {roles.map((r) => {
-            const choice = choices.get(r.role);
-            return (
-              <div key={r.role} role="group" aria-label={`role ${r.label}`} className="row role">
-                <span className="role-label">{r.label}</span>
-                <select
-                  aria-label={`${r.label} agent`}
-                  className={choice?.agent ? undefined : "unset"}
-                  value={choice?.agent ?? ""}
-                  onChange={(e) => choose(r.role, { agent: e.target.value })}
-                >
-                  <option value="">{agentFallback(r)}</option>
+            <div className="workflow-actions">
+              <button type="button" onClick={() => workflow && setEditing({ edit: workflow })} disabled={!chosen || !("roles" in chosen)}>
+                Edit…
+              </button>
+              <button type="button" onClick={() => setEditing({ copy: DEFAULT_WORKFLOW })} disabled={!options}>
+                New…
+              </button>
+            </div>
+            {offered === null && <p className="loading">Reading the workflows…</p>}
+            {offered && "error" in offered && (
+              <p className="problem">
+                {offered.error}; the run takes the {DEFAULT_WORKFLOW} workflow
+              </p>
+            )}
+            {chosen && "description" in chosen && chosen.description && <p className="description">{chosen.description}</p>}
+            <div className="row">
+              <label>
+                Agent
+                <select value={agent} onChange={(e) => setAgent(e.target.value)}>
+                  <option value="">the workflow&apos;s</option>
                   {kinds}
                 </select>
-                <input
-                  aria-label={`${r.label} model`}
-                  value={choice?.model ?? ""}
-                  onChange={(e) => choose(r.role, { model: e.target.value })}
-                  placeholder={modelFallback(r)}
-                />
-              </div>
-            );
-          })}
-          <label className="check">
-            <input type="checkbox" checked={noPr} onChange={(e) => setNoPr(e.target.checked)} />
-            No pull request
-          </label>
-          <label className="check">
-            <input type="checkbox" checked={worktree} onChange={(e) => setWorktree(e.target.checked)} />
-            Separate worktree
-          </label>
-        </fieldset>
-        {starting && <p className="loading">Starting the run…</p>}
-        {problem !== null && <pre className="problem">{problem}</pre>}
-        <footer>
-          <button type="button" onClick={onClose} disabled={starting}>
-            Cancel
-          </button>
-          <button type="submit" disabled={!ready}>
-            Start
-          </button>
-        </footer>
-      </form>
-    </Dialog>
+              </label>
+              <label>
+                Model
+                <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="the workflow's" />
+              </label>
+            </div>
+            {roles.map((r) => {
+              const choice = choices.get(r.role);
+              return (
+                <div key={r.role} role="group" aria-label={`role ${r.label}`} className="row role">
+                  <span className="role-label">{r.label}</span>
+                  <select
+                    aria-label={`${r.label} agent`}
+                    className={choice?.agent ? undefined : "unset"}
+                    value={choice?.agent ?? ""}
+                    onChange={(e) => choose(r.role, { agent: e.target.value })}
+                  >
+                    <option value="">{agentFallback(r)}</option>
+                    {kinds}
+                  </select>
+                  <input
+                    aria-label={`${r.label} model`}
+                    value={choice?.model ?? ""}
+                    onChange={(e) => choose(r.role, { model: e.target.value })}
+                    placeholder={modelFallback(r)}
+                  />
+                </div>
+              );
+            })}
+            <label className="check">
+              <input type="checkbox" checked={noPr} onChange={(e) => setNoPr(e.target.checked)} />
+              No pull request
+            </label>
+            <label className="check">
+              <input type="checkbox" checked={worktree} onChange={(e) => setWorktree(e.target.checked)} />
+              Separate worktree
+            </label>
+          </fieldset>
+          {starting && <p className="loading">Starting the run…</p>}
+          {problem !== null && <pre className="problem">{problem}</pre>}
+          <footer>
+            <button type="button" onClick={onClose} disabled={starting}>
+              Cancel
+            </button>
+            <button type="submit" disabled={!ready}>
+              Start
+            </button>
+          </footer>
+        </form>
+      </Dialog>
+      {editing && options && (
+        // After the form, so that it is in front.
+        <WorkflowEditor api={api} agents={options.agents} opening={editing} onSaved={onSaved} onClose={() => setEditing(null)} />
+      )}
+    </>
   );
 }

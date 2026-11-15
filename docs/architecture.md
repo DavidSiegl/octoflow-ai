@@ -356,7 +356,7 @@ browser, at a far smaller download.
   each step the quality loop follows, `publish` when the run opens a pull request, each with its turns and its
   state; the overview's `StepProgress` and the run detail's `RunMap` both draw it) and the wording helpers, which follow `format_age` and `run_round`. A `RunEntry` keeps when its record
   arrived, so `heartbeatAge` ticks with `useNow` between events. The components are `ProjectBar`, `RunsOverview`,
-  `RunForm` (a new run, selected once `POST /run` answers), `SetupDialog`, `About` (the logo's button opens it),
+  `RunForm` (a new run, selected once `POST /run` answers; its Edit… and New… open `WorkflowEditor`), `SetupDialog`, `About` (the logo's button opens it),
   `CleanUpDialog`, and `WorkflowsDialog` (the top bar's "Workflows…", which reaches no project) with its
   `WorkflowEditor`, each a `Dialog`, `RunDetail`,
   `AgentPanes`, `StepProgress`, `RunMap` (the run as an octopus, hand-written SVG: `runMap.ts` places the arms and

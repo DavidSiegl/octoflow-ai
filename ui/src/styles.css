@@ -997,3 +997,9 @@ ul.workflow-list {
   white-space: pre-wrap;
   font-family: ui-monospace, monospace;
 }
+
+/* The run form's Edit… and New…, under the workflow they edit. */
+.run-form .workflow-actions {
+  display: flex;
+  gap: 8px;
+}

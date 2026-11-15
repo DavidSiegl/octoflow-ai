@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { describe, expect, it } from "vitest";
 import type { WorkflowDefinition } from "../api";
 import { App } from "../App";
-import { CONNECTION, DEFAULT_DEFINITION, FakeEventSource, stubServer, workflowAnswers, type Answer, type FakeEdit } from "../test/fakes";
+import { CONNECTION, DEFAULT_DEFINITION, FakeEventSource, OPTIONS, stubServer, workflowAnswers, type Answer, type FakeEdit, type FakeStart } from "../test/fakes";
 
 const connect = () => Promise.resolve(CONNECTION);
 
@@ -331,5 +331,91 @@ describe("the workflows dialog", () => {
     fireEvent.click(within(form).getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("dialog", { name: "workflow" })).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "unsaved changes" })).not.toBeInTheDocument();
+  });
+});
+
+describe("the run form's Edit… and New…", () => {
+  /** The app with the run form open on `default`, the workflows read. */
+  async function openForm(start: FakeStart, edit: FakeEdit = {}): Promise<HTMLElement> {
+    stubServer({}, {}, {}, start, {}, edit);
+    render(<App connect={connect} />);
+    await waitFor(() => expect(FakeEventSource.opened).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "New run…" }));
+    const form = await screen.findByRole("dialog", { name: "new run" });
+    await waitFor(() => expect(within(form).getByLabelText("Workflow")).toHaveValue("default"));
+    return form;
+  }
+
+  it("edits the workflow picked, and returns with it picked and its roles' rows rebuilt", async () => {
+    const start: FakeStart = { options: structuredClone(OPTIONS) };
+    const edit: FakeEdit = {};
+    const form = await openForm(start, edit);
+    fireEvent.change(within(form).getByLabelText("Workflow"), { target: { value: "tdd" } });
+    fireEvent.change(within(form).getByLabelText("Builder model"), { target: { value: "g2" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Edit…" }));
+    const editor = await screen.findByRole("dialog", { name: "workflow" });
+    await waitFor(() => expect(within(editor).getByLabelText("Description")).toHaveValue("Tests first, then the code."));
+    fireEvent.change(within(editor).getByLabelText("role 1 label"), { target: { value: "Tester" } });
+    // What /workflows answers once the save has renamed the label.
+    const tdd = start.options?.workflows[1];
+    if (tdd && "roles" in tdd && tdd.roles[0]) {
+      tdd.roles[0].label = "Tester";
+    }
+    const save = within(editor).getByRole("button", { name: "Save" });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "workflow" })).not.toBeInTheDocument());
+    await waitFor(() => expect(within(form).getByLabelText("Tester agent")).toBeInTheDocument());
+    expect(within(form).getByLabelText("Workflow")).toHaveValue("tdd");
+    expect(within(form).getByLabelText("Builder model")).toHaveValue("g2");
+    expect(posts(edit, "/workflow/save")[0]).toMatchObject({ name: "tdd", base: "tdd's text" });
+  });
+
+  it("creates a workflow from a copy of default and picks it, keeping the rows of the roles it shares", async () => {
+    const start: FakeStart = { options: structuredClone(OPTIONS) };
+    const form = await openForm(start);
+    fireEvent.change(within(form).getByLabelText("Reviewer agent"), { target: { value: "pi" } });
+    fireEvent.click(within(form).getByRole("button", { name: "New…" }));
+    const editor = await screen.findByRole("dialog", { name: "workflow" });
+    await waitFor(() => expect(within(editor).getByLabelText("Name")).toBeInTheDocument());
+    fireEvent.change(within(editor).getByLabelText("Name"), { target: { value: "mine" } });
+    start.options?.workflows.push({
+      name: "mine",
+      description: "",
+      roles: [
+        { role: "review", label: "Reviewer", agent: "codex", model: "o3" },
+        { role: "check", label: "Checker", agent: "claude", model: null },
+      ],
+    });
+    const save = within(editor).getByRole("button", { name: "Save" });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+    await waitFor(() => expect(within(form).getByLabelText("Workflow")).toHaveValue("mine"));
+    expect(within(form).getByLabelText("Reviewer agent")).toHaveValue("pi");
+    expect(within(form).getByLabelText("Checker agent")).toHaveValue("");
+    expect(within(form).queryByLabelText("Builder agent")).not.toBeInTheDocument();
+  });
+
+  it("disables Edit… and New… while the run starts", async () => {
+    let release = () => {};
+    const start: FakeStart = { held: new Promise((resolve) => (release = resolve)) };
+    const form = await openForm(start);
+    expect(within(form).getByRole("button", { name: "Edit…" })).toBeEnabled();
+    fireEvent.change(within(form).getByLabelText("Task"), { target: { value: "a task" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(within(form).getByRole("button", { name: "Edit…" })).toBeDisabled());
+    expect(within(form).getByRole("button", { name: "New…" })).toBeDisabled();
+    release();
+  });
+
+  it("returns to the form unchanged when the editor closes without saving", async () => {
+    const edit: FakeEdit = {};
+    const form = await openForm({}, edit);
+    fireEvent.click(within(form).getByRole("button", { name: "Edit…" }));
+    const editor = await screen.findByRole("dialog", { name: "workflow" });
+    fireEvent.click(await within(editor).findByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog", { name: "workflow" })).not.toBeInTheDocument();
+    expect(within(form).getByLabelText("Workflow")).toHaveValue("default");
+    expect(posts(edit, "/workflow/save")).toEqual([]);
   });
 });
