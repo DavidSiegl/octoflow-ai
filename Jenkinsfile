@@ -82,7 +82,11 @@ pipeline {
         stage('Install') {
             steps {
                 // The Gate stage's Python and its Markdown linter, pyproject.toml's dev group: octoflow has no Python
-                // of its own.
+                // of its own. --frozen, here and in the Gate stage, installs what uv.lock holds without asking whether
+                // it still matches pyproject.toml, so `uv lock --check` first fails a build whose uv.lock was not
+                // resolved from pyproject.toml's current requirements, rather than judging with tools that may not
+                // meet them. It needs uv 0.12 or later, as pyproject.toml's required-version says.
+                sh 'uv lock --check'
                 sh 'uv sync --frozen'
                 // The Test stage's TestClippy and the Gate stage's gate run the real clippy, and the Test stage's
                 // cargo-llvm-cov reads its coverage data with llvm-tools' llvm-profdata and llvm-cov, which must be the

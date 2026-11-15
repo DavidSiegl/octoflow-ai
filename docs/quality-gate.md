@@ -176,11 +176,12 @@ runs on the machine the run does, not here ([The local gate](#the-local-gate)).
   restricted to this folder's jobs, while the agents that deploy accept no job from this folder. A label alone
   does not enforce that - a pushed branch's `Jenkinsfile` can ask for any label - so the restriction sits on
   the nodes, with the Job Restrictions plugin.
-- **`uv`, `git`, `shellcheck`, `actionlint` and clippy on the agent**: the Install stage runs `uv sync --frozen`, and
-  `uv` brings the Python of `.python-version`, which pymarkdown runs on; clippy and llvm-tools (which cargo-llvm-cov
-  reads its coverage data with) are rustup components of the Rust below, which the agent image must add: its rustup
-  home is root's, so a build cannot, and the Install stage fails naming a missing one. The gate fails a build that
-  lacks a linter, and the tests that run the real clippy fail without it.
+- **`uv`, `git`, `shellcheck`, `actionlint` and clippy on the agent**: the Install stage runs `uv lock --check` and `uv
+  sync --frozen`, which need uv 0.12 or later (`pyproject.toml`'s `required-version`), and `uv` brings the Python of
+  `.python-version`, which pymarkdown runs on; clippy and llvm-tools (which cargo-llvm-cov reads its coverage data with)
+  are rustup components of the Rust below, which the agent image must add: its rustup home is root's, so a build cannot,
+  and the Install stage fails naming a missing one. The gate fails a build that lacks a linter, and the tests that run
+  the real clippy fail without it.
 - **`curl`, `sha256sum`, `tar` and `openssl` on the agent**: the Install stage downloads, with `ci/install-tools.sh`,
   pinned releases of the gitleaks the e2e scenarios (`engine/e2e`) run, of cargo-llvm-cov and cargo-nextest,
   for the Rust tests and their coverage and the passes-at-base check's run of the changed Rust
