@@ -51,7 +51,8 @@ pub enum Outcome {
     },
     /// Closed before, by close or since the sweep began: what close recorded then.
     AlreadyClosed(String),
-    /// Not closed, and why: Decision::Refused's reason, or the run is gone.
+    /// Not closed, and why: Decision::Refused's reason, the run is gone, or it changed since the preview of a
+    /// Sweep::Previewed.
     Skipped(String),
     /// Its close failed; what it did before the failure stays done.
     Failed {
@@ -71,7 +72,8 @@ pub enum Sweep<'p> {
     /// Close every run as it stands when its turn comes.
     Close,
     /// Close only the runs that this earlier DryRun of the project gave as Outcome::Closed, each only while closing it
-    /// would still do just what the dry run said, discarding the same changes, so that nothing goes that was not
+    /// would still do just what the dry run said, discarding the same changes (the same lines of git status: a file
+    /// listed as changed may have changed further), so that no run is closed, and no changed file goes, that was not
     /// shown; a run that changed since is skipped, saying what closing it would now do. No other run is looked at.
     Previewed(&'p [RunClosed]),
 }
@@ -159,14 +161,17 @@ pub fn close_run(world: &Closer, cwd: &str, run_ref: &str, dry_run: bool) -> Res
     }
 }
 
-/// Close every run of the project at cwd as close_run does, in run id order, or the runs sweep says, or with
-/// Sweep::DryRun say what closing each would do, then say a count of the runs closed (or to close), skipped and already closed, and failed if any. A
+/// Close the runs of the project at cwd that sweep names as close_run does, or with Sweep::DryRun say what closing
+/// each would do, then say a count of the runs closed (or to close), skipped and already closed, and failed if any.
+/// The runs are every run of the project, in run id order, or a Sweep::Previewed's, in the preview's order. A
 /// Decision::Refused run is skipped with a line saying why; one already closed is only counted. Each run is read again
 /// just before it is closed, so one that started running, or was removed, since the sweep began is skipped. A run
 /// whose close fails gets a line with the error, and the rest are still closed. A raised Interrupt starts no further
 /// run; the run being closed then finishes or fails as close_run would, and a second sweep finishes it.
 ///
-/// Returns each run looked at, in that order; none after an Interrupt. Errors: the runs cannot be read at the start.
+/// Returns each run looked at, in that order; none after an Interrupt. Errors: for Sweep::DryRun and Sweep::Close,
+/// the project's runs cannot be read at the start; a Sweep::Previewed reads each run only at its turn, and one that
+/// cannot be read is Outcome::Failed.
 pub fn close_all(world: &Closer, cwd: &str, sweep: Sweep) -> Result<Vec<RunClosed>, OrchestratorError> {
     // Each run to look at: its id, what its state.json records as its closed when first read, and for a
     // Sweep::Previewed what the preview said closing it would do and discard.

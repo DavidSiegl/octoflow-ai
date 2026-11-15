@@ -115,7 +115,7 @@ impl ProjectRuns {
 
     /// Close the project's runs that sweep names, as crate::cli::close::close_all does, and give each run's outcome;
     /// the lines close prints are dropped, as the outcomes hold what they say. A raised stopping starts no further
-    /// run. Errors: the runs cannot be read.
+    /// run. Errors: as close_all's.
     pub fn close_all(&self, sweep: Sweep, stopping: &Interrupt) -> Result<Vec<RunClosed>, OrchestratorError> {
         let here = local_host();
         let closer = Closer {
