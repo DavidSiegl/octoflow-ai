@@ -780,6 +780,14 @@ ul.checks {
   margin: 0;
 }
 
+.show-closed {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 12px;
+  color: var(--muted-mint);
+}
+
 .run-form fieldset {
   border: none;
   padding: 0;
