@@ -38,6 +38,14 @@ fn built_in_workflow(name: &str) -> Pipeline {
     find_workflow(name, &built_in()).unwrap()
 }
 
+// WORKFLOWS is built at compile time, so this is the only run of built_in_names that coverage sees.
+#[test]
+fn the_built_in_names_are_the_default_then_the_embedded_files() {
+    let files: Vec<&str> = BUILT_IN_FILES.iter().map(|(name, _)| *name).collect();
+    assert_eq!(built_in_names()[0], "default");
+    assert_eq!(built_in_names()[1..], files[..]);
+}
+
 #[test]
 fn the_built_in_workflows() {
     assert_eq!(WORKFLOWS, ["default", "product-team", "quick"]);
