@@ -193,7 +193,7 @@ as a finding that stands unless a report shows the proof itself is wrong; the re
 whichever round wrote it.
 
 `WORKFLOWS` names the built-in workflows, which `find_workflow` gives worded by a run's prompts: `default`
-(`default_workflow`, every text a built-in prompt) and `quick` and `product-team`, workflow files under
+(`default_workflow`, every text a built-in prompt) and `design`, `quick` and `product-team`, workflow files under
 `engine/src/workflows/` that the binary embeds and parses as it would a user's, so a prompt file words the steps
 they `use`. Other workflows are TOML files: `run --workflow NAME` finds
 `NAME.toml` in `workflows_dir` (`~/.config/octoflow-ai/workflows/`), and `run --workflow-file` takes

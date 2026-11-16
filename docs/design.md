@@ -402,7 +402,8 @@ does. So the
 orchestrator polls for the file, and sends a herdr notification when a role:
 
 - is **blocked** on a permission prompt, a question, or a startup dialog such as folder trust;
-- has sat **idle for 3 minutes** without writing its file (not the Spec Collector, which waits on you by design);
+- has sat **idle for 3 minutes** without writing its file (not in a human-paced step, such as the Spec
+  Collector's interview, which waits on you by design);
 - writes a report whose first non-blank line starts with **`BLOCKED:`**, because it cannot go on without a
   decision from you.
 

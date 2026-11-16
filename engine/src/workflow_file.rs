@@ -59,7 +59,8 @@ const STEP_FLAGS: [&str; 5] = ["fresh_repeats_again", "human_paced", "edits", "q
 /// The built-in workflows other than the default, in name order: each one's name and the text of its workflow file,
 /// which the binary carries. Each `use`s steps of the default workflow, so prompt files word those as they would in a
 /// workflow file of the user's. A new built-in needs only its line here.
-const BUILT_IN_FILES: [(&str, &str); 2] = [
+const BUILT_IN_FILES: [(&str, &str); 3] = [
+    ("design", include_str!("workflows/design.toml")),
     ("product-team", include_str!("workflows/product-team.toml")),
     ("quick", include_str!("workflows/quick.toml")),
 ];
