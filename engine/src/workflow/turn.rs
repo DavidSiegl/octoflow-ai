@@ -547,38 +547,11 @@ impl Workflow<'_> {
         self.save()
     }
 
-    /// Make sure the role's agent is running, and say how.
-    ///
-    /// An agent found alive has the session herdr reports for it saved, when that is not the one its record holds,
-    /// so the turn recorded next is in it and its tokens can be counted. The record holds none when an orchestrator
-    /// stopped between `start`'s two saves, and an older one when the agent moved to a new session (a human's
-    /// `/clear` in its pane, say) while no orchestrator watched it, `await_handoff` noting sessions only while one does.
-    /// An agent found alive that is marked as not yet prompted (AgentRecord::unprompted) is prompted as the start
-    /// that launched it would have, once the human has answered any startup dialog it is blocked on; found working,
-    /// it took a prompt the stopped orchestrator sent but did not record, and goes on as one found alive (waited on if
-    /// prompted already names its file, else sent its prompt once more, the duplicate `written` accepts).
+    /// Make sure the role's agent is running, and say how: as `alive` finds it, else started again.
     fn agent(&mut self, role: &str) -> Outcome<How> {
         let known = self.state.agents.get(role).cloned();
         if let Some(known) = &known {
-            let mut found = self.herdr.agent(&known.name)?;
-            let mut how = known.unprompted.map_or(How::Alive, How::Started);
-            if known.unprompted.is_some() {
-                match found.as_ref().map(|r| r.status.as_str()) {
-                    // A startup dialog, or a question about a prompt taken but not recorded; both need the human.
-                    Some("blocked") => {
-                        self.wait_for_startup(role, &known.name)?;
-                        found = self.herdr.agent(&known.name)?;
-                    }
-                    Some("working") => {
-                        how = How::Alive;
-                        self.state.agents.get_mut(role).expect("the record just read").unprompted = None;
-                        self.save()?;
-                    }
-                    _ => {}
-                }
-            }
-            if let Some(record) = found {
-                self.note_session(role, &record)?;
+            if let Some(how) = self.alive(role, known)? {
                 return Ok(how);
             }
         }
@@ -611,6 +584,39 @@ impl Workflow<'_> {
         };
         self.start(role, &pane, start)?;
         Ok(How::Started(start))
+    }
+
+    /// How the role's agent of the record known is ready, when herdr finds it alive; None when it has exited.
+    ///
+    /// An agent found alive has the session herdr reports for it saved, when that is not the one its record holds,
+    /// so the turn recorded next is in it and its tokens can be counted. The record holds none when an orchestrator
+    /// stopped between `start`'s two saves, and an older one when the agent moved to a new session (a human's
+    /// `/clear` in its pane, say) while no orchestrator watched it, `await_handoff` noting sessions only while one does.
+    /// An agent marked as not yet prompted (AgentRecord::unprompted) is prompted as the start that launched it would
+    /// have, once the human has answered any startup dialog it is blocked on, unless it exits there; found working,
+    /// it took a prompt the stopped orchestrator sent but did not record, and goes on as one found alive (waited on if
+    /// prompted already names its file, else sent its prompt once more, the duplicate `written` accepts).
+    fn alive(&mut self, role: &str, known: &AgentRecord) -> Outcome<Option<How>> {
+        let mut found = self.herdr.agent(&known.name)?;
+        let mut how = known.unprompted.map_or(How::Alive, How::Started);
+        if known.unprompted.is_some() {
+            match found.as_ref().map(|r| r.status.as_str()) {
+                // A startup dialog, or a question about a prompt taken but not recorded; both need the human.
+                Some("blocked") => {
+                    self.wait_for_startup(role, &known.name)?;
+                    found = self.herdr.agent(&known.name)?;
+                }
+                Some("working") => {
+                    how = How::Alive;
+                    self.state.agents.get_mut(role).expect("the record just read").unprompted = None;
+                    self.save()?;
+                }
+                _ => {}
+            }
+        }
+        let Some(record) = found else { return Ok(None) };
+        self.note_session(role, &record)?;
+        Ok(Some(how))
     }
 
     /// The pane for the role's next agent: its old one if that survives, else a new split.
