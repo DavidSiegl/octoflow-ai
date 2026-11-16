@@ -1517,7 +1517,7 @@ fn a_check_answers_the_problem_and_the_placeholders() {
     assert_eq!(reply.json(), serde_json::json!({"problem": null, "placeholders": placeholders}));
     let body = serde_json::json!({"name": "default", "definition": definition}).to_string();
     let checked = served.post("/workflow/check", &body).json();
-    assert_eq!(checked["problem"], "workflow default is built in, so no file may take its name; rename the file to keep it as a workflow of its own, or delete it and run the built-in");
+    assert_eq!(checked["problem"], "workflow default is built in, so no file may take its name");
     assert_eq!(checked["placeholders"], placeholders);
     for bad in [
         "not json".to_string(),

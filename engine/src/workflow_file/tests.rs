@@ -526,7 +526,7 @@ fn a_built_in_workflow_reads_without_a_file_and_cannot_be_saved_or_deleted() {
     let read = read_workflow(&config.config, "default").unwrap();
     assert_eq!(read, EditableWorkflow { definition: workflow_definition(&DEFAULT_WORKFLOW), file: None });
     let refused = save_workflow(&config.config, "default", &read.definition, None).unwrap_err();
-    let error = "workflow default is built in, so no file may take its name; rename the file to keep it as a workflow of its own, or delete it and run the built-in".to_string();
+    let error = "workflow default is built in, so no file may take its name".to_string();
     assert_eq!(refused, WorkflowEditError::Invalid { error, path: None, text: None });
     assert!(matches!(delete_workflow(&config.config, "default", ""), Err(WorkflowEditError::BuiltIn(_))));
     assert!(!std::path::Path::new(&config.dir.join("workflows/default.toml")).exists());
@@ -623,7 +623,7 @@ fn a_check_names_the_first_problem_and_still_lists_the_placeholders() {
     let fine = check_workflow("mine", &workflow_definition(&DEFAULT_WORKFLOW));
     assert_eq!(fine.problem, None);
     let named = |name: &str| check_workflow(name, &workflow_definition(&DEFAULT_WORKFLOW)).problem.unwrap();
-    assert_eq!(named("default"), "workflow default is built in, so no file may take its name; rename the file to keep it as a workflow of its own, or delete it and run the built-in");
+    assert_eq!(named("default"), "workflow default is built in, so no file may take its name");
     assert!(named("my flow").starts_with("a workflow's name, its file's, may use only letters"));
     assert!(named("../up").starts_with("a workflow's name"));
 }

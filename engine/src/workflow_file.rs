@@ -153,7 +153,14 @@ fn unreadable(path: &str, e: &std::io::Error) -> OrchestratorError {
 fn workflow_from_text(path: &str, text: &str, prompts: &Prompts) -> Result<Pipeline, OrchestratorError> {
     let name = split_extension(file_name(path)).0;
     if let Some(problem) = name_problem(name) {
-        return Err(OrchestratorError(format!("{path}: {problem}")));
+        // A file of a built-in's name may predate the name's becoming built in, as a quick.toml or product-team.toml
+        // copied from the example workflows of releases before 0.85.0 does: say how to get either workflow.
+        let fix = if WORKFLOWS.contains(&name) {
+            "; rename the file to keep it as a workflow of its own, or delete it and run the built-in"
+        } else {
+            ""
+        };
+        return Err(OrchestratorError(format!("{path}: {problem}{fix}")));
     }
     let definition = parse_toml(text).map_err(|e| OrchestratorError(format!("{path}: {e}")))?;
     parse_workflow(name, &definition, prompts).map_err(|e| OrchestratorError(format!("{path}: {e}")))
@@ -162,13 +169,8 @@ fn workflow_from_text(path: &str, text: &str, prompts: &Prompts) -> Result<Pipel
 /// What is wrong with name as the name of a workflow file's workflow: it is built in, or not a name (is_name); None
 /// when nothing is.
 fn name_problem(name: &str) -> Option<String> {
-    // Worded for a file that predates its name's becoming built in too, as a quick.toml or product-team.toml copied
-    // from the example workflows of releases before 0.85.0 does.
     if WORKFLOWS.contains(&name) {
-        return Some(format!(
-            "workflow {name} is built in, so no file may take its name; rename the file to keep it as a workflow of \
-             its own, or delete it and run the built-in"
-        ));
+        return Some(format!("workflow {name} is built in, so no file may take its name"));
     }
     if !is_name(name) {
         return Some("a workflow's name, its file's, may use only letters, digits, - and _".into());
