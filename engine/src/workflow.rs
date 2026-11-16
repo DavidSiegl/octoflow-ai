@@ -33,7 +33,7 @@ use crate::json::{object, Object, ValueExt};
 use crate::quality::parse_gate;
 use crate::runs::{local_host, RUNNING};
 use crate::spec_file::SpecFile;
-use crate::state::RunState;
+use crate::state::{AgentStart, RunState};
 use crate::summary::{iso_utc, run_metrics, run_summary, turn_tokens};
 use crate::workflow_file::{is_built_in, run_pipeline, workflow_definition};
 use step_prompt::RunView;
@@ -177,14 +177,11 @@ type Outcome<T> = Result<T, Stopped>;
 /// How a role's agent came to be ready for a turn, which decides what it is prompted with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum How {
-    /// The role's first agent in this run.
-    New,
-    /// Still running from before.
+    /// Still running from before, and prompted by the run since it started.
     Alive,
-    /// Had exited; relaunched into its saved agent session.
-    Resumed,
-    /// Had exited; relaunched in a fresh session that has lost its earlier turns.
-    Restarted,
+    /// Started as the AgentStart says and not yet prompted: by this orchestrator, or by one that stopped before the
+    /// agent took its first prompt.
+    Started(AgentStart),
 }
 
 /// Drives one run through the steps of its workflow in a herdr workspace.

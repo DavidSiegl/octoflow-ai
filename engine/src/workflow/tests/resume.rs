@@ -141,6 +141,125 @@ fn resumed_builder_not_yet_prompted_gets_its_normal_prompt() {
     assert!(seen.borrow()[0].starts_with("Changes were requested"), "{}", seen.borrow()[0]);
 }
 
+/// The role's saved agent, marked as started the way start says and not yet prompted.
+fn unprompted(mut state: RunState, role: &str, start: AgentStart) -> RunState {
+    state.agents.get_mut(role).expect("a saved agent").unprompted = Some(start);
+    state
+}
+
+#[test]
+fn a_new_agent_stopped_in_its_startup_dialog_is_waited_out_then_prompted() {
+    // The orchestrator stopped while the Spec Collector's harness asked whether to trust the folder (Workflow::start).
+    let state = unprompted(saved_run("spec", 0, &["spec"]), "spec", AgentStart::New);
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, approved(), &["spec"], &[]);
+    f.herdr.state().statuses.insert("spec-a1b2c3".into(), "blocked".into());
+    let order = Rc::new(RefCell::new(vec![]));
+    let (herdr, seen) = (Rc::clone(&f.herdr), Rc::clone(&order));
+    f.herdr.state().wait_with = Some(Box::new(move |name, timeout_ms, until| {
+        if until == ["idle", "done"] {
+            seen.borrow_mut().push("startup");
+            herdr.state().statuses.insert(name.to_string(), "idle".into());
+        }
+        herdr.own_wait(name, timeout_ms, until)
+    }));
+    let seen = Rc::clone(&order);
+    f.herdr.state().before_call = Some(Box::new(move |c| {
+        if matches!(c, Call::Prompt { .. }) {
+            seen.borrow_mut().push("prompt");
+        }
+    }));
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert_eq!(order.borrow()[..2], ["startup", "prompt"], "the prompt is not typed into the dialog");
+    assert!(f.told.lines().contains(&"[spec] needs your answer before it starts (pane w1:p1)".into()));
+    assert!(!names(&f, "start").contains(&"spec-a1b2c3".to_string()), "the live agent is not started again");
+    assert_eq!(wf.state().agents.get("spec").unwrap().unprompted, None);
+}
+
+#[test]
+fn a_resumed_agent_stopped_before_its_continue_prompt_is_told_to_continue() {
+    // The orchestrator stopped after relaunching the Builder into its session, before the prompt went out.
+    let seen = seen();
+    let state = unprompted(prompted(saved_run("build", 2, FULL), "build-2.md"), "build", AgentStart::Resumed);
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, build_and_approve(2, &seen), &["build", "review"], &[(
+        "build", "s-build",
+    )]);
+    f.herdr.state().statuses.insert("build-a1b2c3".into(), "idle".into());
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert!(!names(&f, "start").contains(&"build-a1b2c3".to_string()), "the live agent is not started again");
+    assert_eq!(*seen.borrow(), [continue_prompt(&wf.state().build_path(2))]);
+}
+
+#[test]
+fn a_restarted_agent_stopped_before_its_prompt_gets_the_fresh_one() {
+    let seen = seen();
+    let state = unprompted(prompted(saved_run("build", 2, FULL), "build-2.md"), "build", AgentStart::Restarted);
+    let script = build_and_approve(2, &seen);
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &["build", "review"], &[]);
+    f.herdr.state().statuses.insert("build-a1b2c3".into(), "idle".into());
+    assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
+    assert!(!names(&f, "start").contains(&"build-a1b2c3".to_string()), "the live agent is not started again");
+    let first = &seen.borrow()[0];
+    assert!(first.contains("This is round 2, and you are a fresh session"), "{first}");
+}
+
+#[test]
+fn a_relaunch_is_saved_marked_and_in_its_session_before_herdr_starts_it() {
+    // herdr's agent start itself waits up to a minute on a startup dialog: a stop then must find the new agent's
+    // record.
+    let state = prompted(saved_run("build", 2, FULL), "build-2.md");
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, build_and_approve(2, &seen()), &["review"], &[(
+        "build", "s-build",
+    )]);
+    let saved_at_start = Rc::new(RefCell::new(vec![]));
+    let (host, path, seen) = (Rc::clone(&f.host), format!("{}/state.json", f.state.dir()), Rc::clone(&saved_at_start));
+    f.herdr.state().before_call = Some(Box::new(move |c| {
+        if matches!(c, Call::Start { .. }) {
+            let saved = RunState::from_text(&host.read(&path).unwrap().expect("a saved state")).unwrap();
+            seen.borrow_mut().push(saved.agents.get("build").cloned().expect("a saved Builder"));
+        }
+    }));
+    assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
+    let record = saved_at_start.borrow()[0].clone();
+    assert_eq!((record.unprompted, record.session.as_deref()), (Some(AgentStart::Resumed), Some("s-build")));
+}
+
+#[test]
+fn an_agent_that_exits_in_the_startup_dialog_a_resume_waits_out_is_started_again() {
+    // As when the human refuses Claude Code's folder-trust question.
+    let state = unprompted(saved_run("spec", 0, &["spec"]), "spec", AgentStart::New);
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, approved(), &["spec"], &[]);
+    f.herdr.state().statuses.insert("spec-a1b2c3".into(), "blocked".into());
+    let herdr = Rc::clone(&f.herdr);
+    f.herdr.state().wait_with = Some(Box::new(move |name, timeout_ms, until| {
+        if until == ["idle", "done"] && herdr.state().statuses.get(name).is_some_and(|s| s == "blocked") {
+            herdr.state().statuses.remove(name);
+            return Err(crate::herdr::HerdrError::new("agent_not_found", format!("agent target {name} not found")));
+        }
+        herdr.own_wait(name, timeout_ms, until)
+    }));
+    assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
+    assert_eq!(names(&f, "start")[0], "spec-a1b2c3");
+    assert!(f.told.titles().contains(&"Spec Collector is waiting for you".to_string()), "{:?}", f.told.titles());
+}
+
+#[test]
+fn a_marked_agent_found_working_took_its_prompt_and_is_only_waited_on() {
+    // The orchestrator stopped after the Builder took its prompt to continue, before it saved that.
+    let state = unprompted(prompted(saved_run("build", 2, FULL), "build-2.md"), "build", AgentStart::Resumed);
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![("review", vec![review_turn(2, APPROVE)])], &[
+        "build", "review",
+    ], &[("build", "s-build")]);
+    let (host, build) = (Rc::clone(&f.host), f.state.build_path(2));
+    f.clock.hook(move |_| host.write(&build, "built", false).unwrap());
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert_eq!(prompts_to(&f, "build-a1b2c3"), 0);
+    assert!(!f.told.lines().iter().any(|l| l.contains("needs your answer")), "{:?}", f.told.lines());
+    assert_eq!(wf.state().agents.get("build").unwrap().unprompted, None);
+}
+
 #[test]
 fn exited_builder_without_session_gets_a_recovery_prompt() {
     let seen = seen();

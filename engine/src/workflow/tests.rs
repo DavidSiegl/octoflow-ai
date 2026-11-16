@@ -16,7 +16,7 @@ use crate::host::Host;
 use serde_json::Value;
 use crate::map::Map;
 use crate::json::{Object, ValueExt};
-use crate::state::{AgentRecord, RunState, TurnRecord};
+use crate::state::{AgentRecord, AgentStart, RunState, TurnRecord};
 use crate::constants::DEFAULT_HARNESS;
 
 mod blocked;
