@@ -46,6 +46,10 @@ fn workflows_lists_them() {
         "    Creative Director -> Designer's concepts -> the human's direction -> Designer <-> Design Critic, then the \
          human's acceptance"
             .into(),
+        "peer-review  built in".into(),
+        "    question -> research -> methods -> significance -> decision (back to research)".into(),
+        "    Editor -> Author -> Methods Referee -> Domain Referee -> the Editor's decision, back to the Author to revise"
+            .into(),
         "product-team  built in".into(),
         "    spec -> design -> tests -> build -> review (back to build) -> accept (back to build)".into(),
         "    Product Manager -> Architect -> QA Engineer -> Engineer <-> Tech Lead, then the Product Manager's acceptance"
@@ -98,7 +102,7 @@ fn workflows_prints_a_files_agent() {
 fn an_unknown_or_broken_workflow_is_an_error() {
     let d = TempDir::new();
     let cli = configured(&d, &[("workflows/broken.toml", "[[steps]]\nid = 3\n")]);
-    assert_eq!(cli.error(&["workflows", "nosuch"]), "unknown workflow nosuch; there are broken, default, design, product-team, quick");
+    assert_eq!(cli.error(&["workflows", "nosuch"]), "unknown workflow nosuch; there are broken, default, design, peer-review, product-team, quick");
     let broken = cli.config.workflows_dir() + "/broken.toml";
     assert_eq!(cli.error(&["workflows", &broken]), format!("{broken}: step 1: file is missing"));
     assert_eq!(cli.main(&["workflows", "nosuch"]), crate::constants::EXIT_ERROR);

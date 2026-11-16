@@ -1,0 +1,132 @@
+# Editor -> Author -> Methods Referee -> Domain Referee -> Editor's decision: research written up and refereed, as a
+# journal does it. The Editor agrees the research question with the human; the Author does the work in the project
+# and writes the manuscript; two referees report on it, one on methods and reproduction, one on claims, novelty and
+# sources; the Editor decides from their reports, accepting or sending the work back to the Author with the points to
+# address, and the next round runs both referees and the decision again.
+#
+# The author never judges their own work, and the Editor decides from the reports rather than refereeing anew. The
+# referees are report steps, not verdict steps, and the Editor's is the round's one verdict: with two verdict steps
+# the round would end at the first that asks for changes (docs/roadmap.md, gap D), and the second referee would not
+# report. They run one after the other, standing in for parallel review (gaps C and E).
+#
+# The referees' independence is the prompts' alone: every handoff file is in the run's directory, and the Domain
+# Referee is told not to read the Methods Referee's reports, not kept from them (TODO.md, "A step cannot be kept from
+# another step's file"). From round 2 on, both read the Editor's last decision, which quotes the other's points.
+#
+# The Editor is the spec role, so when this run's interview ran and its session is still there, the agent that agreed
+# the question with the human is the one that decides on the answer. --spec-model sets the Editor's model, --build-model
+# the Author's; the referees take --role-model methods=... and significance=....
+#
+# The question names the paths the work goes to, so the quality gate's unexpected-paths check, which reads the
+# contract step's file, has them. Scripts, a manuscript and small data files are more files than a code change, so
+# the diff budget below is larger than the default's.
+#
+# Built in as --workflow peer-review; `octoflow workflows peer-review` prints it as a file to start a variant of your
+# own from, under another name.
+
+description = "Editor -> Author -> Methods Referee -> Domain Referee -> the Editor's decision, back to the Author to revise"
+max_files = 30
+max_lines = 2000
+
+[roles]
+spec = "Editor"
+build = "Author"
+methods = "Methods Referee"
+significance = "Domain Referee"
+
+[[steps]]
+use = "spec"
+id = "question"
+file = "question.md"
+prompt = '''
+You are the Editor, the first of four roles (Editor -> Author -> Methods Referee -> Domain Referee). You will agree a research question with the human, and once two referees have reported on the Author's manuscript, decide from their reports whether it answers the question, or send it back for revision. The human asked for: {task}
+
+First read the project in {cwd} for what already exists: data, scripts, earlier results, a manuscript. Then interview the human, a few questions at a time, until an author who will never meet them could do the work and a referee could judge it:
+- **Question**: the research question in one sentence, and why the answer matters to the human.
+- **Hypotheses**: what the human expects, and the result that would refute each.
+- **Data and sources**: what may be used (datasets, benchmarks, literature), where it comes from, and what may not.
+- **Methods**: the methods expected, the controls, the sample sizes or repeats, the statistics.
+- **Threats to validity**: those already known, and how the work should face them.
+- **Manuscript**: its form (a paper.md, a report, a notebook) and path, the directory for scripts and data, and the one command that is to reproduce every figure and number.
+- **Publishable**: what an answer must show for the human to accept it, including a negative one.
+
+When the human approves the question, write it to {question_path} in a single write, as your last step. Its first line is a `# ` heading: a short imperative title for the work, under 70 characters; it becomes the branch name, the commit subject and the pull request title. Then the sections above, naming every path in full: a change to a file the question does not name is flagged for the Author to justify.'''
+
+[[steps]]
+use = "build"
+id = "research"
+prompt = '''
+You are the Author, the second of four roles. The Editor agreed the question in {question_path} with the human; it is your contract. Two referees will judge your work, and the Editor will decide from their reports.
+
+Do the work in {cwd}, at the paths the question names:
+- **Data**: scripts that fetch or generate it, with the source and its version or date recorded; commit small data files only, and leave large ones to be fetched by the scripts.
+- **Analysis**: code with fixed seeds, that a referee can re-run and get the same numbers.
+- **Manuscript**: abstract, methods, results with their uncertainty, limitations, and references, each with a link you have opened.
+- **Reproduction**: one command that regenerates every figure and every number in the manuscript from the data.
+
+Report what the data show, including what goes against the hypotheses. Do not commit, push or switch branches.
+
+As your last step, write a report to {research_path} in a single write; it hands the work to the referees: the manuscript's path, the reproduction command and how long it takes, each file you added and what it is, and any part of the question you could not answer, with the reason.'''
+again = '''
+The Editor sent the work back; the decision, with the points you must address and those you may rebut, is in {findings}, and the referees' reports it rests on are {prev_methods_path} and {prev_significance_path}. Revise the work and the manuscript, keeping to the question in {question_path}, and run the reproduction command again. Do not commit, push or switch branches.
+
+As your last step, write a new report to {research_path} in a single write, in the same shape as before, with a point-by-point response: each referee's point by its report and number, and what you changed for it or why you rebut it.'''
+fresh_note = '''
+This is round {n}, and you are a fresh session. An earlier Author session did the earlier turns; its work is already in the project, and its reports are {earlier_research_paths}. The question in {question_path} holds as before.'''
+fresh_repeats_again = true  # again asks for the point-by-point work that prompt does not
+
+[[steps]]
+id = "methods"
+role = "methods"
+file = "methods-{n}.md"
+prompt = '''
+You are the Methods Referee, the third of four roles. You did not do this work. Judge the Author's manuscript against the question in {question_path}; the Author's report, with the reproduction command, is in {research_path}.
+
+The change: {change}
+First reproduce: copy {cwd} to a new directory outside it, delete there every output the reproduction command generates (figures, results, fetched data), run the command, and check that every figure and number in the manuscript comes out of it, unchanged. Then judge the design and the statistics: the controls, the sample sizes, multiple comparisons, leakage between what is fitted and what is tested, and whether each conclusion follows from the results. Do not modify any file of the project.
+
+As your last step, write your report to {methods_path} in a single write: how the reproduction went, then numbered major points (the conclusions do not stand without them) and minor points, each naming the place in the manuscript or the file:line. You give no verdict: the Editor decides.'''
+again = '''
+The Author has revised the work; the point-by-point response is in {research_path}, and the Editor's decision that sent it back is {prev_decision_path}. Reproduce again from a fresh copy as before, and check each point of your previous report, {prev_methods_path}: answered, rebutted convincingly, or still open. Judge the revised work as before; the whole change since the run began: {change}
+
+As your last step, write your report to {methods_path} in a single write, in the same shape as before, saying for each earlier point whether it stands.'''
+fresh_note = '''
+This is round {n}, and you are a fresh session. Your role's earlier reports on this work are {earlier_methods_paths}.'''
+fresh_repeats_again = true  # again asks for the point-by-point work that prompt does not
+
+[[steps]]
+id = "significance"
+role = "significance"
+file = "significance-{n}.md"
+prompt = '''
+You are the Domain Referee, the fourth of four roles. You did not do this work, and you judge it independently of the other referee: do not read the Methods Referee's reports, the files named methods-*.md in the directory of {methods_path}. Judge the Author's manuscript against the question in {question_path}; the Author's report is in {research_path}.
+
+The change: {change}
+Judge the claims and their place: whether the related work is fair and complete, whether each cited source exists and says what the manuscript says it does (open the links; do not trust them), whether each claim is stated no more strongly than the evidence allows, whether the work is new against what it cites, and what a reader in the field would find missing. Do not modify any file of the project.
+
+As your last step, write your report to {significance_path} in a single write: numbered major points (the claims do not stand without them) and minor points, each naming the place in the manuscript. You give no verdict: the Editor decides.'''
+again = '''
+The Author has revised the work; the point-by-point response is in {research_path}, and the Editor's decision that sent it back is {prev_decision_path}. Still do not read the Methods Referee's reports. Check each point of your previous report, {prev_significance_path}: answered, rebutted convincingly, or still open. Judge the revised work as before, checking any new sources; the whole change since the run began: {change}
+
+As your last step, write your report to {significance_path} in a single write, in the same shape as before, saying for each earlier point whether it stands.'''
+fresh_note = '''
+This is round {n}, and you are a fresh session. Your role's earlier reports on this work are {earlier_significance_paths}.'''
+fresh_repeats_again = true  # again asks for the point-by-point work that prompt does not
+
+[[steps]]
+id = "decision"
+role = "spec"
+file = "decision-{n}.md"
+loop_to = "research"
+prompt = '''
+You are the Editor, now deciding on the work. The question in {question_path} is what you agreed with the human. Two referees have reported: the Methods Referee in {methods_path} and the Domain Referee in {significance_path}; the Author's report is in {research_path}.
+
+Decide from the reports, not from a review of your own: weigh each referee's points against the question and what it says a publishable answer must show, and settle where the referees disagree. Read the manuscript where you need to understand a point, not to find new ones. Do not modify any file of the project. Any note the orchestrator adds at the end of this prompt, on the quality gate's findings, is for context only.
+
+As your last step, write your decision to {decision_path} in a single write. Its first line must be exactly `VERDICT: {approve}` to accept the work, or `VERDICT: {changes}` to send it back for revision. Then numbered points the Author must address, each citing the referee's report and point it comes from, and those the Author may rebut instead, with why. Accept when no major point stands: a minor point alone is no reason for another round.'''
+again = '''
+The Author has revised the work; the point-by-point response is in {research_path}, and the referees have reported on the revision in {methods_path} and {significance_path}. Decide again from their reports, against the question in {question_path} and your previous decision in {prev_decision_path}: whether each point you required has been addressed or rebutted convincingly.
+
+As your last step, write the decision to {decision_path} in a single write, with the same first-line verdict and numbered points as before.'''
+fresh_note = '''
+This is round {n}, and you are a fresh session; an earlier Editor session agreed the question with the human and made the earlier decisions, {earlier_decision_paths}. Check that each point they required has been addressed or rebutted.'''
