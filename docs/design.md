@@ -163,7 +163,8 @@ as `run --no-pr --spec`, with a copy of the task's text as the spec, then runs t
 and closes the run's workspace with `close`. The arguments after `--` go to `run` unchanged; the runner refuses
 the flags it sets itself and those that would put the change elsewhere. A workflow whose first step writes the
 spec, such as the built-in `default` or `product-team`, starts at the step after it, so no
-interview waits for an answer; one without such a step, such as `quick`, cannot take
+interview waits for an answer; `design`, whose later steps wait for the human too, would hang there and is no
+workflow for eval; one without such a step, such as `quick`, cannot take
 `--spec`, and the engine refuses it before any agent starts.
 `xtask/src/eval.rs`'s module comment gives its flags, the shape of a task and its exit status. A Ctrl-C stops the
 eval once the engine has saved its run, keeps that trial's clone, prints the table of the trials before it and exits
@@ -405,7 +406,8 @@ does. So the
 orchestrator polls for the file, and sends a herdr notification when a role:
 
 - is **blocked** on a permission prompt, a question, or a startup dialog such as folder trust;
-- has sat **idle for 3 minutes** without writing its file (not the Spec Collector, which waits on you by design);
+- has sat **idle for 3 minutes** without writing its file (not in a human-paced step, such as the Spec
+  Collector's interview, which waits on you by design);
 - writes a report whose first non-blank line starts with **`BLOCKED:`**, because it cannot go on without a
   decision from you.
 

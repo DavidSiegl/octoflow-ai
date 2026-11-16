@@ -27,10 +27,19 @@ const TASK: &str = "Add a subtract function";
 struct Action(Object);
 
 impl Action {
-    /// Also make these changes to the working tree, path to text, before writing the action's file.
+    /// Also make these changes to the working tree, path to text, before writing the action's file, in place of any
+    /// the action had: `built(..).edit(..)` swaps the Builder's usual edits for others. Add deletions after it.
     fn edit(mut self, files: &[(&str, &str)]) -> Action {
         let edits: Object = files.iter().map(|(path, text)| (path.to_string(), Value::from(*text))).collect();
         self.0.insert("edit".into(), Value::Object(edits));
+        self
+    }
+
+    /// Also delete these files of the working tree, before writing the action's file.
+    fn deletes(mut self, files: &[&str]) -> Action {
+        let edits = self.0.entry("edit").or_insert_with(|| Value::Object(Object::new()));
+        let edits = edits.as_object_mut().expect("an action's edit is an object");
+        edits.extend(files.iter().map(|path| (path.to_string(), Value::Null)));
         self
     }
 
@@ -171,6 +180,50 @@ pub fn workflow_file_installed(w: &mut World) {
         "run", "--workflow", "sbr", "--agent", "codex", "--role-model", "review=opus", "--permission-mode", "acceptEdits",
         "--", TASK,
     ]);
+}
+
+const LOGO_ROUND: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\"><circle cx=\"8\" cy=\"8\" r=\"7\"/></svg>\n";
+const LOGO_SQUARE: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\"><rect width=\"14\" height=\"14\" x=\"1\" y=\"1\"/></svg>\n";
+
+/// The Designer's report of round n, the logo built from the round concept, the concepts directory removed.
+fn designed(n: u32) -> Action {
+    writes(&format!("build-{n}.md"), &format!("Built assets/logo.svg from the round concept (round {n}).\n"))
+        .edit(&[("assets/logo.svg", LOGO_ROUND)])
+        .deletes(&["concepts/round/logo.svg"])
+}
+
+/// The built-in design workflow: the brief, two concepts, the human's direction deleting the one not taken, then a
+/// Design Critic's request for changes in round 1, and the human's at the acceptance in round 2, before the human
+/// accepts round 3.
+pub fn workflow_design(w: &mut World) {
+    w.agent(
+        "spec",
+        [
+            writes("brief.md", "# Draw a logo\n\nOne SVG logo at assets/logo.svg, readable at 16 px. Concepts in concepts/.\n"),
+            writes("direction.md", "The round concept.\n").deletes(&["concepts/square/logo.svg"]),
+            writes("acceptance-2.md", "VERDICT: CHANGES_REQUESTED\n\n1. assets/logo.svg: a thicker outline.\n"),
+            writes("acceptance-3.md", "VERDICT: APPROVE\n\nNone.\n"),
+        ],
+    );
+    w.agent(
+        "build",
+        [
+            writes("concepts.md", "1. round: concepts/round/. 2. square: concepts/square/.\n")
+                .edit(&[("concepts/round/logo.svg", LOGO_ROUND), ("concepts/square/logo.svg", LOGO_SQUARE)]),
+            designed(1),
+            writes("build-2.md", "Answered finding 1 (round 2).\n"),
+            writes("build-3.md", "Answered the human's finding 1 (round 3).\n"),
+        ],
+    );
+    w.agent(
+        "review",
+        [
+            reviewed(1, "CHANGES_REQUESTED", "1. assets/logo.svg: the circle touches the edge at 16 px."),
+            approved(2),
+            approved(3),
+        ],
+    );
+    w.run(&["run", "--workflow", "design", "--", "Draw a logo"]);
 }
 
 const TESTS_WEAKENED: &str = "from calc import add, subtract\n\n\ndef test_add():\n    assert add(1, 2) == 3\n";

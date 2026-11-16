@@ -59,7 +59,8 @@ const STEP_FLAGS: [&str; 5] = ["fresh_repeats_again", "human_paced", "edits", "q
 /// The built-in workflows other than the default, in name order: each one's name and the text of its workflow file,
 /// which the binary carries. Each `use`s steps of the default workflow, so prompt files word those as they would in a
 /// workflow file of the user's. A new built-in needs only its line here.
-const BUILT_IN_FILES: [(&str, &str); 2] = [
+const BUILT_IN_FILES: [(&str, &str); 3] = [
+    ("design", include_str!("workflows/design.toml")),
     ("product-team", include_str!("workflows/product-team.toml")),
     ("quick", include_str!("workflows/quick.toml")),
 ];
@@ -154,7 +155,8 @@ fn workflow_from_text(path: &str, text: &str, prompts: &Prompts) -> Result<Pipel
     let name = split_extension(file_name(path)).0;
     if let Some(problem) = name_problem(name) {
         // A file of a built-in's name may predate the name's becoming built in, as a quick.toml or product-team.toml
-        // copied from the example workflows of releases before 0.85.0 does: say how to get either workflow.
+        // copied from the example workflows of releases before 0.85.0, or a design.toml of one's own from before
+        // 0.86.0, does: say how to get either workflow.
         let fix = if WORKFLOWS.contains(&name) {
             "; rename the file to keep it as a workflow of its own, or delete it and run the built-in"
         } else {

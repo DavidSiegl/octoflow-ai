@@ -11,7 +11,7 @@ Ideas for what comes next, in no particular order. The designs behind what has s
 
 ## Workflows
 
-`default`, `quick` and `product-team` ship built in ([Workflows](architecture.md#workflows)); others are workflow
+`default`, `design`, `quick` and `product-team` ship built in ([Workflows](architecture.md#workflows)); others are workflow
 files. These engine gaps, by letter (G, runs without a verdict, is closed), stand
 between the engine and the candidates below:
 
@@ -40,6 +40,7 @@ between the engine and the candidates below:
 | Workflow | Roles | Handoff files | Gaps |
 |---|---|---|---|
 | **quick** (built in) | Builder, Reviewer | `spec.md` from `--spec FILE`, or the task as the contract; `build-{n}.md`, `review-{n}.md` | A for `--spec`, which works only for workflows with a contract step so far; none without it |
+| **design** (built in) | Creative Director, Designer, Design Critic | `brief.md`, `concepts.md`, `direction.md` (the human's pick), `build-{n}.md`, `review-{n}.md`, `acceptance-{n}.md` (the human's verdict) | none: the human picks the direction and gives the verdict in human-paced Creative Director turns; B would make both gates without an agent |
 | **product-team** (built in) | Product Manager, Architect, QA Engineer, Engineer, Tech Lead | `spec.md` (requirements), `design.md`, `tests.md`, `build-{n}.md`, `review-{n}.md`, `acceptance-{n}.md` (the Product Manager's) | B for the human to approve the design before QA starts |
 | **plan** | Spec Collector, Planner, Builder, Reviewer | `spec.md`, `plan.md` (approved by the human), `build-{n}.md`, `review-{n}.md` | B; D for a plan sent back (`plan-{n}.md`) |
 | **bugfix** | Spec Collector or none, Reproducer, Builder, Reviewer | `spec.md` or the task, `repro.md` with a failing test, `build-{n}.md`, `review-{n}.md` | D for "cannot reproduce"; I for the test failing before and passing after |

@@ -179,6 +179,7 @@ scenarios!(
     specs_drained,
     takeover,
     verdict_retried,
+    workflow_design,
     workflow_file_installed,
     workflow_product_team,
     workflow_quick,
