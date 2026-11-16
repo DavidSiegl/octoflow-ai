@@ -54,6 +54,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   not acted on (cross-review 216 F2; documented in `design.toml`'s header and the 0.86.0 notes). Closed by a
   human-paced verdict step always being asked and able to extend the rounds, or by a workflow setting its own
   round limit.
+- **An agent that writes its handoff file before taking its first prompt keeps its `unprompted` mark into the role's
+  next turn.** `written` (`engine/src/workflow/turn.rs`) returns a file found already written before `agent` or
+  `deliver` run, so the mark is cleared by neither: when an unprompted agent wrote the file anyway (a human typing in
+  its pane), the next turn's `agent` treats it as still unprompted, and, blocked, alerts the human about a startup
+  dialog again (cross-review 214 F6). Closed by clearing the role's mark where `written` takes a file already written.
 - **Two POST /forget requests that list the same run at once can both forget it.** Each listed run is read at its
   turn (`forget_all`, `engine/src/cli/forget.rs`), but serve answers each request on its own thread: two requests
   (two app windows, a double submit) can both read run X as closed before either deletes it, and both answer
