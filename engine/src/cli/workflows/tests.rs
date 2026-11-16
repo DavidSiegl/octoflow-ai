@@ -52,15 +52,15 @@ fn workflows_lists_them() {
         "    error: step 1: file is missing".into(),
         // A file of a built-in's name, which the built-in replaced: the list says how to fix it.
         format!("quick  {workflows}/quick.toml"),
-        "    error: workflow quick is built in; delete this file to run the built-in, or rename it to keep it as a \
-         workflow of its own"
+        "    error: workflow quick is built in, so no file may take its name; \
+         rename the file to keep it as a workflow of its own, or delete it and run the built-in"
             .into(),
         format!("solo  {workflows}/solo.toml"),
         "    build".into(),
         "    Builder alone".into(),
         String::new(),
         format!(
-            "Add one as {workflows}/NAME.toml; `octoflow workflows default` prints the default as a file to \
+            "Add one as {workflows}/NAME.toml; `octoflow workflows NAME` prints any of these as a file to \
              start from."
         ),
     ]);
@@ -129,7 +129,7 @@ fn workflows_says_why_the_prompt_files_would_stop_a_run() {
     assert!(out.ends_with(&expected), "{out}");
     // Without prompt files, the list ends at how to add a workflow.
     let cli = configured(&TempDir::new(), &[]);
-    assert!(printed(&cli, &[]).ends_with("prints the default as a file to start from.\n"));
+    assert!(printed(&cli, &[]).ends_with("prints any of these as a file to start from.\n"));
 }
 
 #[test]

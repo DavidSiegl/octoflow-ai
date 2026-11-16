@@ -56,24 +56,38 @@ pub const STEP_KEYS: [&str; 12] = [
 /// The steps' flags, the fields of STEP_KEYS that are false by default.
 const STEP_FLAGS: [&str; 5] = ["fresh_repeats_again", "human_paced", "edits", "quality_gated", "locks"];
 
-/// The built-in workflows other than the default: each one's name and the text of its workflow file, which the
-/// binary carries. Each `use`s steps of the default workflow, so prompt files word those as they would in a workflow
-/// file of the user's.
+/// The built-in workflows other than the default, in name order: each one's name and the text of its workflow file,
+/// which the binary carries. Each `use`s steps of the default workflow, so prompt files word those as they would in a
+/// workflow file of the user's. A new built-in needs only its line here.
 const BUILT_IN_FILES: [(&str, &str); 2] = [
     ("product-team", include_str!("workflows/product-team.toml")),
     ("quick", include_str!("workflows/quick.toml")),
 ];
 
-/// The names of the workflows `run --workflow` offers built in, in name order; a workflow file cannot take one.
-pub const WORKFLOWS: [&str; 3] = ["default", BUILT_IN_FILES[0].0, BUILT_IN_FILES[1].0];
+/// The names of the workflows `run --workflow` offers built in, in name order: `default`, then BUILT_IN_FILES's. A
+/// workflow file cannot take one.
+pub const WORKFLOWS: [&str; BUILT_IN_FILES.len() + 1] = built_in_names();
+
+/// WORKFLOWS, built from BUILT_IN_FILES at compile time.
+const fn built_in_names() -> [&'static str; BUILT_IN_FILES.len() + 1] {
+    let mut names = ["default"; BUILT_IN_FILES.len() + 1];
+    let mut i = 0;
+    while i < BUILT_IN_FILES.len() {
+        names[i + 1] = BUILT_IN_FILES[i].0;
+        i += 1;
+    }
+    names
+}
 
 /// The built-in workflow of that name, worded by prompts; an error naming the built-in ones when there is none.
+/// Panics if a built-in file does not parse under prompts, which cannot happen for prompts load_prompts accepts:
+/// the tests parse every built-in, and parse_workflow checks a prompt only for its placeholders, which load_prompts
+/// has already checked.
 pub fn find_workflow(name: &str, prompts: &Prompts) -> Result<Pipeline, OrchestratorError> {
     if name == "default" {
         return Ok(default_workflow(prompts));
     }
     if let Some((_, text)) = BUILT_IN_FILES.iter().find(|(n, _)| *n == name) {
-        // The tests load every built-in file, so one that does not parse never ships.
         let definition = parse_toml(text).unwrap_or_else(|e| panic!("built-in workflow {name} is not TOML: {e}"));
         return Ok(parse_workflow(name, &definition, prompts)
             .unwrap_or_else(|e| panic!("built-in workflow {name} is invalid: {e}")));
@@ -138,26 +152,23 @@ fn unreadable(path: &str, e: &std::io::Error) -> OrchestratorError {
 /// The workflow text, the contents of the workflow file at path, defines, as load_workflow_file gives it.
 fn workflow_from_text(path: &str, text: &str, prompts: &Prompts) -> Result<Pipeline, OrchestratorError> {
     let name = split_extension(file_name(path)).0;
-    let definition = parse_toml(text).map_err(|e| OrchestratorError(format!("{path}: {e}")))?;
-    // A file may predate its name's becoming built in, as quick.toml and product-team.toml copied from the examples
-    // of releases before 0.85.0 do: say how to get either workflow.
-    if WORKFLOWS.contains(&name) {
-        return Err(OrchestratorError(format!(
-            "{path}: workflow {name} is built in; delete this file to run the built-in, or rename it to keep it as a \
-             workflow of its own"
-        )));
-    }
     if let Some(problem) = name_problem(name) {
         return Err(OrchestratorError(format!("{path}: {problem}")));
     }
+    let definition = parse_toml(text).map_err(|e| OrchestratorError(format!("{path}: {e}")))?;
     parse_workflow(name, &definition, prompts).map_err(|e| OrchestratorError(format!("{path}: {e}")))
 }
 
 /// What is wrong with name as the name of a workflow file's workflow: it is built in, or not a name (is_name); None
 /// when nothing is.
 fn name_problem(name: &str) -> Option<String> {
+    // Worded for a file that predates its name's becoming built in too, as a quick.toml or product-team.toml copied
+    // from the example workflows of releases before 0.85.0 does.
     if WORKFLOWS.contains(&name) {
-        return Some(format!("workflow {name} is built in; give the file another name"));
+        return Some(format!(
+            "workflow {name} is built in, so no file may take its name; rename the file to keep it as a workflow of \
+             its own, or delete it and run the built-in"
+        ));
     }
     if !is_name(name) {
         return Some("a workflow's name, its file's, may use only letters, digits, - and _".into());

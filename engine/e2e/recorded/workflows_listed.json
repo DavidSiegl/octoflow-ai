@@ -16,7 +16,8 @@
     "<world>",
     "<world>",
     "<world>",
-    "BUILD_PROMPT"
+    "BUILD_PROMPT",
+    "NAME"
    ],
    "stderr_facts": []
   },

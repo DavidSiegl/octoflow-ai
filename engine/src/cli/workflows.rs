@@ -44,7 +44,7 @@ fn print_workflows(config: &ConfigDir, print: &dyn Fn(&str)) -> Result<(), Orche
         }
     }
     say(&format!(
-        "\nAdd one as {}/NAME.toml; `{} workflows default` prints the default as a file to start from.",
+        "\nAdd one as {}/NAME.toml; `{} workflows NAME` prints any of these as a file to start from.",
         config.workflows_dir(),
         super::program_name()
     ));
