@@ -155,7 +155,8 @@ fn workflow_from_text(path: &str, text: &str, prompts: &Prompts) -> Result<Pipel
     let name = split_extension(file_name(path)).0;
     if let Some(problem) = name_problem(name) {
         // A file of a built-in's name may predate the name's becoming built in, as a quick.toml or product-team.toml
-        // copied from the example workflows of releases before 0.85.0 does: say how to get either workflow.
+        // copied from the example workflows of releases before 0.85.0, or a design.toml of one's own from before
+        // 0.86.0, does: say how to get either workflow.
         let fix = if WORKFLOWS.contains(&name) {
             "; rename the file to keep it as a workflow of its own, or delete it and run the built-in"
         } else {

@@ -42,6 +42,13 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **A human-paced verdict step is skipped or overridden in a run's last round.** `--max-rounds` bounds every
+  verdict step's loop together, and from round `max_rounds` on the run goes on past the last verdict step whatever
+  the verdict (`Workflow::take_turn`, `engine/src/workflow.rs`). In `design`, a Critic's CHANGES_REQUESTED in round 3
+  publishes without the human's acceptance, and the human's own CHANGES_REQUESTED at acceptance-3.md is recorded but
+  not acted on (cross-review 216 F2; documented in `design.toml`'s header and the 0.86.0 notes). Closed by a
+  human-paced verdict step always being asked and able to extend the rounds, or by a workflow setting its own
+  round limit.
 - **Two POST /forget requests that list the same run at once can both forget it.** Each listed run is read at its
   turn (`forget_all`, `engine/src/cli/forget.rs`), but serve answers each request on its own thread: two requests
   (two app windows, a double submit) can both read run X as closed before either deletes it, and both answer

@@ -1,8 +1,13 @@
 # Creative Director -> Designer (concepts) -> Creative Director (direction) -> Designer <-> Design Critic, then the
 # Creative Director's acceptance with the human: visual work, such as a web page or frontend, a logo or icon set, a
-# mockup or a small design system, judged by eye against a brief. The human's taste is asked twice, at the direction
-# before the work goes deep and at the acceptance at the end; both steps are human-paced, so they wait on the human
-# with no timeout and focus the Creative Director's pane.
+# mockup or a small design system, judged by eye against a brief. The human is asked three times: for the brief, for
+# the direction before the work goes deep, and for the acceptance at the end. All three steps are human-paced, so
+# they wait on the human with no timeout and focus the Creative Director's pane. A run given its brief (run --spec,
+# drain) starts at concepts and still waits at direction and accept, so it needs the human at hand.
+#
+# --max-rounds bounds the Critic's and the acceptance's rounds together, and from the last round on the run goes on
+# past accept whatever the verdict (RunSettings::max_rounds): a Critic's request for changes in that round publishes
+# without asking the human, and the human's own request for changes there is recorded but not acted on.
 #
 # The Creative Director agrees the brief with the human and is the session that holds the work to it. The Designer
 # makes the concepts and builds the chosen one, so its session knows why each concept looked as it did. The Design
@@ -12,7 +17,8 @@
 # The keys are the default workflow's where the step is one of its own, so --spec-model (the Creative Director's),
 # --build-model (the Designer's) and --review-model (the Design Critic's) still apply.
 #
-# Screenshots go in the run's directory, beside the handoff files, which git ignores; the concepts go under a
+# Screenshots go in the run's directory, beside the handoff files, which git ignores, each name starting with the
+# step and round that took it, so that no role's or round's screenshots overwrite another's; the concepts go under a
 # directory the brief names, and leave the change before it is published. A logo exported at several sizes and in
 # several variants is many files, so the diff budget below is larger than the default's.
 #
@@ -45,7 +51,6 @@ First read the project in {cwd} for what already exists: a design system, colour
 - **Concepts directory**: a directory in the project, not yet used, where the Designer's concepts go while the human picks one; it is removed before the change is published.
 
 When the human approves the brief, write it to {brief_path} in a single write, as your last step. Its first line is a `# ` heading: a short imperative title for the work, under 70 characters; it becomes the branch name, the commit subject and the pull request title. Then the sections above, naming every deliverable's path in full: a change to a file the brief does not name is flagged for the Designer to justify.'''
-human_paced = true
 
 [[steps]]
 id = "concepts"
@@ -57,7 +62,7 @@ You are the Designer, the second of three roles. The Creative Director agreed th
 
 Make two or three concepts that differ in kind, not in shade: different ideas of what the work is, each a direction someone could prefer. Make each one a real artefact of the kind the brief's deliverables are (an SVG, an HTML page, a component in the project's framework), in its own subdirectory of the concepts directory the brief names, and nowhere else in the project. Do not build every deliverable yet: enough of each concept to judge it by.
 
-Render each concept and save the screenshots in the directory of {concepts_path}, the run's directory, which git ignores, so they stay out of the change. Render with what this machine has: a page with a headless Chromium or Chrome (`chromium --headless --screenshot=FILE --window-size=WIDTH,HEIGHT URL`), or with the project's own Playwright if it has one; an SVG with `rsvg-convert` or ImageMagick's `magick`. If none of them is installed, do not install one: say so in your report, and which you would need.
+Render each concept and save the screenshots in the directory of {concepts_path}, the run's directory, which git ignores, so they stay out of the change; start each screenshot's file name with `concepts-` and the concept's name. Render with what this machine has: a page with a headless Chromium or Chrome (`chromium --headless --screenshot=FILE --window-size=WIDTH,HEIGHT URL`), or with the project's own Playwright if it has one; an SVG with `rsvg-convert` or ImageMagick's `magick`. If none of them is installed, do not install one: say so in your report, and which you would need.
 
 Do not commit, push or switch branches. As your last step, write {concepts_path} in a single write; it hands the concepts to the Creative Director: for each concept its name, its directory, its screenshots, and a paragraph on its idea and what it gives up.'''
 
@@ -68,7 +73,7 @@ file = "direction.md"
 human_paced = true
 edits = true  # deletes the concepts not taken
 prompt = '''
-You are the Creative Director again. The Designer made the concepts described in {concepts_path} against the brief in {brief_path} you agreed with the human.
+You are the Creative Director, the first of three roles (Creative Director -> Designer -> Design Critic): you hold the work to the brief in {brief_path}, and you record the human's choices; at the end you will show them the finished work for their verdict. The Designer made the concepts described in {concepts_path} against that brief.
 
 Walk the human through them one at a time: the idea, the screenshots (give their paths, so the human can open them), and how each meets the brief. Ask which they want: one concept, or a mix of named parts of several, and what to change. Do not design anything yourself; record the human's choice in their words where you can.
 
@@ -80,15 +85,15 @@ As your last step, write the direction to {direction_path} in a single write: th
 use = "build"
 id = "design"
 prompt = '''
-You are the Designer again. The brief in {brief_path} is your contract, and the human chose the direction in {direction_path} from your concepts in {concepts_path}.
+You are the Designer, the second of three roles. The brief in {brief_path} is your contract, and the human chose the direction in {direction_path} from the concepts in {concepts_path}.
 
 Build the chosen direction into every deliverable the brief names, at the paths it names, in the project's conventions. Once the deliverables are built, remove the concepts directory, so that the change holds the deliverables only.
 
-Render every deliverable at every size and breakpoint the brief names, and save the screenshots in the directory of {design_path}, the run's directory, which git ignores, so they stay out of the change; render as for the concepts, and if nothing on this machine can, say so in your report. Check the brief's accessibility level yourself: contrast of text and controls, keyboard use for anything interactive. Run the project's tests if it has any. Do not commit, push or switch branches.
+Render every deliverable at every size and breakpoint the brief names, and save the screenshots in the directory of {design_path}, the run's directory, which git ignores, so they stay out of the change, each file name starting with `design-{n}-`; render as for the concepts, and if nothing on this machine can, say so in your report. Check the brief's accessibility level yourself: contrast of text and controls, keyboard use for anything interactive. Run the project's tests if it has any. Do not commit, push or switch branches.
 
 As your last step, write a report to {design_path} in a single write; it hands the work to the Design Critic: each deliverable's path and what it is, the screenshots of each, how you checked accessibility, and any part of the brief or the direction you could not meet, with the reason.'''
 again = '''
-Changes were requested, by the Design Critic or by the human through the Creative Director; the findings are in {findings}. Fix each finding, or explain in your report why it is wrong, keeping to the brief in {brief_path} and the direction in {direction_path}. Render the deliverables you changed again. Do not commit, push or switch branches.
+Changes were requested, by the Design Critic or by the human through the Creative Director; the findings are in {findings}. Fix each finding, or explain in your report why it is wrong, keeping to the brief in {brief_path} and the direction in {direction_path}. Render the deliverables you changed again, with file names starting `design-{n}-`. Do not commit, push or switch branches.
 
 As your last step, write a new report to {design_path} in a single write, in the same shape as before, answering each finding by its number.'''
 fresh_note = '''
@@ -102,13 +107,13 @@ prompt = '''
 You are the Design Critic, the last of three roles; once you approve, the Creative Director shows the human the work for their verdict. You did not make this work. Judge it against the brief in {brief_path} and the direction the human chose in {direction_path}.
 
 The change: {change}
-The Designer's report is in {design_path}. Do not trust its screenshots: render every deliverable yourself, at every size and breakpoint the brief names, and save your screenshots in the directory of {critique_path}, the run's directory, which git ignores, so they stay out of the change. Render with what this machine has: a page with a headless Chromium or Chrome (`chromium --headless --screenshot=FILE --window-size=WIDTH,HEIGHT URL`), or with the project's own Playwright if it has one; an SVG with `rsvg-convert` or ImageMagick's `magick`. If none of them is installed, say so at the top of your review and judge from the source. Do not modify any file of the project.
+The Designer's report is in {design_path}. Do not trust its screenshots: render every deliverable yourself, at every size and breakpoint the brief names, and save your screenshots in the directory of {critique_path}, the run's directory, which git ignores, so they stay out of the change, each file name starting with `critique-{n}-`. Render with what this machine has: a page with a headless Chromium or Chrome (`chromium --headless --screenshot=FILE --window-size=WIDTH,HEIGHT URL`), or with the project's own Playwright if it has one; an SVG with `rsvg-convert` or ImageMagick's `magick`. If none of them is installed, say so at the top of your review and judge from the source. Do not modify any file of the project.
 
 Judge: the hierarchy, what the eye meets first; spacing and alignment; type; colour; consistency across states, sizes and breakpoints; contrast and keyboard use at the brief's WCAG level; for a logo or icon, whether it still reads at 16 px and in one colour. Every deliverable the brief names exists at its path, and nothing else was left behind, the concepts directory included.
 
 As your last step, write your review to {critique_path} in a single write. Its first line must be exactly `VERDICT: {approve}` or `VERDICT: {changes}`. Then numbered findings, each with the deliverable, the size or state where you see it, what is wrong and which part of the brief or direction it breaks; name the screenshot that shows it. Request changes only for what breaks the brief, the direction or the accessibility level, or what a viewer would plainly see as broken. Taste beyond the brief is not a defect: that is the human's call at the acceptance.'''
 again = '''
-The Designer has answered the findings in {findings}, yours or the human's; the new report is in {design_path}. Judge the work again ({change}) against the brief in {brief_path}, the direction in {direction_path} and your previous review in {prev_critique_path}, rendering what changed yourself rather than trusting the Designer's screenshots.
+The Designer has answered the findings in {findings}, yours or the human's; the new report is in {design_path}. Judge the work again ({change}) against the brief in {brief_path}, the direction in {direction_path} and your previous review in {prev_critique_path}, rendering what changed yourself rather than trusting the Designer's screenshots, with file names starting `critique-{n}-`.
 
 As your last step, write the review to {critique_path} in a single write, with the same first-line verdict and numbered findings as before.'''
 fresh_note = '''
@@ -124,13 +129,13 @@ prompt = '''
 You are the Creative Director, now showing the human the finished work. The brief in {brief_path} is what you agreed with them, and the direction in {direction_path} is what they chose; the Design Critic has approved the work against both ({critique_path}).
 
 The change: {change}
-The Designer's report, with the screenshots of every deliverable, is in {design_path}, and the Design Critic's own screenshots are in the directory of {critique_path}. Walk the human through each deliverable beside the part of the brief it answers: give the screenshots' paths and the deliverables' own paths, so they can open them. Do not modify any file of the project. Any note the orchestrator adds at the end of this prompt, on the quality gate's findings, is for context only.
+The Designer's report, with the screenshots of every deliverable, is in {design_path}, and the Design Critic's own screenshots are those whose names start with `critique-{n}-` in the directory of {critique_path}. Walk the human through each deliverable beside the part of the brief it answers: give the screenshots' paths and the deliverables' own paths, so they can open them. Do not modify any file of the project. Any note the orchestrator adds at the end of this prompt, on the quality gate's findings, is for context only.
 
 The verdict is the human's, not yours: ask whether they accept the work, and if not, what to change. Record what they say in their words where you can.
 
 As your last step, write the human's verdict to {accept_path} in a single write. Its first line must be exactly `VERDICT: {approve}` if they accept the work, or `VERDICT: {changes}` if they want changes. Then the changes they asked for, numbered, each naming the deliverable and what they want instead.'''
 again = '''
-The Designer has answered the findings in {findings}, and the Design Critic has approved the work again ({critique_path}); the Designer's new report is in {design_path}. Show the human what changed ({change}) against what they asked for in {prev_accept_path}, and ask for their verdict again.
+The Designer has answered the findings in {findings}, and the Design Critic has approved the work again ({critique_path}); the Designer's new report, with the screenshots of what is new, is in {design_path}, and the Critic's are those whose names start with `critique-{n}-`. Show the human how each change they asked for in {prev_accept_path} was answered, and ask for their verdict again. The whole change since the run began, for reference: {change}
 
 As your last step, write it to {accept_path} in a single write, with the same first-line verdict and numbered changes as before.'''
 fresh_note = '''

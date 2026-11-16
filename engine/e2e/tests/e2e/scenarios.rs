@@ -27,7 +27,8 @@ const TASK: &str = "Add a subtract function";
 struct Action(Object);
 
 impl Action {
-    /// Also make these changes to the working tree, path to text, before writing the action's file.
+    /// Also make these changes to the working tree, path to text, before writing the action's file, in place of any
+    /// the action had: `built(..).edit(..)` swaps the Builder's usual edits for others. Add deletions after it.
     fn edit(mut self, files: &[(&str, &str)]) -> Action {
         let edits: Object = files.iter().map(|(path, text)| (path.to_string(), Value::from(*text))).collect();
         self.0.insert("edit".into(), Value::Object(edits));
