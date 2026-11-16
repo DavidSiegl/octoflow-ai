@@ -43,8 +43,8 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 ## Open issues
 
 - **A step cannot be kept from another step's file.** Every handoff file is in the run's directory, so
-  `peer-review`'s Domain Referee is only asked not to read the Methods Referee's reports
-  (`engine/src/workflows/peer-review.toml`, header). Closed by a step key naming the steps whose files a turn may not
+  `peer-review`'s referees are only asked not to read each other's reports
+  (`engine/src/workflows/peer-review.toml`, header); from round 2 the Author's response quotes both anyway. Closed by a step key naming the steps whose files a turn may not
   read, enforced by keeping them out of the turn's reach (a per-turn directory, say), or by parallel steps (roadmap
   gap C) that each see only the files before the fork.
 - **A human-paced verdict step is skipped or overridden in a run's last round.** `--max-rounds` bounds every

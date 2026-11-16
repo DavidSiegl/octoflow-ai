@@ -155,8 +155,8 @@ fn unreadable(path: &str, e: &std::io::Error) -> OrchestratorError {
 fn workflow_from_text(path: &str, text: &str, prompts: &Prompts) -> Result<Pipeline, OrchestratorError> {
     let name = split_extension(file_name(path)).0;
     if let Some(problem) = name_problem(name) {
-        // A file of a built-in's name may predate the name's becoming built in, as every built-in but the default
-        // came to be in a release of its own (the release notes name it): say how to get either workflow.
+        // A file of a built-in's name may predate the name's becoming built in, since every built-in but the default
+        // became one in a later release (the release notes of that release say so): say how to get either workflow.
         let fix = if WORKFLOWS.contains(&name) {
             "; rename the file to keep it as a workflow of its own, or delete it and run the built-in"
         } else {

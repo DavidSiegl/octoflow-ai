@@ -258,7 +258,7 @@ pub fn workflow_peer_review(w: &mut World) {
         ],
     );
     w.agent(
-        "significance",
+        "domain",
         [
             writes("significance-1.md", "1. Minor: cite Knuth vol. 3.\n"),
             writes("significance-2.md", "1. Answered.\n"),
