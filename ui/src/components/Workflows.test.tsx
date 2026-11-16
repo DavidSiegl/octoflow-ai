@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { WorkflowDefinition } from "../api";
+import { STEP_FLAG_HELP, STEP_FLAGS, type WorkflowDefinition } from "../api";
 import { App } from "../App";
 import { CONNECTION, DEFAULT_DEFINITION, FakeEventSource, OPTIONS, stubServer, workflowAnswers, type Answer, type FakeEdit, type FakeStart } from "../test/fakes";
 
@@ -348,6 +348,22 @@ describe("the workflows dialog", { timeout: EDITOR_TIMEOUT_MS }, () => {
     for (const key of ["max_files", "max_lines", "proof_command"]) {
       expect(saved).not.toHaveProperty(key);
     }
+  });
+
+  it("explains each step flag on hover and as its checkbox's description, read-only and editable alike", async () => {
+    const dialog = await openWorkflows();
+    fireEvent.click(within(entry(dialog, "default")).getByRole("button", { name: "View…" }));
+    const form = await editor();
+    const explained = () => {
+      for (const flag of STEP_FLAGS) {
+        const box = within(form).getByRole("checkbox", { name: flag, description: STEP_FLAG_HELP[flag] });
+        expect(box.closest("label")).toHaveAttribute("title", STEP_FLAG_HELP[flag]);
+      }
+    };
+    explained();
+    fireEvent.click(within(form).getByRole("button", { name: "Duplicate…" }));
+    expect(within(form).getByRole("checkbox", { name: "edits" })).toBeEnabled();
+    explained();
   });
 
   it("shows a file changed since it was opened, and Reload reads it again after a confirmation", async () => {

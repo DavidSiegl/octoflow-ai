@@ -3,6 +3,7 @@ import {
   type Api,
   type EditableWorkflow,
   HttpError,
+  STEP_FLAG_HELP,
   STEP_FLAGS,
   type WorkflowCheck,
   type WorkflowDefinition,
@@ -494,8 +495,15 @@ export function WorkflowEditor({ api, agents, opening, onSaved, onClose }: Props
               </div>
               <div className="flags">
                 {STEP_FLAGS.map((flag) => (
-                  <label key={flag} className="check">
-                    <input type="checkbox" checked={step[flag]} onChange={(e) => editStep({ [flag]: e.target.checked })} />
+                  // The label's title is the tooltip over the key; the checkbox's, which the label's does not give it,
+                  // is its accessible description.
+                  <label key={flag} className="check" title={STEP_FLAG_HELP[flag]}>
+                    <input
+                      type="checkbox"
+                      checked={step[flag]}
+                      title={STEP_FLAG_HELP[flag]}
+                      onChange={(e) => editStep({ [flag]: e.target.checked })}
+                    />
                     {flag}
                   </label>
                 ))}

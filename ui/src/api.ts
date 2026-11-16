@@ -246,8 +246,20 @@ export interface StepDefinition {
   locks?: boolean;
 }
 
-/** The step flags, which a definition leaves out where false, in the order the editor shows them. */
+/** The step flags, which a definition leaves out where false, in the order the editor shows them. Each has its
+ * explanation in STEP_FLAG_HELP. */
 export const STEP_FLAGS = ["fresh_repeats_again", "human_paced", "edits", "quality_gated", "locks"] as const;
+
+/** What each step flag does, in one sentence for the editor's user: its checkbox's tooltip and accessible
+ * description. Written from the engine's Step fields (engine/src/pipeline.rs) and kept in step with the README's
+ * table of step keys. */
+export const STEP_FLAG_HELP: Record<(typeof STEP_FLAGS)[number], string> = {
+  fresh_repeats_again: 'In a later round, a fresh session also gets the "again" prompt, not just the first one.',
+  human_paced: "The step waits on you: no turn timeout or stall notice, and its pane gets focus when ready.",
+  edits: "The step changes the code; the run's base and branch are fixed just before the first such step.",
+  quality_gated: "With --quality-gate, the gate runs after each turn and sends a failing result back to this step.",
+  locks: "Files this step changes are locked, and another step's later changes to them undone; only the first editing step may lock.",
+};
 
 /** A workflow's definition as a workflow file holds it, in JSON: the keys the engine's WORKFLOW_KEYS
  * (engine/src/workflow_file.rs) lists. A key absent is its default: no description, the engine's diff budget, no
