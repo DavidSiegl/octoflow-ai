@@ -194,7 +194,7 @@ fn model_flags_are_run_only() {
 fn unknown_workflow_is_a_usage_error() {
     let (message, status) = refused(&["run", "task", "--workflow", "nope"]);
     assert!(message.contains("invalid value 'nope' for '--workflow"), "{message}");
-    assert!(message.contains("[possible values: default, design, product-team, quick]"), "{message}");
+    assert!(message.contains("[possible values: default, design, peer-review, product-team, quick]"), "{message}");
     assert_eq!(status, 2);
 }
 

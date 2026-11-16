@@ -181,6 +181,7 @@ scenarios!(
     verdict_retried,
     workflow_design,
     workflow_file_installed,
+    workflow_peer_review,
     workflow_product_team,
     workflow_quick,
     workflows_listed,

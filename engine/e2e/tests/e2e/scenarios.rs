@@ -226,6 +226,47 @@ pub fn workflow_design(w: &mut World) {
     w.run(&["run", "--workflow", "design", "--", "Draw a logo"]);
 }
 
+const PAPER: &str = "# Insertion sort against merge sort\n\nInsertion sort is faster below 32 elements.\n";
+const BENCH: &str = "import random\n\nrandom.seed(1)\n";
+
+/// The built-in peer-review workflow: the question, the Author's work, both referees' reports and an Editor's decision
+/// to revise in round 1, then the revision, both referees answering their earlier points and the Editor accepting it
+/// in round 2.
+pub fn workflow_peer_review(w: &mut World) {
+    w.agent(
+        "spec",
+        [
+            writes("question.md", "# Compare two sorts\n\nWhich is faster below 32 elements? paper.md, bench.py.\n"),
+            writes("decision-1.md", "VERDICT: CHANGES_REQUESTED\n\n1. Methods 1: one seed is no sample.\n"),
+            writes("decision-2.md", "VERDICT: APPROVE\n\nMethods 1 answered.\n"),
+        ],
+    );
+    w.agent(
+        "build",
+        [
+            writes("build-1.md", "paper.md; reproduce with `python bench.py`.\n")
+                .edit(&[("paper.md", PAPER), ("bench.py", BENCH)]),
+            writes("build-2.md", "Methods 1: thirty seeds now.\n")
+                .edit(&[("bench.py", "import random\n\nSEEDS = range(30)\n")]),
+        ],
+    );
+    w.agent(
+        "methods",
+        [
+            writes("methods-1.md", "Reproduced.\n\n1. Major: one seed is no sample.\n"),
+            writes("methods-2.md", "Reproduced.\n\n1. Answered.\n"),
+        ],
+    );
+    w.agent(
+        "domain",
+        [
+            writes("significance-1.md", "1. Minor: cite Knuth vol. 3.\n"),
+            writes("significance-2.md", "1. Answered.\n"),
+        ],
+    );
+    w.run(&["run", "--workflow", "peer-review", "--", "Compare two sorts"]);
+}
+
 const TESTS_WEAKENED: &str = "from calc import add, subtract\n\n\ndef test_add():\n    assert add(1, 2) == 3\n";
 
 /// The built-in product-team workflow, approved in round 1 by the Tech Lead and accepted by the Product Manager, its

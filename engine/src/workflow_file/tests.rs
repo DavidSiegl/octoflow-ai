@@ -48,7 +48,7 @@ fn the_built_in_names_are_the_default_then_the_embedded_files() {
 
 #[test]
 fn the_built_in_workflows() {
-    assert_eq!(WORKFLOWS, ["default", "design", "product-team", "quick"]);
+    assert_eq!(WORKFLOWS, ["default", "design", "peer-review", "product-team", "quick"]);
     assert!(WORKFLOWS.is_sorted(), "WORKFLOWS is in name order");
     for name in WORKFLOWS {
         let p = built_in_workflow(name);
@@ -59,7 +59,7 @@ fn the_built_in_workflows() {
     assert!(!is_built_in(&quick(), &built_in()), "the fixture named quick is not the built-in");
     assert_eq!(
         find_workflow("nope", &built_in()).unwrap_err().0,
-        "unknown workflow nope; this orchestrator has default, design, product-team, quick"
+        "unknown workflow nope; this orchestrator has default, design, peer-review, product-team, quick"
     );
 }
 
@@ -401,12 +401,12 @@ fn files_are_offered_by_name() {
     config.file("team", &workflow_toml(&built_in_workflow("product-team")));
     config.file("broken", "nonsense\n");
     std::fs::write(config.dir.join("workflows/notes.txt"), "not a workflow").unwrap();
-    assert_eq!(workflow_names(&config.config).unwrap(), ["broken", "default", "design", "product-team", "quick", "team"]);
+    assert_eq!(workflow_names(&config.config).unwrap(), ["broken", "default", "design", "peer-review", "product-team", "quick", "team"]);
     assert_eq!(named_workflow(&config.config, "team", &built_in()).unwrap().name(), "team");
     assert_eq!(named_workflow(&config.config, "default", &built_in()).unwrap(), *DEFAULT_WORKFLOW);
     assert_eq!(
         named_workflow(&config.config, "nope", &built_in()).unwrap_err().0,
-        "unknown workflow nope; there are broken, default, design, product-team, quick, team"
+        "unknown workflow nope; there are broken, default, design, peer-review, product-team, quick, team"
     );
     let none = ConfigDir::at(&config.dir.join("elsewhere"));
     assert!(workflow_files(&none).unwrap().is_empty());

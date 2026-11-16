@@ -300,7 +300,7 @@ octoflow metrics | jq -s 'map(.rounds) | add / length'
 | `--model MODEL` | Model for every role, passed to its harness unchanged. Default: the workflow file's model for the role, else the harness's own. |
 | `--spec-model`, `--build-model`, `--review-model MODEL` | Model for the Spec Collector, Builder or Reviewer. Overrides `--model`. |
 | `--role-model ROLE=MODEL` | Model for one role, by its key, e.g. `tests=sonnet`. Overrides `--model`; repeatable. |
-| `--workflow NAME` | `run` and `drain`: `default`, `design`, `quick`, `product-team`, or one of [your own](#your-own-workflows). A resumed run keeps its workflow. |
+| `--workflow NAME` | `run` and `drain`: `default`, `design`, `peer-review`, `quick`, `product-team`, or one of [your own](#your-own-workflows). A resumed run keeps its workflow. |
 | `--workflow-file FILE` | `run` and `drain`: like `--workflow`, for the workflow file at `FILE`. |
 | `--spec FILE` | `run` only: skip the interview. `FILE` is read on this machine, a relative path from the current directory, not `--cwd`. It becomes the first step's handoff file, and the run starts at the step after it. Without a task, the task is the spec's first line, when that is a level-one heading, or else `FILE`'s name. Needs a workflow whose first step writes the spec, such as `default` or `product-team`. Later steps that wait for you, such as `design`'s direction and acceptance, still do. |
 | `--no-pr` | `run` only: leave the change uncommitted and the workspace open instead of opening a pull request. Works outside git. |
@@ -459,18 +459,20 @@ how it treats specs you edit while it runs.
 
 ## Your own workflows
 
-The roles, their prompts and their order are a workflow. Four are built in: `default` (Spec Collector → Builder ⇄
+The roles, their prompts and their order are a workflow. Five are built in: `default` (Spec Collector → Builder ⇄
 Reviewer), `design` (for visual work such as a page, a logo or a mockup: Creative Director → Designer's concepts →
 your pick of a direction → Designer ⇄ Design Critic, who renders the work, then your verdict; you are asked at the
-brief, the direction and the acceptance), `quick` (Builder ⇄ Reviewer, the task as the contract) and `product-team` (Product Manager → Architect →
+brief, the direction and the acceptance), `peer-review` (for research written up and refereed: Editor → Author →
+Methods Referee, who reproduces every number → Domain Referee, who checks the claims and sources → the Editor's
+decision to accept or send it back for revision), `quick` (Builder ⇄ Reviewer, the task as the contract) and `product-team` (Product Manager → Architect →
 QA Engineer → Engineer ⇄ Tech Lead, then the Product Manager's acceptance: requirements in business terms, a design
 against the code, acceptance tests written and locked before the code, and the Product Manager judging the change
 the Tech Lead approved against the requirements, or sending it back to the Engineer). Add your own as a TOML file in
 `~/.config/octoflow-ai/workflows/`, named after the workflow, or anywhere with `--workflow-file`. `octoflow
 workflows` lists them and says why one does not load, and `workflows NAME` prints a workflow's full definition, a
-built-in's to start a variant from. A file cannot take a built-in's name: a `quick.toml`, `product-team.toml` or
-`design.toml` made before that workflow was built in no longer loads; delete it to run the built-in, or rename it to
-keep yours.
+built-in's to start a variant from. A file cannot take a built-in's name: one made before that workflow was built in,
+such as a `quick.toml` copied from an earlier release, no longer loads; delete it to run the built-in, or rename it
+to keep yours.
 
 ```toml
 # An abridged product-team.toml: the Architect's design before the default Builder and Reviewer.

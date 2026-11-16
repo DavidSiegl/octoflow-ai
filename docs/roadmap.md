@@ -11,7 +11,7 @@ Ideas for what comes next, in no particular order. The designs behind what has s
 
 ## Workflows
 
-`default`, `design`, `quick` and `product-team` ship built in ([Workflows](architecture.md#workflows)); others are workflow
+`default`, `design`, `peer-review`, `quick` and `product-team` ship built in ([Workflows](architecture.md#workflows)); others are workflow
 files. These engine gaps, by letter (G, runs without a verdict, is closed), stand
 between the engine and the candidates below:
 
@@ -41,10 +41,11 @@ between the engine and the candidates below:
 |---|---|---|---|
 | **quick** (built in) | Builder, Reviewer | `spec.md` from `--spec FILE`, or the task as the contract; `build-{n}.md`, `review-{n}.md` | A for `--spec`, which works only for workflows with a contract step so far; none without it |
 | **design** (built in) | Creative Director, Designer, Design Critic | `brief.md`, `concepts.md`, `direction.md` (the human's pick), `build-{n}.md`, `review-{n}.md`, `acceptance-{n}.md` (the human's verdict) | none: the human picks the direction and gives the verdict in human-paced Creative Director turns; B would make both gates without an agent |
+| **peer-review** (built in) | Editor, Author, Methods Referee, Domain Referee | `question.md`, `build-{n}.md` (the manuscript's report and point-by-point response), `methods-{n}.md`, `significance-{n}.md`, `decision-{n}.md` (the Editor's) | C and E for the referees in parallel, each with a verdict the Editor aggregates; until then they report in turn, without a verdict |
 | **product-team** (built in) | Product Manager, Architect, QA Engineer, Engineer, Tech Lead | `spec.md` (requirements), `design.md`, `tests.md`, `build-{n}.md`, `review-{n}.md`, `acceptance-{n}.md` (the Product Manager's) | B for the human to approve the design before QA starts |
 | **plan** | Spec Collector, Planner, Builder, Reviewer | `spec.md`, `plan.md` (approved by the human), `build-{n}.md`, `review-{n}.md` | B; D for a plan sent back (`plan-{n}.md`) |
 | **bugfix** | Spec Collector or none, Reproducer, Builder, Reviewer | `spec.md` or the task, `repro.md` with a failing test, `build-{n}.md`, `review-{n}.md` | D for "cannot reproduce"; I for the test failing before and passing after |
 | **review-only** | one or more Reviewers | `review.md` on a given branch or pull request | A, F, H; C and E for several reviewers |
-| **research / spike** | Spec Collector, Researcher, Critic | `question.md`, `findings-{n}.md`, `critique-{n}.md` | F, H; D for the critic's verdict |
+| **research / spike** | Spec Collector, Researcher, Critic | `question.md`, `findings-{n}.md`, `critique-{n}.md` | F, H; D for the critic's verdict. `peer-review` covers research that ends in a manuscript in the project; a spike that ends in a document alone still needs F and H |
 | **panel review** | Spec Collector, Builder, two or three Reviewers (e.g. correctness, security) | `spec.md`, `build-{n}.md`, `review-<lens>-{n}.md` | C, E |
 | **solo** | Builder, with or without a Spec Collector | `spec.md` (optional), `build.md` | none |
