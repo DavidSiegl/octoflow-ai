@@ -923,15 +923,6 @@ ul.workflow-list {
   color: var(--muted-mint);
 }
 
-.workflow-editor .row {
-  display: flex;
-  gap: 12px;
-}
-
-.workflow-editor .row label {
-  flex: 1;
-}
-
 .workflow-editor table.roles input,
 .workflow-editor table.roles select {
   width: 100%;

@@ -47,13 +47,17 @@ type DraftStep = {
   loopTo: number | null;
 } & Flags;
 
-/** A workflow as the form holds it: every field as its widget holds it, text where a definition has a number. */
+/** The definition's fields the editor has no widget for: the diff budget (docs/quality-gate.md) and proof_command
+ * (README, "Your own workflows"), set by hand in the file. A save writes them back as they were read, but for
+ * proof_command while no step is a verdict step: the engine refuses a proof command with no proofs to run, and the
+ * editor has no field to clear it, so it is left out until a step loops back again. */
+type Kept = Omit<WorkflowDefinition, "description" | "roles" | "steps">;
+
+/** A workflow as the form holds it: every field as its widget holds it, and kept, the fields it has none for. */
 interface Draft {
   name: string;
   description: string;
-  maxFiles: string;
-  maxLines: string;
-  proofCommand: string;
+  kept: Kept;
   roles: DraftRole[];
   steps: DraftStep[];
 }
@@ -75,7 +79,8 @@ function newStep(id: string, role: number): DraftStep {
 /** definition under name, as the form holds it. A step's role that the definition's roles lack, which a definition
  * read from the server never has, gets a row of its own. */
 function draftOf(name: string, definition: WorkflowDefinition): Draft {
-  const roles = Object.entries(definition.roles).map(([key, r]) => ({
+  const { description, roles: definedRoles, steps: definedSteps, ...kept } = definition;
+  const roles = Object.entries(definedRoles).map(([key, r]) => ({
     row: nextRow(),
     key,
     label: r.label,
@@ -89,11 +94,11 @@ function draftOf(name: string, definition: WorkflowDefinition): Draft {
     }
     return found.row;
   };
-  const steps = definition.steps.map((s) => {
+  const steps = definedSteps.map((s) => {
     const flags = Object.fromEntries(STEP_FLAGS.map((flag) => [flag, s[flag] === true])) as Flags;
     return { ...newStep(s.id, roleRow(s.role)), file: s.file, prompt: s.prompt, again: s.again ?? "", fresh_note: s.fresh_note ?? "", ...flags };
   });
-  definition.steps.forEach((s, i) => {
+  definedSteps.forEach((s, i) => {
     const step = steps[i];
     if (step) {
       step.loopTo = steps.find((t) => s.loop_to !== undefined && t.id === s.loop_to)?.row ?? null;
@@ -101,27 +106,16 @@ function draftOf(name: string, definition: WorkflowDefinition): Draft {
   });
   return {
     name,
-    description: definition.description ?? "",
-    maxFiles: definition.max_files?.toString() ?? "",
-    maxLines: definition.max_lines?.toString() ?? "",
-    proofCommand: definition.proof_command ?? "",
+    description: description ?? "",
+    kept,
     roles,
     steps,
   };
 }
 
-/** A budget field's text as a definition holds it: absent when empty, a number when it is a whole one JSON carries
- * exactly, else the text, for the server to name as the problem. */
-function budget(text: string): number | string | undefined {
-  const trimmed = text.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-  return /^\d+$/.test(trimmed) && Number.isSafeInteger(Number(trimmed)) ? Number(trimmed) : trimmed;
-}
-
-/** The definition draft holds, in the canonical form a save writes: a field at its default left out. A role key given
- * twice keeps its last row, and a removed role or loop target is written as none; draftProblem names both first. */
+/** The definition draft holds, in the canonical form a save writes: a field at its default left out, and the kept
+ * proof_command too while no step loops back (Kept). A role key given twice keeps its last row, and a removed role or
+ * loop target is written as none; draftProblem names both first. */
 function definitionOf(draft: Draft): WorkflowDefinition {
   const optional = <T,>(key: string, value: T | undefined | "") => (value === undefined || value === "" ? {} : { [key]: value });
   const steps = draft.steps.map((s) => {
@@ -137,11 +131,12 @@ function definitionOf(draft: Draft): WorkflowDefinition {
       ...optional("loop_to", draft.steps.find((t) => t.row === s.loopTo)?.id),
     };
   });
+  const { proof_command, ...budget } = draft.kept;
+  const verdictStep = steps.some((s) => "loop_to" in s);
   return {
     ...optional("description", draft.description),
-    ...optional("max_files", budget(draft.maxFiles)),
-    ...optional("max_lines", budget(draft.maxLines)),
-    ...optional("proof_command", draft.proofCommand),
+    ...budget,
+    ...(verdictStep ? optional("proof_command", proof_command) : {}),
     roles: Object.fromEntries(
       draft.roles.map((r) => [r.key, { label: r.label, ...optional("agent", r.agent), ...optional("model", r.model) }]),
     ),
@@ -186,12 +181,13 @@ interface Props {
   onClose: () => void;
 }
 
-/** An editor of a workflow file, over the window: its name (for a copy), description, diff budget and proof command;
- * its roles, each with its label, agent and model; and its steps, each with every field. The server checks the
- * definition a moment after each change, and Save is enabled only while its last check of what the form holds found
- * no problem. A save names the file's text the editor opened, so that the server refuses it when the file changed
- * since; a hand-written file is rewritten only after a confirmation. A built-in workflow opens read-only, with
- * Duplicate… in place of Save. Every confirmation is a dialog of its own, in front. */
+/** An editor of a workflow file, over the window: its name (for a copy) and description; its roles, each with its label,
+ * agent and model; and its steps, each with every field. The diff budget and proof command it does not show, and a save
+ * keeps them as the file set them. The server checks the definition a moment after each change, and Save is enabled
+ * only while its last check of what the form holds found no problem. A save names the file's text the editor opened, so
+ * that the server refuses it when the file changed since; a hand-written file is rewritten only after a confirmation. A
+ * built-in workflow opens read-only, with Duplicate… in place of Save. Every confirmation is a dialog of its own, in
+ * front. */
 export function WorkflowEditor({ api, agents, opening, onSaved, onClose }: Props) {
   // The workflow as read; null while it is, or a load that failed: the server's error, or a file that does not load.
   const [opened, setOpened] = useState<Opened | null>(null);
@@ -349,20 +345,6 @@ export function WorkflowEditor({ api, agents, opening, onSaved, onClose }: Props
             Description
             <input value={draft.description} onChange={(e) => edit({ description: e.target.value })} />
           </label>
-          <div className="row">
-            <label>
-              max_files
-              <input value={draft.maxFiles} inputMode="numeric" onChange={(e) => edit({ maxFiles: e.target.value })} placeholder="default" />
-            </label>
-            <label>
-              max_lines
-              <input value={draft.maxLines} inputMode="numeric" onChange={(e) => edit({ maxLines: e.target.value })} placeholder="default" />
-            </label>
-            <label>
-              proof_command
-              <input value={draft.proofCommand} onChange={(e) => edit({ proofCommand: e.target.value })} placeholder="none" />
-            </label>
-          </div>
 
           <h3>Roles</h3>
           <table className="roles">
