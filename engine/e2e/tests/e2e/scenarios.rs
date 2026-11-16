@@ -6,7 +6,7 @@
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use octoflow_e2e::{array_at, checkout, object, object_at};
+use octoflow_e2e::{array_at, object, object_at};
 use serde_json::Value;
 use octoflow_engine::json::Object;
 
@@ -87,10 +87,9 @@ fn accepted(n: u32) -> Action {
     writes(&format!("acceptance-{n}.md"), "VERDICT: APPROVE\n\nNone.\n")
 }
 
-/// The path of the example workflow name in this checkout.
-fn example(name: &str) -> String {
-    checkout().join("examples/workflows").join(name).to_string_lossy().into_owned()
-}
+/// A workflow file of the default workflow's steps by use, under a name and description of its own.
+const SPEC_BUILD_REVIEW: &str = "description = \"The default's steps, as a workflow file\"\n\n[[steps]]\nuse = \"spec\"\n\n\
+                                 [[steps]]\nuse = \"build\"\n\n[[steps]]\nuse = \"review\"\n";
 
 /// The default workflow's three roles, approved in round 1.
 fn approved_roles(w: &mut World) {
@@ -157,17 +156,16 @@ pub fn agent_exits(w: &mut World) {
 
 // -- The other workflows ------------------------------------------------------------
 
-/// examples/workflows/quick.toml by --workflow-file: Builder and Reviewer, the task as the contract.
+/// The built-in quick workflow: Builder and Reviewer, the task as the contract.
 pub fn workflow_quick(w: &mut World) {
     w.agent("build", [built(1, 0)]);
     w.agent("review", [approved(1)]);
-    w.run(&["run", "--workflow-file", &example("quick.toml"), "--", TASK]);
+    w.run(&["run", "--workflow", "quick", "--", TASK]);
 }
 
-/// examples/workflows/spec-build-review.toml installed as a workflow file and run by --workflow, with --role-model and
-/// --agent.
-pub fn workflow_spec_build_review(w: &mut World) {
-    w.write_config("workflows/sbr.toml", &read(&example("spec-build-review.toml")));
+/// A workflow file installed in the configuration directory and run by --workflow, with --role-model and --agent.
+pub fn workflow_file_installed(w: &mut World) {
+    w.write_config("workflows/sbr.toml", SPEC_BUILD_REVIEW);
     approved_roles(w);
     w.run(&[
         "run", "--workflow", "sbr", "--agent", "codex", "--role-model", "review=opus", "--permission-mode", "acceptEdits",
@@ -177,7 +175,7 @@ pub fn workflow_spec_build_review(w: &mut World) {
 
 const TESTS_WEAKENED: &str = "from calc import add, subtract\n\n\ndef test_add():\n    assert add(1, 2) == 3\n";
 
-/// examples/workflows/product-team.toml, approved in round 1 by the Tech Lead and accepted by the Product Manager, its
+/// The built-in product-team workflow, approved in round 1 by the Tech Lead and accepted by the Product Manager, its
 /// Engineer making engineer_edits.
 fn product_team(w: &mut World, engineer_edits: &[(&str, &str)]) {
     w.agent("spec", [spec_written(), accepted(1)]);
@@ -189,10 +187,10 @@ fn product_team(w: &mut World, engineer_edits: &[(&str, &str)]) {
     );
     w.agent("build", [built(1, 0).edit(engineer_edits)]);
     w.agent("review", [approved(1)]);
-    w.run(&["run", "--workflow-file", &example("product-team.toml"), "--", TASK]);
+    w.run(&["run", "--workflow", "product-team", "--", TASK]);
 }
 
-/// examples/workflows/product-team.toml: five roles, the QA Engineer's tests locked, the Engineer leaving them.
+/// The built-in product-team workflow: five roles, the QA Engineer's tests locked, the Engineer leaving them.
 pub fn workflow_product_team(w: &mut World) {
     product_team(w, &[("src/calc.py", CALC_WITH_SUBTRACT)]);
 }
@@ -493,7 +491,7 @@ pub fn kill_in_quality(w: &mut World) {
     killed_held_and_resumed(w, "quality", &gated(&["--", TASK]), &[]);
 }
 
-/// examples/workflows/product-team.toml killed in step hold, design or tests, and resumed.
+/// The built-in product-team workflow killed in step hold, design or tests, and resumed.
 fn product_team_killed(w: &mut World, hold: &str) {
     let held = |action: Action, step: &str| if hold == step { action.hold(step) } else { action };
     w.agent("spec", [spec_written(), accepted(1)]);
@@ -503,7 +501,7 @@ fn product_team_killed(w: &mut World, hold: &str) {
     w.agent("tests", [held(tests, "tests")]);
     w.agent("build", [built(1, 0).edit(&[("src/calc.py", CALC_WITH_SUBTRACT)])]);
     w.agent("review", [approved(1)]);
-    killed_and_resumed(w, hold, &["run", "--workflow-file", &example("product-team.toml"), "--", TASK]);
+    killed_and_resumed(w, hold, &["run", "--workflow", "product-team", "--", TASK]);
 }
 
 /// The product team's run killed while the Architect works, before the run has a branch.
@@ -647,14 +645,16 @@ fn wait_for_the_next_second() {
     }
 }
 
-/// workflows: the list, with a workflow file and a prompt file installed; the default printed as a file; an example by
-/// its path; and a workflow file that does not load.
+/// workflows: the list, with a workflow file, one of a built-in's name and a prompt file installed; the default and
+/// quick printed as files; a workflow file by its path; and a workflow file that does not load.
 pub fn workflows_listed(w: &mut World) {
-    w.write_config("workflows/quick.toml", &read(&example("quick.toml")));
+    let sbr = w.write_config("workflows/sbr.toml", SPEC_BUILD_REVIEW);
+    w.write_config("workflows/quick.toml", "[[steps]]\nuse = \"build\"\n");
     w.write_config("prompts/BUILD_PROMPT.md", "Build {spec_path} in {cwd}; follow the conventions. Report to {build_path}.\n");
     w.run(&["workflows"]);
     w.run(&["workflows", "default"]);
-    w.run(&["workflows", &example("product-team.toml")]);
+    w.run(&["workflows", "quick"]);
+    w.run(&["workflows", &sbr]);
     let broken = w.write("workflows/broken.toml", "[[steps]]\nuse = \"nothing\"\n");
     w.run(&["workflows", &broken]);
 }

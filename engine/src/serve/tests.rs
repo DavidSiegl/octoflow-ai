@@ -1442,7 +1442,7 @@ fn workflows_are_the_configuration_s_with_their_roles_and_the_harnesses() {
     assert_eq!(answer["agents"], serde_json::json!(crate::constants::HARNESS_NAMES));
     let workflows = answer["workflows"].as_array().unwrap();
     let names: Vec<&str> = workflows.iter().map(|w| w["name"].as_str().unwrap()).collect();
-    let mut expected: Vec<&str> = crate::pipeline::WORKFLOWS.iter().copied().chain(["broken", "solo"]).collect();
+    let mut expected: Vec<&str> = crate::workflow_file::WORKFLOWS.iter().copied().chain(["broken", "solo"]).collect();
     expected.sort_unstable();
     assert_eq!(names, expected);
     let named = |name: &str| workflows.iter().find(|w| w["name"] == name).unwrap().clone();
@@ -1517,7 +1517,7 @@ fn a_check_answers_the_problem_and_the_placeholders() {
     assert_eq!(reply.json(), serde_json::json!({"problem": null, "placeholders": placeholders}));
     let body = serde_json::json!({"name": "default", "definition": definition}).to_string();
     let checked = served.post("/workflow/check", &body).json();
-    assert_eq!(checked["problem"], "workflow default is built in; give the file another name");
+    assert_eq!(checked["problem"], "workflow default is built in, so no file may take its name");
     assert_eq!(checked["placeholders"], placeholders);
     for bad in [
         "not json".to_string(),

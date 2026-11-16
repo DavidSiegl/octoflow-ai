@@ -12,9 +12,9 @@ use crate::workflow::fixture::Outcome;
 use crate::constants::{FINISHED, QUALITY_GATE_FAILED};
 use crate::paths::file_name;
 use crate::prompts::QUALITY_PASSED_NOTE;
-use crate::pipeline::{Pipeline, Step, DEFAULT_WORKFLOW};
-use crate::test_support::{four, impl_, quick, roles, solo, TempDir, EXAMPLES};
-use crate::workflow_file::{load_workflow_file, workflow_definition};
+use crate::pipeline::{Pipeline, Step};
+use crate::test_support::{four, impl_, quick, roles, solo, TempDir};
+use crate::workflow_file::{find_workflow, load_workflow_file, workflow_definition, workflow_toml};
 
 const D: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
 /// What a step's {change} is in a run in /proj based on abc123.
@@ -381,7 +381,7 @@ fn a_gate_that_passes_is_finished() {
     assert!(pr.body.contains("<summary>Quality gate (round 1)</summary>\n\nGATE: OK"));
 }
 
-// -- Workflow definitions and files, as a run takes them, and the example spec-build-review.toml ------------------
+// -- Workflow definitions and files, as a run takes them -------------------------------------------------------------
 
 #[test]
 fn the_gate_needs_a_gated_step() {
@@ -409,8 +409,9 @@ fn a_pull_request_needs_an_editing_step() {
 #[test]
 fn a_run_keeps_its_workflow_when_the_file_is_gone() {
     let workflows = TempDir::new();
-    let path = workflows.join("quick.toml");
-    std::fs::copy(format!("{EXAMPLES}/quick.toml"), &path).unwrap();
+    let path = workflows.join("mine.toml");
+    let built_in = find_workflow("quick", &Default::default()).unwrap();
+    std::fs::write(&path, workflow_toml(&built_in)).unwrap();
     let quick = load_workflow_file(&path, &Default::default()).unwrap();
     let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&quick), vec![
         ("build", vec![build_turn(1)]),
@@ -440,9 +441,3 @@ fn a_built_in_workflow_is_saved_by_name_only() {
     assert_eq!((wf.state().workflow.as_str(), wf.state().workflow_definition.as_ref()), ("default", None));
 }
 
-#[test]
-fn spec_build_review_is_the_default_workflow() {
-    // Fails when a built-in prompt or step changes; regenerate the file with `workflows default`.
-    let example = load_workflow_file(&format!("{EXAMPLES}/spec-build-review.toml"), &Default::default()).unwrap();
-    assert_eq!(workflow_definition(&example), workflow_definition(&DEFAULT_WORKFLOW));
-}

@@ -23,7 +23,7 @@ refused (`state::format_problem`). By module:
 | `json`, `map` | JSON is serde_json's `Value`, an object keeping its keys' order (`json::Object`, made by `json::object`), with `ValueExt`'s `is_set`, `text` and `kind` for a value read from a file; `Map`, a map from strings in insertion order for the engine's own tables (roles, steps, agents), which serializes in its order. |
 | `constants`, `error`, `env`, `paths` | The constants, `OrchestratorError`, with `shortened` and `closest_name`, the "did you mean" of an unknown name, for messages; `child_env`, `ci_credentials` and `parse_env_file`; `ConfigDir` is `config_dir` and where its files are; `file_name` and `split_extension`, the parts of a path the engine names files by, and `replace_local_file`, which replaces a file of this machine through a temporary file and a rename. |
 | `prompts` | The built-in prompts, `Prompts` (by `Prompt`, each filled in by `Prompts::fill`), `load_prompts`, `prompt_problem` and `saved_prompts`; `template`, the language of prompts, handoff file names and `proof_command`: `{name}` and the doubled braces `{{` and `}}`, nothing else. |
-| `pipeline`, `workflow_file` | `Step`, `Pipeline` with all its checks, `default_workflow`, `find_workflow`, `is_built_in`; `parse_workflow`, `load_workflow_file`, `workflow_files`, `named_workflow`, `workflow_definition`, `workflow_toml` and `run_pipeline`; `prompt_placeholders`, the names a step's prompt may use; and for the app's workflow editor `read_workflow` (an `EditableWorkflow`), `check_workflow` (a `WorkflowCheck`), `save_workflow` and `delete_workflow`, which fail with a `WorkflowEditError`. |
+| `pipeline`, `workflow_file` | `Step`, `Pipeline` with all its checks, `default_workflow`; `WORKFLOWS`, `find_workflow`, `is_built_in`, `parse_workflow`, `load_workflow_file`, `workflow_files`, `named_workflow`, `workflow_definition`, `workflow_toml` and `run_pipeline`; `prompt_placeholders`, the names a step's prompt may use; and for the app's workflow editor `read_workflow` (an `EditableWorkflow`), `check_workflow` (a `WorkflowCheck`), `save_workflow` and `delete_workflow`, which fail with a `WorkflowEditError`. |
 | `state` | `RunState`, saved by serde with `"format": 2` (`STATE_FORMAT`) first and the fields of a `state.json` it does not know kept, after its own, with what every reader asks of a run (`done`, `pipeline`, `in_quality`, `harness`, a role's harness); its agent and turn records typed as `AgentRecord` and `TurnRecord`, every field required that the engine writes, and theirs it does not know kept as `RunState`'s are; `format_problem`, why a `state.json` of another format is not read; `SavedRun`, a [saved run](../GLOSSARY.md) as `Host::run_states` reads it back, whose `state` a command acts on and which refuses an unreadable one, and whose `shown` list and show print; `find_run`, the saved run a run reference names. |
 | `handoff`, `quality` | `parse_verdict` and `parse_blocked`; the quality-file reader, `parse_gate`, `gate_failures`, `finding_fingerprint`, and the engine's own quality files, `leak_report` and `build_failed_report`. |
 | `host`, `patch` | `Host`, a trait whose every operation is a provided method built on running one command (`exec`), so a fake overrides only what it plays: `ProcessHost`, the machine reached by real processes, here or over `ssh -o BatchMode=yes` with `ssh_sharing_options`' shared connection, each command again on a connection of its own once the target's server refuses a session on it, each command in a process group of its own, its output read to the end on threads of their own, and the whole group killed with SIGKILL when it runs out of time; the secret scan (`scan_secrets`, of the commits a push would publish or of those since a base, as `Scanned` says, finding `quality`'s `Leak`s, `LeaksFound`); `ChangedFile`, `RunFile`, the pull request views with `GhError::Unusable` when gh cannot be used where the project is, and `PushError::Leaks` with the `LeaksFound`. Output kept verbatim is bytes, and a path git prints is refused when it is not UTF-8. `FakeHost` (`host/fake.rs`, tests only) is the tests' `Host`, git played one command at a time through `git_run`, its other commands real processes when a test sets `processes`, its time read from a `FakeClock` there. `added_lines` reads `change_diff`'s diffs. |
@@ -192,14 +192,16 @@ as a finding that stands unless a report shows the proof itself is wrong; the re
 `PROOFS_NOTE` ends the next round's prompt of the step the review loops back to, naming every carried proof, from
 whichever round wrote it.
 
-`WORKFLOWS` holds only `DEFAULT_WORKFLOW`, worded by the built-in prompts; a run with prompt files gets it from
-`find_workflow`, worded by its own. Other workflows are TOML files: `run --workflow NAME` finds
-`NAME::toml` in `workflows_dir` (`~/.config/octoflow-ai/workflows/`), and `run --workflow-file` takes
+`WORKFLOWS` names the built-in workflows, which `find_workflow` gives worded by a run's prompts: `default`
+(`default_workflow`, every text a built-in prompt) and `quick` and `product-team`, workflow files under
+`engine/src/workflows/` that the binary embeds and parses as it would a user's, so a prompt file words the steps
+they `use`. Other workflows are TOML files: `run --workflow NAME` finds
+`NAME.toml` in `workflows_dir` (`~/.config/octoflow-ai/workflows/`), and `run --workflow-file` takes
 one by path; the README's [Your own workflows](../README.md#your-own-workflows) gives the format. A file's
 step can `use` a default step and override some of its fields; a role without a label keeps the default
 workflow's label for its key, or else is named after the key; a role's `model` sits under every model flag,
 and its `agent` (`Pipeline::agents`, one of `HARNESS_NAMES`) under `--agent` and `--role-agent`. A
-file cannot take a built-in workflow's name. `Pipeline` also rejects a prompt or file that is not a template of
+file cannot take a built-in workflow's name; `load_workflow_file` says to delete or rename one that does. `Pipeline` also rejects a prompt or file that is not a template of
 known placeholders (`template_problem`, by `crate::prompts::template`), and a handoff file outside the run
 directory or named like the run's own
 `state.json`, `summary.md`, `metrics.json`, `quality-*` and `locked-*` files, and two steps whose files can share a name in some round (`Step::name_forms`,
@@ -406,11 +408,11 @@ from the help of the same binary the scenarios run (`src/engine.rs`), and the na
 `ui/src-tauri/src` with syn. Each failure names `file:line`.
 
 Golden files hold generated text to a reviewed copy of it under `tests/golden/`, so a change to that text is reviewed
-as the diff of its golden files. They hold the engine's prompts: each step's prompts in the built-in workflow and each
-example workflow, as `Workflow` renders them, to a file per workflow, round 1 and, for the steps the review loops over,
-round 2 as the running session and a fresh one hear it; the engine's `workflow/tests/default_prompts.rs` holds the
+as the diff of its golden files. They hold the engine's prompts: each step's prompts in each built-in workflow, as
+`Workflow` renders them, to a file per workflow, round 1 and, for the steps the review loops over, round 2 as the
+running session and a fresh one hear it; the engine's `workflow/tests/default_prompts.rs` holds the
 engine to them. The e2e scenarios record round 1 of each workflow as sent, so a reworded prompt fails both. Of round 2
-of the examples and of a fresh session's prompts, the recordings hold only the templates, in `state.json`; the text as
+of the other workflows and of a fresh session's prompts, the recordings hold only the templates, in `state.json`; the text as
 sent, placeholders filled in and a fresh session's prompt put together, only the golden files hold. The engine's other
 texts, its follow-up prompts, notes, commit messages and pull request bodies, have no golden files: the scenarios record
 them as sent, where one reaches them. GitHub #347 lists the texts neither reaches.

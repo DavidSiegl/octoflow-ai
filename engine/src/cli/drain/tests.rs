@@ -31,7 +31,7 @@ use crate::pull_request::conflict_warning;
 use crate::json::{Object, ValueExt};
 use crate::spec_file::SpecFile;
 use crate::state::RunState;
-use crate::test_support::{TempDir, EXAMPLES};
+use crate::test_support::{built_in_as_file, TempDir};
 use crate::workflow::fixture::{build_turn, review_turn};
 use crate::json::object;
 
@@ -1274,10 +1274,11 @@ fn the_flags_reach_every_run() {
     let d = Drain::new();
     d.spec("a", &ready("A"));
     d.spec("b", &ready("B"));
-    let example = format!("{EXAMPLES}/spec-build-review.toml");
+    let files = TempDir::new();
+    let mine = built_in_as_file(&files, "default", "mine");
     let job = crate::local_gate::LOCAL_GATE;
     let argv = [
-        "--workflow-file", &example, "--worktree", "--quality-gate", job, "--max-quality-rounds", "2",
+        "--workflow-file", &mine, "--worktree", "--quality-gate", job, "--max-quality-rounds", "2",
         "--max-rounds", "5", "--timeout", "60", "--permission-mode", "auto", "--model", "m", "--review-model", "r",
         "--agent", "codex",
     ];
@@ -1285,7 +1286,7 @@ fn the_flags_reach_every_run() {
     let runs = d.runs.borrow();
     assert_eq!(runs.len(), 2);
     for (state, _) in runs.iter() {
-        assert_eq!(state.workflow, "spec-build-review");
+        assert_eq!(state.workflow, "mine");
         assert_eq!((state.quality_job.as_deref(), state.max_quality_rounds, state.max_rounds), (Some(job), 2, 5));
         assert_eq!((state.turn_timeout, state.permission_mode.as_deref()), (60, Some("auto")));
         assert_eq!(state.worktree, Some(format!("/proj/{WORKTREES_DIR}/{}", state.key())));
@@ -1301,8 +1302,7 @@ fn a_workflow_that_cannot_take_a_spec_fails_before_any_run() {
     let d = Drain::new();
     d.sweepable();
     d.spec("a", &ready("A"));
-    let quick = format!("{EXAMPLES}/quick.toml");
-    let r = d.drain(vec![], &["--workflow-file", &quick]);
+    let r = d.drain(vec![], &["--workflow", "quick"]);
     assert_eq!(r.status, EXIT_ERROR);
     assert!(r.err.contains("--spec needs a first step that writes the spec"), "{}", r.err);
     assert!(!d.swept());

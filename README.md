@@ -243,9 +243,10 @@ octoflow run --worktree "add a token-bucket rate limiter"
 # Skip the interview: a spec you already have is the contract
 octoflow run --spec docs/specs/rate-limiter.md
 
-# Another workflow: one of yours by name, or a workflow file anywhere; `workflows` lists them
+# Another workflow: a built-in or one of yours by name, or a workflow file anywhere; `workflows` lists them
 octoflow run --workflow product-team "add a token-bucket rate limiter"
-octoflow run --workflow-file examples/workflows/quick.toml "fix the off-by-one in the pager"
+octoflow run --workflow quick "fix the off-by-one in the pager"
+octoflow run --workflow-file ~/flows/pairing.toml "fix the off-by-one in the pager"
 
 # With the quality gate after each Builder turn
 octoflow run --quality-gate local "add a token-bucket rate limiter"
@@ -299,7 +300,7 @@ octoflow metrics | jq -s 'map(.rounds) | add / length'
 | `--model MODEL` | Model for every role, passed to its harness unchanged. Default: the workflow file's model for the role, else the harness's own. |
 | `--spec-model`, `--build-model`, `--review-model MODEL` | Model for the Spec Collector, Builder or Reviewer. Overrides `--model`. |
 | `--role-model ROLE=MODEL` | Model for one role, by its key, e.g. `tests=sonnet`. Overrides `--model`; repeatable. |
-| `--workflow NAME` | `run` and `drain`: `default`, or one of [your own](#your-own-workflows). A resumed run keeps its workflow. |
+| `--workflow NAME` | `run` and `drain`: `default`, `quick`, `product-team`, or one of [your own](#your-own-workflows). A resumed run keeps its workflow. |
 | `--workflow-file FILE` | `run` and `drain`: like `--workflow`, for the workflow file at `FILE`. |
 | `--spec FILE` | `run` only: skip the interview. `FILE` is read on this machine, a relative path from the current directory, not `--cwd`. It becomes the first step's handoff file, and the run starts at the step after it. Without a task, the task is the spec's first line, when that is a level-one heading, or else `FILE`'s name. Needs a workflow whose first step writes the spec, such as `default` or `product-team`. |
 | `--no-pr` | `run` only: leave the change uncommitted and the workspace open instead of opening a pull request. Works outside git. |
@@ -458,15 +459,15 @@ how it treats specs you edit while it runs.
 
 ## Your own workflows
 
-The roles, their prompts and their order are a workflow. Besides the built-in `default`, add your own as a TOML
-file in `~/.config/octoflow-ai/workflows/`, named after the workflow, or anywhere with
-`--workflow-file`. `octoflow workflows` lists them and says why one does not load, and
-`workflows default` prints the default's full definition to start from. [`examples/workflows/`](examples/workflows)
-has three more: `spec-build-review` (the default as a file), `quick` (Builder ⇄ Reviewer, the task as the
-contract) and `product-team` (Product Manager → Architect → QA Engineer → Engineer ⇄ Tech Lead, then the Product
-Manager's acceptance: requirements in business terms, a design against the code, acceptance tests written and locked
-before the code, and the Product Manager judging the change the Tech Lead approved against the requirements, or
-sending it back to the Engineer).
+The roles, their prompts and their order are a workflow. Three are built in: `default` (Spec Collector → Builder ⇄
+Reviewer), `quick` (Builder ⇄ Reviewer, the task as the contract) and `product-team` (Product Manager → Architect →
+QA Engineer → Engineer ⇄ Tech Lead, then the Product Manager's acceptance: requirements in business terms, a design
+against the code, acceptance tests written and locked before the code, and the Product Manager judging the change
+the Tech Lead approved against the requirements, or sending it back to the Engineer). Add your own as a TOML file in
+`~/.config/octoflow-ai/workflows/`, named after the workflow, or anywhere with `--workflow-file`. `octoflow
+workflows` lists them and says why one does not load, and `workflows NAME` prints a workflow's full definition, a
+built-in's to start a variant from. A file cannot take a built-in's name: a `quick.toml` or `product-team.toml`
+copied there from an earlier release no longer loads; delete it to run the built-in, or rename it to keep yours.
 
 ```toml
 # An abridged product-team.toml: the Architect's design before the default Builder and Reviewer.

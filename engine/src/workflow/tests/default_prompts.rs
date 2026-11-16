@@ -14,11 +14,11 @@ use super::*;
 use crate::workflow::fixture::Outcome;
 use crate::env::ConfigDir;
 use crate::paths::file_name;
-use crate::pipeline::{find_workflow, Pipeline, DEFAULT_WORKFLOW};
+use crate::pipeline::Pipeline;
 use crate::prompts::{load_prompts};
-use crate::test_support::{quick, TempDir, EXAMPLES};
+use crate::test_support::{quick, TempDir};
 use crate::workflow::step_prompt::RunView;
-use crate::workflow_file::load_workflow_file;
+use crate::workflow_file::{find_workflow, WORKFLOWS};
 
 const D: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
 
@@ -501,7 +501,7 @@ fn fresh_reviewer_in_round_two_with_the_gate() {
     assert_eq!(step_prompt(&state, &host, "review", 2).1.unwrap(), FRESH_REVIEW_2_PASSED);
 }
 
-// -- Each step's prompts in the built-in workflow and in each file of examples/workflows/, as Workflow renders them
+// -- Each step's prompts in each built-in workflow, as Workflow renders them
 // for a new run on the fakes, held to the golden file tests/golden/prompts_<name>.txt: round 1, and for the steps
 // the verdict step loops back over, round 2 as the running session and as a fresh one hears it. --------------------
 
@@ -540,20 +540,10 @@ fn assert_golden(name: &str, text: &str) {
 }
 
 #[test]
-fn the_built_in_workflow() {
-    assert_golden("prompts_default", &rendered(&DEFAULT_WORKFLOW));
-}
-
-#[test]
-fn each_example_workflow() {
-    let mut names: Vec<String> =
-        std::fs::read_dir(EXAMPLES).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
-    names.sort();
-    // So that a wrong or empty EXAMPLES cannot pass it; a new example adds one here.
-    assert_eq!(names.len(), 3);
-    for name in names {
-        let pipeline = load_workflow_file(&format!("{EXAMPLES}/{name}"), &Default::default()).unwrap();
-        assert_golden(&format!("prompts_{}", name.strip_suffix(".toml").unwrap()), &rendered(&pipeline));
+fn each_built_in_workflow() {
+    assert!(!WORKFLOWS.is_empty());
+    for name in WORKFLOWS {
+        assert_golden(&format!("prompts_{name}"), &rendered(&find_workflow(name, &Default::default()).unwrap()));
     }
 }
 

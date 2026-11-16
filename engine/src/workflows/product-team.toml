@@ -18,6 +18,9 @@
 # With --quality-gate, the orchestrator's unexpected-paths check reads file names from the contract, spec.md, which
 # here is in business terms and names none: expect a finding to weigh for each path the change touches. The design
 # in design.md is where the paths are (TODO.md, "unexpected-paths reads only the contract step's file").
+#
+# Built in as --workflow product-team; `octoflow workflows product-team` prints it as a file to start a variant of
+# your own from, under another name.
 
 description = "Product Manager -> Architect -> QA Engineer -> Engineer <-> Tech Lead, then the Product Manager's acceptance"
 

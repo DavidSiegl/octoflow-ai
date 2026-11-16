@@ -725,26 +725,6 @@ pub fn default_workflow(prompts: &Prompts) -> Pipeline {
 /// The default workflow worded by the built-in prompts.
 pub static DEFAULT_WORKFLOW: LazyLock<Pipeline> = LazyLock::new(|| default_workflow(&Prompts::default()));
 
-/// The names of the workflows `run --workflow` offers built in; a workflow file cannot take one.
-pub const WORKFLOWS: [&str; 1] = ["default"];
-
-/// The built-in workflow of that name, worded by prompts; an error naming the built-in ones when there is none.
-pub fn find_workflow(name: &str, prompts: &Prompts) -> Result<Pipeline, OrchestratorError> {
-    if name == "default" {
-        // The one built-in workflow, whose steps take their texts from Prompts.
-        return Ok(default_workflow(prompts));
-    }
-    let mut names = WORKFLOWS.to_vec();
-    names.sort();
-    Err(OrchestratorError(format!("unknown workflow {name}; this orchestrator has {}", names.join(", "))))
-}
-
-/// Whether p is the built-in workflow of its name as prompts word it, which a run need not save the definition of:
-/// its name and prompts give it back (run_pipeline).
-pub fn is_built_in(p: &Pipeline, prompts: &Prompts) -> bool {
-    WORKFLOWS.contains(&p.name()) && find_workflow(p.name(), prompts).is_ok_and(|built_in| &built_in == p)
-}
-
 /// The workflow's steps in order, e.g. spec -> build -> review (back to build).
 pub fn workflow_shape(p: &Pipeline) -> String {
     p.steps()

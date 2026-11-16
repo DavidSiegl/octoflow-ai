@@ -15,16 +15,9 @@ fn bad(steps: Vec<Step>) -> String {
 }
 
 #[test]
-fn default_is_the_only_registered_workflow() {
-    assert_eq!(WORKFLOWS, ["default"]);
+fn the_default_workflow() {
     assert_eq!(DEFAULT_WORKFLOW.name(), "default");
     assert_eq!(workflow_shape(&DEFAULT_WORKFLOW), "spec -> build -> review (back to build)");
-    assert!(is_built_in(&DEFAULT_WORKFLOW, &Prompts::default()));
-    assert!(!is_built_in(&quick(), &Prompts::default()));
-    assert_eq!(
-        find_workflow("quick", &Prompts::default()).unwrap_err().0,
-        "unknown workflow quick; this orchestrator has default"
-    );
 }
 
 #[test]
@@ -355,8 +348,6 @@ fn the_default_is_worded_by_its_prompts() {
     let mut overrides = Map::new();
     overrides.insert("BUILD_PROMPT", "Build {spec_path} in {cwd}; report to {build_path}.".to_string());
     let prompts = Prompts::from_overrides(&overrides).unwrap();
-    let p = find_workflow("default", &prompts).unwrap();
+    let p = default_workflow(&prompts);
     assert_eq!(p.step("build").unwrap().prompt, "Build {spec_path} in {cwd}; report to {build_path}.");
-    assert!(is_built_in(&p, &prompts));
-    assert!(!is_built_in(&p, &Prompts::default()));
 }

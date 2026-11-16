@@ -1718,7 +1718,7 @@
    "proofs_section": null
   },
   {
-   "recording": "workflow_spec_build_review.json",
+   "recording": "workflow_file_installed.json",
    "run_dir": "runs/<run:1>/",
    "conflicts": [],
    "spec_title": "Add a subtract function",

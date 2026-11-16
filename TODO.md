@@ -14,7 +14,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   as known gaps (the user's ruling, 2026-11-11), since unit tests cover each harness's arguments and its token
   parsing: the harnesses other than claude and codex starting
   an agent (only their arguments differ); a session log's token counts (every turn records `unknown`); `--timeout` and
-  the stall notice, which take real minutes; round 2 of the example workflows and
+  the stall notice, which take real minutes; round 2 of the workflows other than `default` and
   a fresh session's prompts as sent, whose templates only the recorded `state.json` holds and whose text only golden
   files hold (docs/architecture.md, Tests). Where gitleaks or openssl is not on PATH, every scenario fails naming it: a
   skip would pass a machine that checked nothing, and the gate's test-integrity check fails an added skip (the user's
@@ -156,6 +156,20 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   started under one engine and resumed under one with a raised pin has its rounds judged by two releases, and
   `GateFailures.repeats` compares two check sets. First seen with 0.70.0's raise from 0.7.0 to 0.10.0. Closes with the
   release a pinless run starts with saved in its state and judged by on resume.
+- **A run of a built-in workflow resumes on the built-in of the release that resumes it.** Raised by cross-review 215
+  (F2): `Workflow::new` (`engine/src/workflow.rs`) saves no `workflow_definition` for a run whose workflow
+  `is_built_in` (`engine/src/workflow_file.rs`), and a resume rebuilds it with `find_workflow`. "If a later release
+  changes product-team's steps (v0.59.0 added `accept`), the saved phase, rounds and verdicts no longer match the
+  step list." This holds for `default` since the start; 0.85.0 adds `quick` and `product-team`, and a run saved from
+  a pre-0.85.0 `quick.toml` equal to the built-in drops its saved definition at its first resume. Closes with every
+  run saving its definition, or a resume that checks the built-in still has the saved run's steps.
+- **The desktop app neither shows nor deletes a workflow file of a built-in's name.** Raised by cross-review 215
+  (F3): `workflow_names` (`engine/src/workflow_file.rs`) lists a built-in's name once, so GET /workflows
+  (`offered_workflows`, `engine/src/serve/start.rs`) and the app's Workflows dialog show the built-in and not the
+  file's error, and `delete_workflow` refuses the name as built in. A `quick.toml` or `product-team.toml` copied from
+  the example workflows of releases before 0.85.0 is the likely case; `octoflow workflows` lists it with its error,
+  and the release notes say to delete or rename it by hand. Closes with GET /workflows listing such a file beside
+  the built-in, and the dialog able to delete it.
 - **A local gate whose job cannot start shows it at the first verdict, not at `start`.** Raised by cross-review 171
   (F6): "If setsid has gone missing since the preflight, the first verdict reports 'its job gone without a status:
   <job.log tail>'." LAUNCH prints the job's pid either way; the tail of `job.log` still says why. Closes with
@@ -344,12 +358,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 - **unexpected-paths reads only the contract step's file.** `unexpected_paths` judges each path the change touches
   against `RunChange.spec`, the contract step's file, so a workflow whose contract is in business terms, such as
-  `examples/workflows/product-team.toml`, whose requirements name no file and whose `design.md` lists the
+  the built-in `product-team`, whose requirements name no file and whose `design.md` lists the
   components, gets a finding to weigh for every path on every quality round. Raised by review 20 of
   product-team-workflow (F4, 2026-10-25): "the gate reads file names from the spec and this spec is in business
-  terms by design". The example's header says so. Decided against (the user's ruling, 2026-11-11): the check reading
+  terms by design". The workflow file's header says so. Decided against (the user's ruling, 2026-11-11): the check reading
   every non-editing step's file that precedes the first editing step, or a workflow key naming the file that holds
-  the paths; only the contract step names paths in the example workflows, and the finding is one to weigh.
+  the paths; only the contract step names paths in the built-in workflows, and the finding is one to weigh.
 - **Removing a tree of read-only directories is written out twice.** `chmod -R u+rwX "$dir" && rm -rf "$dir"`, with a
   warning when it fails, is in the Jenkinsfile's Checkout stage (emptying `TMPDIR` before any stage uses it) and in
   `packaging/build-desktop.sh`'s `remove_temporaries`, for the AppImage extractions it removes; a fix to one does not

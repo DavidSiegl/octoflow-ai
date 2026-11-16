@@ -179,9 +179,9 @@ scenarios!(
     specs_drained,
     takeover,
     verdict_retried,
+    workflow_file_installed,
     workflow_product_team,
     workflow_quick,
-    workflow_spec_build_review,
     workflows_listed,
     worktree_run,
 );

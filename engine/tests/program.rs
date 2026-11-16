@@ -110,10 +110,10 @@ fn the_hints_and_the_usage_name_the_program_by_the_file_name_it_was_invoked_by()
     let dir = Dir::new("invoked");
     let hint = |out: &Output| {
         let stdout = String::from_utf8_lossy(&out.stdout);
-        stdout.lines().find(|l| l.contains(" workflows default`")).map(String::from)
+        stdout.lines().find(|l| l.contains(" workflows NAME`")).map(String::from)
     };
     let out = program(&dir, &["workflows"], None).output().expect("the program runs");
-    assert!(hint(&out).is_some_and(|l| l.contains("`octoflow workflows default`")), "{:?}", hint(&out));
+    assert!(hint(&out).is_some_and(|l| l.contains("`octoflow workflows NAME`")), "{:?}", hint(&out));
     let out = Command::new(env!("CARGO_BIN_EXE_octoflow"))
         .arg0("/usr/local/bin/orchestrator")
         .arg("workflows")
@@ -122,7 +122,7 @@ fn the_hints_and_the_usage_name_the_program_by_the_file_name_it_was_invoked_by()
         .stdin(Stdio::null())
         .output()
         .expect("the program runs");
-    assert!(hint(&out).is_some_and(|l| l.contains("`orchestrator workflows default`")), "{:?}", hint(&out));
+    assert!(hint(&out).is_some_and(|l| l.contains("`orchestrator workflows NAME`")), "{:?}", hint(&out));
     let out = Command::new(env!("CARGO_BIN_EXE_octoflow"))
         .arg0("orchestrator")
         .arg("--bogus")

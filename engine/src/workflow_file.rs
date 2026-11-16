@@ -27,7 +27,7 @@ use crate::env::ConfigDir;
 use crate::error::{closest_name, strerror, OrchestratorError};
 use crate::harness::replaced_by;
 use crate::paths::{file_name, replace_local_file, split_extension};
-use crate::pipeline::{default_workflow, find_workflow, prompt_placeholders, Pipeline, PipelineSettings, Step, DEFAULT_WORKFLOW, WORKFLOWS};
+use crate::pipeline::{default_workflow, prompt_placeholders, Pipeline, PipelineSettings, Step, DEFAULT_WORKFLOW};
 use crate::prompts::template::{is_name, placeholders};
 use crate::prompts::{files_with_extension, Prompts};
 use serde_json::Value;
@@ -55,6 +55,51 @@ pub const STEP_KEYS: [&str; 12] = [
 ];
 /// The steps' flags, the fields of STEP_KEYS that are false by default.
 const STEP_FLAGS: [&str; 5] = ["fresh_repeats_again", "human_paced", "edits", "quality_gated", "locks"];
+
+/// The built-in workflows other than the default, in name order: each one's name and the text of its workflow file,
+/// which the binary carries. Each `use`s steps of the default workflow, so prompt files word those as they would in a
+/// workflow file of the user's. A new built-in needs only its line here.
+const BUILT_IN_FILES: [(&str, &str); 2] = [
+    ("product-team", include_str!("workflows/product-team.toml")),
+    ("quick", include_str!("workflows/quick.toml")),
+];
+
+/// The names of the workflows `run --workflow` offers built in, in name order: `default`, then BUILT_IN_FILES's. A
+/// workflow file cannot take one.
+pub const WORKFLOWS: [&str; BUILT_IN_FILES.len() + 1] = built_in_names();
+
+/// WORKFLOWS, built from BUILT_IN_FILES at compile time.
+const fn built_in_names() -> [&'static str; BUILT_IN_FILES.len() + 1] {
+    let mut names = ["default"; BUILT_IN_FILES.len() + 1];
+    let mut i = 0;
+    while i < BUILT_IN_FILES.len() {
+        names[i + 1] = BUILT_IN_FILES[i].0;
+        i += 1;
+    }
+    names
+}
+
+/// The built-in workflow of that name, worded by prompts; an error naming the built-in ones when there is none.
+/// Panics if a built-in file does not parse under prompts, which cannot happen for prompts load_prompts accepts:
+/// the tests parse every built-in, and parse_workflow checks a prompt only for its placeholders, which load_prompts
+/// has already checked.
+pub fn find_workflow(name: &str, prompts: &Prompts) -> Result<Pipeline, OrchestratorError> {
+    if name == "default" {
+        return Ok(default_workflow(prompts));
+    }
+    if let Some((_, text)) = BUILT_IN_FILES.iter().find(|(n, _)| *n == name) {
+        let definition = parse_toml(text).unwrap_or_else(|e| panic!("built-in workflow {name} is not TOML: {e}"));
+        return Ok(parse_workflow(name, &definition, prompts)
+            .unwrap_or_else(|e| panic!("built-in workflow {name} is invalid: {e}")));
+    }
+    Err(OrchestratorError(format!("unknown workflow {name}; this orchestrator has {}", WORKFLOWS.join(", "))))
+}
+
+/// Whether p is the built-in workflow of its name as prompts word it, which a run need not save the definition of:
+/// its name and prompts give it back (run_pipeline).
+pub fn is_built_in(p: &Pipeline, prompts: &Prompts) -> bool {
+    WORKFLOWS.contains(&p.name()) && find_workflow(p.name(), prompts).is_ok_and(|built_in| &built_in == p)
+}
 
 /// Name -> path of each workflow file in config's workflows_dir, unparsed, in name order; none without the
 /// directory. Errors: the directory cannot be listed.
@@ -107,10 +152,17 @@ fn unreadable(path: &str, e: &std::io::Error) -> OrchestratorError {
 /// The workflow text, the contents of the workflow file at path, defines, as load_workflow_file gives it.
 fn workflow_from_text(path: &str, text: &str, prompts: &Prompts) -> Result<Pipeline, OrchestratorError> {
     let name = split_extension(file_name(path)).0;
-    let definition = parse_toml(text).map_err(|e| OrchestratorError(format!("{path}: {e}")))?;
     if let Some(problem) = name_problem(name) {
-        return Err(OrchestratorError(format!("{path}: {problem}")));
+        // A file of a built-in's name may predate the name's becoming built in, as a quick.toml or product-team.toml
+        // copied from the example workflows of releases before 0.85.0 does: say how to get either workflow.
+        let fix = if WORKFLOWS.contains(&name) {
+            "; rename the file to keep it as a workflow of its own, or delete it and run the built-in"
+        } else {
+            ""
+        };
+        return Err(OrchestratorError(format!("{path}: {problem}{fix}")));
     }
+    let definition = parse_toml(text).map_err(|e| OrchestratorError(format!("{path}: {e}")))?;
     parse_workflow(name, &definition, prompts).map_err(|e| OrchestratorError(format!("{path}: {e}")))
 }
 
@@ -118,7 +170,7 @@ fn workflow_from_text(path: &str, text: &str, prompts: &Prompts) -> Result<Pipel
 /// when nothing is.
 fn name_problem(name: &str) -> Option<String> {
     if WORKFLOWS.contains(&name) {
-        return Some(format!("workflow {name} is built in; give the file another name"));
+        return Some(format!("workflow {name} is built in, so no file may take its name"));
     }
     if !is_name(name) {
         return Some("a workflow's name, its file's, may use only letters, digits, - and _".into());

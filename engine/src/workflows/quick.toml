@@ -1,6 +1,5 @@
-# Builder <-> Reviewer with no interview: the task itself is the contract.
-# Copy to ~/.config/octoflow-ai/workflows/ and run with --workflow quick,
-# or run it from here with --workflow-file examples/workflows/quick.toml.
+# Builder <-> Reviewer with no interview: the task itself is the contract. Built in as --workflow quick;
+# `octoflow workflows quick` prints it as a file to start a variant of your own from, under another name.
 
 description = "Builder <-> Reviewer, with the task as the contract: no interview"
 

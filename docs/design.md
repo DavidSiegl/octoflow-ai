@@ -145,8 +145,7 @@ The unit tests and the e2e scenarios check what the engine does, never how well 
 or workflow change can make runs worse without failing a test. `evals/` is a small set of tasks that real agents do
 end to end, each judged by an acceptance test they never see, so that such a change comes with numbers.
 
-**When to run it.** By hand, from a herdr pane, before a release that changes a prompt, a workflow (the built-in
-one or `examples/workflows/`) or how a harness is started or its session read; and on the branch of such a change,
+**When to run it.** By hand, from a herdr pane, before a release that changes a prompt, a built-in workflow or how a harness is started or its session read; and on the branch of such a change,
 once on its base and once on the branch, so that its pull request carries both. Never on a schedule or in CI: every
 trial is a real run, which spends tokens and needs a herdr pane.
 
@@ -163,8 +162,8 @@ For each task and repeat, the runner clones the task's bundle into a directory o
 as `run --no-pr --spec`, with a copy of the task's text as the spec, then runs the hidden test on what the run left
 and closes the run's workspace with `close`. The arguments after `--` go to `run` unchanged; the runner refuses
 the flags it sets itself and those that would put the change elsewhere. A workflow whose first step writes the
-spec, such as the built-in `default` or `examples/workflows/product-team.toml`, starts at the step after it, so no
-interview waits for an answer; one without such a step, such as `examples/workflows/quick.toml`, cannot take
+spec, such as the built-in `default` or `product-team`, starts at the step after it, so no
+interview waits for an answer; one without such a step, such as `quick`, cannot take
 `--spec`, and the engine refuses it before any agent starts.
 `xtask/src/eval.rs`'s module comment gives its flags, the shape of a task and its exit status. A Ctrl-C stops the
 eval once the engine has saved its run, keeps that trial's clone, prints the table of the trials before it and exits

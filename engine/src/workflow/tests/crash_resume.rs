@@ -32,8 +32,7 @@ use crate::env::ConfigDir;
 use crate::host::fake::FakeClock;
 use crate::local_gate::LOCAL_GATE;
 use crate::pipeline::{Pipeline, DONE};
-use crate::test_support::EXAMPLES;
-use crate::workflow_file::load_workflow_file;
+use crate::workflow_file::find_workflow;
 
 /// The run's state.json, which every scenario's run writes.
 const STATE_PATH: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3/state.json";
@@ -58,11 +57,11 @@ struct Scenario {
     /// What each run of the local gate judges in turn, green once they run out; None for a run without the quality
     /// gate.
     gate: Option<&'static [fn() -> Outcome]>,
-    /// An example workflow's file name in EXAMPLES; None for the default workflow.
-    workflow_file: Option<&'static str>,
+    /// The built-in workflow the run takes; None for the default workflow, as a new state has it.
+    workflow: Option<&'static str>,
 }
 
-const APPROVED: Scenario = Scenario { verdicts: &[APPROVE], pull_request: true, gate: None, workflow_file: None };
+const APPROVED: Scenario = Scenario { verdicts: &[APPROVE], pull_request: true, gate: None, workflow: None };
 
 /// The orchestrator's death right after a write of state.json: the payload of the unwind that stops it.
 struct Crashed;
@@ -104,9 +103,8 @@ struct World {
 impl World {
     /// scenario's run, not started yet, its agents playing agent_turn.
     fn new(scenario: &'static Scenario) -> World {
-        let pipeline = match scenario.workflow_file {
-            Some(name) => load_workflow_file(&format!("{EXAMPLES}/{name}"), &Default::default())
-                .expect("the example workflow loads"),
+        let pipeline = match scenario.workflow {
+            Some(name) => find_workflow(name, &Default::default()).expect("a built-in workflow"),
             None => new_state().pipeline().expect("the default workflow loads"),
         };
         let mut state = new_run(&pipeline);
@@ -372,7 +370,7 @@ fn quality_gate_fails_then_passes() {
 
 #[test]
 fn product_team_with_locked_tests() {
-    static SCENARIO: Scenario = Scenario { workflow_file: Some("product-team.toml"), ..APPROVED };
+    static SCENARIO: Scenario = Scenario { workflow: Some("product-team"), ..APPROVED };
     crash_after_every_write(&SCENARIO);
 }
 

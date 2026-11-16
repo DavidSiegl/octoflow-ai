@@ -12,8 +12,7 @@ use crate::constants::NO_QUESTION;
 use crate::host::fake::HOST_EPOCH;
 use crate::paths::{file_name, split_extension};
 use crate::pipeline::DEFAULT_WORKFLOW;
-use crate::test_support::EXAMPLES;
-use crate::workflow_file::{load_workflow_file, workflow_toml};
+use crate::workflow_file::{find_workflow, workflow_toml};
 
 const D: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
 const QUESTION: &str = "which database?";
@@ -325,8 +324,8 @@ fn the_note_is_in_every_prompt_of_the_steps_that_can_block_only() {
 }
 
 #[test]
-fn a_step_from_a_workflow_file_can_block() {
-    let team = load_workflow_file(&format!("{EXAMPLES}/product-team.toml"), &Default::default()).unwrap();
+fn a_step_of_a_workflow_other_than_the_default_can_block() {
+    let team = find_workflow("product-team", &Default::default()).unwrap();
     let tests_md = |s: &RunState| format!("{}/tests.md", s.dir());
     let (blocks, specs) = (seen(), seen());
     let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&team), vec![

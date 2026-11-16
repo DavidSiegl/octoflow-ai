@@ -207,11 +207,11 @@ describe("the workflows dialog", { timeout: EDITOR_TIMEOUT_MS }, () => {
   });
 
   it("shows the server's problem with the name, a built-in one", async () => {
-    await openWorkflows({ problem: ({ name }) => (name === "default" ? "workflow default is built in; give the file another name" : null) });
+    await openWorkflows({ problem: ({ name }) => (name === "default" ? "workflow default is built in, so no file may take its name" : null) });
     fireEvent.click(within(screen.getByRole("dialog", { name: "workflows" })).getByRole("button", { name: "New…" }));
     const form = await editor();
     type(form, "Name", "default");
-    expect(await within(form).findByText("workflow default is built in; give the file another name")).toBeInTheDocument();
+    expect(await within(form).findByText("workflow default is built in, so no file may take its name")).toBeInTheDocument();
     expect(within(form).getByRole("button", { name: "Save" })).toBeDisabled();
   });
 
