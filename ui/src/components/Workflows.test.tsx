@@ -69,7 +69,7 @@ function lastSent(edit: FakeEdit): WorkflowDefinition {
   return edit.posts?.at(-1)?.body.definition as WorkflowDefinition;
 }
 
-/** The definition answers' GET /workflow body for name holds. */
+/** The definition of workflow name in answers, a GET /workflow answer that loads. */
 function definitionIn(answers: Record<string, Answer>, name: string): WorkflowDefinition {
   return (answers[name]?.body as { definition: WorkflowDefinition }).definition;
 }
@@ -279,8 +279,11 @@ describe("the workflows dialog", { timeout: EDITOR_TIMEOUT_MS }, () => {
 
   it("shows no input for max_files, max_lines or proof_command, and keeps a file's values of them through an edit and a copy", async () => {
     const workflows = workflowAnswers();
-    const settings = { max_files: 3, max_lines: 120, proof_command: "make proof" };
-    changeAnswer(workflows, "tdd", { definition: { ...definitionIn(workflows, "tdd"), ...settings } });
+    const settings = { max_files: 3, max_lines: 120, proof_command: "make proof {proofs}" };
+    const tdd = definitionIn(workflows, "tdd");
+    // A verdict step, which a proof_command needs.
+    const steps = tdd.steps.map((s) => (s.id === "build" ? { ...s, loop_to: "test" } : s));
+    changeAnswer(workflows, "tdd", { definition: { ...tdd, ...settings, steps } });
     const edit: FakeEdit = { workflows };
     const dialog = await openWorkflows(edit);
     fireEvent.click(within(entry(dialog, "tdd")).getByRole("button", { name: "Edit…" }));
@@ -300,6 +303,36 @@ describe("the workflows dialog", { timeout: EDITOR_TIMEOUT_MS }, () => {
     fireEvent.click(await saveable(copy));
     await waitFor(() => expect(posts(edit, "/workflow/save")).toHaveLength(2));
     expect(posts(edit, "/workflow/save")[1]).toMatchObject({ name: "mine", definition: settings });
+  });
+
+  it("leaves proof_command out while no step is a verdict step, and writes it again once one is", async () => {
+    const workflows = workflowAnswers();
+    changeAnswer(workflows, "default", { definition: { ...DEFAULT_DEFINITION, proof_command: "pytest {proofs}" } });
+    const edit: FakeEdit = { workflows };
+    const form = await newMine(edit);
+    expect(lastSent(edit).proof_command).toBe("pytest {proofs}");
+    fireEvent.click(within(form).getByRole("button", { name: "review" }));
+    choose(within(form).getByLabelText("loop_to"), "none");
+    await waitFor(() => expect(lastSent(edit).steps.at(-1)?.loop_to).toBeUndefined());
+    await saveable(form);
+    expect(lastSent(edit)).not.toHaveProperty("proof_command");
+    choose(within(form).getByLabelText("loop_to"), "build");
+    await waitFor(() => expect(lastSent(edit).proof_command).toBe("pytest {proofs}"));
+  });
+
+  it("keeps a built-in workflow's max_files, max_lines and proof_command in a copy made from its view", async () => {
+    const workflows = workflowAnswers();
+    const settings = { max_files: 3, max_lines: 120, proof_command: "pytest {proofs}" };
+    changeAnswer(workflows, "default", { definition: { ...DEFAULT_DEFINITION, ...settings } });
+    const edit: FakeEdit = { workflows };
+    const dialog = await openWorkflows(edit);
+    fireEvent.click(within(entry(dialog, "default")).getByRole("button", { name: "View…" }));
+    const form = await editor();
+    fireEvent.click(within(form).getByRole("button", { name: "Duplicate…" }));
+    type(form, "Name", "mine");
+    fireEvent.click(await saveable(form));
+    await waitFor(() => expect(posts(edit, "/workflow/save")).toHaveLength(1));
+    expect(posts(edit, "/workflow/save")[0]).toMatchObject({ name: "mine", definition: settings });
   });
 
   it("writes no max_files, max_lines or proof_command for a workflow that sets none", async () => {

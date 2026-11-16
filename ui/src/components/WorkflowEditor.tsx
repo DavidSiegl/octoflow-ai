@@ -47,9 +47,11 @@ type DraftStep = {
   loopTo: number | null;
 } & Flags;
 
-/** The definition's fields the editor has no widget for, which a save writes back as they were read: tuning of the
- * quality gate and the proof runs, set by hand in the file (README, "Workflow files"). */
-type Kept = Pick<WorkflowDefinition, "max_files" | "max_lines" | "proof_command">;
+/** The definition's fields the editor has no widget for: the diff budget (docs/quality-gate.md) and proof_command
+ * (README, "Your own workflows"), set by hand in the file. A save writes them back as they were read, but for
+ * proof_command while no step is a verdict step: the engine refuses a proof command with no proofs to run, and the
+ * editor has no field to clear it, so it is left out until a step loops back again. */
+type Kept = Omit<WorkflowDefinition, "description" | "roles" | "steps">;
 
 /** A workflow as the form holds it: every field as its widget holds it, and kept, the fields it has none for. */
 interface Draft {
@@ -77,7 +79,8 @@ function newStep(id: string, role: number): DraftStep {
 /** definition under name, as the form holds it. A step's role that the definition's roles lack, which a definition
  * read from the server never has, gets a row of its own. */
 function draftOf(name: string, definition: WorkflowDefinition): Draft {
-  const roles = Object.entries(definition.roles).map(([key, r]) => ({
+  const { description, roles: definedRoles, steps: definedSteps, ...kept } = definition;
+  const roles = Object.entries(definedRoles).map(([key, r]) => ({
     row: nextRow(),
     key,
     label: r.label,
@@ -91,11 +94,11 @@ function draftOf(name: string, definition: WorkflowDefinition): Draft {
     }
     return found.row;
   };
-  const steps = definition.steps.map((s) => {
+  const steps = definedSteps.map((s) => {
     const flags = Object.fromEntries(STEP_FLAGS.map((flag) => [flag, s[flag] === true])) as Flags;
     return { ...newStep(s.id, roleRow(s.role)), file: s.file, prompt: s.prompt, again: s.again ?? "", fresh_note: s.fresh_note ?? "", ...flags };
   });
-  definition.steps.forEach((s, i) => {
+  definedSteps.forEach((s, i) => {
     const step = steps[i];
     if (step) {
       step.loopTo = steps.find((t) => s.loop_to !== undefined && t.id === s.loop_to)?.row ?? null;
@@ -103,15 +106,16 @@ function draftOf(name: string, definition: WorkflowDefinition): Draft {
   });
   return {
     name,
-    description: definition.description ?? "",
-    kept: { max_files: definition.max_files, max_lines: definition.max_lines, proof_command: definition.proof_command },
+    description: description ?? "",
+    kept,
     roles,
     steps,
   };
 }
 
-/** The definition draft holds, in the canonical form a save writes: a field at its default left out. A role key given
- * twice keeps its last row, and a removed role or loop target is written as none; draftProblem names both first. */
+/** The definition draft holds, in the canonical form a save writes: a field at its default left out, and the kept
+ * proof_command too while no step loops back (Kept). A role key given twice keeps its last row, and a removed role or
+ * loop target is written as none; draftProblem names both first. */
 function definitionOf(draft: Draft): WorkflowDefinition {
   const optional = <T,>(key: string, value: T | undefined | "") => (value === undefined || value === "" ? {} : { [key]: value });
   const steps = draft.steps.map((s) => {
@@ -127,11 +131,12 @@ function definitionOf(draft: Draft): WorkflowDefinition {
       ...optional("loop_to", draft.steps.find((t) => t.row === s.loopTo)?.id),
     };
   });
+  const { proof_command, ...budget } = draft.kept;
+  const verdictStep = steps.some((s) => "loop_to" in s);
   return {
     ...optional("description", draft.description),
-    ...optional("max_files", draft.kept.max_files),
-    ...optional("max_lines", draft.kept.max_lines),
-    ...optional("proof_command", draft.kept.proof_command),
+    ...budget,
+    ...(verdictStep ? optional("proof_command", proof_command) : {}),
     roles: Object.fromEntries(
       draft.roles.map((r) => [r.key, { label: r.label, ...optional("agent", r.agent), ...optional("model", r.model) }]),
     ),
