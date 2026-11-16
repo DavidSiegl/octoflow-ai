@@ -273,29 +273,6 @@
     ]
    },
    {
-    "herdr": [
-     "pane",
-     "rename",
-     "p1",
-     "Spec Collector"
-    ]
-   },
-   {
-    "herdr": [
-     "agent",
-     "start",
-     "spec-<key:1>",
-     "--kind",
-     "codex",
-     "--pane",
-     "p1",
-     "--timeout",
-     "60000",
-     "--",
-     "--full-auto"
-    ]
-   },
-   {
     "state": {
      "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
      "saved": {
@@ -325,7 +302,8 @@
        "spec": {
         "name": "spec-<key:1>",
         "pane": "p1",
-        "kind": "codex"
+        "kind": "codex",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -413,6 +391,29 @@
    },
    {
     "herdr": [
+     "pane",
+     "rename",
+     "p1",
+     "Spec Collector"
+    ]
+   },
+   {
+    "herdr": [
+     "agent",
+     "start",
+     "spec-<key:1>",
+     "--kind",
+     "codex",
+     "--pane",
+     "p1",
+     "--timeout",
+     "60000",
+     "--",
+     "--full-auto"
+    ]
+   },
+   {
+    "herdr": [
      "agent",
      "get",
      "spec-<key:1>"
@@ -449,7 +450,8 @@
         "name": "spec-<key:1>",
         "pane": "p1",
         "kind": "codex",
-        "session": "session-1"
+        "session": "session-1",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -714,29 +716,6 @@
     ]
    },
    {
-    "herdr": [
-     "pane",
-     "rename",
-     "p2",
-     "Builder"
-    ]
-   },
-   {
-    "herdr": [
-     "agent",
-     "start",
-     "build-<key:1>",
-     "--kind",
-     "codex",
-     "--pane",
-     "p2",
-     "--timeout",
-     "60000",
-     "--",
-     "--full-auto"
-    ]
-   },
-   {
     "state": {
      "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
      "saved": {
@@ -772,7 +751,8 @@
        "build": {
         "name": "build-<key:1>",
         "pane": "p2",
-        "kind": "codex"
+        "kind": "codex",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -876,6 +856,29 @@
    },
    {
     "herdr": [
+     "pane",
+     "rename",
+     "p2",
+     "Builder"
+    ]
+   },
+   {
+    "herdr": [
+     "agent",
+     "start",
+     "build-<key:1>",
+     "--kind",
+     "codex",
+     "--pane",
+     "p2",
+     "--timeout",
+     "60000",
+     "--",
+     "--full-auto"
+    ]
+   },
+   {
+    "herdr": [
      "agent",
      "get",
      "build-<key:1>"
@@ -918,7 +921,8 @@
         "name": "build-<key:1>",
         "pane": "p2",
         "kind": "codex",
-        "session": "session-2"
+        "session": "session-2",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -1202,31 +1206,6 @@
     ]
    },
    {
-    "herdr": [
-     "pane",
-     "rename",
-     "p3",
-     "Reviewer"
-    ]
-   },
-   {
-    "herdr": [
-     "agent",
-     "start",
-     "review-<key:1>",
-     "--kind",
-     "codex",
-     "--pane",
-     "p3",
-     "--timeout",
-     "60000",
-     "--",
-     "--full-auto",
-     "--model",
-     "opus"
-    ]
-   },
-   {
     "state": {
      "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
      "saved": {
@@ -1268,7 +1247,8 @@
        "review": {
         "name": "review-<key:1>",
         "pane": "p3",
-        "kind": "codex"
+        "kind": "codex",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -1387,6 +1367,31 @@
    },
    {
     "herdr": [
+     "pane",
+     "rename",
+     "p3",
+     "Reviewer"
+    ]
+   },
+   {
+    "herdr": [
+     "agent",
+     "start",
+     "review-<key:1>",
+     "--kind",
+     "codex",
+     "--pane",
+     "p3",
+     "--timeout",
+     "60000",
+     "--",
+     "--full-auto",
+     "--model",
+     "opus"
+    ]
+   },
+   {
+    "herdr": [
      "agent",
      "get",
      "review-<key:1>"
@@ -1435,7 +1440,8 @@
         "name": "review-<key:1>",
         "pane": "p3",
         "kind": "codex",
-        "session": "session-3"
+        "session": "session-3",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,

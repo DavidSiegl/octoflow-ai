@@ -10,6 +10,9 @@ the process that drives them. `resume` picks the run up where `state.json` says 
 
 - A handoff file written while no orchestrator was watching is taken as it is, without prompting the role again.
 - A role whose agent still runs is reused. If it was already prompted for its current file, it is only waited on.
+  One the stopped run had started but not yet prompted, still in a startup dialog such as folder trust or just
+  relaunched into its session, first has its dialog answered in the pane, then gets the prompt its start would have
+  sent: a fresh agent its step's prompt, a resumed one the prompt to continue.
 - An agent that exited is relaunched in its pane into its saved session, keeping its conversation, with its
   harness's own syntax: `--resume <id>` for claude, `--conversation <id>` for agy, `--session <id>` for pi and
   opencode, and `codex resume <id>`. When its session is gone, or the role runs in another harness now, a fresh one starts
