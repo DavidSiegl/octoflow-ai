@@ -257,7 +257,8 @@ export const STEP_FLAG_HELP: Record<(typeof STEP_FLAGS)[number], string> = {
   fresh_repeats_again: 'In a later round, a fresh session also gets the "again" prompt, not just the first one.',
   human_paced: "The step waits on you: no turn timeout or stall notice, and its pane gets focus when ready.",
   edits: "The step changes the code; the run's base and branch are fixed just before the first such step.",
-  quality_gated: "With --quality-gate, the gate runs after each turn and sends a failing result back to this step.",
+  quality_gated:
+    "With --quality-gate, the gate runs after each turn of this editing step and sends a failing result back to it; one step at most.",
   locks: "Files this step changes are locked, and another step's later changes to them undone; only the first editing step may lock.",
 };
 
