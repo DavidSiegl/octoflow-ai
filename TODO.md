@@ -339,10 +339,10 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 - **unexpected-paths reads only the contract step's file.** `unexpected_paths` judges each path the change touches
   against `RunChange.spec`, the contract step's file, so a workflow whose contract is in business terms, such as
-  `examples/workflows/product-team.toml`, whose requirements name no file and whose `design.md` lists the
+  the built-in `product-team`, whose requirements name no file and whose `design.md` lists the
   components, gets a finding to weigh for every path on every quality round. Raised by review 20 of
   product-team-workflow (F4, 2026-10-25): "the gate reads file names from the spec and this spec is in business
-  terms by design". The example's header says so. Decided against (the user's ruling, 2026-11-11): the check reading
+  terms by design". The workflow file's header says so. Decided against (the user's ruling, 2026-11-11): the check reading
   every non-editing step's file that precedes the first editing step, or a workflow key naming the file that holds
   the paths; only the contract step names paths in the example workflows, and the finding is one to weigh.
 - **Removing a tree of read-only directories is written out twice.** `chmod -R u+rwX "$dir" && rm -rf "$dir"`, with a

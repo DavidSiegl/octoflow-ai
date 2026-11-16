@@ -4,9 +4,9 @@
 
 use crate::env::ConfigDir;
 use crate::error::OrchestratorError;
-use crate::pipeline::{find_workflow, workflow_shape, Pipeline, WORKFLOWS};
+use crate::pipeline::{workflow_shape, Pipeline};
 use crate::prompts::{load_prompts, Prompts};
-use crate::workflow_file::{load_workflow_file, named_workflow, workflow_files, workflow_toml};
+use crate::workflow_file::{find_workflow, load_workflow_file, named_workflow, workflow_files, workflow_toml, WORKFLOWS};
 
 /// Print, by print (which writes its text on standard output as it is), the workflow reference names as a workflow
 /// file, worded by config's prompt files as a new run would be; without reference, the list print_workflows prints.
@@ -31,9 +31,7 @@ fn print_workflows(config: &ConfigDir, print: &dyn Fn(&str)) -> Result<(), Orche
     let say = |line: &str| print(&format!("{line}\n"));
     // The shape and description only, which no prompt file changes.
     let built_in = Prompts::default();
-    let mut names = WORKFLOWS.to_vec();
-    names.sort_unstable();
-    for name in names {
+    for name in WORKFLOWS {
         print_workflow(&say, name, "built in", &find_workflow(name, &built_in)?);
     }
     for (name, path) in workflow_files(config)?.iter() {

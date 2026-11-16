@@ -1442,7 +1442,7 @@ fn workflows_are_the_configuration_s_with_their_roles_and_the_harnesses() {
     assert_eq!(answer["agents"], serde_json::json!(crate::constants::HARNESS_NAMES));
     let workflows = answer["workflows"].as_array().unwrap();
     let names: Vec<&str> = workflows.iter().map(|w| w["name"].as_str().unwrap()).collect();
-    let mut expected: Vec<&str> = crate::pipeline::WORKFLOWS.iter().copied().chain(["broken", "solo"]).collect();
+    let mut expected: Vec<&str> = crate::workflow_file::WORKFLOWS.iter().copied().chain(["broken", "solo"]).collect();
     expected.sort_unstable();
     assert_eq!(names, expected);
     let named = |name: &str| workflows.iter().find(|w| w["name"] == name).unwrap().clone();

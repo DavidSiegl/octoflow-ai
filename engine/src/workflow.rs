@@ -23,7 +23,7 @@ use crate::herdr::{Herdr, HerdrError};
 use crate::host::{git_status, Host, PushError, Scanned};
 use crate::interrupt::Interrupt;
 use crate::paths::file_name;
-use crate::pipeline::{is_built_in, Pipeline, Step, DONE, METRICS_FILE, PUBLISH, QUALITY, SUMMARY_FILE};
+use crate::pipeline::{Pipeline, Step, DONE, METRICS_FILE, PUBLISH, QUALITY, SUMMARY_FILE};
 use crate::prompts::Prompts;
 use crate::proofs::PROOF_TIMEOUT;
 use crate::pull_request::{branch_name, commit_note, pr_body, provenance, spec_title, GateEvidence, QualityFile};
@@ -35,7 +35,7 @@ use crate::runs::{local_host, RUNNING};
 use crate::spec_file::SpecFile;
 use crate::state::RunState;
 use crate::summary::{iso_utc, run_metrics, run_summary, turn_tokens};
-use crate::workflow_file::{run_pipeline, workflow_definition};
+use crate::workflow_file::{is_built_in, run_pipeline, workflow_definition};
 use step_prompt::RunView;
 
 mod gate_switch;

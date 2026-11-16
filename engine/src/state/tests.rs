@@ -352,9 +352,11 @@ fn a_state_names_its_workflow() {
     let mut state = RunState::new("r1", "t", "/p");
     assert_eq!(state.pipeline().unwrap(), *crate::pipeline::DEFAULT_WORKFLOW);
     // A workflow that is not built in is read from its saved definition, never from its file.
+    state.workflow = "nosuch".into();
+    assert!(state.pipeline().is_err());
+    // Even one of a built-in's name, as a run of a workflow file of that name saved it before the name was built in.
     let quick = crate::test_support::quick();
     state.workflow = "quick".into();
-    assert!(state.pipeline().is_err());
     state.workflow_definition = Some(crate::workflow_file::workflow_definition(&quick));
     assert_eq!(state.pipeline().unwrap(), quick);
     // Worded by its saved prompts, which must name prompts this engine has.

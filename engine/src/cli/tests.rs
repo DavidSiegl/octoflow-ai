@@ -20,9 +20,9 @@ use crate::json::ValueExt;
 use crate::workflow::fixture::{build_turn, saved_run, then_interrupted, Fixture};
 use super::fixture::Cli;
 use crate::constants::{CHANGES_REQUESTED, FINISHED};
-use crate::test_support::TempDir;
+use crate::test_support::{built_in_as_file, TempDir};
 use crate::workflow::fixture::{review_turn, solo_turn, spec_turn};
-use crate::workflow_file::{load_workflow_file, workflow_definition, workflow_toml};
+use crate::workflow_file::{find_workflow, load_workflow_file, workflow_definition, workflow_toml};
 
 /// The command line argv, after the program's name.
 fn command(argv: &[&str]) -> Command {
@@ -173,11 +173,6 @@ fn the_resume_hint() {
 
 
 // -- Runs started through main ---------------------------------------------------------------------------------------
-
-/// The repository's example workflow file of name.
-fn example(name: &str) -> String {
-    format!("{}/../examples/workflows/{name}.toml", env!("CARGO_MANIFEST_DIR"))
-}
 
 /// A Cli whose configuration directory, d, holds files, each a (path in it, text) pair.
 fn configured(d: &TempDir, files: &[(&str, &str)]) -> Cli {
@@ -405,28 +400,27 @@ fn a_workflow_file_is_offered_and_started() {
     assert_eq!(field(&saved, "models"), r#"{"build":"X","review":"X"}"#);
 }
 
-/// A Cli whose configuration has the example product-team workflow file.
-fn with_product_team(d: &TempDir) -> Cli {
-    configured(d, &[("workflows/product-team.toml", &std::fs::read_to_string(example("product-team")).unwrap())])
-}
-
 #[test]
-fn run_a_workflow_file_by_name_or_path() {
+fn run_a_built_in_workflow_or_a_workflow_file() {
     let d = TempDir::new();
-    let cli = with_product_team(&d);
+    let cli = Cli::new();
     let saved = started(&cli, &["task", "--workflow", "product-team"]);
     assert_eq!((field(&saved, "workflow"), field(&saved, "phase")), (r#""product-team""#.into(), r#""spec""#.into()));
-    let team = load_workflow_file(&example("product-team"), &crate::prompts::Prompts::default()).unwrap();
-    assert_eq!(saved.get("workflow_definition"), Some(&workflow_definition(&team)));
+    // A built-in workflow is saved by name; its name and the run's prompts give it back.
+    assert_eq!(saved.get("workflow_definition"), Some(&Value::Null));
     assert_eq!(field(&saved, "models"), r#"{"tests":"sonnet"}"#);
-    let saved = started(&cli, &["task", "--workflow-file", &example("quick")]);
-    assert_eq!((field(&saved, "workflow"), field(&saved, "phase")), (r#""quick""#.into(), r#""build""#.into()));
+    let mine = built_in_as_file(&d, "quick", "mine");
+    let saved = started(&cli, &["task", "--workflow-file", &mine]);
+    assert_eq!((field(&saved, "workflow"), field(&saved, "phase")), (r#""mine""#.into(), r#""build""#.into()));
+    let quick = find_workflow("quick", &Default::default()).unwrap();
+    let mine = load_workflow_file(&mine, &Default::default()).unwrap();
+    assert_eq!(saved.get("workflow_definition"), Some(&workflow_definition(&mine)));
+    assert_eq!(mine.steps(), quick.steps());
 }
 
 #[test]
-fn model_flags_override_the_files_models() {
-    let d = TempDir::new();
-    let cli = with_product_team(&d);
+fn model_flags_override_the_workflows_models() {
+    let cli = Cli::new();
     let saved = started(&cli, &["task", "--workflow", "product-team", "--model", "X"]);
     // The file's models first, then the flags', a flag's replacing the file's for the same role.
     assert_eq!(field(&saved, "models"), r#"{"tests":"X","spec":"X","design":"X","build":"X","review":"X"}"#);
@@ -449,7 +443,7 @@ fn a_role_flag_for_a_role_the_workflow_lacks() {
 
 #[test]
 fn resume_takes_role_model() {
-    let team = load_workflow_file(&example("product-team"), &crate::prompts::Prompts::default()).unwrap();
+    let team = find_workflow("product-team", &Default::default()).unwrap();
     let mut state = saved_run("build", 1, &[]);
     state.models = [("tests", "sonnet".to_string())].into_iter().collect();
     state.workflow = "product-team".into();
@@ -512,14 +506,14 @@ fn the_spec_combines_with_the_other_run_flags() {
     let d = TempDir::new();
     std::fs::write(d.join("spec.md"), GIVEN_SPEC).unwrap();
     let spec = d.join("spec.md");
-    let example = example("spec-build-review");
+    let mine = built_in_as_file(&d, "default", "mine");
     let gate = format!(r#""{LOCAL_GATE}""#);
     let cases: [(&[&str], &str, &str); 5] = [
         (&["--no-pr"], "pull_request", "false"),
         (&["--quality-gate", LOCAL_GATE], "quality_job", &gate),
         (&["--machine", "m", "--cwd", "/proj"], "machine", r#""m""#),
         (&["--workflow", "default"], "workflow", r#""default""#),
-        (&["--workflow-file", &example], "workflow", r#""spec-build-review""#),
+        (&["--workflow-file", &mine], "workflow", r#""mine""#),
     ];
     for (flags, key, value) in cases {
         let cli = Cli::gated();
@@ -550,7 +544,7 @@ fn an_unreadable_or_empty_spec_is_an_error() {
 fn a_spec_needs_a_workflow_with_a_contract_step() {
     let d = TempDir::new();
     std::fs::write(d.join("spec.md"), GIVEN_SPEC).unwrap();
-    let e = refused(&Cli::new(), &["--spec", &d.join("spec.md"), "--workflow-file", &example("quick")]);
+    let e = refused(&Cli::new(), &["--spec", &d.join("spec.md"), "--workflow", "quick"]);
     assert!(e.contains("workflow quick starts with step build"), "{e}");
     assert!(e.contains("--spec needs a first step that writes the spec"), "{e}");
 }

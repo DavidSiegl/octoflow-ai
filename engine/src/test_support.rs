@@ -173,8 +173,14 @@ pub fn eventually(mut done: impl FnMut() -> bool) -> bool {
     done()
 }
 
-/// The repository's examples/workflows/.
-pub const EXAMPLES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/workflows");
+/// The path of a new workflow file dir/name.toml holding the built-in workflow built_in, worded by the built-in
+/// prompts: a workflow of name that is not built in, to run by --workflow-file or install in a workflows directory.
+pub fn built_in_as_file(dir: &TempDir, built_in: &str, name: &str) -> String {
+    let pipeline = crate::workflow_file::find_workflow(built_in, &Default::default()).expect("a built-in workflow");
+    let path = dir.join(&format!("{name}.toml"));
+    std::fs::write(&path, crate::workflow_file::workflow_toml(&pipeline)).expect("the workflow file is written");
+    path
+}
 
 /// The bytes a string of hex digits stands for, as an oracle file (engine/tests/oracle/) writes bytes that are not
 /// UTF-8.

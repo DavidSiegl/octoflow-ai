@@ -20,7 +20,7 @@ use crate::cli::listing::RUN_RECORD_VERSION;
 use crate::pipeline::METRICS_FILE;
 use crate::env::ConfigDir;
 use crate::local_gate::LOCAL_GATE;
-use crate::pipeline::WORKFLOWS;
+use crate::workflow_file::WORKFLOWS;
 use crate::workflow_file::workflow_names;
 
 /// What the command line asks for: one subcommand and its flags.

@@ -150,7 +150,7 @@ fn a_change_that_also_touches_released_code_still_needs_the_raise() {
         "engine/src/main.rs",
         "engine/src/prompts/builder.md",
         "ui/src/App.tsx",
-        "examples/workflows/q.toml",
+        "engine/src/workflows/q.toml",
         "packaging/build-desktop.sh",
     ] {
         // From main each time, so that path is the only released one in the diff.

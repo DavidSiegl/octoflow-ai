@@ -4,8 +4,8 @@
 
 use super::*;
 use crate::pipeline::{Pipeline, Step};
-use crate::test_support::{accepting, roles, EXAMPLES};
-use crate::workflow_file::load_workflow_file;
+use crate::test_support::{accepting, roles};
+use crate::workflow_file::find_workflow;
 
 const D: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
 
@@ -232,7 +232,7 @@ fn a_run_saved_without_records_keeps_its_earlier_rounds_once_it_goes_on() {
 
 #[test]
 fn the_product_team_s_product_manager_sends_the_change_back_once() {
-    let team = load_workflow_file(&format!("{EXAMPLES}/product-team.toml"), &Default::default()).unwrap();
+    let team = find_workflow("product-team", &Default::default()).unwrap();
     let acceptance = |n: u32, verdict: &str| {
         writes(move |s| format!("{}/acceptance-{n}.md", s.dir()), &format!("VERDICT: {verdict}\n1. criterion"), "done")
     };
@@ -273,7 +273,7 @@ fn the_product_team_s_product_manager_sends_the_change_back_once() {
 #[test]
 fn a_fresh_tech_lead_hears_of_the_product_manager_s_findings() {
     // Resumed in round 2's review after the Product Manager sent round 1 back, the Tech Lead's session gone.
-    let team = load_workflow_file(&format!("{EXAMPLES}/product-team.toml"), &Default::default()).unwrap();
+    let team = find_workflow("product-team", &Default::default()).unwrap();
     let mut state = saved_run("review", 2, &["spec", "design", "tests", "build", "review"]);
     state.record_verdict(1, "review", APPROVE);
     state.record_verdict(1, "accept", CHANGES_REQUESTED);

@@ -5,13 +5,8 @@ use crate::cli::fixture::Cli;
 use crate::env::ConfigDir;
 use crate::pipeline::DEFAULT_WORKFLOW;
 use crate::prompts::Prompts;
-use crate::test_support::TempDir;
-use crate::workflow_file::{load_workflow_file, parse_toml, parse_workflow};
-
-/// The repository's example workflow file of name.
-fn example(name: &str) -> String {
-    format!("{}/../examples/workflows/{name}.toml", env!("CARGO_MANIFEST_DIR"))
-}
+use crate::test_support::{built_in_as_file, TempDir};
+use crate::workflow_file::{find_workflow, parse_toml, parse_workflow};
 
 /// A Cli whose configuration directory, d, holds files, each a (path in it, text) pair.
 fn configured(d: &TempDir, files: &[(&str, &str)]) -> Cli {
@@ -36,18 +31,33 @@ fn printed(cli: &Cli, argv: &[&str]) -> String {
 #[test]
 fn workflows_lists_them() {
     let d = TempDir::new();
-    let team = std::fs::read_to_string(example("product-team")).unwrap();
-    let cli = configured(&d, &[("workflows/product-team.toml", &team), ("workflows/broken.toml", "[[steps]]\nid = 3\n")]);
+    let solo = "description = \"Builder alone\"\n[[steps]]\nid = \"build\"\nfile = \"b-{n}.md\"\nprompt = \"{path}\"\nedits = true\n";
+    let cli = configured(&d, &[
+        ("workflows/solo.toml", solo),
+        ("workflows/broken.toml", "[[steps]]\nid = 3\n"),
+        ("workflows/quick.toml", "[[steps]]\nuse = \"build\"\n"),
+    ]);
     let workflows = cli.config.workflows_dir();
     assert_eq!(printed(&cli, &[]).lines().collect::<Vec<_>>(), [
         "default  built in".to_string(),
         "    spec -> build -> review (back to build)".into(),
-        format!("broken  {workflows}/broken.toml"),
-        "    error: step 1: file is missing".into(),
-        format!("product-team  {workflows}/product-team.toml"),
+        "product-team  built in".into(),
         "    spec -> design -> tests -> build -> review (back to build) -> accept (back to build)".into(),
         "    Product Manager -> Architect -> QA Engineer -> Engineer <-> Tech Lead, then the Product Manager's acceptance"
             .into(),
+        "quick  built in".into(),
+        "    build -> review (back to build)".into(),
+        "    Builder <-> Reviewer, with the task as the contract: no interview".into(),
+        format!("broken  {workflows}/broken.toml"),
+        "    error: step 1: file is missing".into(),
+        // A file of a built-in's name, which the built-in replaced: the list says how to fix it.
+        format!("quick  {workflows}/quick.toml"),
+        "    error: workflow quick is built in; delete this file to run the built-in, or rename it to keep it as a \
+         workflow of its own"
+            .into(),
+        format!("solo  {workflows}/solo.toml"),
+        "    build".into(),
+        "    Builder alone".into(),
         String::new(),
         format!(
             "Add one as {workflows}/NAME.toml; `octoflow workflows default` prints the default as a file to \
@@ -59,13 +69,13 @@ fn workflows_lists_them() {
 #[test]
 fn workflows_prints_one_as_a_file() {
     let d = TempDir::new();
-    let team = std::fs::read_to_string(example("product-team")).unwrap();
-    let cli = configured(&d, &[("workflows/product-team.toml", &team)]);
-    let expected = load_workflow_file(&example("product-team"), &Prompts::default()).unwrap();
-    for reference in ["product-team".to_string(), example("product-team")] {
-        let text = printed(&cli, &[&reference]);
-        let printed = parse_workflow("product-team", &parse_toml(&text).unwrap(), &Prompts::default()).unwrap();
-        assert_eq!(printed, expected, "{reference}");
+    let cli = configured(&d, &[]);
+    let path = built_in_as_file(&d, "product-team", "team");
+    for (reference, name) in [("product-team", "product-team"), ("quick", "quick"), (path.as_str(), "team")] {
+        let text = printed(&cli, &[reference]);
+        let printed = parse_workflow(name, &parse_toml(&text).unwrap(), &Prompts::default()).unwrap();
+        let built_in = if name == "team" { "product-team" } else { name };
+        assert_eq!(printed.steps(), find_workflow(built_in, &Prompts::default()).unwrap().steps(), "{reference}");
     }
 }
 
@@ -83,7 +93,7 @@ fn workflows_prints_a_files_agent() {
 fn an_unknown_or_broken_workflow_is_an_error() {
     let d = TempDir::new();
     let cli = configured(&d, &[("workflows/broken.toml", "[[steps]]\nid = 3\n")]);
-    assert_eq!(cli.error(&["workflows", "nosuch"]), "unknown workflow nosuch; there are broken, default");
+    assert_eq!(cli.error(&["workflows", "nosuch"]), "unknown workflow nosuch; there are broken, default, product-team, quick");
     let broken = cli.config.workflows_dir() + "/broken.toml";
     assert_eq!(cli.error(&["workflows", &broken]), format!("{broken}: step 1: file is missing"));
     assert_eq!(cli.main(&["workflows", "nosuch"]), crate::constants::EXIT_ERROR);

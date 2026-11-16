@@ -1,7 +1,7 @@
 use super::*;
 use crate::pipeline::workflow_shape;
 use crate::prompts::Prompt;
-use crate::test_support::{locking, oracle, quick, replaced, roles, TempDir, EXAMPLES};
+use crate::test_support::{locking, oracle, quick, replaced, roles, TempDir};
 
 fn built_in() -> Prompts {
     Prompts::default()
@@ -33,8 +33,74 @@ impl Config {
     }
 }
 
-fn example(name: &str) -> Pipeline {
-    load_workflow_file(&format!("{EXAMPLES}/{name}.toml"), &built_in()).unwrap()
+/// The built-in workflow name, worded by the built-in prompts.
+fn built_in_workflow(name: &str) -> Pipeline {
+    find_workflow(name, &built_in()).unwrap()
+}
+
+#[test]
+fn the_built_in_workflows() {
+    assert_eq!(WORKFLOWS, ["default", "product-team", "quick"]);
+    assert!(WORKFLOWS.is_sorted(), "WORKFLOWS is in name order");
+    for name in WORKFLOWS {
+        let p = built_in_workflow(name);
+        assert_eq!(p.name(), name);
+        assert!(is_built_in(&p, &built_in()), "{name}");
+    }
+    assert_eq!(built_in_workflow("default"), *DEFAULT_WORKFLOW);
+    assert!(!is_built_in(&quick(), &built_in()), "the fixture named quick is not the built-in");
+    assert_eq!(
+        find_workflow("nope", &built_in()).unwrap_err().0,
+        "unknown workflow nope; this orchestrator has default, product-team, quick"
+    );
+}
+
+#[test]
+fn a_built_in_workflow_is_worded_by_the_prompts_its_steps_take_from_the_default() {
+    let mut overrides = Map::new();
+    overrides.insert("BUILD_PROMPT", "Build {spec_path} in {cwd}; report to {build_path}.".to_string());
+    overrides.insert("FIX_PROMPT", "Fix {findings}; report to {build_path}.".to_string());
+    let prompts = Prompts::from_overrides(&overrides).unwrap();
+    let default = find_workflow("default", &prompts).unwrap();
+    assert_eq!(default.step("build").unwrap().prompt, "Build {spec_path} in {cwd}; report to {build_path}.");
+    assert!(is_built_in(&default, &prompts));
+    assert!(!is_built_in(&default, &built_in()));
+    // quick's build step has a prompt of its own and takes again from the default's, as its file would.
+    let quick = find_workflow("quick", &prompts).unwrap();
+    let build = quick.step("build").unwrap();
+    assert!(build.prompt.starts_with("You are the Builder, the first of two roles"), "{}", build.prompt);
+    assert_eq!(build.again.as_deref(), Some(prompts.text(Prompt::FixPrompt)));
+    assert!(is_built_in(&quick, &prompts));
+    // product-team words every text of the steps it uses itself, so no prompt file changes it.
+    assert_eq!(find_workflow("product-team", &prompts).unwrap(), built_in_workflow("product-team"));
+}
+
+#[test]
+fn a_workflow_file_cannot_take_a_built_in_name() {
+    let config = Config::new();
+    let path = config.file("quick", &workflow_toml(&quick()));
+    assert_eq!(
+        load_workflow_file(&path, &built_in()).unwrap_err().0,
+        format!(
+            "{path}: workflow quick is built in; delete this file to run the built-in, or rename it to keep it as a \
+             workflow of its own"
+        )
+    );
+    // The name finds the built-in, which the file does not shadow.
+    assert_eq!(named_workflow(&config.config, "quick", &built_in()).unwrap(), built_in_workflow("quick"));
+    assert_eq!(workflow_names(&config.config).unwrap(), WORKFLOWS);
+}
+
+#[test]
+fn a_run_saved_from_a_workflow_file_of_a_built_in_name_keeps_its_definition() {
+    // Before quick was built in, a run of the quick.toml file saved its definition under that name: say, a Reviewer
+    // on another model. It resumes with that definition, not the built-in's.
+    let mut saved = workflow_definition(&built_in_workflow("quick"));
+    saved["roles"]["review"]["model"] = Value::from("opus");
+    let p = run_pipeline("quick", Some(&saved), &built_in()).unwrap();
+    assert_eq!(p.models(), &roles(&[("review", "opus")]));
+    assert_ne!(p, built_in_workflow("quick"));
+    assert!(!is_built_in(&p, &built_in()), "so a resumed run saves it again");
 }
 
 #[test]
@@ -57,7 +123,7 @@ fn every_workflow_parses_to_the_definition_workflows_json_records() {
                 assert_eq!(workflow_definition(&p), definition, "{from}");
                 assert_eq!(workflow_toml(&p), field("toml"), "{from}");
                 assert_eq!(workflow_shape(&p), field("shape"), "{from}");
-                assert_eq!(Some(crate::pipeline::is_built_in(&p, &built_in())), outcome.get("built_in").and_then(Value::as_bool), "{from}");
+                assert_eq!(Some(is_built_in(&p, &built_in())), outcome.get("built_in").and_then(Value::as_bool), "{from}");
                 // The definition as state.json saves it gives the workflow back too.
                 let saved = serde_json::from_str::<Value>(field("definition")).unwrap();
                 assert_eq!(run_pipeline(name, Some(&saved), &built_in()).unwrap(), p, "{from}");
@@ -67,10 +133,10 @@ fn every_workflow_parses_to_the_definition_workflows_json_records() {
 }
 
 #[test]
-fn examples_load() {
+fn the_built_in_files_load() {
     let default = &*DEFAULT_WORKFLOW;
-    assert_eq!(workflow_shape(&example("quick")), "build -> review (back to build)");
-    let team = example("product-team");
+    assert_eq!(workflow_shape(&built_in_workflow("quick")), "build -> review (back to build)");
+    let team = built_in_workflow("product-team");
     assert_eq!(team.name(), "product-team");
     let shape = "spec -> design -> tests -> build -> review (back to build) -> accept (back to build)";
     assert_eq!(workflow_shape(&team), shape);
@@ -293,14 +359,14 @@ fn a_saved_definition_with_an_unreadable_template_or_corrupt_is_refused() {
     assert!(e.0.starts_with("the definition of workflow quick saved with the run is invalid: step 1 (build): prompt: placeholder {task:d} at line 1, column 1 has a format spec"), "{e}");
     let e = run_pipeline("quick", Some(&serde_json::from_str::<Value>(r#"{"steps": []}"#).unwrap()), &built_in()).unwrap_err();
     assert_eq!(e.0, "the definition of workflow quick saved with the run is invalid: it has no [[steps]]");
-    assert!(run_pipeline("quick", None, &built_in()).unwrap_err().0.starts_with("unknown workflow quick"));
+    assert!(run_pipeline("nosuch", None, &built_in()).unwrap_err().0.starts_with("unknown workflow nosuch"));
 }
 
 #[test]
 fn a_file_cannot_replace_a_built_in_workflow_or_take_a_name_no_workflow_can() {
     let config = Config::new();
     let path = config.file("default", "[[steps]]\nuse = \"spec\"\n");
-    assert!(load_workflow_file(&path, &built_in()).unwrap_err().0.ends_with("workflow default is built in; give the file another name"));
+    assert!(load_workflow_file(&path, &built_in()).unwrap_err().0.ends_with("workflow default is built in; delete this file to run the built-in, or rename it to keep it as a workflow of its own"));
     let path = config.file("my flow", "[[steps]]\nuse = \"spec\"\n");
     assert!(load_workflow_file(&path, &built_in()).unwrap_err().0.contains("a workflow's name, its file's, may use only letters"));
 }
@@ -320,15 +386,15 @@ fn a_missing_or_undecodable_file() {
 #[test]
 fn files_are_offered_by_name() {
     let config = Config::new();
-    config.file("product-team", &std::fs::read_to_string(format!("{EXAMPLES}/product-team.toml")).unwrap());
+    config.file("team", &workflow_toml(&built_in_workflow("product-team")));
     config.file("broken", "nonsense\n");
     std::fs::write(config.dir.join("workflows/notes.txt"), "not a workflow").unwrap();
-    assert_eq!(workflow_names(&config.config).unwrap(), ["broken", "default", "product-team"]);
-    assert_eq!(named_workflow(&config.config, "product-team", &built_in()).unwrap().name(), "product-team");
+    assert_eq!(workflow_names(&config.config).unwrap(), ["broken", "default", "product-team", "quick", "team"]);
+    assert_eq!(named_workflow(&config.config, "team", &built_in()).unwrap().name(), "team");
     assert_eq!(named_workflow(&config.config, "default", &built_in()).unwrap(), *DEFAULT_WORKFLOW);
     assert_eq!(
         named_workflow(&config.config, "nope", &built_in()).unwrap_err().0,
-        "unknown workflow nope; there are broken, default, product-team"
+        "unknown workflow nope; there are broken, default, product-team, quick, team"
     );
     let none = ConfigDir::at(&config.dir.join("elsewhere"));
     assert!(workflow_files(&none).unwrap().is_empty());
@@ -414,19 +480,6 @@ again = "Again, with tests in {proofs_dir}; write {review_path}."
     assert_eq!(parse_workflow("bad", &Value::Object(definition), &built_in()).unwrap_err(), "proof_command must be a string");
 }
 
-#[test]
-fn a_workflow_files_own_prompt_is_not_replaced() {
-    let mut overrides = Map::new();
-    overrides.insert("BUILD_PROMPT", "Build {spec_path} in {cwd}; report to {build_path}.".to_string());
-    overrides.insert("FIX_PROMPT", "Fix {findings}; report to {build_path}.".to_string());
-    let prompts = Prompts::from_overrides(&overrides).unwrap();
-    let p = load_workflow_file(&format!("{EXAMPLES}/quick.toml"), &prompts).unwrap();
-    let build = p.step("build").unwrap();
-    // Its own prompt, and the again it takes from the default workflow's build step through use.
-    assert!(build.prompt.starts_with("You are the Builder, the first of two roles"), "{}", build.prompt);
-    assert_eq!(build.again.as_deref(), Some(prompts.text(Prompt::FixPrompt)));
-}
-
 // -- Editing a workflow: read_workflow, check_workflow, save_workflow, delete_workflow -------------------------------
 
 /// A workflow file of default's steps by use, with a comment: a workflow not in canonical form.
@@ -438,7 +491,7 @@ fn by_use() -> String {
 #[test]
 fn a_saved_definition_is_the_workflow_run_loads_and_reads_back_canonical() {
     let config = Config::new();
-    let definition = workflow_definition(&example("product-team"));
+    let definition = workflow_definition(&built_in_workflow("product-team"));
     let path = save_workflow(&config.config, "mine", &definition, None).unwrap();
     assert_eq!(path, config.dir.join("workflows/mine.toml"));
     let loaded = named_workflow(&config.config, "mine", &built_in()).unwrap();
