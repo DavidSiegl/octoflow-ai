@@ -188,6 +188,17 @@ fn agent_and_turn_records_keep_the_fields_they_do_not_know_after_their_own() {
 }
 
 #[test]
+fn an_agents_start_is_kept_until_it_is_prompted_and_reads_as_none_where_an_older_engine_saved_none() {
+    let agents = r#"{"build": {"name": "build-r1", "pane": "p2", "kind": "pi", "session": "s1", "unprompted": "resumed"}}"#;
+    let text = saved_with(&[("agents", Some(agents))]);
+    let state = RunState::from_text(&text).unwrap();
+    assert_eq!(state.agents.get("build").unwrap().unprompted, Some(AgentStart::Resumed));
+    assert_eq!(state.to_text(), text + "\n");
+    let older = saved_with(&[("agents", Some(r#"{"build": {"name": "build-r1", "pane": "p2", "kind": "pi"}}"#))]);
+    assert_eq!(RunState::from_text(&older).unwrap().agents.get("build").unwrap().unprompted, None);
+}
+
+#[test]
 fn an_agent_or_turn_record_without_a_field_its_engine_writes_is_refused() {
     let agentless = [r#"{"build": {"name": "build-r1", "pane": "p2"}}"#, r#"{"build": {"name": "b", "kind": 1, "pane": ""}}"#];
     for agents in agentless {

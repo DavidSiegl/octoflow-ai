@@ -186,31 +186,6 @@
     ]
    },
    {
-    "herdr": [
-     "--machine",
-     "box",
-     "pane",
-     "rename",
-     "p1",
-     "Spec Collector"
-    ]
-   },
-   {
-    "herdr": [
-     "--machine",
-     "box",
-     "agent",
-     "start",
-     "spec-<key:1>",
-     "--kind",
-     "claude",
-     "--pane",
-     "p1",
-     "--timeout",
-     "60000"
-    ]
-   },
-   {
     "state": {
      "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
      "saved": {
@@ -237,7 +212,8 @@
        "spec": {
         "name": "spec-<key:1>",
         "pane": "p1",
-        "kind": "claude"
+        "kind": "claude",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -283,6 +259,31 @@
     "herdr": [
      "--machine",
      "box",
+     "pane",
+     "rename",
+     "p1",
+     "Spec Collector"
+    ]
+   },
+   {
+    "herdr": [
+     "--machine",
+     "box",
+     "agent",
+     "start",
+     "spec-<key:1>",
+     "--kind",
+     "claude",
+     "--pane",
+     "p1",
+     "--timeout",
+     "60000"
+    ]
+   },
+   {
+    "herdr": [
+     "--machine",
+     "box",
      "agent",
      "get",
      "spec-<key:1>"
@@ -316,7 +317,8 @@
         "name": "spec-<key:1>",
         "pane": "p1",
         "kind": "claude",
-        "session": "session-1"
+        "session": "session-1",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -498,31 +500,6 @@
     ]
    },
    {
-    "herdr": [
-     "--machine",
-     "box",
-     "pane",
-     "rename",
-     "p2",
-     "Builder"
-    ]
-   },
-   {
-    "herdr": [
-     "--machine",
-     "box",
-     "agent",
-     "start",
-     "build-<key:1>",
-     "--kind",
-     "claude",
-     "--pane",
-     "p2",
-     "--timeout",
-     "60000"
-    ]
-   },
-   {
     "state": {
      "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
      "saved": {
@@ -555,7 +532,8 @@
        "build": {
         "name": "build-<key:1>",
         "pane": "p2",
-        "kind": "claude"
+        "kind": "claude",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -617,6 +595,31 @@
     "herdr": [
      "--machine",
      "box",
+     "pane",
+     "rename",
+     "p2",
+     "Builder"
+    ]
+   },
+   {
+    "herdr": [
+     "--machine",
+     "box",
+     "agent",
+     "start",
+     "build-<key:1>",
+     "--kind",
+     "claude",
+     "--pane",
+     "p2",
+     "--timeout",
+     "60000"
+    ]
+   },
+   {
+    "herdr": [
+     "--machine",
+     "box",
      "agent",
      "get",
      "build-<key:1>"
@@ -656,7 +659,8 @@
         "name": "build-<key:1>",
         "pane": "p2",
         "kind": "claude",
-        "session": "session-2"
+        "session": "session-2",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -855,31 +859,6 @@
     ]
    },
    {
-    "herdr": [
-     "--machine",
-     "box",
-     "pane",
-     "rename",
-     "p3",
-     "Reviewer"
-    ]
-   },
-   {
-    "herdr": [
-     "--machine",
-     "box",
-     "agent",
-     "start",
-     "review-<key:1>",
-     "--kind",
-     "claude",
-     "--pane",
-     "p3",
-     "--timeout",
-     "60000"
-    ]
-   },
-   {
     "state": {
      "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
      "saved": {
@@ -918,7 +897,8 @@
        "review": {
         "name": "review-<key:1>",
         "pane": "p3",
-        "kind": "claude"
+        "kind": "claude",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,
@@ -995,6 +975,31 @@
     "herdr": [
      "--machine",
      "box",
+     "pane",
+     "rename",
+     "p3",
+     "Reviewer"
+    ]
+   },
+   {
+    "herdr": [
+     "--machine",
+     "box",
+     "agent",
+     "start",
+     "review-<key:1>",
+     "--kind",
+     "claude",
+     "--pane",
+     "p3",
+     "--timeout",
+     "60000"
+    ]
+   },
+   {
+    "herdr": [
+     "--machine",
+     "box",
      "agent",
      "get",
      "review-<key:1>"
@@ -1040,7 +1045,8 @@
         "name": "review-<key:1>",
         "pane": "p3",
         "kind": "claude",
-        "session": "session-3"
+        "session": "session-3",
+        "unprompted": "new"
        }
       },
       "max_rounds": 3,

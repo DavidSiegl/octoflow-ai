@@ -169,8 +169,8 @@ pub struct StepVerdict {
     pub verdict: String,
 }
 
-/// A role's agent as the run started it (RunState::agents). Saved as {"name", "pane", "kind"}, and "session" once
-/// known, then the fields this engine does not know.
+/// A role's agent as the run started it (RunState::agents). Saved as {"name", "pane", "kind"}, "session" once known,
+/// "unprompted" until the agent takes its first prompt, then the fields this engine does not know.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentRecord {
     /// The agent's herdr name, `<role>-<key>`.
@@ -184,9 +184,27 @@ pub struct AgentRecord {
     /// The harness's session id, as herdr reports it; None until it does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
+    /// How the agent started, while it has not yet taken a prompt from the run; None once it has. A resume that finds
+    /// it alive with this set finishes its start and prompts it as that start would have. A record saved by an engine
+    /// that did not keep it reads as None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unprompted: Option<AgentStart>,
     /// The fields of the record this engine does not know, as read, written after its own.
     #[serde(flatten)]
     pub unknown: Object,
+}
+
+/// How a role's agent came to run (AgentRecord::unprompted), which decides what its first prompt is. Saved in
+/// lowercase.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentStart {
+    /// The role's first agent in this run.
+    New,
+    /// Relaunched into its saved agent session, after the one before exited.
+    Resumed,
+    /// Relaunched in a fresh session that has lost its earlier turns.
+    Restarted,
 }
 
 /// The record of one handoff file's turn (RunState::turns), as Workflow::turn_record opens it and end_turn closes it.
@@ -235,10 +253,11 @@ pub struct TurnRecord {
 }
 
 impl AgentRecord {
-    /// The record of an agent just started as name, in pane, in harness: its session not yet known.
+    /// The record of an agent as name, in pane, in harness: its session not yet known, and no mark of a prompt it is
+    /// owed (unprompted), which Workflow::start sets on the record of an agent it starts.
     pub fn new(name: &str, pane: &str, harness: &str) -> AgentRecord {
         let (name, pane, harness) = (name.into(), pane.into(), harness.into());
-        AgentRecord { name, pane, harness, session: None, unknown: Object::new() }
+        AgentRecord { name, pane, harness, session: None, unprompted: None, unknown: Object::new() }
     }
 }
 
