@@ -47,13 +47,15 @@ type DraftStep = {
   loopTo: number | null;
 } & Flags;
 
-/** A workflow as the form holds it: every field as its widget holds it, text where a definition has a number. */
+/** The definition's fields the editor has no widget for, which a save writes back as they were read: tuning of the
+ * quality gate and the proof runs, set by hand in the file (README, "Workflow files"). */
+type Kept = Pick<WorkflowDefinition, "max_files" | "max_lines" | "proof_command">;
+
+/** A workflow as the form holds it: every field as its widget holds it, and kept, the fields it has none for. */
 interface Draft {
   name: string;
   description: string;
-  maxFiles: string;
-  maxLines: string;
-  proofCommand: string;
+  kept: Kept;
   roles: DraftRole[];
   steps: DraftStep[];
 }
@@ -102,22 +104,10 @@ function draftOf(name: string, definition: WorkflowDefinition): Draft {
   return {
     name,
     description: definition.description ?? "",
-    maxFiles: definition.max_files?.toString() ?? "",
-    maxLines: definition.max_lines?.toString() ?? "",
-    proofCommand: definition.proof_command ?? "",
+    kept: { max_files: definition.max_files, max_lines: definition.max_lines, proof_command: definition.proof_command },
     roles,
     steps,
   };
-}
-
-/** A budget field's text as a definition holds it: absent when empty, a number when it is a whole one JSON carries
- * exactly, else the text, for the server to name as the problem. */
-function budget(text: string): number | string | undefined {
-  const trimmed = text.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-  return /^\d+$/.test(trimmed) && Number.isSafeInteger(Number(trimmed)) ? Number(trimmed) : trimmed;
 }
 
 /** The definition draft holds, in the canonical form a save writes: a field at its default left out. A role key given
@@ -139,9 +129,9 @@ function definitionOf(draft: Draft): WorkflowDefinition {
   });
   return {
     ...optional("description", draft.description),
-    ...optional("max_files", budget(draft.maxFiles)),
-    ...optional("max_lines", budget(draft.maxLines)),
-    ...optional("proof_command", draft.proofCommand),
+    ...optional("max_files", draft.kept.max_files),
+    ...optional("max_lines", draft.kept.max_lines),
+    ...optional("proof_command", draft.kept.proof_command),
     roles: Object.fromEntries(
       draft.roles.map((r) => [r.key, { label: r.label, ...optional("agent", r.agent), ...optional("model", r.model) }]),
     ),
@@ -186,12 +176,13 @@ interface Props {
   onClose: () => void;
 }
 
-/** An editor of a workflow file, over the window: its name (for a copy), description, diff budget and proof command;
- * its roles, each with its label, agent and model; and its steps, each with every field. The server checks the
- * definition a moment after each change, and Save is enabled only while its last check of what the form holds found
- * no problem. A save names the file's text the editor opened, so that the server refuses it when the file changed
- * since; a hand-written file is rewritten only after a confirmation. A built-in workflow opens read-only, with
- * Duplicate… in place of Save. Every confirmation is a dialog of its own, in front. */
+/** An editor of a workflow file, over the window: its name (for a copy) and description; its roles, each with its label,
+ * agent and model; and its steps, each with every field. The diff budget and proof command it does not show, and a save
+ * keeps them as the file set them. The server checks the definition a moment after each change, and Save is enabled
+ * only while its last check of what the form holds found no problem. A save names the file's text the editor opened, so
+ * that the server refuses it when the file changed since; a hand-written file is rewritten only after a confirmation. A
+ * built-in workflow opens read-only, with Duplicate… in place of Save. Every confirmation is a dialog of its own, in
+ * front. */
 export function WorkflowEditor({ api, agents, opening, onSaved, onClose }: Props) {
   // The workflow as read; null while it is, or a load that failed: the server's error, or a file that does not load.
   const [opened, setOpened] = useState<Opened | null>(null);
@@ -349,20 +340,6 @@ export function WorkflowEditor({ api, agents, opening, onSaved, onClose }: Props
             Description
             <input value={draft.description} onChange={(e) => edit({ description: e.target.value })} />
           </label>
-          <div className="row">
-            <label>
-              max_files
-              <input value={draft.maxFiles} inputMode="numeric" onChange={(e) => edit({ maxFiles: e.target.value })} placeholder="default" />
-            </label>
-            <label>
-              max_lines
-              <input value={draft.maxLines} inputMode="numeric" onChange={(e) => edit({ maxLines: e.target.value })} placeholder="default" />
-            </label>
-            <label>
-              proof_command
-              <input value={draft.proofCommand} onChange={(e) => edit({ proofCommand: e.target.value })} placeholder="none" />
-            </label>
-          </div>
 
           <h3>Roles</h3>
           <table className="roles">

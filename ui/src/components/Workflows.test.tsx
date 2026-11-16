@@ -69,6 +69,11 @@ function lastSent(edit: FakeEdit): WorkflowDefinition {
   return edit.posts?.at(-1)?.body.definition as WorkflowDefinition;
 }
 
+/** The definition answers' GET /workflow body for name holds. */
+function definitionIn(answers: Record<string, Answer>, name: string): WorkflowDefinition {
+  return (answers[name]?.body as { definition: WorkflowDefinition }).definition;
+}
+
 function posts(edit: FakeEdit, path: string) {
   return (edit.posts ?? []).filter((p) => p.path === path).map((p) => p.body);
 }
@@ -270,6 +275,46 @@ describe("the workflows dialog", { timeout: EDITOR_TIMEOUT_MS }, () => {
     expect(posts(edit, "/workflow/save")[0]).toMatchObject({ name: "tdd", base: "tdd's text" });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "workflow" })).not.toBeInTheDocument());
     await waitFor(() => expect(entry(dialog, "tdd")).toHaveAttribute("aria-current", "true"));
+  });
+
+  it("shows no input for max_files, max_lines or proof_command, and keeps a file's values of them through an edit and a copy", async () => {
+    const workflows = workflowAnswers();
+    const settings = { max_files: 3, max_lines: 120, proof_command: "make proof" };
+    changeAnswer(workflows, "tdd", { definition: { ...definitionIn(workflows, "tdd"), ...settings } });
+    const edit: FakeEdit = { workflows };
+    const dialog = await openWorkflows(edit);
+    fireEvent.click(within(entry(dialog, "tdd")).getByRole("button", { name: "Edit…" }));
+    const form = await editor();
+    for (const label of ["max_files", "max_lines", "proof_command"]) {
+      expect(within(form).queryByLabelText(label)).not.toBeInTheDocument();
+    }
+    type(form, "prompt", "Write the tests first.");
+    fireEvent.click(await saveable(form));
+    await waitFor(() => expect(posts(edit, "/workflow/save")).toHaveLength(1));
+    expect(posts(edit, "/workflow/save")[0]?.definition).toMatchObject({ ...settings, steps: [{ prompt: "Write the tests first." }, {}] });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "workflow" })).not.toBeInTheDocument());
+    // The list is read again after the save.
+    fireEvent.click(await within(await within(dialog).findByRole("listitem", { name: "workflow tdd" })).findByRole("button", { name: "Duplicate…" }));
+    const copy = await editor();
+    type(copy, "Name", "mine");
+    fireEvent.click(await saveable(copy));
+    await waitFor(() => expect(posts(edit, "/workflow/save")).toHaveLength(2));
+    expect(posts(edit, "/workflow/save")[1]).toMatchObject({ name: "mine", definition: settings });
+  });
+
+  it("writes no max_files, max_lines or proof_command for a workflow that sets none", async () => {
+    const edit: FakeEdit = {};
+    const dialog = await openWorkflows(edit);
+    fireEvent.click(within(entry(dialog, "tdd")).getByRole("button", { name: "Edit…" }));
+    const form = await editor();
+    type(form, "prompt", "Write the tests first.");
+    fireEvent.click(await saveable(form));
+    await waitFor(() => expect(posts(edit, "/workflow/save")).toHaveLength(1));
+    const saved = posts(edit, "/workflow/save")[0]?.definition;
+    expect(saved).toBeDefined();
+    for (const key of ["max_files", "max_lines", "proof_command"]) {
+      expect(saved).not.toHaveProperty(key);
+    }
   });
 
   it("shows a file changed since it was opened, and Reload reads it again after a confirmation", async () => {

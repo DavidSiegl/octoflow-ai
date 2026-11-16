@@ -158,11 +158,12 @@ first time when a browser downloaded it, as it does the binary.
 - **Workflows:** "Workflows…" in the top bar lists every workflow `octoflow workflows` lists, with its file and
   description, or the error of one that does not load, which you fix by hand or delete. New starts from a copy of
   `default`, Duplicate from a copy of the one picked, and Edit opens a workflow's file (View a built-in one,
-  read-only). The editor has a field for every key in [Your own workflows](#your-own-workflows): the roles as a
-  table, the steps as a list you add to, remove from and reorder, and each step's prompts beside the placeholders
-  they may use. A moment after each change the orchestrator checks the workflow as `run` would, and Save stays off
-  while it names a problem. Saving a file someone changed since you opened it is refused, and Reload reads it again.
-  Delete asks first and names the file. A run already started keeps its own copy of the workflow.
+  read-only). The editor has a field for every key in [Your own workflows](#your-own-workflows) but the workflow's
+  `max_files`, `max_lines` and `proof_command`, which you set in the file and a save keeps: the roles as a table, the
+  steps as a list you add to, remove from and reorder, and each step's prompts beside the placeholders they may use. A
+  moment after each change the orchestrator checks the workflow as `run` would, and Save stays off while it names a
+  problem. Saving a file someone changed since you opened it is refused, and Reload reads it again. Delete asks first
+  and names the file. A run already started keeps its own copy of the workflow.
 - **Run detail:** the run as an octopus map: the head is the run, with its round, and each stage of its workflow
   (its steps, the quality gate after each gated step, and the pull request) is an arm ending in a station that shows
   who holds it, the harness and model of its last turn, its rounds and a verdict step's last verdict. The working
@@ -522,8 +523,9 @@ Builder's `again` names), and for every step `X`, `{X_path}`, `{prev_X_path}` an
 brace as `{{` or `}}`. A placeholder is its name alone, with no conversion, format spec, attribute or index. The
 file is checked when it loads, and a run saves its workflow, so editing the file does not change a run already started.
 The desktop app's workflow editor writes these same files, in canonical form: every step written out, with no
-comments and no `use` lines, a `use` step's text taken from the built-in prompts, not your prompt files. It asks
-before it rewrites a file written by hand.
+comments and no `use` lines, a `use` step's text taken from the built-in prompts, not your prompt files. It keeps
+`proof_command` and the diff budget `max_files` and `max_lines` ([quality gate](docs/quality-gate.md)) as the file set
+them, but does not edit them. It asks before it rewrites a file written by hand.
 [Workflows](docs/architecture.md#workflows) has the full rules.
 
 ## Prompt files
