@@ -757,8 +757,8 @@ ul.checks {
   padding-left: 1.2em;
 }
 
-/* About's entries: buttons, which the shell opens by name, drawn as links. */
-.about button.link {
+/* OutsideLink's buttons, drawn as links. */
+button.link {
   padding: 0;
   color: var(--mint);
   text-decoration: underline;

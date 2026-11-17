@@ -5,6 +5,9 @@ import { AGENT_POLL_MS } from "./components/AgentPanes";
 import type { ForgottenRun } from "./api";
 import { CONNECTION, FakeEventSource, OPTIONS, RECORDED, stubServer, type FakeClose, type FakeForget, type FakeSetup, type FakeStart } from "./test/fakes";
 
+const invoke = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+
 const RUN = "20261024-140000-c0ffee";
 const DONE = "20261024-090000-beef00";
 const connect = () => Promise.resolve(CONNECTION);
@@ -53,7 +56,7 @@ describe("the runs overview", () => {
     act(() => source.replay("the stream opened"));
     const done = row(DONE);
     expect(within(done).getByText("APPROVE")).toBeInTheDocument();
-    expect(within(done).getByRole("link", { name: "#1" })).toHaveAttribute("href", "https://github.com/parity/project/pull/1");
+    expect(within(done).getByRole("button", { name: "#1" })).toHaveAttribute("title", "https://github.com/parity/project/pull/1");
     expect(stages(done)).toEqual([["spec", "done"], ["build", "done"], ["review", "done"], ["publish", "done"]]);
 
     act(() => source.replayOne("a run started its interview"));
@@ -242,6 +245,21 @@ describe("the run detail", () => {
     expect(screen.getByRole("region", { name: "run beef00" })).toBeInTheDocument();
     act(() => source.replay("the finished run was deleted"));
     expect(screen.queryByRole("region", { name: "run beef00" })).not.toBeInTheDocument();
+  });
+
+  it("opens a run's pull request outside the app, from the overview without selecting the run, and from its detail", async () => {
+    invoke.mockReset().mockResolvedValue(undefined);
+    const { source } = await openApp({ "review-1.md": "VERDICT: APPROVE\n" });
+    act(() => source.replay("the stream opened"));
+    const target = { page: "https://github.com/parity/project/pull/1" };
+    fireEvent.click(within(row(DONE)).getByRole("button", { name: "#1" }));
+    expect(invoke).toHaveBeenLastCalledWith("open_outside", { target });
+    expect(screen.queryByRole("region", { name: "run beef00" })).not.toBeInTheDocument();
+    fireEvent.click(row(DONE));
+    const detail = screen.getByRole("region", { name: "run beef00" });
+    fireEvent.click(within(detail).getByRole("button", { name: target.page }));
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(invoke).toHaveBeenLastCalledWith("open_outside", { target });
   });
 });
 
