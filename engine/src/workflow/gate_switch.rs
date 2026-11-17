@@ -3,7 +3,7 @@
 //! run left (turn_quality_gate_off).
 
 use super::turn::turn_started;
-use super::{Collaborators, Human};
+use super::Human;
 use crate::error::OrchestratorError;
 use crate::host::Host;
 use crate::local_gate::LOCAL_GATE;
@@ -92,7 +92,7 @@ fn gate_can_start<'p>(state: &RunState, pipeline: &'p Pipeline) -> Result<Option
 }
 
 /// Turn the quality gate of the run in state, of workflow pipeline, off for good, as resume --no-quality-gate does,
-/// on with's host; with's human hears what was done.
+/// on host; human hears what was done.
 ///
 /// A run in phase quality goes on at the step after the gated one, dropping an analysis that
 /// has not finished; the verdict step then hears of the round's quality files as the quality note says (Workflow::quality_note).
@@ -103,7 +103,8 @@ fn gate_can_start<'p>(state: &RunState, pipeline: &'p Pipeline) -> Result<Option
 pub fn turn_quality_gate_off(
     state: &mut RunState,
     pipeline: &Pipeline,
-    with: &Collaborators,
+    host: &dyn Host,
+    human: &dyn Human,
 ) -> Result<(), OrchestratorError> {
     let s = state;
     if s.phase == DONE || s.quality_job.as_deref().is_none_or(str::is_empty) {
@@ -114,8 +115,8 @@ pub fn turn_quality_gate_off(
     s.quality_gate_disabled = true;
     if s.phase == QUALITY {
         let gate_dir = s.gate_dir(s.round, s.quality_round);
-        if let Err(e) = crate::local_gate::stop_left(with.host, s.work_dir(), &gate_dir) {
-            with.human.log(&format!("could not stop the quality gate's job: {e}"));
+        if let Err(e) = crate::local_gate::stop_left(host, s.work_dir(), &gate_dir) {
+            human.log(&format!("could not stop the quality gate's job: {e}"));
         }
         if let Some(gated) = pipeline.gated() {
             // An analysis that has not finished has an open record, which no quality file will ever close.
@@ -123,6 +124,6 @@ pub fn turn_quality_gate_off(
             s.phase = pipeline.after(&gated.id).map_or(PUBLISH, |f| f.id.as_str()).to_string();
         }
     }
-    with.human.log(&format!("turned the quality gate of run {} off", s.run_id));
+    human.log(&format!("turned the quality gate of run {} off", s.run_id));
     Ok(())
 }
