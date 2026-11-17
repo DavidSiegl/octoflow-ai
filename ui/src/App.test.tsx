@@ -970,7 +970,7 @@ describe("deleting closed runs", () => {
     const held = new Promise<void>((resolve) => (release = resolve));
     const forgotten: ForgottenRun[] = [
       { run: DONE, outcome: "forgotten", detail: "" },
-      { run: OLD, outcome: "failed", detail: "remove /proj/.orchestrator/runs/x: permission denied" },
+      { run: OLD, outcome: "failed", detail: "remove /proj/.octoflow-ai/runs/x: permission denied" },
     ];
     const forget: FakeForget = { preview: PREVIEW, forgotten, held };
     const source = await openClosedRuns(forget);
@@ -988,7 +988,7 @@ describe("deleting closed runs", () => {
     expect(forget.requests?.map((r) => r.body)).toEqual([{ dry_run: true }, { forget: [DONE, OLD] }]);
     expect(line(dialog, DONE).textContent).toBe("deleted add a token-bucket rate limiter to the API client");
     expect(line(dialog, OLD)).toHaveAttribute("data-state", "missing");
-    expect(line(dialog, OLD).textContent).toBe("failed retry failed uploads: remove /proj/.orchestrator/runs/x: permission denied");
+    expect(line(dialog, OLD).textContent).toBe("failed retry failed uploads: remove /proj/.octoflow-ai/runs/x: permission denied");
     fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 

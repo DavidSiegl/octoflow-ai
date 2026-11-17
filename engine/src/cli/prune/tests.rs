@@ -187,7 +187,7 @@ impl Prune {
 }
 
 fn state_path(run_id: &str) -> String {
-    format!("/proj/.orchestrator/runs/{run_id}/state.json")
+    format!("/proj/.octoflow-ai/runs/{run_id}/state.json")
 }
 
 fn strings(argv: &[&str]) -> Vec<String> {
@@ -291,7 +291,7 @@ fn checked_out_branch_is_kept() {
     }
 }
 
-const WORKTREE: &str = "/proj/.orchestrator/worktrees/aaaaaa";
+const WORKTREE: &str = "/proj/.octoflow-ai/worktrees/aaaaaa";
 
 /// A merged run with a --worktree, holding its branch; its run id.
 fn add_worktree_run(p: &Prune) -> String {
@@ -473,7 +473,7 @@ fn worktrees_no_run_names_are_untouched() {
     let run_id = p.add(run("aaaaaa", merged()));
     // The user's, holding the run's branch, and one under the run's directory that its state does not name.
     p.host().worktrees.insert("/elsewhere/mine".to_string(), "orchestrator/task-aaaaaa".into());
-    p.host().worktrees.insert("/proj/.orchestrator/worktrees/bbbbbb".to_string(), "other".into());
+    p.host().worktrees.insert("/proj/.octoflow-ai/worktrees/bbbbbb".to_string(), "other".into());
     let r = p.pruned(&run_id);
     assert_eq!(r.worktree, "");
     assert_eq!(r.local, "kept: checked out in /elsewhere/mine");
@@ -1053,7 +1053,7 @@ fn prune_on_real_git_with_worktree(in_worktree: bool) -> PrunedRun {
     use crate::test_support::TempDir;
     // A squash-merged run branch: local behind the PR head, origin at it. gh, a script, says it merged at head.
     let bin = TempDir::new();
-    let repo = Repo::with_host(&[("app.py", "one\n"), (".orchestrator/.gitignore", "*\n")], host_with_tools(&bin.path()));
+    let repo = Repo::with_host(&[("app.py", "one\n"), (".octoflow-ai/.gitignore", "*\n")], host_with_tools(&bin.path()));
     let origin = format!("{}/origin.git", repo.outside);
     repo.git(&["init", "--quiet", "--bare", "-b", "main", &origin]);
     repo.git(&["remote", "add", "origin", &origin]);

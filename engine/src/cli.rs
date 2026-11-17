@@ -331,14 +331,21 @@ fn run_command(command: &Command, world: &Connected) -> Result<Ended, Stop> {
     }
 }
 
-/// The project directory target names, the current directory without one, as world's host resolves it. Errors: the
-/// current directory cannot be read, or the host cannot resolve the directory.
+/// The project directory target names, the current directory without one, as world's host resolves it, its own
+/// directory moved from its old name first if it has to be (crate::old_project_dir::move_project_dir, which says so
+/// on standard error). Errors: the current directory cannot be read, the host cannot resolve the directory, or the
+/// move is refused or fails.
 fn project_dir(target: Option<&Target>, world: &Connected) -> Result<String, OrchestratorError> {
     let cwd = match target.and_then(|t| t.cwd.clone()) {
         Some(cwd) => cwd,
         None => current_dir()?,
     };
-    world.with.host.resolve_dir(&cwd)
+    let cwd = world.with.host.resolve_dir(&cwd)?;
+    let moved = crate::old_project_dir::move_project_dir(world.with.host, &cwd, world.local_host, world.with.pid_alive)?;
+    if let Some(moved) = moved {
+        world.say_err(&moved);
+    }
+    Ok(cwd)
 }
 
 /// The state a new run of args in the project at cwd starts from, its workflow and, for run --spec, its spec. A run

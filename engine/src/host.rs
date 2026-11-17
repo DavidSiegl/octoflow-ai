@@ -69,7 +69,7 @@ pub const ORIGIN_SILENT: &str = "origin did not answer within";
 const METRICS_FILE: &str = "metrics.json";
 /// Where, relative to a project, forget_run keeps the metrics of the runs it deleted: one line of JSON per run, each
 /// its METRICS_FILE's object, in the order they were forgotten.
-const METRICS_ARCHIVE: &str = ".orchestrator/metrics-archive.jsonl";
+const METRICS_ARCHIVE: &str = ".octoflow-ai/metrics-archive.jsonl";
 
 /// sh, inside a loop over files $f: what ends that pass when the command before it failed. A file gone since the loop
 /// found it is skipped, as a running run removes some of its files and prune a whole run (serve-run-files/03); one
@@ -533,7 +533,7 @@ pub trait Host {
     }
 
     /// Commit the working tree as it is, untracked files included, on top of parent, with message; returns the
-    /// commit. No ref moves and the index stays as it was. `.gitignore` is honoured, which keeps `.orchestrator/` out,
+    /// commit. No ref moves and the index stays as it was. `.gitignore` is honoured, which keeps `.octoflow-ai/` out,
     /// so the snapshot holds what committing the change would. Errors: git fails, or prints what is no commit.
     fn snapshot(&self, cwd: &str, parent: &str, message: &str) -> Result<String, OrchestratorError> {
         let tree = working_tree(self, cwd)?;
@@ -1022,16 +1022,15 @@ pub trait Host {
     /// of a format this engine does not read is among them, as unreadable. Errors: a state.json that is still there
     /// cannot be stat'ed or read, or is not JSON naming its run (SavedRun::read).
     fn run_states(&self, cwd: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
-        let script = format!("now=$(date +%s) || exit 1; {}", run_states_loop("*", "true"));
-        parsed_run_states(cwd, &self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?)
+        run_states_in(self, cwd, RUNS_DIR)
     }
 
     /// The run of the project at cwd whose id is run_id, as run_states gives each, reading only its state.json; None
     /// when it has none. Errors: as run_states'.
     fn run_state(&self, cwd: &str, run_id: &str) -> Result<Option<SavedRun>, OrchestratorError> {
-        let script = format!("now=$(date +%s) || exit 1; {}", run_states_loop("\"$2\"", "true"));
+        let script = format!("now=$(date +%s) || exit 1; {}", run_states_loop(RUNS_DIR, "\"$2\"", "true"));
         let out = self.check(&["sh", "-c", &script, "_", cwd, run_id], None, DEFAULT_TIMEOUT)?;
-        Ok(parsed_run_states(cwd, &out)?.into_iter().next())
+        Ok(parsed_run_states(cwd, RUNS_DIR, &out)?.into_iter().next())
     }
 
     /// As run_states, but serve's view of the runs: a run whose directory, every link resolved, is not below the
@@ -1042,9 +1041,9 @@ pub trait Host {
         // Without a runs directory there are no runs; f becomes the resolved path, which is what is stat'ed and read.
         let script = format!(
             "{BELOW}now=$(date +%s) || exit 1; runs=$(cd -P -- \"$1/{RUNS_DIR}\" 2>/dev/null && pwd -P) || exit 0; {}",
-            run_states_loop("*", "below \"${f%/*}\" \"$runs\" && below \"$f\" \"$r\" && f=$r")
+            run_states_loop(RUNS_DIR, "*", "below \"${f%/*}\" \"$runs\" && below \"$f\" \"$r\" && f=$r")
         );
-        parsed_run_states(cwd, &self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?)
+        parsed_run_states(cwd, RUNS_DIR, &self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?)
     }
 
     /// The log in which the harness named name keeps a session's token usage (crate::harness::SessionLog), found in
@@ -1170,28 +1169,39 @@ pub trait Host {
     }
 }
 
-/// sh printing, for each state.json $f of a run under the project $1 whose directory name matches the sh word runs,
-/// such as `*`, and for which the sh condition keep succeeds, its age in seconds by $now, a blank and its text, ended
-/// by a NUL, which no JSON text holds: what parsed_run_states reads. A state.json a human pretty-printed reads as well
-/// as the engine's one line.
-fn run_states_loop(runs: &str, keep: &str) -> String {
+/// Host::run_states for the runs directory runs_dir, relative to the project at cwd, in place of RUNS_DIR: how
+/// crate::old_project_dir reads the runs a project kept under its old name. Errors: as run_states'.
+pub(crate) fn run_states_in<H: Host + ?Sized>(
+    host: &H,
+    cwd: &str,
+    runs_dir: &str,
+) -> Result<Vec<SavedRun>, OrchestratorError> {
+    let script = format!("now=$(date +%s) || exit 1; {}", run_states_loop(runs_dir, "*", "true"));
+    parsed_run_states(cwd, runs_dir, &host.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?)
+}
+
+/// sh printing, for each state.json $f of a run in the directory runs_dir of the project $1, relative to it, whose
+/// directory name matches the sh word runs, such as `*`, and for which the sh condition keep succeeds, its age in
+/// seconds by $now, a blank and its text, ended by a NUL, which no JSON text holds: what parsed_run_states reads. A
+/// state.json a human pretty-printed reads as well as the engine's one line.
+fn run_states_loop(runs_dir: &str, runs: &str, keep: &str) -> String {
     format!(
-        "for f in \"$1\"/{RUNS_DIR}/{runs}/state.json; do [ -f \"$f\" ] || continue; {keep} || continue; \
+        "for f in \"$1\"/{runs_dir}/{runs}/state.json; do [ -f \"$f\" ] || continue; {keep} || continue; \
          {MTIME_OF_F} || {SKIP_F_IF_GONE}; s=$(cat -- \"$f\") || {SKIP_F_IF_GONE}; \
          printf \"%s %s\\000\" \"$((now - m))\" \"$s\"; done; true"
     )
 }
 
-/// The runs run_states_loop printed as out, under the project at cwd, as run_states gives them. Errors: an age that
-/// is not a number, or a state that is not JSON naming its run (SavedRun::read).
-fn parsed_run_states(cwd: &str, out: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
+/// The runs run_states_loop printed as out, under the project at cwd's runs_dir, as run_states gives them. Errors:
+/// an age that is not a number, or a state that is not JSON naming its run (SavedRun::read).
+fn parsed_run_states(cwd: &str, runs_dir: &str, out: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
     let mut runs = vec![];
     for entry in out.split('\0') {
         if entry.trim().is_empty() {
             continue;
         }
         let (age, text) = entry.split_once(' ').unwrap_or((entry, ""));
-        let corrupt = |e: String| OrchestratorError(format!("corrupt run state under {cwd}/{RUNS_DIR}: {e}"));
+        let corrupt = |e: String| OrchestratorError(format!("corrupt run state under {cwd}/{runs_dir}: {e}"));
         let not_int = || corrupt(format!("an age that is not a whole number: {age:?}"));
         let age: i64 = decimal_int(age).ok_or_else(not_int)?;
         let saved = serde_json::from_str::<Value>(text).map_err(|e| corrupt(e.to_string()))?;

@@ -116,7 +116,7 @@ impl FakeClock {
 
 /// An in-memory filesystem and git checkout standing in for the machine the agents run on.
 ///
-/// Files written outside .orchestrator/ count as uncommitted changes until a commit. Git is played at the level of
+/// Files written outside .octoflow-ai/ count as uncommitted changes until a commit. Git is played at the level of
 /// single commands (Host::git_run), so Host's own fetch, fast-forward and merge steps run on it; a process of any other
 /// kind panics the test, unless FakeState::run_command answers it or FakeState::processes runs it. A test scripts it
 /// through [`FakeHost::state`], whose fields say what each scripts.
@@ -257,7 +257,7 @@ pub(crate) struct FakeState {
     /// (ref, paths) of each restore.
     pub restores: Vec<(String, Vec<String>)>,
     /// The files each tree object held, by path, tree<n> the nth: one per tree_snapshot, and one per restore_tree
-    /// that changed anything, of the tree as it found it; those under its directory outside .orchestrator/, the one
+    /// that changed anything, of the tree as it found it; those under its directory outside .octoflow-ai/, the one
     /// directory the fake plays as ignored.
     pub tree_snapshots: Vec<BTreeMap<String, String>>,
     /// What session_log reads, by (harness, session).
@@ -409,9 +409,9 @@ impl FakeState {
         sha
     }
 
-    /// The files under cwd but its .orchestrator directory, by path: what tree_snapshot holds.
+    /// The files under cwd but its .octoflow-ai directory, by path: what tree_snapshot holds.
     fn files_in(&self, cwd: &str) -> BTreeMap<String, String> {
-        let (inside, ignored) = (format!("{cwd}/"), format!("{cwd}/.orchestrator/"));
+        let (inside, ignored) = (format!("{cwd}/"), format!("{cwd}/.octoflow-ai/"));
         let held = |p: &str| p.starts_with(&inside) && !p.starts_with(&ignored);
         self.files.iter().filter(|(p, _)| held(p)).map(|(p, text)| (p.to_string(), text.clone())).collect()
     }
@@ -759,7 +759,7 @@ impl Host for FakeHost {
         }
         s.files.insert(path.to_string(), text.to_string());
         let orchestrator_file =
-            path.starts_with("/proj/.orchestrator/") && !path.starts_with(&format!("/proj/{WORKTREES_DIR}/"));
+            path.starts_with("/proj/.octoflow-ai/") && !path.starts_with(&format!("/proj/{WORKTREES_DIR}/"));
         if !orchestrator_file {
             s.changed.insert(path.to_string());
         }

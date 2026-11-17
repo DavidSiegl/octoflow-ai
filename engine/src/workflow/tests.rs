@@ -154,7 +154,7 @@ fn approved_first_round() {
     assert!(calls.contains(&Call::Split { pane: "w1:p1".into(), direction: Direction::Right }));
     assert!(calls.contains(&Call::Split { pane: "w1:p2".into(), direction: Direction::Down }));
     assert!(calls.contains(&Call::Focus { name: "spec-a1b2c3".into() }));
-    assert_eq!(f.host.state().files.get("/proj/.orchestrator/.gitignore").map(String::as_str), Some("*\n"));
+    assert_eq!(f.host.state().files.get("/proj/.octoflow-ai/.gitignore").map(String::as_str), Some("*\n"));
     let saved = f.saved();
     assert_eq!(
         (text(&saved, "phase"), text(&saved, "verdict"), text(&saved, "base")),

@@ -1112,13 +1112,13 @@ fn fakeherdr_plays_each_role_s_scripted_turns() {
 
     // Once the run's state.json is saved, a turn sees the state as the Workflow saved it.
     let mut saved = run.clone();
-    saved.worktree = Some("/proj/.orchestrator/worktrees/a1b2c3".to_string());
+    saved.worktree = Some("/proj/.octoflow-ai/worktrees/a1b2c3".to_string());
     host.write(&format!("{}/state.json", run.dir()), &saved.to_text(), false).unwrap();
     let worktree: Turn = Box::new(|_, run, _| run.worktree.clone().unwrap_or_default());
     herdr.state().script.insert("review".to_string(), [worktree].into());
     assert_eq!(herdr.start_agent("review-b", "w1:p4", "claude", &[]), Ok(true));
     herdr.prompt("review-b", "review").unwrap();
-    assert_eq!(herdr.agent("review-b").map(|a| a.map(|a| a.status)), Ok(Some("/proj/.orchestrator/worktrees/a1b2c3".to_string())));
+    assert_eq!(herdr.agent("review-b").map(|a| a.map(|a| a.status)), Ok(Some("/proj/.octoflow-ai/worktrees/a1b2c3".to_string())));
 
     herdr.focus("build-a1b2c3").unwrap();
     herdr.close_workspace("w1", None).unwrap();

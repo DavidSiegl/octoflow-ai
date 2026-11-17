@@ -28,7 +28,7 @@ const CLOSE_ID: &str = "20261001-120000-a1b2c3";
 const CLOSE_BRANCH: &str = "orchestrator/x-a1b2c3";
 
 fn close_state() -> String {
-    format!("/proj/.orchestrator/runs/{CLOSE_ID}/state.json")
+    format!("/proj/.octoflow-ai/runs/{CLOSE_ID}/state.json")
 }
 
 fn worktree() -> String {
@@ -679,7 +679,7 @@ fn args() {
 fn close_on_real_git() {
     // A failed --worktree run: its dirty worktree is removed by force, and its branch, at base, deleted. The user's
     // status.showUntrackedFiles=no does not hide the new file from the list of what goes with the worktree.
-    let repo = Repo::new(&[("app.py", "one\n"), (".orchestrator/.gitignore", "*\n")]);
+    let repo = Repo::new(&[("app.py", "one\n"), (".octoflow-ai/.gitignore", "*\n")]);
     repo.git(&["config", "status.showUntrackedFiles", "no"]);
     let base = repo.base().to_string();
     let wt = format!("{}/{WORKTREES_DIR}/a1b2c3", repo.path);
@@ -862,7 +862,7 @@ fn a_run_that_started_running_since_the_sweep_began_is_skipped() {
     // As the first run's workspace closes, the stale run is resumed: its owner is this process, its beat now.
     let c = Close::project_of_five();
     let host = Rc::clone(&c.cli.f.host);
-    let path = format!("/proj/.orchestrator/runs/{STALE}/state.json");
+    let path = format!("/proj/.octoflow-ai/runs/{STALE}/state.json");
     c.cli.f.herdr.state().before_call = Some(Box::new(move |call| {
         if matches!(call, Call::Close { .. }) {
             let mut s = host.state();
@@ -886,7 +886,7 @@ fn a_run_removed_since_the_sweep_began_is_skipped_not_failed() {
     // As the first run's workspace closes, the stale run's directory is removed, as prune or a human would.
     let c = Close::project_of_five();
     let host = Rc::clone(&c.cli.f.host);
-    let path = format!("/proj/.orchestrator/runs/{STALE}/state.json");
+    let path = format!("/proj/.octoflow-ai/runs/{STALE}/state.json");
     c.cli.f.herdr.state().before_call = Some(Box::new(move |call| {
         if matches!(call, Call::Close { .. }) {
             host.state().files.shift_remove(&path);
@@ -896,7 +896,7 @@ fn a_run_removed_since_the_sweep_began_is_skipped_not_failed() {
     assert_eq!(status, 0, "{out}");
     assert!(
         out.contains(&format!(
-            "skipped: run {STALE} is gone: its state.json was removed from /proj/.orchestrator/runs since the sweep \
+            "skipped: run {STALE} is gone: its state.json was removed from /proj/.octoflow-ai/runs since the sweep \
              began\n"
         )),
         "{out}"

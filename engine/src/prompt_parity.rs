@@ -198,8 +198,8 @@ fn every_recorded_prompt_is_made_of_this_engines_templates_filled_in_with_the_ru
             for (role, text, saved) in latest_states(invocation.as_array().unwrap(), &mut states) {
                 let state = recorded_state(&saved);
                 let pipeline = state.pipeline().unwrap_or_else(|e| panic!("{scenario}: {e}"));
-                // The run files, named relative to the project's .orchestrator directory, as paths.
-                let paths: BTreeSet<String> = files.iter().map(|f| format!("{}/.orchestrator/{f}", state.cwd)).collect();
+                // The run files, named relative to the project's .octoflow-ai directory, as paths.
+                let paths: BTreeSet<String> = files.iter().map(|f| format!("{}/.octoflow-ai/{f}", state.cwd)).collect();
                 let firsts = firsts(&state, &pipeline, &role, &paths);
                 assert!(
                     made_of(&text, &firsts, &others(&state, &pipeline)),

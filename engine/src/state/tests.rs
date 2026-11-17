@@ -112,7 +112,7 @@ fn a_state_without_the_format_is_refused_with_what_to_do_with_its_run() {
         e.0,
         format!(
             "run r1 was saved by an octoflow before {STATE_FORMAT_SINCE}; finish or close it with that release, or \
-             remove .orchestrator/runs/r1"
+             remove .octoflow-ai/runs/r1"
         )
     );
     let other = saved_with(&[("format", Some("3"))]);
@@ -255,7 +255,7 @@ fn a_state_with_a_field_missing_or_of_the_wrong_type_is_refused_naming_the_run()
 #[test]
 fn the_runs_paths() {
     let mut s = RunState::new("20260929-120000-a1b2c3", "t", "/proj");
-    let d = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
+    let d = "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3";
     assert_eq!(s.key(), "a1b2c3");
     assert_eq!(s.dir(), d);
     assert_eq!(s.work_dir(), "/proj");
@@ -274,8 +274,8 @@ fn the_runs_paths() {
     assert!(!s.had_quality_gate());
     s.quality_gate_disabled = true;
     assert!(s.had_quality_gate());
-    s.worktree = Some("/proj/.orchestrator/worktrees/a1b2c3".into());
-    assert_eq!(s.work_dir(), "/proj/.orchestrator/worktrees/a1b2c3");
+    s.worktree = Some("/proj/.octoflow-ai/worktrees/a1b2c3".into());
+    assert_eq!(s.work_dir(), "/proj/.octoflow-ai/worktrees/a1b2c3");
     assert_eq!(s.prompts().unwrap(), Prompts::default());
     s.prompt_overrides.insert("LATER_NOTE".to_string(), "x".to_string());
     assert!(s.prompts().unwrap_err().0.contains("replaces prompt LATER_NOTE"));
@@ -409,5 +409,5 @@ fn ambiguous_key() {
 
 #[test]
 fn no_match() {
-    assert_eq!(find_run(&runs(), "abcdef", "/p").unwrap_err().0, "no run abcdef under /p/.orchestrator/runs");
+    assert_eq!(find_run(&runs(), "abcdef", "/p").unwrap_err().0, "no run abcdef under /p/.octoflow-ai/runs");
 }

@@ -264,7 +264,7 @@ fn run_exit_code_when_changes_remain() {
     let argv = ["run", "task"];
     assert_eq!(cli.status(ended, &argv), EXIT_CHANGES_REQUESTED);
     let out = cli.take_out();
-    assert!(out.starts_with("CHANGES_REQUESTED: /proj/.orchestrator/runs/") && out.ends_with("/review-1.md\n"), "{out}");
+    assert!(out.starts_with("CHANGES_REQUESTED: /proj/.octoflow-ai/runs/") && out.ends_with("/review-1.md\n"), "{out}");
 }
 
 #[test]
@@ -276,7 +276,7 @@ fn a_run_without_a_verdict_step_finishes_with_its_last_file() {
     assert!(matches!(&ended, Ok(Ended::Ran(ran)) if ran.verdict.as_deref() == Some(FINISHED)));
     assert_eq!(cli.status(ended, &["run", "task"]), 0);
     let out = cli.take_out();
-    assert!(out.starts_with("FINISHED: /proj/.orchestrator/runs/") && out.ends_with("/build.md\n"), "{out}");
+    assert!(out.starts_with("FINISHED: /proj/.octoflow-ai/runs/") && out.ends_with("/build.md\n"), "{out}");
 }
 
 #[test]
@@ -458,7 +458,7 @@ const GIVEN_SPEC: &str = "# Add a token-bucket rate limiter\r\n\r\n## Goal\r\nli
 
 /// The spec the run of saved was seeded with, as the host holds it.
 fn seeded(cli: &Cli, saved: &Value) -> Option<String> {
-    let dir = format!("/proj/.orchestrator/runs/{}", saved.get("run_id").map(Value::text).unwrap_or_default());
+    let dir = format!("/proj/.octoflow-ai/runs/{}", saved.get("run_id").map(Value::text).unwrap_or_default());
     cli.f.host.state().files.get(&format!("{dir}/spec.md")).cloned()
 }
 
@@ -497,7 +497,7 @@ fn a_relative_spec_path_is_the_shells_not_cwds() {
     let (_, saved) = cli.started(&["--spec", &relative, "--cwd", "/elsewhere"]);
     let saved = saved.expect("the run saved its state");
     assert_eq!(field(&saved, "cwd"), r#""/elsewhere""#);
-    let dir = format!("/elsewhere/.orchestrator/runs/{}", saved.get("run_id").unwrap().text());
+    let dir = format!("/elsewhere/.octoflow-ai/runs/{}", saved.get("run_id").unwrap().text());
     assert_eq!(cli.f.host.state().files.get(&format!("{dir}/spec.md")).map(String::as_str), Some(GIVEN_SPEC));
 }
 
@@ -520,7 +520,7 @@ fn the_spec_combines_with_the_other_run_flags() {
         let argv: Vec<&str> = ["--spec", &spec].iter().copied().chain(flags.iter().copied()).collect();
         let saved = started(&cli, &argv);
         assert_eq!((field(&saved, "phase"), field(&saved, key)), (r#""build""#.to_string(), value.to_string()), "{flags:?}");
-        let dir = format!("{}/.orchestrator/runs/{}", saved.get("cwd").unwrap().text(), saved.get("run_id").unwrap().text());
+        let dir = format!("{}/.octoflow-ai/runs/{}", saved.get("cwd").unwrap().text(), saved.get("run_id").unwrap().text());
         assert_eq!(cli.f.host.state().files.get(&format!("{dir}/spec.md")).map(String::as_str), Some(GIVEN_SPEC), "{flags:?}");
     }
 }
@@ -589,7 +589,7 @@ fn the_worktree_flag_reaches_the_workflow() {
     let cli = Cli::new();
     let saved = started(&cli, &["task", "--worktree"]);
     let key = saved.get("run_id").unwrap().text().rsplit('-').next().unwrap().to_string();
-    assert_eq!(field(&saved, "worktree"), format!(r#""/proj/.orchestrator/worktrees/{key}""#));
+    assert_eq!(field(&saved, "worktree"), format!(r#""/proj/.octoflow-ai/worktrees/{key}""#));
     assert_eq!(field(&started(&cli, &["task"]), "worktree"), "null");
 }
 
@@ -636,7 +636,7 @@ fn list_names_a_non_default_workflow() {
 
 #[test]
 fn record_in_state_refuses_a_changed_file_naming_what_it_does_not_record() {
-    let path = "/proj/.orchestrator/runs/r1/state.json";
+    let path = "/proj/.octoflow-ai/runs/r1/state.json";
     let read = crate::state::RunState::new("r1", "a task", "/proj");
     let mut now = read.clone();
     now.round = 3;

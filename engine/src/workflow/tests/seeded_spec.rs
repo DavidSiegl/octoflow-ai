@@ -11,7 +11,7 @@ use crate::pipeline::{Pipeline, Step, DEFAULT_WORKFLOW};
 use crate::spec_file::SpecFile;
 use crate::test_support::{quick, roles};
 
-const D: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
+const D: &str = "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3";
 /// CRLF and trailing blanks, which the run's copy keeps.
 const GIVEN_SPEC: &str = "# Add a token-bucket rate limiter\r\n\r\n## Goal\r\nlimit requests  \n\n";
 const SPEC_SOURCE: &str = "/home/me/spec.md";

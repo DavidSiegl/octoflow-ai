@@ -24,7 +24,7 @@
   "1": [
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -119,7 +119,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -210,7 +210,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -329,7 +329,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -424,12 +424,12 @@
      "agent",
      "prompt",
      "build-<key:1>",
-     "Implement Add a subtract function in <world>/project; report to <world>/project/.orchestrator/runs/<run:1>/build-1.md.\n\nIf you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead."
+     "Implement Add a subtract function in <world>/project; report to <world>/project/.octoflow-ai/runs/<run:1>/build-1.md.\n\nIf you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead."
     ]
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -551,7 +551,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",

@@ -186,7 +186,7 @@ fn a_failing_proof_demonstrates_its_finding_and_the_builder_must_make_it_pass() 
     let proj = proj.path();
     assert!(reviewed.contains(&format!(
         "## Proofs the orchestrator ran\n\nThe orchestrator ran each proof with `sh {{proofs}}` in {proj}, from a copy of \
-         its directory under `{proj}/.orchestrator/proofs/`, removed after each run; a path to a proof in its output is \
+         its directory under `{proj}/.octoflow-ai/proofs/`, removed after each run; a path to a proof in its output is \
          the copy's."
     )));
     assert!(reviewed.contains(
@@ -796,7 +796,7 @@ fn a_proof_runs_on_the_worktrees_code_and_the_commit_holds_no_copy_of_it() {
         let physical = std::fs::canonicalize(worktree).unwrap();
         assert!(said.contains(&format!("\n{}/limiter.sh\nRATE is change", physical.display())), "{said}");
         assert!(!std::path::Path::new(&copies).exists());
-        assert_eq!(repo.host.read(&format!("{worktree}/.orchestrator/.gitignore")).unwrap().as_deref(), Some("*\n"));
+        assert_eq!(repo.host.read(&format!("{worktree}/.octoflow-ai/.gitignore")).unwrap().as_deref(), Some("*\n"));
         let listed: Vec<String> =
             std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
         assert_eq!(listed, ["test_1_rate.sh"]);
@@ -963,9 +963,9 @@ fn a_carried_proof_runs_again_after_the_rounds_last_quality_round_and_before_the
     let mut state = RunState::new(RUN_ID, TASK, &dir);
     (state.phase, state.workflow) = ("build".into(), pipeline.name().to_string());
     let host = Rc::new(FakeHost::default());
-    // git ignores the scratch project's .orchestrator, as FakeHost has it ignore /proj's, for the gate's clean-tree
+    // git ignores the scratch project's .octoflow-ai, as FakeHost has it ignore /proj's, for the gate's clean-tree
     // check; and a quality round is logged as the local gate checks its snapshot out, in gate-<n>-<q>/job-1/tree.
-    let (weak, orchestrator_dir, judged) = (Rc::downgrade(&host), format!("{dir}/.orchestrator/"), event.clone());
+    let (weak, orchestrator_dir, judged) = (Rc::downgrade(&host), format!("{dir}/.octoflow-ai/"), event.clone());
     host.state().before_git = Some(Box::new(move |_, args| {
         if let Some(host) = weak.upgrade() {
             host.state().changed.retain(|p| !p.starts_with(&orchestrator_dir));

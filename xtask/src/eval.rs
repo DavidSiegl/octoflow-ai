@@ -10,7 +10,7 @@
 //! The engine is the command line `EVAL_ENGINE` gives, else this checkout's own, built first ([`built_engine`]), so
 //! that a trial never runs a binary older than the commit it is recorded under. It is run as a program, through `run`
 //! and `close`, and must keep a run's files as the orchestrator does: the runner finds the run under
-//! `.orchestrator/runs/<run id>/` in the clone, and its numbers in `metrics.json` there (docs/design.md, Run metrics).
+//! `.octoflow-ai/runs/<run id>/` in the clone, and its numbers in `metrics.json` there (docs/design.md, Run metrics).
 //!
 //! A task is a directory evals/tasks/<name>/ holding:
 //!
@@ -48,7 +48,7 @@ const RESULTS_SUBDIR: &str = "evals/results";
 /// tasks became Rust crates, whose numbers start a new series.
 pub const RECORD_VERSION: u64 = 2;
 /// Where a run keeps its files in the project it runs on, one directory per run named by its run id.
-const RUNS_DIR: &str = ".orchestrator/runs";
+const RUNS_DIR: &str = ".octoflow-ai/runs";
 /// How long a hidden test may take, with the crate's own tests and their build, and how many of the last lines of
 /// its output a result line keeps.
 const HIDDEN_TEST_TIMEOUT: Duration = Duration::from_secs(600);

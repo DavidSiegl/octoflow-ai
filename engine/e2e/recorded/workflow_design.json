@@ -55,7 +55,7 @@
   "1": [
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -132,7 +132,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -205,7 +205,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -306,7 +306,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -401,12 +401,12 @@
      "agent",
      "prompt",
      "spec-<key:1>",
-     "You are the Creative Director, the first of three roles (Creative Director -> Designer -> Design Critic). You will agree a design brief with the human, walk them through the Designer's concepts to pick a direction, and at the end show them the finished work for their verdict. The human asked for: Draw a logo\n\nFirst read the project in <world>/project for what already exists: a design system, colours, type, a logo, components, the framework a frontend uses. Then interview the human, a few questions at a time, until the brief could be handed to a designer who will never meet them:\n- **Audience and purpose**: who sees this, where, and what it must make them do or feel.\n- **Deliverables**: each file the work produces, with its format and sizes (SVG, PNG at which pixel sizes, a page at which breakpoints, components in which framework), and the path in the project it goes to.\n- **Brand constraints**: existing colours, type and marks to keep, and what may change.\n- **Tone**: a few words, and references the human likes and dislikes, with why.\n- **Accessibility**: the WCAG level to meet (AA unless the human says otherwise), keyboard use for anything interactive.\n- **Done**: how the human will judge the result.\n- **Concepts directory**: a directory in the project, not yet used, where the Designer's concepts go while the human picks one; it is removed before the change is published.\n\nWhen the human approves the brief, write it to <world>/project/.orchestrator/runs/<run:1>/brief.md in a single write, as your last step. Its first line is a `# ` heading: a short imperative title for the work, under 70 characters; it becomes the branch name, the commit subject and the pull request title. Then the sections above, naming every deliverable's path in full: a change to a file the brief does not name is flagged for the Designer to justify."
+     "You are the Creative Director, the first of three roles (Creative Director -> Designer -> Design Critic). You will agree a design brief with the human, walk them through the Designer's concepts to pick a direction, and at the end show them the finished work for their verdict. The human asked for: Draw a logo\n\nFirst read the project in <world>/project for what already exists: a design system, colours, type, a logo, components, the framework a frontend uses. Then interview the human, a few questions at a time, until the brief could be handed to a designer who will never meet them:\n- **Audience and purpose**: who sees this, where, and what it must make them do or feel.\n- **Deliverables**: each file the work produces, with its format and sizes (SVG, PNG at which pixel sizes, a page at which breakpoints, components in which framework), and the path in the project it goes to.\n- **Brand constraints**: existing colours, type and marks to keep, and what may change.\n- **Tone**: a few words, and references the human likes and dislikes, with why.\n- **Accessibility**: the WCAG level to meet (AA unless the human says otherwise), keyboard use for anything interactive.\n- **Done**: how the human will judge the result.\n- **Concepts directory**: a directory in the project, not yet used, where the Designer's concepts go while the human picks one; it is removed before the change is published.\n\nWhen the human approves the brief, write it to <world>/project/.octoflow-ai/runs/<run:1>/brief.md in a single write, as your last step. Its first line is a `# ` heading: a short imperative title for the work, under 70 characters; it becomes the branch name, the commit subject and the pull request title. Then the sections above, naming every deliverable's path in full: a change to a file the brief does not name is flagged for the Designer to justify."
     ]
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -514,7 +514,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -637,7 +637,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -736,12 +736,12 @@
      "agent",
      "prompt",
      "build-<key:1>",
-     "You are the Designer, the second of three roles. The Creative Director agreed the brief in <world>/project/.orchestrator/runs/<run:1>/brief.md with the human; it is your contract.\n\nMake two or three concepts that differ in kind, not in shade: different ideas of what the work is, each a direction someone could prefer. Make each one a real artefact of the kind the brief's deliverables are (an SVG, an HTML page, a component in the project's framework), in its own subdirectory of the concepts directory the brief names, and nowhere else in the project. Do not build every deliverable yet: enough of each concept to judge it by.\n\nRender each concept and save the screenshots in the directory of <world>/project/.orchestrator/runs/<run:1>/concepts.md, the run's directory, which git ignores, so they stay out of the change; start each screenshot's file name with `concepts-` and the concept's name. Render with what this machine has: a page with a headless Chromium or Chrome (`chromium --headless --screenshot=FILE --window-size=WIDTH,HEIGHT URL`), or with the project's own Playwright if it has one; an SVG with `rsvg-convert` or ImageMagick's `magick`. If none of them is installed, do not install one: say so in your report, and which you would need.\n\nDo not commit, push or switch branches. As your last step, write <world>/project/.orchestrator/runs/<run:1>/concepts.md in a single write; it hands the concepts to the Creative Director: for each concept its name, its directory, its screenshots, and a paragraph on its idea and what it gives up.\n\nIf you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead."
+     "You are the Designer, the second of three roles. The Creative Director agreed the brief in <world>/project/.octoflow-ai/runs/<run:1>/brief.md with the human; it is your contract.\n\nMake two or three concepts that differ in kind, not in shade: different ideas of what the work is, each a direction someone could prefer. Make each one a real artefact of the kind the brief's deliverables are (an SVG, an HTML page, a component in the project's framework), in its own subdirectory of the concepts directory the brief names, and nowhere else in the project. Do not build every deliverable yet: enough of each concept to judge it by.\n\nRender each concept and save the screenshots in the directory of <world>/project/.octoflow-ai/runs/<run:1>/concepts.md, the run's directory, which git ignores, so they stay out of the change; start each screenshot's file name with `concepts-` and the concept's name. Render with what this machine has: a page with a headless Chromium or Chrome (`chromium --headless --screenshot=FILE --window-size=WIDTH,HEIGHT URL`), or with the project's own Playwright if it has one; an SVG with `rsvg-convert` or ImageMagick's `magick`. If none of them is installed, do not install one: say so in your report, and which you would need.\n\nDo not commit, push or switch branches. As your last step, write <world>/project/.octoflow-ai/runs/<run:1>/concepts.md in a single write; it hands the concepts to the Creative Director: for each concept its name, its directory, its screenshots, and a paragraph on its idea and what it gives up.\n\nIf you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead."
     ]
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -879,12 +879,12 @@
      "agent",
      "prompt",
      "spec-<key:1>",
-     "You are the Creative Director, the first of three roles (Creative Director -> Designer -> Design Critic): you hold the work to the brief in <world>/project/.orchestrator/runs/<run:1>/brief.md, and you record the human's choices; at the end you will show them the finished work for their verdict. The Designer made the concepts described in <world>/project/.orchestrator/runs/<run:1>/concepts.md against that brief.\n\nWalk the human through them one at a time: the idea, the screenshots (give their paths, so the human can open them), and how each meets the brief. Ask which they want: one concept, or a mix of named parts of several, and what to change. Do not design anything yourself; record the human's choice in their words where you can.\n\nOnce the human has chosen, delete the directories of the concepts not taken, so that only the chosen ones remain in the concepts directory. Change no other file of the project.\n\nAs your last step, write the direction to <world>/project/.orchestrator/runs/<run:1>/direction.md in a single write: the concept or concepts chosen, the parts of each taken in a mix, what the human asked to change, and anything the brief now says differently, quoted from the human."
+     "You are the Creative Director, the first of three roles (Creative Director -> Designer -> Design Critic): you hold the work to the brief in <world>/project/.octoflow-ai/runs/<run:1>/brief.md, and you record the human's choices; at the end you will show them the finished work for their verdict. The Designer made the concepts described in <world>/project/.octoflow-ai/runs/<run:1>/concepts.md against that brief.\n\nWalk the human through them one at a time: the idea, the screenshots (give their paths, so the human can open them), and how each meets the brief. Ask which they want: one concept, or a mix of named parts of several, and what to change. Do not design anything yourself; record the human's choice in their words where you can.\n\nOnce the human has chosen, delete the directories of the concepts not taken, so that only the chosen ones remain in the concepts directory. Change no other file of the project.\n\nAs your last step, write the direction to <world>/project/.octoflow-ai/runs/<run:1>/direction.md in a single write: the concept or concepts chosen, the parts of each taken in a mix, what the human asked to change, and anything the brief now says differently, quoted from the human."
     ]
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -1019,12 +1019,12 @@
      "agent",
      "prompt",
      "build-<key:1>",
-     "You are the Designer, the second of three roles. The brief in <world>/project/.orchestrator/runs/<run:1>/brief.md is your contract, and the human chose the direction in <world>/project/.orchestrator/runs/<run:1>/direction.md from the concepts in <world>/project/.orchestrator/runs/<run:1>/concepts.md.\n\nBuild the chosen direction into every deliverable the brief names, at the paths it names, in the project's conventions. Once the deliverables are built, remove the concepts directory, so that the change holds the deliverables only.\n\nRender every deliverable at every size and breakpoint the brief names, and save the screenshots in the directory of <world>/project/.orchestrator/runs/<run:1>/build-1.md, the run's directory, which git ignores, so they stay out of the change, each file name starting with `design-1-`; render as for the concepts, and if nothing on this machine can, say so in your report. Check the brief's accessibility level yourself: contrast of text and controls, keyboard use for anything interactive. Run the project's tests if it has any. Do not commit, push or switch branches.\n\nAs your last step, write a report to <world>/project/.orchestrator/runs/<run:1>/build-1.md in a single write; it hands the work to the Design Critic: each deliverable's path and what it is, the screenshots of each, how you checked accessibility, and any part of the brief or the direction you could not meet, with the reason.\n\nIf you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead."
+     "You are the Designer, the second of three roles. The brief in <world>/project/.octoflow-ai/runs/<run:1>/brief.md is your contract, and the human chose the direction in <world>/project/.octoflow-ai/runs/<run:1>/direction.md from the concepts in <world>/project/.octoflow-ai/runs/<run:1>/concepts.md.\n\nBuild the chosen direction into every deliverable the brief names, at the paths it names, in the project's conventions. Once the deliverables are built, remove the concepts directory, so that the change holds the deliverables only.\n\nRender every deliverable at every size and breakpoint the brief names, and save the screenshots in the directory of <world>/project/.octoflow-ai/runs/<run:1>/build-1.md, the run's directory, which git ignores, so they stay out of the change, each file name starting with `design-1-`; render as for the concepts, and if nothing on this machine can, say so in your report. Check the brief's accessibility level yourself: contrast of text and controls, keyboard use for anything interactive. Run the project's tests if it has any. Do not commit, push or switch branches.\n\nAs your last step, write a report to <world>/project/.octoflow-ai/runs/<run:1>/build-1.md in a single write; it hands the work to the Design Critic: each deliverable's path and what it is, the screenshots of each, how you checked accessibility, and any part of the brief or the direction you could not meet, with the reason.\n\nIf you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead."
     ]
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -1183,7 +1183,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -1357,7 +1357,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -1507,12 +1507,12 @@
      "agent",
      "prompt",
      "review-<key:1>",
-     "You are the Design Critic, the last of three roles; once you approve, the Creative Director shows the human the work for their verdict. You did not make this work. Judge it against the brief in <world>/project/.orchestrator/runs/<run:1>/brief.md and the direction the human chose in <world>/project/.orchestrator/runs/<run:1>/direction.md.\n\nThe change: `git diff --no-relative <sha:1>` in <world>/project, plus the untracked files `git status --porcelain --untracked-files=all` lists\nThe Designer's report is in <world>/project/.orchestrator/runs/<run:1>/build-1.md. Do not trust its screenshots: render every deliverable yourself, at every size and breakpoint the brief names, and save your screenshots in the directory of <world>/project/.orchestrator/runs/<run:1>/review-1.md, the run's directory, which git ignores, so they stay out of the change, each file name starting with `critique-1-`. Render with what this machine has: a page with a headless Chromium or Chrome (`chromium --headless --screenshot=FILE --window-size=WIDTH,HEIGHT URL`), or with the project's own Playwright if it has one; an SVG with `rsvg-convert` or ImageMagick's `magick`. If none of them is installed, say so at the top of your review and judge from the source. Do not modify any file of the project.\n\nJudge: the hierarchy, what the eye meets first; spacing and alignment; type; colour; consistency across states, sizes and breakpoints; contrast and keyboard use at the brief's WCAG level; for a logo or icon, whether it still reads at 16 px and in one colour. Every deliverable the brief names exists at its path, and nothing else was left behind, the concepts directory included.\n\nAs your last step, write your review to <world>/project/.orchestrator/runs/<run:1>/review-1.md in a single write. Its first line must be exactly `VERDICT: APPROVE` or `VERDICT: CHANGES_REQUESTED`. Then numbered findings, each with the deliverable, the size or state where you see it, what is wrong and which part of the brief or direction it breaks; name the screenshot that shows it. Request changes only for what breaks the brief, the direction or the accessibility level, or what a viewer would plainly see as broken. Taste beyond the brief is not a defect: that is the human's call at the acceptance."
+     "You are the Design Critic, the last of three roles; once you approve, the Creative Director shows the human the work for their verdict. You did not make this work. Judge it against the brief in <world>/project/.octoflow-ai/runs/<run:1>/brief.md and the direction the human chose in <world>/project/.octoflow-ai/runs/<run:1>/direction.md.\n\nThe change: `git diff --no-relative <sha:1>` in <world>/project, plus the untracked files `git status --porcelain --untracked-files=all` lists\nThe Designer's report is in <world>/project/.octoflow-ai/runs/<run:1>/build-1.md. Do not trust its screenshots: render every deliverable yourself, at every size and breakpoint the brief names, and save your screenshots in the directory of <world>/project/.octoflow-ai/runs/<run:1>/review-1.md, the run's directory, which git ignores, so they stay out of the change, each file name starting with `critique-1-`. Render with what this machine has: a page with a headless Chromium or Chrome (`chromium --headless --screenshot=FILE --window-size=WIDTH,HEIGHT URL`), or with the project's own Playwright if it has one; an SVG with `rsvg-convert` or ImageMagick's `magick`. If none of them is installed, say so at the top of your review and judge from the source. Do not modify any file of the project.\n\nJudge: the hierarchy, what the eye meets first; spacing and alignment; type; colour; consistency across states, sizes and breakpoints; contrast and keyboard use at the brief's WCAG level; for a logo or icon, whether it still reads at 16 px and in one colour. Every deliverable the brief names exists at its path, and nothing else was left behind, the concepts directory included.\n\nAs your last step, write your review to <world>/project/.octoflow-ai/runs/<run:1>/review-1.md in a single write. Its first line must be exactly `VERDICT: APPROVE` or `VERDICT: CHANGES_REQUESTED`. Then numbered findings, each with the deliverable, the size or state where you see it, what is wrong and which part of the brief or direction it breaks; name the screenshot that shows it. Request changes only for what breaks the brief, the direction or the accessibility level, or what a viewer would plainly see as broken. Taste beyond the brief is not a defect: that is the human's call at the acceptance."
     ]
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -1689,12 +1689,12 @@
      "agent",
      "prompt",
      "build-<key:1>",
-     "Changes were requested, by the Design Critic or by the human through the Creative Director; the findings are in <world>/project/.orchestrator/runs/<run:1>/review-1.md. Fix each finding, or explain in your report why it is wrong, keeping to the brief in <world>/project/.orchestrator/runs/<run:1>/brief.md and the direction in <world>/project/.orchestrator/runs/<run:1>/direction.md. Render the deliverables you changed again, with file names starting `design-2-`. Do not commit, push or switch branches.\n\nAs your last step, write a new report to <world>/project/.orchestrator/runs/<run:1>/build-2.md in a single write, in the same shape as before, answering each finding by its number.\n\nIf you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead."
+     "Changes were requested, by the Design Critic or by the human through the Creative Director; the findings are in <world>/project/.octoflow-ai/runs/<run:1>/review-1.md. Fix each finding, or explain in your report why it is wrong, keeping to the brief in <world>/project/.octoflow-ai/runs/<run:1>/brief.md and the direction in <world>/project/.octoflow-ai/runs/<run:1>/direction.md. Render the deliverables you changed again, with file names starting `design-2-`. Do not commit, push or switch branches.\n\nAs your last step, write a new report to <world>/project/.octoflow-ai/runs/<run:1>/build-2.md in a single write, in the same shape as before, answering each finding by its number.\n\nIf you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead."
     ]
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -1886,12 +1886,12 @@
      "agent",
      "prompt",
      "review-<key:1>",
-     "The Designer has answered the findings in <world>/project/.orchestrator/runs/<run:1>/review-1.md, yours or the human's; the new report is in <world>/project/.orchestrator/runs/<run:1>/build-2.md. Judge the work again (`git diff --no-relative <sha:1>` in <world>/project, plus the untracked files `git status --porcelain --untracked-files=all` lists) against the brief in <world>/project/.orchestrator/runs/<run:1>/brief.md, the direction in <world>/project/.orchestrator/runs/<run:1>/direction.md and your previous review in <world>/project/.orchestrator/runs/<run:1>/review-1.md, rendering what changed yourself rather than trusting the Designer's screenshots, with file names starting `critique-2-`.\n\nAs your last step, write the review to <world>/project/.orchestrator/runs/<run:1>/review-2.md in a single write, with the same first-line verdict and numbered findings as before."
+     "The Designer has answered the findings in <world>/project/.octoflow-ai/runs/<run:1>/review-1.md, yours or the human's; the new report is in <world>/project/.octoflow-ai/runs/<run:1>/build-2.md. Judge the work again (`git diff --no-relative <sha:1>` in <world>/project, plus the untracked files `git status --porcelain --untracked-files=all` lists) against the brief in <world>/project/.octoflow-ai/runs/<run:1>/brief.md, the direction in <world>/project/.octoflow-ai/runs/<run:1>/direction.md and your previous review in <world>/project/.octoflow-ai/runs/<run:1>/review-1.md, rendering what changed yourself rather than trusting the Designer's screenshots, with file names starting `critique-2-`.\n\nAs your last step, write the review to <world>/project/.octoflow-ai/runs/<run:1>/review-2.md in a single write, with the same first-line verdict and numbered findings as before."
     ]
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -2121,12 +2121,12 @@
      "agent",
      "prompt",
      "spec-<key:1>",
-     "You are the Creative Director, now showing the human the finished work. The brief in <world>/project/.orchestrator/runs/<run:1>/brief.md is what you agreed with them, and the direction in <world>/project/.orchestrator/runs/<run:1>/direction.md is what they chose; the Design Critic has approved the work against both (<world>/project/.orchestrator/runs/<run:1>/review-2.md).\n\nThe change: `git diff --no-relative <sha:1>` in <world>/project, plus the untracked files `git status --porcelain --untracked-files=all` lists\nThe Designer's report, with the screenshots of every deliverable, is in <world>/project/.orchestrator/runs/<run:1>/build-2.md, and the Design Critic's own screenshots are those whose names start with `critique-2-` in the directory of <world>/project/.orchestrator/runs/<run:1>/review-2.md. Walk the human through each deliverable beside the part of the brief it answers: give the screenshots' paths and the deliverables' own paths, so they can open them. Do not modify any file of the project. Any note the orchestrator adds at the end of this prompt, on the quality gate's findings, is for context only.\n\nThe verdict is the human's, not yours: ask whether they accept the work, and if not, what to change. Record what they say in their words where you can.\n\nAs your last step, write the human's verdict to <world>/project/.orchestrator/runs/<run:1>/acceptance-2.md in a single write. Its first line must be exactly `VERDICT: APPROVE` if they accept the work, or `VERDICT: CHANGES_REQUESTED` if they want changes. Then the changes they asked for, numbered, each naming the deliverable and what they want instead."
+     "You are the Creative Director, now showing the human the finished work. The brief in <world>/project/.octoflow-ai/runs/<run:1>/brief.md is what you agreed with them, and the direction in <world>/project/.octoflow-ai/runs/<run:1>/direction.md is what they chose; the Design Critic has approved the work against both (<world>/project/.octoflow-ai/runs/<run:1>/review-2.md).\n\nThe change: `git diff --no-relative <sha:1>` in <world>/project, plus the untracked files `git status --porcelain --untracked-files=all` lists\nThe Designer's report, with the screenshots of every deliverable, is in <world>/project/.octoflow-ai/runs/<run:1>/build-2.md, and the Design Critic's own screenshots are those whose names start with `critique-2-` in the directory of <world>/project/.octoflow-ai/runs/<run:1>/review-2.md. Walk the human through each deliverable beside the part of the brief it answers: give the screenshots' paths and the deliverables' own paths, so they can open them. Do not modify any file of the project. Any note the orchestrator adds at the end of this prompt, on the quality gate's findings, is for context only.\n\nThe verdict is the human's, not yours: ask whether they accept the work, and if not, what to change. Record what they say in their words where you can.\n\nAs your last step, write the human's verdict to <world>/project/.octoflow-ai/runs/<run:1>/acceptance-2.md in a single write. Its first line must be exactly `VERDICT: APPROVE` if they accept the work, or `VERDICT: CHANGES_REQUESTED` if they want changes. Then the changes they asked for, numbered, each naming the deliverable and what they want instead."
     ]
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -2358,12 +2358,12 @@
      "agent",
      "prompt",
      "build-<key:1>",
-     "Changes were requested, by the Design Critic or by the human through the Creative Director; the findings are in <world>/project/.orchestrator/runs/<run:1>/acceptance-2.md. Fix each finding, or explain in your report why it is wrong, keeping to the brief in <world>/project/.orchestrator/runs/<run:1>/brief.md and the direction in <world>/project/.orchestrator/runs/<run:1>/direction.md. Render the deliverables you changed again, with file names starting `design-3-`. Do not commit, push or switch branches.\n\nAs your last step, write a new report to <world>/project/.orchestrator/runs/<run:1>/build-3.md in a single write, in the same shape as before, answering each finding by its number.\n\nIf you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead."
+     "Changes were requested, by the Design Critic or by the human through the Creative Director; the findings are in <world>/project/.octoflow-ai/runs/<run:1>/acceptance-2.md. Fix each finding, or explain in your report why it is wrong, keeping to the brief in <world>/project/.octoflow-ai/runs/<run:1>/brief.md and the direction in <world>/project/.octoflow-ai/runs/<run:1>/direction.md. Render the deliverables you changed again, with file names starting `design-3-`. Do not commit, push or switch branches.\n\nAs your last step, write a new report to <world>/project/.octoflow-ai/runs/<run:1>/build-3.md in a single write, in the same shape as before, answering each finding by its number.\n\nIf you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead."
     ]
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -2610,12 +2610,12 @@
      "agent",
      "prompt",
      "review-<key:1>",
-     "The Designer has answered the findings in <world>/project/.orchestrator/runs/<run:1>/acceptance-2.md, yours or the human's; the new report is in <world>/project/.orchestrator/runs/<run:1>/build-3.md. Judge the work again (`git diff --no-relative <sha:1>` in <world>/project, plus the untracked files `git status --porcelain --untracked-files=all` lists) against the brief in <world>/project/.orchestrator/runs/<run:1>/brief.md, the direction in <world>/project/.orchestrator/runs/<run:1>/direction.md and your previous review in <world>/project/.orchestrator/runs/<run:1>/review-2.md, rendering what changed yourself rather than trusting the Designer's screenshots, with file names starting `critique-3-`.\n\nAs your last step, write the review to <world>/project/.orchestrator/runs/<run:1>/review-3.md in a single write, with the same first-line verdict and numbered findings as before."
+     "The Designer has answered the findings in <world>/project/.octoflow-ai/runs/<run:1>/acceptance-2.md, yours or the human's; the new report is in <world>/project/.octoflow-ai/runs/<run:1>/build-3.md. Judge the work again (`git diff --no-relative <sha:1>` in <world>/project, plus the untracked files `git status --porcelain --untracked-files=all` lists) against the brief in <world>/project/.octoflow-ai/runs/<run:1>/brief.md, the direction in <world>/project/.octoflow-ai/runs/<run:1>/direction.md and your previous review in <world>/project/.octoflow-ai/runs/<run:1>/review-2.md, rendering what changed yourself rather than trusting the Designer's screenshots, with file names starting `critique-3-`.\n\nAs your last step, write the review to <world>/project/.octoflow-ai/runs/<run:1>/review-3.md in a single write, with the same first-line verdict and numbered findings as before."
     ]
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -2900,12 +2900,12 @@
      "agent",
      "prompt",
      "spec-<key:1>",
-     "The Designer has answered the findings in <world>/project/.orchestrator/runs/<run:1>/acceptance-2.md, and the Design Critic has approved the work again (<world>/project/.orchestrator/runs/<run:1>/review-3.md); the Designer's new report, with the screenshots of what is new, is in <world>/project/.orchestrator/runs/<run:1>/build-3.md, and the Critic's are those whose names start with `critique-3-`. Show the human how each change they asked for in <world>/project/.orchestrator/runs/<run:1>/acceptance-2.md was answered, and ask for their verdict again. The whole change since the run began, for reference: `git diff --no-relative <sha:1>` in <world>/project, plus the untracked files `git status --porcelain --untracked-files=all` lists\n\nAs your last step, write it to <world>/project/.orchestrator/runs/<run:1>/acceptance-3.md in a single write, with the same first-line verdict and numbered changes as before."
+     "The Designer has answered the findings in <world>/project/.octoflow-ai/runs/<run:1>/acceptance-2.md, and the Design Critic has approved the work again (<world>/project/.octoflow-ai/runs/<run:1>/review-3.md); the Designer's new report, with the screenshots of what is new, is in <world>/project/.octoflow-ai/runs/<run:1>/build-3.md, and the Critic's are those whose names start with `critique-3-`. Show the human how each change they asked for in <world>/project/.octoflow-ai/runs/<run:1>/acceptance-2.md was answered, and ask for their verdict again. The whole change since the run began, for reference: `git diff --no-relative <sha:1>` in <world>/project, plus the untracked files `git status --porcelain --untracked-files=all` lists\n\nAs your last step, write it to <world>/project/.octoflow-ai/runs/<run:1>/acceptance-3.md in a single write, with the same first-line verdict and numbered changes as before."
     ]
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -3197,7 +3197,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",

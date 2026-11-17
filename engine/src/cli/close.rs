@@ -389,7 +389,7 @@ impl Plan<'_> {
     }
 
     /// What closing would do, for a dry run: each step with what it acts on, such as "close workspace w1; delete
-    /// worktree /proj/.orchestrator/worktrees/a1b2c3; delete branch orchestrator/a1b2c3; delete the refs under
+    /// worktree /proj/.octoflow-ai/worktrees/a1b2c3; delete branch orchestrator/a1b2c3; delete the refs under
     /// refs/orchestrator/a1b2c3/". summary is what closing records instead, once it is done.
     fn preview(&self) -> String {
         let mut steps = vec![];

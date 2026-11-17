@@ -395,7 +395,7 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         .about("Delete a closed run's directory, or every closed run's, keeping their metrics")
         .long_about(
             "Delete the run directory of a closed run, so that list, show and the app no longer show it. Its line of \
-             metrics is kept first, in .orchestrator/metrics-archive.jsonl, so metrics prints the same as before. A \
+             metrics is kept first, in .octoflow-ai/metrics-archive.jsonl, so metrics prints the same as before. A \
              run that is not closed is refused: close it first. So is a closed run whose branch and worktree prune \
              has yet to delete, as its state is how prune finds them: run prune after its pull request is merged or \
              closed. With --all, every closed run in turn: a run refused alone is counted and left, one whose state \
@@ -622,7 +622,7 @@ fn starts_args(config: &ConfigDir) -> Vec<Arg> {
             .value_name("FILE")
             .help("Like --workflow, for the workflow file at FILE, on this machine"),
         Arg::new("worktree").long("worktree").action(ArgAction::SetTrue).help(
-            "Build in a git worktree of the run's own, .orchestrator/worktrees/<key>, from origin's version of the \
+            "Build in a git worktree of the run's own, .octoflow-ai/worktrees/<key>, from origin's version of the \
              checked-out branch, instead of in the checkout itself, which then need not be clean and stays free to \
              use. Needs a branch checked out and an origin. The worktree is removed once the pull request is open; \
              when the run fails, or for run --no-pr, it stays",

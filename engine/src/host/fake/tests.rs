@@ -11,11 +11,11 @@ fn proj(name: &str) -> String {
 fn files_written_outside_the_run_directory_are_changes() {
     let host = FakeHost::default();
     host.write(&proj("app.py"), "x", false).unwrap();
-    host.write(&proj(".orchestrator/runs/r/state.json"), "{}", true).unwrap();
+    host.write(&proj(".octoflow-ai/runs/r/state.json"), "{}", true).unwrap();
     host.write(&proj(&format!("{WORKTREES_DIR}/a1/f.py")), "y", false).unwrap();
     let s = host.state();
     assert_eq!(s.writes.len(), 3);
-    assert_eq!(s.mtime_kept, [proj(".orchestrator/runs/r/state.json")]);
+    assert_eq!(s.mtime_kept, [proj(".octoflow-ai/runs/r/state.json")]);
     let changed: Vec<&String> = s.changed.iter().collect();
     assert_eq!(changed, [&proj(&format!("{WORKTREES_DIR}/a1/f.py")), &proj("app.py")]);
     drop(s);
@@ -208,7 +208,7 @@ fn a_tree_snapshot_is_restored_over_what_changed_since() {
     host.write("/proj/app.py", "after\n", false).unwrap();
     host.delete("/proj/gone.py");
     host.write("/proj/stray.txt", "added\n", false).unwrap();
-    host.write("/proj/.orchestrator/runs/r/state.json", "{}\n", false).unwrap();
+    host.write("/proj/.octoflow-ai/runs/r/state.json", "{}\n", false).unwrap();
     host.write("/elsewhere.txt", "outside\n", false).unwrap();
     host.restore_tree("/proj", &tree).unwrap();
     let read = |path: &str| host.read(path).unwrap();
@@ -216,7 +216,7 @@ fn a_tree_snapshot_is_restored_over_what_changed_since() {
         [read("/proj/app.py"), read("/proj/gone.py"), read("/proj/stray.txt")],
         [Some("before\n".into()), Some("kept\n".into()), None]
     );
-    assert_eq!([read("/proj/.orchestrator/runs/r/state.json"), read("/elsewhere.txt")], [Some("{}\n".into()), Some("outside\n".into())]);
+    assert_eq!([read("/proj/.octoflow-ai/runs/r/state.json"), read("/elsewhere.txt")], [Some("{}\n".into()), Some("outside\n".into())]);
 }
 
 #[test]
@@ -259,9 +259,9 @@ fn pull_requests_through_host_s_views() {
 #[test]
 fn run_states_and_session_logs() {
     let host = FakeHost::default();
-    host.write("/proj/.orchestrator/runs/r1/state.json", "{\"run_id\": \"r1\"}", false).unwrap();
-    host.write("/proj/.orchestrator/runs/r1/spec.md", "spec", false).unwrap();
-    host.write("/proj/.orchestrator/runs/r2/state.json", "{\"run_id\": \"r2\"}", false).unwrap();
+    host.write("/proj/.octoflow-ai/runs/r1/state.json", "{\"run_id\": \"r1\"}", false).unwrap();
+    host.write("/proj/.octoflow-ai/runs/r1/spec.md", "spec", false).unwrap();
+    host.write("/proj/.octoflow-ai/runs/r2/state.json", "{\"run_id\": \"r2\"}", false).unwrap();
     host.state().ages.insert("r2".into(), 400);
     let states = host.run_states("/proj").unwrap();
     let ages: Vec<u64> = states.iter().map(SavedRun::age).collect();

@@ -45,7 +45,7 @@
   "1": [
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -122,7 +122,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -195,7 +195,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -296,7 +296,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -391,12 +391,12 @@
      "agent",
      "prompt",
      "spec-<key:1>",
-     "You are the Spec Collector, the first of three roles (Spec Collector -> Builder -> Reviewer). Separate agent sessions play the Builder and the Reviewer; they will know only what you write down. A human is at this terminal and answers you directly.\n\nTask from the human:\nAdd a subtract function\n\nInterview the human until the requirements are unambiguous: the goal, what is in and out of scope, testable acceptance criteria, constraints, and how the result will be verified. Read the code in <world>/project first so your questions are grounded and you can cite the files the change touches. Ask a few questions at a time. Do not write or change any code.\n\nWhen the human approves the spec, write it in a single write to <world>/project/.orchestrator/runs/<run:1>/spec.md as Markdown. Its first line is a `# ` heading: a short imperative title for the change, under 70 characters; it becomes the commit subject and the pull request title. Then these `##` sections: Goal, Scope, Non-goals, Acceptance criteria (a numbered list, each one checkable), Relevant code (file:line), Verification. Writing that file hands the work to the Builder, so write it only after the human approves it."
+     "You are the Spec Collector, the first of three roles (Spec Collector -> Builder -> Reviewer). Separate agent sessions play the Builder and the Reviewer; they will know only what you write down. A human is at this terminal and answers you directly.\n\nTask from the human:\nAdd a subtract function\n\nInterview the human until the requirements are unambiguous: the goal, what is in and out of scope, testable acceptance criteria, constraints, and how the result will be verified. Read the code in <world>/project first so your questions are grounded and you can cite the files the change touches. Ask a few questions at a time. Do not write or change any code.\n\nWhen the human approves the spec, write it in a single write to <world>/project/.octoflow-ai/runs/<run:1>/spec.md as Markdown. Its first line is a `# ` heading: a short imperative title for the change, under 70 characters; it becomes the commit subject and the pull request title. Then these `##` sections: Goal, Scope, Non-goals, Acceptance criteria (a numbered list, each one checkable), Relevant code (file:line), Verification. Writing that file hands the work to the Builder, so write it only after the human approves it."
     ]
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -504,7 +504,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -627,7 +627,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -726,14 +726,14 @@
      "agent",
      "prompt",
      "build-<key:1>",
-     "You are the Builder, the second of three roles (Spec Collector -> Builder -> Reviewer). The spec in <world>/project/.orchestrator/runs/<run:1>/spec.md was agreed with the human by a separate session; it is your contract.\n\nImplement it in <world>/project, following the conventions of the surrounding code. Verify the change the way the spec's Verification section says, and run the tests. Do not commit, push or switch branches; leave the changes in the working tree for the Reviewer. If the spec is wrong or cannot be met, do not deviate silently: say so in your report.\n\nAs your last step, write a report to <world>/project/.orchestrator/runs/<run:1>/build-1.md in a single write; it hands the work to the Reviewer: the files you changed and why, how you verified the change (commands and a summary of their results), and any acceptance criterion you did not meet, with the reason.\n\nIf you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead."
+     "You are the Builder, the second of three roles (Spec Collector -> Builder -> Reviewer). The spec in <world>/project/.octoflow-ai/runs/<run:1>/spec.md was agreed with the human by a separate session; it is your contract.\n\nImplement it in <world>/project, following the conventions of the surrounding code. Verify the change the way the spec's Verification section says, and run the tests. Do not commit, push or switch branches; leave the changes in the working tree for the Reviewer. If the spec is wrong or cannot be met, do not deviate silently: say so in your report.\n\nAs your last step, write a report to <world>/project/.octoflow-ai/runs/<run:1>/build-1.md in a single write; it hands the work to the Reviewer: the files you changed and why, how you verified the change (commands and a summary of their results), and any acceptance criterion you did not meet, with the reason.\n\nIf you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead."
     ]
    }
   ],
   "2": [
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -865,7 +865,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -1017,7 +1017,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -1184,7 +1184,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -1327,12 +1327,12 @@
      "agent",
      "prompt",
      "review-<key:1>",
-     "You are the Reviewer, the last of three roles (Spec Collector -> Builder -> Reviewer). You did not write this change. Judge it only against the spec in <world>/project/.orchestrator/runs/<run:1>/spec.md and the code itself.\n\nThe change: `git diff --no-relative <sha:1>` in <world>/project, plus the untracked files `git status --porcelain --untracked-files=all` lists\nThe Builder's report is in <world>/project/.orchestrator/runs/<run:1>/build-1.md. Treat its claims as unverified: check them, and run the verification yourself. Do not modify any file other than your review.\n\nAs your last step, write your review to <world>/project/.orchestrator/runs/<run:1>/review-1.md in a single write. Its first line must be exactly `VERDICT: APPROVE` or `VERDICT: CHANGES_REQUESTED`. Then list numbered findings, each with file:line, what is wrong, and which acceptance criterion it violates or what failure it causes. Request changes only for defects: an unmet acceptance criterion, a bug, a broken test. Style preferences are not defects.\n\nThe quality gate passed on this change; its report is in <world>/project/.orchestrator/runs/<run:1>/quality-1-1.md. If <world>/project/.orchestrator/runs/<run:1>/quality-1-1.md lists, under Build configuration, an edit the change makes to lint or clippy configuration, judge each such edit as a finding: say whether the spec justifies the loosening, and request changes when it only hides a finding."
+     "You are the Reviewer, the last of three roles (Spec Collector -> Builder -> Reviewer). You did not write this change. Judge it only against the spec in <world>/project/.octoflow-ai/runs/<run:1>/spec.md and the code itself.\n\nThe change: `git diff --no-relative <sha:1>` in <world>/project, plus the untracked files `git status --porcelain --untracked-files=all` lists\nThe Builder's report is in <world>/project/.octoflow-ai/runs/<run:1>/build-1.md. Treat its claims as unverified: check them, and run the verification yourself. Do not modify any file other than your review.\n\nAs your last step, write your review to <world>/project/.octoflow-ai/runs/<run:1>/review-1.md in a single write. Its first line must be exactly `VERDICT: APPROVE` or `VERDICT: CHANGES_REQUESTED`. Then list numbered findings, each with file:line, what is wrong, and which acceptance criterion it violates or what failure it causes. Request changes only for defects: an unmet acceptance criterion, a bug, a broken test. Style preferences are not defects.\n\nThe quality gate passed on this change; its report is in <world>/project/.octoflow-ai/runs/<run:1>/quality-1-1.md. If <world>/project/.octoflow-ai/runs/<run:1>/quality-1-1.md lists, under Build configuration, an edit the change makes to lint or clippy configuration, judge each such edit as a finding: say whether the spec justifies the loosening, and request changes when it only hides a finding."
     ]
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -1507,7 +1507,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",

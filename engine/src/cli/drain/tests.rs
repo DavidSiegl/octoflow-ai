@@ -1036,7 +1036,7 @@ fn an_unfinished_run_on_the_run_line_stops_the_drain_before_any_run() {
         (Some(vec![("closed", Value::from("workspace closed"))]), stale, "was closed (workspace closed)", "; remove the Run: line from"),
         // resume refuses a state of another format, so drain does not offer it.
         (Some(vec![("format", Value::from(1))]), stale, "cannot be resumed: run 20261024-100000-aaaaaa has state format 1", "; remove the Run: line from"),
-        (None, 0, "is not under /proj/.orchestrator/runs", "; remove the Run: line from"),
+        (None, 0, "is not under /proj/.octoflow-ai/runs", "; remove the Run: line from"),
     ];
     for (fields, age, why, remedy) in cases {
         let d = Drain::new();

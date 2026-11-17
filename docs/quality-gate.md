@@ -323,12 +323,12 @@ The Builder leaves its work uncommitted, and the gate judges a checkout of a com
 message)` commits the working tree through a temporary index, in one `sh -c` script: it copies the real index,
 runs `git add -A` and `git write-tree` on the copy, and `git commit-tree` with `state.base` as the parent. No ref
 moves, and the index, HEAD and `git status` stay as they were. `git add -A` honours `.gitignore`, and
-`.orchestrator/` ignores itself, so the snapshot holds what the pull request's commit would. Its only parent
+`.octoflow-ai/` ignores itself, so the snapshot holds what the pull request's commit would. Its only parent
 being the base is what lets the gate measure the whole change against the base.
 
 ### The orchestrator's checks
 
-Some checks need the run's spec, which lives in the run directory (`.orchestrator/`, ignored, so never in a
+Some checks need the run's spec, which lives in the run directory (`.octoflow-ai/`, ignored, so never in a
 snapshot) and so never reaches the gate. The orchestrator runs these itself, in each quality round, after it reads
 the gate's `quality.md` and before it writes `quality-<n>-<q>.md`; a gate that could not judge gets none of them. They run only with `--quality-gate`. The spec is the contract step's file, `spec.md` in the default
 workflow, or the run's task for a workflow without one. Each check is an `OrchestratorCheck` in

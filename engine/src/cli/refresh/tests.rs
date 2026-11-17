@@ -17,7 +17,7 @@ const REFRESH_URL: &str = "https://github.com/o/r/pull/7";
 
 /// The path of run_id's state.json in /proj.
 fn state_path(run_id: &str) -> String {
-    format!("/proj/.orchestrator/runs/{run_id}/state.json")
+    format!("/proj/.octoflow-ai/runs/{run_id}/state.json")
 }
 
 /// A done run's state, as add_run saves it.

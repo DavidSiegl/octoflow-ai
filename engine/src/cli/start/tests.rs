@@ -100,7 +100,7 @@ fn a_run_an_earlier_release_saved_is_refused_with_what_to_do() {
         e,
         format!(
             "run 20260929-120000-a1b2c3 was saved by an octoflow before {}; finish or close it with that release, or \
-             remove .orchestrator/runs/20260929-120000-a1b2c3",
+             remove .octoflow-ai/runs/20260929-120000-a1b2c3",
             crate::state::STATE_FORMAT_SINCE
         )
     );
@@ -331,7 +331,7 @@ fn a_new_run_takes_the_defaults_and_the_flags() {
     assert_eq!(dumps(&state.models), r#"{"spec":"m","build":"b","review":"r"}"#);
     assert_eq!(dumps(&state.next_harnesses), r#"{"spec":"agy","build":"codex","review":"codex"}"#);
     assert_eq!((state.pull_request, state.quality_job.as_deref()), (false, Some(LOCAL_GATE)));
-    assert_eq!(state.worktree, Some(format!("/proj/.orchestrator/worktrees/{}", state.key())));
+    assert_eq!(state.worktree, Some(format!("/proj/.octoflow-ai/worktrees/{}", state.key())));
     // A timeout of 0 is none given: DEFAULT_TURN_TIMEOUT.
     let (state, _) = new_state(&run_args(&["--timeout", "0", "t"], &config), "/proj", None, &world).unwrap();
     assert_eq!(state.turn_timeout, 1800);
@@ -346,9 +346,9 @@ fn a_new_run_takes_the_run_id_given_unless_its_directory_is_there() {
     let (state, _) = new_state(&run_args(&["--run-id", id, "t"], &config), "/proj", None, &world).unwrap();
     assert_eq!(state.run_id, id);
     // A directory with any file in it, a state.json or not, is a run's.
-    f.host.state().files.insert(format!("/proj/.orchestrator/runs/{id}/log.md"), String::new());
+    f.host.state().files.insert(format!("/proj/.octoflow-ai/runs/{id}/log.md"), String::new());
     let e = new_state(&run_args(&["--run-id", id, "t"], &config), "/proj", None, &world).unwrap_err();
-    assert_eq!(e.0, format!("/proj/.orchestrator/runs/{id} exists already; a new run needs an id of its own"));
+    assert_eq!(e.0, format!("/proj/.octoflow-ai/runs/{id} exists already; a new run needs an id of its own"));
     // Another project's run of that id is no matter.
     let (state, _) = new_state(&run_args(&["--run-id", id, "t"], &config), "/other", None, &world).unwrap();
     assert_eq!(state.run_id, id);
@@ -406,7 +406,7 @@ fn a_resume_finds_its_run_on_the_host_and_switches_its_gate() {
     let (state, _) = resumed_state(&resume_args(&["a1b2c3", "--no-quality-gate"]), "/proj", &world).unwrap();
     assert_eq!((state.quality_job, state.quality_gate_disabled), (None, true));
     let e = resumed_state(&resume_args(&["b0b0b0"]), "/proj", &world).unwrap_err();
-    assert_eq!(e.0, "no run b0b0b0 under /proj/.orchestrator/runs");
+    assert_eq!(e.0, "no run b0b0b0 under /proj/.octoflow-ai/runs");
 }
 
 #[test]

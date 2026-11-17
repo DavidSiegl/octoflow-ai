@@ -31,7 +31,7 @@ fn a_proofs_section_names_each_proof_and_the_findings_left_unproven() {
     assert_eq!(
         section,
         "## Proofs the orchestrator ran\n\nThe orchestrator ran each proof with `sh {proofs}` in /proj, from a copy of its \
-         directory under `/proj/.orchestrator/proofs/`, removed after each run; a path to a proof in its output is the \
+         directory under `/proj/.octoflow-ai/proofs/`, removed after each run; a path to a proof in its output is the \
          copy's. A proof that fails demonstrates its finding; one that passes or errors does not.\n\n\
          - `test_1_rate.py` (finding 1): demonstrated, it fails.\n\n  ````\n  E   assert 2 == 3\n  last\n  ````\n\n\
          - `check.sh` (no finding): not demonstrated, it did not run: gone.\n\n\
