@@ -923,7 +923,7 @@ impl Host for FakeHost {
             return Err(OrchestratorError(error.clone()));
         }
         let before = s.refs.len();
-        s.refs = s.refs.iter().filter(|(r, _)| !r.starts_with(prefix)).map(|(r, sha)| (r.clone(), sha.clone())).collect();
+        s.refs.retain(|r, _| !r.starts_with(prefix));
         Ok(s.refs.len() < before)
     }
 

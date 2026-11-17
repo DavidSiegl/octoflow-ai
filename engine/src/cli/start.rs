@@ -279,9 +279,7 @@ fn named_roles(flag: &str, pairs: &[(String, String)], roles: &IndexMap<String, 
 /// base with each of over's entries put in, a key of base keeping its place.
 fn merged(base: &IndexMap<String, String>, over: IndexMap<String, String>) -> IndexMap<String, String> {
     let mut out = base.clone();
-    for (k, v) in over.iter() {
-        out.insert(k.clone(), v.clone());
-    }
+    out.extend(over);
     out
 }
 

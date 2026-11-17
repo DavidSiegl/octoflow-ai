@@ -784,12 +784,7 @@ pub fn new_dependencies(change: &RunChange, indexes: &PackageIndexes) -> Result<
     for p in &packages {
         if !p.direct && (p.source.is_some() || known_of(&known, p).is_some_and(Option::is_some)) {
             let described = format!("`{}` ({})", p.key, whence(p, &known, change.now, ""));
-            match pulled_in.get_mut(&p.path) {
-                Some(list) => list.push(described),
-                None => {
-                    pulled_in.insert(p.path.clone(), vec![described]);
-                }
-            }
+            pulled_in.entry(p.path.clone()).or_default().push(described);
         } else if let Some((fails, finding)) = package_finding(p, &named, &known, change.now) {
             if fails { &mut found.issues } else { &mut found.to_weigh }.push(finding);
         }
@@ -821,12 +816,9 @@ fn known_of<'k>(known: &'k Known, p: &NewPackage) -> Option<&'k Option<IndexedPa
 fn unchecked_findings(packages: &[NewPackage], known: &Known, failures: &IndexMap<String, String>) -> Vec<Finding> {
     let mut unasked: IndexMap<String, Vec<&str>> = IndexMap::new();
     for p in packages.iter().filter(|p| p.source.is_none() && known_of(known, p).is_none()) {
-        match unasked.get_mut(p.index.name()) {
-            Some(keys) if keys.contains(&p.key.as_str()) => {}
-            Some(keys) => keys.push(&p.key),
-            None => {
-                unasked.insert(p.index.name().to_string(), vec![p.key.as_str()]);
-            }
+        let keys = unasked.entry(p.index.name().to_string()).or_default();
+        if !keys.contains(&p.key.as_str()) {
+            keys.push(&p.key);
         }
     }
     unasked
@@ -937,8 +929,8 @@ fn compare_dependencies<'a>(
     before: &Dependencies,
     after: &Dependencies,
 ) -> (Vec<NewPackage<'a>>, Vec<Finding>) {
-    let lock_only: IndexMap<String, Vec<Dependency>> =
-        after.locked.iter().filter(|(key, _)| !after.direct.contains_key(*key)).map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut lock_only = after.locked.clone();
+    lock_only.retain(|key, _| !after.direct.contains_key(key));
     let mut new = Vec::new();
     let mut moved = Vec::new();
     for (was, now, direct) in [(&before.direct, &after.direct, true), (&before.locked, &lock_only, false)] {

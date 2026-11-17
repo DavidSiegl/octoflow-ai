@@ -145,12 +145,7 @@ impl GateFailures {
 
     /// Count fingerprint as a failure of check, after the ones it has.
     pub fn add(&mut self, check: &str, fingerprint: String) {
-        match self.fingerprints.get_mut(check) {
-            Some(list) => list.push(fingerprint),
-            None => {
-                self.fingerprints.insert(check.to_string(), vec![fingerprint]);
-            }
-        }
+        self.fingerprints.entry(check.to_string()).or_default().push(fingerprint);
     }
 
     fn all(&self) -> std::collections::BTreeSet<&str> {
