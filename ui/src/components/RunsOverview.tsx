@@ -1,5 +1,6 @@
 import type { RunEntry } from "../runs";
 import { formatRound, heartbeatAge, outcome, prLabel } from "../runs";
+import { OutsideLink } from "./OutsideLink";
 import { StepProgress } from "./StepProgress";
 
 interface TableProps {
@@ -87,9 +88,9 @@ function RunsTable({ runs, now, selected, onSelect }: TableProps) {
               </td>
               <td>
                 {record.pr && (
-                  <a href={record.pr.url} title={record.pr.url} target="_blank" rel="noreferrer">
+                  <OutsideLink target={{ page: record.pr.url }} title={record.pr.url}>
                     {prLabel(record.pr.url)}
-                  </a>
+                  </OutsideLink>
                 )}
               </td>
             </tr>

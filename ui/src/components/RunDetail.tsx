@@ -4,6 +4,7 @@ import type { RunEntry } from "../runs";
 import { formatRound, heartbeatAge, outcome } from "../runs";
 import { AgentPanes } from "./AgentPanes";
 import { HandoffFile } from "./HandoffFile";
+import { OutsideLink } from "./OutsideLink";
 import { RunMap } from "./RunMap";
 
 interface Props {
@@ -35,9 +36,7 @@ export function RunDetail({ api, project, entry, now, onClose }: Props) {
         </p>
         {record.waiting?.reason === "blocked" && <p className="blocked">blocked: {record.waiting.detail}</p>}
         {record.pr && (
-          <a href={record.pr.url} target="_blank" rel="noreferrer">
-            {record.pr.url}
-          </a>
+          <OutsideLink target={{ page: record.pr.url }}>{record.pr.url}</OutsideLink>
         )}
       </header>
       <RunMap record={record} now={now} />
