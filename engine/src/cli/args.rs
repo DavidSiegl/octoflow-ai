@@ -184,6 +184,17 @@ impl Command {
         }
     }
 
+    /// Whether the command was given --dry-run: it says what it would do and changes nothing.
+    pub fn dry_run(&self) -> bool {
+        match self {
+            Command::Drain(a) => a.dry_run,
+            Command::Close { dry_run, .. }
+            | Command::Forget { dry_run, .. }
+            | Command::Runs(_, RunsCommand::Prune { dry_run }) => *dry_run,
+            _ => false,
+        }
+    }
+
     /// The run's settings as the flags give them; None for a command that starts no run.
     pub fn settings(&self) -> Option<&Settings> {
         match self {

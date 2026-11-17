@@ -1,20 +1,27 @@
 //! The engine's defaults, intervals, names and exit statuses that no one part of it owns. A constant that belongs to
 //! one part of the engine lives in that part's module instead.
 
+/// PROJECT_DIR as a literal, for the names below and the prompts that concat! it into their text.
+#[macro_export]
+macro_rules! project_dir {
+    () => {
+        ".octoflow-ai"
+    };
+}
 /// The engine's own directory in a project, relative to it: RUNS_DIR and WORKTREES_DIR are in it, and in a run's
 /// working tree, PROOF_COPIES_DIR. A project of an engine from before the rename keeps it as crate::old_project_dir's
-/// OLD_PROJECT_DIR until the engine moves it here. Each of the three below spells it out.
-pub const PROJECT_DIR: &str = ".octoflow-ai";
+/// OLD_PROJECT_DIR until the engine moves it here.
+pub const PROJECT_DIR: &str = project_dir!();
 /// Where a project keeps its runs' directories, relative to it.
-pub const RUNS_DIR: &str = ".octoflow-ai/runs";
+pub const RUNS_DIR: &str = concat!(project_dir!(), "/runs");
 /// Where run --worktree puts each run's worktree, named by the run's key.
-pub const WORKTREES_DIR: &str = ".octoflow-ai/worktrees";
+pub const WORKTREES_DIR: &str = concat!(project_dir!(), "/worktrees");
 
 /// PROOF_COPIES_DIR as a literal, for the prompts that concat! it into their text.
 #[macro_export]
 macro_rules! proof_copies_dir {
     () => {
-        ".octoflow-ai/proofs"
+        concat!($crate::project_dir!(), "/proofs")
     };
 }
 /// Where, in a run's working tree, a proof is copied to for its run (Workflow._run_proof), under the round that wrote

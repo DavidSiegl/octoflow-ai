@@ -150,7 +150,7 @@ pub fn project_host(machine: &str, cwd: &str, stopping: &Interrupt) -> Result<Re
     let herdr = ProcessHerdr::new(Some(machine), stopping);
     let host = if machine.is_empty() { here } else { here.over_ssh(&herdr.ssh_target()?) };
     let dir = host.resolve_dir(cwd)?;
-    let moved = crate::old_project_dir::move_project_dir(&host, &dir, &crate::runs::local_host(), &crate::runs::pid_alive)?;
+    let moved = crate::old_project_dir::move_project_dir(&host, &dir, false)?;
     if let Some(moved) = moved {
         // Nowhere else to say it, if stderr does not take it.
         let _ = writeln!(io::stderr(), "{moved}");

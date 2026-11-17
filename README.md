@@ -402,7 +402,8 @@ Everything a run writes stays in `<project>/.octoflow-ai/runs/<run-id>/`, which 
 it. Runs in one checkout share its working tree, so a run refuses to start or resume while another run there is
 `running`; use `--worktree`, or a clone per run, to run in parallel. An engine from before 0.89.0 kept this
 directory as `.orchestrator/`; the first command, or `serve`, that finds one moves it to `.octoflow-ai/`, its
-worktrees and their saved paths with it, and refuses, moving nothing, while a run there is still `running`.
+worktrees with it, once every run there is closed. Until then it refuses, moving nothing: finish and `close` those
+runs with the older engine first.
 
 A failed run keeps its workspace open and stays on its branch, and so does a `--no-pr` run. `resume` continues a
 stopped run where `state.json` says ([Resuming a run](docs/design.md#resuming-a-run)), and `close` cleans up after
