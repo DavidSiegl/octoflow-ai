@@ -109,8 +109,7 @@ function Connected({ connection }: { connection: Connection }) {
         <p className="empty">Open a project folder to see its runs.</p>
       )}
       {settingUp && project.cwd && (
-        // After the runs, so that it is in front of a run form open beside it. Keyed by the project, so opening
-        // another one while it is open checks that one.
+        // Keyed by the project, so that a dialog left open across a change of project checks the new one.
         <SetupDialog key={`setup:${project.machine}:${project.cwd}`} api={api} project={project} onClose={() => setSettingUp(false)} />
       )}
       {workflowsOpen && <WorkflowsDialog api={api} onClose={() => setWorkflowsOpen(false)} />}
