@@ -38,7 +38,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   developer's chore, not a user's feature. Not covered: the quality gate, which a trial
   runs only given `--quality-gate local` after `--`, and then by an empty `gate.toml`, since the toy repositories have
   none, so `quality rounds` stays 0; a `--worktree` or `--machine` run, which the runner refuses; and an interview, which `--spec` skips.
-  Decided 2026-10-28. The verification run it still lacks is GitHub #364 and #365.
+  Decided 2026-10-28.
 
 ## Open issues
 

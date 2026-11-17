@@ -208,8 +208,9 @@ and a few repeats are a small sample: one trial more or less passed is noise, a 
 not. Compare results of the same tasks only; a line's `commit`, this checkout's HEAD, says which. The Rust series'
 first trial, `bugfix` in `evals/results/2026-11-11-default.jsonl`, is no baseline for wall time or tokens: an unknown
 part of its 73m49s was its Builder's pane waiting on Claude Code's trust question, which later trials are not asked,
-and its `tokens` are `null`
-though Claude Code's are read, for a reason not yet known (GitHub #364).
+and its `tokens` are `null` because one turn's are unknown, most likely that waiting turn's; which turn cannot be
+known, since its clone was deleted with the run. The next, in `evals/results/2026-11-17-default.jsonl`, took 1m00s
+and has every turn's tokens (GitHub #364).
 
 A result line holds `version` (2 since the tasks became Rust crates, whose numbers start a new series on 2026-10-31; 1
 for the Python tasks before), `date`, `config`, `run_args`, `engine` (`EVAL_ENGINE`, or `this checkout's build`),
