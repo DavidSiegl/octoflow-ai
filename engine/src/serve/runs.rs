@@ -232,9 +232,10 @@ impl ProjectRuns {
     /// `--machine`, for one on a machine. Once the run is launched a look that fails, at its state.json or its pane, is
     /// no answer: the wait goes on, so that the client still gets the id of a run that is running. Gives how the wait
     /// ended, and the named herdr session the run's pane is in (Launched::herdr_session). Errors: Refused for a run
-    /// id that is not a plain name; Failed, before any workspace opens, when herdr's panes start a shell the run's
-    /// command cannot be typed into or that cannot be told (crate::herdr::pane_shell), and when herdr cannot launch
-    /// it (Launcher::launch).
+    /// id that is not a plain name; Failed, before any workspace opens, when the panes of the project's host's herdr
+    /// start a shell that the lines a run types cannot be typed into or that cannot be told (crate::herdr::pane_shell),
+    /// and when herdr cannot launch it (Launcher::launch). For a project on a machine that is the machine's herdr,
+    /// where the agents run; the pane of this machine's that the run's command is typed into is not checked (TODO.md).
     pub fn start(
         &self,
         request: &RunRequest,

@@ -545,3 +545,10 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   can flake the same way"; (R1-1): "the hidden `run --run-id` flag would fix the order with no wait", at the price of
   testing the given-id path rather than `new_run_id`. Closed by the engine ordering runs by their start time (a saved
   start instant that sorts below the second), after which the scenario's wait goes.
+- **serve does not check the shell of the pane it types a machine's run into.** For a project on a machine,
+  `RunServer::start` (`engine/src/serve/runs.rs`) checks `crate::herdr::pane_shell` on the machine, whose herdr the
+  run's agents are typed into (`Herdr::export`), but `Reached::launcher` types the run's own command line into a pane
+  of this machine's herdr. Cross-review 221 (F3): "a local herdr with default_shell nu serving a project on a machine
+  whose shell is bash. The check passes, the line is typed into nu, and POST /run answers 422 or 202 as before the
+  fix." Closed by the Launcher checking the shell of the panes it opens before it types into one (its fake answering
+  as `ServeHost::pane_shell` does), with serve checking the project's host only for a project on a machine.

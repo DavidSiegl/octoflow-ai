@@ -7,8 +7,9 @@
 //! documented: TODO.md's "No `doctor` check that a harness can start in the project without asking" decided against
 //! reading the file for doctor for that reason. The runner writes it all the same, because a trial cannot answer the
 //! question, and it fails loudly, naming the file, when the file cannot be read, parsed or written, rather than
-//! running a trial that would wait on the question. Should a Claude Code release move the record, trials wait again,
-//! as the first eval run's Builder did (docs/design.md, Evals).
+//! running a trial that would wait on the question. Forgetting the clone after its trial only warns, naming the file:
+//! the trial's numbers are kept, and what is left behind is an entry for a folder that is gone. Should a Claude Code
+//! release move the record, trials wait again, as the first eval run's Builder did (docs/design.md, Evals).
 //!
 //! Claude Code rewrites the file while it runs, so each change here is a read and an atomic replace (a temporary file
 //! renamed over it) that keeps every other key; a write Claude Code makes between the two is lost. A config that is a
