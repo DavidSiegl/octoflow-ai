@@ -445,7 +445,7 @@ fn a_role_flag_for_a_role_the_workflow_lacks() {
 fn resume_takes_role_model() {
     let team = find_workflow("product-team", &Default::default()).unwrap();
     let mut state = saved_run("build", 1, &[]);
-    state.models = [("tests", "sonnet".to_string())].into_iter().collect();
+    state.models = [("tests".to_string(), "sonnet".to_string())].into_iter().collect();
     state.workflow = "product-team".into();
     state.workflow_definition = Some(workflow_definition(&team));
     let Value::Object(saved) = state.to_json() else { unreachable!("a state is saved as an object") };

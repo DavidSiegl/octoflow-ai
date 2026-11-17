@@ -4,7 +4,7 @@ use crate::test_support::oracle;
 
 
 /// added_lines as host.json records it: each line's number as a string, its text as a string.
-fn as_recorded(added: &Map<AddedLines>) -> Value {
+fn as_recorded(added: &IndexMap<String, AddedLines>) -> Value {
     Value::Object(
         added
             .iter()
@@ -26,7 +26,7 @@ fn added_lines_reads_each_diff_as_host_json_records() {
         let diff = case[0].as_str().unwrap();
         let added = added_lines(diff.as_bytes()).expect("a diff of UTF-8 paths");
         assert_eq!(as_recorded(&added), case[1], "{diff:?}");
-        let order: Vec<&str> = added.keys().collect();
+        let order: Vec<&str> = added.keys().map(String::as_str).collect();
         let recorded: Vec<&str> = case[1].as_object().unwrap().keys().map(String::as_str).collect();
         assert_eq!(order, recorded, "{diff:?}");
     }

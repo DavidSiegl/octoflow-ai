@@ -6,11 +6,12 @@
 //! implements only those, and a fake overrides what it plays in memory, as `FakeHost` (host/fake.rs) plays git one
 //! command at a time through [`Host::git_run`], so that Host's own git steps run on it.
 
+use indexmap::IndexMap;
+
 use crate::constants::{CONSOLE_TAIL_LINES, NETWORK_TIMEOUT, REMOTE, RUNS_DIR};
 use crate::error::OrchestratorError;
 use crate::harness::{harness, SessionLog};
 use serde_json::Value;
-use crate::map::Map;
 use crate::json::ValueExt;
 use crate::paths::file_name;
 use std::collections::HashSet;
@@ -897,8 +898,8 @@ pub trait Host {
     /// The branches checked out in the repository's worktrees, the main checkout's included, each with its path, in
     /// the order git lists them. A worktree whose directory is gone (git marks it prunable) holds nothing, as
     /// is_worktree has it.
-    fn checked_out_branches(&self, cwd: &str) -> Result<Map<String>, OrchestratorError> {
-        let mut branches = Map::new();
+    fn checked_out_branches(&self, cwd: &str) -> Result<IndexMap<String, String>, OrchestratorError> {
+        let mut branches = IndexMap::new();
         // One record per worktree, separated by a blank line.
         for record in self.git(cwd, &["worktree", "list", "--porcelain"])?.split("\n\n") {
             if record.lines().any(|line| line.starts_with("prunable")) {
@@ -910,7 +911,7 @@ pub trait Host {
                 if key == "worktree" {
                     path = rest;
                 } else if key == "branch" {
-                    branches.insert(rest.strip_prefix("refs/heads/").unwrap_or(rest), path.to_string());
+                    branches.insert(rest.strip_prefix("refs/heads/").unwrap_or(rest).to_string(), path.to_string());
                 }
             }
         }

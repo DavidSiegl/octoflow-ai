@@ -102,7 +102,7 @@ fn interrupted_at_the_end(git_command: &'static str) -> Fixture {
     state.pull_request = true;
     (state.base_branch, state.branch) = (Some("main".into()), Some("orchestrator/x-a1b2c3".into()));
     (state.verdict, state.workflow) = (Some(crate::constants::FINISHED.into()), "solo".into());
-    state.locked = [("build", vec!["tests/test_x.py".to_string()])].into_iter().collect();
+    state.locked = [("build".to_string(), vec!["tests/test_x.py".to_string()])].into_iter().collect();
     let host = Rc::new(FakeHost::new(Some("def456"), "orchestrator/x-a1b2c3"));
     host.state().refs.insert(format!("{}build/1", crate::state::refs_prefix(&state.run_id)), "abc123".to_string());
     let f = Fixture::resume(Rc::clone(&host), state, vec![], &[], &[]);

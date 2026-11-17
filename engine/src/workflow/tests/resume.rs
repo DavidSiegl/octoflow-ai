@@ -26,7 +26,7 @@ fn spec_written_while_orchestrator_was_gone() {
     let mut state = RunState::new("20260929-120000-a1b2c3", "add a rate limiter", "/proj");
     state.machine = Some("remote".into());
     state.workspace_id = "w1".into();
-    state.agents.insert("spec", AgentRecord::new("spec-a1b2c3", "w1:p1", DEFAULT_HARNESS));
+    state.agents.insert("spec".to_string(), AgentRecord::new("spec-a1b2c3", "w1:p1", DEFAULT_HARNESS));
     let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![
         ("build", vec![build_turn(1)]),
         ("review", vec![review_turn(1, APPROVE)]),
@@ -466,7 +466,7 @@ fn invalid_review_is_refused_until_deleted() {
     assert_eq!(saved.get("prompted"), Some(&Value::Null));
     assert_eq!(prompts_to(&f, "review-a1b2c3"), 0);
 
-    f.host.state().files.remove(&f.state.review_path(1));
+    f.host.state().files.shift_remove(&f.state.review_path(1));
     let seen = seen();
     let f2 = Fixture::resume(Rc::clone(&f.host), RunState::from_saved(&saved).unwrap(), vec![(
         "review",

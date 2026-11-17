@@ -31,8 +31,8 @@ fn each_turn_of_an_approved_run_is_recorded_on_the_host_clock() {
         ("review", vec![taking(300, review_turn(1, APPROVE))]),
     ]);
     let mut wf = f.workflow(settings(|s| {
-        s.agents.models.insert("review", "opus".into());
-        s.agents.harnesses.insert("build", "codex".into());
+        s.agents.models.insert("review".to_string(), "opus".into());
+        s.agents.harnesses.insert("build".to_string(), "codex".into());
     }));
     assert_eq!(wf.run(), verdict(APPROVE));
     let expected = [
@@ -252,7 +252,7 @@ fn a_run_taken_over_writes_no_summary() {
             let Ok(Value::Object(mut saved)) = serde_json::from_str::<Value>(&host.state().files.get(&path).unwrap().clone()) else { panic!() };
             if now > 30.0 && saved.get("owner") != Some(&theirs) {
                 saved.insert("owner".into(), theirs.clone());
-                host.state().files.insert(path.as_str(), Value::Object(saved).to_string());
+                host.state().files.insert(path.as_str().to_string(), Value::Object(saved).to_string());
                 if interrupted {
                     interrupt.raise();
                 }
@@ -325,7 +325,7 @@ fn tokens_come_from_the_session_the_turn_ran_in() {
     let f = Fixture::new(vec![("spec", vec![spec_turn()]), ("build", vec![taking(100, build_turn(1))])]);
     // The sessions are known once both agents have started: the logs are put in place during the review, before
     // publishing reads them.
-    let sessions = Rc::new(RefCell::new(Map::new()));
+    let sessions = Rc::new(RefCell::new(IndexMap::new()));
     let (herdr, known) = (Rc::clone(&f.herdr), Rc::clone(&sessions));
     let mut review = review_turn(1, APPROVE);
     let with_logs: Turn = Box::new(move |prompt, state, host| {
@@ -353,7 +353,7 @@ fn tokens_come_from_the_session_the_turn_ran_in() {
     });
     f.play("review", vec![taking(60, with_logs)]);
     let mut wf = f.workflow(settings(|s| {
-        s.agents.harnesses.insert("review", "pi".into());
+        s.agents.harnesses.insert("review".to_string(), "pi".into());
     }));
     assert_eq!(wf.run(), verdict(APPROVE));
     let metrics = serde_json::from_str::<Value>(f.host.state().files.get(&format!("{}/metrics.json", f.state.dir())).unwrap()).unwrap();

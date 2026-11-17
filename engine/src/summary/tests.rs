@@ -90,9 +90,9 @@ fn approved_run() -> RunState {
     s.branch = Some("orchestrator/add-a-token-bucket-rate-limiter-a1b2c3".into());
     s.round = 1;
     for (role, kind) in [("spec", "claude"), ("build", "codex"), ("review", "claude")] {
-        s.agents.insert(role, AgentRecord::new(&format!("{role}-a1b2c3"), "p1", kind));
+        s.agents.insert(role.to_string(), AgentRecord::new(&format!("{role}-a1b2c3"), "p1", kind));
     }
-    s.models.insert("review", "opus".to_string());
+    s.models.insert("review".to_string(), "opus".to_string());
     s.turns = vec![
         turn("spec", "spec.md", Some(0), Some(600), |t| { t.insert("round".into(), Value::from(0)); t.insert("human_paced".into(), Value::Bool(true)); }),
         turn("build", "build-1.md", Some(600), Some(1800), |t| { t.insert("agent".into(), Value::from("codex")); }),
@@ -116,7 +116,7 @@ fn a_run_without_turns_or_an_end_says_so() {
     assert!(summary.contains("- **Wall time:** ?, from the first turn's start to 1970-01-01T00:00:00+00:00\n"));
     assert!(summary.contains("## Task\n\nt\n") && summary.ends_with("## Turns\n\nNo turns were recorded.\n"));
     s.error = None;
-    s.next_harnesses.insert("build", "pi".to_string());
+    s.next_harnesses.insert("build".to_string(), "pi".to_string());
     let summary = run_summary(&s, &DEFAULT_WORKFLOW, &[], 0);
     assert!(summary.contains("- **Outcome:** unfinished\n") && summary.contains("| Builder (build) | pi | default |"));
     let metrics = run_metrics(&s, 10);

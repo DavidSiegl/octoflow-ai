@@ -102,7 +102,7 @@ fn failed_heartbeat_is_not_fatal() {
     let (host, build) = (Rc::clone(&f.host), f.state.build_path(1));
     f.clock.hook(move |now| {
         if now > 200.0 && host.read(&build).unwrap().is_none() {
-            host.state().files.insert(build.as_str(), "r".to_string());
+            host.state().files.insert(build.as_str().to_string(), "r".to_string());
         }
     });
     assert_eq!(f.workflow(no_pr()).run(), verdict(APPROVE));
@@ -123,7 +123,7 @@ fn takeover_stops_without_saving() {
                 other => panic!("{other:?}"),
             };
             saved.insert("owner".into(), theirs.clone());
-            host.state().files.insert(path.as_str(), Value::Object(saved).to_string());
+            host.state().files.insert(path.as_str().to_string(), Value::Object(saved).to_string());
         }
     });
     match f.workflow(RunSettings::default()).run() {
@@ -144,7 +144,7 @@ fn run_with_state_replaced(text: &str) -> (Fixture, Result<Option<String>, Stopp
     let (host, text, mut replaced) = (Rc::clone(&f.host), text.to_string(), false);
     f.clock.hook(move |now| {
         if now > 30.0 && !replaced {
-            host.state().files.insert(path.as_str(), text.clone());
+            host.state().files.insert(path.as_str().to_string(), text.clone());
             replaced = true;
         }
     });

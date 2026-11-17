@@ -4,6 +4,8 @@
 //! (GitHub keeps refs/pull/<n>/head; docs/design.md). The same holds for the --worktree a run left behind, which
 //! would keep its branch checked out: it is removed only when clean and held by that head.
 
+use indexmap::IndexMap;
+
 use super::{record_in_state, Connected};
 use crate::constants::{BRANCH_PREFIX, CLOSED_BRANCH_GRACE, RUNS_DIR, WORKTREES_DIR};
 use crate::error::OrchestratorError;
@@ -148,7 +150,7 @@ fn prune_run(
     cwd: &str,
     state: &RunState,
     run: &mut PrunedRun,
-    checked_out: &mut crate::map::Map<String>,
+    checked_out: &mut IndexMap<String, String>,
     dry_run: bool,
 ) -> Result<(), GhError> {
     let failed = GhError::Failed;
@@ -179,7 +181,7 @@ fn prune_run(
     // A worktree that went frees the branch it held, not one checked out elsewhere (a detached worktree).
     let went = !worktree.is_empty() && worktree_kept.is_none();
     if went && path.is_some_and(|path| checked_out.get(branch).is_some_and(|at| at == path)) {
-        checked_out.remove(branch);
+        checked_out.shift_remove(branch);
     }
     let (local, local_kept) = prune_local(host, cwd, branch, head, number, checked_out, dry_run).map_err(failed)?;
     (run.remote, run.local, run.worktree) = (remote, local, worktree);
@@ -309,7 +311,7 @@ fn prune_local(
     branch: &str,
     head: &str,
     number: &str,
-    checked_out: &crate::map::Map<String>,
+    checked_out: &IndexMap<String, String>,
     dry_run: bool,
 ) -> Result<(String, Option<String>), OrchestratorError> {
     let kept = |why: String| Ok((format!("{BRANCH_KEPT}{why}"), Some(why)));

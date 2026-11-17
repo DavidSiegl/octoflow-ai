@@ -35,15 +35,15 @@ fn on_model(kind: &str) -> Vec<String> {
 }
 
 /// Every role of the default workflow in harness kind.
-fn every_role(kind: &str) -> Map<String> {
-    FULL.iter().map(|role| (*role, kind.to_string())).collect()
+fn every_role(kind: &str) -> IndexMap<String, String> {
+    FULL.iter().map(|role| (role.to_string(), kind.to_string())).collect()
 }
 
 /// AgentSettings of a permission mode, the models and the harnesses by role.
-fn agent_settings(permission_mode: Option<&str>, models: &[(&str, &str)], harnesses: Map<String>) -> AgentSettings {
+fn agent_settings(permission_mode: Option<&str>, models: &[(&str, &str)], harnesses: IndexMap<String, String>) -> AgentSettings {
     AgentSettings {
         permission_mode: permission_mode.map(String::from),
-        models: models.iter().map(|(r, m)| (*r, m.to_string())).collect(),
+        models: models.iter().map(|(r, m)| (r.to_string(), m.to_string())).collect(),
         harnesses,
     }
 }
@@ -112,7 +112,7 @@ fn each_permission_mode_in_each_harness() {
 
 #[test]
 fn without_a_harness_every_role_is_claude_as_before() {
-    let (started, logged) = run_default(with_agents(agent_settings(Some("auto"), &[], Map::new())));
+    let (started, logged) = run_default(with_agents(agent_settings(Some("auto"), &[], IndexMap::new())));
     let auto = strings(&["--permission-mode", "auto"]);
     assert_eq!(started, expected_starts("claude", [auto.clone(), auto.clone(), auto]));
     assert!(dropped(&logged).is_empty());
@@ -183,7 +183,7 @@ fn a_changed_harness_starts_fresh() {
         state.agents.get_mut("build").unwrap().harness = saved_kind.to_string();
         let script = vec![("build", vec![recording(build_turn(2), &seen)]), ("review", vec![review_turn(2, APPROVE)])];
         let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &["review"], &[("build", "s-build")]);
-        let kinds = [("build", kind.to_string())].into_iter().collect();
+        let kinds = [("build".to_string(), kind.to_string())].into_iter().collect();
         let settings = RunSettings { agents: agent_settings(None, &[], kinds), ..f.as_saved() };
         assert_eq!(f.workflow(settings).run(), verdict(APPROVE), "{kind}");
         assert_eq!(starts(&f), [("build-a1b2c3".into(), "w1:p2".into(), vec![])]);
@@ -213,7 +213,7 @@ fn a_live_agent_keeps_its_harness() {
 #[test]
 fn every_roles_harness_is_saved() {
     let f = Fixture::new(approved());
-    let kinds = [("review", "pi".to_string())].into_iter().collect();
+    let kinds = [("review".to_string(), "pi".to_string())].into_iter().collect();
     f.workflow(with_agents(agent_settings(Some("plan"), &[], kinds))).run().unwrap();
     let saved = f.saved();
     assert_eq!(saved.get("agent_kinds").unwrap().to_string(), r#"{"spec":"claude","build":"claude","review":"pi"}"#);
@@ -231,7 +231,7 @@ fn role_agent_starts_that_role_in_its_harness() {
     // The harnesses new_state gives `run task --agent agy --role-agent review=pi`, as crate::cli's tests check.
     let expected = [("spec", "agy"), ("build", "agy"), ("review", "pi")];
     let f = Fixture::new(approved());
-    let kinds = expected.iter().map(|(r, k)| (*r, k.to_string())).collect();
+    let kinds = expected.iter().map(|(r, k)| (r.to_string(), k.to_string())).collect();
     f.workflow(with_agents(agent_settings(None, &[], kinds))).run().unwrap();
     let started: Vec<(String, String)> = f.herdr.state().kinds.iter().map(|(name, kind)| (role_of(name), kind.clone())).collect();
     assert_eq!(started, expected.map(|(r, k)| (r.to_string(), k.to_string())));
@@ -242,12 +242,12 @@ fn resume_keeps_or_overrides_the_saved_harnesses() {
     let mut saved = saved_run("build", 2, FULL).to_json().as_object().unwrap().clone();
     let kinds = r#"{"spec": "claude", "build": "codex", "review": "agy"}"#;
     saved.insert("agent_kinds".into(), serde_json::from_str::<Value>(kinds).unwrap());
-    let cases: [(&[&str], Map<String>); 3] = [
-        (&[], [("spec", "claude"), ("build", "codex"), ("review", "agy")].map(|(r, k)| (r, k.to_string())).into_iter().collect()),
+    let cases: [(&[&str], IndexMap<String, String>); 3] = [
+        (&[], [("spec", "claude"), ("build", "codex"), ("review", "agy")].map(|(r, k)| (r.to_string(), k.to_string())).into_iter().collect()),
         (&["--agent", "pi"], every_role("pi")),
         (
             &["--role-agent", "review=opencode"],
-            [("spec", "claude"), ("build", "codex"), ("review", "opencode")].map(|(r, k)| (r, k.to_string())).into_iter().collect(),
+            [("spec", "claude"), ("build", "codex"), ("review", "opencode")].map(|(r, k)| (r.to_string(), k.to_string())).into_iter().collect(),
         ),
     ];
     for (flags, kinds) in cases {
@@ -273,7 +273,7 @@ fn resume_with_a_new_harness_relaunches_in_it() {
 fn saved_with_the_run() {
     let quick = crate::test_support::quick();
     let mut settings = quick.settings().clone();
-    settings.agents.insert("review", "codex".to_string());
+    settings.agents.insert("review".to_string(), "codex".to_string());
     let p = crate::pipeline::Pipeline::with("coded", quick.roles().clone(), quick.steps().to_vec(), settings).unwrap();
     let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&p), vec![
         ("build", vec![build_turn(1)]),
@@ -293,7 +293,7 @@ fn a_run_saved_with_gemini_resumes_only_moved_to_another_harness() {
     // A run 0.67 saved: its workflow's review role and its next_harnesses name gemini (GitHub issue #125).
     let quick = crate::test_support::quick();
     let mut settings = quick.settings().clone();
-    settings.agents.insert("review", "codex".to_string());
+    settings.agents.insert("review".to_string(), "codex".to_string());
     let p = crate::pipeline::Pipeline::with("coded", quick.roles().clone(), quick.steps().to_vec(), settings).unwrap();
     let mut definition = crate::workflow_file::workflow_definition(&p);
     definition["roles"]["review"]["agent"] = Value::from("gemini");
@@ -333,7 +333,7 @@ fn run_dir_granted_in_worktree_runs_only() {
 #[test]
 fn opencode_s_config_is_exported_before_it_starts() {
     let f = worktree_run(Rc::new(FakeHost::default()), None);
-    let kinds = [("build", "opencode".to_string())].into_iter().collect();
+    let kinds = [("build".to_string(), "opencode".to_string())].into_iter().collect();
     let agents = agent_settings(None, &[("build", "m")], kinds);
     f.workflow(RunSettings { agents, ..RunSettings::default() }).run().unwrap();
     let calls = f.herdr.state().calls.clone();

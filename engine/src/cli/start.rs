@@ -1,6 +1,8 @@
 //! The state a run starts from: a new run's, from run's flags (new_state), and a stopped run's, from its saved state
 //! and resume's flags (resumed_state), each with its workflow.
 
+use indexmap::IndexMap;
+
 use super::args::{ResumeArgs, RunArgs, Settings};
 use super::Connected;
 use crate::constants::{DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT, RUNS_DIR, WORKTREES_DIR};
@@ -10,7 +12,6 @@ use crate::json::Object;
 use crate::local_gate::LOCAL_GATE;
 use crate::pipeline::{Pipeline, DONE, QUALITY};
 use crate::prompts::{load_prompts, Prompts};
-use crate::map::Map;
 use crate::runs::RUNNING;
 use crate::spec_file::SpecFile;
 use crate::state::{find_run, RunState, SavedRun};
@@ -235,7 +236,7 @@ fn resume_quality_limit(state: &mut RunState, pipeline: &Pipeline, args: &Resume
 /// --ROLE-model, else --model; a role with none is left out, keeping its workflow's, or its harness's.
 ///
 /// Errors: a --role-model names a role not among roles.
-fn role_models(s: &Settings, roles: &Map<String>) -> Result<Map<String>, OrchestratorError> {
+fn role_models(s: &Settings, roles: &IndexMap<String, String>) -> Result<IndexMap<String, String>, OrchestratorError> {
     let named = named_roles("--role-model", &s.role_model, roles)?;
     let label = |role: &str| s.label_models.iter().find(|(r, _)| r == role).map(|(_, m)| m.as_str());
     Ok(roles
@@ -245,7 +246,7 @@ fn role_models(s: &Settings, roles: &Map<String>) -> Result<Map<String>, Orchest
                 .into_iter()
                 .flatten()
                 .find(|m| !m.is_empty())?;
-            Some((role, model.to_string()))
+            Some((role.clone(), model.to_string()))
         })
         .collect())
 }
@@ -253,20 +254,20 @@ fn role_models(s: &Settings, roles: &Map<String>) -> Result<Map<String>, Orchest
 /// The harness each of roles runs in by the flags, each one of HARNESS_NAMES as the parser takes them: --role-agent's,
 /// else --agent's; a role with none is left out,
 /// keeping its workflow's, or the saved one. Errors: a --role-agent names a role not among roles.
-fn role_agents(s: &Settings, roles: &Map<String>) -> Result<Map<String>, OrchestratorError> {
+fn role_agents(s: &Settings, roles: &IndexMap<String, String>) -> Result<IndexMap<String, String>, OrchestratorError> {
     let named = named_roles("--role-agent", &s.role_agent, roles)?;
     Ok(roles
         .keys()
-        .filter_map(|role| named.get(role).cloned().or_else(|| s.agent.clone()).map(|kind| (role, kind)))
+        .filter_map(|role| named.get(role).cloned().or_else(|| s.agent.clone()).map(|kind| (role.clone(), kind)))
         .collect())
 }
 
 /// flag's ROLE=VALUE pairs by role, a later pair for a role replacing an earlier one. Errors: a role not among roles,
 /// naming the first by name and the roles there are.
-fn named_roles(flag: &str, pairs: &[(String, String)], roles: &Map<String>) -> Result<Map<String>, OrchestratorError> {
-    let named: Map<String> = pairs.iter().map(|(r, v)| (r.as_str(), v.clone())).collect();
-    if let Some(unknown) = named.keys().filter(|r| !roles.contains_key(r)).min() {
-        let roles: Vec<&str> = roles.keys().collect();
+fn named_roles(flag: &str, pairs: &[(String, String)], roles: &IndexMap<String, String>) -> Result<IndexMap<String, String>, OrchestratorError> {
+    let named: IndexMap<String, String> = pairs.iter().map(|(r, v)| (r.clone(), v.clone())).collect();
+    if let Some(unknown) = named.keys().filter(|r| !roles.contains_key(*r)).min() {
+        let roles: Vec<&str> = roles.keys().map(String::as_str).collect();
         return Err(OrchestratorError(format!(
             "{flag} names role {unknown}, which the workflow does not have; its roles are {}",
             roles.join(", ")
@@ -276,11 +277,9 @@ fn named_roles(flag: &str, pairs: &[(String, String)], roles: &Map<String>) -> R
 }
 
 /// base with each of over's entries put in, a key of base keeping its place.
-fn merged(base: &Map<String>, over: Map<String>) -> Map<String> {
+fn merged(base: &IndexMap<String, String>, over: IndexMap<String, String>) -> IndexMap<String, String> {
     let mut out = base.clone();
-    for (k, v) in over.iter() {
-        out.insert(k, v.clone());
-    }
+    out.extend(over);
     out
 }
 

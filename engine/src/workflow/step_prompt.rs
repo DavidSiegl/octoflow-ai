@@ -3,10 +3,11 @@
 //! run's records say of its quality rounds, proofs and locked files (RunView's other methods, beside the phase they
 //! belong to: quality_rounds.rs, proof_runs.rs, locks.rs).
 
+use indexmap::IndexMap;
+
 use crate::constants::{APPROVE, CHANGES_REQUESTED};
 use crate::error::OrchestratorError;
 use crate::host::Host;
-use crate::map::Map;
 use crate::pipeline::{Pipeline, Step};
 use crate::prompts::template::fill;
 use crate::prompts::{prompt_error, Prompt, Prompts};
@@ -45,7 +46,7 @@ impl RunView<'_> {
     fn as_worded(&self, step: &Step, n: u32) -> Result<(String, Option<String>), OrchestratorError> {
         let s = self.state;
         let q = if step.quality_gated { s.quality_round } else { 0 };
-        let mut values = Map::new();
+        let mut values = IndexMap::new();
         for name in step.placeholders() {
             let value = self.placeholder(&name, step, n)?;
             values.insert(name, value);

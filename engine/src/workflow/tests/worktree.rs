@@ -221,7 +221,7 @@ fn a_failed_run_keeps_the_worktree() {
 #[test]
 fn resume_reuses_the_worktree() {
     let host = FakeHost::default();
-    host.state().worktrees.insert(WORKTREE, RUN_BRANCH.to_string());
+    host.state().worktrees.insert(WORKTREE.to_string(), RUN_BRANCH.to_string());
     host.state().changed.insert(format!("{WORKTREE}/limiter.py"));
     let f = Fixture::resume(Rc::new(host), saved_worktree_run("review", 1), vec![("review", vec![review_turn(1, APPROVE)])], &[], &[]);
     f.put(&f.state.build_path(1), "report 1");
@@ -237,7 +237,7 @@ fn resume_reuses_the_worktree() {
 #[test]
 fn resume_before_the_first_edit_reuses_the_worktree() {
     let host = FakeHost::default();
-    host.state().worktrees.insert(WORKTREE, "HEAD".to_string());
+    host.state().worktrees.insert(WORKTREE.to_string(), "HEAD".to_string());
     let mut state = saved_run("spec", 0, &["spec"]);
     (state.worktree, state.pull_request) = (Some(WORKTREE.into()), true);
     let script = vec![
@@ -255,7 +255,7 @@ fn resume_refuses_a_worktree_that_is_gone() {
     for registered in [None, Some("/proj/.orchestrator/worktrees/ffffff")] {
         let host = FakeHost::default();
         if let Some(other) = registered {
-            host.state().worktrees.insert(other, "HEAD".to_string());
+            host.state().worktrees.insert(other.to_string(), "HEAD".to_string());
         }
         let f = Fixture::resume(Rc::new(host), saved_worktree_run("review", 1), vec![("review", vec![])], &[], &[]);
         let error = failure(f.workflow(f.as_saved()).run());

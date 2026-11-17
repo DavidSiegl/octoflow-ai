@@ -19,7 +19,6 @@ pub mod http;
 pub mod interrupt;
 pub mod json;
 pub mod local_gate;
-pub mod map;
 pub mod package_index;
 pub mod patch;
 pub mod paths;

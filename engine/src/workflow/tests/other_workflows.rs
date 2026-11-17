@@ -166,7 +166,7 @@ fn model_reaches_a_role_without_its_own_flag() {
     let mut settings = with_pipeline(&four);
     settings.agents.models = [("spec", "X"), ("tests", "X"), ("build", "Y"), ("review", "X")]
         .into_iter()
-        .map(|(role, model)| (role, model.to_string()))
+        .map(|(role, model)| (role.to_string(), model.to_string()))
         .collect();
     f.workflow(settings).run().unwrap();
     let start = Call::Start { name: "tests-a1b2c3".into(), pane: "w1:p2".into(), args: strings(&["--model", "X"]) };
@@ -195,7 +195,7 @@ fn written(f: &Fixture) -> Vec<String> {
 fn impl_saved() -> RunState {
     let mut state = saved_run("impl", 1, &[]);
     (state.quality_job, state.workflow) = (Some("local".to_string()), "impl".into());
-    state.agents.insert("impl", AgentRecord::new("impl-a1b2c3", "w1:p1", DEFAULT_HARNESS));
+    state.agents.insert("impl".to_string(), AgentRecord::new("impl-a1b2c3", "w1:p1", DEFAULT_HARNESS));
     state
 }
 

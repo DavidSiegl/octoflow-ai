@@ -660,7 +660,7 @@ impl Workflow<'_> {
     /// keeps the order the roles' agents first started in, and the role asking now is the first when none has.
     fn pane_order(&self, role: &str) -> Vec<String> {
         let roles: Vec<String> = self.pipeline.roles().keys().map(String::from).collect();
-        let first = self.state.agents.keys().next().unwrap_or(role).to_string();
+        let first = self.state.agents.keys().next().map_or(role, String::as_str).to_string();
         let Some(contract) = self.pipeline.contract().map(|c| c.role.clone()).filter(|c| *c != first) else {
             return roles;
         };
@@ -695,7 +695,7 @@ impl Workflow<'_> {
         let mut record = AgentRecord::new(&name, pane, h.kind);
         record.session.clone_from(&session);
         record.unprompted = Some(start);
-        self.state.agents.insert(role, record);
+        self.state.agents.insert(role.to_string(), record);
         self.save()?;
         self.herdr.rename_pane(pane, &self.label(role))?;
         // The handoff files are outside a worktree run's working directory.

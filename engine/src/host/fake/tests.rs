@@ -82,7 +82,7 @@ fn a_conflicting_merge_is_aborted_on_the_fake_too() {
 #[test]
 fn pushes_scan_first_and_land_on_its_origin() {
     let host = FakeHost::default();
-    host.state().branches.insert("orchestrator/x", "c1".to_string());
+    host.state().branches.insert("orchestrator/x".to_string(), "c1".to_string());
     host.push_branch("/proj", "orchestrator/x", "abc123", "/r/leaks.json").unwrap();
     let scan = Scan {
         commit: "c1".into(),
@@ -99,7 +99,7 @@ fn pushes_scan_first_and_land_on_its_origin() {
         commit: SCANNED.into(),
         fingerprint: "c0ffee:limiter.py:github-pat:3".into(),
     }];
-    host.state().branches.insert("b", "c2".to_string());
+    host.state().branches.insert("b".to_string(), "c2".to_string());
     let Err(PushError::Leaks(found)) = host.push_branch("/proj", "b", "abc123", "/r/leaks.json") else {
         panic!("no leak")
     };
@@ -116,9 +116,9 @@ fn prune_s_git_steps() {
     let host = FakeHost::default();
     {
         let mut s = host.state();
-        s.remote.insert("orchestrator/x", "c1".to_string());
+        s.remote.insert("orchestrator/x".to_string(), "c1".to_string());
         s.tracking.insert("orchestrator/x".into());
-        s.branches.insert("orchestrator/x", "c0".to_string());
+        s.branches.insert("orchestrator/x".to_string(), "c0".to_string());
         s.ancestors.insert(("c0".into(), "c1".into()));
         s.ahead.insert("orchestrator/x".into(), 2);
         s.missing_commits.insert("c9".into());
@@ -145,7 +145,7 @@ fn worktrees_see_their_own_branch_and_changes() {
     host.add_worktree("/proj", &wt, "abc123").unwrap();
     assert!(host.is_worktree("/proj", &wt).unwrap());
     let branches = host.checked_out_branches("/proj").unwrap();
-    assert_eq!(branches.iter().collect::<Vec<_>>(), [("feature", &"/proj".to_string())]);
+    assert_eq!(branches.iter().collect::<Vec<_>>(), [(&"feature".to_string(), &"/proj".to_string())]);
     assert_eq!(host.git(&wt, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap(), "HEAD\n");
     host.git(&wt, &["switch", "-c", "orchestrator/x", "origin/main"]).unwrap();
     assert_eq!(host.git(&wt, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap(), "orchestrator/x\n");
@@ -306,7 +306,7 @@ fn a_branch_s_commit_is_what_branches_holds_else_head_s_where_it_is_checked_out(
         let mut s = host.state();
         s.worktrees.insert(proj(&format!("{WORKTREES_DIR}/a1")), "orchestrator/x".into());
         s.worktrees.insert(proj(&format!("{WORKTREES_DIR}/b2")), "HEAD".into());
-        s.branches.insert("main", "c0".into());
+        s.branches.insert("main".to_string(), "c0".into());
     }
     let verified = |b: &str| host.git_run("/proj", &["rev-parse", "--verify", &format!("refs/heads/{b}")], 60).unwrap();
     for (b, commit) in [("main", Some("c0")), ("orchestrator/x", Some("abc123")), ("HEAD", None), ("none", None)] {

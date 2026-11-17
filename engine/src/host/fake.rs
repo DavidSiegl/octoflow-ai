@@ -6,6 +6,8 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use indexmap::IndexMap;
+
 use super::{ChangedFile, Completed, Exec, ExecError, Host, PutBack, RestoreError, Scanned, GIT_STATUS_ARGS, ORIGIN_READ};
 use crate::quality::Leak;
 use crate::state::SavedRun;
@@ -13,7 +15,6 @@ use crate::constants::WORKTREES_DIR;
 use crate::error::OrchestratorError;
 use crate::host::tests::FAKE_TOKEN;
 use serde_json::Value;
-use crate::map::Map;
 
 /// What a FakeHost's clock reads when the workflow's clock reads 0: far from it, so a time taken from the wrong clock
 /// shows.
@@ -152,7 +153,7 @@ pub(crate) enum PrEdit {
 /// What a FakeHost holds and records.
 pub(crate) struct FakeState {
     /// Each file's text, by path, in the order first written.
-    pub files: Map<String>,
+    pub files: IndexMap<String, String>,
     /// The commit HEAD is at; None outside a git repository with a commit.
     pub head: Option<String>,
     /// Every path written, in order.
@@ -185,7 +186,7 @@ pub(crate) struct FakeState {
     /// (parent, message) of each snapshot, whose commit is snap<n>.
     pub snapshots: Vec<(String, String)>,
     /// origin's branches, by name, with their commit: those `push --set-upstream` created, which `ls-remote` reads.
-    pub remote: Map<String>,
+    pub remote: IndexMap<String, String>,
     /// The stderr of a failing `ls-remote` of origin, which reads remote; None reads it.
     pub list_remote_error: Option<String>,
     /// How many more `ls-remote`s fail with list_remote_error, the ones after them succeeding; None: every one.
@@ -199,12 +200,12 @@ pub(crate) struct FakeState {
     /// The local branches by name, with their commit, as `rev-parse --verify refs/heads/<b>` reads them
     /// (FakeState::branch_commit): a commit does not move one, so a branch checked out and committed on is left out,
     /// and its commit is HEAD's.
-    pub branches: Map<String>,
+    pub branches: IndexMap<String, String>,
     /// The branches origin/<name> exists for.
     pub tracking: BTreeSet<String>,
     /// The linked worktrees' branches, by path, "HEAD" for a detached one; /proj has `branch` checked out. git in a
     /// worktree sees its own branch, and the changed files under its path as its own changes.
-    pub worktrees: Map<String>,
+    pub worktrees: IndexMap<String, String>,
     /// The linked worktrees in worktrees whose directory was deleted by hand: git still lists them, as prunable, and
     /// `git worktree prune` forgets them.
     pub vanished_worktrees: BTreeSet<String>,
@@ -248,7 +249,7 @@ pub(crate) struct FakeState {
     /// restore play the locked files on it.
     pub trees: HashMap<String, BTreeMap<String, Option<String>>>,
     /// The local refs lock made, with their snapshot.
-    pub refs: Map<String>,
+    pub refs: IndexMap<String, String>,
     /// The error of a failing delete_refs, which then deletes nothing; None deletes.
     pub delete_refs_error: Option<String>,
     /// Run directories, by path, that remove_run_dir fails to delete, leaving them whole.
@@ -305,7 +306,7 @@ impl FakeHost {
     pub fn new(head: Option<&str>, branch: &str) -> FakeHost {
         FakeHost {
             state: RefCell::new(FakeState {
-                files: Map::new(),
+                files: IndexMap::new(),
                 head: head.map(String::from),
                 writes: vec![],
                 branch: branch.to_string(),
@@ -321,15 +322,15 @@ impl FakeHost {
                 conflicts: vec![],
                 merge_head: false,
                 snapshots: vec![],
-                remote: Map::new(),
+                remote: IndexMap::new(),
                 list_remote_error: None,
                 list_remote_failures_left: None,
                 diff: String::new(),
                 has_origin: true,
                 ages: HashMap::new(),
-                branches: Map::new(),
+                branches: IndexMap::new(),
                 tracking: BTreeSet::new(),
-                worktrees: Map::new(),
+                worktrees: IndexMap::new(),
                 vanished_worktrees: BTreeSet::new(),
                 ancestors: HashSet::new(),
                 ahead: HashMap::new(),
@@ -349,7 +350,7 @@ impl FakeHost {
                 file_reads: vec![],
                 line_counts: None,
                 trees: HashMap::new(),
-                refs: Map::new(),
+                refs: IndexMap::new(),
                 delete_refs_error: None,
                 undeletable_run_dirs: BTreeSet::new(),
                 restores: vec![],
@@ -374,7 +375,7 @@ impl FakeHost {
     /// Delete a file of the working tree, as an agent may.
     pub fn delete(&self, path: &str) {
         let mut s = self.state();
-        s.files.remove(path);
+        s.files.shift_remove(path);
         s.changed.insert(path.to_string());
     }
 }
@@ -430,7 +431,7 @@ impl FakeState {
                 Some(if branch == "HEAD" { status(1) } else { ok(&format!("refs/heads/{branch}\n")) })
             }
             ["switch", "-c", name, _] => {
-                self.worktrees.insert(cwd, name.to_string());
+                self.worktrees.insert(cwd.to_string(), name.to_string());
                 Some(ok(""))
             }
             args if args == GIT_STATUS_ARGS => Some(ok(&porcelain(&self.changed_in(cwd)))),
@@ -500,7 +501,7 @@ impl FakeState {
                 return ok(&format!("{n}\n"));
             }
             ["branch", "--quiet", "-D", b] => {
-                self.branches.remove(b);
+                self.branches.shift_remove(*b);
             }
             // What a fetch brings is set up in the state beforehand (upstream, missing_commits), not fetched.
             ["fetch", "--quiet", "origin", _] => {}
@@ -605,18 +606,20 @@ impl FakeState {
     /// vanished one marked prunable.
     fn git_worktree(&mut self, args: &[&str]) -> Completed {
         match args {
-            ["worktree", "add", "--detach", path, _] => self.worktrees.insert(*path, "HEAD".to_string()),
+            ["worktree", "add", "--detach", path, _] => {
+                self.worktrees.insert(path.to_string(), "HEAD".to_string());
+            }
             ["worktree", "remove", path] | ["worktree", "remove", "--force", path] => {
                 if let Some(error) = &self.remove_error {
                     return Completed::new(128, "", error);
                 }
-                self.worktrees.remove(path);
+                self.worktrees.shift_remove(*path);
                 self.changed.retain(|p| !p.starts_with(&format!("{path}/")));
             }
             ["worktree", "prune"] => {
                 let vanished = std::mem::take(&mut self.vanished_worktrees);
                 for path in &vanished {
-                    self.worktrees.remove(path);
+                    self.worktrees.shift_remove(path);
                 }
             }
             ["worktree", "list", "--porcelain"] => {
@@ -645,7 +648,7 @@ impl FakeState {
             ["push", "--quiet", "--set-upstream", "origin", b] => {
                 let commit = self.branch_commit(b).unwrap_or_else(|| panic!("FakeHost has no branch {b} to push"));
                 let commit = commit.to_string();
-                self.remote.insert(*b, commit);
+                self.remote.insert(b.to_string(), commit);
                 self.tracking.insert(b.to_string());
             }
             ["push", "--quiet", lease, "origin", "--delete", git_ref] if lease.starts_with("--force-with-lease=") => {
@@ -654,7 +657,7 @@ impl FakeState {
                 if *lease != format!("--force-with-lease={git_ref}:{at}") {
                     return Completed::new(1, "", &format!(" ! [rejected]        {b} (stale info)"));
                 }
-                self.remote.remove(b);
+                self.remote.shift_remove(b);
                 self.tracking.remove(b);
             }
             _ => unplayed(args),
@@ -754,7 +757,7 @@ impl Host for FakeHost {
             let now = s.now();
             s.mtimes.insert(path.to_string(), now);
         }
-        s.files.insert(path, text.to_string());
+        s.files.insert(path.to_string(), text.to_string());
         let orchestrator_file =
             path.starts_with("/proj/.orchestrator/") && !path.starts_with(&format!("/proj/{WORKTREES_DIR}/"));
         if !orchestrator_file {
@@ -778,8 +781,8 @@ impl Host for FakeHost {
             self.state().before_rename = Some(hook);
         }
         let mut s = self.state();
-        let text = s.files.remove(path).unwrap_or_else(|| panic!("FakeHost has no {path} to rename"));
-        s.files.insert(new_path, text);
+        let text = s.files.shift_remove(path).unwrap_or_else(|| panic!("FakeHost has no {path} to rename"));
+        s.files.insert(new_path.to_string(), text);
         if let Some(mtime) = s.mtimes.remove(path) {
             s.mtimes.insert(new_path.to_string(), mtime);
         }
@@ -833,7 +836,7 @@ impl Host for FakeHost {
     fn lock(&self, cwd: &str, base: &str, git_ref: &str) -> Result<Vec<String>, OrchestratorError> {
         let mut s = self.state();
         let sha = s.snapshot(cwd, base, &format!("locked files, {git_ref}"));
-        s.refs.insert(git_ref, sha.clone());
+        s.refs.insert(git_ref.to_string(), sha.clone());
         let prefix = format!("{cwd}/");
         Ok(s.trees[&sha].keys().map(|p| p.strip_prefix(&prefix).unwrap_or(p).to_string()).collect())
     }
@@ -868,9 +871,11 @@ impl Host for FakeHost {
             let path = format!("{cwd}/{p}");
             match tree.get(&path).cloned().flatten() {
                 None => {
-                    s.files.remove(&path);
+                    s.files.shift_remove(&path);
                 }
-                Some(text) => s.files.insert(path, text),
+                Some(text) => {
+                    s.files.insert(path, text);
+                }
             }
         }
         Ok(())
@@ -899,7 +904,7 @@ impl Host for FakeHost {
         let paths: Vec<String> = differ.iter().map(relative).collect();
         let absent: HashSet<String> = differ.iter().filter(|p| !found.contains_key(**p)).map(relative).collect();
         for path in found.keys().filter(|p| !held.contains_key(*p)) {
-            s.files.remove(path);
+            s.files.shift_remove(path);
         }
         for (path, text) in held {
             s.files.insert(path, text);
@@ -918,7 +923,7 @@ impl Host for FakeHost {
             return Err(OrchestratorError(error.clone()));
         }
         let before = s.refs.len();
-        s.refs = s.refs.iter().filter(|(r, _)| !r.starts_with(prefix)).map(|(r, sha)| (r, sha.clone())).collect();
+        s.refs.retain(|r, _| !r.starts_with(prefix));
         Ok(s.refs.len() < before)
     }
 
@@ -980,7 +985,7 @@ impl Host for FakeHost {
                     format!("{{\"Secret\": \"{FAKE_TOKEN}\", \"File\": {file}}}")
                 })
                 .collect();
-            s.files.insert(report_path, format!("[{}]", report.join(", ")));
+            s.files.insert(report_path.to_string(), format!("[{}]", report.join(", ")));
         }
         Ok(s.leaks
             .iter()
@@ -1093,7 +1098,7 @@ impl Host for FakeHost {
         let under = format!("{dir}/");
         let gone: Vec<String> = s.files.keys().filter(|path| path.starts_with(&under)).map(String::from).collect();
         for path in gone {
-            s.files.remove(&path);
+            s.files.shift_remove(&path);
         }
         Ok(())
     }

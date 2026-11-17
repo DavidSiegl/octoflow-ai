@@ -8,10 +8,11 @@
 
 use std::collections::HashSet;
 
+use indexmap::IndexMap;
+
 use crate::constants::HARNESS_NAMES;
 use crate::error::OrchestratorError;
 use serde_json::Value;
-use crate::map::Map;
 
 /// How each role's agent starts: the permission mode, and by role its model and its harness. A role missing from
 /// models starts on its harness's default model, and one missing from harnesses in DEFAULT_HARNESS.
@@ -20,9 +21,9 @@ pub struct AgentSettings {
     /// --permission-mode as given, in Claude Code's names; None passes none to any harness.
     pub permission_mode: Option<String>,
     /// By role, the model its agent starts on.
-    pub models: Map<String>,
+    pub models: IndexMap<String, String>,
     /// By role, the harness its agent starts in, one of HARNESS_NAMES.
-    pub harnesses: Map<String>,
+    pub harnesses: IndexMap<String, String>,
 }
 
 /// What the engine knows of one agent harness: how its agent starts (the arguments, and the environment its pane's

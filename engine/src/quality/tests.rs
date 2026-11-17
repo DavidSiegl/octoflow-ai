@@ -200,17 +200,17 @@ fn the_engine_reads_what_the_gate_writes() {
         ]
     );
     // The two issues and the failing test; the finding to weigh is left out.
-    let mut want = Map::new();
-    want.insert("ruff", vec![finding_fingerprint(Some("f.py"), "ruff B023", "Function definition does not bind loop variable `x`")]);
+    let mut want = IndexMap::new();
+    want.insert("ruff".to_string(), vec![finding_fingerprint(Some("f.py"), "ruff B023", "Function definition does not bind loop variable `x`")]);
     want.insert(
-        "test-integrity",
+        "test-integrity".to_string(),
         vec![finding_fingerprint(
             Some("tests/test_f.py"),
             "test-integrity skip",
             "`pytest.mark.skip` added: it skips a test or expects it to fail.",
         )],
     );
-    want.insert("tests", vec![finding_fingerprint(Some("tests.T.test_limit"), "tests", "")]);
+    want.insert("tests".to_string(), vec![finding_fingerprint(Some("tests.T.test_limit"), "tests", "")]);
     assert_eq!(failures.fingerprints, want);
     assert_eq!(read_report(&gate_golden("gate_error", "json")).unwrap(), Judgement { gate: QUALITY_ERROR, failures });
 
@@ -238,7 +238,7 @@ fn quality_json_reads_as_its_quality_file_but_for_what_the_file_cuts() {
         assert_eq!(judged.failures.conditions, from_file.conditions, "{name}");
         // The file lists at most QUALITY_FINDINGS_LIMIT findings and as many failing tests; quality.json all of them,
         // in the same order.
-        let checks: Vec<&str> = judged.failures.fingerprints.keys().collect();
+        let checks: Vec<&str> = judged.failures.fingerprints.keys().map(String::as_str).collect();
         assert_eq!(checks, from_file.fingerprints.keys().collect::<Vec<_>>(), "{name}");
         for (check, listed) in from_file.fingerprints.iter() {
             let all = judged.failures.fingerprints.get(check).unwrap();

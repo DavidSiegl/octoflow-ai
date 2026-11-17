@@ -1,6 +1,6 @@
 [package]
 name = "octoflow-engine"
-version = "0.88.2"
+version = "0.88.3"
 description = "The orchestrator's engine: its library and the octoflow program"
 edition = "2021"
 license = "MIT OR Apache-2.0"
@@ -11,6 +11,9 @@ publish = false
 # per role and share groups of flags between subcommands. 4.6.7 is from 2026-09-14. wrap_help wraps --help to the
 # terminal's width, which it asks of terminal_size, a crate it brings (cli-help-format/01, the user, 2026-11-15).
 clap = { version = "4.6.7", default-features = false, features = ["std", "help", "usage", "error-context", "string", "wrap_help"] }
+# An insertion-ordered map for what the engine shows or saves in its own order (roles, steps, a run's agents). 2.14.2
+# is from 2026-09-05 and in Cargo.lock already. Approved by the user for todo/18, 2026-11-13.
+indexmap = { version = "2.14.2", features = ["serde"] }
 # Times: RFC 3339 times read and written in state.json and the records, and the machine's local time a new run's id
 # is named by (cli/start.rs), its zone from TZ, else /etc/localtime, else UTC, and a zone's rules from
 # /usr/share/zoneinfo, with no database of its own. 0.2.38 is from 2026-10-06; ui/src-tauri's crates had it in Cargo.lock already. Approved by the user for ticket

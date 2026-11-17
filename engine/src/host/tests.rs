@@ -1580,7 +1580,7 @@ fn checked_out_branches_of_every_worktree() {
     c.sh(&["git", "-C", &c.a, "worktree", "add", "--quiet", "-b", "orchestrator/y-a1b2c3", &wt]);
     let real = |p: &str| std::fs::canonicalize(p).unwrap().to_str().unwrap().to_string();
     let branches = c.host.checked_out_branches(&c.a).unwrap();
-    let listed: Vec<(&str, &String)> = branches.iter().collect();
+    let listed: Vec<(&str, &String)> = branches.iter().map(|(k, v)| (k.as_str(), v)).collect();
     assert_eq!(listed, [("main", &real(&c.a)), ("orchestrator/y-a1b2c3", &real(&wt))]);
     assert_eq!(c.host.checked_out_branches(&wt).unwrap(), branches);
 }

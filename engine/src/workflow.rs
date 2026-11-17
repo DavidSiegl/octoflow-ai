@@ -268,7 +268,7 @@ impl<'a> Workflow<'a> {
         state.next_harnesses = pipeline
             .roles()
             .keys()
-            .map(|role| (role, agents.harnesses.get(role).cloned().unwrap_or_else(|| DEFAULT_HARNESS.to_string())))
+            .map(|role| (role.clone(), agents.harnesses.get(role).cloned().unwrap_or_else(|| DEFAULT_HARNESS.to_string())))
             .collect();
         state.pull_request = settings.pull_request;
         state.quality_job = settings.quality_gate_on.then(|| LOCAL_GATE.to_string());

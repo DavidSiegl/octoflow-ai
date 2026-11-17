@@ -65,9 +65,9 @@ fn the_built_in_workflows() {
 
 #[test]
 fn a_built_in_workflow_is_worded_by_the_prompts_its_steps_take_from_the_default() {
-    let mut overrides = Map::new();
-    overrides.insert("BUILD_PROMPT", "Build {spec_path} in {cwd}; report to {build_path}.".to_string());
-    overrides.insert("FIX_PROMPT", "Fix {findings}; report to {build_path}.".to_string());
+    let mut overrides = IndexMap::new();
+    overrides.insert("BUILD_PROMPT".to_string(), "Build {spec_path} in {cwd}; report to {build_path}.".to_string());
+    overrides.insert("FIX_PROMPT".to_string(), "Fix {findings}; report to {build_path}.".to_string());
     let prompts = Prompts::from_overrides(&overrides).unwrap();
     let default = find_workflow("default", &prompts).unwrap();
     assert_eq!(default.step("build").unwrap().prompt, "Build {spec_path} in {cwd}; report to {build_path}.");

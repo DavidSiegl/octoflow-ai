@@ -2,8 +2,9 @@
 
 use std::collections::BTreeMap;
 
+use indexmap::IndexMap;
+
 use crate::error::OrchestratorError;
-use crate::map::Map;
 
 /// The lines a file gains, by their line in the new tree, from 1, each one's bytes without the "+".
 pub type AddedLines = BTreeMap<u64, Vec<u8>>;
@@ -17,8 +18,8 @@ pub type AddedLines = BTreeMap<u64, Vec<u8>>;
 /// The gate's changed_lines (octoflow-gate, the release ci/gate.pin names) reads the same shape and is the home of
 /// how, so a fix to one belongs in both.
 /// Errors: a path, as git writes it or once its quoting is undone, that is not UTF-8.
-pub fn added_lines(diff: &[u8]) -> Result<Map<AddedLines>, OrchestratorError> {
-    let mut out: Map<AddedLines> = Map::new();
+pub fn added_lines(diff: &[u8]) -> Result<IndexMap<String, AddedLines>, OrchestratorError> {
+    let mut out: IndexMap<String, AddedLines> = IndexMap::new();
     let mut path: Option<String> = None;
     let (mut line, mut in_hunk) = (0u64, false);
     for text in diff.split(|&b| b == b'\n') {
@@ -66,13 +67,13 @@ fn hunk_start(header: &[u8]) -> Option<u64> {
 /// The file the diff is about after text, a header line outside a hunk, path before it; a deleted file is dropped
 /// from out, as added_lines says.
 fn header_path(
-    out: &mut Map<AddedLines>,
+    out: &mut IndexMap<String, AddedLines>,
     path: Option<String>,
     text: &[u8],
 ) -> Result<Option<String>, OrchestratorError> {
     if text.starts_with(b"deleted file mode") {
         if let Some(p) = path {
-            out.remove(&p);
+            out.shift_remove(&p);
             return Ok(None);
         }
     }

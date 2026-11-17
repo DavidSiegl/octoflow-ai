@@ -11,12 +11,12 @@
 
 use std::fmt;
 
+use indexmap::IndexMap;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use crate::error::OrchestratorError;
 use crate::handoff::first_line_word;
-use crate::map::Map;
 
 /// The words of the gate line, the file's first non-blank one. Only the engine writes BUILD_FAILED, for a gate that
 /// could not judge (could_not_judge_report), as a release before 0.72.0 also wrote it for a Jenkins build that ended
@@ -131,7 +131,7 @@ pub struct GateFailures {
     /// secret, under "gitleaks", is finding_fingerprint(path, "gitleaks <rule>", "") with "-<k>" added for the k-th
     /// secret of that rule in that file, its line and commit left out, so that two rounds compare by how many each
     /// has.
-    pub fingerprints: Map<Vec<String>>,
+    pub fingerprints: IndexMap<String, Vec<String>>,
 }
 
 impl GateFailures {
@@ -145,10 +145,7 @@ impl GateFailures {
 
     /// Count fingerprint as a failure of check, after the ones it has.
     pub fn add(&mut self, check: &str, fingerprint: String) {
-        match self.fingerprints.get_mut(check) {
-            Some(list) => list.push(fingerprint),
-            None => self.fingerprints.insert(check, vec![fingerprint]),
-        }
+        self.fingerprints.entry(check.to_string()).or_default().push(fingerprint);
     }
 
     fn all(&self) -> std::collections::BTreeSet<&str> {
@@ -174,7 +171,7 @@ pub fn finding_fingerprint(path: Option<&str>, rule: &str, message: &str) -> Str
 /// again.
 pub fn gate_failures(quality: &str) -> GateFailures {
     let mut failures = GateFailures::default();
-    let mut secrets: Map<usize> = Map::new();
+    let mut secrets: IndexMap<String, usize> = IndexMap::new();
     let (mut section, mut weighing) = ("", false);
     for line in quality.split('\n') {
         if line.starts_with("## ") {
