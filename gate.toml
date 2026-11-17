@@ -8,7 +8,7 @@
 # Python to measure the coverage of or mutation-test; the Python left is the gate's own toolchain (pyproject.toml).
 
 [build-config]
-Jenkinsfile = "Jenkins builds this change with its own copy, so the edit changes how Jenkins judges it."
+Jenkinsfile = "Jenkins judges this change by its own copy; a local quality round does not use it."
 "ci/gate.pin" = "Jenkins judges this change with the release its own pin names; a local quality round with the base's."
 "ci/fetch-gate.sh" = "Jenkins fetches the gate with this change's own copy; a local quality round does not use it."
 

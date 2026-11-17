@@ -24,8 +24,8 @@ What this repository gives it:
 - **The rules**: `pyproject.toml`'s pymarkdown table, and the top-level `Cargo.toml`'s lints for clippy. No Python
   file is tracked, so the gate runs neither ruff nor mypy, and has no Python to measure the coverage of or
   mutation-test; `pyproject.toml` and `uv.lock` hold only the gate's toolchain.
-- **`gate.toml`**, the gate's settings: the files whose edits change how a build judges, with a note on each that
-  `quality.md` gives (`[build-config]`), the commands that run the tests outside Jenkins (`[[test]]`) and the time
+- **`gate.toml`**, the gate's settings: the files beyond the gate's own configuration whose edit `quality.md` notes,
+  with the note's text (`[build-config]`), the commands that run the tests outside Jenkins (`[[test]]`) and the time
   budgets.
 
 **Raising the pin.** Only after the release exists: download its tarball and its `.sha256` asset, check them with
