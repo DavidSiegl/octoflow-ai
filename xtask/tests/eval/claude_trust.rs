@@ -62,6 +62,21 @@ fn a_kept_clone_stays_trusted() {
 }
 
 #[test]
+fn a_config_that_is_a_link_stays_one() {
+    let engine = FakeEngine::new();
+    engine.plan(Plan::default());
+    let link = engine.claude_config();
+    let target = link.with_file_name("dotfiles.claude.json");
+    let before = claude_config(&target);
+    std::os::unix::fs::symlink(&target, &link).expect("the link is made");
+    engine.trial("feature", &[], false, 1);
+    let seen: Value = serde_json::from_str(engine.log()[0]["seen"].as_str().expect("seen")).expect("JSON");
+    assert_eq!(trusted(&seen).len(), 2, "{seen:#}");
+    assert!(fs::symlink_metadata(&link).expect("the link is there").file_type().is_symlink());
+    assert_eq!(fs::read_to_string(&target).expect("the target reads"), before);
+}
+
+#[test]
 fn without_a_config_file_none_is_made() {
     let engine = FakeEngine::new();
     engine.plan(Plan::default());

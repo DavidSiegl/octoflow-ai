@@ -11,7 +11,8 @@
 //! as the first eval run's Builder did (docs/design.md, Evals).
 //!
 //! Claude Code rewrites the file while it runs, so each change here is a read and an atomic replace (a temporary file
-//! renamed over it) that keeps every other key; a write Claude Code makes between the two is lost. Nothing of Claude
+//! renamed over it) that keeps every other key; a write Claude Code makes between the two is lost. A config that is a
+//! symbolic link stays one: the file it points to is the one replaced. Nothing of Claude
 //! Code's runs in a trial's folder while the runner marks or forgets it.
 
 use std::fs::{self, OpenOptions};
@@ -65,10 +66,14 @@ fn edit(config: &Path, change: impl FnOnce(&mut Map<String, Value>) -> Result<()
     let failed = |what: &str, why: &dyn std::fmt::Display| {
         Error(format!("could not {what} Claude Code's config {}: {why}", config.display()))
     };
-    let text = match fs::read_to_string(config) {
+    // The file at the end of config's symbolic links, if any: renamed over the link, the temporary file would replace
+    // it, and Claude Code's config and the link's target would part ways.
+    let config = match fs::canonicalize(config) {
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
-        read => read.map_err(|e| failed("read", &e))?,
+        resolved => resolved.map_err(|e| failed("read", &e))?,
     };
+    let config = config.as_path();
+    let text = fs::read_to_string(config).map_err(|e| failed("read", &e))?;
     let mut top: Value = serde_json::from_str(&text).map_err(|e| failed("parse", &e))?;
     let object = top.as_object_mut().ok_or_else(|| failed("change", &"it is not a JSON object"))?;
     change(object).map_err(|why| failed("change", &why))?;
