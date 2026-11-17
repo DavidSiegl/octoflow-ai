@@ -16,21 +16,36 @@ interface Props {
 /** A modal box over the rest of the window: its title, the project it is about if any, and children. While it is
  * open, everything else in the window is inert, unreachable by Tab, clicks and keys, so that nothing behind it, such
  * as the project bar, can change what it is about. A dialog opened later is in front of one opened earlier, which is
- * inert until the later one closes. */
+ * inert until the later one closes. A child with `autoFocus` takes the focus when the dialog opens; when it closes,
+ * the focus goes back to whatever had it when the dialog opened, if that is still in the window. */
 export function Dialog({ label, title, project, className, children }: Props) {
   // The child of document.body the dialog is rendered into, outside the app's root, so that the root can be inert.
   const [host] = useState(() => document.createElement("div"));
+  // True once host is in the document. The children render only then: React focuses an `autoFocus` child as it
+  // commits it, before this component's layout effect could attach host, and a detached node does not take focus.
+  const [attached, setAttached] = useState(false);
   useLayoutEffect(() => {
+    const opener = document.activeElement;
     document.body.append(host);
     open.push(host);
     settleInert();
+    // The one extra render this causes, on opening, is the one that renders the children.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setAttached(true);
     return () => {
       open.splice(open.indexOf(host), 1);
       host.remove();
       madeInert.delete(host);
       settleInert();
+      // Only now: the webviews do not focus an element under `inert`, which settleInert has just lifted.
+      if (opener instanceof HTMLElement && opener.isConnected) {
+        opener.focus();
+      }
     };
   }, [host]);
+  if (!attached) {
+    return null;
+  }
   return createPortal(
     <div className="dialog-backdrop">
       <section className={`dialog ${className}`} role="dialog" aria-modal="true" aria-label={label}>

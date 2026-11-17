@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Api, type Connection, type Project, type StartedRun } from "./api";
 import { About } from "./components/About";
 import { CleanUpDialog } from "./components/CleanUpDialog";
@@ -56,12 +56,6 @@ function Connected({ connection }: { connection: Connection }) {
   const [settingUp, setSettingUp] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [workflowsOpen, setWorkflowsOpen] = useState(false);
-  // The logo's button, which gets the focus back when About closes.
-  const badge = useRef<HTMLButtonElement>(null);
-  const closeAbout = () => {
-    setAboutOpen(false);
-    badge.current?.focus();
-  };
   // On start, with a project, the setup dialog opens by itself until it has been closed with every required check
   // passed. When the server cannot tell whether it has, the dialog stays closed: "Check setup…" still opens it.
   const [startedWithProject] = useState(project.cwd !== "");
@@ -86,7 +80,6 @@ function Connected({ connection }: { connection: Connection }) {
     <main>
       <header className="top-bar">
         <button
-          ref={badge}
           type="button"
           className="app-badge"
           aria-label="About Octoflow AI"
@@ -113,7 +106,7 @@ function Connected({ connection }: { connection: Connection }) {
         <SetupDialog key={`setup:${project.machine}:${project.cwd}`} api={api} project={project} onClose={() => setSettingUp(false)} />
       )}
       {workflowsOpen && <WorkflowsDialog api={api} onClose={() => setWorkflowsOpen(false)} />}
-      {aboutOpen && <About version={connection.version} onClose={closeAbout} />}
+      {aboutOpen && <About version={connection.version} onClose={() => setAboutOpen(false)} />}
     </main>
   );
 }
