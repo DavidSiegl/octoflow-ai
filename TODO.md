@@ -231,7 +231,8 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   stops a run before its first turn; run-usability/02 made the run say so and the README list it, but `doctor` does
   not check it. Decided against reading Claude Code's trust record (`~/.claude.json`, `projects.<path>`) on
   2026-11-05: an undocumented file of another tool, which would break silently when it changes. Closes if Claude
-  Code documents a way to ask whether a folder is trusted.
+  Code documents a way to ask whether a folder is trusted. The eval runner writes that record all the same, for its
+  trials' clones, which no human is there to answer for (`xtask/src/claude_trust.rs`).
 - **The desktop app's recorder reads the e2e Normalizer's placeholders back out of its text, and folds events as
   `last_by_run` does.** Raised by cross-review 166 (F9, nit): "`<run:N>`, `<key:N>`, `<pid:`, `<host>`,
   `<duration>`, `<seconds>`, `<time>` and `<world>` are spelt here as well as in normalize.rs, and line 134 takes

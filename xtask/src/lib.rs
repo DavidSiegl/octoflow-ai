@@ -3,6 +3,7 @@
 //! the command line and hands each command its arguments.
 
 pub mod bundles;
+pub mod claude_trust;
 pub mod eval;
 mod process;
 pub mod toy_repos;

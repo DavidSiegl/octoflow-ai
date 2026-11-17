@@ -15,7 +15,8 @@ jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-sy
 # starts (process.rs), so that the engine saves its run and the runner still prints its table.
 nix = { version = "0.31", default-features = false, features = ["signal"] }
 # cargo's build messages, a run's metrics.json, the eval's result lines and the fake engine's plan and log.
-serde_json = "1"
+# preserve_order: claude_trust rewrites Claude Code's config with its keys in the order they were.
+serde_json = { version = "1", features = ["preserve_order"] }
 # Scratch directories, removed when dropped: an eval's trial (eval.rs) and the bundles' repos (bundles.rs), and the
 # tests'. Approved by the user for ticket 48, 2026-11-13.
 tempfile = "3"

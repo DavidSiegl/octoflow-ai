@@ -36,9 +36,12 @@ fn written_bundles_pass_the_check() {
 fn a_ctrl_c_waits_for_the_engine_keeps_the_clone_and_exits_130() {
     // An engine that says it started, on the runner's standard error, and outlives the Ctrl-C, which reaches only the
     // runner here, not a terminal's whole group.
+    let config = tempfile::Builder::new().prefix("xtask-cli-test-").tempdir().expect("a temporary directory");
     let mut child = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .args(["eval", "--tasks", "feature"])
         .env("EVAL_ENGINE", "sh -c 'echo engine started >&2; sleep 2'")
+        // Never the user's own: the kept clone stays trusted there.
+        .env("CLAUDE_CONFIG_DIR", config.path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

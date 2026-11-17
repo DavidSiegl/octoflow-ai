@@ -2,6 +2,7 @@
 //! tasks themselves: each hidden test rejects its task's starting point and accepts a solution of it (solutions.rs).
 //! No real agent runs here; docs/design.md, Evals, says how a real eval is run.
 
+mod claude_trust;
 mod solutions;
 
 use std::fs;
@@ -36,7 +37,8 @@ impl Default for Plan {
     }
 }
 
-/// The fake engine, with its plan and log in a directory of the test's own.
+/// The fake engine, with its plan and log in a directory of the test's own, and Claude Code's config file there too,
+/// which no test makes unless it needs one.
 struct FakeEngine {
     dir: tempfile::TempDir,
 }
@@ -53,12 +55,18 @@ impl FakeEngine {
         fs::write(self.dir.path().join("plan.json"), plan.to_string()).expect("the plan is written");
     }
 
-    /// The engine's command line: the fake, given its plan and log by env.
+    /// Where the trials' Claude Code config file is, which the engine logs as it saw it.
+    fn claude_config(&self) -> PathBuf {
+        self.dir.path().join(".claude.json")
+    }
+
+    /// The engine's command line: the fake, given its plan, its log and the file to log as seen by env.
     fn command(&self) -> Vec<String> {
         vec![
             "env".to_string(),
             format!("FAKE_ENGINE_PLAN={}", self.dir.path().join("plan.json").display()),
             format!("FAKE_ENGINE_LOG={}", self.dir.path().join("log.jsonl").display()),
+            format!("FAKE_ENGINE_SEEN={}", self.claude_config().display()),
             env!("CARGO_BIN_EXE_fake-engine").to_string(),
         ]
     }
@@ -71,7 +79,9 @@ impl FakeEngine {
 
     fn trial(&self, task: &str, run_args: &[&str], keep: bool, repeat: u32) -> Trial {
         let (task,) = load(task);
-        eval::run_trial(&task, repeat, &self.command(), &strings(run_args), keep).expect("the trial runs")
+        let config = self.claude_config();
+        let trial = eval::run_trial(&task, repeat, &self.command(), &strings(run_args), keep, Some(&config));
+        trial.expect("the trial runs")
     }
 }
 
@@ -247,7 +257,7 @@ fn an_engine_that_made_no_run_halts_the_eval_unjudged() {
     let engine = FakeEngine::new();
     engine.plan(Plan { exit: 1, run_id: None, ..Plan::default() });
     let (task,) = load("feature");
-    match eval::run_trial(&task, 1, &engine.command(), &[], false) {
+    match eval::run_trial(&task, 1, &engine.command(), &[], false, None) {
         Err(Halt::Failed(e)) => {
             assert!(e.0.contains("the engine exited with status 1 and made no run"), "{e}");
         }
@@ -264,7 +274,7 @@ fn an_engine_that_made_no_run_leaves_no_result_line() {
     let checkout = checkout_with("feature");
     let mut out = vec![];
     let argv = strings(&["--tasks", "feature", "--repeat", "2"]);
-    assert_eq!(eval::run(&argv, checkout.path(), Some(&engine.command().join(" ")), &mut out), 1);
+    assert_eq!(eval::run(&argv, checkout.path(), Some(&engine.command().join(" ")), None, &mut out), 1);
     assert_eq!(engine.log().len(), 1, "the second trial never started");
     assert!(!checkout.path().join("evals/results").exists());
     assert!(out.is_empty(), "{}", String::from_utf8_lossy(&out));
@@ -292,7 +302,7 @@ fn an_unreadable_bundle_is_an_error_of_the_runners() {
         fs::write(dir.path().join(name), "not a bundle\n").expect("written");
     }
     let task = Task { name: "broken".to_string(), dir: dir.path().to_path_buf() };
-    match eval::run_trial(&task, 1, &strings(&["true"]), &[], false) {
+    match eval::run_trial(&task, 1, &strings(&["true"]), &[], false, None) {
         Err(Halt::Failed(e)) => assert!(e.0.contains("could not clone"), "{e}"),
         other => panic!("not an error of the runner's: {other:?}"),
     }
@@ -571,7 +581,8 @@ fn run_prints_the_table_and_appends_a_line_per_trial() {
     let checkout = checkout_with("feature");
     let mut out = vec![];
     let argv = strings(&["--tasks", "feature", "--repeat", "2", "--", "--model", "sonnet"]);
-    let status = eval::run(&argv, checkout.path(), Some(&engine.command().join(" ")), &mut out);
+    let config = engine.claude_config();
+    let status = eval::run(&argv, checkout.path(), Some(&engine.command().join(" ")), Some(&config), &mut out);
     let out = String::from_utf8(out).expect("the table is UTF-8");
     assert_eq!(status, 0, "{out}");
     let row = out.lines().nth(1).expect("a row");
@@ -615,7 +626,7 @@ fn run_prints_the_table_and_appends_a_line_per_trial() {
 fn an_unknown_task_exits_1_and_writes_nothing() {
     let checkout = checkout_with("feature");
     let mut out = vec![];
-    assert_eq!(eval::run(&strings(&["--tasks", "nope"]), checkout.path(), Some("true"), &mut out), 1);
+    assert_eq!(eval::run(&strings(&["--tasks", "nope"]), checkout.path(), Some("true"), None, &mut out), 1);
     assert!(out.is_empty());
     assert!(!checkout.path().join("evals/results").exists());
 }
@@ -624,7 +635,7 @@ fn an_unknown_task_exits_1_and_writes_nothing() {
 fn a_usage_error_exits_2_and_help_0() {
     let checkout = checkout_with("feature");
     let mut out = vec![];
-    assert_eq!(eval::run(&strings(&["--repeat", "0"]), checkout.path(), Some("true"), &mut out), 2);
-    assert_eq!(eval::run(&strings(&["--help"]), checkout.path(), Some("true"), &mut out), 0);
+    assert_eq!(eval::run(&strings(&["--repeat", "0"]), checkout.path(), Some("true"), None, &mut out), 2);
+    assert_eq!(eval::run(&strings(&["--help"]), checkout.path(), Some("true"), None, &mut out), 0);
     assert!(String::from_utf8_lossy(&out).starts_with("usage: cargo xtask eval"));
 }
