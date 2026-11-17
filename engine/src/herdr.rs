@@ -18,7 +18,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::constants::AGENT_START_TIMEOUT_MS;
 use crate::error::{os_error, OrchestratorError};
-use crate::host::{last_lines, line_ends_as_lf, run_process, ProcessError};
+use crate::host::{last_lines, line_ends_as_lf, run_process, Host, ProcessError, DEFAULT_TIMEOUT};
 use crate::interrupt::Interrupt;
 use serde_json::Value;
 use crate::json::ValueExt;
@@ -350,7 +350,7 @@ impl Launcher for ProcessHerdr {
     /// herdr 0.9.1's `pane run` types its arguments, joined by spaces, into the pane's shell as keystrokes, so no word
     /// of argv is typed: each is given to the new pane's shell as an environment variable (`workspace create --env`),
     /// and the typed line is only `"$OCTOFLOW_ARG_0" "$OCTOFLOW_ARG_1" ...; echo '<marker>'`, which POSIX shells and
-    /// fish read alike. A word typed even quoted would reach the terminal's line editing first: a ^U erases what was
+    /// fish read alike; serve refuses to launch into any other shell (pane_shell). A word typed even quoted would reach the terminal's line editing first: a ^U erases what was
     /// typed before it, and a ^C or ^M ends the line, so a client's text could run as a command of its own.
     fn launch(&self, cwd: &str, label: &str, argv: &[String]) -> Result<Launched, HerdrError> {
         match self.launch_in_server(cwd, label, argv) {
@@ -716,6 +716,45 @@ fn herdr_error(status: i32, stdout: &str, stderr: &str) -> HerdrError {
     }
     let printed = if stderr.is_empty() { stdout } else { stderr };
     HerdrError::new(&format!("exit_{status}"), printed.trim())
+}
+
+/// The shells, by program name, that read the lines a run types into a pane: Launcher::launch's command line and
+/// Herdr::export's `export NAME='value'`. The POSIX shells first, then fish.
+const PANE_SHELLS: [&str; 6] = ["sh", "bash", "zsh", "dash", "ksh", "fish"];
+
+/// The script pane_shell runs: it prints $SHELL, then the path of herdr's config.toml as herdr 0.9.1 finds it
+/// (HERDR_CONFIG_PATH, else ~/.config/herdr/config.toml), each on a line of its own, then the file's text when there is
+/// a file, failing when it cannot be read.
+pub(crate) const PANE_SHELL_SCRIPT: &str = r#"f=${HERDR_CONFIG_PATH:-$HOME/.config/herdr/config.toml}
+printf '%s\n%s\n' "$SHELL" "$f"
+[ ! -e "$f" ] || cat -- "$f""#;
+
+/// The shell a new pane of the herdr server on host starts, as `/bin/bash ($SHELL)` says it and where herdr took it
+/// from, when a run can type into it (PANE_SHELLS). herdr 0.9.1 starts its config.toml's `[terminal] default_shell`,
+/// or with that unset or empty the server's $SHELL, or /bin/sh. host runs commands where that server runs, here or
+/// over SSH on the run's machine, and its environment stands for the server's: a server started elsewhere, with
+/// another $SHELL or HERDR_CONFIG_PATH, is not seen. Errors: the shell is none of PANE_SHELLS, naming it, where it
+/// came from, and the shells that work; host cannot run the script; config.toml cannot be read or is not TOML.
+pub fn pane_shell<H: Host + ?Sized>(host: &H) -> Result<String, OrchestratorError> {
+    let out = host.check(&["sh", "-c", PANE_SHELL_SCRIPT], None, DEFAULT_TIMEOUT)?;
+    let mut lines = out.splitn(3, '\n');
+    let (env_shell, path, config) = (lines.next().unwrap_or(""), lines.next().unwrap_or(""), lines.next().unwrap_or(""));
+    let table: toml::Table = config.parse().map_err(|e| OrchestratorError(format!("herdr's {path} is not TOML: {e}")))?;
+    let configured = table.get("terminal").and_then(|t| t.get("default_shell")).and_then(toml::Value::as_str);
+    let (shell, from) = match configured.filter(|s| !s.is_empty()) {
+        Some(shell) => (shell, format!("[terminal] default_shell in {path}")),
+        None if !env_shell.is_empty() => (env_shell, "$SHELL".to_string()),
+        None => ("/bin/sh", "herdr's default".to_string()),
+    };
+    let name = shell.rsplit('/').next().unwrap_or(shell);
+    if PANE_SHELLS.contains(&name) {
+        return Ok(format!("{shell} ({from})"));
+    }
+    let posix = PANE_SHELLS[..PANE_SHELLS.len() - 1].join(", ");
+    Err(OrchestratorError(format!(
+        "herdr's panes start {shell} ({from}), which cannot run the lines a run types: they need a POSIX shell \
+         ({posix}) or fish"
+    )))
 }
 
 /// Ok when each value of vars can be typed into pane's shell (Herdr::export); else Failed, naming the first that

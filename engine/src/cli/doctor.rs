@@ -145,7 +145,7 @@ pub(super) fn doctor_command(local: &Local, target: &Target, setup_gate: bool) -
 }
 
 /// A Check of each thing a run needs, in this order: herdr, reaching herdr, with herdr's machine herdr on that
-/// machine, each harness's CLI and herdr integration, git, gh, gitleaks, the local quality gate, and with cwd the
+/// machine, the shell herdr's panes start (crate::herdr::pane_shell), each harness's CLI and herdr integration, git, gh, gitleaks, the local quality gate, and with cwd the
 /// project's git checkout and its origin.
 ///
 /// host runs commands on this machine, where the orchestrator runs and whose herdr a run drives. Without a machine the
@@ -183,6 +183,11 @@ pub fn check_setup(
             tool_version(agents, "herdr", &HERDR_MIN_VERSION)
         });
     }
+    let fix = "set [terminal] default_shell in herdr's config.toml to a POSIX shell or fish, then run `herdr server \
+               reload-config`";
+    check(&mut checks, "pane shell", Level::Required, fix, on_machine.as_ref(), "", &mut || {
+        Ok(crate::herdr::pane_shell(agents)?)
+    });
     let mut integrations = IntegrationStatus::new(agents);
     for Harness { kind, integration, .. } in HARNESSES {
         let (level, note) = if kind == DEFAULT_HARNESS {

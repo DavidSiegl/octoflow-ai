@@ -6,7 +6,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::constants::RUNS_DIR;
 use crate::error::OrchestratorError;
-use crate::herdr::{AgentAddress, AgentConsole, HerdrError, HerdrServer, Launched, Launcher, Workspaces};
+use crate::herdr::{
+    AgentAddress, AgentConsole, HerdrError, HerdrServer, Launched, Launcher, Workspaces, PANE_SHELL_SCRIPT,
+};
 use crate::host::{Exec, ExecError, Host, RunFile, RunFileText};
 use crate::serve::Reached;
 use crate::state::SavedRun;
@@ -14,8 +16,8 @@ use serde_json::Value;
 
 /// A Host whose files are `files`, whose run_states_inside reads the state.json of each run among them, whose
 /// run_files_inside lists those under a run directory by their `mtimes`, as the real Host's does, and which records
-/// the path of every read, read_inside's included, in `reads`. It runs no command, and none of its files is a link,
-/// so every one stays inside its run directory.
+/// the path of every read, read_inside's included, in `reads`. It runs no command but crate::herdr::pane_shell's,
+/// which it answers from `pane_shell`, and none of its files is a link, so every one stays inside its run directory.
 #[derive(Default)]
 pub struct ServeHost {
     /// The SSH target it stands for; None for this machine.
@@ -24,7 +26,6 @@ pub struct ServeHost {
 }
 
 /// What a ServeHost holds, changed by the tests while a server reads it.
-#[derive(Default)]
 pub struct Files {
     /// By path, each file's text.
     pub files: BTreeMap<String, String>,
@@ -42,6 +43,25 @@ pub struct Files {
     pub run_files_inside_calls: usize,
     /// While set, what every read fails with (still recorded in reads).
     pub read_error: Option<String>,
+    /// What crate::herdr::pane_shell's script prints: $SHELL, the path of herdr's config.toml, and its text. Bash and
+    /// no config.toml, in ServeHost::default.
+    pub pane_shell: String,
+}
+
+impl Default for Files {
+    fn default() -> Files {
+        Files {
+            files: BTreeMap::new(),
+            mtimes: BTreeMap::new(),
+            ages: BTreeMap::new(),
+            reads: Vec::new(),
+            run_states_inside_error: None,
+            run_states_inside_calls: 0,
+            run_files_inside_calls: 0,
+            read_error: None,
+            pane_shell: "/bin/bash\n/home/me/.config/herdr/config.toml\n".to_string(),
+        }
+    }
 }
 
 impl ServeHost {
@@ -62,7 +82,11 @@ impl Host for ServeHost {
     }
 
     fn exec(&self, argv: &[&str], _stdin: Option<&[u8]>, _timeout: u64) -> Result<Exec, ExecError> {
-        panic!("ServeHost runs no command, asked for {argv:?}")
+        if argv == ["sh", "-c", PANE_SHELL_SCRIPT] {
+            let stdout = self.state().pane_shell.clone().into_bytes();
+            return Ok(Exec { command: argv.join(" "), status: 0, stdout, stderr: Vec::new() });
+        }
+        panic!("ServeHost runs no command but pane_shell's, asked for {argv:?}")
     }
 
     fn read(&self, path: &str) -> Result<Option<String>, OrchestratorError> {
