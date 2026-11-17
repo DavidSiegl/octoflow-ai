@@ -8,7 +8,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Planned
 
-- **The e2e scenarios: what they do not record.** `engine/e2e/` runs 43 scenarios against the engine as a program and
+- **The e2e scenarios: what they do not record.** `engine/e2e/` runs 45 scenarios against the engine as a program and
   compares each with its recording (docs/architecture.md, Tests); a scenario's recording is a review of the engine's
   behaviour. Not covered, and accepted
   as known gaps (the user's ruling, 2026-11-11), since unit tests cover each harness's arguments and its token
