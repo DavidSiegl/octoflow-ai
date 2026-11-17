@@ -133,7 +133,7 @@ pub fn resumed_state(args: &ResumeArgs, cwd: &str, world: &Connected) -> Result<
     if args.quality_gate {
         turn_quality_gate_on(&mut state, &pipeline, w.host, w.human)?;
     } else if args.no_quality_gate {
-        turn_quality_gate_off(&mut state, &pipeline, w)?;
+        turn_quality_gate_off(&mut state, &pipeline, w.host, w.human)?;
     }
     Ok((state, pipeline))
 }

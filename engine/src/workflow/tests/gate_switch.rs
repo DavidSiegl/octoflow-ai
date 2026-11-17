@@ -71,11 +71,11 @@ fn job(f: &Fixture, n: u32, q: u32) -> String {
     format!("{}/job-1", f.state.gate_dir(n, q))
 }
 
-/// turn_quality_gate_off of state on pipeline, on host and a fixture's other fakes: the lines it logged, or its error.
-fn turn_off(state: &mut RunState, pipeline: &Pipeline, host: &Rc<FakeHost>) -> Result<Vec<String>, OrchestratorError> {
-    let f = Fixture::on(Rc::clone(host), state.clone(), vec![]);
-    turn_quality_gate_off(state, pipeline, &f.collaborators())?;
-    Ok(f.told.lines())
+/// turn_quality_gate_off of state on pipeline, on host: the lines it logged, or its error.
+fn turn_off(state: &mut RunState, pipeline: &Pipeline, host: &FakeHost) -> Result<Vec<String>, OrchestratorError> {
+    let told = Told::default();
+    turn_quality_gate_off(state, pipeline, host, &told)?;
+    Ok(told.lines())
 }
 
 
@@ -613,7 +613,7 @@ fn off_in_quality_stops_the_job_a_killed_run_left_and_keeps_what_ended_jobs_wrot
     }
     let f = Fixture::on(Rc::clone(&host), state.clone(), vec![]).gated();
 
-    turn_quality_gate_off(&mut state, &DEFAULT_WORKFLOW, &f.collaborators()).expect("the gate turns off");
+    turn_quality_gate_off(&mut state, &DEFAULT_WORKFLOW, &*host, &f.told).expect("the gate turns off");
 
     assert_eq!(f.gate.borrow().stops, 1, "the left job is stopped");
     let s = host.state();
@@ -639,7 +639,7 @@ fn off_in_quality_goes_on_when_the_left_job_cannot_be_cleared_saying_why() {
     }
     let f = Fixture::on(Rc::clone(&host), state.clone(), vec![]).gated();
 
-    turn_quality_gate_off(&mut state, &DEFAULT_WORKFLOW, &f.collaborators()).expect("the gate turns off");
+    turn_quality_gate_off(&mut state, &DEFAULT_WORKFLOW, &*host, &f.told).expect("the gate turns off");
 
     assert_eq!(state.phase, "review");
     let lines = f.told.lines();
