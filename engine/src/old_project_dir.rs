@@ -24,8 +24,8 @@ const OLD_PROJECT_DIR: &str = ".orchestrator";
 /// engine's directory under the old name, something at PROJECT_DIR already, or another engine moved it first.
 ///
 /// Errors: a run under the old name is not closed, which the error names, so that the human finishes and closes it
-/// with the older engine first; dry_run and a move is due; a state under the old name cannot be read; the rename
-/// fails; or the worktrees' repair cannot be run after it, which leaves the directory moved.
+/// with the older engine first; dry_run and a move is due; a state under the old name cannot be read; or the rename
+/// fails. Once the rename is made, what fails after it is named in the returned line instead.
 pub fn move_project_dir(host: &dyn Host, cwd: &str, dry_run: bool) -> Result<Option<String>, OrchestratorError> {
     let (old, new) = (format!("{cwd}/{OLD_PROJECT_DIR}"), format!("{cwd}/{PROJECT_DIR}"));
     if !host.exists(&old)? || host.exists(&new)? {
@@ -59,10 +59,16 @@ pub fn move_project_dir(host: &dyn Host, cwd: &str, dry_run: bool) -> Result<Opt
     let repair = "cd -- \"$1\" || exit 1; for d in \"$2\"/*/; do [ -f \"$d.git\" ] || continue; \
                   git worktree repair \"${d%/}\" >/dev/null 2>&1 || printf '%s\\n' \"${d%/}\"; done";
     let worktrees = format!("{cwd}/{WORKTREES_DIR}");
-    let unrepaired = host.check(&["sh", "-c", repair, "_", cwd, &worktrees], None, DEFAULT_TIMEOUT)?;
     let mut said = format!("moved the project's runs from {old} to {new}");
-    for tree in unrepaired.lines() {
-        said.push_str(&format!("; git could not register the worktree {tree} again: run `git worktree repair {tree}` in {cwd}"));
+    match host.check(&["sh", "-c", repair, "_", cwd, &worktrees], None, DEFAULT_TIMEOUT) {
+        Ok(unrepaired) => {
+            for tree in unrepaired.lines() {
+                said.push_str(&format!(
+                    "; git could not register the worktree {tree} again: run `git worktree repair {tree}` in {cwd}"
+                ));
+            }
+        }
+        Err(e) => said.push_str(&format!("; {e}: run `git worktree repair` on each worktree in {worktrees}")),
     }
     // A run's worktree is WORKTREES_DIR/<its key> (cli::start), under whatever spelling of the project's path the run
     // was started with; prune finds a kept one only by its saved path.
