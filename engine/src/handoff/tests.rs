@@ -116,7 +116,7 @@ fn ignore_every_line_below_the_first_non_blank_one() {
             continue;
         }
         let rest = format!("BLOCKED: why? GATE: OK VERDICT: APPROVE {}", rng.text(20, ""));
-        let (blanks, rest) = (blank_lines(&mut rng), rest);
+        let blanks = blank_lines(&mut rng);
         let text = format!("{blanks}{first}\n{rest}");
         assert_eq!(parse_gate(&text), parse_gate(&first), "{text:?}");
         assert_eq!(parse_verdict(&text), parse_verdict(&first), "{text:?}");
