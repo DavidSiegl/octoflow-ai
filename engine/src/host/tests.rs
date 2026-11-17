@@ -418,7 +418,7 @@ fn run_states_corrupt() {
 
 #[test]
 fn a_run_state_whose_age_is_not_a_number_is_corrupt() {
-    let e = parsed_run_states("/p", "12x {}\0").unwrap_err();
+    let e = parsed_run_states("/p", RUNS_DIR, "12x {}\0").unwrap_err();
     assert_eq!(e.0, format!("corrupt run state under /p/{RUNS_DIR}: an age that is not a whole number: \"12x\""));
 }
 
@@ -814,12 +814,12 @@ fn run_files_failure_and_a_time_that_is_not_one() {
 #[test]
 fn what_leads_out_of_a_run_directory_is_neither_listed_nor_read_over_ssh() {
     let d = TempDir::new();
-    // The project's .orchestrator is itself a link, which is no way out: the runs directory is taken links resolved.
-    let (orchestrator, runs) = (d.join("kept"), d.join("proj/.orchestrator/runs"));
+    // The project's .octoflow-ai is itself a link, which is no way out: the runs directory is taken links resolved.
+    let (orchestrator, runs) = (d.join("kept"), d.join("proj/.octoflow-ai/runs"));
     std::fs::create_dir_all(format!("{orchestrator}/runs/r")).unwrap();
     std::fs::create_dir_all(d.join("proj")).unwrap();
     let link = |target: &str, at: &str| std::os::unix::fs::symlink(target, at).unwrap();
-    link(&orchestrator, &d.join("proj/.orchestrator"));
+    link(&orchestrator, &d.join("proj/.octoflow-ai"));
     put(&d.join("outside.md"), "outside");
     put(&format!("{runs}/r/a.md"), "a");
     put(&format!("{runs}/other.md"), "beside the runs");
@@ -1015,7 +1015,7 @@ fn a_forgotten_run_s_directory_goes_and_its_metrics_stay_in_place() {
     assert!(!std::path::Path::new(&format!("{runs}/a")).exists());
     assert!(std::path::Path::new(&format!("{runs}/c/state.json")).exists());
     assert_eq!(host.run_metrics(&d.path()).unwrap(), before);
-    let archive = std::fs::read_to_string(d.join(".orchestrator/metrics-archive.jsonl")).unwrap();
+    let archive = std::fs::read_to_string(d.join(".octoflow-ai/metrics-archive.jsonl")).unwrap();
     assert_eq!(archive, "{\"run_id\":\"b\"}\n{\"run_id\":\"a\"}\n");
 }
 
@@ -1025,7 +1025,7 @@ fn a_forget_after_its_archive_line_was_written_does_not_write_it_twice() {
     let host = ProcessHost::local(&Interrupt::new());
     let runs = d.join(RUNS_DIR);
     put(&format!("{runs}/a/metrics.json"), "{\"run_id\": \"a\"}");
-    put(&d.join(".orchestrator/metrics-archive.jsonl"), "{\"run_id\":\"a\"}\n");
+    put(&d.join(".octoflow-ai/metrics-archive.jsonl"), "{\"run_id\":\"a\"}\n");
     host.forget_run(&d.path(), "a").unwrap();
     assert_eq!(host.run_metrics(&d.path()).unwrap(), [serde_json::json!({"run_id": "a"})]);
 }
@@ -1036,7 +1036,7 @@ fn a_run_without_metrics_is_forgotten_without_an_archive_line() {
     let host = ProcessHost::local(&Interrupt::new());
     put(&format!("{}/a/state.json", d.join(RUNS_DIR)), "{}");
     host.forget_run(&d.path(), "a").unwrap();
-    assert!(!std::path::Path::new(&d.join(".orchestrator/metrics-archive.jsonl")).exists());
+    assert!(!std::path::Path::new(&d.join(".octoflow-ai/metrics-archive.jsonl")).exists());
     assert!(!std::path::Path::new(&format!("{}/a", d.join(RUNS_DIR))).exists());
 }
 
@@ -1044,15 +1044,15 @@ fn a_run_without_metrics_is_forgotten_without_an_archive_line() {
 fn forget_refuses_a_run_id_that_leads_out_of_the_runs_directory() {
     let d = TempDir::new();
     let host = ProcessHost::local(&Interrupt::new());
-    put(&d.join(".orchestrator/keep"), "");
+    put(&d.join(".octoflow-ai/keep"), "");
     // A metrics.json that ".." would lead to: refused before it is read, so that nothing is archived either.
-    put(&d.join(".orchestrator/metrics.json"), "{\"run_id\": \"x\"}");
+    put(&d.join(".octoflow-ai/metrics.json"), "{\"run_id\": \"x\"}");
     for id in ["..", ".", "", "../x", "a/b"] {
         let e = host.forget_run(&d.path(), id).unwrap_err();
         assert!(e.0.contains("is not a name in the run directory"), "{id:?}: {e}");
     }
-    assert!(std::path::Path::new(&d.join(".orchestrator/keep")).exists());
-    assert!(!std::path::Path::new(&d.join(".orchestrator/metrics-archive.jsonl")).exists());
+    assert!(std::path::Path::new(&d.join(".octoflow-ai/keep")).exists());
+    assert!(!std::path::Path::new(&d.join(".octoflow-ai/metrics-archive.jsonl")).exists());
 }
 
 #[test]
@@ -1060,7 +1060,7 @@ fn a_run_the_archive_holds_twice_is_given_once() {
     // As two forgets of the run at once can leave it.
     let d = TempDir::new();
     let host = ProcessHost::local(&Interrupt::new());
-    put(&d.join(".orchestrator/metrics-archive.jsonl"), "{\"run_id\":\"a\"}\n{\"run_id\":\"b\"}\n{\"run_id\":\"a\"}\n");
+    put(&d.join(".octoflow-ai/metrics-archive.jsonl"), "{\"run_id\":\"a\"}\n{\"run_id\":\"b\"}\n{\"run_id\":\"a\"}\n");
     let ids: Vec<Value> = host.run_metrics(&d.path()).unwrap().into_iter().map(|m| m["run_id"].clone()).collect();
     assert_eq!(ids, ["a", "b"]);
 }
@@ -1653,8 +1653,8 @@ fn has_origin_on_real_git() {
 #[test]
 fn worktree_steps() {
     let c = Clones::new();
-    put(&format!("{}/.orchestrator/.gitignore", c.a), "*\n");
-    let wt = format!("{}/.orchestrator/worktrees/a1b2c3", c.a);
+    put(&format!("{}/.octoflow-ai/.gitignore", c.a), "*\n");
+    let wt = format!("{}/.octoflow-ai/worktrees/a1b2c3", c.a);
     let upstream = c.push_from_b("lib.py", "new\n");
     assert!(!c.host.is_worktree(&c.a, &wt).unwrap());
     c.host.add_worktree(&c.a, &wt, &c.host.fetch(&c.a, "main").unwrap()).unwrap();
@@ -2151,8 +2151,8 @@ fn snapshot_of_the_working_tree() {
     std::fs::remove_file(format!("{}/del.py", r.path)).unwrap();
     r.put("untracked.py", "new\n");
     r.put("debug.log", "ignored\n");
-    r.put(".orchestrator/.gitignore", "*\n");
-    r.put(".orchestrator/runs/r/state.json", "{}\n");
+    r.put(".octoflow-ai/.gitignore", "*\n");
+    r.put(".octoflow-ai/runs/r/state.json", "{}\n");
     // A staged change, to show the index is left as it was.
     r.git(&["add", "mod.py"]);
     let look = || [r.git(&["rev-parse", "HEAD"]), r.git(&["ls-files", "--stage"]), r.git(&["status", "--porcelain"])];

@@ -101,7 +101,7 @@ impl Workflow<'_> {
     /// directory, for at most proof_timeout seconds. A tool that looks upwards from the proof for its configuration,
     /// as pytest does for its rootdir, conftest.py files and pythonpath, so meets the working tree's before any of the
     /// checkout's, which holds the run directory and encloses a run's worktree. The proof's output names the copy. The
-    /// working tree's .orchestrator directory is made ignored first, so no commit holds the copy; PROOF_COPIES_DIR is
+    /// working tree's .octoflow-ai directory is made ignored first, so no commit holds the copy; PROOF_COPIES_DIR is
     /// emptied before the copy is made and removed after the proof, so what a proof writes beside itself goes with it.
     ///
     /// The working tree is left as the proof found it, ignored files aside (Host::tree_snapshot, Host::restore_tree),
@@ -128,7 +128,7 @@ impl Workflow<'_> {
         let limit = self.proof_timeout.to_string();
         // The tree as the proof finds it, put back after it; None puts nothing back.
         let mut before = None;
-        let ran = self.ignore_orchestrator_dir(work_dir).and_then(|()| {
+        let ran = self.ignore_project_dir(work_dir).and_then(|()| {
             before = self.host.tree_snapshot(work_dir).unwrap_or_else(|e| {
                 self.human.log(&format!("cannot snapshot {work_dir}, so what the proof writes there stays: {e}"));
                 None

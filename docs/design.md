@@ -279,7 +279,7 @@ without changing its modification time, so a stale run does not look live again.
 
 A branch checked out in the run's own `--worktree` would stay for good when the worktree outlived the run:
 `leave_work_dir` only logs a removal that git refused, and `close` handles failed runs only. So for a candidate run
-whose saved `worktree` is directly under `.orchestrator/worktrees/` and still a worktree of the project, `prune` first
+whose saved `worktree` is directly under `.octoflow-ai/worktrees/` and still a worktree of the project, `prune` first
 decides the worktree, by a rule like the branch's: it is removed, without `--force`, when `git status` lists nothing,
 the run's own branch (or a detached HEAD) is checked out in it, and its HEAD is the pull request's head commit or an
 ancestor of it. What it holds that git tracks can then be restored from the pull request; ignored files go with the
@@ -288,7 +288,7 @@ with build output, such as `target/` or `node_modules/`, for good.) A worktree w
 branch checked out, or commits that head lacks, or one git refuses to remove (locked, say), is kept, with its reason
 recorded in `branch_cleanup` beside the branch's own (a kept worktree keeps its branch checked out, unless it now holds
 another one). Worktrees no run names, or
-outside `.orchestrator/worktrees/`, are never touched, nor are a finished `--no-pr` run's (it holds the change) or a
+outside `.octoflow-ai/worktrees/`, are never touched, nor are a finished `--no-pr` run's (it holds the change) or a
 failed run's (`close`). Before reading which branches are checked out, `prune` runs `git worktree prune` (not in a
 `--dry-run`), which forgets every worktree of the repository whose directory is gone, not only the runs'. A worktree
 whose directory is gone holds no branch, so a `--dry-run` reads its branch as free either way.

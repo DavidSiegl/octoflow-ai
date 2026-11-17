@@ -673,10 +673,10 @@ impl World {
         Value::Object(by.into_iter().map(|(who, events)| (who, Value::Array(collapsed(events.as_array().cloned().unwrap_or_default())))).collect())
     }
 
-    /// Every file under the project's .orchestrator, but the worktrees, by its path there: each directory's files in
+    /// Every file under the project's .octoflow-ai, but the worktrees, by its path there: each directory's files in
     /// name order, then its directories', as os.walk lists them.
     fn run_files(&self) -> Value {
-        let top = self.project.join(".orchestrator");
+        let top = self.project.join(".octoflow-ai");
         let mut files = Object::new();
         walk(&top, &top, &mut files);
         Value::Object(files)
@@ -779,7 +779,7 @@ impl World {
             for entry in &porcelain {
                 let name = entry.get(3..).unwrap_or_default();
                 let full = Path::new(&path).join(name);
-                if full.is_file() && !name.starts_with(".orchestrator/") {
+                if full.is_file() && !name.starts_with(".octoflow-ai/") {
                     changed.insert(name.to_string(), Value::String(read_lossy(&full)));
                 }
             }

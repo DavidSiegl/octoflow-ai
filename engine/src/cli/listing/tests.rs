@@ -21,7 +21,7 @@ const RUN_ID: &str = "20260930-070000-c0ffee";
 const PR_URL: &str = "https://github.com/o/r/pull/7";
 const QUESTION: &str = "which database?";
 const SHOW_ID: &str = "20260929-120000-a1b2c3";
-const SHOW_DIR: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
+const SHOW_DIR: &str = "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3";
 /// A Jenkins job a run saved before 0.72.0 removed the Jenkins quality gate; listings still show it.
 const JOB: &str = "Octoflow-AI/octoflow-ai-quality";
 
@@ -290,7 +290,7 @@ fn a_run_an_earlier_release_saved_lists_as_unreadable_with_what_to_do() {
     let record = record(&state, STALE_SECONDS + 1, true, &[]);
     let hint = format!(
         "run {RUN_ID} was saved by an octoflow before {}; finish or close it with that release, or remove \
-         .orchestrator/runs/{RUN_ID}",
+         .octoflow-ai/runs/{RUN_ID}",
         crate::state::STATE_FORMAT_SINCE
     );
     assert_eq!(key(&record, "error"), Value::from(hint.as_str()));
@@ -630,7 +630,7 @@ fn key_and_full_id_print_the_same() {
 fn unknown_or_ambiguous_run() {
     let cli = show_host(&[show_state(&[]), show_state(&[("run_id", Value::from("20260930-120000-a1b2c3"))])]);
     let cases = [
-        ("nosuch", "no run nosuch under /proj/.orchestrator/runs".to_string()),
+        ("nosuch", "no run nosuch under /proj/.octoflow-ai/runs".to_string()),
         ("a1b2c3", format!("a1b2c3 matches several runs ({SHOW_ID}, 20260930-120000-a1b2c3); give the full run id")),
     ];
     for (run_ref, message) in cases {
@@ -739,7 +739,7 @@ fn turns_once_recorded() {
 
 #[test]
 fn worktree_of_a_worktree_run() {
-    let worktree = "/proj/.orchestrator/worktrees/a1b2c3";
+    let worktree = "/proj/.octoflow-ai/worktrees/a1b2c3";
     let out = shown(&[show_state(&[("worktree", Value::from(worktree)), ("branch", Value::from("orchestrator/x-a1b2c3"))])]);
     assert!(out.contains(&format!("\nworktree   {worktree}\nbranch     orchestrator/x-a1b2c3\n")), "{out}");
     assert!(!has_line(&shown(&[show_state(&[])]), "worktree"));
@@ -886,7 +886,7 @@ fn fake_ssh(dir: &TempDir) -> ProcessHost {
 fn on_a_machine_everything_goes_over_ssh() {
     let dir = TempDir::new();
     let proj = dir.join("proj");
-    let run_dir = format!("{proj}/.orchestrator/runs/{SHOW_ID}");
+    let run_dir = format!("{proj}/.octoflow-ai/runs/{SHOW_ID}");
     std::fs::create_dir_all(&run_dir).unwrap();
     let saved = show_state(&[("phase", Value::from("build")), ("round", Value::from(2)), ("verdict", Value::from(CHANGES_REQUESTED))]);
     let at = |seconds| std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds);
@@ -1033,7 +1033,7 @@ fn list_reads_the_gated_step_from_the_saved_definition() {
 #[test]
 fn the_metrics_command_prints_a_line_per_run_that_is_done() {
     let proj = TempDir::new();
-    let runs = proj.join(".orchestrator/runs");
+    let runs = proj.join(".octoflow-ai/runs");
     for (run_id, metrics) in [
         ("1-aaaaaa", Some(r#"{"run_id": "1-aaaaaa", "outcome": "APPROVE"}"#)),
         ("2-bbbbbb", None),

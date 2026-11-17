@@ -16,7 +16,7 @@ use crate::pipeline::{Pipeline, Step};
 use crate::test_support::{four, impl_, quick, roles, solo, TempDir};
 use crate::workflow_file::{find_workflow, load_workflow_file, workflow_definition, workflow_toml};
 
-const D: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
+const D: &str = "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3";
 /// What a step's {change} is in a run in /proj based on abc123.
 const CHANGE: &str = "`git diff --no-relative abc123` in /proj, plus the untracked files `git status --porcelain --untracked-files=all` lists";
 

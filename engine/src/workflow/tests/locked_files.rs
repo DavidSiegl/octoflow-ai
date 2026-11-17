@@ -9,7 +9,7 @@ use crate::pipeline::Pipeline;
 use crate::test_support::{four, locking, object as record};
 use crate::workflow_file::workflow_definition;
 
-const D: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
+const D: &str = "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3";
 const TEST_FILE: &str = "/proj/test_limiter.py";
 /// The ref that holds the files the Test Writer locked.
 const LOCK_REF: &str = "refs/orchestrator/a1b2c3/locked/tests";

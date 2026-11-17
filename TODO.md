@@ -143,7 +143,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 - **One state.json that is not JSON naming its run stops every command that lists the runs.** `parsed_run_states`
   (`engine/src/host.rs`) fails the whole listing when one run's state.json is not JSON, or is JSON without a non-empty
   `run_id` (`SavedRun::read`, `engine/src/state.rs`), so `close --all` closes nothing, and `list`, `refresh` and
-  `close RUN` fail too; the error, "corrupt run state under <cwd>/.orchestrator/runs", does not say which run's file it
+  `close RUN` fail too; the error, "corrupt run state under <cwd>/.octoflow-ai/runs", does not say which run's file it
   is. Only a state.json of a format this engine does not read is an unreadable run that is skipped and named. Raised by
   cross-review 194 (F1). Closed by listing such a file as an unreadable run named by its directory, which `SavedRun`
   cannot hold today without a run id, and the desktop app's run list then showing it.
@@ -534,7 +534,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   snapshot id in the PR body, the quality turn's times and every later timestamp, the job's worktree added and
   removed again. Closes with `expected` normalising those for a crash that left a job, and adding its stop.
 - **Six places build a run directory's path by hand.** `crate::state::run_dir` is the one home for
-  `<cwd>/.orchestrator/runs/<run_id>`, which `forget` and `Host::forget_run` use; `cli::start` (`:79`), `cli::listing`
+  `<cwd>/.octoflow-ai/runs/<run_id>`, which `forget` and `Host::forget_run` use; `cli::start` (`:79`), `cli::listing`
   (`:298`), and the state.json paths of `refresh`, `close`, `drain` and `prune` still format it themselves. Raised by
   cross-review 207 (F7). Closed by those calling `run_dir`.
 - **Runs started within one second list in random order.** A run id orders by its start only to the second, then by

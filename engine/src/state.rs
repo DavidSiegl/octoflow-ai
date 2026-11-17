@@ -31,7 +31,7 @@ pub fn run_dir(cwd: &str, run_id: &str) -> String {
 pub struct RunState {
     pub run_id: String,
     pub task: String,
-    /// The project's checkout, which holds the run directory (dir) and .orchestrator/.gitignore.
+    /// The project's checkout, which holds the run directory (dir) and .octoflow-ai/.gitignore.
     pub cwd: String,
     /// The herdr machine the agents run on; None for this one.
     pub machine: Option<String>,

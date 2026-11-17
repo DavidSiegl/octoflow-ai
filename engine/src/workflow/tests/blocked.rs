@@ -14,7 +14,7 @@ use crate::paths::{file_name, split_extension};
 use crate::pipeline::DEFAULT_WORKFLOW;
 use crate::workflow_file::{find_workflow, workflow_toml};
 
-const D: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
+const D: &str = "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3";
 const QUESTION: &str = "which database?";
 
 fn build_1() -> String {

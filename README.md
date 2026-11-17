@@ -72,7 +72,7 @@ there; `doctor --setup-gate` writes the gate's `ci/gate.pin` and a starter `gate
 - Each harness able to start in the project directory without asking first. Claude Code, for one, asks once per
   folder whether to trust it: open `claude` there once, or answer in the pane when the run says the role
   "needs your answer before it starts". A `--worktree` run starts its agents in a new directory under the
-  project, `.orchestrator/worktrees/<key>`, which a harness may ask about again
+  project, `.octoflow-ai/worktrees/<key>`, which a harness may ask about again
 - Unless you use `--no-pr`: a git checkout with an `origin` it can push to, and [`gh`](https://cli.github.com)
   logged in; with `--worktree`, a branch checked out and an `origin` even with `--no-pr`
 - For any run that pushes: [gitleaks](https://github.com/gitleaks/gitleaks#installing) 8.19+ and git 2.36+.
@@ -398,9 +398,12 @@ configuration instead.
    writes `metrics.json`, which `metrics` prints
    ([Turn timings and the summary](docs/design.md#turn-timings-and-the-summary)).
 
-Everything a run writes stays in `<project>/.orchestrator/runs/<run-id>/`, which git ignores, until `forget` deletes
+Everything a run writes stays in `<project>/.octoflow-ai/runs/<run-id>/`, which git ignores, until `forget` deletes
 it. Runs in one checkout share its working tree, so a run refuses to start or resume while another run there is
-`running`; use `--worktree`, or a clone per run, to run in parallel.
+`running`; use `--worktree`, or a clone per run, to run in parallel. An engine from before 0.89.0 kept this
+directory as `.orchestrator/`; the first command, or `serve`, that finds one moves it to `.octoflow-ai/`, its
+worktrees with it, once every run there is closed. Until then it refuses, moving nothing: finish and `close` those
+runs with the older engine first.
 
 A failed run keeps its workspace open and stays on its branch, and so does a `--no-pr` run. `resume` continues a
 stopped run where `state.json` says ([Resuming a run](docs/design.md#resuming-a-run)), and `close` cleans up after
@@ -414,7 +417,7 @@ and [quality gate](docs/quality-gate.md).
 
 ### Worktree runs
 
-A `--worktree` run works in `.orchestrator/worktrees/<key>`, checked out from `origin`'s version of the project's
+A `--worktree` run works in `.octoflow-ai/worktrees/<key>`, checked out from `origin`'s version of the project's
 branch, so the project's checkout need not be clean and stays yours to use. The worktree holds what git tracks.
 Untracked and ignored files, such as a `.venv`, are not in it, though Claude Code still reads the project's
 `CLAUDE.md` from the parent directory. The handoff files stay in the project's run directory. agy, claude and
@@ -428,7 +431,7 @@ request is already open.
 
 If removing the worktree failed because it had changes, it stays, and so does its branch, which it keeps checked out.
 Once the pull request is merged, or closed for 14 days, `prune` removes such a worktree under
-`.orchestrator/worktrees/` when it has no uncommitted changes, still has the run's branch checked out, and is on the
+`.octoflow-ai/worktrees/` when it has no uncommitted changes, still has the run's branch checked out, and is on the
 pull request's head commit or behind it, and then deletes the branch. Files git ignores, such as a hand-made `.env`,
 go with the worktree, as with `close`. Otherwise `prune` keeps both and says why. It also forgets a worktree whose
 directory you deleted by hand (`git worktree prune`), which would otherwise keep its branch.

@@ -13,7 +13,7 @@ use std::rc::Rc;
 
 use crate::constants::{
     APPROVE, CHANGES_REQUESTED, DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
-    FINISHED, HEARTBEAT_SECONDS, QUALITY_GATE_FAILED, REMOTE, SUCCEEDED,
+    FINISHED, HEARTBEAT_SECONDS, PROJECT_DIR, QUALITY_GATE_FAILED, REMOTE, SUCCEEDED,
 };
 use crate::local_gate::{self, LOCAL_GATE};
 use crate::error::OrchestratorError;
@@ -592,7 +592,7 @@ impl<'a> Workflow<'a> {
 
     pub(crate) fn claim(&mut self) -> Outcome<()> {
         let cwd = self.state.cwd.clone();
-        self.ignore_orchestrator_dir(&cwd)?;
+        self.ignore_project_dir(&cwd)?;
         if let Some(spec) = &self.spec {
             self.seed_spec(spec)?;
         }
@@ -602,11 +602,11 @@ impl<'a> Workflow<'a> {
         Ok(self.write_state()?)
     }
 
-    /// Make git ignore everything under the .orchestrator directory of the working tree at tree, by a .gitignore of
+    /// Make git ignore everything under the PROJECT_DIR of the working tree at tree, by a .gitignore of
     /// `*` there, unless it has a .gitignore already. Keeps run files out of `git status`, so the Reviewer sees only
     /// the Builder's changes and the commit holds nothing else.
-    fn ignore_orchestrator_dir(&self, tree: &str) -> Result<(), OrchestratorError> {
-        let ignore = format!("{tree}/.orchestrator/.gitignore");
+    fn ignore_project_dir(&self, tree: &str) -> Result<(), OrchestratorError> {
+        let ignore = format!("{tree}/{PROJECT_DIR}/.gitignore");
         if self.host.read(&ignore)?.is_none() {
             self.host.write(&ignore, "*\n", false)?;
         }

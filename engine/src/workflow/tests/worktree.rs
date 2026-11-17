@@ -13,7 +13,7 @@ use crate::host::GIT_STATUS_ARGS;
 use crate::pull_request::commit_note;
 
 /// The worktree of a run --worktree run of the default run.
-pub(super) const WORKTREE: &str = "/proj/.orchestrator/worktrees/a1b2c3";
+pub(super) const WORKTREE: &str = "/proj/.octoflow-ai/worktrees/a1b2c3";
 /// The default run's branch, for its spec's title.
 const RUN_BRANCH: &str = "orchestrator/add-a-token-bucket-rate-limiter-a1b2c3";
 
@@ -252,7 +252,7 @@ fn resume_before_the_first_edit_reuses_the_worktree() {
 
 #[test]
 fn resume_refuses_a_worktree_that_is_gone() {
-    for registered in [None, Some("/proj/.orchestrator/worktrees/ffffff")] {
+    for registered in [None, Some("/proj/.octoflow-ai/worktrees/ffffff")] {
         let host = FakeHost::default();
         if let Some(other) = registered {
             host.state().worktrees.insert(other.to_string(), "HEAD".to_string());

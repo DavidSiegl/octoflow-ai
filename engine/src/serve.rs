@@ -143,12 +143,18 @@ fn serve(
 /// server serve's own environment picks; an agent of a run saved before runs saved it is reached in the one serve's
 /// environment picks (HERDR_SOCKET_PATH, else HERDR_SESSION, else the default session). Errors: the machine is not
 /// saved or enabled, or the directory cannot be entered; for a project on a machine, serve's own working directory
-/// cannot be told.
+/// cannot be told; the project's own directory has to move from its old name, and that is refused or fails
+/// (crate::old_project_dir::move_project_dir, whose line saying it moved goes to serve's standard error).
 pub fn project_host(machine: &str, cwd: &str, stopping: &Interrupt) -> Result<Reached, OrchestratorError> {
     let here = ProcessHost::local(stopping);
     let herdr = ProcessHerdr::new(Some(machine), stopping);
     let host = if machine.is_empty() { here } else { here.over_ssh(&herdr.ssh_target()?) };
     let dir = host.resolve_dir(cwd)?;
+    let moved = crate::old_project_dir::move_project_dir(&host, &dir, false)?;
+    if let Some(moved) = moved {
+        // Nowhere else to say it, if stderr does not take it.
+        let _ = writeln!(io::stderr(), "{moved}");
+    }
     let launch_dir = if machine.is_empty() { dir.clone() } else { serve_dir()? };
     let launcher = Arc::new(ProcessHerdr::new(None, stopping));
     let herdr = Arc::new(herdr);

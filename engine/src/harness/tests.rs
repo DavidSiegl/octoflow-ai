@@ -101,13 +101,13 @@ fn the_launch_of_every_combination_is_harness_json_s() {
 #[test]
 fn opencode_takes_its_model_and_grant_as_config() {
     let h = harness("opencode").unwrap();
-    let d = "/proj/.orchestrator/runs/r";
+    let d = "/proj/.octoflow-ai/runs/r";
     // A launch with args, its config exported as the JSON json when given one.
     let launch = |args: &[&str], json: Option<&str>| Launch {
         args: args.iter().map(|a| a.to_string()).collect(),
         env: json.map(|j| ("OPENCODE_CONFIG_CONTENT".to_string(), j.to_string())).into_iter().collect(),
     };
-    let grant = r#""permission":{"external_directory":{"/proj/.orchestrator/runs/r/*":"allow"}}"#;
+    let grant = r#""permission":{"external_directory":{"/proj/.octoflow-ai/runs/r/*":"allow"}}"#;
     let cases = [
         (None, None, None, launch(&[], None)),
         (Some(""), Some(""), Some(""), launch(&[], None)),
@@ -135,7 +135,7 @@ fn opencode_takes_its_model_and_grant_as_config() {
 fn opencode_grants_no_run_directory_its_matcher_would_read_as_more_than_itself() {
     // opencode 2.0.24 reads `*` and `?` in a grant as wildcards, and `\` as `/`, so each would widen or move it.
     let h = harness("opencode").unwrap();
-    for dir in ["/p*/.orchestrator/runs/r", "/p?/.orchestrator/runs/r", r"/p\q/.orchestrator/runs/r"] {
+    for dir in ["/p*/.octoflow-ai/runs/r", "/p?/.octoflow-ai/runs/r", r"/p\q/.octoflow-ai/runs/r"] {
         let expected = Launch {
             args: vec!["--standalone".to_string()],
             env: vec![("OPENCODE_CONFIG_CONTENT".to_string(), r#"{"model":"m"}"#.to_string())],
@@ -161,7 +161,7 @@ fn the_run_directory_is_granted_where_the_harness_can() {
     // The launch half, for the harnesses that take a flag; the Workflow half is in workflow/tests/harnesses.rs, and
     // opencode's grant in
     // opencode_takes_its_model_and_grant_as_config.
-    let d = "/proj/.orchestrator/runs/r";
+    let d = "/proj/.octoflow-ai/runs/r";
     let grants: [(&str, &[&str]); 4] = [
         ("agy", &["--add-dir", d]),
         ("claude", &["--add-dir", d]),

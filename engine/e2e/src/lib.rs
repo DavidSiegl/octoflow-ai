@@ -79,7 +79,7 @@ pub fn checkout() -> PathBuf {
 
 /// Where the engine keeps the runs of the project at project, a directory per run named `<run id>-<key>`.
 pub fn runs_dir(project: &Path) -> PathBuf {
-    project.join(".orchestrator").join("runs")
+    project.join(".octoflow-ai").join("runs")
 }
 
 /// The directory of the project's run whose key is key. Panics, naming the directory, when runs/ cannot be listed or

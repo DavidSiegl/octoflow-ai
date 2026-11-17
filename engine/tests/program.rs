@@ -214,7 +214,7 @@ fn a_resume_of_no_run_names_where_it_looked() {
     let out = program(&dir, &["resume", "b0b0b0"], Some("1")).output().expect("the program runs");
     assert_eq!(out.status.code(), Some(1));
     let project = std::fs::canonicalize(&dir.0).expect("the directory resolves");
-    assert_eq!(stderr(&out), format!("error: no run b0b0b0 under {}/.orchestrator/runs\n", project.display()));
+    assert_eq!(stderr(&out), format!("error: no run b0b0b0 under {}/.octoflow-ai/runs\n", project.display()));
 }
 
 #[test]
@@ -230,7 +230,7 @@ fn a_run_is_named_by_the_time_in_the_machine_s_zone() {
     let out = program(&dir, &["run", "--no-pr", "a task"], Some("1")).env("TZ", zone).output().expect("the program runs");
     let after = shown(jiff::Timestamp::now());
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
-    let runs: Vec<String> = std::fs::read_dir(dir.0.join(".orchestrator/runs"))
+    let runs: Vec<String> = std::fs::read_dir(dir.0.join(".octoflow-ai/runs"))
         .expect("the run's state was saved")
         .map(|entry| entry.expect("an entry").file_name().into_string().expect("a UTF-8 name"))
         .collect();
@@ -379,9 +379,9 @@ fn serve_reaches_a_machine_by_its_saved_target() {
     let ssh = format!("#!/bin/sh\nfor a; do last=$a; done\necho \"ssh $*\" >> '{}'\nexec sh -c \"$last\"\n", asked.display());
     dir.tool("ssh", &ssh);
     let project = dir.0.join("proj");
-    std::fs::create_dir_all(project.join(".orchestrator/runs/20261024-120000-5e7e00")).unwrap();
+    std::fs::create_dir_all(project.join(".octoflow-ai/runs/20261024-120000-5e7e00")).unwrap();
     let state = r#"{"format": 2, "run_id": "20261024-120000-5e7e00", "task": "t", "phase": "build", "round": 1}"#;
-    std::fs::write(project.join(".orchestrator/runs/20261024-120000-5e7e00/state.json"), state).unwrap();
+    std::fs::write(project.join(".octoflow-ai/runs/20261024-120000-5e7e00/state.json"), state).unwrap();
     let serving = Serving::start(&dir, &[]);
     let (status, body) = serving.get(&format!("/runs?cwd={}", encoded(&project)));
     assert_eq!(status, 200, "{body}");

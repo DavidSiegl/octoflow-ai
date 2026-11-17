@@ -121,7 +121,7 @@ that is done first counts each agent turn's tokens (`count_tokens`: `Host::sessi
 where its harness's `SessionLog` says its harness keeps one, and `turn_tokens` sums the answers within the turn), then writes
 `metrics.json` (`run_metrics`), with the quality rounds `quality` records in `quality_rounds` by `gate_failures`;
 the `metrics` command prints every run's (`Host::run_metrics`), with those of the runs `forget` deleted, which
-`Host::forget_run` keeps in `.orchestrator/metrics-archive.jsonl` first.
+`Host::forget_run` keeps in `.octoflow-ai/metrics-archive.jsonl` first.
 
 ## Workflows
 
@@ -179,7 +179,7 @@ working tree (`run_proof`: exit status 1 is a failing proof, which demonstrates 
 names; 0 passes and anything else errors, neither demonstrating), saves the outcomes in `RunState.proofs`, and
 appends `proofs_section` under `PROOFS_HEADING` to the review; a resume runs no proof of a round that has records,
 and appends the section only where the review lacks it. A proof runs from a copy of its directory inside the tree
-it judges, `<work_dir>/.orchestrator/proofs/<round that wrote it>/`, so that pytest, looking upwards from it for its
+it judges, `<work_dir>/.octoflow-ai/proofs/<round that wrote it>/`, so that pytest, looking upwards from it for its
 configuration, meets the working tree's first (`run_proof` has the details); the review and the notes name the proof
 where the verdict step wrote it, and say where it ran. The tree is left as the proof found it, ignored files aside:
 `run_proof` snapshots it before the proof (`Host::tree_snapshot`) and afterwards puts back every file that differs
@@ -305,7 +305,7 @@ started, as the human would start one from a herdr pane.
   run id or file name be only a plain name (`plain_name`: no `/`, not `.` or `..`) and refuses `state.json`.
   It refuses such a path before anything is read (`RunReadError::Refused`), which the server answers with 403. A
   symbolic link is followed only as far as it stays inside: a file that, links resolved, is not in its run
-  directory, links resolved, and every file of a run directory that is not in the project's `.orchestrator/runs`,
+  directory, links resolved, and every file of a run directory that is not in the project's `.octoflow-ai/runs`,
   are refused with 403 by `/file` and left out of `/files` and the event stream's `files` events. A run whose
   `state.json` is refused so is no run: `/runs` and the stream's `record` events leave it out, as a run without a
   `state.json`, and `/agent` answers 404. The links are resolved on the project's host, over SSH too

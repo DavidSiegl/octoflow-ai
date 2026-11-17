@@ -1200,7 +1200,7 @@ const CLOSE_BRANCH: &str = "orchestrator/x-a1b2c3";
 /// worktree (the second value) on CLOSE_BRANCH, its app.py changed; CLOSE_RUNNING, just saved by a live run; and
 /// CLOSE_CLOSED, closed.
 fn closing() -> (Repo, String, Served) {
-    let repo = Repo::new(&[("app.py", "one\n"), (".orchestrator/.gitignore", "*\n")]);
+    let repo = Repo::new(&[("app.py", "one\n"), (".octoflow-ai/.gitignore", "*\n")]);
     let base = repo.base().to_string();
     let wt = format!("{}/{WORKTREES_DIR}/a1b2c3", repo.path);
     repo.host.add_worktree(&repo.path, &wt, &base).unwrap();
@@ -1410,7 +1410,7 @@ fn a_forget_dry_run_names_the_closed_run_and_a_listed_forget_deletes_it_keeping_
     let body = serde_json::json!({ "forget": [FORGET_CLOSED] }).to_string();
     assert_eq!(forgotten_runs(&served.post(&target, &body)), [(FORGET_CLOSED.into(), "forgotten".into(), String::new())]);
     assert!(!std::path::Path::new(&closed_dir).exists());
-    let archive = std::fs::read_to_string(project.0.join(".orchestrator/metrics-archive.jsonl")).unwrap();
+    let archive = std::fs::read_to_string(project.0.join(".octoflow-ai/metrics-archive.jsonl")).unwrap();
     assert!(archive.contains(FORGET_CLOSED), "{archive}");
     assert!(std::path::Path::new(&project.0.join(&format!("{RUNS_DIR}/{FORGET_OPEN}"))).exists());
 

@@ -4,7 +4,7 @@
 //!
 //! - "files": paths, relative to --cwd, and the text to write there, as the agents would;
 //! - "exit": the run's exit status;
-//! - "run_id": the name of the run directory to make under .orchestrator/runs, or null for none;
+//! - "run_id": the name of the run directory to make under .octoflow-ai/runs, or null for none;
 //! - "metrics": what to write as that directory's metrics.json, or null for none.
 //!
 //! Each invocation appends a JSON line to the file FAKE_ENGINE_LOG names: its arguments as "argv", and for `run`, what
@@ -43,7 +43,7 @@ fn main() -> ExitCode {
             fs::write(&full, text.as_str().expect("a file's text is a string")).expect("the file is written");
         }
         if let Some(run_id) = plan["run_id"].as_str() {
-            let run_dir = cwd.join(".orchestrator/runs").join(run_id);
+            let run_dir = cwd.join(".octoflow-ai/runs").join(run_id);
             fs::create_dir_all(&run_dir).expect("the run directory is made");
             if !plan["metrics"].is_null() {
                 fs::write(run_dir.join("metrics.json"), plan["metrics"].to_string()).expect("metrics.json is written");

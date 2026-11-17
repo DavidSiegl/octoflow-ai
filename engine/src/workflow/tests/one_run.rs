@@ -11,7 +11,7 @@ use crate::json::object;
 const OTHER_ID: &str = "20261009-220151-537935";
 
 fn other_dir() -> String {
-    format!("/proj/.orchestrator/runs/{OTHER_ID}")
+    format!("/proj/.octoflow-ai/runs/{OTHER_ID}")
 }
 
 /// A FakeHost whose /proj holds run OTHER_ID, which this host's orchestrator pid 3354482 last saved age seconds ago,
@@ -137,7 +137,7 @@ fn two_runs_that_claim_together_both_refuse() {
 
 #[test]
 fn worktree_runs_do_not_refuse_each_other() {
-    let host = host_with_other_run(16, &[("worktree", Value::from("/proj/.orchestrator/worktrees/537935"))]);
+    let host = host_with_other_run(16, &[("worktree", Value::from("/proj/.octoflow-ai/worktrees/537935"))]);
     let mut f = worktree_run(host, None);
     f.pid_alive = Box::new(|_| true);
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));

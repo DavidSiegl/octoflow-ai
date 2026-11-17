@@ -7,7 +7,7 @@ use crate::pipeline::{Pipeline, Step};
 use crate::test_support::{accepting, roles};
 use crate::workflow_file::find_workflow;
 
-const D: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3";
+const D: &str = "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3";
 
 fn with_pipeline(p: &Pipeline, max_rounds: u32) -> RunSettings {
     RunSettings { pipeline: Some(p.clone()), max_rounds, ..RunSettings::default() }

@@ -28,7 +28,7 @@
   "1": [
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -105,7 +105,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -178,7 +178,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -279,7 +279,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -356,12 +356,12 @@
      "agent",
      "prompt",
      "build-<key:1>",
-     "You are the Builder, the second of three roles (Spec Collector -> Builder -> Reviewer). The spec in <world>/project/.orchestrator/runs/<run:1>/spec.md was agreed with the human by a separate session; it is your contract.\n\nImplement it in <world>/project, following the conventions of the surrounding code. Verify the change the way the spec's Verification section says, and run the tests. Do not commit, push or switch branches; leave the changes in the working tree for the Reviewer. If the spec is wrong or cannot be met, do not deviate silently: say so in your report.\n\nAs your last step, write a report to <world>/project/.orchestrator/runs/<run:1>/build-1.md in a single write; it hands the work to the Reviewer: the files you changed and why, how you verified the change (commands and a summary of their results), and any acceptance criterion you did not meet, with the reason.\n\nIf you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead."
+     "You are the Builder, the second of three roles (Spec Collector -> Builder -> Reviewer). The spec in <world>/project/.octoflow-ai/runs/<run:1>/spec.md was agreed with the human by a separate session; it is your contract.\n\nImplement it in <world>/project, following the conventions of the surrounding code. Verify the change the way the spec's Verification section says, and run the tests. Do not commit, push or switch branches; leave the changes in the working tree for the Reviewer. If the spec is wrong or cannot be met, do not deviate silently: say so in your report.\n\nAs your last step, write a report to <world>/project/.octoflow-ai/runs/<run:1>/build-1.md in a single write; it hands the work to the Reviewer: the files you changed and why, how you verified the change (commands and a summary of their results), and any acceptance criterion you did not meet, with the reason.\n\nIf you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead."
     ]
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -469,7 +469,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -592,7 +592,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -691,12 +691,12 @@
      "agent",
      "prompt",
      "review-<key:1>",
-     "You are the Reviewer, the last of three roles (Spec Collector -> Builder -> Reviewer). You did not write this change. Judge it only against the spec in <world>/project/.orchestrator/runs/<run:1>/spec.md and the code itself.\n\nThe change: `git diff --no-relative <sha:1>` in <world>/project, plus the untracked files `git status --porcelain --untracked-files=all` lists\nThe Builder's report is in <world>/project/.orchestrator/runs/<run:1>/build-1.md. Treat its claims as unverified: check them, and run the verification yourself. Do not modify any file other than your review.\n\nAs your last step, write your review to <world>/project/.orchestrator/runs/<run:1>/review-1.md in a single write. Its first line must be exactly `VERDICT: APPROVE` or `VERDICT: CHANGES_REQUESTED`. Then list numbered findings, each with file:line, what is wrong, and which acceptance criterion it violates or what failure it causes. Request changes only for defects: an unmet acceptance criterion, a bug, a broken test. Style preferences are not defects."
+     "You are the Reviewer, the last of three roles (Spec Collector -> Builder -> Reviewer). You did not write this change. Judge it only against the spec in <world>/project/.octoflow-ai/runs/<run:1>/spec.md and the code itself.\n\nThe change: `git diff --no-relative <sha:1>` in <world>/project, plus the untracked files `git status --porcelain --untracked-files=all` lists\nThe Builder's report is in <world>/project/.octoflow-ai/runs/<run:1>/build-1.md. Treat its claims as unverified: check them, and run the verification yourself. Do not modify any file other than your review.\n\nAs your last step, write your review to <world>/project/.octoflow-ai/runs/<run:1>/review-1.md in a single write. Its first line must be exactly `VERDICT: APPROVE` or `VERDICT: CHANGES_REQUESTED`. Then list numbered findings, each with file:line, what is wrong, and which acceptance criterion it violates or what failure it causes. Request changes only for defects: an unmet acceptance criterion, a bug, a broken test. Style preferences are not defects."
     ]
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",
@@ -827,7 +827,7 @@
    },
    {
     "state": {
-     "path": "<world>/project/.orchestrator/runs/<run:1>/state.json",
+     "path": "<world>/project/.octoflow-ai/runs/<run:1>/state.json",
      "saved": {
       "format": 2,
       "run_id": "<run:1>",

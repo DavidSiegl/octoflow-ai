@@ -19,6 +19,7 @@ pub mod http;
 pub mod interrupt;
 pub mod json;
 pub mod local_gate;
+pub mod old_project_dir;
 pub mod package_index;
 pub mod patch;
 pub mod paths;

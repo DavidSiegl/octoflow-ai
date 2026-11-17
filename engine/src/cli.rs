@@ -292,7 +292,7 @@ pub(crate) fn in_herdr_pane() -> bool {
 fn run_command(command: &Command, world: &Connected) -> Result<Ended, Stop> {
     let interrupt = world.with.interrupt;
     let stopped = |e: OrchestratorError| stop(e, interrupt, None);
-    let cwd = project_dir(command.target(), world).map_err(stopped)?;
+    let cwd = project_dir(command, world).map_err(stopped)?;
     let (state, pipeline, spec) = match command {
         Command::Run(args) => new_run(args, &cwd, world).map_err(stopped)?,
         Command::Resume(args) => {
@@ -331,14 +331,21 @@ fn run_command(command: &Command, world: &Connected) -> Result<Ended, Stop> {
     }
 }
 
-/// The project directory target names, the current directory without one, as world's host resolves it. Errors: the
-/// current directory cannot be read, or the host cannot resolve the directory.
-fn project_dir(target: Option<&Target>, world: &Connected) -> Result<String, OrchestratorError> {
-    let cwd = match target.and_then(|t| t.cwd.clone()) {
+/// The project directory command's target names, the current directory without one, as world's host resolves it,
+/// its own directory moved from its old name first if it has to be (crate::old_project_dir::move_project_dir, which
+/// says so on standard error, and refuses a --dry-run command). Errors: the current directory cannot be read, the
+/// host cannot resolve the directory, or the move is refused or fails.
+fn project_dir(command: &Command, world: &Connected) -> Result<String, OrchestratorError> {
+    let cwd = match command.target().and_then(|t| t.cwd.clone()) {
         Some(cwd) => cwd,
         None => current_dir()?,
     };
-    world.with.host.resolve_dir(&cwd)
+    let cwd = world.with.host.resolve_dir(&cwd)?;
+    let moved = crate::old_project_dir::move_project_dir(world.with.host, &cwd, command.dry_run())?;
+    if let Some(moved) = moved {
+        world.say_err(&moved);
+    }
+    Ok(cwd)
 }
 
 /// The state a new run of args in the project at cwd starts from, its workflow and, for run --spec, its spec. A run

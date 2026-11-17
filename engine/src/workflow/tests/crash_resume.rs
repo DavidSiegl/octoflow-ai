@@ -35,7 +35,7 @@ use crate::pipeline::{Pipeline, DONE};
 use crate::workflow_file::find_workflow;
 
 /// The run's state.json, which every scenario's run writes.
-const STATE_PATH: &str = "/proj/.orchestrator/runs/20260929-120000-a1b2c3/state.json";
+const STATE_PATH: &str = "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3/state.json";
 
 /// Seconds each agent works on a prompt before its handoff file appears: past HEARTBEAT_SECONDS, so every turn has
 /// a heartbeat save to crash after while the agent works.
