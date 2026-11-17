@@ -7,6 +7,7 @@ use serde_json::Value;
 use crate::constants::{PROJECT_DIR, WORKTREES_DIR};
 use crate::error::OrchestratorError;
 use crate::host::{run_states_in, Host, DEFAULT_TIMEOUT};
+use crate::state::SavedRun;
 
 /// A project's own directory under its old name, relative to the project, as PROJECT_DIR is.
 const OLD_PROJECT_DIR: &str = ".orchestrator";
@@ -53,13 +54,23 @@ pub fn move_project_dir(host: &dyn Host, cwd: &str, dry_run: bool) -> Result<Opt
         // Another engine's first command, serve's for one, may have moved it between the checks and here.
         return if !host.exists(&old)? && host.exists(&new)? { Ok(None) } else { Err(e) };
     }
+    let said = format!("moved the project's runs from {old} to {new}");
+    Ok(Some(said + &carry_worktrees(host, cwd, &runs)))
+}
+
+/// After the project at cwd's own directory moved from its old name to PROJECT_DIR, on host: register each worktree
+/// under it with git at its new path, and save each of runs, the runs that moved, whose saved worktree was under the
+/// old name with the new one. Every worktree and run is tried whatever happened to the others. Returns, for the
+/// move's line on standard error, a "; "-led clause per one that could not be carried over, saying what to do by
+/// hand; empty when all were.
+fn carry_worktrees(host: &dyn Host, cwd: &str, runs: &[SavedRun]) -> String {
+    let mut said = String::new();
     // Each worktree's .git file and the project's record of it name each other by absolute path; repair, given the
     // worktree's new path, rewrites both. A directory there that is no worktree is left alone, and one repair that
     // fails, printed, does not stop the others.
     let repair = "cd -- \"$1\" || exit 1; for d in \"$2\"/*/; do [ -f \"$d.git\" ] || continue; \
                   git worktree repair \"${d%/}\" >/dev/null 2>&1 || printf '%s\\n' \"${d%/}\"; done";
     let worktrees = format!("{cwd}/{WORKTREES_DIR}");
-    let mut said = format!("moved the project's runs from {old} to {new}");
     match host.check(&["sh", "-c", repair, "_", cwd, &worktrees], None, DEFAULT_TIMEOUT) {
         Ok(unrepaired) => {
             for tree in unrepaired.lines() {
@@ -72,18 +83,18 @@ pub fn move_project_dir(host: &dyn Host, cwd: &str, dry_run: bool) -> Result<Opt
     }
     // A run's worktree is WORKTREES_DIR/<its key> (cli::start), under whatever spelling of the project's path the run
     // was started with; prune finds a kept one only by its saved path.
-    for run in runs.iter().map(|r| r.shown()) {
+    for run in runs.iter().map(SavedRun::shown) {
         let old_tail = format!("/{OLD_PROJECT_DIR}/worktrees/{}", run.key());
         if !run.worktree.as_deref().is_some_and(|w| w.ends_with(&old_tail)) {
             continue;
         }
-        let state = format!("{new}/runs/{}/state.json", run.run_id);
-        let tree = format!("{cwd}/{WORKTREES_DIR}/{}", run.key());
+        let state = format!("{cwd}/{PROJECT_DIR}/runs/{}/state.json", run.run_id);
+        let tree = format!("{worktrees}/{}", run.key());
         if let Err(e) = resave_worktree(host, &state, &tree) {
             said.push_str(&format!("; {e}: set its worktree to {tree} by hand"));
         }
     }
-    Ok(Some(said))
+    said
 }
 
 /// Set the worktree of the run whose state.json is at path to worktree, keeping the rest of the file, and its
