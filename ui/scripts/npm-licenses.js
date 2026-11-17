@@ -23,8 +23,8 @@ export const BUILD_CODE = ["vite", "rolldown"];
 
 // The names of the files that hold the licenses of code a package copied from others, wherever in the name and in
 // whatever case: THIRD-PARTY-LICENSE, THIRD_PARTY_LICENSES, ThirdPartyNotices.txt, LICENSE-THIRD-PARTY. Never taken for
-// the package's own license text; shipped for BUILD_CODE's packages only, whose code is the only dev code the bundle
-// holds.
+// the package's own license text. Shipped for BUILD_CODE's packages, and for any package when the name also starts
+// with NOTICE; a production package's other third-party files are not looked for (TODO.md).
 const THIRD_PARTY = /third[-_ ]?party/i;
 
 /**
@@ -135,10 +135,10 @@ function licenseNotice(dir, offered, usable) {
   return { license: expression, text: files[0].text };
 }
 
-// text followed by the files in dir it ships with, by name, each headed by its name: every THIRD_PARTY file when
-// thirdParty, none otherwise, and each other NOTICE* file.
+// text followed by the files in dir it ships with, by name, each headed by its name: each NOTICE* file, whatever
+// else its name says, and every other THIRD_PARTY file when thirdParty.
 function withNotices(dir, text, thirdParty) {
-  const extra = noticeFiles(dir, (name) => (THIRD_PARTY.test(name) ? thirdParty : /^notice/i.test(name)));
+  const extra = noticeFiles(dir, (name) => /^notice/i.test(name) || (thirdParty && THIRD_PARTY.test(name)));
   return [text, ...extra.map((f) => `${f.name}:\n\n${f.text}`)].join("\n\n");
 }
 
