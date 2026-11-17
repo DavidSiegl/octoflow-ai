@@ -1029,8 +1029,9 @@ pub trait Host {
             return Ok(None);
         }
         let script = format!(
-            "cd -- \"$HOME\" || exit 1; for f in $1; do [ -f \"$f\" ] && exec cat -- \"$f\"; done; \
-             exit {MISSING_FILE_STATUS}"
+            "cd -- \"$HOME\" || exit 1; for f in $1; do [ -f \"$f\" ] || continue; {}; exit 0; done; \
+             exit {MISSING_FILE_STATUS}",
+            cat_unless_gone("$f")
         );
         let glob = pattern.replace("{session}", session);
         let proc = self.run_verbatim(&["sh", "-c", &script, "_", &glob], None, DEFAULT_TIMEOUT)?;

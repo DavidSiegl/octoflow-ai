@@ -969,6 +969,18 @@ fn session_log_finds_the_file_under_home() {
 }
 
 #[test]
+fn a_session_log_removed_between_its_test_and_its_read_is_missing() {
+    let home = TempDir::new();
+    put(&home.join(".claude/projects/-proj/abc-123.jsonl"), "log\n");
+    // session_log cats the path its glob expanded to under $HOME, relative to it.
+    let bin = TempDir::new();
+    tool_that_loses(&bin.path(), "cat", ".claude/projects/-proj/abc-123.jsonl");
+    let host =
+        ProcessHost::in_environment(environment(Some(&bin.path()), &[("HOME", &home.path())]).into_iter(), &Interrupt::new());
+    assert_eq!(host.session_log("claude", "abc-123").unwrap(), None);
+}
+
+#[test]
 fn run_metrics_reads_each_run_s_line() {
     let d = TempDir::new();
     let host = ProcessHost::local(&Interrupt::new());
