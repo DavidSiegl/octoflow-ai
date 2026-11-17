@@ -54,17 +54,22 @@ export APPIMAGE_EXTRACT_AND_RUN=1
 # and appimagetool one each a build, and the desktop AppImage one each smoke test. So each of them runs with a TMPDIR
 # of its own, build_tmp for tauri build and smoke_dir for the smoke test, removed when done and, should the
 # script stop first, on its exit, a failure, Ctrl-C, SIGHUP or SIGTERM. One a kill -9 leaves in build_tmp is removed
-# by the next build. macOS builds no AppImage, and its build's temporary files go the same way.
+# by the next build. macOS builds no AppImage, and its build's temporary files go the same way, as does the .dmg smoke
+# test's smoke_dir, the .dmg detached first.
 build_tmp="$PWD/build/desktop/tmp"
-# The smoke test's own directory, the AppImage's or the .dmg's; empty until one starts.
+# The directory the running or last smoke test works in, the AppImage's TMPDIR or the .dmg's mount point's parent;
+# empty until one starts.
 smoke_dir=''
-# Non-empty while the .dmg smoke test has the .dmg attached at $smoke_dir/mnt.
-dmg_attached=''
-# The extractions hold read-only directories, which rm -rf alone cannot empty. An attached .dmg is detached first,
-# since its read-only volume cannot be emptied either; should that fail, so does the removal, which says so.
+# The extractions hold read-only directories, which rm -rf alone cannot empty. A .dmg still mounted at
+# $smoke_dir/mnt, by a smoke test that failed or was stopped, is detached first, since its read-only volume cannot be
+# emptied either. Only a mounted one: given a path that is no mount point, hdiutil detach could act on the volume
+# holding it. A signal arriving during hdiutil attach runs the trap once attach has returned, so a .dmg it attached
+# is mounted by then. Should the detach fail, it says so and so does the removal.
 remove_temporaries() {
-    [ -z "$dmg_attached" ] || hdiutil detach -quiet -force "$smoke_dir/mnt" 2>/dev/null || true
-    dmg_attached=''
+    if [ -n "$smoke_dir" ] && mount | grep -qF " on $smoke_dir/mnt ("; then
+        hdiutil detach -quiet -force "$smoke_dir/mnt" \
+            || echo "build-desktop.sh: could not detach the .dmg mounted at $smoke_dir/mnt" >&2
+    fi
     for dir in "$build_tmp" ${smoke_dir:+"$smoke_dir"}; do
         [ ! -e "$dir" ] || { chmod -R u+rwX "$dir" && rm -rf "$dir"; } \
             || echo "build-desktop.sh: could not remove $dir" >&2
@@ -231,9 +236,6 @@ smoke_dmg() {
         exit 1
     }
     mkdir "$smoke/mnt" "$smoke/bin" "$smoke/project" || smoke_fail "could not make directories in $smoke"
-    # Set before the attach, so that a signal during it still detaches whatever it attached; detaching what was never
-    # attached fails harmlessly.
-    dmg_attached=yes
     hdiutil attach -quiet -nobrowse -readonly -mountpoint "$smoke/mnt" "$1" || smoke_fail "could not mount $1"
     app="$smoke/mnt/Octoflow.app"
     ln -s "$app/Contents/MacOS/octoflow" "$smoke/bin/octoflow" || smoke_fail "could not link the orchestrator"
@@ -248,7 +250,6 @@ smoke_dmg() {
         fi
         sleep 2
     done
-    dmg_attached=''
     remove_temporaries
     echo "smoke-tested dist/$(basename "$1") as the CLI, by symlink"
 }
