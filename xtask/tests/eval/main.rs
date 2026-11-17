@@ -242,13 +242,32 @@ fn a_run_that_failed_without_metrics_is_still_judged() {
 }
 
 #[test]
-fn a_run_that_made_no_run_directory_is_not_closed() {
+fn an_engine_that_made_no_run_halts_the_eval_unjudged() {
+    // As the engine refuses a workflow without a spec step under --spec, before any agent starts.
     let engine = FakeEngine::new();
     engine.plan(Plan { exit: 1, run_id: None, ..Plan::default() });
-    let trial = engine.trial("feature", &[], false, 1);
-    assert_eq!((trial.passed, trial.run_id), (false, None));
+    let (task,) = load("feature");
+    match eval::run_trial(&task, 1, &engine.command(), &[], false) {
+        Err(Halt::Failed(e)) => {
+            assert!(e.0.contains("the engine exited with status 1 and made no run"), "{e}");
+        }
+        other => panic!("not an error of the runner's: {other:?}"),
+    }
     let commands: Vec<Value> = engine.log().iter().map(|entry| entry["argv"][0].clone()).collect();
-    assert_eq!(commands, [json!("run")]);
+    assert_eq!(commands, [json!("run")], "no close");
+}
+
+#[test]
+fn an_engine_that_made_no_run_leaves_no_result_line() {
+    let engine = FakeEngine::new();
+    engine.plan(Plan { exit: 1, run_id: None, ..Plan::default() });
+    let checkout = checkout_with("feature");
+    let mut out = vec![];
+    let argv = strings(&["--tasks", "feature", "--repeat", "2"]);
+    assert_eq!(eval::run(&argv, checkout.path(), Some(&engine.command().join(" ")), &mut out), 1);
+    assert_eq!(engine.log().len(), 1, "the second trial never started");
+    assert!(!checkout.path().join("evals/results").exists());
+    assert!(out.is_empty(), "{}", String::from_utf8_lossy(&out));
 }
 
 #[test]

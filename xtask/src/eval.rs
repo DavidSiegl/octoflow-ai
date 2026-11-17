@@ -24,7 +24,8 @@
 //!   starting commit, which the run never moves.
 //!
 //! Exit status: 0 when every trial ran, whatever its tests said; 1 for an error of the runner's own, such as an unknown
-//! task or a bundle that cannot be cloned; 2 for a usage error; 130 when interrupted, after the trials before.
+//! task, a bundle that cannot be cloned, or an engine that made no run, refusing its arguments; 2 for a usage error;
+//! 130 when interrupted, after the trials before.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -304,8 +305,9 @@ pub fn config_name(run_args: &[String]) -> String {
 ///
 /// Neither the hidden test nor the task's directory is reachable from the clone: the spec is a copy beside it, and
 /// its origin a copy of the bundle. The engine's output goes to this process's standard error, the hidden test's into
-/// the result. Errors: [`Halt::Failed`] when the bundle cannot be cloned or the hidden test cannot be started;
-/// [`Halt::Interrupted`] after a Ctrl-C, once the command it reached has stopped, leaving the directory for a resume.
+/// the result. Errors: [`Halt::Failed`] when the bundle cannot be cloned, the engine made no run (it refused its
+/// arguments), or the hidden test cannot be started; [`Halt::Interrupted`] after a Ctrl-C, once the command it
+/// reached has stopped, leaving the directory for a resume.
 pub fn run_trial(task: &Task, repeat: u32, engine: &[String], run_args: &[String], keep: bool) -> Result<Trial, Halt> {
     let work = tempfile::Builder::new()
         .prefix(&format!("octoflow-eval-{}-", task.name))
@@ -354,10 +356,17 @@ fn judged_trial(
     let engine_exit = run_engine(&argv)?;
     let seconds = (started.elapsed().as_secs_f64() * 10.0).round() / 10.0;
     let known = run_metrics(repo);
-    match &known.run_id {
-        Some(run_id) => close(engine, run_id, repo),
-        None => eprintln!("warning: the engine left no run directory under {RUNS_DIR} in {}", repo.display()),
-    }
+    // An engine that made no run refused it before any agent started, as it refuses a workflow without a spec step
+    // under --spec: the arguments are wrong for every trial, and no trial of them is worth judging or recording.
+    let Some(run_id) = &known.run_id else {
+        return Err(Halt::Failed(Error(format!(
+            "task {}: the engine exited with status {engine_exit} and made no run under {RUNS_DIR} in {}; its own \
+             error is above",
+            task.name,
+            repo.display()
+        ))));
+    };
+    close(engine, run_id, repo);
     if interrupted() {
         return Err(Halt::Interrupted);
     }

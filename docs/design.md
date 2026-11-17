@@ -165,7 +165,8 @@ the flags it sets itself and those that would put the change elsewhere. A workfl
 spec, such as the built-in `default` or `product-team`, starts at the step after it, so no
 interview waits for an answer; `design`, whose later steps wait for the human too, would hang there and is no
 workflow for eval; one without such a step, such as `quick`, cannot take
-`--spec`, and the engine refuses it before any agent starts.
+`--spec`, and the engine refuses it before any agent starts; the runner then stops with an error, recording no
+trial, since its arguments would fail every one.
 `xtask/src/eval.rs`'s module comment gives its flags, the shape of a task and its exit status. A Ctrl-C stops the
 eval once the engine has saved its run, keeps that trial's clone, prints the table of the trials before it and exits
 130.
