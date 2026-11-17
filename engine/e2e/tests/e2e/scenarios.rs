@@ -68,8 +68,8 @@ fn writes(file: &str, text: &str) -> Action {
 }
 
 /// An agent that exits without doing anything.
-fn exits() -> Value {
-    object([("exit", Value::Bool(true))])
+fn exits() -> Action {
+    Action(octoflow_engine::json::object([("exit", Value::Bool(true))]))
 }
 
 fn spec_written() -> Action {
@@ -170,6 +170,18 @@ pub fn workflow_quick(w: &mut World) {
     w.agent("build", [built(1, 0)]);
     w.agent("review", [approved(1)]);
     w.run(&["run", "--workflow", "quick", "--", TASK]);
+}
+
+/// A workflow without a verdict step and without the quality gate, published as FINISHED; the Builder's report is
+/// longer than a pull request section holds (PR_SECTION_LIMIT), so the body cuts it.
+pub fn finished_with_long_report(w: &mut World) {
+    let path = solo_workflow(w);
+    let line = "Checked `subtract` against every pair of small integers; each difference is as expected.\n";
+    let report = format!("Added subtract and its test (round 1). `pytest` passes.\n\n{}", line.repeat(250));
+    assert!(report.chars().count() > octoflow_engine::constants::PR_SECTION_LIMIT, "a report longer than a section");
+    w.agent("build", [writes("build-1.md", &report)
+        .edit(&[("src/calc.py", CALC_WITH_SUBTRACT), ("tests/test_calc.py", TEST_WITH_SUBTRACT)])]);
+    w.run(&["run", "--workflow-file", &path, "--", TASK]);
 }
 
 /// A workflow file installed in the configuration directory and run by --workflow, with --role-model and --agent.
@@ -523,6 +535,17 @@ pub fn gate_turned_off_by_resume(w: &mut World) {
     killed_held_and_resumed(w, "quality", &gated(&["--", TASK]), &["--no-quality-gate"]);
 }
 
+/// Quality round 1 fails; the run is killed while the Builder answers it and resumed with --no-quality-gate, so the
+/// Builder's answer goes unjudged: the Reviewer gets QUALITY_OFF_NOTE, and the pull request says the gate was turned
+/// off after its last analysis.
+pub fn gate_turned_off_after_analysis(w: &mut World) {
+    w.local_gate([judged_failed()]);
+    w.agent("spec", [spec_written()]);
+    w.agent("build", [built(1, 0), built(1, 1).hold("fix")]);
+    w.agent("review", [approved(1)]);
+    killed_and_resumed_with(w, "fix", &gated(&["--", TASK]), &["--no-quality-gate"]);
+}
+
 // -- Where the run works -------------------------------------------------------------
 
 /// run --worktree: the run builds in a worktree of its own from origin's main, which is removed once the pull request is
@@ -660,9 +683,23 @@ pub fn kill_in_tests(w: &mut World) {
 /// prompted to continue in.
 pub fn resume_after_agent_exit(w: &mut World) {
     w.agent("spec", [spec_written()]);
-    w.agent("build", [exits(), built(1, 0).into()]);
+    w.agent("build", [exits(), built(1, 0)]);
     w.agent("review", [approved(1)]);
     w.run(&["run", "--", TASK]);
+    let key = w.run_key(1);
+    w.run(&["resume", &key]);
+}
+
+/// The Builder takes its prompt, then exits mid-turn without its report, and the run fails; resume relaunches it in
+/// its saved session, where it is told to continue the turn (CONTINUE_PROMPT) rather than prompted afresh.
+pub fn agent_exits_mid_turn(w: &mut World) {
+    w.agent("spec", [spec_written()]);
+    w.agent("build", [exits().hold("build"), built(1, 0)]);
+    w.agent("review", [approved(1)]);
+    let run = w.start(&["run", "--", TASK], true);
+    w.wait_reached("build");
+    w.release("build");
+    w.invocation(run).wait();
     let key = w.run_key(1);
     w.run(&["resume", &key]);
 }
