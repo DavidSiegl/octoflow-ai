@@ -68,10 +68,20 @@ remove_temporaries() {
 # empty when none is running. A signal sent to this script alone, rather than to its process group as a Ctrl-C at a
 # terminal is, reaches neither of them.
 serve_pid='' orchestrator=''
+# gone PID: whether process PID has ended: no /proc entry, or a zombie's, state Z after its "(comm) ". Linux only, as
+# the AppImage smoke test that sets the pids above is.
+gone() {
+    [ ! -e "/proc/$1" ] || [ "$(sed -n 's/.*) \(.\).*/\1/p' "/proc/$1/stat" 2>/dev/null)" = Z ]
+}
 # Stops serve before its directory goes. The orchestrator by its own pid too: the smoke test's failed check may be
-# that the runtime's death did not stop it.
+# that the runtime's death did not stop it. Waits up to 2 s for both to end, so that neither still writes in the
+# directory while it is removed; one that outlives that is left, and the removal may then fail and say so.
 clean_up() {
     for pid in $orchestrator $serve_pid; do kill "$pid" 2>/dev/null || true; done
+    for pid in $orchestrator $serve_pid; do
+        tries=0
+        until gone "$pid" || [ "$tries" -ge 20 ]; do tries=$((tries + 1)); sleep 0.1; done
+    done
     remove_temporaries
 }
 trap clean_up EXIT
@@ -186,11 +196,10 @@ smoke_appimage() {
 
     # The runtime, as timeout or a service manager would stop it: under APPIMAGE_EXTRACT_AND_RUN it stays serve's
     # parent and passes on no signal, so serve stops only by the SIGTERM it asked for at its parent's death
-    # (Cli::run in ui/src-tauri/src/lib.rs). Gone means no /proc entry, or a zombie's, state Z after its "(comm) ".
+    # (Cli::run in ui/src-tauri/src/lib.rs).
     kill "$serve_pid"
     tries=0
-    while [ -e "/proc/$orchestrator" ] && [ "$(sed -n 's/.*) \(.\).*/\1/p' "/proc/$orchestrator/stat" 2>/dev/null)" != Z ]
-    do
+    until gone "$orchestrator"; do
         tries=$((tries + 1))
         [ "$tries" -le 20 ] || smoke_fail "serve still runs 2 s after the AppImage's runtime got SIGTERM"
         sleep 0.1
