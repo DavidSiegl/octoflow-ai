@@ -14,6 +14,7 @@ use crate::constants::{
     HARNESS_NAMES, CLOSED_BRANCH_GRACE, DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS,
     DEFAULT_TURN_TIMEOUT, EXIT_ERROR, EXIT_WAITING, REMOTE, ROLE_LABELS,
 };
+use crate::harness::harness;
 use crate::cli::doctor::{dotted, GIT_MIN_VERSION, HERDR_MIN_VERSION};
 use crate::cli::drain::{DRAIN_DIR, SPEC_DONE, SPEC_FOR_HUMAN, SPEC_IN_REVIEW, SPEC_READY};
 use crate::cli::listing::RUN_RECORD_VERSION;
@@ -564,7 +565,7 @@ fn settings_args() -> Vec<Arg> {
                 "Model for one role of the workflow, by its key; overrides --model and the workflow's own model for \
                  it; repeatable",
             ),
-        Arg::new("agent").long("agent").value_name("KIND").value_parser(PossibleValuesParser::new(HARNESS_NAMES)).help(
+        Arg::new("agent").long("agent").value_name("KIND").value_parser(agent_arg).help(
             format!(
                 "Agent harness for every role, one of {}; overrides the agent key of a role in the workflow file \
                  (default {DEFAULT_HARNESS}). Each harness a run uses needs its CLI on PATH and its herdr \
@@ -665,16 +666,16 @@ fn role_model_arg(text: &str) -> Result<(String, String), String> {
     }
 }
 
-/// ROLE=KIND, ROLE non-empty and KIND one of HARNESS_NAMES.
+/// KIND, a harness kind. Errors: crate::harness::harness's refusal, which names the kind that replaced a retired one.
+fn agent_arg(kind: &str) -> Result<String, String> {
+    harness(kind).map(|_| kind.to_string()).map_err(|e| e.0)
+}
+
+/// ROLE=KIND, ROLE non-empty and KIND a harness kind. Errors: not of that shape, or agent_arg's for KIND.
 fn role_agent_arg(text: &str) -> Result<(String, String), String> {
     match text.split_once('=') {
-        Some((role, kind)) if !role.is_empty() && HARNESS_NAMES.contains(&kind) => {
-            Ok((role.to_string(), kind.to_string()))
-        }
-        _ => Err(format!(
-            "expected ROLE=KIND, where KIND is one of {}; not {text:?}",
-            HARNESS_NAMES.join(", ")
-        )),
+        Some((role, kind)) if !role.is_empty() => Ok((role.to_string(), agent_arg(kind)?)),
+        _ => Err(format!("expected ROLE=KIND, where KIND is one of {}; not {text:?}", HARNESS_NAMES.join(", "))),
     }
 }
 

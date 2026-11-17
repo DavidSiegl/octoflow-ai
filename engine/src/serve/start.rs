@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 use crate::constants::{HARNESS_NAMES, DEFAULT_HARNESS};
 use crate::env::ConfigDir;
 use crate::error::OrchestratorError;
+use crate::harness::harness;
 use crate::interrupt::Interrupt;
 use crate::pipeline::Pipeline;
 use crate::prompts::Prompts;
@@ -64,11 +65,11 @@ pub struct RunRequest {
     pub task: String,
     /// --workflow; None for run's default.
     pub workflow: Option<String>,
-    /// --agent, one of HARNESS_NAMES.
+    /// --agent, a harness kind (crate::harness::harness).
     pub agent: Option<String>,
     /// --model.
     pub model: Option<String>,
-    /// Each --role-agent, (role, kind), in the body's order; kind one of HARNESS_NAMES.
+    /// Each --role-agent, (role, kind), in the body's order; kind a harness kind.
     pub role_agents: Vec<(String, String)>,
     /// Each --role-model, (role, model), in the body's order.
     pub role_models: Vec<(String, String)>,
@@ -83,10 +84,11 @@ const FIELDS: [&str; 8] = ["task", "workflow", "agent", "model", "role_agents", 
 
 impl RunRequest {
     /// The run body asks for: a JSON object with "task", a string that is not empty, and any of "workflow", "agent"
-    /// and "model", each a string that is not empty, "agent" one of HARNESS_NAMES; "role_agents" and "role_models",
-    /// each an object of role to harness (one of HARNESS_NAMES) or to model, each role and model not empty and a role
-    /// without `=`; and "no_pr" and "worktree", each a boolean; null for any of them but "task" is leaving it out.
-    /// Errors: why the body is not so, in words a client can show, naming the first field that is wrong.
+    /// and "model", each a string that is not empty, "agent" a harness kind; "role_agents" and "role_models", each an
+    /// object of role to harness kind or to model, each role and model not empty and a role without `=`; and "no_pr"
+    /// and "worktree", each a boolean; null for any of them but "task" is leaving it out. Errors: why the body is not
+    /// so, in words a client can show, naming the first field that is wrong; for a kind that is not a harness, the
+    /// refusal of crate::harness::harness, as the CLI's --agent and --role-agent give it.
     pub fn parse(body: &[u8]) -> Result<RunRequest, String> {
         let Some(fields) = super::json_object(body) else { return Err("the body must be a JSON object".to_string()) };
         if let Some(unknown) = fields.keys().find(|k| !FIELDS.contains(&k.as_str())) {
@@ -110,16 +112,17 @@ impl RunRequest {
         };
         let task = text("task")?.ok_or_else(|| "task must be a string that is not empty".to_string())?;
         let agent = text("agent")?;
-        if let Some(kind) = agent.as_deref().filter(|k| !HARNESS_NAMES.contains(k)) {
-            return Err(format!("agent {kind:?} is not one of {}", HARNESS_NAMES.join(", ")));
+        let role_agents = by_role(given("role_agents"), "role_agents")?;
+        for kind in agent.iter().chain(role_agents.iter().map(|(_, kind)| kind)) {
+            harness(kind).map_err(|e| e.0)?;
         }
         Ok(RunRequest {
             task,
             workflow: text("workflow")?,
             agent,
             model: text("model")?,
-            role_agents: by_role(given("role_agents"), "role_agents", Some(&HARNESS_NAMES))?,
-            role_models: by_role(given("role_models"), "role_models", None)?,
+            role_agents,
+            role_models: by_role(given("role_models"), "role_models")?,
             no_pr: flag("no_pr")?,
             worktree: flag("worktree")?,
         })
@@ -193,22 +196,18 @@ fn json_holds_nul(json: &Value) -> bool {
     }
 }
 
-/// The (role, setting) pairs of field, the body's field name, in its order; none when it is not given. Each setting
-/// must be one of allowed when given. Errors: field is not an object of such pairs.
-fn by_role(field: Option<&Value>, name: &str, allowed: Option<&[&str]>) -> Result<Vec<(String, String)>, String> {
+/// The (role, setting) pairs of field, the body's field name, in its order; none when it is not given. Errors: field
+/// is not an object of role to a string that is not empty.
+fn by_role(field: Option<&Value>, name: &str) -> Result<Vec<(String, String)>, String> {
     let Some(field) = field else { return Ok(vec![]) };
-    let shape = || match allowed {
-        Some(kinds) => format!("{name} must be an object of role to one of {}", kinds.join(", ")),
-        None => format!("{name} must be an object of role to a string that is not empty"),
-    };
+    let shape = || format!("{name} must be an object of role to a string that is not empty");
     // A role with `=` would split elsewhere than its own end in --role-agent's and --role-model's ROLE=VALUE.
     let role_ok = |role: &str| !role.is_empty() && !role.contains('=');
-    let setting_ok = |v: &str| !v.is_empty() && allowed.is_none_or(|a| a.contains(&v));
     let pairs = field.as_object().ok_or_else(shape)?;
     pairs
         .iter()
         .map(|(role, v)| match v.as_str() {
-            Some(v) if role_ok(role) && setting_ok(v) => Ok((role.clone(), v.to_string())),
+            Some(v) if role_ok(role) && !v.is_empty() => Ok((role.clone(), v.to_string())),
             _ => Err(shape()),
         })
         .collect()
