@@ -78,8 +78,8 @@ gone() {
 # directory while it is removed; one that outlives that is left, and the removal may then fail and say so.
 clean_up() {
     for pid in $orchestrator $serve_pid; do kill "$pid" 2>/dev/null || true; done
+    tries=0
     for pid in $orchestrator $serve_pid; do
-        tries=0
         until gone "$pid" || [ "$tries" -ge 20 ]; do tries=$((tries + 1)); sleep 0.1; done
     done
     remove_temporaries

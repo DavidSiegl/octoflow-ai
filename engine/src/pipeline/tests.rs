@@ -330,7 +330,8 @@ fn every_verdict_step_judges_the_change_each_round_ends_with() {
         Pipeline::new("bad", p.roles().clone(), steps).unwrap_err(),
         "workflow bad: step notes runs between verdict steps review and accept, so a round that review sends back \
          would skip it"
-    );    // A verdict step that edits before the last one: only the later verdict steps would judge its edits.
+    );
+    // A verdict step that edits before the last one: only the later verdict steps would judge its edits.
     let mut steps = p.steps().to_vec();
     steps[1].edits = true;
     assert_eq!(
