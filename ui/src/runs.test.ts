@@ -144,6 +144,18 @@ describe("wording", () => {
     );
     expect(outcome(record({ health: "stale", closed: "workspace closed" }), 400)).toBe("closed: workspace closed");
   });
+
+  it("names the step whose verdict sent back a run judged by several verdict steps", () => {
+    const v = (step: string, verdict: string) => ({ round: 1, step, verdict });
+    const several = [v("review", "APPROVE"), v("accept", "CHANGES_REQUESTED")];
+    expect(outcome(record({ health: null, verdict: "CHANGES_REQUESTED", verdicts: several }), 0))
+      .toBe("CHANGES_REQUESTED by accept");
+    expect(outcome(record({ health: null, verdict: "APPROVE", verdicts: [...several, v("accept", "APPROVE")] }), 0))
+      .toBe("APPROVE");
+    const one = [v("review", "CHANGES_REQUESTED"), v("review", "CHANGES_REQUESTED")];
+    expect(outcome(record({ health: null, verdict: "CHANGES_REQUESTED", verdicts: one }), 0)).toBe("CHANGES_REQUESTED");
+    expect(outcome(record({ health: null, verdict: "CHANGES_REQUESTED" }), 0)).toBe("CHANGES_REQUESTED");
+  });
 });
 
 describe("applyEvent", () => {

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../App";
 import { CONNECTION, stubServer } from "../test/fakes";
@@ -18,8 +18,14 @@ afterEach(() => {
 async function openAbout() {
   stubServer({}, {});
   render(<App connect={() => Promise.resolve(CONNECTION)} />);
-  fireEvent.click(await screen.findByRole("button", { name: "About Octoflow AI" }));
+  clickBadge(await screen.findByRole("button", { name: "About Octoflow AI" }));
   return screen.getByRole("dialog", { name: "about" });
+}
+
+// Clicks the logo's button the way a webview does: jsdom's click alone does not focus it.
+function clickBadge(badge: HTMLElement) {
+  badge.focus();
+  fireEvent.click(badge);
 }
 
 describe("About", () => {
@@ -74,13 +80,26 @@ describe("About", () => {
     expect(screen.queryByText(/Could not open/)).not.toBeInTheDocument();
   });
 
-  it("closes on Escape and on Close, giving the focus back to the logo's button", async () => {
+  it("puts the focus on Close when it opens", async () => {
+    const about = await openAbout();
+    expect(within(about).getByRole("button", { name: "Close" })).toHaveFocus();
+  });
+
+  it("closes on Escape and on Close, giving the focus back to the logo's button once it is no longer inert", async () => {
     await openAbout();
+    const badge = screen.getByRole("button", { name: "About Octoflow AI" });
+    // jsdom focuses an inert element, which the webviews refuse, so this records where each focus() call lands.
+    const focusedInert: boolean[] = [];
+    const focus = vi.spyOn(badge, "focus").mockImplementation(function (this: HTMLElement) {
+      focusedInert.push(this.closest("[inert]") !== null);
+      focus.mockRestore();
+      this.focus();
+    });
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "about" })).not.toBeInTheDocument();
-    const badge = screen.getByRole("button", { name: "About Octoflow AI" });
     expect(badge).toHaveFocus();
-    fireEvent.click(badge);
+    expect(focusedInert).toEqual([false]);
+    clickBadge(badge);
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("dialog", { name: "about" })).not.toBeInTheDocument();
     expect(badge).toHaveFocus();

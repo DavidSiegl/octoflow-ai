@@ -8,7 +8,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Planned
 
-- **The e2e scenarios: what they do not record.** `engine/e2e/` runs 43 scenarios against the engine as a program and
+- **The e2e scenarios: what they do not record.** `engine/e2e/` runs 49 scenarios against the engine as a program and
   compares each with its recording (docs/architecture.md, Tests); a scenario's recording is a review of the engine's
   behaviour. Not covered, and accepted
   as known gaps (the user's ruling, 2026-11-11), since unit tests cover each harness's arguments and its token
@@ -231,7 +231,8 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   stops a run before its first turn; run-usability/02 made the run say so and the README list it, but `doctor` does
   not check it. Decided against reading Claude Code's trust record (`~/.claude.json`, `projects.<path>`) on
   2026-11-05: an undocumented file of another tool, which would break silently when it changes. Closes if Claude
-  Code documents a way to ask whether a folder is trusted.
+  Code documents a way to ask whether a folder is trusted. The eval runner writes that record all the same, for its
+  trials' clones, which no human is there to answer for (`xtask/src/claude_trust.rs`).
 - **The desktop app's recorder reads the e2e Normalizer's placeholders back out of its text, and folds events as
   `last_by_run` does.** Raised by cross-review 166 (F9, nit): "`<run:N>`, `<key:N>`, `<pid:`, `<host>`,
   `<duration>`, `<seconds>`, `<time>` and `<world>` are spelt here as well as in normalize.rs, and line 134 takes
@@ -544,3 +545,10 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   can flake the same way"; (R1-1): "the hidden `run --run-id` flag would fix the order with no wait", at the price of
   testing the given-id path rather than `new_run_id`. Closed by the engine ordering runs by their start time (a saved
   start instant that sorts below the second), after which the scenario's wait goes.
+- **serve does not check the shell of the pane it types a machine's run into.** For a project on a machine,
+  `RunServer::start` (`engine/src/serve/runs.rs`) checks `crate::herdr::pane_shell` on the machine, whose herdr the
+  run's agents are typed into (`Herdr::export`), but `Reached::launcher` types the run's own command line into a pane
+  of this machine's herdr. Cross-review 221 (F3): "a local herdr with default_shell nu serving a project on a machine
+  whose shell is bash. The check passes, the line is typed into nu, and POST /run answers 422 or 202 as before the
+  fix." Closed by the Launcher checking the shell of the panes it opens before it types into one (its fake answering
+  as `ServeHost::pane_shell` does), with serve checking the project's host only for a project on a machine.

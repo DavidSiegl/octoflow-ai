@@ -11,13 +11,14 @@ use crate::interrupt::Interrupt;
 /// passes in that, and a longer outage is left to the human, who resumes the run.
 const WAITS: [u64; 3] = [5, 20, 60];
 
-/// What git writes, over SSH or HTTPS, when it could not reach origin or origin would not let it in: each a failure
-/// that a later try may not have. A failure without any of them, such as a branch origin lacks, is final, and so is
-/// one with any of FINAL too. A command the host kills for running past its time limit, as one that hangs on a network
-/// that drops its packets, says none of them either: four tries of NETWORK_TIMEOUT each would hold a run for 20
-/// minutes, so a hang is final.
+/// What git writes, over SSH or HTTPS, when it could not reach origin or origin would not let it in, and what a read of
+/// origin the host killed for running past its time says: each a failure that a later try may not have. A failure
+/// without any of them, such as a branch origin lacks, is final, and so is one with any of FINAL too.
+///
+/// A read of origin that stalls is ended by git or ssh itself within about a minute and a half (host::ORIGIN_READ),
+/// in an error among these; the host's kill at NETWORK_TIMEOUT is for what those limits miss.
 const UNREACHABLE: &[&str] = &[
-    // ssh's every failure, a refused key included, ends so.
+    // ssh's every failure, a refused key included, ends so; a connection or a server that timed out too.
     "Could not read from remote repository",
     // curl's every failure: DNS, connect, TLS, an HTTP error status.
     "unable to access",
@@ -28,6 +29,8 @@ const UNREACHABLE: &[&str] = &[
     "the remote end hung up unexpectedly",
     "early EOF",
     "RPC failed",
+    // The host's kill of a read past its time; a command that does not read origin, such as a merge, says otherwise.
+    crate::host::ORIGIN_SILENT,
 ];
 
 /// What git writes, beside one of UNREACHABLE's, when origin answered and the answer will not change by asking again:
@@ -41,7 +44,8 @@ const FINAL: &[&str] = &[
     "The requested URL returned error: 404",
 ];
 
-/// reach's result, reach being a call that reaches origin (a fetch, an `ls-remote`), tried again while its error says
+/// reach's result, reach being a call that reaches origin (a fetch or an `ls-remote`, alone or with local git work
+/// around it, as a fast-forward to what was fetched), tried again while its error says
 /// origin could not be reached: up to WAITS.len() more times, each after a wait on clocks that human is told of
 /// first, as `origin unreachable, trying again in 20 s (2 of 3)`.
 ///

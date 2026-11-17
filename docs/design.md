@@ -165,7 +165,12 @@ the flags it sets itself and those that would put the change elsewhere. A workfl
 spec, such as the built-in `default` or `product-team`, starts at the step after it, so no
 interview waits for an answer; `design`, whose later steps wait for the human too, would hang there and is no
 workflow for eval; one without such a step, such as `quick`, cannot take
-`--spec`, and the engine refuses it before any agent starts.
+`--spec`, and the engine refuses it before any agent starts; the runner then stops with an error, recording no
+trial, since its arguments would fail every one.
+Nor does Claude Code's first-run question, whether to trust the folder: the runner marks each clone trusted in
+Claude Code's config file (`~/.claude.json`, or the one in `CLAUDE_CONFIG_DIR`) before the engine starts, and
+removes the mark with the clone; `xtask/src/claude_trust.rs` says why it writes that undocumented record, and stops
+the eval when it cannot.
 `xtask/src/eval.rs`'s module comment gives its flags, the shape of a task and its exit status. A Ctrl-C stops the
 eval once the engine has saved its run, keeps that trial's clone, prints the table of the trials before it and exits
 130.
@@ -202,7 +207,8 @@ run that failed or was interrupted has no `metrics.json`, so it adds to `passed`
 and a few repeats are a small sample: one trial more or less passed is noise, a shift across tasks and repeats is
 not. Compare results of the same tasks only; a line's `commit`, this checkout's HEAD, says which. The Rust series'
 first trial, `bugfix` in `evals/results/2026-11-11-default.jsonl`, is no baseline for wall time or tokens: an unknown
-part of its 73m49s was its Builder's pane waiting on a harness's first-run question, and its `tokens` are `null`
+part of its 73m49s was its Builder's pane waiting on Claude Code's trust question, which later trials are not asked,
+and its `tokens` are `null`
 though Claude Code's are read, for a reason not yet known (GitHub #364).
 
 A result line holds `version` (2 since the tasks became Rust crates, whose numbers start a new series on 2026-10-31; 1

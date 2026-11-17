@@ -1174,3 +1174,60 @@ fn errors_and_directions_as_herdr_takes_them() {
     assert_eq!(OrchestratorError::from(failed).0, "herdr is not on PATH");
     assert_eq!((Direction::Right.as_str(), Direction::Down.as_str()), ("right", "down"));
 }
+
+// -- pane_shell: the shell herdr's panes start, read by its script in a real sh -------------------------------------
+
+/// pane_shell on this machine, in the environment with set added, HERDR_CONFIG_PATH unset unless set has it.
+fn pane_shell_with(set: &[(&str, &str)]) -> Result<String, OrchestratorError> {
+    let mut vars = environment(None, set);
+    if !set.iter().any(|(name, _)| *name == "HERDR_CONFIG_PATH") {
+        vars.retain(|(k, _)| k != "HERDR_CONFIG_PATH");
+    }
+    pane_shell(&crate::host::ProcessHost::in_environment(vars.into_iter(), &Interrupt::new()))
+}
+
+#[test]
+fn pane_shell_is_shell_without_herdrs_config() {
+    let home = TempDir::new();
+    assert_eq!(pane_shell_with(&[("HOME", &home.path()), ("SHELL", "/usr/bin/zsh")]).unwrap(), "/usr/bin/zsh ($SHELL)");
+    let refused = pane_shell_with(&[("HOME", &home.path()), ("SHELL", "/usr/bin/pwsh")]).unwrap_err();
+    assert_eq!(
+        refused.0,
+        "herdr's panes start /usr/bin/pwsh ($SHELL), which cannot run the lines a run types: they need a POSIX shell \
+         (sh, bash, zsh, dash, ksh) or fish"
+    );
+    assert_eq!(pane_shell_with(&[("HOME", &home.path()), ("SHELL", "")]).unwrap(), "/bin/sh (herdr's default)");
+}
+
+#[test]
+fn pane_shell_is_herdrs_default_shell_where_its_config_sets_one() {
+    let home = TempDir::new();
+    let config = format!("{}/.config/herdr/config.toml", home.path());
+    std::fs::create_dir_all(format!("{}/.config/herdr", home.path())).unwrap();
+    std::fs::write(&config, "onboarding = false\n[terminal]\ndefault_shell = \"nu\"\n").unwrap();
+    let refused = pane_shell_with(&[("HOME", &home.path()), ("SHELL", "/bin/bash")]).unwrap_err();
+    assert!(refused.0.starts_with(&format!("herdr's panes start nu ([terminal] default_shell in {config}), ")), "{refused}");
+    // Empty, it leaves $SHELL to pick.
+    std::fs::write(&config, "[terminal]\ndefault_shell = \"\"\n").unwrap();
+    assert_eq!(pane_shell_with(&[("HOME", &home.path()), ("SHELL", "/bin/bash")]).unwrap(), "/bin/bash ($SHELL)");
+    // HERDR_CONFIG_PATH names the file in place of ~/.config/herdr/config.toml.
+    let elsewhere = home.join("herdr.toml");
+    std::fs::write(&elsewhere, "[terminal]\ndefault_shell = \"/usr/bin/fish\"\n").unwrap();
+    let set = [("HOME", home.path()), ("SHELL", "/bin/bash".into()), ("HERDR_CONFIG_PATH", elsewhere.clone())];
+    let set: Vec<(&str, &str)> = set.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    assert_eq!(pane_shell_with(&set).unwrap(), format!("/usr/bin/fish ([terminal] default_shell in {elsewhere})"));
+}
+
+#[test]
+fn pane_shell_names_a_config_it_cannot_read() {
+    let home = TempDir::new();
+    let config = format!("{}/.config/herdr/config.toml", home.path());
+    std::fs::create_dir_all(format!("{}/.config/herdr", home.path())).unwrap();
+    std::fs::write(&config, "[terminal\n").unwrap();
+    let e = pane_shell_with(&[("HOME", &home.path()), ("SHELL", "/bin/bash")]).unwrap_err();
+    assert!(e.0.starts_with(&format!("herdr's {config} is not TOML: ")), "{e}");
+    // A directory where the file would be: cat fails.
+    std::fs::remove_file(&config).unwrap();
+    std::fs::create_dir(&config).unwrap();
+    assert!(pane_shell_with(&[("HOME", &home.path()), ("SHELL", "/bin/bash")]).is_err());
+}

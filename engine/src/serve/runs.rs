@@ -232,7 +232,10 @@ impl ProjectRuns {
     /// `--machine`, for one on a machine. Once the run is launched a look that fails, at its state.json or its pane, is
     /// no answer: the wait goes on, so that the client still gets the id of a run that is running. Gives how the wait
     /// ended, and the named herdr session the run's pane is in (Launched::herdr_session). Errors: Refused for a run
-    /// id that is not a plain name; Failed when herdr cannot launch it (Launcher::launch).
+    /// id that is not a plain name; Failed, before any workspace opens, when the panes of the project's host's herdr
+    /// start a shell that the lines a run types cannot be typed into or that cannot be told (crate::herdr::pane_shell),
+    /// and when herdr cannot launch it (Launcher::launch). For a project on a machine that is the machine's herdr,
+    /// where the agents run; the pane of this machine's that the run's command is typed into is not checked (TODO.md).
     pub fn start(
         &self,
         request: &RunRequest,
@@ -246,6 +249,7 @@ impl ProjectRuns {
         // The pane starts in the resolved directory too, where a relative cwd or one with ~ would resolve elsewhere.
         let target = if self.remote() { self.target.clone() } else { vec!["--cwd".to_string(), self.cwd.clone()] };
         let argv = request.argv(program, run_id, &target);
+        crate::herdr::pane_shell(&*self.host)?;
         let launched = self.launcher.launch(&self.launch_dir, &label, &argv).map_err(OrchestratorError::from)?;
         let saved = || self.host.read(&state).is_ok_and(|text| text.is_some());
         let ended = wait.until(stopping, || {

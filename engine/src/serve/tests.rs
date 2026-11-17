@@ -1044,6 +1044,23 @@ fn a_run_of_a_project_here_is_given_the_directory_serve_resolved() {
 }
 
 #[test]
+fn a_run_is_refused_before_its_workspace_opens_when_herdrs_panes_start_a_shell_it_cannot_type_into() {
+    let host = Arc::new(ServeHost::on(None));
+    let served = starting(&host);
+    host.state().pane_shell = "/usr/bin/nu\n/home/me/.config/herdr/config.toml\n".to_string();
+    let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#);
+    assert_eq!(reply.status, Some(502), "{}", reply.body);
+    let why = reply.json()["error"].as_str().unwrap_or_default().to_string();
+    assert!(why.starts_with("herdr's panes start /usr/bin/nu ($SHELL)"), "{why}");
+    assert!(why.ends_with("POSIX shell (sh, bash, zsh, dash, ksh) or fish"), "{why}");
+    assert!(served.console.state().launches.is_empty());
+    // One herdr's config.toml names, which wins over $SHELL.
+    host.state().pane_shell.push_str("[terminal]\ndefault_shell = \"zsh\"\n");
+    assert_eq!(served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#).status, Some(202));
+    assert_eq!(served.console.state().launches.len(), 1);
+}
+
+#[test]
 fn a_look_that_fails_once_the_run_is_launched_is_no_answer() {
     let host = Arc::new(ServeHost::on(None));
     let served = starting(&host);

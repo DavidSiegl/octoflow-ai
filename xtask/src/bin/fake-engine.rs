@@ -9,7 +9,9 @@
 //!
 //! Each invocation appends a JSON line to the file FAKE_ENGINE_LOG names: its arguments as "argv", and for `run`, what
 //! the agents could see: every path under --cwd but .git's ("paths"), origin's URL ("origin"), and the spec's path and
-//! text ("spec", "spec_text"). It panics on whatever it cannot do, which fails the test that ran it.
+//! text ("spec", "spec_text"), and the text of the file FAKE_ENGINE_SEEN names when it is set ("seen", null for a
+//! file that does not exist): what a harness the engine starts would read there. It panics on whatever it cannot
+//! do, which fails the test that ran it.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -32,6 +34,9 @@ fn main() -> ExitCode {
         entry["origin"] = json!(origin(cwd));
         entry["spec"] = json!(spec);
         entry["spec_text"] = json!(fs::read_to_string(spec).expect("the spec reads"));
+        if let Ok(seen) = std::env::var("FAKE_ENGINE_SEEN") {
+            entry["seen"] = json!(fs::read_to_string(seen).ok());
+        }
         for (path, text) in plan["files"].as_object().into_iter().flatten() {
             let full = cwd.join(path);
             fs::create_dir_all(full.parent().expect("a file has a directory")).expect("its directory is made");

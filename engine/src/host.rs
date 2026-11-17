@@ -38,6 +38,32 @@ pub const GH_UNUSABLE_STATUS: [i32; 2] = [4, 127];
 /// Runs a command in a directory: gh, which finds the repository from its working directory and has no -C, and
 /// gitleaks, which reads an `[extend] path` from its working directory.
 pub const IN_DIR: &str = "cd -- \"$1\" && shift && exec \"$@\"";
+/// Runs `git -C "$1"` with the rest of its arguments, a command that reads origin (a fetch, an `ls-remote`), under
+/// limits git and ssh enforce themselves, so that a try that stalls ends, well before NETWORK_TIMEOUT, in an error
+/// that origin_unreachable takes for an outage: over HTTPS, under 1000 bytes a second for 60 s; over SSH, no
+/// connection after 30 s, or a server silent through 4 keep-alives 15 s apart.
+///
+/// What the user's own configuration sets is kept: git's http.lowSpeedLimit and http.lowSpeedTime, each on its own,
+/// which the GIT_HTTP_LOW_SPEED_* variables outrank in any case; an ssh of their own (GIT_SSH_COMMAND, GIT_SSH,
+/// core.sshCommand or ssh.variant), which is run as they set it, without either limit; and ssh's ConnectTimeout and
+/// ServerAliveInterval for origin's host, as `ssh -G` resolves them from git's own arguments.
+pub const ORIGIN_READ: &str = r#"c=$1; shift
+git -C "$c" config http.lowSpeedLimit >/dev/null 2>&1 || set -- -c http.lowSpeedLimit=1000 "$@"
+git -C "$c" config http.lowSpeedTime >/dev/null 2>&1 || set -- -c http.lowSpeedTime=60 "$@"
+if [ -z "${GIT_SSH_COMMAND-}${GIT_SSH-}" ] && ! git -C "$c" config core.sshCommand >/dev/null 2>&1 &&
+  ! git -C "$c" config ssh.variant >/dev/null 2>&1; then
+  GIT_SSH_COMMAND='o=$(ssh -G "$@" 2>/dev/null); t=
+printf "%s\n" "$o" | grep -qx "connecttimeout none" && t="-o ConnectTimeout=30"
+printf "%s\n" "$o" | grep -qx "serveraliveinterval 0" && t="$t -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+exec ssh $t'
+  GIT_SSH_VARIANT=ssh
+  export GIT_SSH_COMMAND GIT_SSH_VARIANT
+fi
+exec git -C "$c" "$@""#;
+/// What the error of a read of origin (ORIGIN_READ) says, after the git command and before NETWORK_TIMEOUT, when the
+/// host killed it for running past that: crate::workflow::origin_unreachable tries it again. No other command's error
+/// says it.
+pub const ORIGIN_SILENT: &str = "origin did not answer within";
 /// The name of a run directory's file that the engine's metrics command reads (crate::summary::run_metrics).
 const METRICS_FILE: &str = "metrics.json";
 /// Where, relative to a project, forget_run keeps the metrics of the runs it deleted: one line of JSON per run, each
@@ -247,15 +273,17 @@ pub enum ExecError {
     /// The command's program is not on this host's PATH, so it could not be started. Over SSH it is the remote shell
     /// that cannot find a program, which exits 127 as an Exec does.
     NotFound(OrchestratorError),
-    /// Any other failure: the command could not be started otherwise, timed out, was interrupted, or its output could
-    /// not be read.
+    /// The command ran longer than its timeout and was killed.
+    TimedOut(OrchestratorError),
+    /// Any other failure: the command could not be started otherwise, was interrupted, or its output could not be
+    /// read.
     Failed(OrchestratorError),
 }
 
 impl From<ExecError> for OrchestratorError {
     fn from(e: ExecError) -> OrchestratorError {
         match e {
-            ExecError::NotFound(e) | ExecError::Failed(e) => e,
+            ExecError::NotFound(e) | ExecError::TimedOut(e) | ExecError::Failed(e) => e,
         }
     }
 }
@@ -303,8 +331,8 @@ pub trait Host {
 
     /// Runs argv on this host and gives its exit status and output, as they are, once it has exited and closed its
     /// output. stdin, when given, is its standard input, else it reads none. Errors: ExecError::NotFound when argv[0]
-    /// is not on PATH; ExecError::Failed when argv cannot be started otherwise, or runs longer than timeout seconds,
-    /// in which case every process it started that has not left its process group is killed.
+    /// is not on PATH; ExecError::TimedOut when it runs longer than timeout seconds, in which case every process it
+    /// started that has not left its process group is killed; ExecError::Failed when it cannot be started otherwise.
     fn exec(&self, argv: &[&str], stdin: Option<&[u8]>, timeout: u64) -> Result<Exec, ExecError>;
 
     /// argv's exit status and output as text, each line end made "\n", which suits output that is parsed, such as
@@ -445,7 +473,7 @@ pub trait Host {
     /// Fetch the branch from origin and return its remote-tracking ref, `origin/<branch>`. Errors: the fetch fails,
     /// as for a branch origin lacks.
     fn fetch(&self, cwd: &str, branch: &str) -> Result<String, OrchestratorError> {
-        git_timed(self, cwd, &["fetch", "--quiet", REMOTE, branch], NETWORK_TIMEOUT)
+        origin_read(self, cwd, &["fetch", "--quiet", REMOTE, branch])
             .map_err(|e| OrchestratorError(format!("could not fetch {branch} from {REMOTE}: {e}")))?;
         Ok(format!("{REMOTE}/{branch}"))
     }
@@ -757,7 +785,7 @@ pub trait Host {
     /// The commit origin's branch is at; None when origin has no such branch.
     fn remote_branch_commit(&self, cwd: &str, branch: &str) -> Result<Option<String>, OrchestratorError> {
         let git_ref = format!("refs/heads/{branch}");
-        let out = git_timed(self, cwd, &["ls-remote", REMOTE, &git_ref], NETWORK_TIMEOUT)?;
+        let out = origin_read(self, cwd, &["ls-remote", REMOTE, &git_ref])?;
         // ls-remote matches its pattern against the end of each ref's name, so the exact name is picked out.
         Ok(out.lines().find_map(|line| {
             let (commit, name) = line.split_once('\t').unwrap_or((line, ""));
@@ -1273,6 +1301,22 @@ fn git_argv<'a>(cwd: &'a str, args: &[&'a str]) -> Vec<&'a str> {
 /// Host::git with timeout in seconds.
 fn git_timed<H: Host + ?Sized>(host: &H, cwd: &str, args: &[&str], timeout: u64) -> Result<String, OrchestratorError> {
     checked(host, &git_argv(cwd, args), host.git_run(cwd, args, timeout)?)
+}
+
+/// Host::git for a command that reads origin, run through ORIGIN_READ with NETWORK_TIMEOUT. Its failure names the git
+/// command, not the script, when git fails and when it runs past NETWORK_TIMEOUT (ORIGIN_SILENT); one that cannot be
+/// started names the script.
+fn origin_read<H: Host + ?Sized>(host: &H, cwd: &str, args: &[&str]) -> Result<String, OrchestratorError> {
+    let git = git_argv(cwd, args);
+    let mut argv = vec!["sh", "-c", ORIGIN_READ, "_", cwd];
+    argv.extend(args);
+    let exec = host.exec(&argv, None, NETWORK_TIMEOUT).map_err(|e| match e {
+        ExecError::TimedOut(_) => {
+            OrchestratorError(format!("{}: {ORIGIN_SILENT} {NETWORK_TIMEOUT} seconds", shlex_join(&git)))
+        }
+        e => e.into(),
+    })?;
+    checked(host, &git, decoded(exec)?)
 }
 
 /// Whether a yes-or-no git command answers yes: status 0 is yes, 1 is no. Errors: any other status.

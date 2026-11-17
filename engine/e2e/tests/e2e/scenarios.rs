@@ -68,8 +68,8 @@ fn writes(file: &str, text: &str) -> Action {
 }
 
 /// An agent that exits without doing anything.
-fn exits() -> Value {
-    object([("exit", Value::Bool(true))])
+fn exits() -> Action {
+    Action(octoflow_engine::json::object([("exit", Value::Bool(true))]))
 }
 
 fn spec_written() -> Action {
@@ -170,6 +170,18 @@ pub fn workflow_quick(w: &mut World) {
     w.agent("build", [built(1, 0)]);
     w.agent("review", [approved(1)]);
     w.run(&["run", "--workflow", "quick", "--", TASK]);
+}
+
+/// A workflow without a verdict step and without the quality gate, published as FINISHED; the Builder's report is
+/// longer than a pull request section holds (PR_SECTION_LIMIT), so the body cuts it.
+pub fn finished_with_long_report(w: &mut World) {
+    let path = solo_workflow(w);
+    let line = "Checked `subtract` against every pair of small integers; each difference is as expected.\n";
+    let report = format!("Added subtract and its test (round 1). `pytest` passes.\n\n{}", line.repeat(250));
+    assert!(report.chars().count() > octoflow_engine::constants::PR_SECTION_LIMIT, "a report longer than a section");
+    w.agent("build", [writes("build-1.md", &report)
+        .edit(&[("src/calc.py", CALC_WITH_SUBTRACT), ("tests/test_calc.py", TEST_WITH_SUBTRACT)])]);
+    w.run(&["run", "--workflow-file", &path, "--", TASK]);
 }
 
 /// A workflow file installed in the configuration directory and run by --workflow, with --role-model and --agent.
@@ -449,6 +461,44 @@ pub fn quality_stuck(w: &mut World) {
     w.run(&gated(&["--max-rounds", "1", "--", TASK]));
 }
 
+/// An API key gitleaks's default rules find (generic-api-key), written into src/settings.py, split so that this file
+/// holds none. Recordings hold `<api-key>` instead (leaked_key_masked), so that they hold none either.
+const API_KEY: [&str; 2] = ["x9Rk2LmQ7vT4", "pW8sZ3nB6cY1hJ5dF0gA"];
+
+/// Have w's recording show API_KEY as `<api-key>`.
+fn leaked_key_masked(w: &mut World) {
+    w.normalizer.literal(&API_KEY.concat(), "<api-key>");
+}
+
+/// src/settings.py reading the key from the environment, as the Builder writes it once told of API_KEY.
+const SETTINGS_FROM_ENV: &str = "import os\n\nAPI_KEY = os.environ[\"API_KEY\"]\n";
+
+/// The Builder's report of round n, answering quality round q when q is not 0, having added subtract, its test and
+/// src/settings.py holding settings.
+fn built_with_settings(n: u32, q: u32, settings: &str) -> Action {
+    built(n, q).edit(&[
+        ("src/calc.py", CALC_WITH_SUBTRACT),
+        ("tests/test_calc.py", TEST_WITH_SUBTRACT),
+        ("src/settings.py", settings),
+    ])
+}
+
+/// built_with_settings, the settings holding API_KEY.
+fn built_with_key(n: u32, q: u32) -> Action {
+    built_with_settings(n, q, &format!("API_KEY = \"{}\"\n", API_KEY.concat()))
+}
+
+/// The Builder writes an API key into the change: quality round 1's snapshot holds it, so its file is GATE: LEAK and
+/// the gate is not asked; the Builder takes it out, and quality round 2 passes.
+pub fn quality_leak_taken_out(w: &mut World) {
+    leaked_key_masked(w);
+    w.local_gate([judged_ok()]);
+    w.agent("spec", [spec_written()]);
+    w.agent("build", [built_with_key(1, 0), built_with_settings(1, 1, SETTINGS_FROM_ENV)]);
+    w.agent("review", [approved(1)]);
+    w.run(&gated(&["--", TASK]));
+}
+
 /// A workflow without a verdict step whose last quality round fails: QUALITY_GATE_FAILED, exit status 3.
 pub fn quality_workflow_without_review(w: &mut World) {
     let path = solo_workflow(w);
@@ -485,6 +535,17 @@ pub fn gate_turned_off_by_resume(w: &mut World) {
     killed_held_and_resumed(w, "quality", &gated(&["--", TASK]), &["--no-quality-gate"]);
 }
 
+/// Quality round 1 fails; the run is killed while the Builder answers it and resumed with --no-quality-gate, so the
+/// Builder's answer goes unjudged: the Reviewer gets QUALITY_OFF_NOTE, and the pull request says the gate was turned
+/// off after its last analysis.
+pub fn gate_turned_off_after_analysis(w: &mut World) {
+    w.local_gate([judged_failed()]);
+    w.agent("spec", [spec_written()]);
+    w.agent("build", [built(1, 0), built(1, 1).hold("fix")]);
+    w.agent("review", [approved(1)]);
+    killed_and_resumed_with(w, "fix", &gated(&["--", TASK]), &["--no-quality-gate"]);
+}
+
 // -- Where the run works -------------------------------------------------------------
 
 /// run --worktree: the run builds in a worktree of its own from origin's main, which is removed once the pull request is
@@ -516,6 +577,16 @@ pub fn publish_with_conflict(w: &mut World) {
     w.push_to_origin(&[("src/calc.py", upstream)], "Add subtract upstream");
     w.release("review");
     w.invocation(run).wait();
+}
+
+/// No quality gate, and the Builder writes an API key into the change, which the Reviewer approves: publishing commits
+/// it, the scan of the run's branch finds it, and the run ends in phase publish with nothing pushed.
+pub fn publish_with_leak(w: &mut World) {
+    leaked_key_masked(w);
+    w.agent("spec", [spec_written()]);
+    w.agent("build", [built_with_key(1, 0)]);
+    w.agent("review", [approved(1)]);
+    w.run(&["run", "--", TASK]);
 }
 
 // -- Stopped and resumed ------------------------------------------------------------
@@ -612,9 +683,23 @@ pub fn kill_in_tests(w: &mut World) {
 /// prompted to continue in.
 pub fn resume_after_agent_exit(w: &mut World) {
     w.agent("spec", [spec_written()]);
-    w.agent("build", [exits(), built(1, 0).into()]);
+    w.agent("build", [exits(), built(1, 0)]);
     w.agent("review", [approved(1)]);
     w.run(&["run", "--", TASK]);
+    let key = w.run_key(1);
+    w.run(&["resume", &key]);
+}
+
+/// The Builder takes its prompt, then exits mid-turn without its report, and the run fails; resume relaunches it in
+/// its saved session, where it is told to continue the turn (CONTINUE_PROMPT) rather than prompted afresh.
+pub fn agent_exits_mid_turn(w: &mut World) {
+    w.agent("spec", [spec_written()]);
+    w.agent("build", [exits().hold("build"), built(1, 0)]);
+    w.agent("review", [approved(1)]);
+    let run = w.start(&["run", "--", TASK], true);
+    w.wait_reached("build");
+    w.release("build");
+    w.invocation(run).wait();
     let key = w.run_key(1);
     w.run(&["resume", &key]);
 }

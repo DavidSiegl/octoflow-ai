@@ -24,7 +24,8 @@
 //!   starting commit, which the run never moves.
 //!
 //! Exit status: 0 when every trial ran, whatever its tests said; 1 for an error of the runner's own, such as an unknown
-//! task or a bundle that cannot be cloned; 2 for a usage error; 130 when interrupted, after the trials before.
+//! task, a bundle that cannot be cloned, or an engine that made no run, refusing its arguments; 2 for a usage error;
+//! 130 when interrupted, after the trials before.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -36,6 +37,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
+use crate::claude_trust;
 use crate::process::{command, interrupted, watch_interrupts};
 use crate::Error;
 
@@ -302,17 +304,29 @@ pub fn config_name(run_args: &[String]) -> String {
 /// spec there with run_args and without a pull request, close the run's workspace, run the hidden test on what the
 /// run left, and remove the directory unless keep, saying where it is when kept.
 ///
+/// claude_config is Claude Code's config file ([`claude_trust::config_file`]), None for none: the clone is marked
+/// trusted there before the engine starts, so that no Claude Code agent stops at the first-run question, and the mark
+/// is removed with the clone; a kept clone keeps it, for a human to look into the run with Claude Code.
+///
 /// Neither the hidden test nor the task's directory is reachable from the clone: the spec is a copy beside it, and
 /// its origin a copy of the bundle. The engine's output goes to this process's standard error, the hidden test's into
-/// the result. Errors: [`Halt::Failed`] when the bundle cannot be cloned or the hidden test cannot be started;
-/// [`Halt::Interrupted`] after a Ctrl-C, once the command it reached has stopped, leaving the directory for a resume.
-pub fn run_trial(task: &Task, repeat: u32, engine: &[String], run_args: &[String], keep: bool) -> Result<Trial, Halt> {
-    let work = tempfile::Builder::new()
-        .prefix(&format!("octoflow-eval-{}-", task.name))
-        .tempdir()
-        .map_err(|e| Error(format!("task {}: could not make its directory: {e}", task.name)))?;
-    let repo = work.path().join("repo");
-    let trial = match judged_trial(task, repeat, engine, run_args, work.path(), &repo) {
+/// the result. Errors: [`Halt::Failed`] when the bundle cannot be cloned, the clone cannot be marked trusted, the
+/// engine made no run (it refused its arguments), or the hidden test cannot be started; [`Halt::Interrupted`] after a
+/// Ctrl-C, once the command it reached has stopped, leaving the directory for a resume.
+pub fn run_trial(
+    task: &Task,
+    repeat: u32,
+    engine: &[String],
+    run_args: &[String],
+    keep: bool,
+    claude_config: Option<&Path>,
+) -> Result<Trial, Halt> {
+    let made = |e: io::Error| Error(format!("task {}: could not make its directory: {e}", task.name));
+    let work = tempfile::Builder::new().prefix(&format!("octoflow-eval-{}-", task.name)).tempdir().map_err(made)?;
+    // With its links resolved, as Claude Code's working directory names it, which its trust record is keyed by.
+    let root = fs::canonicalize(work.path()).map_err(made)?;
+    let repo = root.join("repo");
+    let trial = match judged_trial(task, repeat, engine, run_args, claude_config, &root, &repo) {
         // A command the Ctrl-C reached failed by it.
         Err(Halt::Failed(_)) if interrupted() => Err(Halt::Interrupted),
         trial => trial,
@@ -326,24 +340,30 @@ pub fn run_trial(task: &Task, repeat: u32, engine: &[String], run_args: &[String
             eprintln!("{} #{repeat}: kept in {}", task.name, kept.display());
         }
     } else {
-        let path = work.path().to_path_buf();
+        if let Some(Err(e)) = claude_config.map(|config| claude_trust::forget(config, &repo)) {
+            eprintln!("warning: {e}");
+        }
         if let Err(e) = work.close() {
-            eprintln!("warning: could not remove {}: {e}", path.display());
+            eprintln!("warning: could not remove {}: {e}", root.display());
         }
     }
     trial
 }
 
-/// run_trial's trial, in work, with the clone at repo, which it leaves there.
+/// run_trial's trial, in work, with the clone at repo, which it leaves there, marked trusted in claude_config.
 fn judged_trial(
     task: &Task,
     repeat: u32,
     engine: &[String],
     run_args: &[String],
+    claude_config: Option<&Path>,
     work: &Path,
     repo: &Path,
 ) -> Result<Trial, Halt> {
     let spec = isolated_inputs(task, work, repo)?;
+    if let Some(config) = claude_config {
+        claude_trust::trust(config, repo)?;
+    }
     let started = Instant::now();
     let mut argv: Vec<String> = engine.to_vec();
     argv.extend(["run", "--no-pr", "--spec"].map(String::from));
@@ -354,10 +374,17 @@ fn judged_trial(
     let engine_exit = run_engine(&argv)?;
     let seconds = (started.elapsed().as_secs_f64() * 10.0).round() / 10.0;
     let known = run_metrics(repo);
-    match &known.run_id {
-        Some(run_id) => close(engine, run_id, repo),
-        None => eprintln!("warning: the engine left no run directory under {RUNS_DIR} in {}", repo.display()),
-    }
+    // An engine that made no run refused it before any agent started, as it refuses a workflow without a spec step
+    // under --spec: the arguments are wrong for every trial, and no trial of them is worth judging or recording.
+    let Some(run_id) = &known.run_id else {
+        return Err(Halt::Failed(Error(format!(
+            "task {}: the engine exited with status {engine_exit} and made no run under {RUNS_DIR} in {}; its own \
+             error is above",
+            task.name,
+            repo.display()
+        ))));
+    };
+    close(engine, run_id, repo);
     if interrupted() {
         return Err(Halt::Interrupted);
     }
@@ -836,14 +863,22 @@ pub fn main(argv: &[String]) -> i32 {
         eprintln!("error: could not watch for Ctrl-C: {e}");
         return 1;
     }
-    run(argv, &crate::checkout(), std::env::var("EVAL_ENGINE").ok().as_deref(), &mut io::stdout())
+    let env = |name: &str| std::env::var(name).ok();
+    let claude_config = claude_trust::config_file(&env);
+    run(argv, &crate::checkout(), env("EVAL_ENGINE").as_deref(), claude_config.as_deref(), &mut io::stdout())
 }
 
 /// Run the eval set as the module's comment says, with argv the runner's arguments, the tasks of checkout's
 /// evals/tasks and its HEAD, and eval_engine as EVAL_ENGINE's value; write its table, or the help, to out, and append
-/// its result lines to checkout's evals/results/<date>-<config>.jsonl as each trial ends. The exit status is the
-/// module's; one that out could not take is 1.
-pub fn run(argv: &[String], checkout: &Path, eval_engine: Option<&str>, out: &mut dyn Write) -> i32 {
+/// its result lines to checkout's evals/results/<date>-<config>.jsonl as each trial ends; each trial's clone is
+/// trusted in claude_config as [`run_trial`] says. The exit status is the module's; one that out could not take is 1.
+pub fn run(
+    argv: &[String],
+    checkout: &Path,
+    eval_engine: Option<&str>,
+    claude_config: Option<&Path>,
+    out: &mut dyn Write,
+) -> i32 {
     if argv.iter().take_while(|arg| *arg != "--").any(|arg| arg == "-h" || arg == "--help") {
         let help =
             writeln!(out, "{USAGE}\n\nRun the eval set's tasks through the engine and judge each by its hidden test.");
@@ -865,7 +900,7 @@ pub fn run(argv: &[String], checkout: &Path, eval_engine: Option<&str>, out: &mu
     };
     let results_path = evaluation.results_path(&checkout.join(RESULTS_SUBDIR));
     let mut trials = vec![];
-    let halt = run_trials(&args, checkout, eval_engine, &evaluation, &results_path, &mut trials);
+    let halt = run_trials(&args, checkout, eval_engine, claude_config, &evaluation, &results_path, &mut trials);
     let mut exit = match halt {
         Ok(()) => 0,
         Err(Halt::Failed(e)) => {
@@ -907,6 +942,7 @@ fn run_trials(
     args: &Args,
     checkout: &Path,
     eval_engine: Option<&str>,
+    claude_config: Option<&Path>,
     evaluation: &Eval,
     results_path: &Path,
     trials: &mut Vec<Trial>,
@@ -920,7 +956,7 @@ fn run_trials(
             if interrupted() {
                 return Err(Halt::Interrupted);
             }
-            let trial = run_trial(task, repeat, &engine, &args.run_args, args.keep)?;
+            let trial = run_trial(task, repeat, &engine, &args.run_args, args.keep, claude_config)?;
             let record = evaluation.record(&trial);
             // In the table even when its line cannot be kept.
             trials.push(trial);

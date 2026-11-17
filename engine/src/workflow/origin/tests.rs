@@ -74,6 +74,15 @@ fn a_failure_a_retry_cannot_change_is_tried_once() {
 }
 
 #[test]
+fn a_local_command_killed_for_running_past_its_time_is_tried_once() {
+    let (clock, told, interrupt, tries) = (FakeClock::default(), Told::default(), Interrupt::new(), Cell::new(0));
+    // fast_forward's merge after its fetch, under the same reaching_origin.
+    let merge = "git -C /proj merge --ff-only --quiet origin/main: timed out after 60 seconds";
+    let e = reaching_origin(&clock, &told, &interrupt, failing(merge, u32::MAX, &tries)).unwrap_err();
+    assert_eq!((tries.get(), e.0.as_str()), (1, merge));
+}
+
+#[test]
 fn an_answer_origin_will_give_again_is_final() {
     for error in [
         "fatal: 'origin' does not appear to be a git repository\nfatal: Could not read from remote repository.",
@@ -100,6 +109,12 @@ fn each_way_git_says_it_could_not_reach_origin_is_retried() {
         "fatal: early EOF",
         "error: RPC failed; HTTP 502 curl 22 The requested URL returned error: 502",
         "fatal: Authentication failed for 'https://github.com/o/r/'",
+        // What ends a read under host::ORIGIN_READ's limits: HTTPS too slow, a silent server over SSH.
+        "error: RPC failed; curl 28 Operation too slow. Less than 1000 bytes/sec transferred the last 60 seconds",
+        "fatal: unable to access 'https://github.com/o/r/': Operation too slow. Less than 1000 bytes/sec transferred",
+        "Timeout, server github.com not responding.\nfatal: the remote end hung up unexpectedly",
+        // And the host's kill of a read that ran past NETWORK_TIMEOUT all the same.
+        "git -C /proj fetch --quiet origin main: origin did not answer within 300 seconds",
     ] {
         let (clock, told, interrupt, tries) = (FakeClock::default(), Told::default(), Interrupt::new(), Cell::new(0));
         reaching_origin(&clock, &told, &interrupt, failing(error, 1, &tries)).unwrap();

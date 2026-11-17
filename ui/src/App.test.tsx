@@ -623,6 +623,38 @@ describe("the run form", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
+  // jsdom keeps an inert element focusable and clickable, so these check for the attribute the webview enforces.
+  const reachable = (element: HTMLElement) => element.closest("[inert]") === null;
+
+  it("leaves only the form reachable while a start is pending, and then selects the started run", async () => {
+    let release = () => {};
+    const { form, source } = await openForm({ held: new Promise<void>((resolve) => (release = resolve)) });
+    expect(reachable(form)).toBe(true);
+    typeTask(form, "Add a rate limiter");
+    fireEvent.click(within(form).getByRole("button", { name: "Start" }));
+    await within(form).findByText("Starting the run…");
+    expect(reachable(screen.getByLabelText("Project folder"))).toBe(false);
+    expect(reachable(screen.getByRole("button", { name: "Check setup…" }))).toBe(false);
+    await act(async () => release());
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(reachable(screen.getByLabelText("Project folder"))).toBe(true);
+    act(() => source.replay("a run started its interview"));
+    expect(screen.getByRole("region", { name: "run c0ffee" })).toBeInTheDocument();
+  });
+
+  it("leaves only the form reachable while a start is pending, and then shows why it failed", async () => {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const { form } = await openForm({ held, runStatus: 422, runBody: { error: "no workflow nope", run: RUN } });
+    typeTask(form, "Add a rate limiter");
+    fireEvent.click(within(form).getByRole("button", { name: "Start" }));
+    await within(form).findByText("Starting the run…");
+    expect(reachable(screen.getByRole("button", { name: "Open" }))).toBe(false);
+    await act(async () => release());
+    expect(await within(form).findByText("no workflow nope")).toBeInTheDocument();
+    expect(reachable(screen.getByLabelText("Project folder"))).toBe(false);
+  });
+
   it("says a run is not listed yet, and opens it once it is", async () => {
     const { form, source } = await openForm({ runStatus: 202, runBody: { run: RUN, listed: false } });
     typeTask(form, "Add a rate limiter");

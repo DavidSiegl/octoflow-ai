@@ -66,6 +66,8 @@ there; `doctor --setup-gate` writes the gate's `ci/gate.pin` and a starter `gate
 - herdr 0.9+ where the agents run, with the integration of each harness a run uses
   (`herdr integration install <integration>`: the kind's own name, e.g. `herdr integration install claude`, but
   `antigravity-cli` for `agy`)
+- herdr's panes starting a POSIX shell (sh, bash, zsh, dash, ksh) or fish, which herdr takes from
+  `[terminal] default_shell` in its `config.toml`, else `$SHELL` ([Harnesses](#harnesses))
 - The CLI of each harness a run uses on `PATH` where the agents run: `claude` by default
 - Each harness able to start in the project directory without asking first. Claude Code, for one, asks once per
   folder whether to trust it: open `claude` there once, or answer in the pane when the run says the role
@@ -323,7 +325,9 @@ A role's harness is herdr's `--kind` for its agent. The precedence is `--role-ag
 role's `agent` in the workflow file, then `claude`. A model name is passed as it is, never translated, so give
 each role a model its harness knows. opencode, whose interactive interface takes no `--model`, gets it as `model` in
 an `OPENCODE_CONFIG_CONTENT` its pane's shell exports before starting it with `--standalone`, so that shell must take
-`export NAME='value'`, as sh, bash, zsh and fish do. pi asks before no tool call, so a worktree run needs nothing for it
+`export NAME='value'`, as sh, bash, zsh and fish do. The desktop app starts a run by typing its command into a new
+pane's shell too, so `doctor` checks which shell herdr's panes start and the app starts no run in any but a POSIX
+shell or fish ([Requirements](#requirements)). pi asks before no tool call, so a worktree run needs nothing for it
 (see Worktree runs).
 
 | `--permission-mode` | claude | agy | codex | pi, opencode |

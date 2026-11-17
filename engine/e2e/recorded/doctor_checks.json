@@ -189,6 +189,7 @@
    [
     "ok      herdr: herdr 0.9.4",
     "ok      reaching herdr: inside a herdr pane",
+    "ok      pane shell: /bin/sh (herdr's default)",
     "ok      agy CLI: <world>/bin/agy",
     "ok      agy integration: current (v10)",
     "ok      claude CLI: <world>/bin/claude",
@@ -205,6 +206,7 @@
    [
     "ok      herdr: herdr 0.9.4",
     "ok      reaching herdr: inside a herdr pane",
+    "ok      pane shell: /bin/sh (herdr's default)",
     "ok      agy CLI: <world>/bin/agy",
     "ok      agy integration: current (v10)",
     "ok      claude CLI: <world>/bin/claude",
@@ -224,6 +226,7 @@
     "ok      herdr: herdr 0.9.4",
     "ok      reaching herdr: herdr machine box, over SSH to parity@box",
     "ok      herdr on box: herdr 0.9.4",
+    "ok      pane shell: /bin/sh (herdr's default)",
     "ok      agy CLI: <world>/bin/agy",
     "ok      agy integration: current (v10)",
     "ok      claude CLI: <world>/bin/claude",
@@ -244,6 +247,8 @@
     "missing reaching herdr: no saved herdr machine named nowhere",
     "        fix: save herdr machine nowhere and enable it, with non-interactive SSH to its target",
     "missing herdr on nowhere: skipped: needs reaching herdr",
+    "        fix: fix reaching herdr first",
+    "missing pane shell: skipped: needs reaching herdr",
     "        fix: fix reaching herdr first",
     "warn    agy CLI: skipped: needs reaching herdr; needed only for a role that runs in agy",
     "        fix: fix reaching herdr first",

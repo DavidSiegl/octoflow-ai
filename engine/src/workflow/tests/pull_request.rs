@@ -232,6 +232,17 @@ fn a_fetch_origin_refuses_twice_is_tried_again_and_the_run_goes_on() {
 }
 
 #[test]
+fn a_fetch_killed_for_running_past_its_time_is_tried_again_and_the_run_goes_on() {
+    let host = FakeHost::default();
+    host.state().fetch_hangs_left = 1;
+    let f = Fixture::on(Rc::new(host), new_state(), approved());
+    assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
+    let retries: Vec<String> = f.told.lines().into_iter().filter(|l| l.contains("trying again")).collect();
+    assert_eq!(retries, ["origin unreachable, trying again in 5 s (1 of 3)"]);
+    assert_eq!(f.host.state().prs.len(), 1);
+}
+
+#[test]
 fn a_ctrl_c_while_waiting_for_origin_stops_the_run_as_interrupted() {
     let host = FakeHost::default();
     host.state().fetch_error = Some("fatal: unable to access 'https://github.com/o/r/': Could not resolve host".into());

@@ -62,6 +62,8 @@ struct Tools {
     answer_with: Option<AnswerWith>,
     /// What the login shell an SSH command runs in answers for a command, by its name, that is not on PATH.
     missing_over_ssh: fn(&str) -> Answer,
+    /// What crate::herdr::pane_shell's script answers: $SHELL, the path of herdr's config.toml and its text.
+    pane_shell: Answer,
 }
 
 /// A POSIX login shell's answer for a command not on PATH.
@@ -114,6 +116,7 @@ impl FakeTools {
             envs: vec![],
             answer_with: None,
             missing_over_ssh: sh_not_found,
+            pane_shell: completed("/bin/bash\n/home/u/.config/herdr/config.toml\n"),
         })))
     }
 
@@ -162,6 +165,9 @@ impl FakeTools {
         if is_preflight(&argv) {
             let answer = t.answers[&vec!["sh".to_string(), "-c".to_string()]].clone();
             return played(&answer);
+        }
+        if argv[0] == "sh" && argv[2] == crate::herdr::PANE_SHELL_SCRIPT {
+            return played(&t.pane_shell);
         }
         if argv[0] == "sh" && argv[2] == "command -v -- \"$1\"" {
             return match t.paths.get(argv.last().unwrap()) {
@@ -282,7 +288,7 @@ fn check_of(name: &str, level: Level, ok: bool, detail: &str, fix: &str) -> Chec
 fn all_present() {
     let tools = FakeTools::new();
     let order = names(&tools, Some("/proj"));
-    let mut want: Vec<String> = vec!["herdr".into(), "reaching herdr".into()];
+    let mut want: Vec<String> = vec!["herdr".into(), "reaching herdr".into(), "pane shell".into()];
     for kind in HARNESS_NAMES {
         want.extend([format!("{kind} CLI"), format!("{kind} integration")]);
     }
@@ -291,6 +297,7 @@ fn all_present() {
     let checks = setup(&tools, None, Some("/proj"));
     assert_eq!(failed(&checks, &order), Vec::<String>::new());
     assert_eq!(checks["herdr"].detail, "herdr 0.9.1");
+    assert_eq!(checks["pane shell"].detail, "/bin/bash ($SHELL)");
     assert_eq!(checks["claude integration"].detail, "current (v3)");
     assert_eq!(checks["origin"].detail, "git@github.com:me/proj.git");
     let (out, status) = reported(&checks, &order);
@@ -307,6 +314,7 @@ fn levels() {
     let want: BTreeMap<&str, &str> = [
         ("herdr", "required"),
         ("reaching herdr", "required"),
+        ("pane shell", "required"),
         ("claude CLI", "required"),
         ("claude integration", "required"),
         ("git", "required"),
@@ -318,6 +326,40 @@ fn levels() {
     .into_iter()
     .collect();
     assert_eq!(levels, want);
+}
+
+#[test]
+fn pane_shell_that_runs_cannot_type_into() {
+    let tools = FakeTools::new();
+    tools.tools().pane_shell = completed("/usr/bin/nu\n/home/u/.config/herdr/config.toml\n");
+    let checks = setup(&tools, None, None);
+    let fix = "set [terminal] default_shell in herdr's config.toml to a POSIX shell or fish, then run `herdr server \
+               reload-config`";
+    let detail = "herdr's panes start /usr/bin/nu ($SHELL), which cannot run the lines a run types: they need a POSIX \
+                  shell (sh, bash, zsh, dash, ksh) or fish";
+    assert_eq!(checks["pane shell"], check_of("pane shell", Level::Required, false, detail, fix));
+}
+
+#[test]
+fn pane_shell_of_herdrs_config_wins_over_shell() {
+    let tools = FakeTools::new();
+    let config = "[terminal]\ndefault_shell = \"/usr/bin/fish\"\n";
+    tools.tools().pane_shell = completed(&format!("/usr/bin/nu\n/home/u/.config/herdr/config.toml\n{config}"));
+    let checks = setup(&tools, None, None);
+    assert!(checks["pane shell"].ok, "{:?}", checks["pane shell"]);
+    assert_eq!(checks["pane shell"].detail, "/usr/bin/fish ([terminal] default_shell in /home/u/.config/herdr/config.toml)");
+}
+
+#[test]
+fn pane_shell_on_the_machine() {
+    let tools = FakeTools::new();
+    tools.tools().answer_with = Some(Box::new(|target, argv| {
+        let nu = target == Some("me@box") && argv[0] == "sh" && argv[2] == crate::herdr::PANE_SHELL_SCRIPT;
+        nu.then(|| completed("/usr/bin/nu\n/home/me/.config/herdr/config.toml\n"))
+    }));
+    assert!(setup(&tools, None, None)["pane shell"].ok);
+    let checks = setup(&tools, Some("box"), None);
+    assert!(checks["pane shell"].detail.starts_with("herdr's panes start /usr/bin/nu ($SHELL)"), "{:?}", checks["pane shell"]);
 }
 
 #[test]

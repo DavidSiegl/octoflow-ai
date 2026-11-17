@@ -159,7 +159,10 @@ The names in parentheses are its constants and functions for each part, which oc
   it was written as.
 
 Everything else in the file, such as the intro, coverage, suppressions and build configuration, is for the Builder
-and the Reviewer to read; the orchestrator passes it on as it is.
+and the Reviewer to read; the orchestrator passes it on as it is. The Reviewer's note on the quality file
+(`QUALITY_PASSED_NOTE`, `QUALITY_UNRESOLVED_NOTE`, `QUALITY_STUCK_NOTE`) tells it to judge each edit to lint or
+clippy configuration that Build configuration lists as a finding: the gate's clippy reads the change's own
+configuration, so a change can silence a lint by loosening it and still pass.
 
 ## Jenkins setup
 

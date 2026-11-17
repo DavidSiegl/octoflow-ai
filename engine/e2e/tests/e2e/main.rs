@@ -143,6 +143,7 @@ macro_rules! scenarios {
 
 scenarios!(
     agent_exits,
+    agent_exits_mid_turn,
     blocked_build_answered,
     branches_pruned,
     conflict_refreshed,
@@ -152,7 +153,9 @@ scenarios!(
     doctor_checks,
     failed_run_closed,
     finished_run_closed,
+    finished_with_long_report,
     runs_closed_all,
+    gate_turned_off_after_analysis,
     gate_turned_off_by_resume,
     gate_turned_on_by_resume,
     kill_in_build,
@@ -168,7 +171,9 @@ scenarios!(
     prompt_file_run,
     proofs_run,
     publish_with_conflict,
+    publish_with_leak,
     quality_fails_then_passes,
+    quality_leak_taken_out,
     quality_passes,
     quality_stuck,
     quality_workflow_without_review,

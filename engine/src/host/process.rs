@@ -116,7 +116,9 @@ impl ProcessHost {
             }
             Err(ProcessError::Start(e)) => Err(failed(os_error(&e, Some(&argv[0])))),
             Err(ProcessError::Io(e)) => Err(failed(os_error(&e, None))),
-            Err(ProcessError::Timeout) => Err(failed(format!("timed out after {timeout} seconds"))),
+            Err(ProcessError::Timeout) => {
+                Err(ExecError::TimedOut(OrchestratorError(format!("{command}: timed out after {timeout} seconds"))))
+            }
             Err(ProcessError::Interrupted) => Err(failed("interrupted".to_string())),
         }
     }
