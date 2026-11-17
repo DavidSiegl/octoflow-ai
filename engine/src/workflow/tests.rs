@@ -3,6 +3,8 @@
 
 use std::rc::Rc;
 
+use indexmap::IndexMap;
+
 use super::fixture::*;
 use super::{RunSettings, Stopped};
 use crate::constants::{APPROVE, CHANGES_REQUESTED, STALL_SECONDS};
@@ -14,7 +16,6 @@ use crate::herdr::Direction;
 use crate::host::fake::FakeHost;
 use crate::host::Host;
 use serde_json::Value;
-use crate::map::Map;
 use crate::json::{Object, ValueExt};
 use crate::state::{AgentRecord, AgentStart, RunState, TurnRecord};
 use crate::constants::DEFAULT_HARNESS;
@@ -463,8 +464,8 @@ fn start_args(settings: RunSettings) -> (Vec<(String, Vec<String>)>, Fixture) {
 fn agents(permission_mode: Option<&str>, models: &[(&str, &str)]) -> RunSettings {
     let agents = AgentSettings {
         permission_mode: permission_mode.map(String::from),
-        models: models.iter().map(|(r, m)| (*r, m.to_string())).collect(),
-        harnesses: Map::new(),
+        models: models.iter().map(|(r, m)| (r.to_string(), m.to_string())).collect(),
+        harnesses: IndexMap::new(),
     };
     RunSettings { agents, ..RunSettings::default() }
 }

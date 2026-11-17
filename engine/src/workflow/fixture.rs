@@ -177,7 +177,7 @@ impl Fixture {
         sessions: &[(&str, &str)],
     ) -> Fixture {
         for (role, session) in sessions {
-            state.agents.get_mut(role).expect("a saved agent").session = Some(session.to_string());
+            state.agents.get_mut(*role).expect("a saved agent").session = Some(session.to_string());
         }
         let f = Fixture::on(host, state, script);
         {
@@ -232,7 +232,7 @@ impl Fixture {
     /// Put text at path straight into FakeHost.files: no write is recorded, and the
     /// file has no mtime of its own, so mtime() gives the time it is asked.
     pub fn put(&self, path: &str, text: &str) {
-        self.host.state().files.insert(path, text.to_string());
+        self.host.state().files.insert(path.to_string(), text.to_string());
     }
 
     /// The run's state.json as the host holds it now.
@@ -459,7 +459,7 @@ pub(crate) fn saved_run(phase: &str, rnd: u32, roles: &[&str]) -> RunState {
             "build" => "w1:p2",
             _ => "w1:p3",
         };
-        state.agents.insert(*role, AgentRecord::new(&format!("{role}-a1b2c3"), pane, DEFAULT_HARNESS));
+        state.agents.insert(role.to_string(), AgentRecord::new(&format!("{role}-a1b2c3"), pane, DEFAULT_HARNESS));
     }
     state
 }
@@ -633,7 +633,7 @@ fn remove_tree(host: &FakeHost, paths: &[&str]) {
     let under = |file: &str| paths.iter().any(|p| file == *p || file.starts_with(&format!("{p}/")));
     let gone: Vec<String> = state.files.keys().filter(|file| under(file)).map(String::from).collect();
     for file in gone {
-        state.files.remove(&file);
+        state.files.shift_remove(&file);
     }
 }
 

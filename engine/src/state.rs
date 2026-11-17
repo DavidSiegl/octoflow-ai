@@ -1,5 +1,7 @@
 //! RunState: what a run has done so far, saved as state.json in its run directory.
 
+use indexmap::IndexMap;
+
 use crate::constants::{
     DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
     LOCAL_REFS_PREFIX, RUNS_DIR,
@@ -8,7 +10,6 @@ use crate::error::OrchestratorError;
 use crate::herdr::HerdrServer;
 use crate::prompts::{saved_prompts, Prompts};
 use crate::json::Object;
-use crate::map::Map;
 use crate::pipeline::{Pipeline, DONE, QUALITY};
 use crate::workflow_file::run_pipeline;
 use serde::{Deserialize, Serialize};
@@ -72,17 +73,17 @@ pub struct RunState {
     pub conflict_cleared: Option<String>,
     pub error: Option<String>,
     /// Per role that has started an agent, its last one, in the order the roles first started theirs.
-    pub agents: Map<AgentRecord>,
+    pub agents: IndexMap<String, AgentRecord>,
     pub max_rounds: u32,
     /// Seconds a turn may take.
     pub turn_timeout: u64,
     /// As --permission-mode names it; each harness's agent gets its own equivalent (permission_args).
     pub permission_mode: Option<String>,
-    pub models: Map<String>,
+    pub models: IndexMap<String, String>,
     /// Per role: the harness its next agent starts in, which may differ from the one its agent runs in (harness).
     /// A role missing here runs in DEFAULT_HARNESS. Saved as "agent_kinds", the name earlier releases gave it.
     #[serde(rename = "agent_kinds")]
-    pub next_harnesses: Map<String>,
+    pub next_harnesses: IndexMap<String, String>,
     /// Whether the run works on a branch of its own and ends in a pull request; false for a --no-pr run.
     pub pull_request: bool,
     /// Basename of the handoff file whose prompt was delivered, so a resume does not prompt for it again.
@@ -114,7 +115,7 @@ pub struct RunState {
     pub workflow_definition: Option<Value>,
     /// Prompts::overrides of the prompts the run started with (load_prompts), so a resume does not depend on the
     /// prompt files either; empty for the built-in texts.
-    pub prompt_overrides: Map<String>,
+    pub prompt_overrides: IndexMap<String, String>,
     /// What prune did with branch once the pull request was done: "deleted", or "kept: <why>". Written by
     /// prune_branches, never by the run itself.
     pub branch_cleanup: Option<String>,
@@ -138,7 +139,7 @@ pub struct RunState {
     pub blocked: Option<Object>,
     /// Per locking step (Step::locks), by id: the paths its last turn locked, as Host::lock gives them. Their locked
     /// versions are in the commit at lock_ref(step id).
-    pub locked: Map<Vec<String>>,
+    pub locked: IndexMap<String, Vec<String>>,
     /// One record per editing turn that changed locked files, {"round", "file", "paths"}, in the order of the turns:
     /// file is the basename of the diff of what the turn changed in them, in the run directory, and paths are the
     /// files, by the id of the step that locked them. The files were restored once the record was saved.
@@ -333,12 +334,12 @@ impl RunState {
             conflicts: Vec::new(),
             conflict_cleared: None,
             error: None,
-            agents: Map::new(),
+            agents: IndexMap::new(),
             max_rounds: DEFAULT_MAX_ROUNDS,
             turn_timeout: DEFAULT_TURN_TIMEOUT,
             permission_mode: None,
-            models: Map::new(),
-            next_harnesses: Map::new(),
+            models: IndexMap::new(),
+            next_harnesses: IndexMap::new(),
             pull_request: false,
             prompted: None,
             retried: Vec::new(),
@@ -352,14 +353,14 @@ impl RunState {
             ci: Object::new(),
             workflow: "default".to_string(),
             workflow_definition: None,
-            prompt_overrides: Map::new(),
+            prompt_overrides: IndexMap::new(),
             branch_cleanup: None,
             worktree: None,
             closed: None,
             turns: Vec::new(),
             quality_rounds: Vec::new(),
             blocked: None,
-            locked: Map::new(),
+            locked: IndexMap::new(),
             restored: Vec::new(),
             proofs: Vec::new(),
             unknown: Object::new(),

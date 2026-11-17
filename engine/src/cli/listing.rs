@@ -2,6 +2,8 @@
 //! (SavedRun::shown), so a state saved by an older version, or one whose workflow this orchestrator cannot load, still
 //! lists.
 
+use indexmap::IndexMap;
+
 use super::{resume_command, Connected};
 use crate::constants::{APPROVE, RUNS_DIR};
 use crate::error::OrchestratorError;
@@ -9,7 +11,6 @@ use crate::handoff::parse_verdict;
 use crate::pipeline::{workflow_shape, Pipeline, Step, QUALITY};
 use crate::json::{object, Object, ValueExt};
 use crate::local_gate::LOCAL_GATE;
-use crate::map::Map;
 use crate::runs::{RUNNING, STALE};
 use crate::state::{find_run, judged_by_several, AgentRecord, RunState, SavedRun, StepVerdict, TurnRecord};
 use crate::summary::turn_lines;
@@ -139,10 +140,10 @@ fn step_refs(p: &Pipeline, s: &RunState) -> Value {
 }
 
 /// run_record's agents, of a state's agents, by role.
-fn agent_refs(agents: &Map<AgentRecord>) -> Value {
+fn agent_refs(agents: &IndexMap<String, AgentRecord>) -> Value {
     let started = agents.iter().filter(|(_, agent)| !agent.name.is_empty()).map(|(role, agent)| {
         let (name, kind) = (agent.name.as_str(), agent.harness.as_str());
-        Value::Object(object([("role", Value::from(role)), ("name", Value::from(name)), ("kind", Value::from(kind))]))
+        Value::Object(object([("role", Value::from(role.as_str())), ("name", Value::from(name)), ("kind", Value::from(kind))]))
     });
     Value::Array(started.collect())
 }

@@ -211,7 +211,7 @@ fn a_python_package_is_a_dependency_from_each_source_it_is_named_with() {
     );
     // A requirement's own line, and for baz each of its [tool.uv.sources] entries' lines.
     let lines: Vec<(&str, u64)> =
-        deps.direct.iter().flat_map(|(key, sources)| sources.iter().map(move |d| (key, d.line))).collect();
+        deps.direct.iter().flat_map(|(key, sources)| sources.iter().map(move |d| (key.as_str(), d.line))).collect();
     assert_eq!(lines, [("foo", 3), ("foo", 5), ("bar", 3), ("bar", 3), ("baz", 12), ("baz", 13)]);
 }
 
@@ -640,7 +640,7 @@ fn kind_name(kind: SourceKind) -> &'static str {
     }
 }
 
-fn sources(map: &Map<Vec<Dependency>>) -> Value {
+fn sources(map: &IndexMap<String, Vec<Dependency>>) -> Value {
     Value::Array(
         sourced(map)
             .into_iter()
@@ -764,8 +764,8 @@ fn cargo_read(files: &[(&str, &str)]) -> Dependencies {
 }
 
 /// (package_key, manifest, source) of each package of deps from each of its sources, in deps's order.
-fn sourced(deps: &Map<Vec<Dependency>>) -> Vec<(&str, &str, Option<PackageSource>)> {
-    deps.iter().flat_map(|(k, ds)| ds.iter().map(move |d| (k, d.manifest.as_str(), d.source.clone()))).collect()
+fn sourced(deps: &IndexMap<String, Vec<Dependency>>) -> Vec<(&str, &str, Option<PackageSource>)> {
+    deps.iter().flat_map(|(k, ds)| ds.iter().map(move |d| (k.as_str(), d.manifest.as_str(), d.source.clone()))).collect()
 }
 
 #[test]
@@ -779,7 +779,7 @@ fn every_dependency_table_of_the_workspace_and_its_members_is_direct() {
         private = { version = \"1\", registry = \"corp\" }\nlocal = { path = \"../local\" }\n\n[dev-dependencies]\n\
         tempfile = \"3\"\n";
     let deps = cargo_read(&[("Cargo.toml", root), ("engine/Cargo.toml", engine)]);
-    assert_eq!(deps.unreadable, Map::new());
+    assert_eq!(deps.unreadable, IndexMap::<String, String>::new());
     assert_eq!(
         sourced(&deps.direct),
         [

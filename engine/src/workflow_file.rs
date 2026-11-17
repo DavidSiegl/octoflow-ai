@@ -22,6 +22,8 @@
 //! workflow_definition writes the canonical form, which such a file may also be: every role with its label, and every
 //! step with its fields.
 
+use indexmap::IndexMap;
+
 use crate::constants::{BUDGET_KEYS, DEFAULT_MAX_FILES, DEFAULT_MAX_LINES};
 use crate::env::ConfigDir;
 use crate::error::{closest_name, strerror, OrchestratorError};
@@ -31,7 +33,6 @@ use crate::pipeline::{default_workflow, prompt_placeholders, Pipeline, PipelineS
 use crate::prompts::template::{is_name, placeholders};
 use crate::prompts::{files_with_extension, Prompts};
 use serde_json::Value;
-use crate::map::Map;
 use crate::json::Object;
 
 /// The keys a workflow definition's top table may have.
@@ -105,7 +106,7 @@ pub fn is_built_in(p: &Pipeline, prompts: &Prompts) -> bool {
 
 /// Name -> path of each workflow file in config's workflows_dir, unparsed, in name order; none without the
 /// directory. Errors: the directory cannot be listed.
-pub fn workflow_files(config: &ConfigDir) -> Result<Map<String>, OrchestratorError> {
+pub fn workflow_files(config: &ConfigDir) -> Result<IndexMap<String, String>, OrchestratorError> {
     files_with_extension(&config.workflows_dir(), ".toml")
 }
 
@@ -198,24 +199,24 @@ pub fn parse_workflow(name: &str, definition: &Value, prompts: &Prompts) -> Resu
     let default = default_workflow(prompts);
     let steps = raw_steps.iter().enumerate().map(|(i, raw)| parse_step(i + 1, raw, &default)).collect::<Result<Vec<_>, _>>()?;
     let declared = match definition.get("roles") {
-        None => Map::new(),
+        None => IndexMap::new(),
         Some(Value::Object(raw_roles)) => {
-            raw_roles.iter().map(|(role, raw)| parse_role(role, raw).map(|table| (role, table))).collect::<Result<_, _>>()?
+            raw_roles.iter().map(|(role, raw)| parse_role(role, raw).map(|table| (role.clone(), table))).collect::<Result<_, _>>()?
         }
         Some(_) => return Err("roles must be a table".into()),
     };
     // The panes follow the steps; a declared role no step uses goes last, for Pipeline to reject.
-    let mut labels: Map<String> = Map::new();
-    for role in steps.iter().map(|st| st.role.as_str()).chain(declared.keys()) {
+    let mut labels: IndexMap<String, String> = IndexMap::new();
+    for role in steps.iter().map(|st| st.role.as_str()).chain(declared.keys().map(String::as_str)) {
         if !labels.contains_key(role) {
-            let label = declared.get(role).and_then(|t: &Map<String>| t.get("label")).filter(|l| !l.is_empty());
-            labels.insert(role, label.cloned().unwrap_or_else(|| default_label(role)));
+            let label = declared.get(role).and_then(|t: &IndexMap<String, String>| t.get("label")).filter(|l| !l.is_empty());
+            labels.insert(role.to_string(), label.cloned().unwrap_or_else(|| default_label(role)));
         }
     }
-    let role_setting = |key: &str| -> Map<String> {
+    let role_setting = |key: &str| -> IndexMap<String, String> {
         declared
             .iter()
-            .filter_map(|(role, table)| table.get(key).filter(|v| !v.is_empty()).map(|v| (role, v.clone())))
+            .filter_map(|(role, table)| table.get(key).filter(|v| !v.is_empty()).map(|v| (role.clone(), v.clone())))
             .collect()
     };
     let description = match definition.get("description") {
@@ -248,13 +249,13 @@ pub fn parse_workflow(name: &str, definition: &Value, prompts: &Prompts) -> Resu
 }
 
 /// The ROLE_KEYS a role's entry in [roles] sets: a string is its label.
-fn parse_role(role: &str, raw: &Value) -> Result<Map<String>, String> {
+fn parse_role(role: &str, raw: &Value) -> Result<IndexMap<String, String>, String> {
     let place = format!("role {role}");
     if !is_name(role) {
         return Err(format!("{place}: a role key may use only letters, digits, - and _"));
     }
     let table = match raw {
-        Value::String(label) => return Ok([("label", label.clone())].into_iter().collect()),
+        Value::String(label) => return Ok([("label".to_string(), label.clone())].into_iter().collect()),
         Value::Object(table) => table,
         _ => return Err(format!("{place}: give a label, or a table with label, model and agent")),
     };
@@ -262,7 +263,7 @@ fn parse_role(role: &str, raw: &Value) -> Result<Map<String>, String> {
     table
         .iter()
         .map(|(key, value)| match value {
-            Value::String(s) => Ok((key, s.clone())),
+            Value::String(s) => Ok((key.clone(), s.clone())),
             _ => Err(format!("{place}: {key} must be a string")),
         })
         .collect()

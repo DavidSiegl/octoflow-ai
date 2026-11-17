@@ -7,12 +7,13 @@
 
 use std::collections::BTreeSet;
 
+use indexmap::IndexMap;
+
 use crate::constants::{APPROVE, CHANGES_REQUESTED};
 use crate::pipeline::{Pipeline, Step};
 use crate::prompts::Prompt;
 use crate::prompts::template;
 use serde_json::Value;
-use crate::map::Map;
 use crate::json::Object;
 use crate::state::RunState;
 use crate::test_support::{recorded_state, recordings};
@@ -163,7 +164,7 @@ fn others(s: &RunState, p: &Pipeline) -> Vec<Vec<Piece>> {
 }
 
 /// The latest state.json saved of each run, by its number in the recording's names, as the events give them.
-fn latest_states(events: &[Value], into: &mut Map<Object>) -> Vec<(String, String, Object)> {
+fn latest_states(events: &[Value], into: &mut IndexMap<String, Object>) -> Vec<(String, String, Object)> {
     let mut prompts = Vec::new();
     for event in events {
         if let Some(Value::Object(saved)) = event.get("state").and_then(|s| s.get("saved")) {
@@ -192,7 +193,7 @@ fn every_recorded_prompt_is_made_of_this_engines_templates_filled_in_with_the_ru
             .map(|files| files.keys().map(String::from).collect())
             .unwrap_or_default();
         let events = recording.get("events").and_then(Value::as_object).cloned().unwrap_or_default();
-        let mut states = Map::new();
+        let mut states = IndexMap::new();
         for (_, invocation) in events {
             for (role, text, saved) in latest_states(invocation.as_array().unwrap(), &mut states) {
                 let state = recorded_state(&saved);

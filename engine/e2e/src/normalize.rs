@@ -7,8 +7,8 @@
 //! letter or a digit in Unicode's sense, or `_`) and any other, `\d` an ASCII digit (the records hold no other), and
 //! hex is `[0-9a-f]`.
 
+use indexmap::IndexMap;
 use serde_json::Value;
-use octoflow_engine::map::Map;
 
 /// The JSON keys whose numbers are times measured by a clock: a turn's or a run's seconds, a state's age, a file's
 /// modification time. Sorted.
@@ -27,11 +27,11 @@ pub struct Normalizer {
     /// Each literal and its placeholder, the longest literal first.
     literals: Vec<(String, String)>,
     /// A run id to its placeholder, in the order learnt.
-    runs: Map<String>,
+    runs: IndexMap<String, String>,
     /// A run's key, the six hex digits that end its id, to its placeholder.
-    keys: Map<String>,
+    keys: IndexMap<String, String>,
     /// A git object name to its placeholder.
-    shas: Map<String>,
+    shas: IndexMap<String, String>,
     /// A pid to its placeholder, in the order registered; a pid registered again keeps its place.
     pids: Vec<(i64, String)>,
 }
@@ -42,9 +42,9 @@ impl Normalizer {
         let host = nix::unistd::gethostname().unwrap_or_else(|e| panic!("reading the host's name: {e}"));
         let mut normalizer = Normalizer {
             literals: Vec::new(),
-            runs: Map::new(),
-            keys: Map::new(),
-            shas: Map::new(),
+            runs: IndexMap::new(),
+            keys: IndexMap::new(),
+            shas: IndexMap::new(),
             pids: Vec::new(),
         };
         normalizer.literal(&host.to_string_lossy(), "<host>");
@@ -77,7 +77,7 @@ impl Normalizer {
                     let id: String = text[i..end].iter().collect();
                     if !self.runs.contains_key(&id) {
                         let n = self.runs.len() + 1;
-                        self.keys.insert(&id[id.len() - 6..], format!("<key:{n}>"));
+                        self.keys.insert(id[id.len() - 6..].to_string(), format!("<key:{n}>"));
                         self.runs.insert(id, format!("<run:{n}>"));
                     }
                     i = end;

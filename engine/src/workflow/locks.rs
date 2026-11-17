@@ -3,6 +3,8 @@
 
 use std::collections::BTreeSet;
 
+use indexmap::IndexMap;
+
 use super::step_prompt::RunView;
 use super::{Outcome, Stopped, Workflow};
 use crate::error::OrchestratorError;
@@ -11,7 +13,6 @@ use crate::pipeline::Step;
 use crate::prompts::Prompt;
 use crate::state::refs_prefix;
 use serde_json::Value;
-use crate::map::Map;
 use crate::json::{object, Object};
 
 /// What one editing turn changed in other steps' locked files, as a RunState::restored record holds it.
@@ -23,7 +24,7 @@ struct Restored {
     file: String,
     /// The paths the turn changed, relative to the repository's top level, by the id of the step that locked them, in
     /// the order of RunState::locked.
-    paths: Map<Vec<String>>,
+    paths: IndexMap<String, Vec<String>>,
 }
 
 impl Restored {
@@ -48,7 +49,7 @@ impl Restored {
                     let paths = paths.as_array()?.iter().map(|p| p.as_str().map(String::from)).collect::<Option<_>>()?;
                     Some((locker.to_string(), paths))
                 })
-                .collect::<Option<Map<Vec<String>>>>()
+                .collect::<Option<IndexMap<String, Vec<String>>>>()
         });
         let paths = lists.ok_or_else(|| invalid("paths", paths, "lists of paths by step"))?;
         Ok(Restored { round, file, paths })
@@ -106,12 +107,12 @@ impl Workflow<'_> {
     /// written to file in the run directory; None when it changed none of them.
     fn locked_changes(&mut self, step: &Step, n: u32, file: &str) -> Outcome<Option<Restored>> {
         let s = &self.state;
-        let mut paths = Map::new();
+        let mut paths = IndexMap::new();
         let mut diffs = String::new();
-        for (locker, locked) in s.locked.iter().filter(|(locker, _)| *locker != step.id) {
+        for (locker, locked) in s.locked.iter().filter(|(locker, _)| **locker != step.id) {
             let (differ, diff) = self.host.locked_changes(s.work_dir(), &s.lock_ref(locker), locked)?;
             if !differ.is_empty() {
-                paths.insert(locker, differ);
+                paths.insert(locker.clone(), differ);
                 diffs.push_str(&diff);
             }
         }
@@ -150,7 +151,7 @@ impl RunView<'_> {
         }
         let paths: BTreeSet<&str> =
             records.iter().flat_map(|r| r.paths.values().flatten().map(String::as_str)).collect();
-        let lockers: BTreeSet<&str> = records.iter().flat_map(|r| r.paths.keys()).collect();
+        let lockers: BTreeSet<&str> = records.iter().flat_map(|r| r.paths.keys().map(String::as_str)).collect();
         let paths: Vec<String> = paths.iter().map(|p| format!("`{p}`")).collect();
         let dir = self.state.dir();
         let diff_paths: Vec<String> = records.iter().map(|r| format!("{dir}/{}", r.file)).collect();

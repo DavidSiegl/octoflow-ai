@@ -7,8 +7,11 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]
-# The engine's ordered Map and its JSON helpers (octoflow_engine::json).
+# The engine's JSON helpers (octoflow_engine::json).
 octoflow-engine = { path = ".." }
+# The ordered maps of the normalizer and the world's fakes: the engine's own dependency. 2.14.2 is from 2026-09-05
+# and in Cargo.lock already. Approved by the user for todo/18, 2026-11-13.
+indexmap = "2.14.2"
 # JSON for the fakes' ledger, the script and the recordings: preserve_order keeps an object's keys in their order,
 # which a recording is compared in (tests/e2e/compare.rs).
 serde_json = { version = "1", features = ["preserve_order"] }

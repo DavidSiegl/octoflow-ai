@@ -53,7 +53,7 @@ fn saved_with(state: &RunState, more: &[(&str, Value)]) -> Object {
 }
 
 /// map as JSON text, in its order.
-fn dumps(map: &Map<String>) -> String {
+fn dumps(map: &IndexMap<String, String>) -> String {
     serde_json::to_string(map).unwrap()
 }
 
@@ -72,7 +72,7 @@ fn saved_settings(more: &[(&str, Value)]) -> Object {
     state.max_rounds = 3;
     state.turn_timeout = 600;
     state.permission_mode = Some("auto".into());
-    state.models = [("build", "sonnet".to_string())].into_iter().collect();
+    state.models = [("build".to_string(), "sonnet".to_string())].into_iter().collect();
     saved_with(&state, more)
 }
 

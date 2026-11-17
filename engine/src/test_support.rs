@@ -207,13 +207,14 @@ pub fn oracle(file: &str) -> serde_json::Value {
 
 // -- The workflows the tests share ----------------------------------------------------------------------------------
 
+use indexmap::IndexMap;
+
 use crate::pipeline::{Pipeline, PipelineSettings, Step};
-use crate::map::Map;
 use crate::json::Object;
 
 /// A role map of (key, label) pairs, in pane order.
-pub fn roles(pairs: &[(&str, &str)]) -> Map<String> {
-    pairs.iter().map(|(k, v)| (*k, v.to_string())).collect()
+pub fn roles(pairs: &[(&str, &str)]) -> IndexMap<String, String> {
+    pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
 }
 
 /// Step::new, with again set.
@@ -263,7 +264,7 @@ pub fn four_steps() -> Vec<Step> {
     vec![spec, tests, build, review]
 }
 
-pub fn four_roles() -> Map<String> {
+pub fn four_roles() -> IndexMap<String, String> {
     roles(&[("spec", "Spec Collector"), ("tests", "Test Writer"), ("build", "Builder"), ("review", "Reviewer")])
 }
 

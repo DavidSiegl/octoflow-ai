@@ -20,9 +20,9 @@
 
 use std::path::Path;
 
+use indexmap::IndexMap;
 use octoflow_e2e::normalize::Normalizer;
 use octoflow_e2e::{at, object, str_at};
-use octoflow_engine::map::Map;
 use serde_json::Value;
 
 /// What serve's event stream sent after one step of a scenario.
@@ -47,11 +47,11 @@ pub fn recording(batches: &[Batch], normalizer: &mut Normalizer, project: &Path)
     let payloads: Vec<Value> = batches.iter().flat_map(|b| b.events.iter().map(|(_, payload)| payload.clone())).collect();
     normalizer.learn(&Value::Array(payloads));
     // By run and file name, the mtime serve last sent and the number of the batch that first held it.
-    let mut versions: Map<(i64, usize)> = Map::new();
+    let mut versions: IndexMap<String, (i64, usize)> = IndexMap::new();
     let mut out = Vec::new();
     for (n, batch) in batches.iter().enumerate() {
         // By run, in the order the batch first names them, its last record and last files.
-        let mut last: Map<(Option<Value>, Option<Value>)> = Map::new();
+        let mut last: IndexMap<String, (Option<Value>, Option<Value>)> = IndexMap::new();
         for (kind, payload) in &batch.events {
             let part = match kind.as_str() {
                 "record" | "files" => at(payload, kind).clone(),

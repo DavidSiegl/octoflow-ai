@@ -12,6 +12,7 @@ use std::process::{Child, Command, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
+use indexmap::IndexMap;
 use nix::sys::signal::{kill, killpg, Signal};
 use nix::unistd::Pid;
 use octoflow_e2e::fakes::HARNESS_NAMES;
@@ -22,7 +23,6 @@ use octoflow_e2e::scratch::Scratch;
 use crate::servers::{ServerFailure, Servers, PYPI_CA};
 use octoflow_e2e::{array_at, checkout, object, object_at, procs, str_at, strings};
 use serde_json::Value;
-use octoflow_engine::map::Map;
 use octoflow_engine::json::Object;
 use octoflow_engine::env::CONFIG_DIR_NAME;
 use octoflow_engine::host::shlex_quote;
@@ -758,12 +758,12 @@ impl World {
     /// Each worktree of repo: its path, branch, status and the text of each file the status names.
     fn worktrees(&self, repo: &Path) -> Value {
         let mut out = Vec::new();
-        let mut tree: Map<String> = Map::new();
+        let mut tree: IndexMap<String, String> = IndexMap::new();
         let listing = self.git(repo, &["worktree", "list", "--porcelain"]);
         for line in listing.lines().chain(std::iter::once("")) {
             if !line.is_empty() {
                 let (name, text) = line.split_once(' ').unwrap_or((line, ""));
-                tree.insert(name, text.to_string());
+                tree.insert(name.to_string(), text.to_string());
                 continue;
             }
             if tree.is_empty() {
@@ -789,7 +789,7 @@ impl World {
                 ("status", strings(&porcelain)),
                 ("changed", Value::Object(changed)),
             ]));
-            tree = Map::new();
+            tree = IndexMap::new();
         }
         Value::Array(out)
     }

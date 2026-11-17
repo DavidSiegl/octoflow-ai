@@ -228,9 +228,9 @@ fn an_empty_harness_name_is_refused() {
 #[test]
 fn a_roles_harness_is_its_agents_then_its_next_agents_then_the_default() {
     let mut state = RunState::new("r1", "t", "/p");
-    state.next_harnesses.insert("build", "codex".to_string());
-    state.next_harnesses.insert("review", "pi".to_string());
-    state.agents.insert("build", AgentRecord::new("build-r1", "p2", "agy"));
+    state.next_harnesses.insert("build".to_string(), "codex".to_string());
+    state.next_harnesses.insert("review".to_string(), "pi".to_string());
+    state.agents.insert("build".to_string(), AgentRecord::new("build-r1", "p2", "agy"));
     // build's agent runs in agy though its next one starts in codex: a resume's --role-agent changed it.
     for (role, harness) in [("build", "agy"), ("review", "pi"), ("spec", DEFAULT_HARNESS)] {
         assert_eq!(state.harness(role), harness, "{role}");
@@ -277,7 +277,7 @@ fn the_runs_paths() {
     s.worktree = Some("/proj/.orchestrator/worktrees/a1b2c3".into());
     assert_eq!(s.work_dir(), "/proj/.orchestrator/worktrees/a1b2c3");
     assert_eq!(s.prompts().unwrap(), Prompts::default());
-    s.prompt_overrides.insert("LATER_NOTE", "x".to_string());
+    s.prompt_overrides.insert("LATER_NOTE".to_string(), "x".to_string());
     assert!(s.prompts().unwrap_err().0.contains("replaces prompt LATER_NOTE"));
 }
 
@@ -372,10 +372,10 @@ fn a_state_names_its_workflow() {
     assert_eq!(state.pipeline().unwrap(), quick);
     // Worded by its saved prompts, which must name prompts this engine has.
     let mut state = RunState::new("r1", "t", "/p");
-    state.prompt_overrides.insert("LATER_NOTE", "x".into());
+    state.prompt_overrides.insert("LATER_NOTE".to_string(), "x".into());
     assert!(state.pipeline().is_err());
     let fix = "Fix {findings}; report to {build_path}.";
-    state.prompt_overrides = [("FIX_PROMPT", fix.to_string())].into_iter().collect();
+    state.prompt_overrides = [("FIX_PROMPT".to_string(), fix.to_string())].into_iter().collect();
     assert_eq!(state.pipeline().unwrap().step("build").unwrap().again.as_deref(), Some(fix));
 }
 

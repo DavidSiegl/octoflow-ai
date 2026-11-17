@@ -9,6 +9,8 @@
 
 use std::rc::Rc;
 
+use indexmap::IndexMap;
+
 use super::*;
 use crate::state::format_problem;
 use crate::cli::fixture::Cli;
@@ -17,7 +19,6 @@ use crate::cli::Stop;
 use crate::constants::{APPROVE, STALE_SECONDS, WORKTREES_DIR};
 use crate::host::fake::{FakeHost, FakePr};
 use crate::host::Completed;
-use crate::map::Map;
 use crate::json::Object;
 use crate::summary::iso_utc;
 use crate::workflow::fixture::{build_turn, review_turn, saved_run, spec_turn, Fixture};
@@ -138,10 +139,10 @@ impl Prune {
         host.files.insert(state_path(&run_id), format!("{}\n", Value::Object(saved)));
         host.pull_requests.insert(url, r.pr);
         if let Some(at) = r.local {
-            host.branches.insert(branch.as_str(), at.to_string());
+            host.branches.insert(branch.as_str().to_string(), at.to_string());
         }
         if let Some(at) = r.remote {
-            host.remote.insert(branch.as_str(), at.to_string());
+            host.remote.insert(branch.as_str().to_string(), at.to_string());
         }
         run_id
     }
@@ -280,7 +281,7 @@ fn checked_out_branch_is_kept() {
         if place == "/proj" {
             p.host().branch = "orchestrator/task-aaaaaa".into();
         } else {
-            p.host().worktrees.insert(place, "orchestrator/task-aaaaaa".into());
+            p.host().worktrees.insert(place.to_string(), "orchestrator/task-aaaaaa".into());
         }
         let r = p.pruned(&run_id);
         let kept = format!("kept: checked out in {place}");
@@ -295,7 +296,7 @@ const WORKTREE: &str = "/proj/.orchestrator/worktrees/aaaaaa";
 /// A merged run with a --worktree, holding its branch; its run id.
 fn add_worktree_run(p: &Prune) -> String {
     let run_id = p.add(run("aaaaaa", merged()).with("worktree", WORKTREE));
-    p.host().worktrees.insert(WORKTREE, "orchestrator/task-aaaaaa".into());
+    p.host().worktrees.insert(WORKTREE.to_string(), "orchestrator/task-aaaaaa".into());
     run_id
 }
 
@@ -341,7 +342,7 @@ fn worktree_with_commits_the_pull_request_lacks_is_kept() {
 fn worktree_holding_another_branch_is_kept() {
     let p = Prune::new();
     let run_id = add_worktree_run(&p);
-    p.host().worktrees.insert(WORKTREE, "mine".into());
+    p.host().worktrees.insert(WORKTREE.to_string(), "mine".into());
     let r = p.pruned(&run_id);
     assert_eq!(r.worktree, format!("kept: worktree {WORKTREE} now holds branch mine"));
     assert!(p.host().worktrees.contains_key(WORKTREE));
@@ -353,7 +354,7 @@ fn worktree_holding_another_branch_is_kept() {
 fn worktree_on_a_detached_head_goes() {
     let p = Prune::new();
     let run_id = add_worktree_run(&p);
-    p.host().worktrees.insert(WORKTREE, "HEAD".into());
+    p.host().worktrees.insert(WORKTREE.to_string(), "HEAD".into());
     let r = p.pruned(&run_id);
     assert_eq!((r.worktree.as_str(), r.local.as_str()), ("deleted", "deleted"));
     assert!(p.host().worktrees.is_empty());
@@ -379,8 +380,8 @@ fn a_detached_worktree_that_goes_leaves_a_branch_checked_out_elsewhere_kept() {
     for dry_run in [false, true] {
         let p = Prune::new();
         let run_id = add_worktree_run(&p);
-        p.host().worktrees.insert(WORKTREE, "HEAD".into());
-        p.host().worktrees.insert("/other", "orchestrator/task-aaaaaa".into());
+        p.host().worktrees.insert(WORKTREE.to_string(), "HEAD".into());
+        p.host().worktrees.insert("/other".to_string(), "orchestrator/task-aaaaaa".into());
         let pruned = p.prune(dry_run, false);
         let [(id, r)] = &pruned[..] else { panic!("{pruned:?}") };
         assert_eq!(id, &run_id);
@@ -471,8 +472,8 @@ fn worktrees_no_run_names_are_untouched() {
     let p = Prune::new();
     let run_id = p.add(run("aaaaaa", merged()));
     // The user's, holding the run's branch, and one under the run's directory that its state does not name.
-    p.host().worktrees.insert("/elsewhere/mine", "orchestrator/task-aaaaaa".into());
-    p.host().worktrees.insert("/proj/.orchestrator/worktrees/bbbbbb", "other".into());
+    p.host().worktrees.insert("/elsewhere/mine".to_string(), "orchestrator/task-aaaaaa".into());
+    p.host().worktrees.insert("/proj/.orchestrator/worktrees/bbbbbb".to_string(), "other".into());
     let r = p.pruned(&run_id);
     assert_eq!(r.worktree, "");
     assert_eq!(r.local, "kept: checked out in /elsewhere/mine");
@@ -483,7 +484,7 @@ fn worktrees_no_run_names_are_untouched() {
 fn a_worktree_a_run_names_outside_the_worktrees_directory_is_untouched() {
     let p = Prune::new();
     let run_id = p.add(run("aaaaaa", merged()).with("worktree", "/elsewhere/mine"));
-    p.host().worktrees.insert("/elsewhere/mine", "orchestrator/task-aaaaaa".into());
+    p.host().worktrees.insert("/elsewhere/mine".to_string(), "orchestrator/task-aaaaaa".into());
     let r = p.pruned(&run_id);
     assert_eq!(r.worktree, "");
     assert!(p.host().worktrees.contains_key("/elsewhere/mine"));
@@ -626,7 +627,7 @@ fn dry_run_deletes_and_records_nothing() {
     let run_id = p.add(run("aaaaaa", merged()).remote(None));
     p.host().tracking.insert("orchestrator/task-aaaaaa".into());
     let kept = p.add(run("bbbbbb", merged()).n(8).remote(Some(LATER)));
-    let pruned: Map<PrunedRun> = p.prune(true, false).into_iter().collect();
+    let pruned: IndexMap<String, PrunedRun> = p.prune(true, false).into_iter().collect();
     let first = &pruned.get(&run_id).unwrap();
     assert_eq!((first.local.as_str(), first.remote.as_str()), ("would be deleted", "gone"));
     assert_eq!(pruned.get(&kept).unwrap().remote, "kept: remote has commits beyond PR #8");
@@ -640,7 +641,7 @@ fn gh_failure_on_one_run_skips_only_that_run() {
     let p = Prune::new();
     let failed = p.add(run("aaaaaa", failing(1, "HTTP 502: Bad Gateway")));
     let fine = p.add(run("bbbbbb", merged()).n(8));
-    let pruned: Map<PrunedRun> = p.prune(false, false).into_iter().collect();
+    let pruned: IndexMap<String, PrunedRun> = p.prune(false, false).into_iter().collect();
     assert_eq!(
         pruned.get(&failed).unwrap().skipped.as_deref(),
         Some("failed: gh pr view https://github.com/o/r/pull/7 --json state,headRefOid,closedAt failed: HTTP 502: Bad Gateway")
@@ -659,7 +660,7 @@ fn rejected_lease_skips_the_run() {
     let host = Rc::clone(&p.cli.f.host);
     p.host().before_git = Some(Box::new(move |_, args| {
         if args.first() == Some(&"push") {
-            host.state().remote.insert("orchestrator/task-aaaaaa", LATER.to_string());
+            host.state().remote.insert("orchestrator/task-aaaaaa".to_string(), LATER.to_string());
         }
     }));
     let r = p.pruned(&run_id);
@@ -739,7 +740,7 @@ fn state_saved_meanwhile_is_not_overwritten() {
     saved.insert("round".into(), Value::from(2));
     let resumed = Value::Object(saved).to_string();
     p.host().before_git = Some(Box::new(move |_, _| {
-        host.state().files.insert(path.as_str(), resumed.clone());
+        host.state().files.insert(path.as_str().to_string(), resumed.clone());
     }));
     assert!(p.pruned(&run_id).skipped.as_deref().unwrap().contains("changed while its branch was pruned"));
     assert_eq!(p.saved(&run_id).get("round"), Some(&Value::from(2)));
@@ -795,7 +796,7 @@ fn the_summary_counts_worktrees_removed() {
     // Origin's branch moved on: the run is kept, but its worktree is gone.
     let p = Prune::new();
     p.add(run("aaaaaa", merged()).with("worktree", WORKTREE).remote(Some(LATER)));
-    p.host().worktrees.insert(WORKTREE, "orchestrator/task-aaaaaa".into());
+    p.host().worktrees.insert(WORKTREE.to_string(), "orchestrator/task-aaaaaa".into());
     assert_eq!(p.sweep(), ["deleted 1 worktree of earlier runs; kept 1 branch, see prune"]);
 }
 
@@ -934,7 +935,7 @@ struct SweepOnRun {
 }
 
 /// The local branches and origin's, by name with their commit, as the interview started; None before it.
-type Seen = Rc<std::cell::RefCell<Option<(Map<String>, Map<String>)>>>;
+type Seen = Rc<std::cell::RefCell<Option<(IndexMap<String, String>, IndexMap<String, String>)>>>;
 
 impl SweepOnRun {
     fn new() -> SweepOnRun {

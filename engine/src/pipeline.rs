@@ -5,13 +5,14 @@
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::LazyLock;
 
+use indexmap::IndexMap;
+
 use crate::constants::{DEFAULT_MAX_FILES, DEFAULT_MAX_LINES, ROLE_LABELS};
 use crate::error::OrchestratorError;
 use crate::harness::harness;
 use crate::paths::split_extension;
 use crate::prompts::{Prompt, Prompts};
 use crate::prompts::template::{fill, parse, placeholders, Piece};
-use crate::map::Map;
 
 /// Run phases that are no step's: the quality loop after a quality-gated step's turn, and the run's last two.
 pub const QUALITY: &str = "quality";
@@ -206,11 +207,11 @@ fn name_tokens(template: &str) -> NameTokens {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PipelineSettings {
     /// Role key -> the model its agent starts with when no model flag names one.
-    pub models: Map<String>,
+    pub models: IndexMap<String, String>,
     /// Shown by `workflows`.
     pub description: String,
     /// Role key -> the harness its agent runs in when no agent flag names one; else DEFAULT_HARNESS.
-    pub agents: Map<String>,
+    pub agents: IndexMap<String, String>,
     /// The size of change past which a quality round asks the Builder why (diff_budget): files touched, and lines
     /// added plus lines removed. The workflow's, not the gated step's: the change a quality round judges runs from
     /// the run's base to the snapshot, so it holds every editing step's work, not only the gated step's.
@@ -226,9 +227,9 @@ pub struct PipelineSettings {
 impl Default for PipelineSettings {
     fn default() -> Self {
         PipelineSettings {
-            models: Map::new(),
+            models: IndexMap::new(),
             description: String::new(),
-            agents: Map::new(),
+            agents: IndexMap::new(),
             max_files: DEFAULT_MAX_FILES,
             max_lines: DEFAULT_MAX_LINES,
             proof_command: None,
@@ -245,7 +246,7 @@ pub struct Pipeline {
     name: String,
     /// Role key -> pane label. The order lays out the panes: the first role takes the workspace's root pane, the
     /// second a split to its right, and each further one a split below the one before.
-    roles: Map<String>,
+    roles: IndexMap<String, String>,
     steps: Vec<Step>,
     settings: PipelineSettings,
 }
@@ -253,12 +254,12 @@ pub struct Pipeline {
 impl Pipeline {
     /// The workflow of these roles and steps, with the default settings; the problem that makes it unusable, as
     /// "workflow <name>: <problem>", otherwise.
-    pub fn new(name: &str, roles: Map<String>, steps: Vec<Step>) -> Result<Pipeline, String> {
+    pub fn new(name: &str, roles: IndexMap<String, String>, steps: Vec<Step>) -> Result<Pipeline, String> {
         Pipeline::with(name, roles, steps, PipelineSettings::default())
     }
 
     /// new, with settings.
-    pub fn with(name: &str, roles: Map<String>, steps: Vec<Step>, settings: PipelineSettings) -> Result<Pipeline, String> {
+    pub fn with(name: &str, roles: IndexMap<String, String>, steps: Vec<Step>, settings: PipelineSettings) -> Result<Pipeline, String> {
         let p = Pipeline { name: name.to_string(), roles, steps, settings };
         match p.problem() {
             Some(problem) => Err(format!("workflow {name}: {problem}")),
@@ -270,7 +271,7 @@ impl Pipeline {
         &self.name
     }
 
-    pub fn roles(&self) -> &Map<String> {
+    pub fn roles(&self) -> &IndexMap<String, String> {
         &self.roles
     }
 
@@ -369,12 +370,12 @@ impl Pipeline {
             if label.is_empty() {
                 return Some(format!("role {role} has no label"));
             }
-            if !self.steps.iter().any(|st| st.role == role) {
+            if !self.steps.iter().any(|st| st.role == *role) {
                 return Some(format!("role {role} has no step"));
             }
         }
         for (what, table) in [("a model", &self.settings.models), ("an agent", &self.settings.agents)] {
-            if let Some(unknown) = table.keys().filter(|role| !self.roles.contains_key(role)).min() {
+            if let Some(unknown) = table.keys().filter(|role| !self.roles.contains_key(*role)).min() {
                 return Some(format!("{what} is set for role {unknown}, which is not one of the workflow's roles"));
             }
         }
@@ -597,11 +598,11 @@ impl Pipeline {
             .unwrap_or(&self.steps[self.steps.len() - 1])
     }
 
-    pub fn models(&self) -> &Map<String> {
+    pub fn models(&self) -> &IndexMap<String, String> {
         &self.settings.models
     }
 
-    pub fn agents(&self) -> &Map<String> {
+    pub fn agents(&self) -> &IndexMap<String, String> {
         &self.settings.agents
     }
 
@@ -733,7 +734,7 @@ pub fn default_workflow(prompts: &Prompts) -> Pipeline {
     review.again = Some(text(Prompt::RecheckPrompt));
     review.fresh_note = Some(text(Prompt::RereviewNote));
     review.loop_to = Some("build".to_string());
-    let roles = ROLE_LABELS.iter().map(|(k, v)| (*k, v.to_string())).collect();
+    let roles = ROLE_LABELS.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
     Pipeline::new("default", roles, vec![spec, build, review]).expect("the default workflow is valid with any prompts")
 }
 

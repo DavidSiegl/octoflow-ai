@@ -326,7 +326,7 @@ fn step_prompt(state: &RunState, host: &FakeHost, step: &str, n: u32) -> (String
 fn holding(files: &[(String, &str)]) -> FakeHost {
     let host = FakeHost::default();
     for (path, text) in files {
-        host.state().files.insert(path, text.to_string());
+        host.state().files.insert(path.to_string(), text.to_string());
     }
     host
 }
@@ -602,7 +602,7 @@ fn a_build_prompt_file_words_the_builders_first_turn() {
     let mut wf = f.workflow(no_pr_of(pipeline));
     assert_eq!(wf.run(), verdict(APPROVE));
     assert_eq!(*seen.borrow(), [format!("Build {D}/spec.md in /proj; report to {D}/build-1.md.{}", note())]);
-    let overrides: Vec<(&str, &String)> = wf.state().prompt_overrides.iter().collect();
+    let overrides: Vec<(&str, &String)> = wf.state().prompt_overrides.iter().map(|(k, v)| (k.as_str(), v)).collect();
     assert_eq!(overrides, [("BUILD_PROMPT", &build.to_string())]);
     // Its name and the overrides give the workflow back, so the run saves no definition of it.
     assert_eq!(wf.state().workflow_definition, None);
@@ -679,7 +679,7 @@ fn a_run_an_earlier_release_started_with_its_fix_prompt_file_is_resumable_and_wo
     // resume itself is verdict_steps.rs's and a_resume_keeps_the_prompts_the_run_started_with's: this checks that
     // the saved state passes resume's checks and that its fix prompt fills.
     let mut state = saved_run("review", 1, &["spec", "build", "review"]);
-    state.prompt_overrides.insert("FIX_PROMPT", "Fix {prev_review_path}; report to {build_path}.".to_string());
+    state.prompt_overrides.insert("FIX_PROMPT".to_string(), "Fix {prev_review_path}; report to {build_path}.".to_string());
     let Value::Object(mut saved) = state.to_json() else { unreachable!("a state is saved as an object") };
     saved.shift_remove("verdicts");
     crate::test_support::resumable(&[], &saved).unwrap();

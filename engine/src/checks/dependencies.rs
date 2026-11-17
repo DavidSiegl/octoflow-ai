@@ -6,13 +6,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
+use indexmap::IndexMap;
 use ::toml::de::{DeTable, DeValue, ValueDeserializer};
 use ::toml::{Spanned, Table, Value};
 use serde::Deserialize;
 
 use super::{CheckFindings, Finding, RunChange};
 use crate::error::{toml_syntax_error, OrchestratorError};
-use crate::map::Map;
 use crate::package_index::{IndexedPackage, PackageIndex, PackageIndexes};
 
 /// A new dependency whose first release is fewer days old than this is flagged: few have used it yet, and a name
@@ -103,11 +103,11 @@ pub struct Dependency {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Dependencies {
     /// The project's own choice, which the spec must name.
-    pub direct: Map<Vec<Dependency>>,
+    pub direct: IndexMap<String, Vec<Dependency>>,
     /// Every package its lock file pins, the project and its workspace aside.
-    pub locked: Map<Vec<Dependency>>,
+    pub locked: IndexMap<String, Vec<Dependency>>,
     /// Why, by path, for each manifest that cannot be read; direct and locked then come from the others only.
-    pub unreadable: Map<String>,
+    pub unreadable: IndexMap<String, String>,
 }
 
 /// A kind of project's dependency manifests, from the repository's top level, how to read them, and the index its
@@ -170,7 +170,9 @@ pub fn python_dependencies(read: &ReadFile) -> Result<Dependencies, Orchestrator
     let mut found = Dependencies::default();
     match read_manifest(read, "uv.lock", uv_lock_packages)? {
         Ok(locked) => add_named(&mut found.locked, locked, "uv.lock"),
-        Err(why) => found.unreadable.insert("uv.lock", why),
+        Err(why) => {
+            found.unreadable.insert("uv.lock".to_string(), why);
+        }
     }
     match read_manifest(read, "pyproject.toml", pyproject_dependencies)? {
         Ok(direct) => {
@@ -183,18 +185,22 @@ pub fn python_dependencies(read: &ReadFile) -> Result<Dependencies, Orchestrator
                 .collect();
             add_named(&mut found.direct, direct, "pyproject.toml");
         }
-        Err(why) => found.unreadable.insert("pyproject.toml", why),
+        Err(why) => {
+            found.unreadable.insert("pyproject.toml".to_string(), why);
+        }
     }
     Ok(found)
 }
 
 /// Adds to packages each package of sources from each source that packages does not hold it from yet, as named by
 /// the manifest at path.
-fn add_named(packages: &mut Map<Vec<Dependency>>, sources: Sources, path: &str) {
+fn add_named(packages: &mut IndexMap<String, Vec<Dependency>>, sources: Sources, path: &str) {
     for (key, source, line) in sources {
         let dependency = Dependency { source, manifest: path.to_string(), line };
         match packages.get_mut(&key) {
-            None => packages.insert(key, vec![dependency]),
+            None => {
+                packages.insert(key, vec![dependency]);
+            }
             Some(held) if held.iter().all(|d| d.source != dependency.source) => held.push(dependency),
             Some(_) => {}
         }
@@ -547,7 +553,9 @@ pub fn cargo_dependencies(read: &ReadFile) -> Result<Dependencies, OrchestratorE
     let mut found = Dependencies::default();
     match read_manifest(read, "Cargo.lock", cargo_lock_packages)? {
         Ok(locked) => add_named(&mut found.locked, locked, "Cargo.lock"),
-        Err(why) => found.unreadable.insert("Cargo.lock", why),
+        Err(why) => {
+            found.unreadable.insert("Cargo.lock".to_string(), why);
+        }
     }
     // A root whose own dependencies cannot be read still says which members to read.
     let root = read_manifest(read, "Cargo.toml", |root| {
@@ -562,11 +570,11 @@ pub fn cargo_dependencies(read: &ReadFile) -> Result<Dependencies, OrchestratorE
             workspace
         }
         Ok((workspace, Err(why))) => {
-            found.unreadable.insert("Cargo.toml", why);
+            found.unreadable.insert("Cargo.toml".to_string(), why);
             workspace
         }
         Err(why) => {
-            found.unreadable.insert("Cargo.toml", why);
+            found.unreadable.insert("Cargo.toml".to_string(), why);
             return Ok(found);
         }
     };
@@ -578,7 +586,9 @@ pub fn cargo_dependencies(read: &ReadFile) -> Result<Dependencies, OrchestratorE
         };
         match direct {
             Ok(direct) => add_named(&mut found.direct, direct, &path),
-            Err(why) => found.unreadable.insert(path, why),
+            Err(why) => {
+                found.unreadable.insert(path, why);
+            }
         }
     }
     Ok(found)
@@ -589,17 +599,17 @@ struct CargoWorkspace {
     /// Each member's directory from the top level, without a trailing /; the top level itself left out.
     members: Vec<String>,
     /// `[workspace.dependencies]`: by each entry's name, its crate's package_key, its source and the line of the entry.
-    shared: Map<(String, Option<PackageSource>, u64)>,
+    shared: IndexMap<String, (String, Option<PackageSource>, u64)>,
 }
 
 /// The CargoWorkspace of the parsed top-level Cargo.toml root, which has none when root has no `[workspace]`; why
 /// not, for one of another shape.
 fn workspace_of(root: &Manifest) -> Result<CargoWorkspace, String> {
     let workspace = toml_table(&root.table, "workspace")?;
-    let mut shared = Map::new();
+    let mut shared = IndexMap::new();
     for (name, entry) in toml_table(workspace, "dependencies")? {
         let (key, source) = cargo_entry(name.get_ref(), &plain(entry), "[workspace.dependencies]")?;
-        shared.insert(name.get_ref().as_ref(), (key, source, root.line(name.span())));
+        shared.insert(name.get_ref().to_string(), (key, source, root.line(name.span())));
     }
     let excluded = string_list(workspace, "exclude", "[workspace] exclude")?;
     let mut members = Vec::new();
@@ -628,7 +638,7 @@ fn string_list(table: &DeTable, key: &str, place: &str) -> Result<Vec<String>, S
 /// `[workspace.dependencies]`; why not, for one of another shape.
 fn cargo_manifest_dependencies(
     manifest: &Manifest,
-    shared: &Map<(String, Option<PackageSource>, u64)>,
+    shared: &IndexMap<String, (String, Option<PackageSource>, u64)>,
 ) -> Result<Sources, String> {
     let mut tables = Vec::new();
     for table in CARGO_DEPENDENCY_TABLES {
@@ -660,7 +670,7 @@ fn cargo_member_entry(
     name: &str,
     entry: &Value,
     place: &str,
-    shared: &Map<(String, Option<PackageSource>, u64)>,
+    shared: &IndexMap<String, (String, Option<PackageSource>, u64)>,
 ) -> Result<(String, Option<PackageSource>), String> {
     match entry.as_table().and_then(|t| t.get("workspace")) {
         None => cargo_entry(name, entry, place),
@@ -770,13 +780,15 @@ pub fn new_dependencies(change: &RunChange, indexes: &PackageIndexes) -> Result<
     let (packages, mut found) = new_packages(change, indexes)?;
     let (known, failures) = ask_indexes(&packages, change.in_time);
     let named = spec_names(&change.spec);
-    let mut pulled_in: Map<Vec<String>> = Map::new();
+    let mut pulled_in: IndexMap<String, Vec<String>> = IndexMap::new();
     for p in &packages {
         if !p.direct && (p.source.is_some() || known_of(&known, p).is_some_and(Option::is_some)) {
             let described = format!("`{}` ({})", p.key, whence(p, &known, change.now, ""));
             match pulled_in.get_mut(&p.path) {
                 Some(list) => list.push(described),
-                None => pulled_in.insert(p.path.as_str(), vec![described]),
+                None => {
+                    pulled_in.insert(p.path.clone(), vec![described]);
+                }
             }
         } else if let Some((fails, finding)) = package_finding(p, &named, &known, change.now) {
             if fails { &mut found.issues } else { &mut found.to_weigh }.push(finding);
@@ -806,13 +818,15 @@ fn known_of<'k>(known: &'k Known, p: &NewPackage) -> Option<&'k Option<IndexedPa
 /// The unchecked findings new_dependencies fails the gate with, one per index that ask_indexes did not ask about each
 /// of packages from it: it names, once each and in the order of packages, those it was not asked about, known being
 /// what ask_indexes learned, and gives the index's entry of failures, its reason for stopping.
-fn unchecked_findings(packages: &[NewPackage], known: &Known, failures: &Map<String>) -> Vec<Finding> {
-    let mut unasked: Map<Vec<&str>> = Map::new();
+fn unchecked_findings(packages: &[NewPackage], known: &Known, failures: &IndexMap<String, String>) -> Vec<Finding> {
+    let mut unasked: IndexMap<String, Vec<&str>> = IndexMap::new();
     for p in packages.iter().filter(|p| p.source.is_none() && known_of(known, p).is_none()) {
         match unasked.get_mut(p.index.name()) {
             Some(keys) if keys.contains(&p.key.as_str()) => {}
             Some(keys) => keys.push(&p.key),
-            None => unasked.insert(p.index.name(), vec![p.key.as_str()]),
+            None => {
+                unasked.insert(p.index.name().to_string(), vec![p.key.as_str()]);
+            }
         }
     }
     unasked
@@ -898,7 +912,7 @@ fn new_packages<'a>(
         let after = (ecosystem.read)(&|path: &str| (change.file_at)(&change.commit, path))?;
         let before = (ecosystem.read)(&|path: &str| (change.file_at)(&change.base, path))?;
         // Each manifest by its own two sides: the Builder broke only what the base could read.
-        for (path, why) in after.unreadable.iter().filter(|(path, _)| !before.unreadable.contains_key(path)) {
+        for (path, why) in after.unreadable.iter().filter(|(path, _)| !before.unreadable.contains_key(*path)) {
             found.issues.push(unreadable(path, why, "in the change", true));
         }
         for (path, why) in before.unreadable.iter() {
@@ -923,8 +937,8 @@ fn compare_dependencies<'a>(
     before: &Dependencies,
     after: &Dependencies,
 ) -> (Vec<NewPackage<'a>>, Vec<Finding>) {
-    let lock_only: Map<Vec<Dependency>> =
-        after.locked.iter().filter(|(key, _)| !after.direct.contains_key(key)).map(|(k, v)| (k, v.clone())).collect();
+    let lock_only: IndexMap<String, Vec<Dependency>> =
+        after.locked.iter().filter(|(key, _)| !after.direct.contains_key(*key)).map(|(k, v)| (k.clone(), v.clone())).collect();
     let mut new = Vec::new();
     let mut moved = Vec::new();
     for (was, now, direct) in [(&before.direct, &after.direct, true), (&before.locked, &lock_only, false)] {
@@ -987,9 +1001,9 @@ fn unreadable(path: &str, why: &str, place: &str, fails: bool) -> Finding {
 /// What each package's index knows of it, of those from their index; and why an index was not asked about the rest
 /// of its packages, by its name: in_time() said no before a request, which leaves every later one of every index
 /// out, or the index gave no usable answer to one, which leaves that one and every later one of the index out.
-fn ask_indexes(packages: &[NewPackage], in_time: &dyn Fn() -> bool) -> (Known, Map<String>) {
+fn ask_indexes(packages: &[NewPackage], in_time: &dyn Fn() -> bool) -> (Known, IndexMap<String, String>) {
     let mut known = Known::new();
-    let mut failures: Map<String> = Map::new();
+    let mut failures: IndexMap<String, String> = IndexMap::new();
     let mut out_of_time = false;
     for p in packages.iter().filter(|p| p.source.is_none()) {
         let index = p.index.name();
@@ -998,14 +1012,16 @@ fn ask_indexes(packages: &[NewPackage], in_time: &dyn Fn() -> bool) -> (Known, M
         }
         out_of_time = out_of_time || !in_time();
         if out_of_time {
-            failures.insert(index, "the quality round had too little time left to ask".to_string());
+            failures.insert(index.to_string(), "the quality round had too little time left to ask".to_string());
             continue;
         }
         match p.index.package(&p.key) {
             Ok(package) => {
                 known.insert((index, p.key.clone()), package);
             }
-            Err(e) => failures.insert(index, e.to_string()),
+            Err(e) => {
+                failures.insert(index.to_string(), e.to_string());
+            }
         }
     }
     (known, failures)

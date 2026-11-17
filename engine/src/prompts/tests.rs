@@ -127,17 +127,17 @@ fn an_override_ends_with_one_newline_less_and_its_line_ends_read_as_newlines() {
 
 #[test]
 fn a_state_that_replaces_an_unknown_prompt() {
-    let overrides: Map<String> = [("LATER_NOTE", "x".to_string()), ("ANOTHER", "y".to_string())].into_iter().collect();
+    let overrides: IndexMap<String, String> = [("LATER_NOTE".to_string(), "x".to_string()), ("ANOTHER".to_string(), "y".to_string())].into_iter().collect();
     assert_eq!(
         saved_prompts(&overrides, "20260929-120000-a1b2c3").unwrap_err().0,
         "run state 20260929-120000-a1b2c3 replaces prompt ANOTHER, which this orchestrator lacks"
     );
-    assert_eq!(saved_prompts(&Map::new(), "r").unwrap(), Prompts::default());
+    assert_eq!(saved_prompts(&IndexMap::new(), "r").unwrap(), Prompts::default());
 }
 
 #[test]
 fn a_state_whose_prompt_an_earlier_release_could_fill_in_is_refused() {
-    let overrides: Map<String> = [("CONTINUE_PROMPT", "Go on to {path!s}.".to_string())].into_iter().collect();
+    let overrides: IndexMap<String, String> = [("CONTINUE_PROMPT".to_string(), "Go on to {path!s}.".to_string())].into_iter().collect();
     assert_eq!(
         saved_prompts(&overrides, "r").unwrap_err().0,
         "run state r replaces prompt CONTINUE_PROMPT with a text this orchestrator cannot fill in: placeholder {path!s} \
@@ -150,14 +150,14 @@ fn a_state_keeps_the_fix_prompt_an_earlier_release_saved() {
     // Saved before 0.58.0, whose FIX_PROMPT named {prev_review_path}: refused as a prompt file (see
     // the_builders_fix_prompt_names_the_findings_that_sent_the_round_back), read as saved.
     let earlier = "Fix {prev_review_path}; report to {build_path}.";
-    let overrides: Map<String> = [("FIX_PROMPT", earlier.to_string())].into_iter().collect();
+    let overrides: IndexMap<String, String> = [("FIX_PROMPT".to_string(), earlier.to_string())].into_iter().collect();
     assert_eq!(saved_prompts(&overrides, "r").unwrap().text(Prompt::FixPrompt), earlier);
     // Only one text's placeholders, not a mix of the earlier and today's.
     for (name, text) in [
         ("FIX_PROMPT", "Fix {prev_review_path} and {findings}; report to {build_path}."),
         ("RECHECK_PROMPT", "Recheck {prev_review_path}, {build_path}, {change}, {spec_path}; write {review_path}."),
     ] {
-        let overrides: Map<String> = [(name, text.to_string())].into_iter().collect();
+        let overrides: IndexMap<String, String> = [(name.to_string(), text.to_string())].into_iter().collect();
         assert!(saved_prompts(&overrides, "r").is_err(), "{name}: {text}");
     }
 }
@@ -166,18 +166,18 @@ fn a_state_keeps_the_fix_prompt_an_earlier_release_saved() {
 fn a_state_keeps_an_override_that_leaves_out_a_placeholder_its_built_in_text_has() {
     // A release that adds a placeholder to a built-in text must not refuse the runs that saved an override without it.
     let text = "Recheck {change}.";
-    let overrides: Map<String> = [("RECHECK_PROMPT", text.to_string())].into_iter().collect();
+    let overrides: IndexMap<String, String> = [("RECHECK_PROMPT".to_string(), text.to_string())].into_iter().collect();
     assert_eq!(saved_prompts(&overrides, "r").unwrap().text(Prompt::RecheckPrompt), text);
     assert!(prompt_problem("RECHECK_PROMPT", text).unwrap().contains("is missing"));
     // An earlier text's placeholders may be left out too.
-    let overrides: Map<String> = [("FIX_PROMPT", "Fix {prev_review_path}.".to_string())].into_iter().collect();
+    let overrides: IndexMap<String, String> = [("FIX_PROMPT".to_string(), "Fix {prev_review_path}.".to_string())].into_iter().collect();
     assert!(saved_prompts(&overrides, "r").is_ok());
 }
 
 #[test]
 fn a_state_and_a_file_both_refuse_an_unknown_placeholder_and_a_template_that_does_not_parse() {
     for text in ["Recheck {change} {nothing}.", "Recheck {change"] {
-        let overrides: Map<String> = [("RECHECK_PROMPT", text.to_string())].into_iter().collect();
+        let overrides: IndexMap<String, String> = [("RECHECK_PROMPT".to_string(), text.to_string())].into_iter().collect();
         assert!(saved_prompts(&overrides, "r").is_err(), "{text}");
         assert!(prompt_problem("RECHECK_PROMPT", text).is_some(), "{text}");
     }

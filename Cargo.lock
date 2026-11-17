@@ -2171,6 +2171,7 @@ dependencies = [
 name = "octoflow-e2e"
 version = "0.1.0"
 dependencies = [
+ "indexmap 2.14.2",
  "nix",
  "octoflow-engine",
  "rustls",
@@ -2186,6 +2187,7 @@ name = "octoflow-engine"
 version = "0.88.2"
 dependencies = [
  "clap",
+ "indexmap 2.14.2",
  "jiff",
  "nix",
  "openssl-probe",

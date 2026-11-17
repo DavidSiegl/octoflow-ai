@@ -66,8 +66,8 @@ fn locked_note(steps: &str, paths: &str, diff_paths: &str) -> String {
 }
 
 /// RunState::locked as the Test Writer leaves it.
-fn tests_locked() -> Map<Vec<String>> {
-    [("tests", strings(&["test_limiter.py"]))].into_iter().collect()
+fn tests_locked() -> IndexMap<String, Vec<String>> {
+    [("tests".to_string(), strings(&["test_limiter.py"]))].into_iter().collect()
 }
 
 #[test]
@@ -165,9 +165,9 @@ fn a_record_saved_before_the_restore_is_restored_on_resume() {
     let host = Rc::new(FakeHost::default());
     {
         let mut h = host.state();
-        h.refs.insert(LOCK_REF, "snap0".to_string());
+        h.refs.insert(LOCK_REF.to_string(), "snap0".to_string());
         h.trees.insert("snap0".to_string(), [(TEST_FILE.to_string(), Some("assert limit() == 3".to_string()))].into());
-        h.files.insert(TEST_FILE, "assert True".to_string());
+        h.files.insert(TEST_FILE.to_string(), "assert True".to_string());
     }
     let f = Fixture::resume(host, state, vec![("review", vec![review_turn(1, APPROVE)])], &[], &[]);
     f.put(&format!("{D}/build-1.md"), "report 1");

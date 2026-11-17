@@ -6,6 +6,8 @@
 
 use std::rc::Rc;
 
+use indexmap::IndexMap;
+
 use super::*;
 use crate::state::format_problem;
 use serde_json::Value;
@@ -16,7 +18,6 @@ use crate::herdr::fake::Call;
 use crate::herdr::{HerdrError, HerdrServer, OWN_SESSION};
 use crate::host::tests::Repo;
 use crate::host::{Host, GIT_STATUS_ARGS};
-use crate::map::Map;
 use crate::json::Object;
 use crate::test_support::resumable;
 use crate::workflow::fixture::saved_run;
@@ -72,7 +73,7 @@ impl Close {
         if worktree {
             host.worktrees.insert(self::worktree(), CLOSE_BRANCH.into());
             host.changed.insert(format!("{}/a.py", self::worktree()));
-            host.branches.insert(CLOSE_BRANCH, "base1".into());
+            host.branches.insert(CLOSE_BRANCH.to_string(), "base1".into());
         } else {
             host.branch = CLOSE_BRANCH.into();
             host.changed.insert("/proj/a.py".into());
@@ -351,7 +352,7 @@ fn finished_worktree_run_whose_worktree_went_with_its_pull_request() {
     let c = Close::new();
     let pr = ("pr_url", Value::from("https://github.com/o/r/pull/7"));
     c.add(0, true, &[("phase", Value::from("done")), ("error", Value::Null), ("verdict", Value::from(APPROVE)), pr]);
-    c.cli.f.host.state().worktrees = Map::new();
+    c.cli.f.host.state().worktrees = IndexMap::new();
     c.close(&[]);
     c.assert_closed("workspace closed");
 }
@@ -374,15 +375,15 @@ fn a_workspace_herdr_lacks_is_already_gone() {
 fn a_worktree_already_gone_still_has_its_branch_deleted() {
     let c = Close::new();
     c.add(0, true, &[]);
-    c.cli.f.host.state().worktrees = Map::new();
+    c.cli.f.host.state().worktrees = IndexMap::new();
     c.close(&[]);
     assert!(c.cli.f.host.state().branches.is_empty());
     c.assert_closed("workspace closed; worktree already gone; branch deleted");
 
     let c = Close::new();
     c.add(0, true, &[]);
-    c.cli.f.host.state().worktrees = Map::new();
-    c.cli.f.host.state().branches = Map::new();
+    c.cli.f.host.state().worktrees = IndexMap::new();
+    c.cli.f.host.state().branches = IndexMap::new();
     c.close(&[]);
     c.assert_closed("workspace closed; worktree already gone");
 }
@@ -510,7 +511,7 @@ impl Close {
     fn add_refs(&self) {
         let refs = &mut self.cli.f.host.state().refs;
         for git_ref in ["refs/orchestrator/a1b2c3/locked/tests", "refs/orchestrator/a1b2c3/locked/build", OTHER_REF] {
-            refs.insert(git_ref, "snap1".to_string());
+            refs.insert(git_ref.to_string(), "snap1".to_string());
         }
     }
 
@@ -618,7 +619,7 @@ fn close_outside_a_repository(locked: &[(&str, Vec<String>)]) -> (Result<String,
     let mut state = RunState::new(CLOSE_ID, "x", &tmp.path());
     (state.phase, state.round, state.error) = ("build".into(), 1, Some("interrupted".into()));
     for (step, paths) in locked {
-        state.locked.insert(*step, paths.clone());
+        state.locked.insert(step.to_string(), paths.clone());
     }
     let path = format!("{}/state.json", state.dir());
     host.write(&path, &state.to_text(), false).unwrap();
@@ -695,7 +696,7 @@ fn close_on_real_git() {
     state.branch = Some(CLOSE_BRANCH.into());
     state.error = Some("interrupted".into());
     state.worktree = Some(wt.clone());
-    state.locked.insert("tests", vec!["app.py".to_string()]);
+    state.locked.insert("tests".to_string(), vec!["app.py".to_string()]);
     let path = format!("{}/state.json", state.dir());
     repo.host.write(&path, &state.to_text(), false).unwrap();
     crate::host::tests::set_mtime(&path, 1_000_000_000);
@@ -888,7 +889,7 @@ fn a_run_removed_since_the_sweep_began_is_skipped_not_failed() {
     let path = format!("/proj/.orchestrator/runs/{STALE}/state.json");
     c.cli.f.herdr.state().before_call = Some(Box::new(move |call| {
         if matches!(call, Call::Close { .. }) {
-            host.state().files.remove(&path);
+            host.state().files.shift_remove(&path);
         }
     }));
     let (status, out) = c.close(&["--all"]);

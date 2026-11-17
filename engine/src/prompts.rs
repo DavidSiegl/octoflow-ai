@@ -6,10 +6,10 @@ use crate::error::{closest_name, OrchestratorError};
 use crate::host::line_ends_as_lf;
 use crate::paths::split_extension;
 use crate::proof_copies_dir;
-use crate::map::Map;
 
 pub mod template;
 
+use indexmap::IndexMap;
 use template::{fill, placeholders, TemplateError};
 
 // -- The built-in texts. Each is a template (template.rs) whose placeholders a prompt file replacing it must keep
@@ -287,7 +287,7 @@ impl Default for Prompts {
 impl Prompts {
     /// The built-in texts, each one overrides names replaced by its text; Err with the least name, by code point,
     /// that names no prompt.
-    pub fn from_overrides(overrides: &Map<String>) -> Result<Prompts, String> {
+    pub fn from_overrides(overrides: &IndexMap<String, String>) -> Result<Prompts, String> {
         if let Some(unknown) = overrides.keys().filter(|name| Prompt::named(name).is_none()).min() {
             return Err(unknown.to_string());
         }
@@ -313,11 +313,11 @@ impl Prompts {
 
     /// Name -> text of each prompt that differs from the built-in text, in Prompt::ALL's order;
     /// Prompts::from_overrides gives these prompts back.
-    pub fn overrides(&self) -> Map<String> {
+    pub fn overrides(&self) -> IndexMap<String, String> {
         Prompt::ALL
             .iter()
             .filter(|p| self.text(**p) != p.built_in())
-            .map(|p| (p.name(), self.text(*p).to_string()))
+            .map(|p| (p.name().to_string(), self.text(*p).to_string()))
             .collect()
     }
 }
@@ -345,7 +345,7 @@ const EARLIER_PLACEHOLDERS: &[(Prompt, &[&str])] = &[(Prompt::FixPrompt, &["buil
 ///
 /// Errors, naming run_id: the overrides name a prompt this orchestrator lacks, or one is not a template, or names a
 /// placeholder neither text offers.
-pub fn saved_prompts(overrides: &Map<String>, run_id: &str) -> Result<Prompts, OrchestratorError> {
+pub fn saved_prompts(overrides: &IndexMap<String, String>, run_id: &str) -> Result<Prompts, OrchestratorError> {
     let prompts = Prompts::from_overrides(overrides).map_err(|unknown| {
         OrchestratorError(format!("run state {run_id} replaces prompt {unknown}, which this orchestrator lacks"))
     })?;
@@ -372,18 +372,18 @@ pub fn saved_prompts(overrides: &Map<String>, run_id: &str) -> Result<Prompts, O
 
 /// Name -> path of each .md file in dir, ConfigDir::prompts_dir, unread, in name order; none without the directory. Other files are not
 /// prompt files, as an editor's backup is not. Errors: the directory cannot be listed.
-pub fn prompt_files(dir: &str) -> Result<Map<String>, OrchestratorError> {
+pub fn prompt_files(dir: &str) -> Result<IndexMap<String, String>, OrchestratorError> {
     files_with_extension(dir, ".md")
 }
 
 /// Name -> path of each file in dir whose extension (split_extension's) is ext, in name order, the name being the
 /// file's without its extension; none without the directory. Errors: the directory cannot be listed. A file whose
 /// name is not UTF-8 is left out.
-pub(crate) fn files_with_extension(dir: &str, ext: &str) -> Result<Map<String>, OrchestratorError> {
+pub(crate) fn files_with_extension(dir: &str, ext: &str) -> Result<IndexMap<String, String>, OrchestratorError> {
     use crate::error::strerror;
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Map::new()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(IndexMap::new()),
         Err(e) => return Err(OrchestratorError(format!("cannot list {dir}: {}", strerror(&e)))),
     };
     let mut names = Vec::new();
@@ -398,7 +398,7 @@ pub(crate) fn files_with_extension(dir: &str, ext: &str) -> Result<Map<String>, 
         .iter()
         .filter_map(|name| {
             let (stem, found) = split_extension(name);
-            (found == ext).then(|| (stem, format!("{dir}/{name}")))
+            (found == ext).then(|| (stem.to_string(), format!("{dir}/{name}")))
         })
         .collect())
 }
@@ -410,7 +410,7 @@ pub(crate) fn files_with_extension(dir: &str, ext: &str) -> Result<Map<String>, 
 /// the built-in text (prompt_problem); and a prompts directory that cannot be listed.
 pub fn load_prompts(config: &ConfigDir) -> Result<Prompts, OrchestratorError> {
     use crate::error::strerror;
-    let mut overrides = Map::new();
+    let mut overrides = IndexMap::new();
     for (name, path) in prompt_files(&config.prompts_dir())? {
         if Prompt::named(&name).is_none() {
             let names = Prompt::ALL.iter().map(|p| p.name());

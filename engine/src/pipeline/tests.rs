@@ -233,7 +233,7 @@ fn only_an_editing_step_may_lock() {
         .collect();
     steps.push(with(step("accept", "accept-{n}.md"), |s| s.loop_to = Some("tests".into())));
     let mut roles = four_roles();
-    roles.insert("accept", "Product Manager".to_string());
+    roles.insert("accept".to_string(), "Product Manager".to_string());
     let e = Pipeline::new("bad", roles, steps).unwrap_err();
     assert!(e.ends_with("step tests locks the files it changes, so the verdict loop of step accept must not run it again"), "{e}");
 }
@@ -378,8 +378,8 @@ fn run_files_are_the_runs_own() {
 
 #[test]
 fn the_default_is_worded_by_its_prompts() {
-    let mut overrides = Map::new();
-    overrides.insert("BUILD_PROMPT", "Build {spec_path} in {cwd}; report to {build_path}.".to_string());
+    let mut overrides = IndexMap::new();
+    overrides.insert("BUILD_PROMPT".to_string(), "Build {spec_path} in {cwd}; report to {build_path}.".to_string());
     let prompts = Prompts::from_overrides(&overrides).unwrap();
     let p = default_workflow(&prompts);
     assert_eq!(p.step("build").unwrap().prompt, "Build {spec_path} in {cwd}; report to {build_path}.");
