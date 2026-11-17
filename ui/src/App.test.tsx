@@ -255,10 +255,14 @@ describe("the run detail", () => {
     fireEvent.click(within(row(DONE)).getByRole("button", { name: "#1" }));
     expect(invoke).toHaveBeenLastCalledWith("open_outside", { target });
     expect(screen.queryByRole("region", { name: "run beef00" })).not.toBeInTheDocument();
+    invoke.mockRejectedValueOnce("no browser");
+    await act(async () => fireEvent.click(within(row(DONE)).getByRole("button", { name: "#1" })));
+    fireEvent.click(within(row(DONE)).getByText("Could not open it: no browser"));
+    expect(screen.queryByRole("region", { name: "run beef00" })).not.toBeInTheDocument();
     fireEvent.click(row(DONE));
     const detail = screen.getByRole("region", { name: "run beef00" });
     fireEvent.click(within(detail).getByRole("button", { name: target.page }));
-    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(invoke).toHaveBeenCalledTimes(3);
     expect(invoke).toHaveBeenLastCalledWith("open_outside", { target });
   });
 });

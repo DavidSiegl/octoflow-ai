@@ -420,10 +420,11 @@ enum LicenseFile {
 }
 
 impl Outside {
-    /// What the opener is given for it: a page's URL as `tauri::Url` writes it, or a license file's path in
-    /// resources, the app's resource directory. Errors, saying so: a page that is not an `https` URL with a host, or
-    /// a license file resources does not hold, as in any build but a packaged one.
-    fn target(&self, resources: &Path) -> Result<OsString, String> {
+    /// What the opener is given for it: a page's URL as `tauri::Url` writes it, or a license file's path in the app's
+    /// resource directory, which resources gives, called for a license file only. Errors, saying so: a page that is
+    /// not an `https` URL with a host; resources' error; a license file the directory does not hold, as in any build
+    /// but a packaged one.
+    fn target(&self, resources: impl FnOnce() -> Result<PathBuf, String>) -> Result<OsString, String> {
         let file = match self {
             Outside::Page(page) => {
                 return match tauri::Url::parse(page) {
@@ -434,7 +435,7 @@ impl Outside {
             Outside::License(LicenseFile::CrateLicenses) => "THIRD-PARTY-LICENSES.html",
             Outside::License(LicenseFile::NpmLicenses) => "THIRD-PARTY-LICENSES-NPM.html",
         };
-        let path = resources.join(file);
+        let path = resources()?.join(file);
         if !path.is_file() {
             return Err(format!("{file} is not bundled with this build"));
         }
@@ -444,12 +445,12 @@ impl Outside {
 
 /// Open target outside the app, with the system's default handler, as the user's own shell would: in the user's
 /// environment (`UserShell`), not the window's, whose AppImage variables would start the browser against the bundle's
-/// libraries. Errors, as a line for the window to show: Outside::target's, the app's resource directory cannot be
-/// told, or run_opener's.
+/// libraries. Errors, as a line for the window to show: Outside::target's, among them that a license file's directory,
+/// the app's resources, cannot be told; or run_opener's.
 #[tauri::command(async)]
 fn open_outside(app: tauri::AppHandle, target: Outside) -> Result<(), String> {
-    let resources = app.path().resource_dir().map_err(|e| format!("cannot tell where the app's resources are: {e}"))?;
-    run_opener(Path::new(OPENER), &target.target(&resources)?, &UserShell::current())
+    let resources = || app.path().resource_dir().map_err(|e| format!("cannot tell where the app's resources are: {e}"));
+    run_opener(Path::new(OPENER), &target.target(resources)?, &UserShell::current())
 }
 
 /// The program that opens a URL or a file with the system's default handler.

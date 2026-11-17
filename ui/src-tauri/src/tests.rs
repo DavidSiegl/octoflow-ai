@@ -76,17 +76,21 @@ fn the_connection_s_version_is_the_release_s() {
 #[test]
 fn only_an_https_page_opens_and_a_license_file_only_when_bundled() {
     let resources = scratch_dir();
-    let page = |url: &str| Outside::Page(url.to_string()).target(resources.path());
+    let dir = || Ok(resources.path().to_path_buf());
+    // A page needs no resource directory: one that cannot be told fails license files only.
+    let page = |url: &str| Outside::Page(url.to_string()).target(|| Err("no resources".to_string()));
     assert_eq!(page("https://github.com/o/r/pull/1"), Ok("https://github.com/o/r/pull/1".into()));
     for refused in ["http://github.com/o/r", "file:///etc/passwd", "https://", "-https://x", "javascript:alert(1)"] {
         assert_eq!(page(refused), Err(format!("only an https page opens outside the app, not {refused}")));
     }
-    let missing = Outside::License(LicenseFile::NpmLicenses).target(resources.path());
+    let missing = Outside::License(LicenseFile::NpmLicenses).target(dir);
     assert_eq!(missing, Err("THIRD-PARTY-LICENSES-NPM.html is not bundled with this build".to_string()));
     let bundled = resources.path().join("THIRD-PARTY-LICENSES.html");
     std::fs::write(&bundled, "<html></html>").expect("the license file is written");
-    let found = Outside::License(LicenseFile::CrateLicenses).target(resources.path());
+    let found = Outside::License(LicenseFile::CrateLicenses).target(dir);
     assert_eq!(found, Ok(bundled.into_os_string()));
+    let untold = Outside::License(LicenseFile::CrateLicenses).target(|| Err("no resources".to_string()));
+    assert_eq!(untold, Err("no resources".to_string()));
 }
 
 #[test]

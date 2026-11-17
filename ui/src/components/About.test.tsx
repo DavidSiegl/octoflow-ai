@@ -80,7 +80,7 @@ describe("About", () => {
     invoke.mockReturnValueOnce(new Promise((_, reject) => (fail = reject))).mockResolvedValueOnce(undefined);
     await openAbout();
     fireEvent.click(screen.getByRole("button", { name: "Releases" }));
-    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Releases" })));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Source code" })));
     await act(async () => fail("no browser"));
     expect(screen.queryByText(/Could not open/)).not.toBeInTheDocument();
   });
