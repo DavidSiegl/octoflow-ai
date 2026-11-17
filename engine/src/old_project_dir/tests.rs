@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use super::*;
-use crate::host::tests::{put, Repo};
+use crate::host::tests::{put, read, set_mtime, Repo};
 use crate::state::RunState;
 
 /// A run id as new_run_id makes them, with the key k1a2b3.
@@ -12,9 +12,15 @@ const RUN: &str = "20260101-120000-k1a2b3";
 
 /// A run of the project at cwd that failed, so nothing drives it, closed when closed is, saved as state.json text.
 fn failed_run(cwd: &str, closed: bool) -> String {
+    kept_run(cwd, closed, None)
+}
+
+/// As failed_run, its worktree, which close kept, at worktree unless it is None.
+fn kept_run(cwd: &str, closed: bool, worktree: Option<&str>) -> String {
     let mut state = RunState::new(RUN, "a task", cwd);
     state.error = Some("it failed".to_string());
     state.closed = closed.then(|| "workspace closed".to_string());
+    state.worktree = worktree.map(str::to_string);
     state.to_text()
 }
 
@@ -24,23 +30,53 @@ fn old_state(cwd: &str) -> String {
 }
 
 #[test]
-fn a_project_s_old_directory_of_closed_runs_moves_with_its_kept_worktree_registered_at_the_new_place() {
+fn a_project_s_old_directory_of_closed_runs_moves_with_its_kept_worktree_registered_and_saved_at_the_new_place() {
     let repo = Repo::new(&[("a.txt", "a\n")]);
     let cwd = &repo.path;
     let old_tree = format!("{cwd}/.orchestrator/worktrees/k1a2b3");
     let new_tree = format!("{cwd}/.octoflow-ai/worktrees/k1a2b3");
     repo.git(&["worktree", "add", "--quiet", "-b", "run-k1a2b3", &old_tree]);
-    put(&old_state(cwd), &failed_run(cwd, true));
+    put(&old_state(cwd), &kept_run(cwd, true, Some(&old_tree)));
+    set_mtime(&old_state(cwd), 1_700_000_000);
 
     let moved = move_project_dir(&repo.host, cwd, false).expect("the move");
 
     assert_eq!(moved, Some(format!("moved the project's runs from {cwd}/.orchestrator to {cwd}/.octoflow-ai")));
     assert!(!Path::new(&format!("{cwd}/.orchestrator")).exists());
-    assert!(Path::new(&format!("{cwd}/.octoflow-ai/runs/{RUN}/state.json")).exists());
+    // prune finds the kept worktree by its saved path; the run's age stays as it was.
+    let new_state = format!("{cwd}/.octoflow-ai/runs/{RUN}/state.json");
+    let saved = RunState::from_text(&read(&new_state)).expect("a state");
+    assert_eq!(saved.worktree.as_deref(), Some(new_tree.as_str()));
+    assert_eq!(repo.host.mtime(&new_state).expect("its mtime"), 1_700_000_000);
     // Git finds the worktree at its new place from both ends.
     assert!(repo.git(&["worktree", "list", "--porcelain"]).contains(&format!("worktree {new_tree}\n")));
     let head = repo.host.git(&new_tree, &["rev-parse", "--abbrev-ref", "HEAD"]).expect("git in the worktree");
     assert_eq!(head, "run-k1a2b3\n");
+}
+
+#[test]
+fn a_worktree_saved_under_another_spelling_of_the_project_s_path_is_saved_at_the_new_place() {
+    let repo = Repo::new(&[("a.txt", "a\n")]);
+    let cwd = &repo.path;
+    put(&old_state(cwd), &kept_run(cwd, true, Some("/a/link/to/it/.orchestrator/worktrees/k1a2b3")));
+
+    move_project_dir(&repo.host, cwd, false).expect("the move");
+
+    let saved = RunState::from_text(&read(&format!("{cwd}/.octoflow-ai/runs/{RUN}/state.json"))).expect("a state");
+    assert_eq!(saved.worktree, Some(format!("{cwd}/.octoflow-ai/worktrees/k1a2b3")));
+}
+
+#[test]
+fn an_old_directory_whose_runs_were_all_forgotten_moves_with_their_metrics() {
+    let repo = Repo::new(&[("a.txt", "a\n")]);
+    let cwd = &repo.path;
+    put(&format!("{cwd}/.orchestrator/runs/.keep"), "");
+    put(&format!("{cwd}/.orchestrator/metrics-archive.jsonl"), "{}\n");
+
+    let moved = move_project_dir(&repo.host, cwd, false).expect("the move");
+
+    assert!(moved.is_some());
+    assert!(Path::new(&format!("{cwd}/.octoflow-ai/metrics-archive.jsonl")).exists());
 }
 
 #[test]

@@ -69,7 +69,7 @@ pub const ORIGIN_SILENT: &str = "origin did not answer within";
 const METRICS_FILE: &str = "metrics.json";
 /// Where, relative to a project, forget_run keeps the metrics of the runs it deleted: one line of JSON per run, each
 /// its METRICS_FILE's object, in the order they were forgotten.
-const METRICS_ARCHIVE: &str = ".octoflow-ai/metrics-archive.jsonl";
+const METRICS_ARCHIVE: &str = concat!(crate::project_dir!(), "/metrics-archive.jsonl");
 
 /// sh, inside a loop over files $f: what ends that pass when the command before it failed. A file gone since the loop
 /// found it is skipped, as a running run removes some of its files and prune a whole run (serve-run-files/03); one
