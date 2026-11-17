@@ -496,7 +496,7 @@ As your last step, write the design to {design_path} in a single write."""
 
 [[steps]]
 use = "build"              # the default Builder step, with only its first prompt replaced
-edits = true               # as it already is: the run's branch is created before the first editing step
+edits = true               # as it already is: the run's base and branch are fixed before the first editing step
 prompt = "... the design in {design_path} ... write a report to {build_path} in a single write."
 
 [[steps]]
@@ -511,7 +511,7 @@ use = "review"
 | `use` | `"spec"`, `"build"` or `"review"`: start from that default step and override only the keys given. |
 | `loop_to` | Makes this a verdict step, which sends `CHANGES_REQUESTED` back to the earlier step it names. A workflow may have several: each round runs them in order and ends at the first that requests changes. Each must loop back to a step at or before the first verdict step, and no step between the first and the last may edit, so that every verdict step judges the change the round ends with. |
 | `edits`, `human_paced`, `quality_gated` | The step edits the code, waits on you, or is the one the quality gate follows. |
-| `locks` | The first editing step locks the files it changes, as `product-team`'s QA Engineer does; later turns' changes to them are undone. |
+| `locks` | The first editing step locks the files it changes, as `product-team`'s QA Engineer does; another step's later changes to them are undone. |
 | `fresh_repeats_again` | A fresh session in a later round gets `again` too. |
 
 A workflow without a verdict step ends `FINISHED`, and its pull request says no agent reviewed the change. One with
