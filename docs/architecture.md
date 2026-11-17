@@ -68,7 +68,9 @@ its first editing step), a worktree run's `open_worktree` checks for a branch an
 branch and adds the worktree at `origin`'s (or finds it from before), `check_gate` checks the working tree,
 gitleaks and `local_gate::preflight`, and for an in-place run `check_repo` fast-forwards the base branch; in a later round,
 a worktree run's `check_worktree` refuses a run whose worktree is gone unless `pr_url` is set. Each fetch of the run, and its merge of `origin`'s base branch, goes through `reaching_origin` (`workflow/origin.rs`), which waits out a short
-outage of `origin`. Then `walk` takes the steps in order, in `work_dir`:
+outage of `origin`; each read of `origin` runs under `ORIGIN_READ` (`host.rs`), whose git and ssh limits end a
+stalled try in an error `reaching_origin` tries again on, as it does the host's kill of a try at `NETWORK_TIMEOUT`.
+Then `walk` takes the steps in order, in `work_dir`:
 
 - Each step's turn is `take_turn` and `step_turn`, prompted with `RunView::step_prompt`'s texts
   (`workflow/step_prompt.rs`): a read of the run's state, workflow, prompts and files, through `placeholder` and the

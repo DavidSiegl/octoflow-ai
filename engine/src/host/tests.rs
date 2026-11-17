@@ -1419,6 +1419,64 @@ fn fetch_of_a_branch_origin_lacks() {
     assert!(e.0.starts_with(&said), "{e}");
 }
 
+/// A fetch from an origin over SSH in a repository whose own config is config, with git's user and system config left
+/// out, and an ssh on PATH whose `ssh -G` prints ssh_g: the arguments that ssh was given for the fetch, one a line, and
+/// git's trace2 events, which give each http.* setting of each git command as `"param":"<key>","value":"<value>"`,
+/// keys in lower case.
+fn origin_read_limits(config: &[(&str, &str)], ssh_g: &str) -> (String, String) {
+    let bin = TempDir::new();
+    tool(
+        &bin.path(),
+        "ssh",
+        "#!/bin/sh\nif [ \"$1\" = -G ]; then printf '%s\\n' \"$SSH_G\"; exit 0; fi\nd=$(dirname \"$0\")\n\
+         printf '%s\\n' \"$@\" > \"$d/args\"\n\
+         echo 'fatal: Could not read from remote repository.' >&2; exit 255\n",
+    );
+    let events = bin.join("events");
+    let set = [
+        ("SSH_G", ssh_g),
+        ("GIT_TRACE2_EVENT", &events),
+        ("GIT_TRACE2_CONFIG_PARAMS", "http.*"),
+        ("GIT_CONFIG_GLOBAL", "/dev/null"),
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+    ];
+    // An ssh of the tester's own would stand in for the fake.
+    let env = environment(Some(&bin.path()), &set).into_iter().filter(|(k, _)| k != "GIT_SSH_COMMAND" && k != "GIT_SSH");
+    let repo = Repo::with_host(&[("a.txt", "a\n")], ProcessHost::in_environment(env, &Interrupt::new()));
+    repo.git(&["remote", "add", "origin", "remote-host:r.git"]);
+    for (key, value) in config {
+        repo.git(&["config", key, value]);
+    }
+    let e = repo.host.fetch(&repo.path, "main").unwrap_err();
+    assert!(e.0.contains("Could not read from remote repository"), "{e}");
+    (read(&bin.join("args")), read(&events))
+}
+
+/// The low-speed limits a read of origin sets, as trace2 reports them.
+const LIMIT_1000: &str = r#""param":"http.lowspeedlimit","value":"1000""#;
+const TIME_60: &str = r#""param":"http.lowspeedtime","value":"60""#;
+
+#[test]
+fn a_read_of_origin_has_git_and_ssh_give_up_on_a_stall() {
+    let (args, params) = origin_read_limits(&[], "connecttimeout none\nserveraliveinterval 0");
+    for option in ["ConnectTimeout=30", "ServerAliveInterval=15", "ServerAliveCountMax=4"] {
+        assert!(args.lines().any(|a| a == option), "{option} in {args}");
+    }
+    assert!(params.contains(LIMIT_1000) && params.contains(TIME_60), "{params}");
+}
+
+#[test]
+fn a_read_of_origin_keeps_the_users_own_limits() {
+    // Each setting on its own: the user's ssh config sets a connect timeout and git's config a low-speed time.
+    let (args, params) =
+        origin_read_limits(&[("http.lowSpeedTime", "5")], "connecttimeout 5\nserveraliveinterval 0");
+    assert!(!args.contains("ConnectTimeout") && args.contains("ServerAliveInterval=15"), "{args}");
+    assert!(params.contains(LIMIT_1000) && !params.contains(TIME_60), "{params}");
+    // An ssh command of the user's own is run as they set it.
+    let (args, _) = origin_read_limits(&[("core.sshCommand", "ssh")], "connecttimeout none\nserveraliveinterval 0");
+    assert!(!args.contains("ConnectTimeout") && !args.contains("ServerAlive"), "{args}");
+}
+
 #[test]
 fn merge_of_a_moved_base_is_a_merge_commit() {
     let c = Clones::new();

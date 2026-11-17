@@ -100,6 +100,12 @@ fn each_way_git_says_it_could_not_reach_origin_is_retried() {
         "fatal: early EOF",
         "error: RPC failed; HTTP 502 curl 22 The requested URL returned error: 502",
         "fatal: Authentication failed for 'https://github.com/o/r/'",
+        // What ends a read under host::ORIGIN_READ's limits: HTTPS too slow, a silent server over SSH.
+        "error: RPC failed; curl 28 Operation too slow. Less than 1000 bytes/sec transferred the last 60 seconds",
+        "fatal: unable to access 'https://github.com/o/r/': Operation too slow. Less than 1000 bytes/sec transferred",
+        "Timeout, server github.com not responding.\nfatal: the remote end hung up unexpectedly",
+        // And the host's kill of a read that ran past NETWORK_TIMEOUT all the same.
+        "git -C /proj fetch --quiet origin main: timed out after 300 seconds",
     ] {
         let (clock, told, interrupt, tries) = (FakeClock::default(), Told::default(), Interrupt::new(), Cell::new(0));
         reaching_origin(&clock, &told, &interrupt, failing(error, 1, &tries)).unwrap();

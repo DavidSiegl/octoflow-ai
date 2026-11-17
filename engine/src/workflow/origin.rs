@@ -11,13 +11,14 @@ use crate::interrupt::Interrupt;
 /// passes in that, and a longer outage is left to the human, who resumes the run.
 const WAITS: [u64; 3] = [5, 20, 60];
 
-/// What git writes, over SSH or HTTPS, when it could not reach origin or origin would not let it in: each a failure
-/// that a later try may not have. A failure without any of them, such as a branch origin lacks, is final, and so is
-/// one with any of FINAL too. A command the host kills for running past its time limit, as one that hangs on a network
-/// that drops its packets, says none of them either: four tries of NETWORK_TIMEOUT each would hold a run for 20
-/// minutes, so a hang is final.
+/// What git writes, over SSH or HTTPS, when it could not reach origin or origin would not let it in, and what the host
+/// says of a command it killed for running past its time: each a failure that a later try may not have. A failure
+/// without any of them, such as a branch origin lacks, is final, and so is one with any of FINAL too.
+///
+/// A read of origin that stalls is ended by git or ssh itself within about a minute and a half (host::ORIGIN_READ),
+/// in an error among these; the host's kill at NETWORK_TIMEOUT is for what those limits miss.
 const UNREACHABLE: &[&str] = &[
-    // ssh's every failure, a refused key included, ends so.
+    // ssh's every failure, a refused key included, ends so; a connection or a server that timed out too.
     "Could not read from remote repository",
     // curl's every failure: DNS, connect, TLS, an HTTP error status.
     "unable to access",
@@ -28,6 +29,8 @@ const UNREACHABLE: &[&str] = &[
     "the remote end hung up unexpectedly",
     "early EOF",
     "RPC failed",
+    // The host's kill of a command past its time, after the command (host::process::timed_out).
+    ": timed out after ",
 ];
 
 /// What git writes, beside one of UNREACHABLE's, when origin answered and the answer will not change by asking again:

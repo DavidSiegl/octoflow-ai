@@ -6,7 +6,9 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use super::{ChangedFile, Completed, Exec, ExecError, Host, PutBack, RestoreError, Scanned, GIT_STATUS_ARGS};
+use super::process::timed_out;
+use super::{ChangedFile, Completed, Exec, ExecError, Host, PutBack, RestoreError, Scanned, GIT_STATUS_ARGS, ORIGIN_READ};
+use crate::constants::NETWORK_TIMEOUT;
 use crate::quality::Leak;
 use crate::state::SavedRun;
 use crate::constants::WORKTREES_DIR;
@@ -173,6 +175,9 @@ pub(crate) struct FakeState {
     pub fetch_error: Option<String>,
     /// How many more fetches fail with fetch_error, the ones after them succeeding; None: every one.
     pub fetch_failures_left: Option<u32>,
+    /// How many more fetches run past their time and are killed, as a real host's exec reports it, before any that
+    /// fail with fetch_error: a fetch that hangs on a network dropping its packets.
+    pub fetch_hangs_left: u32,
     /// The local branch and origin's each have commits the other lacks.
     pub diverged: bool,
     /// The files a merge of upstream conflicts in.
@@ -313,6 +318,7 @@ impl FakeHost {
                 upstream: None,
                 fetch_error: None,
                 fetch_failures_left: None,
+                fetch_hangs_left: 0,
                 diverged: false,
                 conflicts: vec![],
                 merge_head: false,
@@ -680,6 +686,12 @@ impl Host for FakeHost {
     }
 
     fn exec(&self, argv: &[&str], stdin: Option<&[u8]>, timeout: u64) -> Result<Exec, ExecError> {
+        // A read of origin is git in a script (Host::fetch and the ls-remotes), played as the git it runs.
+        if let ["sh", "-c", ORIGIN_READ, "_", cwd, args @ ..] = argv {
+            let proc = self.git_run(cwd, args, timeout)?;
+            let command = argv.join(" ");
+            return Ok(Exec { command, status: proc.status, stdout: proc.stdout.into_bytes(), stderr: proc.stderr.into_bytes() });
+        }
         // Run with the host's state released, as before_write is.
         let hook = self.state().run_command.take();
         if let Some(mut hook) = hook {
@@ -792,6 +804,13 @@ impl Host for FakeHost {
         }
         s.git_calls.push(owned.clone());
         s.git_log.push((cwd.to_string(), owned));
+        if let ["fetch", ..] = args {
+            if s.fetch_hangs_left > 0 {
+                s.fetch_hangs_left -= 1;
+                let argv: Vec<String> = ["git", "-C", cwd].into_iter().chain(args.iter().copied()).map(String::from).collect();
+                return Err(OrchestratorError(format!("{}: {}", argv.join(" "), timed_out(NETWORK_TIMEOUT))));
+            }
+        }
         Ok(s.git(cwd, args))
     }
 
