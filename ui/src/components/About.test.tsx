@@ -36,12 +36,16 @@ describe("About", () => {
     expect(about).toHaveTextContent("MIT OR Apache-2.0");
   });
 
-  it("asks the shell to open each page by its name", async () => {
+  it("asks the shell to open each page by its URL", async () => {
     await openAbout();
-    const pages = { "Source code": "source", Releases: "releases", "Support on Ko-fi": "ko-fi" };
-    for (const [name, link] of Object.entries(pages)) {
+    const pages = {
+      "Source code": "https://github.com/DavidSiegl/octoflow-ai",
+      Releases: "https://github.com/DavidSiegl/octoflow-ai/releases",
+      "Support on Ko-fi": "https://ko-fi.com/davidsiegl",
+    };
+    for (const [name, page] of Object.entries(pages)) {
       fireEvent.click(screen.getByRole("button", { name }));
-      expect(invoke).toHaveBeenLastCalledWith("open_about", { link });
+      expect(invoke).toHaveBeenLastCalledWith("open_outside", { target: { page } });
     }
     expect(invoke).toHaveBeenCalledTimes(3);
   });
@@ -50,9 +54,9 @@ describe("About", () => {
     vi.stubEnv("DEV", false);
     await openAbout();
     fireEvent.click(screen.getByRole("button", { name: "Third-party licenses: crates" }));
-    expect(invoke).toHaveBeenLastCalledWith("open_about", { link: "crate-licenses" });
+    expect(invoke).toHaveBeenLastCalledWith("open_outside", { target: { license: "crate-licenses" } });
     fireEvent.click(screen.getByRole("button", { name: "Third-party licenses: npm packages" }));
-    expect(invoke).toHaveBeenLastCalledWith("open_about", { link: "npm-licenses" });
+    expect(invoke).toHaveBeenLastCalledWith("open_outside", { target: { license: "npm-licenses" } });
   });
 
   it("says a development build bundles no license files", async () => {
@@ -67,7 +71,8 @@ describe("About", () => {
     invoke.mockRejectedValue("no browser");
     await openAbout();
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Releases" })));
-    expect(await screen.findByText("Could not open Releases: no browser")).toBeInTheDocument();
+    const releases = screen.getByRole("button", { name: "Releases" }).closest("li");
+    expect(releases).toHaveTextContent("Could not open it: no browser");
   });
 
   it("says nothing of a failure that comes after a later click", async () => {

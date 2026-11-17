@@ -2,7 +2,7 @@
 //! (`octoflow_engine`). Started with arguments, the app is the orchestrator's CLI: see `cli`. Started with none, it
 //! opens its window and starts itself, as `serve`, as its sidecar, which it kills when it exits. The webview talks to
 //! the sidecar's server over HTTP; the shell hands it the server's address and token, through the `server` command,
-//! and opens About's links outside the app, through `open_about`.
+//! and opens links outside the app, through `open_outside`.
 
 use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, BufReader};
@@ -399,35 +399,43 @@ fn server(sidecar: tauri::State<'_, Sidecar>) -> Result<Connection, String> {
     sidecar.connection.clone()
 }
 
-/// The repository About links to, and its releases below it.
-const REPOSITORY: &str = "https://github.com/DavidSiegl/octoflow-ai";
+/// What the window can have opened outside the app, as it asks `open_outside` for it: `{"page": "<url>"}`, a web page
+/// in the system's browser, or `{"license": "crate-licenses"}` (or `npm-licenses`), a third-party license file a
+/// packaged app bundles among its resources (packaging/build-desktop.sh), in its HTML viewer. A page must be an
+/// `https` URL, and a file is named, never given by its path, so that nothing the window sends opens a program, a
+/// local file or another scheme's handler.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+enum Outside {
+    Page(String),
+    License(LicenseFile),
+}
 
-/// What About opens outside the app, as the window names it to `open_about` (kebab-case, such as `ko-fi`): pages in
-/// the system's browser, and the third-party license files a packaged app bundles among its resources
-/// (packaging/build-desktop.sh) in its HTML viewer. These are all the window can have opened: it names a link, never
-/// a URL or a path.
+/// A third-party license file a packaged app bundles, by the name the window gives it.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
-enum AboutLink {
-    Source,
-    Releases,
-    KoFi,
+enum LicenseFile {
     CrateLicenses,
     NpmLicenses,
 }
 
-impl AboutLink {
-    /// What the opener is given for it: a page's URL, or a license file's path in resources, the app's resource
-    /// directory. Errors, saying so, for a license file resources does not hold, as in any build but a packaged one.
-    fn target(self, resources: &Path) -> Result<OsString, String> {
+impl Outside {
+    /// What the opener is given for it: a page's URL as `tauri::Url` writes it, or a license file's path in the app's
+    /// resource directory, which resources gives, called for a license file only. Errors, saying so: a page that is
+    /// not an `https` URL with a host; resources' error; a license file the directory does not hold, as in any build
+    /// but a packaged one.
+    fn target(&self, resources: impl FnOnce() -> Result<PathBuf, String>) -> Result<OsString, String> {
         let file = match self {
-            AboutLink::Source => return Ok(REPOSITORY.into()),
-            AboutLink::Releases => return Ok(format!("{REPOSITORY}/releases").into()),
-            AboutLink::KoFi => return Ok("https://ko-fi.com/davidsiegl".into()),
-            AboutLink::CrateLicenses => "THIRD-PARTY-LICENSES.html",
-            AboutLink::NpmLicenses => "THIRD-PARTY-LICENSES-NPM.html",
+            Outside::Page(page) => {
+                return match tauri::Url::parse(page) {
+                    Ok(url) if url.scheme() == "https" && url.host().is_some() => Ok(url.as_str().into()),
+                    _ => Err(format!("only an https page opens outside the app, not {page}")),
+                }
+            }
+            Outside::License(LicenseFile::CrateLicenses) => "THIRD-PARTY-LICENSES.html",
+            Outside::License(LicenseFile::NpmLicenses) => "THIRD-PARTY-LICENSES-NPM.html",
         };
-        let path = resources.join(file);
+        let path = resources()?.join(file);
         if !path.is_file() {
             return Err(format!("{file} is not bundled with this build"));
         }
@@ -435,20 +443,20 @@ impl AboutLink {
     }
 }
 
-/// Open link outside the app, with the system's default handler, as the user's own shell would: in the user's
+/// Open target outside the app, with the system's default handler, as the user's own shell would: in the user's
 /// environment (`UserShell`), not the window's, whose AppImage variables would start the browser against the bundle's
-/// libraries. Errors, as a line for the window to show: AboutLink::target's, the app's resource directory cannot be
-/// told, or open_outside's.
+/// libraries. Errors, as a line for the window to show: Outside::target's, among them that a license file's directory,
+/// the app's resources, cannot be told; or run_opener's.
 #[tauri::command(async)]
-fn open_about(app: tauri::AppHandle, link: AboutLink) -> Result<(), String> {
-    let resources = app.path().resource_dir().map_err(|e| format!("cannot tell where the app's resources are: {e}"))?;
-    open_outside(Path::new(OPENER), &link.target(&resources)?, &UserShell::current())
+fn open_outside(app: tauri::AppHandle, target: Outside) -> Result<(), String> {
+    let resources = || app.path().resource_dir().map_err(|e| format!("cannot tell where the app's resources are: {e}"));
+    run_opener(Path::new(OPENER), &target.target(resources)?, &UserShell::current())
 }
 
 /// The program that opens a URL or a file with the system's default handler.
 const OPENER: &str = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
 
-/// How long open_outside waits for the opener to fail. `xdg-open` and `open` exit once they have handed the target
+/// How long run_opener waits for the opener to fail. `xdg-open` and `open` exit once they have handed the target
 /// over, but `xdg-open` on a desktop it does not know runs `$BROWSER` itself and waits for it.
 const OPENER_CHECK: Duration = Duration::from_secs(2);
 
@@ -456,7 +464,7 @@ const OPENER_CHECK: Duration = Duration::from_secs(2);
 /// longer a directory), its standard input closed and its output the app's, and return once
 /// it has exited successfully or OPENER_CHECK has passed; one still running then is waited for in the background, so
 /// it leaves no zombie. Errors, naming the target: opener cannot be started, or exits failing within OPENER_CHECK.
-fn open_outside(opener: &Path, target: &OsStr, shell: &UserShell) -> Result<(), String> {
+fn run_opener(opener: &Path, target: &OsStr, shell: &UserShell) -> Result<(), String> {
     let shown = target.to_string_lossy();
     let mut command = Command::new(opener);
     command.arg(target).env_clear().envs(shell.vars.iter().map(|(name, value)| (name, value))).stdin(Stdio::null());
@@ -491,7 +499,7 @@ pub fn run() {
             app.manage(Sidecar::of_app(&webview_origin(app)));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![server, open_about])
+        .invoke_handler(tauri::generate_handler![server, open_outside])
         .build(tauri::generate_context!())
         .expect("error while building the app")
         .run(|app, event| {

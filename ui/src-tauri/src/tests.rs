@@ -74,22 +74,32 @@ fn the_connection_s_version_is_the_release_s() {
 }
 
 #[test]
-fn a_page_opens_by_its_url_and_a_license_file_only_when_bundled() {
+fn only_an_https_page_opens_and_a_license_file_only_when_bundled() {
     let resources = scratch_dir();
-    assert_eq!(AboutLink::KoFi.target(resources.path()), Ok("https://ko-fi.com/davidsiegl".into()));
-    assert_eq!(AboutLink::Releases.target(resources.path()), Ok(format!("{REPOSITORY}/releases").into()));
-    let missing = AboutLink::NpmLicenses.target(resources.path());
+    let dir = || Ok(resources.path().to_path_buf());
+    // A page needs no resource directory: one that cannot be told fails license files only.
+    let page = |url: &str| Outside::Page(url.to_string()).target(|| Err("no resources".to_string()));
+    assert_eq!(page("https://github.com/o/r/pull/1"), Ok("https://github.com/o/r/pull/1".into()));
+    for refused in ["http://github.com/o/r", "file:///etc/passwd", "https://", "-https://x", "javascript:alert(1)"] {
+        assert_eq!(page(refused), Err(format!("only an https page opens outside the app, not {refused}")));
+    }
+    let missing = Outside::License(LicenseFile::NpmLicenses).target(dir);
     assert_eq!(missing, Err("THIRD-PARTY-LICENSES-NPM.html is not bundled with this build".to_string()));
     let bundled = resources.path().join("THIRD-PARTY-LICENSES.html");
     std::fs::write(&bundled, "<html></html>").expect("the license file is written");
-    assert_eq!(AboutLink::CrateLicenses.target(resources.path()), Ok(bundled.into_os_string()));
+    let found = Outside::License(LicenseFile::CrateLicenses).target(dir);
+    assert_eq!(found, Ok(bundled.into_os_string()));
+    let untold = Outside::License(LicenseFile::CrateLicenses).target(|| Err("no resources".to_string()));
+    assert_eq!(untold, Err("no resources".to_string()));
 }
 
 #[test]
-fn the_window_names_links_in_kebab_case() {
-    let link: AboutLink = serde_json::from_str("\"ko-fi\"").expect("a link's name");
-    assert_eq!(link, AboutLink::KoFi);
-    assert!(serde_json::from_str::<AboutLink>("\"https://example.com\"").is_err());
+fn the_window_names_a_page_by_its_url_and_a_license_file_by_its_name() {
+    let parse = |json: &str| serde_json::from_str::<Outside>(json);
+    assert_eq!(parse(r#"{"page": "https://example.com"}"#).expect("a page"), Outside::Page("https://example.com".into()));
+    let license = parse(r#"{"license": "crate-licenses"}"#).expect("a license file");
+    assert_eq!(license, Outside::License(LicenseFile::CrateLicenses));
+    assert!(parse(r#"{"license": "/etc/passwd"}"#).is_err());
 }
 
 #[test]
@@ -106,7 +116,7 @@ fn the_opener_runs_in_the_user_s_shell_only() {
         vars: vars(&[("PATH", "/usr/bin:/bin"), ("MARK", "user")]),
         dir: Some(canonical(users.path().to_path_buf())),
     };
-    assert_eq!(open_outside(&opener, OsStr::new("https://example.com"), &shell), Ok(()));
+    assert_eq!(run_opener(&opener, OsStr::new("https://example.com"), &shell), Ok(()));
     // HOME is the test process's own, which the window's environment stands for.
     let ran = std::fs::read_to_string(&out).expect("the opener ran");
     assert_eq!(ran, format!("https://example.com|user|unset|{}", canonical(users.path().to_path_buf()).display()));
@@ -119,9 +129,9 @@ fn an_opener_that_fails_or_is_not_there_is_an_error() {
     let opener = dir.path().join("opener");
     put_executable(&opener, "#!/bin/sh\nexit 3\n");
     let shell = shell_of(vars(&[("PATH", "/usr/bin:/bin")]));
-    let failed = open_outside(&opener, OsStr::new("/x.html"), &shell).expect_err("exit 3 fails");
+    let failed = run_opener(&opener, OsStr::new("/x.html"), &shell).expect_err("exit 3 fails");
     assert!(failed.ends_with("could not open /x.html: it exited with exit status: 3"), "{failed}");
-    let missing = open_outside(&dir.path().join("gone"), OsStr::new("/x.html"), &shell).expect_err("no opener");
+    let missing = run_opener(&dir.path().join("gone"), OsStr::new("/x.html"), &shell).expect_err("no opener");
     assert!(missing.starts_with("cannot run ") && missing.contains("to open /x.html"), "{missing}");
 }
 
@@ -133,7 +143,7 @@ fn an_opener_still_running_is_left_to_run() {
     put_executable(&opener, "#!/bin/sh\nexec sleep 5\n");
     let shell = shell_of(vars(&[("PATH", "/usr/bin:/bin")]));
     let started = Instant::now();
-    assert_eq!(open_outside(&opener, OsStr::new("https://example.com"), &shell), Ok(()));
+    assert_eq!(run_opener(&opener, OsStr::new("https://example.com"), &shell), Ok(()));
     assert!(started.elapsed() < OPENER_CHECK + Duration::from_secs(1));
 }
 

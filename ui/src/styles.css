@@ -757,13 +757,19 @@ ul.checks {
   padding-left: 1.2em;
 }
 
-/* About's entries: buttons, which the shell opens by name, drawn as links. */
-.about button.link {
+/* OutsideLink's buttons, drawn as links, hovered too: the hover rule above outranks button.link alone. */
+button.link,
+button.link:hover:not(:disabled) {
   padding: 0;
   color: var(--mint);
   text-decoration: underline;
   background: none;
   border: none;
+}
+
+/* An OutsideLink's failure wraps, also in a table cell that does not. */
+.outside-link .problem {
+  white-space: normal;
 }
 
 .dialog footer {

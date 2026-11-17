@@ -132,8 +132,8 @@ checkout. The macOS app is signed ad hoc only, not notarized, so macOS refuses t
 first time when a browser downloaded it, as it does the binary.
 
 - **Overview:** each run's task, its progress through the workflow, its round, the current role, whether it is
-  running or stale, the question it is blocked on, its verdict and its pull request. Closed runs are left out
-  until "Show closed runs" is checked.
+  running or stale, the question it is blocked on, its verdict and its pull request, which a click opens in your
+  browser. Closed runs are left out until "Show closed runs" is checked.
 - **New run:** "New run…" above the overview asks for the task, the workflow (`default` unless you pick another,
   with its description; "Edit…" under it opens the workflow editor, described under Workflows below, on it, and
   "New…" on a copy of `default`; the form waits while the editor is open, and then picks the workflow saved, if it
