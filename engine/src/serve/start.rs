@@ -87,8 +87,9 @@ impl RunRequest {
     /// and "model", each a string that is not empty, "agent" a harness kind; "role_agents" and "role_models", each an
     /// object of role to harness kind or to model, each role and model not empty and a role without `=`; and "no_pr"
     /// and "worktree", each a boolean; null for any of them but "task" is leaving it out. Errors: why the body is not
-    /// so, in words a client can show, naming the first field that is wrong; for a kind that is not a harness, the
-    /// refusal of crate::harness::harness, as the CLI's --agent and --role-agent give it.
+    /// so, in words a client can show, naming the first field that is wrong in FIELDS' order; for a kind that is not a
+    /// harness, the refusal of crate::harness::harness, as the CLI's --agent gives it, after the field and the role for
+    /// one of role_agents (`role_agents build: agent vim is not a harness …`).
     pub fn parse(body: &[u8]) -> Result<RunRequest, String> {
         let Some(fields) = super::json_object(body) else { return Err("the body must be a JSON object".to_string()) };
         if let Some(unknown) = fields.keys().find(|k| !FIELDS.contains(&k.as_str())) {
@@ -111,16 +112,21 @@ impl RunRequest {
             Some(_) => Err(format!("{name} must be true or false")),
         };
         let task = text("task")?.ok_or_else(|| "task must be a string that is not empty".to_string())?;
+        let workflow = text("workflow")?;
         let agent = text("agent")?;
-        let role_agents = by_role(given("role_agents"), "role_agents")?;
-        for kind in agent.iter().chain(role_agents.iter().map(|(_, kind)| kind)) {
+        if let Some(kind) = &agent {
             harness(kind).map_err(|e| e.0)?;
+        }
+        let model = text("model")?;
+        let role_agents = by_role(given("role_agents"), "role_agents")?;
+        for (role, kind) in &role_agents {
+            harness(kind).map_err(|e| format!("role_agents {role}: {}", e.0))?;
         }
         Ok(RunRequest {
             task,
-            workflow: text("workflow")?,
+            workflow,
             agent,
-            model: text("model")?,
+            model,
             role_agents,
             role_models: by_role(given("role_models"), "role_models")?,
             no_pr: flag("no_pr")?,

@@ -48,8 +48,10 @@ fn a_body_of_another_shape_is_refused_naming_what_is_wrong() {
         (r#"{"task": "t", "agent": "vim"}"#, "agent vim is not a harness this orchestrator supports; it takes agy, claude, codex, opencode, pi"),
         (r#"{"task": "t", "agent": "gemini"}"#, "agent gemini is not a harness this orchestrator supports any more; agy replaced it"),
         (r#"{"task": "t", "no_pr": "yes"}"#, "no_pr must be true or false"),
-        (r#"{"task": "t", "role_agents": {"build": "vim"}}"#, "agent vim is not a harness this orchestrator supports; it takes agy, claude, codex, opencode, pi"),
-        (r#"{"task": "t", "role_agents": {"build": "gemini"}}"#, "agent gemini is not a harness this orchestrator supports any more; agy replaced it"),
+        (r#"{"task": "t", "role_agents": {"build": "vim"}}"#, "role_agents build: agent vim is not a harness this orchestrator supports; it takes agy, claude, codex, opencode, pi"),
+        (r#"{"task": "t", "role_agents": {"build": "gemini"}}"#, "role_agents build: agent gemini is not a harness this orchestrator supports any more; agy replaced it"),
+        // Of several wrong fields, the first in the fields' order.
+        (r#"{"task": "t", "role_agents": {"build": "vim"}, "workflow": ""}"#, "workflow must be a string that is not empty"),
         (r#"{"task": "t", "role_agents": ["build"]}"#, "role_agents must be an object of role to a string that is not empty"),
         (r#"{"task": "t", "role_agents": {"build": ""}}"#, "role_agents must be an object of role to a string that is not empty"),
         (r#"{"task": "t", "role_models": {"a=b": "m"}}"#, "role_models must be an object of role to a string that is not empty"),
