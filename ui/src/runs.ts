@@ -152,7 +152,7 @@ export function progress(record: RunRecord): Stage[] {
 export function outcome(record: RunRecord, age: number): string {
   const was =
     record.error ? `error: ${record.error}`
-    : record.health === null ? (record.verdict ?? "")
+    : record.health === null ? finishedVerdict(record)
     // Stale by its beat, but closed: resume refuses it, so its health is not worth showing.
     : record.closed ? ""
     : `${record.health}, beat ${formatAge(age)} ago`;
@@ -160,4 +160,19 @@ export function outcome(record: RunRecord, age: number): string {
     return was;
   }
   return was ? `${was}; closed: ${record.closed}` : `closed: ${record.closed}`;
+}
+
+/**
+ * A finished run's verdict as list words it (outcome_verdict in the engine's cli/listing.rs): "" without one. A
+ * verdict other than APPROVE, of a run whose verdicts came from more than one verdict step, names the step that gave
+ * it last, as in "CHANGES_REQUESTED by accept"; a record without verdicts gives the bare verdict.
+ */
+function finishedVerdict(record: RunRecord): string {
+  const verdict = record.verdict ?? "";
+  const verdicts = record.verdicts ?? [];
+  const judge = verdicts.at(-1);
+  if (!judge || !verdict || verdict === "APPROVE" || verdicts.every((v) => v.step === judge.step)) {
+    return verdict;
+  }
+  return `${verdict} by ${judge.step}`;
 }
