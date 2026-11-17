@@ -6,9 +6,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use super::process::timed_out;
 use super::{ChangedFile, Completed, Exec, ExecError, Host, PutBack, RestoreError, Scanned, GIT_STATUS_ARGS, ORIGIN_READ};
-use crate::constants::NETWORK_TIMEOUT;
 use crate::quality::Leak;
 use crate::state::SavedRun;
 use crate::constants::WORKTREES_DIR;
@@ -688,6 +686,17 @@ impl Host for FakeHost {
     fn exec(&self, argv: &[&str], stdin: Option<&[u8]>, timeout: u64) -> Result<Exec, ExecError> {
         // A read of origin is git in a script (Host::fetch and the ls-remotes), played as the git it runs.
         if let ["sh", "-c", ORIGIN_READ, "_", cwd, args @ ..] = argv {
+            if let ["fetch", ..] = args {
+                let mut s = self.state();
+                if s.fetch_hangs_left > 0 {
+                    s.fetch_hangs_left -= 1;
+                    let owned: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+                    s.git_calls.push(owned.clone());
+                    s.git_log.push((cwd.to_string(), owned));
+                    let why = format!("{}: timed out after {timeout} seconds", argv.join(" "));
+                    return Err(ExecError::TimedOut(OrchestratorError(why)));
+                }
+            }
             let proc = self.git_run(cwd, args, timeout)?;
             let command = argv.join(" ");
             return Ok(Exec { command, status: proc.status, stdout: proc.stdout.into_bytes(), stderr: proc.stderr.into_bytes() });
@@ -804,13 +813,6 @@ impl Host for FakeHost {
         }
         s.git_calls.push(owned.clone());
         s.git_log.push((cwd.to_string(), owned));
-        if let ["fetch", ..] = args {
-            if s.fetch_hangs_left > 0 {
-                s.fetch_hangs_left -= 1;
-                let argv: Vec<String> = ["git", "-C", cwd].into_iter().chain(args.iter().copied()).map(String::from).collect();
-                return Err(OrchestratorError(format!("{}: {}", argv.join(" "), timed_out(NETWORK_TIMEOUT))));
-            }
-        }
         Ok(s.git(cwd, args))
     }
 

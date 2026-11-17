@@ -1419,6 +1419,16 @@ fn fetch_of_a_branch_origin_lacks() {
     assert!(e.0.starts_with(&said), "{e}");
 }
 
+#[test]
+fn fetch_killed_for_running_past_its_time_names_the_git_command() {
+    let host = crate::host::fake::FakeHost::default();
+    host.state().fetch_hangs_left = 1;
+    let e = host.fetch("/proj", "main").unwrap_err();
+    let said = "could not fetch main from origin: git -C /proj fetch --quiet origin main: origin did not answer within \
+                300 seconds";
+    assert_eq!(e.0, said);
+}
+
 /// A fetch from an origin over SSH in a repository whose own config is config, with git's user and system config left
 /// out, and an ssh on PATH whose `ssh -G` prints ssh_g: the arguments that ssh was given for the fetch, one a line, and
 /// git's trace2 events, which give each http.* setting of each git command as `"param":"<key>","value":"<value>"`,

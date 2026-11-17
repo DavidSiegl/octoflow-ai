@@ -343,7 +343,7 @@ fn run_tool(host: &dyn Host, argv: &[&str], timeout: u64) -> Result<Completed, U
     on_path(host, argv[0])?;
     match host.exec(argv, None, timeout) {
         Err(ExecError::NotFound(_)) => Err(Unmet::new(format!("{} is not on PATH", argv[0]))),
-        Err(ExecError::Failed(e)) => Err(e.into()),
+        Err(ExecError::TimedOut(e) | ExecError::Failed(e)) => Err(e.into()),
         Ok(exec) => Ok(decoded(exec)?),
     }
 }
