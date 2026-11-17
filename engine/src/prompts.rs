@@ -126,12 +126,28 @@ pub const QUALITY_FIX_PROMPT: &str = concat!(
     "in the same shape as before, answering each numbered issue and finding to weigh by its number.",
 );
 
+/// The sentence that ends each of the notes below: the gate judges Rust by the change's own clippy configuration, and
+/// lists an edit to it in the quality file without failing it, so the Reviewer is the one to judge such a loosening.
+macro_rules! config_edits_sentence {
+    () => {
+        concat!(
+            " If {quality_path} lists, under Build configuration, an edit the change makes to lint or clippy ",
+            "configuration, judge each such edit as a finding: say whether the spec justifies the loosening, ",
+            "and request changes when it only hides a finding.",
+        )
+    };
+}
+
 /// Appended to the Reviewer's prompt in a run with the quality gate.
-pub const QUALITY_PASSED_NOTE: &str = "The quality gate passed on this change; its report is in {quality_path}.";
+pub const QUALITY_PASSED_NOTE: &str = concat!(
+    "The quality gate passed on this change; its report is in {quality_path}.",
+    config_edits_sentence!(),
+);
 
 pub const QUALITY_UNRESOLVED_NOTE: &str = concat!(
     "The quality gate still did not pass after the Builder's last quality round; ",
     "its unresolved findings are in {quality_path}. Weigh them as you would your own.",
+    config_edits_sentence!(),
 );
 
 /// QUALITY_UNRESOLVED_NOTE for a quality loop that stopped because a round failed on just what the one before it had.
@@ -139,6 +155,7 @@ pub const QUALITY_STUCK_NOTE: &str = concat!(
     "The quality gate still did not pass, and its last quality round failed on just what the round before it ",
     "failed on, so the Builder was not asked again; its unresolved findings are in {quality_path}. ",
     "Weigh them as you would your own.",
+    config_edits_sentence!(),
 );
 
 /// In place of the notes above when the round's change went unjudged (Workflow::unjudged) and the round has a quality

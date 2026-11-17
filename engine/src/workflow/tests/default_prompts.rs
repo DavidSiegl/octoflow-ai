@@ -129,7 +129,10 @@ const REVIEW_1_PASSED: &str = concat!(
     "findings, each with file:line, what is wrong, and which acceptance criterion it violates or ",
     "what failure it causes. Request changes only for defects: an unmet acceptance criterion, a bug, ",
     "a broken test. Style preferences are not defects.\n\nThe quality gate passed on this change; its ",
-    "report is in /proj/.orchestrator/runs/20260929-120000-a1b2c3/quality-1-2.md.",
+    "report is in /proj/.orchestrator/runs/20260929-120000-a1b2c3/quality-1-2.md. If ",
+    "/proj/.orchestrator/runs/20260929-120000-a1b2c3/quality-1-2.md lists, under Build configuration, an edit the ",
+    "change makes to lint or clippy configuration, judge each such edit as a finding: say whether the spec ",
+    "justifies the loosening, and request changes when it only hides a finding.",
 );
 
 const FIX_2: &str = concat!(
@@ -165,7 +168,10 @@ const RECHECK_2_UNRESOLVED: &str = concat!(
     "first-line verdict and numbered findings as before.\n\nThe quality gate still did not pass after ",
     "the Builder's last quality round; its unresolved findings are in ",
     "/proj/.orchestrator/runs/20260929-120000-a1b2c3/quality-2-2.md. Weigh them as you would your ",
-    "own.",
+    "own. If ",
+    "/proj/.orchestrator/runs/20260929-120000-a1b2c3/quality-2-2.md lists, under Build configuration, an edit the ",
+    "change makes to lint or clippy configuration, judge each such edit as a finding: say whether the spec ",
+    "justifies the loosening, and request changes when it only hides a finding.",
 );
 
 const REVIEW_1_UNRESOLVED: &str = concat!(
@@ -183,7 +189,9 @@ const REVIEW_1_UNRESOLVED: &str = concat!(
     "a broken test. Style preferences are not defects.\n\nThe quality gate still did not pass after ",
     "the Builder's last quality round; its unresolved findings are in ",
     "/proj/.orchestrator/runs/20260929-120000-a1b2c3/quality-1-2.md. Weigh them as you would your ",
-    "own.",
+    "own. If /proj/.orchestrator/runs/20260929-120000-a1b2c3/quality-1-2.md lists, under Build configuration, an ",
+    "edit the change makes to lint or clippy configuration, judge each such edit as a finding: say whether the spec ",
+    "justifies the loosening, and request changes when it only hides a finding.",
 );
 
 const RECHECK_2_PASSED: &str = concat!(
@@ -194,7 +202,10 @@ const RECHECK_2_PASSED: &str = concat!(
     "the Builder's claims rather than trusting them. As your last step, write the review to ",
     "/proj/.orchestrator/runs/20260929-120000-a1b2c3/review-2.md in a single write, with the same ",
     "first-line verdict and numbered findings as before.\n\nThe quality gate passed on this change; ",
-    "its report is in /proj/.orchestrator/runs/20260929-120000-a1b2c3/quality-2-1.md.",
+    "its report is in /proj/.orchestrator/runs/20260929-120000-a1b2c3/quality-2-1.md. If ",
+    "/proj/.orchestrator/runs/20260929-120000-a1b2c3/quality-2-1.md lists, under Build configuration, an edit the ",
+    "change makes to lint or clippy configuration, judge each such edit as a finding: say whether the spec justifies ",
+    "the loosening, and request changes when it only hides a finding.",
 );
 
 const FRESH_BUILD_2_AFTER_QUALITY_ROUNDS: &str = concat!(
@@ -262,10 +273,12 @@ const FRESH_REVIEW_2_PASSED: &str = concat!(
     "findings, each with file:line, what is wrong, and which acceptance criterion it violates or ",
     "what failure it causes. Request changes only for defects: an unmet acceptance criterion, a bug, ",
     "a broken test. Style preferences are not defects.\n\nThe quality gate passed on this change; its ",
-    "report is in /proj/.orchestrator/runs/20260929-120000-a1b2c3/quality-2-1.md.\n\nThis is round 2, ",
-    "and you are a fresh session. The earlier reviews of this change are ",
-    "/proj/.orchestrator/runs/20260929-120000-a1b2c3/review-1.md; check that the Builder has ",
-    "answered each of their findings.",
+    "report is in /proj/.orchestrator/runs/20260929-120000-a1b2c3/quality-2-1.md. If ",
+    "/proj/.orchestrator/runs/20260929-120000-a1b2c3/quality-2-1.md lists, under Build configuration, an edit the ",
+    "change makes to lint or clippy configuration, judge each such edit as a finding: say whether the spec ",
+    "justifies the loosening, and request changes when it only hides a finding.\n\nThis is round 2, and you are a ",
+    "fresh session. The earlier reviews of this change are /proj/.orchestrator/runs/20260929-120000-a1b2c3/review-1.md; ",
+    "check that the Builder has answered each of their findings.",
 );
 
 const GOLDEN_PR_BODY: &str = concat!(
