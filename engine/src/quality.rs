@@ -230,8 +230,8 @@ pub fn read_report(json: &str) -> Result<Judgement, OrchestratorError> {
             let found = found.map_or("no schema_version".to_string(), |v| format!("schema_version {v}"));
             return Err(OrchestratorError(format!(
                 "quality.json has {found}, and this engine reads only schema_version {QUALITY_SCHEMA_VERSION}: the \
-                 quality job ran a gate release whose report it cannot read; have the job run one that writes \
-                 schema_version {QUALITY_SCHEMA_VERSION}, or an octoflow that reads {found}"
+                 gate release the run's base pins in ci/gate.pin writes a report it cannot read; pin one that writes \
+                 schema_version {QUALITY_SCHEMA_VERSION}, or use an octoflow that reads {found}"
             )));
         }
     }

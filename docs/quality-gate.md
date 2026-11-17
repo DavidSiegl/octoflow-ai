@@ -24,8 +24,9 @@ What this repository gives it:
 - **The rules**: `pyproject.toml`'s pymarkdown table, and the top-level `Cargo.toml`'s lints for clippy. No Python
   file is tracked, so the gate runs neither ruff nor mypy, and has no Python to measure the coverage of or
   mutation-test; `pyproject.toml` and `uv.lock` hold only the gate's toolchain.
-- **`gate.toml`**, the gate's settings: the files whose edits a quality round judges without (`[build-config]`), the
-  commands that run the tests outside Jenkins (`[[test]]`) and the time budgets.
+- **`gate.toml`**, the gate's settings: the files whose edits change how a build judges, with a note on each that
+  `quality.md` gives (`[build-config]`), the commands that run the tests outside Jenkins (`[[test]]`) and the time
+  budgets.
 
 **Raising the pin.** Only after the release exists: download its tarball and its `.sha256` asset, check them with
 `sha256sum -c`, and write the version and the sha256 into `ci/gate.pin`. The release must read this commit's
@@ -243,8 +244,8 @@ its `ci/gate.pin` names; the console says which version. A release that cannot b
 match, fails the build as one the gate could not judge, with no quality file. The gate takes the linters' rules from
 the `pyproject.toml` beside the `gate.toml` it is given, and it writes `quality.json` beside `quality.md`, which the
 stage archives with it. The pull request that raises `ci/gate.pin` is judged by the release it raises it to.
-`gate.toml`'s `[build-config]` names the pin and `ci/fetch-gate.sh`, so `quality.md` says so of a change that edits
-either.
+`gate.toml`'s `[build-config]` names the pin, `ci/fetch-gate.sh` and the `Jenkinsfile`, so `quality.md` says so of a
+change that edits any of them.
 
 A pull request is judged by the gate and rules it brings, and most from a branch of this repository merge once
 Jenkins's App reports `pr-head` green, with no human in between (`.github/workflows/automerge.yml` says which).

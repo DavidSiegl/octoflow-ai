@@ -13,8 +13,9 @@ dev = [
     "pymarkdownlnt>=0.9.41",
 ]
 
-# The rules the quality gate judges a change by. In a quality build the gate reads them from main's copy of this file
-# (--config), so a change cannot loosen the rules it is judged by. Only findings on lines a change adds count, so the
+# The rules the quality gate judges a change by, read from the pyproject.toml beside the gate.toml it is given: Jenkins
+# passes the change's own, so a pull request is judged by the rules it brings (docs/quality-gate.md, "What the Gate
+# stage judges"); octoflow's local gate passes the run's base's. Only findings on lines a change adds count, so the
 # findings already on main do not block.
 
 [tool.pymarkdown]
