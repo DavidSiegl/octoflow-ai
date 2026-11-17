@@ -330,6 +330,13 @@ fn every_verdict_step_judges_the_change_each_round_ends_with() {
         Pipeline::new("bad", p.roles().clone(), steps).unwrap_err(),
         "workflow bad: step notes runs between verdict steps review and accept, so a round that review sends back \
          would skip it"
+    );    // A verdict step that edits before the last one: only the later verdict steps would judge its edits.
+    let mut steps = p.steps().to_vec();
+    steps[1].edits = true;
+    assert_eq!(
+        Pipeline::new("bad", p.roles().clone(), steps).unwrap_err(),
+        "workflow bad: step review edits between verdict steps review and accept, so review would not judge its \
+         change"
     );
 }
 
@@ -346,8 +353,14 @@ fn every_verdict_steps_loop_runs_an_editing_step() {
     // Back to a step that does not edit.
     let build = with(step("build", "a-{n}.md"), |s| s.edits = true);
     let notes = with(step("notes", "n-{n}.md"), |s| s.role = "review".into());
+    let review = with(step("review", "b-{n}.md"), |s| s.loop_to = Some("notes".into()));
     assert_eq!(
-        bad(vec![build, notes, with(step("review", "b-{n}.md"), |s| s.loop_to = Some("notes".into()))]),
+        bad(vec![build.clone(), notes.clone(), review.clone()]),
+        "workflow bad: step review loops back to notes, but no step in that loop edits"
+    );
+    // The verdict step's own edits come before the findings it sends back, so they answer none of them.
+    assert_eq!(
+        bad(vec![build, notes, with(review, |s| s.edits = true)]),
         "workflow bad: step review loops back to notes, but no step in that loop edits"
     );
 }
