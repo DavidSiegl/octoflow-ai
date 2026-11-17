@@ -42,6 +42,19 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **A failed run's summary.md can still miss the desktop app.** `Workflow::release` (`engine/src/workflow.rs`) saves
+  state.json with no owner before `write_summary`, which runs `round_results` (over SSH on a `--machine`), so a
+  summary that lands more than `FINISHED_RUN_WRITES` (60 s) after that save is never sent: serve's stream stops
+  listing the run's files then (`engine/src/serve/runs.rs`, `RunsWatch::poll`), as todo/19 left it. Meanwhile every
+  finished run is relisted on each poll for that minute (cross-review 220 F3). Closed by writing the summary before
+  the save that drops the owner, as `end_done_run` orders it, once a takeover found by that save is shown not to need
+  the summary unwritten; or by one more save after the summary, so the record change drives the relist.
+- **A production npm package's third-party license files are not shipped.** `withNotices`
+  (`ui/scripts/npm-licenses.js`) appends `THIRD_PARTY` files (`THIRD_PARTY_LICENSES`, `ThirdPartyNotices.txt`, …) for
+  `BUILD_CODE`'s packages only, as todo/14 settled; a bundled production package whose code was copied from others
+  ships without their licenses unless the file's name starts with NOTICE. None does today (cross-review 220 F5).
+  Closed by shipping them for every bundled package, with the completeness test widened to all of them.
+
 - **A step cannot be kept from another step's file.** Every handoff file is in the run's directory, so
   `peer-review`'s referees are only asked not to read each other's reports
   (`engine/src/workflows/peer-review.toml`, header); from round 2 the Author's response quotes both anyway. Closed by a step key naming the steps whose files a turn may not
