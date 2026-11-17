@@ -300,14 +300,6 @@ fn several_verdict_steps_each_loop_back_to_an_earlier_step() {
     steps.insert(1, polish.clone());
     steps[3].loop_to = Some("polish".into());
     assert!(Pipeline::new("polished", p.roles().clone(), steps).is_ok());
-    // Back to the first verdict step itself, which so runs again.
-    let mut steps = p.steps().to_vec();
-    steps[2].loop_to = Some("review".into());
-    assert!(Pipeline::new("rejudged", p.roles().clone(), steps).is_ok());
-    // A step between the verdict steps that does not edit leaves them judging the same change.
-    let mut steps = p.steps().to_vec();
-    steps.insert(2, with(step("notes", "notes-{n}.md"), |s| s.role = "review".into()));
-    assert!(Pipeline::new("noted", p.roles().clone(), steps).is_ok());
 }
 
 #[test]
@@ -330,6 +322,47 @@ fn every_verdict_step_judges_the_change_each_round_ends_with() {
         Pipeline::new("bad", p.roles().clone(), steps).unwrap_err(),
         "workflow bad: step polish edits between verdict steps review and accept, so review would not judge its \
          change"
+    );
+    // A step between the verdict steps that does not edit: a round the review sends back skips it.
+    let mut steps = p.steps().to_vec();
+    steps.insert(2, with(step("notes", "notes-{n}.md"), |s| s.role = "review".into()));
+    assert_eq!(
+        Pipeline::new("bad", p.roles().clone(), steps).unwrap_err(),
+        "workflow bad: step notes runs between verdict steps review and accept, so a round that review sends back \
+         would skip it"
+    );
+    // A verdict step that edits before the last one: only the later verdict steps would judge its edits.
+    let mut steps = p.steps().to_vec();
+    steps[1].edits = true;
+    assert_eq!(
+        Pipeline::new("bad", p.roles().clone(), steps).unwrap_err(),
+        "workflow bad: step review edits between verdict steps review and accept, so review would not judge its \
+         change"
+    );
+}
+
+#[test]
+fn every_verdict_steps_loop_runs_an_editing_step() {
+    let p = accepting();
+    // Back to the first verdict step: the review judges the same change again, and nobody answers the findings.
+    let mut steps = p.steps().to_vec();
+    steps[2].loop_to = Some("review".into());
+    assert_eq!(
+        Pipeline::new("bad", p.roles().clone(), steps).unwrap_err(),
+        "workflow bad: step accept loops back to review, but no step in that loop edits"
+    );
+    // Back to a step that does not edit.
+    let build = with(step("build", "a-{n}.md"), |s| s.edits = true);
+    let notes = with(step("notes", "n-{n}.md"), |s| s.role = "review".into());
+    let review = with(step("review", "b-{n}.md"), |s| s.loop_to = Some("notes".into()));
+    assert_eq!(
+        bad(vec![build.clone(), notes.clone(), review.clone()]),
+        "workflow bad: step review loops back to notes, but no step in that loop edits"
+    );
+    // The verdict step's own edits come before the findings it sends back, so they answer none of them.
+    assert_eq!(
+        bad(vec![build, notes, with(review, |s| s.edits = true)]),
+        "workflow bad: step review loops back to notes, but no step in that loop edits"
     );
 }
 

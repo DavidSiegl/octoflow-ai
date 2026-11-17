@@ -17,6 +17,7 @@ use crate::herdr::{AgentAddress, AgentConsole, HerdrError, Launcher, Workspaces}
 use crate::host::{Host, RunFileText};
 use crate::local_gate::SetUpFile;
 use crate::paths::file_name;
+use crate::serve::FINISHED_RUN_WRITES;
 use serde_json::Value;
 use crate::json::{object, Object, ValueExt};
 use crate::interrupt::Interrupt;
@@ -330,12 +331,11 @@ impl<'p> RunWatch<'p> {
     /// - problem, {"error"}: the project could not be read, and why; error is null once it can be again. First.
     ///
     /// The first poll sends every run's record and files. A running run's files are listed on every poll. A finished
-    /// or failed run's are listed until two polls in a row with the same record list the same files; then again only
-    /// when its record changes, as nothing else drives it. The wait is for the files the engine writes after the save
-    /// that finishes the run (workflow.rs: end_done_run's summary.md and metrics.json, release's summary.md): a poll
-    /// interval (SERVE_POLL) is taken to be long enough for them, and ones written later are told of only at the
-    /// record's next change. A poll that fails sends only its problem, and changes nothing else of what the watch
-    /// holds.
+    /// or failed run's are listed until its state.json is FINISHED_RUN_WRITES old (the record's heartbeat_age) and two
+    /// polls in a row with the same record list the same files; then again only when its record changes, as nothing
+    /// else drives it. The wait is for the files the engine writes after the save that finishes the run, which
+    /// FINISHED_RUN_WRITES names; one written later still is told of only at the record's next change. A poll that
+    /// fails sends only its problem, and changes nothing else of what the watch holds.
     pub fn poll(&mut self) -> Vec<Event> {
         match self.changes() {
             Ok(events) => self.problem_events(None).into_iter().chain(events).collect(),
@@ -357,11 +357,14 @@ impl<'p> RunWatch<'p> {
             let old = self.sent.get(&run_id);
             let same_record = old.is_some_and(|old| old.key == key);
             let finished = record.get("health").is_none_or(Value::is_null);
+            // heartbeat_age: whole seconds since state.json was written.
+            let age = record.get("heartbeat_age").and_then(Value::as_u64);
+            let written = age.is_none_or(|age| age >= FINISHED_RUN_WRITES.as_secs());
             let (files, files_settled) = match old {
                 Some(old) if same_record && finished && old.files_settled => (old.files.clone(), true),
                 _ => {
                     let files = self.project.files(&run_id)?;
-                    let settled = finished && same_record && old.is_some_and(|old| old.files == files);
+                    let settled = finished && written && same_record && old.is_some_and(|old| old.files == files);
                     (files, settled)
                 }
             };

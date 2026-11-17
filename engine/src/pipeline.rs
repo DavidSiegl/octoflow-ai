@@ -445,11 +445,15 @@ impl Pipeline {
     }
 
     /// The first verdict step, in step order, whose loop does not go back to an earlier step, skips an earlier
-    /// verdict step, or runs a step with a fixed file again; else an editing step between two verdict steps.
+    /// verdict step, runs a step with a fixed file again, or runs no editing step before it; else the first step
+    /// from the first verdict step up to the last that edits or is not a verdict step.
     ///
-    /// The last two keep every verdict step judging the change a round ends with: a loop that went back past an
-    /// earlier verdict step would have the next round's edits judged by the later steps alone, and an edit between
-    /// verdict steps would be judged by the later ones alone.
+    /// All but the first two keep each round one change, made in the round's loop and judged by every verdict step.
+    /// A loop that went back past an earlier verdict step would have the next round's edits judged by the later steps
+    /// alone; a loop without an editing step would judge the same change again, with no step answering the findings.
+    /// A step between verdict steps would be judged by the later ones alone if it edits, and either way skipped by a
+    /// round an earlier verdict step sends back, while Workflow::judged_rounds knows skipped rounds for verdict steps
+    /// only, so its next turn's `again` prompt and earlier-file paths would name rounds it never ran.
     fn loop_problem(&self) -> Option<String> {
         let first = self.proof_step()?;
         let first_at = self.index_of(&first.id).unwrap_or_default();
@@ -469,24 +473,35 @@ impl Pipeline {
                     verdict.id, first.id
                 ));
             }
+            let looped = &self.steps[target..=end];
             // A later round finds a fixed file already written and would skip the step.
-            self.steps[target..=end]
-                .iter()
-                .find(|st| !st.per_round())
-                .map(|fixed| format!("step {} is in the review loop, so its handoff file needs {{n}}", fixed.id))
+            if let Some(fixed) = looped.iter().find(|st| !st.per_round()) {
+                return Some(format!("step {} is in the review loop, so its handoff file needs {{n}}", fixed.id));
+            }
+            // The verdict step's own edits precede the findings it sends back, so a step before it must answer them.
+            (!self.steps[target..end].iter().any(|st| st.edits))
+                .then(|| format!("step {} loops back to {loop_to}, but no step in that loop edits", verdict.id))
         });
         if problem.is_some() {
             return problem;
         }
         let last_at = self.verdict_steps().next_back().and_then(|last| self.index_of(&last.id)).unwrap_or_default();
-        let edit = self.steps[first_at..last_at].iter().find(|st| st.edits)?;
-        let at = self.index_of(&edit.id).unwrap_or_default();
-        let next = self.steps[at..].iter().find(|st| st.loop_to.is_some()).unwrap_or(first);
-        let before = self.steps[..at].iter().rev().find(|st| st.loop_to.is_some()).unwrap_or(first);
-        Some(format!(
-            "step {} edits between verdict steps {} and {}, so {} would not judge its change",
-            edit.id, before.id, next.id, before.id
-        ))
+        let between = self.steps[first_at..last_at].iter().find(|st| st.edits || st.loop_to.is_none())?;
+        let at = self.index_of(&between.id).unwrap_or_default();
+        // An editing verdict step is its own "before": it judges the round ahead of its edits.
+        let next = self.steps[at + 1..].iter().find(|st| st.loop_to.is_some()).unwrap_or(first);
+        let before = self.steps[..=at].iter().rev().find(|st| st.loop_to.is_some()).unwrap_or(first);
+        Some(if between.edits {
+            format!(
+                "step {} edits between verdict steps {} and {}, so {} would not judge its change",
+                between.id, before.id, next.id, before.id
+            )
+        } else {
+            format!(
+                "step {} runs between verdict steps {} and {}, so a round that {} sends back would skip it",
+                between.id, before.id, next.id, before.id
+            )
+        })
     }
 
     fn index_of(&self, step_id: &str) -> Option<usize> {

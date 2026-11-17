@@ -40,6 +40,7 @@ head=$(sh "$here/release-version.sh" HEAD)
 greater=$(printf '%s\n%s\n' "$target" "$head" | sort -V | tail -n 1)
 if [ "$head" = "$target" ] || [ "$greater" != "$head" ]; then
     echo "version-raised.sh: engine/Cargo.toml's version is $head, not greater than $CHANGE_TARGET's $target; raise" \
-        "it, or the merge goes unreleased (Jenkinsfile, Release)" >&2
+        "it, or the merge goes unreleased (Jenkinsfile, Release), then refresh Cargo.lock with" \
+        "\`cargo update --workspace\` in engine/: the build's --locked cargo steps fail on a stale one" >&2
     exit 1
 fi

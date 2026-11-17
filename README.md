@@ -509,7 +509,7 @@ use = "review"
 | `file` | The handoff file in the run directory that ends the turn; `{n}` in it makes one per round. |
 | `prompt`, `again`, `fresh_note` | The first prompt, the prompt in a later round, and the note for a fresh session in a later round. |
 | `use` | `"spec"`, `"build"` or `"review"`: start from that default step and override only the keys given. |
-| `loop_to` | Makes this a verdict step, which sends `CHANGES_REQUESTED` back to the earlier step it names. A workflow may have several: each round runs them in order and ends at the first that requests changes. Each must loop back to a step at or before the first verdict step, and no step between the first and the last may edit, so that every verdict step judges the change the round ends with. |
+| `loop_to` | Makes this a verdict step, which sends `CHANGES_REQUESTED` back to the earlier step it names. A workflow may have several: each round runs them in order and ends at the first that requests changes. Each must loop back to a step at or before the first verdict step, through at least one step that edits, and only verdict steps may come between the first and the last, so that every verdict step judges the change the round ends with. |
 | `edits`, `human_paced`, `quality_gated` | The step edits the code, waits on you, or is the one the quality gate follows. |
 | `locks` | The first editing step locks the files it changes, as `product-team`'s QA Engineer does; another step's later changes to them are undone. |
 | `fresh_repeats_again` | A fresh session in a later round gets `again` too. |
