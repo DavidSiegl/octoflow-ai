@@ -4,9 +4,9 @@
 //! version given is taken as it is. Lowering the pin, to roll back, works the same way.
 //!
 //! The changes, made only once every check has passed (the release exists, is 0.7.0 or later, and its tarball
-//! matches its `.sha256` asset; `engine/Cargo.toml`'s version is the one at HEAD's merge base with origin/main, since
-//! the raise bumps main's version, and bumping one already bumped, by another change or an unmerged raise, would skip
-//! a release), in this order:
+//! matches its `.sha256` asset; `engine/Cargo.toml`'s version is the one origin/main's tip has, since the raise bumps
+//! main's version, and bumping one already bumped, by another change or an unmerged raise, can skip a release, while
+//! a tree behind main can bump to a version main already has), in this order:
 //! - `engine/tests/data/quality/`'s golden reports are the release's `golden/`, and its README names the release;
 //! - `engine/Cargo.toml`'s version is bumped at the gate's level (a gate patch is a patch, anything else a minor, a
 //!   rollback included), and `Cargo.lock` follows by `cargo update --workspace`;
@@ -38,7 +38,8 @@ const PIN: &str = "ci/gate.pin";
 const GOLDEN_DIR: &str = "engine/tests/data/quality";
 const ENGINE_MANIFEST: &str = "engine/Cargo.toml";
 const RELEASE_NOTES_DIR: &str = "docs/releases";
-/// The branch a raise merges into, whose version it bumps.
+/// The local remote-tracking ref of the branch a raise merges into, main, whose version the raise bumps; git must
+/// have fetched it.
 const TARGET_BRANCH: &str = "origin/main";
 
 /// The command line `cargo xtask raise-gate-pin [<version>]`, as the module's comment says.
@@ -129,11 +130,12 @@ fn raise(top: &Path, wanted: Option<Version>) -> Result<String, Error> {
         return Ok(String::new());
     }
     let manifest = read(&top.join(ENGINE_MANIFEST))?;
-    let base = base_version(top)?;
-    if let Some((_, here)) = package_version(&manifest).filter(|&(_, here)| here != base) {
+    let (version_line, here) = package_version(&manifest, ENGINE_MANIFEST)?;
+    let target = target_version(top)?;
+    if here != target {
         return Err(Error(format!(
-            "{ENGINE_MANIFEST}'s version is {here}, but {base} where HEAD branched from {TARGET_BRANCH}: a raise bumps \
-             {TARGET_BRANCH}'s version, so start it from a tree that has not bumped it"
+            "{ENGINE_MANIFEST}'s version is {here}, but {target} on {TARGET_BRANCH}: a raise bumps \
+             {TARGET_BRANCH}'s version, so start it from a tree whose version is {TARGET_BRANCH}'s"
         )));
     }
     let unpacked = tempfile::Builder::new()
@@ -146,7 +148,8 @@ fn raise(top: &Path, wanted: Option<Version>) -> Result<String, Error> {
     if !names_version(&readme, old) || !readme.contains(old_sha) {
         return Err(Error(format!("{} does not name octoflow-gate {old} and its sha256", readme_path.display())));
     }
-    let (octoflow, manifest) = bump_package_version(&manifest, old, new)?;
+    let octoflow = here.bumped_for(old, new);
+    let manifest = with_line(&manifest, version_line, &format!("version = \"{octoflow}\""));
     let notes_path = top.join(RELEASE_NOTES_DIR).join(format!("v{octoflow}.md"));
     let notes = match fs::read_to_string(&notes_path) {
         Ok(text) => format!("{text}\n"),
@@ -340,45 +343,34 @@ fn replace_pin_line(pin: &str, line: &str) -> String {
         .collect()
 }
 
-/// The engine's version at the commit where HEAD branched from TARGET_BRANCH. Errors: git cannot find that commit
-/// (TARGET_BRANCH not fetched, say) or its manifest, or the manifest's [package] has no version.
-fn base_version(top: &Path) -> Result<Version, Error> {
-    let base = run(
-        command("git").args(["merge-base", "HEAD", TARGET_BRANCH]).current_dir(top),
-        &format!("finding where HEAD branched from {TARGET_BRANCH}"),
-    )?;
-    let object = format!("{}:{ENGINE_MANIFEST}", base.trim_end());
+/// The engine's version on TARGET_BRANCH's tip. Errors: git cannot read the manifest there (TARGET_BRANCH not
+/// fetched, say), or its [package] has no version.
+fn target_version(top: &Path) -> Result<Version, Error> {
+    let object = format!("{TARGET_BRANCH}:{ENGINE_MANIFEST}");
     let manifest = run(command("git").args(["show", &object]).current_dir(top), &format!("reading {object}"))?;
-    let (_, version) =
-        package_version(&manifest).ok_or_else(|| Error(format!("{object}'s [package] has no version = \"x.y.z\"")))?;
-    Ok(version)
+    Ok(package_version(&manifest, &object)?.1)
 }
 
-/// The index among manifest's lines of its [package] table's `version = "x.y.z"` line, with the version it gives;
-/// None when the table has none.
-fn package_version(manifest: &str) -> Option<(usize, Version)> {
+/// The index among manifest's lines of its [package] table's `version = "x.y.z"` line, with the version it gives.
+/// Errors: the table has none; the message names the manifest as source.
+fn package_version(manifest: &str, source: &str) -> Result<(usize, Version), Error> {
     let mut in_package = false;
-    manifest.lines().enumerate().find_map(|(i, line)| {
-        if line.starts_with('[') {
-            in_package = line.trim() == "[package]";
-        }
-        let version = line.strip_prefix("version = \"").and_then(|v| v.strip_suffix('"')).and_then(Version::parse);
-        version.filter(|_| in_package).map(|v| (i, v))
-    })
-}
-
-/// manifest's [package] version bumped for a gate raise from old to new (Version::bumped_for), with manifest so
-/// changed. Errors: the [package] table has no `version = "x.y.z"` line.
-fn bump_package_version(manifest: &str, old: Version, new: Version) -> Result<(Version, String), Error> {
-    let (at, current) = package_version(manifest)
-        .ok_or_else(|| Error(format!("{ENGINE_MANIFEST}'s [package] has no version = \"x.y.z\"")))?;
-    let bumped = current.bumped_for(old, new);
-    let changed = manifest
+    manifest
         .lines()
         .enumerate()
-        .map(|(i, line)| if i == at { format!("version = \"{bumped}\"\n") } else { format!("{line}\n") })
-        .collect();
-    Ok((bumped, changed))
+        .find_map(|(i, line)| {
+            if line.starts_with('[') {
+                in_package = line.trim() == "[package]";
+            }
+            let version = line.strip_prefix("version = \"").and_then(|v| v.strip_suffix('"')).and_then(Version::parse);
+            version.filter(|_| in_package).map(|v| (i, v))
+        })
+        .ok_or_else(|| Error(format!("{source}'s [package] has no version = \"x.y.z\"")))
+}
+
+/// text with its line at index `at` replaced by line, every line ending in a newline.
+fn with_line(text: &str, at: usize, line: &str) -> String {
+    text.lines().enumerate().map(|(i, l)| format!("{}\n", if i == at { line } else { l })).collect()
 }
 
 /// The release notes' section for moving the pin from old to new, wrapped at 120 columns as the docs are; changed
