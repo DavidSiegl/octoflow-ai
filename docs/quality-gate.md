@@ -29,9 +29,11 @@ What this repository gives it:
   with the note's text (`[build-config]`), the commands that run the tests outside Jenkins (`[[test]]`) and the time
   budgets.
 
-**Raising the pin.** Only after the release exists: download its tarball and its `.sha256` asset, check them with
-`sha256sum -c`, and write the version and the sha256 into `ci/gate.pin`. The release must read this commit's
-`gate.toml`, since the gate refuses a key it does not know. A pull request that raises the pin is judged by the release
+**Raising the pin.** `cargo xtask raise-gate-pin [<version>]` (`xtask/src/raise_gate_pin.rs`) makes every change a
+raise needs, once the release exists: it checks the release's tarball against its `.sha256` asset, writes the pin,
+copies the release's golden reports (below), bumps octoflow's version at the gate's level and writes its release
+notes, and prints the gate's notes for the pull request. With no version it takes the latest release, and only an
+immutable one. The release must read this commit's `gate.toml`, since the gate refuses a key it does not know. A pull request that raises the pin is judged by the release
 it raises it to; quality rounds take the new release once it is on `main`. Lowering the pin rolls back the same way,
 to 0.7.0 or later: the Gate stage and the local gate run a release's `gate`, which the releases before 0.7.0 do not
 ship, so rolling back below it means reverting 0.66.0's cutover, its `Jenkinsfile` with its pin.

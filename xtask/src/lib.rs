@@ -1,11 +1,13 @@
 //! The repository's chores in Rust, run as `cargo xtask <command>` through `.cargo/config.toml`'s alias: the eval
-//! set's runner, `eval` ([`eval`]), and the builder of its tasks' bundles, `bundles` ([`bundles`]). src/main.rs reads
-//! the command line and hands each command its arguments.
+//! set's runner, `eval` ([`eval`]), the builder of its tasks' bundles, `bundles` ([`bundles`]), and the raise of the
+//! octoflow-gate pin, `raise-gate-pin` ([`raise_gate_pin`]). src/main.rs reads the command line and hands each command
+//! its arguments.
 
 pub mod bundles;
 pub mod claude_trust;
 pub mod eval;
 mod process;
+pub mod raise_gate_pin;
 pub mod toy_repos;
 
 use std::fmt;
