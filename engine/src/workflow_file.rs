@@ -98,12 +98,6 @@ pub fn find_workflow(name: &str, prompts: &Prompts) -> Result<Pipeline, Orchestr
     Err(OrchestratorError(format!("unknown workflow {name}; this orchestrator has {}", WORKFLOWS.join(", "))))
 }
 
-/// Whether p is the built-in workflow of its name as prompts word it, which a run need not save the definition of:
-/// its name and prompts give it back (run_pipeline).
-pub fn is_built_in(p: &Pipeline, prompts: &Prompts) -> bool {
-    WORKFLOWS.contains(&p.name()) && find_workflow(p.name(), prompts).is_ok_and(|built_in| &built_in == p)
-}
-
 /// Name -> path of each workflow file in config's workflows_dir, unparsed, in name order; none without the
 /// directory. Errors: the directory cannot be listed.
 pub fn workflow_files(config: &ConfigDir) -> Result<IndexMap<String, String>, OrchestratorError> {

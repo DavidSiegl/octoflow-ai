@@ -629,8 +629,10 @@ fn a_build_prompt_file_words_the_builders_first_turn() {
     assert_eq!(*seen.borrow(), [format!("Build {D}/spec.md in /proj; report to {D}/build-1.md.{}", note())]);
     let overrides: Vec<(&str, &String)> = wf.state().prompt_overrides.iter().map(|(k, v)| (k.as_str(), v)).collect();
     assert_eq!(overrides, [("BUILD_PROMPT", &build.to_string())]);
-    // Its name and the overrides give the workflow back, so the run saves no definition of it.
-    assert_eq!(wf.state().workflow_definition, None);
+    // The saved definition holds the overridden prompt, so a resume asks the same of the Builder.
+    let definition = wf.state().workflow_definition.as_ref().expect("a run saves its definition");
+    let build_step = definition["steps"].as_array().unwrap().iter().find(|s| s["id"] == "build").unwrap();
+    assert_eq!(build_step["prompt"], build);
 }
 
 #[test]

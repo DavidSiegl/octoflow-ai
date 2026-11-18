@@ -8,8 +8,9 @@ use std::cell::RefCell;
 use super::pull_request::rounds;
 use super::*;
 use crate::json::object;
-use crate::pipeline::{METRICS_FILE, SUMMARY_FILE};
+use crate::pipeline::{DEFAULT_WORKFLOW, METRICS_FILE, SUMMARY_FILE};
 use crate::test_support::herdr_server;
+use crate::workflow_file::workflow_definition;
 
 /// saved_run, its prompt for file counted as delivered.
 fn prompted(mut state: RunState, file: &str) -> RunState {
@@ -167,6 +168,49 @@ fn resumed_builder_not_yet_prompted_gets_its_normal_prompt() {
     );
     f.workflow(f.as_saved()).run().unwrap();
     assert!(seen.borrow()[0].starts_with("Changes were requested"), "{}", seen.borrow()[0]);
+}
+
+#[test]
+fn a_built_in_workflow_resumes_on_the_definition_saved_with_the_run_not_on_this_engine_s_built_in() {
+    // The run was started by a release whose default workflow asked the Builder again in other words.
+    let mut definition = workflow_definition(&DEFAULT_WORKFLOW);
+    let steps = definition["steps"].as_array_mut().unwrap();
+    let build = steps.iter_mut().find(|step| step["id"] == "build").unwrap();
+    build["again"] = Value::from("Mend the findings in {findings}; report to {build_path}.");
+    let mut state = prompted(saved_run("build", 2, FULL), "review-1.md");
+    state.workflow_definition = Some(definition.clone());
+    let seen = seen();
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state,
+        build_and_approve(2, &seen),
+        &["review"],
+        &[("build", "s-build")],
+    );
+
+    f.workflow(f.as_saved()).run().unwrap();
+
+    assert!(seen.borrow()[0].starts_with("Mend the findings in "), "{}", seen.borrow()[0]);
+    assert_eq!(f.saved().get("workflow_definition"), Some(&definition));
+}
+
+#[test]
+fn a_built_in_workflow_saved_without_its_definition_resumes_on_this_engine_s_built_in_and_saves_it() {
+    let mut state = prompted(saved_run("build", 2, FULL), "review-1.md");
+    state.workflow_definition = None;
+    let seen = seen();
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state,
+        build_and_approve(2, &seen),
+        &["review"],
+        &[("build", "s-build")],
+    );
+
+    f.workflow(f.as_saved()).run().unwrap();
+
+    assert!(seen.borrow()[0].starts_with("Changes were requested"), "{}", seen.borrow()[0]);
+    assert_eq!(f.saved().get("workflow_definition"), Some(&workflow_definition(&DEFAULT_WORKFLOW)));
 }
 
 /// The role's saved agent, marked as started the way start says and not yet prompted.
