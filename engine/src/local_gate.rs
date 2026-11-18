@@ -356,7 +356,7 @@ const SETTINGS_PATH: &str = "gate.toml";
 /// the octoflow that runs it (BUILT_IN_PIN). Nothing is committed: a run's gate reads both from the run's base commit,
 /// so they count once committed. cwd may start with ~, host's home. Returns gate.toml's SetUpFile, then the pin's when
 /// asked for. Two commands on host, so two round trips over SSH, and a third, a curl of the release's `.sha256` asset,
-/// for a pin other than the built-in release, whose sha256 this engine knows.
+/// for a pin other than the built-in release, whose sha256 this engine knows, unless a ci/gate.pin is there already.
 ///
 /// Errors: pin is no version a pin can name, or one before FIRST_WITH_GATE (both before host is asked anything); cwd
 /// is no directory on host, or in no git checkout; the release's `.sha256` asset cannot be fetched or holds no
@@ -372,7 +372,7 @@ pub fn set_up(host: &dyn Host, cwd: &str, pin: Option<&str>) -> Result<Vec<SetUp
     let look = format!("cd -- {word} && {SET_UP_LOOK}");
     let mut argv = vec!["sh", "-c", &look, "_", arg];
     argv.extend(KIND_MARKERS);
-    argv.push(PYPROJECT_PATH);
+    argv.extend([PYPROJECT_PATH, PIN_PATH]);
     let looked = set_up_step(host, &argv, &format!("looking at {cwd}"))?;
     let unread = || OrchestratorError(format!("looking at {cwd}: the look printed {looked:?}"));
     let (top, mut rest) = looked.split_once('\0').ok_or_else(unread)?;
@@ -380,15 +380,16 @@ pub fn set_up(host: &dyn Host, cwd: &str, pin: Option<&str>) -> Result<Vec<SetUp
     loop {
         let (name, after) = rest.split_once('\0').ok_or_else(unread)?;
         rest = after;
-        match KIND_MARKERS.iter().chain([&PYPROJECT_PATH]).find(|m| **m == name) {
+        match KIND_MARKERS.iter().chain([&PYPROJECT_PATH, &PIN_PATH]).find(|m| **m == name) {
             Some(marker) => present.push(*marker),
             None if name.is_empty() => break,
             None => return Err(unread()),
         }
     }
     let pyproject = present.contains(&PYPROJECT_PATH).then_some(rest);
+    let pin_there = present.contains(&PIN_PATH);
     let mut files = vec![(SETTINGS_PATH, starter_settings(&present, pyproject))];
-    if let Some(version) = pin {
+    if let Some(version) = pin.filter(|_| !pin_there) {
         files.push((PIN_PATH, pin_text(version, &release_sha256(host, version)?)));
     }
     let mut argv = vec!["sh", "-c", SET_UP_WRITE, "_", top];
@@ -400,7 +401,12 @@ pub fn set_up(host: &dyn Host, cwd: &str, pin: Option<&str>) -> Result<Vec<SetUp
     if said.len() != files.len() || !said.iter().all(|w| ["written", "kept"].contains(w)) {
         return Err(OrchestratorError(format!("setting up the gate in {top}: the write printed {wrote:?}")));
     }
-    Ok(files.iter().zip(said).map(|((path, _), w)| SetUpFile { path, written: w == "written" }).collect())
+    let mut set: Vec<SetUpFile> =
+        files.iter().zip(said).map(|((path, _), w)| SetUpFile { path, written: w == "written" }).collect();
+    if pin.is_some() && pin_there {
+        set.push(SetUpFile { path: PIN_PATH, written: false });
+    }
+    Ok(set)
 }
 
 /// The ci/gate.pin set_up writes to hold a project at octoflow-gate version, whose tarball has sha256: a comment on
@@ -438,16 +444,25 @@ pub enum ProjectRelease {
     BuiltIn,
     /// Its ci/gate.pin names this version, ordered against the built-in release's as release_order orders them.
     Pinned(String, Option<std::cmp::Ordering>),
+    /// Its ci/gate.pin fails every run (start), and this says why: it has no `<version> <sha256>` line, or names a
+    /// release before FIRST_WITH_GATE.
+    Refused(String),
 }
 
 /// The octoflow-gate release that judges a run of the project whose checkout's top level is top on host, as its
 /// ci/gate.pin there reads now; a run reads it from its base commit, so an edit counts once committed. Errors: the
-/// pin has no `<version> <sha256>` line, which fails every run (start); it cannot be read.
+/// pin cannot be read.
 pub fn project_release(host: &dyn Host, top: &str) -> Result<ProjectRelease, OrchestratorError> {
     let Some(pin) = host.read(&format!("{top}/{PIN_PATH}"))? else {
         return Ok(ProjectRelease::BuiltIn);
     };
-    let (version, _) = parse_pin(&pin).map_err(|why| OrchestratorError(format!("{PIN_PATH}: {why}")))?;
+    let version = match parse_pin(&pin) {
+        Ok((version, _)) => version,
+        Err(why) => return Ok(ProjectRelease::Refused(format!("{PIN_PATH}: {why}"))),
+    };
+    if let Err(why) = refuse_before_gate(&version, PIN_PATH) {
+        return Ok(ProjectRelease::Refused(why.0));
+    }
     let (built_in, _) = parse_pin(BUILT_IN_PIN)?;
     let order = release_order(&version, &built_in);
     Ok(ProjectRelease::Pinned(version, order))
@@ -605,9 +620,11 @@ const fn pin_line(pin: &str) -> &str {
     ""
 }
 
-/// Whether version is one a pin can name: only letters, digits and `.+-`, as it goes into a URL.
+/// Whether version is one a pin can name: a digit, then only letters, digits and `.+-`, as it goes into a URL. Not
+/// the release's tag, `v<version>`, which RELEASE_URL makes of it.
 fn is_version(version: &str) -> bool {
-    !version.is_empty() && version.bytes().all(|b| b.is_ascii_alphanumeric() || b".+-".contains(&b))
+    version.starts_with(|c: char| c.is_ascii_digit())
+        && version.bytes().all(|b| b.is_ascii_alphanumeric() || b".+-".contains(&b))
 }
 
 /// Whether sha256 is one as a pin names it: 64 lowercase hex digits.

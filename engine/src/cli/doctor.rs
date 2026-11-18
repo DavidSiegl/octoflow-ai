@@ -240,20 +240,22 @@ pub fn check_setup(
     let fix = "install or fix what it names where the agents run (docs/quality-gate.md, \"The local gate\")";
     let note = "needed only for --quality-gate local";
     check(&mut checks, "local quality gate", Level::Optional, fix, on_machine.as_ref(), note, &mut || {
+        // The release first, which needs nothing of the machine, so a check that fails for a tool still names it.
+        let judged = judging_release(agents, top.as_ref().filter(|c| c.ok).map(|c| c.detail.as_str()))?;
         if !gitleaks.ok {
-            let detail = format!("{}, and the gate scans each snapshot for secrets with it", gitleaks.detail);
+            let detail = format!("{}, and the gate scans each snapshot for secrets with it; {judged}", gitleaks.detail);
             return Err(Unmet::with_fix(detail, GITLEAKS_INSTALL));
         }
-        local_gate::preflight(agents)?;
-        let judged = judging_release(agents, top.as_ref().filter(|c| c.ok).map(|c| c.detail.as_str()))?;
+        local_gate::preflight(agents).map_err(|e| Unmet::new(format!("{}; {judged}", e.0)))?;
         Ok(format!("gitleaks, and all the gate's preflight asks for, are ready; {judged}"))
     });
     checks
 }
 
-/// Which octoflow-gate release judges the project whose checkout's top level is top on host, worded for the local
-/// quality gate's check; with no top, which would judge a project. Unmet: its ci/gate.pin names no release, which
-/// fails every gated run, or one newer than the built-in release, whose report this octoflow may not read.
+/// Which octoflow-gate release judges the runs of the project whose checkout's top level is top on host, as the
+/// checkout's ci/gate.pin reads now, worded for the local quality gate's check; with no top, which would judge a
+/// project. Unmet: the pin cannot be read; it fails every gated run (ProjectRelease::Refused); it names a release newer
+/// than the built-in one, whose report this octoflow may not read.
 fn judging_release(host: &dyn Host, top: Option<&str>) -> Probed {
     let (built_in, _) = local_gate::parse_pin(local_gate::BUILT_IN_PIN)?;
     let Some(top) = top else {
@@ -261,26 +263,25 @@ fn judging_release(host: &dyn Host, top: Option<&str>) -> Probed {
             "a project is judged by octoflow-gate {built_in}, built in, unless its ci/gate.pin pins another"
         ));
     };
-    let pinned = local_gate::project_release(host, top).map_err(|e| {
-        let fix = "write the `<version> <sha256>` line, or delete ci/gate.pin to follow the built-in release";
-        Unmet::with_fix(e.0, fix)
-    })?;
-    let follow = "delete ci/gate.pin to follow it";
-    match pinned {
-        ProjectRelease::BuiltIn => Ok(format!("the project is judged by octoflow-gate {built_in}, built in")),
-        ProjectRelease::Pinned(v, Some(Ordering::Less)) => Ok(format!(
-            "the project is judged by octoflow-gate {v}, which its ci/gate.pin holds it at, older than the built-in \
-             {built_in}: {follow}"
-        )),
+    // A run reads the pin from its base commit, so what doctor tells to do with it counts once committed.
+    let follow = "delete ci/gate.pin, and commit that, to follow it";
+    let held = |v: &str| format!("the checkout's ci/gate.pin holds its runs at octoflow-gate {v}");
+    match local_gate::project_release(host, top)? {
+        ProjectRelease::BuiltIn => {
+            Ok(format!("the checkout has no ci/gate.pin, so octoflow-gate {built_in}, built in, judges its runs"))
+        }
+        ProjectRelease::Pinned(v, Some(Ordering::Less)) => {
+            Ok(format!("{}, older than the built-in {built_in}: {follow}", held(&v)))
+        }
         ProjectRelease::Pinned(v, Some(Ordering::Greater)) => Err(Unmet::with_fix(
-            format!(
-                "the project's ci/gate.pin holds it at octoflow-gate {v}, newer than the built-in {built_in}, whose \
-                 report this octoflow may not read"
-            ),
+            format!("{}, newer than the built-in {built_in}, whose report this octoflow may not read", held(&v)),
             &format!("update octoflow, or {follow}"),
         )),
-        ProjectRelease::Pinned(v, _) => Ok(format!(
-            "the project is judged by octoflow-gate {v}, which its ci/gate.pin holds it at (built in: {built_in})"
+        ProjectRelease::Pinned(v, _) => Ok(format!("{} (built in: {built_in})", held(&v))),
+        ProjectRelease::Refused(why) => Err(Unmet::with_fix(
+            why,
+            "write a `<version> <sha256>` line of 0.7.0 or later, or delete ci/gate.pin to follow the built-in \
+             release, and commit that",
         )),
     }
 }

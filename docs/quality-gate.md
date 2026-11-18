@@ -115,9 +115,10 @@ configure only other tools. Check the guessed commands. With `--pin-gate <versio
 `ci/gate.pin`, holding the project at that release, 0.7.0 or later, whatever octoflow runs it: the built-in
 release's sha256 is known, another's is fetched from its release's `.sha256` asset. Without one the project follows
 octoflow's built-in release, and doctor's local quality gate check says which release judges it: a pin older than
-the built-in one is reported with how to follow again (delete `ci/gate.pin`), as for a project set up before 0.91.0,
-when setup-gate always pinned; a pin newer than it is a warning, since this octoflow may not read that release's
-report. A file already there is kept.
+the built-in one is reported with how to follow again (delete `ci/gate.pin` and commit that, as a run reads the pin
+from its base commit), as for a project set up before 0.91.0, when setup-gate always pinned; a pin newer than it is a
+warning, since this octoflow may not read that release's report, and so is one every gated run refuses, without a
+`<version> <sha256>` line or before 0.7.0. A file already there is kept, and a pin already there is not fetched for.
 Nothing is committed, and nothing makes the project's runs gated: commit the files for the gate to read them, and
 pass `--quality-gate local` to a run.
 

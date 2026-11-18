@@ -596,6 +596,9 @@ fn set_up_writes_nothing_for_a_pin_it_cannot_make() {
     assert_eq!(e, "--pin-gate: octoflow-gate 0.6.3 ships no gate, which the local gate runs from 0.7.0 on");
     let e = set_up(&missing, &repo.path, Some("0.9 x")).unwrap_err().to_string();
     assert_eq!(e, "'0.9 x' is not an octoflow-gate version");
+    // The release's tag spells it so, and its URL adds the v itself.
+    let e = set_up(&missing, &repo.path, Some("v0.9.1")).unwrap_err().to_string();
+    assert_eq!(e, "'v0.9.1' is not an octoflow-gate version");
     assert_eq!(read(&dir.join("curl-log")).lines().count(), 1, "only the 0.99.0 fetch reached curl");
     assert_eq!(repo.git(&["status", "--porcelain"]), "");
 }
@@ -629,9 +632,25 @@ fn project_release_reads_the_checkouts_pin_against_the_built_in_release() {
         let pinned = project_release(&repo.host, &repo.path).unwrap();
         assert_eq!(pinned, ProjectRelease::Pinned(version.to_string(), order));
     }
+    // What every run refuses (start) is told apart from a pin that cannot be read.
     repo.put("ci/gate.pin", "0.9.0\n");
-    let e = project_release(&repo.host, &repo.path).unwrap_err().to_string();
-    assert_eq!(e, "ci/gate.pin: its first line '0.9.0' is not '<version> <sha256>'");
+    let why = "ci/gate.pin: its first line '0.9.0' is not '<version> <sha256>'";
+    assert_eq!(project_release(&repo.host, &repo.path).unwrap(), ProjectRelease::Refused(why.to_string()));
+    repo.put("ci/gate.pin", &format!("0.6.3 {sha256}\n"));
+    let why = "ci/gate.pin: octoflow-gate 0.6.3 ships no gate, which the local gate runs from 0.7.0 on";
+    assert_eq!(project_release(&repo.host, &repo.path).unwrap(), ProjectRelease::Refused(why.to_string()));
+}
+
+#[test]
+fn set_up_keeps_a_pin_already_there_without_fetching_the_one_asked_for() {
+    let repo = Repo::new(&[("ci/gate.pin", "0.8.0 mine\n")]);
+    let dir = TempDir::new();
+    let offline = sha256_server(&dir, None);
+    let files = set_up(&offline, &repo.path, Some("0.9.1")).unwrap();
+    let (kept, written) = (|path| SetUpFile { path, written: false }, |path| SetUpFile { path, written: true });
+    assert_eq!(files, [written("gate.toml"), kept("ci/gate.pin")]);
+    assert_eq!(read(&format!("{}/ci/gate.pin", repo.path)), "0.8.0 mine\n");
+    assert!(!std::path::Path::new(&dir.join("curl-log")).exists(), "nothing was fetched for a pin it keeps");
 }
 
 #[test]
