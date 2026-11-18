@@ -414,8 +414,8 @@ kills the engine while the gate's test runs and resumes, then has the round fail
 Builder answers it, and asserts what the engine made of the release's output (the end of the killed round's test, the
 rounds' verdicts, the quality file the Builder gets), not the release's wording. It needs the network and Linux
 x86_64, so it runs only under `OCTOFLOW_REAL_GATE=1`, which Jenkins's Test stage sets, with the release kept in
-`OCTOFLOW_GATE_CACHE`, else the developer's own cache; elsewhere it passes at once. `OCTOFLOW_GATE_TARBALL=<path to
-octoflow-gate-<version>.tar.gz>` runs it on that tarball instead, a gate release candidate. With `cargo xtask
+`OCTOFLOW_GATE_CACHE`, else the developer's own cache; elsewhere it passes at once. `OCTOFLOW_GATE_TARBALL=<absolute path
+to octoflow-gate-<version>.tar.gz>` runs it on that tarball instead, a gate release candidate. With `cargo xtask
 raise-gate-pin`, it makes a raise's pull request the test that octoflow can drive the release it raises to.
 
 The package's other test, `tests/docs/`, holds the README and `docs/` to the code: each command the docs run takes the

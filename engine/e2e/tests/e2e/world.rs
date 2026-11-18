@@ -282,8 +282,9 @@ impl World {
     // -- Scripting the world ------------------------------------------------
 
     /// Have the engine judge by a real octoflow-gate release, as a host outside the world does: its job downloads the
-    /// release from GitHub and keeps it under cache_home, its XDG_CACHE_HOME, and nothing goes through the world's PyPI
-    /// proxy, which would answer for GitHub too. Call it before the engine first runs.
+    /// release from GitHub, through this host's own proxy and CAs where its environment names them, and keeps it under
+    /// cache_home, its XDG_CACHE_HOME; nothing goes through the world's PyPI proxy, which would answer for GitHub too.
+    /// Call it before the engine first runs.
     pub fn real_gate(&mut self, cache_home: &Path) {
         self.gate_cache = Some(cache_home.to_path_buf());
     }
@@ -326,23 +327,30 @@ impl World {
             .status()
             .unwrap_or_else(|e| panic!("running tar: {e}"));
         assert!(packed.success(), "packing the stub release: {packed}");
-        let sum = Command::new("sha256sum").arg(&served).output().unwrap_or_else(|e| panic!("running sha256sum: {e}"));
-        assert!(sum.status.success(), "sha256sum {served}: {}", sum.status);
+        self.serve_gate("9.9.9", Path::new(&served));
+        // The machine the release's gate is built for, whatever the scenarios run on.
+        self.tool("uname", "echo 'Linux x86_64'");
+    }
+
+    /// Make the project's main pin version, released as tarball, an absolute path: ci/gate.pin names the tarball's
+    /// sha256 and is committed and pushed, and curl, for any URL, writes the tarball where its -o says, so the engine's
+    /// job downloads it from the world. Call it before the engine first runs.
+    pub fn serve_gate(&self, version: &str, tarball: &Path) {
+        let shown = tarball.display();
+        let sum = Command::new("sha256sum").arg(tarball).output().unwrap_or_else(|e| panic!("running sha256sum: {e}"));
+        assert!(sum.status.success(), "sha256sum {shown}: {}", String::from_utf8_lossy(&sum.stderr));
         let sha256 = String::from_utf8_lossy(&sum.stdout).split(' ').next().unwrap_or_default().to_string();
         self.tool(
             "curl",
             &format!(
                 "while [ $# -gt 0 ]; do case $1 in -o) out=$2; shift ;; esac; shift; done\ncp -- {} \"$out\"",
-                shlex_quote(&served)
+                shlex_quote(&tarball.to_string_lossy())
             ),
         );
-        // The machine the release's gate is built for, whatever the scenarios run on.
-        self.tool("uname", "echo 'Linux x86_64'");
-        self.write("project/ci/gate.pin", &format!("9.9.9 {sha256}\n"));
-        let project = self.project.clone();
-        self.git(&project, &["add", "ci/gate.pin"]);
-        self.git(&project, &["commit", "--quiet", "-m", "Pin the gate"]);
-        self.git(&project, &["push", "--quiet", "origin", "main"]);
+        self.write("project/ci/gate.pin", &format!("{version} {sha256}\n"));
+        self.git(&self.project, &["add", "ci/gate.pin"]);
+        self.git(&self.project, &["commit", "--quiet", "-m", "Pin the gate"]);
+        self.git(&self.project, &["push", "--quiet", "origin", "main"]);
     }
 
     /// Make PyPI answer GET /pypi/<name>/json with answer, its JSON API's document; any other name is a 404.
@@ -545,7 +553,15 @@ impl World {
         env.push(("HERDR_ENV".to_string(), "1".to_string()));
         env.push((INVOCATION_VAR.to_string(), n.to_string()));
         match &self.gate_cache {
-            Some(cache) => env.push(("XDG_CACHE_HOME".to_string(), cache.display().to_string())),
+            Some(cache) => {
+                env.push(("XDG_CACHE_HOME".to_string(), cache.display().to_string()));
+                // The release is downloaded the way this host reaches GitHub, through its proxy and trusting its CAs,
+                // as ci/fetch-gate.sh's curl on the same host would.
+                let reach = [
+                    "https_proxy", "HTTPS_PROXY", "no_proxy", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR", "CURL_CA_BUNDLE",
+                ];
+                env.extend(reach.iter().filter_map(|k| Some((k.to_string(), std::env::var(k).ok()?))));
+            }
             None => env.extend([
                 ("no_proxy", "127.0.0.1,localhost".to_string()),
                 ("https_proxy", self.servers.proxy_url.clone()),
