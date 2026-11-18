@@ -24,8 +24,8 @@ NOT_RELEASED=":(exclude)docs :(exclude,glob)*.md :(exclude)tests :(exclude)engin
 :(exclude,glob)**/tests.rs :(exclude,glob)engine/src/**/tests/** :(exclude,glob)engine/src/**/fake.rs
 :(exclude,glob)engine/src/**/fixture.rs :(exclude)engine/src/test_support.rs :(exclude)engine/src/prompt_parity.rs
 :(exclude,glob)ui/src/**/*.test.ts :(exclude,glob)ui/src/**/*.test.tsx :(exclude)ui/src/test
-:(exclude,glob)ci/*.sh :(exclude)ci/nextest.toml :(exclude)Jenkinsfile :(exclude).github :(exclude)evals :(exclude)gate.toml
-:(exclude)pyproject.toml :(exclude)uv.lock :(exclude).python-version
+:(exclude,glob)ci/*.sh :(exclude)ci/nextest.toml :(exclude)Jenkinsfile :(exclude).github :(exclude)evals
+:(exclude)gate.toml :(exclude)pyproject.toml :(exclude)uv.lock :(exclude).python-version
 :(exclude)xtask :(exclude).gitignore :(exclude).copier-answers.yml"
 base=$(git merge-base HEAD "origin/$CHANGE_TARGET")
 # shellcheck disable=SC2086 # NOT_RELEASED is split into one pathspec per word on purpose.

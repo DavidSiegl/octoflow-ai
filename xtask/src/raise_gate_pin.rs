@@ -153,7 +153,12 @@ fn raise(top: &Path, wanted: Option<Version>) -> Result<String, Error> {
         write(&top.join(ENGINE_MANIFEST), &manifest)?;
         run(command("cargo").args(["update", "--workspace"]).current_dir(top), "refreshing Cargo.lock")?;
         write(&notes_path, &format!("{notes}{}", release_notes_section(old, new, &changed)))?;
-        write(&top.join(PIN), &replace_pin_line(&pin_text, &format!("{new} {sha}")))
+        // Through a file beside it, renamed over it, so that a write that fails leaves the old pin whole, as the
+        // error below says.
+        let staged = top.join(format!("{PIN}.raising"));
+        write(&staged, &replace_pin_line(&pin_text, &format!("{new} {sha}")))?;
+        fs::rename(&staged, top.join(PIN))
+            .map_err(|e| Error(format!("could not rename {} over {PIN}: {e}", staged.display())))
     })();
     written.map_err(|Error(e)| {
         Error(format!(
