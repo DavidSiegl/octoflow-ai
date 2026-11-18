@@ -279,3 +279,15 @@ fn a_release_that_is_missing_or_ships_no_gate_is_refused() {
     }
     assert_eq!(raise.files(), before);
 }
+
+#[test]
+fn a_flag_or_a_second_version_is_a_usage_error() {
+    let raise = Raise::new(&[release("0.10.0", true)]);
+    let before = raise.files();
+    for args in [&["--nope"][..], &["0.10.0", "0.11.0"]] {
+        let output = raise.raise(args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(stderr(&output).contains("usage: cargo xtask raise-gate-pin [<version>]"), "{args:?}");
+    }
+    assert_eq!(raise.files(), before);
+}
