@@ -148,7 +148,7 @@ fn no_answer_is_worded_with_the_system_s_words() {
     // A port bound and never listened on is refused. While the socket is open no other bind() can take the port, as
     // one could take a listener's freed port, and connect() never picks a bound port as its own end, as it can pick a
     // connection's, connecting the client to itself (todo/84, cross-review 241).
-    let refusing = socket(AddressFamily::Inet, SockType::Stream, SockFlag::empty(), None).unwrap();
+    let refusing = socket(AddressFamily::Inet, SockType::Stream, SockFlag::SOCK_CLOEXEC, None).unwrap();
     bind(refusing.as_raw_fd(), &SockaddrIn::new(127, 0, 0, 1, 0)).unwrap();
     let port = getsockname::<SockaddrIn>(refusing.as_raw_fd()).unwrap().port();
     let url = format!("http://127.0.0.1:{port}/");
