@@ -17,7 +17,7 @@ users only if it raises the version.
 - Don't create tags or releases by hand; Jenkins does that after the merge.
 - One pull request that raises the version is open at a time: pull requests merge on their own once Jenkins passes
   them, so two would both claim the next version. Before opening one, check that no open pull request changes
-  `engine/Cargo.toml`, the gate pin raise's from `gate-pin-raise` (`.github/workflows/raise-gate-pin.yml`) included.
+  `engine/Cargo.toml`, including the one `.github/workflows/raise-gate-pin.yml` opens from `gate-pin-raise`.
 
 ## Formatting
 

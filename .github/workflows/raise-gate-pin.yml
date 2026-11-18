@@ -14,9 +14,10 @@
 #
 # Two jobs, so that AUTOMERGE_TOKEN never shares a machine with code the raise builds: raise runs the xtask with
 # github.token, read-only, and hands publish a patch and a title; publish, on a fresh runner, applies the patch to the
-# same main with git hooks off and runs nothing of the tree. It pushes and edits the pull request with AUTOMERGE_TOKEN
-# (automerge.yml's header says what it is), since GitHub starts no workflow for a pull request opened or pushed with
-# github.token, so automerge.yml would never see it.
+# same main with git hooks off and runs nothing of the tree. Since the xtask's crates could have written anything into
+# that patch, publish refuses one that touches more than the xtask writes. It pushes and edits the pull request with
+# AUTOMERGE_TOKEN (automerge.yml's header says what it is), since GitHub starts no workflow for a pull request opened
+# or pushed with github.token, so automerge.yml would never see it.
 name: Raise gate pin
 
 on:
@@ -40,6 +41,11 @@ concurrency:
 env:
   BRANCH: gate-pin-raise
 
+# GitHub's bash runs with pipefail, its default shell without, so that a gh failing before a jq fails the step.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   raise:
     runs-on: ubuntu-latest
@@ -61,9 +67,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
+          # An assignment, since errexit ignores a failing command substitution in a for loop's word list.
+          numbers=$(gh pr list --state open --limit 200 --json number,headRefName,isCrossRepository |
+            jq -r --arg branch "$BRANCH" '.[] | select(.isCrossRepository or .headRefName != $branch) | .number')
           others=
-          for n in $(gh pr list --state open --limit 200 --json number,headRefName,isCrossRepository |
-              jq -r --arg branch "$BRANCH" '.[] | select(.isCrossRepository or .headRefName != $branch) | .number'); do
+          for n in $numbers; do
             files=$(gh api --paginate "repos/$GH_REPO/pulls/$n/files" --jq '.[].filename')
             if grep -qx engine/Cargo.toml <<<"$files"; then others="$others #$n"; fi
           done
@@ -114,7 +122,8 @@ jobs:
     if: needs.raise.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions: {}
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v5
         with:
@@ -152,6 +161,23 @@ jobs:
           fi
 
           git apply --index "$RUNNER_TEMP/raise/raise.patch"
+          # What the xtask writes (raise_gate_pin.rs's PIN, GOLDEN_DIR, ENGINE_MANIFEST and RELEASE_NOTES_DIR), and in
+          # the manifest and Cargo.lock only octoflow's version, main's to the raise's; anything else came from the
+          # code raise ran, not from the raise.
+          git diff --cached --name-only > "$RUNNER_TEMP/paths"
+          if grep -Ev '^(ci/gate\.pin|engine/Cargo\.toml|Cargo\.lock|engine/tests/data/quality/[^/]+|docs/releases/v[0-9.]+\.md)$' \
+              "$RUNNER_TEMP/paths"; then
+            echo "::error::The raise changes files the xtask does not write (above); not pushing it"
+            exit 1
+          fi
+          version() { git show "$1:engine/Cargo.toml" | sed -n '/^version = /{s/^version = "\(.*\)"$/\1/p;q}'; }
+          old=$(version HEAD) new=$(version :0)
+          git diff --cached -U0 -- engine/Cargo.toml Cargo.lock > "$RUNNER_TEMP/versions.diff"
+          if grep -Evx -e '' -e '[^-+].*' -e '--- a/.*' -e '\+\+\+ b/.*' \
+              -e "-version = \"${old//./\\.}\"" -e "\+version = \"${new//./\\.}\"" "$RUNNER_TEMP/versions.diff"; then
+            echo "::error::The raise changes more than octoflow's version in engine/Cargo.toml or Cargo.lock (above); not pushing it"
+            exit 1
+          fi
           git -c core.hooksPath=/dev/null -c user.name='github-actions[bot]' \
             -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
             commit -q -m "$TITLE (raise-gate-pin.yml)"
