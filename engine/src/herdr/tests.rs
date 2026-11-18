@@ -669,12 +669,24 @@ fn herdr_gets_no_pathspec_switches() {
 
 // -- Launcher --------------------------------------------------------------------------------------------------------
 
-/// A ProcessHerdr that opens workspace w1 with pane w1:p1, takes every `pane run`, and shows screen at every
-/// `pane read`; and what it ran.
+/// Whether argv is launch's look at the shell its herdr's panes start (panes_shell): PANE_SHELL_SCRIPT in sh here,
+/// or any ssh, which only that look runs.
+fn looks_at_panes_shell(argv: &[String]) -> bool {
+    argv[0] == "ssh" || argv[..] == ["sh", "-c", PANE_SHELL_SCRIPT]
+}
+
+/// What PANE_SHELL_SCRIPT prints where the panes start bash, from $SHELL, with no herdr config.
+const PANES_START_BASH: &str = "/bin/bash\n/home/u/.config/herdr/config.toml\n";
+
+/// A ProcessHerdr whose panes start bash, that opens workspace w1 with pane w1:p1, takes every `pane run`, and shows
+/// screen at every `pane read`; and what it ran, but for the look at its panes' shell.
 fn launching(screen: &str) -> (ProcessHerdr, Commands) {
     let ran: Commands = Arc::default();
     let (seen, screen) = (ran.clone(), screen.to_string());
     let herdr = ProcessHerdr::with_runner(None, move |argv, limit| {
+        if looks_at_panes_shell(argv) {
+            return Ok((0, PANES_START_BASH.as_bytes().to_vec(), vec![]));
+        }
         seen.lock().unwrap().push((argv.to_vec(), limit));
         let out = match (argv[1].as_str(), argv[2].as_str()) {
             ("workspace", "create") => {
@@ -754,6 +766,7 @@ fn a_command_herdr_does_not_take_closes_the_workspace_it_opened() {
         seen.lock().unwrap().push((argv.to_vec(), limit));
         let created = result(r#"{"workspace": {"workspace_id": "w1"}, "root_pane": {"pane_id": "w1:p1"}}"#);
         Ok(match argv[1..3].join(" ").as_str() {
+            _ if looks_at_panes_shell(argv) => (0, PANES_START_BASH.as_bytes().to_vec(), vec![]),
             "workspace create" => (0, created.into_bytes(), vec![]),
             "pane run" => (1, vec![], error("pane_not_found", "pane w1:p1 not found").into_bytes()),
             _ => (0, result("{}").into_bytes(), vec![]),
@@ -972,7 +985,8 @@ fn a_look_herdr_answers_with_an_error_while_its_server_comes_up_is_not_the_end()
     let no_server = error("server_not_running", "no herdr server is running at /s.sock");
     // What each command gives in turn: its exit status, standard output and standard error.
     let answers = Mutex::new(VecDeque::from([
-        (1, String::new(), no_server), // workspace create, in the environment's server
+        (0, PANES_START_BASH.to_string(), String::new()), // sh, the look at the panes' shell
+        (1, String::new(), no_server),                    // workspace create, in the environment's server
         (0, "status: not running\n".to_string(), String::new()),
         (0, String::new(), String::new()), // sh, which starts the server
         (1, String::new(), "connection refused\n".to_string()), // a look the server is not yet there to answer
@@ -994,6 +1008,7 @@ fn a_server_that_never_answers_fails_the_launch_with_what_herdr_last_said() {
     let looked = Mutex::new(false);
     // sh, which starts the server, succeeds; after it, herdr has no server to answer a look with.
     let mut herdr = ProcessHerdr::with_runner(None, move |argv, _| match argv[1].as_str() {
+        _ if looks_at_panes_shell(argv) => Ok((0, PANES_START_BASH.as_bytes().to_vec(), Vec::new())),
         "workspace" => Ok((1, Vec::new(), no_server.clone().into_bytes())),
         "status" if !std::mem::replace(&mut *looked.lock().unwrap(), true) => {
             Ok((0, b"status: not running\n".to_vec(), Vec::new()))
@@ -1014,13 +1029,61 @@ fn a_server_that_never_answers_fails_the_launch_with_what_herdr_last_said() {
     assert!(e.ends_with(&format!("; cannot read what herdr server wrote: {gone}")), "{e}");
 }
 
+/// A ProcessHerdr forwarding to machine box, at SSH target box-host, whose panes there print panes for
+/// PANE_SHELL_SCRIPT and whose every other command is answered as `workspace create` without a server; and what it
+/// ran.
+fn on_box_without_a_server(panes: &str) -> (ProcessHerdr, Commands) {
+    let ran: Commands = Arc::default();
+    let (seen, panes) = (ran.clone(), panes.to_string());
+    let herdr = ProcessHerdr::with_runner(Some("box"), move |argv, limit| {
+        seen.lock().unwrap().push((argv.to_vec(), limit));
+        Ok(match argv[1..3].join(" ").as_str() {
+            "machine list" => (0, br#"[{"label": "box", "target": "box-host", "enabled": true}]"#.to_vec(), vec![]),
+            _ if argv[0] == "ssh" => (0, panes.as_bytes().to_vec(), vec![]),
+            _ => (1, vec![], error("server_not_running", "no herdr server is running at /s.sock").into_bytes()),
+        })
+    });
+    (herdr, ran)
+}
+
 #[test]
 fn a_machine_s_missing_server_is_not_started_here() {
-    let message = "no herdr server is running at /s.sock";
-    let (herdr, ran) = answering(Some("box"), 1, "", &error("server_not_running", message));
+    let (herdr, ran) = on_box_without_a_server(PANES_START_BASH);
     let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err();
-    assert_eq!(e, HerdrError::new("server_not_running", message));
-    assert_eq!(ran.lock().unwrap().len(), 1, "nothing is started or typed");
+    assert_eq!(e, HerdrError::new("server_not_running", "no herdr server is running at /s.sock"));
+    let create = &last(&ran).0;
+    assert_eq!(create[..4], ["herdr", "--machine", "box", "workspace"], "nothing is started or typed after it");
+}
+
+#[test]
+fn launch_opens_nothing_where_herdr_s_panes_start_a_shell_it_cannot_type_into() {
+    let ran: Commands = Arc::default();
+    let seen = ran.clone();
+    let herdr = ProcessHerdr::with_runner(None, move |argv, limit| {
+        seen.lock().unwrap().push((argv.to_vec(), limit));
+        Ok((0, b"/usr/bin/nu\n/home/u/.config/herdr/config.toml\n".to_vec(), vec![]))
+    });
+    let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
+    assert!(e.starts_with("herdr's panes start /usr/bin/nu ($SHELL), which cannot run the lines a run types"), "{e}");
+    let ran: Vec<Vec<String>> = ran.lock().unwrap().iter().map(|(argv, _)| argv.clone()).collect();
+    assert_eq!(ran, [argv(&["sh", "-c", PANE_SHELL_SCRIPT])], "only the look ran");
+    // A look that fails is no answer either.
+    let herdr = ProcessHerdr::with_runner(None, |_, _| Ok((2, vec![], b"sh: HOME: parameter not set\n".to_vec())));
+    let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
+    let why = "telling the shell herdr's panes start: the script exited with 2: sh: HOME: parameter not set";
+    assert!(e.contains(why), "{e}");
+}
+
+#[test]
+fn a_machine_s_panes_are_looked_at_on_the_machine_over_ssh() {
+    let (herdr, ran) = on_box_without_a_server(PANES_START_BASH);
+    herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err();
+    let ssh = ran.lock().unwrap().iter().map(|(argv, _)| argv.clone()).find(|argv| argv[0] == "ssh").unwrap();
+    assert_eq!(ssh, crate::host::ssh_argv("box-host", Vec::new(), &["sh", "-c", PANE_SHELL_SCRIPT]));
+    let (herdr, ran) = on_box_without_a_server("/usr/bin/nu\n/home/u/.config/herdr/config.toml\n");
+    let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
+    assert!(e.starts_with("herdr's panes start /usr/bin/nu"), "{e}");
+    assert!(!ran.lock().unwrap().iter().any(|(argv, _)| argv.contains(&"workspace".to_string())), "nothing opened");
 }
 
 // -- What the e2e scenarios recorded ---------------------------------------------------------------------------------

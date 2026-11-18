@@ -153,8 +153,9 @@ impl Host for ServeHost {
 /// An AgentConsole whose agents show `screens`, by herdr name, whatever server they are addressed in, and which
 /// records what is typed into them in `typed`, and the server of each in `servers`. An agent without a screen has
 /// exited (herdr's agent_not_found). As Workspaces, its open workspaces are `workspaces`, and it records each call in
-/// `workspace_calls`. As a Launcher, it records each launch in `launches`, plays it by `on_launch`, and
-/// gives every launch pane LAUNCHED_PANE, whose command has exited once `exited` is set.
+/// `workspace_calls`. As a Launcher, it refuses a launch, as ProcessHerdr does, when `pane_shell` names a shell a run
+/// cannot type into; else it records each launch in `launches`, plays it by `on_launch`, and gives every launch pane
+/// LAUNCHED_PANE, whose command has exited once `exited` is set.
 #[derive(Default)]
 pub struct FakeConsole {
     state: Mutex<Consoled>,
@@ -183,6 +184,9 @@ pub struct Consoled {
     pub exited: Option<String>,
     /// While set, what every launch fails with, having launched nothing.
     pub launch_error: Option<HerdrError>,
+    /// What crate::herdr::PANE_SHELL_SCRIPT prints where the launcher's herdr runs, as ServeHost's `pane_shell`;
+    /// empty, the default, names no shell, so panes start /bin/sh, which a run can type into.
+    pub pane_shell: String,
     /// While set, what every look at whether a launched command has exited fails with.
     pub exited_error: Option<HerdrError>,
     /// The server each launch's pane is in (Launched::server); None for the one the launcher's environment picks.
@@ -263,6 +267,7 @@ impl Launcher for FakeConsole {
         if let Some(e) = &s.launch_error {
             return Err(e.clone());
         }
+        crate::herdr::shell_of_panes(&s.pane_shell).map_err(HerdrError::Failed)?;
         s.launches.push((cwd.to_string(), label.to_string(), argv.to_vec()));
         if let Some(play) = s.on_launch.as_mut() {
             play(argv);

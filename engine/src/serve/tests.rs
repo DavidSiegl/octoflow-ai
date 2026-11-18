@@ -1103,21 +1103,42 @@ fn a_run_of_a_project_here_is_given_the_directory_serve_resolved() {
     assert_eq!(argv[3..], ["--cwd", "/proj", "--", "t"]);
 }
 
-#[test]
-fn a_run_is_refused_before_its_workspace_opens_when_herdrs_panes_start_a_shell_it_cannot_type_into() {
-    let host = Arc::new(ServeHost::on(None));
-    let served = starting(&host);
-    host.state().pane_shell = "/usr/bin/nu\n/home/me/.config/herdr/config.toml\n".to_string();
+/// POST /run's reply when the panes of one herdr, the launcher's or the machine's, start nu: refused before the
+/// launcher opened a workspace, naming the shell.
+fn refused_for_nu(served: &Served) {
     let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#);
     assert_eq!(reply.status, Some(502), "{}", reply.body);
     let why = reply.json()["error"].as_str().unwrap_or_default().to_string();
     assert!(why.starts_with("herdr's panes start /usr/bin/nu ($SHELL)"), "{why}");
     assert!(why.ends_with("POSIX shell (sh, bash, zsh, dash, ksh) or fish"), "{why}");
     assert!(served.console.state().launches.is_empty());
+}
+
+const NU: &str = "/usr/bin/nu\n/home/me/.config/herdr/config.toml\n";
+
+#[test]
+fn a_run_is_refused_before_its_workspace_opens_when_herdrs_panes_start_a_shell_it_cannot_type_into() {
+    let host = Arc::new(ServeHost::on(None));
+    let served = starting(&host);
+    served.console.state().pane_shell = NU.to_string();
+    refused_for_nu(&served);
     // One herdr's config.toml names, which wins over $SHELL.
-    host.state().pane_shell.push_str("[terminal]\ndefault_shell = \"zsh\"\n");
+    served.console.state().pane_shell.push_str("[terminal]\ndefault_shell = \"zsh\"\n");
     assert_eq!(served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#).status, Some(202));
     assert_eq!(served.console.state().launches.len(), 1);
+}
+
+#[test]
+fn a_run_on_a_machine_is_refused_when_either_herdrs_panes_start_a_shell_it_cannot_type_into() {
+    let host = Arc::new(ServeHost::on(Some("me@box")));
+    let served = starting(&host);
+    // This machine's, which the run's command line is typed into, though the machine's takes it.
+    served.console.state().pane_shell = NU.to_string();
+    refused_for_nu(&served);
+    // The machine's, which its agents' exports are typed into.
+    served.console.state().pane_shell = String::new();
+    host.state().pane_shell = NU.to_string();
+    refused_for_nu(&served);
 }
 
 #[test]

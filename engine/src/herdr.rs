@@ -315,8 +315,10 @@ pub trait Launcher: Send + Sync {
     /// newlines, control characters). A word must hold no NUL, which no process argument can. The workspace is in
     /// the herdr server the launcher's environment picks or, when that one is not running, in the session
     /// OWN_SESSION, whose server is started first if it is not running either, and outlives the launcher.
-    /// Errors: herdr's; OWN_SESSION's server cannot be started, or does not answer in time. The workspace is closed
-    /// again when it opened but the command could not be given to it.
+    /// Errors: Failed, before any workspace opens, when the shell the launcher's herdr starts in a new pane cannot
+    /// take the line that runs argv, or cannot be told (pane_shell); herdr's; OWN_SESSION's server cannot be started,
+    /// or does not answer in time. The workspace is closed again when it opened but the command could not be given to
+    /// it.
     fn launch(&self, cwd: &str, label: &str, argv: &[String]) -> Result<Launched, HerdrError>;
 
     /// What launched's pane showed of its command, at most its last lines lines, once it has exited; None while it
@@ -358,9 +360,11 @@ impl Launcher for ProcessHerdr {
     /// herdr 0.9.1's `pane run` types its arguments, joined by spaces, into the pane's shell as keystrokes, so no word
     /// of argv is typed: each is given to the new pane's shell as an environment variable (`workspace create --env`),
     /// and the typed line is only `"$OCTOFLOW_ARG_0" "$OCTOFLOW_ARG_1" ...; echo '<marker>'`, which POSIX shells and
-    /// fish read alike; serve refuses to launch into any other shell (pane_shell). A word typed even quoted would reach the terminal's line editing first: a ^U erases what was
-    /// typed before it, and a ^C or ^M ends the line, so a client's text could run as a command of its own.
+    /// fish read alike; it launches into no other shell (panes_shell). A word typed even quoted would reach the
+    /// terminal's line editing first: a ^U erases what was typed before it, and a ^C or ^M ends the line, so a
+    /// client's text could run as a command of its own.
     fn launch(&self, cwd: &str, label: &str, argv: &[String]) -> Result<Launched, HerdrError> {
+        self.panes_shell()?;
         match self.launch_in_server(cwd, label, argv) {
             // A machine's herdr is not this one's to start.
             Err(e) if e.code() == Some("server_not_running") && self.machine.is_none() => {
@@ -714,6 +718,31 @@ impl ProcessHerdr {
         }
         Ok(stdout)
     }
+
+    /// pane_shell for the herdr server this herdr's commands reach: PANE_SHELL_SCRIPT run in the environment they run
+    /// in, which stands for that server's, here or, forwarded to a machine, over SSH on it. Errors: pane_shell's, as
+    /// Failed; and Failed when the script cannot be run, runs out of time, is interrupted or fails, naming why.
+    fn panes_shell(&self) -> Result<String, HerdrError> {
+        let script = ["sh", "-c", PANE_SHELL_SCRIPT];
+        let argv = match &self.machine {
+            None => script.map(String::from).to_vec(),
+            Some(_) => crate::host::ssh_argv(&self.ssh_target()?, Vec::new(), &script),
+        };
+        let failed = |why: String| {
+            HerdrError::Failed(OrchestratorError(format!("telling the shell herdr's panes start: {why}")))
+        };
+        let (status, stdout, stderr) = match (self.run)(&argv, &self.env, Some(Duration::from_secs(DEFAULT_TIMEOUT))) {
+            Ok(ran) => ran,
+            Err(ProcessError::Start(e) | ProcessError::Io(e)) => return Err(failed(os_error(&e, None))),
+            Err(ProcessError::Timeout) => return Err(failed("the script did not return".to_string())),
+            Err(ProcessError::Interrupted) => return Err(failed("interrupted".to_string())),
+        };
+        let (stdout, stderr) = (String::from_utf8_lossy(&stdout), String::from_utf8_lossy(&stderr));
+        if status != 0 {
+            return Err(failed(format!("the script exited with {status}: {}", stderr.trim())));
+        }
+        shell_of_panes(&line_ends_as_lf(&stdout)).map_err(HerdrError::Failed)
+    }
 }
 
 /// answer's value, or None when herdr answered with the error code: for a command whose one error is an answer.
@@ -759,7 +788,12 @@ printf '%s\n%s\n' "$SHELL" "$f"
 /// another $SHELL or HERDR_CONFIG_PATH, is not seen. Errors: the shell is none of PANE_SHELLS, naming it, where it
 /// came from, and the shells that work; host cannot run the script; config.toml cannot be read or is not TOML.
 pub fn pane_shell<H: Host + ?Sized>(host: &H) -> Result<String, OrchestratorError> {
-    let out = host.check(&["sh", "-c", PANE_SHELL_SCRIPT], None, DEFAULT_TIMEOUT)?;
+    shell_of_panes(&host.check(&["sh", "-c", PANE_SHELL_SCRIPT], None, DEFAULT_TIMEOUT)?)
+}
+
+/// pane_shell, given out, what PANE_SHELL_SCRIPT printed where the server runs; for a caller that runs the script
+/// itself. Errors: as pane_shell's, but for running the script.
+pub(crate) fn shell_of_panes(out: &str) -> Result<String, OrchestratorError> {
     let mut lines = out.splitn(3, '\n');
     let (env_shell, path, config) =
         (lines.next().unwrap_or(""), lines.next().unwrap_or(""), lines.next().unwrap_or(""));
