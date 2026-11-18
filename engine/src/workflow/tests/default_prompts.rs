@@ -281,6 +281,7 @@ const FRESH_REVIEW_2_PASSED: &str = concat!(
     "check that the Builder has answered each of their findings.",
 );
 
+/// The pull request body, but for "<built-in gate>", which stands for fixture::built_in_gate.
 const GOLDEN_PR_BODY: &str = concat!(
     "Opened by Octoflow AI run `20260929-120000-a1b2c3`. Reviewer verdict after 2 rounds: ",
     "**APPROVE**.\n\n| Commit trailer | Value |\n| --- | --- |\n| Octoflow-Run | ",
@@ -290,7 +291,7 @@ const GOLDEN_PR_BODY: &str = concat!(
     "open>\n<summary>Spec</summary>\n\n# Add a token-bucket rate limiter\n\n## Goal\nlimit ",
     "requests\n\n</details>\n\n<details>\n<summary>Builder report (round 2)</summary>\n\nreport 2 ",
     "q1\n\n</details>\n\n<details>\n<summary>Quality gate (round 2)</summary>\n\nGATE: ",
-    "ERROR\n\noctoflow-gate 0.10.0, run locally, judged snapshot `snap4` (round 2, quality round 2 of ",
+    "ERROR\n\n<built-in gate>, run locally, judged snapshot `snap4` (round 2, quality round 2 of ",
     "2).\n\n`gate` judged the working tree.\n\n## Issues on changed lines\n\n1. ",
     "`limiter.py:9` error mypy arg-type: Argument 1 has incompatible ",
     "type\n\n</details>\n\n<details>\n<summary>Review (round 2)</summary>\n\n**VERDICT: APPROVE**\n1. ",
@@ -462,7 +463,7 @@ fn gate_passes_after_a_fix_then_runs_out() {
     ]);
     let pr = f.host.state().prs[0].clone();
     assert_eq!(pr.title, "Add a token-bucket rate limiter");
-    assert_eq!(pr.body, GOLDEN_PR_BODY);
+    assert_eq!(pr.body, GOLDEN_PR_BODY.replace("<built-in gate>", &built_in_gate()));
 }
 
 #[test]
