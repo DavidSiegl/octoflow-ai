@@ -767,3 +767,41 @@ fn recorded_reviewer_is_not_started_twice() {
     assert!(starts(&f).is_empty());
     assert_eq!(prompts_to(&f, "review-a1b2c3"), 1);
 }
+
+/// The herdr server whose session is session, its socket path unset.
+fn session(session: &str) -> HerdrServer {
+    serde_json::from_value(serde_json::json!({"HERDR_SESSION": session})).unwrap()
+}
+
+#[test]
+fn a_resume_from_another_herdr_server_closes_the_old_workspace_there_and_opens_one_here() {
+    // Started in the app's session, resumed from a shell in another: the fake's one set of workspaces stands for
+    // both servers, so w1 is also there in the new one, and must not be taken for the run's.
+    let mut state = saved_run("spec", 0, &["spec"]);
+    state.herdr_server = Some(session("octoflow"));
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, approved(), &[], &[]);
+    f.herdr.state().server = Some(session("work"));
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    let reached = f.herdr.state().reached.clone();
+    assert_eq!(
+        reached[..2],
+        [("w1".to_string(), Some(session("octoflow"))), ("w1".to_string(), Some(session("octoflow")))]
+    );
+    assert!(called(&f, &Call::Close { workspace: "w1".into() }));
+    assert!(f.herdr.state().calls.iter().any(|c| matches!(c, Call::Workspace { .. })));
+    assert_eq!(wf.state().herdr_server, Some(session("work")));
+}
+
+#[test]
+fn a_resume_from_the_run_s_own_herdr_server_goes_on_in_its_workspace() {
+    let mut state = saved_run("spec", 0, &["spec"]);
+    state.herdr_server = Some(session("work"));
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, approved(), &["spec"], &[]);
+    f.herdr.state().server = Some(session("work"));
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    let calls = f.herdr.state().calls.clone();
+    assert!(!calls.iter().any(|c| matches!(c, Call::Workspace { .. } | Call::Close { .. })), "{calls:?}");
+    assert_eq!(wf.state().herdr_server, Some(session("work")));
+}

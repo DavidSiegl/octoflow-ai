@@ -842,17 +842,35 @@ impl<'a> Workflow<'a> {
         self.state.base_branch.clone().ok_or_else(|| OrchestratorError("the run has no base branch yet".into()))
     }
 
-    /// Open the run's herdr workspace, or find it from before.
+    /// Open the run's herdr workspace, or find it from before in the herdr server the run saved. One found in a
+    /// server other than the one this engine's herdr reaches is closed there, as the engine could give its panes no
+    /// command, and a new one opened here; the run saves this server only once it has a workspace in it.
     fn prepare(&mut self) -> Outcome<()> {
         let s = &mut self.state;
         if !s.workspace_id.is_empty() {
-            if self.herdr.workspace_exists(&s.workspace_id, None)? {
+            let saved = s.herdr_server.as_ref();
+            // A run that saved no server looks for its workspace in the one this environment reaches.
+            let elsewhere = saved.is_some() && saved != self.herdr.server().as_ref();
+            let exists = self.herdr.workspace_exists(&s.workspace_id, saved)?;
+            if exists && !elsewhere {
                 self.human.log(&format!("run {} resumes in herdr workspace {}", s.run_id, s.workspace_id));
                 return Ok(());
             }
+            if exists {
+                self.human.log(&format!(
+                    "herdr workspace {} is in another herdr server than this one; closing it there and opening a new \
+                     one here",
+                    s.workspace_id
+                ));
+                // A workspace left open is only a stray one; the run goes on without it.
+                if let Err(e) = self.herdr.close_workspace(&s.workspace_id, saved) {
+                    self.human.log(&format!("cannot close herdr workspace {}: {e}", s.workspace_id));
+                }
+            } else {
+                self.human.log(&format!("herdr workspace {} is gone; opening a new one", s.workspace_id));
+            }
             // The handoff files are the whole contract between roles, so a new workspace loses nothing a role
             // needs; its panes went with the old one.
-            self.human.log(&format!("herdr workspace {} is gone; opening a new one", s.workspace_id));
             for agent in s.agents.values_mut() {
                 agent.pane.clear();
             }
@@ -860,6 +878,7 @@ impl<'a> Workflow<'a> {
         let label = workspace_label(&s.run_id, &s.task);
         let (workspace, root) = self.herdr.create_workspace(s.work_dir(), &label)?;
         (s.workspace_id, s.root_pane) = (workspace, root);
+        s.herdr_server = self.herdr.server();
         self.human.log(&format!("run {} in herdr workspace {}", s.run_id, s.workspace_id));
         self.save()
     }

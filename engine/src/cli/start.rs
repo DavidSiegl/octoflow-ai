@@ -103,8 +103,9 @@ pub(crate) fn new_run_id(wall: f64, zone: &jiff::tz::TimeZone) -> Result<String,
 }
 
 /// The state of the run args.run_ref names among cwd's runs and its workflow, as resumable_state finds them, with the
-/// quality gate turned on or off as args asks (turn_quality_gate_on and _off), and its herdr server world's herdr's
-/// (Herdr::server), where it starts its agents from now on; a done run's as resumable_state gives it. Changes nothing
+/// quality gate turned on or off as args asks (turn_quality_gate_on and _off); a done run's as resumable_state gives
+/// it. Its herdr server stays the one it saved, where its workspace is: Workflow::prepare replaces it only when it
+/// opens a new workspace. Changes nothing
 /// on disk but the gate's job --no-quality-gate stops (turn_quality_gate_off), which stays stopped even when the resume
 /// fails later, before the run is saved; a resume after that judges the round again.
 ///
@@ -125,7 +126,6 @@ pub fn resumed_state(
     if state.phase == DONE {
         return Ok((state, pipeline));
     }
-    state.herdr_server = w.herdr.server();
     // A build kept in ci means a Jenkins job, even one named `local`, as a release before 0.63.0 took it.
     let jenkins = !state.ci.is_empty();
     if let Some(job) = state.quality_job.take_if(|job| !job.is_empty() && (job != LOCAL_GATE || jenkins)) {

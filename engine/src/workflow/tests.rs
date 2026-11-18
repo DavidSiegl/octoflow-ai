@@ -13,7 +13,7 @@ use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
 use crate::harness::AgentSettings;
 use crate::herdr::fake::{Call, Turn};
-use crate::herdr::Direction;
+use crate::herdr::{Direction, HerdrServer};
 use crate::host::fake::FakeHost;
 use crate::host::Host;
 use crate::json::{Object, ValueExt};
