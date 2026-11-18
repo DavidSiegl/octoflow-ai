@@ -19,11 +19,12 @@ import { fileURLToPath } from "node:url";
  */
 export const BUILD_CODE = ["vite", "rolldown"];
 
-// The names of the files that hold the licenses of code a package copied from others, wherever in the name and in
-// whatever case: THIRD-PARTY-LICENSE, THIRD_PARTY_LICENSES, ThirdPartyNotices.txt, LICENSE-THIRD-PARTY. Never taken for
-// the package's own license text. Shipped with every package's notice, since its code may be copied from others, as
-// Rolldown's runtime credits esbuild.
-const THIRD_PARTY = /third[-_ ]?party/i;
+// The names of the files that hold the licenses of code a package copied from others: "third party" and "license" or
+// "notice", in either order, anywhere in the name and in whatever case: THIRD-PARTY-LICENSE, THIRD_PARTY_LICENSES,
+// ThirdPartyNotices.txt, LICENSE-THIRD-PARTY. Third party alone names code as often (thirdParty.js), which would be
+// pasted in as a license. Never taken for the package's own license text. Shipped with every package's notice, since
+// its code may be copied from others, as Rolldown's runtime credits esbuild.
+const THIRD_PARTY = /third[-_ ]?party.*(licen[cs]e|notice)|(licen[cs]e|notice).*third[-_ ]?party/i;
 
 /**
  * The licenses about.toml's `accepted` array lists, in its order: the licenses a dependency may be used under.

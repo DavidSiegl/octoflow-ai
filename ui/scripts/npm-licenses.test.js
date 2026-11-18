@@ -35,6 +35,8 @@ describe("the notices of the app's own npm packages", () => {
   };
 
   const buildCode = BUILD_CODE.map((name) => `node_modules/${name}`);
+  // The lockfile entries whose code the bundle holds: the production tree and BUILD_CODE.
+  const bundled = entries.filter(([path, e]) => !e.dev || buildCode.includes(path));
 
   it("name every package of the production tree, and those whose code the build adds", () => {
     const missing = entries.filter(([path, e]) => !e.dev && !names.has(named(path))).map(([path]) => path);
@@ -45,8 +47,7 @@ describe("the notices of the app's own npm packages", () => {
   });
 
   it("name no other dev package", () => {
-    const kept = entries.filter(([path, e]) => !e.dev || buildCode.includes(path));
-    const prod = new Set(kept.map(([path]) => named(path)));
+    const prod = new Set(bundled.map(([path]) => named(path)));
     const dev = entries.map(([path]) => named(path)).filter((n) => !prod.has(n));
     expect(dev.length).toBeGreaterThan(0);
     expect(dev.filter((n) => names.has(n))).toEqual([]);
@@ -74,8 +75,7 @@ describe("the notices of the app's own npm packages", () => {
     // The package's own license files are left out: of a dual-licensed package's, the notices ship the one chosen.
     const noticeLike = /licen[cs]e|notice|copying|third[-_ ]?party/i;
     const ownLicense = (name) => /^(licen[cs]e|copying)/i.test(name) && !/third[-_ ]?party/i.test(name);
-    const bundled = entries.filter(([path, e]) => !e.dev || buildCode.includes(path)).map(([path]) => path);
-    for (const path of bundled.filter((path) => existsSync(join(ui, path, "package.json")))) {
+    for (const [path] of bundled.filter(([path]) => existsSync(join(ui, path, "package.json")))) {
       const files = readdirSync(join(ui, path), { withFileTypes: true })
         .filter((f) => f.isFile() && noticeLike.test(f.name) && !/\.spdx$/i.test(f.name))
         .map((f) => f.name);
@@ -198,6 +198,14 @@ describe("npmNotices on a made-up tree", () => {
       { license: "ISC", packages: ["plain 1.0.0"], text: "own\n\nNOTICE-THIRD-PARTY:\n\nnotice" },
     ]);
   });
+
+  it.each(["thirdParty.js", "third-party.d.ts", "THIRD_PARTY.md"])(
+    "takes %s, whose name says third party but not license or notice, for no license",
+    (file) => {
+      const ui = tree([{ name: "plain", license: "ISC", files: { LICENSE: "own", [file]: "export {}" } }]);
+      expect(sections(npmNotices(ui, accepted))).toEqual([{ license: "ISC", packages: ["plain 1.0.0"], text: "own" }]);
+    },
+  );
 
   it.each(["THIRD_PARTY_LICENSES", "ThirdPartyNotices.txt", "LICENSE-THIRD-PARTY"])(
     "takes %s for any package's third-party licenses, not for its own license",
