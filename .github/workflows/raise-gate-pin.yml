@@ -1,0 +1,108 @@
+# Keeps one pull request into main that moves ci/gate.pin to octoflow-gate's latest immutable release, or to the
+# version a dispatch names, made by `cargo xtask raise-gate-pin` (xtask/src/raise_gate_pin.rs); automerge.yml merges
+# it once Jenkins passes it. Daily, so that a gate release reaches octoflow without anyone starting the raise.
+#
+# The pull request's branch, gate-pin-raise, is this workflow's alone, and no person or agent pushes to it: every run
+# that raises rebuilds it from main and force-pushes it, so a newer raise replaces an older one, and a raise that
+# conflicts with main is made again from main the next day. A run whose main already names the release closes the
+# pull request, main having caught up. A run that finds another open pull request changing engine/Cargo.toml skips,
+# saying so, since two bumping pull requests race for the version; the next day's tries again. While the latest
+# release is not immutable, the xtask refuses it and the run fails saying why.
+#
+# The push and the pull request use AUTOMERGE_TOKEN (automerge.yml's header says what it is): GitHub starts no
+# workflow for a pull request opened or pushed with github.token, so automerge.yml would never see it. The xtask,
+# which builds and runs code, gets only github.token, to read the gate's public releases.
+name: Raise gate pin
+
+on:
+  schedule:
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The octoflow-gate release to pin, e.g. 0.16.0; empty for the latest immutable one
+        required: false
+        type: string
+
+permissions: {}
+
+# Two runs at once would both force-push gate-pin-raise; the later one waits.
+concurrency:
+  group: raise-gate-pin
+  cancel-in-progress: false
+
+env:
+  BRANCH: gate-pin-raise
+
+jobs:
+  raise:
+    runs-on: ubuntu-latest
+    # A raise builds the xtask and downloads one release; a run that hangs fails here rather than after 6 hours.
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - id: others
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          others=$(gh pr list --state open --limit 100 --json number,headRefName,files | jq -r --arg branch "$BRANCH" \
+            '[.[] | select(.headRefName != $branch and any(.files[]; .path == "engine/Cargo.toml")) | "#\(.number)"]
+            | join(" ")')
+          if [ -n "$others" ]; then
+            echo "::notice::Not raising: $others changes engine/Cargo.toml; one bumping pull request at a time"
+            echo skip=true >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.others.outputs.skip != 'true'
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          persist-credentials: false
+
+      # rustup installs the toolchain rust-toolchain.toml pins on the first cargo command. The notes the xtask prints
+      # are the pull request's body.
+      - id: raise
+        if: steps.others.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          cargo xtask raise-gate-pin ${VERSION:+"$VERSION"} > "$RUNNER_TEMP/notes.md"
+          if [ -n "$(git status --porcelain)" ]; then echo changed=true >> "$GITHUB_OUTPUT"; fi
+
+      - if: steps.raise.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gate=$(grep -v '^#' ci/gate.pin | head -n 1 | cut -d ' ' -f 1)
+          version=$(ci/release-version.sh)
+          title="ci/gate.pin names octoflow-gate $gate; version $version"
+          git switch -c "$BRANCH"
+          git add -A
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -q -m "$title (raise-gate-pin.yml)"
+          git push --force "https://x-access-token:$GH_TOKEN@github.com/$GH_REPO.git" "HEAD:refs/heads/$BRANCH"
+          { echo "Made by \`cargo xtask raise-gate-pin\` in $RUN_URL."; echo; cat "$RUNNER_TEMP/notes.md"; } \
+            > "$RUNNER_TEMP/body.md"
+          pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$pr" ]; then
+            gh pr edit "$pr" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh pr create --base main --head "$BRANCH" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+          fi
+
+      - if: steps.others.outputs.skip != 'true' && steps.raise.outputs.changed != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$pr" ]; then
+            gh pr close "$pr" --delete-branch --comment "main already names the release this raised to ($RUN_URL)."
+          fi

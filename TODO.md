@@ -42,6 +42,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **The workflows reference their actions by tag.** `actions/checkout@v5` and the others in `.github/workflows/`
+  run whatever commit the tag names when the job starts, so a moved tag runs someone else's code in a job that may hold
+  a write token: `raise-gate-pin.yml` runs `actions/checkout` in the job that pushes with `AUTOMERGE_TOKEN`.
+  Raised by gate-pin-follows/02. Closes with every `uses:` pinned by commit sha, its tag in a comment, and something
+  that raises the pins (Dependabot's github-actions ecosystem).
 - **`cargo xtask raise-gate-pin` bumps the working tree's version, not the target branch's.** Raised by
   cross-review 229 (F6): `bump_package_version` (`xtask/src/raise_gate_pin.rs`) raises whatever `engine/Cargo.toml`
   holds, so a run on a branch that already bumped for another change, or a second raise on one branch before it
