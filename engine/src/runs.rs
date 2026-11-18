@@ -5,8 +5,8 @@
 use crate::constants::{HEARTBEAT_SECONDS, STALE_SECONDS};
 use crate::json::ValueExt;
 use crate::state::{RunState, SavedRun};
-use serde_json::Value;
 use crate::summary::format_age;
+use serde_json::Value;
 
 /// A run an orchestrator still drives, as far as its heartbeat tells.
 pub const RUNNING: &str = "running";
@@ -22,7 +22,12 @@ impl RunState {
     /// age is the seconds since the state was written, which a live owner does every HEARTBEAT_SECONDS. The owner's
     /// pid can be checked only on its own host, local_host, by pid_alive. Host names can collide, so a dead pid counts
     /// only once a beat is late too; a live pid proves nothing, since pids are reused, so the age still applies to it.
-    pub fn health(&self, age: u64, local_host: &str, pid_alive: &dyn Fn(i64) -> bool) -> Option<(&'static str, String)> {
+    pub fn health(
+        &self,
+        age: u64,
+        local_host: &str,
+        pid_alive: &dyn Fn(i64) -> bool,
+    ) -> Option<(&'static str, String)> {
         let owner = self.owner.as_ref().filter(|o| !o.is_empty());
         let driven = if self.done() { owner.is_some() } else { self.error.as_deref().is_none_or(str::is_empty) };
         if !driven {

@@ -2,13 +2,13 @@
 //! itself, metrics.json for the metrics command, and the times and durations they are written in.
 
 use crate::harness::{Tokens, Usage};
-use crate::pipeline::Pipeline;
-use serde_json::Value;
 use crate::json::{Object, ValueExt};
+use crate::pipeline::Pipeline;
 use crate::state::{RunState, TurnRecord};
 use jiff::tz::TimeZone;
 use jiff::Timestamp;
 use serde_json::json;
+use serde_json::Value;
 
 /// The version of run_metrics' shape, raised when a key changes its meaning or goes.
 pub const METRICS_VERSION: i64 = 1;
@@ -147,12 +147,7 @@ pub fn turn_lines(turns: &[TurnRecord], zone: &TimeZone) -> Vec<String> {
 
 /// The start of each turn that has one, in seconds since the epoch; a start that is not a time is left out.
 fn turn_starts(state: &RunState) -> Vec<i64> {
-    state
-        .turns
-        .iter()
-        .filter_map(|t| t.started_at.as_deref())
-        .filter_map(|at| epoch_seconds(at).ok())
-        .collect()
+    state.turns.iter().filter_map(|t| t.started_at.as_deref()).filter_map(|at| epoch_seconds(at).ok()).collect()
 }
 
 /// summary.md of a run that ended at now, in seconds since the epoch: how it turned out, who played each role, and
@@ -252,9 +247,7 @@ pub fn run_metrics(state: &RunState, now: i64) -> Value {
     let roles: Object = s
         .agents
         .iter()
-        .map(|(role, agent)| {
-            (role.to_string(), json!({"harness": agent.harness, "model": s.models.get(role)}))
-        })
+        .map(|(role, agent)| (role.to_string(), json!({"harness": agent.harness, "model": s.models.get(role)})))
         .collect();
     let restored: usize = s
         .restored

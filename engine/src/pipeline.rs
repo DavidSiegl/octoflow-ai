@@ -11,8 +11,8 @@ use crate::constants::{DEFAULT_MAX_FILES, DEFAULT_MAX_LINES, ROLE_LABELS};
 use crate::error::OrchestratorError;
 use crate::harness::harness;
 use crate::paths::split_extension;
-use crate::prompts::{Prompt, Prompts};
 use crate::prompts::template::{fill, parse, placeholders, Piece};
+use crate::prompts::{Prompt, Prompts};
 
 /// Run phases that are no step's: the quality loop after a quality-gated step's turn, and the run's last two.
 pub const QUALITY: &str = "quality";
@@ -259,7 +259,12 @@ impl Pipeline {
     }
 
     /// new, with settings.
-    pub fn with(name: &str, roles: IndexMap<String, String>, steps: Vec<Step>, settings: PipelineSettings) -> Result<Pipeline, String> {
+    pub fn with(
+        name: &str,
+        roles: IndexMap<String, String>,
+        steps: Vec<Step>,
+        settings: PipelineSettings,
+    ) -> Result<Pipeline, String> {
         let p = Pipeline { name: name.to_string(), roles, steps, settings };
         match p.problem() {
             Some(problem) => Err(format!("workflow {name}: {problem}")),
@@ -333,7 +338,10 @@ impl Pipeline {
                 return Some(format!("step {} locks the files it changes, so it must edit", st.id));
             }
             if Some(st.id.as_str()) != first_edit {
-                return Some(format!("step {} locks the files it changes, so it must be the first editing step", st.id));
+                return Some(format!(
+                    "step {} locks the files it changes, so it must be the first editing step",
+                    st.id
+                ));
             }
             for verdict in self.verdict_steps() {
                 let target = verdict.loop_to.as_deref().and_then(|target| self.index_of(target));
@@ -511,10 +519,7 @@ impl Pipeline {
 
     /// Each per-step path placeholder, with its prefix and the step whose file it names, in step order.
     pub fn path_placeholders(&self) -> Vec<(String, &'static str, &Step)> {
-        self.steps
-            .iter()
-            .flat_map(|st| path_names(&st.id).map(move |(name, pre)| (name, pre, st)))
-            .collect()
+        self.steps.iter().flat_map(|st| path_names(&st.id).map(move |(name, pre)| (name, pre, st))).collect()
     }
 
     /// The step of that id; None for an id the workflow has no step of.

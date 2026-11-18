@@ -20,8 +20,8 @@ use crate::constants::AGENT_START_TIMEOUT_MS;
 use crate::error::{os_error, OrchestratorError};
 use crate::host::{last_lines, line_ends_as_lf, run_process, Host, ProcessError, DEFAULT_TIMEOUT};
 use crate::interrupt::Interrupt;
-use serde_json::Value;
 use crate::json::ValueExt;
+use serde_json::Value;
 
 #[cfg(test)]
 pub(crate) mod fake;
@@ -397,7 +397,9 @@ impl ProcessHerdr {
         // A pane id is herdr's, such as w1:p1, with no quote in it.
         let line = format!("{}; echo '{}'", typed.join(" "), exit_marker(&pane));
         // `pane run` prints nothing on success; its errors are JSON as every command's.
-        if let Err(e) = self.exec_forwarded(&["pane", "run", &pane, &line], Some(Duration::from_secs(CALL_LIMIT_SECONDS))) {
+        if let Err(e) =
+            self.exec_forwarded(&["pane", "run", &pane, &line], Some(Duration::from_secs(CALL_LIMIT_SECONDS)))
+        {
             // An idle shell nobody asked for; when the close fails too, the error that matters is still the run's.
             let _ = self.close_workspace(&workspace, None);
             return Err(e);
@@ -484,7 +486,10 @@ impl ProcessHerdr {
         loop {
             let info = self.call(&["pane", "process-info", "--pane", pane])?;
             let Some(shell) = info.pointer("/process_info/shell_pid").and_then(Value::as_u64) else {
-                return Err(HerdrError::new("bad_response", "pane process-info: no process_info.shell_pid in the answer"));
+                return Err(HerdrError::new(
+                    "bad_response",
+                    "pane process-info: no process_info.shell_pid in the answer",
+                ));
             };
             let foreground = info.pointer("/process_info/foreground_process_group_id").and_then(Value::as_u64);
             if foreground == Some(shell) {
@@ -738,8 +743,10 @@ printf '%s\n%s\n' "$SHELL" "$f"
 pub fn pane_shell<H: Host + ?Sized>(host: &H) -> Result<String, OrchestratorError> {
     let out = host.check(&["sh", "-c", PANE_SHELL_SCRIPT], None, DEFAULT_TIMEOUT)?;
     let mut lines = out.splitn(3, '\n');
-    let (env_shell, path, config) = (lines.next().unwrap_or(""), lines.next().unwrap_or(""), lines.next().unwrap_or(""));
-    let table: toml::Table = config.parse().map_err(|e| OrchestratorError(format!("herdr's {path} is not TOML: {e}")))?;
+    let (env_shell, path, config) =
+        (lines.next().unwrap_or(""), lines.next().unwrap_or(""), lines.next().unwrap_or(""));
+    let table: toml::Table =
+        config.parse().map_err(|e| OrchestratorError(format!("herdr's {path} is not TOML: {e}")))?;
     let configured = table.get("terminal").and_then(|t| t.get("default_shell")).and_then(toml::Value::as_str);
     let (shell, from) = match configured.filter(|s| !s.is_empty()) {
         Some(shell) => (shell, format!("[terminal] default_shell in {path}")),

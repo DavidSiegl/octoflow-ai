@@ -35,7 +35,8 @@ pub const QUALITY_FAILING_TESTS: &str = "## Failing tests";
 /// leak_report's section, numbering each Leak as its Display gives it.
 pub const QUALITY_SECRETS_FOUND: &str = "## Secrets found";
 /// Leads the findings to weigh, in a section of the gate's or the orchestrator's checks'.
-pub const QUALITY_TO_WEIGH_NOTE: &str = "These do not fail the gate. Fix each, or say in your report why it should stand.";
+pub const QUALITY_TO_WEIGH_NOTE: &str =
+    "These do not fail the gate. Fix each, or say in your report why it should stand.";
 /// The most findings a quality file lists, numbered as one list, and the most failing tests; the rest are counted.
 pub const QUALITY_FINDINGS_LIMIT: usize = 50;
 

@@ -159,11 +159,14 @@ fn export_types_a_line_that_gives_a_shell_back_each_value_then_waits_for_it_to_r
     herdr.export("w1:p2", &vars.map(|(n, v)| (n.to_string(), v.to_string()))).unwrap();
     let ran = ran.lock().unwrap().clone();
     let commands: Vec<&[String]> = ran.iter().map(|(args, _)| &args[..4]).collect();
-    assert_eq!(commands, [
-        &argv(&["herdr", "pane", "process-info", "--pane"])[..],
-        &argv(&["herdr", "pane", "run", "w1:p2"])[..],
-        &argv(&["herdr", "pane", "wait-output", "w1:p2"])[..],
-    ]);
+    assert_eq!(
+        commands,
+        [
+            &argv(&["herdr", "pane", "process-info", "--pane"])[..],
+            &argv(&["herdr", "pane", "run", "w1:p2"])[..],
+            &argv(&["herdr", "pane", "wait-output", "w1:p2"])[..],
+        ]
+    );
     // The shell, given the typed line, sets each variable and prints the line the wait matches, which the typed
     // line, echoed on the screen, does not match.
     let typed = &ran[1].0[4];
@@ -196,7 +199,10 @@ fn export_waits_for_a_new_panes_shell_to_reach_its_prompt() {
     herdr.export("w1:p2", &[("A".to_string(), "a".to_string())]).unwrap();
     let ran = ran.lock().unwrap();
     let commands: Vec<String> = ran.iter().map(|(args, _)| args[1..3].join(" ")).collect();
-    assert_eq!(commands, ["pane process-info"; 3].into_iter().chain(["pane run", "pane wait-output"]).collect::<Vec<_>>());
+    assert_eq!(
+        commands,
+        ["pane process-info"; 3].into_iter().chain(["pane run", "pane wait-output"]).collect::<Vec<_>>()
+    );
 }
 
 #[test]
@@ -347,7 +353,8 @@ fn a_command_that_does_not_return_is_a_timeout() {
     let d = TempDir::new();
     tool(&d.path(), "herdr", "#!/bin/sh\nsleep 5\n");
     let list = |machine: Option<&str>| {
-        let herdr = ProcessHerdr::in_environment(machine, environment(Some(&d.path()), &[]).into_iter(), &Interrupt::new());
+        let herdr =
+            ProcessHerdr::in_environment(machine, environment(Some(&d.path()), &[]).into_iter(), &Interrupt::new());
         herdr.call_within(&["agent", "list"], Some(Duration::from_millis(200))).unwrap_err()
     };
     let e = list(None);
@@ -386,7 +393,8 @@ fn a_prompt_herdr_delivered_before_the_ctrl_c_fails() {
     // Ctrl-C during herdr's prompt records nothing (FakeHerdrState::interrupt plays the same).
     let d = TempDir::new();
     let (delivered, interrupt) = (d.join("delivered"), Interrupt::new());
-    let script = hearing_sigint(&format!("trap 'exit 0' INT\necho \"$4\" > '{delivered}'\nwhile :; do sleep 0.05; done\n"));
+    let script =
+        hearing_sigint(&format!("trap 'exit 0' INT\necho \"$4\" > '{delivered}'\nwhile :; do sleep 0.05; done\n"));
     tool(&d.path(), "herdr", &script);
     let herdr = ProcessHerdr::in_environment(None, environment(Some(&d.path()), &[]).into_iter(), &interrupt);
     let raising = raise_once_written(&delivered, &interrupt);
@@ -655,13 +663,28 @@ fn launch_gives_each_word_to_the_new_shell_as_a_variable_and_types_only_their_na
     assert_eq!(herdr.launch("/proj", "a1b2c3 a task", &argv).unwrap(), in_the_environment_s_server("w1:p1"));
     let ran: Vec<Vec<String>> = ran.lock().unwrap().iter().map(|(argv, _)| argv.clone()).collect();
     let create = [
-        "herdr", "workspace", "create", "--cwd", "/proj", "--label", "a1b2c3 a task", "--no-focus",
-        "--env", "OCTOFLOW_ARG_0=/bin/octoflow", "--env", "OCTOFLOW_ARG_1=run",
-        "--env", "OCTOFLOW_ARG_2=--model=--session", "--env", "OCTOFLOW_ARG_3=--",
-        "--env", "OCTOFLOW_ARG_4=x\u{15}touch /tmp/pwned #",
+        "herdr",
+        "workspace",
+        "create",
+        "--cwd",
+        "/proj",
+        "--label",
+        "a1b2c3 a task",
+        "--no-focus",
+        "--env",
+        "OCTOFLOW_ARG_0=/bin/octoflow",
+        "--env",
+        "OCTOFLOW_ARG_1=run",
+        "--env",
+        "OCTOFLOW_ARG_2=--model=--session",
+        "--env",
+        "OCTOFLOW_ARG_3=--",
+        "--env",
+        "OCTOFLOW_ARG_4=x\u{15}touch /tmp/pwned #",
     ];
     assert_eq!(ran[0], create);
-    let line = r#""$OCTOFLOW_ARG_0" "$OCTOFLOW_ARG_1" "$OCTOFLOW_ARG_2" "$OCTOFLOW_ARG_3" "$OCTOFLOW_ARG_4"; "#.to_string()
+    let line = r#""$OCTOFLOW_ARG_0" "$OCTOFLOW_ARG_1" "$OCTOFLOW_ARG_2" "$OCTOFLOW_ARG_3" "$OCTOFLOW_ARG_4"; "#
+        .to_string()
         + "echo 'octoflow: the command in pane w1:p1 has exited'";
     assert_eq!(ran[1], ["herdr", "pane", "run", "w1:p1", &line]);
     assert_eq!(ran.len(), 2);
@@ -712,7 +735,10 @@ fn exited_gives_what_the_pane_showed_before_the_marker_once_it_is_there() {
     assert_eq!(last(&ran).0, ["herdr", "pane", "read", "w1:p1", "--source", "recent-unwrapped", "--lines", "8"]);
     let ended = format!("{running}error: no workflow x\noctoflow: the command in pane w1:p1 has exited  \n$ ");
     let (herdr, _) = launching(&ended);
-    assert_eq!(herdr.exited(&in_the_environment_s_server("w1:p1"), 2).unwrap().as_deref(), Some("working\nerror: no workflow x"));
+    assert_eq!(
+        herdr.exited(&in_the_environment_s_server("w1:p1"), 2).unwrap().as_deref(),
+        Some("working\nerror: no workflow x")
+    );
     // Another pane's marker is not this one's.
     let (herdr, _) = launching("octoflow: the command in pane w1:p2 has exited\n");
     assert_eq!(herdr.exited(&in_the_environment_s_server("w1:p1"), 2).unwrap(), None);
@@ -799,7 +825,10 @@ fn a_running_own_session_is_launched_in_without_starting_it() {
     let herdr = ProcessHerdr::in_environment(None, vars.into_iter(), &Interrupt::new());
     assert_eq!(herdr.launch("/proj", "l", &argv(&["true"])).unwrap(), in_own_session("w1:p1"));
     let ran: Vec<String> = given(&d).iter().map(|c| c.split(' ').take(3).collect::<Vec<_>>().join(" ")).collect();
-    assert_eq!(ran, [": workspace create", "octoflow: status server", "octoflow: workspace create", "octoflow: pane run"]);
+    assert_eq!(
+        ran,
+        [": workspace create", "octoflow: status server", "octoflow: workspace create", "octoflow: pane run"]
+    );
 }
 
 #[test]
@@ -860,7 +889,11 @@ fn a_relative_xdg_state_home_is_ignored_as_the_xdg_spec_asks() {
     let (d, vars) = herdr_with_servers(&[], None, "");
     let vars = vars.into_iter().filter(|(k, _)| k != "XDG_STATE_HOME" && k != "HOME").collect::<Vec<_>>();
     let home = d.join("home");
-    let mut herdr = ProcessHerdr::in_environment(None, with(&vars, &[("XDG_STATE_HOME", "state"), ("HOME", &home)]), &Interrupt::new());
+    let mut herdr = ProcessHerdr::in_environment(
+        None,
+        with(&vars, &[("XDG_STATE_HOME", "state"), ("HOME", &home)]),
+        &Interrupt::new(),
+    );
     herdr.server_start = Poll { limit: Duration::from_millis(1000), every: Duration::from_millis(50) };
     let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
     let log = format!("{home}/.local/state/octoflow/herdr-server.log");
@@ -902,13 +935,13 @@ fn a_look_herdr_answers_with_an_error_while_its_server_comes_up_is_not_the_end()
     let no_server = error("server_not_running", "no herdr server is running at /s.sock");
     // What each command gives in turn: its exit status, standard output and standard error.
     let answers = Mutex::new(VecDeque::from([
-        (1, String::new(), no_server),                           // workspace create, in the environment's server
+        (1, String::new(), no_server), // workspace create, in the environment's server
         (0, "status: not running\n".to_string(), String::new()),
-        (0, String::new(), String::new()),                       // sh, which starts the server
+        (0, String::new(), String::new()), // sh, which starts the server
         (1, String::new(), "connection refused\n".to_string()), // a look the server is not yet there to answer
         (0, "status: running\n".to_string(), String::new()),
-        (0, created.to_string(), String::new()),                 // workspace create, in the session octoflow's
-        (0, String::new(), String::new()),                       // pane run
+        (0, created.to_string(), String::new()), // workspace create, in the session octoflow's
+        (0, String::new(), String::new()),       // pane run
     ]));
     let herdr = ProcessHerdr::with_runner(None, move |argv, _| {
         let next = answers.lock().unwrap().pop_front();
@@ -935,7 +968,10 @@ fn a_server_that_never_answers_fails_the_launch_with_what_herdr_last_said() {
     });
     herdr.server_start = Poll { limit: Duration::from_millis(100), every: Duration::from_millis(20) };
     let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
-    assert!(e.starts_with("cannot start a herdr server: it was not running after 0.1 seconds; herdr status server"), "{e}");
+    assert!(
+        e.starts_with("cannot start a herdr server: it was not running after 0.1 seconds; herdr status server"),
+        "{e}"
+    );
     assert!(e.contains("connection refused"), "{e}");
     let gone = "/gone/herdr-server.log: No such file or directory";
     assert!(e.ends_with(&format!("; cannot read what herdr server wrote: {gone}")), "{e}");
@@ -1118,7 +1154,10 @@ fn fakeherdr_plays_each_role_s_scripted_turns() {
     herdr.state().script.insert("review".to_string(), [worktree].into());
     assert_eq!(herdr.start_agent("review-b", "w1:p4", "claude", &[]), Ok(true));
     herdr.prompt("review-b", "review").unwrap();
-    assert_eq!(herdr.agent("review-b").map(|a| a.map(|a| a.status)), Ok(Some("/proj/.octoflow-ai/worktrees/a1b2c3".to_string())));
+    assert_eq!(
+        herdr.agent("review-b").map(|a| a.map(|a| a.status)),
+        Ok(Some("/proj/.octoflow-ai/worktrees/a1b2c3".to_string()))
+    );
 
     herdr.focus("build-a1b2c3").unwrap();
     herdr.close_workspace("w1", None).unwrap();
@@ -1126,21 +1165,24 @@ fn fakeherdr_plays_each_role_s_scripted_turns() {
     let s = herdr.state();
     let start = |name: &str, pane: &str, args: Vec<String>| Call::Start { name: name.into(), pane: pane.into(), args };
     let prompt = |name: &str| Call::Prompt { name: name.into() };
-    assert_eq!(s.calls, [
-        Call::Workspace { label: "a1b2c3 task".into() },
-        Call::Split { pane: "w1:p1".into(), direction: Direction::Right },
-        Call::Rename { pane: "w1:p2".into(), label: "Builder".into() },
-        start("spec-a1b2c3", "w1:p1", vec![]),
-        prompt("spec-a1b2c3"),
-        start("build-a1b2c3", "w1:p2", resume),
-        prompt("build-a1b2c3"),
-        prompt("build-a1b2c3"),
-        start("review-a1b2c3", "w1:p3", argv(&["--session", "s-gone"])),
-        start("review-b", "w1:p4", vec![]),
-        prompt("review-b"),
-        Call::Focus { name: "build-a1b2c3".into() },
-        Call::Close { workspace: "w1".into() },
-    ]);
+    assert_eq!(
+        s.calls,
+        [
+            Call::Workspace { label: "a1b2c3 task".into() },
+            Call::Split { pane: "w1:p1".into(), direction: Direction::Right },
+            Call::Rename { pane: "w1:p2".into(), label: "Builder".into() },
+            start("spec-a1b2c3", "w1:p1", vec![]),
+            prompt("spec-a1b2c3"),
+            start("build-a1b2c3", "w1:p2", resume),
+            prompt("build-a1b2c3"),
+            prompt("build-a1b2c3"),
+            start("review-a1b2c3", "w1:p3", argv(&["--session", "s-gone"])),
+            start("review-b", "w1:p4", vec![]),
+            prompt("review-b"),
+            Call::Focus { name: "build-a1b2c3".into() },
+            Call::Close { workspace: "w1".into() },
+        ]
+    );
     assert_eq!(s.kinds.iter().map(|(_, k)| k.as_str()).collect::<Vec<_>>(), ["claude", "codex", "pi", "claude"]);
     assert_eq!(s.sessions.get("spec-a1b2c3").map(String::as_str), Some("session-4"));
     assert_eq!(s.waits, [vec!["done".to_string()]]);
@@ -1206,7 +1248,10 @@ fn pane_shell_is_herdrs_default_shell_where_its_config_sets_one() {
     std::fs::create_dir_all(format!("{}/.config/herdr", home.path())).unwrap();
     std::fs::write(&config, "onboarding = false\n[terminal]\ndefault_shell = \"nu\"\n").unwrap();
     let refused = pane_shell_with(&[("HOME", &home.path()), ("SHELL", "/bin/bash")]).unwrap_err();
-    assert!(refused.0.starts_with(&format!("herdr's panes start nu ([terminal] default_shell in {config}), ")), "{refused}");
+    assert!(
+        refused.0.starts_with(&format!("herdr's panes start nu ([terminal] default_shell in {config}), ")),
+        "{refused}"
+    );
     // Empty, it leaves $SHELL to pick.
     std::fs::write(&config, "[terminal]\ndefault_shell = \"\"\n").unwrap();
     assert_eq!(pane_shell_with(&[("HOME", &home.path()), ("SHELL", "/bin/bash")]).unwrap(), "/bin/bash ($SHELL)");

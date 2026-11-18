@@ -27,10 +27,13 @@ fn spec_written_while_orchestrator_was_gone() {
     state.machine = Some("remote".into());
     state.workspace_id = "w1".into();
     state.agents.insert("spec".to_string(), AgentRecord::new("spec-a1b2c3", "w1:p1", DEFAULT_HARNESS));
-    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![
-        ("build", vec![build_turn(1)]),
-        ("review", vec![review_turn(1, APPROVE)]),
-    ], &[], &[]);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state,
+        vec![("build", vec![build_turn(1)]), ("review", vec![review_turn(1, APPROVE)])],
+        &[],
+        &[],
+    );
     f.put(&f.state.spec_path(), "# Goal\nx");
     let mut wf = f.workflow(f.as_saved());
     assert_eq!(wf.run(), verdict(APPROVE));
@@ -42,10 +45,13 @@ fn spec_written_while_orchestrator_was_gone() {
 
 #[test]
 fn live_prompted_collector_is_only_waited_on() {
-    let f = Fixture::resume(Rc::new(FakeHost::default()), prompted(saved_run("spec", 0, &["spec"]), "spec.md"), vec![
-        ("build", vec![build_turn(1)]),
-        ("review", vec![review_turn(1, APPROVE)]),
-    ], &["spec"], &[]);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        prompted(saved_run("spec", 0, &["spec"]), "spec.md"),
+        vec![("build", vec![build_turn(1)]), ("review", vec![review_turn(1, APPROVE)])],
+        &["spec"],
+        &[],
+    );
     let (host, spec) = (Rc::clone(&f.host), f.state.spec_path());
     f.clock.hook(move |_| host.write(&spec, "# Goal\nx", false).unwrap());
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
@@ -69,9 +75,13 @@ fn live_collector_never_prompted_is_prompted_once() {
 fn a_live_agent_saved_without_its_session_has_it_noted_before_its_turn_is_recorded() {
     // The orchestrator died between saving the Reviewer's agent and saving its session (Workflow::start).
     let state = prompted(saved_run("review", 1, FULL), "build-1.md");
-    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![("review", vec![taking(100, review_turn(1, APPROVE))])], &[
-        "review",
-    ], &[]);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state,
+        vec![("review", vec![taking(100, review_turn(1, APPROVE))])],
+        &["review"],
+        &[],
+    );
     f.herdr.state().sessions.insert("review-a1b2c3".into(), "s-review".into());
     f.host.state().session_logs.insert(("claude".into(), "s-review".into()), claude_log(&[(50, 10, 20)]));
     let mut wf = f.workflow(f.as_saved());
@@ -86,9 +96,13 @@ fn a_live_agent_saved_without_its_session_has_it_noted_before_its_turn_is_record
 fn herdr_failing_to_look_up_a_known_agent_stops_the_run_without_starting_one() {
     // A skip in place of the failure would start a second Reviewer next to the live one.
     let state = prompted(saved_run("review", 1, FULL), "build-1.md");
-    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![("review", vec![review_turn(1, APPROVE)])], &[
-        "review",
-    ], &[]);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state,
+        vec![("review", vec![review_turn(1, APPROVE)])],
+        &["review"],
+        &[],
+    );
     f.herdr.state().agent_error = Some(crate::herdr::HerdrError::new("server_error", "herdr is down"));
     let e = failure(f.workflow(f.as_saved()).run());
     assert!(e.contains("herdr is down"), "{e}");
@@ -98,9 +112,13 @@ fn herdr_failing_to_look_up_a_known_agent_stops_the_run_without_starting_one() {
 #[test]
 fn a_live_agent_in_another_session_than_saved_has_its_turn_recorded_in_that_one() {
     let state = prompted(saved_run("review", 1, FULL), "build-1.md");
-    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![("review", vec![review_turn(1, APPROVE)])], &["review"], &[(
-        "review", "s-old",
-    )]);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state,
+        vec![("review", vec![review_turn(1, APPROVE)])],
+        &["review"],
+        &[("review", "s-old")],
+    );
     f.herdr.state().sessions.insert("review-a1b2c3".into(), "s-now".into());
     let mut wf = f.workflow(f.as_saved());
     assert_eq!(wf.run(), verdict(APPROVE));
@@ -121,9 +139,13 @@ fn collector_without_session_restarts_the_interview() {
 fn exited_builder_resumes_its_session_and_continues() {
     let seen = seen();
     let state = prompted(saved_run("build", 2, FULL), "build-2.md");
-    let f = Fixture::resume(Rc::new(FakeHost::default()), state, build_and_approve(2, &seen), &["review"], &[(
-        "build", "s-build",
-    )]);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state,
+        build_and_approve(2, &seen),
+        &["review"],
+        &[("build", "s-build")],
+    );
     let mut wf = f.workflow(f.as_saved());
     assert_eq!(wf.run(), verdict(APPROVE));
     assert_eq!(starts(&f), [("build-a1b2c3".into(), "w1:p2".into(), strings(&["--resume", "s-build"]))]);
@@ -134,9 +156,13 @@ fn exited_builder_resumes_its_session_and_continues() {
 fn resumed_builder_not_yet_prompted_gets_its_normal_prompt() {
     let seen = seen();
     let state = prompted(saved_run("build", 2, FULL), "review-1.md");
-    let f = Fixture::resume(Rc::new(FakeHost::default()), state, build_and_approve(2, &seen), &["review"], &[(
-        "build", "s-build",
-    )]);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state,
+        build_and_approve(2, &seen),
+        &["review"],
+        &[("build", "s-build")],
+    );
     f.workflow(f.as_saved()).run().unwrap();
     assert!(seen.borrow()[0].starts_with("Changes were requested"), "{}", seen.borrow()[0]);
 }
@@ -181,9 +207,13 @@ fn a_resumed_agent_stopped_before_its_continue_prompt_is_told_to_continue() {
     // The orchestrator stopped after relaunching the Builder into its session, before the prompt went out.
     let seen = seen();
     let state = unprompted(prompted(saved_run("build", 2, FULL), "build-2.md"), "build", AgentStart::Resumed);
-    let f = Fixture::resume(Rc::new(FakeHost::default()), state, build_and_approve(2, &seen), &["build", "review"], &[(
-        "build", "s-build",
-    )]);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state,
+        build_and_approve(2, &seen),
+        &["build", "review"],
+        &[("build", "s-build")],
+    );
     f.herdr.state().statuses.insert("build-a1b2c3".into(), "idle".into());
     let mut wf = f.workflow(f.as_saved());
     assert_eq!(wf.run(), verdict(APPROVE));
@@ -209,9 +239,13 @@ fn a_relaunch_is_saved_marked_and_in_its_session_before_herdr_starts_it() {
     // herdr's agent start itself waits up to a minute on a startup dialog: a stop then must find the new agent's
     // record.
     let state = prompted(saved_run("build", 2, FULL), "build-2.md");
-    let f = Fixture::resume(Rc::new(FakeHost::default()), state, build_and_approve(2, &seen()), &["review"], &[(
-        "build", "s-build",
-    )]);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state,
+        build_and_approve(2, &seen()),
+        &["review"],
+        &[("build", "s-build")],
+    );
     let saved_at_start = Rc::new(RefCell::new(vec![]));
     let (host, path, seen) = (Rc::clone(&f.host), format!("{}/state.json", f.state.dir()), Rc::clone(&saved_at_start));
     f.herdr.state().before_call = Some(Box::new(move |c| {
@@ -248,9 +282,13 @@ fn an_agent_that_exits_in_the_startup_dialog_a_resume_waits_out_is_started_again
 fn a_marked_agent_found_working_took_its_prompt_and_is_only_waited_on() {
     // The orchestrator stopped after the Builder took its prompt to continue, before it saved that.
     let state = unprompted(prompted(saved_run("build", 2, FULL), "build-2.md"), "build", AgentStart::Resumed);
-    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![("review", vec![review_turn(2, APPROVE)])], &[
-        "build", "review",
-    ], &[("build", "s-build")]);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state,
+        vec![("review", vec![review_turn(2, APPROVE)])],
+        &["build", "review"],
+        &[("build", "s-build")],
+    );
     let (host, build) = (Rc::clone(&f.host), f.state.build_path(2));
     f.clock.hook(move |_| host.write(&build, "built", false).unwrap());
     let mut wf = f.workflow(f.as_saved());
@@ -276,9 +314,13 @@ fn exited_builder_without_session_gets_a_recovery_prompt() {
 #[test]
 fn lost_session_falls_back_to_a_fresh_one() {
     let seen = seen();
-    let f = Fixture::resume(Rc::new(FakeHost::default()), saved_run("build", 2, FULL), build_and_approve(2, &seen), &[
-        "review",
-    ], &[("build", "s-gone")]);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        saved_run("build", 2, FULL),
+        build_and_approve(2, &seen),
+        &["review"],
+        &[("build", "s-gone")],
+    );
     f.herdr.state().lost_sessions.insert("s-gone".into());
     let mut wf = f.workflow(f.as_saved());
     assert_eq!(wf.run(), verdict(APPROVE));
@@ -291,10 +333,13 @@ fn lost_session_falls_back_to_a_fresh_one() {
 #[test]
 fn fresh_reviewer_in_a_later_round_is_told_about_earlier_reviews() {
     let seen = seen();
-    let f = Fixture::resume(Rc::new(FakeHost::default()), saved_run("review", 2, FULL), vec![(
-        "review",
-        vec![recording(review_turn(2, APPROVE), &seen)],
-    )], &[], &[]);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        saved_run("review", 2, FULL),
+        vec![("review", vec![recording(review_turn(2, APPROVE), &seen)])],
+        &[],
+        &[],
+    );
     f.put(&f.state.build_path(2), "report 2");
     f.workflow(f.as_saved()).run().unwrap();
     let first = &seen.borrow()[0];
@@ -315,10 +360,13 @@ fn review_already_written_is_not_asked_for() {
 #[test]
 fn base_comes_from_the_saved_state() {
     let seen = seen();
-    let f = Fixture::resume(Rc::new(FakeHost::new(Some("moved"), "main")), saved_run("build", 1, &["spec"]), vec![
-        ("build", vec![build_turn(1)]),
-        ("review", vec![recording(review_turn(1, APPROVE), &seen)]),
-    ], &[], &[]);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::new(Some("moved"), "main")),
+        saved_run("build", 1, &["spec"]),
+        vec![("build", vec![build_turn(1)]), ("review", vec![recording(review_turn(1, APPROVE), &seen)])],
+        &[],
+        &[],
+    );
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
     assert!(seen.borrow()[0].contains("git diff --no-relative abc123"));
     // A crash before the Builder was recorded: it is started in a split of the root pane.
@@ -387,7 +435,13 @@ fn closed_w1(f: &Fixture) -> bool {
 
 #[test]
 fn an_ending_writes_the_files_before_it_releases_the_run() {
-    let f = Fixture::resume(Rc::new(FakeHost::default()), saved_run("review", 1, FULL), vec![("review", vec![review_turn(1, APPROVE)])], &[], &[]);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        saved_run("review", 1, FULL),
+        vec![("review", vec![review_turn(1, APPROVE)])],
+        &[],
+        &[],
+    );
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
     let writes = f.host.state().writes.clone();
     let last = |p: &str| writes.iter().rposition(|w| *w == p).unwrap_or_else(|| panic!("no write of {p}: {writes:?}"));
@@ -453,9 +507,13 @@ fn invalid_review_is_refused_until_deleted() {
     let mut state = saved_run("review", 1, FULL);
     state.retried = vec!["review-1.md".into()];
     state.error = Some("review-1.md does not start with a VERDICT line, and its one retry was already used".into());
-    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![("review", vec![review_turn(1, APPROVE)])], &[
-        "review",
-    ], &[]);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state,
+        vec![("review", vec![review_turn(1, APPROVE)])],
+        &["review"],
+        &[],
+    );
     f.put(&f.state.review_path(1), "looks fine");
     let message = failure(f.workflow(f.as_saved()).run());
     assert!(
@@ -468,10 +526,13 @@ fn invalid_review_is_refused_until_deleted() {
 
     f.host.state().files.shift_remove(&f.state.review_path(1));
     let seen = seen();
-    let f2 = Fixture::resume(Rc::clone(&f.host), RunState::from_saved(&saved).unwrap(), vec![(
-        "review",
-        vec![recording(review_turn(1, APPROVE), &seen)],
-    )], &["review"], &[]);
+    let f2 = Fixture::resume(
+        Rc::clone(&f.host),
+        RunState::from_saved(&saved).unwrap(),
+        vec![("review", vec![recording(review_turn(1, APPROVE), &seen)])],
+        &["review"],
+        &[],
+    );
     let mut wf2 = f2.workflow(f2.as_saved());
     assert_eq!(wf2.run(), verdict(APPROVE));
     assert_eq!(prompts_to(&f2, "review-a1b2c3"), 1);
@@ -483,10 +544,13 @@ fn invalid_review_is_refused_until_deleted() {
 fn malformed_review_found_on_resume_is_retried() {
     let saved = prompted(saved_run("review", 1, FULL), "review-1.md").to_json().as_object().unwrap().clone();
     let seen = seen();
-    let f = Fixture::resume(Rc::new(FakeHost::default()), RunState::from_saved(&saved).unwrap(), vec![(
-        "review",
-        vec![recording(review_turn(1, APPROVE), &seen)],
-    )], &["review"], &[]);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        RunState::from_saved(&saved).unwrap(),
+        vec![("review", vec![recording(review_turn(1, APPROVE), &seen)])],
+        &["review"],
+        &[],
+    );
     f.put(&f.state.review_path(1), "looks fine");
     let mut wf = f.workflow(f.as_saved());
     assert_eq!(wf.run(), verdict(APPROVE));
@@ -498,7 +562,12 @@ fn malformed_review_found_on_resume_is_retried() {
 
 /// A run that stopped after the Reviewer was given the retry prompt, before it wrote review-1.md again, on a host
 /// holding the rejected review; the roles alive and in sessions as given, the Reviewer playing script.
-fn retrying_run(state_with: impl FnOnce(&mut RunState), script: Vec<Turn>, alive: &[&str], sessions: &[(&str, &str)]) -> Fixture {
+fn retrying_run(
+    state_with: impl FnOnce(&mut RunState),
+    script: Vec<Turn>,
+    alive: &[&str],
+    sessions: &[(&str, &str)],
+) -> Fixture {
     let mut state = prompted(saved_run("review", 1, FULL), "review-1.md");
     state.retried = vec!["review-1.md".into()];
     state.retrying = Some("review-1.md".into());
@@ -552,10 +621,13 @@ fn reviewer_not_yet_given_the_retry_prompt_gets_it() {
 fn workspace_gone_opens_a_new_one() {
     let mut state = saved_run("build", 1, &["spec", "build"]);
     state.workspace_id = "w0".into();
-    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![
-        ("build", vec![build_turn(1)]),
-        ("review", vec![review_turn(1, APPROVE)]),
-    ], &[], &[]);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state,
+        vec![("build", vec![build_turn(1)]), ("review", vec![review_turn(1, APPROVE)])],
+        &[],
+        &[],
+    );
     {
         let mut h = f.herdr.state();
         h.workspaces.clear();
@@ -573,10 +645,13 @@ fn workspace_gone_opens_a_new_one() {
 
 #[test]
 fn pane_gone_splits_a_surviving_one() {
-    let f = Fixture::resume(Rc::new(FakeHost::default()), saved_run("review", 1, FULL), vec![(
-        "review",
-        vec![review_turn(1, APPROVE)],
-    )], &[], &[]);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        saved_run("review", 1, FULL),
+        vec![("review", vec![review_turn(1, APPROVE)])],
+        &[],
+        &[],
+    );
     f.put(&f.state.build_path(1), "report");
     {
         let mut h = f.herdr.state();
@@ -590,10 +665,13 @@ fn pane_gone_splits_a_surviving_one() {
 #[test]
 fn recorded_reviewer_is_not_started_twice() {
     // start("review") saves before the review loop does, so round 1 can be saved as build with a reviewer.
-    let f = Fixture::resume(Rc::new(FakeHost::default()), saved_run("build", 1, FULL), vec![(
-        "review",
-        vec![review_turn(1, APPROVE)],
-    )], &["build", "review"], &[]);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        saved_run("build", 1, FULL),
+        vec![("review", vec![review_turn(1, APPROVE)])],
+        &["build", "review"],
+        &[],
+    );
     f.put(&f.state.build_path(1), "report");
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
     assert!(starts(&f).is_empty());

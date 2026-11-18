@@ -7,6 +7,7 @@ use indexmap::IndexMap;
 
 use super::fixture::*;
 use super::{RunSettings, Stopped};
+use crate::constants::DEFAULT_HARNESS;
 use crate::constants::{APPROVE, CHANGES_REQUESTED, STALL_SECONDS};
 use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
@@ -15,10 +16,9 @@ use crate::herdr::fake::{Call, Turn};
 use crate::herdr::Direction;
 use crate::host::fake::FakeHost;
 use crate::host::Host;
-use serde_json::Value;
 use crate::json::{Object, ValueExt};
 use crate::state::{AgentRecord, AgentStart, RunState, TurnRecord};
-use crate::constants::DEFAULT_HARNESS;
+use serde_json::Value;
 
 mod blocked;
 mod crash_resume;
@@ -186,10 +186,7 @@ fn changes_requested_loop_back_to_builder() {
     let mut wf = f.workflow(RunSettings::default());
     assert_eq!(wf.run(), verdict(APPROVE));
     assert_eq!(wf.state().round, 2);
-    assert_eq!(
-        names(&f, "prompt"),
-        ["spec-a1b2c3", "build-a1b2c3", "review-a1b2c3", "build-a1b2c3", "review-a1b2c3"]
-    );
+    assert_eq!(names(&f, "prompt"), ["spec-a1b2c3", "build-a1b2c3", "review-a1b2c3", "build-a1b2c3", "review-a1b2c3"]);
 }
 
 #[test]
@@ -280,7 +277,11 @@ fn startup_dialog_waits_for_the_human() {
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
     // Told apart from a question within a turn, with the likeliest one named (run-usability/02).
     assert_eq!(f.told.titles()[0], "Spec Collector needs your answer before it starts");
-    assert!(f.told.lines().iter().any(|l| l.starts_with("[spec] ") && l.contains("whether to trust a folder")), "{:?}", f.told.lines());
+    assert!(
+        f.told.lines().iter().any(|l| l.starts_with("[spec] ") && l.contains("whether to trust a folder")),
+        "{:?}",
+        f.told.lines()
+    );
     assert_eq!(f.herdr.state().waits, [["idle", "done"]]);
 }
 
@@ -315,7 +316,10 @@ fn review_without_verdict_is_asked_for_once_more() {
     let f = Fixture::new(vec![
         ("spec", vec![spec_turn()]),
         ("build", vec![build_turn(1)]),
-        ("review", vec![recording(malformed_review(1, "looks fine"), &seen), recording(review_turn(1, APPROVE), &seen)]),
+        (
+            "review",
+            vec![recording(malformed_review(1, "looks fine"), &seen), recording(review_turn(1, APPROVE), &seen)],
+        ),
     ]);
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
     let path = f.state.review_path(1);
@@ -338,11 +342,10 @@ fn review_without_verdict_is_asked_for_once_more() {
     // The run goes on as if the first review had been valid: a pull request, and the retry spent.
     assert_eq!(f.host.state().prs.len(), 1);
     let saved = f.saved();
-    assert_eq!((text(&saved, "phase"), saved.get("round"), text(&saved, "verdict")), (
-        Some("done".into()),
-        Some(&Value::from(1)),
-        Some(APPROVE.into())
-    ));
+    assert_eq!(
+        (text(&saved, "phase"), saved.get("round"), text(&saved, "verdict")),
+        (Some("done".into()), Some(&Value::from(1)), Some(APPROVE.into()))
+    );
     assert_eq!(saved.get("retried"), Some(&Value::Array(vec![Value::from("review-1.md")])));
     assert_eq!(saved.get("retrying"), Some(&Value::Null));
 }
@@ -534,7 +537,8 @@ fn only_the_steps_that_can_block_hear_the_blocked_note() {
 #[test]
 fn a_step_before_round_1_names_round_minus_1() {
     use crate::pipeline::{Pipeline, Step};
-    let plan = Step::new("plan", "planner", "plan.md", "Plan {task}; before: {prev_build_path}; [{earlier_build_paths}]");
+    let plan =
+        Step::new("plan", "planner", "plan.md", "Plan {task}; before: {prev_build_path}; [{earlier_build_paths}]");
     let mut build = Step::new("build", "builder", "build-{n}.md", "Build {plan_path}.");
     build.edits = true;
     let roles = crate::test_support::roles(&[("planner", "Planner"), ("builder", "Builder")]);
@@ -543,10 +547,14 @@ fn a_step_before_round_1_names_round_minus_1() {
     let dir = new_state().dir();
     let mut state = new_state();
     state.phase = "plan".into();
-    let f = Fixture::on(Rc::new(FakeHost::default()), state, vec![
-        ("planner", vec![recording(writes(|s| format!("{}/plan.md", s.dir()), "the plan", "done"), &seen)]),
-        ("builder", vec![writes(|s| s.build_path(1), "built", "done")]),
-    ]);
+    let f = Fixture::on(
+        Rc::new(FakeHost::default()),
+        state,
+        vec![
+            ("planner", vec![recording(writes(|s| format!("{}/plan.md", s.dir()), "the plan", "done"), &seen)]),
+            ("builder", vec![writes(|s| s.build_path(1), "built", "done")]),
+        ],
+    );
     let settings = RunSettings { pipeline: Some(pipeline), pull_request: false, ..RunSettings::default() };
     assert_eq!(f.workflow(settings).run(), verdict("FINISHED"));
     assert!(seen.borrow()[0].starts_with(&format!("Plan add a rate limiter; before: {dir}/build--1.md; []")));

@@ -12,18 +12,18 @@ use std::rc::Rc;
 use indexmap::IndexMap;
 
 use super::*;
-use crate::state::format_problem;
 use crate::cli::fixture::Cli;
-use crate::cli::{parse_args, Command, RunsCommand, Target};
 use crate::cli::Stop;
+use crate::cli::{parse_args, Command, RunsCommand, Target};
 use crate::constants::{APPROVE, STALE_SECONDS, WORKTREES_DIR};
 use crate::host::fake::{FakeHost, FakePr};
 use crate::host::Completed;
+use crate::json::object;
 use crate::json::Object;
+use crate::state::format_problem;
+use crate::state::RunState;
 use crate::summary::iso_utc;
 use crate::workflow::fixture::{build_turn, review_turn, saved_run, spec_turn, Fixture};
-use crate::state::RunState;
-use crate::json::object;
 use serde_json::Value;
 
 const PR_HEAD: &str = "1111111111111111111111111111111111111111";
@@ -36,9 +36,11 @@ const DAY: f64 = 86_400.0;
 /// What gh pr view prints of a pull request.
 fn pr(state: &str, head: &str, closed_at: Option<f64>) -> FakePr {
     let closed = closed_at.map_or(Value::Null, |t| Value::from(iso_utc(t as i64).replace("+00:00", "Z")));
-    FakePr::Prints(Value::Object(
-        object([("state", Value::from(state)), ("headRefOid", Value::from(head)), ("closedAt", closed)]),
-    ))
+    FakePr::Prints(Value::Object(object([
+        ("state", Value::from(state)),
+        ("headRefOid", Value::from(head)),
+        ("closedAt", closed),
+    ])))
 }
 
 /// Merged a day ago at PR_HEAD.
@@ -209,7 +211,10 @@ fn merged_at_the_pull_requests_head() {
     let lease = format!("--force-with-lease=refs/heads/orchestrator/task-aaaaaa:{PR_HEAD}");
     let push = strings(&["push", "--quiet", &lease, "origin", "--delete", "refs/heads/orchestrator/task-aaaaaa"]);
     assert!(host.git_calls.contains(&push), "{:?}", host.git_calls);
-    assert_eq!(host.gh_calls, [strings(&["pr", "view", "https://github.com/o/r/pull/7", "--json", "state,headRefOid,closedAt"])]);
+    assert_eq!(
+        host.gh_calls,
+        [strings(&["pr", "view", "https://github.com/o/r/pull/7", "--json", "state,headRefOid,closedAt"])]
+    );
     drop(host);
     assert_eq!(p.cleanup(&run_id), Value::from("deleted"));
 }
@@ -542,9 +547,11 @@ fn closed_15_days_ago_is_deleted() {
 fn running_run_is_skipped() {
     // Saved a moment ago by an orchestrator on another host: RUNNING, whatever its pid.
     let p = Prune::new();
-    let owner = Value::Object(
-        object([("host", Value::from("elsewhere")), ("pid", Value::from(1)), ("started_at", Value::from("x"))]),
-    );
+    let owner = Value::Object(object([
+        ("host", Value::from("elsewhere")),
+        ("pid", Value::from(1)),
+        ("started_at", Value::from("x")),
+    ]));
     p.add(run("aaaaaa", merged()).with("phase", "build").with("verdict", Value::Null).with("owner", owner));
     assert!(p.prune(false, false).is_empty());
     assert!(p.host().gh_calls.is_empty() && p.deleting_calls().is_empty());
@@ -556,9 +563,11 @@ fn done_run_still_ending_is_skipped() {
     // workspace (Workflow::end_done_run): the run is driven (RunState::health).
     let mut p = Prune::new();
     p.cli.f.pid_alive = Box::new(|pid| pid == 4242);
-    let owner = Value::Object(
-        object([("host", Value::from("here")), ("pid", Value::from(4242)), ("started_at", Value::from("x"))]),
-    );
+    let owner = Value::Object(object([
+        ("host", Value::from("here")),
+        ("pid", Value::from(4242)),
+        ("started_at", Value::from("x")),
+    ]));
     p.add(run("aaaaaa", merged()).with("owner", owner));
     assert!(p.prune(false, false).is_empty());
     assert!(p.host().gh_calls.is_empty() && p.deleting_calls().is_empty());
@@ -671,7 +680,8 @@ fn rejected_lease_skips_the_run() {
 
 #[test]
 fn unusable_gh_stops_the_sweep_after_one_line() {
-    let cases = [(127, "sh: 1: exec: gh: not found"), (4, "To get started with GitHub CLI, please run:  gh auth login")];
+    let cases =
+        [(127, "sh: 1: exec: gh: not found"), (4, "To get started with GitHub CLI, please run:  gh auth login")];
     for (status, stderr) in cases {
         let p = Prune::new();
         p.add(run("aaaaaa", failing(status, stderr)));
@@ -950,7 +960,8 @@ impl SweepOnRun {
             drop(host);
             spec(prompt, s, h)
         });
-        let script = vec![("spec", vec![spec]), ("build", vec![build_turn(1)]), ("review", vec![review_turn(1, APPROVE)])];
+        let script =
+            vec![("spec", vec![spec]), ("build", vec![build_turn(1)]), ("review", vec![review_turn(1, APPROVE)])];
         let mut f = Fixture::on(Rc::clone(&host), state.clone(), script);
         // The new run's agents play its state, which the fake finds by the key their names end in.
         let herdr = Rc::clone(&f.herdr);
@@ -992,9 +1003,8 @@ fn a_failing_sweep_leaves_the_run_as_it_was() {
     t.p.add(run("aaaaaa", merged()));
     let failing_states = Rc::new(std::cell::Cell::new(true));
     let once = Rc::clone(&failing_states);
-    t.p.host().run_states_with = Some(Box::new(move |_| {
-        once.replace(false).then(|| Err(OrchestratorError::new("ssh: connection reset")))
-    }));
+    t.p.host().run_states_with =
+        Some(Box::new(move |_| once.replace(false).then(|| Err(OrchestratorError::new("ssh: connection reset")))));
     assert_eq!(t.p.cli.main(&["run", "--cwd", "/proj", "task"]), 0, "{:?}", t.p.log());
     assert!(!failing_states.get());
     assert!(t.seen.borrow().is_some());
@@ -1053,7 +1063,8 @@ fn prune_on_real_git_with_worktree(in_worktree: bool) -> PrunedRun {
     use crate::test_support::TempDir;
     // A squash-merged run branch: local behind the PR head, origin at it. gh, a script, says it merged at head.
     let bin = TempDir::new();
-    let repo = Repo::with_host(&[("app.py", "one\n"), (".octoflow-ai/.gitignore", "*\n")], host_with_tools(&bin.path()));
+    let repo =
+        Repo::with_host(&[("app.py", "one\n"), (".octoflow-ai/.gitignore", "*\n")], host_with_tools(&bin.path()));
     let origin = format!("{}/origin.git", repo.outside);
     repo.git(&["init", "--quiet", "--bare", "-b", "main", &origin]);
     repo.git(&["remote", "add", "origin", &origin]);

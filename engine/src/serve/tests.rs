@@ -8,15 +8,15 @@ use std::sync::mpsc;
 use std::time::Instant;
 
 use super::*;
+use crate::cli::doctor::{Check, Level};
 use crate::cli::listing::run_record;
 use crate::constants::{APPROVE, RUNS_DIR, STALE_SECONDS, WORKTREES_DIR};
-use crate::host::tests::Repo;
-use crate::state::RunState;
-use crate::json::{Object, ValueExt};
-use crate::http::quote;
-use crate::cli::doctor::{Check, Level};
-use crate::serve::fake::{reached, FakeConsole, ServeHost};
 use crate::herdr::{HerdrError, HerdrServer, OWN_SESSION};
+use crate::host::tests::Repo;
+use crate::http::quote;
+use crate::json::{Object, ValueExt};
+use crate::serve::fake::{reached, FakeConsole, ServeHost};
+use crate::state::RunState;
 use crate::test_support::TempDir;
 
 /// The pairs as a query string, each name and value quoted (crate::http::quote), in the order given.
@@ -112,7 +112,8 @@ impl Served {
     ) -> Served {
         let origins: Vec<String> = origins.iter().map(|o| o.to_string()).collect();
         let Options { polls, setup, config, wait } = options;
-        let server = RunServer::start_polling(&origins, connect, setup, config, polls, wait).expect("the server starts");
+        let server =
+            RunServer::start_polling(&origins, connect, setup, config, polls, wait).expect("the server starts");
         let port = port_of(server.url());
         Served { server, port, connects, console: Arc::default() }
     }
@@ -233,7 +234,10 @@ fn status_at(port: u16) -> Option<u16> {
 
 /// A Setup for a test that asks for no setup: checking a project fails the test, and the marker is nowhere.
 fn unchecked() -> Setup {
-    Setup::new(Box::new(|_: &str, _: &str, _: &Interrupt| panic!("no setup check was expected")), "/nowhere/setup-checked".into())
+    Setup::new(
+        Box::new(|_: &str, _: &str, _: &Interrupt| panic!("no setup check was expected")),
+        "/nowhere/setup-checked".into(),
+    )
 }
 
 /// A project directory of the test's own, which serve is asked about by its path, removed when it is dropped.
@@ -322,8 +326,13 @@ fn runs_are_list_json_records_locally() {
         .collect();
     let doc = reply.json();
     assert_eq!(doc.get("version"), Some(&Value::from(1)));
-    let served_runs: Vec<Value> =
-        doc.get("runs").and_then(Value::as_array).unwrap().iter().map(|r| without_aging(r.as_object().unwrap().clone())).collect();
+    let served_runs: Vec<Value> = doc
+        .get("runs")
+        .and_then(Value::as_array)
+        .unwrap()
+        .iter()
+        .map(|r| without_aging(r.as_object().unwrap().clone()))
+        .collect();
     assert_eq!(served_runs.len(), 2);
     assert_eq!(served_runs, listed);
 }
@@ -352,7 +361,9 @@ fn files_with_their_mtimes() {
     assert_eq!(reply.status, Some(200));
     assert_eq!(
         reply.body,
-        format!(r#"{{"run":"{SERVE_ID}","files":[{{"name":"spec.md","mtime":100}},{{"name":"build-1.md","mtime":200}}]}}"#)
+        format!(
+            r#"{{"run":"{SERVE_ID}","files":[{{"name":"spec.md","mtime":100}},{{"name":"build-1.md","mtime":200}}]}}"#
+        )
     );
 }
 
@@ -423,18 +434,28 @@ fn a_link_that_leads_out_of_the_run_directory_is_refused() {
     d.save(SERVE_ID, &[]);
     d.write("outside.txt", "outside");
     d.write(&format!("{RUNS_DIR}/{SERVE_ID}/spec.md"), "spec");
-    let (runs, link) = (format!("{}/{RUNS_DIR}", d.root()), |target: &str, at: &str| std::os::unix::fs::symlink(target, at).unwrap());
+    let (runs, link) =
+        (format!("{}/{RUNS_DIR}", d.root()), |target: &str, at: &str| std::os::unix::fs::symlink(target, at).unwrap());
     link(&format!("{}/outside.txt", d.root()), &format!("{runs}/{SERVE_ID}/out.md"));
     link("../../../outside.txt", &format!("{runs}/{SERVE_ID}/up.md"));
     link("spec.md", &format!("{runs}/{SERVE_ID}/in.md"));
     link(&d.root(), &format!("{runs}/elsewhere"));
     link(SERVE_ID, &format!("{runs}/alias"));
     let served = Served::real();
-    let file = |run: &str, name: &str| served.get(&format!("/file?{}", urlencode(&[("cwd", &d.root()), ("run", run), ("name", name)])), &[]);
+    let file = |run: &str, name: &str| {
+        served.get(&format!("/file?{}", urlencode(&[("cwd", &d.root()), ("run", run), ("name", name)])), &[])
+    };
     let names = |run: &str| {
         let reply = served.get(&format!("/files?{}", urlencode(&[("cwd", &d.root()), ("run", run)])), &[]);
         assert_eq!(reply.status, Some(200), "{reply:?}");
-        let mut names: Vec<String> = reply.json().get("files").and_then(Value::as_array).unwrap().iter().map(|f| f.get("name").unwrap().text()).collect();
+        let mut names: Vec<String> = reply
+            .json()
+            .get("files")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .map(|f| f.get("name").unwrap().text())
+            .collect();
         names.sort();
         names
     };
@@ -442,9 +463,15 @@ fn a_link_that_leads_out_of_the_run_directory_is_refused() {
     for name in ["out.md", "up.md"] {
         let reply = file(SERVE_ID, name);
         assert_eq!((reply.status, reply.json().get("text")), (Some(403), None), "{name}");
-        assert_eq!(reply.error(), format!("{name:?} leads out of run {SERVE_ID}'s directory, or the directory out of the runs directory"));
+        assert_eq!(
+            reply.error(),
+            format!("{name:?} leads out of run {SERVE_ID}'s directory, or the directory out of the runs directory")
+        );
     }
-    assert_eq!((file(SERVE_ID, "in.md").status, file(SERVE_ID, "in.md").json().get("text")), (Some(200), Some(&Value::from("spec"))));
+    assert_eq!(
+        (file(SERVE_ID, "in.md").status, file(SERVE_ID, "in.md").json().get("text")),
+        (Some(200), Some(&Value::from("spec")))
+    );
     assert_eq!(names(SERVE_ID), ["in.md", "spec.md"]);
     // A run directory that leads out of the runs directory lists nothing and reads nothing; one that is a link to
     // another run directory is that run's.
@@ -473,10 +500,18 @@ fn a_run_whose_state_json_leads_out_of_its_run_directory_is_no_run() {
     link("saved.json", &format!("{runs}/x-in0000/state.json"));
     let served = Served::real();
     let reply = served.get(&d.query("/runs"), &[]);
-    let mut ids: Vec<String> = reply.json().get("runs").and_then(Value::as_array).unwrap().iter().map(|r| r.get("id").unwrap().text()).collect();
+    let mut ids: Vec<String> = reply
+        .json()
+        .get("runs")
+        .and_then(Value::as_array)
+        .unwrap()
+        .iter()
+        .map(|r| r.get("id").unwrap().text())
+        .collect();
     ids.sort();
     assert_eq!((reply.status, ids), (Some(200), vec![SERVE_ID.to_string(), "x-in0000".to_string()]));
-    let agent = served.get(&format!("/agent?{}", urlencode(&[("cwd", &d.root()), ("run", "x-out000"), ("role", "build")])), &[]);
+    let agent = served
+        .get(&format!("/agent?{}", urlencode(&[("cwd", &d.root()), ("run", "x-out000"), ("role", "build")])), &[]);
     assert_eq!((agent.status, agent.error()), (Some(404), "no run x-out000".to_string()));
     // The stream gives a record and a files event for each run it lists, and none for the two refused.
     let stream = EventStream::open(&served, &d.query("/events"), "");
@@ -595,7 +630,9 @@ fn a_setup_marker_that_cannot_be_written_or_looked_for_is_500() {
 fn the_setup_marker_needs_the_token() {
     let (served, _) = setup_served("/nowhere/setup-checked", vec![]);
     let port = served.port;
-    let raw = format!("POST /setup/checked HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    let raw = format!(
+        "POST /setup/checked HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    );
     assert_eq!(exchange(port, raw.as_bytes()).status, Some(401));
 }
 
@@ -655,7 +692,11 @@ fn a_target_read_as_http_server_reads_it() {
     host.state().files.insert(format!("{}/spec.md", run_dir()), "x".to_string());
     let served = Served::fake(&host, &[]);
     let base = format!("cwd=%7E%2Fproj&run={SERVE_ID}&name=nope&name=spec.md");
-    for target in [format!("//file?{base}"), format!("/file?{base}#frag"), format!("http://127.0.0.1:{}/file?{base}", served.port)] {
+    for target in [
+        format!("//file?{base}"),
+        format!("/file?{base}#frag"),
+        format!("http://127.0.0.1:{}/file?{base}", served.port),
+    ] {
         let reply = served.get(&target, &[]);
         assert_eq!((reply.status, reply.json().get("text")), (Some(200), Some(&Value::from("x"))), "{target}");
     }
@@ -747,8 +788,15 @@ fn tokens_are_32_random_bytes_in_base64url() {
 fn bytes_are_the_same_only_when_equal() {
     assert!(same_bytes(b"", b""));
     assert!(same_bytes(b"abc", b"abc"));
-    let differ: [(&[u8], &[u8]); 7] =
-        [(b"abd", b"abc"), (b"xbc", b"abc"), (b"ab", b"abc"), (b"abcd", b"abc"), (b"", b"a"), (b"a", b""), (b"abc\0", b"abc")];
+    let differ: [(&[u8], &[u8]); 7] = [
+        (b"abd", b"abc"),
+        (b"xbc", b"abc"),
+        (b"ab", b"abc"),
+        (b"abcd", b"abc"),
+        (b"", b"a"),
+        (b"a", b""),
+        (b"abc\0", b"abc"),
+    ];
     for (given, expected) in differ {
         assert!(!same_bytes(given, expected), "{given:?} {expected:?}");
     }
@@ -786,7 +834,8 @@ fn foreign_host_header() {
 #[test]
 fn a_request_without_a_host_header_is_refused() {
     let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
-    let raw = format!("GET {} HTTP/1.0\r\nAuthorization: Bearer {}\r\n\r\n", Served::query("/runs", &[]), served.token());
+    let raw =
+        format!("GET {} HTTP/1.0\r\nAuthorization: Bearer {}\r\n\r\n", Served::query("/runs", &[]), served.token());
     assert_eq!(exchange(served.port, raw.as_bytes()).status, Some(403));
 }
 
@@ -1020,9 +1069,23 @@ fn a_run_that_saves_its_state_is_answered_with_its_id_and_runs_its_own_program_i
     assert_eq!(*label, crate::workflow::workspace_label(&id, "--add a rate limiter"));
     let program = std::env::current_exe().unwrap().into_os_string().into_string().unwrap();
     let expected = [
-        program.as_str(), "run", &format!("--run-id={id}"), "--machine", "box", "--cwd", "~/proj", "--workflow=quick",
-        "--agent=codex", "--model=-m", "--role-agent=review=pi", "--role-agent=build=claude", "--role-model=review=o3",
-        "--no-pr", "--worktree", "--", "--add a rate limiter",
+        program.as_str(),
+        "run",
+        &format!("--run-id={id}"),
+        "--machine",
+        "box",
+        "--cwd",
+        "~/proj",
+        "--workflow=quick",
+        "--agent=codex",
+        "--model=-m",
+        "--role-agent=review=pi",
+        "--role-agent=build=claude",
+        "--role-model=review=o3",
+        "--no-pr",
+        "--worktree",
+        "--",
+        "--add a rate limiter",
     ];
     assert_eq!(argv, &expected);
     // An id as run's own, which `run --run-id` takes.
@@ -1145,7 +1208,10 @@ fn a_run_herdr_cannot_launch_is_refused_with_herdr_s_error() {
     let served = starting(&host);
     served.console.state().launch_error = Some(HerdrError::new("timeout", "herdr workspace create did not return"));
     let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#);
-    assert_eq!((reply.status, reply.error()), (Some(502), "herdr timeout: herdr workspace create did not return".to_string()));
+    assert_eq!(
+        (reply.status, reply.error()),
+        (Some(502), "herdr timeout: herdr workspace create did not return".to_string())
+    );
 }
 
 #[test]
@@ -1209,7 +1275,9 @@ fn closing() -> (Repo, String, Served) {
         set(&mut state);
         repo.host.write(&format!("{}/state.json", state.dir()), &state.to_text(), false).unwrap();
     };
-    save(CLOSE_FINISHED, &|s| (s.phase, s.verdict, s.workspace_id) = ("done".into(), Some(APPROVE.into()), "w-fin".into()));
+    save(CLOSE_FINISHED, &|s| {
+        (s.phase, s.verdict, s.workspace_id) = ("done".into(), Some(APPROVE.into()), "w-fin".into())
+    });
     save(CLOSE_FAILED, &|s| {
         (s.error, s.worktree, s.branch) = (Some("interrupted".into()), Some(wt.clone()), Some(CLOSE_BRANCH.into()));
         s.base = Some(base.clone());
@@ -1233,14 +1301,18 @@ fn closed_runs(reply: &Reply) -> Vec<(String, String, String, Vec<String>)> {
     assert_eq!(reply.status, Some(200), "{reply:?}");
     let runs = reply.json().get("runs").and_then(Value::as_array).cloned().expect("runs");
     let field = |run: &Value, key: &str| run.get(key).map(Value::text).expect(key);
-    let discarded = |run: &Value| run.get("discarded").and_then(Value::as_array).expect("discarded").iter().map(Value::text).collect();
+    let discarded = |run: &Value| {
+        run.get("discarded").and_then(Value::as_array).expect("discarded").iter().map(Value::text).collect()
+    };
     runs.iter().map(|run| (field(run, "run"), field(run, "outcome"), field(run, "detail"), discarded(run))).collect()
 }
 
 /// The body of a POST /close that closes the runs of closed_runs' dry run whose outcome is "closed", as it gave them.
 fn close_body(preview: &[(String, String, String, Vec<String>)]) -> String {
     let closing = preview.iter().filter(|(_, outcome, _, _)| outcome == "closed");
-    let runs: Vec<Value> = closing.map(|(run, _, detail, discarded)| serde_json::json!({"run": run, "detail": detail, "discarded": discarded})).collect();
+    let runs: Vec<Value> = closing
+        .map(|(run, _, detail, discarded)| serde_json::json!({"run": run, "detail": detail, "discarded": discarded}))
+        .collect();
     serde_json::json!({ "close": runs }).to_string()
 }
 
@@ -1261,7 +1333,12 @@ fn a_dry_run_says_what_closing_each_run_would_do_and_changes_nothing() {
         runs,
         [
             (CLOSE_FINISHED.into(), "closed".into(), "close workspace w-fin".into(), vec![]),
-            (CLOSE_FAILED.into(), "closed".into(), format!("delete worktree {wt}; delete branch {CLOSE_BRANCH}"), vec![" M app.py".into()]),
+            (
+                CLOSE_FAILED.into(),
+                "closed".into(),
+                format!("delete worktree {wt}; delete branch {CLOSE_BRANCH}"),
+                vec![" M app.py".into()]
+            ),
             (CLOSE_CLOSED.into(), "already closed".into(), "workspace closed".into(), vec![]),
         ]
     );
@@ -1284,7 +1361,8 @@ fn the_previewed_runs_are_closed_and_say_what_was_done_and_discarded() {
     let runs = closed_runs(&served.post(&target, &close_body(&preview)));
     let outcomes: Vec<_> = runs.iter().map(|(run, outcome, _, _)| (run.as_str(), outcome.as_str())).collect();
     assert_eq!(outcomes, [(CLOSE_FINISHED, "closed"), (CLOSE_FAILED, "closed")]);
-    let failed = ("workspace already gone; worktree deleted; branch deleted".to_string(), vec![" M app.py".to_string()]);
+    let failed =
+        ("workspace already gone; worktree deleted; branch deleted".to_string(), vec![" M app.py".to_string()]);
     assert_eq!((runs[1].2.clone(), runs[1].3.clone()), failed);
     assert_eq!(saved_closed(&repo, CLOSE_FINISHED).as_deref(), Some("workspace closed"));
     assert_eq!(saved_closed(&repo, CLOSE_FAILED), Some(failed.0));
@@ -1381,7 +1459,8 @@ const FORGET_OPEN: &str = "20261001-120100-d4e5f6";
 fn forgetting() -> (Project, Served) {
     let project = Project::new();
     project.save(FORGET_CLOSED, &[("closed", Value::from("workspace closed"))]);
-    project.write(&format!("{RUNS_DIR}/{FORGET_CLOSED}/metrics.json"), &format!("{{\"run_id\": \"{FORGET_CLOSED}\"}}\n"));
+    project
+        .write(&format!("{RUNS_DIR}/{FORGET_CLOSED}/metrics.json"), &format!("{{\"run_id\": \"{FORGET_CLOSED}\"}}\n"));
     project.save(FORGET_OPEN, &[]);
     (project, Served::real())
 }
@@ -1400,12 +1479,16 @@ fn a_forget_dry_run_names_the_closed_run_and_a_listed_forget_deletes_it_keeping_
     let target = project.query("/forget");
     let closed_dir = project.0.join(&format!("{RUNS_DIR}/{FORGET_CLOSED}"));
     let preview = forgotten_runs(&served.post(&target, r#"{"dry_run": true}"#));
-    let expected = [(FORGET_CLOSED, "forgotten"), (FORGET_OPEN, "not closed")].map(|(r, o)| (r.into(), o.into(), String::new()));
+    let expected =
+        [(FORGET_CLOSED, "forgotten"), (FORGET_OPEN, "not closed")].map(|(r, o)| (r.into(), o.into(), String::new()));
     assert_eq!(preview, expected);
     assert!(std::path::Path::new(&closed_dir).exists(), "a dry run deleted nothing");
 
     let body = serde_json::json!({ "forget": [FORGET_CLOSED] }).to_string();
-    assert_eq!(forgotten_runs(&served.post(&target, &body)), [(FORGET_CLOSED.into(), "forgotten".into(), String::new())]);
+    assert_eq!(
+        forgotten_runs(&served.post(&target, &body)),
+        [(FORGET_CLOSED.into(), "forgotten".into(), String::new())]
+    );
     assert!(!std::path::Path::new(&closed_dir).exists());
     let archive = std::fs::read_to_string(project.0.join(".octoflow-ai/metrics-archive.jsonl")).unwrap();
     assert!(archive.contains(FORGET_CLOSED), "{archive}");
@@ -1427,8 +1510,16 @@ fn a_bad_forget_body_is_refused_before_the_project_is_reached() {
     let served = Served::start(Box::new(connect), &[], Arc::clone(&connects), Options::default());
     let target = Served::query("/forget", &[("machine", "box")]);
     let wrong = r#"the body must be {"dry_run": true} or {"forget": ["...", ...]}"#;
-    let bad = ["", "[]", "{}", r#"{"dry_run": false}"#, r#"{"forget": "r1"}"#, r#"{"forget": [1]}"#, r#"{"forget": ["../r1"]}"#,
-               r#"{"forget": ["r1"], "x": 1}"#];
+    let bad = [
+        "",
+        "[]",
+        "{}",
+        r#"{"dry_run": false}"#,
+        r#"{"forget": "r1"}"#,
+        r#"{"forget": [1]}"#,
+        r#"{"forget": ["../r1"]}"#,
+        r#"{"forget": ["r1"], "x": 1}"#,
+    ];
     for body in bad {
         let reply = served.post(&target, body);
         assert_eq!((reply.status, reply.error()), (Some(400), wrong.to_string()), "{body}");
@@ -1444,12 +1535,17 @@ fn a_bad_forget_body_is_refused_before_the_project_is_reached() {
 fn workflows_are_the_configuration_s_with_their_roles_and_the_harnesses() {
     let d = TempDir::new();
     std::fs::create_dir_all(d.join("workflows")).unwrap();
-    let solo = "description = \"one builder\"\n[roles]\nbuild = { label = \"Solo\", agent = \"codex\", model = \"o3\" }\n\
+    let solo =
+        "description = \"one builder\"\n[roles]\nbuild = { label = \"Solo\", agent = \"codex\", model = \"o3\" }\n\
                 [[steps]]\nid = \"build\"\nfile = \"build.md\"\nprompt = \"Build {task} in {cwd}; report to {path}.\"\n\
                 edits = true\n";
     std::fs::write(d.join("workflows/solo.toml"), solo).unwrap();
     std::fs::write(d.join("workflows/broken.toml"), "not toml [").unwrap();
-    let served = Served::fake_with(&Arc::new(ServeHost::on(None)), &[], Options { config: ConfigDir::at(&d.path()), ..Options::default() });
+    let served = Served::fake_with(
+        &Arc::new(ServeHost::on(None)),
+        &[],
+        Options { config: ConfigDir::at(&d.path()), ..Options::default() },
+    );
     let reply = served.get("/workflows", &[]);
     assert_eq!(reply.status, Some(200), "{}", reply.body);
     let answer = reply.json();
@@ -1480,7 +1576,11 @@ fn workflows_are_the_configuration_s_with_their_roles_and_the_harnesses() {
 
 /// A server whose workflow files are in dir's workflows directory, and whose projects are none it should reach.
 fn editing(dir: &TempDir) -> Served {
-    Served::fake_with(&Arc::new(ServeHost::on(None)), &[], Options { config: ConfigDir::at(&dir.path()), ..Options::default() })
+    Served::fake_with(
+        &Arc::new(ServeHost::on(None)),
+        &[],
+        Options { config: ConfigDir::at(&dir.path()), ..Options::default() },
+    )
 }
 
 #[test]
@@ -1503,13 +1603,19 @@ fn a_workflow_reads_with_its_file_or_none_for_a_built_in_one() {
     assert_eq!(reply.status, Some(200), "{}", reply.body);
     let read = reply.json();
     assert_eq!(read["built_in"], false);
-    assert_eq!((read["path"].clone(), read["text"].clone()), (Value::from(d.join("workflows/mine.toml")), Value::from(mine)));
+    assert_eq!(
+        (read["path"].clone(), read["text"].clone()),
+        (Value::from(d.join("workflows/mine.toml")), Value::from(mine))
+    );
     assert_eq!(read["hand_written"], true);
     assert_eq!(read["definition"]["steps"].as_array().map(Vec::len), Some(2), "{read}");
     let reply = served.get("/workflow?name=broken", &[]);
     let broken = d.join("workflows/broken.toml");
     assert_eq!(reply.status, Some(422), "{}", reply.body);
-    assert_eq!((reply.json()["path"].clone(), reply.json()["text"].clone()), (Value::from(broken.as_str()), Value::from("not toml [")));
+    assert_eq!(
+        (reply.json()["path"].clone(), reply.json()["text"].clone()),
+        (Value::from(broken.as_str()), Value::from("not toml ["))
+    );
     assert!(reply.error().starts_with(&format!("{broken}: ")), "{}", reply.body);
     let reply = served.get("/workflow?name=nope", &[]);
     assert_eq!((reply.status, reply.error()), (Some(404), "no workflow nope".to_string()));
@@ -1602,7 +1708,11 @@ fn a_workflow_post_needs_the_token_and_a_body_within_bounds() {
     let body = r#"{"name": "mine", "base": "x"}"#;
     let length = body.len().to_string();
     for target in ["/workflow/check", "/workflow/save", "/workflow/delete"] {
-        assert_eq!(served.ask_with_body("POST", target, &[("Content-Length", &length)], body).status, Some(401), "{target}");
+        assert_eq!(
+            served.ask_with_body("POST", target, &[("Content-Length", &length)], body).status,
+            Some(401),
+            "{target}"
+        );
         let long = format!(r#"{{"name": "{}"}}"#, "x".repeat(MAX_BODY_BYTES));
         assert_eq!(served.post(target, &long).status, Some(413), "{target}");
     }
@@ -1813,7 +1923,12 @@ fn the_stream_ends_when_the_server_stops() {
 #[test]
 fn a_stream_to_an_http_1_0_client_ends_with_its_connection() {
     let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
-    let raw = format!("GET {}&token={} HTTP/1.0\r\nHost: 127.0.0.1:{}\r\n\r\n", Served::query("/events", &[]), served.token(), served.port);
+    let raw = format!(
+        "GET {}&token={} HTTP/1.0\r\nHost: 127.0.0.1:{}\r\n\r\n",
+        Served::query("/events", &[]),
+        served.token(),
+        served.port
+    );
     let port = served.port;
     let reader = std::thread::spawn(move || exchange(port, raw.as_bytes()));
     std::thread::sleep(Duration::from_millis(300));
@@ -1864,7 +1979,9 @@ fn a_machine_is_polled_less_often() {
     let stream = EventStream::open(&served, &Served::query("/events", &[("machine", "remote")]), "");
     // The first poll, whenever the handler gets to it, sends the run; only a change after it waits for the next.
     assert_eq!(stream.kinds(2), ["record", "files"]);
-    host.state().files.insert(format!("{}/state.json", run_dir()), serve_state(SERVE_ID, &[("phase", Value::from("review"))]));
+    host.state()
+        .files
+        .insert(format!("{}/state.json", run_dir()), serve_state(SERVE_ID, &[("phase", Value::from("review"))]));
     assert!(stream.events.recv_timeout(Duration::from_secs(1)).is_err());
 }
 
@@ -1872,7 +1989,11 @@ fn a_machine_is_polled_less_often() {
 fn the_stream_allows_the_webview_origin() {
     let served = Served::fake(&host_with_run(None), &[TAURI_ORIGIN]);
     let stream = EventStream::open(&served, &Served::query("/events", &[]), &format!("Origin: {TAURI_ORIGIN}\r\n"));
-    assert!(stream.head.contains(&format!("\r\nAccess-Control-Allow-Origin: {TAURI_ORIGIN}\r\nVary: Origin\r\n")), "{}", stream.head);
+    assert!(
+        stream.head.contains(&format!("\r\nAccess-Control-Allow-Origin: {TAURI_ORIGIN}\r\nVary: Origin\r\n")),
+        "{}",
+        stream.head
+    );
     assert_eq!(stream.kinds(2), ["record", "files"]);
 }
 
@@ -1906,16 +2027,17 @@ impl Write for Lines {
 #[test]
 fn in_process() {
     let host = Arc::new(ServeHost::on(None));
-    let connect = move |_: &str, _: &str, _: &Interrupt| {
-        Ok(reached(&host, &Arc::default()))
-    };
+    let connect = move |_: &str, _: &str, _: &Interrupt| Ok(reached(&host, &Arc::default()));
     let (lines, printed) = mpsc::channel();
     let (stop, stopped) = mpsc::channel::<()>();
     let serving = std::thread::spawn(move || {
         let mut err = vec![];
-        let status = serve(RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config")), &mut Lines(lines), &mut err, || {
-            stopped.recv().map_err(io::Error::other)
-        });
+        let status = serve(
+            RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config")),
+            &mut Lines(lines),
+            &mut err,
+            || stopped.recv().map_err(io::Error::other),
+        );
         (status, err)
     });
     let mut line = vec![];

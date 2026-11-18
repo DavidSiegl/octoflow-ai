@@ -10,12 +10,12 @@ use crate::checks::Severity;
 use crate::crates_io::fake::{CrateJson, FakeCratesIo};
 use crate::crates_io::CratesIo;
 use crate::http::Http;
+use crate::json::object;
 use crate::package_index::PackageIndexes;
-use serde_json::Value;
 use crate::pypi::fake::{FakePyPI, ProjectJson};
 use crate::pypi::PyPI;
 use crate::test_support::oracle;
-use crate::json::object;
+use serde_json::Value;
 
 fn find(change: &Change, pypi: &Arc<FakePyPI>) -> CheckFindings {
     let indexes = PackageIndexes::with_pypi(Arc::clone(pypi) as Arc<dyn Http>);
@@ -716,10 +716,8 @@ fn cargo_root_with(crates: &[&str]) -> String {
     )
 }
 
-const ENGINE_MANIFEST: &str =
-    "[package]\nname = \"engine\"\n\n[dependencies]\nserde = { workspace = true }\n";
-const APP_MANIFEST: &str =
-    "[package]\nname = \"app\"\n\n[dependencies]\nengine = { path = \"../engine\" }\n";
+const ENGINE_MANIFEST: &str = "[package]\nname = \"engine\"\n\n[dependencies]\nserde = { workspace = true }\n";
+const APP_MANIFEST: &str = "[package]\nname = \"app\"\n\n[dependencies]\nengine = { path = \"../engine\" }\n";
 
 /// `git diff -U0` of path gaining lines from line from on.
 fn adding(path: &str, from: usize, lines: &[&str]) -> String {
@@ -733,10 +731,8 @@ fn adding(path: &str, from: usize, lines: &[&str]) -> String {
 
 /// The workspace's files at base and new: the top-level Cargo.toml without and with the crates, and the members'.
 fn cargo_files(crates: &[&str]) -> Vec<(&'static str, &'static str, Option<String>)> {
-    let mut files = vec![
-        ("base", "Cargo.toml", Some(cargo_root_with(&[]))),
-        ("new", "Cargo.toml", Some(cargo_root_with(crates))),
-    ];
+    let mut files =
+        vec![("base", "Cargo.toml", Some(cargo_root_with(&[]))), ("new", "Cargo.toml", Some(cargo_root_with(crates)))];
     for side in ["base", "new"] {
         files.push((side, "engine/Cargo.toml", Some(ENGINE_MANIFEST.to_string())));
         files.push((side, "app/Cargo.toml", Some(APP_MANIFEST.to_string())));
@@ -745,27 +741,24 @@ fn cargo_files(crates: &[&str]) -> Vec<(&'static str, &'static str, Option<Strin
 }
 
 fn find_crates(change: &Change, crates: &Arc<FakeCratesIo>) -> CheckFindings {
-    let indexes = PackageIndexes {
-        pypi: PyPI::new(none()),
-        crates_io: CratesIo::new(Arc::clone(crates) as Arc<dyn Http>),
-    };
+    let indexes =
+        PackageIndexes { pypi: PyPI::new(none()), crates_io: CratesIo::new(Arc::clone(crates) as Arc<dyn Http>) };
     change.run(&always, |c| new_dependencies(c, &indexes).unwrap())
 }
 
 /// cargo_dependencies of the files, by path.
 fn cargo_read(files: &[(&str, &str)]) -> Dependencies {
     cargo_dependencies(&|path: &str| {
-        Ok(files
-            .iter()
-            .find(|(p, _)| *p == path)
-            .map(|(_, text)| text.as_bytes().to_vec()))
+        Ok(files.iter().find(|(p, _)| *p == path).map(|(_, text)| text.as_bytes().to_vec()))
     })
     .unwrap()
 }
 
 /// (package_key, manifest, source) of each package of deps from each of its sources, in deps's order.
 fn sourced(deps: &IndexMap<String, Vec<Dependency>>) -> Vec<(&str, &str, Option<PackageSource>)> {
-    deps.iter().flat_map(|(k, ds)| ds.iter().map(move |d| (k.as_str(), d.manifest.as_str(), d.source.clone()))).collect()
+    deps.iter()
+        .flat_map(|(k, ds)| ds.iter().map(move |d| (k.as_str(), d.manifest.as_str(), d.source.clone())))
+        .collect()
 }
 
 #[test]
@@ -788,21 +781,9 @@ fn every_dependency_table_of_the_workspace_and_its_members_is_direct() {
             ("cc", "Cargo.toml", None),
             ("nix", "Cargo.toml", None),
             ("serde-derive", "Cargo.toml", None),
-            (
-                "mine",
-                "Cargo.toml",
-                Some(PackageSource::new(SourceKind::Git, "https://example.com/mine.git"))
-            ),
-            (
-                "private",
-                "engine/Cargo.toml",
-                Some(PackageSource::new(SourceKind::Index, "corp"))
-            ),
-            (
-                "local",
-                "engine/Cargo.toml",
-                Some(PackageSource::new(SourceKind::Workspace, ""))
-            ),
+            ("mine", "Cargo.toml", Some(PackageSource::new(SourceKind::Git, "https://example.com/mine.git"))),
+            ("private", "engine/Cargo.toml", Some(PackageSource::new(SourceKind::Index, "corp"))),
+            ("local", "engine/Cargo.toml", Some(PackageSource::new(SourceKind::Workspace, ""))),
             ("tempfile", "engine/Cargo.toml", None),
         ]
     );
@@ -859,31 +840,19 @@ fn the_lock_file_pins_what_comes_from_a_registry_or_a_repository() {
 #[test]
 fn a_workspace_this_check_cannot_follow_is_unreadable() {
     let cases = [
-        (
-            "[workspace]\nmembers = [\"crates/*\"]\n",
-            "Cargo.toml",
-            "its workspace member `crates/*` is a glob",
-        ),
+        ("[workspace]\nmembers = [\"crates/*\"]\n", "Cargo.toml", "its workspace member `crates/*` is a glob"),
         (
             "[workspace]\nmembers = [\"gone\"]\n",
             "gone/Cargo.toml",
             "the workspace names it a member, but it does not exist",
         ),
-        (
-            "[workspace]\nmembers = \"engine\"\n",
-            "Cargo.toml",
-            "[workspace] members is not a list of strings",
-        ),
+        ("[workspace]\nmembers = \"engine\"\n", "Cargo.toml", "[workspace] members is not a list of strings"),
         (
             "[dependencies]\nserde = { workspace = true }\n",
             "Cargo.toml",
             "`serde` in [dependencies] takes `workspace = true`",
         ),
-        (
-            "[dependencies]\nserde = 1\n",
-            "Cargo.toml",
-            "`serde` in [dependencies] is neither a version nor a table",
-        ),
+        ("[dependencies]\nserde = 1\n", "Cargo.toml", "`serde` in [dependencies] is neither a version nor a table"),
         (
             "[workspace.dependencies]\nserde = \"1\"\n\n[dependencies]\nserde = { workspace = \"true\" }\n",
             "Cargo.toml",
@@ -903,13 +872,7 @@ fn a_workspace_this_check_cannot_follow_is_unreadable() {
     ];
     for (root, path, why) in cases {
         let deps = cargo_read(&[("Cargo.toml", root)]);
-        assert!(
-            deps.unreadable
-                .get(path)
-                .is_some_and(|w| w.starts_with(why)),
-            "{root}: {:?}",
-            deps.unreadable
-        );
+        assert!(deps.unreadable.get(path).is_some_and(|w| w.starts_with(why)), "{root}: {:?}", deps.unreadable);
     }
 }
 
@@ -917,37 +880,19 @@ fn a_workspace_this_check_cannot_follow_is_unreadable() {
 fn a_crate_the_spec_names_is_reported_with_what_crates_io_knows_and_one_it_does_not_name_fails() {
     let crates = FakeCratesIo::with(&[
         ("tokio", CrateJson::default()),
-        (
-            "serde-yaml",
-            CrateJson {
-                created: "2026-10-20",
-                latest: "2026-10-21",
-                version: "0.1.0",
-                license: None,
-            },
-        ),
+        ("serde-yaml", CrateJson { created: "2026-10-20", latest: "2026-10-21", version: "0.1.0", license: None }),
     ]);
-    let change = Change::new(&adding(
-        "Cargo.toml",
-        6,
-        &["tokio = \"1\"", "serde_yaml = \"0.1\""],
-    ))
-    .files(cargo_files(&["tokio = \"1\"", "serde_yaml = \"0.1\""]))
-    .spec("Run it on Tokio.");
+    let change = Change::new(&adding("Cargo.toml", 6, &["tokio = \"1\"", "serde_yaml = \"0.1\""]))
+        .files(cargo_files(&["tokio = \"1\"", "serde_yaml = \"0.1\""]))
+        .spec("Run it on Tokio.");
     let found = find_crates(&change, &crates);
-    assert_eq!(
-        rules(&found.issues),
-        [(Some("Cargo.toml"), Some(7), "not-in-spec")]
-    );
+    assert_eq!(rules(&found.issues), [(Some("Cargo.toml"), Some(7), "not-in-spec")]);
     assert_eq!(
         found.issues[0].message,
         "`serde-yaml` is a new dependency that the spec does not name; on crates.io since 2026-10-20, latest 0.1.0 of \
          2026-10-21, license not stated; it is younger than 14 days, so few have used it yet."
     );
-    assert_eq!(
-        rules(&found.to_weigh),
-        [(Some("Cargo.toml"), Some(6), "added")]
-    );
+    assert_eq!(rules(&found.to_weigh), [(Some("Cargo.toml"), Some(6), "added")]);
     assert_eq!(
         found.to_weigh[0].message,
         "`tokio`, which the spec names: on crates.io since 2014-12-05, latest 1.0.228 of 2026-09-01, license MIT OR \
@@ -963,13 +908,8 @@ fn a_crate_crates_io_does_not_know_fails() {
         .files(cargo_files(&["tokioo = \"1\""]))
         .spec("tokioo");
     let found = find_crates(&change, &crates);
-    assert_eq!(
-        rules(&found.issues),
-        [(Some("Cargo.toml"), Some(6), "not-on-crates-io")]
-    );
-    assert!(found.issues[0]
-        .message
-        .starts_with("crates.io does not know `tokioo`: "));
+    assert_eq!(rules(&found.issues), [(Some("Cargo.toml"), Some(6), "not-on-crates-io")]);
+    assert!(found.issues[0].message.starts_with("crates.io does not know `tokioo`: "));
 }
 
 #[test]
@@ -979,14 +919,8 @@ fn a_member_s_new_crate_is_found_in_its_own_manifest() {
     files.retain(|(side, path, _)| !(*side == "new" && *path == "engine/Cargo.toml"));
     files.push(("new", "engine/Cargo.toml", Some(engine)));
     let crates = FakeCratesIo::with(&[("rand", CrateJson::default())]);
-    let found = find_crates(
-        &Change::new(&adding("engine/Cargo.toml", 6, &["rand = \"0.9\""])).files(files),
-        &crates,
-    );
-    assert_eq!(
-        rules(&found.issues),
-        [(Some("engine/Cargo.toml"), Some(6), "not-in-spec")]
-    );
+    let found = find_crates(&Change::new(&adding("engine/Cargo.toml", 6, &["rand = \"0.9\""])).files(files), &crates);
+    assert_eq!(rules(&found.issues), [(Some("engine/Cargo.toml"), Some(6), "not-in-spec")]);
 }
 
 /// The workspace's files at base and new, engine's manifest new ending in lines from line 6 on.
@@ -1000,12 +934,8 @@ fn cargo_member_files(engine: &[&str]) -> Vec<(&'static str, &'static str, Optio
 
 /// foo added to engine's manifest from line 6 on, from crates.io in [dependencies] and from a repository under a
 /// target table.
-const FOO_TWICE: [&str; 4] = [
-    "foo = \"1\"",
-    "",
-    "[target.'cfg(windows)'.dependencies]",
-    "foo = { git = \"https://example.com/foo.git\" }",
-];
+const FOO_TWICE: [&str; 4] =
+    ["foo = \"1\"", "", "[target.'cfg(windows)'.dependencies]", "foo = { git = \"https://example.com/foo.git\" }"];
 
 /// The findings on a change that adds FOO_TWICE, given crates.io and the spec.
 fn find_foo_twice(crates: &Arc<FakeCratesIo>, spec: &str) -> CheckFindings {
@@ -1062,10 +992,7 @@ fn a_source_beside_a_young_crate_is_not_young() {
     let crates = FakeCratesIo::with(&[("foo", young)]);
     let found = find_foo_twice(&crates, "foo");
     assert_eq!(found.issues, []);
-    assert_eq!(
-        found.to_weigh.iter().map(|f| f.rule.as_str()).collect::<Vec<_>>(),
-        ["young", "added"]
-    );
+    assert_eq!(found.to_weigh.iter().map(|f| f.rule.as_str()).collect::<Vec<_>>(), ["young", "added"]);
     assert_eq!(found.to_weigh[1].message, FOO_FROM_GIT);
 }
 
@@ -1073,10 +1000,8 @@ fn a_source_beside_a_young_crate_is_not_young() {
 fn a_source_the_change_adds_to_a_crate_the_project_had_is_reported() {
     let added = ["", "[target.'cfg(windows)'.dependencies]", "serde = { git = \"https://example.com/serde.git\" }"];
     let crates = FakeCratesIo::with(&[]);
-    let found = find_crates(
-        &Change::new(&adding("engine/Cargo.toml", 6, &added)).files(cargo_member_files(&added)),
-        &crates,
-    );
+    let found =
+        find_crates(&Change::new(&adding("engine/Cargo.toml", 6, &added)).files(cargo_member_files(&added)), &crates);
     assert_eq!(found.issues, []);
     assert_eq!(
         found.to_weigh,
@@ -1094,18 +1019,11 @@ fn a_source_the_change_adds_to_a_crate_the_project_had_is_reported() {
 
 #[test]
 fn a_crate_from_a_repository_or_another_registry_is_not_asked_of_crates_io() {
-    let added = [
-        "mine = { git = \"https://example.com/mine.git\" }",
-        "corp = { version = \"1\", registry = \"corp\" }",
-    ];
-    let crates = FakeCratesIo::with(&[
-        ("mine", CrateJson::default()),
-        ("corp", CrateJson::default()),
-    ]);
+    let added =
+        ["mine = { git = \"https://example.com/mine.git\" }", "corp = { version = \"1\", registry = \"corp\" }"];
+    let crates = FakeCratesIo::with(&[("mine", CrateJson::default()), ("corp", CrateJson::default())]);
     let found = find_crates(
-        &Change::new(&adding("Cargo.toml", 6, &added))
-            .files(cargo_files(&added))
-            .spec("mine, corp"),
+        &Change::new(&adding("Cargo.toml", 6, &added)).files(cargo_files(&added)).spec("mine, corp"),
         &crates,
     );
     assert_eq!(found.issues, []);
@@ -1129,11 +1047,8 @@ fn crates_io_unreachable_leaves_its_crates_unchecked_and_pypi_asked() {
     let pypi = FakePyPI::with(&[("limits", ProjectJson::default())]);
     let mut files = cargo_files(&["tokio = \"1\"", "rand = \"0.9\""]);
     files.extend(pyproject_files(&["limits"]));
-    let diff = adding("Cargo.toml", 6, &["tokio = \"1\"", "rand = \"0.9\""])
-        + &pyproject_diff(&["limits"]);
-    let change = Change::new(&diff)
-        .files(files)
-        .spec("limits, tokio and rand");
+    let diff = adding("Cargo.toml", 6, &["tokio = \"1\"", "rand = \"0.9\""]) + &pyproject_diff(&["limits"]);
+    let change = Change::new(&diff).files(files).spec("limits, tokio and rand");
     let indexes = PackageIndexes {
         pypi: PyPI::new(Arc::clone(&pypi) as Arc<dyn Http>),
         crates_io: CratesIo::new(Arc::clone(&crates) as Arc<dyn Http>),
@@ -1151,10 +1066,7 @@ fn crates_io_unreachable_leaves_its_crates_unchecked_and_pypi_asked() {
              whether they exist is not known."
         )]
     );
-    assert_eq!(
-        rules(&found.to_weigh),
-        [(Some("pyproject.toml"), Some(5), "added")]
-    );
+    assert_eq!(rules(&found.to_weigh), [(Some("pyproject.toml"), Some(5), "added")]);
 }
 
 #[test]
@@ -1166,20 +1078,13 @@ fn the_crates_the_lock_file_alone_adds_are_pulled_in() {
     let mut files = cargo_files(&["tokio = \"1\""]);
     files.push(("base", "Cargo.lock", Some(lock(&["serde"]))));
     files.push(("new", "Cargo.lock", Some(lock(&["serde", "tokio", "mio"]))));
-    let diff =
-        adding("Cargo.toml", 6, &["tokio = \"1\""]) + &adding("Cargo.lock", 6, &["[[package]]"]);
-    let crates = FakeCratesIo::with(&[
-        ("tokio", CrateJson::default()),
-        ("mio", CrateJson::default()),
-    ]);
+    let diff = adding("Cargo.toml", 6, &["tokio = \"1\""]) + &adding("Cargo.lock", 6, &["[[package]]"]);
+    let crates = FakeCratesIo::with(&[("tokio", CrateJson::default()), ("mio", CrateJson::default())]);
     let found = find_crates(&Change::new(&diff).files(files).spec("tokio"), &crates);
     assert_eq!(found.issues, []);
     assert_eq!(
         rules(&found.to_weigh),
-        [
-            (Some("Cargo.toml"), Some(6), "added"),
-            (Some("Cargo.lock"), None, "pulled-in")
-        ]
+        [(Some("Cargo.toml"), Some(6), "added"), (Some("Cargo.lock"), None, "pulled-in")]
     );
     assert_eq!(
         found.to_weigh[1].message,
@@ -1232,17 +1137,11 @@ fn a_locked_crate_from_several_sources_is_pulled_in_and_moved_from_each() {
 #[test]
 fn a_cargo_manifest_anywhere_starts_the_check_and_one_untouched_does_not() {
     let crates = FakeCratesIo::with(&[]);
-    let untouched = find_crates(
-        &Change::new(&new_file_diff("src/lib.rs", 1)).files(cargo_files(&["tokio = \"1\""])),
-        &crates,
-    );
+    let untouched =
+        find_crates(&Change::new(&new_file_diff("src/lib.rs", 1)).files(cargo_files(&["tokio = \"1\""])), &crates);
     assert_eq!(untouched, CheckFindings::default());
-    let member = Change::new(&adding("app/Cargo.toml", 6, &["# a comment"]))
-        .files(cargo_files(&["tokio = \"1\""]));
-    assert_eq!(
-        rules(&find_crates(&member, &crates).issues),
-        [(Some("Cargo.toml"), Some(6), "not-in-spec")]
-    );
+    let member = Change::new(&adding("app/Cargo.toml", 6, &["# a comment"])).files(cargo_files(&["tokio = \"1\""]));
+    assert_eq!(rules(&find_crates(&member, &crates).issues), [(Some("Cargo.toml"), Some(6), "not-in-spec")]);
 }
 
 #[test]

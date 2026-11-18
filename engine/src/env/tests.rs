@@ -19,7 +19,10 @@ fn path_follows_xdg_config_home() {
     assert_eq!(config.setup_checked_path(), format!("/home/u/.config/{CONFIG_DIR_NAME}/setup-checked"));
     assert_eq!(ConfigDir::for_env(&from(&[]), &|| None).path(), format!("~/.config/{CONFIG_DIR_NAME}"));
     // Without HOME, the user's home from /etc/passwd, as os.path.expanduser takes it.
-    assert_eq!(ConfigDir::for_env(&from(&[]), &|| Some("/home/p".into())).path(), format!("/home/p/.config/{CONFIG_DIR_NAME}"));
+    assert_eq!(
+        ConfigDir::for_env(&from(&[]), &|| Some("/home/p".into())).path(),
+        format!("/home/p/.config/{CONFIG_DIR_NAME}")
+    );
     let passwd = "root:x:0:0:root:/root:/bin/sh\nbad line\nu:x:1001:1001::/home/u:/bin/sh\n";
     assert_eq!(home_of(passwd, "1001").as_deref(), Some("/home/u"));
     assert_eq!(home_of(passwd, "7"), None);

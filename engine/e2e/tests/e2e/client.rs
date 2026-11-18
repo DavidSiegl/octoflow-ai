@@ -58,7 +58,11 @@ fn connect(address: &str, method: &str, target: &str, headers: &[(&str, &str)]) 
 fn read_head(stream: &mut TcpStream) -> (u16, Vec<(String, String)>, BufReader<TcpStream>) {
     let mut reader = BufReader::new(stream.try_clone().unwrap_or_else(|e| panic!("cloning serve's connection: {e}")));
     let status_line = read_line(&mut reader).unwrap_or_else(|| panic!("serve closed the connection before answering"));
-    let status = status_line.split(' ').nth(1).and_then(|s| s.parse().ok()).unwrap_or_else(|| panic!("serve answered {status_line:?}"));
+    let status = status_line
+        .split(' ')
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| panic!("serve answered {status_line:?}"));
     let mut headers = Vec::new();
     loop {
         let line = read_line(&mut reader).unwrap_or_else(|| panic!("serve closed the connection in its headers"));
@@ -76,7 +80,9 @@ fn read_line(reader: &mut impl BufRead) -> Option<String> {
     let mut line = Vec::new();
     match reader.read_until(b'\n', &mut line) {
         Ok(0) | Err(_) => None,
-        Ok(_) => Some(String::from_utf8_lossy(line.strip_suffix(b"\n").unwrap_or(&line)).trim_end_matches('\r').to_string()),
+        Ok(_) => {
+            Some(String::from_utf8_lossy(line.strip_suffix(b"\n").unwrap_or(&line)).trim_end_matches('\r').to_string())
+        }
     }
 }
 
@@ -195,7 +201,8 @@ fn read_events(reader: &mut BufReader<TcpStream>, chunked: bool, items: &Mutex<V
             if let Some(k) = line.strip_prefix("event: ") {
                 kind = Some(k.to_string());
             } else if let Some(data) = line.strip_prefix("data: ") {
-                payload = serde_json::from_str::<Value>(data).unwrap_or_else(|e| panic!("serve sent an event's data that is no JSON: {e}"));
+                payload = serde_json::from_str::<Value>(data)
+                    .unwrap_or_else(|e| panic!("serve sent an event's data that is no JSON: {e}"));
             } else if line == ":" {
                 add(None);
             } else if line.is_empty() {

@@ -1,0 +1,6 @@
+# Commits that only reformat, which `git blame` skips to the change before them once a checkout sets
+# `git config blame.ignoreRevsFile .git-blame-ignore-revs` (GitHub's blame view reads this file by itself). Add a
+# commit here only when it changes nothing but formatting.
+
+# cargo fmt --all, when rustfmt.toml was added (todo/64)
+68ced2bd980bf985cc9ea5453fd2f780c4fcc5b0

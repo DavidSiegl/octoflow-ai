@@ -44,7 +44,8 @@ const START: i64 = 1_792_850_400;
 /// than RUN_IDS names, and on a placeholder of the normalizer's this module has no stand-in for: something new that
 /// differs between two recordings, which needs one.
 pub fn recording(batches: &[Batch], normalizer: &mut Normalizer, project: &Path) -> Value {
-    let payloads: Vec<Value> = batches.iter().flat_map(|b| b.events.iter().map(|(_, payload)| payload.clone())).collect();
+    let payloads: Vec<Value> =
+        batches.iter().flat_map(|b| b.events.iter().map(|(_, payload)| payload.clone())).collect();
     normalizer.learn(&Value::Array(payloads));
     // By run and file name, the mtime serve last sent and the number of the batch that first held it.
     let mut versions: IndexMap<String, (i64, usize)> = IndexMap::new();
@@ -96,7 +97,11 @@ pub fn recording(batches: &[Batch], normalizer: &mut Normalizer, project: &Path)
                 let files = listed.iter().map(|(first_held, name)| {
                     object([("name", (*name).into()), ("mtime", (START + 60 * *first_held as i64).into())])
                 });
-                events.push(object([("kind", "files".into()), ("run", run_id.as_str().into()), ("files", files.collect())]));
+                events.push(object([
+                    ("kind", "files".into()),
+                    ("run", run_id.as_str().into()),
+                    ("files", files.collect()),
+                ]));
             }
         }
         out.push(object([("after", batch.after.into()), ("events", Value::Array(events))]));
@@ -108,8 +113,12 @@ pub fn recording(batches: &[Batch], normalizer: &mut Normalizer, project: &Path)
 /// stand-in.
 fn stand_in(node: &Value, key: Option<&str>, project: &Path) -> Value {
     match node {
-        Value::Object(map) => Value::Object(map.iter().map(|(k, v)| (k.clone(), stand_in(v, Some(k), project))).collect()),
-        Value::Array(items) if key == Some("turns") => Value::Array(items.iter().enumerate().map(|(k, turn)| stand_in_turn(turn, k, project)).collect()),
+        Value::Object(map) => {
+            Value::Object(map.iter().map(|(k, v)| (k.clone(), stand_in(v, Some(k), project))).collect())
+        }
+        Value::Array(items) if key == Some("turns") => {
+            Value::Array(items.iter().enumerate().map(|(k, turn)| stand_in_turn(turn, k, project)).collect())
+        }
         Value::Array(items) => Value::Array(items.iter().map(|v| stand_in(v, key, project)).collect()),
         Value::String(s) if s == "<seconds>" && key == Some("heartbeat_age") => Value::from(1),
         Value::String(s) => Value::String(stand_in_text(s, project)),
@@ -135,14 +144,20 @@ fn stand_in_turn(turn: &Value, k: usize, project: &Path) -> Value {
 
 /// text as the normalizer wrote it, with each placeholder replaced by its stand-in. Panics on one it has none for.
 fn stand_in_text(text: &str, project: &Path) -> String {
-    let mut out = text.replace(&project.to_string_lossy().replace(&project.parent().expect("the world").to_string_lossy().into_owned(), "<world>"), "/home/me/proj");
+    let mut out = text.replace(
+        &project
+            .to_string_lossy()
+            .replace(&project.parent().expect("the world").to_string_lossy().into_owned(), "<world>"),
+        "/home/me/proj",
+    );
     for (k, id) in RUN_IDS.iter().enumerate() {
         out = out.replace(&format!("<run:{}>", k + 1), id).replace(&format!("<key:{}>", k + 1), &id[id.len() - 6..]);
     }
     out = out.replace("<host>", "devbox").replace("<duration>", "1s");
     while let Some((before, rest)) = out.split_once("<pid:") {
         let Some((invocation, behind)) = rest.split_once('>') else { break };
-        let invocation: i64 = invocation.parse().unwrap_or_else(|_| panic!("a pid of no engine invocation in {text:?}"));
+        let invocation: i64 =
+            invocation.parse().unwrap_or_else(|_| panic!("a pid of no engine invocation in {text:?}"));
         out = format!("{before}{}{behind}", 4000 + invocation);
     }
     let placeholder = out.find('<').filter(|start| out[*start..].contains('>'));

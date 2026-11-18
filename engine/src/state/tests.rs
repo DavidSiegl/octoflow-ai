@@ -189,7 +189,8 @@ fn agent_and_turn_records_keep_the_fields_they_do_not_know_after_their_own() {
 
 #[test]
 fn an_agents_start_is_kept_until_it_is_prompted_and_reads_as_none_where_an_older_engine_saved_none() {
-    let agents = r#"{"build": {"name": "build-r1", "pane": "p2", "kind": "pi", "session": "s1", "unprompted": "resumed"}}"#;
+    let agents =
+        r#"{"build": {"name": "build-r1", "pane": "p2", "kind": "pi", "session": "s1", "unprompted": "resumed"}}"#;
     let text = saved_with(&[("agents", Some(agents))]);
     let state = RunState::from_text(&text).unwrap();
     assert_eq!(state.agents.get("build").unwrap().unprompted, Some(AgentStart::Resumed));
@@ -200,7 +201,8 @@ fn an_agents_start_is_kept_until_it_is_prompted_and_reads_as_none_where_an_older
 
 #[test]
 fn an_agent_or_turn_record_without_a_field_its_engine_writes_is_refused() {
-    let agentless = [r#"{"build": {"name": "build-r1", "pane": "p2"}}"#, r#"{"build": {"name": "b", "kind": 1, "pane": ""}}"#];
+    let agentless =
+        [r#"{"build": {"name": "build-r1", "pane": "p2"}}"#, r#"{"build": {"name": "b", "kind": 1, "pane": ""}}"#];
     for agents in agentless {
         let e = RunState::from_text(&saved_with(&[("agents", Some(agents))])).unwrap_err();
         assert!(e.0.starts_with("run state r1 is invalid: "), "{agents}: {e}");
@@ -240,10 +242,20 @@ fn a_roles_harness_is_its_agents_then_its_next_agents_then_the_default() {
 #[test]
 fn a_state_with_a_field_missing_or_of_the_wrong_type_is_refused_naming_the_run() {
     for (field, value) in [
-        ("cwd", None), ("phase", None), ("round", Some("\"1\"")), ("round", Some("-1")), ("phase", Some("1")),
-        ("machine", Some("3")), ("conflicts", Some("[1]")), ("agents", Some("{\"a\": 1}")),
-        ("pull_request", Some("1")), ("owner", Some("[]")), ("ci", Some("null")), ("turns", Some("[1]")),
-        ("locked", Some("{\"s\": [1]}")), ("models", Some("{\"a\": null}")),
+        ("cwd", None),
+        ("phase", None),
+        ("round", Some("\"1\"")),
+        ("round", Some("-1")),
+        ("phase", Some("1")),
+        ("machine", Some("3")),
+        ("conflicts", Some("[1]")),
+        ("agents", Some("{\"a\": 1}")),
+        ("pull_request", Some("1")),
+        ("owner", Some("[]")),
+        ("ci", Some("null")),
+        ("turns", Some("[1]")),
+        ("locked", Some("{\"s\": [1]}")),
+        ("models", Some("{\"a\": null}")),
     ] {
         let e = RunState::from_text(&saved_with(&[(field, value)])).unwrap_err();
         assert!(e.0.starts_with("run state r1 is invalid: "), "{field}: {e}");
@@ -298,7 +310,11 @@ fn a_saved_run_of_this_format_is_its_state() {
 fn an_unreadable_saved_run_is_refused_but_shown_as_far_as_it_reads() {
     // (state.json, the problem's start, what shown keeps)
     let cases = [
-        (saved_object(&[("format", None), ("phase", Some("\"build\""))]), "run r1 was saved by an octoflow before", "build"),
+        (
+            saved_object(&[("format", None), ("phase", Some("\"build\""))]),
+            "run r1 was saved by an octoflow before",
+            "build",
+        ),
         (saved_object(&[("format", Some("3")), ("phase", Some("\"build\""))]), "run r1 has state format 3", "build"),
         (saved_object(&[("round", Some("\"2\"")), ("phase", Some("\"build\""))]), "run state r1 is invalid: ", "build"),
     ];
@@ -319,14 +335,21 @@ fn a_saved_run_names_its_run() {
         saved_object(&[("run_id", Some("\"\""))]),
     ];
     for saved in cases {
-        assert_eq!(SavedRun::read(0, saved.clone()).unwrap_err().0, "a run state is a JSON object with its run_id", "{saved}");
+        assert_eq!(
+            SavedRun::read(0, saved.clone()).unwrap_err().0,
+            "a run state is a JSON object with its run_id",
+            "{saved}"
+        );
     }
 }
 
 #[test]
 fn an_unreadable_field_is_shown_at_its_default_and_the_others_as_saved() {
     let saved = saved_object(&[
-        ("format", None), ("round", Some("\"2\"")), ("task", Some("\"add a rate limiter\"")), ("later", Some("1")),
+        ("format", None),
+        ("round", Some("\"2\"")),
+        ("task", Some("\"add a rate limiter\"")),
+        ("later", Some("1")),
         ("owner", Some("{\"host\": \"here\", \"pid\": 1}")),
     ]);
     let shown = SavedRun::read(0, saved).unwrap().shown().clone();
@@ -350,7 +373,10 @@ fn in_quality_is_the_quality_phase_or_the_gated_step() {
     let mut state = RunState::new("r1", "t", "/p");
     // (phase, pipeline, in quality)
     for (phase, pipeline, quality) in [
-        ("quality", &quick, true), ("impl", &impl_, true), ("review", &impl_, false), ("build", &quick, false),
+        ("quality", &quick, true),
+        ("impl", &impl_, true),
+        ("review", &impl_, false),
+        ("build", &quick, false),
         ("impl", &quick, false),
     ] {
         state.phase = phase.into();
@@ -394,7 +420,9 @@ fn by_key_or_full_id() {
     assert_eq!(find_run(&runs(), "c0ffee", "/p").unwrap().age(), 1);
     assert_eq!(find_run(&runs(), "20260929-080000-beef00", "/p").unwrap().age(), 3);
     // Unreadable or not.
-    let old = SavedRun::read(4, Value::Object(crate::json::object([("run_id", Value::from("20260928-080000-0dd000"))]))).unwrap();
+    let old =
+        SavedRun::read(4, Value::Object(crate::json::object([("run_id", Value::from("20260928-080000-0dd000"))])))
+            .unwrap();
     assert_eq!(find_run(&[old], "0dd000", "/p").unwrap().age(), 4);
 }
 

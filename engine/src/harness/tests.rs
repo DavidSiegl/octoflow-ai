@@ -3,8 +3,8 @@
 
 use super::*;
 use crate::constants::DEFAULT_HARNESS;
-use crate::test_support::{oracle, unhex};
 use crate::json::Object;
+use crate::test_support::{oracle, unhex};
 
 /// The harness harness.json has no cases of: agy, which replaced gemini (GitHub issue #125). Each comparison with
 /// harness.json leaves it out, and DROPPED; agy_takes_ticket_01_s_flags tests agy.
@@ -40,7 +40,8 @@ fn every_harness_s_tables_are_harness_json_s() {
     assert_eq!(recorded_kinds, kinds.iter().filter(|k| **k != UNRECORDED).copied().collect::<Vec<_>>());
     assert_eq!(constants.get("DEFAULT_AGENT").and_then(Value::as_str), Some(DEFAULT_HARNESS));
     // The four tables harness.json records, as the rows here make them.
-    let (mut permissions, mut resume, mut add_dir, mut logs) = (Object::new(), Object::new(), Object::new(), Object::new());
+    let (mut permissions, mut resume, mut add_dir, mut logs) =
+        (Object::new(), Object::new(), Object::new(), Object::new());
     for h in HARNESSES.iter().filter(|h| h.kind != UNRECORDED) {
         if let Permissions::Equivalents(table) = h.permissions {
             let mut modes = Object::new();
@@ -162,12 +163,8 @@ fn the_run_directory_is_granted_where_the_harness_can() {
     // opencode's grant in
     // opencode_takes_its_model_and_grant_as_config.
     let d = "/proj/.octoflow-ai/runs/r";
-    let grants: [(&str, &[&str]); 4] = [
-        ("agy", &["--add-dir", d]),
-        ("claude", &["--add-dir", d]),
-        ("codex", &["--add-dir", d]),
-        ("pi", &[]),
-    ];
+    let grants: [(&str, &[&str]); 4] =
+        [("agy", &["--add-dir", d]), ("claude", &["--add-dir", d]), ("codex", &["--add-dir", d]), ("pi", &[])];
     for (kind, grant) in grants {
         let h = harness(kind).unwrap();
         for (mode, model, session) in [(None, None, None), (Some("acceptEdits"), Some("m"), Some("s1"))] {
@@ -244,8 +241,13 @@ fn a_time_is_read_only_with_its_offset() {
         )
     };
     let times = [
-        "2026-10-03T04:00:01.000Z", "2026-10-03T04:00:02.000+00:00", "2026-10-03T04:00:03.000+02:00",
-        "2026-10-03T04:00:07.123456789Z", "20261003T040009Z", "2026-10-03T24:00:00Z", "2026-10-03T04:00:13+00",
+        "2026-10-03T04:00:01.000Z",
+        "2026-10-03T04:00:02.000+00:00",
+        "2026-10-03T04:00:03.000+02:00",
+        "2026-10-03T04:00:07.123456789Z",
+        "20261003T040009Z",
+        "2026-10-03T24:00:00Z",
+        "2026-10-03T04:00:13+00",
         "2026-10-03T04:00:14",
     ];
     let log: Vec<String> = times.iter().zip(1..).map(|(at, n)| line(n, at)).collect();

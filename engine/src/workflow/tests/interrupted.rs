@@ -44,7 +44,8 @@ fn a_ctrl_c_during_a_prompt_herdr_delivered_records_no_prompt() {
     let d = TempDir::new();
     let delivered = d.join("delivered");
     let f = Fixture::new(vec![("spec", vec![spec_turn()])]);
-    let script = hearing_sigint(&format!("trap 'exit 0' INT\necho \"$4\" > '{delivered}'\nwhile :; do sleep 0.05; done\n"));
+    let script =
+        hearing_sigint(&format!("trap 'exit 0' INT\necho \"$4\" > '{delivered}'\nwhile :; do sleep 0.05; done\n"));
     let herdr = real_herdr(&f, &d, &script);
     f.herdr.state().prompt_with = Some(Box::new(move |name, text| herdr.prompt(name, text)));
     let raising = raise_once_written(&delivered, &f.interrupt);

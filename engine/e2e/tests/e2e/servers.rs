@@ -13,10 +13,10 @@ use std::thread::JoinHandle;
 
 use octoflow_e2e::ledger::Ledger;
 use octoflow_e2e::{object_at, procs};
-use serde_json::Value;
 use octoflow_engine::json::Object;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use serde_json::Value;
 
 /// The file, in the world's directory, of the certificate authority that signed PyPI's certificate, which the engine
 /// trusts by SSL_CERT_FILE.
@@ -150,11 +150,34 @@ fn unquote(text: &str) -> String {
 fn pypi_tls(world: &Path) -> rustls::ServerConfig {
     let path = |name: &str| world.join(name).to_string_lossy().into_owned();
     let key = ["-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes", "-days", "30"];
-    let (ca, ca_key, cert, cert_key) = (path(PYPI_CA), path("pypi-ca-key.pem"), path("pypi-cert.pem"), path("pypi-key.pem"));
-    let ca_args = ["-subj", "/CN=Parity CA", "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign"];
-    let leaf_args = ["-subj", "/CN=pypi.org", "-addext", "subjectAltName=DNS:pypi.org", "-addext", "basicConstraints=critical,CA:FALSE"];
+    let (ca, ca_key, cert, cert_key) =
+        (path(PYPI_CA), path("pypi-ca-key.pem"), path("pypi-cert.pem"), path("pypi-key.pem"));
+    let ca_args = [
+        "-subj",
+        "/CN=Parity CA",
+        "-addext",
+        "basicConstraints=critical,CA:TRUE",
+        "-addext",
+        "keyUsage=critical,keyCertSign",
+    ];
+    let leaf_args = [
+        "-subj",
+        "/CN=pypi.org",
+        "-addext",
+        "subjectAltName=DNS:pypi.org",
+        "-addext",
+        "basicConstraints=critical,CA:FALSE",
+    ];
     openssl(&[&["req", "-x509"], &key[..], &["-keyout", &ca_key, "-out", &ca], &ca_args[..]].concat());
-    openssl(&[&["req", "-x509"], &key[..], &["-CA", &ca, "-CAkey", &ca_key, "-keyout", &cert_key, "-out", &cert], &leaf_args[..]].concat());
+    openssl(
+        &[
+            &["req", "-x509"],
+            &key[..],
+            &["-CA", &ca, "-CAkey", &ca_key, "-keyout", &cert_key, "-out", &cert],
+            &leaf_args[..],
+        ]
+        .concat(),
+    );
     let chain = CertificateDer::pem_file_iter(&cert)
         .unwrap_or_else(|e| panic!("reading {cert}: {e}"))
         .collect::<Result<Vec<_>, _>>()
@@ -183,7 +206,13 @@ fn openssl(args: &[&str]) {
 }
 
 /// Accept the proxy's connections until stopping, each answered on a thread of its own.
-fn proxy_accept(listener: &TcpListener, world: &Path, tls: &Arc<rustls::ServerConfig>, stopping: &AtomicBool, failed: &Arc<AtomicBool>) {
+fn proxy_accept(
+    listener: &TcpListener,
+    world: &Path,
+    tls: &Arc<rustls::ServerConfig>,
+    stopping: &AtomicBool,
+    failed: &Arc<AtomicBool>,
+) {
     let mut connections = Vec::new();
     for stream in listener.incoming() {
         if stopping.load(Ordering::SeqCst) {

@@ -9,8 +9,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
-use xtask::eval::{self, Args, Eval, Halt, Task, Tokens, Trial};
 use xtask::bundles;
+use xtask::eval::{self, Args, Eval, Halt, Task, Tokens, Trial};
 
 const RUN_ID: &str = "20261028-120000-abc123";
 const TASK_NAMES: [&str; 5] = ["bugfix", "docs", "feature", "no-dependency", "refactor"];
@@ -545,10 +545,7 @@ fn the_engine_is_eval_engine_split_as_a_shell_splits_it() {
     let engine = eval::engine_command(Some(r#"target/debug/octoflow --flag 'a b' "c \"d\"" e\ f"#), Path::new("/"));
     assert_eq!(engine, Ok(strings(&["target/debug/octoflow", "--flag", "a b", "c \"d\"", "e f"])));
     assert!(eval::engine_command(Some("x 'unclosed"), Path::new("/")).is_err());
-    assert!(
-        eval::engine_command(Some("x \\"), Path::new("/")).is_err(),
-        "a trailing backslash is refused"
-    );
+    assert!(eval::engine_command(Some("x \\"), Path::new("/")).is_err(), "a trailing backslash is refused");
 }
 
 #[test]

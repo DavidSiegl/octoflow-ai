@@ -140,7 +140,11 @@ fn a_directory_that_cannot_be_deleted_fails_its_run_and_not_the_others() {
 fn a_run_whose_state_cannot_be_read_is_skipped_and_named() {
     let cli = cli();
     add(&cli, CLOSED, Some("workspace closed"), false);
-    cli.f.host.state().files.insert(format!("{}/state.json", dir(FINISHED)), format!("{}\n", json!({"run_id": FINISHED, "format": 999})));
+    cli.f
+        .host
+        .state()
+        .files
+        .insert(format!("{}/state.json", dir(FINISHED)), format!("{}\n", json!({"run_id": FINISHED, "format": 999})));
     let (status, out) = run(&cli, &["forget", "--all"]);
     assert_eq!(status, 0);
     let lines: Vec<&str> = out.lines().collect();
@@ -188,7 +192,11 @@ fn a_live_run_is_refused_and_left() {
     let mut cli = cli();
     cli.f.pid_alive = Box::new(|pid| pid == 4242);
     add_with(&cli, RUNNING, None, false, |s| {
-        s.owner = Some(object([("host", Value::from("here")), ("pid", Value::from(4242)), ("started_at", Value::from("2026-10-01T12:02:00+00:00"))]));
+        s.owner = Some(object([
+            ("host", Value::from("here")),
+            ("pid", Value::from(4242)),
+            ("started_at", Value::from("2026-10-01T12:02:00+00:00")),
+        ]));
     });
     assert!(run(&cli, &["list"]).1.contains("running: pid 4242 on here"));
     let e = cli.error(&["forget", "--cwd", "/proj", RUNNING]);
@@ -202,7 +210,10 @@ fn on_a_machine() {
     let cli = cli();
     add(&cli, CLOSED, Some("workspace closed"), true);
     let (status, out) = run(&cli, &["forget", "--all", "--machine", "m"]);
-    assert_eq!((status, out), (0, format!("forgot run {CLOSED}: deleted {}\n1 forgotten, 0 not closed, 0 skipped\n", dir(CLOSED))));
+    assert_eq!(
+        (status, out),
+        (0, format!("forgot run {CLOSED}: deleted {}\n1 forgotten, 0 not closed, 0 skipped\n", dir(CLOSED)))
+    );
     assert!(!kept(&cli, CLOSED));
     let target = Target { machine: Some("m".into()), cwd: Some("/proj".into()) };
     assert_eq!(cli.command(&["forget", "--cwd", "/proj", CLOSED, "--machine", "m"]).target(), Some(&target));
@@ -217,6 +228,12 @@ fn a_listed_run_is_read_at_its_turn_so_one_forgotten_since_is_gone() {
     let ids = [CLOSED, CLOSED, "20261001-130000-ffffff"].map(String::from);
     let runs = cli.with(|world| forget_all(&Forgetter::of(world), "/proj", Sweep::Listed(&ids))).unwrap();
     let outcome = |id: &str, outcome| RunForgotten { run_id: id.to_string(), outcome };
-    assert_eq!(runs, [outcome(CLOSED, Outcome::Forgotten), outcome(CLOSED, Outcome::Gone), outcome(&ids[2], Outcome::Gone)]);
-    assert_eq!(cli.take_out(), format!("forgot run {CLOSED}: deleted {}\n1 forgotten, 0 not closed, 2 skipped\n", dir(CLOSED)));
+    assert_eq!(
+        runs,
+        [outcome(CLOSED, Outcome::Forgotten), outcome(CLOSED, Outcome::Gone), outcome(&ids[2], Outcome::Gone)]
+    );
+    assert_eq!(
+        cli.take_out(),
+        format!("forgot run {CLOSED}: deleted {}\n1 forgotten, 0 not closed, 2 skipped\n", dir(CLOSED))
+    );
 }

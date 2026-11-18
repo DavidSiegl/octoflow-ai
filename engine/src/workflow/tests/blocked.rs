@@ -64,13 +64,8 @@ fn blocked_prompt(path: &str, k: u32) -> String {
 
 /// The names of the blocked reports on the host, sorted.
 fn blocked_files(host: &FakeHost) -> Vec<String> {
-    let mut names: Vec<String> = host
-        .state()
-        .files
-        .keys()
-        .filter(|p| p.contains(".blocked-"))
-        .map(|p| file_name(p).to_string())
-        .collect();
+    let mut names: Vec<String> =
+        host.state().files.keys().filter(|p| p.contains(".blocked-")).map(|p| file_name(p).to_string()).collect();
     names.sort();
     names
 }
@@ -111,7 +106,9 @@ fn run_blocked(build: Vec<Turn>, review: Option<Vec<Turn>>) -> Blocked {
         let (at_review, mut approve) = (Rc::clone(&at_review), review_turn(1, APPROVE));
         let first: Turn = Box::new(move |prompt, state, host| {
             let saved = host.state().files.get(&format!("{D}/state.json")).cloned().expect("a saved state");
-            let Ok(Value::Object(saved)) = serde_json::from_str::<Value>(&saved) else { panic!("state.json is no object") };
+            let Ok(Value::Object(saved)) = serde_json::from_str::<Value>(&saved) else {
+                panic!("state.json is no object")
+            };
             at_review.borrow_mut().push(saved);
             approve(prompt, state, host)
         });
@@ -197,7 +194,10 @@ fn the_wait_is_saved() {
     let b = run_blocked(vec![blocked_report(build_path(1), QUESTION), wait], None);
     assert_eq!(b.f.workflow(RunSettings::default()).run(), verdict(APPROVE));
     let saved = &during.borrow()[0];
-    assert_eq!(saved.get("blocked").unwrap().to_string(), r#"{"file":"build-1.md","question":"which database?","k":1}"#);
+    assert_eq!(
+        saved.get("blocked").unwrap().to_string(),
+        r#"{"file":"build-1.md","question":"which database?","k":1}"#
+    );
     assert_eq!(saved.get("prompted"), Some(&Value::Null));
 }
 
@@ -328,25 +328,29 @@ fn a_step_of_a_workflow_other_than_the_default_can_block() {
     let team = find_workflow("product-team", &Default::default()).unwrap();
     let tests_md = |s: &RunState| format!("{}/tests.md", s.dir());
     let (blocks, specs) = (seen(), seen());
-    let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&team), vec![
-        (
-            "spec",
-            vec![
-                recording(spec_turn(), &specs),
-                recording(writes(|s| format!("{}/acceptance-1.md", s.dir()), "VERDICT: APPROVE", "done"), &specs),
-            ],
-        ),
-        ("design", vec![writes(|s| format!("{}/design.md", s.dir()), "the design", "done")]),
-        (
-            "tests",
-            vec![
-                recording(blocked_report(tests_md, "which test runner?"), &blocks),
-                recording(answered(tests_md, "tests written"), &blocks),
-            ],
-        ),
-        ("build", vec![build_turn(1)]),
-        ("review", vec![review_turn(1, APPROVE)]),
-    ]);
+    let f = Fixture::on(
+        Rc::new(FakeHost::default()),
+        new_run(&team),
+        vec![
+            (
+                "spec",
+                vec![
+                    recording(spec_turn(), &specs),
+                    recording(writes(|s| format!("{}/acceptance-1.md", s.dir()), "VERDICT: APPROVE", "done"), &specs),
+                ],
+            ),
+            ("design", vec![writes(|s| format!("{}/design.md", s.dir()), "the design", "done")]),
+            (
+                "tests",
+                vec![
+                    recording(blocked_report(tests_md, "which test runner?"), &blocks),
+                    recording(answered(tests_md, "tests written"), &blocks),
+                ],
+            ),
+            ("build", vec![build_turn(1)]),
+            ("review", vec![review_turn(1, APPROVE)]),
+        ],
+    );
     bounded(&f);
     let settings = RunSettings { pipeline: Some(team), ..RunSettings::default() };
     assert_eq!(f.workflow(settings).run(), verdict(APPROVE));
@@ -385,7 +389,10 @@ fn workflow_definitions_do_not_contain_the_note() {
 
 #[test]
 fn the_wait_and_the_rewrite_are_a_human_paced_turn() {
-    let b = run_blocked(vec![taking(600, blocked_report(build_path(1), QUESTION)), answered(build_path(1), "report 1")], None);
+    let b = run_blocked(
+        vec![taking(600, blocked_report(build_path(1), QUESTION)), answered(build_path(1), "report 1")],
+        None,
+    );
     let f = &b.f;
     let mut wf = f.workflow(RunSettings::default());
     assert_eq!(wf.run(), verdict(APPROVE));
@@ -413,7 +420,13 @@ fn a_state_saved_before_blocks_loads_and_resumes() {
     saved.remove("blocked");
     let state = RunState::from_saved(&saved).unwrap();
     assert_eq!(state.blocked, None);
-    let f = Fixture::resume(Rc::new(FakeHost::default()), state.clone(), vec![("review", vec![review_turn(1, APPROVE)])], &["build"], &[]);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state.clone(),
+        vec![("review", vec![review_turn(1, APPROVE)])],
+        &["build"],
+        &[],
+    );
     let host = Rc::clone(&f.host);
     let mut build = build_turn(1);
     f.clock.hook(move |_| {
@@ -457,7 +470,10 @@ fn killing_host(kill_at: KillAt) -> Rc<FakeHost> {
 }
 
 fn saving_a_block(what: &str, path: &str, text: Option<&str>) -> bool {
-    let blocked = || serde_json::from_str::<Value>(text.unwrap_or_default()).is_ok_and(|s| s.get("blocked").is_some_and(|b| !b.is_null()));
+    let blocked = || {
+        serde_json::from_str::<Value>(text.unwrap_or_default())
+            .is_ok_and(|s| s.get("blocked").is_some_and(|b| !b.is_null()))
+    };
     what == "write" && path.ends_with("state.json") && blocked()
 }
 
@@ -484,10 +500,11 @@ enum Also {
 fn kill(host: Rc<FakeHost>, also: Also) -> (RunState, Vec<String>) {
     let wait = seen();
     let waits = recording(showing("idle"), &wait);
-    let f = Fixture::on(Rc::clone(&host), new_state(), vec![
-        ("spec", vec![spec_turn()]),
-        ("build", vec![blocked_report(build_path(1), QUESTION), waits]),
-    ]);
+    let f = Fixture::on(
+        Rc::clone(&host),
+        new_state(),
+        vec![("spec", vec![spec_turn()]), ("build", vec![blocked_report(build_path(1), QUESTION), waits])],
+    );
     if also == Also::AtFocus {
         f.herdr.state().before_call = Some(Box::new(|call| {
             if *call == (Call::Focus { name: "build-a1b2c3".into() }) {
@@ -517,10 +534,13 @@ fn kill(host: Rc<FakeHost>, also: Also) -> (RunState, Vec<String>) {
 /// what it was prompted with.
 fn resume_blocked(state: RunState, host: Rc<FakeHost>, alive: &[&str], sessions: &[(&str, &str)]) -> Vec<String> {
     let seen = seen();
-    let f = Fixture::resume(Rc::clone(&host), state.clone(), vec![
-        ("build", vec![recording(idle(), &seen)]),
-        ("review", vec![review_turn(1, APPROVE)]),
-    ], alive, sessions);
+    let f = Fixture::resume(
+        Rc::clone(&host),
+        state.clone(),
+        vec![("build", vec![recording(idle(), &seen)]), ("review", vec![review_turn(1, APPROVE)])],
+        alive,
+        sessions,
+    );
     let mut build = build_turn(1);
     f.clock.hook(move |_| {
         let answer = !blocked_files(&host).is_empty() && !host.state().files.contains_key(&build_1());
@@ -536,8 +556,7 @@ fn resume_blocked(state: RunState, host: Rc<FakeHost>, alive: &[&str], sessions:
     assert!(f.told.notes.borrow().contains(&("Builder is blocked: which database?".into(), "pane w1:p2".into())));
     assert!(called(&f, &Call::Focus { name: "build-a1b2c3".into() }));
     let s = wf.state();
-    let files: Vec<String> =
-        s.turns.iter().filter(|t| t.step == "build").map(|t| t.file.clone()).collect();
+    let files: Vec<String> = s.turns.iter().filter(|t| t.step == "build").map(|t| t.file.clone()).collect();
     assert_eq!(files, ["build-1.blocked-1.md", "build-1.md"]);
     assert!(s.turns[2].human_paced);
     assert_eq!(s.blocked, None);
@@ -622,7 +641,9 @@ fn a_report_written_while_no_orchestrator_watched_ends_the_wait() {
 #[test]
 fn a_block_without_its_number_stops_the_resume() {
     let mut state = saved_run("build", 1, &["spec", "build"]);
-    let Ok(Value::Object(block)) = serde_json::from_str::<Value>(r#"{"file": "build-1.md", "question": "which database?"}"#) else {
+    let Ok(Value::Object(block)) =
+        serde_json::from_str::<Value>(r#"{"file": "build-1.md", "question": "which database?"}"#)
+    else {
         unreachable!()
     };
     state.blocked = Some(block);

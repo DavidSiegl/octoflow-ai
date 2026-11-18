@@ -1,22 +1,36 @@
 use super::*;
-use serde_json::Value;
-use crate::test_support::{helper_cases, TempDir};
 use crate::state::AgentRecord;
+use crate::test_support::{helper_cases, TempDir};
+use serde_json::Value;
 
 #[test]
 fn every_recorded_run_is_published_as_helpers_json_expects() {
     for case in helper_cases() {
         let expected = |key: &str| case.expected.get(key).and_then(Value::as_str).map(String::from);
-        let place = format!("{} {} {}", expected("recording").unwrap(), expected("run_dir").unwrap(), case.expected.get("conflicts").unwrap());
+        let place = format!(
+            "{} {} {}",
+            expected("recording").unwrap(),
+            expected("run_dir").unwrap(),
+            case.expected.get("conflicts").unwrap()
+        );
         let s = &case.state;
         assert_eq!(spec_title(&case.spec), expected("spec_title"), "{place}");
         let title = spec_title(&case.spec).unwrap_or(s.task.clone());
         assert_eq!(Some(branch_name(&title, &s.run_id)), expected("branch_name"), "{place}");
-        let trailers = Value::Array(provenance(s, &case.evidence).into_iter().map(|(k, v)| Value::Array(vec![Value::from(k), Value::from(v)])).collect());
+        let trailers = Value::Array(
+            provenance(s, &case.evidence)
+                .into_iter()
+                .map(|(k, v)| Value::Array(vec![Value::from(k), Value::from(v)]))
+                .collect(),
+        );
         assert_eq!(Some(&trailers), case.expected.get("provenance"), "{place}");
         // A run that ended without a verdict never publishes, so nothing words how it ended.
         if s.verdict.is_none() {
-            assert_eq!((expected("verdict_line"), expected("commit_note"), expected("pr_body")), (None, None, None), "{place}");
+            assert_eq!(
+                (expected("verdict_line"), expected("commit_note"), expected("pr_body")),
+                (None, None, None),
+                "{place}"
+            );
             continue;
         }
         assert_eq!(Some(verdict_line(s)), expected("verdict_line"), "{place}");
@@ -27,7 +41,11 @@ fn every_recorded_run_is_published_as_helpers_json_expects() {
             let mut clean = s.clone();
             clean.conflicts.clear();
             let without = without_conflict_warning(&body, s.base_branch.as_deref().unwrap(), &s.conflicts);
-            assert_eq!(without, pr_body(&clean, &case.spec, &case.report, &one(&case.review), &case.evidence), "{place}");
+            assert_eq!(
+                without,
+                pr_body(&clean, &case.spec, &case.report, &one(&case.review), &case.evidence),
+                "{place}"
+            );
         }
     }
 }
@@ -49,7 +67,10 @@ fn a_run_judged_by_several_verdict_steps_names_each_verdict_of_its_last_round() 
         .map(|(name, text)| (name.to_string(), text.to_string()));
     let body = pr_body(&s, "spec", "r", &reviews, &GateEvidence::default());
     assert!(body.contains("<details>\n<summary>Review (review-2.md)</summary>\n\nVERDICT: APPROVE\nfine"), "{body}");
-    assert!(body.contains("<details>\n<summary>Review (accept-2.md)</summary>\n\nVERDICT: APPROVE\naccepted"), "{body}");
+    assert!(
+        body.contains("<details>\n<summary>Review (accept-2.md)</summary>\n\nVERDICT: APPROVE\naccepted"),
+        "{body}"
+    );
     // The second requests changes in the last round: its file opens, the first's stays closed.
     s.record_verdict(2, "accept", CHANGES);
     s.verdict = Some(CHANGES.into());
@@ -109,9 +130,15 @@ fn spec_titles() {
 
 #[test]
 fn branch_names() {
-    assert_eq!(branch_name("Add a Token-Bucket limiter!", "20260929-120000-a1b2c3"), "orchestrator/add-a-token-bucket-limiter-a1b2c3");
+    assert_eq!(
+        branch_name("Add a Token-Bucket limiter!", "20260929-120000-a1b2c3"),
+        "orchestrator/add-a-token-bucket-limiter-a1b2c3"
+    );
     assert_eq!(branch_name("???", "20260929-120000-a1b2c3"), "orchestrator/a1b2c3");
-    assert_eq!(branch_name("Ünïcode İs here — and a very long title that goes past forty", "r-x"), "orchestrator/n-code-i-s-here-and-a-very-long-title-t-x");
+    assert_eq!(
+        branch_name("Ünïcode İs here — and a very long title that goes past forty", "r-x"),
+        "orchestrator/n-code-i-s-here-and-a-very-long-title-t-x"
+    );
 }
 
 #[test]
@@ -145,7 +172,11 @@ fn the_conflict_warning_is_removed_and_nothing_else() {
         (format!("Text{warning}\n\nx"), None),
     ];
     for (body, without) in cases {
-        assert_eq!(without_conflict_warning(&body, "main", &files), without.map_or(body.clone(), String::from), "{body:?}");
+        assert_eq!(
+            without_conflict_warning(&body, "main", &files),
+            without.map_or(body.clone(), String::from),
+            "{body:?}"
+        );
     }
 }
 
@@ -169,8 +200,12 @@ fn the_gate_trailer_says_how_the_last_quality_round_ended() {
     let last = |e: &GateEvidence| provenance(&s, e).last().cloned().unwrap();
     assert_eq!(last(&evidence(2, 1, "GATE: OK\n", false)), ("Octoflow-Gate".into(), "OK after 1 quality round".into()));
     assert_eq!(last(&evidence(2, 3, "garbled", false)), ("Octoflow-Gate".into(), "? after 3 quality rounds".into()));
-    assert_eq!(last(&evidence(1, 1, "GATE: ERROR\n", true)), ("Octoflow-Gate".into(), "ERROR after 1 quality round, then turned off".into()));
-    let keys: Vec<String> = provenance(&s, &GateEvidence { last: None, unjudged: true }).into_iter().map(|(k, _)| k).collect();
+    assert_eq!(
+        last(&evidence(1, 1, "GATE: ERROR\n", true)),
+        ("Octoflow-Gate".into(), "ERROR after 1 quality round, then turned off".into())
+    );
+    let keys: Vec<String> =
+        provenance(&s, &GateEvidence { last: None, unjudged: true }).into_iter().map(|(k, _)| k).collect();
     assert_eq!(keys, ["Octoflow-Run", "Octoflow-Workflow", "Octoflow-Role"]);
 }
 
@@ -179,17 +214,23 @@ fn the_notes_of_a_run_without_a_review_or_a_gate_turned_off() {
     let finished = state(|s| s.verdict = Some(FINISHED.into()));
     assert_eq!(commit_note(&finished), "Orchestrator run r: FINISHED, unreviewed.");
     let body = pr_body(&finished, "spec", "report", &one("never read"), &GateEvidence { last: None, unjudged: true });
-    assert!(body.starts_with("> [!NOTE]\n> The quality gate was turned off (`resume --no-quality-gate`) before any analysis finished"));
+    assert!(body.starts_with(
+        "> [!NOTE]\n> The quality gate was turned off (`resume --no-quality-gate`) before any analysis finished"
+    ));
     assert!(!body.contains("never read"));
     let failed = state(|s| s.verdict = Some(QUALITY_GATE_FAILED.into()));
     assert!(verdict_line(&failed).ends_with("so this is a draft."));
     let unjudged = pr_body(&finished, "spec", "report", &one(""), &evidence(2, 1, "GATE: OK\n", true));
     assert!(unjudged.contains("after its last analysis, and the Builder changed the code since"));
     assert!(unjudged.contains("<summary>Quality gate (round 2, before the last change)</summary>"));
-    let changes = state(|s| { s.verdict = Some(CHANGES.into()); s.round = 2; });
+    let changes = state(|s| {
+        s.verdict = Some(CHANGES.into());
+        s.round = 2;
+    });
     assert_eq!(verdict_line(&changes), "Reviewer verdict after 2 rounds: **CHANGES_REQUESTED**.\n\nThe Reviewer still requested changes after the last round, so this is a draft.");
     assert_eq!(commit_note(&changes), "Orchestrator run r: CHANGES_REQUESTED after 2 review round(s).");
-    assert!(pr_body(&changes, "s", "r", &one("VERDICT: CHANGES_REQUESTED"), &GateEvidence::default()).contains("<details open>\n<summary>Review (round 2)</summary>"));
+    assert!(pr_body(&changes, "s", "r", &one("VERDICT: CHANGES_REQUESTED"), &GateEvidence::default())
+        .contains("<details open>\n<summary>Review (round 2)</summary>"));
 }
 
 const CHANGES: &str = crate::constants::CHANGES_REQUESTED;

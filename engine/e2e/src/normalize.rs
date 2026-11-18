@@ -438,7 +438,8 @@ mod tests {
     #[test]
     fn runs_keys_and_shas_are_numbered_as_learnt() {
         let n = normalizer();
-        let text = n.text("run 20260101-120000-abc123 (key abc123), commit 0123456789abcdef0123456789abcdef01234567", false);
+        let text =
+            n.text("run 20260101-120000-abc123 (key abc123), commit 0123456789abcdef0123456789abcdef01234567", false);
         assert_eq!(text, "run <run:1> (key <key:1>), commit <sha:1>");
         assert_eq!(n.text("20991231-000000-ffffff", false), "<run:?>");
     }
@@ -494,7 +495,8 @@ mod tests {
 
     #[test]
     fn facts_are_the_placeholders_paths_words_and_numbers_sorted() {
-        let got = facts("run <run:1> failed: VERDICT_X in src/calc.py (see https://x.example/a), exit 3; build_path ok.");
+        let got =
+            facts("run <run:1> failed: VERDICT_X in src/calc.py (see https://x.example/a), exit 3; build_path ok.");
         assert_eq!(got, ["3", "<run:1>", "VERDICT_X", "build_path", "https://x.example/a", "src/calc.py"]);
     }
 
@@ -545,7 +547,10 @@ mod tests {
         let json_in = oracle.get("json_in").expect("oracle.json has json_in");
         let want = oracle_items(&oracle, "json");
         assert_eq!(n.json(json_in, false, None).to_string(), want[1].to_string());
-        assert_eq!(n.json(&serde_json::from_str::<Value>(r#"{"a": "5s"}"#).expect("JSON"), true, None).to_string(), want[2].to_string());
+        assert_eq!(
+            n.json(&serde_json::from_str::<Value>(r#"{"a": "5s"}"#).expect("JSON"), true, None).to_string(),
+            want[2].to_string()
+        );
     }
 
     #[test]

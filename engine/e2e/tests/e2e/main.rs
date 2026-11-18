@@ -57,7 +57,10 @@ impl Recordings {
             return;
         }
         let text = std::fs::read_to_string(path).unwrap_or_else(|e| {
-            panic!("scenario {name} has no recording at {} ({e}); make it with E2E_RECORD=1, and review what it records", path.display())
+            panic!(
+                "scenario {name} has no recording at {} ({e}); make it with E2E_RECORD=1, and review what it records",
+                path.display()
+            )
         });
         let want = serde_json::from_str::<Value>(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         if let Some(difference) = compare::first_difference(&want, got, "$") {
@@ -70,7 +73,8 @@ impl Recordings {
 /// and a newline.
 fn recording_text(json: &Value) -> String {
     let mut out = Vec::new();
-    let mut writer = serde_json::Serializer::with_formatter(&mut out, serde_json::ser::PrettyFormatter::with_indent(b" "));
+    let mut writer =
+        serde_json::Serializer::with_formatter(&mut out, serde_json::ser::PrettyFormatter::with_indent(b" "));
     // A Value serializes into a Vec without fail, as UTF-8.
     json.serialize(&mut writer).expect("JSON serializes");
     String::from_utf8(out).expect("serde_json writes UTF-8") + "\n"
@@ -78,9 +82,13 @@ fn recording_text(json: &Value) -> String {
 
 #[test]
 fn a_recording_keeps_characters_beyond_ascii_as_they_are() {
-    let record = serde_json::from_str::<Value>(r#"{"a": ["é \u2014", {}, []], "b": {"n": 1.5, "x": null}}"#).expect("JSON");
+    let record =
+        serde_json::from_str::<Value>(r#"{"a": ["é \u2014", {}, []], "b": {"n": 1.5, "x": null}}"#).expect("JSON");
     let text = recording_text(&record);
-    assert_eq!(text, "{\n \"a\": [\n  \"é \u{2014}\",\n  {},\n  []\n ],\n \"b\": {\n  \"n\": 1.5,\n  \"x\": null\n }\n}\n");
+    assert_eq!(
+        text,
+        "{\n \"a\": [\n  \"é \u{2014}\",\n  {},\n  []\n ],\n \"b\": {\n  \"n\": 1.5,\n  \"x\": null\n }\n}\n"
+    );
 }
 
 /// Recordings in a directory of the test's own, removed when dropped, writing or not.

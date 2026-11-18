@@ -23,8 +23,12 @@ fn run(text: &str) -> ProofRun {
 #[test]
 fn a_proofs_section_names_each_proof_and_the_findings_left_unproven() {
     let proofs = [
-        run(r#"{"round": 1, "written": 1, "file": "test_1_rate.py", "finding": 1, "demonstrated": true, "said": "it fails:\nE   assert 2 == 3\nlast"}"#),
-        run(r#"{"round": 1, "written": 1, "file": "check.sh", "finding": null, "demonstrated": false, "said": "it did not run: gone"}"#),
+        run(
+            r#"{"round": 1, "written": 1, "file": "test_1_rate.py", "finding": 1, "demonstrated": true, "said": "it fails:\nE   assert 2 == 3\nlast"}"#,
+        ),
+        run(
+            r#"{"round": 1, "written": 1, "file": "check.sh", "finding": null, "demonstrated": false, "said": "it did not run: gone"}"#,
+        ),
     ];
     let review = "VERDICT: CHANGES_REQUESTED\n1. rate\n2. burst\n 3. indented\n\u{0663}. arabic\n10.no blank\n";
     let section = proofs_section("sh {proofs}", "/proj", review, &proofs);
@@ -39,18 +43,26 @@ fn a_proofs_section_names_each_proof_and_the_findings_left_unproven() {
     );
     assert_eq!((proofs[0].written, proofs[1].written), (1, 1));
     assert!(!proofs[0].passed());
-    assert!(run(r#"{"round": 2, "written": 1, "file": "t", "finding": null, "demonstrated": false, "said": "it passes"}"#).passed());
+    assert!(run(
+        r#"{"round": 2, "written": 1, "file": "t", "finding": null, "demonstrated": false, "said": "it passes"}"#
+    )
+    .passed());
 }
 
 #[test]
 fn a_moved_proof_is_saved_with_moved_and_one_saved_without_it_is_not_moved() {
-    let moved = run(r#"{"round": 2, "written": 1, "file": "t", "finding": null, "demonstrated": false, "said": "it did not run", "moved": true}"#);
+    let moved = run(
+        r#"{"round": 2, "written": 1, "file": "t", "finding": null, "demonstrated": false, "said": "it did not run", "moved": true}"#,
+    );
     assert!(moved.moved);
     assert_eq!(Value::Object(moved.record()).get("moved"), Some(&Value::Bool(true)));
-    let older = run(r#"{"round": 2, "written": 1, "file": "t", "finding": null, "demonstrated": false, "said": "it errors"}"#);
+    let older =
+        run(r#"{"round": 2, "written": 1, "file": "t", "finding": null, "demonstrated": false, "said": "it errors"}"#);
     assert!(!older.moved);
     assert!(!older.record().contains_key("moved"));
-    let refused = ProofRun::read(&record(r#"{"round": 2, "written": 1, "file": "t", "finding": null, "demonstrated": false, "said": "", "moved": "yes"}"#));
+    let refused = ProofRun::read(&record(
+        r#"{"round": 2, "written": 1, "file": "t", "finding": null, "demonstrated": false, "said": "", "moved": "yes"}"#,
+    ));
     assert_eq!(refused.unwrap_err().0, "a proof run saved in state.json has moved \"yes\", not true or false");
 }
 
@@ -62,12 +74,18 @@ fn a_proof_run_is_read_and_written_as_state_json_saves_it() {
         (r#"{"written": 1}"#, "a proof run saved in state.json has no round"),
         (r#"{"round": -1}"#, "a proof run saved in state.json has round -1, not a round"),
         (r#"{"round": 2, "file": "t", "finding": 3}"#, "a proof run saved in state.json has no written"),
-        (r#"{"round": 1, "written": 1, "file": "t", "finding": "3"}"#, "a proof run saved in state.json has finding \"3\", not a number"),
+        (
+            r#"{"round": 1, "written": 1, "file": "t", "finding": "3"}"#,
+            "a proof run saved in state.json has finding \"3\", not a number",
+        ),
         (
             r#"{"round": 1, "written": 1, "file": "t", "finding": 3, "demonstrated": 1}"#,
             "a proof run saved in state.json has demonstrated 1, not true or false",
         ),
-        (r#"{"round": 1, "written": 1, "file": 2, "finding": null, "demonstrated": true}"#, "a proof run saved in state.json has file 2, not a string"),
+        (
+            r#"{"round": 1, "written": 1, "file": 2, "finding": null, "demonstrated": true}"#,
+            "a proof run saved in state.json has file 2, not a string",
+        ),
     ];
     for (text, error) in refused {
         assert_eq!(ProofRun::read(&record(text)).unwrap_err().0, error, "{text}");

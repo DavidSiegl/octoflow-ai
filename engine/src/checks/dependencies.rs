@@ -6,9 +6,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
-use indexmap::IndexMap;
 use ::toml::de::{DeTable, DeValue, ValueDeserializer};
 use ::toml::{Spanned, Table, Value};
+use indexmap::IndexMap;
 use serde::Deserialize;
 
 use super::{CheckFindings, Finding, RunChange};

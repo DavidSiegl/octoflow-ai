@@ -10,13 +10,13 @@ use std::collections::BTreeSet;
 use indexmap::IndexMap;
 
 use crate::constants::{APPROVE, CHANGES_REQUESTED};
-use crate::pipeline::{Pipeline, Step};
-use crate::prompts::Prompt;
-use crate::prompts::template;
-use serde_json::Value;
 use crate::json::Object;
+use crate::pipeline::{Pipeline, Step};
+use crate::prompts::template;
+use crate::prompts::Prompt;
 use crate::state::RunState;
 use crate::test_support::{recorded_state, recordings};
+use serde_json::Value;
 
 /// A piece of a template's text: literal text, or a placeholder whose value is not known here.
 #[derive(Clone, Debug)]
@@ -92,7 +92,14 @@ fn reports(s: &RunState, st: &Step, n: u32, files: &BTreeSet<String>) -> Vec<Str
 
 /// The value of a placeholder of step's prompts in round n, as Workflow::placeholder gives it, from the state
 /// alone; None for a name that is not a placeholder.
-fn placeholder(name: &str, s: &RunState, p: &Pipeline, step: &Step, n: u32, files: &BTreeSet<String>) -> Option<String> {
+fn placeholder(
+    name: &str,
+    s: &RunState,
+    p: &Pipeline,
+    step: &Step,
+    n: u32,
+    files: &BTreeSet<String>,
+) -> Option<String> {
     let dir = s.dir();
     let q = if step.quality_gated { s.quality_round } else { 0 };
     let own = step.path(&dir, n, q);

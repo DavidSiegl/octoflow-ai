@@ -41,7 +41,8 @@ fn a_host_over_ssh_says_where() {
     assert_eq!(host.over_ssh("me@box").ssh_target(), Some("me@box"));
     // An empty target is this machine.
     assert_eq!(host.over_ssh("").ssh_target(), None);
-    let secret = ProcessHost::in_environment([("GH_TOKEN".into(), "token-value".into())].into_iter(), &Interrupt::new());
+    let secret =
+        ProcessHost::in_environment([("GH_TOKEN".into(), "token-value".into())].into_iter(), &Interrupt::new());
     let shown = format!("{:?}", secret.over_ssh("box"));
     assert!(shown.contains("box") && !shown.contains("token-value"), "{shown}");
     let vars = [("A".into(), "1".into()), ("A".into(), "2".into())];

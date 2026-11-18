@@ -182,7 +182,8 @@ fn a_pin_is_its_first_line_not_a_comment() {
 #[test]
 fn the_gate_judges_a_checkout_of_the_snapshot_by_the_bases_settings_and_both_reports_are_read() {
     let mut bench = Bench::pinned();
-    let base = bench.repo.commit(&[("gate.toml", "[gate]\nstrict = true\n"), ("pyproject.toml", "[tool.x]\n")], "settings");
+    let base =
+        bench.repo.commit(&[("gate.toml", "[gate]\nstrict = true\n"), ("pyproject.toml", "[tool.x]\n")], "settings");
     bench.repo.base = Some(base.clone());
     // The change loosens the gate's settings in its working tree, which is not what judges it, and adds a file it
     // has not told git about, which is judged.
@@ -267,7 +268,8 @@ fn an_exit_status_2_that_is_not_the_gates_own_is_an_error() {
 fn a_release_from_before_the_gate_was_one_program_is_refused_before_any_download() {
     let bench = Bench::new(&[("ci/gate.pin", &format!("0.6.0 {}\n", "0".repeat(64)))]);
     let e = bench.start().unwrap_err().to_string();
-    let want = "the run's base's ci/gate.pin: octoflow-gate 0.6.0 ships no gate, which the local gate runs from 0.7.0 on";
+    let want =
+        "the run's base's ci/gate.pin: octoflow-gate 0.6.0 ships no gate, which the local gate runs from 0.7.0 on";
     assert_eq!(e, want);
     assert!(bench.downloads().is_empty());
     assert!(!std::path::Path::new(&bench.job(1)).exists());
@@ -387,7 +389,8 @@ fn a_gate_whose_jobs_leader_has_died_is_still_stopped() {
     put(&bench.dir.join("hang"), "");
     let judging = bench.start().unwrap();
     bench.until_the_gate_runs();
-    let leader = |args: &[&str]| std::process::Command::new(args[0]).args(&args[1..]).status().expect(args[0]).success();
+    let leader =
+        |args: &[&str]| std::process::Command::new(args[0]).args(&args[1..]).status().expect(args[0]).success();
     assert!(leader(&["kill", "-KILL", &judging.group]));
     for _ in 0..100 {
         if !leader(&["sh", "-c", "ps -p \"$1\" >/dev/null", "_", &judging.group]) {
@@ -689,7 +692,8 @@ fn set_up_keeps_a_directory_made_after_it_looked_and_leaves_nothing_in_it() {
     let host = ProcessHost::in_environment(environment(Some(&bin.path()), &[]).into_iter(), &Interrupt::new());
     let files = set_up(&host, &repo.path, None).unwrap();
     assert_eq!(files, [SetUpFile { path: "gate.toml", written: false }]);
-    let left: Vec<_> = std::fs::read_dir(format!("{}/gate.toml", repo.path)).unwrap().map(|e| e.unwrap().file_name()).collect();
+    let left: Vec<_> =
+        std::fs::read_dir(format!("{}/gate.toml", repo.path)).unwrap().map(|e| e.unwrap().file_name()).collect();
     assert!(left.is_empty(), "{left:?}");
 }
 
@@ -758,7 +762,11 @@ fn starter_settings_guess_the_tests_from_the_projects_kind() {
     assert_guessed(&["pytest.ini"], None, &[pytest]);
     let uv_pytest = ("pytest", "uv run pytest --junitxml=junit.xml", Some("junit.xml"));
     assert_guessed(&["uv.lock"], Some("[project]\n\n[tool.pytest.ini_options]\n"), &[uv_pytest]);
-    assert_guessed(&["go.mod", "package.json"], None, &[("npm-test", "npm test", None), ("go-test", "go test ./...", None)]);
+    assert_guessed(
+        &["go.mod", "package.json"],
+        None,
+        &[("npm-test", "npm test", None), ("go-test", "go test ./...", None)],
+    );
     assert_guessed(&["Cargo.toml", "conftest.py"], None, &[cargo, pytest]);
 }
 

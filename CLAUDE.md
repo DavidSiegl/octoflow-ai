@@ -1,4 +1,4 @@
-# Releases
+## Releases
 
 A merge into `main` releases the version in `engine/Cargo.toml`'s `[package]` table (`ci/release-version.sh` prints
 it) as GitHub release `v<version>`, if that release doesn't exist yet (Jenkinsfile, Release stage). A change reaches
@@ -15,5 +15,11 @@ users only if it raises the version.
   `cargo update --workspace`: Jenkins's `--locked` cargo steps fail a build whose `Cargo.lock` is stale.
   `pyproject.toml` has no version: it holds only the quality gate's toolchain.
 - Don't create tags or releases by hand; Jenkins does that after the merge.
+
+## Formatting
+
+Format Rust with `cargo fmt --all` (its settings: `rustfmt.toml`) after each change, rather than wrapping it by hand:
+`ci/rustfmt.sh`, a `[[test]]` of `gate.toml` and a step of Jenkins's Test stage, fails a change it would reformat.
+Run `git config blame.ignoreRevsFile .git-blame-ignore-revs` once per clone so `git blame` skips the reformat.
 
 @docs/agents/README.md

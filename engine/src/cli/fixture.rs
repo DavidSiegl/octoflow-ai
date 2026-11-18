@@ -15,10 +15,10 @@ use crate::herdr::fake::Turn;
 use crate::herdr::HerdrError;
 use crate::host::fake::FakeHost;
 use crate::host::ProcessHost;
-use serde_json::Value;
 use crate::json::ValueExt;
 use crate::state::RunState;
 use crate::workflow::fixture::{new_state, Fixture};
+use serde_json::Value;
 
 /// A command line's world: the fakes of `f`, this machine named "here", and what the commands print.
 pub(super) struct Cli {
@@ -50,12 +50,7 @@ impl Cli {
 
     /// A world on f's fakes.
     pub fn of(f: Fixture) -> Cli {
-        Cli {
-            f,
-            out: RefCell::new(String::new()),
-            err: RefCell::new(String::new()),
-            config: ConfigDir::at("/nowhere"),
-        }
+        Cli { f, out: RefCell::new(String::new()), err: RefCell::new(String::new()), config: ConfigDir::at("/nowhere") }
     }
 
     /// Run f with the world: run_command's, on f's fakes, its runs driven by run_workflow.
@@ -165,7 +160,8 @@ impl Cli {
         let ended = self.ended(&argv);
         self.f.herdr.state().prompt_with = None;
         let new = states(&self.f.host).into_iter().find(|p| !before.contains(p));
-        let saved = new.map(|p| serde_json::from_str::<Value>(&self.f.host.state().files.get(&p).cloned().unwrap_or_default()));
+        let saved =
+            new.map(|p| serde_json::from_str::<Value>(&self.f.host.state().files.get(&p).cloned().unwrap_or_default()));
         (ended, saved.map(|s| s.expect("state.json is JSON")))
     }
 

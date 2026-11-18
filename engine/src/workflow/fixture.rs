@@ -7,19 +7,19 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use super::{Clocks, Collaborators, Human, RunSettings, Workflow};
+use crate::constants::DEFAULT_HARNESS;
 use crate::herdr::fake::{FakeHerdr, Turn};
-use crate::http::Http;
-use crate::pypi::fake::FakePyPI;
-use crate::package_index::PackageIndexes;
 use crate::host::fake::{FakeClock, FakeHost};
 use crate::host::{Exec, Host, ProcessHost};
+use crate::http::Http;
 use crate::interrupt::Interrupt;
-use serde_json::Value;
+use crate::json::object;
 use crate::json::Object;
+use crate::package_index::PackageIndexes;
+use crate::pypi::fake::FakePyPI;
 use crate::runs::pid_alive;
 use crate::state::{AgentRecord, RunState, TurnRecord};
-use crate::constants::DEFAULT_HARNESS;
-use crate::json::object;
+use serde_json::Value;
 
 /// The id of the run every test starts unless it says otherwise.
 pub(crate) const RUN_ID: &str = "20260929-120000-a1b2c3";
@@ -338,14 +338,19 @@ pub(crate) fn continue_prompt(path: &str) -> String {
 /// A Claude Code session log: for each (host clock reading, input, output) an answer of the model, written as
 /// Claude Code writes it, one line per content block, each with the whole answer's usage.
 pub(crate) fn claude_log(answers: &[(i64, i64, i64)]) -> String {
-    let mut lines = vec![format!(r#"{{"type": "user", "timestamp": "{}", "message": {{"role": "user"}}}}"#, at(0).replace("+00:00", "Z"))];
+    let mut lines = vec![format!(
+        r#"{{"type": "user", "timestamp": "{}", "message": {{"role": "user"}}}}"#,
+        at(0).replace("+00:00", "Z")
+    )];
     for (k, (seconds, tokens_in, tokens_out)) in answers.iter().enumerate() {
         let usage = format!(
             r#"{{"input_tokens": {tokens_in}, "output_tokens": {tokens_out}, "cache_read_input_tokens": 7, "cache_creation_input_tokens": 1}}"#
         );
         let time = at(*seconds).replace("+00:00", ".250Z");
         for _ in 0..2 {
-            lines.push(format!(r#"{{"type": "assistant", "timestamp": "{time}", "message": {{"id": "msg_{k}", "usage": {usage}}}}}"#));
+            lines.push(format!(
+                r#"{{"type": "assistant", "timestamp": "{time}", "message": {{"id": "msg_{k}", "usage": {usage}}}}}"#
+            ));
         }
     }
     lines.join("\n") + "\n"
@@ -393,21 +398,19 @@ pub(crate) fn record(step: &str, file: &str, start: Option<i64>, end: Option<i64
         (Some(start), Some(end)) => Value::from(end - start),
         _ => Value::Null,
     };
-    Record(
-        object([
-            ("step", Value::from(step)),
-            ("role", Value::from(step)),
-            ("round", Value::from(1)),
-            ("quality_round", Value::from(0)),
-            ("file", Value::from(file)),
-            ("agent", Value::from("claude")),
-            ("model", Value::Null),
-            ("human_paced", Value::Bool(false)),
-            ("started_at", time(start)),
-            ("ended_at", time(end)),
-            ("seconds", seconds),
-        ]),
-    )
+    Record(object([
+        ("step", Value::from(step)),
+        ("role", Value::from(step)),
+        ("round", Value::from(1)),
+        ("quality_round", Value::from(0)),
+        ("file", Value::from(file)),
+        ("agent", Value::from("claude")),
+        ("model", Value::Null),
+        ("human_paced", Value::Bool(false)),
+        ("started_at", time(start)),
+        ("ended_at", time(end)),
+        ("seconds", seconds),
+    ]))
 }
 
 impl Record {
@@ -440,7 +443,8 @@ impl PartialEq<TurnRecord> for Record {
 
 /// What every prompt of a step that can block ends with.
 pub(crate) fn note() -> String {
-    let text = crate::prompts::template::fill(crate::prompts::BLOCKED_NOTE, &|_| None).expect("the built-in note fills in");
+    let text =
+        crate::prompts::template::fill(crate::prompts::BLOCKED_NOTE, &|_| None).expect("the built-in note fills in");
     format!("\n\n{text}")
 }
 
@@ -485,9 +489,8 @@ impl Outcome {
     pub fn gate(gate: &str, findings: &[&str]) -> Outcome {
         let numbered: Vec<String> = findings.iter().enumerate().map(|(k, f)| format!("{}. {f}", k + 1)).collect();
         let numbered = if numbered.is_empty() { "None.".to_string() } else { numbered.join("\n") };
-        let quality = format!(
-            "GATE: {gate}\n\n`gate` judged the working tree.\n\n## Issues on changed lines\n\n{numbered}\n"
-        );
+        let quality =
+            format!("GATE: {gate}\n\n`gate` judged the working tree.\n\n## Issues on changed lines\n\n{numbered}\n");
         Outcome { quality_json: report_json(&quality), quality, exit: i32::from(gate != "OK"), polls: 2 }
     }
 }
@@ -687,7 +690,12 @@ fn plays(
 
 impl Fixture {
     /// A resume of state with the gate on, and round 1's build report written.
-    pub fn resume_gated(host: Rc<FakeHost>, state: RunState, script: Vec<(&str, Vec<Turn>)>, alive: &[&str]) -> Fixture {
+    pub fn resume_gated(
+        host: Rc<FakeHost>,
+        state: RunState,
+        script: Vec<(&str, Vec<Turn>)>,
+        alive: &[&str],
+    ) -> Fixture {
         host.state().files.insert(state.build_path(1), "report 1".to_string());
         Fixture::resume(host, state, script, alive, &[]).gated()
     }

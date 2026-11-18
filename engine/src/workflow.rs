@@ -15,27 +15,27 @@ use crate::constants::{
     APPROVE, CHANGES_REQUESTED, DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
     FINISHED, HEARTBEAT_SECONDS, PROJECT_DIR, QUALITY_GATE_FAILED, REMOTE, SUCCEEDED,
 };
-use crate::local_gate::{self, LOCAL_GATE};
 use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
 use crate::harness::{harness, AgentSettings};
 use crate::herdr::{Herdr, HerdrError};
 use crate::host::{git_status, Host, PushError, Scanned};
 use crate::interrupt::Interrupt;
+use crate::json::{object, Object, ValueExt};
+use crate::local_gate::{self, LOCAL_GATE};
+use crate::package_index::PackageIndexes;
 use crate::paths::file_name;
 use crate::pipeline::{Pipeline, Step, DONE, METRICS_FILE, PUBLISH, QUALITY, SUMMARY_FILE};
 use crate::prompts::Prompts;
 use crate::proofs::PROOF_TIMEOUT;
 use crate::pull_request::{branch_name, commit_note, pr_body, provenance, spec_title, GateEvidence, QualityFile};
-use crate::package_index::PackageIndexes;
-use serde_json::Value;
-use crate::json::{object, Object, ValueExt};
 use crate::quality::parse_gate;
 use crate::runs::{local_host, RUNNING};
 use crate::spec_file::SpecFile;
 use crate::state::{AgentStart, RunState};
 use crate::summary::{iso_utc, run_metrics, run_summary, turn_tokens};
 use crate::workflow_file::{is_built_in, run_pipeline, workflow_definition};
+use serde_json::Value;
 use step_prompt::RunView;
 
 mod gate_switch;
@@ -238,7 +238,11 @@ impl<'a> Workflow<'a> {
     /// Errors: the state's prompt overrides or saved workflow cannot be read, the run has the quality gate
     /// (settings.quality_gate_on) and its workflow no quality-gated step, or the run is to end in a pull request and its workflow
     /// has no editing step.
-    pub fn new(with: Collaborators<'a>, mut state: RunState, settings: RunSettings) -> Result<Workflow<'a>, OrchestratorError> {
+    pub fn new(
+        with: Collaborators<'a>,
+        mut state: RunState,
+        settings: RunSettings,
+    ) -> Result<Workflow<'a>, OrchestratorError> {
         let prompts = state.prompts()?;
         let pipeline = match settings.pipeline {
             Some(p) => p,
@@ -268,7 +272,9 @@ impl<'a> Workflow<'a> {
         state.next_harnesses = pipeline
             .roles()
             .keys()
-            .map(|role| (role.clone(), agents.harnesses.get(role).cloned().unwrap_or_else(|| DEFAULT_HARNESS.to_string())))
+            .map(|role| {
+                (role.clone(), agents.harnesses.get(role).cloned().unwrap_or_else(|| DEFAULT_HARNESS.to_string()))
+            })
             .collect();
         state.pull_request = settings.pull_request;
         state.quality_job = settings.quality_gate_on.then(|| LOCAL_GATE.to_string());
@@ -412,7 +418,8 @@ impl<'a> Workflow<'a> {
         if let (Some(worktree), false) = (&s.worktree, s.pull_request) {
             self.human.log(&format!("the change is in worktree {worktree}"));
         }
-        let title = s.verdict.as_ref().map_or("Run finished without a verdict".to_string(), |v| format!("Run finished: {v}"));
+        let title =
+            s.verdict.as_ref().map_or("Run finished without a verdict".to_string(), |v| format!("Run finished: {v}"));
         let body = s.pr_url.as_deref().filter(|url| !url.is_empty()).unwrap_or(&s.task);
         self.human.notify(&title, body);
         self.check_interrupt()?;
@@ -843,9 +850,10 @@ impl<'a> Workflow<'a> {
     /// The step of the current phase. Errors: the workflow has none, which check_phase rules out.
     fn current_step(&self) -> Result<Step, OrchestratorError> {
         let phase = &self.state.phase;
-        self.pipeline.step(phase).cloned().ok_or_else(|| {
-            OrchestratorError(format!("workflow {} has no step {phase}", self.pipeline.name()))
-        })
+        self.pipeline
+            .step(phase)
+            .cloned()
+            .ok_or_else(|| OrchestratorError(format!("workflow {} has no step {phase}", self.pipeline.name())))
     }
 
     /// Take the turn of the current step and of each one after it, looping back as the verdict says.
@@ -1201,7 +1209,9 @@ impl<'a> Workflow<'a> {
                 Ok(Value::Object(saved)) => saved.get("owner").cloned().unwrap_or(Value::Null),
                 Ok(other) => {
                     let kind = other.kind();
-                    return Err(Stopped::Failed(OrchestratorError(format!("corrupt {path}: {kind} where an object belongs"))));
+                    return Err(Stopped::Failed(OrchestratorError(format!(
+                        "corrupt {path}: {kind} where an object belongs"
+                    ))));
                 }
                 Err(e) => return Err(Stopped::Failed(OrchestratorError(format!("corrupt {path}: {e}")))),
             };

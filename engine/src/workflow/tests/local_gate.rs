@@ -33,10 +33,13 @@ fn the_local_gate_fails_then_passes_with_nothing_pushed() {
 
     let state = &f.state;
     let quality = f.quality_file(1, 1);
-    assert!(quality.starts_with(&format!(
-        "GATE: ERROR\n\n{}, run locally, judged snapshot `snap1` (round 1, quality round 1 of 3).\n",
-        built_in_gate()
-    )), "{quality}");
+    assert!(
+        quality.starts_with(&format!(
+            "GATE: ERROR\n\n{}, run locally, judged snapshot `snap1` (round 1, quality round 1 of 3).\n",
+            built_in_gate()
+        )),
+        "{quality}"
+    );
     assert!(quality.contains("1. `limiter.py:3` error ruff F401: `os` imported but unused\n"));
     assert_eq!(*builds.borrow(), [quality_fix(state, 1, 1) + &note()]);
     assert!(reviews.borrow()[0].contains(&quality_note(QUALITY_PASSED_NOTE, &state.quality_path(1, 2))));
@@ -44,16 +47,24 @@ fn the_local_gate_fails_then_passes_with_nothing_pushed() {
     // Each round judges a checkout of its snapshot, gone once judged, its files in a directory of its own.
     let calls = f.gate.borrow();
     assert_eq!(calls.jobs.len(), 2);
-    let (job, (version, sha256)) = (format!("{}/job-1", state.gate_dir(1, 2)), local_gate::parse_pin(local_gate::BUILT_IN_PIN).unwrap());
-    let url = format!("https://github.com/DavidSiegl/octoflow-gate/releases/download/v{version}/octoflow-gate-{version}.tar.gz");
+    let (job, (version, sha256)) =
+        (format!("{}/job-1", state.gate_dir(1, 2)), local_gate::parse_pin(local_gate::BUILT_IN_PIN).unwrap());
+    let url = format!(
+        "https://github.com/DavidSiegl/octoflow-gate/releases/download/v{version}/octoflow-gate-{version}.tar.gz"
+    );
     assert_eq!(calls.jobs[1], strings(&[&job, &version, &sha256, &url, "abc123"]));
     let tree = format!("{job}/tree");
     let host = f.host.state();
-    assert!(host.git_calls.contains(&strings(&["worktree", "add", "--detach", &tree, "snap2"])), "{:?}", host.git_calls);
+    assert!(
+        host.git_calls.contains(&strings(&["worktree", "add", "--detach", &tree, "snap2"])),
+        "{:?}",
+        host.git_calls
+    );
     assert!(!host.worktrees.contains_key(tree.as_str()));
     assert_eq!(host.files.get(&format!("{job}/judge/gate.toml")).map(String::as_str), Some(""));
     // gitleaks scanned each snapshot's change alone, as it goes nowhere; the publish at the end scans as a push does.
-    let scanned: Vec<_> = host.scans.iter().filter(|scan| scan.commit.starts_with("snap")).map(|scan| scan.scanned).collect();
+    let scanned: Vec<_> =
+        host.scans.iter().filter(|scan| scan.commit.starts_with("snap")).map(|scan| scan.scanned).collect();
     assert_eq!(scanned, [Scanned::SinceBase, Scanned::SinceBase], "{:?}", host.scans);
     assert_eq!(calls.stops, 0);
     drop(host);
@@ -79,7 +90,8 @@ fn a_gate_that_cannot_judge_goes_back_to_the_builder_with_what_it_said() {
 
     let quality = f.quality_file(1, 1);
     assert!(quality.starts_with("GATE: BUILD_FAILED\n"), "{quality}");
-    assert!(quality.contains("octoflow-gate, run locally, could not judge snapshot `snap1` (round 1, quality round 1 of 3)"));
+    assert!(quality
+        .contains("octoflow-gate, run locally, could not judge snapshot `snap1` (round 1, quality round 1 of 3)"));
     assert!(quality.contains("gate.toml: unknown key \"x\""), "{quality}");
     assert!(builds.borrow()[0].contains(&f.state.quality_path(1, 1)));
     assert!(f.quality_file(1, 2).starts_with("GATE: OK"));
@@ -101,10 +113,16 @@ fn a_secret_in_the_snapshot_is_not_judged() {
         new_state(),
         vec![
             ("spec", vec![spec_turn()]),
-            ("build", vec![build_turn(1), Box::new(|prompt, state, host| {
-                host.state().leaks.clear();
-                fix_turn(1, 1)(prompt, state, host)
-            })]),
+            (
+                "build",
+                vec![
+                    build_turn(1),
+                    Box::new(|prompt, state, host| {
+                        host.state().leaks.clear();
+                        fix_turn(1, 1)(prompt, state, host)
+                    }),
+                ],
+            ),
             ("review", vec![review_turn(1, APPROVE)]),
         ],
     )
@@ -130,7 +148,9 @@ fn a_resume_in_a_round_without_its_quality_file_runs_the_gate_again() {
     assert_eq!(f.workflow(f.as_saved_gated()).run(), verdict(APPROVE));
 
     assert_eq!(f.gate.borrow().jobs.len(), 1);
-    assert!(f.quality_file(1, 1).starts_with(&format!("GATE: OK\n\n{}, run locally, judged snapshot `snap1`", built_in_gate())));
+    assert!(f
+        .quality_file(1, 1)
+        .starts_with(&format!("GATE: OK\n\n{}, run locally, judged snapshot `snap1`", built_in_gate())));
 }
 
 #[test]
@@ -143,16 +163,16 @@ fn on_a_machine_that_fails_the_preflight_the_run_fails_before_the_interview() {
 
     let e = failure(f.workflow(RunSettings::default()).run());
 
-    assert!(e.contains("the local quality gate fetches octoflow-gate and runs it on the project's machine: curl is not"), "{e}");
+    assert!(
+        e.contains("the local quality gate fetches octoflow-gate and runs it on the project's machine: curl is not"),
+        "{e}"
+    );
     assert!(f.herdr.state().calls.is_empty());
 }
 
 #[test]
 fn a_gate_still_running_when_the_rounds_deadline_passes_is_stopped() {
-    let f = gated_locally(
-        vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)])],
-        vec![GateRun::Hangs],
-    );
+    let f = gated_locally(vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)])], vec![GateRun::Hangs]);
 
     let e = failure(f.workflow(RunSettings::default()).run());
 
@@ -163,10 +183,7 @@ fn a_gate_still_running_when_the_rounds_deadline_passes_is_stopped() {
 
 #[test]
 fn a_ctrl_c_while_the_gate_runs_stops_it() {
-    let f = gated_locally(
-        vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)])],
-        vec![GateRun::Hangs],
-    );
+    let f = gated_locally(vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)])], vec![GateRun::Hangs]);
     let interrupt = f.interrupt.clone();
     let mut played = f.host.state().run_command.take().expect("the gate is played");
     f.host.state().run_command = Some(Box::new(move |host, argv| {

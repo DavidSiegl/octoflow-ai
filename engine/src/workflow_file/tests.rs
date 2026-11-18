@@ -131,7 +131,11 @@ fn every_workflow_parses_to_the_definition_workflows_json_records() {
                 assert_eq!(workflow_definition(&p), definition, "{from}");
                 assert_eq!(workflow_toml(&p), field("toml"), "{from}");
                 assert_eq!(workflow_shape(&p), field("shape"), "{from}");
-                assert_eq!(Some(is_built_in(&p, &built_in())), outcome.get("built_in").and_then(Value::as_bool), "{from}");
+                assert_eq!(
+                    Some(is_built_in(&p, &built_in())),
+                    outcome.get("built_in").and_then(Value::as_bool),
+                    "{from}"
+                );
                 // The definition as state.json saves it gives the workflow back too.
                 let saved = serde_json::from_str::<Value>(field("definition")).unwrap();
                 assert_eq!(run_pipeline(name, Some(&saved), &built_in()).unwrap(), p, "{from}");
@@ -150,7 +154,13 @@ fn the_built_in_files_load() {
     assert_eq!(workflow_shape(&team), shape);
     assert_eq!(
         team.roles(),
-        &roles(&[("spec", "Product Manager"), ("design", "Architect"), ("tests", "QA Engineer"), ("build", "Engineer"), ("review", "Tech Lead")])
+        &roles(&[
+            ("spec", "Product Manager"),
+            ("design", "Architect"),
+            ("tests", "QA Engineer"),
+            ("build", "Engineer"),
+            ("review", "Tech Lead")
+        ])
     );
     assert_eq!(team.models(), &roles(&[("tests", "sonnet")]));
     let [spec, design, tests, build, review, accept] = team.steps() else { panic!("six steps") };
@@ -183,7 +193,8 @@ fn the_built_in_files_load() {
     assert!(tests.prompt.contains("{design_path}"));
     // The Product Manager who ran the interview accepts after the Tech Lead, sending the change back to the Engineer
     // too, and judges it against the requirements alone.
-    let fields = (accept.role.as_str(), accept.file.as_str(), accept.loop_to.as_deref(), accept.edits, accept.human_paced);
+    let fields =
+        (accept.role.as_str(), accept.file.as_str(), accept.loop_to.as_deref(), accept.edits, accept.human_paced);
     assert_eq!(fields, ("spec", "acceptance-{n}.md", Some("build"), false, false));
     for text in [Some(&accept.prompt), accept.again.as_ref(), accept.fresh_note.as_ref()] {
         assert!(text.unwrap().contains("{spec_path}"));
@@ -204,7 +215,11 @@ fn default_round_trips_through_its_file() {
 fn the_change_budget_is_the_workflows() {
     let config = Config::new();
     let step = "id = \"build\"\nfile = \"b-{n}.md\"\nprompt = \"{path}\"\nedits = true\n";
-    let p = load_workflow_file(&config.file("small", &format!("max_files = 1\nmax_lines = 100\n[[steps]]\n{step}")), &built_in()).unwrap();
+    let p = load_workflow_file(
+        &config.file("small", &format!("max_files = 1\nmax_lines = 100\n[[steps]]\n{step}")),
+        &built_in(),
+    )
+    .unwrap();
     assert_eq!((p.max_files(), p.max_lines()), (1, 100));
     assert_eq!(parse_workflow("small", &toml(&workflow_toml(&p)), &built_in()).unwrap(), p);
     assert_eq!(workflow_definition(&p).get("max_lines"), Some(&Value::from(100)));
@@ -225,11 +240,24 @@ fn the_change_budget_is_the_workflows() {
 #[test]
 fn any_text_round_trips() {
     let odd = [
-        "ends in a quote '", "has ''' inside\nand a newline", "tab\there", "del\x7f", "ünïcode 🦀\n",
-        "\nstarts with a newline", "back\\slash \"quoted\"\n",
+        "ends in a quote '",
+        "has ''' inside\nand a newline",
+        "tab\there",
+        "del\x7f",
+        "ünïcode 🦀\n",
+        "\nstarts with a newline",
+        "back\\slash \"quoted\"\n",
     ];
-    let steps = odd.iter().enumerate().map(|(i, text)| Step::new(&format!("s{i}"), "b", &format!("s{i}.md"), &format!("{text} {{path}}"))).collect();
-    let settings = PipelineSettings { models: roles(&[("b", "m")]), description: "with ''' and '".into(), ..PipelineSettings::default() };
+    let steps = odd
+        .iter()
+        .enumerate()
+        .map(|(i, text)| Step::new(&format!("s{i}"), "b", &format!("s{i}.md"), &format!("{text} {{path}}")))
+        .collect();
+    let settings = PipelineSettings {
+        models: roles(&[("b", "m")]),
+        description: "with ''' and '".into(),
+        ..PipelineSettings::default()
+    };
     let p = Pipeline::with("odd", roles(&[("b", "Bob's \"pane\"")]), steps, settings).unwrap();
     assert_eq!(parse_workflow("odd", &toml(&workflow_toml(&p)), &built_in()).unwrap(), p);
 }
@@ -237,7 +265,10 @@ fn any_text_round_trips() {
 #[test]
 fn roles_default_from_the_steps() {
     let config = Config::new();
-    let p = load_workflow_file(&config.file("mine", r#"
+    let p = load_workflow_file(
+        &config.file(
+            "mine",
+            r#"
         [[steps]]
         id = "test_writer"
         file = "tests.md"
@@ -250,7 +281,11 @@ fn roles_default_from_the_steps() {
         again = "Fix them; report to {build_path}."
         fresh_note = "Earlier: {earlier_build_paths}."
         quality_gated = false
-    "#), &built_in()).unwrap();
+    "#,
+        ),
+        &built_in(),
+    )
+    .unwrap();
     assert_eq!(p.roles(), &roles(&[("test_writer", "Test Writer"), ("build", "Builder")]));
     assert_eq!(p.steps()[0].role, "test_writer");
     let st = &p.steps()[1];
@@ -262,7 +297,10 @@ fn roles_default_from_the_steps() {
 #[test]
 fn panes_follow_the_steps_not_the_roles_table() {
     let config = Config::new();
-    let p = load_workflow_file(&config.file("mine", r#"
+    let p = load_workflow_file(
+        &config.file(
+            "mine",
+            r#"
         roles.review = { model = "opus" }
         roles.build = "Implementer"
         [[steps]]
@@ -271,7 +309,11 @@ fn panes_follow_the_steps_not_the_roles_table() {
         use = "build"
         [[steps]]
         use = "review"
-    "#), &built_in()).unwrap();
+    "#,
+        ),
+        &built_in(),
+    )
+    .unwrap();
     assert_eq!(p.roles(), &roles(&[("spec", "Spec Collector"), ("build", "Implementer"), ("review", "Reviewer")]));
     assert_eq!(p.roles().keys().collect::<Vec<_>>(), ["spec", "build", "review"]);
     assert_eq!(p.models(), &roles(&[("review", "opus")]));
@@ -321,13 +363,25 @@ fn invalid_files_name_the_problem() {
     .into_iter()
     .map(|(m, t)| (m.to_string(), t))
     .collect();
-    for (name, why) in [("b-{n!s}.md", "{n!s} at line 1, column 3 has a conversion"), ("b-{n:d}.md", "{n:d} at line 1, column 3 has a format spec")] {
+    for (name, why) in [
+        ("b-{n!s}.md", "{n!s} at line 1, column 3 has a conversion"),
+        ("b-{n:d}.md", "{n:d} at line 1, column 3 has a format spec"),
+    ] {
         cases.push((
             format!("step 1 (build): file: placeholder {why}; a placeholder takes none"),
             format!("[[steps]]\n{}", step.replace("b-{n}.md", name)),
         ));
     }
-    for name in ["state.json", "summary.md", "metrics.json", "quality-{n}-1.md", "proofs-{n}", "../b-{n}.md", "/tmp/b-{n}.md", ".."] {
+    for name in [
+        "state.json",
+        "summary.md",
+        "metrics.json",
+        "quality-{n}-1.md",
+        "proofs-{n}",
+        "../b-{n}.md",
+        "/tmp/b-{n}.md",
+        "..",
+    ] {
         cases.push((
             format!(
                 "step build: handoff file {name} must be a plain file name, and not state.json, summary.md, \
@@ -349,7 +403,10 @@ fn a_table_with_two_problems_names_the_first_in_the_file() {
     let step = "id = \"build\"\nfile = \"b-{n}.md\"\nprompt = \"{path}\"\nedits = true\n";
     for (message, text) in [
         ("step 1 (build): unknown key zzz; it takes again,", format!("[[steps]]\n{step}zzz = 1\naaa = 2\n")),
-        ("role zz: give a label, or a table with label, model and agent", format!("[roles]\nzz = 3\naa = 4\n[[steps]]\n{step}")),
+        (
+            "role zz: give a label, or a table with label, model and agent",
+            format!("[roles]\nzz = 3\naa = 4\n[[steps]]\n{step}"),
+        ),
     ] {
         let path = config.file("bad", &text);
         let e = load_workflow_file(&path, &built_in()).unwrap_err();
@@ -365,7 +422,8 @@ fn a_saved_definition_with_an_unreadable_template_or_corrupt_is_refused() {
     first.insert("prompt".into(), Value::from("{task:d}"));
     let e = run_pipeline("quick", Some(&Value::Object(definition)), &built_in()).unwrap_err();
     assert!(e.0.starts_with("the definition of workflow quick saved with the run is invalid: step 1 (build): prompt: placeholder {task:d} at line 1, column 1 has a format spec"), "{e}");
-    let e = run_pipeline("quick", Some(&serde_json::from_str::<Value>(r#"{"steps": []}"#).unwrap()), &built_in()).unwrap_err();
+    let e = run_pipeline("quick", Some(&serde_json::from_str::<Value>(r#"{"steps": []}"#).unwrap()), &built_in())
+        .unwrap_err();
     assert_eq!(e.0, "the definition of workflow quick saved with the run is invalid: it has no [[steps]]");
     assert!(run_pipeline("nosuch", None, &built_in()).unwrap_err().0.starts_with("unknown workflow nosuch"));
 }
@@ -380,7 +438,10 @@ fn a_file_cannot_replace_a_built_in_workflow_or_take_a_name_no_workflow_can() {
     let path = config.file("quick", "[[steps]\n");
     assert!(load_workflow_file(&path, &built_in()).unwrap_err().0.contains("workflow quick is built in"));
     let path = config.file("my flow", "[[steps]]\nuse = \"spec\"\n");
-    assert!(load_workflow_file(&path, &built_in()).unwrap_err().0.contains("a workflow's name, its file's, may use only letters"));
+    assert!(load_workflow_file(&path, &built_in())
+        .unwrap_err()
+        .0
+        .contains("a workflow's name, its file's, may use only letters"));
 }
 
 #[test]
@@ -401,7 +462,10 @@ fn files_are_offered_by_name() {
     config.file("team", &workflow_toml(&built_in_workflow("product-team")));
     config.file("broken", "nonsense\n");
     std::fs::write(config.dir.join("workflows/notes.txt"), "not a workflow").unwrap();
-    assert_eq!(workflow_names(&config.config).unwrap(), ["broken", "default", "design", "peer-review", "product-team", "quick", "team"]);
+    assert_eq!(
+        workflow_names(&config.config).unwrap(),
+        ["broken", "default", "design", "peer-review", "product-team", "quick", "team"]
+    );
     assert_eq!(named_workflow(&config.config, "team", &built_in()).unwrap().name(), "team");
     assert_eq!(named_workflow(&config.config, "default", &built_in()).unwrap(), *DEFAULT_WORKFLOW);
     assert_eq!(
@@ -460,13 +524,17 @@ fn locks_round_trip_and_are_checked_in_a_file() {
     let step = "id = \"tests\"\nfile = \"t.md\"\nprompt = \"{path}\"\nlocks = true\n";
     let e = parse_workflow("bad", &toml(&format!("[[steps]]\n{step}")), &built_in()).unwrap_err();
     assert!(e.ends_with("step tests locks the files it changes, so it must edit"), "{e}");
-    let e = parse_workflow("bad", &toml(&format!("[[steps]]\n{}", step.replace("true", "\"yes\""))), &built_in()).unwrap_err();
+    let e = parse_workflow("bad", &toml(&format!("[[steps]]\n{}", step.replace("true", "\"yes\""))), &built_in())
+        .unwrap_err();
     assert!(e.ends_with("locks must be true or false"), "{e}");
 }
 
 #[test]
 fn proof_command_in_a_file() {
-    let p = parse_workflow("proving", &toml(r#"
+    let p = parse_workflow(
+        "proving",
+        &toml(
+            r#"
 proof_command = "python -m pytest -q {proofs}"
 
 [[steps]]
@@ -479,7 +547,11 @@ use = "build"
 use = "review"
 prompt = "Back each finding with a test in {proofs_dir}; write {review_path}."
 again = "Again, with tests in {proofs_dir}; write {review_path}."
-"#), &built_in()).unwrap();
+"#,
+        ),
+        &built_in(),
+    )
+    .unwrap();
     assert_eq!(p.proof_command(), Some("python -m pytest -q {proofs}"));
     assert!(p.step("review").unwrap().prompt.contains("{proofs_dir}"));
     let proving = replaced(&quick(), |s| s.proof_command = Some("sh {proofs}".into())).unwrap();
@@ -489,14 +561,18 @@ again = "Again, with tests in {proofs_dir}; write {review_path}."
     assert!(!workflow_toml(&quick()).contains("proof_command"));
     let Value::Object(mut definition) = workflow_definition(&quick()) else { panic!("an object") };
     definition.insert("proof_command".into(), Value::from(1));
-    assert_eq!(parse_workflow("bad", &Value::Object(definition), &built_in()).unwrap_err(), "proof_command must be a string");
+    assert_eq!(
+        parse_workflow("bad", &Value::Object(definition), &built_in()).unwrap_err(),
+        "proof_command must be a string"
+    );
 }
 
 // -- Editing a workflow: read_workflow, check_workflow, save_workflow, delete_workflow -------------------------------
 
 /// A workflow file of default's steps by use, with a comment: a workflow not in canonical form.
 fn by_use() -> String {
-    let steps: Vec<String> = DEFAULT_WORKFLOW.steps().iter().map(|st| format!("[[steps]]\nuse = \"{}\"\n", st.id)).collect();
+    let steps: Vec<String> =
+        DEFAULT_WORKFLOW.steps().iter().map(|st| format!("[[steps]]\nuse = \"{}\"\n", st.id)).collect();
     format!("# default's steps, by name\n{}", steps.join("\n"))
 }
 

@@ -97,7 +97,8 @@ impl Proving {
         let (seen, reviewed) = (super::seen(), super::seen());
         let builds = (1..=self.builds)
             .map(|n| {
-                let fixed: Vec<&str> = if n >= 2 { self.fixes.get(n as usize - 2).cloned().unwrap_or_default() } else { vec![] };
+                let fixed: Vec<&str> =
+                    if n >= 2 { self.fixes.get(n as usize - 2).cloned().unwrap_or_default() } else { vec![] };
                 let (dir, mut build) = (proj.path(), build_turn(n));
                 let turn: Turn = Box::new(move |prompt, state, host| {
                     for name in &fixed {
@@ -173,10 +174,20 @@ fn review(f: &Fixture, state: &RunState, n: u32) -> String {
 #[test]
 fn a_failing_proof_demonstrates_its_finding_and_the_builder_must_make_it_pass() {
     let proj = TempDir::new();
-    let p = run_proofs(&proj, vec![
-        (CHANGES_REQUESTED, vec![("test_1_bug.sh", Exit::Status(1)), ("test_2.sh", Exit::Status(0)), ("test_3.sh", Exit::Status(4))]),
-        (APPROVE, vec![]),
-    ]);
+    let p = run_proofs(
+        &proj,
+        vec![
+            (
+                CHANGES_REQUESTED,
+                vec![
+                    ("test_1_bug.sh", Exit::Status(1)),
+                    ("test_2.sh", Exit::Status(0)),
+                    ("test_3.sh", Exit::Status(4)),
+                ],
+            ),
+            (APPROVE, vec![]),
+        ],
+    );
     let mut wf = p.f.workflow(p.settings.clone());
     assert_eq!(wf.run(), verdict(APPROVE));
 
@@ -198,13 +209,22 @@ fn a_failing_proof_demonstrates_its_finding_and_the_builder_must_make_it_pass() 
         .proofs
         .iter()
         .filter(|p| p.get("round") == Some(&Value::from(1)))
-        .map(|p| (p.get("finding").and_then(Value::as_i64), text(p, "file").unwrap(), p.get("demonstrated") == Some(&Value::Bool(true))))
+        .map(|p| {
+            (
+                p.get("finding").and_then(Value::as_i64),
+                text(p, "file").unwrap(),
+                p.get("demonstrated") == Some(&Value::Bool(true)),
+            )
+        })
         .collect();
-    assert_eq!(firsts, [
-        (Some(1), "test_1_bug.sh".to_string(), true),
-        (Some(2), "test_2.sh".to_string(), false),
-        (Some(3), "test_3.sh".to_string(), false),
-    ]);
+    assert_eq!(
+        firsts,
+        [
+            (Some(1), "test_1_bug.sh".to_string(), true),
+            (Some(2), "test_2.sh".to_string(), false),
+            (Some(3), "test_3.sh".to_string(), false),
+        ]
+    );
     assert_eq!(text(&state.proofs[0], "said").unwrap(), "it fails:\nchecking test_1_bug.sh");
     let seen = p.seen.borrow();
     assert!(seen[1].contains(&proofs_note(&format!("{}/test_1_bug.sh", state.proofs_dir(1)))), "{}", seen[1]);
@@ -283,14 +303,17 @@ fn only_the_first_of_several_verdict_steps_has_its_proofs_run() {
     };
     let mut state = RunState::new(RUN_ID, TASK, &dir);
     (state.phase, state.workflow) = ("build".to_string(), pipeline.name().to_string());
-    let f = on_real_processes(state, vec![
-        ("build", builds),
-        ("review", vec![review(1, CHANGES_REQUESTED), review(2, APPROVE), review(3, APPROVE)]),
-        (
-            "accept",
-            vec![recording(accept(2, CHANGES_REQUESTED), &accepted), recording(accept(3, APPROVE), &accepted)],
-        ),
-    ]);
+    let f = on_real_processes(
+        state,
+        vec![
+            ("build", builds),
+            ("review", vec![review(1, CHANGES_REQUESTED), review(2, APPROVE), review(3, APPROVE)]),
+            (
+                "accept",
+                vec![recording(accept(2, CHANGES_REQUESTED), &accepted), recording(accept(3, APPROVE), &accepted)],
+            ),
+        ],
+    );
     let mut wf = f.workflow(settings(&pipeline, 3));
     assert_eq!(wf.run(), verdict(APPROVE));
     let state = wf.state();
@@ -318,13 +341,14 @@ fn a_workflow_without_proof_command_runs_none() {
 /// Builder's prompts.
 fn resumed_in_review(proj: &TempDir, review: &str, proofs: Vec<Object>) -> (Fixture, RunState, Vec<String>) {
     let mut state = RunState::new(RUN_ID, TASK, &proj.path());
-    (state.phase, state.round, state.workflow, state.base) = ("review".into(), 1, "quick".into(), Some("abc123".into()));
+    (state.phase, state.round, state.workflow, state.base) =
+        ("review".into(), 1, "quick".into(), Some("abc123".into()));
     state.proofs = proofs;
     let seen = seen();
-    let f = on_real_processes(state.clone(), vec![
-        ("build", vec![recording(build_turn(2), &seen)]),
-        ("review", vec![review_turn(2, APPROVE)]),
-    ]);
+    let f = on_real_processes(
+        state.clone(),
+        vec![("build", vec![recording(build_turn(2), &seen)]), ("review", vec![review_turn(2, APPROVE)])],
+    );
     f.put(&state.review_path(1), review);
     f.put(&state.build_path(1), "report 1");
     let mut wf = f.workflow(settings(&proving(), 3));
@@ -335,7 +359,8 @@ fn resumed_in_review(proj: &TempDir, review: &str, proofs: Vec<Object>) -> (Fixt
     (f, end, prompts)
 }
 
-const FIRST_RUN: &str = r#"{"round": 1, "written": 1, "file": "test_1.sh", "finding": 1, "demonstrated": true, "said": "it fails"}"#;
+const FIRST_RUN: &str =
+    r#"{"round": 1, "written": 1, "file": "test_1.sh", "finding": 1, "demonstrated": true, "said": "it fails"}"#;
 
 #[test]
 fn a_review_judged_before_a_resume_is_not_judged_again() {
@@ -361,7 +386,10 @@ fn a_demonstrated_proof_runs_again_every_round_until_it_passes() {
     let proj = TempDir::new();
     let p = Proving {
         reviews: vec![
-            (CHANGES_REQUESTED, vec![("test_1_bug.sh", Exit::Fixable), ("test_2.sh", Exit::Fixable), ("test_3.sh", Exit::Status(0))]),
+            (
+                CHANGES_REQUESTED,
+                vec![("test_1_bug.sh", Exit::Fixable), ("test_2.sh", Exit::Fixable), ("test_3.sh", Exit::Status(0))],
+            ),
             (CHANGES_REQUESTED, vec![("test_4.sh", Exit::Status(1))]),
             (CHANGES_REQUESTED, vec![]),
             (APPROVE, vec![]),
@@ -379,7 +407,8 @@ fn a_demonstrated_proof_runs_again_every_round_until_it_passes() {
     let (reviewed, seen) = (p.reviewed.borrow(), p.seen.borrow());
 
     assert!(!reviewed[0].contains("run again"));
-    let fails_1 = format!("- `{one}/test_1_bug.sh`: still fails, it fails.\n\n  ````\n  checking test_1_bug.sh\n  ````");
+    let fails_1 =
+        format!("- `{one}/test_1_bug.sh`: still fails, it fails.\n\n  ````\n  checking test_1_bug.sh\n  ````");
     let fails_4 = format!("- `{two}/test_4.sh`: still fails, it fails.\n\n  ````\n  checking test_4.sh\n  ````");
     let passes_2 = format!("- `{one}/test_2.sh`: now passes.");
     let passes_1 = format!("- `{one}/test_1_bug.sh`: now passes.");
@@ -387,10 +416,16 @@ fn a_demonstrated_proof_runs_again_every_round_until_it_passes() {
     assert!(reviewed[2].ends_with(&carried_note(&proj, &[&fails_1, &fails_4])));
     assert!(reviewed[3].contains(&carried_note(&proj, &[&passes_1, &fails_4])));
     let expected: Vec<(i64, i64, String, bool)> = [
-        (1, 1, "test_1_bug.sh", true), (1, 1, "test_2.sh", true), (1, 1, "test_3.sh", false),
-        (2, 1, "test_1_bug.sh", true), (2, 1, "test_2.sh", false), (2, 2, "test_4.sh", true),
-        (3, 1, "test_1_bug.sh", true), (3, 2, "test_4.sh", true),
-        (4, 1, "test_1_bug.sh", false), (4, 2, "test_4.sh", true),
+        (1, 1, "test_1_bug.sh", true),
+        (1, 1, "test_2.sh", true),
+        (1, 1, "test_3.sh", false),
+        (2, 1, "test_1_bug.sh", true),
+        (2, 1, "test_2.sh", false),
+        (2, 2, "test_4.sh", true),
+        (3, 1, "test_1_bug.sh", true),
+        (3, 2, "test_4.sh", true),
+        (4, 1, "test_1_bug.sh", false),
+        (4, 2, "test_4.sh", true),
     ]
     .into_iter()
     .map(|(round, written, file, demonstrated)| (round, written, file.to_string(), demonstrated))
@@ -411,10 +446,13 @@ fn a_demonstrated_proof_runs_again_every_round_until_it_passes() {
 fn a_round_with_no_proof_to_carry_prompts_the_reviewer_as_before() {
     // Proofs that pass or error are not carried, so round 2's review is prompted as in a run without proofs.
     let proj = TempDir::new();
-    let p = run_proofs(&proj, vec![
-        (CHANGES_REQUESTED, vec![("test_1.sh", Exit::Status(0)), ("test_2.sh", Exit::Status(4))]),
-        (APPROVE, vec![]),
-    ]);
+    let p = run_proofs(
+        &proj,
+        vec![
+            (CHANGES_REQUESTED, vec![("test_1.sh", Exit::Status(0)), ("test_2.sh", Exit::Status(4))]),
+            (APPROVE, vec![]),
+        ],
+    );
     let mut wf = p.f.workflow(p.settings.clone());
     assert_eq!(wf.run(), verdict(APPROVE));
     let rounds: Vec<i64> = runs(wf.state()).into_iter().map(|(round, ..)| round).collect();
@@ -444,14 +482,19 @@ fn reruns_recorded_before_a_resume_are_not_run_again_and_still_heard() {
     let proj = TempDir::new();
     let rerun = r#"{"round": 2, "written": 1, "file": "test_1.sh", "finding": 1, "demonstrated": true, "said": "it fails:\nstill broken"}"#;
     let reviewed = seen();
-    let f = saved_with_proofs(&proj, "review", 2, vec![record(FIRST_RUN), record(rerun)], vec![
-        ("review", vec![recording(review_turn(2, APPROVE), &reviewed)]),
-    ]);
+    let f = saved_with_proofs(
+        &proj,
+        "review",
+        2,
+        vec![record(FIRST_RUN), record(rerun)],
+        vec![("review", vec![recording(review_turn(2, APPROVE), &reviewed)])],
+    );
     f.put(&f.state.build_path(2), "report 2");
     let mut wf = f.workflow(settings(&proving(), 3));
     assert_eq!(wf.run(), verdict(APPROVE));
     assert_eq!(wf.state().proofs, [record(FIRST_RUN), record(rerun)]);
-    let item = format!("- `{}/test_1.sh`: still fails, it fails.\n\n  ````\n  still broken\n  ````", f.state.proofs_dir(1));
+    let item =
+        format!("- `{}/test_1.sh`: still fails, it fails.\n\n  ````\n  still broken\n  ````", f.state.proofs_dir(1));
     assert!(reviewed.borrow()[0].contains(&carried_note(&proj.path(), &[&item])));
 }
 
@@ -459,22 +502,33 @@ fn reruns_recorded_before_a_resume_are_not_run_again_and_still_heard() {
 fn a_proof_that_errors_when_run_again_stays_carried() {
     // A change that makes a demonstrated proof crash has not made it pass.
     let proj = TempDir::new();
-    let first = r#"{"round": 1, "written": 1, "file": "test_1.sh", "finding": 1, "demonstrated": true, "said": "it fails"}"#;
+    let first =
+        r#"{"round": 1, "written": 1, "file": "test_1.sh", "finding": 1, "demonstrated": true, "said": "it fails"}"#;
     let (seen, reviewed) = (seen(), seen());
-    let f = saved_with_proofs(&proj, "build", 2, vec![record(first)], vec![
-        ("build", vec![recording(build_turn(2), &seen), recording(build_turn(3), &seen)]),
-        ("review", vec![
-            recording(review_turn(2, CHANGES_REQUESTED), &reviewed),
-            recording(review_turn(3, APPROVE), &reviewed),
-        ]),
-    ]);
+    let f = saved_with_proofs(
+        &proj,
+        "build",
+        2,
+        vec![record(first)],
+        vec![
+            ("build", vec![recording(build_turn(2), &seen), recording(build_turn(3), &seen)]),
+            (
+                "review",
+                vec![
+                    recording(review_turn(2, CHANGES_REQUESTED), &reviewed),
+                    recording(review_turn(3, APPROVE), &reviewed),
+                ],
+            ),
+        ],
+    );
     let dir = f.state.proofs_dir(1);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(format!("{dir}/test_1.sh"), "echo crashed\nexit 2\n").unwrap();
     let mut wf = f.workflow(settings(&proving(), 3));
     assert_eq!(wf.run(), verdict(APPROVE));
     let path = format!("{dir}/test_1.sh");
-    let item = format!("- `{path}`: no longer fails but errors, it errors, with exit status 2.\n\n  ````\n  crashed\n  ````");
+    let item =
+        format!("- `{path}`: no longer fails but errors, it errors, with exit status 2.\n\n  ````\n  crashed\n  ````");
     for prompt in reviewed.borrow().iter() {
         assert!(prompt.contains(&carried_note(&proj.path(), &[&item])), "{prompt}");
     }
@@ -487,7 +541,8 @@ fn a_proof_that_errors_when_run_again_stays_carried() {
 fn a_proof_the_builder_moves_into_the_project_is_told_once_as_moved_and_carried_no_further() {
     // The Builder moves a demonstrated proof out of its directory in round 2, as PROOFS_NOTE lets it.
     let proj = TempDir::new();
-    let first = r#"{"round": 1, "written": 1, "file": "test_1.sh", "finding": 1, "demonstrated": true, "said": "it fails"}"#;
+    let first =
+        r#"{"round": 1, "written": 1, "file": "test_1.sh", "finding": 1, "demonstrated": true, "said": "it fails"}"#;
     let (seen, reviewed) = (seen(), seen());
     let dir = RunState::new(RUN_ID, TASK, &proj.path()).proofs_dir(1);
     let path = format!("{dir}/test_1.sh");
@@ -499,19 +554,30 @@ fn a_proof_the_builder_moves_into_the_project_is_told_once_as_moved_and_carried_
             build(prompt, state, host)
         })
     };
-    let f = saved_with_proofs(&proj, "build", 2, vec![record(first)], vec![
-        ("build", vec![recording(moves_it, &seen), recording(build_turn(3), &seen)]),
-        ("review", vec![
-            recording(review_turn(2, CHANGES_REQUESTED), &reviewed),
-            recording(review_turn(3, APPROVE), &reviewed),
-        ]),
-    ]);
+    let f = saved_with_proofs(
+        &proj,
+        "build",
+        2,
+        vec![record(first)],
+        vec![
+            ("build", vec![recording(moves_it, &seen), recording(build_turn(3), &seen)]),
+            (
+                "review",
+                vec![
+                    recording(review_turn(2, CHANGES_REQUESTED), &reviewed),
+                    recording(review_turn(3, APPROVE), &reviewed),
+                ],
+            ),
+        ],
+    );
     let mut wf = f.workflow(settings(&proving(), 3));
     assert_eq!(wf.run(), verdict(APPROVE));
 
     // Round 2's builder still hears it fails; its verdict step hears it moved, not erroring.
-    let item = format!("- `{path}`: not run, as its file is gone from its directory, taken as moved into the project. \
-         Check that the change holds it as a test that passes; if it does not, the proof's finding stands.");
+    let item = format!(
+        "- `{path}`: not run, as its file is gone from its directory, taken as moved into the project. \
+         Check that the change holds it as a test that passes; if it does not, the proof's finding stands."
+    );
     assert!(seen.borrow()[0].contains(&proofs_note(&path)));
     assert!(reviewed.borrow()[0].ends_with(&carried_note(&proj.path(), &[&item])), "{}", reviewed.borrow()[0]);
 
@@ -599,7 +665,10 @@ fn a_proof_whose_file_or_directory_is_gone_is_moved_and_not_run() {
     std::fs::write(format!("{dir}/test_2.sh"), "").unwrap();
     let did_not_run = || {
         let outcome = wf.run_proof("test -f {proofs} || exit 1", 1, "test_1.sh").unwrap();
-        assert_eq!(outcome, ProofOutcome { demonstrated: false, said: "it did not run: its file is gone".into(), moved: true });
+        assert_eq!(
+            outcome,
+            ProofOutcome { demonstrated: false, said: "it did not run: its file is gone".into(), moved: true }
+        );
         assert!(!std::path::Path::new(&format!("{}/{PROOF_COPIES_DIR}", proj.path())).exists());
     };
     did_not_run();
@@ -660,11 +729,23 @@ impl Host for Unpublished<'_> {
         None
     }
 
-    fn exec(&self, argv: &[&str], stdin: Option<&[u8]>, timeout: u64) -> Result<crate::host::Exec, crate::host::ExecError> {
+    fn exec(
+        &self,
+        argv: &[&str],
+        stdin: Option<&[u8]>,
+        timeout: u64,
+    ) -> Result<crate::host::Exec, crate::host::ExecError> {
         self.0.exec(argv, stdin, timeout)
     }
 
-    fn refuse_leaks(&self, _cwd: &str, _commit: &str, _base: &str, _: Scanned, _report_path: &str) -> Result<(), PushError> {
+    fn refuse_leaks(
+        &self,
+        _cwd: &str,
+        _commit: &str,
+        _base: &str,
+        _: Scanned,
+        _report_path: &str,
+    ) -> Result<(), PushError> {
         Ok(())
     }
 
@@ -886,7 +967,11 @@ fn a_proof_whose_writes_cannot_be_undone_did_not_run_cleanly() {
 
         assert!(!failed);
         assert!(said.starts_with("it did not run cleanly: ") && said.contains("fixture"), "{said}");
-        assert!(run.told.lines().iter().any(|l| l.starts_with("could not undo what a proof wrote in ")), "{:?}", run.told.lines());
+        assert!(
+            run.told.lines().iter().any(|l| l.starts_with("could not undo what a proof wrote in ")),
+            "{:?}",
+            run.told.lines()
+        );
     });
 }
 
@@ -971,14 +1056,26 @@ fn a_carried_proof_runs_again_after_the_rounds_last_quality_round_and_before_the
             host.state().changed.retain(|p| !p.starts_with(&orchestrator_dir));
         }
         if let ["worktree", "add", "--detach", tree, _] = args {
-            let round = tree.rsplit_once("/gate-").map_or("", |(_, nq)| nq).trim_end_matches("/job-1/tree").replace('-', " ");
+            let round =
+                tree.rsplit_once("/gate-").map_or("", |(_, nq)| nq).trim_end_matches("/job-1/tree").replace('-', " ");
             judged(format!("quality round {round}"));
         }
     }));
-    let f = Fixture::on(host, state, vec![
-        ("build", vec![logged("build", build_turn(1)), logged("build", build_turn(2)), logged("quality fix", fix_turn(2, 1))]),
-        ("review", vec![logged("review", review_with_proof), logged("review", review_turn(2, APPROVE))]),
-    ])
+    let f = Fixture::on(
+        host,
+        state,
+        vec![
+            (
+                "build",
+                vec![
+                    logged("build", build_turn(1)),
+                    logged("build", build_turn(2)),
+                    logged("quality fix", fix_turn(2, 1)),
+                ],
+            ),
+            ("review", vec![logged("review", review_with_proof), logged("review", review_turn(2, APPROVE))]),
+        ],
+    )
     .gated();
     f.run_processes();
     f.judging(vec![green(), red(), green()]);

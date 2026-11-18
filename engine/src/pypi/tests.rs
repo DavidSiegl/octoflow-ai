@@ -107,7 +107,10 @@ fn json_of_another_shape_says_what_was_found_where() {
         (format!(r#"{{{info}, "urls": [{{}}]}}"#), "\"upload_time_iso_8601\""),
         (format!(r#"{{{info}, "urls": [{{"upload_time_iso_8601": 1}}]}}"#), "upload_time_iso_8601 is not a string"),
         (format!(r#"{{{info}, "urls": [{{"upload_time_iso_8601": "yesterday"}}]}}"#), ""),
-        (r#"{"info": {"version": "1", "license_expression": 7}}"#.to_string(), "license_expression is number, not a string"),
+        (
+            r#"{"info": {"version": "1", "license_expression": 7}}"#.to_string(),
+            "license_expression is number, not a string",
+        ),
         (r#"{"info": {"version": "1", "classifiers": [null]}}"#.to_string(), "a classifier is null, not a string"),
     ];
     let licensed = |classifiers: &str| format!(r#"{{"info": {{"version": "1", "classifiers": {classifiers}}}}}"#);

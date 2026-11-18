@@ -20,7 +20,8 @@ pub struct SplitUrl {
 /// url split into its parts, after its leading C0 controls and blanks are dropped and every tab, CR and LF in it
 /// removed. A netloc is kept as it is, whatever it holds.
 pub fn urlsplit(url: &str) -> SplitUrl {
-    let url: String = url.trim_start_matches(|c: char| c <= ' ').chars().filter(|c| !matches!(c, '\t' | '\r' | '\n')).collect();
+    let url: String =
+        url.trim_start_matches(|c: char| c <= ' ').chars().filter(|c| !matches!(c, '\t' | '\r' | '\n')).collect();
     let mut rest = url.as_str();
     let mut scheme = String::new();
     if let Some(i) = rest.find(':') {

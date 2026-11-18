@@ -8,9 +8,9 @@ use crate::constants::{CRATES_IO_TIMEOUT, PYPI_TIMEOUT};
 use crate::error::OrchestratorError;
 use crate::handoff::labelled_word;
 use crate::host::ChangedFile;
+use crate::package_index::PackageIndexes;
 use crate::paths::file_name;
 use crate::pipeline::Pipeline;
-use crate::package_index::PackageIndexes;
 use crate::quality::{
     finding_fingerprint, one_line, Judgement, QUALITY_ERROR, QUALITY_FAILED_CONDITIONS, QUALITY_FINDINGS_LIMIT,
     QUALITY_OK, QUALITY_TO_WEIGH_NOTE,
@@ -186,7 +186,8 @@ impl RunFindings {
         if self.issues.is_empty() && self.to_weigh.is_empty() {
             return quality.to_string();
         }
-        let quality = if self.conditions.is_empty() { quality.to_string() } else { failed_by(quality, &self.conditions) };
+        let quality =
+            if self.conditions.is_empty() { quality.to_string() } else { failed_by(quality, &self.conditions) };
         let after = last_number(&quality);
         let section = orchestrator_section(&self.issues, &self.to_weigh, after).join("\n");
         format!("{}\n{section}\n", quality.trim_end_matches('\n'))

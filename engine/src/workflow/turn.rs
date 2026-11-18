@@ -3,19 +3,18 @@
 
 use super::{How, Outcome, Stopped, Workflow};
 use crate::constants::{
-    APPROVE, CHANGES_REQUESTED, HEARTBEAT_SECONDS, POLL_SECONDS, PROMPT_DELIVERY_SECONDS,
-    STALL_SECONDS,
+    APPROVE, CHANGES_REQUESTED, HEARTBEAT_SECONDS, POLL_SECONDS, PROMPT_DELIVERY_SECONDS, STALL_SECONDS,
 };
 use crate::error::OrchestratorError;
 use crate::handoff::{parse_blocked, parse_verdict};
 use crate::harness::harness;
 use crate::herdr::{Agent, Direction, HerdrError};
+use crate::json::{object, Object, ValueExt};
 use crate::paths::{file_name, split_extension};
 use crate::prompts::Prompt;
-use serde_json::Value;
-use crate::json::{object, Object, ValueExt};
 use crate::state::{AgentRecord, AgentStart, RunState, TurnRecord};
 use crate::summary::{epoch_seconds, iso_utc};
+use serde_json::Value;
 
 /// What a turn does once its agent is ready, before any prompt.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,7 +23,9 @@ pub(super) enum Announce {
     /// The human-paced step's: focus the agent's pane and tell the human it waits for them.
     Interview,
     /// A blocked turn's wait for the human's answer: focus the agent's pane and tell the human its question.
-    Blocked { question: String },
+    Blocked {
+        question: String,
+    },
 }
 
 /// The turn a step asks of a role.
@@ -246,7 +247,8 @@ impl Workflow<'_> {
         // report to be judged again, as block k once more, or the wait under way, never a report lost or counted
         // twice. No prompt counts as delivered, so even an agent that is alive gets BLOCKED_PROMPT.
         s.prompted = None;
-        let record = object([("file", Value::from(file.as_str())), ("question", Value::from(question)), ("k", Value::from(k))]);
+        let record =
+            object([("file", Value::from(file.as_str())), ("question", Value::from(question)), ("k", Value::from(k))]);
         s.blocked = Some(record.clone());
         // The turn's record, which written closed, goes with the file, as in retry; the wait opens a record of its
         // own, human-paced (turn_record).
@@ -299,7 +301,8 @@ impl Workflow<'_> {
         if self.taken(role, path)? {
             return Ok(());
         }
-        self.human.log(&format!("[{role}] did not take its prompt within {PROMPT_DELIVERY_SECONDS}s; sending it again"));
+        self.human
+            .log(&format!("[{role}] did not take its prompt within {PROMPT_DELIVERY_SECONDS}s; sending it again"));
         self.herdr.prompt(name, message)?;
         if !self.taken(role, path)? {
             let (label, pane) = (self.label(role), self.pane(role));
@@ -370,7 +373,8 @@ impl Workflow<'_> {
 
     fn retry_prompt(&self, path: &str) -> Result<String, OrchestratorError> {
         let rejected = rejected_path(path);
-        let values = [("path", path), ("rejected_path", &rejected), ("approve", APPROVE), ("changes", CHANGES_REQUESTED)];
+        let values =
+            [("path", path), ("rejected_path", &rejected), ("approve", APPROVE), ("changes", CHANGES_REQUESTED)];
         self.prompts.fill(Prompt::RetryVerdictPrompt, &values)
     }
 
@@ -784,7 +788,8 @@ impl Workflow<'_> {
 /// was delivered, it is being asked again for its verdict, or it waits on the human's answer to its BLOCKED report. A
 /// turn with none of these has not been prompted, so has not yet seen the change.
 pub(super) fn turn_started(state: &RunState, file: &str) -> bool {
-    [state.prompted.as_deref(), state.retrying.as_deref(), state.blocked.as_ref().and_then(file_of)].contains(&Some(file))
+    [state.prompted.as_deref(), state.retrying.as_deref(), state.blocked.as_ref().and_then(file_of)]
+        .contains(&Some(file))
 }
 
 /// The file the record of a block (RunState::blocked) is of; None for a record without one.

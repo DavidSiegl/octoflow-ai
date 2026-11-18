@@ -1,8 +1,8 @@
 use super::*;
-use crate::pipeline::DEFAULT_WORKFLOW;
-use crate::test_support::{helper_cases, oracle, unhex, GOLDEN_SUMMARY};
 use crate::json::object;
+use crate::pipeline::DEFAULT_WORKFLOW;
 use crate::state::AgentRecord;
+use crate::test_support::{helper_cases, oracle, unhex, GOLDEN_SUMMARY};
 
 #[test]
 fn every_recorded_run_is_summed_up_as_helpers_json_expects() {
@@ -13,11 +13,17 @@ fn every_recorded_run_is_summed_up_as_helpers_json_expects() {
         let place = format!("{} {}", expected("recording").unwrap(), expected("run_dir").unwrap());
         let pipeline = case.state.pipeline().ok();
         let rounds: Vec<String> = (1..=case.state.round).map(|k| format!("Round {k}: as recorded")).collect();
-        assert_eq!(pipeline.map(|p| run_summary(&case.state, &p, &rounds, case.now)), expected("run_summary"), "{place}");
+        assert_eq!(
+            pipeline.map(|p| run_summary(&case.state, &p, &rounds, case.now)),
+            expected("run_summary"),
+            "{place}"
+        );
         // The keys and values helpers.json records, its spacing aside.
         let recorded = expected("run_metrics").map(|text| serde_json::from_str::<Value>(&text).unwrap());
         assert_eq!(Some(run_metrics(&case.state, case.now)), recorded, "{place}");
-        let lines = Value::Array(turn_lines(&case.state.turns, &jiff::tz::TimeZone::UTC).into_iter().map(Value::from).collect());
+        let lines = Value::Array(
+            turn_lines(&case.state.turns, &jiff::tz::TimeZone::UTC).into_iter().map(Value::from).collect(),
+        );
         assert_eq!(Some(&lines), case.expected.get("turn_lines"), "{place}");
     }
 }
@@ -46,7 +52,9 @@ fn times_are_written_and_read_as_rfc_3339() {
     assert_eq!(epoch_time("2026-10-03T04:00:00.25Z"), Ok(1_791_000_000.25));
     // Whole seconds are those before the time, before the epoch too.
     assert_eq!(epoch_seconds("1969-12-31T23:59:59.5Z"), Ok(-1));
-    for bad in ["<time>", "garbled", "2026-13-01T00:00:00Z", "2026-02-30T00:00:00Z", "2026-10-03T04:00:00", "2026-10-03"] {
+    for bad in
+        ["<time>", "garbled", "2026-13-01T00:00:00Z", "2026-02-30T00:00:00Z", "2026-10-03T04:00:00", "2026-10-03"]
+    {
         assert!(epoch_seconds(bad).is_err(), "{bad}");
     }
 }
@@ -55,10 +63,18 @@ fn times_are_written_and_read_as_rfc_3339() {
 fn turn(step: &str, file: &str, start: Option<i64>, end: Option<i64>, change: impl FnOnce(&mut Object)) -> TurnRecord {
     let at = |s: Option<i64>| Value::from(s.map(|s| iso_utc(1_791_000_000 + s)));
     let mut t: Object = object([
-        ("step", Value::from(step)), ("role", Value::from(step)), ("round", Value::from(1)), ("quality_round", Value::from(0)),
-        ("file", Value::from(file)), ("agent", Value::from("claude")), ("model", Value::Null), ("session", Value::Null),
-        ("tokens", Value::Null), ("human_paced", Value::Bool(false)),
-        ("started_at", at(start)), ("ended_at", at(end)),
+        ("step", Value::from(step)),
+        ("role", Value::from(step)),
+        ("round", Value::from(1)),
+        ("quality_round", Value::from(0)),
+        ("file", Value::from(file)),
+        ("agent", Value::from("claude")),
+        ("model", Value::Null),
+        ("session", Value::Null),
+        ("tokens", Value::Null),
+        ("human_paced", Value::Bool(false)),
+        ("started_at", at(start)),
+        ("ended_at", at(end)),
         ("seconds", Value::from(start.zip(end).map(|(s, e)| e - s))),
     ]);
     change(&mut t);
@@ -94,16 +110,24 @@ fn approved_run() -> RunState {
     }
     s.models.insert("review".to_string(), "opus".to_string());
     s.turns = vec![
-        turn("spec", "spec.md", Some(0), Some(600), |t| { t.insert("round".into(), Value::from(0)); t.insert("human_paced".into(), Value::Bool(true)); }),
-        turn("build", "build-1.md", Some(600), Some(1800), |t| { t.insert("agent".into(), Value::from("codex")); }),
-        turn("review", "review-1.md", Some(1800), Some(2100), |t| { t.insert("model".into(), Value::from("opus")); }),
+        turn("spec", "spec.md", Some(0), Some(600), |t| {
+            t.insert("round".into(), Value::from(0));
+            t.insert("human_paced".into(), Value::Bool(true));
+        }),
+        turn("build", "build-1.md", Some(600), Some(1800), |t| {
+            t.insert("agent".into(), Value::from("codex"));
+        }),
+        turn("review", "review-1.md", Some(1800), Some(2100), |t| {
+            t.insert("model".into(), Value::from("opus"));
+        }),
     ];
     s
 }
 
 #[test]
 fn the_summary_of_an_approved_run() {
-    let summary = run_summary(&approved_run(), &DEFAULT_WORKFLOW, &["Round 1: review APPROVE".to_string()], 1_791_000_000 + 2100);
+    let summary =
+        run_summary(&approved_run(), &DEFAULT_WORKFLOW, &["Round 1: review APPROVE".to_string()], 1_791_000_000 + 2100);
     assert_eq!(summary, GOLDEN_SUMMARY);
 }
 
@@ -112,7 +136,9 @@ fn a_run_without_turns_or_an_end_says_so() {
     let mut s = RunState::new("r-a1b2c3", "  t \n", "/proj");
     s.error = Some("the Builder did not write it".into());
     let summary = run_summary(&s, &DEFAULT_WORKFLOW, &[], 0);
-    assert!(summary.contains("- **Outcome:** error: the Builder did not write it\n- **Pull request:** none\n- **Branch:** none\n"));
+    assert!(summary.contains(
+        "- **Outcome:** error: the Builder did not write it\n- **Pull request:** none\n- **Branch:** none\n"
+    ));
     assert!(summary.contains("- **Wall time:** ?, from the first turn's start to 1970-01-01T00:00:00+00:00\n"));
     assert!(summary.contains("## Task\n\nt\n") && summary.ends_with("## Turns\n\nNo turns were recorded.\n"));
     s.error = None;
@@ -133,10 +159,22 @@ fn turns_with_unknown_starts_and_ends_and_quality_rounds() {
         t.insert("quality_round".into(), Value::from(1));
     });
     let lines = turn_lines(&[open, analysis.clone()], &jiff::tz::TimeZone::UTC);
-    assert_eq!(lines, ["build    1     claude  ?                    ?       build-1.md", "quality  1 q1  -       2026-10-03 04:00:00  1m 05s  quality-1-1.md"]);
+    assert_eq!(
+        lines,
+        [
+            "build    1     claude  ?                    ?       build-1.md",
+            "quality  1 q1  -       2026-10-03 04:00:00  1m 05s  quality-1-1.md"
+        ]
+    );
     let mut s = approved_run();
     s.turns = vec![analysis];
-    s.restored = vec![serde_json::from_str::<Value>(r#"{"round": 1, "file": "locked-build-1.diff", "paths": {"tests": ["a", "b"], "x": ["c"]}}"#).unwrap().as_object().unwrap().clone()];
+    s.restored = vec![serde_json::from_str::<Value>(
+        r#"{"round": 1, "file": "locked-build-1.diff", "paths": {"tests": ["a", "b"], "x": ["c"]}}"#,
+    )
+    .unwrap()
+    .as_object()
+    .unwrap()
+    .clone()];
     let metrics = run_metrics(&s, 1_791_000_100);
     assert_eq!(metrics.get("restored_locked_files"), Some(&Value::from(3)));
     assert_eq!(metrics.get("seconds"), Some(&Value::from(100)));
@@ -151,7 +189,11 @@ fn turn_tokens_sums_the_answers_within_the_turn() {
     let recorded = oracle("harness.json");
     // Each log's usage, None for the case of times in each form, which this engine reads otherwise than harness.json
     // records (crate::harness's a_time_is_read_only_with_its_offset): its expected sums are not compared.
-    let logs: Vec<Option<Vec<Usage>>> = recorded.get("session_usage").and_then(Value::as_array).unwrap().iter()
+    let logs: Vec<Option<Vec<Usage>>> = recorded
+        .get("session_usage")
+        .and_then(Value::as_array)
+        .unwrap()
+        .iter()
         .map(|case| case.as_array().unwrap())
         .filter(|case| case[0].as_str() == Some("claude"))
         .map(|case| {

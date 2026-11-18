@@ -10,19 +10,19 @@ use clap::builder::PossibleValuesParser;
 use clap::error::ErrorKind;
 use clap::{Arg, ArgAction, ArgGroup, ArgMatches};
 
-use crate::constants::{
-    HARNESS_NAMES, CLOSED_BRANCH_GRACE, DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS,
-    DEFAULT_TURN_TIMEOUT, EXIT_ERROR, EXIT_WAITING, REMOTE, ROLE_LABELS,
-};
-use crate::harness::harness;
 use crate::cli::doctor::{dotted, GIT_MIN_VERSION, HERDR_MIN_VERSION};
 use crate::cli::drain::{DRAIN_DIR, SPEC_DONE, SPEC_FOR_HUMAN, SPEC_IN_REVIEW, SPEC_READY};
 use crate::cli::listing::RUN_RECORD_VERSION;
-use crate::pipeline::METRICS_FILE;
+use crate::constants::{
+    CLOSED_BRANCH_GRACE, DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
+    EXIT_ERROR, EXIT_WAITING, HARNESS_NAMES, REMOTE, ROLE_LABELS,
+};
 use crate::env::ConfigDir;
+use crate::harness::harness;
 use crate::local_gate::LOCAL_GATE;
-use crate::workflow_file::WORKFLOWS;
+use crate::pipeline::METRICS_FILE;
 use crate::workflow_file::workflow_names;
+use crate::workflow_file::WORKFLOWS;
 
 /// What the command line asks for: one subcommand and its flags.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -328,14 +328,12 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         // Hidden and refused by check_spec_args: a resumed run keeps its spec, and an abbreviation of --spec-model
         // must not be taken for it.
         .arg(Arg::new("spec").long("spec").num_args(0..=1).default_missing_value("").hide(true))
-        .arg(
-            quality_gate_arg().conflicts_with("no-quality-gate").help(
-                "Turn the local quality gate on, as run --quality-gate local has it, for a run started without it; \
+        .arg(quality_gate_arg().conflicts_with("no-quality-gate").help(
+            "Turn the local quality gate on, as run --quality-gate local has it, for a run started without it; \
                  a Builder report not yet judged is judged before the Reviewer starts, and otherwise the gate starts \
                  at the Builder's next turn. A run started on the Jenkins gate, removed in 0.72.0, resumes on the \
                  local gate without it",
-            ),
-        )
+        ))
         .arg(Arg::new("no-quality-gate").long("no-quality-gate").action(ArgAction::SetTrue).help(
             "Turn the run's quality gate off for good; an analysis under way is dropped, and the Reviewer is told \
              what the gate last found",
@@ -715,9 +713,11 @@ fn check_spec_args(matches: &ArgMatches, p: &mut clap::Command) -> Result<(), cl
         Some(("run", m)) if !m.contains_id("task") && !m.contains_id("spec") => {
             Err(subcommand_error(p, "run", "a task or --spec FILE is needed"))
         }
-        Some(("resume", m)) if m.contains_id("spec") => {
-            Err(subcommand_error(p, "resume", "unexpected argument '--spec' found; a resumed run keeps the spec it has"))
-        }
+        Some(("resume", m)) if m.contains_id("spec") => Err(subcommand_error(
+            p,
+            "resume",
+            "unexpected argument '--spec' found; a resumed run keeps the spec it has",
+        )),
         Some(("drain", m)) if m.contains_id("spec") => {
             Err(subcommand_error(p, "drain", "unexpected argument '--spec' found; drain runs the specs in DIR"))
         }

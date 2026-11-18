@@ -13,11 +13,12 @@ use serde_json::Value;
 /// machine without cargo fails the tests rather than skipping them.
 pub fn binary() -> PathBuf {
     static BINARY: OnceLock<PathBuf> = OnceLock::new();
-    BINARY.get_or_init(|| match std::env::var_os("E2E_ENGINE") {
-        Some(given) => PathBuf::from(given),
-        None => build(),
-    })
-    .clone()
+    BINARY
+        .get_or_init(|| match std::env::var_os("E2E_ENGINE") {
+            Some(given) => PathBuf::from(given),
+            None => build(),
+        })
+        .clone()
 }
 
 fn build() -> PathBuf {

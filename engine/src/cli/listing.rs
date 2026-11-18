@@ -8,9 +8,9 @@ use super::{resume_command, Connected};
 use crate::constants::{APPROVE, RUNS_DIR};
 use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
-use crate::pipeline::{workflow_shape, Pipeline, Step, QUALITY};
 use crate::json::{object, Object, ValueExt};
 use crate::local_gate::LOCAL_GATE;
+use crate::pipeline::{workflow_shape, Pipeline, Step, QUALITY};
 use crate::runs::{RUNNING, STALE};
 use crate::state::{find_run, judged_by_several, AgentRecord, RunState, SavedRun, StepVerdict, TurnRecord};
 use crate::summary::turn_lines;
@@ -71,10 +71,7 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
     let waiting = if running && blocked.is_some() {
         let question = blocked.and_then(|b| b.get("question")).cloned().unwrap_or(Value::Null);
         Some((BLOCKED_STATUS, question))
-    } else if running
-        && step.is_some_and(|st| st.human_paced)
-        && last_turn.is_some_and(TurnRecord::under_way)
-    {
+    } else if running && step.is_some_and(|st| st.human_paced) && last_turn.is_some_and(TurnRecord::under_way) {
         Some(("interview", role.clone().map_or(Value::Null, Value::from)))
     } else {
         resume.clone().map(|command| (STALE, Value::from(command)))
@@ -92,7 +89,10 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
     record.insert("pull_request".into(), Value::from(s.pull_request));
     record.insert("phase".into(), Value::from(s.phase.as_str()));
     record.insert("round".into(), Value::from(s.round));
-    record.insert("quality_round".into(), (in_quality && s.quality_round != 0).then_some(s.quality_round).map_or(Value::Null, Value::from));
+    record.insert(
+        "quality_round".into(),
+        (in_quality && s.quality_round != 0).then_some(s.quality_round).map_or(Value::Null, Value::from),
+    );
     record.insert("role".into(), optional(role));
     record.insert("pane".into(), optional(pane));
     record.insert("agents".into(), agent_refs(&s.agents));
@@ -101,7 +101,9 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
     record.insert("heartbeat_age".into(), Value::from(run.age() as i64));
     record.insert(
         "waiting".into(),
-        waiting.map_or(Value::Null, |(reason, detail)| Value::Object(object([("reason", Value::from(reason)), ("detail", detail)]))),
+        waiting.map_or(Value::Null, |(reason, detail)| {
+            Value::Object(object([("reason", Value::from(reason)), ("detail", detail)]))
+        }),
     );
     record.insert("verdict".into(), optional(s.verdict.clone()));
     // A list of records of strings and numbers serializes without fail.
@@ -143,7 +145,11 @@ fn step_refs(p: &Pipeline, s: &RunState) -> Value {
 fn agent_refs(agents: &IndexMap<String, AgentRecord>) -> Value {
     let started = agents.iter().filter(|(_, agent)| !agent.name.is_empty()).map(|(role, agent)| {
         let (name, kind) = (agent.name.as_str(), agent.harness.as_str());
-        Value::Object(object([("role", Value::from(role.as_str())), ("name", Value::from(name)), ("kind", Value::from(kind))]))
+        Value::Object(object([
+            ("role", Value::from(role.as_str())),
+            ("name", Value::from(name)),
+            ("kind", Value::from(kind)),
+        ]))
     });
     Value::Array(started.collect())
 }
@@ -174,7 +180,12 @@ pub fn fill_pr_states(world: &Connected, cwd: &str, records: &mut [Object]) -> R
 
 /// Each run as `list` shows it: its id, phase, round, outcome and the first 100 characters of its task, from its
 /// record.
-pub fn run_rows(runs: &[SavedRun], local_host: &str, pid_alive: &dyn Fn(i64) -> bool, target: &[String]) -> Vec<[String; 5]> {
+pub fn run_rows(
+    runs: &[SavedRun],
+    local_host: &str,
+    pid_alive: &dyn Fn(i64) -> bool,
+    target: &[String],
+) -> Vec<[String; 5]> {
     runs.iter()
         .map(|run| {
             let record = run_record(run, local_host, pid_alive, target);
@@ -320,9 +331,7 @@ pub fn show_run(world: &Connected, cwd: &str, run_ref: &str, target: &[String]) 
         }
     }
     let width = s.agents.keys().map(|role| role.chars().count()).max().unwrap_or(0);
-    let agent_lines = s.agents.iter().map(|(role, a)| {
-        format!("{role:<width$}  {:<8}  {}", a.harness, a.pane)
-    });
+    let agent_lines = s.agents.iter().map(|(role, a)| format!("{role:<width$}  {:<8}  {}", a.harness, a.pane));
     print_section(world, "agents", agent_lines.collect());
     let turns = &s.turns;
     let zone = world.with.clocks.zone();
@@ -369,7 +378,11 @@ fn zone_name(zone: &jiff::tz::TimeZone, turns: &[TurnRecord]) -> String {
             offsets.push(offset);
         }
     }
-    if offsets.is_empty() { "local time".into() } else { offsets.join(" and ") }
+    if offsets.is_empty() {
+        "local time".into()
+    } else {
+        offsets.join(" and ")
+    }
 }
 
 /// show's line per verdict a verdict step gave, of a state's verdicts, such as "round 1  review  CHANGES_REQUESTED";

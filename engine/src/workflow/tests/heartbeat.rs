@@ -114,7 +114,9 @@ fn failed_heartbeat_is_not_fatal() {
 fn takeover_stops_without_saving() {
     let f = Fixture::new(vec![("spec", vec![spec_turn()]), ("build", vec![idle()])]);
     let path = format!("{}/state.json", f.state.dir());
-    let other: Value = serde_json::from_str::<Value>(r#"{"host": "laptop", "pid": 4242, "started_at": "2026-09-30T07:00:00+00:00"}"#).unwrap();
+    let other: Value =
+        serde_json::from_str::<Value>(r#"{"host": "laptop", "pid": 4242, "started_at": "2026-09-30T07:00:00+00:00"}"#)
+            .unwrap();
     let (host, theirs) = (Rc::clone(&f.host), other.clone());
     f.clock.hook(move |now| {
         if now > 30.0 && saved_field(&host, &path, "owner") != theirs {
@@ -154,7 +156,9 @@ fn run_with_state_replaced(text: &str) -> (Fixture, Result<Option<String>, Stopp
 
 #[test]
 fn a_takeover_by_an_owner_missing_its_pid_or_host_says_which_is_unknown() {
-    for (owner, who) in [(r#"{"host": "laptop"}"#, "pid unknown on laptop"), (r#"{"pid": 4242}"#, "pid 4242 on unknown")] {
+    for (owner, who) in
+        [(r#"{"host": "laptop"}"#, "pid unknown on laptop"), (r#"{"pid": 4242}"#, "pid 4242 on unknown")]
+    {
         match run_with_state_replaced(&format!(r#"{{"owner": {owner}}}"#)).1 {
             Err(Stopped::TakenOver(e)) => assert!(e.0.contains(&format!("taken over by {who};")), "{e}"),
             other => panic!("not taken over: {other:?}"),

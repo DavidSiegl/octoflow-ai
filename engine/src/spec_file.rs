@@ -29,8 +29,8 @@ impl SpecFile {
 /// Errors, naming the path: the file cannot be read (with the system's reason), is not UTF-8 (with what Rust's
 /// decoder says of it), or holds only blanks.
 pub fn read_spec_file(path: &str) -> Result<SpecFile, OrchestratorError> {
-    let bytes =
-        std::fs::read(path).map_err(|e| OrchestratorError(format!("cannot read spec file {path}: {}", strerror(&e))))?;
+    let bytes = std::fs::read(path)
+        .map_err(|e| OrchestratorError(format!("cannot read spec file {path}: {}", strerror(&e))))?;
     let text = String::from_utf8(bytes)
         .map_err(|e| OrchestratorError(format!("spec file {path} is not UTF-8 text: {}", e.utf8_error())))?;
     if text.trim().is_empty() {

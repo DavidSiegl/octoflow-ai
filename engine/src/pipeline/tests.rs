@@ -33,17 +33,32 @@ fn invalid_definitions() {
         ),
         (
             "step build loops back to review, which does not come before it",
-            vec![with(step("build", "a-{n}.md"), |s| { s.edits = true; s.loop_to = Some("review".into()) }), review.clone()],
+            vec![
+                with(step("build", "a-{n}.md"), |s| {
+                    s.edits = true;
+                    s.loop_to = Some("review".into())
+                }),
+                review.clone(),
+            ],
         ),
         (
             "step build loops back to build, which does not come before it",
-            vec![with(step("build", "a-{n}.md"), |s| { s.edits = true; s.loop_to = Some("build".into()) }), review.clone()],
+            vec![
+                with(step("build", "a-{n}.md"), |s| {
+                    s.edits = true;
+                    s.loop_to = Some("build".into())
+                }),
+                review.clone(),
+            ],
         ),
         (
             "step review loops back to review, which does not come before it",
             vec![
                 build.clone(),
-                with(step("check", "c-{n}.md"), |s| { s.role = "review".into(); s.loop_to = Some("build".into()) }),
+                with(step("check", "c-{n}.md"), |s| {
+                    s.role = "review".into();
+                    s.loop_to = Some("build".into())
+                }),
                 with(step("review", "b-{n}.md"), |s| s.loop_to = Some("review".into())),
             ],
         ),
@@ -58,26 +73,45 @@ fn invalid_definitions() {
         (
             "steps build, review are each quality-gated; only one may be",
             vec![
-                with(step("build", "a-{n}.md"), |s| { s.edits = true; s.quality_gated = true }),
-                with(step("review", "b-{n}.md"), |s| { s.edits = true; s.quality_gated = true }),
+                with(step("build", "a-{n}.md"), |s| {
+                    s.edits = true;
+                    s.quality_gated = true
+                }),
+                with(step("review", "b-{n}.md"), |s| {
+                    s.edits = true;
+                    s.quality_gated = true
+                }),
             ],
         ),
         (
             "step build is quality-gated, so it must edit",
             vec![
-                with(step("prep", "p-{n}.md"), |s| { s.role = "review".into(); s.edits = true }),
+                with(step("prep", "p-{n}.md"), |s| {
+                    s.role = "review".into();
+                    s.edits = true
+                }),
                 with(step("build", "a-{n}.md"), |s| s.quality_gated = true),
             ],
         ),
         (
             "step build is quality-gated, so its handoff file needs {n}",
-            vec![with(step("build", "a.md"), |s| { s.edits = true; s.quality_gated = true }), review.clone()],
+            vec![
+                with(step("build", "a.md"), |s| {
+                    s.edits = true;
+                    s.quality_gated = true
+                }),
+                review.clone(),
+            ],
         ),
         (
             "step review is quality-gated, so it cannot be a verdict step",
             vec![
                 build.clone(),
-                with(step("review", "b-{n}.md"), |s| { s.edits = true; s.quality_gated = true; s.loop_to = Some("build".into()) }),
+                with(step("review", "b-{n}.md"), |s| {
+                    s.edits = true;
+                    s.quality_gated = true;
+                    s.loop_to = Some("build".into())
+                }),
             ],
         ),
         ("role review has no step", vec![build.clone()]),
@@ -90,7 +124,10 @@ fn invalid_definitions() {
             vec![step("build", "a-{n}.md"), with(step("review", "b-{n}.md"), |s| s.edits = true)],
         ),
         ("step id done is reserved", vec![build.clone(), with(step("done", "b.md"), |s| s.role = "review".into())]),
-        ("step id quality is reserved", vec![build.clone(), with(step("quality", "b.md"), |s| s.role = "review".into())]),
+        (
+            "step id quality is reserved",
+            vec![build.clone(), with(step("quality", "b.md"), |s| s.role = "review".into())],
+        ),
         ("has no steps", vec![]),
         (
             "step build: handoff file a-{round}.md may use only {n}",
@@ -120,13 +157,17 @@ fn role_without_label() {
 fn unknown_placeholder() {
     let st = with(Step::new("build", "build", "a-{n}.md", "write {spec_path}"), |s| s.edits = true);
     let e = Pipeline::new("bad", roles(&[("build", "Builder")]), vec![st]).unwrap_err();
-    assert_eq!(e, "workflow bad: step build: prompt: placeholder {spec_path} at line 1, column 7 is not one this template takes");
+    assert_eq!(
+        e,
+        "workflow bad: step build: prompt: placeholder {spec_path} at line 1, column 7 is not one this template takes"
+    );
 }
 
 #[test]
 fn a_prompt_may_use_the_prompt_fields_and_each_step_s_paths_once() {
     let names = prompt_placeholders(["spec", "build", "spec"]);
-    let paths = ["spec_path", "prev_spec_path", "earlier_spec_paths", "build_path", "prev_build_path", "earlier_build_paths"];
+    let paths =
+        ["spec_path", "prev_spec_path", "earlier_spec_paths", "build_path", "prev_build_path", "earlier_build_paths"];
     let expected: Vec<String> = PROMPT_FIELDS.iter().chain(paths.iter()).map(|n| n.to_string()).collect();
     assert_eq!(names, expected);
 }
@@ -146,14 +187,25 @@ fn steps_whose_files_can_share_a_name() {
     let default = &*DEFAULT_WORKFLOW;
     let (spec, build, review) = (&default.steps()[0], &default.steps()[1], &default.steps()[2]);
     let b = with(Step::new("b", "b", "x{n}.md", "{path}"), |s| s.edits = true);
-    let gated_a = with(Step::new("a", "a", "b.{n}", "{path}"), |s| { s.edits = true; s.quality_gated = true });
-    let looping = |id: &str, role: &str, file: &str| with(Step::new(id, role, file, "{path}"), |s| s.loop_to = Some("a".into()));
+    let gated_a = with(Step::new("a", "a", "b.{n}", "{path}"), |s| {
+        s.edits = true;
+        s.quality_gated = true
+    });
+    let looping =
+        |id: &str, role: &str, file: &str| with(Step::new(id, role, file, "{path}"), |s| s.loop_to = Some("a".into()));
     let editing = |id: &str, file: &str| with(Step::new(id, id, file, "{path}"), |s| s.edits = true);
     let cases: Vec<(&str, Vec<Step>)> = vec![
-        ("steps spec and build can both write build-1.md", vec![Step::new("spec", "spec", "build-1.md", "{path}"), build.clone(), review.clone()]),
+        (
+            "steps spec and build can both write build-1.md",
+            vec![Step::new("spec", "spec", "build-1.md", "{path}"), build.clone(), review.clone()],
+        ),
         (
             "steps build and review can both write build-1-q1.md",
-            vec![spec.clone(), build.clone(), with(Step::new("review", "review", "build-{n}-q1.md", "{path}"), |s| s.loop_to = Some("build".into()))],
+            vec![
+                spec.clone(),
+                build.clone(),
+                with(Step::new("review", "review", "build-{n}-q1.md", "{path}"), |s| s.loop_to = Some("build".into())),
+            ],
         ),
         ("steps b and r can both write x1.md", vec![b.clone(), Step::new("r", "b", "x1.md", "{path}")]),
         // {n} in the extension: a quality answer goes before it, as b-q3.1.
@@ -172,20 +224,38 @@ fn steps_whose_files_can_share_a_name() {
     // The gated step's own answers, and names that only look alike, are not collisions.
     let ok = |steps: Vec<Step>| Pipeline::new("ok", roles(&[("b", "B")]), steps).unwrap();
     let back_to_b = |file: &str| with(Step::new("r", "b", file, "{path}"), |s| s.loop_to = Some("b".into()));
-    ok(vec![with(Step::new("b", "b", "x{n}.md", "{path}"), |s| { s.edits = true; s.quality_gated = true }), back_to_b("x{n}-r.md")]);
-    ok(vec![Step::new("s", "b", "notes", "{path}"), with(Step::new("b", "b", "notes-{n}", "{path}"), |s| { s.edits = true; s.quality_gated = true })]);
+    ok(vec![
+        with(Step::new("b", "b", "x{n}.md", "{path}"), |s| {
+            s.edits = true;
+            s.quality_gated = true
+        }),
+        back_to_b("x{n}-r.md"),
+    ]);
+    ok(vec![
+        Step::new("s", "b", "notes", "{path}"),
+        with(Step::new("b", "b", "notes-{n}", "{path}"), |s| {
+            s.edits = true;
+            s.quality_gated = true
+        }),
+    ]);
     // A round number is never 0 and has no leading zero, and a digit beside {n} is fine on its own.
-    ok(vec![Step::new("s", "b", "x0.md", "{path}"), with(Step::new("b", "b", "x{n}.md", "{path}"), |s| s.edits = true), back_to_b("x0{n}.md")]);
+    ok(vec![
+        Step::new("s", "b", "x0.md", "{path}"),
+        with(Step::new("b", "b", "x{n}.md", "{path}"), |s| s.edits = true),
+        back_to_b("x0{n}.md"),
+    ]);
     ok(vec![with(Step::new("b", "b", "x-{n}.md", "{path}"), |s| s.edits = true), back_to_b("x3{n}.md")]);
 }
 
 #[test]
 fn a_model_or_agent_for_a_role_not_in_the_workflow() {
     let steps = vec![Step::new("build", "build", "b.md", "{path}")];
-    let e = Pipeline::with("bad", roles(&[("build", "Builder")]), steps.clone(), PipelineSettings {
-        models: roles(&[("x", "m")]),
-        ..PipelineSettings::default()
-    })
+    let e = Pipeline::with(
+        "bad",
+        roles(&[("build", "Builder")]),
+        steps.clone(),
+        PipelineSettings { models: roles(&[("x", "m")]), ..PipelineSettings::default() },
+    )
     .unwrap_err();
     assert_eq!(e, "workflow bad: a model is set for role x, which is not one of the workflow's roles");
     let e = replaced(&quick(), |s| s.agents = roles(&[("x", "pi")])).unwrap_err();
@@ -208,26 +278,38 @@ fn a_model_or_agent_for_a_role_not_in_the_workflow() {
 fn only_an_editing_step_may_lock() {
     let q = quick();
     let steps = vec![q.steps()[0].clone(), with(q.steps()[1].clone(), |s| s.locks = true)];
-    assert!(Pipeline::new("bad", q.roles().clone(), steps).unwrap_err().ends_with("step review locks the files it changes, so it must edit"));
+    assert!(Pipeline::new("bad", q.roles().clone(), steps)
+        .unwrap_err()
+        .ends_with("step review locks the files it changes, so it must edit"));
     // Its lock would hold the earlier step's work too.
     let steps = four_steps().into_iter().map(|st| with(st, |s| s.locks = s.id == "build")).collect();
-    assert!(Pipeline::new("bad", four_roles(), steps).unwrap_err().ends_with("step build locks the files it changes, so it must be the first editing step"));
+    assert!(Pipeline::new("bad", four_roles(), steps)
+        .unwrap_err()
+        .ends_with("step build locks the files it changes, so it must be the first editing step"));
     // A second turn of it would lock the Builder's work of the round before.
     let steps = four_steps()
         .into_iter()
         .map(|st| match st.id.as_str() {
-            "tests" => with(st, |s| { s.locks = true; s.file = "tests-{n}.md".into() }),
+            "tests" => with(st, |s| {
+                s.locks = true;
+                s.file = "tests-{n}.md".into()
+            }),
             "review" => with(st, |s| s.loop_to = Some("tests".into())),
             _ => st,
         })
         .collect();
-    assert!(Pipeline::new("bad", four_roles(), steps).unwrap_err().ends_with("step tests locks the files it changes, so the verdict loop of step review must not run it again"));
+    assert!(Pipeline::new("bad", four_roles(), steps)
+        .unwrap_err()
+        .ends_with("step tests locks the files it changes, so the verdict loop of step review must not run it again"));
     // Nor a second verdict step's loop: four's review goes back to the Builder, after the Test Writer, and an
     // acceptance back to the tests.
     let mut steps: Vec<Step> = four_steps()
         .into_iter()
         .map(|st| match st.id.as_str() {
-            "tests" => with(st, |s| { s.locks = true; s.file = "tests-{n}.md".into() }),
+            "tests" => with(st, |s| {
+                s.locks = true;
+                s.file = "tests-{n}.md".into()
+            }),
             _ => st,
         })
         .collect();
@@ -235,7 +317,10 @@ fn only_an_editing_step_may_lock() {
     let mut roles = four_roles();
     roles.insert("accept".to_string(), "Product Manager".to_string());
     let e = Pipeline::new("bad", roles, steps).unwrap_err();
-    assert!(e.ends_with("step tests locks the files it changes, so the verdict loop of step accept must not run it again"), "{e}");
+    assert!(
+        e.ends_with("step tests locks the files it changes, so the verdict loop of step accept must not run it again"),
+        "{e}"
+    );
 }
 
 #[test]
@@ -295,7 +380,10 @@ fn several_verdict_steps_each_loop_back_to_an_earlier_step() {
     assert_eq!(p.result(Some("review")).id, "review");
     assert_eq!(p.result(None).id, "review");
     // The second loop may go back to an editing step of its own, as long as it runs the first verdict step again.
-    let polish = with(step("polish", "polish-{n}.md"), |s| { s.role = "build".into(); s.edits = true });
+    let polish = with(step("polish", "polish-{n}.md"), |s| {
+        s.role = "build".into();
+        s.edits = true
+    });
     let mut steps = p.steps().to_vec();
     steps.insert(1, polish.clone());
     steps[3].loop_to = Some("polish".into());
@@ -305,7 +393,10 @@ fn several_verdict_steps_each_loop_back_to_an_earlier_step() {
 #[test]
 fn every_verdict_step_judges_the_change_each_round_ends_with() {
     let p = accepting();
-    let polish = with(step("polish", "polish-{n}.md"), |s| { s.role = "build".into(); s.edits = true });
+    let polish = with(step("polish", "polish-{n}.md"), |s| {
+        s.role = "build".into();
+        s.edits = true
+    });
     // Back to a step after the review: the review would not judge the round's edits.
     let mut steps = p.steps().to_vec();
     steps.insert(2, polish.clone());

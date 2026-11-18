@@ -3,8 +3,8 @@
 
 use crate::constants::PROOF_COPIES_DIR;
 use crate::error::OrchestratorError;
-use serde_json::Value;
 use crate::json::{object, Object};
+use serde_json::Value;
 
 /// The heading of the section Workflow::judge_proofs appends to a review, which a Reviewer's own section is unlikely
 /// to take.
@@ -86,10 +86,16 @@ impl ProofRun {
         let (round, written) = (round_of("round")?, round_of("written")?);
         let finding = match field("finding")? {
             Value::Null => None,
-            value => Some(value.as_i64().and_then(|n| u64::try_from(n).ok()).ok_or_else(|| invalid("finding", value, "a number"))?),
+            value => Some(
+                value
+                    .as_i64()
+                    .and_then(|n| u64::try_from(n).ok())
+                    .ok_or_else(|| invalid("finding", value, "a number"))?,
+            ),
         };
         let demonstrated = field("demonstrated")?;
-        let demonstrated = demonstrated.as_bool().ok_or_else(|| invalid("demonstrated", demonstrated, "true or false"))?;
+        let demonstrated =
+            demonstrated.as_bool().ok_or_else(|| invalid("demonstrated", demonstrated, "true or false"))?;
         let moved = match record.get("moved") {
             None => false,
             Some(flag) => flag.as_bool().ok_or_else(|| invalid("moved", flag, "true or false"))?,
@@ -158,11 +164,8 @@ pub fn proofs_section(command: &str, cwd: &str, review: &str, proofs: &[ProofRun
         out.extend(proof_output(&p.said));
     }
     let proven: Vec<Option<i128>> = proofs.iter().map(|p| p.finding.map(i128::from)).collect();
-    let unproven: Vec<String> = numbered_findings(review)
-        .into_iter()
-        .filter(|k| !proven.contains(&Some(*k)))
-        .map(|k| k.to_string())
-        .collect();
+    let unproven: Vec<String> =
+        numbered_findings(review).into_iter().filter(|k| !proven.contains(&Some(*k))).map(|k| k.to_string()).collect();
     if !unproven.is_empty() {
         out.push(String::new());
         out.push(format!("Findings without a proof, unproven: {}.", unproven.join(", ")));

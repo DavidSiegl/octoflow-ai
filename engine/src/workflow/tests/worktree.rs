@@ -81,7 +81,10 @@ fn dirty_checkout_on_another_branch_is_left_alone() {
     assert!(["add", "commit"].iter().all(|word| first.contains(word)), "{first:?}");
     assert!(in_worktree.contains(&strings(GIT_STATUS_ARGS)));
     let s = f.host.state();
-    assert_eq!((s.branch.as_str(), s.changed.iter().map(String::as_str).collect::<Vec<_>>()), ("feature", vec!["/proj/wip.py"]));
+    assert_eq!(
+        (s.branch.as_str(), s.changed.iter().map(String::as_str).collect::<Vec<_>>()),
+        ("feature", vec!["/proj/wip.py"])
+    );
     assert_eq!((s.prs[0].base.as_str(), s.prs[0].head.as_str()), ("feature", RUN_BRANCH));
 }
 
@@ -89,7 +92,8 @@ fn dirty_checkout_on_another_branch_is_left_alone() {
 fn worktree_is_added_from_origin_before_the_workspace_opens() {
     let f = worktree_run(Rc::new(FakeHost::default()), None);
     let at_workspace = Rc::new(RefCell::new(vec![]));
-    let (record, host, state_path) = (Rc::clone(&at_workspace), Rc::clone(&f.host), format!("{}/state.json", f.state.dir()));
+    let (record, host, state_path) =
+        (Rc::clone(&at_workspace), Rc::clone(&f.host), format!("{}/state.json", f.state.dir()));
     f.herdr.state().before_call = Some(Box::new(move |call| {
         if let Call::Workspace { .. } = call {
             let saved = serde_json::from_str::<Value>(host.state().files.get(&state_path).unwrap()).unwrap();
@@ -121,7 +125,10 @@ fn worktree_is_added_from_origin_before_the_workspace_opens() {
 #[test]
 fn agents_work_in_the_worktree() {
     let seen = seen();
-    let script = vec![("spec", vec![recording(spec_turn(), &seen)]), ("review", vec![recording(review_turn(1, APPROVE), &seen)])];
+    let script = vec![
+        ("spec", vec![recording(spec_turn(), &seen)]),
+        ("review", vec![recording(review_turn(1, APPROVE), &seen)]),
+    ];
     let f = worktree_run(Rc::new(FakeHost::default()), Some(script));
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
     let cwds: Vec<(String, String)> =
@@ -200,7 +207,10 @@ fn no_pr_keeps_the_worktree_with_the_change() {
     assert_eq!(f.workflow(no_pr()).run(), verdict(APPROVE));
     assert!(f.told.lines().contains(&format!("the change is in worktree {WORKTREE}")));
     let s = f.host.state();
-    assert_eq!(s.worktrees.iter().map(|(p, b)| (p.to_string(), b.clone())).collect::<Vec<_>>(), [(WORKTREE.into(), "HEAD".into())]);
+    assert_eq!(
+        s.worktrees.iter().map(|(p, b)| (p.to_string(), b.clone())).collect::<Vec<_>>(),
+        [(WORKTREE.into(), "HEAD".into())]
+    );
     assert_eq!(s.changed.iter().collect::<Vec<_>>(), [&format!("{WORKTREE}/limiter.py")]);
     drop(s);
     assert!(!ran(&f.host, &["switch"]) && !ran(&f.host, &["commit"]) && !ran(&f.host, &["push"]));
@@ -215,7 +225,10 @@ fn a_failed_run_keeps_the_worktree() {
     let error = failure(f.workflow(RunSettings::default()).run());
     assert!(error.contains("changed no files"), "{error}");
     let worktrees = f.host.state().worktrees.clone();
-    assert_eq!(worktrees.iter().map(|(p, b)| (p.to_string(), b.clone())).collect::<Vec<_>>(), [(WORKTREE.into(), RUN_BRANCH.into())]);
+    assert_eq!(
+        worktrees.iter().map(|(p, b)| (p.to_string(), b.clone())).collect::<Vec<_>>(),
+        [(WORKTREE.into(), RUN_BRANCH.into())]
+    );
 }
 
 #[test]
@@ -223,7 +236,13 @@ fn resume_reuses_the_worktree() {
     let host = FakeHost::default();
     host.state().worktrees.insert(WORKTREE.to_string(), RUN_BRANCH.to_string());
     host.state().changed.insert(format!("{WORKTREE}/limiter.py"));
-    let f = Fixture::resume(Rc::new(host), saved_worktree_run("review", 1), vec![("review", vec![review_turn(1, APPROVE)])], &[], &[]);
+    let f = Fixture::resume(
+        Rc::new(host),
+        saved_worktree_run("review", 1),
+        vec![("review", vec![review_turn(1, APPROVE)])],
+        &[],
+        &[],
+    );
     f.put(&f.state.build_path(1), "report 1");
     let mut wf = f.workflow(f.as_saved());
     assert_eq!(wf.run(), verdict(APPROVE));

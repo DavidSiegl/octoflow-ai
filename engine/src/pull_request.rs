@@ -1,9 +1,7 @@
 //! The texts a run publishes its change with: its branch's name, its commit's note and trailers, and its pull
 //! request's body, all from its RunState and handoff files.
 
-use crate::constants::{
-    APPROVE, BRANCH_PREFIX, FINISHED, PR_SECTION_LIMIT, QUALITY_GATE_FAILED,
-};
+use crate::constants::{APPROVE, BRANCH_PREFIX, FINISHED, PR_SECTION_LIMIT, QUALITY_GATE_FAILED};
 use crate::handoff::parse_verdict;
 use crate::quality::parse_gate;
 use crate::state::{judged_by_several, RunState, StepVerdict};
@@ -81,12 +79,9 @@ pub fn commit_note(state: &RunState) -> String {
         Some(FINISHED | QUALITY_GATE_FAILED) => {
             format!("Orchestrator run {}: {}, unreviewed.", state.run_id, verdict_text(state))
         }
-        _ => format!(
-            "Orchestrator run {}: {} after {} review round(s).",
-            state.run_id,
-            verdict_text(state),
-            state.round
-        ),
+        _ => {
+            format!("Orchestrator run {}: {} after {} review round(s).", state.run_id, verdict_text(state), state.round)
+        }
     }
 }
 
@@ -119,10 +114,8 @@ pub struct GateEvidence {
 /// A role that ran in two harnesses over resumes names the last. docs/design.md says what each trailer means.
 pub fn provenance(state: &RunState, quality: &GateEvidence) -> Vec<(String, String)> {
     let s = state;
-    let mut trailers = vec![
-        ("Octoflow-Run".to_string(), s.run_id.clone()),
-        ("Octoflow-Workflow".to_string(), s.workflow.clone()),
-    ];
+    let mut trailers =
+        vec![("Octoflow-Run".to_string(), s.run_id.clone()), ("Octoflow-Workflow".to_string(), s.workflow.clone())];
     for (role, agent) in s.agents.iter() {
         let kind = &agent.harness;
         let model = s.models.get(role).filter(|m| !m.is_empty()).map_or("default", String::as_str);
@@ -260,7 +253,13 @@ fn review_details(state: &RunState, reviews: &[(String, String)]) -> Vec<String>
 /// ended, its provenance as a table, the spec, the last report, the last quality file, the reviews and the run's
 /// timings. reviews are the verdict files of the last round, as review_details takes them. quality is what the gate
 /// said of the change, as provenance takes it. state must have a verdict, as every run that publishes has.
-pub fn pr_body(state: &RunState, spec: &str, report: &str, reviews: &[(String, String)], quality: &GateEvidence) -> String {
+pub fn pr_body(
+    state: &RunState,
+    spec: &str,
+    report: &str,
+    reviews: &[(String, String)],
+    quality: &GateEvidence,
+) -> String {
     let s = state;
     let head = format!("Opened by Octoflow AI run `{}`. {}", s.run_id, verdict_line(s));
     let mut table = vec!["| Commit trailer | Value |".to_string(), "| --- | --- |".to_string()];

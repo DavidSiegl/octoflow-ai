@@ -32,11 +32,14 @@ fn printed(cli: &Cli, argv: &[&str]) -> String {
 fn workflows_lists_them() {
     let d = TempDir::new();
     let solo = "description = \"Builder alone\"\n[[steps]]\nid = \"build\"\nfile = \"b-{n}.md\"\nprompt = \"{path}\"\nedits = true\n";
-    let cli = configured(&d, &[
-        ("workflows/solo.toml", solo),
-        ("workflows/broken.toml", "[[steps]]\nid = 3\n"),
-        ("workflows/quick.toml", "[[steps]]\nuse = \"build\"\n"),
-    ]);
+    let cli = configured(
+        &d,
+        &[
+            ("workflows/solo.toml", solo),
+            ("workflows/broken.toml", "[[steps]]\nid = 3\n"),
+            ("workflows/quick.toml", "[[steps]]\nuse = \"build\"\n"),
+        ],
+    );
     let workflows = cli.config.workflows_dir();
     assert_eq!(printed(&cli, &[]).lines().collect::<Vec<_>>(), [
         "default  built in".to_string(),
@@ -102,7 +105,10 @@ fn workflows_prints_a_files_agent() {
 fn an_unknown_or_broken_workflow_is_an_error() {
     let d = TempDir::new();
     let cli = configured(&d, &[("workflows/broken.toml", "[[steps]]\nid = 3\n")]);
-    assert_eq!(cli.error(&["workflows", "nosuch"]), "unknown workflow nosuch; there are broken, default, design, peer-review, product-team, quick");
+    assert_eq!(
+        cli.error(&["workflows", "nosuch"]),
+        "unknown workflow nosuch; there are broken, default, design, peer-review, product-team, quick"
+    );
     let broken = cli.config.workflows_dir() + "/broken.toml";
     assert_eq!(cli.error(&["workflows", &broken]), format!("{broken}: step 1: file is missing"));
     assert_eq!(cli.main(&["workflows", "nosuch"]), crate::constants::EXIT_ERROR);
@@ -112,10 +118,13 @@ fn an_unknown_or_broken_workflow_is_an_error() {
 #[test]
 fn workflows_lists_the_prompt_files() {
     let d = TempDir::new();
-    let cli = configured(&d, &[
-        ("prompts/QUALITY_OFF_NOTE.md", "Off: {quality_paths}.\n"),
-        ("prompts/BUILD_PROMPT.md", "Build {spec_path} in {cwd}; report to {build_path}.\n"),
-    ]);
+    let cli = configured(
+        &d,
+        &[
+            ("prompts/QUALITY_OFF_NOTE.md", "Off: {quality_paths}.\n"),
+            ("prompts/BUILD_PROMPT.md", "Build {spec_path} in {cwd}; report to {build_path}.\n"),
+        ],
+    );
     let prompts = cli.config.prompts_dir();
     let out = printed(&cli, &[]);
     let expected = format!(

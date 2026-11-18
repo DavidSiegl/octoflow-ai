@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use crate::constants::PYPI_TIMEOUT;
 use crate::host::fake::FakeTime;
 use crate::http::{Http, HttpError, Request, Response};
-use serde_json::Value;
-use crate::json::Object;
 use crate::json::object;
+use crate::json::Object;
+use serde_json::Value;
 
 /// PyPI's JSON for a project with one early release and its latest, as https://docs.pypi.org/api/json/ has it.
 #[derive(Clone, Debug)]
@@ -52,9 +52,11 @@ impl ProjectJson {
         ]);
         let releases: Object =
             object([("0.1", files(self.first)), ("0.2", Value::Array(Vec::new())), (self.version, files(self.latest))]);
-        Value::Object(
-            object([("info", Value::Object(info)), ("releases", Value::Object(releases)), ("urls", files(self.latest))]),
-        )
+        Value::Object(object([
+            ("info", Value::Object(info)),
+            ("releases", Value::Object(releases)),
+            ("urls", files(self.latest)),
+        ]))
     }
 }
 

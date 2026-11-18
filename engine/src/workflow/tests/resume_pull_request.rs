@@ -56,7 +56,8 @@ fn assert_refused(f: &Fixture, current: &str) -> Object {
 fn a_run_without_a_pull_request_opens_none() {
     let state = saved_run("review", 1, FULL);
     assert!(!state.pull_request);
-    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![("review", vec![review_turn(1, APPROVE)])], &[], &[]);
+    let f =
+        Fixture::resume(Rc::new(FakeHost::default()), state, vec![("review", vec![review_turn(1, APPROVE)])], &[], &[]);
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
     assert!(f.host.state().prs.is_empty());
     assert!(!called(&f, &Call::Close { workspace: "w1".into() }));
@@ -80,10 +81,13 @@ fn spec_resumed_after_switching_keeps_the_base_branch() {
     let mut state = saved_run("spec", 0, &["spec"]);
     state.pull_request = true;
     state.base_branch = Some("main".into());
-    let f = Fixture::resume(host_on("abc123", BRANCH), state, vec![
-        ("build", vec![build_turn(1)]),
-        ("review", vec![review_turn(1, APPROVE)]),
-    ], &[], &[]);
+    let f = Fixture::resume(
+        host_on("abc123", BRANCH),
+        state,
+        vec![("build", vec![build_turn(1)]), ("review", vec![review_turn(1, APPROVE)])],
+        &[],
+        &[],
+    );
     f.put(&f.state.spec_path(), "# Add a token-bucket rate limiter\n");
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
     let calls = git_calls(&f);
@@ -121,13 +125,16 @@ fn publish_resumed_mid_merge_aborts_it_before_committing() {
     assert_eq!(wf.run(), verdict(APPROVE));
     let calls = git_calls(&f);
     // The branch is checked at the start and again in publish, before anything touches the tree.
-    assert_eq!(calls[..5], [
-        strings(ON_BRANCH),
-        strings(ON_BRANCH),
-        strings(&["rev-parse", "-q", "--verify", "MERGE_HEAD"]),
-        strings(&["merge", "--abort"]),
-        strings(GIT_STATUS_ARGS),
-    ]);
+    assert_eq!(
+        calls[..5],
+        [
+            strings(ON_BRANCH),
+            strings(ON_BRANCH),
+            strings(&["rev-parse", "-q", "--verify", "MERGE_HEAD"]),
+            strings(&["merge", "--abort"]),
+            strings(GIT_STATUS_ARGS),
+        ]
+    );
     assert!(!calls.iter().any(|c| c[0] == "add" || c[0] == "commit"));
     // The merge is tried again, conflicts again, and is aborted again.
     assert_eq!(count(&calls, &["merge", "--abort"]), 2);
@@ -238,10 +245,11 @@ fn runs_without_a_branch_to_guard_are_not_checked() {
     let mut published = approved_publish();
     published.pr_url = Some("https://github.com/o/r/pull/7".into());
     let cases: Vec<(&str, RunState, Script)> = vec![
-        ("no-pr", saved_run("build", 1, FULL), vec![
-            ("build", vec![build_turn(1)]),
-            ("review", vec![review_turn(1, APPROVE)]),
-        ]),
+        (
+            "no-pr",
+            saved_run("build", 1, FULL),
+            vec![("build", vec![build_turn(1)]), ("review", vec![review_turn(1, APPROVE)])],
+        ),
         ("pr_url set", published, vec![]),
     ];
     for (name, state, script) in cases {

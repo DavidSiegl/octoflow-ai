@@ -11,17 +11,17 @@ use indexmap::IndexMap;
 use crate::constants::{CONSOLE_TAIL_LINES, NETWORK_TIMEOUT, REMOTE, RUNS_DIR};
 use crate::error::OrchestratorError;
 use crate::harness::{harness, SessionLog};
-use serde_json::Value;
 use crate::json::ValueExt;
 use crate::paths::file_name;
+use serde_json::Value;
 use std::collections::HashSet;
 
 mod process;
 mod scan;
 
 pub use process::ProcessHost;
-pub use scan::{LeaksFound, Scanned};
 pub(crate) use process::{run_process, ProcessError};
+pub use scan::{LeaksFound, Scanned};
 
 use crate::quality::Leak;
 use crate::state::{run_dir, SavedRun};
@@ -515,10 +515,7 @@ pub trait Host {
         let conflicts = nul_separated(&git_diff(self, cwd, &["--name-only", "-z", "--diff-filter=U"])?);
         self.abort_merge(cwd)?;
         if conflicts.is_empty() {
-            return Err(OrchestratorError(format!(
-                "git merge {upstream} failed in {cwd}: {}",
-                merge.stderr.trim()
-            )));
+            return Err(OrchestratorError(format!("git merge {upstream} failed in {cwd}: {}", merge.stderr.trim())));
         }
         Ok(conflicts)
     }
@@ -540,9 +537,7 @@ pub trait Host {
         let out = self.git(cwd, &["commit-tree", &tree, "-p", parent, "-m", message])?;
         let sha = out.trim();
         if !is_commit_id(sha) {
-            return Err(OrchestratorError(format!(
-                "snapshot of {cwd}: git commit-tree printed {sha:?}, not a commit"
-            )));
+            return Err(OrchestratorError(format!("snapshot of {cwd}: git commit-tree printed {sha:?}, not a commit")));
         }
         Ok(sha.to_string())
     }
@@ -633,9 +628,14 @@ pub trait Host {
         if !gone.is_empty() {
             let top = utf8_path(&self.git_verbatim(cwd, &["rev-parse", "--show-toplevel"])?)?;
             let top = top.strip_suffix('\n').unwrap_or(&top);
-            let printed = sh_over_paths(self, top, r#"cd -- "$1" && xargs -0 sh -c 'for p; do
+            let printed = sh_over_paths(
+                self,
+                top,
+                r#"cd -- "$1" && xargs -0 sh -c 'for p; do
                 if [ -d "$p" ] && [ ! -L "$p" ]; then printf "%s\0" "$p"; fi
-            done' _"#, &gone)?;
+            done' _"#,
+                &gone,
+            )?;
             let dirs: HashSet<String> = nul_separated(printed.as_bytes()).into_iter().collect();
             let (dirs, files): (Vec<&String>, Vec<&String>) = gone.into_iter().partition(|p| dirs.contains(*p));
             if !files.is_empty() {
@@ -1224,7 +1224,11 @@ fn run_files_loop(keep: &str) -> String {
 /// deleted, as host's run_metrics gives them: ordered by run id, the order of the runs' directories, so that forgetting
 /// a run does not move its line. A run archived whose directory is still there, as after a forget_run that failed to
 /// delete it, is given once, from its directory, and so is a run the archive holds twice. Errors: the archive cannot be read, or holds a line that is not JSON.
-pub(crate) fn with_archived_metrics(host: &(impl Host + ?Sized), cwd: &str, live: Vec<Value>) -> Result<Vec<Value>, OrchestratorError> {
+pub(crate) fn with_archived_metrics(
+    host: &(impl Host + ?Sized),
+    cwd: &str,
+    live: Vec<Value>,
+) -> Result<Vec<Value>, OrchestratorError> {
     let path = format!("{cwd}/{METRICS_ARCHIVE}");
     let run_id = |m: &Value| m.get("run_id").and_then(Value::as_str).unwrap_or_default().to_string();
     let live_ids: HashSet<String> = live.iter().map(run_id).collect();
@@ -1251,9 +1255,8 @@ fn parsed_run_files(run_dir: &str, out: &str) -> Result<Vec<RunFile>, Orchestrat
     let mut files = vec![];
     for entry in out.split('\0').filter(|e| !e.is_empty()) {
         let (mtime, path) = entry.split_once(' ').unwrap_or((entry, ""));
-        let mtime = decimal_int(mtime).ok_or_else(|| {
-            OrchestratorError(format!("listing {run_dir}: stat printed {mtime:?}, not a time"))
-        })?;
+        let mtime = decimal_int(mtime)
+            .ok_or_else(|| OrchestratorError(format!("listing {run_dir}: stat printed {mtime:?}, not a time")))?;
         files.push((mtime, path.to_string()));
     }
     files.sort();
@@ -1463,14 +1466,24 @@ fn clean_directories<H: Host + ?Sized>(
         let unheld: Vec<String> =
             level.iter().map(|p| format!("{p}/.gitignore")).filter(|g| !held.contains(g)).collect();
         if !unheld.is_empty() {
-            sh_over_paths(host, top, r#"cd -- "$1" && xargs -0 sh -c 'for g; do
+            sh_over_paths(
+                host,
+                top,
+                r#"cd -- "$1" && xargs -0 sh -c 'for g; do
                 [ -d "./$g" ] || rm -f -- "./$g" || exit 1
-            done' _"#, &unheld)?;
+            done' _"#,
+                &unheld,
+            )?;
         }
-        let found = sh_over_paths(host, top, r#"cd -- "$1" && xargs -0 sh -c 'for p; do
+        let found = sh_over_paths(
+            host,
+            top,
+            r#"cd -- "$1" && xargs -0 sh -c 'for p; do
             rm -rf -- "./$p/.git" || exit 1
             find "./$p" -mindepth 1 -maxdepth 1 -type d ! -name .git -print0 || exit 1
-        done' _"#, &level)?;
+        done' _"#,
+            &level,
+        )?;
         let below: Vec<String> = nul_separated(found.as_bytes())
             .into_iter()
             .map(|c| c.strip_prefix("./").unwrap_or(&c).to_string())
@@ -1481,13 +1494,19 @@ fn clean_directories<H: Host + ?Sized>(
         }
         // check-ignore prints the ignored ones and exits 1 when there are none.
         let script = r#"cd -- "$1" && { git check-ignore --no-index -z --stdin; [ $? -le 1 ]; }"#;
-        let ignored: HashSet<String> = nul_separated(sh_over_paths(host, top, script, &below)?.as_bytes()).into_iter().collect();
+        let ignored: HashSet<String> =
+            nul_separated(sh_over_paths(host, top, script, &below)?.as_bytes()).into_iter().collect();
         level = below.into_iter().filter(|c| !ignored.contains(c)).collect();
     }
     // Without -x, it leaves what the outer rules ignore; with one -f, a repository the walk did not enter.
-    sh_over_paths(host, top, r#"cd -- "$1" && xargs -0 sh -c 'for p; do
+    sh_over_paths(
+        host,
+        top,
+        r#"cd -- "$1" && xargs -0 sh -c 'for p; do
         git clean -fdq -- ":(top,literal)$p" || exit 1
-    done' _"#, dirs)?;
+    done' _"#,
+        dirs,
+    )?;
     Ok(())
 }
 
@@ -1604,9 +1623,7 @@ fn pr_view<H: Host + ?Sized>(host: &H, cwd: &str, url: &str, json_fields: &str) 
     let out = checked(host, &argv, proc).map_err(GhError::Failed)?;
     match serde_json::from_str::<Value>(&out) {
         Ok(pr) => Ok((pr, out)),
-        Err(e) => {
-            Err(GhError::Failed(OrchestratorError(format!("gh pr view {url} printed {:?}: {e}", out.trim()))))
-        }
+        Err(e) => Err(GhError::Failed(OrchestratorError(format!("gh pr view {url} printed {:?}: {e}", out.trim())))),
     }
 }
 

@@ -1,0 +1,11 @@
+# How `cargo fmt --all` formats the workspace's Rust; ci/rustfmt.sh fails a change it would reformat. Chosen by how
+# little of the hand-wrapped code before it they changed (measured on aeefcfc: `cargo fmt --all -- --check` hunks).
+
+# The width the code was wrapped at by hand, rather than rustfmt's default of 100.
+max_width = 120
+# Lets calls, chains, struct literals, arrays and if-else expressions fill the whole width before rustfmt breaks them,
+# as the hand wrapping did: with the default's narrower limits (60% of max_width for a call's arguments) max_width
+# alone changed 3254 hunks, with this 846. Lowering any one of them again (fn_call_width, chain_width,
+# struct_lit_width, array_width) added hunks.
+# reorder_imports = false would have saved 91 more, but keeps imports unsorted for good; sorting them is kept.
+use_small_heuristics = "Max"

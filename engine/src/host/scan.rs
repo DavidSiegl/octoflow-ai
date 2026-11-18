@@ -7,8 +7,8 @@ use std::fmt;
 use super::{checked, git_timed, Host, DEFAULT_TIMEOUT, IN_DIR};
 use crate::constants::{GITLEAKS_ALLOW, GITLEAKS_EXTEND_DEPTH, GITLEAKS_TIMEOUT, REMOTE};
 use crate::error::{shortened, OrchestratorError};
-use serde_json::Value;
 use crate::quality::Leak;
+use serde_json::Value;
 
 /// A push refused because what it would publish holds secrets, as Host::refuse_leaks finds them.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,7 +65,9 @@ pub(super) fn scan_secrets<H: Host + ?Sized>(
     let git_dir = host.git(cwd, &["rev-parse", "--absolute-git-dir"])?;
     let on = host.ssh_target().map(|t| format!(" on {t}")).unwrap_or_default();
     let failed = match scanned {
-        Scanned::Unpublished => format!("gitleaks could not scan what the push would publish{on}, so nothing was pushed"),
+        Scanned::Unpublished => {
+            format!("gitleaks could not scan what the push would publish{on}, so nothing was pushed")
+        }
         Scanned::SinceBase => format!("gitleaks could not scan the change{on}, so nothing judged it"),
     };
     let excluded = match scanned {
@@ -193,9 +195,8 @@ fn allow_comments<H: Host + ?Sized>(
 /// GIT_ATTR_SOURCE and GIT_CONFIG_PARAMETERS (which `git -c` exports, read after GIT_CONFIG_COUNT) would bring a
 /// tree's attributes back, and are unset.
 fn scan_git_env(git_dir: &str, empty_tree: &str) -> Vec<String> {
-    let mut env: Vec<String> = ["env", "-u", "GIT_WORK_TREE", "-u", "GIT_ATTR_SOURCE", "-u", "GIT_CONFIG_PARAMETERS"]
-        .map(String::from)
-        .into();
+    let mut env: Vec<String> =
+        ["env", "-u", "GIT_WORK_TREE", "-u", "GIT_ATTR_SOURCE", "-u", "GIT_CONFIG_PARAMETERS"].map(String::from).into();
     env.push(format!("GIT_DIR={git_dir}"));
     env.extend(["GIT_CONFIG_COUNT=1".into(), "GIT_CONFIG_KEY_0=attr.tree".into()]);
     env.push(format!("GIT_CONFIG_VALUE_0={empty_tree}"));
@@ -223,8 +224,8 @@ fn write_base_rules<H: Host + ?Sized>(
         |chain: &[String], why: String| base_rules_refused(base, &format!("{} {why}", chain[chain.len() - 1]));
     let config = format!("{rules}/{}", chain[0]);
     let mut spelled = chain[0].clone();
-    let mut text = base_rules_file(host, cwd, base, &chain[0])?
-        .unwrap_or_else(|| "[extend]\nuseDefault = true\n".to_string());
+    let mut text =
+        base_rules_file(host, cwd, base, &chain[0])?.unwrap_or_else(|| "[extend]\nuseDefault = true\n".to_string());
     loop {
         host.write(&format!("{rules}/{spelled}"), &text, false)?;
         if chain.len() > GITLEAKS_EXTEND_DEPTH as usize {

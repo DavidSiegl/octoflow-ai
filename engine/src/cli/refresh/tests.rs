@@ -6,11 +6,11 @@ use crate::cli::{Command, Stop, Target};
 use crate::constants::{APPROVE, CHANGES_REQUESTED, EXIT_ERROR, EXIT_WAITING};
 use crate::host::fake::{FakePr, PrEdit};
 use crate::host::Completed;
-use crate::pull_request::{conflict_warning, pr_body, GateEvidence};
-use serde_json::Value;
-use crate::json::Object;
-use crate::state::{format_problem, RunState, SavedRun};
 use crate::json::object;
+use crate::json::Object;
+use crate::pull_request::{conflict_warning, pr_body, GateEvidence};
+use crate::state::{format_problem, RunState, SavedRun};
+use serde_json::Value;
 
 const REFRESH_ID: &str = "20261001-120000-a1b2c3";
 const REFRESH_URL: &str = "https://github.com/o/r/pull/7";
@@ -74,7 +74,15 @@ impl Refresh {
 
     /// A done run whose pull request at url was opened over conflicts, and what gh says of it: pr(body) with fields,
     /// body the one pr_body wrote unless given. The run's saved state.
-    fn add(&self, run_id: &str, url: &str, conflicts: &[&str], verdict: &str, body: Option<&str>, fields: &[(&str, Value)]) -> Value {
+    fn add(
+        &self,
+        run_id: &str,
+        url: &str,
+        conflicts: &[&str],
+        verdict: &str,
+        body: Option<&str>,
+        fields: &[(&str, Value)],
+    ) -> Value {
         let state = done_run(run_id, url, conflicts, verdict);
         let text = state.to_text();
         let body = body.map_or_else(|| body_of(&state), String::from);
@@ -168,7 +176,8 @@ fn a_pull_request_already_out_of_draft_is_not_marked_again() {
 
 #[test]
 fn a_pull_request_that_still_conflicts_or_is_not_known_is_left() {
-    for (mergeable, line) in [("CONFLICTING", "still conflicts"), ("UNKNOWN", "mergeability not known yet, try again")] {
+    for (mergeable, line) in [("CONFLICTING", "still conflicts"), ("UNKNOWN", "mergeability not known yet, try again")]
+    {
         let t = Refresh::new();
         let saved = t.add_run(&[("mergeable", Value::from(mergeable))]);
         let (status, out) = t.refresh(&[REFRESH_ID]);
@@ -311,7 +320,8 @@ fn a_state_saved_meanwhile_is_not_overwritten() {
     let path = state_path(REFRESH_ID);
     // The run is resumed once refresh has read its state: the file holds what the resume saved since.
     t.resave(REFRESH_ID, &saved, &[("round", Value::from(2))]);
-    t.cli.f.host.state().run_states_with = Some(Box::new(move |_: &str| Some(Ok(vec![SavedRun::read(0, saved.clone()).unwrap()]))));
+    t.cli.f.host.state().run_states_with =
+        Some(Box::new(move |_: &str| Some(Ok(vec![SavedRun::read(0, saved.clone()).unwrap()]))));
     let error = t.error(&[REFRESH_ID]);
     let changed = format!("run {REFRESH_ID}: {path} changed while its pull request was refreshed; conflicts and conflict_cleared are not recorded");
     assert!(error.contains(&changed), "{error}");

@@ -1,7 +1,6 @@
 use super::*;
-use serde_json::Value;
 use crate::test_support::oracle;
-
+use serde_json::Value;
 
 /// added_lines as host.json records it: each line's number as a string, its text as a string.
 fn as_recorded(added: &IndexMap<String, AddedLines>) -> Value {

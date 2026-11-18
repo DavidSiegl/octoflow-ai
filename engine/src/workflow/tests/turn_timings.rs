@@ -9,8 +9,8 @@ use std::cell::RefCell;
 
 use super::*;
 use crate::host::fake::HOST_EPOCH;
-use crate::test_support::GOLDEN_SUMMARY;
 use crate::json::object;
+use crate::test_support::GOLDEN_SUMMARY;
 
 /// The run's summary.md, if written.
 fn summary(f: &Fixture) -> Option<String> {
@@ -42,14 +42,18 @@ fn each_turn_of_an_approved_run_is_recorded_on_the_host_clock() {
     ];
     assert_eq!(expected, wf.state().turns[..]);
     let saved = f.saved();
-    let turns: Vec<Object> = saved.get("turns").unwrap().as_array().unwrap().iter().map(|t| t.as_object().unwrap().clone()).collect();
+    let turns: Vec<Object> =
+        saved.get("turns").unwrap().as_array().unwrap().iter().map(|t| t.as_object().unwrap().clone()).collect();
     assert_eq!(expected, turns[..]);
     // The workflow's own clock, which stamps the heartbeat, is HOST_EPOCH behind the host's.
     assert_eq!(text(&saved, "heartbeat_at").as_deref(), Some("1970-01-01T00:35:00+00:00"));
     assert_eq!(summary(&f).as_deref(), Some(GOLDEN_SUMMARY));
     let body = f.host.state().prs[0].body.clone();
     let timings = GOLDEN_SUMMARY.split("## Turns\n\n").nth(1).unwrap().split("\n\n").next().unwrap();
-    assert!(body.ends_with(&format!("<details>\n<summary>Run timings</summary>\n\n{timings}\n\n</details>\n")), "{body}");
+    assert!(
+        body.ends_with(&format!("<details>\n<summary>Run timings</summary>\n\n{timings}\n\n</details>\n")),
+        "{body}"
+    );
 }
 
 #[test]
@@ -66,7 +70,10 @@ fn the_end_is_the_files_mtime_even_when_no_orchestrator_watched() {
     assert_eq!(record("build", "build-1.md", Some(0), None), *saved.turns.last().unwrap());
     let written = summary(&f).unwrap();
     assert!(written.contains("- **Outcome:** error: interrupted\n"), "{written}");
-    assert!(written.contains("| build | build | 1 | claude | default | 2026-10-03 04:00:00 | ? | build-1.md |\n"), "{written}");
+    assert!(
+        written.contains("| build | build | 1 | claude | default | 2026-10-03 04:00:00 | ? | build-1.md |\n"),
+        "{written}"
+    );
 
     // The Builder finishes while no orchestrator runs, and one resumes the run much later. The host keeps this
     // fixture's clock, which the resumed run's turn moves on too.
@@ -112,7 +119,8 @@ fn a_record_closed_before_the_run_moved_on_is_not_recorded_again() {
     let mut state = saved_run("build", 1, &["spec", "build"]);
     state.prompted = Some("build-1.md".into());
     state.turns = vec![closed.map()];
-    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![("review", vec![review_turn(1, APPROVE)])], &[], &[]);
+    let f =
+        Fixture::resume(Rc::new(FakeHost::default()), state, vec![("review", vec![review_turn(1, APPROVE)])], &[], &[]);
     f.put(&f.state.build_path(1), "report");
     let mut wf = f.workflow(f.as_saved());
     assert_eq!(wf.run(), verdict(APPROVE));
@@ -131,7 +139,10 @@ fn a_rejected_verdict_keeps_its_record_under_its_new_name() {
     let mut wf = f.workflow(RunSettings::default());
     assert_eq!(wf.run(), verdict(APPROVE));
     assert_eq!(
-        [record("review", "review-1.rejected.md", Some(0), Some(60)), record("review", "review-1.md", Some(60), Some(90))],
+        [
+            record("review", "review-1.rejected.md", Some(0), Some(60)),
+            record("review", "review-1.md", Some(60), Some(90))
+        ],
         wf.state().turns[2..]
     );
     let rejected = format!("{}/review-1.rejected.md", f.state.dir());
@@ -148,7 +159,11 @@ fn a_file_stamped_in_the_second_before_its_turn_started_ends_the_turn_at_its_sta
         host.state().mtimes.insert(state.review_path(1), now - 1);
         said
     });
-    let f = Fixture::new(vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)]), ("review", vec![stamped_early])]);
+    let f = Fixture::new(vec![
+        ("spec", vec![spec_turn()]),
+        ("build", vec![build_turn(1)]),
+        ("review", vec![stamped_early]),
+    ]);
     let mut wf = f.workflow(RunSettings::default());
     assert_eq!(wf.run(), verdict(APPROVE));
     assert_eq!(record("review", "review-1.md", Some(0), Some(0)), wf.state().turns[2]);
@@ -185,7 +200,11 @@ fn every_end_writes_a_summary() {
         (
             "changes requested",
             new_state(),
-            vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)]), ("review", vec![review_turn(1, CHANGES_REQUESTED)])],
+            vec![
+                ("spec", vec![spec_turn()]),
+                ("build", vec![build_turn(1)]),
+                ("review", vec![review_turn(1, CHANGES_REQUESTED)]),
+            ],
             max_rounds(1),
             strings(&[
                 "- **Outcome:** CHANGES_REQUESTED\n",
@@ -243,13 +262,19 @@ fn a_run_without_turns_says_so() {
 
 #[test]
 fn a_run_taken_over_writes_no_summary() {
-    let other = serde_json::from_str::<Value>(r#"{"host": "laptop", "pid": 4242, "started_at": "2026-09-30T07:00:00+00:00"}"#).unwrap();
+    let other =
+        serde_json::from_str::<Value>(r#"{"host": "laptop", "pid": 4242, "started_at": "2026-09-30T07:00:00+00:00"}"#)
+            .unwrap();
     for interrupted in [false, true] {
         let f = Fixture::new(vec![("spec", vec![spec_turn()]), ("build", vec![idle()])]);
         let path = format!("{}/state.json", f.state.dir());
         let (host, interrupt, theirs) = (Rc::clone(&f.host), f.interrupt.clone(), other.clone());
         f.clock.hook(move |now| {
-            let Ok(Value::Object(mut saved)) = serde_json::from_str::<Value>(&host.state().files.get(&path).unwrap().clone()) else { panic!() };
+            let Ok(Value::Object(mut saved)) =
+                serde_json::from_str::<Value>(&host.state().files.get(&path).unwrap().clone())
+            else {
+                panic!()
+            };
             if now > 30.0 && saved.get("owner") != Some(&theirs) {
                 saved.insert("owner".into(), theirs.clone());
                 host.state().files.insert(path.as_str().to_string(), Value::Object(saved).to_string());
@@ -261,7 +286,8 @@ fn a_run_taken_over_writes_no_summary() {
         let outcome = f.workflow(RunSettings::default()).run();
         if interrupted {
             assert_eq!(outcome, Err(Stopped::Interrupted));
-            let expected = "could not record the failure in state.json: run 20260929-120000-a1b2c3 was taken over by pid \
+            let expected =
+                "could not record the failure in state.json: run 20260929-120000-a1b2c3 was taken over by pid \
                             4242 on laptop";
             assert!(f.told.lines().iter().any(|l| l.contains(expected)), "{:?}", f.told.lines());
         } else {
@@ -275,7 +301,9 @@ fn a_run_taken_over_writes_no_summary() {
 fn a_failure_that_cannot_be_saved_still_writes_a_summary() {
     let f = Fixture::new(vec![("spec", vec![spec_turn()]), ("build", vec![idle()])]);
     f.host.state().before_write = Some(Box::new(|path, text| {
-        if path.ends_with("/state.json") && serde_json::from_str::<Value>(text).unwrap().get("error").is_some_and(Value::is_set) {
+        if path.ends_with("/state.json")
+            && serde_json::from_str::<Value>(text).unwrap().get("error").is_some_and(Value::is_set)
+        {
             return Err(OrchestratorError("ssh: connection reset".into()));
         }
         Ok(())
@@ -335,7 +363,10 @@ fn tokens_come_from_the_session_the_turn_ran_in() {
         }
         let known = known.borrow();
         let mut h = host.state();
-        h.session_logs.insert(("claude".into(), known.get("build").unwrap().clone()), claude_log(&[(50, 10, 20), (90, 1, 2), (500, 9, 9)]));
+        h.session_logs.insert(
+            ("claude".into(), known.get("build").unwrap().clone()),
+            claude_log(&[(50, 10, 20), (90, 1, 2), (500, 9, 9)]),
+        );
         let pi = [
             format!(
                 r#"{{"type": "message", "timestamp": "{}", "message": {{"role": "assistant", "usage": {{"input": 5, "output": 6, "cacheRead": 2}}}}}}"#,
@@ -356,18 +387,25 @@ fn tokens_come_from_the_session_the_turn_ran_in() {
         s.agents.harnesses.insert("review".to_string(), "pi".into());
     }));
     assert_eq!(wf.run(), verdict(APPROVE));
-    let metrics = serde_json::from_str::<Value>(f.host.state().files.get(&format!("{}/metrics.json", f.state.dir())).unwrap()).unwrap();
-    let tokens: Vec<(String, String)> = metrics.get("turns").unwrap()
+    let metrics =
+        serde_json::from_str::<Value>(f.host.state().files.get(&format!("{}/metrics.json", f.state.dir())).unwrap())
+            .unwrap();
+    let tokens: Vec<(String, String)> = metrics
+        .get("turns")
+        .unwrap()
         .as_array()
         .unwrap()
         .iter()
         .map(|t| (t.get("role").unwrap().text(), t.get("tokens").unwrap().to_string()))
         .collect();
-    assert_eq!(tokens, [
-        ("spec".to_string(), r#""unknown""#.to_string()),
-        ("build".into(), r#"{"input":11,"output":22,"cache_read":14,"cache_write":2}"#.into()),
-        ("review".into(), r#"{"input":5,"output":6,"cache_read":2,"cache_write":0}"#.into()),
-    ]);
+    assert_eq!(
+        tokens,
+        [
+            ("spec".to_string(), r#""unknown""#.to_string()),
+            ("build".into(), r#"{"input":11,"output":22,"cache_read":14,"cache_write":2}"#.into()),
+            ("review".into(), r#"{"input":5,"output":6,"cache_read":2,"cache_write":0}"#.into()),
+        ]
+    );
     let known = sessions.borrow();
     let turn_sessions: Vec<Option<String>> = wf.state().turns[1..].iter().map(|t| t.session.clone()).collect();
     assert_eq!(turn_sessions, [known.get("build").cloned(), known.get("review").cloned()]);
@@ -377,11 +415,17 @@ fn tokens_come_from_the_session_the_turn_ran_in() {
 fn a_turn_that_changed_sessions_has_unknown_tokens() {
     let mut state = saved_run("build", 1, &["spec", "build"]);
     state.prompted = Some("build-1.md".into());
-    state.turns = vec![record("build", "build-1.md", Some(-100), None).with("session", "s-old").with("tokens", Value::Null).map()];
-    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![
-        ("build", vec![build_turn(1)]),
-        ("review", vec![review_turn(1, APPROVE)]),
-    ], &[], &[("build", "s-old")]);
+    state.turns = vec![record("build", "build-1.md", Some(-100), None)
+        .with("session", "s-old")
+        .with("tokens", Value::Null)
+        .map()];
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state,
+        vec![("build", vec![build_turn(1)]), ("review", vec![review_turn(1, APPROVE)])],
+        &[],
+        &[("build", "s-old")],
+    );
     f.herdr.state().lost_sessions.insert("s-old".into());
     f.host.state().session_logs.insert(("claude".into(), "s-old".into()), claude_log(&[(-50, 1, 1)]));
     let mut wf = f.workflow(f.as_saved());
@@ -413,14 +457,17 @@ fn quality_rounds_and_answers_have_records_of_their_own() {
     let shape: Vec<(&str, &str, &str, u32, u32)> =
         turns.iter().map(|t| (t.file.as_str(), t.step.as_str(), t.role.as_str(), t.round, t.quality_round)).collect();
     let row = |file, step, n, q| (file, step, step, n, q);
-    assert_eq!(shape, [
-        row("spec.md", "spec", 0, 0),
-        row("build-1.md", "build", 1, 0),
-        row("quality-1-1.md", "quality", 1, 1),
-        row("build-1-q1.md", "build", 1, 1),
-        row("quality-1-2.md", "quality", 1, 2),
-        row("review-1.md", "review", 1, 0),
-    ]);
+    assert_eq!(
+        shape,
+        [
+            row("spec.md", "spec", 0, 0),
+            row("build-1.md", "build", 1, 0),
+            row("quality-1-1.md", "quality", 1, 1),
+            row("build-1-q1.md", "build", 1, 1),
+            row("quality-1-2.md", "quality", 1, 2),
+            row("review-1.md", "review", 1, 0),
+        ]
+    );
     let quality: Vec<&TurnRecord> = turns.iter().filter(|t| t.role == "quality").collect();
     for t in &quality {
         assert_eq!((&t.harness, &t.model, t.human_paced), (&None, &None, false));
@@ -481,28 +528,39 @@ fn a_gated_run_of_two_rounds_records_its_turns_and_quality_rounds() {
     assert!(written.ends_with("}\n"), "{written}");
     let metrics = serde_json::from_str::<Value>(&written).unwrap();
     let metrics = metrics.as_object().unwrap();
-    let turns: Vec<&Object> = field(metrics, "turns").as_array().unwrap().iter().map(|t| t.as_object().unwrap()).collect();
+    let turns: Vec<&Object> =
+        field(metrics, "turns").as_array().unwrap().iter().map(|t| t.as_object().unwrap()).collect();
     let shape: Vec<(Value, Value, Value, Value)> = turns
         .iter()
-        .map(|t| (field(t, "step").clone(), field(t, "round").clone(), field(t, "quality_round").clone(), field(t, "harness").clone()))
+        .map(|t| {
+            (
+                field(t, "step").clone(),
+                field(t, "round").clone(),
+                field(t, "quality_round").clone(),
+                field(t, "harness").clone(),
+            )
+        })
         .collect();
     let row = |step: &str, n: i64, q: i64| {
         let harness = if step == "quality" { Value::Null } else { Value::from("claude") };
         (Value::from(step), Value::from(n), Value::from(q), harness)
     };
-    assert_eq!(shape, [
-        row("spec", 0, 0),
-        row("build", 1, 0),
-        row("quality", 1, 1),
-        row("build", 1, 1),
-        row("quality", 1, 2),
-        row("review", 1, 0),
-        row("build", 2, 0),
-        row("quality", 2, 1),
-        row("build", 2, 1),
-        row("quality", 2, 2),
-        row("review", 2, 0),
-    ]);
+    assert_eq!(
+        shape,
+        [
+            row("spec", 0, 0),
+            row("build", 1, 0),
+            row("quality", 1, 1),
+            row("build", 1, 1),
+            row("quality", 1, 2),
+            row("review", 1, 0),
+            row("build", 2, 0),
+            row("quality", 2, 1),
+            row("build", 2, 1),
+            row("quality", 2, 2),
+            row("review", 2, 0),
+        ]
+    );
     assert_eq!(field(turns[0], "seconds"), &Value::from(600));
     let expected: Object = object([
         ("step", Value::from("build")),
@@ -523,22 +581,18 @@ fn a_gated_run_of_two_rounds_records_its_turns_and_quality_rounds() {
     assert_eq!(tokens, [&Value::from("unknown"), &Value::from("unknown"), &Value::Null]);
     let ruff = crate::quality::finding_fingerprint(Some("limiter.py"), "ruff F401", "`os` imported but unused");
     let round = |n: i64, q: i64, failed: bool| -> Value {
-        let fingerprints: Object = if failed {
-            object([("ruff", Value::Array(vec![Value::from(ruff.as_str())]))])
-        } else {
-            Object::new()
-        };
-        Value::Object(
-            object([
-                ("round", Value::from(n)),
-                ("quality_round", Value::from(q)),
-                ("gate", Value::from(if failed { "ERROR" } else { "OK" })),
-                ("conditions", Value::Array(vec![])),
-                ("fingerprints_by_check", Value::Object(fingerprints)),
-            ]),
-        )
+        let fingerprints: Object =
+            if failed { object([("ruff", Value::Array(vec![Value::from(ruff.as_str())]))]) } else { Object::new() };
+        Value::Object(object([
+            ("round", Value::from(n)),
+            ("quality_round", Value::from(q)),
+            ("gate", Value::from(if failed { "ERROR" } else { "OK" })),
+            ("conditions", Value::Array(vec![])),
+            ("fingerprints_by_check", Value::Object(fingerprints)),
+        ]))
     };
-    let quality_rounds = Value::Array(vec![round(1, 1, true), round(1, 2, false), round(2, 1, true), round(2, 2, true)]);
+    let quality_rounds =
+        Value::Array(vec![round(1, 1, true), round(1, 2, false), round(2, 1, true), round(2, 2, true)]);
     assert_eq!(field(metrics, "quality_rounds"), &quality_rounds);
     let expected = [
         ("version", Value::from(1)),
@@ -575,7 +629,12 @@ fn a_resumed_quality_round_is_recorded_once() {
     ]);
     state.quality_rounds = vec![recorded];
     let path = state.quality_path(1, 1);
-    let f = Fixture::resume_gated(Rc::new(FakeHost::default()), state, vec![("review", vec![review_turn(1, APPROVE)])], &[]);
+    let f = Fixture::resume_gated(
+        Rc::new(FakeHost::default()),
+        state,
+        vec![("review", vec![review_turn(1, APPROVE)])],
+        &[],
+    );
     f.put(&path, "GATE: OK\n");
     let mut wf = f.workflow(f.as_saved_gated());
     assert_eq!(wf.run(), verdict(APPROVE));

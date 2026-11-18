@@ -11,12 +11,12 @@
 //! by hand (new_state is the CLI's).
 
 use super::*;
-use crate::workflow::fixture::Outcome;
 use crate::env::ConfigDir;
 use crate::paths::file_name;
 use crate::pipeline::Pipeline;
-use crate::prompts::{load_prompts};
+use crate::prompts::load_prompts;
 use crate::test_support::{quick, TempDir};
+use crate::workflow::fixture::Outcome;
 use crate::workflow::step_prompt::RunView;
 use crate::workflow_file::{find_workflow, WORKFLOWS};
 
@@ -311,7 +311,13 @@ const GOLDEN_PR_BODY: &str = concat!(
 
 /// The prompts of the step with id step in round n of the run in state, of pipeline, its files those host holds:
 /// RunView::step_prompt's, the running session's and a fresh one's.
-fn step_prompt_in(pipeline: &Pipeline, state: &RunState, host: &FakeHost, step: &str, n: u32) -> (String, Option<String>) {
+fn step_prompt_in(
+    pipeline: &Pipeline,
+    state: &RunState,
+    host: &FakeHost,
+    step: &str,
+    n: u32,
+) -> (String, Option<String>) {
     let prompts = state.prompts().unwrap();
     let view = RunView { state, pipeline, prompts: &prompts, host };
     view.step_prompt(pipeline.step(step).expect("a step of the workflow"), n).unwrap()
@@ -359,7 +365,11 @@ fn continue_after_a_resumed_session() {
 /// A run with the gate and two quality rounds a round, its Builder taking the turns in build and its Reviewer those in
 /// review, run to APPROVE: its fixture, every prompt in order, and the (phase, round, quality round) state.json was
 /// saved with, each once, in the order first saved.
-fn two_gated_rounds(outcomes: Vec<Outcome>, build: Vec<Turn>, review: Vec<Turn>) -> (Fixture, Vec<String>, Vec<(String, i64, i64)>) {
+fn two_gated_rounds(
+    outcomes: Vec<Outcome>,
+    build: Vec<Turn>,
+    review: Vec<Turn>,
+) -> (Fixture, Vec<String>, Vec<(String, i64, i64)>) {
     let seen = seen();
     let f = Fixture::new(vec![
         ("spec", vec![recording(spec_turn(), &seen)]),
@@ -372,7 +382,9 @@ fn two_gated_rounds(outcomes: Vec<Outcome>, build: Vec<Turn>, review: Vec<Turn>)
     let saved = Rc::clone(&phases);
     f.host.state().before_write = Some(Box::new(move |path, text| {
         if path.ends_with("state.json") {
-            let Ok(Value::Object(state)) = serde_json::from_str::<Value>(text) else { panic!("state.json is no object") };
+            let Ok(Value::Object(state)) = serde_json::from_str::<Value>(text) else {
+                panic!("state.json is no object")
+            };
             let int = |key: &str| state.get(key).and_then(Value::as_i64).expect("a saved count");
             let phase = (text_of(&state, "phase"), int("round"), int("quality_round"));
             if !saved.borrow().contains(&phase) {
@@ -399,7 +411,8 @@ fn gate_passes_after_a_fix_then_runs_out() {
         vec![review_turn(1, CHANGES_REQUESTED), review_turn(2, APPROVE)],
     );
 
-    let golden = [SPEC_INTERVIEW, BUILD_1, QUALITY_FIX_1_1, REVIEW_1_PASSED, FIX_2, QUALITY_FIX_2_1, RECHECK_2_UNRESOLVED];
+    let golden =
+        [SPEC_INTERVIEW, BUILD_1, QUALITY_FIX_1_1, REVIEW_1_PASSED, FIX_2, QUALITY_FIX_2_1, RECHECK_2_UNRESOLVED];
     assert_eq!(seen, golden);
     let expected: Vec<(String, i64, i64)> = [
         ("spec", 0, 0),
@@ -430,21 +443,24 @@ fn gate_passes_after_a_fix_then_runs_out() {
         .filter(|p| !p.ends_with("state.json"))
         .map(|p| file_name(p).to_string())
         .collect();
-    assert_eq!(written, [
-        "spec.md",
-        "build-1.md",
-        "quality-1-1.md",
-        "build-1-q1.md",
-        "quality-1-2.md",
-        "review-1.md",
-        "build-2.md",
-        "quality-2-1.md",
-        "build-2-q1.md",
-        "quality-2-2.md",
-        "review-2.md",
-        "summary.md",
-        "metrics.json"
-    ]);
+    assert_eq!(
+        written,
+        [
+            "spec.md",
+            "build-1.md",
+            "quality-1-1.md",
+            "build-1-q1.md",
+            "quality-1-2.md",
+            "review-1.md",
+            "build-2.md",
+            "quality-2-1.md",
+            "build-2-q1.md",
+            "quality-2-2.md",
+            "review-2.md",
+            "summary.md",
+            "metrics.json"
+        ]
+    );
     let layout: Vec<Call> = f
         .herdr
         .state()
@@ -454,13 +470,16 @@ fn gate_passes_after_a_fix_then_runs_out() {
         .cloned()
         .collect();
     let rename = |pane: &str, label: &str| Call::Rename { pane: pane.into(), label: label.into() };
-    assert_eq!(layout, [
-        rename("w1:p1", "Spec Collector"),
-        split("w1:p1", Direction::Right),
-        rename("w1:p2", "Builder"),
-        split("w1:p2", Direction::Down),
-        rename("w1:p3", "Reviewer"),
-    ]);
+    assert_eq!(
+        layout,
+        [
+            rename("w1:p1", "Spec Collector"),
+            split("w1:p1", Direction::Right),
+            rename("w1:p2", "Builder"),
+            split("w1:p2", Direction::Down),
+            rename("w1:p3", "Reviewer"),
+        ]
+    );
     let pr = f.host.state().prs[0].clone();
     assert_eq!(pr.title, "Add a token-bucket rate limiter");
     assert_eq!(pr.body, GOLDEN_PR_BODY.replace("<built-in gate>", &built_in_gate()));
@@ -511,7 +530,8 @@ fn fresh_builder_answering_a_quality_round_in_round_two() {
 fn fresh_reviewer_in_round_two_with_the_gate() {
     let mut state = gated_run("review", 2);
     state.quality_round = 1;
-    let host = holding(&[(state.build_path(1), "r"), (state.build_path(2), "r"), (state.quality_path(2, 1), "GATE: OK\n")]);
+    let host =
+        holding(&[(state.build_path(1), "r"), (state.build_path(2), "r"), (state.quality_path(2, 1), "GATE: OK\n")]);
     assert_eq!(step_prompt(&state, &host, "review", 2).1.unwrap(), FRESH_REVIEW_2_PASSED);
 }
 
@@ -595,11 +615,15 @@ fn a_build_prompt_file_words_the_builders_first_turn() {
     let (_dir, config) = config_with(&[("BUILD_PROMPT.md", build)]);
     let (state, pipeline) = started(&config);
     let seen = seen();
-    let f = Fixture::on(Rc::new(FakeHost::default()), state, vec![
-        ("spec", vec![spec_turn()]),
-        ("build", vec![recording(build_turn(1), &seen)]),
-        ("review", vec![review_turn(1, APPROVE)]),
-    ]);
+    let f = Fixture::on(
+        Rc::new(FakeHost::default()),
+        state,
+        vec![
+            ("spec", vec![spec_turn()]),
+            ("build", vec![recording(build_turn(1), &seen)]),
+            ("review", vec![review_turn(1, APPROVE)]),
+        ],
+    );
     let mut wf = f.workflow(no_pr_of(pipeline));
     assert_eq!(wf.run(), verdict(APPROVE));
     assert_eq!(*seen.borrow(), [format!("Build {D}/spec.md in /proj; report to {D}/build-1.md.{}", note())]);
@@ -648,10 +672,11 @@ fn a_resume_keeps_the_prompts_the_run_started_with() {
         let (_dir, config) = config_with(&[("FIX_PROMPT.md", "Fix {findings}; report to {build_path}.")]);
         let path = format!("{}/FIX_PROMPT.md", config.prompts_dir());
         let (state, pipeline) = started(&config);
-        let f = Fixture::on(Rc::new(FakeHost::default()), state, vec![
-            ("spec", vec![spec_turn()]),
-            ("build", vec![build_turn(1)]),
-        ]);
+        let f = Fixture::on(
+            Rc::new(FakeHost::default()),
+            state,
+            vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)])],
+        );
         f.play("review", vec![then_interrupted(&f.interrupt, idle())]);
         assert_eq!(f.workflow(no_pr_of(pipeline)).run(), Err(Stopped::Interrupted));
         if edit == "edited" {
@@ -661,17 +686,22 @@ fn a_resume_keeps_the_prompts_the_run_started_with() {
         }
         let seen = seen();
         let saved = RunState::from_saved(&f.saved()).unwrap();
-        let f2 = Fixture::resume(Rc::clone(&f.host), saved, vec![
-            ("review", vec![review_turn(1, CHANGES_REQUESTED), review_turn(2, APPROVE)]),
-            ("build", vec![recording(build_turn(2), &seen)]),
-        ], &[], &[]);
+        let f2 = Fixture::resume(
+            Rc::clone(&f.host),
+            saved,
+            vec![
+                ("review", vec![review_turn(1, CHANGES_REQUESTED), review_turn(2, APPROVE)]),
+                ("build", vec![recording(build_turn(2), &seen)]),
+            ],
+            &[],
+            &[],
+        );
         assert_eq!(f2.workflow(f2.as_saved()).run(), verdict(APPROVE), "{edit}");
         assert_eq!(seen.borrow().len(), 1, "{edit}");
         assert!(seen.borrow()[0].contains(&format!("Fix {D}/review-1.md; report to {D}/build-2.md.")), "{edit}");
         assert!(!seen.borrow()[0].contains("Changed"), "{edit}");
     }
 }
-
 
 #[test]
 fn a_run_an_earlier_release_started_with_its_fix_prompt_file_is_resumable_and_words_its_fix() {
@@ -680,7 +710,9 @@ fn a_run_an_earlier_release_started_with_its_fix_prompt_file_is_resumable_and_wo
     // resume itself is verdict_steps.rs's and a_resume_keeps_the_prompts_the_run_started_with's: this checks that
     // the saved state passes resume's checks and that its fix prompt fills.
     let mut state = saved_run("review", 1, &["spec", "build", "review"]);
-    state.prompt_overrides.insert("FIX_PROMPT".to_string(), "Fix {prev_review_path}; report to {build_path}.".to_string());
+    state
+        .prompt_overrides
+        .insert("FIX_PROMPT".to_string(), "Fix {prev_review_path}; report to {build_path}.".to_string());
     let Value::Object(mut saved) = state.to_json() else { unreachable!("a state is saved as an object") };
     saved.shift_remove("verdicts");
     crate::test_support::resumable(&[], &saved).unwrap();

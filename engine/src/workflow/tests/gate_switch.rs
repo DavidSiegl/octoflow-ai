@@ -7,13 +7,13 @@
 use std::cell::RefCell;
 
 use super::*;
-use crate::host::Exec;
-use crate::local_gate::LOCAL_GATE;
 use crate::constants::{DEFAULT_MAX_QUALITY_ROUNDS, FINISHED};
+use crate::host::Exec;
+use crate::json::object;
+use crate::local_gate::LOCAL_GATE;
 use crate::pipeline::{Pipeline, Step, DEFAULT_WORKFLOW, PUBLISH, QUALITY};
 use crate::prompts::{QUALITY_OFF_NOTE, QUALITY_PASSED_NOTE, QUALITY_STUCK_NOTE, QUALITY_UNRESOLVED_NOTE};
 use crate::workflow::{turn_quality_gate_off, turn_quality_gate_on};
-use crate::json::object;
 
 /// The branch of pr_run's change.
 const SWITCH_BRANCH: &str = "orchestrator/add-a-token-bucket-rate-limiter-a1b2c3";
@@ -78,7 +78,6 @@ fn turn_off(state: &mut RunState, pipeline: &Pipeline, host: &FakeHost) -> Resul
     Ok(told.lines())
 }
 
-
 /// The arguments of the commit the run made.
 fn commit_args(f: &Fixture) -> Vec<String> {
     f.host.state().git_calls.iter().find(|c| c[0] == "commit").cloned().expect("a commit")
@@ -131,7 +130,10 @@ fn on_in_the_builders_step_gates_its_turn() {
     let mut state = pr_run("build", 1);
     let host = pr_host();
     turn_on(&mut state, &host).expect("the gate turns on");
-    assert_eq!((state.phase.as_str(), state.quality_job.as_deref(), state.quality_round), ("build", Some(LOCAL_GATE), 0));
+    assert_eq!(
+        (state.phase.as_str(), state.quality_job.as_deref(), state.quality_round),
+        ("build", Some(LOCAL_GATE), 0)
+    );
 
     let reviews = seen();
     let script = vec![
@@ -232,11 +234,8 @@ fn on_in_round_0_is_run_quality_gate() {
     turn_on(&mut state, &unasked).expect("the gate turns on");
     assert_eq!(state.quality_job.as_deref(), Some(LOCAL_GATE));
 
-    let script = vec![
-        ("spec", vec![spec_turn()]),
-        ("build", vec![build_turn(1)]),
-        ("review", vec![review_turn(1, APPROVE)]),
-    ];
+    let script =
+        vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)]), ("review", vec![review_turn(1, APPROVE)])];
     let f = Fixture::on(Rc::new(FakeHost::default()), state.clone(), script).gated();
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
     assert_eq!(judged(&f), [job(&f, 1, 1)]);
@@ -298,9 +297,9 @@ fn refusals_leave_the_state_as_it_was() {
     let refused = turn_quality_gate_on(&mut state, &crate::test_support::solo(), &*pr_host(), &told)
         .expect_err("solo has no gated step");
     assert!(
-        refused.0.contains(
-            "is of workflow solo, which has no quality-gated step, so its quality gate cannot be turned on"
-        ),
+        refused
+            .0
+            .contains("is of workflow solo, which has no quality-gated step, so its quality gate cannot be turned on"),
         "{}",
         refused.0
     );
@@ -327,8 +326,10 @@ fn a_failed_preflight_refuses_before_any_turn() {
         let (command, stderr) = (argv.join(" "), b"curl is not on PATH\n".to_vec());
         Some(Ok(Exec { command, status: 1, stdout: Vec::new(), stderr }))
     }));
-    let cases =
-        [("no gitleaks", no_gitleaks, "every push is scanned for secrets first"), ("no curl", no_curl, "curl is not on PATH")];
+    let cases = [
+        ("no gitleaks", no_gitleaks, "every push is scanned for secrets first"),
+        ("no curl", no_curl, "curl is not on PATH"),
+    ];
     for (name, host, why) in cases {
         let mut state = pr_run("build", 1);
         let before = state.to_json();

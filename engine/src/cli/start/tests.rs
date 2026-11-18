@@ -6,20 +6,20 @@
 use std::rc::Rc;
 
 use super::*;
-use crate::local_gate::LOCAL_GATE;
 use crate::cli::args::{parse_args, Command};
 use crate::constants::{APPROVE, HEARTBEAT_SECONDS};
 use crate::env::ConfigDir;
-use crate::host::fake::FakeHost;
 use crate::herdr::HerdrServer;
+use crate::host::fake::FakeHost;
 use crate::host::Host;
+use crate::json::object;
+use crate::json::Object;
+use crate::local_gate::LOCAL_GATE;
 use crate::runs::local_host;
+use crate::state::SavedRun;
 use crate::test_support::{quick, resumable, solo, TempDir};
 use crate::workflow::fixture::{quality_state, review_turn, saved_run, Fixture};
 use crate::workflow_file::{workflow_definition, workflow_toml};
-use crate::json::Object;
-use crate::json::object;
-use crate::state::SavedRun;
 use serde_json::Value;
 
 /// The Jenkins quality job a run saved by a release before 0.72.0 can name.
@@ -117,12 +117,25 @@ fn live_run_needs_force() {
     let me = [("host", Value::from("here")), ("pid", Value::from(42)), ("started_at", Value::from("x"))];
     let saved = Value::Object(saved_settings(&[("owner", Value::Object(object(me)))]));
     let alive = |_: i64| true;
-    let e = resumable_state(&[SavedRun::read(30, saved.clone()).unwrap()], &resume_args(&["a1b2c3"]), "/proj", "here", &alive).unwrap_err();
+    let e = resumable_state(
+        &[SavedRun::read(30, saved.clone()).unwrap()],
+        &resume_args(&["a1b2c3"]),
+        "/proj",
+        "here",
+        &alive,
+    )
+    .unwrap_err();
     assert_eq!(
         e.0,
         "run 20260929-120000-a1b2c3 looks alive (pid 42 on here, beat 30s ago); pass --force to take it over"
     );
-    let forced = resumable_state(&[SavedRun::read(30, saved).unwrap()], &resume_args(&["a1b2c3", "--force"]), "/proj", "here", &alive);
+    let forced = resumable_state(
+        &[SavedRun::read(30, saved).unwrap()],
+        &resume_args(&["a1b2c3", "--force"]),
+        "/proj",
+        "here",
+        &alive,
+    );
     assert_eq!(forced.unwrap().0.run_id, "20260929-120000-a1b2c3");
 }
 
@@ -132,7 +145,14 @@ fn a_done_run_still_ending_needs_force() {
     let done = [("phase", Value::from("done")), ("owner", Value::Object(object(me)))];
     let saved = Value::Object(saved_settings(&done));
     let alive = |_: i64| true;
-    let e = resumable_state(&[SavedRun::read(30, saved.clone()).unwrap()], &resume_args(&["a1b2c3"]), "/proj", "here", &alive).unwrap_err();
+    let e = resumable_state(
+        &[SavedRun::read(30, saved.clone()).unwrap()],
+        &resume_args(&["a1b2c3"]),
+        "/proj",
+        "here",
+        &alive,
+    )
+    .unwrap_err();
     assert_eq!(
         e.0,
         "run 20260929-120000-a1b2c3 looks alive (pid 42 on here, beat 30s ago); pass --force to take it over"
@@ -140,7 +160,14 @@ fn a_done_run_still_ending_needs_force() {
     // Once its orchestrator is gone, it is resumed so that its ending is finished.
     let dead = |_: i64| false;
     let late = HEARTBEAT_SECONDS + 1;
-    assert!(resumable_state(&[SavedRun::read(late, saved).unwrap()], &resume_args(&["a1b2c3"]), "/proj", "here", &dead).is_ok());
+    assert!(resumable_state(
+        &[SavedRun::read(late, saved).unwrap()],
+        &resume_args(&["a1b2c3"]),
+        "/proj",
+        "here",
+        &dead
+    )
+    .is_ok());
 }
 
 #[test]
@@ -149,7 +176,10 @@ fn a_done_run_keeps_the_settings_it_ran_with() {
     let flags = ["--max-rounds", "9", "--review-model", "opus", "--machine", "remote", "--cwd", "~/p"];
     let state = resumable(&flags, &done).unwrap();
     let as_saved = RunState::from_saved(&done).unwrap();
-    assert_eq!((state.max_rounds, &state.models, &state.machine), (as_saved.max_rounds, &as_saved.models, &as_saved.machine));
+    assert_eq!(
+        (state.max_rounds, &state.models, &state.machine),
+        (as_saved.max_rounds, &as_saved.models, &as_saved.machine)
+    );
 }
 
 #[test]
@@ -321,9 +351,34 @@ fn a_new_run_takes_the_defaults_and_the_flags() {
     assert!(id.chars().all(|c| c.is_ascii_hexdigit() || c == '-'), "{id}");
 
     let flags = [
-        "--max-rounds", "5", "--timeout", "60", "--permission-mode", "plan", "--model", "m", "--build-model", "b",
-        "--role-model", "review=r", "--agent", "codex", "--role-agent", "spec=agy", "--no-pr", "--worktree",
-        "--quality-gate", LOCAL_GATE, "--max-quality-rounds", "2", "--machine", "box", "--cwd", "/p", "--", "a task",
+        "--max-rounds",
+        "5",
+        "--timeout",
+        "60",
+        "--permission-mode",
+        "plan",
+        "--model",
+        "m",
+        "--build-model",
+        "b",
+        "--role-model",
+        "review=r",
+        "--agent",
+        "codex",
+        "--role-agent",
+        "spec=agy",
+        "--no-pr",
+        "--worktree",
+        "--quality-gate",
+        LOCAL_GATE,
+        "--max-quality-rounds",
+        "2",
+        "--machine",
+        "box",
+        "--cwd",
+        "/p",
+        "--",
+        "a task",
     ];
     let (state, _) = new_state(&run_args(&flags, &config), "/proj", None, &world).unwrap();
     assert_eq!((state.max_rounds, state.turn_timeout, state.max_quality_rounds), (5, 60, 2));
@@ -375,7 +430,8 @@ fn a_new_run_of_a_workflow_file_or_a_named_one() {
     std::fs::write(d.join("solo.toml"), workflow_toml(&solo())).unwrap();
     let config = ConfigDir::at(&d.path());
     let world = connected(&f, &config);
-    let (state, pipeline) = new_state(&run_args(&["--workflow", "quick", "t"], &config), "/proj", None, &world).unwrap();
+    let (state, pipeline) =
+        new_state(&run_args(&["--workflow", "quick", "t"], &config), "/proj", None, &world).unwrap();
     assert_eq!((state.workflow.as_str(), state.phase.as_str(), pipeline.name()), ("quick", "build", "quick"));
     let file = d.join("solo.toml");
     let (state, _) = new_state(&run_args(&["--workflow-file", &file, "t"], &config), "/proj", None, &world).unwrap();

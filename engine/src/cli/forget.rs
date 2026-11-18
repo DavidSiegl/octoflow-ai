@@ -88,7 +88,12 @@ impl<'a> Forgetter<'a> {
 ///
 /// Returns the exit status: EXIT_ERROR when a run of a sweep failed, else 0. Errors: the project's runs cannot be read;
 /// for run_ref, no run or several match it, or it is left as decide says, or forgetting it fails.
-pub fn forget_command(world: &Connected, cwd: &str, run_ref: Option<&str>, dry_run: bool) -> Result<i32, OrchestratorError> {
+pub fn forget_command(
+    world: &Connected,
+    cwd: &str,
+    run_ref: Option<&str>,
+    dry_run: bool,
+) -> Result<i32, OrchestratorError> {
     let forgetter = Forgetter::of(world);
     let Some(run_ref) = run_ref else {
         let runs = forget_all(&forgetter, cwd, if dry_run { Sweep::DryRun } else { Sweep::All })?;

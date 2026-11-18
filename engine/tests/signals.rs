@@ -55,7 +55,11 @@ fn main() -> ExitCode {
         println!("test {name} ... {}", if passed { "ok" } else { "FAILED" });
         failed += usize::from(!passed);
     }
-    if failed == 0 { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+    if failed == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 /// What the command line asks of the parent, in libtest's terms.
@@ -114,7 +118,9 @@ impl Cli {
     fn runs(&self, name: &str) -> bool {
         // As libtest, --exact holds for the skips too.
         let named = |f: &String| if self.exact { f == name } else { name.contains(f.as_str()) };
-        !self.ignored_only && (self.filters.is_empty() || self.filters.iter().any(named)) && !self.skips.iter().any(named)
+        !self.ignored_only
+            && (self.filters.is_empty() || self.filters.iter().any(named))
+            && !self.skips.iter().any(named)
     }
 }
 
@@ -142,8 +148,10 @@ fn play(case: &str, dir: &Path) {
         }
         "ignored" => {
             // The command says which signals it ignores, by SigIgn's mask.
-            let script = "echo $$ > \"$1\"; while [ ! -e \"$2\" ]; do sleep 0.05; done; grep ^SigIgn: /proc/self/status";
-            let ran = host.check(&["sh", "-c", script, "_", &at("pid"), &at("go")], None, 600).expect("the command ran");
+            let script =
+                "echo $$ > \"$1\"; while [ ! -e \"$2\" ]; do sleep 0.05; done; grep ^SigIgn: /proc/self/status";
+            let ran =
+                host.check(&["sh", "-c", script, "_", &at("pid"), &at("go")], None, 600).expect("the command ran");
             write("command", &format!("{}, raised: {}", ran.trim(), interrupt.is_raised()));
         }
         "ended" => {

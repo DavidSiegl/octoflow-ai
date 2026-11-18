@@ -340,12 +340,14 @@ fn assert_build_is_left_to_build_again(f: &Fixture) {
 
 #[test]
 fn a_quality_json_whose_gate_is_not_its_quality_file_s_is_rejected() {
-    let f = gated_building(approved(), vec![reporting(green(), |r| {
-        r.insert("gate".into(), Value::from("ERROR"));
-    })]);
+    let f = gated_building(
+        approved(),
+        vec![reporting(green(), |r| {
+            r.insert("gate".into(), Value::from("ERROR"));
+        })],
+    );
     let e = failure(f.workflow(RunSettings::default()).run());
     assert!(e.contains("its quality.md says GATE: OK, but its quality.json says ERROR"), "{e}");
     assert!(f.host.state().files.get(&f.state.quality_path(1, 1)).is_none(), "no quality file is written");
     assert_build_is_left_to_build_again(&f);
 }
-

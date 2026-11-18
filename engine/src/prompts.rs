@@ -139,10 +139,8 @@ macro_rules! config_edits_sentence {
 }
 
 /// Appended to the Reviewer's prompt in a run with the quality gate.
-pub const QUALITY_PASSED_NOTE: &str = concat!(
-    "The quality gate passed on this change; its report is in {quality_path}.",
-    config_edits_sentence!(),
-);
+pub const QUALITY_PASSED_NOTE: &str =
+    concat!("The quality gate passed on this change; its report is in {quality_path}.", config_edits_sentence!(),);
 
 pub const QUALITY_UNRESOLVED_NOTE: &str = concat!(
     "The quality gate still did not pass after the Builder's last quality round; ",

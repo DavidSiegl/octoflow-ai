@@ -8,12 +8,12 @@ use indexmap::IndexMap;
 use super::step_prompt::RunView;
 use super::{Outcome, Stopped, Workflow};
 use crate::error::OrchestratorError;
+use crate::json::{object, Object};
 use crate::paths::{file_name, split_extension};
 use crate::pipeline::Step;
 use crate::prompts::Prompt;
 use crate::state::refs_prefix;
 use serde_json::Value;
-use crate::json::{object, Object};
 
 /// What one editing turn changed in other steps' locked files, as a RunState::restored record holds it.
 #[derive(Clone, Debug, PartialEq)]
@@ -38,7 +38,8 @@ impl Restored {
             OrchestratorError(format!("a restored record in state.json has {key} {}, not {what}", value))
         };
         let round = field("round")?;
-        let round = round.as_i64().and_then(|n| u32::try_from(n).ok()).ok_or_else(|| invalid("round", round, "a round"))?;
+        let round =
+            round.as_i64().and_then(|n| u32::try_from(n).ok()).ok_or_else(|| invalid("round", round, "a round"))?;
         let file = field("file")?;
         let file = file.as_str().ok_or_else(|| invalid("file", file, "a string"))?.to_string();
         let paths = field("paths")?;
@@ -46,7 +47,8 @@ impl Restored {
             lockers
                 .iter()
                 .map(|(locker, paths)| {
-                    let paths = paths.as_array()?.iter().map(|p| p.as_str().map(String::from)).collect::<Option<_>>()?;
+                    let paths =
+                        paths.as_array()?.iter().map(|p| p.as_str().map(String::from)).collect::<Option<_>>()?;
                     Some((locker.to_string(), paths))
                 })
                 .collect::<Option<IndexMap<String, Vec<String>>>>()
@@ -137,7 +139,6 @@ impl Workflow<'_> {
             self.human.log(&format!("could not delete the refs under {prefix}: {e}"));
         }
     }
-
 }
 
 /// What a run's records say of the locked files restored.
@@ -156,11 +157,10 @@ impl RunView<'_> {
         let dir = self.state.dir();
         let diff_paths: Vec<String> = records.iter().map(|r| format!("{dir}/{}", r.file)).collect();
         let lockers: Vec<&str> = lockers.into_iter().collect();
-        let note = self.prompts.fill(Prompt::LockedNote, &[
-            ("paths", &paths.join(", ")),
-            ("steps", &lockers.join(", ")),
-            ("diff_paths", &diff_paths.join(", ")),
-        ])?;
+        let note = self.prompts.fill(
+            Prompt::LockedNote,
+            &[("paths", &paths.join(", ")), ("steps", &lockers.join(", ")), ("diff_paths", &diff_paths.join(", "))],
+        )?;
         Ok(format!("\n\n{note}"))
     }
     /// RunState::restored, read. Errors: as Restored::read's.

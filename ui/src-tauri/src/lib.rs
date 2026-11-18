@@ -144,9 +144,7 @@ impl UserShell {
             std::env::set_var(name, value);
         }
         match &self.dir {
-            Some(dir) => {
-                std::env::set_current_dir(dir).map_err(|e| format!("cannot start in {}: {e}", dir.display()))
-            }
+            Some(dir) => std::env::set_current_dir(dir).map_err(|e| format!("cannot start in {}: {e}", dir.display())),
             None => Ok(()),
         }
     }
@@ -473,9 +471,7 @@ fn run_opener(opener: &Path, target: &OsStr, shell: &UserShell) -> Result<(), St
     if let Some(dir) = shell.dir.as_ref().filter(|dir| dir.is_dir()) {
         command.current_dir(dir);
     }
-    let mut child = command
-        .spawn()
-        .map_err(|e| format!("cannot run {} to open {shown}: {e}", opener.display()))?;
+    let mut child = command.spawn().map_err(|e| format!("cannot run {} to open {shown}: {e}", opener.display()))?;
     let started = Instant::now();
     while started.elapsed() < OPENER_CHECK {
         match child.try_wait() {

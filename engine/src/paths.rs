@@ -43,7 +43,8 @@ pub fn replace_local_file(path: &str, text: &str) -> Result<(), OrchestratorErro
         if let Ok(meta) = std::fs::metadata(&real) {
             std::fs::set_permissions(&tmp, meta.permissions()).map_err(|e| os_error(&e, Some(&tmp)))?;
         }
-        std::fs::rename(&tmp, &real).map_err(|e| format!("{} -> {}: {}", path_text(&tmp), path_text(&real), strerror(&e)))
+        std::fs::rename(&tmp, &real)
+            .map_err(|e| format!("{} -> {}: {}", path_text(&tmp), path_text(&real), strerror(&e)))
     })();
     written.map_err(|why| {
         let _ = std::fs::remove_file(&tmp);

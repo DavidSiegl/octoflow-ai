@@ -217,9 +217,8 @@ fn fetch_failure_stops_before_the_interview() {
 fn a_fetch_origin_refuses_twice_is_tried_again_and_the_run_goes_on() {
     // As GitHub refused known keys during its incident of 2026-11-04 (origin-retry/01).
     let host = FakeHost::default();
-    host.state().fetch_error = Some(
-        "git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.".into(),
-    );
+    host.state().fetch_error =
+        Some("git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.".into());
     host.state().fetch_failures_left = Some(2);
     let f = Fixture::on(Rc::new(host), new_state(), approved());
     assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));

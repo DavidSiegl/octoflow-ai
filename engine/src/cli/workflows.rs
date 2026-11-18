@@ -6,13 +6,19 @@ use crate::env::ConfigDir;
 use crate::error::OrchestratorError;
 use crate::pipeline::{workflow_shape, Pipeline};
 use crate::prompts::{load_prompts, Prompts};
-use crate::workflow_file::{find_workflow, load_workflow_file, named_workflow, workflow_files, workflow_toml, WORKFLOWS};
+use crate::workflow_file::{
+    find_workflow, load_workflow_file, named_workflow, workflow_files, workflow_toml, WORKFLOWS,
+};
 
 /// Print, by print (which writes its text on standard output as it is), the workflow reference names as a workflow
 /// file, worded by config's prompt files as a new run would be; without reference, the list print_workflows prints.
 /// reference is a workflow's name, or a file's path when it has a / or ends in .toml. Errors: the workflow cannot be
 /// found or loaded, or the prompt files or the workflows directory cannot be read.
-pub fn workflows_command(config: &ConfigDir, reference: Option<&str>, print: &dyn Fn(&str)) -> Result<(), OrchestratorError> {
+pub fn workflows_command(
+    config: &ConfigDir,
+    reference: Option<&str>,
+    print: &dyn Fn(&str),
+) -> Result<(), OrchestratorError> {
     let Some(reference) = reference.filter(|r| !r.is_empty()) else { return print_workflows(config, print) };
     let prompts = load_prompts(config)?;
     let pipeline = if reference.contains('/') || reference.ends_with(".toml") {

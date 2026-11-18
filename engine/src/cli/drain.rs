@@ -138,7 +138,8 @@ fn drain_spec(args: &DrainArgs, world: &Connected, cwd: &str, spec: &mut QueuedS
     let interrupt = world.with.interrupt;
     let human = world.with.human;
     let given = spec.file.clone();
-    let (state, pipeline) = new_state(&args.run, cwd, Some(&given), world).map_err(|e| super::stop(e, interrupt, None))?;
+    let (state, pipeline) =
+        new_state(&args.run, cwd, Some(&given), world).map_err(|e| super::stop(e, interrupt, None))?;
     let run_id = state.run_id.clone();
     let stopped = |e: OrchestratorError| super::stop(e, interrupt, Some(&run_id));
     if !spec.update(&vec![(RUN_KEY, run_id.clone())], true, human).map_err(stopped)? {
@@ -166,7 +167,8 @@ fn drain_spec(args: &DrainArgs, world: &Connected, cwd: &str, spec: &mut QueuedS
         }
         Ok(ran) => {
             let status = finish(ran.verdict.as_deref(), &ran.state, &ran.pipeline, world.stdout);
-            let mut entries: Entries = vec![(STATUS_KEY, if status == 0 { SPEC_IN_REVIEW } else { SPEC_FOR_HUMAN }.into())];
+            let mut entries: Entries =
+                vec![(STATUS_KEY, if status == 0 { SPEC_IN_REVIEW } else { SPEC_FOR_HUMAN }.into())];
             if let Some(pr) = ran.state.pr_url.as_ref().filter(|u| !u.is_empty()) {
                 entries.push((PR_KEY, pr.clone()));
             }
@@ -229,7 +231,9 @@ pub fn refreshed_headers(
 ) -> Result<Refreshed, OrchestratorError> {
     let statuses = [SPEC_READY, SPEC_IN_REVIEW, SPEC_FOR_HUMAN];
     // Read once, and only when a spec's run is to be looked at.
-    let looked_at = |s: &QueuedSpec| s.run().is_some_and(|r| !r.is_empty()) && s.status().is_some_and(|st| statuses.contains(&st.as_str()));
+    let looked_at = |s: &QueuedSpec| {
+        s.run().is_some_and(|r| !r.is_empty()) && s.status().is_some_and(|st| statuses.contains(&st.as_str()))
+    };
     let runs = if specs.iter().any(looked_at) { world.with.host.run_states(cwd)? } else { vec![] };
     let mut prs = PullRequestStates { world, cwd, states: HashMap::new() };
     let mut refreshed = Refreshed { headers: vec![], taken: vec![] };
@@ -260,8 +264,14 @@ pub fn forget_cleared(world: &Connected, cwd: &str, taken: &[RunState]) -> Resul
     for state in taken {
         let run_id = &state.run_id;
         let path = format!("{cwd}/{RUNS_DIR}/{run_id}/state.json");
-        record_in_state(world.with.host, &path, state, |s| s.conflict_cleared = None, "drain took up its cleared conflict")
-            .map_err(|e| OrchestratorError(format!("run {run_id}: {e}")))?;
+        record_in_state(
+            world.with.host,
+            &path,
+            state,
+            |s| s.conflict_cleared = None,
+            "drain took up its cleared conflict",
+        )
+        .map_err(|e| OrchestratorError(format!("run {run_id}: {e}")))?;
     }
     Ok(())
 }
@@ -324,7 +334,9 @@ fn settled_header(
     let status = spec.status();
     let run = spec.run().filter(|r| !r.is_empty());
     match (status.as_deref(), run) {
-        (Some(SPEC_IN_REVIEW | SPEC_FOR_HUMAN), _) => merge(&mut entries, conflict_header(spec, runs, prs, taken, dry_run)?),
+        (Some(SPEC_IN_REVIEW | SPEC_FOR_HUMAN), _) => {
+            merge(&mut entries, conflict_header(spec, runs, prs, taken, dry_run)?)
+        }
         (Some(SPEC_READY), Some(run)) => {
             merge(&mut entries, finished_run_header(spec, &run, runs, prs, target)?);
             let state = saved_run(runs, &run).and_then(|r| r.state().ok());
@@ -337,7 +349,8 @@ fn settled_header(
     let status = entry(&entries, STATUS_KEY).map(String::from).or(status);
     let pr = entry(&entries, PR_KEY).map(String::from).or_else(|| spec.pr()).filter(|p| !p.is_empty());
     if let Some(pr) = pr {
-        let follow = status.as_deref() == Some(SPEC_IN_REVIEW) || (status.as_deref() == Some(SPEC_FOR_HUMAN) && prs.known(&pr).is_some());
+        let follow = status.as_deref() == Some(SPEC_IN_REVIEW)
+            || (status.as_deref() == Some(SPEC_FOR_HUMAN) && prs.known(&pr).is_some());
         if follow {
             let settled = pull_request_header(&prs.state(&pr)?);
             if entry(&settled, STATUS_KEY).map(String::from).or_else(|| status.clone()) != status {
@@ -444,7 +457,10 @@ fn finished_run_header(
     let run = saved_run(runs, run_id);
     let Some(s) = run.and_then(|r| r.state().ok()).filter(|s| s.done()) else {
         let (why, remedy) = unfinished_run(spec, run_id, run, prs, target);
-        return Err(OrchestratorError(format!("spec {}: run {run_id}, on its {RUN_KEY}: line, {why}; {remedy}", spec.slug)));
+        return Err(OrchestratorError(format!(
+            "spec {}: run {run_id}, on its {RUN_KEY}: line, {why}; {remedy}",
+            spec.slug
+        )));
     };
     let pr = s.pr_url.clone().filter(|p| !p.is_empty());
     let succeeded = s.verdict.as_deref().is_some_and(|v| SUCCEEDED.contains(&v));
@@ -483,7 +499,12 @@ fn unfinished_run(
     }
     // Starting over would do a finished run's work twice, so its spec's header is the human's to set.
     if let Some(problem) = run.problem().filter(|_| s.done()) {
-        let pr = s.pr_url.as_deref().filter(|p| !p.is_empty()).map(|p| format!(" (its pull request: {p})")).unwrap_or_default();
+        let pr = s
+            .pr_url
+            .as_deref()
+            .filter(|p| !p.is_empty())
+            .map(|p| format!(" (its pull request: {p})"))
+            .unwrap_or_default();
         return (
             format!("is done but cannot be read: {problem}"),
             format!("drain with that release, or set its {STATUS_KEY}: and {PR_KEY}: lines by hand{pr}"),
