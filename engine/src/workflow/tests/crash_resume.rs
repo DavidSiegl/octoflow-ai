@@ -15,7 +15,8 @@
 //! agents (FakeHerdr), the local quality gate (FakeGate) and time (FakeClock). Each agent works on its prompt for
 //! TURN_SECONDS of that time before its handoff file appears, so that a crash can land while it works and it
 //! finishes for the next orchestrator.
-//! A gate job ends before a heartbeat save, so no crash lands while it judges (TODO.md).
+//! A gate job ends before a heartbeat save, so no crash lands while it judges: local_gate's own tests cover
+//! stop_left, which a resume of such a crash runs.
 //!
 //! What the e2e scenarios cover instead: they kill the engine as a program, with SIGKILL at any moment, so also
 //! between two writes, on real git; but only once per phase. This harness crashes after every write of state.json
@@ -279,7 +280,7 @@ fn without_repeats(effects: &Effects, may_repeat: fn(&str, &str) -> bool) -> Eff
 }
 
 /// What a run that crashed where each of crashes, the state.json each left, says leaves behind: uninterrupted's,
-/// but for the one gap pinned here, which TODO.md records.
+/// but for the one gap pinned here, accepted since `octoflow close` closes the workspace that a crash left open.
 ///
 /// A crash after the save that released the finished run (phase done, no owner) costs the human the notice that it
 /// finished, and the closing of its workspace: both come once, after that save, and a resume of a released run whose
