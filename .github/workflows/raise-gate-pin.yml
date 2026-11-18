@@ -185,7 +185,8 @@ jobs:
             echo "$BRANCH already holds this raise"
           elif [ -n "$branch" ] && [ -n "$(git diff --name-only "$branch" HEAD -- .github/workflows)" ]; then
             # Moving the branch would change workflow files, which GitHub refuses to a token without the Workflows
-            # permission; a new branch at the raise changes none.
+            # permission; a new branch at the raise changes none. Each action bump merged from Dependabot
+            # (dependabot.yml) is such a change, so an open raise then moves to a new pull request.
             if [ -n "$pr" ]; then
               gh pr close "$pr" --comment "Replaced: main changed a workflow since this raise ($RUN_URL)."
               pr=

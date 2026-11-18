@@ -1,13 +1,19 @@
 # Raises the actions .github/workflows/ uses. Each `uses:` names a commit sha, with the release tag it was taken from in
 # a comment, so a tag moved upstream runs nothing new here; Dependabot opens a pull request moving the sha and the
-# comment to a newer release. Those pull requests carry no-automerge, so automerge.yml leaves them for the owner to read
-# the new action's changes and merge by hand (the owner's ruling, 2026-11-18): auto-merging them would run a changed
-# action, beside the workflows' write tokens, that nobody has looked at.
+# comment to a newer release. The owner reads the new actions' changes and merges it by hand (the owner's ruling,
+# 2026-11-18): automerge.yml leaves Dependabot's pull requests alone, since merging them on Jenkins's check alone would
+# run changed actions, beside the workflows' write tokens, that nobody has looked at.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-    labels:
-      - no-automerge
+    # A release is proposed only once it is a week old, time for a hijacked one to be found and pulled first.
+    cooldown:
+      default-days: 7
+    # One pull request a week for all the actions, rather than one each to read and merge.
+    groups:
+      actions:
+        patterns:
+          - "*"
