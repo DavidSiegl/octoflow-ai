@@ -3,7 +3,8 @@
 # and write the verdict to target/rustfmt/junit.xml as a JUnit report of one test, rustfmt.formatted, which fails
 # naming each file `cargo fmt --all` would change. Exits 0 whether or not one would change, the gate judging the
 # report, as ci/rust-tests.sh does; exits non-zero, with no report, when rustfmt could not check the code, such as a
-# file that does not parse or a toolchain without rustfmt.
+# file that does not parse or a toolchain without rustfmt. A warning rustfmt prints, such as for an option stable
+# rustfmt ignores, is passed on to standard error and fails nothing.
 #
 #   ci/rustfmt.sh
 #
@@ -13,19 +14,22 @@
 # surviving-mutants check runs the tests on code cargo-mutants rewrote, which rustfmt would reformat.
 set -eu
 
-cd "$(dirname "$0")/.."
+# -P: cargo names the files by their canonical path, and the report strips this $PWD from them.
+cd -P "$(dirname "$0")/.."
 out=target/rustfmt
 mkdir -p "$out"
 rm -f "$out/junit.xml"
 # --check exits 1 both when a file would change, listing it on standard output (-l), and when rustfmt could not
-# check, saying why on standard error; so what it wrote to standard error tells the two apart.
+# check, saying why on standard error; so a failing status with no file listed, or with standard error holding more
+# than rustfmt's "Warning: " lines, means it could not check.
 status=0
 cargo fmt --all --check -- -l > "$out/files" 2> "$out/errors" || status=$?
-if [ -s "$out/errors" ] || { [ "$status" -ne 0 ] && [ ! -s "$out/files" ]; }; then
+if [ "$status" -ne 0 ] && { [ ! -s "$out/files" ] || grep -qv '^Warning: ' "$out/errors"; }; then
     echo "rustfmt could not check the code (cargo fmt exited $status):" >&2
     cat "$out/errors" >&2
     exit 1
 fi
+cat "$out/errors" >&2
 if [ -s "$out/files" ]; then
     # The paths from the top level, escaped for XML: & first, as the others' escapes hold one.
     files=$(sed -e "s|^$PWD/||" -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' "$out/files")
@@ -36,5 +40,5 @@ if [ -s "$out/files" ]; then
 else
     failure=
 fi
-printf '<testsuites><testsuite name="rustfmt" tests="1"><testcase classname="rustfmt" name="formatted">%s</testcase></testsuite></testsuites>\n' \
-    "$failure" > "$out/junit.xml"
+testcase="<testcase classname=\"rustfmt\" name=\"formatted\">$failure</testcase>"
+printf '<testsuites><testsuite name="rustfmt" tests="1">%s</testsuite></testsuites>\n' "$testcase" > "$out/junit.xml"

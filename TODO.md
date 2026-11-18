@@ -145,7 +145,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   give the deleted set without the second diff." Closed by that.
 
 - **A gated run without a pull request is told it pushes when gitleaks is missing.** `Host::check_gitleaks`
-  (`engine/src/host.rs:630`) opens "this run pushes, and every push is scanned for secrets first", and
+  (`engine/src/host.rs:721`) opens "this run pushes, and every push is scanned for secrets first", and
   `Workflow::check_gate` (`engine/src/workflow.rs`) and `turn_quality_gate_on` (`engine/src/workflow/gate_switch.rs`)
   raise it for any gated run: a `--quality-gate local` run without
   `--pr` pushes nothing; what gitleaks scans there is each snapshot before it is judged. Raised while doing todo/53,
@@ -160,7 +160,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   cannot hold today without a run id, and the desktop app's run list then showing it.
 - **Two engine test directories are still named by pid, removing what is there first.** `Dir::new`
   (`engine/tests/program.rs:23`) names its directory `octoflow-program-<name>-<pid>` and removes what is there, and
-  `engine/tests/signals.rs:237` names one `octoflow-signals-<case>-<pid>`: two test runs over one `/tmp` whose
+  `engine/tests/signals.rs:245` names one `octoflow-signals-<case>-<pid>`: two test runs over one `/tmp` whose
   processes share a pid, as in different PID namespaces, delete each other's, the collision todo/49 fixed for the e2e
   scenarios' `Scratch`. Raised by cross-review 186 (raised and not recorded). Closed by making both on
   `tempfile::Builder`, as `Scratch::new` is.

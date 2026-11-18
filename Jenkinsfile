@@ -91,12 +91,11 @@ pipeline {
                 // The Test stage's TestClippy and the Gate stage's gate run the real clippy, the Test stage's
                 // cargo-llvm-cov reads its coverage data with llvm-tools' llvm-profdata and llvm-cov, which must be the
                 // toolchain's own LLVM, and its ci/rustfmt.sh runs rustfmt. All are rustup components the agent image
-                // provides: its rustup home,
-                // /usr/local/rustup, is root's, so a build cannot add to it (PR-163's builds 1-3 failed adding
-                // llvm-tools-preview: "component download failed ... No such file or directory"). This step names a
-                // missing one here rather than letting a later stage fail on it. rustup reads rust-toolchain.toml here,
-                // so it lists the components of the toolchain that file pins, which must be the image's too: rustup
-                // cannot install another one either.
+                // provides: its rustup home, /usr/local/rustup, is root's, so a build cannot add to it (PR-163's builds
+                // 1-3 failed adding llvm-tools-preview: "component download failed ... No such file or directory").
+                // This step names a missing one here rather than letting a later stage fail on it. rustup reads
+                // rust-toolchain.toml here, so it lists the components of the toolchain that file pins, which must be
+                // the image's too: rustup cannot install another one either.
                 sh '''
                     installed=$(rustup component list --installed)
                     for component in clippy llvm-tools rustfmt; do
