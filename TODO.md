@@ -42,6 +42,22 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **The workflows reference their actions by tag.** `actions/checkout@v5` and the others in `.github/workflows/`
+  run whatever commit the tag names when the job starts, so a moved tag runs someone else's code in a job that may hold
+  a write token: `raise-gate-pin.yml` runs `actions/checkout` in the job that pushes with `AUTOMERGE_TOKEN`.
+  Raised by gate-pin-follows/02. Closes with every `uses:` pinned by commit sha, its tag in a comment, and something
+  that raises the pins (Dependabot's github-actions ecosystem).
+- **The raise workflow builds the xtask from cold every day and re-reads the pin in shell.** Raised by
+  cross-review 233 (F9, F10): `.github/workflows/raise-gate-pin.yml`'s raise job installs the toolchain and builds
+  `cargo xtask` on each daily run, though most days no release is new, and takes the new gate version for the title by
+  `grep`/`cut` on `ci/gate.pin`, a second reader beside the xtask's. Closes with a cargo cache or a cheap check for a
+  new release first, and the xtask printing the versions it raised to.
+- **The Install stage's component check fails on rustup's error, not its own.** With a component that
+  `rust-toolchain.toml` lists missing from the agent, `rustup component list --installed` (Jenkinsfile, Install)
+  tries to install it into root's rustup home first and fails with "could not create temp file ... Permission denied",
+  so the check never prints "rustup's <component> component is not on the agent; its image must add it" (PR-495's
+  build 1, todo/64). Closes with a check that reads the installed components without setting off that install, or
+  that names the components it looks for when the listing fails.
 - **`cargo xtask raise-gate-pin` bumps the working tree's version, not the target branch's.** Raised by
   cross-review 229 (F6): `bump_package_version` (`xtask/src/raise_gate_pin.rs`) raises whatever `engine/Cargo.toml`
   holds, so a run on a branch that already bumped for another change, or a second raise on one branch before it

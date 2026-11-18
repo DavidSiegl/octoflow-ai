@@ -15,6 +15,9 @@ users only if it raises the version.
   `cargo update --workspace`: Jenkins's `--locked` cargo steps fail a build whose `Cargo.lock` is stale.
   `pyproject.toml` has no version: it holds only the quality gate's toolchain.
 - Don't create tags or releases by hand; Jenkins does that after the merge.
+- One pull request that raises the version is open at a time: pull requests merge on their own once Jenkins passes
+  them, so two would both claim the next version. Before opening one, check that no open pull request changes
+  `engine/Cargo.toml`, including the one `.github/workflows/raise-gate-pin.yml` opens from `gate-pin-raise`.
 
 ## Formatting
 

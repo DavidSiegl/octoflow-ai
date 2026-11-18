@@ -13,6 +13,8 @@
 # repository, with contents and pull requests read and write. Not github.token: GitHub deletes no head branch of a
 # pull request merged as github-actions[bot], and starts no workflow for the push to main that merge makes. When the
 # token expires, every run fails at its first gh call and pull requests wait for a human until it is replaced.
+# raise-gate-pin.yml is its other user: it pushes its branch and opens its pull request with it, so that this
+# workflow runs on them.
 name: Auto-merge
 
 on:
