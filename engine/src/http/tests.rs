@@ -142,10 +142,13 @@ fn endless_redirects_end_in_the_last_status() {
 
 #[test]
 fn no_answer_is_worded_with_the_system_s_words() {
-    let refusing = TcpListener::bind("127.0.0.1:0").unwrap();
+    // A port bound and never listened on is refused. A connection's own end is such a port, and no other socket can
+    // take it while the connection lasts, as one could take a listener's freed port (todo/84).
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let refusing = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
     let url = format!("http://{}/", refusing.local_addr().unwrap());
-    drop(refusing);
     assert_eq!(direct().send(&get(&url)), Err(HttpError::NoAnswer("Connection refused".to_string())));
+    drop((refusing, listener));
 
     // Accepted by the kernel, never answered.
     let silent = TcpListener::bind("127.0.0.1:0").unwrap();
