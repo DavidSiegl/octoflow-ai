@@ -11,7 +11,7 @@ use crate::serve::{FINISHED_RUN_WRITES, SERVE_POLL};
 const SERVE_ID: &str = "20261024-120000-5e7e00";
 
 fn run_dir() -> String {
-    format!("/proj/{RUNS_DIR}/{SERVE_ID}")
+    crate::state::run_dir("/proj", SERVE_ID)
 }
 
 /// A run's state.json as serve's tests save it: a fresh run in round 1's build, with the extra keys.

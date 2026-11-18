@@ -473,8 +473,7 @@ impl Plan<'_> {
                 world.say(&format!("deleted the refs under {prefix}"));
             }
         }
-        let path = format!("{cwd}/{RUNS_DIR}/{run_id}/state.json");
-        record_in_state(host, &path, self.state, |s| s.closed = Some(closed.clone()), "the run was closed")?;
+        record_in_state(host, cwd, self.state, |s| s.closed = Some(closed.clone()), "the run was closed")?;
         world.say(&format!("closed run {run_id}: {closed}"));
         Ok(closed)
     }

@@ -5,7 +5,7 @@ use indexmap::IndexMap;
 
 use super::args::{ResumeArgs, RunArgs, Settings};
 use super::Connected;
-use crate::constants::{DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT, RUNS_DIR, WORKTREES_DIR};
+use crate::constants::{DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT, WORKTREES_DIR};
 use crate::error::OrchestratorError;
 use crate::harness::harness;
 use crate::json::Object;
@@ -14,7 +14,7 @@ use crate::pipeline::{Pipeline, DONE, QUALITY};
 use crate::prompts::{load_prompts, Prompts};
 use crate::runs::RUNNING;
 use crate::spec_file::SpecFile;
-use crate::state::{find_run, RunState, SavedRun};
+use crate::state::{find_run, run_dir, RunState, SavedRun};
 use crate::workflow::{check_gate_mid_run, turn_quality_gate_off, turn_quality_gate_on};
 use crate::workflow_file::{load_workflow_file, named_workflow};
 
@@ -81,7 +81,7 @@ pub(super) fn flagged_workflow(
 /// id, run --run-id's, once no run of the project at cwd has it: its directory is not there. Errors: it is, or that
 /// cannot be told.
 fn given_run_id(id: &str, cwd: &str, world: &Connected) -> Result<String, OrchestratorError> {
-    let dir = format!("{cwd}/{RUNS_DIR}/{id}");
+    let dir = run_dir(cwd, id);
     if world.with.host.exists(&dir)? {
         return Err(OrchestratorError(format!("{dir} exists already; a new run needs an id of its own")));
     }

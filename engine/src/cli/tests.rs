@@ -723,7 +723,7 @@ fn record_in_state_refuses_a_changed_file_naming_what_it_does_not_record() {
         ),
     ];
     for (change, end) in cases {
-        let e = record_in_state(&host, path, &read, change, "it was closed").unwrap_err();
+        let e = record_in_state(&host, "/proj", &read, change, "it was closed").unwrap_err();
         assert_eq!(e.0, format!("{path} changed while it was closed; {end}"));
     }
     assert!(host.state().writes.is_empty());

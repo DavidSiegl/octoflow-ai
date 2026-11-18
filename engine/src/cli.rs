@@ -20,10 +20,10 @@ use crate::herdr::ProcessHerdr;
 use crate::host::{shlex_join, Host, ProcessHost};
 use crate::interrupt::Interrupt;
 use crate::package_index::PackageIndexes;
-use crate::pipeline::Pipeline;
+use crate::pipeline::{Pipeline, STATE_FILE};
 use crate::runs::{local_host, pid_alive};
 use crate::spec_file::{read_spec_file, SpecFile};
-use crate::state::RunState;
+use crate::state::{run_dir, RunState};
 use crate::workflow::{Collaborators, LocalHuman, RunSettings, Stopped, SystemClocks, Workflow};
 use serde_json::Value;
 
@@ -400,20 +400,21 @@ fn runs_command(runs: &RunsCommand, world: &Connected, cwd: &str, target: &[Stri
     Ok(())
 }
 
-/// Make change to read, the run's state as a command read it, and write the result to the run's state.json at path on
-/// host, in one write, unless the file no longer holds read; for what prune, close, refresh and drain write about a run
-/// they do not drive. The file keeps its modification time, which is the run's heartbeat: a stale run must not look
+/// Make change to read, the run's state as a command read it, and write the result to the run's state.json in the
+/// project at cwd on host, in one write, unless the file no longer holds read; for what prune, close, refresh and drain
+/// write about a run they do not drive. The file keeps its modification time, which is the run's heartbeat: a stale run must not look
 /// live. meanwhile says what was being done, for the error.
 ///
 /// Errors: the file is gone, or no longer reads as read (naming the fields change gives new values, and meanwhile;
 /// nothing is recorded), or cannot be read or written.
 pub fn record_in_state(
     host: &dyn Host,
-    path: &str,
+    cwd: &str,
     read: &RunState,
     change: impl FnOnce(&mut RunState),
     meanwhile: &str,
 ) -> Result<(), OrchestratorError> {
+    let path = &format!("{}/{STATE_FILE}", run_dir(cwd, &read.run_id));
     let mut updated = read.clone();
     change(&mut updated);
     let unchanged = host.read(path)?.is_some_and(|text| RunState::from_text(&text).is_ok_and(|now| now == *read));
