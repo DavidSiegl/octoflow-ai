@@ -299,6 +299,30 @@ fn a_marked_agent_found_working_took_its_prompt_and_is_only_waited_on() {
 }
 
 #[test]
+fn a_marked_agent_whose_file_is_written_before_its_prompt_is_not_waited_out_in_its_next_turn() {
+    // The orchestrator stopped after relaunching the Builder, before the prompt went out; the human had it write
+    // build-2.md in its pane. In round 3 it is blocked on a question of the turn's, not on a startup dialog.
+    let state = unprompted(saved_run("build", 2, FULL), "build", AgentStart::Resumed);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state,
+        vec![
+            ("review", vec![review_turn(2, CHANGES_REQUESTED), review_turn(3, APPROVE)]),
+            ("build", vec![build_turn(3)]),
+        ],
+        &["build", "review"],
+        &[("build", "s-build")],
+    );
+    f.put(&f.state.build_path(2), "built");
+    f.herdr.state().statuses.insert("build-a1b2c3".into(), "blocked".into());
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert!(!f.told.lines().iter().any(|l| l.contains("needs your answer")), "{:?}", f.told.lines());
+    assert_eq!(prompts_to(&f, "build-a1b2c3"), 1);
+    assert_eq!(wf.state().agents.get("build").unwrap().unprompted, None);
+}
+
+#[test]
 fn exited_builder_without_session_gets_a_recovery_prompt() {
     let seen = seen();
     let state = prompted(saved_run("build", 2, FULL), "build-2.md");

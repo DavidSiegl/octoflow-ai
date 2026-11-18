@@ -188,9 +188,10 @@ pub struct AgentRecord {
     /// The harness's session id, as herdr reports it; None until it does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
-    /// How the agent started, while it has not yet taken a prompt from the run; None once it has. A resume that finds
-    /// it alive with this set finishes its start and prompts it as that start would have. A record saved by an engine
-    /// that did not keep it reads as None.
+    /// How the agent started, while it has not yet taken a prompt from the run; None once it has, or once its role's
+    /// file is found written all the same, as by a human typing in its pane. A resume that finds it alive with this set
+    /// finishes its start and prompts it as that start would have. A record saved by an engine that did not keep it
+    /// reads as None.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unprompted: Option<AgentStart>,
     /// The fields of the record this engine does not know, as read, written after its own.

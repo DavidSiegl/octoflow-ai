@@ -156,6 +156,8 @@ impl Workflow<'_> {
         // First, because the role may have written it while no orchestrator was watching.
         if let Some(out) = self.host.read(path)? {
             self.human.log(&format!("[{role}] {file} is already written"));
+            // Its agent wrote it, so it is past any startup dialog, prompted or not (a human typing in its pane).
+            self.clear_unprompted(role);
             self.end_turn(role, path)?;
             return Ok(out);
         }
@@ -172,9 +174,7 @@ impl Workflow<'_> {
             // Recorded only once the prompt is taken. Dying between sending and confirming costs one duplicate
             // prompt, which the role answers by writing the same file again.
             self.state.prompted = Some(file.clone());
-            if let Some(agent) = self.state.agents.get_mut(role) {
-                agent.unprompted = None;
-            }
+            self.clear_unprompted(role);
             if let Some(started) = started {
                 let record = self.turn_record(role, &file, Some(started));
                 self.state.turns.push(record);
@@ -185,6 +185,13 @@ impl Workflow<'_> {
         self.human.log(&format!("[{role}] wrote {file}"));
         self.end_turn(role, path)?;
         Ok(out)
+    }
+
+    /// Take the role's agent as prompted (AgentRecord::unprompted), unsaved; a role with no agent is left as it is.
+    fn clear_unprompted(&mut self, role: &str) {
+        if let Some(agent) = self.state.agents.get_mut(role) {
+            agent.unprompted = None;
+        }
     }
 
     /// What the turn does once the role's agent is ready, as how says it came to be; prompting is true when this pass
@@ -612,7 +619,7 @@ impl Workflow<'_> {
                 }
                 Some("working") => {
                     how = How::Alive;
-                    self.state.agents.get_mut(role).expect("the record just read").unprompted = None;
+                    self.clear_unprompted(role);
                     self.save()?;
                 }
                 _ => {}
