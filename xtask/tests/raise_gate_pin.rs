@@ -223,7 +223,7 @@ fn the_latest_release_is_pinned_with_everything_that_goes_with_it() {
 
     assert_eq!(
         stdout(&output),
-        "## octoflow-gate 0.12.0\n\nNotes of 0.12.0.\n\n## octoflow-gate 0.11.0\n\nNotes of 0.11.0.\n\n"
+        "ci/gate.pin names octoflow-gate 0.12.0; version 0.90.0\n\n## octoflow-gate 0.12.0\n\nNotes of 0.12.0.\n\n## octoflow-gate 0.11.0\n\nNotes of 0.11.0.\n\n"
     );
     let download = "https://github.com/DavidSiegl/octoflow-gate/releases/download/v0.12.0";
     assert_eq!(
@@ -312,7 +312,7 @@ fn a_rollback_names_what_it_takes_back() {
     assert_eq!(raise.engine_version(), "0.90.0", "a rollback across minors is a minor");
     assert_eq!(
         stdout(&output),
-        "## octoflow-gate 0.10.0, rolled back\n\nNotes of 0.10.0.\n\n## octoflow-gate 0.9.0, rolled back\n\nNotes of 0.9.0.\n\n"
+        "ci/gate.pin names octoflow-gate 0.8.0; version 0.90.0\n\n## octoflow-gate 0.10.0, rolled back\n\nNotes of 0.10.0.\n\n## octoflow-gate 0.9.0, rolled back\n\nNotes of 0.9.0.\n\n"
     );
     let notes = raise.read("docs/releases/v0.90.0.md");
     let words = notes.split_whitespace().collect::<Vec<_>>().join(" ");

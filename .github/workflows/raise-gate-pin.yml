@@ -9,8 +9,9 @@
 # latest release differs from main's pin. A run whose raise leaves main as it is closes the pull request only when
 # main's pin is the branch's, main having caught up. A run that finds another open pull request changing
 # engine/Cargo.toml skips, saying so, since two bumping pull requests race for the version (CLAUDE.md, "Releases");
-# the next day's tries again. While the latest release is not immutable, the xtask refuses it and the run fails saying
-# why.
+# the next day's tries again. A scheduled run whose latest release is the one main's pin names, as most days', skips the
+# toolchain and the build, saying so. While the latest release is not immutable, the xtask refuses it and the run fails
+# saying why.
 #
 # Two jobs, so that AUTOMERGE_TOKEN never shares a machine with code the raise builds: raise runs the xtask with
 # github.token, read-only, and hands publish a patch and a title; publish, on a fresh runner, applies the patch to the
@@ -86,10 +87,28 @@ jobs:
           ref: main
           persist-credentials: false
 
-      # rustup installs the toolchain rust-toolchain.toml pins on the first cargo command. The notes the xtask prints
-      # are the pull request's body.
+      # The newest release as the xtask's `chosen` takes it: drafts, pre-releases and tags that are no version left
+      # out, highest version first. Only one equal to the pin's skips: whether a newer one is immutable is the xtask's
+      # to check. A dispatch always raises, since it may name another release.
+      - id: latest
+        if: steps.others.outputs.skip != 'true' && inputs.version == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest=$(gh api --paginate --slurp 'repos/DavidSiegl/octoflow-gate/releases?per_page=100' |
+            jq -r '[.[][] | select((.draft or .prerelease) | not) | .tag_name
+              | select(test("^v?[0-9]+\\.[0-9]+\\.[0-9]+$")) | ltrimstr("v") | split(".") | map(tonumber)]
+              | max // empty | map(tostring) | join(".")')
+          pinned=$(grep -v '^#' ci/gate.pin | head -n 1 | cut -d ' ' -f 1)
+          if [ -n "$latest" ] && [ "$latest" = "$pinned" ]; then
+            echo "::notice::ci/gate.pin names octoflow-gate $latest, the latest release; not raising"
+            echo pinned=true >> "$GITHUB_OUTPUT"
+          fi
+
+      # rustup installs the toolchain rust-toolchain.toml pins on the first cargo command. The xtask prints the pull
+      # request's title, a blank line and its body.
       - id: raise
-        if: steps.others.outputs.skip != 'true'
+        if: steps.others.outputs.skip != 'true' && steps.latest.outputs.pinned != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
@@ -98,13 +117,13 @@ jobs:
           echo "main=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           out=$RUNNER_TEMP/raise
           mkdir -p "$out"
-          cargo xtask raise-gate-pin ${VERSION:+"$VERSION"} > "$out/notes.md"
+          cargo xtask raise-gate-pin ${VERSION:+"$VERSION"} > "$out/pull-request.md"
           git add -A
           if ! git diff --cached --quiet; then
             git diff --cached --binary > "$out/raise.patch"
+            { read -r title; read -r _; cat > "$out/notes.md"; } < "$out/pull-request.md"
             { echo "Made by \`cargo xtask raise-gate-pin\` in $RUN_URL."; echo; cat "$out/notes.md"; } > "$out/body.md"
-            gate=$(grep -v '^#' ci/gate.pin | head -n 1 | cut -d ' ' -f 1)
-            echo "title=ci/gate.pin names octoflow-gate $gate; version $(ci/release-version.sh)" >> "$GITHUB_OUTPUT"
+            echo "title=$title" >> "$GITHUB_OUTPUT"
             echo changed=true >> "$GITHUB_OUTPUT"
           fi
 

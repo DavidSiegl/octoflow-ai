@@ -15,9 +15,11 @@
 //!   before it leaves the old pin, so a second run does not take the half-made raise for a finished one; it says to
 //!   restore the files first.
 //!
-//! Standard output gets the notes of the releases the change brings (after the old pin up to the new one) or, for a
-//! rollback, takes back (after the new pin up to the old one), newest first, for the pull request's body; progress
-//! goes to standard error. Exit status 0 when the pin was moved or already names the release with the sha256 its
+//! Standard output gets the pull request's text, as a commit message is laid out: a title naming the release the pin
+//! now names and octoflow's new version (`ci/gate.pin names octoflow-gate 0.12.0; version 0.90.0`), a blank line, and
+//! the body, the notes of the releases the change brings (after the old pin up to the new one) or, for a rollback,
+//! takes back (after the new pin up to the old one), newest first; nothing when the pin names the release already.
+//! Progress goes to standard error. Exit status 0 when the pin was moved or already names the release with the sha256 its
 //! asset gives, 1 when a check or a step failed, 2 for a usage error, a version that does not parse included. Needs
 //! gh (signed in, or GH_TOKEN), curl, git with origin/main fetched, cargo, and what ci/fetch-gate.sh needs.
 
@@ -53,8 +55,8 @@ pub fn main(argv: &[String]) -> i32 {
         }
     };
     match top_level().and_then(|top| raise(&top, wanted)) {
-        Ok(notes) => {
-            print!("{notes}");
+        Ok(text) => {
+            print!("{text}");
             0
         }
         Err(e) => {
@@ -110,8 +112,8 @@ fn top_level() -> Result<PathBuf, Error> {
     Ok(PathBuf::from(top.trim_end()))
 }
 
-/// Move top's pin to wanted, or to the latest immutable release, and return the notes for the pull request; "" when
-/// the pin names that release already.
+/// Move top's pin to wanted, or to the latest immutable release, and return the pull request's text, as the module's
+/// comment lays it out; "" when the pin names that release already.
 fn raise(top: &Path, wanted: Option<Version>) -> Result<String, Error> {
     // Every read and check first, so that a failed one leaves the checkout as it was.
     let pin_text = read(&top.join(PIN))?;
@@ -182,7 +184,9 @@ fn raise(top: &Path, wanted: Option<Version>) -> Result<String, Error> {
     })?;
     let heading =
         |r: &Release| if new > old { format!("{}", r.version) } else { format!("{}, rolled back", r.version) };
-    Ok(changed.iter().map(|r| format!("## octoflow-gate {}\n\n{}\n\n", heading(r), r.body.trim())).collect())
+    let body: String =
+        changed.iter().map(|r| format!("## octoflow-gate {}\n\n{}\n\n", heading(r), r.body.trim())).collect();
+    Ok(format!("{PIN} names octoflow-gate {new}; version {octoflow}\n\n{body}"))
 }
 
 /// Whether text holds version on its own, not as part of a longer one, as 0.15.2 is part of 0.15.20 and 10.15.2.
