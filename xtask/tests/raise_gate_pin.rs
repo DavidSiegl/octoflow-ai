@@ -256,6 +256,7 @@ fn a_mutable_latest_release_is_refused_and_one_named_is_taken() {
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
     assert_eq!(raise.read("ci/gate.pin"), format!("{PIN_COMMENT}0.10.1 {}\n", raise.release_sha()));
     assert_eq!(raise.engine_version(), "0.89.4", "a gate patch is a patch");
+    assert!(stdout(&output).starts_with("ci/gate.pin names octoflow-gate 0.10.1; version 0.89.4\n\n## octoflow-gate"));
     assert!(raise.read("docs/releases/v0.89.4.md").starts_with("## The quality gate is octoflow-gate 0.10.1\n"));
 }
 

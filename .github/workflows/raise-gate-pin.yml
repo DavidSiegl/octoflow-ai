@@ -9,9 +9,9 @@
 # latest release differs from main's pin. A run whose raise leaves main as it is closes the pull request only when
 # main's pin is the branch's, main having caught up. A run that finds another open pull request changing
 # engine/Cargo.toml skips, saying so, since two bumping pull requests race for the version (CLAUDE.md, "Releases");
-# the next day's tries again. A scheduled run whose latest release is the one main's pin names, as most days', skips the
-# toolchain and the build, saying so. While the latest release is not immutable, the xtask refuses it and the run fails
-# saying why.
+# the next day's tries again. A run that names no version, whose latest release is immutable and the one main's pin
+# names, as most days', skips the toolchain and the build, saying so. While the latest release is not immutable, the
+# xtask refuses it and the run fails saying why.
 #
 # Two jobs, so that AUTOMERGE_TOKEN never shares a machine with code the raise builds: raise runs the xtask with
 # github.token, read-only, and hands publish a patch and a title; publish, on a fresh runner, applies the patch to the
@@ -59,7 +59,7 @@ jobs:
       skip: ${{ steps.others.outputs.skip }}
       changed: ${{ steps.raise.outputs.changed }}
       title: ${{ steps.raise.outputs.title }}
-      main: ${{ steps.raise.outputs.main }}
+      main: ${{ steps.main.outputs.main }}
     steps:
       # Each other open pull request's changed files, through the REST API's pages, since gh pr list's stop at 100. A
       # fork's pull request is another's, even from a branch named as this workflow's.
@@ -87,21 +87,28 @@ jobs:
           ref: main
           persist-credentials: false
 
-      # The newest release as the xtask's `chosen` takes it: drafts, pre-releases and tags that are no version left
-      # out, highest version first. Only one equal to the pin's skips: whether a newer one is immutable is the xtask's
-      # to check. A dispatch always raises, since it may name another release.
+      # The main commit the raise starts from, which publish applies the patch to, or compares the branch's pin with.
+      - id: main
+        if: steps.others.outputs.skip != 'true'
+        run: echo "main=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # The newest release as the xtask's `chosen` takes it (raise_gate_pin.rs's `releases` and `chosen`, which this
+      # must follow; GATE_REPO the repository): drafts, pre-releases and tags that are no version left out, highest
+      # version first, followed by whether it is immutable. Only an immutable one equal to the pin's skips, so that a
+      # mutable one still fails the run in the xtask. A run that names a version always raises.
       - id: latest
         if: steps.others.outputs.skip != 'true' && inputs.version == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           latest=$(gh api --paginate --slurp 'repos/DavidSiegl/octoflow-gate/releases?per_page=100' |
-            jq -r '[.[][] | select((.draft or .prerelease) | not) | .tag_name
-              | select(test("^v?[0-9]+\\.[0-9]+\\.[0-9]+$")) | ltrimstr("v") | split(".") | map(tonumber)]
-              | max // empty | map(tostring) | join(".")')
+            jq -r '[.[][] | select((.draft or .prerelease) | not)
+              | select(.tag_name | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+$"))
+              | {version: (.tag_name | ltrimstr("v") | split(".") | map(tonumber)), immutable: (.immutable == true)}]
+              | max_by(.version) // empty | "\(.version | map(tostring) | join(".")) \(.immutable)"')
           pinned=$(grep -v '^#' ci/gate.pin | head -n 1 | cut -d ' ' -f 1)
-          if [ -n "$latest" ] && [ "$latest" = "$pinned" ]; then
-            echo "::notice::ci/gate.pin names octoflow-gate $latest, the latest release; not raising"
+          if [ "$latest" = "$pinned true" ]; then
+            echo "::notice::ci/gate.pin names octoflow-gate $pinned, the latest release, immutable; not raising"
             echo pinned=true >> "$GITHUB_OUTPUT"
           fi
 
@@ -114,7 +121,6 @@ jobs:
           VERSION: ${{ inputs.version }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          echo "main=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           out=$RUNNER_TEMP/raise
           mkdir -p "$out"
           cargo xtask raise-gate-pin ${VERSION:+"$VERSION"} > "$out/pull-request.md"

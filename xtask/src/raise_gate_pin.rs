@@ -19,9 +19,10 @@
 //! now names and octoflow's new version (`ci/gate.pin names octoflow-gate 0.12.0; version 0.90.0`), a blank line, and
 //! the body, the notes of the releases the change brings (after the old pin up to the new one) or, for a rollback,
 //! takes back (after the new pin up to the old one), newest first; nothing when the pin names the release already.
-//! Progress goes to standard error. Exit status 0 when the pin was moved or already names the release with the sha256 its
-//! asset gives, 1 when a check or a step failed, 2 for a usage error, a version that does not parse included. Needs
-//! gh (signed in, or GH_TOKEN), curl, git with origin/main fetched, cargo, and what ci/fetch-gate.sh needs.
+//! Progress goes to standard error. Exit status 0 when the pin was moved or already names the release with the sha256
+//! its asset gives, 1 when a check or a step failed, 2 for a usage error, a version that does not parse included.
+//! Needs gh (signed in, or GH_TOKEN), curl, git with origin/main fetched, cargo, and what ci/fetch-gate.sh needs.
+//! raise-gate-pin.yml's `latest` step repeats `releases` and `chosen`'s choice of the latest release in jq.
 
 use std::fs;
 use std::path::{Path, PathBuf};

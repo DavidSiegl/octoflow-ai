@@ -32,10 +32,10 @@ What this repository gives it:
 **Raising the pin.** `cargo xtask raise-gate-pin [<version>]` (`xtask/src/raise_gate_pin.rs`) makes every change a raise
 needs, once the release exists: it checks the release's tarball against its `.sha256` asset, writes the pin, copies the
 release's golden reports (below), bumps octoflow's version at the gate's level and writes its release notes, and prints
-the gate's notes for the pull request. With no version it takes the latest release, and only an immutable one.
-`.github/workflows/raise-gate-pin.yml` runs it daily on `main` and keeps one pull request, from its own branch
-`gate-pin-raise`, open for the raise, which merges once Jenkins passes it; a dispatch with a version raises to that one
-at once. The release must read this commit's `gate.toml`, since the gate refuses a key it does not know. A pull request
+the pull request's title, a blank line and its body, the gate's notes. With no version it takes the latest release,
+and only an immutable one. `.github/workflows/raise-gate-pin.yml` runs it daily on `main`, unless the pin already names
+the latest release and that release is immutable, and keeps one pull request, from its own branch `gate-pin-raise`,
+open for the raise, which merges once Jenkins passes it; a dispatch with a version raises to that one at once. The release must read this commit's `gate.toml`, since the gate refuses a key it does not know. A pull request
 that raises the pin is judged by the release it raises it to; quality rounds take the new release once it is on `main`.
 Lowering the pin rolls back the same way, to 0.7.0 or later: the Gate stage and the local gate run a release's `gate`,
 which the releases before 0.7.0 do not ship, so rolling back below it means reverting 0.66.0's cutover, its
