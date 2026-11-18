@@ -533,7 +533,7 @@ earlier verdict step requested changes, your approval approves the run, and your
 more. A workflow's `proof_command`, such as `"python -m pytest -q {proofs}"`, runs the tests the first verdict step
 wrote to back its findings. Prompts fill in `{task}`, `{cwd}`, `{n}`, `{change}`, `{path}`, `{proofs_dir}`, `{findings}`
 (from round 2 on, the verdict files whose requests for changes started the round, which the default Builder's `again`
-names: one, or two when a step that waits on you was asked after another's request in the last round), and for every
+names: more than one when a step that waits on you was asked after another's request in the last round), and for every
 step `X`, `{X_path}`, `{prev_X_path}` and `{earlier_X_paths}`; write a literal brace as `{{` or `}}`. A placeholder
 is its name alone, with no conversion, format spec, attribute or index. The file is checked when it loads, and a run
 saves its workflow, so editing the file does not change a run already started.

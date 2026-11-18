@@ -150,9 +150,10 @@ one. `RunState.verdicts` records each verdict step's verdict per round (`RunStat
 `RunState.verdict`, the run's verdict, turns to `CHANGES_REQUESTED` at a request for changes and to `APPROVE` only
 when the last verdict step approves, so a state saved mid-round keeps the round before's. A verdict step's first turn
 gets its first prompt even in a later round, and its `{prev_X_path}` and `{earlier_X_paths}` name only the rounds it
-judged; `{findings}` names the verdict files that sent the run into the round, for the loop target's `again`: two
-when the last round's request went on to a human-paced step that requested changes too. A state saved before there
-were those records has none and loads all the same, its one verdict step taken to have judged every round. The first verdict step is the proof step (`Pipeline::proof_step`), the only one whose proofs
+judged; `{findings}` names the verdict files that sent the run into the round, for the loop target's `again`: more
+than one when the last round's request went on to a human-paced step that requested changes too. A state saved
+before there were those records has none and loads all the same, its one verdict step taken to have judged every round.
+The first verdict step is the proof step (`Pipeline::proof_step`), the only one whose proofs
 `proof_command` runs. `list` names the step that sent a run back when several judged it (`run_outcome`), and
 `list --json` and serve's `/runs` carry the records as `verdicts`.
 
