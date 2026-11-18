@@ -42,6 +42,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **Nothing checks that a workflow's actions stay pinned by sha.** todo/65 pinned every `uses:` in
+  `.github/workflows/` by commit sha, and `.github/dependabot.yml` keeps a sha a sha, but the Gate stage's actionlint
+  accepts a tag: a later `uses: actions/cache@v4` in a job that holds `AUTOMERGE_TOKEN` passes every check and brings
+  back the moved-tag risk. Raised by cross-review 235 (F3). Closes with a check in the gate that fails a `uses:` whose
+  ref is not 40 hex digits (zizmor's `unpinned-uses`, or a grep in `ci/`).
 - **The desktop app as the terminal client too: what was decided against.** The app, started with arguments, is the CLI
   (`cli` in `ui/src-tauri/src/lib.rs`), and the plain CLI binaries stay released: 13 MB against the AppImage's 120 MB of
   WebKit, and they start without FUSE on headless machines and in CI. Decided against
