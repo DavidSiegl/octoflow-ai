@@ -21,6 +21,13 @@ command = ["sh", "ci/rust-tests.sh"]
 junit = ["target/nextest/ci/junit.xml"]
 coverage = ["coverage-rust.xml"]
 
+# Whether the Rust is as `cargo fmt --all` formats it, a failing test when it is not: the Test stage's second step,
+# whose report the Gate stage passes with --tests likewise (ci/rustfmt.sh).
+[[test]]
+name = "rustfmt"
+command = ["sh", "ci/rustfmt.sh"]
+junit = ["target/rustfmt/junit.xml"]
+
 # The defaults, written out: a quality round's timeout is sized for them.
 [budgets]
 mutation = 600

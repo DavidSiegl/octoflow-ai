@@ -18,15 +18,17 @@ git fetch --quiet origin "+refs/heads/$CHANGE_TARGET:refs/remotes/origin/$CHANGE
 # and nextest.toml are CI, but not ci/gate.pin: the engine is built with its line (BUILT_IN_PIN). gate.toml,
 # pyproject.toml, uv.lock and .python-version, which judge this repository's own changes in Jenkins (pyproject.toml
 # holds no release's metadata, only the gate's Markdown linter and its rules), xtask, its chores (the eval runner and
-# its bundles), .gitignore, which only tells git what to leave untracked, and .copier-answers.yml, the agent-estate
-# template's answers that `copier update` renders docs/agents/ from, are in no release asset.
+# its bundles), .gitignore, which only tells git what to leave untracked, .copier-answers.yml, the agent-estate
+# template's answers that `copier update` renders docs/agents/ from, rustfmt.toml, which says how the source is
+# formatted, not what it builds, and .git-blame-ignore-revs, which only git blame reads, are in no release asset.
 NOT_RELEASED=":(exclude)docs :(exclude,glob)*.md :(exclude)tests :(exclude)engine/e2e :(exclude)engine/tests
 :(exclude,glob)**/tests.rs :(exclude,glob)engine/src/**/tests/** :(exclude,glob)engine/src/**/fake.rs
 :(exclude,glob)engine/src/**/fixture.rs :(exclude)engine/src/test_support.rs :(exclude)engine/src/prompt_parity.rs
 :(exclude,glob)ui/src/**/*.test.ts :(exclude,glob)ui/src/**/*.test.tsx :(exclude)ui/src/test
 :(exclude,glob)ci/*.sh :(exclude)ci/nextest.toml :(exclude)Jenkinsfile :(exclude).github :(exclude)evals
 :(exclude)gate.toml :(exclude)pyproject.toml :(exclude)uv.lock :(exclude).python-version
-:(exclude)xtask :(exclude).gitignore :(exclude).copier-answers.yml"
+:(exclude)xtask :(exclude).gitignore :(exclude).copier-answers.yml :(exclude)rustfmt.toml
+:(exclude).git-blame-ignore-revs"
 base=$(git merge-base HEAD "origin/$CHANGE_TARGET")
 # shellcheck disable=SC2086 # NOT_RELEASED is split into one pathspec per word on purpose.
 if git diff --quiet "$base" HEAD -- . $NOT_RELEASED; then

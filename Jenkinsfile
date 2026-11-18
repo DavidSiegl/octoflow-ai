@@ -88,9 +88,10 @@ pipeline {
                 // meet them. It needs uv 0.12 or later, as pyproject.toml's required-version says.
                 sh 'uv lock --check'
                 sh 'uv sync --frozen'
-                // The Test stage's TestClippy and the Gate stage's gate run the real clippy, and the Test stage's
+                // The Test stage's TestClippy and the Gate stage's gate run the real clippy, the Test stage's
                 // cargo-llvm-cov reads its coverage data with llvm-tools' llvm-profdata and llvm-cov, which must be the
-                // toolchain's own LLVM. Both are rustup components the agent image provides: its rustup home,
+                // toolchain's own LLVM, and its ci/rustfmt.sh runs rustfmt. All are rustup components the agent image
+                // provides: its rustup home,
                 // /usr/local/rustup, is root's, so a build cannot add to it (PR-163's builds 1-3 failed adding
                 // llvm-tools-preview: "component download failed ... No such file or directory"). This step names a
                 // missing one here rather than letting a later stage fail on it. rustup reads rust-toolchain.toml here,
@@ -98,7 +99,7 @@ pipeline {
                 // cannot install another one either.
                 sh '''
                     installed=$(rustup component list --installed)
-                    for component in clippy llvm-tools; do
+                    for component in clippy llvm-tools rustfmt; do
                         printf '%s\\n' "$installed" | grep -q "^$component-" || {
                             echo "rustup's $component component is not on the agent; its image must add it" >&2
                             exit 1
@@ -147,10 +148,14 @@ pipeline {
                         exit 1
                     fi
                 '''
+                // Whether the Rust is as `cargo fmt --all` formats it, as a JUnit report of one test for the Gate
+                // stage, which lists a failure among the failing tests (ci/rustfmt.sh). It takes no lock: rustfmt
+                // builds nothing.
+                sh 'ci/rustfmt.sh'
             }
             post {
                 always {
-                    junit 'target/nextest/ci/junit.xml'
+                    junit 'target/nextest/ci/junit.xml, target/rustfmt/junit.xml'
                 }
             }
         }
@@ -212,7 +217,7 @@ pipeline {
                             # uv run puts pymarkdown, which the gate runs, on PATH.
                             uv run --frozen "$release/gate" --base "$GATE_BASE" \\
                                 --config gate.toml \\
-                                --tests target/nextest/ci/junit.xml \\
+                                --tests target/nextest/ci/junit.xml --tests target/rustfmt/junit.xml \\
                                 --coverage coverage-rust.xml --out quality.md
                         ''')
                     }

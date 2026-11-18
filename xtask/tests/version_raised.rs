@@ -134,6 +134,8 @@ fn a_change_to_docs_tests_ci_or_repository_tooling_alone_passes_at_main_s_versio
         "xtask/src/main.rs",
         ".gitignore",
         ".copier-answers.yml",
+        "rustfmt.toml",
+        ".git-blame-ignore-revs",
     ]
     .into_iter()
     .map(|path| (path, "x"))
