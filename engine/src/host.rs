@@ -1152,8 +1152,9 @@ pub trait Host {
     /// Missing for a file not there, or removed before it is read. Errors: the file cannot be read, or is not UTF-8.
     fn read_inside(&self, run_dir: &str, name: &str) -> Result<RunFileText, OrchestratorError> {
         // What is read is the path below resolved, so the links it walked are not followed again; one put in its
-        // place after that is: a race left open, since an agent that can race the check can as well copy the file
-        // into its run directory, which serve shows as any other; the check is against a link left there.
+        // place after that is: a race left open, here as in run_states_inside and run_files_inside, which check a
+        // path a moment before it is read, since an agent that can race the check can as well copy the file into its
+        // run directory, which serve shows as any other; the check is against a link left there.
         let script = format!(
             "{}f=$1/$2; [ -f \"$f\" ] || exit {MISSING_FILE_STATUS}; below \"$f\" \"$d\"; \
              case $? in 0) ;; 1) exit {OUTSIDE_STATUS};; *) exit {MISSING_FILE_STATUS};; esac; {}",

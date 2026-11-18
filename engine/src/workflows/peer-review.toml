@@ -10,9 +10,9 @@
 # report. They run one after the other, standing in for parallel review (gaps C and E).
 #
 # The referees' independence is the prompts' alone: every handoff file is in the run's directory, and each referee is
-# told not to read the other's reports, not kept from them, until parallel steps (gap C, docs/roadmap.md) give each
-# referee only the files before the fork. It holds for round 1 only: from round 2 on, both read the Author's point-by-point response and the Editor's
-# last decision, which answer and quote the other referee's points.
+# told not to read the other's reports, not kept from them: no step can keep a turn from another step's file. It holds
+# for round 1 only: from round 2 on, both read the Author's point-by-point response and the Editor's last decision,
+# which answer and quote the other referee's points.
 #
 # The Editor is the spec role, so when this run's interview ran and its session is still there, the agent that agreed
 # the question with the human is the one that decides on the answer. --spec-model sets the Editor's model, --build-model

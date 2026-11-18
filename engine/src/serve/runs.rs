@@ -240,7 +240,8 @@ impl ProjectRuns {
     /// id that is not a plain name; Failed, before any workspace opens, when the panes of the project's host's herdr
     /// start a shell that the lines a run types cannot be typed into or that cannot be told (crate::herdr::pane_shell),
     /// and when herdr cannot launch it (Launcher::launch). For a project on a machine that is the machine's herdr,
-    /// where the agents run; the pane of this machine's that the run's command is typed into is not checked.
+    /// where the agents run; the pane of this machine's that the run's command is typed into is not checked
+    /// (GitHub #518).
     pub fn start(
         &self,
         request: &RunRequest,

@@ -395,7 +395,8 @@ impl<'a> Workflow<'a> {
     /// The files are written before the release, so that a run released is one whose files were written: a resume
     /// (ending_left) tells an ending cut short by the owner alone. The notice and the closing
     /// leave no trace, so they come once, after the release: an orchestrator that stopped between the release and
-    /// the notice costs the human the notice, which is accepted over telling them twice of every run ended whole.
+    /// the notice costs the human the notice, and leaves a published run's workspace open until `octoflow close`
+    /// closes it, which is accepted over telling them twice of every run ended whole.
     fn end_done_run(&mut self, left: Ending) -> Outcome<()> {
         if left.count_tokens {
             self.count_tokens();
