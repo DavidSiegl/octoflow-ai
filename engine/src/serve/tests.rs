@@ -600,19 +600,16 @@ fn the_setup_marker_needs_the_token() {
 }
 
 #[test]
-fn setup_gate_writes_the_missing_files_into_the_project_and_names_each() {
-    let repo = crate::host::tests::Repo::new(&[("gate.toml", "# mine\n")]);
+fn setup_gate_names_each_file_and_pins_no_release() {
+    let repo = crate::host::tests::Repo::new(&[]);
     let served = Served::real();
-    let reply = served.post(&format!("/setup/gate?{}", urlencode(&[("cwd", &repo.path)])), "");
+    let path = format!("/setup/gate?{}", urlencode(&[("cwd", &repo.path)]));
+    let reply = served.post(&path, "");
     assert_eq!(reply.status, Some(200), "{reply:?}");
-    let want = serde_json::json!({"files": [
-        {"path": "ci/gate.pin", "written": true},
-        {"path": "gate.toml", "written": false},
-    ]});
-    assert_eq!(reply.json(), want);
-    let pin = std::fs::read_to_string(format!("{}/ci/gate.pin", repo.path)).unwrap();
-    assert_eq!(pin, format!("{}\n", crate::local_gate::BUILT_IN_PIN));
-    assert_eq!(std::fs::read_to_string(format!("{}/gate.toml", repo.path)).unwrap(), "# mine\n");
+    assert_eq!(reply.json(), serde_json::json!({"files": [{"path": "gate.toml", "written": true}]}));
+    assert!(!std::path::Path::new(&format!("{}/ci/gate.pin", repo.path)).exists(), "the project follows the built-in");
+    let reply = served.post(&path, "");
+    assert_eq!(reply.json(), serde_json::json!({"files": [{"path": "gate.toml", "written": false}]}));
 }
 
 #[test]

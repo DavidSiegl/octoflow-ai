@@ -522,11 +522,12 @@ describe("the setup dialog", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("sets the quality gate up for the open project, and shows what it wrote and kept", async () => {
-    const files = [
-      { path: "ci/gate.pin", written: true },
-      { path: "gate.toml", written: false },
-    ];
+  // serve's set_up pins no release, so its answer names gate.toml alone, written or kept.
+  it.each([
+    [true, "wrote"],
+    [false, "kept"],
+  ])("sets the quality gate up for the open project, and shows gate.toml as written: %s", async (written, word) => {
+    const files = [{ path: "gate.toml", written }];
     const setup: FakeSetup = { checked: false, report: { ...REPORT, checks: [...REPORT.checks] }, gateFiles: files };
     await openWith(setup);
     const dialog = await screen.findByRole("dialog", { name: "setup" });
@@ -534,10 +535,9 @@ describe("the setup dialog", () => {
     expect(within(dialog).queryByRole("region", { name: "Quality gate" })).not.toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Set up the quality gate" }));
     const gate = await within(dialog).findByRole("region", { name: "Quality gate" });
-    expect(await within(gate).findByText("wrote")).toBeInTheDocument();
-    expect(within(gate).getByText("ci/gate.pin")).toBeInTheDocument();
-    expect(within(gate).getByText("kept")).toBeInTheDocument();
+    expect(await within(gate).findByText(word)).toBeInTheDocument();
     expect(within(gate).getByText("gate.toml")).toBeInTheDocument();
+    expect(within(gate).queryByText("ci/gate.pin")).not.toBeInTheDocument();
     expect(within(gate).getByText(/reads these from a run's base commit/)).toBeInTheDocument();
     expect(setup.gateCwds).toEqual(["/home/me/proj"]);
   });

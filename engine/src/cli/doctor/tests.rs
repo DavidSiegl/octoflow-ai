@@ -54,6 +54,8 @@ struct Tools {
     targets: Vec<String>,
     /// The directories Host::resolve_dir finds.
     dirs: Vec<String>,
+    /// The text of each file Host::read finds, by its path; it finds no other.
+    files: BTreeMap<String, String>,
     /// (SSH target or None, argv) of each command, in order.
     calls: Vec<(Option<String>, Vec<String>)>,
     /// The environment each command was started in, in order.
@@ -112,6 +114,7 @@ impl FakeTools {
             answers,
             targets: targets.iter().map(|t| t.to_string()).collect(),
             dirs: vec!["/proj".into(), "/home/u/proj".into()],
+            files: BTreeMap::new(),
             calls: vec![],
             envs: vec![],
             answer_with: None,
@@ -173,6 +176,13 @@ impl FakeTools {
             return match t.paths.get(argv.last().unwrap()) {
                 Some(path) => ran(0, &format!("{path}\n"), ""),
                 None => ran(1, "", ""),
+            };
+        }
+        if argv[0] == "sh" && argv[2].starts_with("[ -f \"$1\" ] || exit") {
+            // Host::read.
+            return match t.files.get(argv.last().unwrap()) {
+                Some(text) => ran(0, text, ""),
+                None => ran(crate::host::MISSING_FILE_STATUS, "", ""),
             };
         }
         if argv[0] == "sh" && argv[2].ends_with("&& pwd") {
@@ -292,7 +302,7 @@ fn all_present() {
     for kind in HARNESS_NAMES {
         want.extend([format!("{kind} CLI"), format!("{kind} integration")]);
     }
-    want.extend(["git", "gh", "gitleaks", "local quality gate", "git checkout", "origin"].map(String::from));
+    want.extend(["git", "gh", "gitleaks", "git checkout", "origin", "local quality gate"].map(String::from));
     assert_eq!(order, want);
     let checks = setup(&tools, None, Some("/proj"));
     assert_eq!(failed(&checks, &order), Vec::<String>::new());
@@ -603,9 +613,12 @@ fn the_local_gate_is_checked_by_the_runs_preflight_and_is_optional() {
     let order = names(&tools, None);
     let checks = setup(&tools, None, None);
     let gate = &checks["local quality gate"];
-    let detail = "the local quality gate fetches octoflow-gate and runs it on the project's machine: curl is not on \
-                  PATH; needed only for --quality-gate local";
-    assert_eq!((gate.ok, gate.detail.as_str()), (false, detail));
+    let detail = format!(
+        "the local quality gate fetches octoflow-gate and runs it on the project's machine: curl is not on PATH; {}; \
+         needed only for --quality-gate local",
+        built_in_judges()
+    );
+    assert_eq!((gate.ok, gate.detail.as_str()), (false, detail.as_str()));
     assert!(gate.fix.contains("The local gate"), "{}", gate.fix);
     // Optional: a machine that cannot run the local gate still runs everything else.
     assert_eq!(reported(&checks, &order).1, 0);
@@ -617,9 +630,96 @@ fn the_local_gate_check_needs_gitleaks_as_a_gated_run_does() {
     tools.answer("gitleaks git --help", failing("unknown command \"git\"", 1));
     let gate = setup(&tools, None, None)["local quality gate"].clone();
     // In doctor's words, not a run's, with the install text once, as the fix.
-    let detail = "`gitleaks git` does not run, and the gate scans each snapshot for secrets with it; \
-                  needed only for --quality-gate local";
-    assert_eq!(gate, check_of("local quality gate", Level::Optional, false, detail, GITLEAKS_INSTALL));
+    let detail = format!(
+        "`gitleaks git` does not run, and the gate scans each snapshot for secrets with it; {}; needed only for \
+         --quality-gate local",
+        built_in_judges()
+    );
+    assert_eq!(gate, check_of("local quality gate", Level::Optional, false, &detail, GITLEAKS_INSTALL));
+}
+
+/// What the local quality gate check says of a project not given: the built-in release judges it.
+fn built_in_judges() -> String {
+    let (built_in, _) = local_gate::parse_pin(local_gate::BUILT_IN_PIN).unwrap();
+    format!("a project is judged by octoflow-gate {built_in}, built in, unless its ci/gate.pin pins another")
+}
+
+#[test]
+fn the_local_gate_check_names_the_release_even_when_the_machine_cannot_run_it() {
+    let tools = FakeTools::new();
+    tools.tools().files.insert("/proj/ci/gate.pin".into(), format!("0.7.0 {}\n", "0".repeat(64)));
+    tools.answer("gitleaks git --help", failing("unknown command \"git\"", 1));
+    let gate = setup(&tools, None, Some("/proj"))["local quality gate"].clone();
+    assert!(!gate.ok && gate.detail.contains("ci/gate.pin holds its runs at octoflow-gate 0.7.0"), "{gate:?}");
+}
+
+#[test]
+fn the_local_gate_check_names_the_release_that_judges_the_project() {
+    let (built_in, _) = local_gate::parse_pin(local_gate::BUILT_IN_PIN).unwrap();
+    let ready = "gitleaks, and all the gate's preflight asks for, are ready; ";
+    let tools = FakeTools::new();
+    let gate = |cwd| setup(&tools, None, cwd)["local quality gate"].clone();
+    assert_eq!((gate(None).ok, gate(None).detail), (true, format!("{ready}{}", built_in_judges())));
+    let detail =
+        format!("{ready}the checkout has no ci/gate.pin, so octoflow-gate {built_in}, built in, judges its runs");
+    assert_eq!(gate(Some("/proj")).detail, detail);
+
+    let pin = |version: &str| {
+        let line = format!("# held\n{version} {}\n", "0".repeat(64));
+        tools.tools().files.insert("/proj/ci/gate.pin".into(), line);
+    };
+    // A project set up before setup-gate pinned only when asked learns how to follow again.
+    pin("0.7.0");
+    let older = gate(Some("/proj"));
+    assert!(older.ok, "{older:?}");
+    let detail = format!(
+        "{ready}the checkout's ci/gate.pin holds its runs at octoflow-gate 0.7.0, older than the built-in {built_in}: \
+         delete ci/gate.pin, and commit that, to follow it"
+    );
+    assert_eq!(older.detail, detail);
+    pin(&built_in);
+    let same = gate(Some("/proj"));
+    let held = "the checkout's ci/gate.pin holds its runs at octoflow-gate";
+    let detail = format!("{ready}{held} {built_in} (built in: {built_in})");
+    assert_eq!((same.ok, same.detail), (true, detail));
+
+    pin("99.0.0");
+    let newer = gate(Some("/proj"));
+    let detail = format!(
+        "the checkout's ci/gate.pin holds its runs at octoflow-gate 99.0.0, newer than the built-in {built_in}, whose \
+         report this octoflow may not read; needed only for --quality-gate local"
+    );
+    let fix = "update octoflow, or delete ci/gate.pin, and commit that, to follow it";
+    assert_eq!(newer, check_of("local quality gate", Level::Optional, false, &detail, fix));
+
+    // A pin every gated run refuses, by its line or by its release, is not ok, with how to mend it.
+    let mend = "write a `<version> <sha256>` line of 0.7.0 or later, or delete ci/gate.pin to follow the built-in \
+                release, and commit that";
+    tools.tools().files.insert("/proj/ci/gate.pin".into(), "0.9.0\n".into());
+    let malformed = gate(Some("/proj"));
+    assert!(!malformed.ok && malformed.detail.starts_with("ci/gate.pin: its first line '0.9.0'"), "{malformed:?}");
+    assert_eq!(malformed.fix, mend);
+    pin("0.6.3");
+    let before_gate = gate(Some("/proj"));
+    assert!(!before_gate.ok && before_gate.detail.contains("0.6.3 ships no gate"), "{before_gate:?}");
+    assert_eq!(before_gate.fix, mend);
+
+    // A pin that cannot be read may be right: the fix is the check's own, not the pin's.
+    tools.tools().answer_with = Some(Box::new(|_, argv| {
+        let reading = argv[0] == "sh" && argv[2].starts_with("[ -f \"$1\" ]");
+        reading.then(|| failing("cat: ci/gate.pin: Permission denied", 1))
+    }));
+    let unread = gate(Some("/proj"));
+    assert!(!unread.ok && unread.detail.contains("Permission denied"), "{unread:?}");
+    assert!(unread.fix.contains("The local gate"), "{unread:?}");
+}
+
+#[test]
+fn the_local_gate_check_does_not_need_the_checkout() {
+    let tools = FakeTools::new();
+    tools.answer("git -C /proj rev-parse --show-toplevel", failing("fatal: not a git repository", 128));
+    let gate = setup(&tools, None, Some("/proj"))["local quality gate"].clone();
+    assert!(gate.ok && gate.detail.ends_with("unless its ci/gate.pin pins another"), "{gate:?}");
 }
 
 #[test]
@@ -644,7 +744,8 @@ fn ran_preflight(tools: &FakeTools, target: Option<&str>) -> bool {
 /// error.
 fn doctor_printed(tools: &FakeTools, argv: &[&str]) -> (Result<i32, OrchestratorError>, String) {
     let config = ConfigDir::at("/nowhere");
-    let Ok(crate::cli::Command::Doctor { target, setup_gate }) = parse_args(argv.iter().map(OsString::from), &config) else {
+    let parsed = parse_args(argv.iter().map(OsString::from), &config);
+    let Ok(crate::cli::Command::Doctor { target, setup_gate, pin_gate }) = parsed else {
         panic!("{argv:?} is no doctor command")
     };
     let out = RefCell::new(String::new());
@@ -662,7 +763,7 @@ fn doctor_printed(tools: &FakeTools, argv: &[&str]) -> (Result<i32, Orchestrator
         stderr: &print,
         interrupt: &interrupt,
     };
-    let ended = doctor_command(&local, &target, setup_gate);
+    let ended = doctor_command(&local, &target, setup_gate, pin_gate.as_deref());
     (ended, out.into_inner())
 }
 
@@ -718,9 +819,31 @@ fn setup_gate_writes_the_missing_files_where_the_agents_run_and_keeps_the_rest()
     assert_eq!(status.unwrap(), 0);
     assert_eq!(set_up_writes(&tools, Some("me@box")), ["/home/u/proj"]);
     assert_eq!(set_up_writes(&tools, None), Vec::<String>::new());
-    let tail = "wrote   ci/gate.pin\nkept    gate.toml: already there\n\
+    let tail = "kept    gate.toml: already there\n\
                 --quality-gate local reads these from a run's base commit: commit them for a run to be judged by them.\n";
     assert!(out.ends_with(tail), "{out}");
+}
+
+#[test]
+fn setup_gate_pins_the_release_pin_gate_names() {
+    let tools = FakeTools::new();
+    play_files(&tools, None, &[]);
+    let (version, _) = local_gate::parse_pin(local_gate::BUILT_IN_PIN).unwrap();
+    let (status, out) = doctor_printed(&tools, &["doctor", "--cwd", "/proj", "--setup-gate", "--pin-gate", &version]);
+    assert_eq!(status.unwrap(), 0);
+    assert!(out.contains("wrote   gate.toml\nwrote   ci/gate.pin\n"), "{out}");
+    let calls = tools.tools().calls.clone();
+    let pinned = calls.iter().any(|(_, a)| a[0] == "sh" && a[2] == local_gate::SET_UP_WRITE && a[7] == "ci/gate.pin");
+    assert!(pinned, "the write was given the pin");
+}
+
+#[test]
+fn pin_gate_needs_setup_gate() {
+    let config = ConfigDir::at("/nowhere");
+    let argv = ["doctor", "--pin-gate", "0.15.2"];
+    let e = parse_args(argv.iter().map(OsString::from), &config).unwrap_err();
+    assert_eq!(e.exit_code(), 2);
+    assert!(e.to_string().contains("--setup-gate"), "{e}");
 }
 
 #[test]
@@ -970,7 +1093,11 @@ fn machine_needs_cwd() {
     let config = ConfigDir::at("/nowhere");
     let parse = |argv: &[&str]| parse_args(argv.iter().map(OsString::from), &config);
     assert_eq!(parse(&["doctor", "--machine", "box"]).unwrap_err().exit_code(), 2);
-    assert_eq!(parse(&["doctor"]).unwrap(), crate::cli::Command::Doctor { target: crate::cli::Target::default(), setup_gate: false });
+    assert_eq!(parse(&["doctor"]).unwrap(), crate::cli::Command::Doctor {
+        target: crate::cli::Target::default(),
+        setup_gate: false,
+        pin_gate: None
+    });
 }
 
 #[test]

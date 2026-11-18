@@ -345,12 +345,13 @@ fn each_help_names_the_flags_cli_json_records() {
             .map(Value::text)
             .collect();
         // Flags added since cli.json was recorded: --version (run-usability/01), doctor's --setup-gate and the
-        // --quality-gate its help names (doctor-gate-setup/01), close's --all and --dry-run (close-all-runs/01).
+        // --quality-gate its help names (doctor-gate-setup/01), close's --all and --dry-run (close-all-runs/01),
+        // doctor's --pin-gate (gate-pin-follows/04).
         if name.is_empty() {
             expected.insert("--version".into());
         }
         if name == "doctor" {
-            expected.extend(["--setup-gate".into(), "--quality-gate".into()]);
+            expected.extend(["--setup-gate".into(), "--quality-gate".into(), "--pin-gate".into()]);
         }
         if name == "close" {
             expected.extend(["--all".into(), "--dry-run".into()]);

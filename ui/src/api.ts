@@ -358,9 +358,10 @@ export class Api {
   }
 
   /** Write, at the top level of the project's checkout where its agents run, what `--quality-gate local` reads,
-   * where it is missing: ci/gate.pin and a starter gate.toml, whose test commands are guessed from the project's
-   * kind. Nothing is committed, and a run's gate reads them from its base commit. Resolves to each file, the pin
-   * first; rejects with the server's error message, status 502 for a project it cannot reach or a setup that fails,
+   * where it is missing: a starter gate.toml, whose test commands are guessed from the project's kind, and no
+   * ci/gate.pin, so the project follows the gate release built into octoflow. Nothing is committed, and a run's gate
+   * reads it from its base commit. Resolves to each file; rejects with the server's error message, status 502 for
+   * a project it cannot reach or a setup that fails,
    * as for a directory in no git checkout. */
   async setUpGate(project: Project): Promise<GateFile[]> {
     const body = (await this.json(this.url("/setup/gate", project, {}), { method: "POST" })) as { files?: unknown };

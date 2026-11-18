@@ -365,8 +365,8 @@ fn release_notes_section(old: Version, new: Version, changed: &[&Release]) -> St
     let what = if new > old { "What the gate changed" } else { "What the rollback takes back" };
     let text = format!(
         "The octoflow-gate release this octoflow is built with is {new}, in place of {old}. It judges a project whose \
-         `ci/gate.pin` is missing, and `doctor --setup-gate` pins it in a project it sets up; a project that pins a \
-         release of its own keeps it. {what}: {notes}."
+         `ci/gate.pin` is missing; a project that pins a release of its own, as `doctor --setup-gate --pin-gate` \
+         does, keeps it. {what}: {notes}."
     );
     let mut lines = vec![String::new()];
     for word in text.split(' ') {
