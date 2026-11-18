@@ -129,7 +129,8 @@ impl<'a> Workflow<'a> {
             Err(PushError::Failed(e)) => return Err(e.into()),
             Err(PushError::Leaks(found)) => return Ok((self.leak_report(n, q, &found), None)),
         }
-        let job = local_gate::start(self.host, &work_dir, &snapshot, &base, &self.state.gate_dir(n, q))?;
+        let unpinned = self.state.built_in_gate_pin.get_or_insert_with(|| local_gate::BUILT_IN_PIN.to_string()).clone();
+        let job = local_gate::start(self.host, &work_dir, &snapshot, &base, &unpinned, &self.state.gate_dir(n, q))?;
         let waited = self.poll(&job, deadline);
         if waited.is_err() {
             let host = self.host;

@@ -5,7 +5,8 @@
 //! SSH connection that drops. The job judges a checkout of the snapshot, so the Builder's
 //! untracked files are judged and what the gate and the tests write never reaches the run's worktree.
 //!
-//! The release is the one the run's base pins in ci/gate.pin, else BUILT_IN_PIN. Its tarball is downloaded once per
+//! The release is the one the run's base pins in ci/gate.pin, else the BUILT_IN_PIN of the engine that judged the
+//! run's first quality round (RunState::built_in_gate_pin). Its tarball is downloaded once per
 //! pin into the host's cache, `${XDG_CACHE_HOME:-~/.cache}/octoflow/gate/`, and checked against the pin's sha256
 //! each time it is unpacked, fresh, into the job's directory. It is the release's `gate`, a program for Linux x86_64,
 //! which octoflow-gate has shipped since 0.7.0 (FIRST_WITH_GATE): a base that pins an earlier release cannot be
@@ -19,7 +20,8 @@ use crate::host::{last_lines, shell_path, Host, DEFAULT_TIMEOUT};
 /// The --quality-gate name of the local gate, the only gate there is, as state.json's quality_job keeps it.
 pub const LOCAL_GATE: &str = "local";
 
-/// The release a base without ci/gate.pin is judged by, as a `<version> <sha256>` line: the octoflow-gate release this
+/// The release a base without ci/gate.pin is judged by in a run whose first quality round this engine judges
+/// (RunState::built_in_gate_pin), as a `<version> <sha256>` line: the octoflow-gate release this
 /// engine was tested against, whose quality.json schema crate::quality::read_report reads. It is this repository's own
 /// ci/gate.pin, read when the engine is built, so this repository's Jenkins build and a run judged without a pin use
 /// the same release; `cargo xtask raise-gate-pin` raises it.
@@ -186,24 +188,29 @@ pub fn preflight(host: &dyn Host) -> Result<(), OrchestratorError> {
 /// which go when it ends or is stopped. The release and the settings are base's (the module's comment). The gate runs
 /// the project's tests itself, with gate.toml's [[test]] commands, as the user running the engine, with no sandbox.
 ///
-/// Errors: base's ci/gate.pin has no `<version> <sha256>` line, or names a release before FIRST_WITH_GATE; git, a
-/// command or a file fails, as git does when a job's tree/ was deleted while still registered as a worktree, which
-/// only `git worktree remove` or `prune` clears.
+/// unpinned, a `<version> <sha256>` line as a pin holds, names the release for a base without ci/gate.pin: the run's
+/// RunState::built_in_gate_pin.
+///
+/// Errors: base's ci/gate.pin, or unpinned where base has none, has no `<version> <sha256>` line, or names a release
+/// before FIRST_WITH_GATE; git, a command or a file fails, as git does when a job's tree/ was deleted while still
+/// registered as a worktree, which only `git worktree remove` or `prune` clears.
 pub fn start(
     host: &dyn Host,
     cwd: &str,
     snapshot: &str,
     base: &str,
+    unpinned: &str,
     out_dir: &str,
 ) -> Result<Judging, OrchestratorError> {
     let text = |path: &str| -> Result<Option<String>, OrchestratorError> {
         Ok(host.file_at(cwd, base, path)?.map(|bytes| String::from_utf8_lossy(&bytes).into_owned()))
     };
-    let (release, sha256) = match text(PIN_PATH)? {
-        Some(pin) => parse_pin(&pin).map_err(|why| OrchestratorError(format!("the run's base's {PIN_PATH}: {why}")))?,
-        None => parse_pin(BUILT_IN_PIN)?,
+    let (source, pin) = match text(PIN_PATH)? {
+        Some(pin) => (format!("the run's base's {PIN_PATH}"), pin),
+        None => ("the run's built-in gate pin".to_string(), unpinned.to_string()),
     };
-    refuse_before_gate(&release, &format!("the run's base's {PIN_PATH}"))?;
+    let (release, sha256) = parse_pin(&pin).map_err(|why| OrchestratorError(format!("{source}: {why}")))?;
+    refuse_before_gate(&release, &source)?;
     stop_left(host, cwd, out_dir)?;
     let made = host.check(&["sh", "-c", NEXT_JOB, "_", out_dir], None, DEFAULT_TIMEOUT)?;
     let k: u32 = made

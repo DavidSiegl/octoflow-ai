@@ -72,10 +72,11 @@ Each round, the orchestrator:
    gitleaks scan the change alone, the snapshot's commits that the base does not have; a snapshot holding a secret
    is not judged, and the round's file is `GATE: LEAK`;
 2. reads `ci/gate.pin`, `gate.toml` and `pyproject.toml` from the run's base commit, not from the working tree, so a
-   change cannot loosen how it is itself judged; a base without `ci/gate.pin` follows the octoflow that runs it, and
-   is judged by the release that engine was built with (`BUILT_IN_PIN`, this repository's own `ci/gate.pin`), one
-   without `gate.toml` by the gate's defaults and one without `pyproject.toml` by the linters' own, never by the
-   change's;
+   change cannot loosen how it is itself judged; a base without `ci/gate.pin` follows the octoflow that starts the
+   run's first quality round, and is judged by the release that engine was built with (`BUILT_IN_PIN`, this
+   repository's own `ci/gate.pin`), which the run keeps in its state, so a resume by an octoflow built with another
+   release still judges every round by the first one's; a base without `gate.toml` is judged by the gate's defaults
+   and one without `pyproject.toml` by the linters' own, never by the change's;
 3. checks the snapshot out as a worktree of the run's repository into `gate-<n>-<q>/job-<k>/tree` under the run's
    directory, `k` counting the round's starts, as a resume starts it again: the gate judges the files the Builder
    never told git about, and what the gate and the tests write never reaches the run's

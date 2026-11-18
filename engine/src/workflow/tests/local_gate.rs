@@ -154,6 +154,48 @@ fn a_resume_in_a_round_without_its_quality_file_runs_the_gate_again() {
 }
 
 #[test]
+fn a_pinless_run_resumed_by_an_engine_with_another_built_in_pin_is_judged_by_the_first_engine_s_release() {
+    // The engine that judged the run's first quality round was built with 0.10.0; this one is built with another.
+    let first = "0.10.0 1111111111111111111111111111111111111111111111111111111111111111";
+    assert_ne!(first, local_gate::BUILT_IN_PIN);
+    let mut state = quality_state(1);
+    state.built_in_gate_pin = Some(first.to_string());
+    let host = Rc::new(FakeHost::default());
+    host.state().files.insert(state.build_path(1), "report 1".to_string());
+    let script = vec![("build", vec![fix_turn(1, 1)]), ("review", vec![review_turn(1, APPROVE)])];
+    let f = Fixture::resume(host, state, script, &[], &[]).gated();
+    f.gate.borrow_mut().runs = vec![GateRun::Judges(red())].into();
+
+    assert_eq!(f.workflow(f.as_saved_gated()).run(), verdict(APPROVE));
+
+    let releases: Vec<(String, String)> =
+        f.gate.borrow().jobs.iter().map(|job| (job[1].clone(), job[2].clone())).collect();
+    let (version, sha256) = local_gate::parse_pin(first).unwrap();
+    assert_eq!(releases, [(version.clone(), sha256.clone()), (version, sha256)]);
+    assert!(
+        f.quality_file(1, 2).starts_with("GATE: OK\n\noctoflow-gate 0.10.0, run locally"),
+        "{}",
+        f.quality_file(1, 2)
+    );
+    assert_eq!(text(&f.saved(), "built_in_gate_pin").as_deref(), Some(first));
+}
+
+#[test]
+fn a_pinless_run_saved_without_a_gate_pin_takes_this_engine_s_at_its_next_round() {
+    let mut state = quality_state(1);
+    state.built_in_gate_pin = None;
+    let host = Rc::new(FakeHost::default());
+    host.state().files.insert(state.build_path(1), "report 1".to_string());
+    let f = Fixture::resume(host, state, vec![("review", vec![review_turn(1, APPROVE)])], &[], &[]).gated();
+
+    assert_eq!(f.workflow(f.as_saved_gated()).run(), verdict(APPROVE));
+
+    let (version, _) = local_gate::parse_pin(local_gate::BUILT_IN_PIN).unwrap();
+    assert_eq!(f.gate.borrow().jobs[0][1], version);
+    assert_eq!(text(&f.saved(), "built_in_gate_pin").as_deref(), Some(local_gate::BUILT_IN_PIN));
+}
+
+#[test]
 fn on_a_machine_that_fails_the_preflight_the_run_fails_before_the_interview() {
     let f = Fixture::new(vec![("spec", vec![])]).gated();
     f.host.state().run_command = Some(Box::new(|_, argv| {
