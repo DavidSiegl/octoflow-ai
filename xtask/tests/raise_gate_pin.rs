@@ -35,8 +35,8 @@ const README_TAIL: &str = "Not 10.10.0, 0.10.01 or 0.10.0.1.\n";
 /// The released golden reports, as (name, what it holds).
 const GOLDEN: &[(&str, &str)] = &[("gate_ok.json", "{\"new\": true}\n"), ("gate_ok.txt", "new\n")];
 
-/// A checkout pinning octoflow-gate 0.10.0 at octoflow 0.89.3, with the stubs and the release they serve. Removed
-/// when dropped.
+/// A checkout pinning octoflow-gate 0.10.0 at octoflow 0.89.3, committed as origin/main, with the stubs and the
+/// release they serve. Removed when dropped.
 struct Raise {
     dir: tempfile::TempDir,
 }
@@ -103,7 +103,17 @@ impl Raise {
         write(&quality.join("gate_error.txt"), "old\n");
         write(&repo.join("docs/releases/v0.89.3.md"), "## Earlier\n");
         run(&repo, "git", &["init", "-q"]);
+        raise.commit("main");
+        run(&repo, "git", &["update-ref", "refs/remotes/origin/main", "HEAD"]);
         raise
+    }
+
+    /// Commit everything in the checkout as HEAD's child, whatever the user's own git configuration says.
+    fn commit(&self, message: &str) {
+        let repo = self.repo();
+        run(&repo, "git", &["add", "."]);
+        let config = ["-c", "user.name=test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false"];
+        run(&repo, "git", &[&config[..], &["commit", "-q", "-m", message]].concat());
     }
 
     fn bin(&self) -> PathBuf {
@@ -347,4 +357,55 @@ fn a_raise_that_fails_partway_keeps_the_old_pin_and_says_so() {
     assert!(stderr(&output).contains("refreshing Cargo.lock failed"), "{}", stderr(&output));
     assert!(stderr(&output).contains("the raise stopped partway, ci/gate.pin still at 0.10.0"), "{}", stderr(&output));
     assert_eq!(raise.read("ci/gate.pin"), format!("{PIN_COMMENT}0.10.0 {OLD_SHA}\n"));
+}
+
+#[test]
+fn a_second_raise_before_the_first_merges_is_refused() {
+    let raise = Raise::new(&[release("0.10.0", true), release("0.11.0", true), release("0.12.0", true)]);
+    assert_eq!(raise.raise(&["0.11.0"]).status.code(), Some(0));
+    let before = raise.files();
+    let output = raise.raise(&["0.12.0"]);
+    assert_eq!(output.status.code(), Some(1));
+    let said = stderr(&output);
+    assert!(said.contains("version is 0.90.0, but 0.89.3 on origin/main"), "{said}");
+    assert_eq!(raise.files(), before);
+}
+
+#[test]
+fn a_raise_on_a_branch_that_committed_a_bump_is_refused() {
+    let raise = Raise::new(&[release("0.10.0", true), release("0.11.0", true)]);
+    let manifest = raise.read("engine/Cargo.toml").replace("0.89.3", "0.89.4");
+    write(&raise.repo().join("engine/Cargo.toml"), &manifest);
+    raise.commit("another change's bump");
+    let before = raise.files();
+    let output = raise.raise(&["0.11.0"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr(&output).contains("version is 0.89.4, but 0.89.3 on origin/main"), "{}", stderr(&output));
+    assert_eq!(raise.files(), before);
+}
+
+#[test]
+fn a_raise_on_a_tree_behind_main_is_refused() {
+    let raise = Raise::new(&[release("0.10.0", true), release("0.11.0", true)]);
+    let manifest = raise.read("engine/Cargo.toml");
+    write(&raise.repo().join("engine/Cargo.toml"), &manifest.replace("0.89.3", "0.89.4"));
+    raise.commit("main moves on");
+    run(&raise.repo(), "git", &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    run(&raise.repo(), "git", &["checkout", "-q", "HEAD~1"]);
+    let before = raise.files();
+    let output = raise.raise(&["0.11.0"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr(&output).contains("version is 0.89.3, but 0.89.4 on origin/main"), "{}", stderr(&output));
+    assert_eq!(raise.files(), before);
+}
+
+#[test]
+fn a_raise_without_origin_main_fails() {
+    let raise = Raise::new(&[release("0.10.0", true), release("0.11.0", true)]);
+    run(&raise.repo(), "git", &["update-ref", "-d", "refs/remotes/origin/main"]);
+    let before = raise.files();
+    let output = raise.raise(&["0.11.0"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr(&output).contains("reading origin/main:engine/Cargo.toml"), "{}", stderr(&output));
+    assert_eq!(raise.files(), before);
 }
