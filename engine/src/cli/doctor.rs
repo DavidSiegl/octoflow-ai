@@ -235,12 +235,13 @@ pub fn check_setup(
         top = Some(checkout);
     }
     // What a run with --quality-gate local checks before its interview (Workflow::check_gate's gitleaks and
-    // local_gate::preflight), so the check cannot ask for less or more, then which release judges the project. It asks
-    // nothing else of a checkout, so a project not given, or not a checkout, does not skip it.
+    // local_gate::preflight), so the check cannot ask for less or more, and which release would judge the project. The
+    // release is read first, so that a check failing for a tool still names it; a pin every run refuses fails the
+    // check before the tools are asked after, one fix at a time. It asks nothing else of a checkout, so a project not
+    // given, or not a checkout, does not skip it.
     let fix = "install or fix what it names where the agents run (docs/quality-gate.md, \"The local gate\")";
     let note = "needed only for --quality-gate local";
     check(&mut checks, "local quality gate", Level::Optional, fix, on_machine.as_ref(), note, &mut || {
-        // The release first, which needs nothing of the machine, so a check that fails for a tool still names it.
         let judged = judging_release(agents, top.as_ref().filter(|c| c.ok).map(|c| c.detail.as_str()))?;
         if !gitleaks.ok {
             let detail = format!("{}, and the gate scans each snapshot for secrets with it; {judged}", gitleaks.detail);
