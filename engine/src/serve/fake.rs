@@ -12,7 +12,6 @@ use crate::herdr::{
 use crate::host::{Exec, ExecError, Host, RunFile, RunFileText};
 use crate::serve::Reached;
 use crate::state::SavedRun;
-use serde_json::Value;
 
 /// A Host whose files are `files`, whose run_states_inside and run_state_inside read the state.json of each run among
 /// them that names the run its directory is named for, whose
@@ -93,8 +92,7 @@ impl ServeHost {
             if only.is_some_and(|only| only != dir) {
                 continue;
             }
-            let saved = serde_json::from_str::<Value>(text).map_err(|e| OrchestratorError(e.to_string()))?;
-            let run = SavedRun::read(s.ages.get(dir).copied().unwrap_or(0), saved)?;
+            let run = SavedRun::read(s.ages.get(dir).copied().unwrap_or(0), &format!("{runs}{dir}"), text);
             if run.shown().run_id == dir {
                 states.push(run);
             }

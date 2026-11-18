@@ -14,7 +14,7 @@ use crate::host::fake::{FakeHost, FakePr, HOST_EPOCH};
 use crate::host::{Completed, ProcessHost};
 use crate::interrupt::Interrupt;
 use crate::summary::iso_utc;
-use crate::test_support::{accepting, impl_, solo, TempDir};
+use crate::test_support::{accepting, impl_, read_saved, solo, TempDir};
 use crate::workflow_file::workflow_definition;
 
 const RUN_ID: &str = "20260930-070000-c0ffee";
@@ -75,7 +75,7 @@ fn run(phase: &str) -> Value {
 
 /// The saved runs of state.json objects, each with its age.
 fn saved_runs(runs: &[(u64, Value)]) -> Vec<SavedRun> {
-    runs.iter().map(|(age, state)| SavedRun::read(*age, state.clone()).unwrap()).collect()
+    runs.iter().map(|(age, state)| read_saved(*age, state)).collect()
 }
 
 /// state with each of fields set, replacing a field it has.
@@ -106,7 +106,7 @@ fn block() -> Value {
 /// is.
 fn record(state: &Value, age: u64, alive: bool, target: &[&str]) -> Object {
     let target: Vec<String> = target.iter().map(|s| s.to_string()).collect();
-    run_record(&SavedRun::read(age, state.clone()).unwrap(), "here", &move |_| alive, &target)
+    run_record(&read_saved(age, state), "here", &move |_| alive, &target)
 }
 
 /// record's value of key.
@@ -308,7 +308,7 @@ fn an_unreadable_state_is_listed_with_why() {
     assert_eq!(listed.keys().collect::<Vec<_>>(), RUN_RECORD_KEYS);
     let shown = [key(&listed, "task"), key(&listed, "phase"), key(&listed, "round")];
     assert_eq!(shown, [Value::from("t"), Value::from("review"), Value::from(2)]);
-    let problem = SavedRun::read(0, state.clone()).unwrap().problem().unwrap().to_string();
+    let problem = read_saved(0, &state).problem().unwrap().to_string();
     assert_eq!(key(&listed, "error"), Value::from(problem));
     assert_eq!((key(&listed, "waiting"), key(&listed, "resume_command")), (Value::Null, Value::Null));
     // One an earlier release saved, with format_problem's reason.

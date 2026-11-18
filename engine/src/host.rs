@@ -1012,8 +1012,8 @@ pub trait Host {
     /// Each run under the project at cwd as its state.json reads back (SavedRun), its age measured by this host's own
     /// clock, the one that stamped the file, so clock skew between the machines involved cannot shift it. A run whose
     /// directory is removed while the runs are read, as prune removes one, is among them or not, never an error; one
-    /// of a format this engine does not read is among them, as unreadable. Errors: a state.json that is still there
-    /// cannot be stat'ed or read, or is not JSON naming its run (SavedRun::read).
+    /// of a format this engine does not read, or not JSON naming its run, is among them, as unreadable (SavedRun::read).
+    /// Errors: a state.json that is still there cannot be stat'ed or read.
     fn run_states(&self, cwd: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
         run_states_in(self, cwd, RUNS_DIR)
     }
@@ -1224,6 +1224,7 @@ fn run_states_inside_script(runs: &str) -> String {
 /// ended by a NUL, which no JSON text holds: what parsed_run_states reads. A state.json a human pretty-printed reads
 /// as well as the engine's one line.
 fn run_states_loop(runs_dir: &str, runs: &str, keep: &str) -> String {
+    // d is taken before keep, which may point f at the file a link resolves to.
     format!(
         "for f in \"$1\"/{runs_dir}/{runs}/state.json; do [ -f \"$f\" ] || continue; d=${{f%/*}}; d=${{d##*/}}; \
          {keep} || continue; {MTIME_OF_F} || {SKIP_F_IF_GONE}; s=$(cat -- \"$f\") || {SKIP_F_IF_GONE}; \
@@ -1232,13 +1233,14 @@ fn run_states_loop(runs_dir: &str, runs: &str, keep: &str) -> String {
 }
 
 /// The runs run_states_loop printed as out, under the project at cwd's runs_dir, as run_states gives them. Errors:
-/// an age that is not a number, or a state that is not JSON naming its run (SavedRun::read).
+/// an entry not of run_states_loop's shape, its age not a number or no run directory's name in it.
 fn parsed_run_states(cwd: &str, runs_dir: &str, out: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
     Ok(parsed_named_run_states(cwd, runs_dir, out)?.into_iter().map(|(_, run)| run).collect())
 }
 
 /// As parsed_run_states, under the project at cwd's runs directory, but only the runs whose state.json names the run
-/// its directory is named for, as Host::run_states_inside keeps them.
+/// its directory is named for, as Host::run_states_inside keeps them. An unreadable run whose state.json names no run
+/// is named for its directory (SavedRun::read), so it is kept.
 fn parsed_inside_run_states(cwd: &str, out: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
     let runs = parsed_named_run_states(cwd, RUNS_DIR, out)?;
     Ok(runs.into_iter().filter(|(dir, run)| run.shown().run_id == *dir).map(|(_, run)| run).collect())
@@ -1251,13 +1253,13 @@ fn parsed_named_run_states(cwd: &str, runs_dir: &str, out: &str) -> Result<Vec<(
         if entry.trim().is_empty() {
             continue;
         }
-        let (age, named) = entry.split_once(' ').unwrap_or((entry, ""));
-        let (dir, text) = named.split_once('/').unwrap_or(("", named));
         let corrupt = |e: String| OrchestratorError(format!("corrupt run state under {cwd}/{runs_dir}: {e}"));
+        let (age, named) = entry.split_once(' ').unwrap_or((entry, ""));
         let not_int = || corrupt(format!("an age that is not a whole number: {age:?}"));
         let age: i64 = decimal_int(age).ok_or_else(not_int)?;
-        let saved = serde_json::from_str::<Value>(text).map_err(|e| corrupt(e.to_string()))?;
-        runs.push((dir.to_string(), SavedRun::read(age.max(0).unsigned_abs(), saved).map_err(|e| corrupt(e.0))?));
+        let (dir, text) = named.split_once('/').ok_or_else(|| corrupt(format!("no run directory in {named:?}")))?;
+        let run = SavedRun::read(age.max(0).unsigned_abs(), &format!("{cwd}/{runs_dir}/{dir}"), text);
+        runs.push((dir.to_string(), run));
     }
     Ok(runs)
 }

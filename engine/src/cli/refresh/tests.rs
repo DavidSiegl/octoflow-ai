@@ -9,7 +9,8 @@ use crate::host::Completed;
 use crate::json::object;
 use crate::json::Object;
 use crate::pull_request::{conflict_warning, pr_body, GateEvidence};
-use crate::state::{format_problem, RunState, SavedRun};
+use crate::state::{format_problem, RunState};
+use crate::test_support::read_saved;
 use serde_json::Value;
 
 const REFRESH_ID: &str = "20261001-120000-a1b2c3";
@@ -320,8 +321,7 @@ fn a_state_saved_meanwhile_is_not_overwritten() {
     let path = state_path(REFRESH_ID);
     // The run is resumed once refresh has read its state: the file holds what the resume saved since.
     t.resave(REFRESH_ID, &saved, &[("round", Value::from(2))]);
-    t.cli.f.host.state().run_states_with =
-        Some(Box::new(move |_: &str| Some(Ok(vec![SavedRun::read(0, saved.clone()).unwrap()]))));
+    t.cli.f.host.state().run_states_with = Some(Box::new(move |_: &str| Some(Ok(vec![read_saved(0, &saved)]))));
     let error = t.error(&[REFRESH_ID]);
     let changed = format!("run {REFRESH_ID}: {path} changed while its pull request was refreshed; conflicts and conflict_cleared are not recorded");
     assert!(error.contains(&changed), "{error}");

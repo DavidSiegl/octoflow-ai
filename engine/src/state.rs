@@ -621,8 +621,7 @@ impl RunState {
     }
 }
 
-/// A run's state.json as read back (Host::run_states): its age, and either its RunState or why its format cannot be
-/// read. The commands that act on a run take state(), which refuses an unreadable one; list and show take shown(),
+/// A run's state.json as read back (Host::run_states): its age, and either its RunState or why it cannot be read. The commands that act on a run take state(), which refuses an unreadable one; list and show take shown(),
 /// which shows one too. Not a Result of RunState and the problem: list would lose an unreadable run's task, phase
 /// and round, which the desktop app types as never null (ui/src/api.ts).
 #[derive(Clone, Debug, PartialEq)]
@@ -636,20 +635,34 @@ pub struct SavedRun {
 }
 
 impl SavedRun {
-    /// The run whose state.json holds saved, written age seconds ago: unreadable when saved is not of STATE_FORMAT or
-    /// a field of it does not read (RunState::from_saved). Errors: saved is not an object with a run_id, a non-empty
-    /// string, so that it names no run to show or act on.
-    pub fn read(age: u64, saved: Value) -> Result<SavedRun, OrchestratorError> {
-        let saved = match saved {
-            Value::Object(saved) if saved.get("run_id").and_then(Value::as_str).is_some_and(|id| !id.is_empty()) => {
+    /// The run in the directory run_dir, a path whose last component is the directory's name, whose state.json,
+    /// written age seconds ago, holds text. Unreadable when text is not JSON, or not an object with a run_id (a
+    /// non-empty string), the problem naming the file, and the run named by its directory, as far as the object
+    /// reads; or when it is not of STATE_FORMAT or a field of it does not read (RunState::from_saved).
+    pub fn read(age: u64, run_dir: &str, text: &str) -> SavedRun {
+        let dir_name = run_dir.rsplit('/').next().unwrap_or(run_dir);
+        let unreadable = |saved: &Object, what: String| {
+            let mut state = RunState::from_readable_fields(saved);
+            state.run_id = dir_name.to_string();
+            let problem = format!("{run_dir}/state.json {what}; fix it, or remove {run_dir}");
+            SavedRun { age, state, problem: Some(problem) }
+        };
+        let saved = match serde_json::from_str::<Value>(text) {
+            Err(e) => return unreadable(&Object::new(), format!("is not JSON ({e})")),
+            Ok(Value::Object(saved))
+                if saved.get("run_id").and_then(Value::as_str).is_some_and(|id| !id.is_empty()) =>
+            {
                 saved
             }
-            _ => return Err(OrchestratorError("a run state is a JSON object with its run_id".to_string())),
+            Ok(saved) => {
+                let fields = saved.as_object().cloned().unwrap_or_default();
+                return unreadable(&fields, "is not a JSON object with a run_id".to_string());
+            }
         };
-        Ok(match RunState::from_saved(&saved) {
+        match RunState::from_saved(&saved) {
             Ok(state) => SavedRun { age, state, problem: None },
             Err(e) => SavedRun { age, state: RunState::from_readable_fields(&saved), problem: Some(e.0) },
-        })
+        }
     }
 
     /// Seconds since the state.json was last written, by the clock of the host that wrote it.

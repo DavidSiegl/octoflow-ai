@@ -6,6 +6,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use super::*;
 use crate::interrupt::Interrupt;
+use crate::state::RunState;
 use crate::test_support::{ended, oracle, raise_once_written, TempDir, HEARS_SIGINT};
 
 /// A token-shaped string, built so that no scanner takes this file for a leak.
@@ -424,11 +425,30 @@ fn run_states() {
 }
 
 #[test]
-fn run_states_corrupt() {
+fn a_state_json_that_is_not_json_or_names_no_run_is_an_unreadable_run_named_by_its_directory() {
     let d = TempDir::new();
     put(&d.join(&format!("{RUNS_DIR}/a/state.json")), "{\"run_id\": \n");
-    let e = ProcessHost::local(&Interrupt::new()).run_states(&d.path()).unwrap_err();
-    assert!(e.0.starts_with(&format!("corrupt run state under {}/{RUNS_DIR}: ", d.path())), "{e}");
+    put(&d.join(&format!("{RUNS_DIR}/b/state.json")), "[1]\n");
+    put(&d.join(&format!("{RUNS_DIR}/c/state.json")), &RunState::new("c", "t", &d.path()).to_text());
+    let host = ProcessHost::local(&Interrupt::new());
+    let mut runs = host.run_states(&d.path()).unwrap();
+    runs.sort_by(|x, y| x.shown().run_id.cmp(&y.shown().run_id));
+    let listed: Vec<(&str, Option<&str>)> = runs.iter().map(|r| (r.shown().run_id.as_str(), r.problem())).collect();
+    let a = format!(
+        "{}/{RUNS_DIR}/a/state.json is not JSON (EOF while parsing a value at line 1 column 11); fix \
+                     it, or remove {}/{RUNS_DIR}/a",
+        d.path(),
+        d.path()
+    );
+    let b = format!(
+        "{}/{RUNS_DIR}/b/state.json is not a JSON object with a run_id; fix it, or remove \
+                     {}/{RUNS_DIR}/b",
+        d.path(),
+        d.path()
+    );
+    assert_eq!(listed, [("a", Some(a.as_str())), ("b", Some(b.as_str())), ("c", None)]);
+    let a = host.run_state(&d.path(), "a").unwrap().unwrap();
+    assert_eq!(a.state().unwrap_err().0, listed[0].1.unwrap());
 }
 
 #[test]
