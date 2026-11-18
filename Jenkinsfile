@@ -95,9 +95,12 @@ pipeline {
                 // 1-3 failed adding llvm-tools-preview: "component download failed ... No such file or directory").
                 // This step names a missing one here rather than letting a later stage fail on it. rustup reads
                 // rust-toolchain.toml here, so it lists the components of the toolchain that file pins, which must be
-                // the image's too: rustup cannot install another one either.
+                // the image's too: rustup cannot install another one either, and says so as "toolchain ... is not
+                // installed". RUSTUP_AUTO_INSTALL=0 keeps rustup from installing a component missing from that
+                // toolchain before it lists, which fails in the root-owned home with only "Permission denied"
+                // (PR-495's build 1), so the listing works and the loop below names the component.
                 sh '''
-                    installed=$(rustup component list --installed)
+                    installed=$(RUSTUP_AUTO_INSTALL=0 rustup component list --installed)
                     for component in clippy llvm-tools rustfmt; do
                         printf '%s\\n' "$installed" | grep -q "^$component-" || {
                             echo "rustup's $component component is not on the agent; its image must add it" >&2
