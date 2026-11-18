@@ -47,12 +47,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   after (`Workflow::end_done_run`, `ending_left`'s `release: false`), so serve's event stream, which stopped listing
   the run's files once they settled, lists them again only at the record's next change (`RunWatch::poll`). A failed
   run's release saves again after its summary (todo/70); would close when this ending does the same.
-- **engine/Cargo.toml says only test_support needs tempfile.** The dev-dependency's comment reads "The tests'
-  scratch directories (test_support::TempDir)", but todo/81 made engine/tests/program.rs (`Dir`) and
-  engine/tests/signals.rs (`scratch_dir`) use `tempfile::Builder` directly, so a reader judging whether tempfile can go
-  reads that only test_support needs it. Raised by cross-review 240 (F1); left out of todo/81 because any change to
-  engine/Cargo.toml raises the version (`ci/version-raised.sh`). Closes with the comment naming engine/tests' own
-  directories too, in the next change that raises the version (todo/82's branch carries it).
 - **serve's POST /forget archives a run's metrics.json through a link out of its run directory.** serve's sweeps act
   only on runs inside the runs directory (`RunScope::Inside`, todo/75), but `Host::forget_run` reads the run's
   `metrics.json` with a plain `read`, so a run directory inside whose `metrics.json` is a link to a file outside has
