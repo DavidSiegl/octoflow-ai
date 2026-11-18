@@ -29,6 +29,9 @@ exit 2
 /// The pinned release's sha256 in the checkout before a raise.
 const OLD_SHA: &str = "8f6007f046be5fcf516496201a41bc7185a3af53c5e7778a9489a0d10414525a";
 const PIN_COMMENT: &str = "# The release that judges this repository.\n";
+/// The golden reports' README, around the pinned version: its tail names versions that hold 0.10.0 but are not it.
+const README_LEAD: &str = "The golden files of octoflow-gate ";
+const README_TAIL: &str = "Not 10.10.0, 0.10.01 or 0.10.0.1.\n";
 /// The released golden reports, as (name, what it holds).
 const GOLDEN: &[(&str, &str)] = &[("gate_ok.json", "{\"new\": true}\n"), ("gate_ok.txt", "new\n")];
 
@@ -95,7 +98,7 @@ impl Raise {
         write(&repo.join("ci/gate.pin"), &format!("{PIN_COMMENT}0.10.0 {OLD_SHA}\n"));
         fs::copy(xtask::checkout().join("ci/fetch-gate.sh"), repo.join("ci/fetch-gate.sh")).expect("copied");
         let quality = repo.join("engine/tests/data/quality");
-        write(&quality.join("README.md"), &format!("The golden files of octoflow-gate 0.10.0, sha256 `{OLD_SHA}`.\n"));
+        write(&quality.join("README.md"), &format!("{README_LEAD}0.10.0, sha256 `{OLD_SHA}`. {README_TAIL}"));
         write(&quality.join("gate_error.json"), "{\"old\": true}\n");
         write(&quality.join("gate_error.txt"), "old\n");
         write(&repo.join("docs/releases/v0.89.3.md"), "## Earlier\n");
@@ -195,7 +198,7 @@ fn the_latest_release_is_pinned_with_everything_that_goes_with_it() {
     assert_eq!(fs::read_to_string(quality.join("gate_ok.json")).expect("copied"), GOLDEN[0].1);
     assert_eq!(
         raise.read("engine/tests/data/quality/README.md"),
-        format!("The golden files of octoflow-gate 0.12.0, sha256 `{sha}`.\n")
+        format!("{README_LEAD}0.12.0, sha256 `{sha}`. {README_TAIL}")
     );
     assert_eq!(raise.engine_version(), "0.90.0");
     assert!(raise.read("Cargo.lock").contains("version = \"0.90.0\""));
@@ -270,9 +273,7 @@ fn a_tarball_that_does_not_match_its_sha256_changes_nothing() {
 fn a_release_that_is_missing_or_ships_no_gate_is_refused() {
     let raise = Raise::new(&[release("0.6.0", true), release("0.10.0", true)]);
     let before = raise.files();
-    for (version, why) in
-        [("0.11.0", "has no published release 0.11.0"), ("0.6.0", "ships no gate"), ("x", "is not a version")]
-    {
+    for (version, why) in [("0.11.0", "has no published release 0.11.0"), ("0.6.0", "ships no gate")] {
         let output = raise.raise(&[version]);
         assert_eq!(output.status.code(), Some(1), "{version}");
         assert!(stderr(&output).contains(why), "{version}: {}", stderr(&output));
@@ -284,10 +285,66 @@ fn a_release_that_is_missing_or_ships_no_gate_is_refused() {
 fn a_flag_or_a_second_version_is_a_usage_error() {
     let raise = Raise::new(&[release("0.10.0", true)]);
     let before = raise.files();
-    for args in [&["--nope"][..], &["0.10.0", "0.11.0"]] {
+    for args in [&["--nope"][..], &["0.10.0", "0.11.0"], &["latest"], &["0.10"]] {
         let output = raise.raise(args);
         assert_eq!(output.status.code(), Some(2), "{args:?}");
         assert!(stderr(&output).contains("usage: cargo xtask raise-gate-pin [<version>]"), "{args:?}");
     }
     assert_eq!(raise.files(), before);
+}
+
+#[test]
+fn a_rollback_names_what_it_takes_back() {
+    let raise = Raise::new(&[release("0.8.0", true), release("0.9.0", true), release("0.10.0", true)]);
+    let output = raise.raise(&["0.8.0"]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert_eq!(raise.read("ci/gate.pin"), format!("{PIN_COMMENT}0.8.0 {}\n", raise.release_sha()));
+    assert_eq!(raise.engine_version(), "0.90.0", "a rollback across minors is a minor");
+    assert_eq!(
+        stdout(&output),
+        "## octoflow-gate 0.10.0, rolled back\n\nNotes of 0.10.0.\n\n## octoflow-gate 0.9.0, rolled back\n\nNotes of 0.9.0.\n\n"
+    );
+    let notes = raise.read("docs/releases/v0.90.0.md");
+    let words = notes.split_whitespace().collect::<Vec<_>>().join(" ");
+    let tag = "https://github.com/DavidSiegl/octoflow-gate/releases/tag";
+    assert!(words.contains("is 0.8.0, in place of 0.10.0."), "{notes}");
+    assert!(
+        words.contains(&format!(
+            "What the rollback takes back: the release notes from [0.9.0]({tag}/v0.9.0) to [0.10.0]"
+        )),
+        "{notes}"
+    );
+}
+
+#[test]
+fn a_missing_sha256_asset_changes_nothing() {
+    let raise = Raise::new(&[release("0.10.0", true), release("0.11.0", true)]);
+    fs::remove_file(raise.dir.path().join("release.sha256")).expect("removed");
+    let before = raise.files();
+    let output = raise.raise(&[]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr(&output).contains("octoflow-gate-0.11.0.tar.gz.sha256"), "{}", stderr(&output));
+    assert_eq!(raise.files(), before);
+}
+
+#[test]
+fn a_pin_whose_sha256_is_not_its_release_s_is_not_already_raised() {
+    let raise = Raise::new(&[release("0.10.0", true)]);
+    let before = raise.files();
+    let output = raise.raise(&[]);
+    assert_eq!(output.status.code(), Some(1));
+    let expected = format!("names octoflow-gate 0.10.0 with sha256 {OLD_SHA}, its asset gives {}", raise.release_sha());
+    assert!(stderr(&output).contains(&expected), "{}", stderr(&output));
+    assert_eq!(raise.files(), before);
+}
+
+#[test]
+fn a_raise_that_fails_partway_keeps_the_old_pin_and_says_so() {
+    let raise = Raise::new(&[release("0.10.0", true), release("0.11.0", true)]);
+    write(&raise.repo().join("Cargo.toml"), "[workspace]\nmembers = [\"missing\"]\n");
+    let output = raise.raise(&[]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr(&output).contains("refreshing Cargo.lock failed"), "{}", stderr(&output));
+    assert!(stderr(&output).contains("the raise stopped partway, ci/gate.pin still at 0.10.0"), "{}", stderr(&output));
+    assert_eq!(raise.read("ci/gate.pin"), format!("{PIN_COMMENT}0.10.0 {OLD_SHA}\n"));
 }

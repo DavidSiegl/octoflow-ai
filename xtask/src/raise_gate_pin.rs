@@ -4,17 +4,20 @@
 //! version given is taken as it is. Lowering the pin, to roll back, works the same way.
 //!
 //! The changes, made only once every check has passed (the release exists, is 0.7.0 or later, and its tarball
-//! matches its `.sha256` asset):
-//! - `ci/gate.pin`'s line names the release and its tarball's sha256, its comments kept;
+//! matches its `.sha256` asset), in this order:
 //! - `engine/tests/data/quality/`'s golden reports are the release's `golden/`, and its README names the release;
-//! - `engine/Cargo.toml`'s version is bumped at the gate's level (a gate patch is a patch, anything else a minor), and
-//!   `Cargo.lock` follows by `cargo update --workspace`;
-//! - `docs/releases/v<new>.md` gets a section naming the release, made if missing.
+//! - `engine/Cargo.toml`'s version is bumped at the gate's level (a gate patch is a patch, anything else a minor, a
+//!   rollback included), and `Cargo.lock` follows by `cargo update --workspace`;
+//! - `docs/releases/v<new>.md` gets a section naming the release, made if missing;
+//! - last, `ci/gate.pin`'s line names the release and its tarball's sha256, its comments kept. A run that fails
+//!   before it leaves the old pin, so a second run does not take the half-made raise for a finished one; it says to
+//!   restore the files first.
 //!
-//! Standard output gets the notes of every release after the old pin up to the new one, newest first, for the pull
-//! request's body; progress goes to standard error. Exit status 0 when the pin was moved or already names the
-//! release, 1 when a check or a step failed, 2 for a usage error. Needs gh (signed in, or GH_TOKEN), curl, git, cargo,
-//! and what ci/fetch-gate.sh needs.
+//! Standard output gets the notes of the releases the change brings (after the old pin up to the new one) or, for a
+//! rollback, takes back (after the new pin up to the old one), newest first, for the pull request's body; progress
+//! goes to standard error. Exit status 0 when the pin was moved or already names the release with the sha256 its
+//! asset gives, 1 when a check or a step failed, 2 for a usage error, a version that does not parse included. Needs
+//! gh (signed in, or GH_TOKEN), curl, git, cargo, and what ci/fetch-gate.sh needs.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -38,15 +41,9 @@ const RELEASE_NOTES_DIR: &str = "docs/releases";
 pub fn main(argv: &[String]) -> i32 {
     let wanted = match argv {
         [] => None,
-        [v] if !v.starts_with('-') => match Version::parse(v) {
-            Some(v) => Some(v),
-            None => {
-                eprintln!("error: {v} is not a version like 0.15.2");
-                return 1;
-            }
-        },
+        [v] if Version::parse(v).is_some() => Version::parse(v),
         _ => {
-            eprintln!("usage: cargo xtask raise-gate-pin [<version>]");
+            eprintln!("usage: cargo xtask raise-gate-pin [<version>], the version as 0.15.2");
             return 2;
         }
     };
@@ -116,14 +113,17 @@ fn raise(top: &Path, wanted: Option<Version>) -> Result<String, Error> {
     let (old, old_sha) = pin_of(&pin_text).ok_or_else(|| Error(format!("{PIN} has no '<version> <sha256>' line")))?;
     let releases = releases()?;
     let new = chosen(&releases, wanted)?.version;
-    if new == old {
-        eprintln!("{PIN} already names octoflow-gate {new}");
-        return Ok(String::new());
-    }
     if new < FIRST_WITH_GATE {
         return Err(Error(format!("octoflow-gate {new} ships no gate, which came in {FIRST_WITH_GATE}")));
     }
     let sha = release_sha256(new)?;
+    if new == old {
+        if sha != old_sha {
+            return Err(Error(format!("{PIN} names octoflow-gate {old} with sha256 {old_sha}, its asset gives {sha}")));
+        }
+        eprintln!("{PIN} already names octoflow-gate {new}");
+        return Ok(String::new());
+    }
     let unpacked = tempfile::Builder::new()
         .prefix("raise-gate-pin-")
         .tempdir()
@@ -131,7 +131,7 @@ fn raise(top: &Path, wanted: Option<Version>) -> Result<String, Error> {
     let golden = fetch_golden(top, new, &sha, unpacked.path())?;
     let readme_path = top.join(GOLDEN_DIR).join("README.md");
     let readme = read(&readme_path)?;
-    if !readme.contains(&old.to_string()) || !readme.contains(old_sha) {
+    if !names_version(&readme, old) || !readme.contains(old_sha) {
         return Err(Error(format!("{} does not name octoflow-gate {old} and its sha256", readme_path.display())));
     }
     let manifest = read(&top.join(ENGINE_MANIFEST))?;
@@ -142,21 +142,60 @@ fn raise(top: &Path, wanted: Option<Version>) -> Result<String, Error> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(Error(format!("could not read {}: {e}", notes_path.display()))),
     };
-    let mut between: Vec<&Release> = releases
-        .iter()
-        .filter(|r| if new > old { r.version > old && r.version <= new } else { r.version == new })
-        .collect();
-    between.sort_by_key(|r| std::cmp::Reverse(r.version));
+    let (low, high) = (old.min(new), old.max(new));
+    let mut changed: Vec<&Release> = releases.iter().filter(|r| r.version > low && r.version <= high).collect();
+    changed.sort_by_key(|r| std::cmp::Reverse(r.version));
 
-    // The writes.
-    eprintln!("raising {PIN} from octoflow-gate {old} to {new}, octoflow to {octoflow}");
-    write(&top.join(PIN), &replace_pin_line(&pin_text, &format!("{new} {sha}")))?;
-    replace_golden(&top.join(GOLDEN_DIR), &golden)?;
-    write(&readme_path, &readme.replace(old_sha, &sha).replace(&old.to_string(), &new.to_string()))?;
-    write(&top.join(ENGINE_MANIFEST), &manifest)?;
-    run(command("cargo").args(["update", "--workspace"]).current_dir(top), "refreshing Cargo.lock")?;
-    write(&notes_path, &format!("{notes}{}", release_notes_section(old, new, &between)))?;
-    Ok(between.iter().map(|r| format!("## octoflow-gate {}\n\n{}\n\n", r.version, r.body.trim())).collect())
+    eprintln!("moving {PIN} from octoflow-gate {old} to {new}, octoflow to {octoflow}");
+    let written = (|| {
+        replace_golden(&top.join(GOLDEN_DIR), &golden)?;
+        write(&readme_path, &replace_version(&readme.replace(old_sha, &sha), old, new))?;
+        write(&top.join(ENGINE_MANIFEST), &manifest)?;
+        run(command("cargo").args(["update", "--workspace"]).current_dir(top), "refreshing Cargo.lock")?;
+        write(&notes_path, &format!("{notes}{}", release_notes_section(old, new, &changed)))?;
+        write(&top.join(PIN), &replace_pin_line(&pin_text, &format!("{new} {sha}")))
+    })();
+    written.map_err(|Error(e)| {
+        Error(format!(
+            "{e}; the raise stopped partway, {PIN} still at {old}: restore the files it changed (git checkout, and git \
+             clean for new ones) before running it again"
+        ))
+    })?;
+    let heading =
+        |r: &Release| if new > old { format!("{}", r.version) } else { format!("{}, rolled back", r.version) };
+    Ok(changed.iter().map(|r| format!("## octoflow-gate {}\n\n{}\n\n", heading(r), r.body.trim())).collect())
+}
+
+/// Whether text holds version on its own, not as part of a longer one, as 0.15.2 is part of 0.15.20 and 10.15.2.
+fn names_version(text: &str, version: Version) -> bool {
+    version_spans(text, version).next().is_some()
+}
+
+/// text with each version that names_version finds there replaced by by.
+fn replace_version(text: &str, version: Version, by: Version) -> String {
+    let mut replaced = String::new();
+    let mut last = 0;
+    for start in version_spans(text, version) {
+        replaced.push_str(&text[last..start]);
+        replaced.push_str(&by.to_string());
+        last = start + version.to_string().len();
+    }
+    replaced.push_str(&text[last..]);
+    replaced
+}
+
+/// Where version starts in text, at each place it is not part of a longer version.
+fn version_spans(text: &str, version: Version) -> impl Iterator<Item = usize> + '_ {
+    let needle = version.to_string();
+    let len = needle.len();
+    let bytes = text.as_bytes();
+    let joined = |b: Option<&u8>| b.is_some_and(|b| b.is_ascii_digit() || *b == b'.');
+    text.match_indices(&needle).map(|(i, _)| i).collect::<Vec<_>>().into_iter().filter(move |&i| {
+        let before = i.checked_sub(1).and_then(|j| bytes.get(j));
+        let after = bytes.get(i + len);
+        let after_digit = after == Some(&b'.') && bytes.get(i + len + 1).is_some_and(u8::is_ascii_digit);
+        !joined(before) && !after.is_some_and(u8::is_ascii_digit) && !after_digit
+    })
 }
 
 /// The release among releases that wanted names, or with none the latest, which must be immutable since nobody named
@@ -309,19 +348,20 @@ fn bump_package_version(manifest: &str, old: Version, new: Version) -> Result<(V
     Ok((bumped, lines.iter().map(|l| format!("{l}\n")).collect()))
 }
 
-/// The release notes' section for a raise from old to new, wrapped at 120 columns as the docs are; between are the
-/// releases it brings, newest first.
-fn release_notes_section(old: Version, new: Version, between: &[&Release]) -> String {
+/// The release notes' section for moving the pin from old to new, wrapped at 120 columns as the docs are; changed
+/// are the releases the move brings or, for a rollback, takes back, newest first.
+fn release_notes_section(old: Version, new: Version, changed: &[&Release]) -> String {
     let link = |r: &Release| format!("[{}](https://github.com/{GATE_REPO}/releases/tag/v{})", r.version, r.version);
-    let changes = match between {
-        [newest, .., oldest] => format!("its release notes from {} to {}", link(oldest), link(newest)),
-        [only] => format!("its release notes, {}", link(only)),
-        [] => String::new(),
+    let notes = match changed {
+        [newest, .., oldest] => format!("the release notes from {} to {}", link(oldest), link(newest)),
+        [only] => format!("the release notes of {}", link(only)),
+        [] => "nothing".to_owned(),
     };
+    let what = if new > old { "What the gate changed" } else { "What the rollback takes back" };
     let text = format!(
         "The octoflow-gate release this octoflow is built with is {new}, in place of {old}. It judges a project whose \
          `ci/gate.pin` is missing, and `doctor --setup-gate` pins it in a project it sets up; a project that pins a \
-         release of its own keeps it. What the gate changed: {changes}."
+         release of its own keeps it. {what}: {notes}."
     );
     let mut lines = vec![String::new()];
     for word in text.split(' ') {
