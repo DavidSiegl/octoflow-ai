@@ -37,7 +37,7 @@ that wrote it:
 
 | Harness | `--agent` | Models | `--permission-mode` it understands |
 |---|---|---|---|
-| Antigravity CLI | `agy` | Google's Gemini | `default`, `acceptEdits`, `bypassPermissions`, `plan` |
+| [Antigravity CLI](https://github.com/google-antigravity/antigravity-cli) | `agy` | Google's Gemini | `default`, `acceptEdits`, `bypassPermissions`, `plan` |
 | [Claude Code](https://github.com/anthropics/claude-code) | `claude`, the default | Anthropic's Claude | every mode, as it is |
 | [Codex CLI](https://github.com/openai/codex) | `codex` | OpenAI's GPT | `default`, `acceptEdits`, `bypassPermissions`, `plan` |
 | [opencode](https://github.com/sst/opencode) | `opencode` | any provider it is set up for | none; it starts with its own default |

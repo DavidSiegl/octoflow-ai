@@ -6,7 +6,7 @@
 //! their default, whatever the test's own process does with them (Jenkins runs the tests with SIGINT ignored).
 
 use std::os::unix::process::{CommandExt, ExitStatusExt};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
@@ -16,22 +16,28 @@ use nix::unistd::Pid;
 /// How long a test waits for the program to get somewhere, before it fails.
 const PATIENCE: Duration = Duration::from_secs(30);
 
-/// A directory of the test's own, removed when it is dropped.
-struct Dir(PathBuf);
+/// A directory of the test's own, `octoflow-program-<name>-` and a suffix no other directory has, under TMPDIR (else
+/// /tmp), with an empty bin; removed with everything in it when dropped.
+struct Dir(tempfile::TempDir);
 
 impl Dir {
     fn new(name: &str) -> Dir {
-        let base = std::env::var_os("TMPDIR").map_or_else(std::env::temp_dir, PathBuf::from);
-        let dir = base.join(format!("octoflow-program-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("bin")).expect("a directory for the test");
+        let dir = tempfile::Builder::new()
+            .prefix(&format!("octoflow-program-{name}-"))
+            .tempdir()
+            .unwrap_or_else(|e| panic!("making a directory for {name}: {e}"));
+        std::fs::create_dir(dir.path().join("bin")).expect("a bin for the test");
         Dir(dir)
+    }
+
+    fn path(&self) -> &Path {
+        self.0.path()
     }
 
     /// Put an executable script named name, whose text is script, in the directory's bin, by a child process; for
     /// why a child process writes it: `tool` in engine/src/host/tests.rs.
     fn tool(&self, name: &str, script: &str) {
-        let path = self.0.join("bin").join(name);
+        let path = self.path().join("bin").join(name);
         let written = Command::new("sh")
             .args(["-c", "printf %s \"$2\" > \"$1\" && chmod 755 \"$1\"", "sh"])
             .arg(&path)
@@ -42,23 +48,17 @@ impl Dir {
     }
 }
 
-impl Drop for Dir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
 /// The program, with args, started with SIGINT, SIGTERM and SIGHUP at their default, in a process group of its own,
 /// its PATH beginning with dir's bin, and HERDR_ENV as herdr_env gives it.
 fn program(dir: &Dir, args: &[&str], herdr_env: Option<&str>) -> Command {
     let mut command = Command::new("env");
     command.arg("--default-signal=INT,TERM,HUP").arg(env!("CARGO_BIN_EXE_octoflow")).args(args);
-    let path = format!("{}:{}", dir.0.join("bin").display(), std::env::var("PATH").unwrap_or_default());
-    command.env("PATH", path).env("XDG_CONFIG_HOME", dir.0.join("config")).env_remove("HERDR_ENV");
+    let path = format!("{}:{}", dir.path().join("bin").display(), std::env::var("PATH").unwrap_or_default());
+    command.env("PATH", path).env("XDG_CONFIG_HOME", dir.path().join("config")).env_remove("HERDR_ENV");
     if let Some(value) = herdr_env {
         command.env("HERDR_ENV", value);
     }
-    command.current_dir(&dir.0).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).process_group(0);
+    command.current_dir(dir.path()).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).process_group(0);
     command
 }
 
@@ -117,8 +117,8 @@ fn the_hints_and_the_usage_name_the_program_by_the_file_name_it_was_invoked_by()
     let out = Command::new(env!("CARGO_BIN_EXE_octoflow"))
         .arg0("/usr/local/bin/orchestrator")
         .arg("workflows")
-        .env("XDG_CONFIG_HOME", dir.0.join("config"))
-        .current_dir(&dir.0)
+        .env("XDG_CONFIG_HOME", dir.path().join("config"))
+        .current_dir(dir.path())
         .stdin(Stdio::null())
         .output()
         .expect("the program runs");
@@ -126,8 +126,8 @@ fn the_hints_and_the_usage_name_the_program_by_the_file_name_it_was_invoked_by()
     let out = Command::new(env!("CARGO_BIN_EXE_octoflow"))
         .arg0("orchestrator")
         .arg("--bogus")
-        .env("XDG_CONFIG_HOME", dir.0.join("config"))
-        .current_dir(&dir.0)
+        .env("XDG_CONFIG_HOME", dir.path().join("config"))
+        .current_dir(dir.path())
         .stdin(Stdio::null())
         .output()
         .expect("the program runs");
@@ -169,7 +169,7 @@ fn a_usage_error_exits_2() {
 fn a_ctrl_c_before_the_run_exits_130_with_the_interrupted_note() {
     // herdr is asked for the machine's SSH target, and hangs there until the Ctrl-C stops it.
     let dir = Dir::new("ctrl-c");
-    let asked = dir.0.join("asked");
+    let asked = dir.path().join("asked");
     dir.tool("herdr", &format!("#!/bin/sh\necho \"$@\" > '{}'\nexec sleep 600\n", asked.display()));
     let child = program(&dir, &["resume", "a1b2c3", "--machine", "box", "--cwd", "/p"], None)
         .spawn()
@@ -190,7 +190,7 @@ fn a_sigterm_or_a_sighup_before_the_run_ends_the_program_by_it_with_the_interrup
     for signal in [Signal::SIGTERM, Signal::SIGHUP] {
         // As in the Ctrl-C's case: herdr hangs until the signal stops it, and leaves its pid.
         let dir = Dir::new(&format!("signal-{}", signal as i32));
-        let pid = dir.0.join("pid");
+        let pid = dir.path().join("pid");
         dir.tool("herdr", &format!("#!/bin/sh\necho $$ > '{}'\nexec sleep 600\n", pid.display()));
         let child = program(&dir, &["resume", "a1b2c3", "--machine", "box", "--cwd", "/p"], None)
             .spawn()
@@ -213,7 +213,7 @@ fn a_resume_of_no_run_names_where_it_looked() {
     let dir = Dir::new("no-run");
     let out = program(&dir, &["resume", "b0b0b0"], Some("1")).output().expect("the program runs");
     assert_eq!(out.status.code(), Some(1));
-    let project = std::fs::canonicalize(&dir.0).expect("the directory resolves");
+    let project = std::fs::canonicalize(dir.path()).expect("the directory resolves");
     assert_eq!(stderr(&out), format!("error: no run b0b0b0 under {}/.octoflow-ai/runs\n", project.display()));
 }
 
@@ -231,7 +231,7 @@ fn a_run_is_named_by_the_time_in_the_machine_s_zone() {
         program(&dir, &["run", "--no-pr", "a task"], Some("1")).env("TZ", zone).output().expect("the program runs");
     let after = shown(jiff::Timestamp::now());
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
-    let runs: Vec<String> = std::fs::read_dir(dir.0.join(".octoflow-ai/runs"))
+    let runs: Vec<String> = std::fs::read_dir(dir.path().join(".octoflow-ai/runs"))
         .expect("the run's state was saved")
         .map(|entry| entry.expect("an entry").file_name().into_string().expect("a UTF-8 name"))
         .collect();
@@ -329,7 +329,7 @@ fn serve_prints_one_json_line_then_serves_until_a_sigint_or_sigterm() {
         let serving = Serving::start(&dir, &["--origin", "tauri://localhost"]);
         assert!(serving.url.starts_with("http://127.0.0.1:"), "{}", serving.url);
         assert_eq!(serving.token.len(), 43);
-        let (status, body) = serving.get(&format!("/runs?cwd={}", encoded(&dir.0)));
+        let (status, body) = serving.get(&format!("/runs?cwd={}", encoded(dir.path())));
         assert_eq!((status, body.as_str()), (200, r#"{"version":1,"runs":[]}"#));
         let (ended, out, err) = serving.stop(signal);
         assert_eq!(ended.code(), Some(0), "{signal}: {ended:?}");
@@ -360,7 +360,12 @@ fn serve_stops_at_a_sigint_it_started_with_ignored() {
             None => ignoring.env_remove(key),
         };
     }
-    ignoring.current_dir(&dir.0).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).process_group(0);
+    ignoring
+        .current_dir(dir.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0);
     let (ended, _, err) = Serving::start_as(ignoring).stop(Signal::SIGINT);
     assert_eq!(ended.code(), Some(0), "{ended:?}: {err}");
 }
@@ -382,13 +387,13 @@ fn serve_reaches_a_machine_by_its_saved_target() {
     // herdr names the machine's SSH target, and ssh, played by a script here, runs each command
     // where the project is; with no machine, herdr is not asked.
     let dir = Dir::new("serve-machine");
-    let asked = dir.0.join("asked");
+    let asked = dir.path().join("asked");
     let machines = r#"[{"label": "box", "id": "m1", "enabled": true, "target": "me@box"}]"#;
     dir.tool("herdr", &format!("#!/bin/sh\necho \"herdr $*\" >> '{}'\necho '{machines}'\n", asked.display()));
     let ssh =
         format!("#!/bin/sh\nfor a; do last=$a; done\necho \"ssh $*\" >> '{}'\nexec sh -c \"$last\"\n", asked.display());
     dir.tool("ssh", &ssh);
-    let project = dir.0.join("proj");
+    let project = dir.path().join("proj");
     std::fs::create_dir_all(project.join(".octoflow-ai/runs/20261024-120000-5e7e00")).unwrap();
     let state = r#"{"format": 2, "run_id": "20261024-120000-5e7e00", "task": "t", "phase": "build", "round": 1}"#;
     std::fs::write(project.join(".octoflow-ai/runs/20261024-120000-5e7e00/state.json"), state).unwrap();
