@@ -1,0 +1,13 @@
+# Raises the actions .github/workflows/ uses. Each `uses:` names a commit sha, with the release tag it was taken from in
+# a comment, so a tag moved upstream runs nothing new here; Dependabot opens a pull request moving the sha and the
+# comment to a newer release. Those pull requests carry no-automerge, so automerge.yml leaves them for the owner to read
+# the new action's changes and merge by hand (the owner's ruling, 2026-11-18): auto-merging them would run a changed
+# action, beside the workflows' write tokens, that nobody has looked at.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - no-automerge
