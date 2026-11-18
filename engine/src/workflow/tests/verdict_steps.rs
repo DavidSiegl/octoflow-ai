@@ -155,6 +155,84 @@ fn max_rounds_bounds_both_and_the_last_round_ends_at_the_first_that_does_not_app
     assert!(pr.body.contains("<details open>\n<summary>Review (review-2.md)</summary>"), "{}", pr.body);
 }
 
+/// test_support's accepting workflow with the Product Manager's acceptance paced by the human, as design's is.
+fn human_accepting() -> Pipeline {
+    let mut steps = accepting().steps().to_vec();
+    steps[2].human_paced = true;
+    Pipeline::new("accepting", accepting().roles().clone(), steps).unwrap()
+}
+
+#[test]
+fn a_human_paced_request_for_changes_in_the_last_round_takes_one_round_more() {
+    let p = human_accepting();
+    let f = Fixture::on(
+        Rc::new(FakeHost::default()),
+        new_run(&p),
+        vec![
+            ("build", vec![build_turn(1), build_turn(2)]),
+            ("review", vec![review_turn(1, APPROVE), review_turn(2, APPROVE)]),
+            ("accept", vec![accept_turn(1, CHANGES_REQUESTED), accept_turn(2, APPROVE)]),
+        ],
+    );
+    let mut wf = f.workflow(with_pipeline(&p, 1));
+    assert_eq!(wf.run(), verdict(APPROVE));
+    let s = wf.state();
+    assert_eq!((s.round, s.max_rounds, s.phase.as_str()), (2, 2, "done"));
+    assert_eq!(
+        verdicts(s),
+        [(1, "review", APPROVE), (1, "accept", CHANGES_REQUESTED), (2, "review", APPROVE), (2, "accept", APPROVE)]
+    );
+    assert!(!f.host.state().prs[0].draft);
+}
+
+#[test]
+fn a_request_for_changes_in_the_last_round_still_reaches_the_human_paced_step() {
+    let p = human_accepting();
+    let f = Fixture::on(
+        Rc::new(FakeHost::default()),
+        new_run(&p),
+        vec![
+            ("build", vec![build_turn(1), build_turn(2)]),
+            ("review", vec![review_turn(1, CHANGES_REQUESTED), review_turn(2, APPROVE)]),
+            ("accept", vec![accept_turn(1, CHANGES_REQUESTED), accept_turn(2, APPROVE)]),
+        ],
+    );
+    let mut wf = f.workflow(with_pipeline(&p, 1));
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert_eq!(
+        names(&f, "prompt"),
+        ["build", "review", "accept", "build", "review", "accept"].map(|r| format!("{r}-a1b2c3"))
+    );
+    assert_eq!(
+        verdicts(wf.state()),
+        [
+            (1, "review", CHANGES_REQUESTED),
+            (1, "accept", CHANGES_REQUESTED),
+            (2, "review", APPROVE),
+            (2, "accept", APPROVE)
+        ]
+    );
+}
+
+#[test]
+fn a_human_paced_approval_in_the_last_round_publishes() {
+    let p = human_accepting();
+    let f = Fixture::on(
+        Rc::new(FakeHost::default()),
+        new_run(&p),
+        vec![
+            ("build", vec![build_turn(1)]),
+            ("review", vec![review_turn(1, CHANGES_REQUESTED)]),
+            ("accept", vec![accept_turn(1, APPROVE)]),
+        ],
+    );
+    let mut wf = f.workflow(with_pipeline(&p, 1));
+    assert_eq!(wf.run(), verdict(APPROVE));
+    let s = wf.state();
+    assert_eq!((s.round, s.max_rounds, s.phase.as_str()), (1, 1, "done"));
+    assert!(!f.host.state().prs[0].draft);
+}
+
 #[test]
 fn a_verdict_step_s_earlier_files_are_those_it_wrote() {
     // Round 1: the acceptance requests changes; round 2: the review does, so the acceptance does not run; round 3:

@@ -5,9 +5,9 @@
 # they wait on the human with no timeout and focus the Creative Director's pane. A run given its brief (run --spec,
 # drain) starts at concepts and still waits at direction and accept, so it needs the human at hand.
 #
-# --max-rounds bounds the Critic's and the acceptance's rounds together, and from the last round on the run goes on
-# past accept whatever the verdict (RunSettings::max_rounds): a Critic's request for changes in that round publishes
-# without asking the human, and the human's own request for changes there is recorded but not acted on.
+# --max-rounds bounds the Critic's and the acceptance's rounds together, but the human is always asked
+# (RunSettings::max_rounds): a Critic's request for changes in the last round goes on to the acceptance, and the
+# human's own request for changes there takes one round more.
 #
 # The Creative Director agrees the brief with the human and is the session that holds the work to it. The Designer
 # makes the concepts and builds the chosen one, so its session knows why each concept looked as it did. The Design

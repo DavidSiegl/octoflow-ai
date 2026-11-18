@@ -528,7 +528,8 @@ use = "review"
 
 A workflow without a verdict step ends `FINISHED`, and its pull request says no agent reviewed the change. One with
 several approves only if each of them approved the last round, and `--max-rounds` bounds the rounds of all of them
-together. A workflow's `proof_command`, such as `"python -m pytest -q {proofs}"`, runs the tests the first verdict
+together, except that a step that waits on you is always asked, and your request for changes in the last round takes
+one round more. A workflow's `proof_command`, such as `"python -m pytest -q {proofs}"`, runs the tests the first verdict
 step wrote to back its findings. Prompts fill in `{task}`, `{cwd}`, `{n}`, `{change}`, `{path}`, `{proofs_dir}`,
 `{findings}` (from round 2 on, the verdict file whose request for changes started the round, which the default
 Builder's `again` names), and for every step `X`, `{X_path}`, `{prev_X_path}` and `{earlier_X_paths}`; write a literal
