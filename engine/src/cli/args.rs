@@ -45,6 +45,8 @@ pub enum Command {
         target: Target,
         /// --setup-gate: then write what the local quality gate reads into the project (crate::local_gate::set_up).
         setup_gate: bool,
+        /// --pin-gate's version, which --setup-gate pins the project at; None: it pins none.
+        pin_gate: Option<String>,
     },
     /// `close`: clean up after the finished, failed or stale run run_ref names, by its id or key, or after every such
     /// run of the project when None (--all); with dry_run, only say what closing would do.
@@ -253,7 +255,11 @@ pub fn parse_args(argv: impl IntoIterator<Item = OsString>, config: &ConfigDir) 
             dry_run: m.get_flag("dry-run"),
         }),
         Some(("refresh", m)) => Command::Refresh(target(m), string(m, "run_ref")),
-        Some(("doctor", m)) => Command::Doctor { target: target(m), setup_gate: m.get_flag("setup-gate") },
+        Some(("doctor", m)) => Command::Doctor {
+            target: target(m),
+            setup_gate: m.get_flag("setup-gate"),
+            pin_gate: m.get_one::<String>("pin-gate").cloned(),
+        },
         Some(("resume", m)) => Command::Resume(ResumeArgs {
             target: target(m),
             settings: settings(m),
@@ -475,7 +481,8 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         .long_about(format!(
             "Check what a run needs where the agents run, on this machine or with --machine on that one: herdr {} or \
              later and a way to reach it, each harness's CLI and herdr integration, git {} or later, gh logged in, \
-             gitleaks, what --quality-gate local needs, and with --cwd a git checkout with an {REMOTE}. Prints a \
+             gitleaks, and with --cwd a git checkout with an {REMOTE}, then what --quality-gate local needs and \
+             which gate release judges the project. Prints a \
              line each, ok, missing, or warn for one only some runs need, with a fix under each that is not ok. \
              Installs nothing and writes nothing into the project, unless --setup-gate asks it to write the local \
              quality gate's files there; checking the gate makes the gate's cache directory, as a gated run does. Exit status 0 when nothing is missing and any setup succeeded, {EXIT_ERROR} otherwise.",
@@ -484,11 +491,23 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         ))
         .args(target_args())
         .arg(Arg::new("setup-gate").long("setup-gate").action(ArgAction::SetTrue).help(
-            "After the checks, write at the project's top level what --quality-gate local reads, where missing: \
-             ci/gate.pin, naming the gate release this engine was tested with, and a gate.toml whose test commands \
-             are guessed from the project's kind. A file already there is kept. Nothing is committed: a run's gate \
-             reads them from its base commit",
-        ));
+            "After the checks, write at the project's top level what --quality-gate local reads, where missing: a \
+             gate.toml whose test commands are guessed from the project's kind, and with --pin-gate ci/gate.pin. A \
+             file already there is kept. Without a pin the project is judged by the gate release built into the \
+             octoflow that runs it. Nothing is committed: a run's gate reads them from its base commit",
+        ))
+        .arg(
+            Arg::new("pin-gate")
+                .long("pin-gate")
+                .value_name("VERSION")
+                .requires("setup-gate")
+                .help(
+                    "With --setup-gate, also write ci/gate.pin, holding the project at octoflow-gate VERSION, 0.7.0 \
+                     or later, however octoflow is updated; deleting the file makes it follow octoflow's built-in \
+                     release again. A VERSION other than the built-in one has its sha256 fetched from its GitHub \
+                     release",
+                ),
+        );
     let serve = clap::Command::new("serve")
         .about("Serve the runs of any project over HTTP on 127.0.0.1, and start new ones, for the desktop app")
         .long_about(

@@ -6,7 +6,8 @@ use crate::error::OrchestratorError;
 use crate::harness::{Harness, HARNESSES};
 use crate::herdr::ProcessHerdr;
 use crate::host::{checked, decoded, Completed, ExecError, Host, ProcessHost, DEFAULT_TIMEOUT};
-use crate::local_gate;
+use crate::local_gate::{self, ProjectRelease};
+use std::cmp::Ordering;
 
 /// The oldest herdr a run works with, by the numbers its --version prints.
 pub const HERDR_MIN_VERSION: [u64; 2] = [0, 9];
@@ -106,11 +107,16 @@ pub fn report_checks(checks: &[Check], say: &dyn Fn(&str)) -> i32 {
 
 /// Print check_setup's checks where the agents run, this machine or the herdr machine target names, and of the
 /// project at its cwd when it has one, as report_checks does; then, with setup_gate, set the project up for the local
-/// quality gate there (local_gate::set_up), the current directory standing for a cwd not given, printing a line for
-/// each file written or kept and that a run's gate reads them once committed. Returns report_checks' exit status.
-/// Errors: the setup fails, as for a cwd in no git checkout, after the checks are printed; the interrupt, once
-/// local's is raised, for which nothing more is printed.
-pub(super) fn doctor_command(local: &Local, target: &Target, setup_gate: bool) -> Result<i32, OrchestratorError> {
+/// quality gate there (local_gate::set_up), pinned at pin_gate's version when given, the current directory standing
+/// for a cwd not given, printing a line for each file written or kept and that a run's gate reads them once
+/// committed. Returns report_checks' exit status. Errors: the setup fails, as for a cwd in no git checkout, after the
+/// checks are printed; the interrupt, once local's is raised, for which nothing more is printed.
+pub(super) fn doctor_command(
+    local: &Local,
+    target: &Target,
+    setup_gate: bool,
+    pin_gate: Option<&str>,
+) -> Result<i32, OrchestratorError> {
     let herdr = (local.herdr)(target.machine.as_deref());
     let checks = check_setup(local.host, &herdr, target.cwd.as_deref(), local.in_herdr_pane, Level::Required);
     if local.interrupt.is_raised() {
@@ -131,7 +137,7 @@ pub(super) fn doctor_command(local: &Local, target: &Target, setup_gate: bool) -
             Some(cwd) => cwd.clone(),
             None => (local.cwd)()?,
         };
-        local_gate::set_up(&agents, &cwd)
+        local_gate::set_up(&agents, &cwd, pin_gate)
     })()
     .map_err(|e| OrchestratorError(format!("setting up the local quality gate: {e}")))?;
     for file in &files {
@@ -145,8 +151,9 @@ pub(super) fn doctor_command(local: &Local, target: &Target, setup_gate: bool) -
 }
 
 /// A Check of each thing a run needs, in this order: herdr, reaching herdr, with herdr's machine herdr on that
-/// machine, the shell herdr's panes start (crate::herdr::pane_shell), each harness's CLI and herdr integration, git, gh, gitleaks, the local quality gate, and with cwd the
-/// project's git checkout and its origin.
+/// machine, the shell herdr's panes start (crate::herdr::pane_shell), each harness's CLI and herdr integration, git,
+/// gh, gitleaks, with cwd the project's git checkout and its origin, and the local quality gate, with the release that
+/// judges the project.
 ///
 /// host runs commands on this machine, where the orchestrator runs and whose herdr a run drives. Without a machine the
 /// agents run here too, and herdr is reached from a herdr pane, which in_herdr_pane says this process is in; that
@@ -214,19 +221,8 @@ pub fn check_setup(
     let gitleaks = check(&mut checks, "gitleaks", level, GITLEAKS_INSTALL, on_machine.as_ref(), "", &mut || {
         agents.gitleaks_problem().map_or_else(|| Ok("`gitleaks git` runs".to_string()), |p| Err(Unmet::new(p)))
     });
-    // What a run with --quality-gate local checks before its interview (Workflow::check_gate's gitleaks and
-    // local_gate::preflight), so the check cannot ask for less or more. It asks nothing of a checkout, so a project
-    // not given does not skip it. gitleaks is told from the check above: the run's own check words it for a run.
-    let fix = "install or fix what it names where the agents run (docs/quality-gate.md, \"The local gate\")";
-    let note = "needed only for --quality-gate local";
-    check(&mut checks, "local quality gate", Level::Optional, fix, on_machine.as_ref(), note, &mut || {
-        if !gitleaks.ok {
-            let detail = format!("{}, and the gate scans each snapshot for secrets with it", gitleaks.detail);
-            return Err(Unmet::with_fix(detail, GITLEAKS_INSTALL));
-        }
-        local_gate::preflight(agents)?;
-        Ok("gitleaks, and all the gate's preflight asks for, are ready".to_string())
-    });
+    // The project's checkout's Check, when cwd is given.
+    let mut top = None;
     if let Some(cwd) = cwd {
         let fix = "choose a git checkout as the project (--cwd), or make one with git clone or git init";
         let checkout = check(&mut checks, "git checkout", Level::NeededForPr, fix, Some(&git), "", &mut || {
@@ -236,8 +232,57 @@ pub fn check_setup(
         check(&mut checks, "origin", Level::NeededForPr, &fix, Some(&checkout), "", &mut || {
             Ok(agents.git(&checkout.detail, &["remote", "get-url", REMOTE])?.trim().to_string())
         });
+        top = Some(checkout);
     }
+    // What a run with --quality-gate local checks before its interview (Workflow::check_gate's gitleaks and
+    // local_gate::preflight), so the check cannot ask for less or more, then which release judges the project. It asks
+    // nothing else of a checkout, so a project not given, or not a checkout, does not skip it.
+    let fix = "install or fix what it names where the agents run (docs/quality-gate.md, \"The local gate\")";
+    let note = "needed only for --quality-gate local";
+    check(&mut checks, "local quality gate", Level::Optional, fix, on_machine.as_ref(), note, &mut || {
+        if !gitleaks.ok {
+            let detail = format!("{}, and the gate scans each snapshot for secrets with it", gitleaks.detail);
+            return Err(Unmet::with_fix(detail, GITLEAKS_INSTALL));
+        }
+        local_gate::preflight(agents)?;
+        let judged = judging_release(agents, top.as_ref().filter(|c| c.ok).map(|c| c.detail.as_str()))?;
+        Ok(format!("gitleaks, and all the gate's preflight asks for, are ready; {judged}"))
+    });
     checks
+}
+
+/// Which octoflow-gate release judges the project whose checkout's top level is top on host, worded for the local
+/// quality gate's check; with no top, which would judge a project. Unmet: its ci/gate.pin names no release, which
+/// fails every gated run, or one newer than the built-in release, whose report this octoflow may not read.
+fn judging_release(host: &dyn Host, top: Option<&str>) -> Probed {
+    let (built_in, _) = local_gate::parse_pin(local_gate::BUILT_IN_PIN)?;
+    let Some(top) = top else {
+        return Ok(format!(
+            "a project is judged by octoflow-gate {built_in}, built in, unless its ci/gate.pin pins another"
+        ));
+    };
+    let pinned = local_gate::project_release(host, top).map_err(|e| {
+        let fix = "write the `<version> <sha256>` line, or delete ci/gate.pin to follow the built-in release";
+        Unmet::with_fix(e.0, fix)
+    })?;
+    let follow = "delete ci/gate.pin to follow it";
+    match pinned {
+        ProjectRelease::BuiltIn => Ok(format!("the project is judged by octoflow-gate {built_in}, built in")),
+        ProjectRelease::Pinned(v, Some(Ordering::Less)) => Ok(format!(
+            "the project is judged by octoflow-gate {v}, which its ci/gate.pin holds it at, older than the built-in \
+             {built_in}: {follow}"
+        )),
+        ProjectRelease::Pinned(v, Some(Ordering::Greater)) => Err(Unmet::with_fix(
+            format!(
+                "the project's ci/gate.pin holds it at octoflow-gate {v}, newer than the built-in {built_in}, whose \
+                 report this octoflow may not read"
+            ),
+            &format!("update octoflow, or {follow}"),
+        )),
+        ProjectRelease::Pinned(v, _) => Ok(format!(
+            "the project is judged by octoflow-gate {v}, which its ci/gate.pin holds it at (built in: {built_in})"
+        )),
+    }
 }
 
 /// Add to checks, and return, the Check of probe, named name at level, with fix its fix when the probe brings none;

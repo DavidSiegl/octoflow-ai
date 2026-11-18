@@ -107,9 +107,10 @@ impl ProjectRuns {
         ProjectRuns { pid_alive: Arc::new(pid_alive), ..self }
     }
 
-    /// Set the project up for the local quality gate, as crate::local_gate::set_up does, on the machine it is on.
+    /// Set the project up for the local quality gate, as crate::local_gate::set_up does without a pin, on the
+    /// machine it is on.
     pub fn set_up_gate(&self) -> Result<Vec<SetUpFile>, OrchestratorError> {
-        crate::local_gate::set_up(&*self.host, &self.cwd)
+        crate::local_gate::set_up(&*self.host, &self.cwd, None)
     }
 
     /// Close the project's runs that sweep names, as crate::cli::close::close_all does, and give each run's outcome;

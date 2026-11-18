@@ -190,8 +190,9 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 - **A resumed run without `ci/gate.pin` can change gate release between rounds.** Raised by cross-review 185
   (round 2): `local_gate::start` reads `BUILT_IN_PIN` each round rather than from the run's saved state, so a run
   started under one engine and resumed under one with a raised pin has its rounds judged by two releases, and
-  `GateFailures.repeats` compares two check sets. First seen with 0.70.0's raise from 0.7.0 to 0.10.0. Closes with the
-  release a pinless run starts with saved in its state and judged by on resume.
+  `GateFailures.repeats` compares two check sets. First seen with 0.70.0's raise from 0.7.0 to 0.10.0. Since 0.91.0
+  `doctor --setup-gate` writes no pin unless `--pin-gate` asks (gate-pin-follows/04), so every project it sets up is
+  pinless and meets this. Closes with the release a pinless run starts with saved in its state and judged by on resume.
 - **A run of a built-in workflow resumes on the built-in of the release that resumes it.** Raised by cross-review 215
   (F2): `Workflow::new` (`engine/src/workflow.rs`) saves no `workflow_definition` for a run whose workflow
   `is_built_in` (`engine/src/workflow_file.rs`), and a resume rebuilds it with `find_workflow`. "If a later release

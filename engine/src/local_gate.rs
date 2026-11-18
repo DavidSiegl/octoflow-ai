@@ -197,13 +197,7 @@ pub fn start(host: &dyn Host, cwd: &str, snapshot: &str, base: &str, out_dir: &s
         Some(pin) => parse_pin(&pin).map_err(|why| OrchestratorError(format!("the run's base's {PIN_PATH}: {why}")))?,
         None => parse_pin(BUILT_IN_PIN)?,
     };
-    if !ships_gate(&release) {
-        let (major, minor) = FIRST_WITH_GATE;
-        return Err(OrchestratorError(format!(
-            "the run's base's {PIN_PATH}: octoflow-gate {release} ships no gate, which the local gate runs from \
-             {major}.{minor}.0 on"
-        )));
-    }
+    refuse_before_gate(&release, &format!("the run's base's {PIN_PATH}"))?;
     stop_left(host, cwd, out_dir)?;
     let made = host.check(&["sh", "-c", NEXT_JOB, "_", out_dir], None, DEFAULT_TIMEOUT)?;
     let k: u32 = made
@@ -345,7 +339,7 @@ fn clean_up(host: &dyn Host, cwd: &str, dir: &str) -> Result<(), OrchestratorErr
 /// One of the files set_up looks after.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SetUpFile {
-    /// Its path from the checkout's top level, such as `ci/gate.pin`.
+    /// Its path from the checkout's top level, such as `gate.toml`.
     pub path: &'static str,
     /// true when set_up wrote it; false when something was at its path already, which set_up left as it was.
     pub written: bool,
@@ -355,14 +349,25 @@ pub struct SetUpFile {
 const SETTINGS_PATH: &str = "gate.toml";
 
 /// Make the project in cwd on host ready for `--quality-gate local`, as `doctor --setup-gate` and serve's
-/// `POST /setup/gate` ask: at the top level of the checkout cwd is in, write ci/gate.pin, naming BUILT_IN_PIN, and a
-/// starter gate.toml whose [[test]] commands are guessed from the project's kind (starter_settings), each only where
-/// nothing is at its path yet; a file already there is kept, even one made while set_up runs. Nothing is committed: a
-/// run's gate reads both from the run's base commit, so they count once committed. cwd may start with ~, host's home.
-/// Returns the pin's SetUpFile, then gate.toml's. Two commands on host, so two round trips over SSH.
+/// `POST /setup/gate` ask: at the top level of the checkout cwd is in, write a starter gate.toml whose [[test]]
+/// commands are guessed from the project's kind (starter_settings) and, with pin, a version of octoflow-gate,
+/// ci/gate.pin holding the project at that release (pin_text); each only where nothing is at its path yet, a file
+/// already there being kept, even one made while set_up runs. Without a pin the project follows the release built into
+/// the octoflow that runs it (BUILT_IN_PIN). Nothing is committed: a run's gate reads both from the run's base commit,
+/// so they count once committed. cwd may start with ~, host's home. Returns gate.toml's SetUpFile, then the pin's when
+/// asked for. Two commands on host, so two round trips over SSH, and a third, a curl of the release's `.sha256` asset,
+/// for a pin other than the built-in release, whose sha256 this engine knows.
 ///
-/// Errors: cwd is no directory on host, or in no git checkout; a command fails, as a write to a read-only checkout.
-pub fn set_up(host: &dyn Host, cwd: &str) -> Result<Vec<SetUpFile>, OrchestratorError> {
+/// Errors: pin is no version a pin can name, or one before FIRST_WITH_GATE (both before host is asked anything); cwd
+/// is no directory on host, or in no git checkout; the release's `.sha256` asset cannot be fetched or holds no
+/// sha256; a command fails, as a write to a read-only checkout.
+pub fn set_up(host: &dyn Host, cwd: &str, pin: Option<&str>) -> Result<Vec<SetUpFile>, OrchestratorError> {
+    if let Some(version) = pin {
+        if !is_version(version) {
+            return Err(OrchestratorError(format!("'{version}' is not an octoflow-gate version")));
+        }
+        refuse_before_gate(version, "--pin-gate")?;
+    }
     let (word, arg) = shell_path(cwd);
     let look = format!("cd -- {word} && {SET_UP_LOOK}");
     let mut argv = vec!["sh", "-c", &look, "_", arg];
@@ -382,17 +387,77 @@ pub fn set_up(host: &dyn Host, cwd: &str) -> Result<Vec<SetUpFile>, Orchestrator
         }
     }
     let pyproject = present.contains(&PYPROJECT_PATH).then_some(rest);
-    let pin = format!("{BUILT_IN_PIN}\n");
-    let settings = starter_settings(&present, pyproject);
-    let argv = ["sh", "-c", SET_UP_WRITE, "_", top, PIN_PATH, &pin, SETTINGS_PATH, &settings];
-    let wrote = set_up_step(host, &argv, &format!("setting up the gate in {top}"))?;
-    match wrote.lines().collect::<Vec<_>>()[..] {
-        [a, b] if [a, b].iter().all(|w| ["written", "kept"].contains(w)) => Ok(vec![
-            SetUpFile { path: PIN_PATH, written: a == "written" },
-            SetUpFile { path: SETTINGS_PATH, written: b == "written" },
-        ]),
-        _ => Err(OrchestratorError(format!("setting up the gate in {top}: the write printed {wrote:?}"))),
+    let mut files = vec![(SETTINGS_PATH, starter_settings(&present, pyproject))];
+    if let Some(version) = pin {
+        files.push((PIN_PATH, pin_text(version, &release_sha256(host, version)?)));
     }
+    let mut argv = vec!["sh", "-c", SET_UP_WRITE, "_", top];
+    for (path, text) in &files {
+        argv.extend([*path, text.as_str()]);
+    }
+    let wrote = set_up_step(host, &argv, &format!("setting up the gate in {top}"))?;
+    let said: Vec<&str> = wrote.lines().collect();
+    if said.len() != files.len() || !said.iter().all(|w| ["written", "kept"].contains(w)) {
+        return Err(OrchestratorError(format!("setting up the gate in {top}: the write printed {wrote:?}")));
+    }
+    Ok(files.iter().zip(said).map(|((path, _), w)| SetUpFile { path, written: w == "written" }).collect())
+}
+
+/// The ci/gate.pin set_up writes to hold a project at octoflow-gate version, whose tarball has sha256: a comment on
+/// what the pin does and how to stop it, then the `<version> <sha256>` line.
+fn pin_text(version: &str, sha256: &str) -> String {
+    format!(
+        "# Holds this project at octoflow-gate {version}: --quality-gate local judges its runs by that release,\n\
+         # whatever octoflow runs them. Delete this file to follow the release built into that octoflow instead.\n\
+         # Written by `octoflow doctor --setup-gate --pin-gate {version}`.\n\
+         {version} {sha256}\n"
+    )
+}
+
+/// The sha256 of octoflow-gate version's tarball: BUILT_IN_PIN's for the built-in release, else what the release's
+/// `.sha256` asset gives, fetched by curl on host. Errors: the fetch fails, or the asset holds no sha256.
+fn release_sha256(host: &dyn Host, version: &str) -> Result<String, OrchestratorError> {
+    let (built_in, sha256) = parse_pin(BUILT_IN_PIN)?;
+    if version == built_in {
+        return Ok(sha256);
+    }
+    let url = format!("{}.sha256", RELEASE_URL.replace("{v}", version));
+    let curl = ["curl", "-fsSL", "--connect-timeout", "30", "--", &url];
+    let asset = set_up_step(host, &curl, &format!("fetching {url}"))?;
+    let sha256 = asset.split_whitespace().next().unwrap_or("");
+    match is_sha256(sha256) {
+        true => Ok(sha256.to_string()),
+        false => Err(OrchestratorError(format!("{url} holds no sha256: {asset:?}"))),
+    }
+}
+
+/// Which octoflow-gate release judges the runs of a project, as project_release finds it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProjectRelease {
+    /// It has no ci/gate.pin, so the release built into the octoflow that runs it judges (BUILT_IN_PIN).
+    BuiltIn,
+    /// Its ci/gate.pin names this version, ordered against the built-in release's as release_order orders them.
+    Pinned(String, Option<std::cmp::Ordering>),
+}
+
+/// The octoflow-gate release that judges a run of the project whose checkout's top level is top on host, as its
+/// ci/gate.pin there reads now; a run reads it from its base commit, so an edit counts once committed. Errors: the
+/// pin has no `<version> <sha256>` line, which fails every run (start); it cannot be read.
+pub fn project_release(host: &dyn Host, top: &str) -> Result<ProjectRelease, OrchestratorError> {
+    let Some(pin) = host.read(&format!("{top}/{PIN_PATH}"))? else {
+        return Ok(ProjectRelease::BuiltIn);
+    };
+    let (version, _) = parse_pin(&pin).map_err(|why| OrchestratorError(format!("{PIN_PATH}: {why}")))?;
+    let (built_in, _) = parse_pin(BUILT_IN_PIN)?;
+    let order = release_order(&version, &built_in);
+    Ok(ProjectRelease::Pinned(version, order))
+}
+
+/// How release version a stands against b, by their dot-separated numbers; None when either holds a part that is no
+/// number, as a pre-release's `-rc1` does.
+fn release_order(a: &str, b: &str) -> Option<std::cmp::Ordering> {
+    let numbers = |v: &str| v.split('.').map(|part| part.parse::<u64>().ok()).collect::<Option<Vec<u64>>>();
+    Some(numbers(a)?.cmp(&numbers(b)?))
 }
 
 /// The standard output of argv on host, a step of set_up. Errors: it exits non-zero, said as doing, then its standard
@@ -453,7 +518,9 @@ fn starter_settings(present: &[&str], pyproject: Option<&str>) -> String {
         "# octoflow-gate's settings for judging this project (docs/quality-gate.md, \"The gate's settings\", in\n\
          # https://github.com/DavidSiegl/octoflow-gate): written by `octoflow doctor --setup-gate` or the desktop\n\
          # app's \"Set up the quality gate\". A run with --quality-gate local reads this file from the run's base commit,\n\
-         # so an edit counts once it is committed.\n\
+         # so an edit counts once it is committed. The run is judged by the octoflow-gate release built into the\n\
+         # octoflow that runs it, unless ci/gate.pin holds the project at one (`octoflow doctor --setup-gate\n\
+         # --pin-gate <version>`).\n\
          #\n\
          # Each [[test]] runs at the top level, as an argv: `name`, `command`, and the reports it writes, `junit` and\n\
          # `coverage`, paths from the top level. A command without `junit` is judged by its exit status alone: one that\n\
@@ -507,9 +574,7 @@ fn starter_settings(present: &[&str], pyproject: Option<&str>) -> String {
 pub fn parse_pin(pin: &str) -> Result<(String, String), OrchestratorError> {
     let line = pin.lines().find(|l| !l.starts_with('#')).unwrap_or("");
     let (version, sha256) = line.split_once(' ').unwrap_or((line, ""));
-    let version_ok = !version.is_empty() && version.bytes().all(|b| b.is_ascii_alphanumeric() || b".+-".contains(&b));
-    let sha_ok = sha256.len() == 64 && sha256.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
-    if !version_ok || !sha_ok {
+    if !is_version(version) || !is_sha256(sha256) {
         return Err(OrchestratorError(format!("its first line '{line}' is not '<version> <sha256>'")));
     }
     Ok((version.to_string(), sha256.to_string()))
@@ -538,6 +603,27 @@ const fn pin_line(pin: &str) -> &str {
         };
     }
     ""
+}
+
+/// Whether version is one a pin can name: only letters, digits and `.+-`, as it goes into a URL.
+fn is_version(version: &str) -> bool {
+    !version.is_empty() && version.bytes().all(|b| b.is_ascii_alphanumeric() || b".+-".contains(&b))
+}
+
+/// Whether sha256 is one as a pin names it: 64 lowercase hex digits.
+fn is_sha256(sha256: &str) -> bool {
+    sha256.len() == 64 && sha256.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Refuse release, a version as a pin names it, when it is before FIRST_WITH_GATE, naming what gave it, as `whose`.
+fn refuse_before_gate(release: &str, whose: &str) -> Result<(), OrchestratorError> {
+    if ships_gate(release) {
+        return Ok(());
+    }
+    let (major, minor) = FIRST_WITH_GATE;
+    Err(OrchestratorError(format!(
+        "{whose}: octoflow-gate {release} ships no gate, which the local gate runs from {major}.{minor}.0 on"
+    )))
 }
 
 /// Whether the release version, as a pin names it, ships `gate`: is FIRST_WITH_GATE or later. A version whose major

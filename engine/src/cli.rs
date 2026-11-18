@@ -215,7 +215,9 @@ fn herdrless_command(command: &Command, local: &Local) -> Option<Result<Ended, S
             workflows::workflows_command(local.config, reference.as_deref(), local.stdout).map(|()| 0)
         }
         // Not being in a herdr pane is one of the things doctor reports.
-        Command::Doctor { target, setup_gate } => doctor::doctor_command(local, target, *setup_gate),
+        Command::Doctor { target, setup_gate, pin_gate } => {
+            doctor::doctor_command(local, target, *setup_gate, pin_gate.as_deref())
+        }
         _ => return None,
     };
     Some(match ended {

@@ -68,9 +68,10 @@ Each round, the orchestrator:
    gitleaks scan the change alone, the snapshot's commits that the base does not have; a snapshot holding a secret
    is not judged, and the round's file is `GATE: LEAK`;
 2. reads `ci/gate.pin`, `gate.toml` and `pyproject.toml` from the run's base commit, not from the working tree, so a
-   change cannot loosen how it is itself judged; a base without `ci/gate.pin`
-   is judged by the release the engine was tested against (`BUILT_IN_PIN`, this repository's own `ci/gate.pin`), one without `gate.toml` by the
-   gate's defaults and one without `pyproject.toml` by the linters' own, never by the change's;
+   change cannot loosen how it is itself judged; a base without `ci/gate.pin` follows the octoflow that runs it, and
+   is judged by the release that engine was built with (`BUILT_IN_PIN`, this repository's own `ci/gate.pin`), one
+   without `gate.toml` by the gate's defaults and one without `pyproject.toml` by the linters' own, never by the
+   change's;
 3. checks the snapshot out as a worktree of the run's repository into `gate-<n>-<q>/job-<k>/tree` under the run's
    directory, `k` counting the round's starts, as a resume starts it again: the gate judges the files the Builder
    never told git about, and what the gate and the tests write never reaches the run's
@@ -104,13 +105,19 @@ shellcheck, clippy or, for a project that tracks Go files, golangci-lint (withou
 repository runs pymarkdown, is there when the orchestrator itself runs under `uv run`.
 
 `octoflow doctor --setup-gate`, or "Set up the quality gate" in the desktop app's setup dialog, writes at the top
-level of the project's checkout, on the machine its agents run on, whichever of these is missing: `ci/gate.pin`,
-naming `BUILT_IN_PIN`, and a starter `gate.toml` with a `[[test]]` for each kind of project it finds there
+level of the project's checkout, on the machine its agents run on, a starter `gate.toml` where none is, with a
+`[[test]]` for each kind of project it finds there
 (`Cargo.toml`: `cargo test --workspace`; pytest's settings, in `pytest.ini`, `conftest.py` or a `[tool.pytest…]`
 table of `pyproject.toml`: pytest, through `uv run` when there is a `uv.lock`, writing `junit.xml`; `package.json`:
 `npm test`; `go.mod`: `go test ./...`, under a comment that the gate needs golangci-lint), or none, with a comment
 saying how to add one, when it finds no kind it knows. A `pyproject.toml` alone is not taken for tests, as it may
-configure only other tools. Check the guessed commands. A file already there is kept.
+configure only other tools. Check the guessed commands. With `--pin-gate <version>`, doctor also writes
+`ci/gate.pin`, holding the project at that release, 0.7.0 or later, whatever octoflow runs it: the built-in
+release's sha256 is known, another's is fetched from its release's `.sha256` asset. Without one the project follows
+octoflow's built-in release, and doctor's local quality gate check says which release judges it: a pin older than
+the built-in one is reported with how to follow again (delete `ci/gate.pin`), as for a project set up before 0.91.0,
+when setup-gate always pinned; a pin newer than it is a warning, since this octoflow may not read that release's
+report. A file already there is kept.
 Nothing is committed, and nothing makes the project's runs gated: commit the files for the gate to read them, and
 pass `--quality-gate local` to a run.
 

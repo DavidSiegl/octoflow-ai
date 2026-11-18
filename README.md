@@ -61,7 +61,9 @@ octoflow run "add a token-bucket rate limiter" --role-agent review=codex --role-
 
 `octoflow doctor` checks these, here and where the agents run, and says how to fix each one that
 is missing. It also checks, as optional, what [the local quality gate](docs/quality-gate.md#the-local-gate) needs
-there; `doctor --setup-gate` writes the gate's `ci/gate.pin` and a starter `gate.toml` into the project.
+there, and which gate release judges the project; `doctor --setup-gate` writes a starter `gate.toml` into the
+project, and with `--pin-gate <version>` a `ci/gate.pin` holding it at that release. Without a pin, a project is
+judged by the release built into the octoflow that runs it, so updating octoflow updates the gate.
 
 - herdr 0.9+ where the agents run, with the integration of each harness a run uses
   (`herdr integration install <integration>`: the kind's own name, e.g. `herdr integration install claude`, but
@@ -182,7 +184,7 @@ first time when a browser downloaded it, as it does the binary.
   the project you opened last.
 - **Setup:** "Check setup…" shows what `octoflow doctor --machine --cwd` checks for the open project, with
   the fix for each problem. It opens by itself when the app starts, until you have closed it once with everything
-  a run needs present. Its "Set up the quality gate" button does what `doctor --setup-gate` does.
+  a run needs present. Its "Set up the quality gate" button does what `doctor --setup-gate` does, without a pin.
 
 Each download is the CLI too, with the same commands and flags; started without arguments, the app opens its
 window:
@@ -233,6 +235,9 @@ octoflow doctor --machine <machine> --cwd ~/GitHub/myproject
 
 # The same, then write what --quality-gate local reads into the project, where it is missing; commit it yourself
 octoflow doctor --cwd ~/GitHub/myproject --setup-gate
+
+# The same, and hold the project at one octoflow-gate release, however octoflow is updated
+octoflow doctor --cwd ~/GitHub/myproject --setup-gate --pin-gate 0.15.2
 
 # From a herdr pane, on the project in the current directory
 octoflow run "add a token-bucket rate limiter to the API client"

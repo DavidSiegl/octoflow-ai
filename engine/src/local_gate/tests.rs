@@ -525,30 +525,113 @@ fn the_preflight_needs_linux_on_x86_64_the_jobs_tools_a_full_ps_an_env_that_rest
 }
 
 #[test]
-fn set_up_writes_the_built_in_pin_and_starter_settings_at_the_top_level_uncommitted() {
+fn set_up_writes_starter_settings_at_the_top_level_uncommitted_and_no_pin_unless_asked() {
     let pyproject = "[tool.pytest.ini_options]\n";
     let repo = Repo::new(&[("Cargo.toml", "[package]\n"), ("pyproject.toml", pyproject), ("sub/README", "x\n")]);
-    let files = set_up(&repo.host, &format!("{}/sub", repo.path)).unwrap();
-    let written = |path| SetUpFile { path, written: true };
-    assert_eq!(files, [written("ci/gate.pin"), written("gate.toml")]);
-    assert_eq!(read(&format!("{}/ci/gate.pin", repo.path)), format!("{BUILT_IN_PIN}\n"));
+    let files = set_up(&repo.host, &format!("{}/sub", repo.path), None).unwrap();
+    assert_eq!(files, [SetUpFile { path: "gate.toml", written: true }]);
     let settings = read(&format!("{}/gate.toml", repo.path));
     assert_eq!(settings, starter_settings(&["Cargo.toml"], Some(pyproject)));
     assert_eq!(tests_of(&settings).len(), 2, "{settings}");
+    assert_eq!(repo.git(&["status", "--porcelain"]), "?? gate.toml\n");
+}
+
+/// A host whose curl prints asset and records each URL it is given in <dir>/curl-log, or, for asset None, fails as
+/// curl -f does for a release that is missing.
+fn sha256_server(dir: &TempDir, asset: Option<&str>) -> ProcessHost {
+    let bin = dir.join("bin");
+    let answer = match asset {
+        Some(asset) => format!("printf '%s' '{asset}'"),
+        None => "echo 'curl: (22) The requested URL returned error: 404' >&2; exit 22".to_string(),
+    };
+    let log = dir.join("curl-log");
+    tool(&bin, "curl", &format!("#!/bin/sh\neval \"url=\\${{$#}}\"\necho \"$url\" >> '{log}'\n{answer}\n"));
+    ProcessHost::in_environment(environment(Some(&bin), &[]).into_iter(), &Interrupt::new())
+}
+
+#[test]
+fn set_up_pins_the_built_in_release_without_the_network() {
+    let repo = Repo::new(&[]);
+    let dir = TempDir::new();
+    let host = sha256_server(&dir, None);
+    let (version, sha256) = parse_pin(BUILT_IN_PIN).unwrap();
+    let files = set_up(&host, &repo.path, Some(&version)).unwrap();
+    let written = |path| SetUpFile { path, written: true };
+    assert_eq!(files, [written("gate.toml"), written("ci/gate.pin")]);
+    let pin = read(&format!("{}/ci/gate.pin", repo.path));
+    assert_eq!(pin, pin_text(&version, &sha256));
+    assert_eq!(parse_pin(&pin).unwrap(), (version.clone(), sha256));
+    assert!(pin.starts_with(&format!("# Holds this project at octoflow-gate {version}")), "{pin}");
+    assert!(!std::path::Path::new(&dir.join("curl-log")).exists(), "the built-in release's sha256 is known");
     assert_eq!(repo.git(&["status", "--porcelain"]), "?? ci/\n?? gate.toml\n");
+}
+
+#[test]
+fn set_up_pins_another_release_by_its_sha256_asset() {
+    let repo = Repo::new(&[]);
+    let dir = TempDir::new();
+    let sha256 = "ab".repeat(32);
+    let host = sha256_server(&dir, Some(&format!("{sha256}  octoflow-gate-0.9.1.tar.gz\n")));
+    let files = set_up(&host, &repo.path, Some("0.9.1")).unwrap();
+    assert_eq!(files[1], SetUpFile { path: "ci/gate.pin", written: true });
+    assert_eq!(parse_pin(&read(&format!("{}/ci/gate.pin", repo.path))).unwrap(), ("0.9.1".to_string(), sha256));
+    let url = "https://github.com/DavidSiegl/octoflow-gate/releases/download/v0.9.1/octoflow-gate-0.9.1.tar.gz.sha256";
+    assert_eq!(read(&dir.join("curl-log")), format!("{url}\n"));
+}
+
+#[test]
+fn set_up_writes_nothing_for_a_pin_it_cannot_make() {
+    let repo = Repo::new(&[]);
+    let dir = TempDir::new();
+    let missing = sha256_server(&dir, None);
+    let e = set_up(&missing, &repo.path, Some("0.99.0")).unwrap_err().to_string();
+    assert!(e.starts_with("fetching https://github.com/DavidSiegl/octoflow-gate/releases/download/v0.99.0/"), "{e}");
+    assert!(e.ends_with("returned error: 404"), "{e}");
+    let junk_dir = TempDir::new();
+    let junk = sha256_server(&junk_dir, Some("<html>Not Found</html>"));
+    let e = set_up(&junk, &repo.path, Some("0.9.1")).unwrap_err().to_string();
+    assert!(e.ends_with("octoflow-gate-0.9.1.tar.gz.sha256 holds no sha256: \"<html>Not Found</html>\""), "{e}");
+    // A release before the gate, and no version at all, are refused before the host is asked anything.
+    let e = set_up(&missing, &repo.path, Some("0.6.3")).unwrap_err().to_string();
+    assert_eq!(e, "--pin-gate: octoflow-gate 0.6.3 ships no gate, which the local gate runs from 0.7.0 on");
+    let e = set_up(&missing, &repo.path, Some("0.9 x")).unwrap_err().to_string();
+    assert_eq!(e, "'0.9 x' is not an octoflow-gate version");
+    assert_eq!(read(&dir.join("curl-log")).lines().count(), 1, "only the 0.99.0 fetch reached curl");
+    assert_eq!(repo.git(&["status", "--porcelain"]), "");
 }
 
 #[test]
 fn set_up_keeps_a_file_already_there() {
     let repo = Repo::new(&[("gate.toml", "# mine\n")]);
-    let files = set_up(&repo.host, &repo.path).unwrap();
-    assert_eq!(files, [SetUpFile { path: "ci/gate.pin", written: true }, SetUpFile { path: "gate.toml", written: false }]);
+    let (version, _) = parse_pin(BUILT_IN_PIN).unwrap();
+    let files = set_up(&repo.host, &repo.path, Some(&version)).unwrap();
+    let (kept, written) = (|path| SetUpFile { path, written: false }, |path| SetUpFile { path, written: true });
+    assert_eq!(files, [kept("gate.toml"), written("ci/gate.pin")]);
     assert_eq!(read(&format!("{}/gate.toml", repo.path)), "# mine\n");
     repo.put("ci/gate.pin", "0.4.0 mine\n");
     std::fs::remove_file(format!("{}/gate.toml", repo.path)).unwrap();
-    let files = set_up(&repo.host, &repo.path).unwrap();
-    assert_eq!(files, [SetUpFile { path: "ci/gate.pin", written: false }, SetUpFile { path: "gate.toml", written: true }]);
+    let files = set_up(&repo.host, &repo.path, Some(&version)).unwrap();
+    assert_eq!(files, [written("gate.toml"), kept("ci/gate.pin")]);
     assert_eq!(read(&format!("{}/ci/gate.pin", repo.path)), "0.4.0 mine\n");
+}
+
+#[test]
+fn project_release_reads_the_checkouts_pin_against_the_built_in_release() {
+    use std::cmp::Ordering::{Equal, Greater, Less};
+    let repo = Repo::new(&[]);
+    assert_eq!(project_release(&repo.host, &repo.path).unwrap(), ProjectRelease::BuiltIn);
+    let (built_in, _) = parse_pin(BUILT_IN_PIN).unwrap();
+    let sha256 = "0".repeat(64);
+    for (version, order) in
+        [("0.7.0", Some(Less)), (built_in.as_str(), Some(Equal)), ("99.0.0", Some(Greater)), ("1.0.0-rc1", None)]
+    {
+        repo.put("ci/gate.pin", &format!("# a comment\n{version} {sha256}\n"));
+        let pinned = project_release(&repo.host, &repo.path).unwrap();
+        assert_eq!(pinned, ProjectRelease::Pinned(version.to_string(), order));
+    }
+    repo.put("ci/gate.pin", "0.9.0\n");
+    let e = project_release(&repo.host, &repo.path).unwrap_err().to_string();
+    assert_eq!(e, "ci/gate.pin: its first line '0.9.0' is not '<version> <sha256>'");
 }
 
 #[test]
@@ -567,10 +650,10 @@ fn set_up_keeps_a_file_made_after_it_looked() {
         );
     }
     let host = ProcessHost::in_environment(environment(Some(&bin.path()), &[]).into_iter(), &Interrupt::new());
-    let files = set_up(&host, &repo.path).unwrap();
-    assert_eq!(files, [SetUpFile { path: "ci/gate.pin", written: true }, SetUpFile { path: "gate.toml", written: false }]);
+    let files = set_up(&host, &repo.path, None).unwrap();
+    assert_eq!(files, [SetUpFile { path: "gate.toml", written: false }]);
     assert_eq!(read(&format!("{}/gate.toml", repo.path)), "# mine\n");
-    assert_eq!(repo.git(&["status", "--porcelain"]), "?? ci/\n?? gate.toml\n");
+    assert_eq!(repo.git(&["status", "--porcelain"]), "?? gate.toml\n");
 }
 
 #[test]
@@ -585,8 +668,8 @@ fn set_up_keeps_a_directory_made_after_it_looked_and_leaves_nothing_in_it() {
          for s in /usr/bin/ln /bin/ln; do [ -x \"$s\" ] && exec \"$s\" \"$@\"; done\nexit 127\n",
     );
     let host = ProcessHost::in_environment(environment(Some(&bin.path()), &[]).into_iter(), &Interrupt::new());
-    let files = set_up(&host, &repo.path).unwrap();
-    assert_eq!(files, [SetUpFile { path: "ci/gate.pin", written: true }, SetUpFile { path: "gate.toml", written: false }]);
+    let files = set_up(&host, &repo.path, None).unwrap();
+    assert_eq!(files, [SetUpFile { path: "gate.toml", written: false }]);
     let left: Vec<_> = std::fs::read_dir(format!("{}/gate.toml", repo.path)).unwrap().map(|e| e.unwrap().file_name()).collect();
     assert!(left.is_empty(), "{left:?}");
 }
@@ -598,9 +681,10 @@ fn set_up_is_two_commands_over_ssh_from_a_directory_under_home() {
     let repo = Repo::with_host(&[("go.mod", "module m\n"), ("pyproject.toml", "[tool.pytest]\n")], ssh.host.clone());
     std::os::unix::fs::symlink(&repo.path, home.join("proj")).unwrap();
     let before = ssh.calls().len();
-    let files = set_up(&ssh.host, "~/proj").unwrap();
+    let (version, _) = parse_pin(BUILT_IN_PIN).unwrap();
+    let files = set_up(&ssh.host, "~/proj", Some(&version)).unwrap();
     assert_eq!(ssh.calls().len() - before, 2);
-    assert!(files.iter().all(|f| f.written), "{files:?}");
+    assert!(files.len() == 2 && files.iter().all(|f| f.written), "{files:?}");
     let settings = read(&format!("{}/gate.toml", repo.path));
     assert_eq!(settings, starter_settings(&["go.mod"], Some("[tool.pytest]\n")));
 }
@@ -608,9 +692,9 @@ fn set_up_is_two_commands_over_ssh_from_a_directory_under_home() {
 #[test]
 fn set_up_needs_a_checkout() {
     let repo = Repo::new(&[]);
-    let e = set_up(&repo.host, &repo.outside).unwrap_err().to_string();
+    let e = set_up(&repo.host, &repo.outside, None).unwrap_err().to_string();
     assert!(e.starts_with(&format!("looking at {}: ", repo.outside)) && e.contains("not a git repository"), "{e}");
-    assert!(set_up(&repo.host, &format!("{}/gone", repo.outside)).is_err());
+    assert!(set_up(&repo.host, &format!("{}/gone", repo.outside), None).is_err());
     assert!(!std::path::Path::new(&format!("{}/gate.toml", repo.outside)).exists());
 }
 
