@@ -24,6 +24,7 @@ These do not fail the gate. Fix each, or say in your report why it should stand.
 
 - `t.T.test_x`: AssertionError: 3 != 2
 - `t.T.test_y`: failed
+- `gate.tests::sums`: thread 'tests::sums' (7) panicked at src/lib.rs:6:5: sums differ OCTOFLOW_TEST_SEED=42 was this failing test's run seed
 
 ## Coverage on new code
 

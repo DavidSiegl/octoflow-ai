@@ -49,6 +49,10 @@
     {
       "name": "t.T.test_y",
       "detail": ""
+    },
+    {
+      "name": "gate.tests::sums",
+      "detail": "thread 'tests::sums' (7) panicked at src/lib.rs:6:5:\nsums differ\n  left: 2\nOCTOFLOW_TEST_SEED=42 was this failing test's run seed"
     }
   ],
   "coverage": {
