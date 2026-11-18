@@ -658,6 +658,25 @@ impl<'a> Workflow<'a> {
             }
         }
         self.write_summary();
+        // round_results can take longer than serve waits for a finished run's files
+        // (crate::serve::FINISHED_RUN_WRITES); a save after the summary has serve list them again, so the summary
+        // reaches the app.
+        if let Err(e) = self.save_released() {
+            self.human.log(&format!("could not save state.json after {SUMMARY_FILE}: {e}"));
+        }
+    }
+
+    /// Write state.json again, with a fresh heartbeat, for a run release has saved. Errors: TakenOver when state.json
+    /// is no longer what this orchestrator last wrote (save's owner check cannot tell, since the owner is null now);
+    /// the host's, when it cannot be read or written.
+    fn save_released(&mut self) -> Outcome<()> {
+        if self.host.read(&self.state_path())?.as_deref() != Some(self.state.to_text().as_str()) {
+            return Err(Stopped::TakenOver(OrchestratorError(format!(
+                "run {} was written by another orchestrator since its release; stopping without saving",
+                self.state.run_id
+            ))));
+        }
+        Ok(self.write_state()?)
     }
 
     /// Write summary.md for a run that just ended; a failure costs only the summary, so it is only logged.

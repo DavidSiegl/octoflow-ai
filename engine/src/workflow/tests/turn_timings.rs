@@ -337,6 +337,26 @@ fn a_summary_that_cannot_be_written_changes_no_outcome() {
     assert!(f.told.lines().contains(&"could not write summary.md: disk full".to_string()));
 }
 
+#[test]
+fn a_run_taken_over_while_its_summary_is_written_is_not_saved_again() {
+    let host = Rc::new(FakeHost::default());
+    let other = Rc::downgrade(&host);
+    host.state().before_write = Some(Box::new(move |path, _| {
+        if path.ends_with("/summary.md") {
+            let host = other.upgrade().expect("the host outlives its hook");
+            let state = path.replace("/summary.md", "/state.json");
+            let taken = host.state().files[&state].replace("\"owner\":null", "\"owner\":{\"host\":\"b\",\"pid\":7}");
+            host.state().files.insert(state, taken);
+        }
+        Ok(())
+    }));
+    let f = Fixture::on(host, new_state(), vec![("spec", vec![spec_turn()]), ("build", vec![idle()])]);
+    failure(f.workflow(RunSettings { turn_timeout: 60, ..RunSettings::default() }).run());
+    assert!(f.saved().get("owner").is_some_and(Value::is_set), "{:?}", f.saved());
+    let told = f.told.lines();
+    assert!(told.iter().any(|l| l.starts_with("could not save state.json after summary.md: run ")), "{told:?}");
+}
+
 // -- metrics.json ------------------------------------------------------------------------------------------------
 
 #[test]

@@ -203,3 +203,17 @@ fn a_released_run_has_its_summary() {
     let summary = f.host.state().files.get(&format!("{}/summary.md", f.state.dir())).cloned();
     assert!(summary.is_some_and(|s| s.contains("did not write")));
 }
+
+/// release saves state.json again after summary.md, however long the summary took, so that serve, which has stopped
+/// listing a finished run's files once its state.json is FINISHED_RUN_WRITES old, lists them again and sends it.
+#[test]
+fn a_released_run_saves_its_state_again_after_its_summary() {
+    let f = Fixture::new(vec![("spec", vec![spec_turn()]), ("build", vec![idle()])]);
+    failure(f.workflow(RunSettings { turn_timeout: 60, ..RunSettings::default() }).run());
+    let writes = f.host.state().writes.clone();
+    let state = format!("{}/state.json", f.state.dir());
+    let summary = format!("{}/summary.md", f.state.dir());
+    let summary_at = writes.iter().rposition(|w| *w == summary).expect("a summary.md");
+    assert!(writes[summary_at + 1..].contains(&state), "{writes:?}");
+    assert_eq!(f.saved().get("owner"), Some(&Value::Null));
+}

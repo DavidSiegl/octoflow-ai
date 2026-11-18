@@ -322,8 +322,12 @@ struct Sent {
     /// The run's files, as last listed.
     files: Value,
     /// True means the run is finished and files is taken to be all it has under its record key, so they are not listed
-    /// again until the record changes; always false for a running run. RunWatch::poll says when a list settles.
+    /// again until the record changes or state.json is written again; always false for a running run. RunWatch::poll
+    /// says when a list settles.
     files_settled: bool,
+    /// The record's heartbeat_age, whole seconds; None when it had none. A lower one at a later poll means state.json
+    /// was written again since.
+    age: Option<u64>,
 }
 
 impl<'p> RunWatch<'p> {
@@ -342,9 +346,10 @@ impl<'p> RunWatch<'p> {
     ///
     /// The first poll sends every run's record and files. A running run's files are listed on every poll. A finished
     /// or failed run's are listed until its state.json is FINISHED_RUN_WRITES old (the record's heartbeat_age) and two
-    /// polls in a row with the same record list the same files; then again only when its record changes, as nothing
-    /// else drives it. The wait is for the files the engine writes after the save that finishes the run, which
-    /// FINISHED_RUN_WRITES names; one written later still is told of only at the record's next change. A poll that
+    /// polls in a row with the same record list the same files; then again only when its record changes or its
+    /// state.json is written again (heartbeat_age went down), as nothing else drives it. The wait is for the files the
+    /// engine writes after the save that finishes the run, which FINISHED_RUN_WRITES names; one written later still is
+    /// told of only at the next such write, which the engine makes after it (Workflow::release). A poll that
     /// fails sends only its problem, and changes nothing else of what the watch holds.
     pub fn poll(&mut self) -> Vec<Event> {
         match self.changes() {
@@ -370,8 +375,9 @@ impl<'p> RunWatch<'p> {
             // heartbeat_age: whole seconds since state.json was written.
             let age = record.get("heartbeat_age").and_then(Value::as_u64);
             let written = age.is_none_or(|age| age >= FINISHED_RUN_WRITES.as_secs());
+            let rewritten = old.is_some_and(|old| age.zip(old.age).is_some_and(|(age, was)| age < was));
             let (files, files_settled) = match old {
-                Some(old) if same_record && finished && old.files_settled => (old.files.clone(), true),
+                Some(old) if same_record && !rewritten && finished && old.files_settled => (old.files.clone(), true),
                 _ => {
                     let files = self.project.files(&run_id)?;
                     let settled = finished && written && same_record && old.is_some_and(|old| old.files == files);
@@ -384,7 +390,7 @@ impl<'p> RunWatch<'p> {
             if old.is_none_or(|old| old.files != files) {
                 events.push(Event::new("files", [("run", id), ("files", files.clone())]));
             }
-            sent.insert(run_id, Sent { key, files, files_settled });
+            sent.insert(run_id, Sent { key, files, files_settled, age });
         }
         for gone in self.sent.keys().filter(|id| !sent.contains_key(*id)) {
             events.push(Event::new("record", [("run", Value::from(gone.as_str())), ("record", Value::Null)]));

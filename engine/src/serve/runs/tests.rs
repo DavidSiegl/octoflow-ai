@@ -132,6 +132,24 @@ fn a_finished_runs_file_written_later_than_a_poll_interval_is_still_sent() {
 }
 
 #[test]
+fn a_finished_runs_file_written_after_its_files_settled_is_sent_once_state_json_is_written_again() {
+    let w = Watched::new();
+    let done = [("phase", Value::from("done")), ("error", Value::from("the build failed"))];
+    w.save(FINISHED_RUN_WRITES.as_secs(), &done);
+    let mut watch = RunWatch::new(&w.project);
+    watch.poll();
+    assert_eq!(watch.poll(), vec![]);
+    // summary.md lands after the files settled: nothing tells of it until the engine saves state.json again.
+    w.host.state().files.insert(format!("{}/summary.md", run_dir()), "failed".to_string());
+    w.save(FINISHED_RUN_WRITES.as_secs() + 30, &done);
+    assert_eq!(watch.poll(), vec![]);
+    w.save(0, &done);
+    let events = watch.poll();
+    assert_eq!(kinds(&events), ["files"]);
+    assert_eq!(events[0].payload.get("files").unwrap().to_string(), r#"[{"name":"summary.md","mtime":0}]"#);
+}
+
+#[test]
 fn a_run_of_this_host_whose_orchestrator_exited_is_stale() {
     static ASKED: AtomicI64 = AtomicI64::new(0);
     let w = Watched::new();
