@@ -19,7 +19,7 @@ use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
 use crate::harness::{harness, AgentSettings};
 use crate::herdr::{Herdr, HerdrError};
-use crate::host::{git_status, Host, PushError, Scanned};
+use crate::host::{git_status, Host, PushError, Scanned, SecretScan};
 use crate::interrupt::Interrupt;
 use crate::json::{object, Object, ValueExt};
 use crate::local_gate::{self, LOCAL_GATE};
@@ -492,7 +492,7 @@ impl<'a> Workflow<'a> {
             self.check_gate()?;
         } else if self.state.pull_request {
             // Publishing scans what it pushes; the gate's preflight checks gitleaks itself.
-            self.host.check_gitleaks()?;
+            self.host.check_gitleaks(SecretScan::Pushes)?;
         }
         if self.state.pull_request && self.state.worktree.is_none() {
             self.check_repo()?;
@@ -515,7 +515,7 @@ impl<'a> Workflow<'a> {
             // A snapshot takes every change in the tree, so the tree must start with none.
             self.require_clean()?;
         }
-        self.host.check_gitleaks()?;
+        self.host.check_gitleaks(SecretScan::Snapshots)?;
         local_gate::preflight(self.host)
     }
 

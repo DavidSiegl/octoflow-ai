@@ -4,7 +4,7 @@
 use super::*;
 use crate::error::shortened;
 use crate::host::tests::{environment, put, read, tool, Repo, FAKE_TOKEN};
-use crate::host::{ProcessHost, PushError};
+use crate::host::{ProcessHost, PushError, SecretScan};
 use crate::interrupt::Interrupt;
 use crate::test_support::oracle;
 
@@ -464,14 +464,14 @@ fn a_report_left_by_an_earlier_scan_is_not_read() {
 #[test]
 fn the_preflight_needs_gitleaks_git() {
     let s = Scan::new();
-    s.repo.host.check_gitleaks().unwrap();
+    s.repo.host.check_gitleaks(SecretScan::Snapshots).unwrap();
     s.mode("old");
-    let e = s.repo.host.check_gitleaks().unwrap_err();
+    let e = s.repo.host.check_gitleaks(SecretScan::Snapshots).unwrap_err();
     assert!(e.0.contains("`gitleaks git` does not run: install gitleaks 8.19"), "{e}");
     // No gitleaks at all.
     let nowhere =
         ProcessHost::in_environment(environment(None, &[("PATH", &s.run_dir)]).into_iter(), &Interrupt::new());
-    let e = nowhere.check_gitleaks().unwrap_err();
+    let e = nowhere.check_gitleaks(SecretScan::Pushes).unwrap_err();
     assert!(e.0.contains("gitleaks cannot be started (") && e.0.contains("install gitleaks 8.19"), "{e}");
 }
 

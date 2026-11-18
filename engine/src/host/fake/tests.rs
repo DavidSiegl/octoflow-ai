@@ -1,7 +1,7 @@
 //! FakeHost plays what the Workflow tests ask of it, with Host's own steps running on its git.
 
 use super::*;
-use crate::host::{git_status, GhError, PullRequest, PushError};
+use crate::host::{git_status, GhError, PullRequest, PushError, SecretScan};
 
 fn proj(name: &str) -> String {
     format!("/proj/{name}")
@@ -106,9 +106,9 @@ fn pushes_scan_first_and_land_on_its_origin() {
     assert_eq!(found.leaks[0].commit, "c2");
     assert!(host.read("/r/leaks.json").unwrap().unwrap().contains(FAKE_TOKEN));
     assert!(host.remote_branch_commit("/proj", "b").unwrap().is_none());
-    host.check_gitleaks().unwrap();
+    host.check_gitleaks(SecretScan::Pushes).unwrap();
     host.state().gitleaks_missing = true;
-    assert!(host.check_gitleaks().unwrap_err().0.contains("install gitleaks"));
+    assert!(host.check_gitleaks(SecretScan::Pushes).unwrap_err().0.contains("install gitleaks"));
 }
 
 #[test]

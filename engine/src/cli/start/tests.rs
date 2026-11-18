@@ -510,7 +510,7 @@ fn a_run_of_the_jenkins_gate_past_round_0_needs_the_local_gates_preflight() {
     let config = ConfigDir::at("/nowhere");
     let world = connected(&f, &config);
     let e = resumed_state(&resume_args(&["a1b2c3"]), "/proj", &world).unwrap_err();
-    assert!(e.0.contains("every push is scanned for secrets first"), "{e}");
+    assert!(e.0.contains("the quality gate scans each snapshot for secrets"), "{e}");
     // A run whose gate goes off needs none of it.
     let (resumed, _) = resumed_state(&resume_args(&["a1b2c3", "--no-quality-gate"]), "/proj", &world).unwrap();
     assert_eq!((resumed.quality_job, resumed.quality_gate_disabled), (None, true));

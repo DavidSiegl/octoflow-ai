@@ -151,6 +151,26 @@ impl Completed {
     }
 }
 
+/// What a run scans for secrets with gitleaks, which [`Host::check_gitleaks`]'s error gives as the reason the run
+/// needs it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SecretScan {
+    /// Every push of a run that publishes, before it is pushed.
+    Pushes,
+    /// Every snapshot the quality gate judges, before it is judged.
+    Snapshots,
+}
+
+impl SecretScan {
+    /// Why the run needs gitleaks, as a clause that opens an error.
+    fn why(self) -> &'static str {
+        match self {
+            SecretScan::Pushes => "this run pushes, and every push is scanned for secrets first",
+            SecretScan::Snapshots => "the quality gate scans each snapshot for secrets before it judges it",
+        }
+    }
+}
+
 /// A file a change touches, as [`Host::changed_line_counts`] gives it.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ChangedFile {
@@ -707,13 +727,13 @@ pub trait Host {
         }
     }
 
-    /// Errors, saying how to install it, when gitleaks_problem finds a problem.
-    fn check_gitleaks(&self) -> Result<(), OrchestratorError> {
+    /// Errors when gitleaks_problem finds a problem, opening with why a run that scans as scan says needs gitleaks
+    /// and ending with how to install it.
+    fn check_gitleaks(&self, scan: SecretScan) -> Result<(), OrchestratorError> {
         match self.gitleaks_problem() {
-            Some(problem) => Err(OrchestratorError(format!(
-                "this run pushes, and every push is scanned for secrets first, but {problem}: {}",
-                crate::constants::GITLEAKS_INSTALL
-            ))),
+            Some(problem) => {
+                Err(OrchestratorError(format!("{}, but {problem}: {}", scan.why(), crate::constants::GITLEAKS_INSTALL)))
+            }
             None => Ok(()),
         }
     }
