@@ -513,7 +513,8 @@ impl RunState {
         run_key(&self.run_id)
     }
 
-    /// Whether close recorded that it closed the run (closed is set and not empty).
+    /// Whether close recorded that it closed the run: closed is set and not empty. An empty closed, which close never
+    /// writes, is not closed, so every command that asks (resume, list's resume hint, drain, close, forget) asks this.
     pub fn is_closed(&self) -> bool {
         self.closed.as_deref().is_some_and(|c| !c.is_empty())
     }

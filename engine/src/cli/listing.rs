@@ -57,7 +57,6 @@ pub const BLOCKED_STATUS: &str = "blocked";
 pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> bool, target: &[String]) -> Object {
     let s = run.shown();
     let unreadable = run.problem();
-    let set = |text: &Option<String>| text.as_deref().filter(|t| !t.is_empty()).is_some();
     let pipeline = s.pipeline().ok();
     let step = pipeline.as_ref().and_then(|p| p.step(&s.phase));
     let role = step.map(|st| st.role.clone());
@@ -65,7 +64,7 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
     let stale = health.as_ref().is_some_and(|(h, _)| *h == STALE);
     let running = health.as_ref().is_some_and(|(h, _)| *h == RUNNING);
     // resume refuses a run whose state.json it cannot read.
-    let resume = (stale && !set(&s.closed) && unreadable.is_none()).then(|| resume_command(&s.run_id, target));
+    let resume = (stale && !s.is_closed() && unreadable.is_none()).then(|| resume_command(&s.run_id, target));
     let last_turn = s.turns.iter().rev().find(|t| t.step == s.phase);
     let blocked = s.blocked.as_ref().filter(|b| !b.is_empty());
     let waiting = if running && blocked.is_some() {

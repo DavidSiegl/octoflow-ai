@@ -487,8 +487,8 @@ fn unfinished_run(
         return (format!("is not under {}/{RUNS_DIR}", prs.cwd), start_over);
     };
     let s = run.shown();
-    if let Some(closed) = s.closed.as_deref().filter(|c| !c.is_empty()) {
-        return (format!("was closed ({closed})"), start_over);
+    if s.is_closed() {
+        return (format!("was closed ({})", s.closed.as_deref().unwrap_or_default()), start_over);
     }
     let world = prs.world;
     let health = run.health(world.local_host, world.with.pid_alive);

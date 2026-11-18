@@ -197,6 +197,13 @@ fn a_closed_run_is_not_resumed_even_with_force() {
     assert_eq!(error(resumable(&["--force"], &saved)), "run 20260929-120000-a1b2c3 was closed; start a new run");
 }
 
+#[test]
+fn a_run_whose_closed_is_empty_is_resumed() {
+    // close never writes "", and RunState::is_closed reads it as not closed, as list and drain do.
+    let state = resumable(&[], &saved_settings(&[("closed", Value::from(""))])).unwrap();
+    assert_eq!(state.closed.as_deref(), Some(""));
+}
+
 // -- resume --force against another run of the checkout ------------------------------------------------------------
 
 /// resume --force of run a1b2c3 on host, which looks alive: saved 30 s ago by a live pid on this host. The fixture of
