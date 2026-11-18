@@ -42,6 +42,17 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **`cargo xtask raise-gate-pin` bumps the working tree's version, not the target branch's.** Raised by
+  cross-review 229 (F6): `bump_package_version` (`xtask/src/raise_gate_pin.rs`) raises whatever `engine/Cargo.toml`
+  holds, so a run on a branch that already bumped for another change, or a second raise on one branch before it
+  merges, writes 0.91.0 over main's 0.89.x and a second `docs/releases/` file, and 0.90.0 is never released.
+  gate-pin-follows/02's workflow rebuilds its branch from main each time, so it is a hand run's risk. Closes with the
+  bump taken from the version at `git merge-base HEAD origin/main`, or a refusal when the tree's differs from it.
+- **The raise xtask holds second copies of the engine's gate facts.** Raised by cross-review 229 (F13):
+  `FIRST_WITH_GATE`, the release download URL and the pin line's parser in `xtask/src/raise_gate_pin.rs` repeat
+  `engine/src/local_gate.rs`'s `FIRST_WITH_GATE`, `RELEASE_URL` and `parse_pin`, with a comment pointing at the
+  engine's; they can drift. Closes with xtask depending on the engine crate for them, if its build cost is acceptable,
+  or a test in xtask that compares the two.
 - **A failed run's summary.md can still miss the desktop app.** `Workflow::release` (`engine/src/workflow.rs`) saves
   state.json with no owner before `write_summary`, which runs `round_results` (over SSH on a `--machine`), so a
   summary that lands more than `FINISHED_RUN_WRITES` (60 s) after that save is never sent: serve's stream stops

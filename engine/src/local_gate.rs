@@ -24,6 +24,8 @@ pub const LOCAL_GATE: &str = "local";
 /// ci/gate.pin, read when the engine is built, so this repository's Jenkins build and a run judged without a pin use
 /// the same release; `cargo xtask raise-gate-pin` raises it.
 pub const BUILT_IN_PIN: &str = pin_line(include_str!("../../ci/gate.pin"));
+// A pin with no line but comments is a build error; a malformed line fails local_gate's tests (parse_pin).
+const _: () = assert!(!BUILT_IN_PIN.is_empty(), "ci/gate.pin has no `<version> <sha256>` line");
 
 /// Where a pin's release is downloaded from: the GitHub release `v<version>` of octoflow-gate, with {v} the version.
 const RELEASE_URL: &str = "https://github.com/DavidSiegl/octoflow-gate/releases/download/v{v}/octoflow-gate-{v}.tar.gz";

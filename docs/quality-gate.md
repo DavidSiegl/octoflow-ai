@@ -14,8 +14,8 @@ from a base commit to the working tree with linters, the tests and their coverag
 and writes the quality file, `quality.md`, and `quality.json`. What it checks, the settings it reads and how it reads
 Rust are its own docs'
 ([docs/quality-gate.md](https://github.com/DavidSiegl/octoflow-gate/blob/main/docs/quality-gate.md); the release that
-judges is the one `ci/gate.pin` names, whose tag holds the docs as they were then).
-This repository was its home until 0.62.1.
+judges is the one `ci/gate.pin` names, whose tag holds the docs as they were then; what each release changed is on
+its [releases page](https://github.com/DavidSiegl/octoflow-gate/releases)). This repository was its home until 0.62.1.
 
 What this repository gives it:
 
