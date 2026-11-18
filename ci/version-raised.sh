@@ -14,7 +14,8 @@ git fetch --quiet origin "+refs/heads/$CHANGE_TARGET:refs/remotes/origin/$CHANGE
 # other path, or a diff that fails, needs the version raised, so a path left off errs towards a raise. Markdown counts
 # as docs only at the top level and under docs/ and evals/: elsewhere it may be embedded in the engine. The engine's
 # test-only Rust is every module its parent declares under #[cfg(test)]: tests.rs and tests/, the fake and fixture
-# modules, test_support.rs and prompt_parity.rs; the desktop shell's is its tests.rs (ui/src-tauri/src). gate.toml,
+# modules, test_support.rs and prompt_parity.rs; the desktop shell's is its tests.rs (ui/src-tauri/src). ci/'s scripts
+# and nextest.toml are CI, but not ci/gate.pin: the engine is built with its line (BUILT_IN_PIN). gate.toml,
 # pyproject.toml, uv.lock and .python-version, which judge this repository's own changes in Jenkins (pyproject.toml
 # holds no release's metadata, only the gate's Markdown linter and its rules), xtask, its chores (the eval runner and
 # its bundles), .gitignore, which only tells git what to leave untracked, and .copier-answers.yml, the agent-estate
@@ -23,7 +24,7 @@ NOT_RELEASED=":(exclude)docs :(exclude,glob)*.md :(exclude)tests :(exclude)engin
 :(exclude,glob)**/tests.rs :(exclude,glob)engine/src/**/tests/** :(exclude,glob)engine/src/**/fake.rs
 :(exclude,glob)engine/src/**/fixture.rs :(exclude)engine/src/test_support.rs :(exclude)engine/src/prompt_parity.rs
 :(exclude,glob)ui/src/**/*.test.ts :(exclude,glob)ui/src/**/*.test.tsx :(exclude)ui/src/test
-:(exclude)ci :(exclude)Jenkinsfile :(exclude).github :(exclude)evals :(exclude)gate.toml
+:(exclude,glob)ci/*.sh :(exclude)ci/nextest.toml :(exclude)Jenkinsfile :(exclude).github :(exclude)evals :(exclude)gate.toml
 :(exclude)pyproject.toml :(exclude)uv.lock :(exclude).python-version
 :(exclude)xtask :(exclude).gitignore :(exclude).copier-answers.yml"
 base=$(git merge-base HEAD "origin/$CHANGE_TARGET")
