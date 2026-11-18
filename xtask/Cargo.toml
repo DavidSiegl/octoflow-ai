@@ -21,6 +21,11 @@ serde_json = { version = "1", features = ["preserve_order"] }
 # tests'. Approved by the user for ticket 48, 2026-11-13.
 tempfile = "3"
 
+[dev-dependencies]
+# The engine's gate facts, which src/raise_gate_pin/tests.rs holds raise-gate-pin's own copies to; a test's only, so
+# that the xtask does not build the engine to run.
+octoflow-engine = { path = "../engine" }
+
 # A stand-in for the engine, for tests/eval/: a binary of this package, so that its tests find it by
 # CARGO_BIN_EXE_fake-engine, which Cargo sets only for a test's own package.
 [[bin]]
