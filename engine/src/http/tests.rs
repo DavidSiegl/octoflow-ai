@@ -1,6 +1,9 @@
 use std::net::TcpListener;
+use std::os::fd::AsRawFd;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+
+use nix::sys::socket::{bind, getsockname, socket, AddressFamily, SockFlag, SockType, SockaddrIn};
 
 use super::*;
 
@@ -142,13 +145,15 @@ fn endless_redirects_end_in_the_last_status() {
 
 #[test]
 fn no_answer_is_worded_with_the_system_s_words() {
-    // A port bound and never listened on is refused. A connection's own end is such a port, and no other socket can
-    // take it while the connection lasts, as one could take a listener's freed port (todo/84).
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let refusing = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-    let url = format!("http://{}/", refusing.local_addr().unwrap());
+    // A port bound and never listened on is refused. While the socket is open no other bind() can take the port, as
+    // one could take a listener's freed port, and connect() never picks a bound port as its own end, as it can pick a
+    // connection's, connecting the client to itself (todo/84, cross-review 241).
+    let refusing = socket(AddressFamily::Inet, SockType::Stream, SockFlag::empty(), None).unwrap();
+    bind(refusing.as_raw_fd(), &SockaddrIn::new(127, 0, 0, 1, 0)).unwrap();
+    let port = getsockname::<SockaddrIn>(refusing.as_raw_fd()).unwrap().port();
+    let url = format!("http://127.0.0.1:{port}/");
     assert_eq!(direct().send(&get(&url)), Err(HttpError::NoAnswer("Connection refused".to_string())));
-    drop((refusing, listener));
+    drop(refusing);
 
     // Accepted by the kernel, never answered.
     let silent = TcpListener::bind("127.0.0.1:0").unwrap();
