@@ -24,7 +24,7 @@ export const BUILD_CODE = ["vite", "rolldown"];
 // The names of the files that hold the licenses of code a package copied from others, wherever in the name and in
 // whatever case: THIRD-PARTY-LICENSE, THIRD_PARTY_LICENSES, ThirdPartyNotices.txt, LICENSE-THIRD-PARTY. Never taken for
 // the package's own license text. Shipped for BUILD_CODE's packages, and for any package when the name also starts
-// with NOTICE; a production package's other third-party files are not looked for (TODO.md).
+// with NOTICE; a production package's other third-party files are not looked for (GitHub #503).
 const THIRD_PARTY = /third[-_ ]?party/i;
 
 /**

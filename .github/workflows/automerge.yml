@@ -1,7 +1,7 @@
 # Keeps auto-merge on for a pull request into main from a branch of this repository, so GitHub merges it with a
 # merge commit once the ci-cd ruleset's required check, continuous-integration/jenkins/pr-head, passes; when that
 # check has passed already, gh merges at once. The orchestrator's own pull requests (branches under orchestrator/)
-# merge the same way, by the owner's decision of 2026-10-24 (TODO.md, "An agent's pull request can reach main").
+# merge the same way, by the owner's decision of 2026-10-24.
 # Left for a human to merge, with auto-merge turned off if it is on: drafts; pull requests labelled no-automerge;
 # and pull requests into any branch but main, which no ruleset requires a check for, so auto-merge would merge them
 # unchecked. A run opens its pull request as a draft when the Reviewer still requested changes, when the quality
