@@ -5,9 +5,9 @@
 use clap::error::ErrorKind;
 
 use super::*;
-use serde_json::Value;
 use crate::json::ValueExt;
 use crate::test_support::TempDir;
+use serde_json::Value;
 
 fn parse(argv: &[&str]) -> Result<Command, clap::Error> {
     parse_args(argv.iter().map(OsString::from), &ConfigDir::at("/nowhere"))
@@ -65,16 +65,50 @@ fn run_id_takes_only_an_id_of_new_run_ids_format_and_is_not_in_the_help() {
 #[test]
 fn every_flag_of_run() {
     let args = run(&[
-        "--machine", "box", "--cwd", "/p", "--max-rounds", "4", "--timeout", "90", "--permission-mode", "plan",
-        "--model", "m", "--spec-model", "s", "--review-model", "r", "--role-model", "build=b", "--role-model",
-        "build=b2", "--agent", "codex", "--role-agent", "review=agy", "--max-quality-rounds", "2",
-        "--workflow-file", "/w.toml", "--worktree", "--quality-gate", "local", "--spec", "/s.md", "--no-pr", "task",
+        "--machine",
+        "box",
+        "--cwd",
+        "/p",
+        "--max-rounds",
+        "4",
+        "--timeout",
+        "90",
+        "--permission-mode",
+        "plan",
+        "--model",
+        "m",
+        "--spec-model",
+        "s",
+        "--review-model",
+        "r",
+        "--role-model",
+        "build=b",
+        "--role-model",
+        "build=b2",
+        "--agent",
+        "codex",
+        "--role-agent",
+        "review=agy",
+        "--max-quality-rounds",
+        "2",
+        "--workflow-file",
+        "/w.toml",
+        "--worktree",
+        "--quality-gate",
+        "local",
+        "--spec",
+        "/s.md",
+        "--no-pr",
+        "task",
     ]);
     assert_eq!(args.target, Target { machine: Some("box".into()), cwd: Some("/p".into()) });
     assert_eq!(args.target.flags(), ["--machine", "box", "--cwd", "/p"]);
     let s = &args.settings;
     assert_eq!((s.max_rounds, s.timeout, s.max_quality_rounds), (Some(4), Some(90), Some(2)));
-    assert_eq!((s.permission_mode.as_deref(), s.model.as_deref(), s.agent.as_deref()), (Some("plan"), Some("m"), Some("codex")));
+    assert_eq!(
+        (s.permission_mode.as_deref(), s.model.as_deref(), s.agent.as_deref()),
+        (Some("plan"), Some("m"), Some("codex"))
+    );
     assert_eq!(s.label_models, [pair("spec", "s"), pair("review", "r")]);
     assert_eq!(s.role_model, [pair("build", "b"), pair("build", "b2")]);
     assert_eq!(s.role_agent, [pair("review", "agy")]);
@@ -100,7 +134,9 @@ fn a_workflow_by_name_is_one_the_configuration_offers() {
     std::fs::write(d.join("workflows/mine.toml"), "").unwrap();
     let config = ConfigDir::at(&d.path());
     let parsed = parse_args(["run", "--workflow", "mine", "t"].map(OsString::from), &config);
-    assert!(matches!(parsed, Ok(Command::Run(RunArgs { starts: Starts { ref workflow, .. }, .. })) if workflow == "mine"));
+    assert!(
+        matches!(parsed, Ok(Command::Run(RunArgs { starts: Starts { ref workflow, .. }, .. })) if workflow == "mine")
+    );
     let e = parse_args(["run", "--workflow", "theirs", "t"].map(OsString::from), &config).unwrap_err();
     assert_eq!(e.kind(), ErrorKind::InvalidValue);
     // Where the directory cannot be listed, the built-in ones.
@@ -119,20 +155,44 @@ fn usage_errors_exit_2_naming_the_problem() {
         (&["resume", "a1b2c3", "--machine", "box", "--cwd", ""], "--cwd is required with --machine"),
         (&["run", "--max-rounds", "0", "t"], "--max-rounds must be at least 1"),
         (&["resume", "a1b2c3", "--max-rounds", "-1"], "--max-rounds must be at least 1"),
-        (&["run", "--max-quality-rounds", "0", "--quality-gate", "local", "t"], "--max-quality-rounds must be at least 1"),
+        (
+            &["run", "--max-quality-rounds", "0", "--quality-gate", "local", "t"],
+            "--max-quality-rounds must be at least 1",
+        ),
         (&["run", "--max-quality-rounds", "2", "t"], "--max-quality-rounds needs --quality-gate"),
-        (&["resume", "a1b2c3", "--max-quality-rounds", "2", "--no-quality-gate"], "does not apply with --no-quality-gate"),
-        (&["run", "--quality-gate", "folder/job", "t"], "the Jenkins quality gate was removed in 0.72.0; use --quality-gate local"),
+        (
+            &["resume", "a1b2c3", "--max-quality-rounds", "2", "--no-quality-gate"],
+            "does not apply with --no-quality-gate",
+        ),
+        (
+            &["run", "--quality-gate", "folder/job", "t"],
+            "the Jenkins quality gate was removed in 0.72.0; use --quality-gate local",
+        ),
         (&["drain", "--quality-gate", "folder/job", "dir"], "the Jenkins quality gate was removed in 0.72.0"),
         (&["resume", "a1b2c3", "--quality-gate", "/local"], "the Jenkins quality gate was removed in 0.72.0"),
         (&["run", "--quality-gate", "", "t"], "the Jenkins quality gate was removed in 0.72.0"),
         (&["run", "--role-model", "build", "t"], "expected ROLE=MODEL, not \"build\""),
         (&["run", "--role-model", "=m", "t"], "expected ROLE=MODEL"),
-        (&["run", "--role-agent", "build", "t"], "expected ROLE=KIND, where KIND is one of agy, claude, codex, opencode, pi; not \"build\""),
-        (&["run", "--role-agent", "build=vim", "t"], "agent vim is not a harness this orchestrator supports; it takes agy, claude, codex, opencode, pi"),
-        (&["run", "--role-agent", "build=gemini", "t"], "agent gemini is not a harness this orchestrator supports any more; agy replaced it"),
-        (&["run", "--agent", "vim", "t"], "agent vim is not a harness this orchestrator supports; it takes agy, claude, codex, opencode, pi"),
-        (&["run", "--agent", "gemini", "t"], "agent gemini is not a harness this orchestrator supports any more; agy replaced it"),
+        (
+            &["run", "--role-agent", "build", "t"],
+            "expected ROLE=KIND, where KIND is one of agy, claude, codex, opencode, pi; not \"build\"",
+        ),
+        (
+            &["run", "--role-agent", "build=vim", "t"],
+            "agent vim is not a harness this orchestrator supports; it takes agy, claude, codex, opencode, pi",
+        ),
+        (
+            &["run", "--role-agent", "build=gemini", "t"],
+            "agent gemini is not a harness this orchestrator supports any more; agy replaced it",
+        ),
+        (
+            &["run", "--agent", "vim", "t"],
+            "agent vim is not a harness this orchestrator supports; it takes agy, claude, codex, opencode, pi",
+        ),
+        (
+            &["run", "--agent", "gemini", "t"],
+            "agent gemini is not a harness this orchestrator supports any more; agy replaced it",
+        ),
         (&["run", "--max-rounds", "two", "t"], "two"),
         (&["run", "--workflow", "default", "--workflow-file", "/w.toml", "t"], "--workflow-file"),
         (&["resume", "a1b2c3", "--quality-gate", "local", "--no-quality-gate"], "--no-quality-gate"),
@@ -176,7 +236,11 @@ fn version_exits_0_with_the_engines_version() {
 
 #[test]
 fn machine_requires_cwd() {
-    for argv in [&["run", "task", "--machine", "remote"][..], &["resume", "a1b2c3", "--machine", "m"], &["list", "--machine", "m"]] {
+    for argv in [
+        &["run", "task", "--machine", "remote"][..],
+        &["resume", "a1b2c3", "--machine", "m"],
+        &["list", "--machine", "m"],
+    ] {
         assert!(refused(argv).0.contains("--cwd is required with --machine"), "{argv:?}");
     }
 }
@@ -214,7 +278,10 @@ fn flags_of_how_a_run_starts_are_run_only() {
 
 #[test]
 fn bad_workflow_file_flags() {
-    for argv in [&["run", "task", "--role-model", "tests"][..], &["run", "task", "--workflow", "default", "--workflow-file", "x.toml"]] {
+    for argv in [
+        &["run", "task", "--role-model", "tests"][..],
+        &["run", "task", "--workflow", "default", "--workflow-file", "x.toml"],
+    ] {
         assert_eq!(refused(argv).1, 2, "{argv:?}");
     }
 }
@@ -287,13 +354,29 @@ fn the_commands_about_runs_and_workflows() {
     let target = Target { machine: Some("m".into()), cwd: Some("~/p".into()) };
     let cases: [(&[&str], Command); 10] = [
         (&["list"], Command::Runs(Target::default(), RunsCommand::List { json: false, pr_state: false })),
-        (&["list", "--json", "--pr-state", "--machine", "m", "--cwd", "~/p"], Command::Runs(target.clone(), RunsCommand::List { json: true, pr_state: true })),
+        (
+            &["list", "--json", "--pr-state", "--machine", "m", "--cwd", "~/p"],
+            Command::Runs(target.clone(), RunsCommand::List { json: true, pr_state: true }),
+        ),
         (&["metrics"], Command::Runs(Target::default(), RunsCommand::Metrics)),
         (&["show", "a1b2c3"], Command::Runs(Target::default(), RunsCommand::Show("a1b2c3".into()))),
         (&["prune", "--dry-run"], Command::Runs(Target::default(), RunsCommand::Prune { dry_run: true })),
-        (&["close", "--cwd", "~/p", "a1b2c3"], Command::Close { target: Target { machine: None, cwd: Some("~/p".into()) }, run_ref: Some("a1b2c3".into()), dry_run: false }),
-        (&["forget", "--all", "--dry-run"], Command::Forget { target: Target::default(), run_ref: None, dry_run: true }),
-        (&["forget", "a1b2c3", "--machine", "m", "--cwd", "~/p"], Command::Forget { target: target.clone(), run_ref: Some("a1b2c3".into()), dry_run: false }),
+        (
+            &["close", "--cwd", "~/p", "a1b2c3"],
+            Command::Close {
+                target: Target { machine: None, cwd: Some("~/p".into()) },
+                run_ref: Some("a1b2c3".into()),
+                dry_run: false,
+            },
+        ),
+        (
+            &["forget", "--all", "--dry-run"],
+            Command::Forget { target: Target::default(), run_ref: None, dry_run: true },
+        ),
+        (
+            &["forget", "a1b2c3", "--machine", "m", "--cwd", "~/p"],
+            Command::Forget { target: target.clone(), run_ref: Some("a1b2c3".into()), dry_run: false },
+        ),
         (&["workflows"], Command::Workflows(None)),
         (&["workflows", "quick"], Command::Workflows(Some("quick".into()))),
     ];
@@ -335,7 +418,9 @@ fn each_help_names_the_flags_cli_json_records() {
     let p = parser(&ConfigDir::at("/nowhere"));
     let subcommands: Vec<String> = p.get_subcommands().map(|c| c.get_name().to_string()).collect();
     // The program's own help, then each command's.
-    for (name, argv) in std::iter::once(("", vec!["--help"])).chain(subcommands.iter().map(|c| (c.as_str(), vec![c.as_str(), "--help"]))) {
+    for (name, argv) in std::iter::once(("", vec!["--help"]))
+        .chain(subcommands.iter().map(|c| (c.as_str(), vec![c.as_str(), "--help"])))
+    {
         let help = parse(&argv).unwrap_err().to_string();
         let mut expected: std::collections::BTreeSet<String> = flags
             .get(name)
@@ -371,7 +456,8 @@ fn each_help_names_the_flags_cli_json_records() {
 
 #[test]
 fn a_flag_given_twice_takes_the_last() {
-    let args = run(&["--cwd", "/a", "--max-rounds", "2", "--cwd", "/b", "--max-rounds", "3", "--no-pr", "--no-pr", "t"]);
+    let args =
+        run(&["--cwd", "/a", "--max-rounds", "2", "--cwd", "/b", "--max-rounds", "3", "--no-pr", "--no-pr", "t"]);
     assert_eq!((args.target.cwd.as_deref(), args.settings.max_rounds, args.no_pr), (Some("/b"), Some(3), true));
     let show = parse(&["show", "--machine", "a", "--machine", "b", "--cwd", "/p", "x"]).unwrap();
     assert_eq!(show.target().and_then(|t| t.machine.as_deref()), Some("b"));
@@ -400,10 +486,8 @@ fn every_command(p: &clap::Command) -> Vec<&clap::Command> {
 /// Each help, short and long, of command and every command under it, as [command name, help].
 fn every_help(command: &mut clap::Command) -> Vec<(String, String)> {
     let name = command.get_name().to_string();
-    let mut helps = vec![
-        (name.clone(), command.render_help().to_string()),
-        (name, command.render_long_help().to_string()),
-    ];
+    let mut helps =
+        vec![(name.clone(), command.render_help().to_string()), (name, command.render_long_help().to_string())];
     for sub in command.get_subcommands_mut() {
         helps.extend(every_help(sub));
     }

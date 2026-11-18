@@ -5,8 +5,8 @@
 /// what `octoflow --version` prints and the desktop app's About shows.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub mod cli;
 pub mod checks;
+pub mod cli;
 pub mod constants;
 pub mod crates_io;
 pub mod env;
@@ -24,8 +24,8 @@ pub mod package_index;
 pub mod patch;
 pub mod paths;
 pub mod pipeline;
-pub mod proofs;
 pub mod prompts;
+pub mod proofs;
 pub mod pull_request;
 pub mod pypi;
 pub mod quality;

@@ -70,9 +70,10 @@ fn a_body_of_another_shape_is_refused_naming_what_is_wrong() {
 fn the_command_is_run_with_the_id_the_target_and_each_flag_as_one_word_then_the_task() {
     let mut request = RunRequest { task: "-t".into(), ..RunRequest::default() };
     let target = ["--cwd".to_string(), "~/p".to_string()];
-    assert_eq!(request.argv("/bin/o", "20261103-120000-abcdef", &target), [
-        "/bin/o", "run", "--run-id=20261103-120000-abcdef", "--cwd", "~/p", "--", "-t"
-    ]);
+    assert_eq!(
+        request.argv("/bin/o", "20261103-120000-abcdef", &target),
+        ["/bin/o", "run", "--run-id=20261103-120000-abcdef", "--cwd", "~/p", "--", "-t"]
+    );
     request = RunRequest {
         task: "t".into(),
         workflow: Some("w".into()),
@@ -83,10 +84,23 @@ fn the_command_is_run_with_the_id_the_target_and_each_flag_as_one_word_then_the_
         no_pr: true,
         worktree: true,
     };
-    assert_eq!(request.argv("o", "i", &[]), [
-        "o", "run", "--run-id=i", "--workflow=w", "--agent=pi", "--model=--m", "--role-agent=b=codex",
-        "--role-model=b=x=y", "--no-pr", "--worktree", "--", "t"
-    ]);
+    assert_eq!(
+        request.argv("o", "i", &[]),
+        [
+            "o",
+            "run",
+            "--run-id=i",
+            "--workflow=w",
+            "--agent=pi",
+            "--model=--m",
+            "--role-agent=b=codex",
+            "--role-model=b=x=y",
+            "--no-pr",
+            "--worktree",
+            "--",
+            "t"
+        ]
+    );
 }
 
 #[test]
@@ -107,6 +121,9 @@ fn run_reads_the_command_back_as_the_request() {
     assert_eq!((args.task.as_deref(), args.run_id.as_deref()), (Some("--x"), Some("20261103-120000-abcdef")));
     assert_eq!((args.no_pr, args.starts.worktree, args.starts.workflow.as_str()), (true, true, "default"));
     assert_eq!((args.settings.agent.as_deref(), args.settings.model.as_deref()), (Some("pi"), Some("-m")));
-    assert_eq!((args.settings.role_agent, args.settings.role_model), (pairs(&[("build", "codex")]), pairs(&[("review", "x=y")])));
+    assert_eq!(
+        (args.settings.role_agent, args.settings.role_model),
+        (pairs(&[("build", "codex")]), pairs(&[("review", "x=y")]))
+    );
     assert_eq!(args.target.cwd.as_deref(), Some("/p"));
 }

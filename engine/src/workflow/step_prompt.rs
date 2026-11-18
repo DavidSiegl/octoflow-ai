@@ -65,7 +65,8 @@ impl RunView<'_> {
         let follow = if q > 0 {
             let report_path = self.own_path(step, n);
             let quality_path = s.quality_path(n, q);
-            self.prompts.fill(Prompt::QualityFixPrompt, &[("quality_path", &quality_path), ("report_path", &report_path)])?
+            self.prompts
+                .fill(Prompt::QualityFixPrompt, &[("quality_path", &quality_path), ("report_path", &report_path)])?
         } else if n > 1 && self.judged_rounds(step, n).is_none_or(|rounds| !rounds.is_empty()) {
             // A later round, for a step that has taken a turn before: a verdict step that earlier ones' requests for
             // changes have skipped so far gets its first prompt.

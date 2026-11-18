@@ -8,12 +8,12 @@
 //! crate::workflow_file's and crate::state's.
 
 use super::*;
-use crate::workflow::fixture::Outcome;
 use crate::constants::{FINISHED, QUALITY_GATE_FAILED};
 use crate::paths::file_name;
-use crate::prompts::QUALITY_PASSED_NOTE;
 use crate::pipeline::{Pipeline, Step};
+use crate::prompts::QUALITY_PASSED_NOTE;
 use crate::test_support::{four, impl_, quick, roles, solo, TempDir};
+use crate::workflow::fixture::Outcome;
 use crate::workflow_file::{find_workflow, load_workflow_file, workflow_definition, workflow_toml};
 
 const D: &str = "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3";
@@ -38,10 +38,11 @@ fn workflow_without_a_spec_step() {
         record.borrow_mut().push((state.base.clone(), host.state().branch.clone(), state.round));
         build(prompt, state, host)
     });
-    let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&quick), vec![
-        ("build", vec![recording(building, &seen)]),
-        ("review", vec![recording(review_turn(1, APPROVE), &seen)]),
-    ]);
+    let f = Fixture::on(
+        Rc::new(FakeHost::default()),
+        new_run(&quick),
+        vec![("build", vec![recording(building, &seen)]), ("review", vec![recording(review_turn(1, APPROVE), &seen)])],
+    );
     assert_eq!(f.workflow(with_pipeline(&quick)).run(), verdict(APPROVE));
     let branch = "orchestrator/add-a-rate-limiter-a1b2c3";
     assert_eq!(*at_first_build.borrow(), [(Some("abc123".to_string()), branch.to_string(), 1)]);
@@ -69,16 +70,24 @@ fn verdict_step_of_another_name_gets_one_retry() {
     (build.again, build.edits) = (Some("Fix {prev_check_path}; report to {build_path}.".into()), true);
     let mut check = Step::new("check", "check", "check-{n}.md", "Check {change}; write {path}.");
     check.loop_to = Some("build".into());
-    let checked = Pipeline::new("checked", roles(&[("build", "Builder"), ("check", "Checker")]), vec![build, check]).unwrap();
+    let checked =
+        Pipeline::new("checked", roles(&[("build", "Builder"), ("check", "Checker")]), vec![build, check]).unwrap();
     let seen = seen();
     let check_1 = |s: &RunState| format!("{}/check-1.md", s.dir());
-    let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&checked), vec![
-        ("build", vec![build_turn(1)]),
-        (
-            "check",
-            vec![writes(check_1, "fine by me", "done"), recording(writes(check_1, &format!("VERDICT: {APPROVE}\n"), "done"), &seen)],
-        ),
-    ]);
+    let f = Fixture::on(
+        Rc::new(FakeHost::default()),
+        new_run(&checked),
+        vec![
+            ("build", vec![build_turn(1)]),
+            (
+                "check",
+                vec![
+                    writes(check_1, "fine by me", "done"),
+                    recording(writes(check_1, &format!("VERDICT: {APPROVE}\n"), "done"), &seen),
+                ],
+            ),
+        ],
+    );
     let mut wf = f.workflow(with_pipeline(&checked));
     assert_eq!(wf.run(), verdict(APPROVE));
     assert_eq!(*seen.borrow(), [retry_prompt(&format!("{D}/check-1.md"))]);
@@ -90,12 +99,16 @@ fn verdict_step_of_another_name_gets_one_retry() {
 fn four_roles_loop_back_to_the_builder_only() {
     let four = four();
     let seen = seen();
-    let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&four), vec![
-        ("spec", vec![spec_turn()]),
-        ("tests", vec![write_tests()]),
-        ("build", vec![recording(build_turn(1), &seen), recording(build_turn(2), &seen)]),
-        ("review", vec![review_turn(1, CHANGES_REQUESTED), review_turn(2, APPROVE)]),
-    ]);
+    let f = Fixture::on(
+        Rc::new(FakeHost::default()),
+        new_run(&four),
+        vec![
+            ("spec", vec![spec_turn()]),
+            ("tests", vec![write_tests()]),
+            ("build", vec![recording(build_turn(1), &seen), recording(build_turn(2), &seen)]),
+            ("review", vec![review_turn(1, CHANGES_REQUESTED), review_turn(2, APPROVE)]),
+        ],
+    );
     let mut wf = f.workflow(with_pipeline(&four));
     assert_eq!(wf.run(), verdict(APPROVE));
     let prompted = ["spec", "tests", "build", "review", "build", "review"].map(|r| format!("{r}-a1b2c3"));
@@ -129,20 +142,33 @@ fn four_roles_loop_back_to_the_builder_only() {
 #[test]
 fn interrupted_mid_loop_resumes_at_the_right_step() {
     let four = four();
-    let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&four), vec![
-        ("spec", vec![spec_turn()]),
-        ("tests", vec![write_tests()]),
-        ("build", vec![build_turn(1)]),
-        ("review", vec![review_turn(1, CHANGES_REQUESTED)]),
-    ]);
+    let f = Fixture::on(
+        Rc::new(FakeHost::default()),
+        new_run(&four),
+        vec![
+            ("spec", vec![spec_turn()]),
+            ("tests", vec![write_tests()]),
+            ("build", vec![build_turn(1)]),
+            ("review", vec![review_turn(1, CHANGES_REQUESTED)]),
+        ],
+    );
     f.play("build", vec![then_interrupted(&f.interrupt, build_turn(2))]);
     assert_eq!(f.workflow(with_pipeline(&four)).run(), Err(Stopped::Interrupted));
     let saved = f.saved();
     let fields = ["workflow", "phase", "error"].map(|key| text(&saved, key).unwrap_or_default());
-    assert_eq!((fields, saved.get("round")), (["four", "build", "interrupted"].map(String::from), Some(&Value::from(2))));
+    assert_eq!(
+        (fields, saved.get("round")),
+        (["four", "build", "interrupted"].map(String::from), Some(&Value::from(2)))
+    );
     let seen = seen();
     let state = RunState::from_saved(&saved).unwrap();
-    let f2 = Fixture::resume(Rc::clone(&f.host), state, vec![("review", vec![recording(review_turn(2, APPROVE), &seen)])], &[], &[]);
+    let f2 = Fixture::resume(
+        Rc::clone(&f.host),
+        state,
+        vec![("review", vec![recording(review_turn(2, APPROVE), &seen)])],
+        &[],
+        &[],
+    );
     f2.herdr.state().panes = 4;
     let mut wf = f2.workflow(RunSettings { pipeline: Some(four), ..f2.as_saved() });
     assert_eq!(wf.run(), verdict(APPROVE));
@@ -157,12 +183,16 @@ fn interrupted_mid_loop_resumes_at_the_right_step() {
 fn model_reaches_a_role_without_its_own_flag() {
     // Its Workflow half: the models role_models gives for --model X --build-model Y (crate::cli's tests).
     let four = four();
-    let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&four), vec![
-        ("spec", vec![spec_turn()]),
-        ("tests", vec![write_tests()]),
-        ("build", vec![build_turn(1)]),
-        ("review", vec![review_turn(1, APPROVE)]),
-    ]);
+    let f = Fixture::on(
+        Rc::new(FakeHost::default()),
+        new_run(&four),
+        vec![
+            ("spec", vec![spec_turn()]),
+            ("tests", vec![write_tests()]),
+            ("build", vec![build_turn(1)]),
+            ("review", vec![review_turn(1, APPROVE)]),
+        ],
+    );
     let mut settings = with_pipeline(&four);
     settings.agents.models = [("spec", "X"), ("tests", "X"), ("build", "Y"), ("review", "X")]
         .into_iter()
@@ -188,7 +218,12 @@ fn impl_turn(n: u32, q: u32) -> Turn {
 fn written(f: &Fixture) -> Vec<String> {
     let h = f.host.state();
     let in_run_dir = |p: &&String| p.strip_prefix(D).is_some_and(|name| !name.trim_start_matches('/').contains('/'));
-    h.writes.iter().filter(in_run_dir).filter(|p| !p.ends_with("state.json")).map(|p| file_name(p).to_string()).collect()
+    h.writes
+        .iter()
+        .filter(in_run_dir)
+        .filter(|p| !p.ends_with("state.json"))
+        .map(|p| file_name(p).to_string())
+        .collect()
 }
 
 /// A saved run of the impl workflow in round 1 of phase impl, with the gate's job and the Implementer's agent.
@@ -203,30 +238,35 @@ fn impl_saved() -> RunState {
 fn gated_step_with_another_name() {
     let imp = impl_();
     let (impls, reviews) = (seen(), seen());
-    let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&imp), vec![
-        ("impl", vec![recording(impl_turn(1, 0), &impls), recording(impl_turn(1, 1), &impls)]),
-        ("review", vec![recording(review_turn(1, APPROVE), &reviews)]),
-    ])
+    let f = Fixture::on(
+        Rc::new(FakeHost::default()),
+        new_run(&imp),
+        vec![
+            ("impl", vec![recording(impl_turn(1, 0), &impls), recording(impl_turn(1, 1), &impls)]),
+            ("review", vec![recording(review_turn(1, APPROVE), &reviews)]),
+        ],
+    )
     .gated();
     f.judging(vec![red(), green()]);
 
     assert_eq!(f.workflow(with_pipeline(&imp)).run(), verdict(APPROVE));
-    let fix = filled(crate::prompts::QUALITY_FIX_PROMPT, &[
-        ("quality_path", &format!("{D}/quality-1-1.md")),
-        ("report_path", &format!("{D}/impl-1-q1.md")),
-    ]);
-    assert_eq!(*impls.borrow(), [format!("Implement add a rate limiter; report to {D}/impl-1.md.{}", note()), fix + &note()]);
+    let fix = filled(
+        crate::prompts::QUALITY_FIX_PROMPT,
+        &[("quality_path", &format!("{D}/quality-1-1.md")), ("report_path", &format!("{D}/impl-1-q1.md"))],
+    );
+    assert_eq!(
+        *impls.borrow(),
+        [format!("Implement add a rate limiter; report to {D}/impl-1.md.{}", note()), fix + &note()]
+    );
     let passed = quality_note(QUALITY_PASSED_NOTE, &format!("{D}/quality-1-2.md"));
-    assert_eq!(*reviews.borrow(), [format!("Review {CHANGE} with {D}/impl-1-q1.md; write {D}/review-1.md.\n\n{passed}")]);
-    assert_eq!(written(&f), [
-        "impl-1.md",
-        "quality-1-1.md",
-        "impl-1-q1.md",
-        "quality-1-2.md",
-        "review-1.md",
-        "summary.md",
-        "metrics.json"
-    ]);
+    assert_eq!(
+        *reviews.borrow(),
+        [format!("Review {CHANGE} with {D}/impl-1-q1.md; write {D}/review-1.md.\n\n{passed}")]
+    );
+    assert_eq!(
+        written(&f),
+        ["impl-1.md", "quality-1-1.md", "impl-1-q1.md", "quality-1-2.md", "review-1.md", "summary.md", "metrics.json"]
+    );
     let file = |name: &str| f.host.state().files.get(&format!("{D}/{name}")).cloned().unwrap_or_default();
     assert!(file("quality-1-1.md").starts_with("GATE: ERROR\n"));
     assert!(file("quality-1-2.md").starts_with("GATE: OK\n"));
@@ -249,10 +289,10 @@ fn fresh_gated_step_answering_a_quality_round() {
 
     let mut wf = f.workflow(RunSettings { pipeline: Some(impl_()), ..f.as_saved_gated() });
     assert_eq!(wf.run(), verdict(APPROVE));
-    let fix = filled(crate::prompts::QUALITY_FIX_PROMPT, &[
-        ("quality_path", &format!("{D}/quality-1-1.md")),
-        ("report_path", &format!("{D}/impl-1-q1.md")),
-    ]);
+    let fix = filled(
+        crate::prompts::QUALITY_FIX_PROMPT,
+        &[("quality_path", &format!("{D}/quality-1-1.md")), ("report_path", &format!("{D}/impl-1-q1.md"))],
+    );
     assert_eq!(
         *seen.borrow(),
         [format!(
@@ -331,8 +371,12 @@ fn gated_solo(outcomes: Vec<Outcome>) -> (Result<Option<String>, Stopped>, Fixtu
     let mut step = Step::new("impl", "impl", "impl-{n}.md", "Implement {task}; report to {path}.");
     (step.edits, step.quality_gated) = (true, true);
     let solo = Pipeline::new("gsolo", roles(&[("impl", "Implementer")]), vec![step]).unwrap();
-    let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&solo), vec![("impl", vec![impl_turn(1, 0), impl_turn(1, 1)])])
-        .gated();
+    let f = Fixture::on(
+        Rc::new(FakeHost::default()),
+        new_run(&solo),
+        vec![("impl", vec![impl_turn(1, 0), impl_turn(1, 1)])],
+    )
+    .gated();
     f.judging(outcomes);
     let ran = f.workflow(RunSettings { max_quality_rounds: 2, ..with_pipeline(&solo) }).run();
     (ran, f)
@@ -388,13 +432,20 @@ fn the_gate_needs_a_gated_step() {
     let quick = quick();
     let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&quick), vec![]).gated();
     let refused = f.try_workflow(with_pipeline(&quick)).err().map(|e| e.0);
-    assert_eq!(refused.as_deref(), Some("workflow quick has no quality-gated step, so the quality gate does not apply"));
+    assert_eq!(
+        refused.as_deref(),
+        Some("workflow quick has no quality-gated step, so the quality gate does not apply")
+    );
 }
 
 #[test]
 fn a_pull_request_needs_an_editing_step() {
-    let talk = Pipeline::new("talk", roles(&[("spec", "Spec Collector")]), vec![Step::new("spec", "spec", "spec.md", "{task}")])
-        .unwrap();
+    let talk = Pipeline::new(
+        "talk",
+        roles(&[("spec", "Spec Collector")]),
+        vec![Step::new("spec", "spec", "spec.md", "{task}")],
+    )
+    .unwrap();
     let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&talk), vec![]);
     let refused = f.try_workflow(with_pipeline(&talk)).err().map(|e| e.0);
     let expected = "workflow talk has no editing step, so it cannot end in a pull request; pass --no-pr";
@@ -413,10 +464,11 @@ fn a_run_keeps_its_workflow_when_the_file_is_gone() {
     let built_in = find_workflow("quick", &Default::default()).unwrap();
     std::fs::write(&path, workflow_toml(&built_in)).unwrap();
     let quick = load_workflow_file(&path, &Default::default()).unwrap();
-    let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&quick), vec![
-        ("build", vec![build_turn(1)]),
-        ("review", vec![review_turn(1, CHANGES_REQUESTED)]),
-    ]);
+    let f = Fixture::on(
+        Rc::new(FakeHost::default()),
+        new_run(&quick),
+        vec![("build", vec![build_turn(1)]), ("review", vec![review_turn(1, CHANGES_REQUESTED)])],
+    );
     f.play("build", vec![then_interrupted(&f.interrupt, build_turn(2))]);
     assert_eq!(f.workflow(with_pipeline(&quick)).run(), Err(Stopped::Interrupted));
     let saved = f.saved();
@@ -425,7 +477,13 @@ fn a_run_keeps_its_workflow_when_the_file_is_gone() {
     let seen = seen();
     let state = RunState::from_saved(&saved).unwrap();
     assert_eq!(Some(&state.root_pane), state.agents.get("build").map(|a| &a.pane));
-    let f2 = Fixture::resume(Rc::clone(&f.host), state, vec![("review", vec![recording(review_turn(2, APPROVE), &seen)])], &[], &[]);
+    let f2 = Fixture::resume(
+        Rc::clone(&f.host),
+        state,
+        vec![("review", vec![recording(review_turn(2, APPROVE), &seen)])],
+        &[],
+        &[],
+    );
     let mut wf = f2.workflow(f2.as_saved());
     assert_eq!(wf.run(), verdict(APPROVE));
     assert_eq!(*wf.pipeline, quick);
@@ -440,4 +498,3 @@ fn a_built_in_workflow_is_saved_by_name_only() {
     wf.run().unwrap();
     assert_eq!((wf.state().workflow.as_str(), wf.state().workflow_definition.as_ref()), ("default", None));
 }
-

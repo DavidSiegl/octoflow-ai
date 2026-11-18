@@ -146,7 +146,9 @@ impl FakeTools {
     /// Play one command, as ProcessHost's or ProcessHerdr's runner, started in env.
     fn call(&self, argv: &[String], env: &[(OsString, OsString)]) -> Result<(i32, Vec<u8>, Vec<u8>), ProcessError> {
         let mut t = self.tools();
-        let ran = |status: i32, stdout: &str, stderr: &str| Ok((status, stdout.as_bytes().to_vec(), stderr.as_bytes().to_vec()));
+        let ran = |status: i32, stdout: &str, stderr: &str| {
+            Ok((status, stdout.as_bytes().to_vec(), stderr.as_bytes().to_vec()))
+        };
         let (target, argv) = if argv[0] == "ssh" {
             let target = argv[argv.len() - 2].clone();
             if !t.targets.contains(&target) {
@@ -208,7 +210,8 @@ impl FakeTools {
     /// A Host on this machine whose commands these tools play, in an environment of its own with set added.
     fn host(&self, set: &[(&str, &str)]) -> ProcessHost {
         let tools = self.clone();
-        let vars = set.iter().map(|(k, v)| (OsString::from(k), OsString::from(v))).chain([("PATH".into(), "/usr/bin".into())]);
+        let vars =
+            set.iter().map(|(k, v)| (OsString::from(k), OsString::from(v))).chain([("PATH".into(), "/usr/bin".into())]);
         ProcessHost::with_runner(vars.collect::<Vec<_>>().into_iter(), move |argv, _, _, env| tools.call(argv, env))
     }
 
@@ -264,7 +267,12 @@ fn setup(tools: &FakeTools, machine: Option<&str>, cwd: Option<&str>) -> BTreeMa
     check_in_pane(tools, machine, cwd, true)
 }
 
-fn check_in_pane(tools: &FakeTools, machine: Option<&str>, cwd: Option<&str>, in_pane: bool) -> BTreeMap<String, Check> {
+fn check_in_pane(
+    tools: &FakeTools,
+    machine: Option<&str>,
+    cwd: Option<&str>,
+    in_pane: bool,
+) -> BTreeMap<String, Check> {
     let checks = check_setup(&tools.host(&[]), &tools.herdr(machine), cwd, in_pane, Level::Required);
     checks.into_iter().map(|c| (c.name.clone(), c)).collect()
 }
@@ -319,8 +327,11 @@ fn all_present() {
 #[test]
 fn levels() {
     let checks = setup(&FakeTools::new(), None, Some("/proj"));
-    let levels: BTreeMap<&str, &str> =
-        checks.iter().filter(|(_, c)| c.level != Level::Optional).map(|(n, c)| (n.as_str(), c.level.as_str())).collect();
+    let levels: BTreeMap<&str, &str> = checks
+        .iter()
+        .filter(|(_, c)| c.level != Level::Optional)
+        .map(|(n, c)| (n.as_str(), c.level.as_str()))
+        .collect();
     let want: BTreeMap<&str, &str> = [
         ("herdr", "required"),
         ("reaching herdr", "required"),
@@ -357,7 +368,10 @@ fn pane_shell_of_herdrs_config_wins_over_shell() {
     tools.tools().pane_shell = completed(&format!("/usr/bin/nu\n/home/u/.config/herdr/config.toml\n{config}"));
     let checks = setup(&tools, None, None);
     assert!(checks["pane shell"].ok, "{:?}", checks["pane shell"]);
-    assert_eq!(checks["pane shell"].detail, "/usr/bin/fish ([terminal] default_shell in /home/u/.config/herdr/config.toml)");
+    assert_eq!(
+        checks["pane shell"].detail,
+        "/usr/bin/fish ([terminal] default_shell in /home/u/.config/herdr/config.toml)"
+    );
 }
 
 #[test]
@@ -369,7 +383,11 @@ fn pane_shell_on_the_machine() {
     }));
     assert!(setup(&tools, None, None)["pane shell"].ok);
     let checks = setup(&tools, Some("box"), None);
-    assert!(checks["pane shell"].detail.starts_with("herdr's panes start /usr/bin/nu ($SHELL)"), "{:?}", checks["pane shell"]);
+    assert!(
+        checks["pane shell"].detail.starts_with("herdr's panes start /usr/bin/nu ($SHELL)"),
+        "{:?}",
+        checks["pane shell"]
+    );
 }
 
 #[test]
@@ -387,7 +405,12 @@ fn without_herdr() {
     let (out, status) = reported(&checks, &order);
     assert_eq!(status, EXIT_ERROR);
     assert!(out.contains(&format!("missing herdr: herdr is not on PATH\n        fix: {install}\n")), "{out}");
-    assert!(out.contains("missing claude integration: skipped: needs herdr\n        fix: fix herdr first\nok      codex CLI"), "{out}");
+    assert!(
+        out.contains(
+            "missing claude integration: skipped: needs herdr\n        fix: fix herdr first\nok      codex CLI"
+        ),
+        "{out}"
+    );
 }
 
 #[test]
@@ -396,7 +419,8 @@ fn old_herdr() {
     tools.answer("herdr --version", completed("herdr 0.8.4\n"));
     let herdr = &setup(&tools, None, None)["herdr"];
     assert_eq!((herdr.ok, herdr.detail.as_str()), (false, "herdr 0.8.4 is older than 0.9"));
-    for (said, ok) in [("herdr 0.9\n", true), ("herdr 0.10.0\n", true), ("herdr 1.0.0\n", true), ("herdr dev\n", false)] {
+    for (said, ok) in [("herdr 0.9\n", true), ("herdr 0.10.0\n", true), ("herdr 1.0.0\n", true), ("herdr dev\n", false)]
+    {
         tools.answer("herdr --version", completed(said));
         assert_eq!(setup(&tools, None, None)["herdr"].ok, ok, "{said}");
     }
@@ -412,7 +436,8 @@ fn integrations_not_installed() {
     tools.answer("herdr integration status", completed(&listing));
     let order = names(&tools, Some("/proj"));
     let checks = setup(&tools, None, Some("/proj"));
-    let claude = check_of("claude integration", Level::Required, false, "not installed", "herdr integration install claude");
+    let claude =
+        check_of("claude integration", Level::Required, false, "not installed", "herdr integration install claude");
     assert_eq!(checks["claude integration"], claude);
     let codex = check_of(
         "codex integration",
@@ -432,12 +457,16 @@ fn integrations_not_installed() {
     );
     assert_eq!(checks["agy integration"], agy);
     assert_eq!(failed(&checks, &order), ["agy integration", "claude integration", "codex integration"]);
-    let asked = tools.tools().calls.iter().filter(|(t, a)| t.is_none() && *a == ["herdr", "integration", "status"]).count();
+    let asked =
+        tools.tools().calls.iter().filter(|(t, a)| t.is_none() && *a == ["herdr", "integration", "status"]).count();
     // Once for each check_setup: names' and check's.
     assert_eq!(asked, 2);
     let (out, status) = reported(&checks, &order);
     assert_eq!(status, EXIT_ERROR);
-    assert!(out.contains("missing claude integration: not installed\n        fix: herdr integration install claude\n"), "{out}");
+    assert!(
+        out.contains("missing claude integration: not installed\n        fix: herdr integration install claude\n"),
+        "{out}"
+    );
     assert!(out.contains("warn    codex integration: not installed;"), "{out}");
 }
 
@@ -506,9 +535,11 @@ fn integration_states_are_read_from_the_listing() {
 #[test]
 fn git() {
     let tools = FakeTools::new();
-    for (said, ok) in
-        [("git version 2.36.0\n", true), ("git version 2.39.3 (Apple Git-145)\n", true), ("git version 2.35.9\n", false)]
-    {
+    for (said, ok) in [
+        ("git version 2.36.0\n", true),
+        ("git version 2.39.3 (Apple Git-145)\n", true),
+        ("git version 2.35.9\n", false),
+    ] {
         tools.answer("git --version", completed(said));
         assert_eq!(setup(&tools, None, None)["git"].ok, ok, "{said}");
     }
@@ -528,7 +559,13 @@ fn gh_logged_out() {
     tools.answer("gh auth status", failing(logged_out, 1));
     let order = names(&tools, None);
     let checks = setup(&tools, None, None);
-    let want = check_of("gh", Level::NeededForPr, false, &format!("gh auth status fails: {}", logged_out.trim()), "gh auth login");
+    let want = check_of(
+        "gh",
+        Level::NeededForPr,
+        false,
+        &format!("gh auth status fails: {}", logged_out.trim()),
+        "gh auth login",
+    );
     assert_eq!(checks["gh"], want);
     assert!(checks["gitleaks"].ok);
     assert_eq!(reported(&checks, &order).1, EXIT_ERROR);
@@ -595,7 +632,10 @@ fn gitleaks() {
     tools.answer("gitleaks git --help", failing("unknown command \"git\"", 1));
     let order = names(&tools, None);
     let checks = setup(&tools, None, None);
-    assert_eq!(checks["gitleaks"], check_of("gitleaks", Level::NeededForPr, false, "`gitleaks git` does not run", GITLEAKS_INSTALL));
+    assert_eq!(
+        checks["gitleaks"],
+        check_of("gitleaks", Level::NeededForPr, false, "`gitleaks git` does not run", GITLEAKS_INSTALL)
+    );
     assert!(checks["gitleaks"].fix.contains("https://github.com/gitleaks/gitleaks#installing"));
     assert_eq!(reported(&checks, &order).1, EXIT_ERROR);
     tools.answer("gitleaks git --help", Answer::NotFound);
@@ -957,14 +997,18 @@ fn on_a_machine() {
     let checks = check_in_pane(&tools, Some("box"), Some("/proj"), false);
     assert!(checks.values().all(|c| c.ok), "{checks:?}");
     assert_eq!(checks["reaching herdr"].detail, "herdr machine box, over SSH to me@box");
-    assert_eq!((checks["herdr"].detail.as_str(), checks["herdr on box"].detail.as_str()), ("herdr 0.9.1", "herdr 0.9.1"));
+    assert_eq!(
+        (checks["herdr"].detail.as_str(), checks["herdr on box"].detail.as_str()),
+        ("herdr 0.9.1", "herdr 0.9.1")
+    );
     // Only the herdr a run drives is checked here; everything else goes over SSH to the machine.
     let calls = tools.tools().calls.clone();
     let local: Vec<Vec<String>> = calls.iter().filter(|(t, _)| t.is_none()).map(|(_, a)| a.clone()).collect();
     let words = |w: &str| w.split(' ').map(String::from).collect::<Vec<_>>();
     let lookup = |tool: &str| ["sh", "-c", "command -v -- \"$1\"", "_", tool].map(String::from).to_vec();
     assert_eq!(local, [lookup("herdr"), words("herdr --version"), words("herdr machine list --json")]);
-    let remote: Vec<Vec<String>> = calls.iter().filter(|(t, _)| t.as_deref() == Some("me@box")).map(|(_, a)| a.clone()).collect();
+    let remote: Vec<Vec<String>> =
+        calls.iter().filter(|(t, _)| t.as_deref() == Some("me@box")).map(|(_, a)| a.clone()).collect();
     // Every tool run for its version or login is looked up first, as the agent CLIs are.
     let mut looked_up: Vec<String> = remote
         .iter()
@@ -972,10 +1016,18 @@ fn on_a_machine() {
         .map(|a| a.last().unwrap().clone())
         .collect();
     looked_up.sort();
-    let mut tools_run: Vec<String> = HARNESS_NAMES.iter().copied().chain(["gh", "git", "herdr"]).map(String::from).collect();
+    let mut tools_run: Vec<String> =
+        HARNESS_NAMES.iter().copied().chain(["gh", "git", "herdr"]).map(String::from).collect();
     tools_run.sort();
     assert_eq!(looked_up, tools_run);
-    for argv in ["herdr --version", "herdr integration status", "git --version", "gh auth status", "gitleaks git --help", "git -C /proj rev-parse --show-toplevel"] {
+    for argv in [
+        "herdr --version",
+        "herdr integration status",
+        "git --version",
+        "gh auth status",
+        "gitleaks git --help",
+        "git -C /proj rev-parse --show-toplevel",
+    ] {
         assert!(remote.contains(&words(argv)), "{argv}");
     }
     assert!(remote.contains(&lookup("codex")));
@@ -997,10 +1049,11 @@ fn machine_not_saved_disabled_or_unreachable() {
         assert_eq!(checks[&format!("herdr on {machine}")].detail, "skipped: needs reaching herdr");
         assert_eq!(checks["gh"].detail, "skipped: needs reaching herdr");
         assert_eq!(checks["origin"].detail, "skipped: needs git checkout");
-        let order: Vec<String> = check_setup(&tools.host(&[]), &tools.herdr(Some(machine)), Some("/proj"), true, Level::Required)
-            .into_iter()
-            .map(|c| c.name)
-            .collect();
+        let order: Vec<String> =
+            check_setup(&tools.host(&[]), &tools.herdr(Some(machine)), Some("/proj"), true, Level::Required)
+                .into_iter()
+                .map(|c| c.name)
+                .collect();
         let (out, status) = reported(&checks, &order);
         assert_eq!(status, EXIT_ERROR);
         assert!(out.contains(&format!("missing reaching herdr: {detail}\n")), "{out}");
@@ -1093,11 +1146,10 @@ fn machine_needs_cwd() {
     let config = ConfigDir::at("/nowhere");
     let parse = |argv: &[&str]| parse_args(argv.iter().map(OsString::from), &config);
     assert_eq!(parse(&["doctor", "--machine", "box"]).unwrap_err().exit_code(), 2);
-    assert_eq!(parse(&["doctor"]).unwrap(), crate::cli::Command::Doctor {
-        target: crate::cli::Target::default(),
-        setup_gate: false,
-        pin_gate: None
-    });
+    assert_eq!(
+        parse(&["doctor"]).unwrap(),
+        crate::cli::Command::Doctor { target: crate::cli::Target::default(), setup_gate: false, pin_gate: None }
+    );
 }
 
 #[test]
@@ -1109,13 +1161,22 @@ fn the_report() {
     ];
     let (out, status) = report_list(&checks);
     assert_eq!(status, EXIT_ERROR);
-    assert_eq!(out, "ok      a: fine\nwarn    b: gone\n        fix: get b\nmissing c: skipped: needs a\n        fix: fix a first\n");
+    assert_eq!(
+        out,
+        "ok      a: fine\nwarn    b: gone\n        fix: get b\nmissing c: skipped: needs a\n        fix: fix a first\n"
+    );
     assert_eq!(report_list(&checks[..2]).1, 0);
 }
 
 #[test]
 fn a_version_number_is_the_first_run_of_dotted_digits() {
-    let cases = [("herdr 0.9.1", Some("0.9.1")), ("git version 2.39.3 (Apple Git-145)", Some("2.39.3")), ("v12 then 1.2.", Some("1.2")), ("herdr dev", None), ("7", None)];
+    let cases = [
+        ("herdr 0.9.1", Some("0.9.1")),
+        ("git version 2.39.3 (Apple Git-145)", Some("2.39.3")),
+        ("v12 then 1.2.", Some("1.2")),
+        ("herdr dev", None),
+        ("7", None),
+    ];
     for (text, want) in cases {
         assert_eq!(version_number(text), want, "{text}");
     }

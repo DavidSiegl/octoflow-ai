@@ -12,16 +12,16 @@ use crate::checks::{judge_run, orchestrator_checks, RunChange, RunFindings, SLOW
 use crate::constants::{CI_POLL_SECONDS, QUALITY_TIMEOUT};
 use crate::error::OrchestratorError;
 use crate::host::{LeaksFound, PushError, Scanned};
+use crate::json::{object, Object};
 use crate::local_gate::{self, LocalVerdict};
 use crate::paths::file_name;
 use crate::pipeline::{Step, QUALITY};
 use crate::prompts::Prompt;
-use serde_json::Value;
-use crate::json::{object, Object};
 use crate::quality::{
     could_not_judge_report, gate_failures, leak_report, parse_gate, read_report, under_gate_line, GateFailures,
     Judgement, QUALITY_OK,
 };
+use serde_json::Value;
 
 impl<'a> Workflow<'a> {
     /// The current quality round of round n, of the quality-gated step gated; false when its gate sends the change
@@ -321,7 +321,8 @@ fn recorded_failures(record: &Object) -> Result<GateFailures, OrchestratorError>
     let strings = |value: Option<&Value>| -> Option<Vec<String>> {
         value?.as_array()?.iter().map(|s| s.as_str().map(str::to_string)).collect()
     };
-    let mut failures = GateFailures { conditions: strings(record.get("conditions")).ok_or_else(shape)?, ..GateFailures::default() };
+    let mut failures =
+        GateFailures { conditions: strings(record.get("conditions")).ok_or_else(shape)?, ..GateFailures::default() };
     let by_check = record.get("fingerprints_by_check").and_then(Value::as_object).ok_or_else(shape)?;
     for (check, found) in by_check {
         for fingerprint in strings(Some(found)).ok_or_else(shape)? {

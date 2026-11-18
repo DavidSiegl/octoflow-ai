@@ -22,7 +22,8 @@ pub fn first_difference(want: &Value, got: &Value, path: &str) -> Option<String>
                     return Some(found);
                 }
             }
-            let (ka, kb): (Vec<&str>, Vec<&str>) = (a.keys().map(String::as_str).collect(), b.keys().map(String::as_str).collect());
+            let (ka, kb): (Vec<&str>, Vec<&str>) =
+                (a.keys().map(String::as_str).collect(), b.keys().map(String::as_str).collect());
             (ka != kb).then(|| format!("{path}: keys in another order: recorded {ka:?}, got {kb:?}"))
         }
         (Value::Array(a), Value::Array(b)) => {
@@ -33,7 +34,12 @@ pub fn first_difference(want: &Value, got: &Value, path: &str) -> Option<String>
             }
             (a.len() != b.len()).then(|| {
                 let (side, extra) = if a.len() > b.len() { ("recorded", &a[b.len()]) } else { ("got", &b[a.len()]) };
-                format!("{path}: recorded {} items, got {}; first unmatched ({side}): {}", a.len(), b.len(), cut(&extra.to_string()))
+                format!(
+                    "{path}: recorded {} items, got {}; first unmatched ({side}): {}",
+                    a.len(),
+                    b.len(),
+                    cut(&extra.to_string())
+                )
             })
         }
         (Value::String(a), Value::String(b)) if a != b => {

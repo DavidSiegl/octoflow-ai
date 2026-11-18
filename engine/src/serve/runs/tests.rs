@@ -55,7 +55,8 @@ fn first_poll_sends_everything() {
     w.host.state().files.insert(format!("{}/spec.md", run_dir()), "# Spec\n".to_string());
     let mut watch = RunWatch::new(&w.project);
     let events = watch.poll();
-    let runs: Vec<(&str, &str)> = events.iter().map(|e| (e.kind, e.payload.get("run").and_then(Value::as_str).unwrap())).collect();
+    let runs: Vec<(&str, &str)> =
+        events.iter().map(|e| (e.kind, e.payload.get("run").and_then(Value::as_str).unwrap())).collect();
     assert_eq!(runs, [("record", SERVE_ID), ("files", SERVE_ID)]);
     assert_eq!(events[0].payload.get("record").and_then(|r| r.get("phase")), Some(&Value::from("build")));
     assert_eq!(events[1].payload.get("files").unwrap().to_string(), r#"[{"name":"spec.md","mtime":0}]"#);
@@ -134,9 +135,11 @@ fn a_finished_runs_file_written_later_than_a_poll_interval_is_still_sent() {
 fn a_run_of_this_host_whose_orchestrator_exited_is_stale() {
     static ASKED: AtomicI64 = AtomicI64::new(0);
     let w = Watched::new();
-    let owner = Value::Object(
-        object([("host", Value::from(local_host())), ("pid", Value::from(4242)), ("started_at", Value::from("x"))]),
-    );
+    let owner = Value::Object(object([
+        ("host", Value::from(local_host())),
+        ("pid", Value::from(4242)),
+        ("started_at", Value::from("x")),
+    ]));
     w.save(HEARTBEAT_SECONDS + 1, &[("owner", owner)]);
     let console = Arc::new(FakeConsole::default());
     let project = ProjectRuns::new(reached(&w.host, &console), vec![]).with_pid_alive(|pid| {
@@ -236,7 +239,9 @@ fn an_agent_is_reached_in_the_herdr_server_its_run_saved() {
     let console = Arc::new(FakeConsole::default());
     let project = ProjectRuns::new(reached(&host, &console), vec![]);
     console.state().screens.insert("build-5e7e00".to_string(), "> ready".to_string());
-    let agents = serde_json::from_str::<Value>(r#"{"build": {"name": "build-5e7e00", "pane": "w1:p2", "kind": "claude"}}"#).unwrap();
+    let agents =
+        serde_json::from_str::<Value>(r#"{"build": {"name": "build-5e7e00", "pane": "w1:p2", "kind": "claude"}}"#)
+            .unwrap();
     let save = |server: Option<&str>| {
         let mut extra = vec![("agents", agents.clone())];
         extra.extend(server.map(|s| ("herdr_server", serde_json::from_str::<Value>(s).unwrap())));

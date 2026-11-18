@@ -4,13 +4,13 @@
 
 use std::cell::RefCell;
 
+use super::pull_request::MERGE;
 use super::*;
 use crate::host::fake::SCANNED;
 use crate::host::tests::FAKE_TOKEN;
 use crate::prompts::QUALITY_STUCK_NOTE;
-use crate::quality::{finding_fingerprint, Leak, QUALITY_LEAK, QUALITY_OK};
 use crate::quality::parse_gate;
-use super::pull_request::MERGE;
+use crate::quality::{finding_fingerprint, Leak, QUALITY_LEAK, QUALITY_OK};
 
 /// A secret in a commit of the human's.
 fn leak() -> Leak {
@@ -145,7 +145,8 @@ fn a_secret_the_builder_leaves_in_stops_the_loop_early() {
     let s = wf.state();
     assert_eq!((s.quality_round, prompts_to(&f, "build-a1b2c3")), (2, 2));
     assert!(reviews.borrow()[0].contains(&quality_note(QUALITY_STUCK_NOTE, &s.quality_path(1, 2))));
-    let fingerprint = Value::Array(vec![Value::from(finding_fingerprint(Some("limiter.py"), "gitleaks github-pat", "") + "-1")]);
+    let fingerprint =
+        Value::Array(vec![Value::from(finding_fingerprint(Some("limiter.py"), "gitleaks github-pat", "") + "-1")]);
     let found: Vec<Option<&Value>> =
         s.quality_rounds.iter().map(|r| r.get("fingerprints_by_check").and_then(|f| f.get("gitleaks"))).collect();
     assert_eq!(found, [Some(&fingerprint), Some(&fingerprint)]);

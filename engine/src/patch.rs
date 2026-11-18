@@ -158,9 +158,9 @@ fn unquote(name: &[u8]) -> Vec<u8> {
             i += 1;
             continue;
         }
-        let octal = inner.get(i + 1..i + 4).filter(|d| {
-            (b'0'..=b'3').contains(&d[0]) && d[1..].iter().all(|c| (b'0'..=b'7').contains(c))
-        });
+        let octal = inner
+            .get(i + 1..i + 4)
+            .filter(|d| (b'0'..=b'3').contains(&d[0]) && d[1..].iter().all(|c| (b'0'..=b'7').contains(c)));
         if let Some(digits) = octal {
             raw.push((digits[0] - b'0') * 64 + (digits[1] - b'0') * 8 + (digits[2] - b'0'));
             i += 4;

@@ -24,8 +24,8 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::Path;
 use std::process::Command;
 
-use serde_json::Value;
 use octoflow_engine::json::{Object, ValueExt};
+use serde_json::Value;
 
 use crate::ledger::{invocation, wait_until, Ledger};
 use crate::{array_at, holds, object, object_at, run_dir, str_at, strings};
@@ -311,7 +311,8 @@ fn prompted(ledger: &Ledger, state: &mut Object, name: &str) {
     if let Some(hold) = action.get("hold").and_then(Value::as_str).filter(|h| !h.is_empty()) {
         if !holds(state, "released", hold) {
             mark_agent(state, name, Value::from("working"));
-            object_at(state, "held").insert(hold.to_string(), object([("name", Value::from(name)), ("action", action.clone())]));
+            object_at(state, "held")
+                .insert(hold.to_string(), object([("name", Value::from(name)), ("action", action.clone())]));
             return;
         }
     }

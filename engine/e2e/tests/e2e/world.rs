@@ -22,10 +22,10 @@ use octoflow_e2e::scratch::Scratch;
 
 use crate::servers::{ServerFailure, Servers, PYPI_CA};
 use octoflow_e2e::{array_at, checkout, object, object_at, procs, str_at, strings};
-use serde_json::Value;
-use octoflow_engine::json::Object;
 use octoflow_engine::env::CONFIG_DIR_NAME;
 use octoflow_engine::host::shlex_quote;
+use octoflow_engine::json::Object;
+use serde_json::Value;
 
 /// Who the world's commits are by: the harness's own, and the engine's, through the git configuration it is given.
 const GIT_NAME: &str = "Parity";
@@ -380,7 +380,8 @@ impl World {
 
     /// Pull request n as gh holds it: base, head, title, body, isDraft, state, closedAt, mergeable.
     pub fn pr(&self, n: usize) -> Value {
-        self.ledger.change(|state| object_at(state, "prs").get(&n.to_string()).cloned())
+        self.ledger
+            .change(|state| object_at(state, "prs").get(&n.to_string()).cloned())
             .unwrap_or_else(|| panic!("gh has opened no pull request {n}"))
     }
 
@@ -392,7 +393,10 @@ impl World {
     /// Wait until the engine waits on hold, at a point where it does nothing but poll until hold is released, so that
     /// what it did before is the same in every run: it polled the agent after prompting it, or started gh's pr create.
     pub fn wait_reached(&self, hold: &str) {
-        self.wait_for(|| self.ledger.change(|state| octoflow_e2e::holds(state, "reached", hold)), &format!("hold {hold} to be reached"));
+        self.wait_for(
+            || self.ledger.change(|state| octoflow_e2e::holds(state, "reached", hold)),
+            &format!("hold {hold} to be reached"),
+        );
     }
 
     /// Poll condition until it is true; fails the scenario, naming what, after WAIT_TIMEOUT, and at once when a server's
@@ -454,7 +458,12 @@ impl World {
             .envs(self.env(None))
             .output()
             .unwrap_or_else(|e| panic!("running git {args:?}: {e}"));
-        assert!(out.status.success(), "git {args:?} in {} failed: {}", cwd.display(), String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "git {args:?} in {} failed: {}",
+            cwd.display(),
+            String::from_utf8_lossy(&out.stderr)
+        );
         String::from_utf8_lossy(&out.stdout).into_owned()
     }
 
@@ -490,7 +499,15 @@ impl World {
         self.ledger.change(|state| object_at(state, "engines").insert(n.to_string(), Value::from(pid)));
         let args = args.iter().map(|a| (*a).to_string()).collect();
         let servers = self.servers.failure();
-        self.invocations.push(Invocation { args, process, out_path, output_recorded, killed: false, exit: None, servers });
+        self.invocations.push(Invocation {
+            args,
+            process,
+            out_path,
+            output_recorded,
+            killed: false,
+            exit: None,
+            servers,
+        });
         n
     }
 
@@ -558,15 +575,24 @@ impl World {
                 // The release is downloaded the way this host reaches GitHub, through its proxy and trusting its CAs,
                 // as ci/fetch-gate.sh's curl on the same host would.
                 let reach = [
-                    "https_proxy", "HTTPS_PROXY", "no_proxy", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR", "CURL_CA_BUNDLE",
+                    "https_proxy",
+                    "HTTPS_PROXY",
+                    "no_proxy",
+                    "NO_PROXY",
+                    "SSL_CERT_FILE",
+                    "SSL_CERT_DIR",
+                    "CURL_CA_BUNDLE",
                 ];
                 env.extend(reach.iter().filter_map(|k| Some((k.to_string(), std::env::var(k).ok()?))));
             }
-            None => env.extend([
-                ("no_proxy", "127.0.0.1,localhost".to_string()),
-                ("https_proxy", self.servers.proxy_url.clone()),
-                ("SSL_CERT_FILE", self.root().join(PYPI_CA).display().to_string()),
-            ].map(|(k, v)| (k.to_string(), v))),
+            None => env.extend(
+                [
+                    ("no_proxy", "127.0.0.1,localhost".to_string()),
+                    ("https_proxy", self.servers.proxy_url.clone()),
+                    ("SSL_CERT_FILE", self.root().join(PYPI_CA).display().to_string()),
+                ]
+                .map(|(k, v)| (k.to_string(), v)),
+            ),
         }
         if let Ok(profile) = std::env::var("LLVM_PROFILE_FILE") {
             env.push(("LLVM_PROFILE_FILE".to_string(), profile));
@@ -681,7 +707,10 @@ impl World {
         let out_files = object_at(&mut out, "run_files");
         for (path, text) in raw_files.iter() {
             if path.ends_with("summary.md") {
-                out_files.insert(normalizer.text(path, false), Value::String(normalizer.text(text.as_str().unwrap_or_default(), true)));
+                out_files.insert(
+                    normalizer.text(path, false),
+                    Value::String(normalizer.text(text.as_str().unwrap_or_default(), true)),
+                );
             }
         }
         // What a scenario notes may word the clock's times too.
@@ -696,17 +725,25 @@ impl World {
             let Value::Object(mut event) = event else { continue };
             let who = event.remove("by").and_then(|b| b.as_str().map(str::to_string)).unwrap_or_default();
             if let Some(logged) = event.get("state").cloned() {
-                let saved = serde_json::from_str::<Value>(str_at(&logged, "text")).unwrap_or_else(|e| panic!("a logged state: {e}"));
+                let saved = serde_json::from_str::<Value>(str_at(&logged, "text"))
+                    .unwrap_or_else(|e| panic!("a logged state: {e}"));
                 // The fakes log a state only while its owner, if any, is a process of the invocation logging it.
                 let owner_pid = saved.get("owner").and_then(|o| o.get("pid")).and_then(Value::as_i64);
                 if let (Some(pid), Ok(n)) = (owner_pid, who.parse::<usize>()) {
                     self.normalizer.pid(pid, n);
                 }
-                event.insert("state".into(), object([("path", octoflow_e2e::at(&logged, "path").clone()), ("saved", saved)]));
+                event.insert(
+                    "state".into(),
+                    object([("path", octoflow_e2e::at(&logged, "path").clone()), ("saved", saved)]),
+                );
             }
             array_at(&mut by, &who).push(Value::Object(event));
         }
-        Value::Object(by.into_iter().map(|(who, events)| (who, Value::Array(collapsed(events.as_array().cloned().unwrap_or_default())))).collect())
+        Value::Object(
+            by.into_iter()
+                .map(|(who, events)| (who, Value::Array(collapsed(events.as_array().cloned().unwrap_or_default()))))
+                .collect(),
+        )
     }
 
     /// Every file under the project's .octoflow-ai, but the worktrees, by its path there: each directory's files in
@@ -749,8 +786,13 @@ impl World {
                 continue;
             }
             let commit = self.commit(repo, &sha);
-            let parents: Vec<String> =
-                commit.get("parents").and_then(Value::as_array).into_iter().flatten().filter_map(|p| p.as_str().map(str::to_string)).collect();
+            let parents: Vec<String> = commit
+                .get("parents")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|p| p.as_str().map(str::to_string))
+                .collect();
             commits.insert(sha, commit);
             todo.splice(0..0, parents);
         }
@@ -766,7 +808,11 @@ impl World {
     }
 
     fn commit(&self, repo: &Path, sha: &str) -> Value {
-        let parents: Vec<String> = self.git(repo, &["show", "--no-patch", "--format=%P", sha]).split_whitespace().map(str::to_string).collect();
+        let parents: Vec<String> = self
+            .git(repo, &["show", "--no-patch", "--format=%P", sha])
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
         let message = self.git(repo, &["show", "--no-patch", "--format=%an <%ae>%n%B", sha]);
         let (author, body) = message.split_once('\n').unwrap_or((&message, ""));
         let changes: Vec<String> = self
@@ -842,7 +888,8 @@ impl Drop for World {
 }
 
 fn invocation_record(inv: &Invocation) -> Value {
-    let exit = if inv.killed { Value::from("killed") } else { inv.exit.map_or(Value::Null, |e| Value::from(i64::from(e))) };
+    let exit =
+        if inv.killed { Value::from("killed") } else { inv.exit.map_or(Value::Null, |e| Value::from(i64::from(e))) };
     let mut record = octoflow_engine::json::object([("args", strings(&inv.args)), ("exit", exit)]);
     if !inv.output_recorded {
         return Value::Object(record);

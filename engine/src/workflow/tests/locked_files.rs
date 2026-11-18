@@ -44,12 +44,16 @@ fn build_touching_tests(n: u32, test: Option<&str>) -> Turn {
 fn run_locking(builds: Vec<Turn>, reviews: Option<Vec<Turn>>) -> (Fixture, Rc<std::cell::RefCell<Vec<String>>>) {
     let seen = seen();
     let reviews = reviews.unwrap_or_else(|| vec![review_turn(1, APPROVE)]);
-    let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&locking()), vec![
-        ("spec", vec![spec_turn()]),
-        ("tests", vec![locked_tests_turn()]),
-        ("build", builds),
-        ("review", reviews.into_iter().map(|r| recording(r, &seen)).collect()),
-    ]);
+    let f = Fixture::on(
+        Rc::new(FakeHost::default()),
+        new_run(&locking()),
+        vec![
+            ("spec", vec![spec_turn()]),
+            ("tests", vec![locked_tests_turn()]),
+            ("build", builds),
+            ("review", reviews.into_iter().map(|r| recording(r, &seen)).collect()),
+        ],
+    );
     (f, seen)
 }
 
@@ -121,12 +125,16 @@ fn untouched_locked_files_need_no_restore() {
 
 #[test]
 fn a_workflow_without_locks_restores_nothing() {
-    let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&four()), vec![
-        ("spec", vec![spec_turn()]),
-        ("tests", vec![locked_tests_turn()]),
-        ("build", vec![build_touching_tests(1, Some("assert True"))]),
-        ("review", vec![review_turn(1, APPROVE)]),
-    ]);
+    let f = Fixture::on(
+        Rc::new(FakeHost::default()),
+        new_run(&four()),
+        vec![
+            ("spec", vec![spec_turn()]),
+            ("tests", vec![locked_tests_turn()]),
+            ("build", vec![build_touching_tests(1, Some("assert True"))]),
+            ("review", vec![review_turn(1, APPROVE)]),
+        ],
+    );
     let mut wf = f.workflow(with_pipeline(&four(), RunSettings::default()));
     assert_eq!(wf.run(), verdict(APPROVE));
     let h = f.host.state();
@@ -142,7 +150,11 @@ fn a_resume_between_the_turn_and_the_restore_still_restores() {
     assert_eq!(f.host.state().files.get(TEST_FILE).unwrap(), "assert True");
     let saved = f.saved();
     assert_eq!(
-        (saved.get("phase").unwrap().to_string(), saved.get("locked").unwrap().to_string(), saved.get("restored").unwrap().to_string()),
+        (
+            saved.get("phase").unwrap().to_string(),
+            saved.get("locked").unwrap().to_string(),
+            saved.get("restored").unwrap().to_string()
+        ),
         (r#""build""#.to_string(), r#"{"tests":["test_limiter.py"]}"#.to_string(), "[]".to_string())
     );
 
@@ -161,7 +173,8 @@ fn a_record_saved_before_the_restore_is_restored_on_resume() {
     state.workflow = "locking".to_string();
     state.workflow_definition = Some(workflow_definition(&locking()));
     state.locked = tests_locked();
-    state.restored = vec![record(r#"{"round": 1, "file": "locked-build-1.diff", "paths": {"tests": ["test_limiter.py"]}}"#)];
+    state.restored =
+        vec![record(r#"{"round": 1, "file": "locked-build-1.diff", "paths": {"tests": ["test_limiter.py"]}}"#)];
     let host = Rc::new(FakeHost::default());
     {
         let mut h = host.state();
@@ -205,12 +218,16 @@ fn the_gate_judges_the_restored_tests() {
         host.write(TEST_FILE, "assert 1", false).expect("the fake host writes");
         fix_1(prompt, state, host)
     });
-    let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&pipeline), vec![
-        ("spec", vec![spec_turn()]),
-        ("tests", vec![locked_tests_turn()]),
-        ("build", vec![build_touching_tests(1, Some("assert True")), fix]),
-        ("review", vec![review_turn(1, APPROVE)]),
-    ])
+    let f = Fixture::on(
+        Rc::new(FakeHost::default()),
+        new_run(&pipeline),
+        vec![
+            ("spec", vec![spec_turn()]),
+            ("tests", vec![locked_tests_turn()]),
+            ("build", vec![build_touching_tests(1, Some("assert True")), fix]),
+            ("review", vec![review_turn(1, APPROVE)]),
+        ],
+    )
     .gated();
     f.judging(vec![red(), green()]);
 

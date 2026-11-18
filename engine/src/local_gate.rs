@@ -189,7 +189,13 @@ pub fn preflight(host: &dyn Host) -> Result<(), OrchestratorError> {
 /// Errors: base's ci/gate.pin has no `<version> <sha256>` line, or names a release before FIRST_WITH_GATE; git, a
 /// command or a file fails, as git does when a job's tree/ was deleted while still registered as a worktree, which
 /// only `git worktree remove` or `prune` clears.
-pub fn start(host: &dyn Host, cwd: &str, snapshot: &str, base: &str, out_dir: &str) -> Result<Judging, OrchestratorError> {
+pub fn start(
+    host: &dyn Host,
+    cwd: &str,
+    snapshot: &str,
+    base: &str,
+    out_dir: &str,
+) -> Result<Judging, OrchestratorError> {
     let text = |path: &str| -> Result<Option<String>, OrchestratorError> {
         Ok(host.file_at(cwd, base, path)?.map(|bytes| String::from_utf8_lossy(&bytes).into_owned()))
     };

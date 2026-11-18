@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::constants::{HARNESS_NAMES, DEFAULT_HARNESS};
+use crate::constants::{DEFAULT_HARNESS, HARNESS_NAMES};
 use crate::env::ConfigDir;
 use crate::error::OrchestratorError;
 use crate::harness::harness;

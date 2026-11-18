@@ -9,8 +9,8 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use nix::fcntl::{Flock, FlockArg};
-use serde_json::Value;
 use octoflow_engine::json::{Object, ValueExt};
+use serde_json::Value;
 
 use crate::{object, object_at, procs};
 
@@ -103,7 +103,9 @@ impl Ledger {
             Err(e) if e.kind() == ErrorKind::NotFound => return Vec::new(),
             Err(e) => panic!("reading {}: {e}", path.display()),
         };
-        text.lines().map(|line| serde_json::from_str::<Value>(line).unwrap_or_else(|e| panic!("{}: {e}", path.display()))).collect()
+        text.lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap_or_else(|e| panic!("{}: {e}", path.display())))
+            .collect()
     }
 
     /// The scenario's script as the world last wrote it.

@@ -3,14 +3,13 @@
 use indexmap::IndexMap;
 
 use crate::constants::{
-    DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
-    LOCAL_REFS_PREFIX, RUNS_DIR,
+    DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT, LOCAL_REFS_PREFIX, RUNS_DIR,
 };
 use crate::error::OrchestratorError;
 use crate::herdr::HerdrServer;
-use crate::prompts::{saved_prompts, Prompts};
 use crate::json::Object;
 use crate::pipeline::{Pipeline, DONE, QUALITY};
+use crate::prompts::{saved_prompts, Prompts};
 use crate::workflow_file::run_pipeline;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -389,7 +388,9 @@ impl RunState {
         let mut state: RunState = serde_json::from_value(Value::Object(fields.clone()))
             .map_err(|e| OrchestratorError(format!("run state {run_id} is invalid: {e}")))?;
         // RunState writes every field it has, so a blank state's keys are all it knows.
-        let Value::Object(known) = RunState::new("", "", "").to_json() else { unreachable!("a run state is an object") };
+        let Value::Object(known) = RunState::new("", "", "").to_json() else {
+            unreachable!("a run state is an object")
+        };
         state.unknown = fields.into_iter().filter(|(k, _)| !known.contains_key(k)).collect();
         Ok(state)
     }
@@ -398,7 +399,9 @@ impl RunState {
     /// reads as RunState's field of that name, every other field at new's defaults, and the fields RunState does not
     /// have in unknown. For showing a run of another format (SavedRun::shown), never for acting on it.
     fn from_readable_fields(saved: &Object) -> RunState {
-        let Value::Object(mut fields) = RunState::new("", "", "").to_json() else { unreachable!("a run state is an object") };
+        let Value::Object(mut fields) = RunState::new("", "", "").to_json() else {
+            unreachable!("a run state is an object")
+        };
         // RunState writes every field it has, format included, so a blank state's keys are all it knows.
         let known: std::collections::HashSet<String> = fields.keys().cloned().collect();
         fields.shift_remove("format");
@@ -416,7 +419,8 @@ impl RunState {
         let Ok(mut state) = serde_json::from_value::<RunState>(Value::Object(fields)) else {
             unreachable!("every field is new's or one that reads")
         };
-        state.unknown = saved.iter().filter(|(k, _)| !known.contains(k.as_str())).map(|(k, v)| (k.clone(), v.clone())).collect();
+        state.unknown =
+            saved.iter().filter(|(k, _)| !known.contains(k.as_str())).map(|(k, v)| (k.clone(), v.clone())).collect();
         state
     }
 
@@ -611,7 +615,9 @@ impl SavedRun {
     /// string, so that it names no run to show or act on.
     pub fn read(age: u64, saved: Value) -> Result<SavedRun, OrchestratorError> {
         let saved = match saved {
-            Value::Object(saved) if saved.get("run_id").and_then(Value::as_str).is_some_and(|id| !id.is_empty()) => saved,
+            Value::Object(saved) if saved.get("run_id").and_then(Value::as_str).is_some_and(|id| !id.is_empty()) => {
+                saved
+            }
             _ => return Err(OrchestratorError("a run state is a JSON object with its run_id".to_string())),
         };
         Ok(match RunState::from_saved(&saved) {

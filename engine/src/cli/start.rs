@@ -67,7 +67,11 @@ pub fn new_state(
 }
 
 /// The workflow run's --workflow-file or --workflow names, worded by prompts.
-pub(super) fn flagged_workflow(args: &RunArgs, prompts: &Prompts, world: &Connected) -> Result<Pipeline, OrchestratorError> {
+pub(super) fn flagged_workflow(
+    args: &RunArgs,
+    prompts: &Prompts,
+    world: &Connected,
+) -> Result<Pipeline, OrchestratorError> {
     match &args.starts.workflow_file {
         Some(path) => load_workflow_file(path, prompts),
         None => named_workflow(world.config, &args.starts.workflow, prompts),
@@ -110,7 +114,11 @@ pub(crate) fn new_run_id(wall: f64, zone: &jiff::tz::TimeZone) -> Result<String,
 ///
 /// Errors: the run cannot be resumed (resumable_state), a Jenkins run fails check_gate_mid_run, or its gate cannot be
 /// switched.
-pub fn resumed_state(args: &ResumeArgs, cwd: &str, world: &Connected) -> Result<(RunState, Pipeline), OrchestratorError> {
+pub fn resumed_state(
+    args: &ResumeArgs,
+    cwd: &str,
+    world: &Connected,
+) -> Result<(RunState, Pipeline), OrchestratorError> {
     let w = &world.with;
     let runs = w.host.run_states(cwd)?;
     let (mut state, pipeline) = resumable_state(&runs, args, cwd, world.local_host, w.pid_alive)?;
@@ -264,7 +272,11 @@ fn role_agents(s: &Settings, roles: &IndexMap<String, String>) -> Result<IndexMa
 
 /// flag's ROLE=VALUE pairs by role, a later pair for a role replacing an earlier one. Errors: a role not among roles,
 /// naming the first by name and the roles there are.
-fn named_roles(flag: &str, pairs: &[(String, String)], roles: &IndexMap<String, String>) -> Result<IndexMap<String, String>, OrchestratorError> {
+fn named_roles(
+    flag: &str,
+    pairs: &[(String, String)],
+    roles: &IndexMap<String, String>,
+) -> Result<IndexMap<String, String>, OrchestratorError> {
     let named: IndexMap<String, String> = pairs.iter().map(|(r, v)| (r.clone(), v.clone())).collect();
     if let Some(unknown) = named.keys().filter(|r| !roles.contains_key(*r)).min() {
         let roles: Vec<&str> = roles.keys().map(String::as_str).collect();

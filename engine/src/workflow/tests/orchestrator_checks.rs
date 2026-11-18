@@ -9,10 +9,10 @@ use std::sync::Arc;
 
 use super::*;
 use crate::checks::tests::{pyproject_diff, pyproject_with, SPEC_NAMING_LIMITS, TODAY};
-use crate::workflow::fixture::Outcome;
 use crate::constants::QUALITY_TIMEOUT;
 use crate::pypi::fake::{FakePyPI, ProjectJson};
 use crate::test_support::impl_;
+use crate::workflow::fixture::Outcome;
 
 /// The pyproject.toml of the run's base and of its first snapshot, without and with requirements, as FakeHost's
 /// committed files.

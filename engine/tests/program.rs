@@ -227,7 +227,8 @@ fn a_run_is_named_by_the_time_in_the_machine_s_zone() {
     let clock = jiff::tz::TimeZone::posix(zone).expect("a zone");
     let shown = |at: jiff::Timestamp| clock.to_datetime(at).strftime("%Y%m%d-%H%M%S").to_string();
     let before = shown(jiff::Timestamp::now());
-    let out = program(&dir, &["run", "--no-pr", "a task"], Some("1")).env("TZ", zone).output().expect("the program runs");
+    let out =
+        program(&dir, &["run", "--no-pr", "a task"], Some("1")).env("TZ", zone).output().expect("the program runs");
     let after = shown(jiff::Timestamp::now());
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     let runs: Vec<String> = std::fs::read_dir(dir.0.join(".octoflow-ai/runs"))
@@ -270,7 +271,10 @@ impl Serving {
     }
 
     fn port(&self) -> u16 {
-        self.url.strip_prefix("http://127.0.0.1:").and_then(|p| p.parse().ok()).unwrap_or_else(|| panic!("{}", self.url))
+        self.url
+            .strip_prefix("http://127.0.0.1:")
+            .and_then(|p| p.parse().ok())
+            .unwrap_or_else(|| panic!("{}", self.url))
     }
 
     /// The status and body of a GET of target with the token in its query.
@@ -300,7 +304,12 @@ impl Serving {
         let mut out = String::new();
         self.rest.read_to_string(&mut out).expect("serve's stdout is read");
         let mut err = String::new();
-        self.child.stderr.take().expect("its stderr is piped").read_to_string(&mut err).expect("serve's stderr is read");
+        self.child
+            .stderr
+            .take()
+            .expect("its stderr is piped")
+            .read_to_string(&mut err)
+            .expect("serve's stderr is read");
         (self.child.wait().expect("serve ends"), out, err)
     }
 }
@@ -376,7 +385,8 @@ fn serve_reaches_a_machine_by_its_saved_target() {
     let asked = dir.0.join("asked");
     let machines = r#"[{"label": "box", "id": "m1", "enabled": true, "target": "me@box"}]"#;
     dir.tool("herdr", &format!("#!/bin/sh\necho \"herdr $*\" >> '{}'\necho '{machines}'\n", asked.display()));
-    let ssh = format!("#!/bin/sh\nfor a; do last=$a; done\necho \"ssh $*\" >> '{}'\nexec sh -c \"$last\"\n", asked.display());
+    let ssh =
+        format!("#!/bin/sh\nfor a; do last=$a; done\necho \"ssh $*\" >> '{}'\nexec sh -c \"$last\"\n", asked.display());
     dir.tool("ssh", &ssh);
     let project = dir.0.join("proj");
     std::fs::create_dir_all(project.join(".octoflow-ai/runs/20261024-120000-5e7e00")).unwrap();

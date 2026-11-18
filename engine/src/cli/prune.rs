@@ -186,11 +186,13 @@ fn prune_run(
     let (local, local_kept) = prune_local(host, cwd, branch, head, number, checked_out, dry_run).map_err(failed)?;
     (run.remote, run.local, run.worktree) = (remote, local, worktree);
     let kept: Vec<String> = [worktree_kept, local_kept, remote_kept].into_iter().flatten().collect();
-    let cleanup = if kept.is_empty() { BRANCH_DELETED.to_string() } else { format!("{BRANCH_KEPT}{}", kept.join("; ")) };
+    let cleanup =
+        if kept.is_empty() { BRANCH_DELETED.to_string() } else { format!("{BRANCH_KEPT}{}", kept.join("; ")) };
     run.cleanup = Some(cleanup.clone());
     if !dry_run {
         let path = format!("{cwd}/{RUNS_DIR}/{}/state.json", state.run_id);
-        record_in_state(host, &path, state, |s| s.branch_cleanup = Some(cleanup), "its branch was pruned").map_err(failed)?;
+        record_in_state(host, &path, state, |s| s.branch_cleanup = Some(cleanup), "its branch was pruned")
+            .map_err(failed)?;
     }
     Ok(())
 }
@@ -353,7 +355,9 @@ pub fn print_pruned(world: &Connected, pruned: &[PrunedRun]) {
 pub fn sweep_summary(pruned: &[PrunedRun]) -> Option<String> {
     let deleted = pruned
         .iter()
-        .filter(|r| r.cleanup.as_deref() == Some(BRANCH_DELETED) && (r.local == BRANCH_DELETED || r.remote == BRANCH_DELETED))
+        .filter(|r| {
+            r.cleanup.as_deref() == Some(BRANCH_DELETED) && (r.local == BRANCH_DELETED || r.remote == BRANCH_DELETED)
+        })
         .count();
     let removed = pruned.iter().filter(|r| r.worktree == BRANCH_DELETED).count();
     let kept = pruned.iter().filter(|r| r.cleanup.as_deref().is_some_and(|c| c.starts_with(BRANCH_KEPT))).count();
@@ -381,7 +385,11 @@ pub fn sweep_summary(pruned: &[PrunedRun]) -> Option<String> {
 
 /// n branches, in words.
 fn branches(n: usize) -> String {
-    if n == 1 { "1 branch".to_string() } else { format!("{n} branches") }
+    if n == 1 {
+        "1 branch".to_string()
+    } else {
+        format!("{n} branches")
+    }
 }
 
 /// Prune the branches of the project's earlier runs, as a new run in cwd starts, logging what was done to world's

@@ -1,9 +1,9 @@
 use std::os::unix::fs::PermissionsExt;
 
 use super::*;
-use serde_json::Value;
-use crate::test_support::{oracle, TempDir};
 use crate::env::ConfigDir;
+use crate::test_support::{oracle, TempDir};
+use serde_json::Value;
 
 #[test]
 fn every_built_in_text_is_the_one_texts_json_records() {
@@ -115,7 +115,8 @@ fn without_prompt_files_nothing_changes() {
 
 #[test]
 fn an_override_ends_with_one_newline_less_and_its_line_ends_read_as_newlines() {
-    let (_dir, config) = prompt_dir(&[("BLOCKED_NOTE.md", b"Ask.\n"), ("CONTINUE_PROMPT.md", b"Go on\r\nto\r{path}.\r")]);
+    let (_dir, config) =
+        prompt_dir(&[("BLOCKED_NOTE.md", b"Ask.\n"), ("CONTINUE_PROMPT.md", b"Go on\r\nto\r{path}.\r")]);
     let prompts = load_prompts(&config).unwrap();
     assert_eq!(prompts.text(Prompt::BlockedNote), "Ask.\n");
     // "\r\n" with the editor's newline is the one trailing newline left out.
@@ -127,7 +128,8 @@ fn an_override_ends_with_one_newline_less_and_its_line_ends_read_as_newlines() {
 
 #[test]
 fn a_state_that_replaces_an_unknown_prompt() {
-    let overrides: IndexMap<String, String> = [("LATER_NOTE".to_string(), "x".to_string()), ("ANOTHER".to_string(), "y".to_string())].into_iter().collect();
+    let overrides: IndexMap<String, String> =
+        [("LATER_NOTE".to_string(), "x".to_string()), ("ANOTHER".to_string(), "y".to_string())].into_iter().collect();
     assert_eq!(
         saved_prompts(&overrides, "20260929-120000-a1b2c3").unwrap_err().0,
         "run state 20260929-120000-a1b2c3 replaces prompt ANOTHER, which this orchestrator lacks"
@@ -137,7 +139,8 @@ fn a_state_that_replaces_an_unknown_prompt() {
 
 #[test]
 fn a_state_whose_prompt_an_earlier_release_could_fill_in_is_refused() {
-    let overrides: IndexMap<String, String> = [("CONTINUE_PROMPT".to_string(), "Go on to {path!s}.".to_string())].into_iter().collect();
+    let overrides: IndexMap<String, String> =
+        [("CONTINUE_PROMPT".to_string(), "Go on to {path!s}.".to_string())].into_iter().collect();
     assert_eq!(
         saved_prompts(&overrides, "r").unwrap_err().0,
         "run state r replaces prompt CONTINUE_PROMPT with a text this orchestrator cannot fill in: placeholder {path!s} \
@@ -170,14 +173,16 @@ fn a_state_keeps_an_override_that_leaves_out_a_placeholder_its_built_in_text_has
     assert_eq!(saved_prompts(&overrides, "r").unwrap().text(Prompt::RecheckPrompt), text);
     assert!(prompt_problem("RECHECK_PROMPT", text).unwrap().contains("is missing"));
     // An earlier text's placeholders may be left out too.
-    let overrides: IndexMap<String, String> = [("FIX_PROMPT".to_string(), "Fix {prev_review_path}.".to_string())].into_iter().collect();
+    let overrides: IndexMap<String, String> =
+        [("FIX_PROMPT".to_string(), "Fix {prev_review_path}.".to_string())].into_iter().collect();
     assert!(saved_prompts(&overrides, "r").is_ok());
 }
 
 #[test]
 fn a_state_and_a_file_both_refuse_an_unknown_placeholder_and_a_template_that_does_not_parse() {
     for text in ["Recheck {change} {nothing}.", "Recheck {change"] {
-        let overrides: IndexMap<String, String> = [("RECHECK_PROMPT".to_string(), text.to_string())].into_iter().collect();
+        let overrides: IndexMap<String, String> =
+            [("RECHECK_PROMPT".to_string(), text.to_string())].into_iter().collect();
         assert!(saved_prompts(&overrides, "r").is_err(), "{text}");
         assert!(prompt_problem("RECHECK_PROMPT", text).is_some(), "{text}");
     }

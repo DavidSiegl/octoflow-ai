@@ -27,9 +27,31 @@ const JOB: &str = "Octoflow-AI/octoflow-ai-quality";
 
 /// The keys of a run record, in the order run_record gives them.
 const RUN_RECORD_KEYS: [&str; 25] = [
-    "id", "key", "task", "workflow", "steps", "pull_request", "phase", "round", "quality_round", "role", "pane",
-    "agents", "health", "health_reason", "heartbeat_age", "waiting", "verdict", "verdicts", "error", "closed", "branch",
-    "worktree", "pr", "turns", "resume_command",
+    "id",
+    "key",
+    "task",
+    "workflow",
+    "steps",
+    "pull_request",
+    "phase",
+    "round",
+    "quality_round",
+    "role",
+    "pane",
+    "agents",
+    "health",
+    "health_reason",
+    "heartbeat_age",
+    "waiting",
+    "verdict",
+    "verdicts",
+    "error",
+    "closed",
+    "branch",
+    "worktree",
+    "pr",
+    "turns",
+    "resume_command",
 ];
 
 /// The default workflow's steps as a run record gives them for a run without the quality gate.
@@ -135,16 +157,22 @@ fn print_closed_runs() {
     let closed = "workspace closed; worktree deleted";
     let runs = [
         (STALE_SECONDS + 1, with(run("build"), &[("closed", Value::from(closed))])),
-        (1_000_000, with(run("done"), &[("verdict", Value::from(APPROVE)), ("closed", Value::from("workspace closed"))])),
+        (
+            1_000_000,
+            with(run("done"), &[("verdict", Value::from(APPROVE)), ("closed", Value::from("workspace closed"))]),
+        ),
         (1_000_000, with(run("done"), &[("closed", Value::from("workspace already gone"))])),
         (1_000_000, with(run("build"), &[("error", Value::from("interrupted")), ("closed", Value::from(closed))])),
     ];
-    assert_eq!(listed(&runs, &[]), [
-        format!("20260930-070000-c0ffee  build    round 1  closed: {closed}"),
-        "20260930-070000-c0ffee  done     round 1  APPROVE; closed: workspace closed".to_string(),
-        "20260930-070000-c0ffee  done     round 1  closed: workspace already gone".to_string(),
-        format!("20260930-070000-c0ffee  build    round 1  error: interrupted; closed: {closed}"),
-    ]);
+    assert_eq!(
+        listed(&runs, &[]),
+        [
+            format!("20260930-070000-c0ffee  build    round 1  closed: {closed}"),
+            "20260930-070000-c0ffee  done     round 1  APPROVE; closed: workspace closed".to_string(),
+            "20260930-070000-c0ffee  done     round 1  closed: workspace already gone".to_string(),
+            format!("20260930-070000-c0ffee  build    round 1  error: interrupted; closed: {closed}"),
+        ]
+    );
 }
 
 // -- A run's record --------------------------------------------------------------------------------------------------
@@ -169,16 +197,14 @@ fn every_key_is_present() {
     assert_eq!(key(&record, "workflow"), Value::from("default"));
     assert_eq!(key(&record, "steps"), json(DEFAULT_STEPS));
     assert_eq!(key(&record, "pull_request"), Value::from(false));
-    assert_eq!([key(&record, "phase"), key(&record, "round"), key(&record, "role")], [
-        Value::from("build"),
-        Value::from(1),
-        Value::from("build")
-    ]);
-    assert_eq!([key(&record, "health"), key(&record, "health_reason"), key(&record, "heartbeat_age")], [
-        Value::from("running"),
-        Value::from("pid 4242 on here, beat 40s ago"),
-        Value::from(40)
-    ]);
+    assert_eq!(
+        [key(&record, "phase"), key(&record, "round"), key(&record, "role")],
+        [Value::from("build"), Value::from(1), Value::from("build")]
+    );
+    assert_eq!(
+        [key(&record, "health"), key(&record, "health_reason"), key(&record, "heartbeat_age")],
+        [Value::from("running"), Value::from("pid 4242 on here, beat 40s ago"), Value::from(40)]
+    );
     assert_eq!(key(&record, "pr"), json(&format!(r#"{{"url": "{PR_URL}", "state": null, "error": null}}"#)));
     assert_eq!(key(&record, "branch"), Value::from("orchestrator/x"));
     assert_eq!(key(&record, "turns"), json("[]"));
@@ -190,7 +216,8 @@ fn every_key_is_present() {
 fn each_step_has_its_role_label_loop_and_quality_gate() {
     // A workflow file's own labels; its review step loops to impl, whose turns the quality loop follows only while the
     // run has the gate, or once a quality turn followed them.
-    let state = with(run("impl"), &[("workflow", Value::from("impl")), ("workflow_definition", workflow_definition(&impl_()))]);
+    let state =
+        with(run("impl"), &[("workflow", Value::from("impl")), ("workflow_definition", workflow_definition(&impl_()))]);
     let steps = |fields: &[(&str, Value)]| key(&record(&with(state.clone(), fields), 40, true, &[]), "steps");
     let expected = |impl_gated: bool| {
         json(&format!(
@@ -236,7 +263,10 @@ fn the_agents_are_those_started_with_their_names_and_kinds() {
 #[test]
 fn the_task_is_whole() {
     let task = "x".repeat(300);
-    assert_eq!(key(&record(&with(run("build"), &[("task", Value::from(task.as_str()))]), 40, true, &[]), "task"), Value::from(task));
+    assert_eq!(
+        key(&record(&with(run("build"), &[("task", Value::from(task.as_str()))]), 40, true, &[]), "task"),
+        Value::from(task)
+    );
 }
 
 #[test]
@@ -244,12 +274,17 @@ fn a_run_sent_back_by_one_of_several_verdict_steps_lists_which() {
     let given = |pairs: &[(u32, &str, &str)]| {
         let records: Vec<Value> = pairs
             .iter()
-            .map(|(round, step, verdict)| json(&format!(r#"{{"round": {round}, "step": "{step}", "verdict": "{verdict}"}}"#)))
+            .map(|(round, step, verdict)| {
+                json(&format!(r#"{{"round": {round}, "step": "{step}", "verdict": "{verdict}"}}"#))
+            })
             .collect();
         Value::Array(records)
     };
     let done = |verdict: &str, verdicts: Value| {
-        with(run("done"), &[("verdict", Value::from(verdict)), ("verdicts", verdicts), ("workflow", Value::from("default"))])
+        with(
+            run("done"),
+            &[("verdict", Value::from(verdict)), ("verdicts", verdicts), ("workflow", Value::from("default"))],
+        )
     };
     let outcome = |state: &Value| run_outcome(&record(state, 1_000_000, true, &[]));
     let sent_back = given(&[(1, "review", APPROVE), (1, "accept", CHANGES_REQUESTED)]);
@@ -333,11 +368,14 @@ fn quality_round_only_in_the_quality_loop_or_gated_step() {
 
 #[test]
 fn blocked_waits_for_the_answer() {
-    let state = with(mine(), &[
-        ("blocked", json(r#"{"file": "build-1.md", "question": "which db?", "k": 1}"#)),
-        ("agents", json(r#"{"build": {"name": "build-c0ffee", "pane": "w1:p2", "kind": "claude"}}"#)),
-        ("turns", Value::Array(vec![open_turn("spec", "spec")])),
-    ]);
+    let state = with(
+        mine(),
+        &[
+            ("blocked", json(r#"{"file": "build-1.md", "question": "which db?", "k": 1}"#)),
+            ("agents", json(r#"{"build": {"name": "build-c0ffee", "pane": "w1:p2", "kind": "claude"}}"#)),
+            ("turns", Value::Array(vec![open_turn("spec", "spec")])),
+        ],
+    );
     let record = record(&state, 40, true, &[]);
     assert_eq!(key(&record, "waiting"), json(r#"{"reason": "blocked", "detail": "which db?"}"#));
     assert_eq!(key(&record, "pane"), Value::from("w1:p2"));
@@ -371,27 +409,35 @@ fn a_stale_run_waits_to_be_resumed_unless_closed() {
 #[test]
 fn a_blocked_stale_run_waits_to_be_resumed() {
     let state = with(mine(), &[("blocked", json(r#"{"file": "build-1.md", "question": "q", "k": 1}"#))]);
-    assert_eq!(key(&record(&state, STALE_SECONDS + 1, true, &[]), "waiting").get("reason"), Some(&Value::from("stale")));
+    assert_eq!(
+        key(&record(&state, STALE_SECONDS + 1, true, &[]), "waiting").get("reason"),
+        Some(&Value::from("stale"))
+    );
 }
 
 #[test]
 fn finished_and_failed_runs_wait_for_nothing() {
-    for state in [with(run("done"), &[("verdict", Value::from(APPROVE))]), with(run("build"), &[("error", Value::from("interrupted"))])] {
+    for state in [
+        with(run("done"), &[("verdict", Value::from(APPROVE))]),
+        with(run("build"), &[("error", Value::from("interrupted"))]),
+    ] {
         let record = record(&state, 1_000_000, true, &[]);
-        assert_eq!([key(&record, "health"), key(&record, "waiting"), key(&record, "resume_command")], [
-            Value::Null,
-            Value::Null,
-            Value::Null
-        ]);
+        assert_eq!(
+            [key(&record, "health"), key(&record, "waiting"), key(&record, "resume_command")],
+            [Value::Null, Value::Null, Value::Null]
+        );
     }
 }
 
 #[test]
 fn plain_lines_in_each_state() {
-    let blocked = with(mine(), &[
-        ("blocked", json(r#"{"file": "build-1.md", "question": "which db?", "k": 1}"#)),
-        ("agents", json(r#"{"build": {"name": "build-c0ffee", "pane": "w1:p2", "kind": "claude"}}"#)),
-    ]);
+    let blocked = with(
+        mine(),
+        &[
+            ("blocked", json(r#"{"file": "build-1.md", "question": "which db?", "k": 1}"#)),
+            ("agents", json(r#"{"build": {"name": "build-c0ffee", "pane": "w1:p2", "kind": "claude"}}"#)),
+        ],
+    );
     let approved = with(run("done"), &[("verdict", Value::from(APPROVE))]);
     let runs = [
         (40, mine()),
@@ -404,22 +450,29 @@ fn plain_lines_in_each_state() {
         (40, with(run("quality"), &[("owner", me()), ("quality_round", Value::from(2))])),
     ];
     let rows = run_rows(&saved_runs(&runs), "here", &|_| true, &[]);
-    assert_eq!(rows.iter().map(run_line).collect::<Vec<_>>(), [
-        "20260930-070000-c0ffee  build    round 1  running: pid 4242 on here, beat 40s ago".to_string(),
-        "20260930-070000-c0ffee  build    round 1  stale: no heartbeat for 5m; resume: octoflow resume c0ffee".into(),
-        "20260930-070000-c0ffee  build    round 1  blocked: which db? (pane w1:p2)".into(),
-        "20260930-070000-c0ffee  build    round 1  closed: workspace closed".into(),
-        "20260930-070000-c0ffee  build    round 1  error: interrupted".into(),
-        format!("20260930-070000-c0ffee  done     round 1  APPROVE  {PR_URL}"),
-        "20260930-070000-c0ffee  done     round 1  APPROVE  [gone workflow]".into(),
-        "20260930-070000-c0ffee  quality  round 1 q2  running: pid 4242 on here, beat 40s ago".into(),
-    ]);
+    assert_eq!(
+        rows.iter().map(run_line).collect::<Vec<_>>(),
+        [
+            "20260930-070000-c0ffee  build    round 1  running: pid 4242 on here, beat 40s ago".to_string(),
+            "20260930-070000-c0ffee  build    round 1  stale: no heartbeat for 5m; resume: octoflow resume c0ffee"
+                .into(),
+            "20260930-070000-c0ffee  build    round 1  blocked: which db? (pane w1:p2)".into(),
+            "20260930-070000-c0ffee  build    round 1  closed: workspace closed".into(),
+            "20260930-070000-c0ffee  build    round 1  error: interrupted".into(),
+            format!("20260930-070000-c0ffee  done     round 1  APPROVE  {PR_URL}"),
+            "20260930-070000-c0ffee  done     round 1  APPROVE  [gone workflow]".into(),
+            "20260930-070000-c0ffee  quality  round 1 q2  running: pid 4242 on here, beat 40s ago".into(),
+        ]
+    );
 }
 
 #[test]
 fn show_starts_with_the_list_line() {
     let cli = alive();
-    let state = with(run("done"), &[("verdict", Value::from(APPROVE)), ("cwd", Value::from("/proj")), ("pr_url", Value::from(PR_URL))]);
+    let state = with(
+        run("done"),
+        &[("verdict", Value::from(APPROVE)), ("cwd", Value::from("/proj")), ("pr_url", Value::from(PR_URL))],
+    );
     cli.save(&state, 0);
     cli.with(|world| show_run(world, "/proj", "c0ffee", &[])).unwrap();
     assert_eq!(cli.lines()[0], format!("20260930-070000-c0ffee  done     round 1  APPROVE  {PR_URL}"));
@@ -431,7 +484,10 @@ fn pr_states_are_filled_per_run() {
     let (unusable, broken) = (format!("{PR_URL}/unusable"), format!("{PR_URL}/broken"));
     {
         let mut host = cli.f.host.state();
-        let merged = json(&format!(r#"{{"state": "MERGED", "headRefOid": "{}", "closedAt": "2026-09-30T08:00:00Z"}}"#, "a".repeat(40)));
+        let merged = json(&format!(
+            r#"{{"state": "MERGED", "headRefOid": "{}", "closedAt": "2026-09-30T08:00:00Z"}}"#,
+            "a".repeat(40)
+        ));
         host.pull_requests.insert(PR_URL.into(), FakePr::Prints(merged));
         host.pull_requests.insert(unusable.clone(), FakePr::Fails(Completed::new(4, "", "gh: not logged in")));
         host.pull_requests.insert(broken.clone(), FakePr::Fails(Completed::new(0, "nonsense", "")));
@@ -488,7 +544,10 @@ fn no_runs() {
 #[test]
 fn one_record_per_run_in_order() {
     let cli = Cli::new();
-    let runs = [(40, mine()), (1_000_000, with(run("done"), &[("verdict", Value::from(APPROVE)), ("run_id", Value::from("x-beef00"))]))];
+    let runs = [
+        (40, mine()),
+        (1_000_000, with(run("done"), &[("verdict", Value::from(APPROVE)), ("run_id", Value::from("x-beef00"))])),
+    ];
     let doc = list_json(&cli, &[], &runs);
     let records = doc.get("runs").and_then(Value::as_array).unwrap();
     assert_eq!(records.iter().map(|r| r.get("key").unwrap().text()).collect::<Vec<_>>(), ["c0ffee", "beef00"]);
@@ -504,7 +563,10 @@ fn one_record_per_run_in_order() {
 fn no_gh_without_pr_state() {
     let cli = Cli::new();
     let doc = list_json(&cli, &[], &[(1_000_000, with(run("done"), &[("pr_url", Value::from(PR_URL))]))]);
-    assert_eq!(doc.get("runs").unwrap().as_array().unwrap()[0].get("pr"), Some(&json(&format!(r#"{{"url": "{PR_URL}", "state": null, "error": null}}"#))));
+    assert_eq!(
+        doc.get("runs").unwrap().as_array().unwrap()[0].get("pr"),
+        Some(&json(&format!(r#"{{"url": "{PR_URL}", "state": null, "error": null}}"#)))
+    );
     assert!(cli.f.host.state().gh_calls.is_empty());
 }
 
@@ -513,10 +575,16 @@ fn pr_state() {
     let cli = Cli::new();
     let open = json(&format!(r#"{{"state": "OPEN", "headRefOid": "{}", "closedAt": null}}"#, "a".repeat(40)));
     cli.f.host.state().pull_requests.insert(PR_URL.into(), FakePr::Prints(open));
-    let runs = [(1_000_000, with(run("done"), &[("pr_url", Value::from(PR_URL))])), (1_000_000, with(run("done"), &[("run_id", Value::from("x-beef00"))]))];
+    let runs = [
+        (1_000_000, with(run("done"), &[("pr_url", Value::from(PR_URL))])),
+        (1_000_000, with(run("done"), &[("run_id", Value::from("x-beef00"))])),
+    ];
     let doc = list_json(&cli, &["--pr-state"], &runs);
     assert_eq!(cli.f.host.state().gh_calls, [vec!["pr", "view", PR_URL, "--json", "state,headRefOid,closedAt"]]);
-    assert_eq!(doc.get("runs").unwrap().as_array().unwrap()[0].get("pr").unwrap().get("state"), Some(&Value::from("OPEN")));
+    assert_eq!(
+        doc.get("runs").unwrap().as_array().unwrap()[0].get("pr").unwrap().get("state"),
+        Some(&Value::from("OPEN"))
+    );
 }
 
 #[test]
@@ -529,7 +597,9 @@ fn unusable_gh_still_lists() {
     assert_eq!(pr.get("state"), Some(&Value::Null));
     assert_eq!(
         pr.get("error").unwrap().text(),
-        format!("gh pr view {PR_URL} --json state,headRefOid,closedAt failed with status 127: sh: 1: exec: gh: not found")
+        format!(
+            "gh pr view {PR_URL} --json state,headRefOid,closedAt failed with status 127: sh: 1: exec: gh: not found"
+        )
     );
 }
 
@@ -574,7 +644,8 @@ fn long_task() -> String {
 /// A run of the default workflow, done with APPROVE, in workspace w1, with fields set.
 fn show_state(fields: &[(&str, Value)]) -> Value {
     let mut state = RunState::new(SHOW_ID, &long_task(), "/proj");
-    (state.phase, state.round, state.verdict, state.workspace_id) = ("done".into(), 1, Some(APPROVE.into()), "w1".into());
+    (state.phase, state.round, state.verdict, state.workspace_id) =
+        ("done".into(), 1, Some(APPROVE.into()), "w1".into());
     let agents = json(
         r#"{"spec": {"name": "spec-a1b2c3", "pane": "w1:p1", "kind": "claude"},
             "build": {"name": "build-a1b2c3", "pane": "w1:p2", "kind": "codex"},
@@ -643,8 +714,17 @@ fn unknown_or_ambiguous_run() {
 fn starts_with_the_list_line_and_the_whole_task() {
     let cases = [
         show_state(&[("pr_url", Value::from(PR_URL))]),
-        show_state(&[("phase", Value::from("build")), ("owner", me()), ("verdict", Value::Null), ("workflow", Value::from("nosuch"))]),
-        show_state(&[("phase", Value::from("review")), ("verdict", Value::Null), ("error", Value::from("interrupted"))]),
+        show_state(&[
+            ("phase", Value::from("build")),
+            ("owner", me()),
+            ("verdict", Value::Null),
+            ("workflow", Value::from("nosuch")),
+        ]),
+        show_state(&[
+            ("phase", Value::from("review")),
+            ("verdict", Value::Null),
+            ("error", Value::from("interrupted")),
+        ]),
     ];
     for saved in cases {
         let cli = show_host(&[saved]);
@@ -710,19 +790,28 @@ fn turns_once_recorded() {
     let turns = Value::Array(vec![
         turn("spec", "spec.md", Some(0), Some(4000), &[("round", Value::from(0)), ("human_paced", Value::Bool(true))]),
         turn("build", "build-1.md", Some(4000), Some(4600), &[("agent", Value::from("codex"))]),
-        turn("quality", "quality-1-1.md", Some(4600), Some(4650), &[("quality_round", Value::from(1)), ("agent", Value::Null)]),
+        turn(
+            "quality",
+            "quality-1-1.md",
+            Some(4600),
+            Some(4650),
+            &[("quality_round", Value::from(1)), ("agent", Value::Null)],
+        ),
         turn("review", "review-1.md", None, Some(4700), &[]),
         turn("build", "build-2.md", Some(4800), None, &[("round", Value::from(2)), ("agent", Value::from("codex"))]),
     ]);
     let out = shown(&[show_state(&[("turns", turns.clone())])]);
-    assert!(out.contains(concat!(
-        "\nturns, started in UTC\n",
-        "    spec     0     claude  2026-10-03 04:00:00  1h 06m   spec.md\n",
-        "    build    1     codex   2026-10-03 05:06:40  10m 00s  build-1.md\n",
-        "    quality  1 q1  -       2026-10-03 05:16:40  50s      quality-1-1.md\n",
-        "    review   1     claude  ?                    ?        review-1.md\n",
-        "    build    2     codex   2026-10-03 05:20:00  ?        build-2.md\n",
-    )), "{out}");
+    assert!(
+        out.contains(concat!(
+            "\nturns, started in UTC\n",
+            "    spec     0     claude  2026-10-03 04:00:00  1h 06m   spec.md\n",
+            "    build    1     codex   2026-10-03 05:06:40  10m 00s  build-1.md\n",
+            "    quality  1 q1  -       2026-10-03 05:16:40  50s      quality-1-1.md\n",
+            "    review   1     claude  ?                    ?        review-1.md\n",
+            "    build    2     codex   2026-10-03 05:20:00  ?        build-2.md\n",
+        )),
+        "{out}"
+    );
     for saved in [show_state(&[]), show_state(&[("turns", json("[]"))])] {
         assert!(!shown(&[saved]).lines().any(|l| l.starts_with("turns")));
     }
@@ -730,7 +819,12 @@ fn turns_once_recorded() {
     let cli = show_host(&[show_state(&[("turns", turns)])]);
     cli.f.clock.set_zone(jiff::tz::TimeZone::fixed(jiff::tz::offset(1)));
     let out = show(&cli, "a1b2c3").1;
-    assert!(out.contains("\nturns, started in UTC+01:00\n    spec     0     claude  2026-10-03 05:00:00  1h 06m   spec.md\n"), "{out}");
+    assert!(
+        out.contains(
+            "\nturns, started in UTC+01:00\n    spec     0     claude  2026-10-03 05:00:00  1h 06m   spec.md\n"
+        ),
+        "{out}"
+    );
     // A zone without a name is named by the offsets its starts had, not today's: October is summer time.
     cli.f.clock.set_zone(jiff::tz::TimeZone::posix("CET-1CEST,M3.5.0,M10.5.0/3").unwrap());
     let out = show(&cli, "a1b2c3").1;
@@ -740,7 +834,8 @@ fn turns_once_recorded() {
 #[test]
 fn worktree_of_a_worktree_run() {
     let worktree = "/proj/.octoflow-ai/worktrees/a1b2c3";
-    let out = shown(&[show_state(&[("worktree", Value::from(worktree)), ("branch", Value::from("orchestrator/x-a1b2c3"))])]);
+    let out =
+        shown(&[show_state(&[("worktree", Value::from(worktree)), ("branch", Value::from("orchestrator/x-a1b2c3"))])]);
     assert!(out.contains(&format!("\nworktree   {worktree}\nbranch     orchestrator/x-a1b2c3\n")), "{out}");
     assert!(!has_line(&shown(&[show_state(&[])]), "worktree"));
 }
@@ -748,7 +843,12 @@ fn worktree_of_a_worktree_run() {
 #[test]
 fn every_agent_with_its_kind_and_pane() {
     let out = shown(&[show_state(&[])]);
-    assert!(out.contains("\nagents\n    spec    claude    w1:p1\n    build   codex     w1:p2\n    review  claude    w1:p3\n"), "{out}");
+    assert!(
+        out.contains(
+            "\nagents\n    spec    claude    w1:p1\n    build   codex     w1:p2\n    review  claude    w1:p3\n"
+        ),
+        "{out}"
+    );
 }
 
 #[test]
@@ -758,12 +858,21 @@ fn files_oldest_first() {
         put(&cli, name, "x");
     }
     let out = show(&cli, "a1b2c3").1;
-    assert!(out.contains(&format!("\nfiles\n    {SHOW_DIR}/spec.md\n    {SHOW_DIR}/build-1.md\n    {SHOW_DIR}/review-1.md\n")), "{out}");
+    assert!(
+        out.contains(&format!(
+            "\nfiles\n    {SHOW_DIR}/spec.md\n    {SHOW_DIR}/build-1.md\n    {SHOW_DIR}/review-1.md\n"
+        )),
+        "{out}"
+    );
 }
 
 #[test]
 fn the_last_review_in_a_later_round() {
-    let cli = show_host(&[show_state(&[("phase", Value::from("build")), ("round", Value::from(2)), ("verdict", Value::from(CHANGES_REQUESTED))])]);
+    let cli = show_host(&[show_state(&[
+        ("phase", Value::from("build")),
+        ("round", Value::from(2)),
+        ("verdict", Value::from(CHANGES_REQUESTED)),
+    ])]);
     put(&cli, "review-1.md", "\n**VERDICT: CHANGES_REQUESTED**\n\n## Findings\n\n1. a bug\n");
     let out = show(&cli, "a1b2c3").1;
     assert!(out.ends_with(&format!("\nlast review: {SHOW_DIR}/review-1.md\n\n\n## Findings\n\n1. a bug\n")), "{out}");
@@ -832,12 +941,15 @@ fn each_verdict_step_s_verdicts_and_the_last_verdict_file_written() {
     put(&cli, "accept-1.md", "VERDICT: CHANGES_REQUESTED\nnot what was asked\n");
     put(&cli, "review-2.md", "VERDICT: CHANGES_REQUESTED\na bug\n");
     let out = show(&cli, "a1b2c3").1;
-    assert!(out.contains(concat!(
-        "\nverdicts\n",
-        "    round 1  review  APPROVE\n",
-        "    round 1  accept  CHANGES_REQUESTED\n",
-        "    round 2  review  CHANGES_REQUESTED\n",
-    )), "{out}");
+    assert!(
+        out.contains(concat!(
+            "\nverdicts\n",
+            "    round 1  review  APPROVE\n",
+            "    round 1  accept  CHANGES_REQUESTED\n",
+            "    round 2  review  CHANGES_REQUESTED\n",
+        )),
+        "{out}"
+    );
     assert!(out.ends_with(&format!("\nlast review: {SHOW_DIR}/review-2.md\na bug\n")), "{out}");
     // Round 2's acceptance, had it been written, is the later file of the round.
     put(&cli, "accept-2.md", "VERDICT: APPROVE\nas asked\n");
@@ -850,7 +962,11 @@ fn each_verdict_step_s_verdicts_and_the_last_verdict_file_written() {
 fn no_last_review() {
     let solo = workflow_definition(&solo());
     let cases = [
-        show_state(&[("workflow", Value::from("solo")), ("workflow_definition", solo), ("verdict", Value::from("FINISHED"))]),
+        show_state(&[
+            ("workflow", Value::from("solo")),
+            ("workflow_definition", solo),
+            ("verdict", Value::from("FINISHED")),
+        ]),
         show_state(&[("phase", Value::from("spec")), ("round", Value::from(0)), ("verdict", Value::Null)]),
         show_state(&[("workflow", Value::from("nosuch"))]),
     ];
@@ -888,7 +1004,11 @@ fn on_a_machine_everything_goes_over_ssh() {
     let proj = dir.join("proj");
     let run_dir = format!("{proj}/.octoflow-ai/runs/{SHOW_ID}");
     std::fs::create_dir_all(&run_dir).unwrap();
-    let saved = show_state(&[("phase", Value::from("build")), ("round", Value::from(2)), ("verdict", Value::from(CHANGES_REQUESTED))]);
+    let saved = show_state(&[
+        ("phase", Value::from("build")),
+        ("round", Value::from(2)),
+        ("verdict", Value::from(CHANGES_REQUESTED)),
+    ]);
     let at = |seconds| std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds);
     let write = |name: &str, text: &str, seconds: u64| {
         let path = format!("{run_dir}/{name}");
@@ -967,27 +1087,48 @@ fn show_names_the_gate() {
 
 #[test]
 fn a_running_blocked_run_shows_its_question_and_pane() {
-    let blocked = with(mine(), &[("blocked", block()), ("agents", json(r#"{"build": {"name": "build-a1b2c3", "pane": "w1:p2", "kind": "claude"}}"#))]);
-    assert_eq!(listed(&[(40, blocked.clone()), (STALE_SECONDS + 1, blocked)], &[]), [
-        format!("20260930-070000-c0ffee  build    round 1  blocked: {QUESTION} (pane w1:p2)"),
-        "20260930-070000-c0ffee  build    round 1  stale: no heartbeat for 5m; resume: octoflow resume c0ffee".into(),
-    ]);
+    let blocked = with(
+        mine(),
+        &[
+            ("blocked", block()),
+            ("agents", json(r#"{"build": {"name": "build-a1b2c3", "pane": "w1:p2", "kind": "claude"}}"#)),
+        ],
+    );
+    assert_eq!(
+        listed(&[(40, blocked.clone()), (STALE_SECONDS + 1, blocked)], &[]),
+        [
+            format!("20260930-070000-c0ffee  build    round 1  blocked: {QUESTION} (pane w1:p2)"),
+            "20260930-070000-c0ffee  build    round 1  stale: no heartbeat for 5m; resume: octoflow resume c0ffee"
+                .into(),
+        ]
+    );
 }
 
 #[test]
 fn without_a_known_pane_only_the_question() {
     let unknown = with(mine(), &[("blocked", block()), ("workflow", Value::from("nosuch"))]);
     let no_agent = with(mine(), &[("blocked", block())]);
-    assert_eq!(listed(&[(40, unknown), (40, no_agent)], &[]), [
-        format!("20260930-070000-c0ffee  build    round 1  blocked: {QUESTION}  [nosuch workflow]"),
-        format!("20260930-070000-c0ffee  build    round 1  blocked: {QUESTION}"),
-    ]);
+    assert_eq!(
+        listed(&[(40, unknown), (40, no_agent)], &[]),
+        [
+            format!("20260930-070000-c0ffee  build    round 1  blocked: {QUESTION}  [nosuch workflow]"),
+            format!("20260930-070000-c0ffee  build    round 1  blocked: {QUESTION}"),
+        ]
+    );
 }
 
 #[test]
 fn show_of_a_blocked_run() {
     let cli = alive();
-    cli.save(&show_state(&[("phase", Value::from("build")), ("owner", me()), ("verdict", Value::Null), ("blocked", block())]), 40);
+    cli.save(
+        &show_state(&[
+            ("phase", Value::from("build")),
+            ("owner", me()),
+            ("verdict", Value::Null),
+            ("blocked", block()),
+        ]),
+        40,
+    );
     assert_eq!(cli.main(&["show", "a1b2c3", "--cwd", "/proj"]), 0);
     assert_eq!(cli.lines()[0], format!("{SHOW_ID}  build    round 1  blocked: {QUESTION} (pane w1:p2)"));
 }
@@ -995,12 +1136,20 @@ fn show_of_a_blocked_run() {
 #[test]
 fn the_wait_is_listed() {
     // The state a Workflow saves while the Builder's BLOCKED report waits (crate::workflow's blocked tests).
-    let saved = with(run("build"), &[
-        ("run_id", Value::from("20260929-120000-a1b2c3")),
-        ("owner", json(r#"{"host": "box", "pid": 7, "started_at": "2026-09-29T12:00:00+00:00"}"#)),
-        ("agents", json(r#"{"spec": {"name": "spec-a1b2c3", "pane": "w1:p1", "kind": "claude"}, "build": {"name": "build-a1b2c3", "pane": "w1:p2", "kind": "claude"}}"#)),
-        ("blocked", block()),
-    ]);
+    let saved = with(
+        run("build"),
+        &[
+            ("run_id", Value::from("20260929-120000-a1b2c3")),
+            ("owner", json(r#"{"host": "box", "pid": 7, "started_at": "2026-09-29T12:00:00+00:00"}"#)),
+            (
+                "agents",
+                json(
+                    r#"{"spec": {"name": "spec-a1b2c3", "pane": "w1:p1", "kind": "claude"}, "build": {"name": "build-a1b2c3", "pane": "w1:p2", "kind": "claude"}}"#,
+                ),
+            ),
+            ("blocked", block()),
+        ],
+    );
     let cli = alive();
     cli.with(|world| {
         let world = Connected { local_host: "box", ..*world };
@@ -1019,11 +1168,14 @@ fn list_shows_the_quality_phase() {
 
 #[test]
 fn list_reads_the_gated_step_from_the_saved_definition() {
-    let state = with(run("impl"), &[
-        ("quality_round", Value::from(2)),
-        ("workflow", Value::from("impl")),
-        ("workflow_definition", workflow_definition(&impl_())),
-    ]);
+    let state = with(
+        run("impl"),
+        &[
+            ("quality_round", Value::from(2)),
+            ("workflow", Value::from("impl")),
+            ("workflow_definition", workflow_definition(&impl_())),
+        ],
+    );
     let lines = listed(&[(1_000_000, state)], &[]);
     assert!(lines[0].starts_with("20260930-070000-c0ffee  impl     round 1 q2"), "{}", lines[0]);
 }
@@ -1049,10 +1201,10 @@ fn the_metrics_command_prints_a_line_per_run_that_is_done() {
     let argv = ["metrics", "--cwd", &proj.path()];
     // Each printed as one line, a file the run wrote over several lines too.
     assert_eq!(cli.main(&argv), 0);
-    assert_eq!(cli.lines(), [
-        r#"{"run_id":"1-aaaaaa","outcome":"APPROVE"}"#,
-        r#"{"run_id":"3-cccccc","outcome":"error"}"#,
-    ]);
+    assert_eq!(
+        cli.lines(),
+        [r#"{"run_id":"1-aaaaaa","outcome":"APPROVE"}"#, r#"{"run_id":"3-cccccc","outcome":"error"}"#,]
+    );
     // A file that is not JSON is corrupt.
     std::fs::write(format!("{runs}/3-cccccc/metrics.json"), "{\"run_id\": ").unwrap();
     cli.take_out();

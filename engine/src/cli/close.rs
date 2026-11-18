@@ -138,7 +138,12 @@ enum BranchFate {
 /// The `close` command in the project at cwd, run from world: close_run of the run run_ref names, or without one
 /// close_all, each with dry_run changing nothing. Returns the exit status: EXIT_ERROR when a run of close_all failed,
 /// else 0. Errors: as close_run's, or close_all's.
-pub fn close_command(world: &Connected, cwd: &str, run_ref: Option<&str>, dry_run: bool) -> Result<i32, OrchestratorError> {
+pub fn close_command(
+    world: &Connected,
+    cwd: &str,
+    run_ref: Option<&str>,
+    dry_run: bool,
+) -> Result<i32, OrchestratorError> {
     let closer = Closer::of(world);
     match run_ref {
         Some(run_ref) => close_run(&closer, cwd, run_ref, dry_run).map(|_| 0),
@@ -195,7 +200,9 @@ pub fn close_all(world: &Closer, cwd: &str, sweep: Sweep) -> Result<Vec<RunClose
         Sweep::Previewed(preview) => preview
             .iter()
             .filter_map(|run| match &run.outcome {
-                Outcome::Closed { done, discarded } => Some((run.run_id.clone(), None, Some((done.as_str(), &discarded[..])))),
+                Outcome::Closed { done, discarded } => {
+                    Some((run.run_id.clone(), None, Some((done.as_str(), &discarded[..]))))
+                }
                 _ => None,
             })
             .collect(),
@@ -319,7 +326,8 @@ fn decide<'r>(world: &Closer, cwd: &str, run: &'r SavedRun) -> Result<Decision<'
     // refs, and no git command runs for them.
     let refs = !state.locked.is_empty() || {
         let prefix = refs_prefix(&state.run_id);
-        let unreadable = |e: OrchestratorError| OrchestratorError(format!("could not read the refs under {prefix}: {e}"));
+        let unreadable =
+            |e: OrchestratorError| OrchestratorError(format!("could not read the refs under {prefix}: {e}"));
         host.git_head(cwd)?.is_some() && !host.refs(cwd, &prefix).map_err(unreadable)?.is_empty()
     };
     Ok(Decision::Close(Plan { state, workspace, worktree, refs }))

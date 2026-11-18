@@ -39,7 +39,9 @@ fn run_seeded(script: Script, text: &str, pipeline: &Pipeline) -> (Fixture, Resu
     f.host.state().before_write = Some(Box::new(move |path, text| {
         let mut first = record.borrow_mut();
         if path.ends_with("/state.json") && first.is_none() {
-            let Ok(Value::Object(saved)) = serde_json::from_str::<Value>(text) else { panic!("state.json is no object") };
+            let Ok(Value::Object(saved)) = serde_json::from_str::<Value>(text) else {
+                panic!("state.json is no object")
+            };
             *first = Some(saved);
         }
         Ok(())
@@ -109,7 +111,8 @@ fn a_spec_without_a_title_titles_by_the_task() {
 
 #[test]
 fn a_seeded_run_resumes_like_any_other() {
-    let f = Fixture::on(Rc::new(FakeHost::default()), seeded_run(&DEFAULT_WORKFLOW), vec![("build", vec![build_turn(1)])]);
+    let f =
+        Fixture::on(Rc::new(FakeHost::default()), seeded_run(&DEFAULT_WORKFLOW), vec![("build", vec![build_turn(1)])]);
     f.play("review", vec![then_interrupted(&f.interrupt, idle())]);
     assert_eq!(f.workflow(given(&DEFAULT_WORKFLOW, GIVEN_SPEC)).run(), Err(Stopped::Interrupted));
     let saved = RunState::from_saved(&f.saved()).unwrap();
@@ -132,7 +135,8 @@ fn a_contract_role_with_a_later_step_lays_out_last() {
     let mut check = Step::new("check", "plan", "check-{n}.md", "Check {change} against {plan_path}; write {path}.");
     check.loop_to = Some("build".into());
     let planned =
-        Pipeline::new("planned", roles(&[("plan", "Planner"), ("build", "Builder")]), vec![plan, build, check]).unwrap();
+        Pipeline::new("planned", roles(&[("plan", "Planner"), ("build", "Builder")]), vec![plan, build, check])
+            .unwrap();
     let seen = seen();
     let script = vec![
         ("build", vec![recording(build_turn(1), &seen)]),
@@ -158,8 +162,12 @@ fn a_workflow_without_a_contract_step_cannot_take_a_spec() {
 
 #[test]
 fn a_workflow_with_only_a_contract_step_cannot_take_a_spec() {
-    let solo = Pipeline::new("solo", roles(&[("spec", "Spec Collector")]), vec![Step::new("spec", "spec", "spec.md", "Write {path}.")])
-        .unwrap();
+    let solo = Pipeline::new(
+        "solo",
+        roles(&[("spec", "Spec Collector")]),
+        vec![Step::new("spec", "spec", "spec.md", "Write {path}.")],
+    )
+    .unwrap();
     let error = solo.seeded_start().unwrap_err().0;
     assert!(error.starts_with("workflow solo has no step after spec, so with --spec"), "{error}");
 }

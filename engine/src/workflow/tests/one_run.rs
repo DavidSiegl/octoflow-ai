@@ -5,8 +5,8 @@
 use super::worktree::worktree_run;
 use super::*;
 use crate::constants::{HEARTBEAT_SECONDS, STALE_SECONDS};
-use crate::runs::local_host;
 use crate::json::object;
+use crate::runs::local_host;
 
 const OTHER_ID: &str = "20261009-220151-537935";
 
@@ -145,7 +145,8 @@ fn worktree_runs_do_not_refuse_each_other() {
 
 #[test]
 fn a_worktree_run_and_one_in_the_checkout_do_not_refuse_each_other() {
-    let in_place = Fixture::on(host_with_other_run(16, &[("worktree", Value::from("/elsewhere"))]), new_state(), approved());
+    let in_place =
+        Fixture::on(host_with_other_run(16, &[("worktree", Value::from("/elsewhere"))]), new_state(), approved());
     let in_worktree = worktree_run(host_with_other_run(16, &[]), Some(approved()));
     // An in-place run beside a live worktree run, and a worktree run beside a live in-place run.
     for mut f in [in_place, in_worktree] {

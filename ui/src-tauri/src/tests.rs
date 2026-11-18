@@ -96,7 +96,10 @@ fn only_an_https_page_opens_and_a_license_file_only_when_bundled() {
 #[test]
 fn the_window_names_a_page_by_its_url_and_a_license_file_by_its_name() {
     let parse = |json: &str| serde_json::from_str::<Outside>(json);
-    assert_eq!(parse(r#"{"page": "https://example.com"}"#).expect("a page"), Outside::Page("https://example.com".into()));
+    assert_eq!(
+        parse(r#"{"page": "https://example.com"}"#).expect("a page"),
+        Outside::Page("https://example.com".into())
+    );
     let license = parse(r#"{"license": "crate-licenses"}"#).expect("a license file");
     assert_eq!(license, Outside::License(LicenseFile::CrateLicenses));
     assert!(parse(r#"{"license": "/etc/passwd"}"#).is_err());
@@ -204,8 +207,7 @@ fn vars(pairs: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
 /// An AppImage's start-up: APPDIR /tmp/.mount_x, the AppImage, and the user's directory /home/u/proj, before
 /// rest.
 fn appimage(rest: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
-    let mut env =
-        vars(&[("APPDIR", "/tmp/.mount_x"), ("APPIMAGE", "/home/u/app.AppImage"), ("OWD", "/home/u/proj")]);
+    let mut env = vars(&[("APPDIR", "/tmp/.mount_x"), ("APPIMAGE", "/home/u/app.AppImage"), ("OWD", "/home/u/proj")]);
     env.extend(vars(rest));
     env
 }
@@ -230,8 +232,7 @@ fn the_cli_gets_the_arguments_as_they_came() {
 #[test]
 fn outside_an_appimage_nothing_changes() {
     // APPDIR alone, as a user might export it, is not an AppImage.
-    let env =
-        vars(&[("APPDIR", "/opt/x"), ("LD_LIBRARY_PATH", "/opt/x/lib"), ("PYTHONHOME", "/opt/x"), ("OWD", "/")]);
+    let env = vars(&[("APPDIR", "/opt/x"), ("LD_LIBRARY_PATH", "/opt/x/lib"), ("PYTHONHOME", "/opt/x"), ("OWD", "/")]);
     assert_eq!(shell_of(env.clone()), UserShell { vars: env.clone(), dir: None });
     let elsewhere = UserShell::from_vars(env.clone(), Some(Path::new("/usr/bin/octoflow-ui")));
     assert_eq!(elsewhere, UserShell { vars: env, dir: None });
@@ -294,8 +295,7 @@ fn under_an_appimage_the_directory_is_the_users() {
 
 #[test]
 fn under_an_extracted_appimage_the_directory_is_pwd() {
-    let env =
-        vars(&[("APPDIR", "/tmp/appimage_extracted_x"), ("APPIMAGE", "/a.AppImage"), ("PWD", "/home/u/proj")]);
+    let env = vars(&[("APPDIR", "/tmp/appimage_extracted_x"), ("APPIMAGE", "/a.AppImage"), ("PWD", "/home/u/proj")]);
     let shell = shell_of(env);
     assert_eq!(shell, UserShell { vars: vars(&[("PWD", "/home/u/proj")]), dir: Some("/home/u/proj".into()) });
 }

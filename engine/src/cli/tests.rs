@@ -11,18 +11,18 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::*;
-use crate::local_gate::LOCAL_GATE;
-use crate::constants::APPROVE;
-use crate::host::fake::FakeHost;
-use serde_json::Value;
-use crate::json::ValueExt;
-use crate::workflow::fixture::{build_turn, saved_run, then_interrupted, Fixture};
 use super::fixture::Cli;
+use super::*;
+use crate::constants::APPROVE;
 use crate::constants::{CHANGES_REQUESTED, FINISHED};
+use crate::host::fake::FakeHost;
+use crate::json::ValueExt;
+use crate::local_gate::LOCAL_GATE;
 use crate::test_support::{built_in_as_file, TempDir};
+use crate::workflow::fixture::{build_turn, saved_run, then_interrupted, Fixture};
 use crate::workflow::fixture::{review_turn, solo_turn, spec_turn};
 use crate::workflow_file::{find_workflow, load_workflow_file, workflow_definition, workflow_toml};
+use serde_json::Value;
 
 /// The command line argv, after the program's name.
 fn command(argv: &[&str]) -> Command {
@@ -104,7 +104,10 @@ fn a_run_ends_with_its_verdict_and_its_pull_request() {
     let Ok(ran) = run_on(&f, &["resume", "a1b2c3", "--cwd", "/proj"]) else {
         panic!("a done run resumes to its verdict")
     };
-    assert_eq!((ran.verdict.as_deref(), ran.state.pr_url.as_deref()), (Some(APPROVE), Some("https://github.com/o/r/pull/7")));
+    assert_eq!(
+        (ran.verdict.as_deref(), ran.state.pr_url.as_deref()),
+        (Some(APPROVE), Some("https://github.com/o/r/pull/7"))
+    );
     assert_eq!(ran_status(Ok(ran), &command(&["resume", "a1b2c3"])), 0);
 }
 
@@ -129,9 +132,7 @@ fn a_ctrl_c_in_the_workflow_names_the_run_it_stopped() {
     let (f, _) = saved_on_host(saved_run("build", 1, &["spec", "build"]));
     f.play("build", vec![then_interrupted(&f.interrupt, build_turn(1))]);
     let argv = ["resume", "a1b2c3", "--cwd", "/proj"];
-    let Err(Stop::Interrupted(Some(run_id))) = run_on(&f, &argv) else {
-        panic!("the run was not interrupted")
-    };
+    let Err(Stop::Interrupted(Some(run_id))) = run_on(&f, &argv) else { panic!("the run was not interrupted") };
     assert_eq!(run_id, "20260929-120000-a1b2c3");
     assert_eq!(f.saved().get("error"), Some(&Value::from("interrupted")));
 }
@@ -162,15 +163,20 @@ fn a_run_without_a_verdict_finishes_as_no_verdict() {
 #[test]
 fn the_resume_hint() {
     let target = ["--machine".to_string(), "box".to_string(), "--cwd".to_string(), "~/my project".to_string()];
-    assert_eq!(resume_command("20260929-120000-a1b2c3", &target), "octoflow resume a1b2c3 --machine box --cwd '~/my project'");
+    assert_eq!(
+        resume_command("20260929-120000-a1b2c3", &target),
+        "octoflow resume a1b2c3 --machine box --cwd '~/my project'"
+    );
     assert_eq!(
         interrupted_note(Some("20260929-120000-a1b2c3"), &[]),
         "interrupted; the role agents keep running in herdr; resume with: octoflow resume a1b2c3"
     );
     assert_eq!(interrupted_note(None, &target), "interrupted; the role agents keep running in herdr");
-    assert_eq!(command(&["run", "--machine", "box", "--cwd", "/p", "t"]).target().unwrap().flags(), target[..2].iter().cloned().chain(["--cwd".into(), "/p".into()]).collect::<Vec<_>>());
+    assert_eq!(
+        command(&["run", "--machine", "box", "--cwd", "/p", "t"]).target().unwrap().flags(),
+        target[..2].iter().cloned().chain(["--cwd".into(), "/p".into()]).collect::<Vec<_>>()
+    );
 }
-
 
 // -- Runs started through main ---------------------------------------------------------------------------------------
 
@@ -190,10 +196,13 @@ fn configured(d: &TempDir, files: &[(&str, &str)]) -> Cli {
 fn started(cli: &Cli, argv: &[&str]) -> Value {
     match cli.started(argv) {
         (Err(Stop::Failed(e)), Some(saved)) if e.0.contains("at its first prompt") => saved,
-        (ended, saved) => panic!("{argv:?} did not start a run: {:?}, {saved:?}", ended.err().map(|e| match e {
-            Stop::Failed(e) => e.0,
-            Stop::Interrupted(_) => "interrupted".into(),
-        })),
+        (ended, saved) => panic!(
+            "{argv:?} did not start a run: {:?}, {saved:?}",
+            ended.err().map(|e| match e {
+                Stop::Failed(e) => e.0,
+                Stop::Interrupted(_) => "interrupted".into(),
+            })
+        ),
     }
 }
 
@@ -227,7 +236,10 @@ fn permission_mode_and_models_reach_the_workflow() {
 fn role_models() {
     let cases: [(&[&str], &str); 4] = [
         (&[], "{}"),
-        (&["--model", "claude-opus-5-5"], r#"{"spec":"claude-opus-5-5","build":"claude-opus-5-5","review":"claude-opus-5-5"}"#),
+        (
+            &["--model", "claude-opus-5-5"],
+            r#"{"spec":"claude-opus-5-5","build":"claude-opus-5-5","review":"claude-opus-5-5"}"#,
+        ),
         (&["--model", "sonnet", "--review-model", "opus"], r#"{"spec":"sonnet","build":"sonnet","review":"opus"}"#),
         (&["--build-model", "sonnet"], r#"{"build":"sonnet"}"#),
     ];
@@ -272,7 +284,8 @@ fn a_run_without_a_verdict_step_finishes_with_its_last_file() {
     // With --no-pr this run publishes nothing, so its last line names the Builder's file.
     let d = TempDir::new();
     let cli = configured(&d, &[("solo.toml", &workflow_toml(&crate::test_support::solo()))]);
-    let ended = cli.played(&["--no-pr", "--workflow-file", &d.join("solo.toml"), "task"], vec![("build", vec![solo_turn()])]);
+    let ended =
+        cli.played(&["--no-pr", "--workflow-file", &d.join("solo.toml"), "task"], vec![("build", vec![solo_turn()])]);
     assert!(matches!(&ended, Ok(Ended::Ran(ran)) if ran.verdict.as_deref() == Some(FINISHED)));
     assert_eq!(cli.status(ended, &["run", "task"]), 0);
     let out = cli.take_out();
@@ -285,7 +298,8 @@ fn a_failed_gate_exits_as_changes_requested() {
     let state = saved_run("done", 1, &[]);
     let pipeline = crate::pipeline::DEFAULT_WORKFLOW.clone();
     let line = RefCell::new(String::new());
-    let status = finish(Some(crate::constants::QUALITY_GATE_FAILED), &state, &pipeline, &|t| line.borrow_mut().push_str(t));
+    let status =
+        finish(Some(crate::constants::QUALITY_GATE_FAILED), &state, &pipeline, &|t| line.borrow_mut().push_str(t));
     assert_eq!(status, EXIT_CHANGES_REQUESTED);
     assert_eq!(*line.borrow(), format!("QUALITY_GATE_FAILED: {}/review-1.md\n", state.dir()));
 }
@@ -306,7 +320,12 @@ fn finished_run_exit_status() {
     let cases = [
         (APPROVE, vec![], 0, format!("{APPROVE}: {url}")),
         (APPROVE, vec!["a.py"], EXIT_CONFLICT, format!("{APPROVE}: {url} (a draft: it conflicts with main)")),
-        (CHANGES_REQUESTED, vec!["a.py"], EXIT_CHANGES_REQUESTED, format!("{CHANGES_REQUESTED}: {url} (a draft: it conflicts with main)")),
+        (
+            CHANGES_REQUESTED,
+            vec!["a.py"],
+            EXIT_CHANGES_REQUESTED,
+            format!("{CHANGES_REQUESTED}: {url} (a draft: it conflicts with main)"),
+        ),
     ];
     for (verdict, conflicts, status, line) in cases {
         let mut state = saved_run("done", 1, &["spec", "build", "review"]);
@@ -337,7 +356,10 @@ fn an_interrupted_run_names_its_resume_command() {
     let ended = cli.played(&["task"], vec![("spec", vec![interrupted])]);
     let Err(Stop::Interrupted(Some(run_id))) = &ended else { panic!("not interrupted with its run") };
     let key = run_id.rsplit('-').next().unwrap();
-    assert_eq!(interrupted_note(Some(run_id), &[]), format!("interrupted; the role agents keep running in herdr; resume with: octoflow resume {key}"));
+    assert_eq!(
+        interrupted_note(Some(run_id), &[]),
+        format!("interrupted; the role agents keep running in herdr; resume with: octoflow resume {key}")
+    );
     assert_eq!(cli.status(ended, &["run", "task"]), EXIT_INTERRUPTED);
 }
 
@@ -364,7 +386,8 @@ fn the_default_workflow_is_the_default() {
     let plain = started(&cli, &["task", "--model", "m"]);
     let named = started(&cli, &["task", "--model", "m", "--workflow", "default"]);
     let same = |saved: &Value| {
-        ["workflow", "phase", "models", "agent_kinds", "workflow_definition", "pull_request", "max_rounds"].map(|k| field(saved, k))
+        ["workflow", "phase", "models", "agent_kinds", "workflow_definition", "pull_request", "max_rounds"]
+            .map(|k| field(saved, k))
     };
     assert_eq!(same(&plain), same(&named));
     assert_eq!((field(&plain, "workflow"), field(&plain, "phase")), (r#""default""#.into(), r#""spec""#.into()));
@@ -424,7 +447,17 @@ fn model_flags_override_the_workflows_models() {
     let saved = started(&cli, &["task", "--workflow", "product-team", "--model", "X"]);
     // The file's models first, then the flags', a flag's replacing the file's for the same role.
     assert_eq!(field(&saved, "models"), r#"{"tests":"X","spec":"X","design":"X","build":"X","review":"X"}"#);
-    let flags = ["task", "--workflow", "product-team", "--role-model", "tests=haiku", "--role-model", "spec=opus", "--build-model", "Y"];
+    let flags = [
+        "task",
+        "--workflow",
+        "product-team",
+        "--role-model",
+        "tests=haiku",
+        "--role-model",
+        "spec=opus",
+        "--build-model",
+        "Y",
+    ];
     assert_eq!(field(&started(&cli, &flags), "models"), r#"{"tests":"haiku","spec":"opus","build":"Y"}"#);
 }
 
@@ -519,9 +552,18 @@ fn the_spec_combines_with_the_other_run_flags() {
         let cli = Cli::gated();
         let argv: Vec<&str> = ["--spec", &spec].iter().copied().chain(flags.iter().copied()).collect();
         let saved = started(&cli, &argv);
-        assert_eq!((field(&saved, "phase"), field(&saved, key)), (r#""build""#.to_string(), value.to_string()), "{flags:?}");
-        let dir = format!("{}/.octoflow-ai/runs/{}", saved.get("cwd").unwrap().text(), saved.get("run_id").unwrap().text());
-        assert_eq!(cli.f.host.state().files.get(&format!("{dir}/spec.md")).map(String::as_str), Some(GIVEN_SPEC), "{flags:?}");
+        assert_eq!(
+            (field(&saved, "phase"), field(&saved, key)),
+            (r#""build""#.to_string(), value.to_string()),
+            "{flags:?}"
+        );
+        let dir =
+            format!("{}/.octoflow-ai/runs/{}", saved.get("cwd").unwrap().text(), saved.get("run_id").unwrap().text());
+        assert_eq!(
+            cli.f.host.state().files.get(&format!("{dir}/spec.md")).map(String::as_str),
+            Some(GIVEN_SPEC),
+            "{flags:?}"
+        );
     }
 }
 
@@ -530,13 +572,20 @@ fn an_unreadable_or_empty_spec_is_an_error() {
     let d = TempDir::new();
     let cli = Cli::new();
     let missing = d.join("nosuch.md");
-    assert_eq!(refused(&cli, &["--spec", &missing]), format!("cannot read spec file {missing}: No such file or directory"));
+    assert_eq!(
+        refused(&cli, &["--spec", &missing]),
+        format!("cannot read spec file {missing}: No such file or directory")
+    );
     assert_eq!(refused(&cli, &["--spec", &d.path()]), format!("cannot read spec file {}: Is a directory", d.path()));
     std::fs::write(d.join("spec.bin"), b"\xff\xfe# spec").unwrap();
-    assert!(refused(&cli, &["--spec", &d.join("spec.bin")]).starts_with(&format!("spec file {} is not UTF-8 text", d.join("spec.bin"))));
+    assert!(refused(&cli, &["--spec", &d.join("spec.bin")])
+        .starts_with(&format!("spec file {} is not UTF-8 text", d.join("spec.bin"))));
     for text in ["", " \n\t\r\n"] {
         std::fs::write(d.join("blank.md"), text).unwrap();
-        assert_eq!(refused(&cli, &["--spec", &d.join("blank.md")]), format!("spec file {} is empty", d.join("blank.md")));
+        assert_eq!(
+            refused(&cli, &["--spec", &d.join("blank.md")]),
+            format!("spec file {} is empty", d.join("blank.md"))
+        );
     }
 }
 
@@ -563,8 +612,14 @@ fn harness_precedence() {
         (&["--role-agent", "build=opencode"], r#"{"spec":"claude","build":"opencode","review":"claude"}"#.into()),
         (&["--workflow", "coded"], r#"{"spec":"claude","build":"claude","review":"codex"}"#.into()),
         (&["--workflow", "coded", "--agent", "agy"], every("agy")),
-        (&["--workflow", "coded", "--role-agent", "review=pi"], r#"{"spec":"claude","build":"claude","review":"pi"}"#.into()),
-        (&["--workflow", "coded", "--agent", "pi", "--role-agent", "spec=claude"], r#"{"spec":"claude","build":"pi","review":"pi"}"#.into()),
+        (
+            &["--workflow", "coded", "--role-agent", "review=pi"],
+            r#"{"spec":"claude","build":"claude","review":"pi"}"#.into(),
+        ),
+        (
+            &["--workflow", "coded", "--agent", "pi", "--role-agent", "spec=claude"],
+            r#"{"spec":"claude","build":"pi","review":"pi"}"#.into(),
+        ),
     ];
     for (flags, kinds) in cases {
         let argv: Vec<&str> = flags.iter().copied().chain(["task"]).collect();
@@ -596,8 +651,16 @@ fn the_worktree_flag_reaches_the_workflow() {
 #[test]
 fn bad_prompt_files_stop_a_run_before_any_agent() {
     let cases = [
-        ("BUILDER_PROMPT.md", "Build {spec_path}.\n", "BUILDER_PROMPT names no built-in prompt; did you mean BUILD_PROMPT.md?"),
-        ("BUILD_PROMPT.md", "Build {spec_path} in {cwd}.\n", "placeholder {build_path} is missing; BUILD_PROMPT takes {build_path}, {cwd}, {spec_path}"),
+        (
+            "BUILDER_PROMPT.md",
+            "Build {spec_path}.\n",
+            "BUILDER_PROMPT names no built-in prompt; did you mean BUILD_PROMPT.md?",
+        ),
+        (
+            "BUILD_PROMPT.md",
+            "Build {spec_path} in {cwd}.\n",
+            "placeholder {build_path} is missing; BUILD_PROMPT takes {build_path}, {cwd}, {spec_path}",
+        ),
     ];
     for (name, text, message) in cases {
         let d = TempDir::new();
@@ -625,11 +688,14 @@ fn list_names_a_non_default_workflow() {
     cli.save(&impl_run.to_json(), 1_000_000);
     assert_eq!(cli.main(&["list", "--cwd", "/proj"]), 0);
     let lines: Vec<String> = cli.lines().into_iter().step_by(2).collect();
-    assert_eq!(lines[..3], [
-        format!("20260930-070000-c0ffe1  done     round 1  {APPROVE}"),
-        format!("20260930-070000-c0ffe2  done     round 1  {APPROVE}"),
-        format!("20260930-070000-c0ffe3  done     round 1  {APPROVE}  [quick workflow]"),
-    ]);
+    assert_eq!(
+        lines[..3],
+        [
+            format!("20260930-070000-c0ffe1  done     round 1  {APPROVE}"),
+            format!("20260930-070000-c0ffe2  done     round 1  {APPROVE}"),
+            format!("20260930-070000-c0ffe3  done     round 1  {APPROVE}  [quick workflow]"),
+        ]
+    );
     assert!(lines[3].starts_with("20260930-070000-c0ffe4  impl     round 1 q2  stale"), "{}", lines[3]);
     assert!(lines[3].ends_with("  [impl workflow]"), "{}", lines[3]);
 }
@@ -647,7 +713,13 @@ fn record_in_state_refuses_a_changed_file_naming_what_it_does_not_record() {
     let cases: [(&Change, &str); 3] = [
         (&|_| {}, "nothing is recorded"),
         (&|s| s.closed = Some("closed".into()), "closed is not recorded"),
-        (&|s| { s.closed = Some("closed".into()); s.conflicts = vec!["a".into()]; }, "conflicts and closed are not recorded"),
+        (
+            &|s| {
+                s.closed = Some("closed".into());
+                s.conflicts = vec!["a".into()];
+            },
+            "conflicts and closed are not recorded",
+        ),
     ];
     for (change, end) in cases {
         let e = record_in_state(&host, path, &read, change, "it was closed").unwrap_err();

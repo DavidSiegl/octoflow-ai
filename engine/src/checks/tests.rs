@@ -5,17 +5,17 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use super::*;
-use crate::workflow::fixture::Outcome;
 use crate::http::Http;
-use crate::quality::gate_failures;
 use crate::package_index::PackageIndexes;
 use crate::patch::added_lines;
 use crate::pipeline::default_workflow;
 use crate::prompts::Prompts;
-use serde_json::Value;
 use crate::pypi::fake::{FakePyPI, ProjectJson};
+use crate::quality::gate_failures;
 use crate::quality::parse_gate;
 use crate::test_support::{oracle, quick, replaced};
+use crate::workflow::fixture::Outcome;
+use serde_json::Value;
 
 /// 2026-10-23, the day the young-package tests run on.
 pub(crate) const TODAY: f64 = 1_792_713_600.0;
@@ -150,7 +150,8 @@ fn judge_run_adds_the_checks_findings_checks_json_records() {
             .unwrap()
             .iter()
             .map(|c| {
-                let list = |k: &str| c.get(k).and_then(Value::as_array).unwrap().iter().map(finding).collect::<Vec<_>>();
+                let list =
+                    |k: &str| c.get(k).and_then(Value::as_array).unwrap().iter().map(finding).collect::<Vec<_>>();
                 let found = CheckFindings { issues: list("issues"), to_weigh: list("to_weigh") };
                 let name: &'static str =
                     Box::leak(c.get("name").and_then(Value::as_str).unwrap().to_string().into_boxed_str());
@@ -182,7 +183,10 @@ fn assert_both_forms_agree(found: &RunFindings, quality: &str, out: &str) {
 #[test]
 fn a_judgement_counts_the_failing_findings_the_file_cuts() {
     let issues: Vec<Finding> = (1..=60).map(|k| Finding::error(Some("a.py"), Some(k), "", format!("m{k}"))).collect();
-    let checks = [OrchestratorCheck { name: "c", find: Box::new(move |_| Ok(CheckFindings { issues: issues.clone(), to_weigh: Vec::new() })) }];
+    let checks = [OrchestratorCheck {
+        name: "c",
+        find: Box::new(move |_| Ok(CheckFindings { issues: issues.clone(), to_weigh: Vec::new() })),
+    }];
     let found = Change::new("").run(&always, |change| judge_run(&checks, change).unwrap());
     let file = found.added_to_file("GATE: OK\n");
     let judged = found.added_to(read("GATE: OK\n"));
@@ -223,7 +227,9 @@ fn judge_run_on_every_recorded_quality_file_gives_the_recorded_result() {
             })
             .collect();
         let change = Change { diff: text("diff"), files, spec: text("spec"), counts: Some(counts) };
-        let indexes = PackageIndexes::with_pypi(FakePyPI::from_json(case.get("pypi").and_then(Value::as_object).unwrap().clone()));
+        let indexes = PackageIndexes::with_pypi(FakePyPI::from_json(
+            case.get("pypi").and_then(Value::as_object).unwrap().clone(),
+        ));
         let pipeline = replaced(&default_workflow(&Prompts::default()), |s| {
             s.max_files = int(case, "max_files");
             s.max_lines = int(case, "max_lines");

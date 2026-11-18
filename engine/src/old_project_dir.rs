@@ -37,7 +37,8 @@ pub fn move_project_dir(host: &dyn Host, cwd: &str, dry_run: bool) -> Result<Opt
         return Ok(None);
     }
     let runs = run_states_in(host, cwd, &format!("{OLD_PROJECT_DIR}/runs"))?;
-    let open: Vec<&str> = runs.iter().map(|r| r.shown()).filter(|s| !s.is_closed()).map(|s| s.run_id.as_str()).collect();
+    let open: Vec<&str> =
+        runs.iter().map(|r| r.shown()).filter(|s| !s.is_closed()).map(|s| s.run_id.as_str()).collect();
     if !open.is_empty() {
         return Err(OrchestratorError(format!(
             "{old} holds runs an older engine left open: {}; this engine moves it to {new} once every run there is \

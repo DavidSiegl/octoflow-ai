@@ -116,7 +116,8 @@ pub fn fill(template: &str, values: &dyn Fn(&str) -> Option<String>) -> Result<S
             Piece::Text(text) => out.push_str(&text),
             Piece::Placeholder(name) => {
                 let at = starts.next().expect("scan gives each placeholder's start");
-                let unknown = || error(template, at, &format!("placeholder {{{name}}}"), "is not one this template takes");
+                let unknown =
+                    || error(template, at, &format!("placeholder {{{name}}}"), "is not one this template takes");
                 out.push_str(&values(&name).ok_or_else(unknown)?);
             }
         }

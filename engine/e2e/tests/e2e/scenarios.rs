@@ -7,8 +7,8 @@
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use octoflow_e2e::{array_at, object, object_at};
-use serde_json::Value;
 use octoflow_engine::json::Object;
+use serde_json::Value;
 
 use crate::app_recording::Batch;
 use crate::client;
@@ -16,7 +16,8 @@ use crate::world::World;
 
 // -- What the agents write ------------------------------------------------------
 
-const SPEC: &str = "# Add a subtract function\n\nAdd `subtract(a, b)` to `src/calc.py`, returning a - b, with a test.\n";
+const SPEC: &str =
+    "# Add a subtract function\n\nAdd `subtract(a, b)` to `src/calc.py`, returning a - b, with a test.\n";
 const CALC_WITH_SUBTRACT: &str = "def add(a, b):\n    \"\"\"The sum of a and b.\"\"\"\n    return a + b\n\n\n\
                                   def subtract(a, b):\n    \"\"\"a minus b.\"\"\"\n    return a - b\n";
 const TEST_WITH_SUBTRACT: &str = "from calc import add, subtract\n\n\ndef test_add():\n    assert add(1, 2) == 3\n\n\n\
@@ -97,7 +98,8 @@ fn accepted(n: u32) -> Action {
 }
 
 /// A workflow file of the default workflow's steps by use, under a name and description of its own.
-const SPEC_BUILD_REVIEW: &str = "description = \"The default's steps, as a workflow file\"\n\n[[steps]]\nuse = \"spec\"\n\n\
+const SPEC_BUILD_REVIEW: &str =
+    "description = \"The default's steps, as a workflow file\"\n\n[[steps]]\nuse = \"spec\"\n\n\
                                  [[steps]]\nuse = \"build\"\n\n[[steps]]\nuse = \"review\"\n";
 
 /// The default workflow's three roles, approved in round 1.
@@ -119,7 +121,10 @@ pub fn default_approved(w: &mut World) {
 pub fn default_changes_then_approved(w: &mut World) {
     w.agent("spec", [spec_written()]);
     w.agent("build", [built(1, 0).edit(&[("src/calc.py", CALC_WITH_SUBTRACT)]), built(2, 0)]);
-    w.agent("review", [reviewed(1, "CHANGES_REQUESTED", "1. tests/test_calc.py:1: subtract has no test."), approved(2)]);
+    w.agent(
+        "review",
+        [reviewed(1, "CHANGES_REQUESTED", "1. tests/test_calc.py:1: subtract has no test."), approved(2)],
+    );
     w.run(&["run", "--", TASK]);
 }
 
@@ -179,8 +184,11 @@ pub fn finished_with_long_report(w: &mut World) {
     let line = "Checked `subtract` against every pair of small integers; each difference is as expected.\n";
     let report = format!("Added subtract and its test (round 1). `pytest` passes.\n\n{}", line.repeat(250));
     assert!(report.chars().count() > octoflow_engine::constants::PR_SECTION_LIMIT, "a report longer than a section");
-    w.agent("build", [writes("build-1.md", &report)
-        .edit(&[("src/calc.py", CALC_WITH_SUBTRACT), ("tests/test_calc.py", TEST_WITH_SUBTRACT)])]);
+    w.agent(
+        "build",
+        [writes("build-1.md", &report)
+            .edit(&[("src/calc.py", CALC_WITH_SUBTRACT), ("tests/test_calc.py", TEST_WITH_SUBTRACT)])],
+    );
     w.run(&["run", "--workflow-file", &path, "--", TASK]);
 }
 
@@ -189,12 +197,22 @@ pub fn workflow_file_installed(w: &mut World) {
     w.write_config("workflows/sbr.toml", SPEC_BUILD_REVIEW);
     approved_roles(w);
     w.run(&[
-        "run", "--workflow", "sbr", "--agent", "codex", "--role-model", "review=opus", "--permission-mode", "acceptEdits",
-        "--", TASK,
+        "run",
+        "--workflow",
+        "sbr",
+        "--agent",
+        "codex",
+        "--role-model",
+        "review=opus",
+        "--permission-mode",
+        "acceptEdits",
+        "--",
+        TASK,
     ]);
 }
 
-const LOGO_ROUND: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\"><circle cx=\"8\" cy=\"8\" r=\"7\"/></svg>\n";
+const LOGO_ROUND: &str =
+    "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\"><circle cx=\"8\" cy=\"8\" r=\"7\"/></svg>\n";
 const LOGO_SQUARE: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\"><rect width=\"14\" height=\"14\" x=\"1\" y=\"1\"/></svg>\n";
 
 /// The Designer's report of round n, the logo built from the round concept, the concepts directory removed.
@@ -211,7 +229,10 @@ pub fn workflow_design(w: &mut World) {
     w.agent(
         "spec",
         [
-            writes("brief.md", "# Draw a logo\n\nOne SVG logo at assets/logo.svg, readable at 16 px. Concepts in concepts/.\n"),
+            writes(
+                "brief.md",
+                "# Draw a logo\n\nOne SVG logo at assets/logo.svg, readable at 16 px. Concepts in concepts/.\n",
+            ),
             writes("direction.md", "The round concept.\n").deletes(&["concepts/square/logo.svg"]),
             writes("acceptance-2.md", "VERDICT: CHANGES_REQUESTED\n\n1. assets/logo.svg: a thicker outline.\n"),
             writes("acceptance-3.md", "VERDICT: APPROVE\n\nNone.\n"),
@@ -271,10 +292,7 @@ pub fn workflow_peer_review(w: &mut World) {
     );
     w.agent(
         "domain",
-        [
-            writes("significance-1.md", "1. Minor: cite Knuth vol. 3.\n"),
-            writes("significance-2.md", "1. Answered.\n"),
-        ],
+        [writes("significance-1.md", "1. Minor: cite Knuth vol. 3.\n"), writes("significance-2.md", "1. Answered.\n")],
     );
     w.run(&["run", "--workflow", "peer-review", "--", "Compare two sorts"]);
 }
@@ -344,7 +362,8 @@ pub fn proofs_run(w: &mut World) {
 
 // -- The quality gate ----------------------------------------------------------------
 
-const QUALITY_FAILED: &str = "GATE: ERROR\n\n## Failed conditions\n\n- 1 findings of the `ruff` check; each is listed below.\n\n\
+const QUALITY_FAILED: &str =
+    "GATE: ERROR\n\n## Failed conditions\n\n- 1 findings of the `ruff` check; each is listed below.\n\n\
                               ## Findings\n\n1. `src/calc.py:7` error ruff F821: undefined name `c`\n";
 /// QUALITY_FAILED's quality.json.
 fn quality_failed_json() -> String {
@@ -439,7 +458,10 @@ fn attrs_added(w: &mut World) {
     .expect("attrs's PyPI document");
     w.pypi_project("attrs", attrs);
     w.agent("spec", [writes("spec.md", &format!("{SPEC}\nUse attrs for the result type.\n"))]);
-    w.agent("build", [built(1, 0).edit(&[("src/calc.py", CALC_WITH_SUBTRACT), ("pyproject.toml", PYPROJECT_WITH_ATTRS)])]);
+    w.agent(
+        "build",
+        [built(1, 0).edit(&[("src/calc.py", CALC_WITH_SUBTRACT), ("pyproject.toml", PYPROJECT_WITH_ATTRS)])],
+    );
     w.agent("review", [approved(1)]);
 }
 
@@ -573,7 +595,8 @@ pub fn publish_with_conflict(w: &mut World) {
     w.agent("review", [approved(1).hold("review")]);
     let run = w.start(&["run", "--", TASK], true);
     w.wait_reached("review");
-    let upstream = "def add(a, b):\n    \"\"\"a plus b.\"\"\"\n    return b + a\n\n\ndef subtract(a, b):\n    return -(b - a)\n";
+    let upstream =
+        "def add(a, b):\n    \"\"\"a plus b.\"\"\"\n    return b + a\n\n\ndef subtract(a, b):\n    return -(b - a)\n";
     w.push_to_origin(&[("src/calc.py", upstream)], "Add subtract upstream");
     w.release("review");
     w.invocation(run).wait();
@@ -637,7 +660,10 @@ pub fn kill_in_build(w: &mut World) {
 pub fn kill_in_review(w: &mut World) {
     w.agent("spec", [spec_written()]);
     w.agent("build", [built(1, 0), built(2, 0)]);
-    w.agent("review", [reviewed(1, "CHANGES_REQUESTED", "1. src/calc.py:5: no docstring."), approved(2).hold("review")]);
+    w.agent(
+        "review",
+        [reviewed(1, "CHANGES_REQUESTED", "1. src/calc.py:5: no docstring."), approved(2).hold("review")],
+    );
     killed_and_resumed(w, "review", &["run", "--", TASK]);
 }
 
@@ -829,7 +855,10 @@ fn wait_for_the_next_second() {
 pub fn workflows_listed(w: &mut World) {
     let sbr = w.write_config("workflows/sbr.toml", SPEC_BUILD_REVIEW);
     w.write_config("workflows/quick.toml", "[[steps]]\nuse = \"build\"\n");
-    w.write_config("prompts/BUILD_PROMPT.md", "Build {spec_path} in {cwd}; follow the conventions. Report to {build_path}.\n");
+    w.write_config(
+        "prompts/BUILD_PROMPT.md",
+        "Build {spec_path} in {cwd}; follow the conventions. Report to {build_path}.\n",
+    );
     w.run(&["workflows"]);
     w.run(&["workflows", "default"]);
     w.run(&["workflows", "quick"]);
@@ -840,7 +869,10 @@ pub fn workflows_listed(w: &mut World) {
 
 /// A run with a prompt file: the Builder gets its text, the run saves it, and the commit says so.
 pub fn prompt_file_run(w: &mut World) {
-    w.write_config("prompts/BUILD_PROMPT.md", "Build what {spec_path} says, in {cwd}. As your last step, report to {build_path}.\n");
+    w.write_config(
+        "prompts/BUILD_PROMPT.md",
+        "Build what {spec_path} says, in {cwd}. As your last step, report to {build_path}.\n",
+    );
     approved_run(w);
 }
 
@@ -884,7 +916,8 @@ fn serve_request(address: &str, token: Option<&str>, target: &str, method: &str,
     let response = client::request(address, method, target, &sent);
     let text = String::from_utf8_lossy(&response.body).into_owned();
     let body = if target.starts_with("/files") && response.status == 200 {
-        let mut files = serde_json::from_str::<Value>(&text).unwrap_or_else(|e| panic!("serve's {target} is no JSON: {e}"));
+        let mut files =
+            serde_json::from_str::<Value>(&text).unwrap_or_else(|e| panic!("serve's {target} is no JSON: {e}"));
         if let Value::Object(fields) = &mut files {
             if let Some(Value::Array(list)) = fields.get_mut("files") {
                 list.sort_by(|a, b| str_of(a, "name").cmp(str_of(b, "name")));
@@ -1132,8 +1165,10 @@ pub fn specs_drained(w: &mut World) {
     w.run(&["drain", &dir]);
     w.set_pr(1, &merged());
     w.run(&["drain", "--dry-run", &dir]);
-    let notes: Object =
-        specs.iter().map(|(slug, _)| (slug.to_string(), Value::String(read(&format!("{dir}/{slug}/spec.md"))))).collect();
+    let notes: Object = specs
+        .iter()
+        .map(|(slug, _)| (slug.to_string(), Value::String(read(&format!("{dir}/{slug}/spec.md")))))
+        .collect();
     w.note("specs", Value::Object(notes));
 }
 
@@ -1151,8 +1186,7 @@ pub fn doctor_checks(w: &mut World) {
         let n = w.start(args, false);
         w.invocation(n).wait();
     }
-    let lines: Vec<Value> =
-        w.invocations.iter().map(|inv| octoflow_e2e::strings(&host_free(&inv.stdout()))).collect();
+    let lines: Vec<Value> = w.invocations.iter().map(|inv| octoflow_e2e::strings(&host_free(&inv.stdout()))).collect();
     w.note("lines", Value::Array(lines));
 }
 

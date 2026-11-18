@@ -83,11 +83,7 @@ impl Rng {
         let len = self.below(max + 1);
         let mut out = String::new();
         while out.chars().count() < len {
-            let c = if self.below(3) == 0 {
-                *self.pick(ODD)
-            } else {
-                char::from(b' ' + self.below(95) as u8)
-            };
+            let c = if self.below(3) == 0 { *self.pick(ODD) } else { char::from(b' ' + self.below(95) as u8) };
             if c != '\0' && !excluded.contains(c) {
                 out.push(c);
             }
@@ -209,8 +205,8 @@ pub fn oracle(file: &str) -> serde_json::Value {
 
 use indexmap::IndexMap;
 
-use crate::pipeline::{Pipeline, PipelineSettings, Step};
 use crate::json::Object;
+use crate::pipeline::{Pipeline, PipelineSettings, Step};
 
 /// A role map of (key, label) pairs, in pane order.
 pub fn roles(pairs: &[(&str, &str)]) -> IndexMap<String, String> {
@@ -225,11 +221,15 @@ pub fn again(mut st: Step, text: &str) -> Step {
 
 /// No spec step: the task is the Builder's contract.
 pub fn quick() -> Pipeline {
-    let mut build = again(Step::new("build", "build", "build-{n}.md", "Build {task} in {cwd}; report to {build_path}."),
-        "Fix {prev_review_path}; report to {build_path}.");
+    let mut build = again(
+        Step::new("build", "build", "build-{n}.md", "Build {task} in {cwd}; report to {build_path}."),
+        "Fix {prev_review_path}; report to {build_path}.",
+    );
     build.edits = true;
-    let mut review = again(Step::new("review", "review", "review-{n}.md", "Review {change} against {task}; write {review_path}."),
-        "Recheck {build_path}; write {review_path}.");
+    let mut review = again(
+        Step::new("review", "review", "review-{n}.md", "Review {change} against {task}; write {review_path}."),
+        "Recheck {build_path}; write {review_path}.",
+    );
     review.loop_to = Some("build".into());
     Pipeline::new("quick", roles(&[("build", "Builder"), ("review", "Reviewer")]), vec![build, review]).unwrap()
 }
@@ -237,8 +237,10 @@ pub fn quick() -> Pipeline {
 /// quick with a second verdict step after the review: the Product Manager accepts the change or sends it back to
 /// the Builder, who is told the findings of whichever sent the round back.
 pub fn accepting() -> Pipeline {
-    let mut accept = again(Step::new("accept", "accept", "accept-{n}.md", "Accept {build_path} against {task}; write {accept_path}."),
-        "Accept again; write {accept_path}.");
+    let mut accept = again(
+        Step::new("accept", "accept", "accept-{n}.md", "Accept {build_path} against {task}; write {accept_path}."),
+        "Accept again; write {accept_path}.",
+    );
     accept.loop_to = Some("build".into());
     let mut steps = quick().steps().to_vec();
     steps[0].again = Some("Fix {findings}; report to {build_path}.".into());
@@ -253,13 +255,17 @@ pub fn four_steps() -> Vec<Step> {
     spec.human_paced = true;
     let mut tests = Step::new("tests", "tests", "tests.md", "Write tests for {spec_path}; report to {tests_path}.");
     tests.edits = true;
-    let mut build = again(Step::new("build", "build", "build-{n}.md", "Build {spec_path} against {tests_path}; report to {build_path}."),
-        "Fix {prev_review_path}; report to {build_path}.");
+    let mut build = again(
+        Step::new("build", "build", "build-{n}.md", "Build {spec_path} against {tests_path}; report to {build_path}."),
+        "Fix {prev_review_path}; report to {build_path}.",
+    );
     build.fresh_note = Some("Earlier reports: {earlier_build_paths}.".into());
     build.fresh_repeats_again = true;
     build.edits = true;
-    let mut review = again(Step::new("review", "review", "review-{n}.md", "Review {change}; write {review_path}."),
-        "Recheck; write {review_path}.");
+    let mut review = again(
+        Step::new("review", "review", "review-{n}.md", "Review {change}; write {review_path}."),
+        "Recheck; write {review_path}.",
+    );
     review.loop_to = Some("build".into());
     vec![spec, tests, build, review]
 }
@@ -274,19 +280,29 @@ pub fn four() -> Pipeline {
 
 /// FOUR with its Test Writer locking the tests it writes.
 pub fn locking() -> Pipeline {
-    let steps = four_steps().into_iter().map(|mut st| { st.locks = st.id == "tests"; st }).collect();
+    let steps = four_steps()
+        .into_iter()
+        .map(|mut st| {
+            st.locks = st.id == "tests";
+            st
+        })
+        .collect();
     Pipeline::new("locking", four_roles(), steps).unwrap()
 }
 
 /// The quality-gated step is not called build.
 pub fn impl_() -> Pipeline {
-    let mut imp = again(Step::new("impl", "impl", "impl-{n}.md", "Implement {task}; report to {impl_path}."),
-        "Fix {prev_review_path}; report to {impl_path}.");
+    let mut imp = again(
+        Step::new("impl", "impl", "impl-{n}.md", "Implement {task}; report to {impl_path}."),
+        "Fix {prev_review_path}; report to {impl_path}.",
+    );
     imp.fresh_note = Some("Earlier reports: {earlier_impl_paths}.".into());
     imp.edits = true;
     imp.quality_gated = true;
-    let mut review = again(Step::new("review", "review", "review-{n}.md", "Review {change} with {impl_path}; write {path}."),
-        "Recheck {impl_path}; write {review_path}.");
+    let mut review = again(
+        Step::new("review", "review", "review-{n}.md", "Review {change} with {impl_path}; write {path}."),
+        "Recheck {impl_path}; write {review_path}.",
+    );
     review.loop_to = Some("impl".into());
     Pipeline::new("impl", roles(&[("impl", "Implementer"), ("review", "Reviewer")]), vec![imp, review]).unwrap()
 }
@@ -308,7 +324,8 @@ pub fn replaced(p: &Pipeline, change: impl FnOnce(&mut PipelineSettings)) -> Res
 /// Each recording of the e2e scenarios, engine/e2e/recorded/<scenario>.json, by scenario, in name order.
 pub fn recordings() -> Vec<(String, serde_json::Value)> {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/e2e/recorded");
-    let mut paths: Vec<_> = std::fs::read_dir(dir).expect("the recordings").map(|e| e.expect("an entry").path()).collect();
+    let mut paths: Vec<_> =
+        std::fs::read_dir(dir).expect("the recordings").map(|e| e.expect("an entry").path()).collect();
     paths.sort();
     paths
         .into_iter()
@@ -316,7 +333,8 @@ pub fn recordings() -> Vec<(String, serde_json::Value)> {
         .map(|p| {
             let text = std::fs::read_to_string(&p).expect("a recording");
             let name = p.file_stem().and_then(|s| s.to_str()).expect("a name").to_string();
-            let recording = serde_json::from_str::<serde_json::Value>(&text).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+            let recording =
+                serde_json::from_str::<serde_json::Value>(&text).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
             (name, recording)
         })
         .collect()
@@ -354,7 +372,16 @@ pub fn helper_cases() -> Vec<HelperCase> {
         let field = |key: &str| case.get(key).and_then(Value::as_str).unwrap().to_string();
         let (recording, run_dir) = (field("recording"), field("run_dir"));
         let name = recording.strip_suffix(".json").unwrap();
-        let files = recordings.iter().find(|(n, _)| n == name).unwrap().1.get("run_files").unwrap().as_object().unwrap().clone();
+        let files = recordings
+            .iter()
+            .find(|(n, _)| n == name)
+            .unwrap()
+            .1
+            .get("run_files")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .clone();
         let file = |name: &str| files.get(&format!("{run_dir}{name}")).and_then(Value::as_str).map(String::from);
         let text = denormalized(&file("state.json").unwrap(), epoch);
         let Value::Object(mut saved) = serde_json::from_str::<Value>(&text).unwrap() else { panic!("a state") };
@@ -365,20 +392,25 @@ pub fn helper_cases() -> Vec<HelperCase> {
         let state = crate::state::RunState::from_saved(&saved).unwrap();
         // The last of the run directory's files whose name matches, by name.
         let last = |matches: &dyn Fn(&str) -> bool| {
-            let mut names: Vec<&str> = files.keys().filter_map(|n| n.strip_prefix(run_dir.as_str())).filter(|n| matches(n)).collect();
+            let mut names: Vec<&str> =
+                files.keys().filter_map(|n| n.strip_prefix(run_dir.as_str())).filter(|n| matches(n)).collect();
             names.sort();
             names.last().map(|n| (n.to_string(), file(n).unwrap()))
         };
         let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
         let body = |n: &str, prefix: &str| n.strip_prefix(prefix).and_then(|n| n.strip_suffix(".md")).map(String::from);
         let spec = last(&|n| n == "spec.md").map(|(_, t)| t).filter(|t| !t.is_empty()).unwrap_or(state.task.clone());
-        let is_report = |n: &str| body(n, "build-").is_some_and(|b| match b.split_once("-q") {
-            Some((round, q)) => digits(round) && digits(q),
-            None => digits(&b),
-        });
+        let is_report = |n: &str| {
+            body(n, "build-").is_some_and(|b| match b.split_once("-q") {
+                Some((round, q)) => digits(round) && digits(q),
+                None => digits(&b),
+            })
+        };
         let report = last(&is_report).map_or(String::new(), |(_, t)| t);
         let review = last(&|n| body(n, "review-").is_some_and(|b| digits(&b))).map_or(String::new(), |(_, t)| t);
-        let is_quality = |n: &str| body(n, "quality-").is_some_and(|b| b.split_once('-').is_some_and(|(r, q)| digits(r) && digits(q)));
+        let is_quality = |n: &str| {
+            body(n, "quality-").is_some_and(|b| b.split_once('-').is_some_and(|(r, q)| digits(r) && digits(q)))
+        };
         let quality = last(&is_quality).map(|(n, text)| {
             let b = body(&n, "quality-").unwrap();
             let (round, q) = b.split_once('-').unwrap();
@@ -466,7 +498,8 @@ pub fn object(text: &str) -> Object {
 /// whose pids are all dead.
 pub fn resumable(flags: &[&str], saved: &Object) -> Result<crate::state::RunState, crate::error::OrchestratorError> {
     let argv = ["resume", "a1b2c3"].iter().chain(flags).map(std::ffi::OsString::from);
-    let Ok(crate::cli::Command::Resume(args)) = crate::cli::parse_args(argv, &crate::env::ConfigDir::at("/nowhere")) else {
+    let Ok(crate::cli::Command::Resume(args)) = crate::cli::parse_args(argv, &crate::env::ConfigDir::at("/nowhere"))
+    else {
         panic!("not a resume: {flags:?}")
     };
     let runs = [crate::state::SavedRun::read(10_000, serde_json::Value::Object(saved.clone())).unwrap()];

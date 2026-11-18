@@ -28,12 +28,12 @@ use crate::constants::{BUDGET_KEYS, DEFAULT_MAX_FILES, DEFAULT_MAX_LINES};
 use crate::env::ConfigDir;
 use crate::error::{closest_name, strerror, OrchestratorError};
 use crate::harness::replaced_by;
+use crate::json::Object;
 use crate::paths::{file_name, replace_local_file, split_extension};
 use crate::pipeline::{default_workflow, prompt_placeholders, Pipeline, PipelineSettings, Step, DEFAULT_WORKFLOW};
 use crate::prompts::template::{is_name, placeholders};
 use crate::prompts::{files_with_extension, Prompts};
 use serde_json::Value;
-use crate::json::Object;
 
 /// The keys a workflow definition's top table may have.
 pub const WORKFLOW_KEYS: [&str; 6] = ["description", "roles", "steps", "proof_command", "max_files", "max_lines"];
@@ -197,19 +197,22 @@ pub fn parse_workflow(name: &str, definition: &Value, prompts: &Prompts) -> Resu
         _ => return Err("it has no [[steps]]".into()),
     };
     let default = default_workflow(prompts);
-    let steps = raw_steps.iter().enumerate().map(|(i, raw)| parse_step(i + 1, raw, &default)).collect::<Result<Vec<_>, _>>()?;
+    let steps =
+        raw_steps.iter().enumerate().map(|(i, raw)| parse_step(i + 1, raw, &default)).collect::<Result<Vec<_>, _>>()?;
     let declared = match definition.get("roles") {
         None => IndexMap::new(),
-        Some(Value::Object(raw_roles)) => {
-            raw_roles.iter().map(|(role, raw)| parse_role(role, raw).map(|table| (role.clone(), table))).collect::<Result<_, _>>()?
-        }
+        Some(Value::Object(raw_roles)) => raw_roles
+            .iter()
+            .map(|(role, raw)| parse_role(role, raw).map(|table| (role.clone(), table)))
+            .collect::<Result<_, _>>()?,
         Some(_) => return Err("roles must be a table".into()),
     };
     // The panes follow the steps; a declared role no step uses goes last, for Pipeline to reject.
     let mut labels: IndexMap<String, String> = IndexMap::new();
     for role in steps.iter().map(|st| st.role.as_str()).chain(declared.keys().map(String::as_str)) {
         if !labels.contains_key(role) {
-            let label = declared.get(role).and_then(|t: &IndexMap<String, String>| t.get("label")).filter(|l| !l.is_empty());
+            let label =
+                declared.get(role).and_then(|t: &IndexMap<String, String>| t.get("label")).filter(|l| !l.is_empty());
             labels.insert(role.to_string(), label.cloned().unwrap_or_else(|| default_label(role)));
         }
     }
@@ -621,14 +624,20 @@ pub fn save_workflow(
     definition: &Value,
     base: Option<&str>,
 ) -> Result<String, WorkflowEditError> {
-    let pipeline =
-        edited_workflow(name, definition).map_err(|error| WorkflowEditError::Invalid { error, path: None, text: None })?;
+    let pipeline = edited_workflow(name, definition).map_err(|error| WorkflowEditError::Invalid {
+        error,
+        path: None,
+        text: None,
+    })?;
     let dir = config.workflows_dir();
     let path = format!("{dir}/{name}.toml");
     let _editing = lock_edits();
     expect_base(&path, base)?;
     std::fs::create_dir_all(&dir).map_err(|e| {
-        WorkflowEditError::Failed(OrchestratorError(format!("cannot make the workflows directory {dir}: {}", strerror(&e))))
+        WorkflowEditError::Failed(OrchestratorError(format!(
+            "cannot make the workflows directory {dir}: {}",
+            strerror(&e)
+        )))
     })?;
     replace_local_file(&path, &workflow_toml(&pipeline)).map_err(WorkflowEditError::Failed)?;
     Ok(path)

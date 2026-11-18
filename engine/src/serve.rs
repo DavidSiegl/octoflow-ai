@@ -21,11 +21,11 @@ use crate::error::{os_error, OrchestratorError};
 use crate::herdr::{AgentConsole, Launcher, ProcessHerdr, Workspaces};
 use crate::host::{Host, ProcessHost};
 use crate::interrupt::Interrupt;
-use serde_json::Value;
-use url::{parse_qsl, urlsplit};
 use runs::{plain_name, AgentInput, Event, ProjectRuns, RunReadError, RunWatch};
+use serde_json::Value;
 use setup::Setup;
 use start::{RunRequest, StartWait, Started, START_WAIT};
+use url::{parse_qsl, urlsplit};
 
 #[cfg(test)]
 mod fake;
@@ -328,8 +328,9 @@ impl RunServer {
         });
         let listening = Arc::new(Mutex::new(Some(Arc::new(on(&listener)?))));
         let (dispatched, to) = (Arc::clone(&listening), Arc::clone(&shared));
-        let dispatcher =
-            std::thread::Builder::new().name("serve".to_string()).spawn(move || dispatch(&listener, &dispatched, &to))?;
+        let dispatcher = std::thread::Builder::new()
+            .name("serve".to_string())
+            .spawn(move || dispatch(&listener, &dispatched, &to))?;
         Ok(RunServer { shared, listening, dispatcher: Some(dispatcher) })
     }
 
@@ -385,7 +386,8 @@ fn dispatch(listener: &std::net::TcpListener, listening: &Mutex<Option<Arc<tiny_
         while let Ok(request) = http.recv() {
             let shared = Arc::clone(shared);
             // A request that gets no thread is dropped, which tiny_http answers with 500.
-            let _ = std::thread::Builder::new().name("serve-request".to_string()).spawn(move || answer(&shared, request));
+            let _ =
+                std::thread::Builder::new().name("serve-request".to_string()).spawn(move || answer(&shared, request));
         }
         // Before the pause and the successor: see the doc comment.
         drop(lock(listening).take());
@@ -409,7 +411,9 @@ fn dispatch(listener: &std::net::TcpListener, listening: &Mutex<Option<Arc<tiny_
 }
 
 /// The server in listening, its lock held; a poisoned lock only means a thread panicked while it held it.
-fn lock(listening: &Mutex<Option<Arc<tiny_http::Server>>>) -> std::sync::MutexGuard<'_, Option<Arc<tiny_http::Server>>> {
+fn lock(
+    listening: &Mutex<Option<Arc<tiny_http::Server>>>,
+) -> std::sync::MutexGuard<'_, Option<Arc<tiny_http::Server>>> {
     listening.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
@@ -520,7 +524,8 @@ fn target(request: &Request) -> (String, HashMap<String, String>) {
     // A target that starts with // is read with its leading slashes as one, never as a //host authority, so that
     // no answer can redirect a client to another host.
     let target = request.url();
-    let target = if target.starts_with("//") { format!("/{}", target.trim_start_matches('/')) } else { target.to_string() };
+    let target =
+        if target.starts_with("//") { format!("/{}", target.trim_start_matches('/')) } else { target.to_string() };
     let url = urlsplit(&target);
     (url.path, parse_qsl(&url.query).into_iter().collect())
 }
@@ -634,7 +639,9 @@ fn read_project(endpoint: Endpoint, project: &ProjectRuns, query: &HashMap<Strin
         }),
         Endpoint::Files => project.files(run).map(|files| (200, object([("run", Value::from(run)), ("files", files)]))),
         Endpoint::File => project.read(run, name).map(|text| match text {
-            Some(text) => (200, object([("run", Value::from(run)), ("name", Value::from(name)), ("text", Value::from(text))])),
+            Some(text) => {
+                (200, object([("run", Value::from(run)), ("name", Value::from(name)), ("text", Value::from(text))]))
+            }
             None => (404, error(&format!("no file {name} in run {run}"))),
         }),
         Endpoint::Agent => match agent_lines(query.get("lines")) {
@@ -703,11 +710,12 @@ fn post_setup_gate(shared: &Shared, request: Request, query: &HashMap<String, St
     if let Some((code, body)) = refusal(shared, &request, query) {
         return send_json(request, code, &body);
     }
-    let set_up = project_of(shared, query, &["cwd"])
-        .and_then(|project| project.set_up_gate().map_err(|e| (502, error(&e.0))));
+    let set_up =
+        project_of(shared, query, &["cwd"]).and_then(|project| project.set_up_gate().map_err(|e| (502, error(&e.0))));
     let (code, body) = match set_up {
         Ok(files) => {
-            let files = files.into_iter().map(|f| object([("path", Value::from(f.path)), ("written", Value::from(f.written))]));
+            let files =
+                files.into_iter().map(|f| object([("path", Value::from(f.path)), ("written", Value::from(f.written))]));
             (200, object([("files", Value::Array(files.collect()))]))
         }
         Err(answer) => answer,
@@ -781,7 +789,12 @@ fn post_close(shared: &Shared, mut request: Request, query: &HashMap<String, Str
 /// name (runs::plain_name).
 fn previewed_runs(body: &[u8]) -> Result<Option<Vec<RunClosed>>, Answer> {
     let shape = || {
-        (400, error(r#"the body must be {"dry_run": true} or {"close": [{"run": "...", "detail": "...", "discarded": ["...", ...]}, ...]}"#))
+        (
+            400,
+            error(
+                r#"the body must be {"dry_run": true} or {"close": [{"run": "...", "detail": "...", "discarded": ["...", ...]}, ...]}"#,
+            ),
+        )
     };
     let fields = json_object(body).filter(|o| o.len() == 1).ok_or_else(shape)?;
     if fields.get("dry_run") == Some(&Value::Bool(true)) {
@@ -969,7 +982,8 @@ fn events(shared: &Shared, request: Request, project: &ProjectRuns) {
         if shared.stopping.is_raised() {
             break;
         }
-        let text: String = if events.is_empty() { ":\n\n".to_string() } else { events.iter().map(Event::sse).collect() };
+        let text: String =
+            if events.is_empty() { ":\n\n".to_string() } else { events.iter().map(Event::sse).collect() };
         let part = if chunked { format!("{:X}\r\n{text}\r\n", text.len()) } else { text };
         if out.write_all(part.as_bytes()).and_then(|()| out.flush()).is_err() {
             return;
@@ -1012,7 +1026,8 @@ fn allowed_origin(request: &Request) -> Vec<(String, String)> {
 /// Answer request with code and body as compact JSON, allowing its origin unless code is 403, and
 /// naming the Bearer scheme with a 401.
 fn send_json(request: Request, code: u16, body: &Value) {
-    let mut response = with_header(Response::from_data(body.to_string()).with_status_code(code), "Content-Type", "application/json");
+    let mut response =
+        with_header(Response::from_data(body.to_string()).with_status_code(code), "Content-Type", "application/json");
     if code != 403 {
         for (name, value) in allowed_origin(&request) {
             response = with_header(response, &name, &value);

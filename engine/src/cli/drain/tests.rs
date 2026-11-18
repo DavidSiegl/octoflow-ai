@@ -15,8 +15,6 @@ use std::rc::Rc;
 
 use super::queue::*;
 use super::*;
-use crate::pipeline::DONE;
-use serde_json::Value;
 use crate::cli::fixture::Cli;
 use crate::cli::{interrupted_note, run_command, Ran, RunWorkflow};
 use crate::constants::{
@@ -26,14 +24,16 @@ use crate::constants::{
 use crate::env::ConfigDir;
 use crate::host::fake::{FakePr, PrEdit};
 use crate::host::Completed;
-use crate::pipeline::Pipeline;
-use crate::pull_request::conflict_warning;
+use crate::json::object;
 use crate::json::{Object, ValueExt};
+use crate::pipeline::Pipeline;
+use crate::pipeline::DONE;
+use crate::pull_request::conflict_warning;
 use crate::spec_file::SpecFile;
 use crate::state::RunState;
 use crate::test_support::{built_in_as_file, TempDir};
 use crate::workflow::fixture::{build_turn, review_turn};
-use crate::json::object;
+use serde_json::Value;
 
 const PR_A: &str = "https://github.com/o/r/pull/1";
 const PR_B: &str = "https://github.com/o/r/pull/2";
@@ -168,8 +168,11 @@ impl Drain {
 
     /// What gh says of the pull request at url: state, headRefOid and closedAt, with fields in place of those.
     fn pull_request(&self, url: &str, state: &str, fields: &[(&str, Value)]) {
-        let mut pr: Object =
-            object([("state", Value::from(state)), ("headRefOid", Value::from("a".repeat(40))), ("closedAt", Value::Null)]);
+        let mut pr: Object = object([
+            ("state", Value::from(state)),
+            ("headRefOid", Value::from("a".repeat(40))),
+            ("closedAt", Value::Null),
+        ]);
         for (key, value) in fields {
             pr.insert(key.to_string(), value.clone());
         }
@@ -472,8 +475,9 @@ fn a_spec_emptied_then_restored_is_run() {
     let line = format!("b: spec file {} is empty; not running it\n", d.path("b"));
     assert_eq!(r.err.matches(&line).count(), 1, "{}", r.err);
     assert_eq!(d.status_pr("b"), (some(SPEC_IN_REVIEW), some(PR_B)));
-    let tail =
-        format!("b: ready-for-agent -> in-review  {PR_B}\nc: ready-for-agent -> in-review  {PR_B}\nall specs cleared\n");
+    let tail = format!(
+        "b: ready-for-agent -> in-review  {PR_B}\nc: ready-for-agent -> in-review  {PR_B}\nall specs cleared\n"
+    );
     assert!(r.out.ends_with(&tail), "{}", r.out);
 }
 
@@ -495,7 +499,8 @@ fn a_change_line_of_a_spec_without_a_status_says_so() {
     for was in [None, some("")] {
         let d = Drain::new();
         let file = SpecFile { path: d.path("a"), text: ready("A") };
-        let mut spec = QueuedSpec { slug: "a".into(), file, blockers: vec![], was: was.clone(), changed: false, gone: None };
+        let mut spec =
+            QueuedSpec { slug: "a".into(), file, blockers: vec![], was: was.clone(), changed: false, gone: None };
         let told = crate::workflow::fixture::Told::default();
         assert!(spec.update(&entries(&[(STATUS_KEY, SPEC_IN_REVIEW)]), false, &told).unwrap());
         assert_eq!(spec.change_line(), "a: no status -> in-review", "{was:?}");
@@ -652,7 +657,11 @@ fn a_finished_run_on_the_run_line_is_taken_up_without_a_new_run() {
     let cases: [(Fields, &str, Option<&str>); 5] = [
         (vec![verdict(APPROVE), pr_a()], SPEC_IN_REVIEW, Some(PR_A)),
         (vec![verdict(FINISHED), pr_a()], SPEC_IN_REVIEW, Some(PR_A)),
-        (vec![verdict(APPROVE), pr_a(), ("conflicts", Value::Array(vec![Value::from("x.py")]))], SPEC_FOR_HUMAN, Some(PR_A)),
+        (
+            vec![verdict(APPROVE), pr_a(), ("conflicts", Value::Array(vec![Value::from("x.py")]))],
+            SPEC_FOR_HUMAN,
+            Some(PR_A),
+        ),
         (vec![verdict(CHANGES_REQUESTED), pr_a()], SPEC_FOR_HUMAN, Some(PR_A)),
         (vec![verdict(CHANGES_REQUESTED)], SPEC_FOR_HUMAN, None),
     ];
@@ -717,7 +726,8 @@ fn conflicted_spec(d: &Drain, status: &str, verdict: &str, pr: &[(&str, Value)])
     ];
     d.saved_run("a", run_id, 10_000, &fields);
     let body = format!("{}\n\nOpened by run {run_id}.\n", conflict_warning("main", &["x.py".to_string()]));
-    let mut all = vec![("isDraft", Value::Bool(true)), ("mergeable", Value::from("MERGEABLE")), ("body", Value::from(body))];
+    let mut all =
+        vec![("isDraft", Value::Bool(true)), ("mergeable", Value::from("MERGEABLE")), ("body", Value::from(body))];
     all.extend(pr.iter().cloned());
     let state = pr.iter().find(|(k, _)| *k == "state").map_or("OPEN".to_string(), |(_, v)| v.text());
     d.pull_request(PR_A, &state, &all);
@@ -741,8 +751,11 @@ fn a_spec_for_the_human_only_for_its_conflict_goes_to_review_once_refresh_clears
 
 #[test]
 fn a_spec_for_the_human_stays_when_its_run_did_not_succeed_or_still_conflicts() {
-    let cases: [(&str, (&str, &str), usize); 3] =
-        [(CHANGES_REQUESTED, ("", ""), 1), (APPROVE, ("mergeable", "CONFLICTING"), 0), (APPROVE, ("state", "CLOSED"), 0)];
+    let cases: [(&str, (&str, &str), usize); 3] = [
+        (CHANGES_REQUESTED, ("", ""), 1),
+        (APPROVE, ("mergeable", "CONFLICTING"), 0),
+        (APPROVE, ("state", "CLOSED"), 0),
+    ];
     for (verdict, (key, value), edits) in cases {
         let d = Drain::new();
         let pr: Vec<(&str, Value)> = if key.is_empty() { vec![] } else { vec![(key, Value::from(value))] };
@@ -930,7 +943,8 @@ fn a_conflict_refresh_cleared_whose_pull_request_gh_cannot_tell_is_logged_and_ke
     let d = Drain::new();
     let run_id = conflicted_spec(&d, SPEC_FOR_HUMAN, APPROVE, &[]);
     d.cli.with(|world| crate::cli::refresh::refresh_command(world, "/proj", None)).unwrap();
-    let unreachable = Completed { status: 1, stdout: String::new(), stderr: "Could not resolve to a PullRequest".into() };
+    let unreachable =
+        Completed { status: 1, stdout: String::new(), stderr: "Could not resolve to a PullRequest".into() };
     d.cli.f.host.state().pull_requests.insert(PR_A.into(), FakePr::Fails(unreachable));
     // Each drain while gh cannot tell goes on, says why the spec stays, and keeps the record.
     for _ in 0..2 {
@@ -975,7 +989,11 @@ fn a_spec_gone_before_its_move_is_written_keeps_its_runs_conflict_refresh_cleare
         let (path, text) = (d.path("a"), d.text("a"));
         let gone_path = path.clone();
         d.cli.f.host.state().run_states_with = Some(Box::new(move |_: &str| {
-            if emptied { std::fs::write(&gone_path, "").unwrap() } else { let _ = std::fs::remove_file(&gone_path); }
+            if emptied {
+                std::fs::write(&gone_path, "").unwrap()
+            } else {
+                let _ = std::fs::remove_file(&gone_path);
+            }
             None
         }));
         let r = d.drain(vec![], &[]);
@@ -1033,9 +1051,19 @@ fn an_unfinished_run_on_the_run_line_stops_the_drain_before_any_run() {
         ),
         (Some(vec![]), stale, "is stale (no heartbeat for", resume),
         (Some(vec![("error", Value::from("interrupted"))]), stale, "failed: interrupted", resume),
-        (Some(vec![("closed", Value::from("workspace closed"))]), stale, "was closed (workspace closed)", "; remove the Run: line from"),
+        (
+            Some(vec![("closed", Value::from("workspace closed"))]),
+            stale,
+            "was closed (workspace closed)",
+            "; remove the Run: line from",
+        ),
         // resume refuses a state of another format, so drain does not offer it.
-        (Some(vec![("format", Value::from(1))]), stale, "cannot be resumed: run 20261024-100000-aaaaaa has state format 1", "; remove the Run: line from"),
+        (
+            Some(vec![("format", Value::from(1))]),
+            stale,
+            "cannot be resumed: run 20261024-100000-aaaaaa has state format 1",
+            "; remove the Run: line from",
+        ),
         (None, 0, "is not under /proj/.octoflow-ai/runs", "; remove the Run: line from"),
     ];
     for (fields, age, why, remedy) in cases {
@@ -1066,8 +1094,18 @@ fn a_run_an_earlier_release_saved_is_waited_for_while_it_runs_and_never_resumed(
     let owner = serde_json::from_str::<Value>(r#"{"host": "elsewhere", "pid": 1}"#).unwrap();
     let cases: [(Option<Value>, u64, &str, &str); 2] = [
         // Its own release is still driving it: removing its directory would pull the run out from under that process.
-        (Some(owner), 0, "is running (pid 1 on elsewhere, beat 0s ago)", "wait for it to finish, or remove the Run: line"),
-        (None, stale, "cannot be resumed: run 20261024-100000-aaaaaa was saved by an octoflow before", "; remove the Run: line from"),
+        (
+            Some(owner),
+            0,
+            "is running (pid 1 on elsewhere, beat 0s ago)",
+            "wait for it to finish, or remove the Run: line",
+        ),
+        (
+            None,
+            stale,
+            "cannot be resumed: run 20261024-100000-aaaaaa was saved by an octoflow before",
+            "; remove the Run: line from",
+        ),
     ];
     for (owner, age, why, remedy) in cases {
         let d = Drain::new();
@@ -1106,7 +1144,8 @@ fn a_finished_run_an_earlier_release_saved_stops_the_drain_without_starting_the_
     let before = d.text("a");
     let r = d.drain(vec![], &[]);
     assert_eq!(r.status, EXIT_ERROR);
-    let why = format!("error: spec a: run {run_id}, on its Run: line, is done but cannot be read: run {run_id} was saved");
+    let why =
+        format!("error: spec a: run {run_id}, on its Run: line, is done but cannot be read: run {run_id} was saved");
     assert!(r.err.starts_with(&why), "{}", r.err);
     assert!(r.err.contains(&format!("set its Status: and PR: lines by hand (its pull request: {PR_A})")), "{}", r.err);
     assert!(!r.err.contains("start the spec over"), "{}", r.err);
@@ -1177,15 +1216,22 @@ fn specs_with_any_other_status_are_left_alone() {
 fn only_the_header_lines_drain_owns_change() {
     for nl in ["\n", "\r\n"] {
         let d = Drain::new();
-        let header =
-            ["Owner: me", "Status:   ready-for-agent  ", "Blocked by:", "Run: stale", "## Notes", "PR: not in the header"];
+        let header = [
+            "Owner: me",
+            "Status:   ready-for-agent  ",
+            "Blocked by:",
+            "Run: stale",
+            "## Notes",
+            "PR: not in the header",
+        ];
         d.spec("a", &spec_text_nl("First", None, &header, nl));
         let fields = [("phase", Value::from(DONE)), ("verdict", Value::from(APPROVE)), ("pr_url", Value::from(PR_A))];
         d.saved_run("a", "stale", 0, &fields);
         d.pull_request(PR_A, "OPEN", &[]);
         assert_eq!(d.drain(vec![], &[]).status, 0);
         let pr = format!("PR: {PR_A}");
-        let want = ["Owner: me", "Status: in-review", &pr, "Blocked by:", "Run: stale", "## Notes", "PR: not in the header"];
+        let want =
+            ["Owner: me", "Status: in-review", &pr, "Blocked by:", "Run: stale", "## Notes", "PR: not in the header"];
         assert_eq!(d.text("a"), spec_text_nl("First", None, &want, nl), "{nl:?}");
     }
 }
@@ -1244,7 +1290,8 @@ fn dry_run_changes_nothing_and_says_what_it_would_do() {
     assert_eq!(r.status, 0);
     assert_eq!(texts(), before);
     assert_eq!(std::fs::read_dir(format!("{}/a", d.dir())).unwrap().count(), 1);
-    let want = format!("a: in-review -> done  {PR_A}\nc: ready-for-agent -> in-review  {PR_B}\nwould run, in order: b, d\n");
+    let want =
+        format!("a: in-review -> done  {PR_A}\nc: ready-for-agent -> in-review  {PR_B}\nwould run, in order: b, d\n");
     assert_eq!(r.out, want);
     assert!(!d.swept());
 }
@@ -1278,9 +1325,25 @@ fn the_flags_reach_every_run() {
     let mine = built_in_as_file(&files, "default", "mine");
     let job = crate::local_gate::LOCAL_GATE;
     let argv = [
-        "--workflow-file", &mine, "--worktree", "--quality-gate", job, "--max-quality-rounds", "2",
-        "--max-rounds", "5", "--timeout", "60", "--permission-mode", "auto", "--model", "m", "--review-model", "r",
-        "--agent", "codex",
+        "--workflow-file",
+        &mine,
+        "--worktree",
+        "--quality-gate",
+        job,
+        "--max-quality-rounds",
+        "2",
+        "--max-rounds",
+        "5",
+        "--timeout",
+        "60",
+        "--permission-mode",
+        "auto",
+        "--model",
+        "m",
+        "--review-model",
+        "r",
+        "--agent",
+        "codex",
     ];
     assert_eq!(d.drain(vec![approved(PR_A, &[]), approved(PR_A, &[])], &argv).status, 0);
     let runs = d.runs.borrow();
@@ -1352,7 +1415,8 @@ fn two_specs_end_as_two_pull_requests() {
     let builds = vec![build_turn(1), build_turn(1)];
     let reviews = vec![review_turn(1, APPROVE), review_turn(1, APPROVE)];
     let dir = d.dir();
-    let ended = d.cli.playing(vec![("build", builds), ("review", reviews)], || d.cli.ended(&["drain", &dir, "--cwd", "/proj"]));
+    let ended =
+        d.cli.playing(vec![("build", builds), ("review", reviews)], || d.cli.ended(&["drain", &dir, "--cwd", "/proj"]));
     assert!(matches!(ended, Ok(Ended::Status(0))));
     let titles: Vec<String> = d.cli.f.host.state().prs.iter().map(|pr| pr.title.clone()).collect();
     assert_eq!(titles, ["Spec a", "Spec b"]);

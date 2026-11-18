@@ -154,7 +154,8 @@ fn no_answer_is_worded_with_the_system_s_words() {
 
     // getaddrinfo's own error: EAI_NONAME, or EAI_AGAIN on a machine that has no resolver to ask.
     let unknown = direct().send(&get("http://unknown-host.invalid/"));
-    let resolver = ["Name or service not known", "Temporary failure in name resolution", "No address associated with hostname"];
+    let resolver =
+        ["Name or service not known", "Temporary failure in name resolution", "No address associated with hostname"];
     assert!(matches!(&unknown, Err(HttpError::NoAnswer(why)) if resolver.contains(&why.as_str())), "{unknown:?}");
     let bad = get("nonsense");
     assert!(matches!(direct().send(&bad), Err(HttpError::NoAnswer(_))));

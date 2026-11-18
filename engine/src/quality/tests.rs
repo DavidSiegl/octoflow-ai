@@ -1,8 +1,8 @@
 use super::*;
-use serde_json::Value;
+use crate::json::object;
 use crate::json::Object;
 use crate::test_support::{oracle, Rng};
-use crate::json::object;
+use serde_json::Value;
 
 fn case_text(case: &Value, key: &str) -> String {
     case.get(key).and_then(Value::as_str).unwrap_or_else(|| panic!("no {key}")).to_string()
@@ -12,7 +12,10 @@ fn case_text(case: &Value, key: &str) -> String {
 fn quality_file(from: &str) -> String {
     let quality = oracle("quality.json");
     let files = quality.get("files").and_then(Value::as_array).unwrap();
-    let file = files.iter().find(|f| f.get("from").and_then(Value::as_str) == Some(from)).unwrap_or_else(|| panic!("no {from}"));
+    let file = files
+        .iter()
+        .find(|f| f.get("from").and_then(Value::as_str) == Some(from))
+        .unwrap_or_else(|| panic!("no {from}"));
     case_text(file, "text")
 }
 
@@ -59,7 +62,10 @@ fn the_engines_quality_files_are_written_as_quality_json_records() {
     }
     for case in quality.get("fingerprints").and_then(Value::as_array).unwrap() {
         let c = case.as_array().unwrap();
-        assert_eq!(finding_fingerprint(c[0].as_str(), c[1].as_str().unwrap(), c[2].as_str().unwrap()), c[3].as_str().unwrap());
+        assert_eq!(
+            finding_fingerprint(c[0].as_str(), c[1].as_str().unwrap(), c[2].as_str().unwrap()),
+            c[3].as_str().unwrap()
+        );
     }
 }
 
@@ -112,7 +118,9 @@ fn reads_failing_findings_and_tests_and_leaves_findings_to_weigh_out() {
         failures.conditions,
         ["1 tests fail; each is listed below.", "1 findings of the `diff-budget` check; each is listed below."]
     );
-    let fp = |path: Option<&str>, rule: &str, message: &str| Value::Array(vec![Value::from(finding_fingerprint(path, rule, message))]);
+    let fp = |path: Option<&str>, rule: &str, message: &str| {
+        Value::Array(vec![Value::from(finding_fingerprint(path, rule, message))])
+    };
     let expected: Object = object([
         ("ruff", fp(Some("a.py"), "ruff F401", "`os` unused")),
         ("mypy", fp(Some("b.py"), "mypy", "bad: 2 errors")),
@@ -125,7 +133,10 @@ fn reads_failing_findings_and_tests_and_leaves_findings_to_weigh_out() {
 #[test]
 fn a_fingerprint_ignores_digits_and_keeps_paths_and_rules_apart() {
     let fp = finding_fingerprint;
-    assert_eq!(fp(Some("a.py"), "ruff C901", "too complex (16 > 15)"), fp(Some("a.py"), "ruff C901", "too complex (17 > 15)"));
+    assert_eq!(
+        fp(Some("a.py"), "ruff C901", "too complex (16 > 15)"),
+        fp(Some("a.py"), "ruff C901", "too complex (17 > 15)")
+    );
     assert_ne!(fp(Some("a.py"), "ruff C901", "m"), fp(Some("b.py"), "ruff C901", "m"));
     assert_ne!(fp(Some("a.py"), "ruff C901", "m"), fp(Some("a.py"), "ruff E501", "m"));
     assert_eq!(fp(None, "x", "y").len(), 16);
@@ -151,8 +162,13 @@ fn read_back_the_gate_of_a_could_not_judge_report() {
 #[test]
 fn lines_that_only_look_like_findings_are_not_read_as_them() {
     for line in [
-        "1. `a.py:3` error", "1. `a.py:x` error r: m", "x. `a.py:3` error r: m", "1. `` error r: m",
-        "1. `a.py:3` error : m", "1.`a.py:3` error r: m", "1. `a.py:3`  error r: m",
+        "1. `a.py:3` error",
+        "1. `a.py:x` error r: m",
+        "x. `a.py:3` error r: m",
+        "1. `` error r: m",
+        "1. `a.py:3` error : m",
+        "1.`a.py:3` error r: m",
+        "1. `a.py:3`  error r: m",
     ] {
         assert!(numbered_finding(line).is_none(), "{line}");
     }
@@ -162,7 +178,11 @@ fn lines_that_only_look_like_findings_are_not_read_as_them() {
     assert_eq!(failing_test("- `a`: b`: c"), Some("a`: b"));
     assert_eq!(failing_test("- ``: c"), None);
     assert_eq!(secret_found("1. `a:b.py:3` r in c (fingerprint `x`)"), Some(("a:b.py", "r")));
-    for line in ["1. `a.py:3` r in c (fingerprint `x`", "1. `a.py:` r in c (fingerprint `x`)", "1. `a.py:3` r in  (fingerprint `x`)"] {
+    for line in [
+        "1. `a.py:3` r in c (fingerprint `x`",
+        "1. `a.py:` r in c (fingerprint `x`)",
+        "1. `a.py:3` r in  (fingerprint `x`)",
+    ] {
         assert_eq!(secret_found(line), None, "{line}");
     }
 }
@@ -201,7 +221,10 @@ fn the_engine_reads_what_the_gate_writes() {
     );
     // The two issues and the failing test; the finding to weigh is left out.
     let mut want = IndexMap::new();
-    want.insert("ruff".to_string(), vec![finding_fingerprint(Some("f.py"), "ruff B023", "Function definition does not bind loop variable `x`")]);
+    want.insert(
+        "ruff".to_string(),
+        vec![finding_fingerprint(Some("f.py"), "ruff B023", "Function definition does not bind loop variable `x`")],
+    );
     want.insert(
         "test-integrity".to_string(),
         vec![finding_fingerprint(

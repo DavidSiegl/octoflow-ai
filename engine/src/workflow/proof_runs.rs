@@ -9,12 +9,12 @@ use crate::error::OrchestratorError;
 use crate::host::{checked, shlex_quote, RestoreError, DEFAULT_TIMEOUT, MISSING_FILE_STATUS};
 use crate::paths::file_name;
 use crate::pipeline::Step;
-use crate::proofs::{
-    proof_finding, proof_outcome, proof_output, proofs_section, ProofOutcome, ProofRun, PROOFS_HEADING, PROOF_TAIL_LINES,
-    REMOVE_TREE_SCRIPT,
-};
 use crate::prompts::template::fill;
 use crate::prompts::{prompt_error, Prompt};
+use crate::proofs::{
+    proof_finding, proof_outcome, proof_output, proofs_section, ProofOutcome, ProofRun, PROOFS_HEADING,
+    PROOF_TAIL_LINES, REMOVE_TREE_SCRIPT,
+};
 
 /// Runs "$2" with sh in the directory "$1", under GNU timeout's limit of "$3" seconds where there is a timeout: it runs
 /// the proof in a process group of its own and kills all of it, so nothing a proof started goes on writing to the
@@ -51,7 +51,15 @@ impl Workflow<'_> {
             files.sort();
             for file in files {
                 let ProofOutcome { demonstrated, said, moved } = self.run_proof(&command, n, &file)?;
-                records.push(ProofRun { round: n, written: n, finding: proof_finding(&file), file, demonstrated, said, moved });
+                records.push(ProofRun {
+                    round: n,
+                    written: n,
+                    finding: proof_finding(&file),
+                    file,
+                    demonstrated,
+                    said,
+                    moved,
+                });
             }
             if records.is_empty() {
                 return Ok(());
@@ -153,7 +161,9 @@ impl Workflow<'_> {
         let did_not_run = |said: String| ProofOutcome { demonstrated: false, said, moved: false };
         let proc = match ran {
             Ok(Some(proc)) => proc,
-            Ok(None) => return Ok(ProofOutcome { moved: true, ..did_not_run("it did not run: its file is gone".into()) }),
+            Ok(None) => {
+                return Ok(ProofOutcome { moved: true, ..did_not_run("it did not run: its file is gone".into()) })
+            }
             Err(e) => return Ok(did_not_run(format!("it did not run: {e}"))),
         };
         if let Err(e) = put_back {
@@ -216,7 +226,6 @@ impl Workflow<'_> {
         self.save()?;
         Ok(records.iter().filter(|p| p.demonstrated).count())
     }
-
 }
 
 /// What a run's records say of its proofs, and what its steps are told of them.
@@ -233,7 +242,10 @@ impl RunView<'_> {
                 None => latest.push(p),
             }
         }
-        Ok(latest.into_iter().filter(|p| !p.moved && (p.demonstrated || (p.written < p.round && !p.passed()))).collect())
+        Ok(latest
+            .into_iter()
+            .filter(|p| !p.moved && (p.demonstrated || (p.written < p.round && !p.passed())))
+            .collect())
     }
     /// The runs of the proofs carried into round n, run again before its proof step's turn.
     fn reruns(&self, n: u32) -> Result<Vec<ProofRun>, OrchestratorError> {
@@ -282,11 +294,10 @@ impl RunView<'_> {
                 lines.join("\n")
             })
             .collect();
-        let note = self.prompts.fill(Prompt::CarriedProofsNote, &[
-            ("command", command),
-            ("cwd", self.state.work_dir()),
-            ("proofs", &items.join("\n\n")),
-        ])?;
+        let note = self.prompts.fill(
+            Prompt::CarriedProofsNote,
+            &[("command", command), ("cwd", self.state.work_dir()), ("proofs", &items.join("\n\n"))],
+        )?;
         Ok(format!("\n\n{note}"))
     }
     /// What the step hears in round n of the proofs carried into it (carried_proofs): PROOFS_NOTE after a blank line;

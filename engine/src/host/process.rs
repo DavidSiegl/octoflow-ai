@@ -59,7 +59,12 @@ pub struct ProcessHost {
 
 /// Runs one command as run_process does, given its argv, standard input, time limit and environment, and gives its
 /// exit status and outputs, or why it gave none.
-pub(crate) type RunCommand = dyn Fn(&[String], Option<&[u8]>, Option<Duration>, &[(OsString, OsString)]) -> Result<(i32, Vec<u8>, Vec<u8>), ProcessError>
+pub(crate) type RunCommand = dyn Fn(
+        &[String],
+        Option<&[u8]>,
+        Option<Duration>,
+        &[(OsString, OsString)],
+    ) -> Result<(i32, Vec<u8>, Vec<u8>), ProcessError>
     + Send
     + Sync;
 
@@ -72,16 +77,26 @@ impl ProcessHost {
 
     /// As local, in the environment vars as child_env would give it, were vars the engine's own: what the tests
     /// give a Host in place of the process's environment, which is shared by every test.
-    pub(crate) fn in_environment(vars: impl Iterator<Item = (OsString, OsString)>, interrupt: &Interrupt) -> ProcessHost {
+    pub(crate) fn in_environment(
+        vars: impl Iterator<Item = (OsString, OsString)>,
+        interrupt: &Interrupt,
+    ) -> ProcessHost {
         let interrupt = interrupt.clone();
-        ProcessHost::with_runner(vars, move |argv, stdin, timeout, env| run_process(argv, stdin, timeout, env, &interrupt))
+        ProcessHost::with_runner(vars, move |argv, stdin, timeout, env| {
+            run_process(argv, stdin, timeout, env, &interrupt)
+        })
     }
 
     /// As in_environment, each command run by run in place of a process, ssh included for a host over_ssh makes of
     /// it, for the tests.
     pub(crate) fn with_runner(
         vars: impl Iterator<Item = (OsString, OsString)>,
-        run: impl Fn(&[String], Option<&[u8]>, Option<Duration>, &[(OsString, OsString)]) -> Result<(i32, Vec<u8>, Vec<u8>), ProcessError>
+        run: impl Fn(
+                &[String],
+                Option<&[u8]>,
+                Option<Duration>,
+                &[(OsString, OsString)],
+            ) -> Result<(i32, Vec<u8>, Vec<u8>), ProcessError>
             + Send
             + Sync
             + 'static,
@@ -355,7 +370,10 @@ fn unblock_signals(command: &mut Command) {
     // SAFETY: the closure runs in the child between fork and exec, where only async-signal-safe functions may be
     // called; it calls pthread_sigmask alone, which is one (POSIX.1-2008, signal-safety(7)), on a set made before the
     // fork, and allocates nothing.
-    #[allow(unsafe_code, reason = "CommandExt::pre_exec is unsafe, and nix has no safe way to start a child with a signal unblocked")]
+    #[allow(
+        unsafe_code,
+        reason = "CommandExt::pre_exec is unsafe, and nix has no safe way to start a child with a signal unblocked"
+    )]
     unsafe {
         command.pre_exec(move || signals.thread_unblock().map_err(std::io::Error::from));
     }

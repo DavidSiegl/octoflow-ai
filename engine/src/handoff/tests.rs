@@ -49,14 +49,27 @@ fn a_labelled_word_says_where_it_stands() {
 const GATES: [&str; 4] = [QUALITY_OK, QUALITY_ERROR, QUALITY_BUILD_FAILED, QUALITY_LEAK];
 const VERDICTS: [&str; 2] = [APPROVE, CHANGES_REQUESTED];
 const LINE_BREAKS: &str = "\n\r\x0b\x0c\x1c\x1d\x1e\u{85}\u{2028}\u{2029}";
-const EMPHASIS: [(&str, &str); 7] = [("", ""), ("**", "**"), ("_", "_"), ("`", "`"), ("# ", ""), ("## ", ""), ("> ", "")];
+const EMPHASIS: [(&str, &str); 7] =
+    [("", ""), ("**", "**"), ("_", "_"), ("`", "`"), ("# ", ""), ("## ", ""), ("> ", "")];
 
 fn blank_lines(rng: &mut Rng) -> String {
-    (0..rng.below(3)).map(|_| format!("{}\n", rng.text(2, &format!("{LINE_BREAKS}abcdefghijklmnopqrstuvwxyz")).replace(|c: char| !c.is_whitespace(), " "))).collect()
+    (0..rng.below(3))
+        .map(|_| {
+            format!(
+                "{}\n",
+                rng.text(2, &format!("{LINE_BREAKS}abcdefghijklmnopqrstuvwxyz"))
+                    .replace(|c: char| !c.is_whitespace(), " ")
+            )
+        })
+        .collect()
 }
 
 fn after_word(rng: &mut Rng) -> String {
-    if rng.below(2) == 0 { String::new() } else { format!(" {}", rng.text(8, LINE_BREAKS)) }
+    if rng.below(2) == 0 {
+        String::new()
+    } else {
+        format!(" {}", rng.text(8, LINE_BREAKS))
+    }
 }
 
 #[test]
@@ -75,9 +88,11 @@ fn never_panic_and_return_only_their_words() {
 fn read_the_word_on_the_first_non_blank_line() {
     let mut rng = Rng::new(11);
     for k in 0..300 {
-        let (blanks, (before, behind)) = if k == 0 { (String::new(), ("_", "_")) } else { (blank_lines(&mut rng), *rng.pick(&EMPHASIS)) };
+        let (blanks, (before, behind)) =
+            if k == 0 { (String::new(), ("_", "_")) } else { (blank_lines(&mut rng), *rng.pick(&EMPHASIS)) };
         let (gate, verdict) = (*rng.pick(&GATES), *rng.pick(&VERDICTS));
-        let (after, rest) = if k == 0 { (String::new(), String::new()) } else { (after_word(&mut rng), rng.text(20, "")) };
+        let (after, rest) =
+            if k == 0 { (String::new(), String::new()) } else { (after_word(&mut rng), rng.text(20, "")) };
         let text = format!("{blanks}{before}GATE: {gate}{behind}{after}\n{rest}");
         assert_eq!(parse_gate(&text), Some(gate), "{text:?}");
         let text = format!("{blanks}{before}VERDICT: {verdict}{behind}{after}\n{rest}");

@@ -30,9 +30,14 @@ fn failed_twice() -> (Fixture, String, Object) {
 
 #[test]
 fn an_agent_that_turns_working_is_prompted_once() {
-    let f = Fixture::new(vec![("spec", vec![idle()]), ("build", vec![build_turn(1)]), ("review", vec![review_turn(1, APPROVE)])]);
+    let f = Fixture::new(vec![
+        ("spec", vec![idle()]),
+        ("build", vec![build_turn(1)]),
+        ("review", vec![review_turn(1, APPROVE)]),
+    ]);
     let prompted = Rc::new(RefCell::new(vec![]));
-    let (host, seen, spec, path) = (Rc::clone(&f.host), Rc::clone(&prompted), f.state.spec_path(), f.state.dir() + "/state.json");
+    let (host, seen, spec, path) =
+        (Rc::clone(&f.host), Rc::clone(&prompted), f.state.spec_path(), f.state.dir() + "/state.json");
     f.clock.hook(move |now| {
         if now > STALL_SECONDS as f64 && host.read(&spec).unwrap().is_none() {
             let saved = serde_json::from_str::<Value>(&host.read(&path).unwrap().unwrap()).unwrap();
@@ -91,7 +96,8 @@ fn two_dropped_prompts_fail_the_turn_unrecorded() {
         format!("the Builder did not take its prompt to write {d}/build-1.md, sent twice; see pane w1:p2, and resume to send it again")
     );
     assert_eq!(text(&saved, "prompted").as_deref(), Some("spec.md"));
-    let files: Vec<&str> = saved.get("turns").unwrap().as_array().unwrap().iter().filter_map(|t| t.get("file")?.as_str()).collect();
+    let files: Vec<&str> =
+        saved.get("turns").unwrap().as_array().unwrap().iter().filter_map(|t| t.get("file")?.as_str()).collect();
     assert!(!files.contains(&"build-1.md"), "{files:?}");
 }
 

@@ -151,7 +151,8 @@ impl FakeSsh {
              echo 'mux_client_request_session: session request failed: Session open refused by peer' >&2; exit 255; fi;; esac\n\
              eval \"last=\\${$#}\"\nexec sh -c \"$last\"\n",
         );
-        let host = ProcessHost::in_environment(environment(Some(&bin), set).into_iter(), &Interrupt::new()).over_ssh("remote-host");
+        let host = ProcessHost::in_environment(environment(Some(&bin), set).into_iter(), &Interrupt::new())
+            .over_ssh("remote-host");
         FakeSsh { dir, host }
     }
 
@@ -364,8 +365,22 @@ fn create_pr_runs_gh_in_the_project() {
     assert!(remote.ends_with("--body-file - --draft"), "{remote}");
     assert_eq!(read(&format!("{bin}/gh-input")), "body");
     assert_eq!(read(&format!("{bin}/gh-cwd")).trim(), std::fs::canonicalize(&cwd).unwrap().to_str().unwrap());
-    assert_eq!(gh_argv(&bin), ["pr", "create", "--base", "main", "--head", "orchestrator/x", "--title", "Title",
-        "--body-file", "-", "--draft"]);
+    assert_eq!(
+        gh_argv(&bin),
+        [
+            "pr",
+            "create",
+            "--base",
+            "main",
+            "--head",
+            "orchestrator/x",
+            "--title",
+            "Title",
+            "--body-file",
+            "-",
+            "--draft"
+        ]
+    );
     // Printing nothing is no pull request.
     put(&format!("{bin}/prints"), "\n");
     let e = ssh.host.create_pr(&cwd, "main", "orchestrator/x", "Title", "body", false).unwrap_err();
@@ -495,7 +510,9 @@ fn rename_over_ssh() {
 #[test]
 fn rename_failure_raises() {
     let d = TempDir::new();
-    let e = ProcessHost::local(&Interrupt::new()).rename(&d.join("review-1.md"), &d.join("review-1.rejected.md")).unwrap_err();
+    let e = ProcessHost::local(&Interrupt::new())
+        .rename(&d.join("review-1.md"), &d.join("review-1.rejected.md"))
+        .unwrap_err();
     assert!(e.0.contains("No such file or directory"), "{e}");
     assert!(e.0.starts_with("mv -f -- "), "{e}");
     let ssh = FakeSsh::new(&[]);
@@ -507,7 +524,10 @@ fn rename_failure_raises() {
 fn output_that_is_not_utf8_raises_naming_the_command() {
     let host = ProcessHost::local(&Interrupt::new());
     let e = host.run(&["printf", "\\351"], None, 60).unwrap_err();
-    assert!(e.0.starts_with("printf '\\351': printed what is not UTF-8: incomplete utf-8 byte sequence from index 0"), "{e}");
+    assert!(
+        e.0.starts_with("printf '\\351': printed what is not UTF-8: incomplete utf-8 byte sequence from index 0"),
+        "{e}"
+    );
     assert_eq!(host.run_verbatim(&["printf", "\\351"], None, 60).unwrap().stdout, b"\xe9");
     let e = host.run(&["sh", "-c", "printf '\\351' >&2"], None, 60).unwrap_err();
     assert!(e.0.contains("printed what is not UTF-8"), "{e}");
@@ -548,12 +568,7 @@ fn a_command_that_runs_out_of_time_is_killed_with_its_process_group() {
     let script = "sleep 30 & echo $! > \"$1\"; wait";
     let e = host.run(&["sh", "-c", script, "_", &pid_file], None, 1).unwrap_err();
     assert!(started.elapsed() < std::time::Duration::from_secs(10));
-    assert_eq!(
-        e.0,
-        format!(
-            "sh -c 'sleep 30 & echo $! > \"$1\"; wait' _ {pid_file}: timed out after 1 seconds"
-        )
-    );
+    assert_eq!(e.0, format!("sh -c 'sleep 30 & echo $! > \"$1\"; wait' _ {pid_file}: timed out after 1 seconds"));
     let pid = read(&pid_file).trim().to_string();
     // The background sleep went with its group: no process has its pid any more, or only as a zombie being reaped.
     let gone = (0..100).any(|_| {
@@ -600,7 +615,10 @@ fn exec_tells_a_command_not_on_path_from_one_that_cannot_be_started_otherwise() 
     // As the doctor tells a tool missing here (cross-review 89, F9).
     let host = ProcessHost::local(&Interrupt::new());
     let message = "no-such-command-here x: no-such-command-here: No such file or directory";
-    assert_eq!(host.exec(&["no-such-command-here", "x"], None, 60), Err(ExecError::NotFound(OrchestratorError::new(message))));
+    assert_eq!(
+        host.exec(&["no-such-command-here", "x"], None, 60),
+        Err(ExecError::NotFound(OrchestratorError::new(message)))
+    );
     let dir = TempDir::new();
     let path = dir.join("not-executable");
     put(&path, "#!/bin/sh\n");
@@ -629,7 +647,10 @@ fn a_ctrl_c_stops_the_running_command_with_its_process_group() {
     let e = host.run(&["sh", "-c", script, "_", &pid, &background], None, 600).unwrap_err();
     raising.join().unwrap();
     assert!(started.elapsed() < std::time::Duration::from_secs(60));
-    assert_eq!(e.0, format!("sh -c 'sleep 600 & echo $! > \"$2\"; echo $$ > \"$1\"; wait' _ {pid} {background}: interrupted"));
+    assert_eq!(
+        e.0,
+        format!("sh -c 'sleep 600 & echo $! > \"$2\"; echo $$ > \"$1\"; wait' _ {pid} {background}: interrupted")
+    );
     assert!(ended(&pid), "the command outlived the Ctrl-C");
     assert!(ended(&background), "what it started outlived the Ctrl-C");
 }
@@ -766,9 +787,15 @@ fn run_files_of_a_real_directory_oldest_first() {
     let host = ProcessHost::local(&Interrupt::new());
     let run_dir = d.join(&format!("{RUNS_DIR}/r-abc"));
     // Name order is a, b, c, d; modification order is c, a, then b and d together.
-    for (name, mtime) in [("b.md", 300), ("a.md", 200), ("c.md", 100), ("d.md", 300), ("state.json", 50),
-        ("state.json.tmp.123", 60), ("spec.md.tmp.9", 70)]
-    {
+    for (name, mtime) in [
+        ("b.md", 300),
+        ("a.md", 200),
+        ("c.md", 100),
+        ("d.md", 300),
+        ("state.json", 50),
+        ("state.json.tmp.123", 60),
+        ("spec.md.tmp.9", 70),
+    ] {
         host.write(&format!("{run_dir}/{name}"), name, false).unwrap();
         set_mtime(&format!("{run_dir}/{name}"), mtime);
     }
@@ -823,9 +850,14 @@ fn what_leads_out_of_a_run_directory_is_neither_listed_nor_read_over_ssh() {
     put(&d.join("outside.md"), "outside");
     put(&format!("{runs}/r/a.md"), "a");
     put(&format!("{runs}/other.md"), "beside the runs");
-    for (target, name) in [("a.md", "in.md"), ("in.md", "chain.md"), ("../../../outside.md", "up.md"),
-        (&d.join("outside.md"), "out.md"), ("../other.md", "beside.md"), ("loop.md", "loop.md")]
-    {
+    for (target, name) in [
+        ("a.md", "in.md"),
+        ("in.md", "chain.md"),
+        ("../../../outside.md", "up.md"),
+        (&d.join("outside.md"), "out.md"),
+        ("../other.md", "beside.md"),
+        ("loop.md", "loop.md"),
+    ] {
         link(target, &format!("{runs}/r/{name}"));
     }
     link(&d.path(), &format!("{runs}/away"));
@@ -833,7 +865,8 @@ fn what_leads_out_of_a_run_directory_is_neither_listed_nor_read_over_ssh() {
     let ssh = FakeSsh::new(&[]);
     let names = |run: &str| -> Vec<String> {
         let files = ssh.host.run_files_inside(&format!("{runs}/{run}")).unwrap();
-        let mut names: Vec<String> = files.into_iter().map(|f| f.path.rsplit('/').next().unwrap().to_string()).collect();
+        let mut names: Vec<String> =
+            files.into_iter().map(|f| f.path.rsplit('/').next().unwrap().to_string()).collect();
         names.sort();
         names
     };
@@ -848,7 +881,10 @@ fn what_leads_out_of_a_run_directory_is_neither_listed_nor_read_over_ssh() {
         assert_eq!(read("r", name), RunFileText::Outside, "{name}");
     }
     assert_eq!(read("away", "outside.md"), RunFileText::Outside);
-    assert_eq!((read("r", "loop.md"), read("r", "nosuch.md"), read("nosuch", "a.md")), (RunFileText::Missing, RunFileText::Missing, RunFileText::Missing));
+    assert_eq!(
+        (read("r", "loop.md"), read("r", "nosuch.md"), read("nosuch", "a.md")),
+        (RunFileText::Missing, RunFileText::Missing, RunFileText::Missing)
+    );
     // A run's state.json is read only from a run directory below the runs directory, alias being r's again, and
     // only when it stays in its run directory.
     put(&format!("{runs}/r/state.json"), "{\"run_id\": \"r\"}");
@@ -975,8 +1011,10 @@ fn a_session_log_removed_between_its_test_and_its_read_is_missing() {
     // session_log cats the path its glob expanded to under $HOME, relative to it.
     let bin = TempDir::new();
     tool_that_loses(&bin.path(), "cat", ".claude/projects/-proj/abc-123.jsonl");
-    let host =
-        ProcessHost::in_environment(environment(Some(&bin.path()), &[("HOME", &home.path())]).into_iter(), &Interrupt::new());
+    let host = ProcessHost::in_environment(
+        environment(Some(&bin.path()), &[("HOME", &home.path())]).into_iter(),
+        &Interrupt::new(),
+    );
     assert_eq!(host.session_log("claude", "abc-123").unwrap(), None);
 }
 
@@ -1357,8 +1395,12 @@ fn changed_line_counts_pair_renames_and_count_binary_files_as_none() {
     };
     assert_eq!(
         counts,
-        [file("app.py", "app.py", 1, 1), file("gone.py", "gone.py", 0, 2), file("lib.py", "sub dir/lib.py", 1, 0),
-            file("logo.png", "logo.png", 0, 0)]
+        [
+            file("app.py", "app.py", 1, 1),
+            file("gone.py", "gone.py", 0, 2),
+            file("lib.py", "sub dir/lib.py", 1, 0),
+            file("logo.png", "logo.png", 0, 0)
+        ]
     );
 }
 
@@ -1424,7 +1466,8 @@ fn fetch_killed_for_running_past_its_time_names_the_git_command() {
     let host = crate::host::fake::FakeHost::default();
     host.state().fetch_hangs_left = 1;
     let e = host.fetch("/proj", "main").unwrap_err();
-    let said = "could not fetch main from origin: git -C /proj fetch --quiet origin main: origin did not answer within \
+    let said =
+        "could not fetch main from origin: git -C /proj fetch --quiet origin main: origin did not answer within \
                 300 seconds";
     assert_eq!(e.0, said);
 }
@@ -1451,7 +1494,8 @@ fn origin_read_limits(config: &[(&str, &str)], ssh_g: &str) -> (String, String) 
         ("GIT_CONFIG_NOSYSTEM", "1"),
     ];
     // An ssh of the tester's own would stand in for the fake.
-    let env = environment(Some(&bin.path()), &set).into_iter().filter(|(k, _)| k != "GIT_SSH_COMMAND" && k != "GIT_SSH");
+    let env =
+        environment(Some(&bin.path()), &set).into_iter().filter(|(k, _)| k != "GIT_SSH_COMMAND" && k != "GIT_SSH");
     let repo = Repo::with_host(&[("a.txt", "a\n")], ProcessHost::in_environment(env, &Interrupt::new()));
     repo.git(&["remote", "add", "origin", "remote-host:r.git"]);
     for (key, value) in config {
@@ -1478,8 +1522,7 @@ fn a_read_of_origin_has_git_and_ssh_give_up_on_a_stall() {
 #[test]
 fn a_read_of_origin_keeps_the_users_own_limits() {
     // Each setting on its own: the user's ssh config sets a connect timeout and git's config a low-speed time.
-    let (args, params) =
-        origin_read_limits(&[("http.lowSpeedTime", "5")], "connecttimeout 5\nserveraliveinterval 0");
+    let (args, params) = origin_read_limits(&[("http.lowSpeedTime", "5")], "connecttimeout 5\nserveraliveinterval 0");
     assert!(!args.contains("ConnectTimeout") && args.contains("ServerAliveInterval=15"), "{args}");
     assert!(params.contains(LIMIT_1000) && !params.contains(TIME_60), "{params}");
     // An ssh command of the user's own is run as they set it.
@@ -1753,8 +1796,10 @@ fn locked_files_are_restored_and_the_index_is_left_alone() {
 
     c.host.restore(&sub, git_ref, &differ).unwrap();
     let file = |name: &str| read(&format!("{}/{name}", c.a));
-    assert_eq!((file("tests/test_[x].py"), file("app.py"), file("feature.py")),
-        ("assert f()\n".to_string(), "one\ntested\n".to_string(), "new\n".to_string()));
+    assert_eq!(
+        (file("tests/test_[x].py"), file("app.py"), file("feature.py")),
+        ("assert f()\n".to_string(), "one\ntested\n".to_string(), "new\n".to_string())
+    );
     assert!(!std::path::Path::new(&format!("{}/gone.py", c.a)).exists());
     assert!(!std::path::Path::new(&format!("{}/removed.py", c.a)).exists());
     assert_eq!(c.host.locked_changes(&c.a, git_ref, &locked).unwrap(), (vec![], String::new()));
@@ -1829,7 +1874,8 @@ fn a_submodule_moved_to_another_commit_is_listed_whatever_the_users_ignore_setti
     let lib = format!("{}/lib", c.dir());
     let ident = ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"];
     let in_lib = |rest: &[&str]| {
-        let argv: Vec<&str> = ["git", "-C", lib.as_str()].into_iter().chain(ident).chain(rest.iter().copied()).collect();
+        let argv: Vec<&str> =
+            ["git", "-C", lib.as_str()].into_iter().chain(ident).chain(rest.iter().copied()).collect();
         c.sh(&argv)
     };
     c.sh(&["git", "init", "--quiet", "-b", "main", &lib]);
@@ -1878,7 +1924,13 @@ fn restore_tree_undoes_what_changed_since_but_ignored_files() {
     let file = |name: &str| text(&r.path, name);
     assert_eq!(
         (file("kept.py"), file("mine.py"), file("gone.py"), file("new/stray.py"), file("run.log")),
-        (Some("changed before\n".into()), Some("untracked before\n".into()), Some("x\n".into()), None, Some("ignored\n".into()))
+        (
+            Some("changed before\n".into()),
+            Some("untracked before\n".into()),
+            Some("x\n".into()),
+            None,
+            Some("ignored\n".into())
+        )
     );
     assert_eq!(r.host.git(&r.path, &["status", "--porcelain"]).unwrap(), porcelain);
     let [PutBack { paths, undo }] = &put_back[..] else { panic!("{put_back:?}") };
@@ -1948,7 +2000,19 @@ fn a_tree_is_restored_over_a_directory_and_a_file_swapped_and_a_nested_repositor
     // With a commit, which git add -A takes as one path, a gitlink.
     let nested = format!("{}/fixture", r.path);
     r.git(&["init", "--quiet", &nested]);
-    r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "--allow-empty", "-m", "fixture"]);
+    r.git(&[
+        "-C",
+        &nested,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.com",
+        "commit",
+        "--quiet",
+        "--allow-empty",
+        "-m",
+        "fixture",
+    ]);
     r.host.restore_tree(&r.path, &tree).unwrap();
     assert_eq!((text(&r.path, "x/y"), text(&r.path, "a")), (Some("in x\n".into()), Some("a file\n".into())));
     assert!(!std::path::Path::new(&nested).exists());
@@ -1966,7 +2030,10 @@ fn the_way_back_swaps_a_directory_and_a_file_again() {
     let put_back = r.host.restore_tree(&r.path, &tree).unwrap();
     let [PutBack { undo, .. }] = &put_back[..] else { panic!("{put_back:?}") };
     r.host.check(&["sh", "-c", undo], None, DEFAULT_TIMEOUT).unwrap();
-    assert_eq!((text(&r.path, "x"), text(&r.path, "a/b")), (Some("now a file\n".into()), Some("now in a directory\n".into())));
+    assert_eq!(
+        (text(&r.path, "x"), text(&r.path, "a/b")),
+        (Some("now a file\n".into()), Some("now in a directory\n".into()))
+    );
 }
 
 #[test]
@@ -1992,7 +2059,18 @@ fn a_nested_repository_made_since_goes_but_the_ignored_files_it_holds() {
     r.git(&["init", "--quiet", &nested]);
     r.put("d/fixture.txt", "made by the proof\n");
     r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "add", "fixture.txt"]);
-    r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "fixture"]);
+    r.git(&[
+        "-C",
+        &nested,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.com",
+        "commit",
+        "--quiet",
+        "-m",
+        "fixture",
+    ]);
     r.host.restore_tree(&r.path, &tree).unwrap();
     assert_eq!((text(&r.path, "d/my.env"), text(&r.path, "d/fixture.txt")), (Some("secret\n".into()), None));
     assert!(!std::path::Path::new(&format!("{nested}/.git")).exists());
@@ -2007,7 +2085,18 @@ fn a_gitignore_in_a_repository_made_since_hides_nothing_the_proof_wrote() {
     r.git(&["init", "--quiet", &nested]);
     r.put("d/.gitignore", "*.log\n");
     r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "add", ".gitignore"]);
-    r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "fixture"]);
+    r.git(&[
+        "-C",
+        &nested,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.com",
+        "commit",
+        "--quiet",
+        "-m",
+        "fixture",
+    ]);
     r.put("d/run.log", "made by the proof\n");
     r.host.restore_tree(&r.path, &tree).unwrap();
     assert!(!std::path::Path::new(&nested).exists());
@@ -2044,7 +2133,18 @@ fn an_ignored_repository_in_one_made_since_keeps_its_history() {
     r.git(&["init", "--quiet", &nested]);
     r.put("d/fixture.txt", "made by the proof\n");
     r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "add", "fixture.txt"]);
-    r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "fixture"]);
+    r.git(&[
+        "-C",
+        &nested,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.com",
+        "commit",
+        "--quiet",
+        "-m",
+        "fixture",
+    ]);
     r.host.restore_tree(&r.path, &tree).unwrap();
     assert_eq!(text(&r.path, "d/fixture.txt"), None);
     assert_eq!(text(&r.path, "d/vendor/lib/.gitignore"), Some("*.o\n".into()));
@@ -2098,7 +2198,18 @@ fn a_repository_of_the_tree_before_in_one_made_since_keeps_its_history() {
     r.git(&["init", "--quiet", &nested]);
     r.put("d/fixture.txt", "made by the proof\n");
     r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "add", "fixture.txt"]);
-    r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "fixture"]);
+    r.git(&[
+        "-C",
+        &nested,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.com",
+        "commit",
+        "--quiet",
+        "-m",
+        "fixture",
+    ]);
     r.host.restore_tree(&r.path, &tree).unwrap();
     assert_eq!(text(&r.path, "d/fixture.txt"), None);
     assert_eq!(text(&r.path, "d/e/lib.c"), Some("int x;\n".into()));
@@ -2117,7 +2228,18 @@ fn a_gitignore_of_the_tree_before_in_one_made_since_keeps_what_it_ignores() {
     r.git(&["init", "--quiet", &nested]);
     r.put("d/fixture.txt", "made by the proof\n");
     r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "add", "fixture.txt"]);
-    r.git(&["-C", &nested, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "fixture"]);
+    r.git(&[
+        "-C",
+        &nested,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.com",
+        "commit",
+        "--quiet",
+        "-m",
+        "fixture",
+    ]);
     r.host.restore_tree(&r.path, &tree).unwrap();
     assert_eq!((text(&r.path, "d/x.log"), text(&r.path, "d/fixture.txt")), (Some("the human's\n".into()), None));
     assert_eq!(text(&r.path, "d/.gitignore"), Some("*.log\n".into()));

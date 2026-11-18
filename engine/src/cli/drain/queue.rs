@@ -220,7 +220,8 @@ pub(super) fn status_text(value: Option<String>) -> String {
 /// Errors, naming the specs: spec_dir cannot be listed, a spec cannot be read (read_spec_file), a Blocked by: line
 /// names a slug that has no spec.md, or the blockers form a cycle.
 pub fn read_queue(spec_dir: &str) -> Result<Vec<QueuedSpec>, OrchestratorError> {
-    let listing = |e: std::io::Error| OrchestratorError(format!("cannot list the specs in {spec_dir}: {}", strerror(&e)));
+    let listing =
+        |e: std::io::Error| OrchestratorError(format!("cannot list the specs in {spec_dir}: {}", strerror(&e)));
     let mut names: Vec<String> = std::fs::read_dir(spec_dir)
         .map_err(listing)?
         .map(|entry| entry.map(|e| e.file_name().into_string().ok()))

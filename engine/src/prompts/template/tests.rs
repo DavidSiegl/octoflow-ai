@@ -6,7 +6,10 @@ fn values(name: &str) -> Option<String> {
 
 #[test]
 fn fill_replaces_each_placeholder_and_undoubles_braces() {
-    assert_eq!(fill("Do {task} per {spec_path}; {task} again.", &values).unwrap(), "Do <task> per <spec_path>; <task> again.");
+    assert_eq!(
+        fill("Do {task} per {spec_path}; {task} again.", &values).unwrap(),
+        "Do <task> per <spec_path>; <task> again."
+    );
     assert_eq!(fill("{{x}} {{{n}}} }}{{", &values).unwrap(), "{x} {<n>} }{");
     assert_eq!(fill("read {prev_my-step}", &values).unwrap(), "read <prev_my-step>");
     assert_eq!(fill("", &values).unwrap(), "");
@@ -32,10 +35,19 @@ fn each_refused_brace_names_the_placeholder_and_where_it_is() {
         ("Ask {}.", "placeholder {} at line 1, column 5 is a positional field; a placeholder is a name"),
         ("{0}", "placeholder {0} at line 1, column 1 is a positional field; a placeholder is a name"),
         ("{0!r}", "placeholder {0!r} at line 1, column 1 is a positional field; a placeholder is a name"),
-        ("{ task }", "placeholder { task } at line 1, column 1 is not a name; a name may use only letters, digits, - and _"),
-        ("é {a{b}", "placeholder {a{b} at line 1, column 3 is not a name; a name may use only letters, digits, - and _"),
+        (
+            "{ task }",
+            "placeholder { task } at line 1, column 1 is not a name; a name may use only letters, digits, - and _",
+        ),
+        (
+            "é {a{b}",
+            "placeholder {a{b} at line 1, column 3 is not a name; a name may use only letters, digits, - and _",
+        ),
         ("x\n\n  {task", "{ at line 3, column 3 is not closed on its line; write a literal brace as {{"),
-        ("a {stray\nlater }} and {task}", "{ at line 1, column 3 is not closed on its line; write a literal brace as {{"),
+        (
+            "a {stray\nlater }} and {task}",
+            "{ at line 1, column 3 is not closed on its line; write a literal brace as {{",
+        ),
         ("{task}}", "} at line 1, column 7 closes no placeholder; write a literal brace as }}"),
         ("Write {nope}.", "placeholder {nope} at line 1, column 7 is not one this template takes"),
     ] {

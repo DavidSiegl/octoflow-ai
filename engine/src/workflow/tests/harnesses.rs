@@ -5,8 +5,8 @@
 //! reading a 0.3.0 state, crate::workflow_file's, crate::harness's and crate::state's.
 
 use super::worktree::worktree_run;
-use crate::test_support::resumable;
 use super::*;
+use crate::test_support::resumable;
 
 const KINDS: &[&str] = &["agy", "claude", "codex", "opencode", "pi"];
 const MODES: &[&str] = &["default", "acceptEdits", "bypassPermissions", "plan", "auto", "dontAsk"];
@@ -40,7 +40,11 @@ fn every_role(kind: &str) -> IndexMap<String, String> {
 }
 
 /// AgentSettings of a permission mode, the models and the harnesses by role.
-fn agent_settings(permission_mode: Option<&str>, models: &[(&str, &str)], harnesses: IndexMap<String, String>) -> AgentSettings {
+fn agent_settings(
+    permission_mode: Option<&str>,
+    models: &[(&str, &str)],
+    harnesses: IndexMap<String, String>,
+) -> AgentSettings {
     AgentSettings {
         permission_mode: permission_mode.map(String::from),
         models: models.iter().map(|(r, m)| (r.to_string(), m.to_string())).collect(),
@@ -61,7 +65,8 @@ fn run_default(settings: RunSettings) -> (Started, Vec<String>) {
     let f = Fixture::new(approved());
     assert_eq!(f.workflow(settings).run(), verdict(APPROVE));
     let kinds = f.herdr.state().kinds.clone();
-    let kind_of = |name: &str| kinds.iter().find(|(n, _)| n == name).map(|(_, kind)| kind.clone()).expect("a start's kind");
+    let kind_of =
+        |name: &str| kinds.iter().find(|(n, _)| n == name).map(|(_, kind)| kind.clone()).expect("a start's kind");
     let started = starts(&f).into_iter().map(|(name, _, args)| (role_of(&name), kind_of(&name), args));
     (started.collect(), f.told.lines())
 }
@@ -93,7 +98,8 @@ fn a_new_agent_in_each_harness() {
 fn each_permission_mode_in_each_harness() {
     for kind in KINDS {
         for mode in MODES {
-            let (started, logged) = run_default(with_agents(agent_settings(Some(mode), &[("review", "m")], every_role(kind))));
+            let (started, logged) =
+                run_default(with_agents(agent_settings(Some(mode), &[("review", "m")], every_role(kind))));
             let expected = permissions(kind, mode);
             let args = expected.clone().unwrap_or_default();
             let review = [args.clone(), on_model(kind)].concat();
@@ -101,7 +107,11 @@ fn each_permission_mode_in_each_harness() {
             let told: Vec<String> = match expected {
                 None => FULL
                     .iter()
-                    .map(|role| format!("[{role}] {kind} has no equivalent of --permission-mode {mode}; starting it without one"))
+                    .map(|role| {
+                        format!(
+                            "[{role}] {kind} has no equivalent of --permission-mode {mode}; starting it without one"
+                        )
+                    })
                     .collect(),
                 Some(_) => vec![],
             };
@@ -151,7 +161,10 @@ fn an_exited_agent_resumes_in_its_own_harness() {
         state.agents.get_mut("build").unwrap().harness = kind.to_string();
         let script = vec![("build", vec![recording(build_turn(2), &seen)]), ("review", vec![review_turn(2, APPROVE)])];
         let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &["review"], &[("build", "s-build")]);
-        let settings = RunSettings { agents: agent_settings(Some("acceptEdits"), &[("build", "m")], every_role(kind)), ..f.as_saved() };
+        let settings = RunSettings {
+            agents: agent_settings(Some("acceptEdits"), &[("build", "m")], every_role(kind)),
+            ..f.as_saved()
+        };
         let mut wf = f.workflow(settings);
         assert_eq!(wf.run(), verdict(APPROVE), "{kind}");
         assert_eq!(starts(&f), [("build-a1b2c3".into(), "w1:p2".into(), resumed(kind))], "{kind}");
@@ -170,7 +183,10 @@ fn a_saved_run_on_gemini_is_refused_naming_agy() {
     let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &["review"], &[("build", "s-build")]);
     let settings = RunSettings { agents: agent_settings(None, &[], every_role("gemini")), ..f.as_saved() };
     let Err(Stopped::Failed(e)) = f.workflow(settings).run() else { panic!("a run on gemini went on") };
-    assert!(e.0.contains("agent gemini is not a harness this orchestrator supports any more; agy replaced it"), "{e:?}");
+    assert!(
+        e.0.contains("agent gemini is not a harness this orchestrator supports any more; agy replaced it"),
+        "{e:?}"
+    );
     assert!(f.herdr.state().kinds.is_empty());
 }
 
@@ -220,7 +236,8 @@ fn every_roles_harness_is_saved() {
     assert_eq!(text(&saved, "permission_mode").as_deref(), Some("plan"));
     assert!(!saved.contains_key("agent_args"));
     let agents = saved.get("agents").unwrap().as_object().unwrap();
-    let recorded: Vec<(&str, &str)> = agents.iter().map(|(role, a)| (role.as_str(), a.get("kind").unwrap().as_str().unwrap())).collect();
+    let recorded: Vec<(&str, &str)> =
+        agents.iter().map(|(role, a)| (role.as_str(), a.get("kind").unwrap().as_str().unwrap())).collect();
     assert_eq!(recorded, [("spec", "claude"), ("build", "claude"), ("review", "pi")]);
 }
 
@@ -233,7 +250,8 @@ fn role_agent_starts_that_role_in_its_harness() {
     let f = Fixture::new(approved());
     let kinds = expected.iter().map(|(r, k)| (r.to_string(), k.to_string())).collect();
     f.workflow(with_agents(agent_settings(None, &[], kinds))).run().unwrap();
-    let started: Vec<(String, String)> = f.herdr.state().kinds.iter().map(|(name, kind)| (role_of(name), kind.clone())).collect();
+    let started: Vec<(String, String)> =
+        f.herdr.state().kinds.iter().map(|(name, kind)| (role_of(name), kind.clone())).collect();
     assert_eq!(started, expected.map(|(r, k)| (r.to_string(), k.to_string())));
 }
 
@@ -243,11 +261,20 @@ fn resume_keeps_or_overrides_the_saved_harnesses() {
     let kinds = r#"{"spec": "claude", "build": "codex", "review": "agy"}"#;
     saved.insert("agent_kinds".into(), serde_json::from_str::<Value>(kinds).unwrap());
     let cases: [(&[&str], IndexMap<String, String>); 3] = [
-        (&[], [("spec", "claude"), ("build", "codex"), ("review", "agy")].map(|(r, k)| (r.to_string(), k.to_string())).into_iter().collect()),
+        (
+            &[],
+            [("spec", "claude"), ("build", "codex"), ("review", "agy")]
+                .map(|(r, k)| (r.to_string(), k.to_string()))
+                .into_iter()
+                .collect(),
+        ),
         (&["--agent", "pi"], every_role("pi")),
         (
             &["--role-agent", "review=opencode"],
-            [("spec", "claude"), ("build", "codex"), ("review", "opencode")].map(|(r, k)| (r.to_string(), k.to_string())).into_iter().collect(),
+            [("spec", "claude"), ("build", "codex"), ("review", "opencode")]
+                .map(|(r, k)| (r.to_string(), k.to_string()))
+                .into_iter()
+                .collect(),
         ),
     ];
     for (flags, kinds) in cases {
@@ -275,16 +302,18 @@ fn saved_with_the_run() {
     let mut settings = quick.settings().clone();
     settings.agents.insert("review".to_string(), "codex".to_string());
     let p = crate::pipeline::Pipeline::with("coded", quick.roles().clone(), quick.steps().to_vec(), settings).unwrap();
-    let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&p), vec![
-        ("build", vec![build_turn(1)]),
-        ("review", vec![review_turn(1, APPROVE)]),
-    ]);
+    let f = Fixture::on(
+        Rc::new(FakeHost::default()),
+        new_run(&p),
+        vec![("build", vec![build_turn(1)]), ("review", vec![review_turn(1, APPROVE)])],
+    );
     let mut wf = f.workflow(RunSettings { pipeline: Some(p.clone()), pull_request: false, ..RunSettings::default() });
     assert_eq!(wf.run(), verdict(APPROVE));
     let definition = wf.state().workflow_definition.clone().unwrap();
     let review = definition.get("roles").and_then(|r| r.get("review")).unwrap();
     assert_eq!(review.to_string(), r#"{"label":"Reviewer","agent":"codex"}"#);
-    let back = crate::workflow_file::run_pipeline("coded", Some(&definition), &crate::prompts::Prompts::default()).unwrap();
+    let back =
+        crate::workflow_file::run_pipeline("coded", Some(&definition), &crate::prompts::Prompts::default()).unwrap();
     assert_eq!(back, p);
 }
 

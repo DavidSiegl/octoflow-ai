@@ -8,9 +8,9 @@
 
 use std::cell::Cell;
 use std::ffi::OsString;
+use std::io::Write;
 use std::path::Path;
 use std::sync::OnceLock;
-use std::io::Write;
 
 use crate::constants::{EXIT_CHANGES_REQUESTED, EXIT_CONFLICT, EXIT_ERROR, EXIT_INTERRUPTED, NO_VERDICT, SUCCEEDED};
 use crate::env::ConfigDir;
@@ -19,28 +19,28 @@ use crate::harness::AgentSettings;
 use crate::herdr::ProcessHerdr;
 use crate::host::{shlex_join, Host, ProcessHost};
 use crate::interrupt::Interrupt;
-use crate::pipeline::Pipeline;
-use serde_json::Value;
 use crate::package_index::PackageIndexes;
+use crate::pipeline::Pipeline;
 use crate::runs::{local_host, pid_alive};
 use crate::spec_file::{read_spec_file, SpecFile};
 use crate::state::RunState;
 use crate::workflow::{Collaborators, LocalHuman, RunSettings, Stopped, SystemClocks, Workflow};
+use serde_json::Value;
 
 pub mod args;
 pub mod close;
 pub mod doctor;
 pub mod drain;
 pub mod forget;
-pub mod refresh;
 pub mod listing;
 pub mod prune;
+pub mod refresh;
 mod start;
 mod workflows;
 
 pub use args::{parse_args, Command, RunsCommand, Target};
-pub use start::{new_state, resumable_state, resumed_state};
 pub(crate) use start::new_run_id;
+pub use start::{new_state, resumable_state, resumed_state};
 
 /// What a command talks to once connected: the Workflow's collaborators and where the orchestrator's configuration
 /// is.
@@ -393,7 +393,9 @@ fn runs_command(runs: &RunsCommand, world: &Connected, cwd: &str, target: &[Stri
                 world.say(&record.to_string());
             }
         }
-        RunsCommand::Prune { dry_run } => prune::print_pruned(world, &prune::prune_branches(world, cwd, *dry_run, true)?),
+        RunsCommand::Prune { dry_run } => {
+            prune::print_pruned(world, &prune::prune_branches(world, cwd, *dry_run, true)?)
+        }
     }
     Ok(())
 }
@@ -419,7 +421,8 @@ pub fn record_in_state(
         let (Value::Object(before), Value::Object(after)) = (read.to_json(), updated.to_json()) else {
             unreachable!("a run state is an object")
         };
-        let keys: Vec<&str> = after.iter().filter(|(k, v)| before.get(*k) != Some(*v)).map(|(k, _)| k.as_str()).collect();
+        let keys: Vec<&str> =
+            after.iter().filter(|(k, v)| before.get(*k) != Some(*v)).map(|(k, _)| k.as_str()).collect();
         let unrecorded = match keys[..] {
             [] => "nothing is recorded".to_string(),
             [key] => format!("{key} is not recorded"),
@@ -517,7 +520,8 @@ pub fn program_name() -> &'static str {
 /// The command that resumes the run run_id names, by its key, with target's --machine and --cwd flags.
 pub fn resume_command(run_id: &str, target: &[String]) -> String {
     let key = run_id.rsplit('-').next().unwrap_or(run_id);
-    let argv: Vec<&str> = [program_name(), "resume", key].into_iter().chain(target.iter().map(String::as_str)).collect();
+    let argv: Vec<&str> =
+        [program_name(), "resume", key].into_iter().chain(target.iter().map(String::as_str)).collect();
     shlex_join(&argv)
 }
 

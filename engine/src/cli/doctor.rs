@@ -174,7 +174,8 @@ pub fn check_setup(
     pane_level: Level,
 ) -> Vec<Check> {
     let mut checks: Vec<Check> = Vec::new();
-    let install_herdr = format!("install herdr {} or later, or update it with `herdr update`", dotted(&HERDR_MIN_VERSION));
+    let install_herdr =
+        format!("install herdr {} or later, or update it with `herdr update`", dotted(&HERDR_MIN_VERSION));
     let mut found = check(&mut checks, "herdr", Level::Required, &install_herdr, None, "", &mut || {
         tool_version(host, "herdr", &HERDR_MIN_VERSION)
     });
@@ -225,9 +226,8 @@ pub fn check_setup(
     let mut top = None;
     if let Some(cwd) = cwd {
         let fix = "choose a git checkout as the project (--cwd), or make one with git clone or git init";
-        let checkout = check(&mut checks, "git checkout", Level::NeededForPr, fix, Some(&git), "", &mut || {
-            top_level(agents, cwd)
-        });
+        let checkout =
+            check(&mut checks, "git checkout", Level::NeededForPr, fix, Some(&git), "", &mut || top_level(agents, cwd));
         let fix = format!("git remote add {REMOTE} <url>");
         check(&mut checks, "origin", Level::NeededForPr, &fix, Some(&checkout), "", &mut || {
             Ok(agents.git(&checkout.detail, &["remote", "get-url", REMOTE])?.trim().to_string())
@@ -341,7 +341,8 @@ fn reach_herdr(
     pane_level: Level,
 ) -> (Option<ProcessHost>, Check) {
     let name = "reaching herdr";
-    let reached = |ok: bool, detail: String, fix: String| Check { name: name.into(), level: Level::Required, ok, detail, fix };
+    let reached =
+        |ok: bool, detail: String, fix: String| Check { name: name.into(), level: Level::Required, ok, detail, fix };
     let Some(machine) = herdr.machine() else {
         let check = match in_herdr_pane {
             true => reached(true, "inside a herdr pane".into(), String::new()),
@@ -457,7 +458,10 @@ impl<'h> IntegrationStatus<'h> {
                 .map_err(|e| e.0)
         });
         let states = states.as_ref().map_err(|e| {
-            Unmet::with_fix(e.clone(), "update herdr with `herdr update`, then check that `herdr integration status` runs")
+            Unmet::with_fix(
+                e.clone(),
+                "update herdr with `herdr update`, then check that `herdr integration status` runs",
+            )
         })?;
         let Some((_, state)) = states.iter().find(|(n, _)| n == name) else {
             return Err(Unmet::new(format!("herdr integration status does not list {name}")));

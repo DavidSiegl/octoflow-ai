@@ -8,12 +8,14 @@ use std::sync::Arc;
 
 use indexmap::IndexMap;
 
-use super::{ChangedFile, Completed, Exec, ExecError, Host, PutBack, RestoreError, Scanned, GIT_STATUS_ARGS, ORIGIN_READ};
-use crate::quality::Leak;
-use crate::state::SavedRun;
+use super::{
+    ChangedFile, Completed, Exec, ExecError, Host, PutBack, RestoreError, Scanned, GIT_STATUS_ARGS, ORIGIN_READ,
+};
 use crate::constants::WORKTREES_DIR;
 use crate::error::OrchestratorError;
 use crate::host::tests::FAKE_TOKEN;
+use crate::quality::Leak;
+use crate::state::SavedRun;
 use serde_json::Value;
 
 /// What a FakeHost's clock reads when the workflow's clock reads 0: far from it, so a time taken from the wrong clock
@@ -702,7 +704,12 @@ impl Host for FakeHost {
             }
             let proc = self.git_run(cwd, args, timeout)?;
             let command = argv.join(" ");
-            return Ok(Exec { command, status: proc.status, stdout: proc.stdout.into_bytes(), stderr: proc.stderr.into_bytes() });
+            return Ok(Exec {
+                command,
+                status: proc.status,
+                stdout: proc.stdout.into_bytes(),
+                stderr: proc.stderr.into_bytes(),
+            });
         }
         // Run with the host's state released, as before_write is.
         let hook = self.state().run_command.take();
@@ -893,7 +900,8 @@ impl Host for FakeHost {
     fn restore_tree(&self, cwd: &str, tree: &str) -> Result<Vec<PutBack>, RestoreError> {
         let mut s = self.state();
         let n: usize = tree.strip_prefix("tree").and_then(|n| n.parse().ok()).unwrap_or(0);
-        let held = s.tree_snapshots.get(n.wrapping_sub(1)).unwrap_or_else(|| panic!("FakeHost has no tree {tree}")).clone();
+        let held =
+            s.tree_snapshots.get(n.wrapping_sub(1)).unwrap_or_else(|| panic!("FakeHost has no tree {tree}")).clone();
         let found = s.files_in(cwd);
         let keys: BTreeSet<&String> = held.keys().chain(found.keys()).collect();
         let differ: Vec<&String> = keys.into_iter().filter(|p| held.get(*p) != found.get(*p)).collect();
@@ -974,7 +982,12 @@ impl Host for FakeHost {
         report_path: &str,
     ) -> Result<Vec<Leak>, OrchestratorError> {
         let mut s = self.state();
-        s.scans.push(Scan { commit: commit.to_string(), base: base.to_string(), scanned, report_path: report_path.to_string() });
+        s.scans.push(Scan {
+            commit: commit.to_string(),
+            base: base.to_string(),
+            scanned,
+            report_path: report_path.to_string(),
+        });
         if !s.leaks.is_empty() {
             // As a gitleaks run without --redact would write it: the report is the one place the secret may be.
             let report: Vec<String> = s
@@ -1024,8 +1037,7 @@ impl Host for FakeHost {
         body: &str,
         draft: bool,
     ) -> Result<String, OrchestratorError> {
-        let opened =
-            OpenedPr { base: base.into(), head: head.into(), title: title.into(), body: body.into(), draft };
+        let opened = OpenedPr { base: base.into(), head: head.into(), title: title.into(), body: body.into(), draft };
         self.state().prs.push(opened);
         Ok("https://github.com/o/r/pull/7".to_string())
     }
@@ -1076,8 +1088,14 @@ impl Host for FakeHost {
             .state()
             .files
             .iter()
-            .filter(|(path, _)| path.strip_prefix(&runs).and_then(|rest| rest.split_once('/')).is_some_and(|(_, name)| name == "metrics.json"))
-            .map(|(path, text)| serde_json::from_str::<Value>(text).map_err(|e| OrchestratorError(format!("corrupt {path}: {e}"))))
+            .filter(|(path, _)| {
+                path.strip_prefix(&runs)
+                    .and_then(|rest| rest.split_once('/'))
+                    .is_some_and(|(_, name)| name == "metrics.json")
+            })
+            .map(|(path, text)| {
+                serde_json::from_str::<Value>(text).map_err(|e| OrchestratorError(format!("corrupt {path}: {e}")))
+            })
             .collect::<Result<Vec<_>, _>>()?;
         super::with_archived_metrics(self, cwd, live)
     }
@@ -1121,7 +1139,8 @@ impl Host for FakeHost {
             .filter_map(|path| {
                 let name = path.strip_prefix(run_dir)?.strip_prefix('/')?;
                 let listed = !name.contains('/') && name != "state.json" && !name.contains(".tmp.");
-                listed.then(|| super::RunFile { path: path.to_string(), mtime: s.mtimes.get(path).copied().unwrap_or(0) })
+                listed
+                    .then(|| super::RunFile { path: path.to_string(), mtime: s.mtimes.get(path).copied().unwrap_or(0) })
             })
             .collect();
         files.sort_by_key(|f| f.mtime);

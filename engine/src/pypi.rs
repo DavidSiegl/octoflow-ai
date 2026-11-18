@@ -6,9 +6,9 @@ use std::sync::Arc;
 use crate::constants::PYPI_TIMEOUT;
 use crate::error::shortened;
 use crate::http::{quote, Http, HttpError, Request};
+use crate::json::ValueExt;
 use crate::package_index::{IndexError, IndexedPackage, PackageIndex, Upload};
 use serde_json::Value;
-use crate::json::ValueExt;
 
 #[cfg(test)]
 pub(crate) mod fake;
@@ -38,7 +38,9 @@ impl PyPI {
             Err(HttpError::Status(status)) => return Err(IndexError(format!("GET {url}: HTTP {status}"))),
             Err(HttpError::NoAnswer(why)) => return Err(IndexError(format!("GET {url}: {why}"))),
         };
-        project_of(&body).map(Some).map_err(|why| IndexError(format!("GET {url}: the answer is not PyPI's JSON: {why}")))
+        project_of(&body)
+            .map(Some)
+            .map_err(|why| IndexError(format!("GET {url}: the answer is not PyPI's JSON: {why}")))
     }
 }
 
@@ -110,7 +112,6 @@ fn first_upload(files: &[&Value]) -> Result<Option<Upload>, String> {
     }
     Ok(first)
 }
-
 
 /// The project's license, as IndexedPackage::license holds it: its license expression, else the first line of its
 /// license field, cut to 80 characters, else its license classifier's last part; None when it states none.

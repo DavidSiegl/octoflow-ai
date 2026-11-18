@@ -25,7 +25,12 @@ static ROOT: LazyLock<PathBuf> = LazyLock::new(octoflow_e2e::checkout);
 const NOT_IN_THE_PARSER: &[(&str, &str, Option<&str>, &str)] = &[
     ("roadmap.md", "resume", Some("--workflow"), "a planned feature, K"),
     ("architecture.md", "run", Some("--run-id"), "hidden from run's help: serve's, for the runs POST /run starts"),
-    ("design.md", "cargo", None, "`EVAL_ENGINE=target/release/octoflow cargo xtask eval`: the program's path, then cargo's"),
+    (
+        "design.md",
+        "cargo",
+        None,
+        "`EVAL_ENGINE=target/release/octoflow cargo xtask eval`: the program's path, then cargo's",
+    ),
 ];
 
 /// Backticked ALL_CAPS names the docs give that are not the Rust's, with where they come from.
@@ -391,7 +396,8 @@ fn each_relative_link_resolves_to_a_file_and_its_anchor_to_a_heading() {
                 } else if !anchor.is_empty() && dest.extension().is_some_and(|e| e == "md") {
                     // The anchor of a file other than markdown, such as #L10 of a source file, names a line.
                     let headings = anchors.entry(dest.clone()).or_insert_with(|| {
-                        let text = fs::read_to_string(&dest).unwrap_or_else(|e| panic!("reading {}: {e}", dest.display()));
+                        let text =
+                            fs::read_to_string(&dest).unwrap_or_else(|e| panic!("reading {}: {e}", dest.display()));
                         markdown::anchors(&text)
                     });
                     if !headings.contains(anchor) {
@@ -419,7 +425,8 @@ fn unescape(path: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         let pair = bytes.get(i + 1..i + 3).and_then(|h| std::str::from_utf8(h).ok());
-        let hex = pair.filter(|h| h.chars().all(|c| c.is_ascii_hexdigit())).and_then(|h| u8::from_str_radix(h, 16).ok());
+        let hex =
+            pair.filter(|h| h.chars().all(|c| c.is_ascii_hexdigit())).and_then(|h| u8::from_str_radix(h, 16).ok());
         match (bytes[i], hex) {
             (b'%', Some(byte)) => {
                 out.push(byte);

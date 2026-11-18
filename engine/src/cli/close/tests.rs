@@ -9,8 +9,6 @@ use std::rc::Rc;
 use indexmap::IndexMap;
 
 use super::*;
-use crate::state::format_problem;
-use serde_json::Value;
 use crate::cli::fixture::Cli;
 use crate::cli::{Command, Target};
 use crate::constants::{APPROVE, EXIT_ERROR, EXIT_INTERRUPTED, HEARTBEAT_SECONDS, STALE_SECONDS, WORKTREES_DIR};
@@ -18,11 +16,13 @@ use crate::herdr::fake::Call;
 use crate::herdr::{HerdrError, HerdrServer, OWN_SESSION};
 use crate::host::tests::Repo;
 use crate::host::{Host, GIT_STATUS_ARGS};
+use crate::json::object;
 use crate::json::Object;
+use crate::state::format_problem;
+use crate::state::RunState;
 use crate::test_support::resumable;
 use crate::workflow::fixture::saved_run;
-use crate::state::RunState;
-use crate::json::object;
+use serde_json::Value;
 
 const CLOSE_ID: &str = "20261001-120000-a1b2c3";
 const CLOSE_BRANCH: &str = "orchestrator/x-a1b2c3";
@@ -112,7 +112,8 @@ impl Close {
     /// The git commands close ran that change a repository, as all but what it reads to decide do.
     fn changing_git_calls(&self) -> Vec<Vec<String>> {
         let reads = |args: &&Vec<String>| {
-            args.as_slice() == GIT_STATUS_ARGS || matches!(args.first().map(String::as_str), Some("rev-parse" | "rev-list"))
+            args.as_slice() == GIT_STATUS_ARGS
+                || matches!(args.first().map(String::as_str), Some("rev-parse" | "rev-list"))
         };
         self.cli.f.host.state().git_calls.iter().filter(|args| !reads(args)).cloned().collect()
     }
@@ -132,9 +133,11 @@ fn closing_w1() -> Vec<Call> {
 }
 
 fn me() -> Value {
-    Value::Object(
-        object([("host", Value::from("here")), ("pid", Value::from(4242)), ("started_at", Value::from("2026-09-30T07:00:00+00:00"))]),
-    )
+    Value::Object(object([
+        ("host", Value::from("here")),
+        ("pid", Value::from(4242)),
+        ("started_at", Value::from("2026-09-30T07:00:00+00:00")),
+    ]))
 }
 
 #[test]
@@ -195,7 +198,10 @@ fn a_sweep_of_a_preview_closes_only_what_it_showed() {
     c.cli.f.host.state().changed.insert(format!("{wt}/b.py"));
     let now = format!("close workspace w1; delete worktree {wt}; delete branch {CLOSE_BRANCH}");
     let skipped = format!("run {CLOSE_ID} changed since the preview: closing it would now {now}");
-    assert_eq!(sweep(Sweep::Previewed(&preview)), [RunClosed { run_id: CLOSE_ID.into(), outcome: Outcome::Skipped(skipped) }]);
+    assert_eq!(
+        sweep(Sweep::Previewed(&preview)),
+        [RunClosed { run_id: CLOSE_ID.into(), outcome: Outcome::Skipped(skipped) }]
+    );
     assert_eq!(c.closed(), Value::Null);
     assert!(c.cli.f.host.state().worktrees.contains_key(&wt));
 
@@ -204,7 +210,10 @@ fn a_sweep_of_a_preview_closes_only_what_it_showed() {
     let Outcome::Closed { discarded, .. } = &preview[0].outcome else { panic!("{preview:?}") };
     let closed = sweep(Sweep::Previewed(&preview));
     let done = "workspace closed; worktree deleted; branch deleted".to_string();
-    assert_eq!(closed, [RunClosed { run_id: CLOSE_ID.into(), outcome: Outcome::Closed { done, discarded: discarded.clone() } }]);
+    assert_eq!(
+        closed,
+        [RunClosed { run_id: CLOSE_ID.into(), outcome: Outcome::Closed { done, discarded: discarded.clone() } }]
+    );
 }
 
 #[test]
@@ -302,8 +311,10 @@ fn branch_of_a_run_without_a_base_is_kept() {
 
 #[test]
 fn stale_runs_are_cleaned_up_as_failed_ones() {
-    let cases: [(u64, Vec<(&str, Value)>); 2] =
-        [(STALE_SECONDS + 1, vec![("error", Value::Null)]), (HEARTBEAT_SECONDS + 1, vec![("error", Value::Null), ("owner", me())])];
+    let cases: [(u64, Vec<(&str, Value)>); 2] = [
+        (STALE_SECONDS + 1, vec![("error", Value::Null)]),
+        (HEARTBEAT_SECONDS + 1, vec![("error", Value::Null), ("owner", me())]),
+    ];
     for (age, fields) in cases {
         let c = Close::new();
         c.add(age, true, &fields);
@@ -464,7 +475,9 @@ fn the_error_of_a_state_saved_meanwhile_names_the_file() {
     c.cli.f.herdr.state().before_call = Some(Box::new(move |_| {
         let path = close_state();
         let text = host.state().files.get(&path).cloned().unwrap();
-        host.state().files.insert(path, text.replace("\"round\": 1", "\"round\": 2").replace("\"round\":1", "\"round\":2"));
+        host.state()
+            .files
+            .insert(path, text.replace("\"round\": 1", "\"round\": 2").replace("\"round\":1", "\"round\":2"));
     }));
     assert_eq!(c.error(), format!("{} changed while the run was closed; closed is not recorded", close_state()));
 }
@@ -625,9 +638,8 @@ fn close_outside_a_repository(locked: &[(&str, Vec<String>)]) -> (Result<String,
     host.write(&path, &state.to_text(), false).unwrap();
     let mut cli = Cli::new();
     cli.f.pid_alive = Box::new(|_| false);
-    let closed = cli.with(|world| {
-        close_run(&Closer { host: &host, ..Closer::of(world) }, &tmp.path(), "a1b2c3", false)
-    });
+    let closed =
+        cli.with(|world| close_run(&Closer { host: &host, ..Closer::of(world) }, &tmp.path(), "a1b2c3", false));
     let saved = serde_json::from_str::<Value>(&host.read(&path).unwrap().unwrap()).unwrap();
     (closed, saved.get("closed").cloned().unwrap_or(Value::Null))
 }
@@ -707,9 +719,7 @@ fn close_on_real_git() {
     let mut cli = Cli::new();
     cli.f.pid_alive = Box::new(|_| false);
     let closed = cli
-        .with(|world| {
-            close_run(&Closer { host: &repo.host, ..Closer::of(world) }, &repo.path, "a1b2c3", false)
-        })
+        .with(|world| close_run(&Closer { host: &repo.host, ..Closer::of(world) }, &repo.path, "a1b2c3", false))
         .unwrap();
     assert_eq!(closed, "workspace already gone; worktree deleted; branch deleted; refs deleted");
     assert_eq!(repo.git(&["for-each-ref", "--format=%(refname)", "refs/orchestrator/"]), format!("{other}\n"));

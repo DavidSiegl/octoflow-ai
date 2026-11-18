@@ -36,7 +36,10 @@ fn the_human_is_notified_through_the_local_herdr() {
     let herdr = ProcessHerdr::in_environment(None, environment(Some(&d.path()), &[]).into_iter(), &Interrupt::new());
     let human = LocalHuman { herdr };
     human.notify("Run finished: APPROVE", "the task");
-    assert_eq!(std::fs::read_to_string(&args).unwrap(), "notification show Run finished: APPROVE --body the task --sound request\n");
+    assert_eq!(
+        std::fs::read_to_string(&args).unwrap(),
+        "notification show Run finished: APPROVE --body the task --sound request\n"
+    );
     // A notification that fails costs only itself.
     tool(&d.path(), "herdr", "#!/bin/sh\nexit 3\n");
     human.notify("t", "b");
