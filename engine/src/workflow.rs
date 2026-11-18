@@ -650,7 +650,8 @@ impl<'a> Workflow<'a> {
     fn release(&mut self, error: &str) {
         self.state.error = Some(error.to_string());
         self.state.owner = None;
-        if let Err(e) = self.save() {
+        let saved = self.save();
+        if let Err(e) = &saved {
             self.human.log(&format!("could not record the failure in state.json: {e}"));
             if let Stopped::TakenOver(_) = e {
                 // The run is another orchestrator's now, and so is its summary.
@@ -660,19 +661,24 @@ impl<'a> Workflow<'a> {
         self.write_summary();
         // round_results can take longer than serve waits for a finished run's files
         // (crate::serve::FINISHED_RUN_WRITES); a save after the summary has serve list them again, so the summary
-        // reaches the app.
-        if let Err(e) = self.save_released() {
-            self.human.log(&format!("could not save state.json after {SUMMARY_FILE}: {e}"));
+        // reaches the app. Only after a save that worked: state.json holds an older text otherwise.
+        if saved.is_ok() {
+            if let Err(e) = self.save_released() {
+                self.human.log(&format!("could not save state.json after {SUMMARY_FILE}: {e}"));
+            }
         }
     }
 
-    /// Write state.json again, with a fresh heartbeat, for a run release has saved. Errors: TakenOver when state.json
-    /// is no longer what this orchestrator last wrote (save's owner check cannot tell, since the owner is null now);
-    /// the host's, when it cannot be read or written.
+    /// Write state.json again, with a fresh heartbeat, for a run release has just saved. Errors: TakenOver when
+    /// state.json no longer reads as what that save wrote, as after a close or another orchestrator's resume (save's
+    /// owner check cannot tell, since the owner is null now); the host's, when it cannot be read or written. A change
+    /// between the read and the write is overwritten, as with save.
     fn save_released(&mut self) -> Outcome<()> {
-        if self.host.read(&self.state_path())?.as_deref() != Some(self.state.to_text().as_str()) {
+        let saved = self.host.read(&self.state_path())?;
+        if !saved.is_some_and(|text| RunState::from_text(&text).is_ok_and(|now| now == self.state)) {
             return Err(Stopped::TakenOver(OrchestratorError(format!(
-                "run {} was written by another orchestrator since its release; stopping without saving",
+                "run {}'s state.json changed since its release, by a close or another orchestrator; stopping without \
+                 saving",
                 self.state.run_id
             ))));
         }

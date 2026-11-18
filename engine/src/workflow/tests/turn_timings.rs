@@ -312,6 +312,8 @@ fn a_failure_that_cannot_be_saved_still_writes_a_summary() {
     assert!(message.contains("did not write"), "{message}");
     assert!(f.told.lines().iter().any(|l| l.starts_with("could not record the failure in state.json: ")));
     assert!(summary(&f).unwrap().contains("- **Outcome:** error: the Builder did not write"));
+    // state.json holds the text from before the failed save, which is no takeover to report.
+    assert!(!f.told.lines().iter().any(|l| l.starts_with("could not save state.json after")), "{:?}", f.told.lines());
 }
 
 #[test]

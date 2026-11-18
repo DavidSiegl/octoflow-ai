@@ -42,6 +42,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **A resumed done run's late summary.md or metrics.json can miss the desktop app.** Raised by cross-review 238 (F3):
+  a done run stopped before its ending wrote them is finished by a resume that writes them without saving state.json
+  after (`Workflow::end_done_run`, `ending_left`'s `release: false`), so serve's event stream, which stopped listing
+  the run's files once they settled, lists them again only at the record's next change (`RunWatch::poll`). A failed
+  run's release saves again after its summary (todo/70); would close when this ending does the same.
 - **The desktop app as the terminal client too: what was decided against.** The app, started with arguments, is the CLI
   (`cli` in `ui/src-tauri/src/lib.rs`), and the plain CLI binaries stay released: 13 MB against the AppImage's 120 MB of
   WebKit, and they start without FUSE on headless machines and in CI. Decided against
