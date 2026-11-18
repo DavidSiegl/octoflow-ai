@@ -52,14 +52,25 @@ EOF
 export APPIMAGE_EXTRACT_AND_RUN=1
 # Extracted so, an AppImage leaves $TMPDIR/appimage_extracted_<hash> behind, never removed by its runtime: linuxdeploy
 # and appimagetool one each a build, and the desktop AppImage one each smoke test. So each of them runs with a TMPDIR
-# of its own, build_tmp for tauri build and appimage_smoke for the smoke test, removed when done and, should the
+# of its own, build_tmp for tauri build and smoke_dir for the smoke test, removed when done and, should the
 # script stop first, on its exit, a failure, Ctrl-C, SIGHUP or SIGTERM. One a kill -9 leaves in build_tmp is removed
-# by the next build. macOS builds no AppImage, and its build's temporary files go the same way.
+# by the next build. macOS builds no AppImage, and its build's temporary files go the same way, as does the .dmg smoke
+# test's smoke_dir, the .dmg detached first.
 build_tmp="$PWD/build/desktop/tmp"
-appimage_smoke=''
-# The extractions hold read-only directories, which rm -rf alone cannot empty.
+# The directory the running or last smoke test works in, the AppImage's TMPDIR or the .dmg's mount point's parent;
+# empty until one starts.
+smoke_dir=''
+# The extractions hold read-only directories, which rm -rf alone cannot empty. A .dmg still mounted at
+# $smoke_dir/mnt, by a smoke test that failed or was stopped, is detached first, since its read-only volume cannot be
+# emptied either. Only a mounted one: given a path that is no mount point, hdiutil detach could act on the volume
+# holding it. A signal arriving during hdiutil attach runs the trap once attach has returned, so a .dmg it attached
+# is mounted by then. Should the detach fail, it says so and so does the removal.
 remove_temporaries() {
-    for dir in "$build_tmp" ${appimage_smoke:+"$appimage_smoke"}; do
+    if [ -n "$smoke_dir" ] && mount | grep -qF " on $smoke_dir/mnt ("; then
+        hdiutil detach -quiet -force "$smoke_dir/mnt" \
+            || echo "build-desktop.sh: could not detach the .dmg mounted at $smoke_dir/mnt" >&2
+    fi
+    for dir in "$build_tmp" ${smoke_dir:+"$smoke_dir"}; do
         [ ! -e "$dir" ] || { chmod -R u+rwX "$dir" && rm -rf "$dir"; } \
             || echo "build-desktop.sh: could not remove $dir" >&2
     done
@@ -137,7 +148,7 @@ smoke_cli() {
 smoke_appimage() {
     smoke=$(mktemp -d)
     smoke=$(cd "$smoke" && pwd -P)
-    appimage_smoke=$smoke
+    smoke_dir=$smoke
     # For the AppImage's extraction (APPIMAGE_EXTRACT_AND_RUN, above). Nothing after this function, the script's last
     # step, makes temporary files.
     export TMPDIR="$smoke"
@@ -218,16 +229,14 @@ smoke_appimage() {
 smoke_dmg() {
     smoke=$(mktemp -d)
     smoke=$(cd "$smoke" && pwd -P)
-    mounted=''
+    smoke_dir=$smoke
+    # The EXIT trap detaches the .dmg and removes the directory.
     smoke_fail() {
         echo "build-desktop.sh: the .dmg's app as the CLI: $*" >&2
-        [ -z "$mounted" ] || hdiutil detach -quiet -force "$smoke/mnt" 2>/dev/null || true
-        rm -rf "$smoke"
         exit 1
     }
     mkdir "$smoke/mnt" "$smoke/bin" "$smoke/project" || smoke_fail "could not make directories in $smoke"
     hdiutil attach -quiet -nobrowse -readonly -mountpoint "$smoke/mnt" "$1" || smoke_fail "could not mount $1"
-    mounted=yes
     app="$smoke/mnt/Octoflow.app"
     ln -s "$app/Contents/MacOS/octoflow" "$smoke/bin/octoflow" || smoke_fail "could not link the orchestrator"
     smoke_cli "$smoke/project" "$smoke/bin/octoflow"
@@ -241,8 +250,7 @@ smoke_dmg() {
         fi
         sleep 2
     done
-    mounted=''
-    rm -rf "$smoke"
+    remove_temporaries
     echo "smoke-tested dist/$(basename "$1") as the CLI, by symlink"
 }
 

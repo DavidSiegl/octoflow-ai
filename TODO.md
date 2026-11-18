@@ -395,6 +395,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   reach the other. `engine/src/proofs.rs`'s `REMOVE_TREE_SCRIPT` is a looser third (`rm` runs even when `chmod`
   fails, with no warning). Raised by cross-review 132 (F6, nit, 2026-11-04): "Record or share it, as the implementer
   judges". Closes with one script both call, should a third copy be needed or the idiom change.
+- **`packaging/build-desktop.sh`'s shared cleanup knows the .dmg smoke test.** `remove_temporaries`, which every
+  platform's exit runs, detaches a .dmg still mounted at `$smoke_dir/mnt` (todo/30). Raised by cross-review 228 (F6,
+  nit, 2026-11-17): "A teardown step that each smoke test registers would leave it generic." With two smoke tests,
+  one of which needs a teardown, a registration step would add more than it removes. Closes with that step, should a
+  third smoke test need its own teardown.
 - **No build has yet been seen waiting for `ci/cargo-lock.sh` on the Jenkins agent.** PR #88's builds ran both
   cargo steps through it on agentbox0 (builds 1-3, 2026-10-25), so the agent image has `flock` and the lock file's
   directory is writable; but the two run side by side
