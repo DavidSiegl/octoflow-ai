@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use super::start::{RunRequest, StartWait, Started};
 use super::Reached;
@@ -91,6 +91,9 @@ pub struct ProjectRuns {
     /// Whether a process of an id runs on this machine, as RunState::health asks it: crate::runs::pid_alive, but in
     /// tests.
     pid_alive: Arc<dyn Fn(i64) -> bool + Send + Sync>,
+    /// Held through each forget sweep, so that the project's sweeps run one after the other: a run that two at once
+    /// list (two app windows, a double submit) is forgotten by the first, and the second finds it gone.
+    forgetting: Mutex<()>,
 }
 
 impl ProjectRuns {
@@ -98,7 +101,17 @@ impl ProjectRuns {
     pub fn new(reached: Reached, target: Vec<String>) -> ProjectRuns {
         let Reached { host, dir, console, workspaces, launcher, launch_dir } = reached;
         let pid_alive = Arc::new(pid_alive);
-        ProjectRuns { host, console, workspaces, launcher, launch_dir, cwd: dir, target, pid_alive }
+        ProjectRuns {
+            host,
+            console,
+            workspaces,
+            launcher,
+            launch_dir,
+            cwd: dir,
+            target,
+            pid_alive,
+            forgetting: Mutex::new(()),
+        }
     }
 
     /// As new, a run's owner on this machine taken to be alive by pid_alive instead.
@@ -130,13 +143,15 @@ impl ProjectRuns {
     }
 
     /// Forget the project's closed runs that sweep names, as crate::cli::forget::forget_all does, and give each run's
-    /// outcome; the lines forget prints are dropped, as the outcomes hold what they say. A raised stopping starts no
-    /// further run. Errors: as forget_all's.
+    /// outcome; the lines forget prints are dropped, as the outcomes hold what they say. A sweep waits for one of the
+    /// project's already under way to end. A raised stopping starts no further run. Errors: as forget_all's.
     pub fn forget_all(
         &self,
         sweep: forget::Sweep,
         stopping: &Interrupt,
     ) -> Result<Vec<RunForgotten>, OrchestratorError> {
+        // A sweep that panicked left nothing half-done that the next could trip on: each run is read at its turn.
+        let _one_at_a_time = self.forgetting.lock().unwrap_or_else(PoisonError::into_inner);
         let forgetter = Forgetter { host: &*self.host, interrupt: stopping, stdout: &|_| {} };
         forget_all(&forgetter, &self.cwd, sweep)
     }

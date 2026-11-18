@@ -1499,6 +1499,62 @@ fn a_forget_dry_run_names_the_closed_run_and_a_listed_forget_deletes_it_keeping_
     assert_eq!(again, [(FORGET_CLOSED.into(), "skipped".into(), "there is no such run any more".into())]);
 }
 
+/// The real Host, but each read of the metrics archive waits, after reading it, until a second has been made or a
+/// second has passed: two forget sweeps that reach it together both read it before either appends to it.
+struct ArchiveReadsMeet {
+    host: Arc<dyn crate::host::Host + Send + Sync>,
+    /// How many reads of the archive have been made.
+    reads: Mutex<usize>,
+    met: std::sync::Condvar,
+}
+
+impl crate::host::Host for ArchiveReadsMeet {
+    fn ssh_target(&self) -> Option<&str> {
+        self.host.ssh_target()
+    }
+
+    fn exec(
+        &self,
+        argv: &[&str],
+        stdin: Option<&[u8]>,
+        timeout: u64,
+    ) -> Result<crate::host::Exec, crate::host::ExecError> {
+        self.host.exec(argv, stdin, timeout)
+    }
+
+    fn read(&self, path: &str) -> Result<Option<String>, OrchestratorError> {
+        let text = self.host.read(path);
+        if path.ends_with("/metrics-archive.jsonl") {
+            let mut reads = self.reads.lock().unwrap();
+            *reads += 1;
+            self.met.notify_all();
+            drop(self.met.wait_timeout_while(reads, Duration::from_secs(1), |n| *n < 2).unwrap());
+        }
+        text
+    }
+}
+
+#[test]
+fn two_forgets_of_one_run_at_once_forget_it_once() {
+    let (project, _) = forgetting();
+    let connect = |machine: &str, cwd: &str, stopping: &Interrupt| {
+        let mut reached = project_host(machine, cwd, stopping)?;
+        reached.host = Arc::new(ArchiveReadsMeet { host: reached.host, reads: Mutex::new(0), met: Default::default() });
+        Ok(reached)
+    };
+    let served = Served::start(Box::new(connect), &[], Arc::default(), Options::default());
+    let (target, body) = (project.query("/forget"), serde_json::json!({ "forget": [FORGET_CLOSED] }).to_string());
+    let outcomes: Vec<String> = std::thread::scope(|scope| {
+        let asks: Vec<_> = (0..2).map(|_| scope.spawn(|| forgotten_runs(&served.post(&target, &body)))).collect();
+        asks.into_iter().map(|ask| ask.join().unwrap()[0].1.clone()).collect()
+    });
+    let mut sorted = outcomes.clone();
+    sorted.sort();
+    assert_eq!(sorted, ["forgotten", "skipped"], "{outcomes:?}");
+    let archive = std::fs::read_to_string(project.0.join(".octoflow-ai/metrics-archive.jsonl")).unwrap();
+    assert_eq!(archive.matches(FORGET_CLOSED).count(), 1, "{archive}");
+}
+
 #[test]
 fn a_bad_forget_body_is_refused_before_the_project_is_reached() {
     let connects = Arc::new(Mutex::new(vec![]));
