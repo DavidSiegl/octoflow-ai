@@ -86,11 +86,8 @@ fn real_gate() {
     let files = [(".gitignore", "junit.xml\n"), ("gate.toml", GATE_TOML)];
     let mut w = World::with_project("real_gate", &engine::binary(), &files);
     let _unhold = Unhold(w.root().to_path_buf());
-    let (cache, release) = match std::env::var_os("OCTOFLOW_GATE_TARBALL") {
-        Some(tarball) => {
-            let version = candidate_served(&w, &absolute("OCTOFLOW_GATE_TARBALL", tarball));
-            (w.root().join("gate-cache"), version)
-        }
+    let (cache, release) = match path_var("OCTOFLOW_GATE_TARBALL") {
+        Some(tarball) => (w.root().join("gate-cache"), candidate_served(&w, &tarball)),
         None => (shared_cache(), parse_pin(BUILT_IN_PIN).expect("BUILT_IN_PIN is a pin").0),
     };
     w.real_gate(&cache);
@@ -127,18 +124,18 @@ fn real_gate() {
 
 /// The cache real_gate keeps the built-in release in: OCTOFLOW_GATE_CACHE, else the developer's own XDG cache.
 fn shared_cache() -> PathBuf {
-    let set = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty()).map(|v| absolute(name, v));
-    set("OCTOFLOW_GATE_CACHE")
-        .or_else(|| set("XDG_CACHE_HOME"))
-        .or_else(|| set("HOME").map(|home| home.join(".cache")))
+    path_var("OCTOFLOW_GATE_CACHE")
+        .or_else(|| path_var("XDG_CACHE_HOME"))
+        .or_else(|| path_var("HOME").map(|home| home.join(".cache")))
         .expect("neither OCTOFLOW_GATE_CACHE, XDG_CACHE_HOME nor HOME is set")
 }
 
-/// The path environment variable name holds, value; panics naming it when the path is relative.
-fn absolute(name: &str, value: std::ffi::OsString) -> PathBuf {
-    let path = PathBuf::from(value);
+/// The path the environment variable name holds; None when it is unset or empty. Panics naming the variable when the
+/// path is relative.
+fn path_var(name: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(std::env::var_os(name).filter(|v| !v.is_empty())?);
     assert!(path.is_absolute(), "{name} {} is relative; give an absolute path", path.display());
-    path
+    Some(path)
 }
 
 /// Have w's curl serve the release candidate tarball, `octoflow-gate-<version>.tar.gz`, and its project pin it;
