@@ -73,6 +73,9 @@ pub struct RunState {
     pub error: Option<String>,
     /// Per role that has started an agent, its last one, in the order the roles first started theirs.
     pub agents: IndexMap<String, AgentRecord>,
+    /// The last round the verdict steps' loops may take (RunSettings::max_rounds): the --max-rounds the run started
+    /// or last resumed with, raised by one for each request for changes a human-paced verdict step gave in the last
+    /// round, so it can be above the flag given. A resume's --max-rounds below the round the run is in is refused.
     pub max_rounds: u32,
     /// Seconds a turn may take.
     pub turn_timeout: u64,

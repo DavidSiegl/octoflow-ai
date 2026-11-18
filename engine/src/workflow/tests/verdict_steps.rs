@@ -188,11 +188,12 @@ fn a_human_paced_request_for_changes_in_the_last_round_takes_one_round_more() {
 #[test]
 fn a_request_for_changes_in_the_last_round_still_reaches_the_human_paced_step() {
     let p = human_accepting();
+    let seen = seen();
     let f = Fixture::on(
         Rc::new(FakeHost::default()),
         new_run(&p),
         vec![
-            ("build", vec![build_turn(1), build_turn(2)]),
+            ("build", vec![build_turn(1), recording(build_turn(2), &seen)]),
             ("review", vec![review_turn(1, CHANGES_REQUESTED), review_turn(2, APPROVE)]),
             ("accept", vec![accept_turn(1, CHANGES_REQUESTED), accept_turn(2, APPROVE)]),
         ],
@@ -212,6 +213,9 @@ fn a_request_for_changes_in_the_last_round_still_reaches_the_human_paced_step() 
             (2, "accept", APPROVE)
         ]
     );
+    // Both requests for changes of round 1 reach the Builder, in the order given.
+    let fix = format!("Fix {D}/review-1.md, {D}/accept-1.md; report to {D}/build-2.md.");
+    assert!(seen.borrow()[0].starts_with(&fix), "{:?}", seen.borrow());
 }
 
 #[test]
