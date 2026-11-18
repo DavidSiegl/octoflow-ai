@@ -44,8 +44,11 @@ fn gate_passes_first_time() {
     let state = &f.state;
     assert_eq!(
         f.quality_file(1, 1),
-        "GATE: OK\n\noctoflow-gate 0.10.0, run locally, judged snapshot `snap1` (round 1, quality round 1 of 3).\n\
-         \n`gate` judged the working tree.\n\n## Issues on changed lines\n\nNone.\n"
+        format!(
+            "GATE: OK\n\n{}, run locally, judged snapshot `snap1` (round 1, quality round 1 of 3).\n\
+             \n`gate` judged the working tree.\n\n## Issues on changed lines\n\nNone.\n",
+            built_in_gate()
+        )
     );
     assert!(seen.borrow()[0].contains(&quality_note(QUALITY_PASSED_NOTE, &state.quality_path(1, 1))));
     assert!(seen.borrow()[0].contains(&format!("The Builder's report is in {}", state.build_path(1))));
@@ -72,9 +75,10 @@ fn gate_fails_then_passes() {
 
     let state = &f.state;
     let quality = f.quality_file(1, 1);
-    assert!(quality.starts_with(
-        "GATE: ERROR\n\noctoflow-gate 0.10.0, run locally, judged snapshot `snap1` (round 1, quality round 1 of 3).\n"
-    ));
+    assert!(quality.starts_with(&format!(
+        "GATE: ERROR\n\n{}, run locally, judged snapshot `snap1` (round 1, quality round 1 of 3).\n",
+        built_in_gate()
+    )));
     assert!(quality.contains("1. `limiter.py:3` error ruff F401: `os` imported but unused\n"));
     assert_eq!(*builds.borrow(), [quality_fix(state, 1, 1) + &note()]);
     assert!(reviews.borrow()[0].contains(&format!("The Builder's report is in {}", state.quality_build_path(1, 1))));

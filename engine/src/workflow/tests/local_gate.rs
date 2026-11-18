@@ -33,9 +33,10 @@ fn the_local_gate_fails_then_passes_with_nothing_pushed() {
 
     let state = &f.state;
     let quality = f.quality_file(1, 1);
-    assert!(quality.starts_with(
-        "GATE: ERROR\n\noctoflow-gate 0.10.0, run locally, judged snapshot `snap1` (round 1, quality round 1 of 3).\n"
-    ), "{quality}");
+    assert!(quality.starts_with(&format!(
+        "GATE: ERROR\n\n{}, run locally, judged snapshot `snap1` (round 1, quality round 1 of 3).\n",
+        built_in_gate()
+    )), "{quality}");
     assert!(quality.contains("1. `limiter.py:3` error ruff F401: `os` imported but unused\n"));
     assert_eq!(*builds.borrow(), [quality_fix(state, 1, 1) + &note()]);
     assert!(reviews.borrow()[0].contains(&quality_note(QUALITY_PASSED_NOTE, &state.quality_path(1, 2))));
@@ -129,7 +130,7 @@ fn a_resume_in_a_round_without_its_quality_file_runs_the_gate_again() {
     assert_eq!(f.workflow(f.as_saved_gated()).run(), verdict(APPROVE));
 
     assert_eq!(f.gate.borrow().jobs.len(), 1);
-    assert!(f.quality_file(1, 1).starts_with("GATE: OK\n\noctoflow-gate 0.10.0, run locally, judged snapshot `snap1`"));
+    assert!(f.quality_file(1, 1).starts_with(&format!("GATE: OK\n\n{}, run locally, judged snapshot `snap1`", built_in_gate())));
 }
 
 #[test]

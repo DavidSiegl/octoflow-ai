@@ -122,6 +122,7 @@ fn a_change_to_docs_tests_ci_or_repository_tooling_alone_passes_at_main_s_versio
         "ui/src/runs.test.ts",
         "ui/src/test/fakes.ts",
         "ci/build.sh",
+        "ci/nextest.toml",
         "Jenkinsfile",
         "gate.toml",
         "pyproject.toml",
@@ -152,6 +153,7 @@ fn a_change_that_also_touches_released_code_still_needs_the_raise() {
         "ui/src/App.tsx",
         "engine/src/workflows/q.toml",
         "packaging/build-desktop.sh",
+        "ci/gate.pin",
     ] {
         // From main each time, so that path is the only released one in the diff.
         repo.git(&["switch", "--quiet", "-C", "change", "main"]);

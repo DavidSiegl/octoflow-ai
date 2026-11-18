@@ -511,6 +511,13 @@ pub(crate) fn report_json(quality: &str) -> String {
     report.to_string()
 }
 
+/// "octoflow-gate <version>", the release BUILT_IN_PIN names, as a quality file's header names the release that judged
+/// a base without ci/gate.pin.
+pub(crate) fn built_in_gate() -> String {
+    let (version, _) = crate::local_gate::parse_pin(crate::local_gate::BUILT_IN_PIN).expect("BUILT_IN_PIN is a pin");
+    format!("octoflow-gate {version}")
+}
+
 /// A build whose gate fails on an unused import.
 pub(crate) fn red() -> Outcome {
     Outcome::gate("ERROR", &["`limiter.py:3` error ruff F401: `os` imported but unused"])

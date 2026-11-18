@@ -159,7 +159,11 @@ impl Bench {
 fn a_pin_is_its_first_line_not_a_comment() {
     let sha = "a".repeat(64);
     assert_eq!(parse_pin(&format!("# c\n1.2.3 {sha}\n0.1 {sha}\n")).unwrap(), ("1.2.3".to_string(), sha.clone()));
-    assert_eq!(parse_pin(BUILT_IN_PIN).unwrap().0, "0.10.0");
+    assert!(parse_pin(BUILT_IN_PIN).is_ok(), "{BUILT_IN_PIN:?}");
+    assert_eq!(pin_line("# c\n\n1.2.3 x\n"), "");
+    assert_eq!(pin_line("# c\n1.2.3 x\n0.1 y"), "1.2.3 x");
+    assert_eq!(pin_line("1.2.3 x"), "1.2.3 x");
+    assert_eq!(pin_line("# only\n"), "");
     for bad in [
         String::new(),
         "# only a comment\n".to_string(),
@@ -301,8 +305,9 @@ fn a_base_without_a_pin_is_judged_by_the_built_in_one() {
     let bench = Bench::new(&[("README", "base\n")]);
     // The stub is not the built-in release, so the fetch fails, having asked for it.
     let e = bench.judge().unwrap_err().to_string();
-    assert!(e.starts_with("fetching octoflow-gate 0.10.0: "), "{e}");
-    let url = "https://github.com/DavidSiegl/octoflow-gate/releases/download/v0.10.0/octoflow-gate-0.10.0.tar.gz";
+    let (v, _) = parse_pin(BUILT_IN_PIN).unwrap();
+    assert!(e.starts_with(&format!("fetching octoflow-gate {v}: ")), "{e}");
+    let url = format!("https://github.com/DavidSiegl/octoflow-gate/releases/download/v{v}/octoflow-gate-{v}.tar.gz");
     assert_eq!(bench.downloads(), [url]);
 }
 

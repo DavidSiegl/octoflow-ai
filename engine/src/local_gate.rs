@@ -19,10 +19,13 @@ use crate::host::{last_lines, shell_path, Host, DEFAULT_TIMEOUT};
 /// The --quality-gate name of the local gate, the only gate there is, as state.json's quality_job keeps it.
 pub const LOCAL_GATE: &str = "local";
 
-/// The release a base without ci/gate.pin is judged by, in ci/gate.pin's form: the octoflow-gate release this engine
-/// was tested against, whose quality.json schema crate::quality::read_report reads. Raise it with the repository's own
-/// ci/gate.pin.
-pub const BUILT_IN_PIN: &str = "0.10.0 8f6007f046be5fcf516496201a41bc7185a3af53c5e7778a9489a0d10414525a";
+/// The release a base without ci/gate.pin is judged by, as a `<version> <sha256>` line: the octoflow-gate release this
+/// engine was tested against, whose quality.json schema crate::quality::read_report reads. It is this repository's own
+/// ci/gate.pin, read when the engine is built, so this repository's Jenkins build and a run judged without a pin use
+/// the same release; `cargo xtask raise-gate-pin` raises it.
+pub const BUILT_IN_PIN: &str = pin_line(include_str!("../../ci/gate.pin"));
+// A pin with no line but comments is a build error; a malformed line fails local_gate's tests (parse_pin).
+const _: () = assert!(!BUILT_IN_PIN.is_empty(), "ci/gate.pin has no `<version> <sha256>` line");
 
 /// Where a pin's release is downloaded from: the GitHub release `v<version>` of octoflow-gate, with {v} the version.
 const RELEASE_URL: &str = "https://github.com/DavidSiegl/octoflow-gate/releases/download/v{v}/octoflow-gate-{v}.tar.gz";
@@ -510,6 +513,31 @@ pub fn parse_pin(pin: &str) -> Result<(String, String), OrchestratorError> {
         return Err(OrchestratorError(format!("its first line '{line}' is not '<version> <sha256>'")));
     }
     Ok((version.to_string(), sha256.to_string()))
+}
+
+/// The first line of pin that is not a comment, without its line break: the line parse_pin reads, "" when pin has
+/// none. A const fn so that BUILT_IN_PIN can be a const.
+const fn pin_line(pin: &str) -> &str {
+    let mut rest = pin.as_bytes();
+    while let [first, ..] = rest {
+        let mut end = 0;
+        while end < rest.len() && rest[end] != b'\n' {
+            end += 1;
+        }
+        let (line, after) = rest.split_at(end);
+        if *first != b'#' {
+            // A line of a str split at a '\n', an ASCII byte, is UTF-8 itself.
+            return match std::str::from_utf8(line) {
+                Ok(line) => line,
+                Err(_) => "",
+            };
+        }
+        rest = match after {
+            [_, after @ ..] => after,
+            [] => after,
+        };
+    }
+    ""
 }
 
 /// Whether the release version, as a pin names it, ships `gate`: is FIRST_WITH_GATE or later. A version whose major
