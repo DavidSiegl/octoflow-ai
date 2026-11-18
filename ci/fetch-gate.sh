@@ -23,9 +23,8 @@ dir=$2
 line=$(grep -v '^#' "$pin" | head -n 1)
 version=${line%% *}
 sha256=${line#* }
-# The version goes into the download URL, so it may hold only what a version does, and starts with a digit: the URL
-# adds the tag's v itself (the engine's parse_pin, engine/src/local_gate.rs, reads a pin the same way).
-case $version in '' | [!0-9]* | *[!0-9A-Za-z.+-]*) version= ;; esac
+# The version goes into the download URL, so it may hold only what a version does.
+case $version in '' | *[!0-9A-Za-z.+-]*) version= ;; esac
 case $sha256 in *[!0-9a-f]*) sha256= ;; esac
 if [ -z "$version" ] || [ ${#sha256} -ne 64 ]; then
     echo "fetch-gate.sh: $pin's first line '$line' is not '<version> <sha256>'" >&2

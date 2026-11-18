@@ -584,8 +584,9 @@ fn starter_settings(present: &[&str], pyproject: Option<&str>) -> String {
 }
 
 /// The release version and sha256 a pin names, read as ci/fetch-gate.sh reads one: the first line not starting with
-/// #, `<version> <sha256>`, the version a digit, then only letters, digits and `.+-`, as it goes into a URL
-/// (is_version), and the sha256 64 lowercase hex digits. Errors: no such line.
+/// #, `<version> <sha256>`, the version only letters, digits and `.+-`, as it goes into a URL, and the sha256 64
+/// lowercase hex digits. Unlike ci/fetch-gate.sh, a copy of octoflow-gate's, it also asks the version to start with a
+/// digit (is_version): RELEASE_URL adds the tag's v itself. Errors: no such line.
 pub fn parse_pin(pin: &str) -> Result<(String, String), OrchestratorError> {
     let line = pin.lines().find(|l| !l.starts_with('#')).unwrap_or("");
     let (version, sha256) = line.split_once(' ').unwrap_or((line, ""));
