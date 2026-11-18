@@ -143,8 +143,8 @@ fn findings(text: &str) -> Result<Option<Vec<Leak>>, String> {
 }
 
 /// A Leak for each line holding `gitleaks:allow` that the commits log_opts selects add, as git log -p shows them, read
-/// as change_diff's diffs are. git runs as gitleaks does, in source under git_env (scan_git_env), so both read the same
-/// patch.
+/// by crate::patch::added_lines. git runs as gitleaks does, in source under git_env (scan_git_env), so both read the
+/// same patch.
 fn allow_comments<H: Host + ?Sized>(
     host: &H,
     git_env: &[String],

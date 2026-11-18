@@ -673,17 +673,6 @@ pub trait Host {
         Ok(!listed.is_empty())
     }
 
-    /// `git diff -U0` from base to commit, or to the working tree's tracked files without one, in the one shape
-    /// crate::patch::added_lines parses, whatever the user's git config (git_diff). Verbatim: a line that is not
-    /// UTF-8, such as Latin-1 text or a binary file git diffs as text, is kept, so a change to such a file is judged
-    /// like any other, and only git's "\n" ends a line, so nothing inside an added line can pass for a header.
-    fn change_diff(&self, cwd: &str, base: &str, commit: Option<&str>) -> Result<Vec<u8>, OrchestratorError> {
-        let mut args = vec!["-U0", "-M", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", base];
-        args.extend(commit);
-        args.push("--");
-        git_diff(self, cwd, &args)
-    }
-
     /// The file at path, relative to the repository's top level and taken literally, as commit has it, its bytes as
     /// git stores them; None where commit has no file there. A symbolic link gives the path it points to. Errors: git
     /// cannot read commit, or cwd is not in a git repository.
@@ -691,7 +680,7 @@ pub trait Host {
         Ok(scan::blob_at(self, cwd, commit, path)?.map(|(text, _)| text))
     }
 
-    /// Each file the change from base to commit touches, a rename paired as change_diff pairs it, with the lines it
+    /// Each file the change from base to commit touches, a rename (git's -M) as one file, with the lines it
     /// adds and removes, from `git diff --numstat`. Errors: git fails, or names a path that is not UTF-8.
     fn changed_line_counts(&self, cwd: &str, base: &str, commit: &str) -> Result<Vec<ChangedFile>, OrchestratorError> {
         let out = git_diff(self, cwd, &["--numstat", "-z", "-M", "--no-ext-diff", base, commit])?;

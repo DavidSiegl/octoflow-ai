@@ -1,4 +1,5 @@
-//! Reading a `git diff -U0` in the one shape Host::change_diff gives it: added_lines.
+//! Reading the lines a patch adds (added_lines), from git's `-p -U0` output with `--no-color --no-ext-diff
+//! --src-prefix=a/ --dst-prefix=b/` under `core.quotePath=false`: the shape host::scan's `git log -p` asks for.
 
 use std::collections::BTreeMap;
 
