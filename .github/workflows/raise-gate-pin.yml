@@ -164,7 +164,7 @@ jobs:
           # What the xtask writes (raise_gate_pin.rs's PIN, GOLDEN_DIR, ENGINE_MANIFEST and RELEASE_NOTES_DIR), and in
           # the manifest and Cargo.lock only octoflow's version, main's to the raise's; anything else came from the
           # code raise ran, not from the raise.
-          git diff --cached --name-only > "$RUNNER_TEMP/paths"
+          git diff --cached --name-only --no-renames > "$RUNNER_TEMP/paths"
           if grep -Ev '^(ci/gate\.pin|engine/Cargo\.toml|Cargo\.lock|engine/tests/data/quality/[^/]+|docs/releases/v[0-9.]+\.md)$' \
               "$RUNNER_TEMP/paths"; then
             echo "::error::The raise changes files the xtask does not write (above); not pushing it"
