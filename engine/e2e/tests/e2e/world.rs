@@ -204,6 +204,10 @@ pub struct World {
     script: Object,
     /// The fakes' state and the commands they got, which the world reads and changes too.
     pub ledger: Ledger,
+    /// The XDG_CACHE_HOME of a world whose runs are judged by a real octoflow-gate release (real_gate), where the
+    /// engine keeps the releases it downloads; None for the world's own network, where the engine reaches PyPI through
+    /// the world's proxy and nothing else.
+    gate_cache: Option<PathBuf>,
 }
 
 /// The fake programs a world puts on PATH, by the name they stand in for; octoflow-gate is what the gate of the release
@@ -222,6 +226,11 @@ impl World {
     /// failing the scenario, where gitleaks or openssl is not on PATH: the engine runs the real gitleaks, and a
     /// scenario without it would record its absence; openssl makes PyPI's certificate (servers::Servers::start).
     pub fn new(scenario: &str, engine: &Path) -> World {
+        World::with_project(scenario, engine, &PROJECT_FILES)
+    }
+
+    /// World::new, the project's first commit holding files, path to text, in place of PROJECT_FILES'.
+    pub fn with_project(scenario: &str, engine: &Path, files: &[(&str, &str)]) -> World {
         for tool in ["gitleaks", "openssl"] {
             assert!(find_on_path(tool).is_some(), "{tool} is not on PATH; the e2e scenarios need it");
         }
@@ -257,10 +266,11 @@ impl World {
             invocations: Vec::new(),
             notes: Object::new(),
             script,
+            gate_cache: None,
         };
         world.write_script();
         world.make_bin();
-        world.make_repositories();
+        world.make_repositories(files);
         world
     }
 
@@ -270,6 +280,13 @@ impl World {
     }
 
     // -- Scripting the world ------------------------------------------------
+
+    /// Have the engine judge by a real octoflow-gate release, as a host outside the world does: its job downloads the
+    /// release from GitHub and keeps it under cache_home, its XDG_CACHE_HOME, and nothing goes through the world's PyPI
+    /// proxy, which would answer for GitHub too. Call it before the engine first runs.
+    pub fn real_gate(&mut self, cache_home: &Path) {
+        self.gate_cache = Some(cache_home.to_path_buf());
+    }
 
     /// Script the role's agent: each action answers one prompt, in order, after those scripted before (see
     /// octoflow_e2e::fakes for what an action holds). A prompt beyond the last makes the agent exit.
@@ -527,11 +544,14 @@ impl World {
         };
         env.push(("HERDR_ENV".to_string(), "1".to_string()));
         env.push((INVOCATION_VAR.to_string(), n.to_string()));
-        env.extend([
-            ("no_proxy", "127.0.0.1,localhost".to_string()),
-            ("https_proxy", self.servers.proxy_url.clone()),
-            ("SSL_CERT_FILE", self.root().join(PYPI_CA).display().to_string()),
-        ].map(|(k, v)| (k.to_string(), v)));
+        match &self.gate_cache {
+            Some(cache) => env.push(("XDG_CACHE_HOME".to_string(), cache.display().to_string())),
+            None => env.extend([
+                ("no_proxy", "127.0.0.1,localhost".to_string()),
+                ("https_proxy", self.servers.proxy_url.clone()),
+                ("SSL_CERT_FILE", self.root().join(PYPI_CA).display().to_string()),
+            ].map(|(k, v)| (k.to_string(), v))),
+        }
         if let Ok(profile) = std::env::var("LLVM_PROFILE_FILE") {
             env.push(("LLVM_PROFILE_FILE".to_string(), profile));
         }
@@ -572,7 +592,7 @@ impl World {
         assert!(written.success(), "writing {}: {written}", path.display());
     }
 
-    fn make_repositories(&self) {
+    fn make_repositories(&self, files: &[(&str, &str)]) {
         let config = format!(
             "[user]\n\tname = {GIT_NAME}\n\temail = {GIT_EMAIL}\n[commit]\n\tgpgsign = false\n[init]\n\tdefaultBranch = main\n[advice]\n\tdetachedHead = false\n"
         );
@@ -580,7 +600,7 @@ impl World {
         fs::write(&path, config).unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
         self.git(self.root(), &["init", "--quiet", "--bare", "-b", "main", &self.origin.to_string_lossy()]);
         self.git(self.root(), &["init", "--quiet", "-b", "main", &self.project.to_string_lossy()]);
-        for (path, text) in PROJECT_FILES {
+        for (path, text) in files {
             self.write(&format!("project/{path}"), text);
         }
         self.git(&self.project, &["add", "--all"]);

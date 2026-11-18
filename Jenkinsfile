@@ -126,7 +126,12 @@ pipeline {
                 // OCTOFLOW_TEST_SEED is the run seed of the engine's generated-input tests (engine/src/test_support.rs
                 // says what it changes), a fresh one each build. It is echoed here, whatever the tests do, as the
                 // assignment that runs a build's cases again.
+                //
+                // OCTOFLOW_REAL_GATE=1 runs the e2e scenario real_gate on the octoflow-gate release the engine has
+                // built in, downloaded once into OCTOFLOW_GATE_CACHE, beside the workspace, which builds keep
+                // (engine/e2e/tests/e2e/real_gate.rs).
                 sh '''
+                    export OCTOFLOW_REAL_GATE=1 OCTOFLOW_GATE_CACHE="$WORKSPACE_TMP/cache"
                     OCTOFLOW_TEST_SEED=$(od -An -N8 -tu8 /dev/urandom | tr -d ' \\n')
                     if [ -z "$OCTOFLOW_TEST_SEED" ]; then
                         echo "no seed for the generated-input tests from /dev/urandom" >&2

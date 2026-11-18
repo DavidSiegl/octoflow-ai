@@ -1,4 +1,5 @@
-//! The e2e scenarios (scenarios.rs), each run against the engine and compared with its recording in `recorded/`.
+//! The e2e scenarios (scenarios.rs), each run against the engine and compared with its recording in `recorded/`; and
+//! real_gate (real_gate.rs), which runs the engine on a real octoflow-gate release and is no recording.
 //!
 //! A scenario's record (World::record) must equal `recorded/<name>.json`; a difference fails the test, naming where the
 //! two first part. `E2E_RECORD=1` writes recordings instead: for a scenario added since, or an intended change of the
@@ -11,6 +12,7 @@
 mod app_recording;
 mod client;
 mod compare;
+mod real_gate;
 mod scenarios;
 mod servers;
 mod world;

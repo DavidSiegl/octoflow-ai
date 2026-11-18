@@ -408,6 +408,16 @@ folds from what a real `serve` sent after each step of two scripted runs, with f
 decides. A kill ends the engine's group and each process below it, since the engine runs each command in a group of
 its own.
 
+One scenario is no recording: `real_gate` (`tests/e2e/real_gate.rs`) runs a quality round on a real octoflow-gate
+release, the one the engine has built in, downloaded for real, on a project whose one test needs nothing but sh. It
+kills the engine while the gate's test runs and resumes, then has the round fail on that test and pass once the
+Builder answers it, and asserts what the engine made of the release's output (the end of the killed round's test, the
+rounds' verdicts, the quality file the Builder gets), not the release's wording. It needs the network and Linux
+x86_64, so it runs only under `OCTOFLOW_REAL_GATE=1`, which Jenkins's Test stage sets, with the release kept in
+`OCTOFLOW_GATE_CACHE`, else the developer's own cache; elsewhere it passes at once. `OCTOFLOW_GATE_TARBALL=<path to
+octoflow-gate-<version>.tar.gz>` runs it on that tarball instead, a gate release candidate. With `cargo xtask
+raise-gate-pin`, it makes a raise's pull request the test that octoflow can drive the release it raises to.
+
 The package's other test, `tests/docs/`, holds the README and `docs/` to the code: each command the docs run takes the
 flags they give it, the README's flag table gives each flag the commands that take it, every flag is documented, the
 names they give in backticks exist, and every relative link and its anchor resolve. It reads the commands and flags

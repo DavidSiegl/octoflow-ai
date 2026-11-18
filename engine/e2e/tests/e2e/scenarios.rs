@@ -24,12 +24,12 @@ const TEST_WITH_SUBTRACT: &str = "from calc import add, subtract\n\n\ndef test_a
 const TASK: &str = "Add a subtract function";
 
 /// An agent's action (octoflow_e2e::fakes says what one holds), built up from `writes`.
-struct Action(Object);
+pub(crate) struct Action(Object);
 
 impl Action {
     /// Also make these changes to the working tree, path to text, before writing the action's file, in place of any
     /// the action had: `built(..).edit(..)` swaps the Builder's usual edits for others. Add deletions after it.
-    fn edit(mut self, files: &[(&str, &str)]) -> Action {
+    pub(crate) fn edit(mut self, files: &[(&str, &str)]) -> Action {
         let edits: Object = files.iter().map(|(path, text)| (path.to_string(), Value::from(*text))).collect();
         self.0.insert("edit".into(), Value::Object(edits));
         self
@@ -63,7 +63,7 @@ impl From<Action> for Value {
 }
 
 /// The action of an agent that writes text to file in the run directory.
-fn writes(file: &str, text: &str) -> Action {
+pub(crate) fn writes(file: &str, text: &str) -> Action {
     Action(octoflow_engine::json::object([("write", object([(file, Value::from(text))])), ("edit", object([]))]))
 }
 
@@ -87,7 +87,7 @@ fn reviewed(n: u32, verdict: &str, findings: &str) -> Action {
     writes(&format!("review-{n}.md"), &format!("VERDICT: {verdict}\n\n{findings}\n"))
 }
 
-fn approved(n: u32) -> Action {
+pub(crate) fn approved(n: u32) -> Action {
     reviewed(n, "APPROVE", "None.")
 }
 
