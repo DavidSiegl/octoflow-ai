@@ -311,8 +311,9 @@ started, as the human would start one from a herdr pane.
   directory, links resolved, and every file of a run directory that is not in the project's `.octoflow-ai/runs`,
   are refused with 403 by `/file` and left out of `/files` and the event stream's `files` events. A run whose
   `state.json` is refused so is no run: `/runs` and the stream's `record` events leave it out, as a run without a
-  `state.json`, and `/agent` answers 404. The links are resolved on the project's host, over SSH too
-  (`Host::run_states_inside`, `run_files_inside` and `read_inside`); the engine's own reads of a run's files and
+  `state.json`, `POST /close` and `POST /forget` neither list nor act on it (`RunScope::Inside`), and `/agent` answers
+  404. The links are resolved on the project's host, over SSH too
+  (`Host::run_states_inside`, `run_state_inside`, `run_files_inside` and `read_inside`); the engine's own reads of a run's files and
   states still follow them. An
   agent is named only by its run and role, which `ProjectRuns` looks up in the run's `state.json`, so a client can
   read or type into no other herdr agent; a POST body is read to at most 64 KiB (`MAX_BODY_BYTES`). `POST /run`

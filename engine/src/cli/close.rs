@@ -4,7 +4,7 @@ use super::{record_in_state, Connected};
 use crate::constants::{EXIT_ERROR, RUNS_DIR};
 use crate::error::OrchestratorError;
 use crate::herdr::Workspaces;
-use crate::host::{git_status, Host};
+use crate::host::{git_status, Host, RunScope};
 use crate::interrupt::Interrupt;
 use crate::runs::RUNNING;
 use crate::state::{find_run, refs_prefix, RunState, SavedRun};
@@ -26,6 +26,8 @@ pub struct Closer<'a> {
     pub local_host: &'a str,
     /// Where close prints, which takes text as Connected::stdout does, a line with its line end.
     pub stdout: &'a dyn Fn(&str),
+    /// Which of the project's runs close reads, and so can close.
+    pub scope: RunScope,
 }
 
 /// One run close_all looked at, and what became of it.
@@ -208,8 +210,8 @@ pub fn close_all(world: &Closer, cwd: &str, sweep: Sweep) -> Result<Vec<RunClose
             .collect(),
         Sweep::DryRun | Sweep::Close => {
             let mut runs: Vec<_> = world
-                .host
-                .run_states(cwd)?
+                .scope
+                .states(world.host, cwd)?
                 .iter()
                 .map(|run| (run.shown().run_id.clone(), closed_as_read(run), None))
                 .collect();
@@ -264,7 +266,7 @@ fn sweep_run(
     dry_run: bool,
     previewed: Option<Preview>,
 ) -> Result<Outcome, OrchestratorError> {
-    let Some(run) = world.host.run_state(cwd, run_id)? else {
+    let Some(run) = world.scope.state(world.host, cwd, run_id)? else {
         return Ok(Outcome::Skipped(format!(
             "run {run_id} is gone: its state.json was removed from {cwd}/{RUNS_DIR} since the sweep began"
         )));
@@ -363,6 +365,7 @@ impl<'a> Closer<'a> {
             pid_alive: world.with.pid_alive,
             local_host: world.local_host,
             stdout: world.stdout,
+            scope: RunScope::Every,
         }
     }
 

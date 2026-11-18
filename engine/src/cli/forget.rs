@@ -4,7 +4,7 @@ use super::prune::awaits_prune;
 use super::Connected;
 use crate::constants::EXIT_ERROR;
 use crate::error::OrchestratorError;
-use crate::host::Host;
+use crate::host::{Host, RunScope};
 use crate::interrupt::Interrupt;
 use crate::state::{find_run, run_dir, SavedRun};
 
@@ -16,6 +16,8 @@ pub struct Forgetter<'a> {
     pub interrupt: &'a Interrupt,
     /// Where forget prints, which takes text as Connected::stdout does, a line with its line end.
     pub stdout: &'a dyn Fn(&str),
+    /// Which of the project's runs forget reads, and so can forget.
+    pub scope: RunScope,
 }
 
 /// Which runs forget_all looks at, and whether it deletes.
@@ -71,7 +73,12 @@ pub enum Left {
 impl<'a> Forgetter<'a> {
     /// The Forgetter of the CLI's world: its host, interrupt and standard output.
     pub fn of(world: &Connected<'a>) -> Forgetter<'a> {
-        Forgetter { host: world.with.host, interrupt: world.with.interrupt, stdout: world.stdout }
+        Forgetter {
+            host: world.with.host,
+            interrupt: world.with.interrupt,
+            stdout: world.stdout,
+            scope: RunScope::Every,
+        }
     }
 
     /// Print line on stdout; line has no line end, which this adds.
@@ -123,7 +130,7 @@ pub fn forget_command(
 pub fn forget_all(world: &Forgetter, cwd: &str, sweep: Sweep) -> Result<Vec<RunForgotten>, OrchestratorError> {
     // Every run of the project, read once here; none for a Sweep::Listed, whose runs are read at their turns.
     let mut every = match sweep {
-        Sweep::DryRun | Sweep::All => world.host.run_states(cwd)?,
+        Sweep::DryRun | Sweep::All => world.scope.states(world.host, cwd)?,
         Sweep::Listed(_) => vec![],
     };
     every.sort_by(|a, b| a.shown().run_id.cmp(&b.shown().run_id));
@@ -139,7 +146,7 @@ pub fn forget_all(world: &Forgetter, cwd: &str, sweep: Sweep) -> Result<Vec<RunF
         }
         let outcome = match every.get(i) {
             Some(run) => sweep_one(world, cwd, run, dry_run),
-            None => match world.host.run_state(cwd, run_id) {
+            None => match world.scope.state(world.host, cwd, run_id) {
                 Ok(Some(run)) => sweep_one(world, cwd, &run, dry_run),
                 Ok(None) => Outcome::Gone,
                 Err(e) => Outcome::Failed(e.0),

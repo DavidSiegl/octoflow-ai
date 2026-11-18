@@ -96,8 +96,8 @@ const OUTSIDE_STATUS: i32 = 5;
 /// cannot be resolved, as when it, or a link on its way, was removed meanwhile, or its links loop. It uses only what
 /// sh has on Linux and macOS alike: `cd -P` and `pwd -P` resolve a directory, and links are followed one at a time
 /// with readlink without options (POSIX.1-2024, and GNU, BSD and BusyBox readlink alike, unlike readlink -f or
-/// realpath), at most 40 deep, as Linux follows them. serve's view of a run (Host::run_files_inside, read_inside and
-/// run_states_inside) is what stays below the run directory, and the run directory below the runs directory.
+/// realpath), at most 40 deep, as Linux follows them. serve's view of a run (Host::run_files_inside, read_inside,
+/// run_states_inside and run_state_inside) is what stays below the run directory, and the run directory below the runs directory.
 const BELOW: &str = "below() { p=$1 n=0; \
      while [ -L \"$p\" ]; do n=$((n + 1)); [ \"$n\" -le 40 ] || return 2; t=$(readlink -- \"$p\") || return 2; \
        case $t in /*) p=$t;; *) p=${p%/*}/$t;; esac; done; \
@@ -1038,12 +1038,16 @@ pub trait Host {
     /// out, as a run without a state.json is. The links are resolved on this host, as BELOW says. Errors: as
     /// run_states'.
     fn run_states_inside(&self, cwd: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
-        // Without a runs directory there are no runs; f becomes the resolved path, which is what is stat'ed and read.
-        let script = format!(
-            "{BELOW}now=$(date +%s) || exit 1; runs=$(cd -P -- \"$1/{RUNS_DIR}\" 2>/dev/null && pwd -P) || exit 0; {}",
-            run_states_loop(RUNS_DIR, "*", "below \"${f%/*}\" \"$runs\" && below \"$f\" \"$r\" && f=$r")
-        );
+        let script = run_states_inside_script("*");
         parsed_run_states(cwd, RUNS_DIR, &self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?)
+    }
+
+    /// As run_state, but serve's view of the run, as run_states_inside's: None also for a run that view leaves out.
+    /// Errors: as run_states'.
+    fn run_state_inside(&self, cwd: &str, run_id: &str) -> Result<Option<SavedRun>, OrchestratorError> {
+        let script = run_states_inside_script("\"$2\"");
+        let out = self.check(&["sh", "-c", &script, "_", cwd, run_id], None, DEFAULT_TIMEOUT)?;
+        Ok(parsed_run_states(cwd, RUNS_DIR, &out)?.into_iter().next())
     }
 
     /// The log in which the harness named name keeps a session's token usage (crate::harness::SessionLog), found in
@@ -1180,6 +1184,44 @@ pub(crate) fn run_states_in<H: Host + ?Sized>(
 ) -> Result<Vec<SavedRun>, OrchestratorError> {
     let script = format!("now=$(date +%s) || exit 1; {}", run_states_loop(runs_dir, "*", "true"));
     parsed_run_states(cwd, runs_dir, &host.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?)
+}
+
+/// Which of a project's runs a command reads: Every run with a state.json, as the CLI does, or only those Inside the
+/// runs directory, as serve shows them to the desktop app (Host::run_states_inside), so that serve never acts on a run
+/// the app does not show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunScope {
+    Every,
+    Inside,
+}
+
+impl RunScope {
+    /// The runs of the project at cwd this scope reads, as Host::run_states gives them. Errors: as run_states'.
+    pub fn states(self, host: &dyn Host, cwd: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
+        match self {
+            RunScope::Every => host.run_states(cwd),
+            RunScope::Inside => host.run_states_inside(cwd),
+        }
+    }
+
+    /// The run of the project at cwd whose id is run_id, as Host::run_state gives it; None also for a run this scope
+    /// leaves out. Errors: as run_states'.
+    pub fn state(self, host: &dyn Host, cwd: &str, run_id: &str) -> Result<Option<SavedRun>, OrchestratorError> {
+        match self {
+            RunScope::Every => host.run_state(cwd, run_id),
+            RunScope::Inside => host.run_state_inside(cwd, run_id),
+        }
+    }
+}
+
+/// sh printing what run_states_loop prints for the runs of the project $1 whose directory names match the sh word
+/// runs, but only of those Host::run_states_inside keeps.
+fn run_states_inside_script(runs: &str) -> String {
+    // Without a runs directory there are no runs; f becomes the resolved path, which is what is stat'ed and read.
+    format!(
+        "{BELOW}now=$(date +%s) || exit 1; runs=$(cd -P -- \"$1/{RUNS_DIR}\" 2>/dev/null && pwd -P) || exit 0; {}",
+        run_states_loop(RUNS_DIR, runs, "below \"${f%/*}\" \"$runs\" && below \"$f\" \"$r\" && f=$r")
+    )
 }
 
 /// sh printing, for each state.json $f of a run in the directory runs_dir of the project $1, relative to it, whose
