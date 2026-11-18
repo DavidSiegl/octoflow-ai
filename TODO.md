@@ -42,144 +42,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
-- **The workflows reference their actions by tag.** `actions/checkout@v5` and the others in `.github/workflows/`
-  run whatever commit the tag names when the job starts, so a moved tag runs someone else's code in a job that may hold
-  a write token: `raise-gate-pin.yml` runs `actions/checkout` in the job that pushes with `AUTOMERGE_TOKEN`.
-  Raised by gate-pin-follows/02. Closes with every `uses:` pinned by commit sha, its tag in a comment, and something
-  that raises the pins (Dependabot's github-actions ecosystem).
-- **The raise workflow builds the xtask from cold every day and re-reads the pin in shell.** Raised by
-  cross-review 233 (F9, F10): `.github/workflows/raise-gate-pin.yml`'s raise job installs the toolchain and builds
-  `cargo xtask` on each daily run, though most days no release is new, and takes the new gate version for the title by
-  `grep`/`cut` on `ci/gate.pin`, a second reader beside the xtask's. Closes with a cargo cache or a cheap check for a
-  new release first, and the xtask printing the versions it raised to.
-- **The Install stage's component check fails on rustup's error, not its own.** With a component that
-  `rust-toolchain.toml` lists missing from the agent, `rustup component list --installed` (Jenkinsfile, Install)
-  tries to install it into root's rustup home first and fails with "could not create temp file ... Permission denied",
-  so the check never prints "rustup's <component> component is not on the agent; its image must add it" (PR-495's
-  build 1, todo/64). Closes with a check that reads the installed components without setting off that install, or
-  that names the components it looks for when the listing fails.
-- **`cargo xtask raise-gate-pin` bumps the working tree's version, not the target branch's.** Raised by
-  cross-review 229 (F6): `bump_package_version` (`xtask/src/raise_gate_pin.rs`) raises whatever `engine/Cargo.toml`
-  holds, so a run on a branch that already bumped for another change, or a second raise on one branch before it
-  merges, writes 0.91.0 over main's 0.89.x and a second `docs/releases/` file, and 0.90.0 is never released.
-  gate-pin-follows/02's workflow rebuilds its branch from main each time, so it is a hand run's risk. Closes with the
-  bump taken from the version at `git merge-base HEAD origin/main`, or a refusal when the tree's differs from it.
-- **The raise xtask holds second copies of the engine's gate facts.** Raised by cross-review 229 (F13):
-  `FIRST_WITH_GATE`, the release download URL and the pin line's parser in `xtask/src/raise_gate_pin.rs` repeat
-  `engine/src/local_gate.rs`'s `FIRST_WITH_GATE`, `RELEASE_URL` and `parse_pin`, with a comment pointing at the
-  engine's; they can drift. Closes with xtask depending on the engine crate for them, if its build cost is acceptable,
-  or a test in xtask that compares the two.
-- **A failed run's summary.md can still miss the desktop app.** `Workflow::release` (`engine/src/workflow.rs`) saves
-  state.json with no owner before `write_summary`, which runs `round_results` (over SSH on a `--machine`), so a
-  summary that lands more than `FINISHED_RUN_WRITES` (60 s) after that save is never sent: serve's stream stops
-  listing the run's files then (`engine/src/serve/runs.rs`, `RunsWatch::poll`), as todo/19 left it. Meanwhile every
-  finished run is relisted on each poll for that minute (cross-review 220 F3). Closed by writing the summary before
-  the save that drops the owner, as `end_done_run` orders it, once a takeover found by that save is shown not to need
-  the summary unwritten; or by one more save after the summary, so the record change drives the relist.
-- **A production npm package's third-party license files are not shipped.** `withNotices`
-  (`ui/scripts/npm-licenses.js`) appends `THIRD_PARTY` files (`THIRD_PARTY_LICENSES`, `ThirdPartyNotices.txt`, …) for
-  `BUILD_CODE`'s packages only, as todo/14 settled; a bundled production package whose code was copied from others
-  ships without their licenses unless the file's name starts with NOTICE. None does today (cross-review 220 F5).
-  Closed by shipping them for every bundled package, with the completeness test widened to all of them.
-
-- **A step cannot be kept from another step's file.** Every handoff file is in the run's directory, so
-  `peer-review`'s referees are only asked not to read each other's reports
-  (`engine/src/workflows/peer-review.toml`, header); from round 2 the Author's response quotes both anyway. Closed by a step key naming the steps whose files a turn may not
-  read, enforced by keeping them out of the turn's reach (a per-turn directory, say), or by parallel steps (roadmap
-  gap C) that each see only the files before the fork.
-- **A human-paced verdict step is skipped or overridden in a run's last round.** `--max-rounds` bounds every
-  verdict step's loop together, and from round `max_rounds` on the run goes on past the last verdict step whatever
-  the verdict (`Workflow::take_turn`, `engine/src/workflow.rs`). In `design`, a Critic's CHANGES_REQUESTED in round 3
-  publishes without the human's acceptance, and the human's own CHANGES_REQUESTED at acceptance-3.md is recorded but
-  not acted on (cross-review 216 F2; documented in `design.toml`'s header and the 0.86.0 notes). Closed by a
-  human-paced verdict step always being asked and able to extend the rounds, or by a workflow setting its own
-  round limit.
-- **An agent that writes its handoff file before taking its first prompt keeps its `unprompted` mark into the role's
-  next turn.** `written` (`engine/src/workflow/turn.rs`) returns a file found already written before `agent` or
-  `deliver` run, so the mark is cleared by neither: when an unprompted agent wrote the file anyway (a human typing in
-  its pane), the next turn's `agent` treats it as still unprompted, and, blocked, alerts the human about a startup
-  dialog again (cross-review 214 F6). Closed by clearing the role's mark where `written` takes a file already written.
-- **Two POST /forget requests that list the same run at once can both forget it.** Each listed run is read at its
-  turn (`forget_all`, `engine/src/cli/forget.rs`), but serve answers each request on its own thread: two requests
-  (two app windows, a double submit) can both read run X as closed before either deletes it, and both answer
-  "forgotten"; if both read its metrics before either appends, `Host::forget_run`'s check-then-append
-  (`engine/src/host.rs`) archives them twice (cross-review 211 F1). Closed by serve holding a per-project lock around a
-  forget sweep, or `forget_run` taking a lock file around its check and append.
-- **POST /close and POST /forget act on runs the app's overview does not show.** Serve's overview reads the runs
-  through `Host::run_states_inside`, which leaves out a run whose directory or `state.json` resolves outside the runs
-  directory; `close_all` and `forget_all` read them through `Host::run_states` and `Host::run_state`, so a dry run
-  lists, and Close or Delete acts on, such a run: Delete reads its `metrics.json` through the link into the archive and
-  removes the link (cross-review 211 F3). Closed by serve's sweeps reading the runs as the overview does.
-- **A sweep stopped by serve's shutdown answers 200 with part of its runs.** When `stopping` is raised partway
-  through a POST /close or POST /forget sweep, `close_all`/`forget_all` return only the runs reached and serve answers
-  200 with that list (`post_close`, `post_forget` in `engine/src/serve.rs`); the dialog shows them with an enabled
-  Done and nothing says the rest were never tried (cross-review 211 F7). Small, as serve is going away. Closed by
-  serve answering an interrupted sweep with an error naming the runs it did not reach.
-- **`ForgetDialog` copies `CleanUpDialog`'s shape.** `ui/src/components/ForgetDialog.tsx` repeats
-  `CleanUpDialog.tsx`'s Sweep type, preview effect, action handler, Cancel/action/Done footer and list; only the
-  endpoint, the words and the counted outcomes differ, plus close's discarded changes and unread runs (cross-review
-  211 F5). Closed by one sweep dialog both use, if a third sweep comes or the two drift; for two, a shared component
-  would need render props for close's extras.
-- **Whether a run is closed is still told in three more places.** `RunState::is_closed` (`engine/src/state.rs`) is
-  the rule close and forget use, but `resumable_state` (`engine/src/cli/start.rs`, `closed.is_some()`, which also
-  takes an empty `closed` for closed), `run_record`'s resume hint (`engine/src/cli/listing.rs`) and drain's check
-  (`engine/src/cli/drain.rs`) each test the field themselves. Closed when all three call `is_closed`, and the empty
-  string's meaning is decided once.
-- **The Workflows dialog reads each workflow twice.** `WorkflowsDialog` (`ui/src/components/WorkflowsDialog.tsx`)
-  sends a `GET /workflow` for each workflow `/workflows` lists, for its file's path and text, though `/workflows` has
-  parsed every file already, and the editor reads its workflow again when it opens. Harmless for a handful of files
-  (app-workflow-editor/02, cross-review 203 R1-8). Closed by `/workflows` giving each file's path, and the list
-  reading a file's text only for Delete.
-- **A resumed run looks its old workspace up in the new herdr server.** `resumed_state` (`engine/src/cli/start.rs`)
-  saves the resuming environment's server as `RunState::herdr_server`, then `Workflow::prepare`
-  (`engine/src/workflow.rs`) asks that server for the saved `workspace_id`: a run started in the app (session
-  `octoflow`) and resumed from a shell finds no workspace and opens a new one, leaving the old one open, and a
-  workspace with the same id in the new server would be taken for the run's. Raised while doing close-all-runs/03,
-  which made `close` reach the saved server. Closed by `prepare` checking the old workspace in the server the state
-  saved before the resume replaces it.
-
-- **Two processes saving one workflow at once can both pass its base check.** `save_workflow` and
-  `delete_workflow` (`engine/src/workflow_file.rs`) hold a lock from the check of the editor's `base` to the write
-  only within their process (`lock_edits`), so two serve processes, or serve and a hand edit, saving the same file in
-  the same instant could both pass, the later rename winning. Accepted as unlikely for one person's editor
-  (app-workflow-editor/01, cross-review 201 F2). Closed by a lock file beside the workflow, taken around check and
-  write.
-- **`Host::change_diff` is called only by tests.** Its one engine caller filled `RunChange::changed` for
-  new-dependencies' line naming; todo/58 took the lines from the manifests' spans and removed the field, so the
-  quality round no longer runs the diff. `engine/src/host/tests.rs`'s snapshot tests still use it with
-  `crate::patch::added_lines` to look at a snapshot, and `host/fake.rs` answers it. Closed by moving those tests onto
-  `changed_line_counts` or plain `git diff`, then removing `change_diff` from `Host` and the fake.
-- **A proof's undo line lists every file it put back on one command line.** `PutBack::new` (`engine/src/host.rs`)
-  writes each path as an argument of `rm` and `git restore`, where `Host::restore` passes them over stdin: cross-review
-  197 (F4): "a proof that writes thousands of unignored files (a build or vendor dir) produces an undo that fails with
-  'Argument list too long' … and a log line of that size." Only in-place runs log it, and a build directory is
-  usually ignored, which restore_tree leaves alone. Closed by an undo whose length does not grow with the files, such
-  as one that diffs the found tree against the working tree itself, with the log naming a count past some number.
-- **restore_tree does git work a worktree run throws away.** Each pass runs a whole-tree `git diff --diff-filter=D`
-  and `git rev-parse --show-toplevel` for its PutBack (`put_back`, `engine/src/host.rs`), which `run_proof` drops in
-  a worktree run. Cross-review 197 (F5, nit): "`--name-status` on restore_tree's existing names_between diff would
-  give the deleted set without the second diff." Closed by that.
-
-- **A gated run without a pull request is told it pushes when gitleaks is missing.** `Host::check_gitleaks`
-  (`engine/src/host.rs:721`) opens "this run pushes, and every push is scanned for secrets first", and
-  `Workflow::check_gate` (`engine/src/workflow.rs`) and `turn_quality_gate_on` (`engine/src/workflow/gate_switch.rs`)
-  raise it for any gated run: a `--quality-gate local` run without
-  `--pr` pushes nothing; what gitleaks scans there is each snapshot before it is judged. Raised while doing todo/53,
-  which gave doctor its own wording. Closed by having the gate's preflight say why it needs gitleaks in its own words,
-  leaving check_gitleaks's to a run that publishes.
-- **One state.json that is not JSON naming its run stops every command that lists the runs.** `parsed_run_states`
-  (`engine/src/host.rs`) fails the whole listing when one run's state.json is not JSON, or is JSON without a non-empty
-  `run_id` (`SavedRun::read`, `engine/src/state.rs`), so `close --all` closes nothing, and `list`, `refresh` and
-  `close RUN` fail too; the error, "corrupt run state under <cwd>/.octoflow-ai/runs", does not say which run's file it
-  is. Only a state.json of a format this engine does not read is an unreadable run that is skipped and named. Raised by
-  cross-review 194 (F1). Closed by listing such a file as an unreadable run named by its directory, which `SavedRun`
-  cannot hold today without a run id, and the desktop app's run list then showing it.
-- **Two engine test directories are still named by pid, removing what is there first.** `Dir::new`
-  (`engine/tests/program.rs:23`) names its directory `octoflow-program-<name>-<pid>` and removes what is there, and
-  `engine/tests/signals.rs:245` names one `octoflow-signals-<case>-<pid>`: two test runs over one `/tmp` whose
-  processes share a pid, as in different PID namespaces, delete each other's, the collision todo/49 fixed for the e2e
-  scenarios' `Scratch`. Raised by cross-review 186 (raised and not recorded). Closed by making both on
-  `tempfile::Builder`, as `Scratch::new` is.
 - **The desktop app as the terminal client too: what was decided against.** The app, started with arguments, is the CLI
   (`cli` in `ui/src-tauri/src/lib.rs`), and the plain CLI binaries stay released: 13 MB against the AppImage's 120 MB of
   WebKit, and they start without FUSE on headless machines and in CI. Decided against
@@ -189,12 +51,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   clients, `current_dir`) where the sidecar takes the user's once at its start (`UserShell::enter`); an engine panic
   would end the window; and `serve`'s signal handling needs the main thread. Its one gain is the first-line handshake
   gone.
-- **A run resumed across 0.84.0 in `publish` opens a pull request that names trailers its commit does not have.**
-  A pre-0.84 binary that made the run's commit wrote `Orchestrator-*` trailers, and a resume does not amend that commit
-  (docs/design.md, Provenance trailers); but `pr_body`'s "Commit trailer" table (`engine/src/pull_request.rs`) is built from
-  `provenance()`, which now gives `Octoflow-*`, so the pull request misstates its commit's trailers and the queries
-  design.md points to find nothing on it (cross-review 212 F6). Only an upgrade in the middle of a run hits it.
-  Closed by `pr_body` reading the trailers back from the commit it publishes.
 - **The local gate's report names an empty `judge/gate.toml` for a base without `gate.toml`.** Raised by
   cross-review 171 (F7): "the gate counts the file as there and reports `<…>/judge/gate.toml` as where the settings
   came from … It does not report 'the defaults (there is no …)', so quality.md hides that the defaults judged the
@@ -203,39 +59,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   file is what keeps the change's settings out. Would close when octoflow-gate takes the judge's rules and settings
   without a settings file, as a `--rules` option, or reports an empty one as its defaults. Decided against (the user's
   ruling, 2026-11-11): either costs a gate release and a `BUILT_IN_PIN` bump for the name of one file in the report.
-- **A resumed run without `ci/gate.pin` can change gate release between rounds.** Raised by cross-review 185
-  (round 2): `local_gate::start` reads `BUILT_IN_PIN` each round rather than from the run's saved state, so a run
-  started under one engine and resumed under one with a raised pin has its rounds judged by two releases, and
-  `GateFailures.repeats` compares two check sets. First seen with 0.70.0's raise from 0.7.0 to 0.10.0. Since 0.91.0
-  `doctor --setup-gate` writes no pin unless `--pin-gate` asks (gate-pin-follows/04), so every project it sets up is
-  pinless and meets this. Closes with the release a pinless run starts with saved in its state and judged by on resume.
-- **A run of a built-in workflow resumes on the built-in of the release that resumes it.** Raised by cross-review 215
-  (F2): `Workflow::new` (`engine/src/workflow.rs`) saves no `workflow_definition` for a run whose workflow
-  `is_built_in` (`engine/src/workflow_file.rs`), and a resume rebuilds it with `find_workflow`. "If a later release
-  changes product-team's steps (v0.59.0 added `accept`), the saved phase, rounds and verdicts no longer match the
-  step list." This holds for `default` since the start; 0.85.0 adds `quick` and `product-team`, and a run saved from
-  a pre-0.85.0 `quick.toml` equal to the built-in drops its saved definition at its first resume. Closes with every
-  run saving its definition, or a resume that checks the built-in still has the saved run's steps.
-- **The desktop app neither shows nor deletes a workflow file of a built-in's name.** Raised by cross-review 215
-  (F3): `workflow_names` (`engine/src/workflow_file.rs`) lists a built-in's name once, so GET /workflows
-  (`offered_workflows`, `engine/src/serve/start.rs`) and the app's Workflows dialog show the built-in and not the
-  file's error, and `delete_workflow` refuses the name as built in. A `quick.toml` or `product-team.toml` copied from
-  the example workflows of releases before 0.85.0 is the likely case; `octoflow workflows` lists it with its error,
-  and the release notes say to delete or rename it by hand. Closes with GET /workflows listing such a file beside
-  the built-in, and the dialog able to delete it.
-- **A local gate whose job cannot start shows it at the first verdict, not at `start`.** Raised by cross-review 171
-  (F6): "If setsid has gone missing since the preflight, the first verdict reports 'its job gone without a status:
-  <job.log tail>'." LAUNCH prints the job's pid either way; the tail of `job.log` still says why. Closes with
-  LAUNCH failing when the job's group never appears, which needs telling that from a job that ended within its wait.
-- **A stuck loop can compare a round read from `quality.json` with one read from `quality.md`.** Raised by
-  cross-review 160 (F3): "A round judged from quality.json records every failing finding's fingerprint; one judged
-  from quality.md (gate_failures) records at most QUALITY_FINDINGS_LIMIT." A round the gate wrote a
-  `quality.json` for is still read from its quality file when the orchestrator stopped between writing that file and
-  saving the round (`Workflow::quality`, `engine/src/workflow/quality_rounds.rs`); with more than
-  50 identical failing findings in rounds Q-1 and Q from different sources, `GateFailures.repeats` is false and the
-  stuck rule misses that loop, so the Builder gets one more turn. Closes with recording the round before the quality
-  file is written, or comparing only the first `QUALITY_FINDINGS_LIMIT` of a JSON-read round against a Markdown-read
-  one.
 - **No coverage-guided fuzzing of the engine's parsers.** Decided against (the user's ruling, 2026-11-11): a
   cargo-fuzz pass over `handoff::first_line_word`, `parse_verdict`, `parse_gate`, `parse_blocked` and
   `parse_env_file`, looking for panics. The seeded generated-input tests (`test_support::Rng`) cover them instead.
@@ -261,22 +84,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   2026-11-05: an undocumented file of another tool, which would break silently when it changes. Closes if Claude
   Code documents a way to ask whether a folder is trusted. The eval runner writes that record all the same, for its
   trials' clones, which no human is there to answer for (`xtask/src/claude_trust.rs`).
-- **The desktop app's recorder reads the e2e Normalizer's placeholders back out of its text, and folds events as
-  `last_by_run` does.** Raised by cross-review 166 (F9, nit): "`<run:N>`, `<key:N>`, `<pid:`, `<host>`,
-  `<duration>`, `<seconds>`, `<time>` and `<world>` are spelt here as well as in normalize.rs, and line 134 takes
-  any `<…>` left in any record string for an unknown placeholder: a task, a BLOCKED question or an error with angle
-  brackets in it panics with "no stand-in for the placeholder" once the scenario holds one"
-  (`stand_in_text`, `engine/e2e/tests/e2e/app_recording.rs`); and (F8, nit) "`app_recording::recording` folds "last
-  record, last files per run" as `last_by_run` does" (`engine/e2e/tests/e2e/scenarios.rs`), so a change to the fold
-  has two places. Today's scenario holds no angle bracket of its own. Closes with a Normalizer that takes the
-  replacements to write (the e2e placeholders, or the app's stand-ins) rather than text to parse again, and one
-  fold both callers shape their output from.
-- **The e2e world still names its project, author, CA and proxy "Parity".** Raised by cross-review 193 (F12, nit):
-  "The e2e world still names its project, git author, CA and proxy "Parity" ("The project a parity scenario
-  changes."), port-era vocabulary" (`engine/e2e/tests/e2e/world.rs`, `servers.rs`, `src/fakes.rs`,
-  `scenarios.rs`). The names reach every recording under `engine/e2e/recorded/`, `engine/tests/oracle/helpers.json`
-  and `ui/src/test/recorded-stream.json`, so a rename rewrites them all; left out of drop-python-mentions for that.
-  Closes with neutral names in the World and the recordings rewritten with `E2E_RECORD=1`.
 - **Writes to origin are not tried again through an outage.** `reaching_origin` (`engine/src/workflow/origin.rs`)
   wraps the run's fetches and its `ls-remote` reads only; the pushes (`engine/src/host.rs`'s `push_ref`,
   `push_branch`), the remote branch deletions (`delete_remote_branch`, `delete_remote_branch_at`) and the `gh` calls
@@ -285,12 +92,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   the value it set. Left out of origin-retry ticket 01 (2026-11-04). Would close with each write's retry made safe to
   repeat, then routed through `reaching_origin`. Decided against (the user's ruling, 2026-11-11): a run a write fails
   is resumed once origin is back, and making each write safe to repeat costs more than that resume.
-- **`host`'s text helpers sit in an import cycle.** `last_lines` and `line_ends_as_lf` (`engine/src/host.rs`) are pure
-  `&str` functions, but `host` imports `state::SavedRun` and `state` imports `herdr`, so herdr → host → state →
-  herdr (`engine/src/herdr.rs:21`, `engine/src/host.rs:26`, `engine/src/state.rs:9`) and prompts → host → state →
-  prompts (`engine/src/prompts.rs:6`, for `line_ends_as_lf` alone) are cycles, on main too. Deferred from
-  cross-review 188 (F2, F3, nits): "A leaf text module importing only constants would hold both helpers without that
-  hazard." Closes with both helpers in such a module and their importers pointed there.
 - **Host::fetch does not wait out an outage by itself.** Each caller wraps it in `reaching_origin`
   (`engine/src/workflow.rs`'s five, `cli/prune.rs`'s `prune_remote`), since a
   `Host` (`engine/src/host.rs`) has no clock to wait on and no human to tell; a new caller gets no retry unless it
@@ -392,15 +193,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   requests (`engine/src/serve.rs`); cross-review 105, F3: "A client that sends a partial request or idles holds it for
   good." Decided against for now (2026-10-29, the user's ruling): serve binds 127.0.0.1 only and every request needs
   the token. Reopen if serve listens beyond loopback.
-- **serve's link checks race the agent.** `Host::read_inside` (`engine/src/host.rs`) resolves a run file's links in
-  sh, then cats the resolved path in another process, `run_states_inside` does the same with a run's state.json,
-  and `run_files_inside` lists a file it checked a moment before; plain sh has no open that refuses to follow a
-  link. Cross-review 125, F1: "an agent loops, swapping
-  `runs/<id>/x.md` between a regular file and a link to `~/.ssh/id_rsa` … A `/file?name=x.md` that finds the
-  regular file at the check and the link at the open returns the key with 200." Left open: an agent that can race
-  the check can as well copy the file into its run directory, which serve shows as any other; the check is against
-  a link left there, not against an agent that means to show the app a file. Closes with an open that does not
-  follow links (a helper on the host with `O_NOFOLLOW` per component), if a reason is found to want it.
 - **The e2e scenarios compare serve's event stream at checkpoints, not event by event.** `serve_endpoints_and_events`
   keeps, at each point where the run waits on an agent and once it is done, the last `record` and `files` event of each
   run (`engine/e2e/tests/e2e/scenarios.rs`, `last_by_run`). Raised by cross-review 65 (F10, 2026-10-27), against the
@@ -417,36 +209,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   terms by design". The workflow file's header says so. Decided against (the user's ruling, 2026-11-11): the check reading
   every non-editing step's file that precedes the first editing step, or a workflow key naming the file that holds
   the paths; only the contract step names paths in the built-in workflows, and the finding is one to weigh.
-- **Removing a tree of read-only directories is written out twice.** `chmod -R u+rwX "$dir" && rm -rf "$dir"`, with a
-  warning when it fails, is in the Jenkinsfile's Checkout stage (emptying `TMPDIR` before any stage uses it) and in
-  `packaging/build-desktop.sh`'s `remove_temporaries`, for the AppImage extractions it removes; a fix to one does not
-  reach the other. `engine/src/proofs.rs`'s `REMOVE_TREE_SCRIPT` is a looser third (`rm` runs even when `chmod`
-  fails, with no warning). Raised by cross-review 132 (F6, nit, 2026-11-04): "Record or share it, as the implementer
-  judges". Closes with one script both call, should a third copy be needed or the idiom change.
-- **`packaging/build-desktop.sh`'s shared cleanup knows the .dmg smoke test.** `remove_temporaries`, which every
-  platform's exit runs, detaches a .dmg still mounted at `$smoke_dir/mnt` (todo/30). Raised by cross-review 228 (F6,
-  nit, 2026-11-17): "A teardown step that each smoke test registers would leave it generic." With two smoke tests,
-  one of which needs a teardown, a registration step would add more than it removes. Closes with that step, should a
-  third smoke test need its own teardown.
-- **No build has yet been seen waiting for `ci/cargo-lock.sh` on the Jenkins agent.** PR #88's builds ran both
-  cargo steps through it on agentbox0 (builds 1-3, 2026-10-25), so the agent image has `flock` and the lock file's
-  directory is writable; but the two run side by side
-  reached their cargo steps 15 s apart, the lock free each time, so the wait and its message were seen only on the
-  development host. Raised by cross-review 25 (F3). Closes with two builds whose cargo steps overlap on agentbox0,
-  one saying that it waits for the lock and both passing.
 - **Is 3 GB the right memory limit for the agentbox0 Jenkins agent?** All builds on the node share its container's
   `mem_limit: 3g` (Homelab `jenkins/agentbox0.yaml`), which this repo cannot change. Since `ci/cargo-lock.sh`, two of
   this repository's builds compile Rust at once only when the Gate stage's clippy, outside the lock, checks the desktop
   shell's own crate, the one crate the UI stage's `cargo check` leaves it; but everything else they run (the gate's
   cargo-mutants, npm) still shares the 3 GB beside a locked rustc, as do other jobs' builds on the node. Decided
   against (2026-11-03): raising it; the 3 GB stays until a build is OOM-killed, which reopens it.
-- **The herdr server serve starts keeps serve's terminal session.** With no herdr server running, `Launcher::launch`
-  (`engine/src/herdr.rs`, `start_server`) starts the session `octoflow`'s as `sh -c 'herdr server … &'`: a process
-  group of its own, standard streams on /dev/null, but no session of its own, since macOS has no `setsid` command and
-  `pre_exec` is unsafe code. The desktop app has no terminal, so nothing follows there; a `serve` typed into a
-  terminal leaves the server with that terminal as its controlling one. Not seen to end the server (its group is in
-  the background, so a hangup is not sent to it), and not tried on macOS. Closes with `setsid(2)` before the exec, or
-  a herdr that detaches its server itself.
 - **A server of the session `octoflow` left running by an older herdr counts as ready.** `server_runs`
   (`engine/src/herdr.rs`) takes the line `status: running` alone; herdr 0.9.1's `herdr status server` prints beside
   it `endpoint_compatible: yes`, `private_protocol: 22`, `private_protocol_compatible: yes`. The session is left
@@ -456,9 +224,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   what herdr answers in that case is unknown. Decided against (the user's ruling, 2026-11-11): the engine restarting
   a server whose `private_protocol_compatible` is not `yes`, which guesses at what herdr answers; reopen when a
   herdr update shows the failure, then name the stop in the error.
-- **Each `exited` look filters the environment anew.** After serve starts a run, `exited` (`engine/src/herdr.rs`)
-  filters the environment for the session's server (`in_server`) at each look, every 500 ms for up to 30 s. Raised
-  by cross-review 169 (F8).
 - **`doctor` checks gitleaks's `git` subcommand, not its version.** README asks for gitleaks 8.19 or later; the
   check reuses `Host.gitleaks_problem`, the run's pre-push check, which asks `gitleaks git --help` because a
   distribution's build may print no version number. So `doctor` shows no gitleaks version. Kept by choice
@@ -466,13 +231,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 - **Proofs run after the last round's review too.** No Builder turn follows to read them; only the draft pull
   request's review shows them, and each may take `PROOF_TIMEOUT`. Kept: a demonstrated defect is what the human
   most needs to see in a draft. Raised by the same review.
-- **Each proof snapshots the whole working tree twice.** `Workflow::run_proof` takes `Host::tree_snapshot` before the
-  proof and `Host::restore_tree` another after it, each a `git add -A` of every untracked, non-ignored file under
-  `DEFAULT_TIMEOUT` (60 s): on a tree with large untracked files a snapshot over the limit makes every proof "did not
-  run" or "did not run cleanly". Raised by cross-review 143 (F9, nit). Kept: one snapshot before a batch of proofs
-  (`judge_proofs`, `rerun_proofs`) would save one of the two, but changes `run_proof`'s interface and every test that
-  calls it, and leaves the limit in place. Closes with that, and with a snapshot timeout that scales, or the snapshot
-  taking only the paths `git status` reports changed.
 - **A run that is never closed keeps its local refs.** A locking step's commit stays under
   `refs/orchestrator/<key>/locked/` (`RunState::lock_ref`) until the run ends `done` (`Workflow::clean_up_locks`) or
   is closed (`close_run`, `engine/src/cli/close.rs`). Left: the refs of a failed or stale run nobody closes
@@ -534,54 +292,9 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   fake's seam up to repository operations (fetch, fast-forward, merge, push). At command level `Host`'s own steps run
   in every Workflow test, and since a command the fake has no arm for fails the test, a flag changed in one file and
   not the other is caught.
-- **FakeHost's commits move HEAD, not a branch `branches` lists.** Cross-review 177 (round 2, raised and not
-  recorded): "a checked-out branch also listed in `branches` reads a stale commit after a commit; in git the ref is
-  HEAD's", and `branch --quiet -D` of a checked-out branch succeeds where git refuses it
-  (`engine/src/host/fake.rs`, `branch_commit`, `commit_head`). No test commits on and then pushes or deletes such a
-  branch today; the fake's own test pins a checked-out `main` at another commit than HEAD, which git cannot be in.
-  Closes with the checked-out branch's commit held in one place, `branches` or HEAD, that a commit moves.
 - **serve's `RunRequest` checks harness kinds and role flags that the command line checks again.** `RunRequest`
   (`engine/src/serve/start.rs`, `parse`, `by_role`, `argv`) checks what `engine/src/cli/args.rs` checks
   (`role_agent_arg`, `role_model_arg`). Decided against (the user's ruling, 2026-11-11): validating by running
   `parse_args` on the built argv and returning clap's error. The desktop app shows serve's `error` text verbatim
   (`ui/src/api.ts`), and clap's is several lines with `Usage:` and "try '--help'"; `serve/start/tests.rs`'s round
   trip through `parse_args` already catches the two checks drifting apart.
-- **`http::tests::no_answer_is_worded_with_the_errno_and_the_system_s_words` can fail under parallel load.** It binds
-  a port, drops the listener and expects "[Errno 111] Connection refused" from it (`engine/src/http/tests.rs`), but
-  another process can take the freed port in between. Seen once, 2026-11-14, in a local workspace run beside other
-  sessions' cargo runs; it passed alone three times. Closes with a port nothing can take, such as a listener kept bound
-  without `listen`, or one on a socket whose backlog refuses.
-- **A crash right after the save that releases a finished run leaves its herdr workspace open.** Cross-review 196
-  (F1): after that crash, "the 'Run finished' notice and the herdr `Close` calls are dropped"; on `resume --force`,
-  `Workflow::ending_left` (`engine/src/workflow.rs`) returns None for a released run whose files exist, so
-  `Workflow::end_done_run` never reaches `close_workspace`, "and the published run's herdr workspace and agent panes
-  stay open for good". `end_done_run`'s comment accepts only the lost notice. The crash-resume test
-  (`engine/src/workflow/tests/crash_resume.rs`, `expected`) pins both as the gap. Closes with the close made safe to
-  repeat and recorded, or retried on a resume of a released, published run; the test's `expected` then keeps the
-  close.
-- **No crash-resume test crashes while a quality gate job judges.** Cross-review 196 (F2): `Outcome::gate`'s two
-  polls end a job after one `CI_POLL_SECONDS` pause, before any heartbeat save, so "the resume path for a run killed
-  while its gate judged (`stop_left`, then a new snapshot and a new job) is never exercised"
-  (`engine/src/workflow/tests/crash_resume.rs`, `quality_gate_fails_then_passes`; `local_gate::stop_left`). Polls past
-  `HEARTBEAT_SECONDS` give it such crashes, but their runs then differ from the uninterrupted one by design: a new
-  snapshot id in the PR body, the quality turn's times and every later timestamp, the job's worktree added and
-  removed again. Closes with `expected` normalising those for a crash that left a job, and adding its stop.
-- **Six places build a run directory's path by hand.** `crate::state::run_dir` is the one home for
-  `<cwd>/.octoflow-ai/runs/<run_id>`, which `forget` and `Host::forget_run` use; `cli::start` (`:79`), `cli::listing`
-  (`:298`), and the state.json paths of `refresh`, `close`, `drain` and `prune` still format it themselves. Raised by
-  cross-review 207 (F7). Closed by those calling `run_dir`.
-- **Runs started within one second list in random order.** A run id orders by its start only to the second, then by
-  a random key (`new_run_id`, `engine/src/cli/start.rs`), and `close --all` (`engine/src/cli/close.rs`), `list`,
-  prune and refresh take runs in run id order. close-all-order-flake/01 made `runs_closed_all`
-  (`engine/e2e/tests/e2e/scenarios.rs`) wait for the next second between its runs, which costs that scenario up to a
-  second per run. Cross-review 206 (R1-2): "a later scenario that starts two runs and records one of those listings
-  can flake the same way"; (R1-1): "the hidden `run --run-id` flag would fix the order with no wait", at the price of
-  testing the given-id path rather than `new_run_id`. Closed by the engine ordering runs by their start time (a saved
-  start instant that sorts below the second), after which the scenario's wait goes.
-- **serve does not check the shell of the pane it types a machine's run into.** For a project on a machine,
-  `RunServer::start` (`engine/src/serve/runs.rs`) checks `crate::herdr::pane_shell` on the machine, whose herdr the
-  run's agents are typed into (`Herdr::export`), but `Reached::launcher` types the run's own command line into a pane
-  of this machine's herdr. Cross-review 221 (F3): "a local herdr with default_shell nu serving a project on a machine
-  whose shell is bash. The check passes, the line is typed into nu, and POST /run answers 422 or 202 as before the
-  fix." Closed by the Launcher checking the shell of the panes it opens before it types into one (its fake answering
-  as `ServeHost::pane_shell` does), with serve checking the project's host only for a project on a machine.
