@@ -10,7 +10,7 @@
 //! nohup with SIGHUP ignored).
 
 use std::os::unix::process::{CommandExt, ExitStatusExt};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
 
@@ -237,21 +237,13 @@ fn ended(path: &Path) -> bool {
     false
 }
 
-/// A directory of its own for one case, removed when dropped.
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new(case: &str) -> Scratch {
-        let dir = std::env::temp_dir().join(format!("octoflow-signals-{case}-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("a scratch directory");
-        Scratch(dir)
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
+/// A directory of its own for one case, `octoflow-signals-<case>-` and a suffix no other directory has, under the
+/// system's temporary directory; removed with everything in it when dropped.
+fn scratch_dir(case: &str) -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix(&format!("octoflow-signals-{case}-"))
+        .tempdir()
+        .unwrap_or_else(|e| panic!("making a directory for {case}: {e}"))
 }
 
 /// The mask of a SigIgn or SigBlk line of /proc/<pid>/status, such as `SigBlk:\t0000000000000002`.
@@ -273,8 +265,8 @@ fn bit(signal: Signal) -> u64 {
 }
 
 fn each_sigint_raises_the_interrupt() {
-    let scratch = Scratch::new("handled");
-    let dir = scratch.0.as_path();
+    let scratch = scratch_dir("handled");
+    let dir = scratch.path();
     let engine = engine("handled", dir, "");
     written(&dir.join("sleeping"));
     send(&engine, Signal::SIGINT);
@@ -291,8 +283,8 @@ fn each_sigint_raises_the_interrupt() {
 }
 
 fn an_ignored_sigint_stays_ignored() {
-    let scratch = Scratch::new("ignored");
-    let dir = scratch.0.as_path();
+    let scratch = scratch_dir("ignored");
+    let dir = scratch.path();
     let mut engine = engine("ignored", dir, "INT");
     written(&dir.join("pid"));
     send(&engine, Signal::SIGINT);
@@ -309,8 +301,8 @@ fn an_ignored_sigint_stays_ignored() {
 /// The engine, its command running, sent signal to its group: the command is stopped, and the engine ends by signal.
 fn ends_the_engine_by(signal: Signal) {
     let case = format!("ended-{}", signal as i32);
-    let scratch = Scratch::new(&case);
-    let dir = scratch.0.as_path();
+    let scratch = scratch_dir(&case);
+    let dir = scratch.path();
     let engine = engine("ended", dir, "");
     written(&dir.join("pid"));
     send(&engine, signal);
@@ -330,8 +322,8 @@ fn a_sighup_ends_the_engine_by_it() {
 
 fn an_ignored_sighup_stays_ignored() {
     // As nohup starts it.
-    let scratch = Scratch::new("hup-ignored");
-    let dir = scratch.0.as_path();
+    let scratch = scratch_dir("hup-ignored");
+    let dir = scratch.path();
     let mut engine = engine("ignored", dir, "HUP");
     written(&dir.join("pid"));
     send(&engine, Signal::SIGHUP);

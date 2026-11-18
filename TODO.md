@@ -42,6 +42,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **engine/Cargo.toml says only test_support needs tempfile.** The dev-dependency's comment reads "The tests'
+  scratch directories (test_support::TempDir)", but todo/81 made engine/tests/program.rs (`Dir`) and
+  engine/tests/signals.rs (`scratch_dir`) use `tempfile::Builder` directly, so a reader judging whether tempfile can go
+  reads that only test_support needs it. Raised by cross-review 240 (F1); left out of todo/81 because any change to
+  engine/Cargo.toml raises the version (`ci/version-raised.sh`). Closes with the comment naming engine/tests' own
+  directories too, in the next change that raises the version (todo/82's branch carries it).
 - **Nothing checks that a workflow's actions stay pinned by sha.** todo/65 pinned every `uses:` in
   `.github/workflows/` by commit sha, and `.github/dependabot.yml` keeps a sha a sha, but the Gate stage's actionlint
   accepts a tag: a later `uses: actions/cache@v4` in a job that holds `AUTOMERGE_TOKEN` passes every check and brings
