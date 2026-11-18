@@ -47,6 +47,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   a write token: `raise-gate-pin.yml` runs `actions/checkout` in the job that pushes with `AUTOMERGE_TOKEN`.
   Raised by gate-pin-follows/02. Closes with every `uses:` pinned by commit sha, its tag in a comment, and something
   that raises the pins (Dependabot's github-actions ecosystem).
+- **The raise workflow builds the xtask from cold every day and re-reads the pin in shell.** Raised by
+  cross-review 233 (F9, F10): `.github/workflows/raise-gate-pin.yml`'s raise job installs the toolchain and builds
+  `cargo xtask` on each daily run, though most days no release is new, and takes the new gate version for the title by
+  `grep`/`cut` on `ci/gate.pin`, a second reader beside the xtask's. Closes with a cargo cache or a cheap check for a
+  new release first, and the xtask printing the versions it raised to.
 - **The Install stage's component check fails on rustup's error, not its own.** With a component that
   `rust-toolchain.toml` lists missing from the agent, `rustup component list --installed` (Jenkinsfile, Install)
   tries to install it into root's rustup home first and fails with "could not create temp file ... Permission denied",

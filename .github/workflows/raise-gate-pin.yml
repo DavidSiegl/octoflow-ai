@@ -2,16 +2,21 @@
 # version a dispatch names, made by `cargo xtask raise-gate-pin` (xtask/src/raise_gate_pin.rs); automerge.yml merges
 # it once Jenkins passes it. Daily, so that a gate release reaches octoflow without anyone starting the raise.
 #
-# The pull request's branch, gate-pin-raise, is this workflow's alone, and no person or agent pushes to it: every run
-# that raises rebuilds it from main and force-pushes it, so a newer raise replaces an older one, and a raise that
-# conflicts with main is made again from main the next day. A run whose main already names the release closes the
-# pull request, main having caught up. A run that finds another open pull request changing engine/Cargo.toml skips,
-# saying so, since two bumping pull requests race for the version; the next day's tries again. While the latest
-# release is not immutable, the xtask refuses it and the run fails saying why.
+# The pull request's branch, gate-pin-raise in this repository, is this workflow's alone, and no person or agent pushes
+# to it. Each run makes the raise again from main and pushes it only when its tree differs from the branch's, so a
+# newer release or a moved main replaces the pull request's commit, an unchanged raise is left alone, and a raise that
+# conflicts with main is made again from main the next day. A raise a dispatch named lasts until a scheduled run's
+# latest release differs from main's pin. A run whose raise leaves main as it is closes the pull request only when
+# main's pin is the branch's, main having caught up. A run that finds another open pull request changing
+# engine/Cargo.toml skips, saying so, since two bumping pull requests race for the version (CLAUDE.md, "Releases");
+# the next day's tries again. While the latest release is not immutable, the xtask refuses it and the run fails saying
+# why.
 #
-# The push and the pull request use AUTOMERGE_TOKEN (automerge.yml's header says what it is): GitHub starts no
-# workflow for a pull request opened or pushed with github.token, so automerge.yml would never see it. The xtask,
-# which builds and runs code, gets only github.token, to read the gate's public releases.
+# Two jobs, so that AUTOMERGE_TOKEN never shares a machine with code the raise builds: raise runs the xtask with
+# github.token, read-only, and hands publish a patch and a title; publish, on a fresh runner, applies the patch to the
+# same main with git hooks off and runs nothing of the tree. It pushes and edits the pull request with AUTOMERGE_TOKEN
+# (automerge.yml's header says what it is), since GitHub starts no workflow for a pull request opened or pushed with
+# github.token, so automerge.yml would never see it.
 name: Raise gate pin
 
 on:
@@ -26,7 +31,8 @@ on:
 
 permissions: {}
 
-# Two runs at once would both force-push gate-pin-raise; the later one waits.
+# Two runs at once would both push gate-pin-raise. A run started while one is in progress waits; GitHub keeps one
+# waiting run per group, so a third replaces the waiting one, which shows as cancelled: dispatch it again.
 concurrency:
   group: raise-gate-pin
   cancel-in-progress: false
@@ -42,17 +48,27 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+    outputs:
+      skip: ${{ steps.others.outputs.skip }}
+      changed: ${{ steps.raise.outputs.changed }}
+      title: ${{ steps.raise.outputs.title }}
+      main: ${{ steps.raise.outputs.main }}
     steps:
+      # Each other open pull request's changed files, through the REST API's pages, since gh pr list's stop at 100. A
+      # fork's pull request is another's, even from a branch named as this workflow's.
       - id: others
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          others=$(gh pr list --state open --limit 100 --json number,headRefName,files | jq -r --arg branch "$BRANCH" \
-            '[.[] | select(.headRefName != $branch and any(.files[]; .path == "engine/Cargo.toml")) | "#\(.number)"]
-            | join(" ")')
+          others=
+          for n in $(gh pr list --state open --limit 200 --json number,headRefName,isCrossRepository |
+              jq -r --arg branch "$BRANCH" '.[] | select(.isCrossRepository or .headRefName != $branch) | .number'); do
+            files=$(gh api --paginate "repos/$GH_REPO/pulls/$n/files" --jq '.[].filename')
+            if grep -qx engine/Cargo.toml <<<"$files"; then others="$others #$n"; fi
+          done
           if [ -n "$others" ]; then
-            echo "::notice::Not raising: $others changes engine/Cargo.toml; one bumping pull request at a time"
+            echo "::notice::Not raising:$others changes engine/Cargo.toml; one bumping pull request at a time"
             echo skip=true >> "$GITHUB_OUTPUT"
           fi
 
@@ -69,40 +85,92 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
-        run: |
-          cargo xtask raise-gate-pin ${VERSION:+"$VERSION"} > "$RUNNER_TEMP/notes.md"
-          if [ -n "$(git status --porcelain)" ]; then echo changed=true >> "$GITHUB_OUTPUT"; fi
-
-      - if: steps.raise.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}
-          GH_REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          gate=$(grep -v '^#' ci/gate.pin | head -n 1 | cut -d ' ' -f 1)
-          version=$(ci/release-version.sh)
-          title="ci/gate.pin names octoflow-gate $gate; version $version"
-          git switch -c "$BRANCH"
+          echo "main=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          out=$RUNNER_TEMP/raise
+          mkdir -p "$out"
+          cargo xtask raise-gate-pin ${VERSION:+"$VERSION"} > "$out/notes.md"
           git add -A
-          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-            commit -q -m "$title (raise-gate-pin.yml)"
-          git push --force "https://x-access-token:$GH_TOKEN@github.com/$GH_REPO.git" "HEAD:refs/heads/$BRANCH"
-          { echo "Made by \`cargo xtask raise-gate-pin\` in $RUN_URL."; echo; cat "$RUNNER_TEMP/notes.md"; } \
-            > "$RUNNER_TEMP/body.md"
-          pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
-          if [ -n "$pr" ]; then
-            gh pr edit "$pr" --title "$title" --body-file "$RUNNER_TEMP/body.md"
-          else
-            gh pr create --base main --head "$BRANCH" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+          if ! git diff --cached --quiet; then
+            git diff --cached --binary > "$out/raise.patch"
+            { echo "Made by \`cargo xtask raise-gate-pin\` in $RUN_URL."; echo; cat "$out/notes.md"; } > "$out/body.md"
+            gate=$(grep -v '^#' ci/gate.pin | head -n 1 | cut -d ' ' -f 1)
+            echo "title=ci/gate.pin names octoflow-gate $gate; version $(ci/release-version.sh)" >> "$GITHUB_OUTPUT"
+            echo changed=true >> "$GITHUB_OUTPUT"
           fi
 
-      - if: steps.others.outputs.skip != 'true' && steps.raise.outputs.changed != 'true'
-        env:
+      - if: steps.raise.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: raise
+          path: |
+            ${{ runner.temp }}/raise/raise.patch
+            ${{ runner.temp }}/raise/body.md
+          retention-days: 1
+
+  publish:
+    needs: raise
+    if: needs.raise.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: {}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.raise.outputs.main }}
+          persist-credentials: false
+
+      - if: needs.raise.outputs.changed == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: raise
+          path: ${{ runner.temp }}/raise
+
+      - env:
           GH_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          CHANGED: ${{ needs.raise.outputs.changed }}
+          TITLE: ${{ needs.raise.outputs.title }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          push_url="https://x-access-token:$GH_TOKEN@github.com/$GH_REPO.git"
+          pr=$(gh pr list --head "$BRANCH" --state open --json number,isCrossRepository |
+            jq -r '[.[] | select(.isCrossRepository | not)][0].number // empty')
+          # The branch as it is now, when there is one; the repository is public, so reading it takes no token.
+          branch=
+          if git fetch --quiet --depth 1 origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"; then
+            branch=refs/remotes/origin/$BRANCH
+          fi
+          pin() { git show "$1:ci/gate.pin" | grep -v '^#' | head -n 1; }
+
+          if [ "$CHANGED" != true ]; then
+            if [ -n "$pr" ] && [ -n "$branch" ] && [ "$(pin "$branch")" = "$(pin HEAD)" ]; then
+              gh pr close "$pr" --delete-branch --comment "main's ci/gate.pin is this pull request's now ($RUN_URL)."
+            fi
+            exit 0
+          fi
+
+          git apply --index "$RUNNER_TEMP/raise/raise.patch"
+          git -c core.hooksPath=/dev/null -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -q -m "$TITLE (raise-gate-pin.yml)"
+          if [ -n "$branch" ] && [ "$(git rev-parse "$branch^{tree}")" = "$(git rev-parse "HEAD^{tree}")" ]; then
+            echo "$BRANCH already holds this raise"
+          elif [ -n "$branch" ] && [ -n "$(git diff --name-only "$branch" HEAD -- .github/workflows)" ]; then
+            # Moving the branch would change workflow files, which GitHub refuses to a token without the Workflows
+            # permission; a new branch at the raise changes none.
+            if [ -n "$pr" ]; then
+              gh pr close "$pr" --comment "Replaced: main changed a workflow since this raise ($RUN_URL)."
+              pr=
+            fi
+            git push --quiet "$push_url" --delete "$BRANCH"
+            git push --quiet "$push_url" "HEAD:refs/heads/$BRANCH"
+          else
+            git push --quiet --force "$push_url" "HEAD:refs/heads/$BRANCH"
+          fi
           if [ -n "$pr" ]; then
-            gh pr close "$pr" --delete-branch --comment "main already names the release this raised to ($RUN_URL)."
+            gh pr edit "$pr" --title "$TITLE" --body-file "$RUNNER_TEMP/raise/body.md"
+          else
+            gh pr create --base main --head "$BRANCH" --title "$TITLE" --body-file "$RUNNER_TEMP/raise/body.md"
           fi
