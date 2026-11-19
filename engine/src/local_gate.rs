@@ -5,14 +5,13 @@
 //! SSH connection that drops. The job judges a checkout of the snapshot, so the Builder's
 //! untracked files are judged and what the gate and the tests write never reaches the run's worktree.
 //!
-//! The release is the one the run's base pins in ci/gate.pin, else the BUILT_IN_PIN of the engine that started the run's
-//! first quality round (RunState::built_in_gate_pin). Its tarball is downloaded once per
-//! pin into the host's cache, `${XDG_CACHE_HOME:-~/.cache}/octoflow/gate/`, and checked against the pin's sha256
-//! each time it is unpacked, fresh, into the job's directory. It is the release's `gate`, a program for Linux x86_64,
-//! which octoflow-gate has shipped since 0.7.0 (FIRST_WITH_GATE): a base that pins an earlier release cannot be
-//! judged. The gate judges by the base's gate.toml and pyproject.toml, never the change's, so a change cannot loosen
-//! how it is itself judged. Every step runs as a command on the host, so
-//! a project on another machine is judged there, as its git steps are.
+//! The release is the one the run's base pins in ci/gate.pin, else the BUILT_IN_PIN of the engine that started the
+//! run's first quality round (RunState::built_in_gate_pin). Its tarball is downloaded once per pin into the host's
+//! cache, `${XDG_CACHE_HOME:-~/.cache}/octoflow/gate/`, and checked against the pin's sha256 each time it is unpacked,
+//! fresh, into the job's directory. It is the release's `gate`, a program for Linux x86_64, which octoflow-gate has
+//! shipped since 0.7.0 (FIRST_WITH_GATE): a base that pins an earlier release cannot be judged. The gate judges by the
+//! base's gate.toml and pyproject.toml, never the change's, so a change cannot loosen how it is itself judged. Every
+//! step runs as a command on the host, so a project on another machine is judged there, as its git steps are.
 
 use crate::error::OrchestratorError;
 use crate::host::{last_lines, shell_path, Host, DEFAULT_TIMEOUT};
@@ -191,9 +190,9 @@ pub fn preflight(host: &dyn Host) -> Result<(), OrchestratorError> {
 /// built_in_pin, a `<version> <sha256>` line as a pin holds, names the release for a base without ci/gate.pin: the
 /// run's RunState::built_in_gate_pin.
 ///
-/// Errors: base's ci/gate.pin, or built_in_pin where base has none, has no `<version> <sha256>` line, or names a release
-/// before FIRST_WITH_GATE; git, a command or a file fails, as git does when a job's tree/ was deleted while still
-/// registered as a worktree, which only `git worktree remove` or `prune` clears.
+/// Errors: base's ci/gate.pin, or built_in_pin where base has none, has no `<version> <sha256>` line, or names a
+/// release before FIRST_WITH_GATE; git, a command or a file fails, as git does when a job's tree/ was deleted while
+/// still registered as a worktree, which only `git worktree remove` or `prune` clears.
 pub fn start(
     host: &dyn Host,
     cwd: &str,
@@ -365,11 +364,12 @@ const SETTINGS_PATH: &str = "gate.toml";
 /// `POST /setup/gate` ask: at the top level of the checkout cwd is in, write a starter gate.toml whose [[test]]
 /// commands are guessed from the project's kind (starter_settings) and, with pin, a version of octoflow-gate,
 /// ci/gate.pin holding the project at that release (pin_text); each only where nothing is at its path yet, a file
-/// already there being kept, even one made while set_up runs. Without a pin the project follows the release built into
-/// the octoflow that first judges each run (BUILT_IN_PIN, RunState::built_in_gate_pin). Nothing is committed: a run's gate reads both from the run's base commit,
-/// so they count once committed. cwd may start with ~, host's home. Returns gate.toml's SetUpFile, then the pin's when
-/// asked for. Two commands on host, so two round trips over SSH, and a third, a curl of the release's `.sha256` asset,
-/// for a pin other than the built-in release, whose sha256 this engine knows, unless a ci/gate.pin is there already.
+/// already there being kept, even one made while set_up runs. Without a pin each run is judged by the release built
+/// into the octoflow that started its first quality round (BUILT_IN_PIN, RunState::built_in_gate_pin). Nothing is
+/// committed: a run's gate reads both from the run's base commit, so they count once committed. cwd may start with ~,
+/// host's home. Returns gate.toml's SetUpFile, then the pin's when asked for. Two commands on host, so two round trips
+/// over SSH, and a third, a curl of the release's `.sha256` asset, for a pin other than the built-in release, whose
+/// sha256 this engine knows, unless a ci/gate.pin is there already.
 ///
 /// Errors: pin is no version a pin can name, or one before FIRST_WITH_GATE (both before host is asked anything); cwd
 /// is no directory on host, or in no git checkout; the release's `.sha256` asset cannot be fetched or holds no
@@ -453,8 +453,8 @@ fn release_sha256(host: &dyn Host, version: &str) -> Result<String, Orchestrator
 /// Which octoflow-gate release judges the runs of a project, as project_release finds it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProjectRelease {
-    /// It has no ci/gate.pin, so each run is judged by the release built into the octoflow that first judges it
-    /// (BUILT_IN_PIN, RunState::built_in_gate_pin).
+    /// It has no ci/gate.pin, so each run is judged by the release built into the octoflow that started its first
+    /// quality round (BUILT_IN_PIN, RunState::built_in_gate_pin).
     BuiltIn,
     /// Its ci/gate.pin names this version, ordered against the built-in release's as release_order orders them.
     Pinned(String, Option<std::cmp::Ordering>),
@@ -547,9 +547,9 @@ fn starter_settings(present: &[&str], pyproject: Option<&str>) -> String {
         "# octoflow-gate's settings for judging this project (docs/quality-gate.md, \"The gate's settings\", in\n\
          # https://github.com/DavidSiegl/octoflow-gate): written by `octoflow doctor --setup-gate` or the desktop\n\
          # app's \"Set up the quality gate\". A run with --quality-gate local reads this file from the run's base commit,\n\
-         # so an edit counts once it is committed. The run is judged by the octoflow-gate release built into the\n\
-         # octoflow that runs it, unless ci/gate.pin holds the project at one (`octoflow doctor --setup-gate\n\
-         # --pin-gate <version>`).\n\
+         # so an edit counts once it is committed. A run is judged by the octoflow-gate release built into the\n\
+         # octoflow that started its first quality round, unless ci/gate.pin holds the project at one\n\
+         # (`octoflow doctor --setup-gate --pin-gate <version>`).\n\
          #\n\
          # Each [[test]] runs at the top level, as an argv: `name`, `command`, and the reports it writes, `junit` and\n\
          # `coverage`, paths from the top level. A command without `junit` is judged by its exit status alone: one that\n\
