@@ -33,7 +33,7 @@ use crate::Error;
 /// The repository octoflow-gate releases are published from, as gh names it.
 const GATE_REPO: &str = "DavidSiegl/octoflow-gate";
 /// The first release that ships `gate`, which the Jenkinsfile's Gate stage and the engine's local gate run; the
-/// engine's FIRST_WITH_GATE, which the tests hold it to.
+/// engine's FIRST_WITH_GATE, as tests.rs's the_first_release_with_gate_is_the_engine_s checks.
 const FIRST_WITH_GATE: Version = Version(0, 7, 0);
 
 /// The files of a raise, relative to the checkout's top level.
@@ -280,8 +280,9 @@ fn release_sha256(version: Version) -> Result<String, Error> {
     Ok(sha.to_owned())
 }
 
-/// Where version's release tarball is downloaded from: the address the engine's RELEASE_URL gives, which the tests
-/// hold it to.
+/// The address of version's release tarball, which the engine's RELEASE_URL gives too (tests.rs's
+/// a_release_is_downloaded_from_where_the_engine_downloads_it checks that); the raise reads only the `.sha256` asset
+/// next to it. ci/fetch-gate.sh, which downloads the tarball, keeps its own copy of the address, which no test checks.
 fn release_url(version: Version) -> String {
     format!("https://github.com/{GATE_REPO}/releases/download/v{version}/octoflow-gate-{version}.tar.gz")
 }
@@ -331,8 +332,10 @@ fn replace_golden(dir: &Path, golden: &[(String, Vec<u8>)]) -> Result<(), Error>
     Ok(())
 }
 
-/// The version and sha256 of pin's first line that is not a comment, as ci/fetch-gate.sh and the engine's parse_pin
-/// read it (the tests hold the two to the same reading).
+/// The version and sha256 of pin's first line that is not a comment. For a well-formed pin this is the engine's
+/// parse_pin's reading, as tests.rs's a_pin_reads_as_the_engine_reads_it checks; on a malformed one they differ:
+/// pin_of takes a `v` prefix and any text as the sha, which parse_pin and ci/fetch-gate.sh refuse, and refuses a
+/// pre-release, which parse_pin takes.
 fn pin_of(pin: &str) -> Option<(Version, &str)> {
     let (version, sha) = pin.lines().find(|l| !l.starts_with('#'))?.split_once(' ')?;
     Some((Version::parse(version)?, sha))
