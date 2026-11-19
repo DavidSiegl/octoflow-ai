@@ -513,10 +513,16 @@ impl RunState {
         run_key(&self.run_id)
     }
 
-    /// Whether close recorded that it closed the run: closed is set and not empty. An empty closed, which close never
-    /// writes, is not closed, so every command that asks (resume, list's resume hint, drain, close, forget) asks this.
+    /// What close recorded when it closed the run (closed), or None when the run is not closed: closed is unset or
+    /// empty. An empty closed, which close never writes, is not closed; every reader that decides on closed asks this
+    /// or is_closed rather than the field.
+    pub fn closed_line(&self) -> Option<&str> {
+        self.closed.as_deref().filter(|c| !c.is_empty())
+    }
+
+    /// Whether the run is closed, as closed_line says.
     pub fn is_closed(&self) -> bool {
-        self.closed.as_deref().is_some_and(|c| !c.is_empty())
+        self.closed_line().is_some()
     }
 
     /// The run directory, in the project's checkout.

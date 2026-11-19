@@ -86,8 +86,8 @@ type Preview<'p> = (&'p str, &'p [String]);
 
 /// What close does to one run, decided just before it is done (decide), so that a dry run says what closing would do.
 enum Decision<'r> {
-    /// The run is closed already; its state, whose closed says how.
-    AlreadyClosed(&'r RunState),
+    /// The run is closed already: its id, and what close recorded then (RunState::closed_line).
+    AlreadyClosed { run_id: &'r str, closed: &'r str },
     /// The run must not be closed now, and why, naming it: its state cannot be read (SavedRun::problem), or it is still
     /// running or done but still ending (RunState::health, as a done run still ending may be deleting its refs itself,
     /// Workflow::clean_up_locks).
@@ -173,10 +173,9 @@ pub fn close_command(
 pub fn close_run(world: &Closer, cwd: &str, run_ref: &str, dry_run: bool) -> Result<String, OrchestratorError> {
     let runs = world.host.run_states(cwd)?;
     match decide(world, cwd, find_run(&runs, run_ref, cwd)?)? {
-        Decision::AlreadyClosed(state) => {
-            let closed = state.closed.clone().unwrap_or_default();
-            world.say(&format!("run {} is already closed: {closed}", state.run_id));
-            Ok(closed)
+        Decision::AlreadyClosed { run_id, closed } => {
+            world.say(&format!("run {run_id} is already closed: {closed}"));
+            Ok(closed.to_string())
         }
         Decision::Refused(e) => Err(e),
         Decision::Close(plan) => plan.close(world, cwd, dry_run),
@@ -253,7 +252,7 @@ pub fn close_all(world: &Closer, cwd: &str, sweep: Sweep) -> Result<Vec<RunClose
 /// What run's state.json, as close_all first read it, records as its closed; None when it records none or cannot be
 /// read.
 fn closed_as_read(run: &SavedRun) -> Option<String> {
-    run.state().ok().filter(|state| state.is_closed()).and_then(|state| state.closed.clone())
+    run.state().ok().and_then(|state| state.closed_line().map(String::from))
 }
 
 /// Read the run of the project at cwd whose id is run_id again, and close it as close_all says, or with dry_run say
@@ -277,7 +276,7 @@ fn sweep_run(
         }));
     };
     Ok(match decide(world, cwd, &run)? {
-        Decision::AlreadyClosed(state) => Outcome::AlreadyClosed(state.closed.clone().unwrap_or_default()),
+        Decision::AlreadyClosed { closed, .. } => Outcome::AlreadyClosed(closed.to_string()),
         Decision::Refused(why) => Outcome::Skipped(why.to_string()),
         Decision::Close(plan) => {
             if previewed.is_some_and(|(done, discarded)| plan.preview() != done || plan.discarded() != discarded) {
@@ -302,8 +301,8 @@ fn decide<'r>(world: &Closer, cwd: &str, run: &'r SavedRun) -> Result<Decision<'
         Ok(state) => state,
         Err(e) => return Ok(Decision::Refused(e)),
     };
-    if state.is_closed() {
-        return Ok(Decision::AlreadyClosed(state));
+    if let Some(closed) = state.closed_line() {
+        return Ok(Decision::AlreadyClosed { run_id: &state.run_id, closed });
     }
     let health = run.health(world.local_host, world.pid_alive);
     if let Some((RUNNING, why)) = &health {
