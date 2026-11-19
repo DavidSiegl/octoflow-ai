@@ -165,7 +165,7 @@ pub fn resumable_state(
     let run = find_run(runs, &args.run_ref, cwd)?;
     let mut state = run.state()?.clone();
     // Not even with --force: close may have deleted its worktree and branch.
-    if state.closed.is_some() {
+    if state.is_closed() {
         return Err(OrchestratorError(format!("run {} was closed; start a new run", state.run_id)));
     }
     let pipeline = state.pipeline()?;

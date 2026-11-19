@@ -487,7 +487,7 @@ fn unfinished_run(
         return (format!("is not under {}/{RUNS_DIR}", prs.cwd), start_over);
     };
     let s = run.shown();
-    if let Some(closed) = s.closed.as_deref().filter(|c| !c.is_empty()) {
+    if let Some(closed) = s.closed_line() {
         return (format!("was closed ({closed})"), start_over);
     }
     let world = prs.world;
