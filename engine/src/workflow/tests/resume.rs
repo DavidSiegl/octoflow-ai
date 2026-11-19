@@ -197,7 +197,7 @@ fn a_new_agent_stopped_in_its_startup_dialog_is_waited_out_then_prompted() {
     let mut wf = f.workflow(f.as_saved());
     assert_eq!(wf.run(), verdict(APPROVE));
     assert_eq!(order.borrow()[..2], ["startup", "prompt"], "the prompt is not typed into the dialog");
-    assert!(f.told.lines().contains(&"[spec] needs your answer before it starts (pane w1:p1)".into()));
+    assert!(f.told.lines().contains(&"[spec] needs your answer (pane w1:p1)".into()));
     assert!(!names(&f, "start").contains(&"spec-a1b2c3".to_string()), "the live agent is not started again");
     assert_eq!(wf.state().agents.get("spec").unwrap().unprompted, None);
 }
@@ -299,9 +299,10 @@ fn a_marked_agent_found_working_took_its_prompt_and_is_only_waited_on() {
 }
 
 #[test]
-fn a_marked_agent_whose_file_is_written_before_its_prompt_is_not_waited_out_in_its_next_turn() {
+fn a_marked_agent_blocked_after_its_file_was_written_is_not_said_to_be_starting() {
     // The orchestrator stopped after relaunching the Builder, before the prompt went out; the human had it write
-    // build-2.md in its pane. In round 3 it is blocked on a question of the turn's, not on a startup dialog.
+    // build-2.md in its pane. In round 3 it is blocked, which may be on what the human typed: the human is asked, with
+    // no claim that it is starting, and it is prompted once it is answered.
     let state = unprompted(saved_run("build", 2, FULL), "build", AgentStart::Resumed);
     let f = Fixture::resume(
         Rc::new(FakeHost::default()),
@@ -317,7 +318,8 @@ fn a_marked_agent_whose_file_is_written_before_its_prompt_is_not_waited_out_in_i
     f.herdr.state().statuses.insert("build-a1b2c3".into(), "blocked".into());
     let mut wf = f.workflow(f.as_saved());
     assert_eq!(wf.run(), verdict(APPROVE));
-    assert!(!f.told.lines().iter().any(|l| l.contains("needs your answer")), "{:?}", f.told.lines());
+    assert!(!f.told.lines().iter().any(|l| l.contains("before it starts")), "{:?}", f.told.lines());
+    assert!(f.told.lines().iter().any(|l| l.starts_with("[build] needs your answer (")), "{:?}", f.told.lines());
     assert_eq!(prompts_to(&f, "build-a1b2c3"), 1);
     assert_eq!(wf.state().agents.get("build").unwrap().unprompted, None);
 }

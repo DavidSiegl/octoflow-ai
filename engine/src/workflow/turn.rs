@@ -156,8 +156,6 @@ impl Workflow<'_> {
         // First, because the role may have written it while no orchestrator was watching.
         if let Some(out) = self.host.read(path)? {
             self.human.log(&format!("[{role}] {file} is already written"));
-            // Its agent wrote it, so it is past any startup dialog, prompted or not (a human typing in its pane).
-            self.clear_unprompted(role);
             self.end_turn(role, path)?;
             return Ok(out);
         }
@@ -612,9 +610,15 @@ impl Workflow<'_> {
         let mut how = known.unprompted.map_or(How::Alive, How::Started);
         if known.unprompted.is_some() {
             match found.as_ref().map(|r| r.status.as_str()) {
-                // A startup dialog, or a question about a prompt taken but not recorded; both need the human.
+                // A startup dialog, a question about a prompt taken but not recorded, or one about what a human
+                // typed in its pane; all need the human, and the alert cannot say which.
                 Some("blocked") => {
-                    self.wait_for_startup(role, &known.name)?;
+                    self.ask_human(role, "needs your answer");
+                    self.human.log(&format!(
+                        "[{role}] it may be at a startup dialog, or asking about what it was last given; \
+                         answer in the pane, and the run goes on"
+                    ));
+                    self.wait_for_answer(&known.name)?;
                     found = self.herdr.agent(&known.name)?;
                 }
                 Some("working") => {
@@ -737,6 +741,12 @@ impl Workflow<'_> {
             "[{role}] a harness may ask something before it starts, such as Claude Code whether to trust a folder it \
              has not run in; answer in the pane, and the run goes on"
         ));
+        self.wait_for_answer(name)
+    }
+
+    /// Wait, with no deadline, until the agent named name is idle or done, or has exited, as after the human answered
+    /// what it asked or refused it; the heartbeat goes on meanwhile.
+    fn wait_for_answer(&mut self, name: &str) -> Result<(), StartFailure> {
         loop {
             match self.herdr.wait(name, Some(HEARTBEAT_SECONDS * 1000), &["idle", "done"]) {
                 Ok(_) => return Ok(()),
