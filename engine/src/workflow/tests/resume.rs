@@ -195,6 +195,33 @@ fn a_built_in_workflow_resumes_on_the_definition_saved_with_the_run_not_on_this_
 }
 
 #[test]
+fn a_built_in_run_started_here_resumes_on_the_definition_it_saved_once_the_built_in_changed() {
+    // An engine starts a run of the built-in default workflow, which stops in round 1 with changes requested.
+    let f = Fixture::new(vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)])]);
+    f.play("review", vec![then_interrupted(&f.interrupt, review_turn(1, CHANGES_REQUESTED))]);
+    assert_eq!(f.workflow(RunSettings::default()).run(), Err(Stopped::Interrupted));
+    // A release whose default workflow asks the Builder again in other words resumes it: the saved definition is
+    // that engine's built-in, edited here as the resuming engine's built-in differs from it.
+    let mut saved = f.saved();
+    let definition = saved.get_mut("workflow_definition").expect("a built-in run saves its definition");
+    let steps = definition["steps"].as_array_mut().unwrap();
+    let build = steps.iter_mut().find(|step| step["id"] == "build").unwrap();
+    build["again"] = Value::from("Mend the findings in {findings}; report to {build_path}.");
+    let seen = seen();
+    let resumed = Fixture::resume(
+        Rc::clone(&f.host),
+        RunState::from_saved(&saved).unwrap(),
+        build_and_approve(2, &seen),
+        &[],
+        &[],
+    );
+
+    resumed.workflow(resumed.as_saved()).run().unwrap();
+
+    assert!(seen.borrow()[0].starts_with("Mend the findings in "), "{}", seen.borrow()[0]);
+}
+
+#[test]
 fn a_built_in_workflow_saved_without_its_definition_resumes_on_this_engine_s_built_in_and_saves_it() {
     let mut state = prompted(saved_run("build", 2, FULL), "review-1.md");
     state.workflow_definition = None;
@@ -584,6 +611,16 @@ fn an_ending_writes_the_files_before_it_releases_the_run() {
     let release = last(&path(&f, "state.json"));
     assert!(last(&path(&f, SUMMARY_FILE)) < release && last(&path(&f, METRICS_FILE)) < release, "{writes:?}");
     assert_eq!(f.saved().get("owner"), Some(&Value::Null));
+}
+
+#[test]
+fn a_done_run_saved_without_its_definition_ends_without_one() {
+    // Its record keeps what it ran with; this engine's built-in may have other steps.
+    let mut state = stopped_after_saving_done();
+    state.workflow_definition = None;
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![], &[], &[]);
+    assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
+    assert_eq!(f.saved().get("workflow_definition").filter(|d| !d.is_null()), None);
 }
 
 #[test]

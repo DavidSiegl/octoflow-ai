@@ -53,6 +53,8 @@ fn the_built_in_workflows() {
     for name in WORKFLOWS {
         let p = built_in_workflow(name);
         assert_eq!(p.name(), name);
+        // Every run of it saves its definition and resumes on what that reads back to.
+        assert_eq!(run_pipeline(name, Some(&workflow_definition(&p)), &built_in()).unwrap(), p, "{name}");
     }
     assert_eq!(built_in_workflow("default"), *DEFAULT_WORKFLOW);
     assert_eq!(
@@ -75,6 +77,10 @@ fn a_built_in_workflow_is_worded_by_the_prompts_its_steps_take_from_the_default(
     let build = quick.step("build").unwrap();
     assert!(build.prompt.starts_with("You are the Builder, the first of two roles"), "{}", build.prompt);
     assert_eq!(build.again.as_deref(), Some(prompts.text(Prompt::FixPrompt)));
+    // A run worded by those prompts saves and resumes on the same steps.
+    for p in [&default, &quick] {
+        assert_eq!(&run_pipeline(p.name(), Some(&workflow_definition(p)), &prompts).unwrap(), p, "{}", p.name());
+    }
     // product-team words every text of the steps it uses itself, so no prompt file changes it.
     assert_eq!(find_workflow("product-team", &prompts).unwrap(), built_in_workflow("product-team"));
 }

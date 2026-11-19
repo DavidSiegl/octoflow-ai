@@ -216,8 +216,8 @@ directory or named like the run's own
 `state.json`, `summary.md`, `metrics.json`, `quality-*` and `locked-*` files, and two steps whose files can share a name in some round (`Step::name_forms`,
 `shared_name` and `collision_problem`, an exact check). `state.json` saves
 the workflow's name and its canonical definition (`workflow_definition`), built in or not, which a resume
-rebuilds the `Pipeline` from, so neither editing or deleting the file nor a release that changes the built-in of
-its name changes a started run. One saved without a definition, as earlier releases saved a built-in one, resumes
+rebuilds the `Pipeline` from, so that neither editing nor deleting the file, nor a release that changes the
+built-in of its name, changes a started run. One saved without a definition, as earlier releases saved a built-in one, resumes
 on the resuming engine's built-in of its name; one saved before workflows existed loads as `default`. Panes: the first role takes the root pane, the second
 splits right of it and each further one splits down from the one before; a workflow file's roles are in the
 order its steps first use them. The tests define three more workflows

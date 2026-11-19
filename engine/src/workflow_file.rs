@@ -708,7 +708,8 @@ fn expect_base(path: &str, base: Option<&str>) -> Result<(), WorkflowEditError> 
 pub fn run_pipeline(name: &str, definition: Option<&Value>, prompts: &Prompts) -> Result<Pipeline, OrchestratorError> {
     match definition {
         None => find_workflow(name, prompts),
-        // A saved definition is canonical, with no use for prompts to word.
+        // A saved definition is canonical, with no use for prompts to word. Its texts are checked against today's
+        // placeholders, a built-in workflow's too (crate::prompts' EARLIER_PLACEHOLDERS).
         Some(definition) => parse_workflow(name, &with_replaced_agents(definition), prompts).map_err(|e| {
             OrchestratorError(format!("the definition of workflow {name} saved with the run is invalid: {e}"))
         }),

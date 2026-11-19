@@ -264,7 +264,11 @@ impl<'a> Workflow<'a> {
             )));
         }
         state.workflow = pipeline.name().to_string();
-        state.workflow_definition = Some(workflow_definition(&pipeline));
+        // A done run's record keeps what it ran with (cli::start's resumable_state), which a resuming engine's
+        // built-in need not be.
+        if state.phase != DONE {
+            state.workflow_definition = Some(workflow_definition(&pipeline));
+        }
         state.max_rounds = settings.max_rounds;
         state.turn_timeout = settings.turn_timeout;
         let agents = settings.agents;
