@@ -53,6 +53,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   reads that only test_support needs it. Raised by cross-review 240 (F1); left out of todo/81 because any change to
   engine/Cargo.toml raises the version (`ci/version-raised.sh`). Closes with the comment naming engine/tests' own
   directories too, in the next change that raises the version (todo/82's branch carries it).
+- **Two processes forgetting one run at once can both forget it.** serve holds a per-project lock through each
+  forget sweep (`ProjectRuns::forgetting`, todo/74), but that lock is the process's own: a second app instance, each
+  with its own `serve` sidecar, or `octoflow forget` from a shell next to the app, can both read a closed run before
+  either deletes it, both answer "forgotten", and `Host::forget_run`'s check-then-append can archive two metrics lines.
+  Raised by cross-review 245 (F1). Closes with a lock file in the project's `.octoflow-ai/` that `forget_all` holds,
+  over SSH too.
 - **Nothing checks that a workflow's actions stay pinned by sha.** todo/65 pinned every `uses:` in
   `.github/workflows/` by commit sha, and `.github/dependabot.yml` keeps a sha a sha, but the Gate stage's actionlint
   accepts a tag: a later `uses: actions/cache@v4` in a job that holds `AUTOMERGE_TOKEN` passes every check and brings
