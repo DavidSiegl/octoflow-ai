@@ -786,7 +786,7 @@
       "quality_gate_disabled": false,
       "max_quality_rounds": 3,
       "quality_round": 1,
-      "built_in_gate_pin": null,
+      "built_in_gate_pin": "<built-in-pin>",
       "ci": {},
       "workflow": "default",
       "workflow_definition": null,

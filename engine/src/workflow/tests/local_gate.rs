@@ -196,6 +196,20 @@ fn a_pinless_run_saved_without_a_gate_pin_takes_this_engine_s_at_its_next_round(
 }
 
 #[test]
+fn a_pinless_run_saves_its_built_in_gate_pin_before_the_gate_can_judge() {
+    let script =
+        vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)]), ("review", vec![review_turn(1, APPROVE)])];
+    let f = gated_locally(script, vec![]);
+
+    assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
+
+    // An engine killed once the first job judged, before it read the verdict, leaves the pin for the resume.
+    let saved = f.gate.borrow().saved_at_end[0].clone().expect("the run was saved before its gate judged");
+    let saved: serde_json::Value = serde_json::from_str(&saved).unwrap();
+    assert_eq!(saved["built_in_gate_pin"].as_str(), Some(local_gate::BUILT_IN_PIN));
+}
+
+#[test]
 fn on_a_machine_that_fails_the_preflight_the_run_fails_before_the_interview() {
     let f = Fixture::new(vec![("spec", vec![])]).gated();
     f.host.state().run_command = Some(Box::new(|_, argv| {

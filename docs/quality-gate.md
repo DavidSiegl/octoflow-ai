@@ -476,7 +476,8 @@ secret is rewritten out of it.
 
 `state.json` holds `quality_job` (None for a run without the gate, as for one saved before it; `local` for the
 [local gate](#the-local-gate)),
-`max_quality_rounds` and `quality_round`; `ci` held the build in flight of a Jenkins round, before 0.72.0, and a
+`max_quality_rounds`, `quality_round` and, for a base without `ci/gate.pin`, `built_in_gate_pin`, the release that
+judges every round (step 2 above); `ci` held the build in flight of a Jenkins round, before 0.72.0, and a
 resume empties it. Phase `build` with q = 0 goes to `quality` q = 1; `quality` q goes to `review` on `OK` or at q ≥
 `max_quality_rounds`, else to the fix turn, `build` with the same q, then `quality` q + 1; `CHANGES_REQUESTED`
 goes to `build`, round n + 1, q = 0. `list` shows the phase `quality` and, in `build` and `quality`, the quality
