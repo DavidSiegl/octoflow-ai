@@ -200,6 +200,21 @@ fn an_agents_start_is_kept_until_it_is_prompted_and_reads_as_none_where_an_older
 }
 
 #[test]
+fn an_agent_past_its_startup_is_saved_so_and_reads_as_not_where_an_older_engine_saved_nothing() {
+    let past =
+        r#"{"build": {"name": "build-r1", "pane": "p2", "kind": "pi", "unprompted": "new", "past_startup": true}}"#;
+    let text = saved_with(&[("agents", Some(past))]);
+    let state = RunState::from_text(&text).unwrap();
+    assert!(state.agents.get("build").unwrap().past_startup);
+    assert_eq!(state.to_text(), text + "\n");
+    let older = r#"{"build": {"name": "build-r1", "pane": "p2", "kind": "pi", "unprompted": "new"}}"#;
+    let older = saved_with(&[("agents", Some(older))]);
+    let state = RunState::from_text(&older).unwrap();
+    assert!(!state.agents.get("build").unwrap().past_startup);
+    assert_eq!(state.to_text(), older + "\n", "false is not saved");
+}
+
+#[test]
 fn an_agent_or_turn_record_without_a_field_its_engine_writes_is_refused() {
     let agentless =
         [r#"{"build": {"name": "build-r1", "pane": "p2"}}"#, r#"{"build": {"name": "b", "kind": 1, "pane": ""}}"#];

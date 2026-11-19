@@ -156,6 +156,9 @@ impl Workflow<'_> {
         // First, because the role may have written it while no orchestrator was watching.
         if let Some(out) = self.host.read(path)? {
             self.human.log(&format!("[{role}] {file} is already written"));
+            if let Some(agent) = self.state.agents.get_mut(role).filter(|a| a.unprompted.is_some()) {
+                agent.past_startup = true;
+            }
             self.end_turn(role, path)?;
             return Ok(out);
         }
@@ -188,7 +191,7 @@ impl Workflow<'_> {
     /// Take the role's agent as prompted (AgentRecord::unprompted), unsaved; a role with no agent is left as it is.
     fn clear_unprompted(&mut self, role: &str) {
         if let Some(agent) = self.state.agents.get_mut(role) {
-            agent.unprompted = None;
+            (agent.unprompted, agent.past_startup) = (None, false);
         }
     }
 
@@ -206,7 +209,9 @@ impl Workflow<'_> {
                 let (name, pane) = (self.agent_name(role), self.pane(role));
                 self.herdr.focus(name)?;
                 let label = self.label(role);
-                let what = if how == How::Started(AgentStart::Restarted) {
+                // One past its startup (AgentRecord::past_startup) went on from its restart with the human already.
+                let past_startup = self.state.agents.get(role).is_some_and(|a| a.past_startup);
+                let what = if how == How::Started(AgentStart::Restarted) && !past_startup {
                     "restarted; the interview starts over"
                 } else {
                     "is waiting for you"
@@ -586,11 +591,9 @@ impl Workflow<'_> {
                 self.human.log(&format!("[{role}] session {session} is gone; starting a fresh one"));
             }
         }
-        // A role whose last agent never took a prompt lost no conversation with it.
-        let start = match known.map(|k| k.unprompted) {
-            None | Some(Some(AgentStart::New)) => AgentStart::New,
-            Some(_) => AgentStart::Restarted,
-        };
+        // A role whose last agent never took a prompt, nor got past its startup, lost no conversation with it.
+        let lost = known.is_some_and(|k| k.unprompted != Some(AgentStart::New) || k.past_startup);
+        let start = if lost { AgentStart::Restarted } else { AgentStart::New };
         self.start(role, &pane, start)?;
         Ok(How::Started(start))
     }
@@ -602,7 +605,7 @@ impl Workflow<'_> {
     /// stopped between `start`'s two saves, and an older one when the agent moved to a new session (a human's
     /// `/clear` in its pane, say) while no orchestrator watched it, `await_handoff` noting sessions only while one does.
     /// An agent marked as not yet prompted (AgentRecord::unprompted) is prompted as the start that launched it would
-    /// have, once the human has answered any startup dialog it is blocked on, unless it exits there; found working,
+    /// have, once the human has answered what it is blocked on (wait_out_block), unless it exits there; found working,
     /// it took a prompt the stopped orchestrator sent but did not record, and goes on as one found alive (waited on if
     /// prompted already names its file, else sent its prompt once more, the duplicate `written` accepts).
     fn alive(&mut self, role: &str, known: &AgentRecord) -> Outcome<Option<How>> {
@@ -610,15 +613,8 @@ impl Workflow<'_> {
         let mut how = known.unprompted.map_or(How::Alive, How::Started);
         if known.unprompted.is_some() {
             match found.as_ref().map(|r| r.status.as_str()) {
-                // A startup dialog, a question about a prompt taken but not recorded, or one about what a human
-                // typed in its pane; all need the human, and the alert cannot say which.
                 Some("blocked") => {
-                    self.ask_human(role, "needs your answer");
-                    self.human.log(&format!(
-                        "[{role}] it may be at a startup dialog, or asking about what it was last given; \
-                         answer in the pane, and the run goes on"
-                    ));
-                    self.wait_for_answer(&known.name)?;
+                    self.wait_out_block(role)?;
                     found = self.herdr.agent(&known.name)?;
                 }
                 Some("working") => {
@@ -723,32 +719,38 @@ impl Workflow<'_> {
         }
         let ready = self.herdr.start_agent(&name, pane, h.kind, &launch.args)?;
         if !ready {
-            self.wait_for_startup(role, &name)?;
+            self.wait_out_block(role)?;
         }
         let Some(record) = self.herdr.agent(&name)? else { return Ok(false) };
         self.note_session(role, &record)?;
         Ok(true)
     }
 
-    /// Wait for the startup dialog of the role's agent, named name, to be answered, having asked the human to; or for
-    /// the agent to exit, as it does when the human refuses what the dialog asks.
+    /// Ask the human to answer what the role's agent is blocked on, then wait until it is answered: the agent idle or
+    /// done, or exited, as when the human refuses what it asks. The role must have an agent.
     ///
-    /// The human decides how long that takes, as with the interview, so there is no deadline; the wait is cut into
-    /// steps so the heartbeat keeps the run from looking stale.
-    fn wait_for_startup(&mut self, role: &str, name: &str) -> Result<(), StartFailure> {
-        self.ask_human(role, "needs your answer before it starts");
-        self.human.log(&format!(
-            "[{role}] a harness may ask something before it starts, such as Claude Code whether to trust a folder it \
-             has not run in; answer in the pane, and the run goes on"
-        ));
-        self.wait_for_answer(name)
-    }
-
-    /// Wait, with no deadline, until the agent named name is idle or done, or has exited, as after the human answered
-    /// what it asked or refused it; the heartbeat goes on meanwhile.
-    fn wait_for_answer(&mut self, name: &str) -> Result<(), StartFailure> {
+    /// The alert names a startup dialog, unless the agent is past its startup (AgentRecord::past_startup): then it is a
+    /// question about what it was last given, by the run or in its pane. The human decides how long that takes, as
+    /// with the interview, so there is no deadline; the wait is cut into steps so the heartbeat keeps the run from
+    /// looking stale.
+    fn wait_out_block(&mut self, role: &str) -> Result<(), StartFailure> {
+        let agent = self.state.agents.get(role).ok_or_else(|| OrchestratorError(format!("no agent of {role}")))?;
+        let (name, past_startup) = (agent.name.clone(), agent.past_startup);
+        if past_startup {
+            self.ask_human(role, "needs your answer");
+            self.human.log(&format!(
+                "[{role}] it is asking about what it was last given, or what was typed in its pane; answer there, and \
+                 the run goes on"
+            ));
+        } else {
+            self.ask_human(role, "needs your answer before it starts");
+            self.human.log(&format!(
+                "[{role}] a harness may ask something before it starts, such as Claude Code whether to trust a folder \
+                 it has not run in; answer in the pane, and the run goes on"
+            ));
+        }
         loop {
-            match self.herdr.wait(name, Some(HEARTBEAT_SECONDS * 1000), &["idle", "done"]) {
+            match self.herdr.wait(&name, Some(HEARTBEAT_SECONDS * 1000), &["idle", "done"]) {
                 Ok(_) => return Ok(()),
                 Err(e) if e.code() == Some("agent_not_found") => return Ok(()),
                 Err(e) if e.code() == Some("timeout") => {}

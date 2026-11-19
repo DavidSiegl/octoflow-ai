@@ -197,7 +197,7 @@ fn a_new_agent_stopped_in_its_startup_dialog_is_waited_out_then_prompted() {
     let mut wf = f.workflow(f.as_saved());
     assert_eq!(wf.run(), verdict(APPROVE));
     assert_eq!(order.borrow()[..2], ["startup", "prompt"], "the prompt is not typed into the dialog");
-    assert!(f.told.lines().contains(&"[spec] needs your answer (pane w1:p1)".into()));
+    assert!(f.told.lines().contains(&"[spec] needs your answer before it starts (pane w1:p1)".into()));
     assert!(!names(&f, "start").contains(&"spec-a1b2c3".to_string()), "the live agent is not started again");
     assert_eq!(wf.state().agents.get("spec").unwrap().unprompted, None);
 }
@@ -322,6 +322,70 @@ fn a_marked_agent_blocked_after_its_file_was_written_is_not_said_to_be_starting(
     assert!(f.told.lines().iter().any(|l| l.starts_with("[build] needs your answer (")), "{:?}", f.told.lines());
     assert_eq!(prompts_to(&f, "build-a1b2c3"), 1);
     assert_eq!(wf.state().agents.get("build").unwrap().unprompted, None);
+}
+
+/// f's saved settings, its workflow quick with a human-paced Builder, whose fresh session is told of its earlier
+/// reports.
+fn interviewing_builder(f: &Fixture) -> RunSettings {
+    use crate::pipeline::{Pipeline, Step};
+    use crate::test_support::{again, roles};
+    let mut build = again(
+        Step::new("build", "build", "build-{n}.md", "Build {task} in {cwd}; report to {build_path}."),
+        "Fix {prev_review_path}; report to {build_path}.",
+    );
+    (build.edits, build.human_paced) = (true, true);
+    build.fresh_note = Some("Earlier reports: {earlier_build_paths}.".into());
+    let mut review = again(
+        Step::new("review", "review", "review-{n}.md", "Review {change} against {task}; write {review_path}."),
+        "Recheck {build_path}; write {review_path}.",
+    );
+    review.loop_to = Some("build".into());
+    let p = Pipeline::new("quick", roles(&[("build", "Builder"), ("review", "Reviewer")]), vec![build, review]);
+    RunSettings { pipeline: Some(p.expect("a valid workflow")), ..f.as_saved() }
+}
+
+/// A saved quick run in round 2 whose Builder, started as start says, was never prompted, yet wrote build-2.md: the
+/// human had it do so in its pane while no orchestrator ran. It loops back to round 3, recording the Builder's prompt in
+/// seen; alive names the roles herdr finds running.
+fn written_by_an_unprompted_builder(start: AgentStart, alive: &[&str], seen: &Rc<RefCell<Vec<String>>>) -> Fixture {
+    let state = unprompted(saved_run("build", 2, &["build", "review"]), "build", start);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state,
+        vec![
+            ("review", vec![review_turn(2, CHANGES_REQUESTED), review_turn(3, APPROVE)]),
+            ("build", vec![recording(build_turn(3), seen)]),
+        ],
+        alive,
+        &[],
+    );
+    f.put(&f.state.build_path(2), "built");
+    f
+}
+
+#[test]
+fn a_restarted_agent_past_its_startup_gets_the_fresh_prompt_and_is_not_said_to_have_restarted() {
+    let seen = seen();
+    let f = written_by_an_unprompted_builder(AgentStart::Restarted, &["build", "review"], &seen);
+    f.herdr.state().statuses.insert("build-a1b2c3".into(), "idle".into());
+    let mut wf = f.workflow(interviewing_builder(&f));
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert!(seen.borrow()[0].contains("Earlier reports:"), "{}", seen.borrow()[0]);
+    assert!(f.told.titles().contains(&"Builder is waiting for you".to_string()), "{:?}", f.told.titles());
+    assert!(!f.told.titles().iter().any(|t| t.contains("restarted")), "{:?}", f.told.titles());
+}
+
+#[test]
+fn a_new_agent_past_its_startup_that_exited_lost_a_conversation_and_is_restarted() {
+    let seen = seen();
+    let f = written_by_an_unprompted_builder(AgentStart::New, &["review"], &seen);
+    let mut wf = f.workflow(interviewing_builder(&f));
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert!(
+        f.told.titles().contains(&"Builder restarted; the interview starts over".to_string()),
+        "{:?}",
+        f.told.titles()
+    );
 }
 
 #[test]
