@@ -174,7 +174,8 @@ pub struct StepVerdict {
 }
 
 /// A role's agent as the run started it (RunState::agents). Saved as {"name", "pane", "kind"}, "session" once known,
-/// "unprompted" until the agent takes its first prompt, then the fields this engine does not know.
+/// "unprompted" until the agent takes its first prompt, "past_startup" while that holds and the agent is past its
+/// startup, then the fields this engine does not know.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentRecord {
     /// The agent's herdr name, `<role>-<key>`.
@@ -193,13 +194,19 @@ pub struct AgentRecord {
     /// that did not keep it reads as None.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unprompted: Option<AgentStart>,
+    /// True when the agent, still unprompted, is known to be past its startup: a file of its role was found written,
+    /// as by a human working with it in its pane. Such an agent has a conversation a relaunch would lose, and a
+    /// question it is blocked on is not a startup dialog. Always false once unprompted is None; saved only when true,
+    /// so a record saved by an engine that did not keep it reads as false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub past_startup: bool,
     /// The fields of the record this engine does not know, as read, written after its own.
     #[serde(flatten)]
     pub unknown: Object,
 }
 
-/// How a role's agent came to run (AgentRecord::unprompted), which decides what its first prompt is. Saved in
-/// lowercase.
+/// How a role's agent came to run (AgentRecord::unprompted), which decides what its first prompt from the run is.
+/// Saved in lowercase.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentStart {
@@ -258,10 +265,18 @@ pub struct TurnRecord {
 
 impl AgentRecord {
     /// The record of an agent as name, in pane, in harness: its session not yet known, and no mark of a prompt it is
-    /// owed (unprompted), which Workflow::start sets on the record of an agent it starts.
+    /// owed (unprompted, past_startup), which Workflow::start sets on the record of an agent it starts.
     pub fn new(name: &str, pane: &str, harness: &str) -> AgentRecord {
         let (name, pane, harness) = (name.into(), pane.into(), harness.into());
-        AgentRecord { name, pane, harness, session: None, unprompted: None, unknown: Object::new() }
+        AgentRecord {
+            name,
+            pane,
+            harness,
+            session: None,
+            unprompted: None,
+            past_startup: false,
+            unknown: Object::new(),
+        }
     }
 }
 
