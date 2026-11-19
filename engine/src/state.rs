@@ -52,8 +52,9 @@ pub struct RunState {
     pub branch: Option<String>,
     pub pr_url: Option<String>,
     /// The run's verdict: CHANGES_REQUESTED from a verdict step's request for changes on, APPROVE once the last
-    /// verdict step approved a round, which every earlier verdict step approved before it (Workflow::take_turn); so
-    /// while a round is between verdict steps it is still the verdict of the round before. For a workflow without a
+    /// verdict step approved a round (Workflow::take_turn); so while a round is between verdict steps it is still the
+    /// verdict of the round before. Every earlier verdict step approved that round too, except in round max_rounds,
+    /// where a rejection goes on to a later human-paced step (Workflow::after_rejection). For a workflow without a
     /// verdict step, FINISHED or QUALITY_GATE_FAILED once its last step is done. None before either.
     pub verdict: Option<String>,
     /// Each verdict a verdict step gave, in the order given, a round's in the order of its verdict steps. Empty for a
@@ -73,6 +74,9 @@ pub struct RunState {
     pub error: Option<String>,
     /// Per role that has started an agent, its last one, in the order the roles first started theirs.
     pub agents: IndexMap<String, AgentRecord>,
+    /// The last round the verdict steps' loops may take (RunSettings::max_rounds): the --max-rounds the run started
+    /// or last resumed with, raised by one for each request for changes a human-paced verdict step gave in the last
+    /// round, so it can be above the flag given. A resume's --max-rounds below the round the run is in is refused.
     pub max_rounds: u32,
     /// Seconds a turn may take.
     pub turn_timeout: u64,

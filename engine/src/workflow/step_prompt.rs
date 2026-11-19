@@ -132,16 +132,24 @@ impl RunView<'_> {
         }
     }
 
-    /// The verdict file whose request for changes sent the run into round n: the file of round n-1's last verdict
-    /// (RunState::verdicts), or for a run saved without those records the proof step's file of round n-1. "" before
-    /// round 2, and in a workflow without a verdict step.
+    /// The verdict files whose requests for changes sent the run into round n, joined by ", " in the order given:
+    /// those of round n-1's verdicts other than APPROVE (RunState::verdicts), which are two or more only when round
+    /// n-1 was the last, where a request goes on to a later human-paced verdict step (RunSettings::max_rounds); or
+    /// for a run saved without those records the proof step's file of round n-1. "" before round 2, and in a
+    /// workflow without a verdict step.
     fn findings(&self, n: u32) -> String {
         let s = self.state;
         if n < 2 {
             return String::new();
         }
-        let judge = s.verdicts.iter().rev().find(|v| v.round == n - 1).and_then(|v| self.pipeline.step(&v.step));
-        judge.or(self.pipeline.proof_step()).map_or(String::new(), |st| st.path(&s.dir(), n - 1, 0))
+        let judges: Vec<&Step> = s
+            .verdicts
+            .iter()
+            .filter(|v| v.round == n - 1 && v.verdict != APPROVE)
+            .filter_map(|v| self.pipeline.step(&v.step))
+            .collect();
+        let judges = if judges.is_empty() { self.pipeline.proof_step().into_iter().collect() } else { judges };
+        judges.iter().map(|st| st.path(&s.dir(), n - 1, 0)).collect::<Vec<_>>().join(", ")
     }
 
     /// The rounds before round n the verdict step judged, in order: those the run's records (RunState::verdicts) give

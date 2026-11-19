@@ -87,11 +87,12 @@ Then `walk` takes the steps in order, in `work_dir`:
   gate's `quality.md`, or the engine's when the gate could not judge the change or a secret leaked. `poll` asks
   the job until `QUALITY_TIMEOUT`, keeping the heartbeat going, and a Ctrl-C or a failure stops the job.
   A gate that does not pass goes back to the gated step, whose answer is `build-N-qQ.md` in the default.
-- The verdict step, the default's `review`, records `verdict`; `CHANGES_REQUESTED` goes back to its loop target
-  in the next round until `max_rounds`, resetting `quality_round`. A workflow without a verdict step records
-  `FINISHED` once its last step is done, which counts as `APPROVE` (`SUCCEEDED`) for the exit status and the
-  draft, while `verdict_line` and `commit_note` say that no agent reviewed the change. With the gate, a last
-  quality round that did not pass (`gate_passed`) records `QUALITY_GATE_FAILED` instead, which does not count.
+- The verdict step, the default's `review`, records `verdict`; `CHANGES_REQUESTED` goes back to its loop target in the
+  next round until `max_rounds` (`RunSettings::max_rounds` for a human-paced one), resetting `quality_round`. A workflow
+  without a verdict step records `FINISHED` once its last step is done, which counts as `APPROVE` (`SUCCEEDED`) for the
+  exit status and the draft, while `verdict_line` and `commit_note` say that no agent reviewed the change. With the
+  gate, a last quality round that did not pass (`gate_passed`) records `QUALITY_GATE_FAILED` instead, which does not
+  count.
 - `publish`, only with a pull request: `publish` commits, merges `origin`'s base branch in (recording
   `conflicts` and aborting when it conflicts), pushes and records `pr_url`, skipping any step already done.
   Then `leave_work_dir` checks the base branch out again, or in a worktree run removes the worktree, only
@@ -134,23 +135,25 @@ verdict step), `quality_gated` and `locks`. Prompts take `{task}`, `{cwd}`, `{n}
 `Pipeline` validates itself when constructed and refuses the definition, naming the problem, such as a duplicate id, a
 loop target that does not come earlier, two gated steps or an unknown placeholder.
 
-A workflow may have several verdict steps (`Pipeline::verdict_steps`), such as a Tech Lead's review back to the
-Builder and then a Product Manager's acceptance back to the Builder too. A round runs them in order and ends at the
-first that does not approve (`Workflow::take_turn`): before round `max_rounds` the run goes back to that step's loop
-target in the next round, and in round `max_rounds` it goes on past the last verdict step, so a later verdict step
-never judges a change an earlier one rejected. Every verdict step judges the change a round ends with, because
-`loop_problem` refuses a loop target after the first verdict step, as a loop must run every earlier verdict step
-again; a loop with no editing step, which would judge the same change again; and any step between the first verdict
-step and the last that is not one, whose edits the earlier ones would not judge and whose rounds an earlier verdict
-step's send-back would skip, untracked by `judged_rounds`.
+A workflow may have several verdict steps (`Pipeline::verdict_steps`), such as a Tech Lead's review back to the Builder
+and then a Product Manager's acceptance back to the Builder too. A round runs them in order and ends at the first that
+does not approve (`Workflow::after_rejection`): before round `max_rounds` the run goes back to that step's loop target
+in the next round, and in round `max_rounds` it goes on past the last verdict step, so a later verdict step never judges
+a change an earlier one rejected; but a human-paced verdict step is always asked: in round `max_rounds` the run goes on
+to it, and its request for changes there raises `max_rounds` by one. Every verdict step judges the change a round ends
+with, because `loop_problem` refuses a loop target after the first verdict step, as a loop must run every earlier
+verdict step again; a loop with no editing step, which would judge the same change again; and any step between the first
+verdict step and the last that is not one, whose edits the earlier ones would not judge and whose rounds an earlier
+verdict step's send-back would skip, untracked by `judged_rounds`.
 One round counter, and one `max_rounds`, serve them all, so `{n}`, `build-{n}.md` and the quality loop are as with
 one. `RunState.verdicts` records each verdict step's verdict per round (`RunState::record_verdict`), and
 `RunState.verdict`, the run's verdict, turns to `CHANGES_REQUESTED` at a request for changes and to `APPROVE` only
 when the last verdict step approves, so a state saved mid-round keeps the round before's. A verdict step's first turn
 gets its first prompt even in a later round, and its `{prev_X_path}` and `{earlier_X_paths}` name only the rounds it
-judged; `{findings}` names the verdict file that sent the run into the round, for the loop target's `again`. A state
-saved before there were those records has none and loads all the same, its one verdict step taken to have judged
-every round. The first verdict step is the proof step (`Pipeline::proof_step`), the only one whose proofs
+judged; `{findings}` names the verdict files that sent the run into the round, for the loop target's `again`: more
+than one when the last round's request went on to a human-paced step that requested changes too. A state saved
+before there were those records has none and loads all the same, its one verdict step taken to have judged every round.
+The first verdict step is the proof step (`Pipeline::proof_step`), the only one whose proofs
 `proof_command` runs. `list` names the step that sent a run back when several judged it (`run_outcome`), and
 `list --json` and serve's `/runs` carry the records as `verdicts`.
 
