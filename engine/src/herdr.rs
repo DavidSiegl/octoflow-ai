@@ -362,7 +362,9 @@ impl Launcher for ProcessHerdr {
     /// and the typed line is only `"$OCTOFLOW_ARG_0" "$OCTOFLOW_ARG_1" ...; echo '<marker>'`, which POSIX shells and
     /// fish read alike; it launches into no other shell (panes_shell). A word typed even quoted would reach the
     /// terminal's line editing first: a ^U erases what was typed before it, and a ^C or ^M ends the line, so a
-    /// client's text could run as a command of its own.
+    /// client's text could run as a command of its own. Forwarded to a machine, it looks at the shell over SSH on it,
+    /// and so fails, before any workspace opens, as ssh_target does too: the machine is not saved or is disabled, or
+    /// `machine list` answers what it cannot read.
     fn launch(&self, cwd: &str, label: &str, argv: &[String]) -> Result<Launched, HerdrError> {
         self.panes_shell()?;
         match self.launch_in_server(cwd, label, argv) {
@@ -721,7 +723,8 @@ impl ProcessHerdr {
 
     /// pane_shell for the herdr server this herdr's commands reach: PANE_SHELL_SCRIPT run in the environment they run
     /// in, which stands for that server's, here or, forwarded to a machine, over SSH on it. Errors: pane_shell's, as
-    /// Failed; and Failed when the script cannot be run, runs out of time, is interrupted or fails, naming why.
+    /// Failed; Failed when the script cannot be run, runs out of time, is interrupted or fails, naming why, as it does
+    /// when SSH cannot reach the machine; and, forwarded to a machine, ssh_target's.
     fn panes_shell(&self) -> Result<String, HerdrError> {
         let script = ["sh", "-c", PANE_SHELL_SCRIPT];
         let argv = match &self.machine {
@@ -739,7 +742,11 @@ impl ProcessHerdr {
         };
         let (stdout, stderr) = (String::from_utf8_lossy(&stdout), String::from_utf8_lossy(&stderr));
         if status != 0 {
-            return Err(failed(format!("the script exited with {status}: {}", stderr.trim())));
+            let said = match stderr.trim() {
+                "" => ", writing nothing to stderr".to_string(),
+                said => format!(": {said}"),
+            };
+            return Err(failed(format!("the script exited with {status}{said}")));
         }
         shell_of_panes(&line_ends_as_lf(&stdout)).map_err(HerdrError::Failed)
     }
@@ -774,7 +781,7 @@ fn herdr_error(status: i32, stdout: &str, stderr: &str) -> HerdrError {
 /// Herdr::export's `export NAME='value'`. The POSIX shells first, then fish.
 const PANE_SHELLS: [&str; 6] = ["sh", "bash", "zsh", "dash", "ksh", "fish"];
 
-/// The script pane_shell runs: it prints $SHELL, then the path of herdr's config.toml as herdr 0.9.1 finds it
+/// The script pane_shell and ProcessHerdr's Launcher::launch (panes_shell) run: it prints $SHELL, then the path of herdr's config.toml as herdr 0.9.1 finds it
 /// (HERDR_CONFIG_PATH, else ~/.config/herdr/config.toml), each on a line of its own, then the file's text when there is
 /// a file, failing when it cannot be read.
 pub(crate) const PANE_SHELL_SCRIPT: &str = r#"f=${HERDR_CONFIG_PATH:-$HOME/.config/herdr/config.toml}

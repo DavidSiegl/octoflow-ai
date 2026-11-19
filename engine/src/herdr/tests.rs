@@ -826,7 +826,18 @@ esac
     // The server's output goes under the state directory; one of the test's own, not the user's.
     let mut vars = environment(Some(&d.path()), &[("XDG_STATE_HOME", &d.join("state"))]);
     vars.retain(|(k, _)| !k.to_string_lossy().starts_with("HERDR_"));
+    panes_start_sh(&mut vars, &d);
     (d, vars)
+}
+
+/// Set vars so that launch's look at the panes' shell (panes_shell) finds /bin/sh, whatever the developer's $SHELL
+/// and herdr config: $SHELL is /bin/sh, and herdr's config.toml a path in d where there is none.
+fn panes_start_sh(vars: &mut Vec<(OsString, OsString)>, d: &TempDir) {
+    vars.retain(|(k, _)| k != "SHELL" && k != "HERDR_CONFIG_PATH");
+    vars.extend([
+        ("SHELL".into(), "/bin/sh".into()),
+        ("HERDR_CONFIG_PATH".into(), d.join("no-herdr-config.toml").into()),
+    ]);
 }
 
 /// The commands a herdr_with_servers in d was given, in order, as it wrote them.
@@ -915,7 +926,8 @@ esac
 "#;
     tool(&d.path(), "herdr", script);
     let state = d.join("state");
-    let vars = environment(Some(&d.path()), &[("XDG_STATE_HOME", &state)]);
+    let mut vars = environment(Some(&d.path()), &[("XDG_STATE_HOME", &state)]);
+    panes_start_sh(&mut vars, &d);
     let mut herdr = ProcessHerdr::in_environment(None, vars.into_iter(), &Interrupt::new());
     herdr.server_start = Poll { limit: Duration::from_millis(1000), every: Duration::from_millis(50) };
     let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
@@ -1072,6 +1084,13 @@ fn launch_opens_nothing_where_herdr_s_panes_start_a_shell_it_cannot_type_into() 
     let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
     let why = "telling the shell herdr's panes start: the script exited with 2: sh: HOME: parameter not set";
     assert!(e.contains(why), "{e}");
+    // One that fails without a word says so, rather than leaving the reason blank.
+    let herdr = ProcessHerdr::with_runner(None, |_, _| Ok((1, vec![], vec![])));
+    let e = herdr.launch("/proj", "l", &argv(&["true"])).unwrap_err().to_string();
+    assert!(
+        e.ends_with("telling the shell herdr's panes start: the script exited with 1, writing nothing to stderr"),
+        "{e}"
+    );
 }
 
 #[test]
