@@ -105,7 +105,7 @@ pub struct RunSettings {
     /// before round max_rounds sends the run back to its step's loop target in the next round. From round max_rounds
     /// on, a verdict step that is not human-paced sends the run on to the next human-paced verdict step, or past the
     /// last verdict step when there is none, whatever the verdict; a human-paced one's request for changes raises
-    /// max_rounds by one, as saved, and sends the run back as in an earlier round (Workflow::take_turn).
+    /// max_rounds by one, as saved, and sends the run back as in an earlier round (Workflow::after_rejection).
     pub max_rounds: u32,
     /// Seconds a turn of a step that is not human-paced may take.
     pub turn_timeout: u64,
@@ -917,11 +917,7 @@ impl<'a> Workflow<'a> {
     /// The step's turn in round n: the id of the step the run goes on after, the step's own or, for a verdict that
     /// ends the last round early, the last verdict step's; None when the run goes on elsewhere, saved already.
     ///
-    /// A round runs the verdict steps in order, and ends at the first that does not approve: in a round before
-    /// max_rounds back to its loop's target, in the next round, and in round max_rounds past the last verdict step.
-    /// So a later verdict step never judges a change an earlier one rejected, except that the human is always asked:
-    /// in round max_rounds the run goes on to the next human-paced verdict step instead, and that step's request for
-    /// changes takes one round more (RunSettings::max_rounds).
+    /// A round runs the verdict steps in order, and ends at the first that does not approve (after_rejection).
     fn take_turn(&mut self, step: &Step, n: u32) -> Outcome<Option<String>> {
         let pipeline = Rc::clone(&self.pipeline);
         let proves = pipeline.proves(step);
@@ -960,14 +956,31 @@ impl<'a> Workflow<'a> {
         if verdict == APPROVE {
             return Ok(Some(step.id.clone()));
         }
+        self.after_rejection(step, loop_to, n, last_verdict_step)
+    }
+
+    /// Where a verdict step's rejection in round n sends the run, as take_turn gives it: loop_to is the step's loop
+    /// target and last_verdict_step the pipeline's last verdict step's id.
+    ///
+    /// In a round before max_rounds the run goes back to loop_to, in the next round. In round max_rounds it goes on
+    /// past last_verdict_step (returned), so a later verdict step never judges a change an earlier one rejected,
+    /// except that the human is always asked: the run goes on to the next human-paced verdict step instead, and a
+    /// human-paced step's own rejection takes one round more, raising max_rounds (RunSettings::max_rounds). Errors:
+    /// loop_to names no step; goto's.
+    fn after_rejection(
+        &mut self,
+        step: &Step,
+        loop_to: &str,
+        n: u32,
+        last_verdict_step: Option<String>,
+    ) -> Outcome<Option<String>> {
+        let pipeline = Rc::clone(&self.pipeline);
         if n >= self.state.max_rounds && !step.human_paced {
-            // The last round ends here, but a later human-paced verdict step is still asked.
             let human = pipeline.verdict_steps().skip_while(|s| s.id != step.id).skip(1).find(|s| s.human_paced);
             let Some(human) = human else { return Ok(last_verdict_step) };
             self.goto(human, n)?;
             return Ok(None);
         }
-        // A human-paced step's request for changes is never overridden: in the last round it takes one round more.
         self.state.max_rounds = self.state.max_rounds.max(n + 1);
         self.state.quality_round = 0;
         let target = pipeline.step(loop_to).ok_or_else(|| OrchestratorError(format!("no step {loop_to}")))?;

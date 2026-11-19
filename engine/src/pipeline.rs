@@ -93,7 +93,7 @@ pub struct Step {
     /// Changes the working tree; the run's base commit and branch are fixed just before the first such step.
     pub edits: bool,
     /// Makes this a verdict step: its file starts with a VERDICT line, and CHANGES_REQUESTED goes back to the step
-    /// with this id in round n+1, until max_rounds (Workflow::take_turn).
+    /// with this id in round n+1, until max_rounds (Workflow::after_rejection).
     pub loop_to: Option<String>,
     /// With --quality-gate, each turn is followed by the quality loop, which sends a gate that does not pass back to
     /// this step with QUALITY_FIX_PROMPT, and each verdict step hears how it ended.

@@ -137,10 +137,10 @@ loop target that does not come earlier, two gated steps or an unknown placeholde
 
 A workflow may have several verdict steps (`Pipeline::verdict_steps`), such as a Tech Lead's review back to the Builder
 and then a Product Manager's acceptance back to the Builder too. A round runs them in order and ends at the first that
-does not approve (`Workflow::take_turn`): before round `max_rounds` the run goes back to that step's loop target in the
-next round, and in round `max_rounds` it goes on past the last verdict step, so a later verdict step never judges a
-change an earlier one rejected; but a human-paced verdict step is always asked: in round `max_rounds` the run goes on to
-it, and its request for changes there raises `max_rounds` by one. Every verdict step judges the change a round ends
+does not approve (`Workflow::after_rejection`): before round `max_rounds` the run goes back to that step's loop target
+in the next round, and in round `max_rounds` it goes on past the last verdict step, so a later verdict step never judges
+a change an earlier one rejected; but a human-paced verdict step is always asked: in round `max_rounds` the run goes on
+to it, and its request for changes there raises `max_rounds` by one. Every verdict step judges the change a round ends
 with, because `loop_problem` refuses a loop target after the first verdict step, as a loop must run every earlier
 verdict step again; a loop with no editing step, which would judge the same change again; and any step between the first
 verdict step and the last that is not one, whose edits the earlier ones would not judge and whose rounds an earlier
