@@ -132,6 +132,27 @@ fn a_finished_runs_file_written_later_than_a_poll_interval_is_still_sent() {
 }
 
 #[test]
+fn a_finished_runs_file_written_after_its_files_settled_is_sent_once_state_json_is_saved_again() {
+    let w = Watched::new();
+    let saved_at = |at: &str| ("heartbeat_at", Value::from(at));
+    let failed = |at: &str| [("phase", Value::from("done")), ("error", Value::from("the build failed")), saved_at(at)];
+    let settled = FINISHED_RUN_WRITES.as_secs() + 10;
+    w.save(settled, &failed("2026-10-24T12:00:00Z"));
+    let mut watch = RunWatch::new(&w.project);
+    watch.poll();
+    assert_eq!(watch.poll(), vec![]);
+    // summary.md lands after the files settled: nothing tells of it until the engine saves state.json again.
+    w.host.state().files.insert(format!("{}/summary.md", run_dir()), "failed".to_string());
+    w.save(settled + 30, &failed("2026-10-24T12:00:00Z"));
+    assert_eq!(watch.poll(), vec![]);
+    // The save comes while polls fail, so that the next one that reads finds state.json older than the last one did.
+    w.save(settled + 40, &failed("2026-10-24T12:01:40Z"));
+    let events = watch.poll();
+    assert_eq!(kinds(&events), ["files"]);
+    assert_eq!(events[0].payload.get("files").unwrap().to_string(), r#"[{"name":"summary.md","mtime":0}]"#);
+}
+
+#[test]
 fn a_run_of_this_host_whose_orchestrator_exited_is_stale() {
     static ASKED: AtomicI64 = AtomicI64::new(0);
     let w = Watched::new();

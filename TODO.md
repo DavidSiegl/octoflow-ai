@@ -42,6 +42,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **A resumed done run's late summary.md or metrics.json can miss the desktop app.** Raised by cross-review 238 (F3):
+  a done run stopped before its ending wrote them is finished by a resume that writes them without saving state.json
+  after (`Workflow::end_done_run`, `ending_left`'s `release: false`), so serve's event stream, which stopped listing
+  the run's files once they settled, lists them again only at the record's next change (`RunWatch::poll`). A failed
+  run's release saves again after its summary (todo/70); would close when this ending does the same.
 - **engine/Cargo.toml says only test_support needs tempfile.** The dev-dependency's comment reads "The tests'
   scratch directories (test_support::TempDir)", but todo/81 made engine/tests/program.rs (`Dir`) and
   engine/tests/signals.rs (`scratch_dir`) use `tempfile::Builder` directly, so a reader judging whether tempfile can go
