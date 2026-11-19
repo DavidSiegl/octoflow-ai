@@ -52,8 +52,9 @@ pub struct RunState {
     pub branch: Option<String>,
     pub pr_url: Option<String>,
     /// The run's verdict: CHANGES_REQUESTED from a verdict step's request for changes on, APPROVE once the last
-    /// verdict step approved a round, which every earlier verdict step approved before it (Workflow::take_turn); so
-    /// while a round is between verdict steps it is still the verdict of the round before. For a workflow without a
+    /// verdict step approved a round (Workflow::take_turn); so while a round is between verdict steps it is still the
+    /// verdict of the round before. Every earlier verdict step approved that round too, except in round max_rounds,
+    /// where a rejection goes on to a later human-paced step (Workflow::after_rejection). For a workflow without a
     /// verdict step, FINISHED or QUALITY_GATE_FAILED once its last step is done. None before either.
     pub verdict: Option<String>,
     /// Each verdict a verdict step gave, in the order given, a round's in the order of its verdict steps. Empty for a
