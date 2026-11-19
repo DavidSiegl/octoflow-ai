@@ -186,7 +186,7 @@ pub fn reached(host: &Arc<ServeHost>, console: &Arc<FakeConsole>) -> Reached {
         launch_dir: dir.clone(),
         dir,
         console: console.clone(),
-        workspaces: console.clone(),
+        places: console.clone(),
         launcher: console.clone(),
     }
 }

@@ -1,5 +1,6 @@
 //! The real run's clocks and human: SystemClocks and LocalHuman.
 
+use crate::herdr::ProcessHerdr;
 use std::time::{Duration, Instant};
 
 use super::*;
@@ -34,7 +35,7 @@ fn the_human_is_notified_through_the_local_herdr() {
     let args = d.join("args");
     tool(&d.path(), "herdr", &format!("#!/bin/sh\necho \"$@\" > '{args}'\necho '{{\"result\": {{}}}}'\n"));
     let herdr = ProcessHerdr::in_environment(None, environment(Some(&d.path()), &[]).into_iter(), &Interrupt::new());
-    let human = LocalHuman { herdr };
+    let human = LocalHuman::new(Box::new(herdr));
     human.notify("Run finished: APPROVE", "the task");
     assert_eq!(
         std::fs::read_to_string(&args).unwrap(),
@@ -44,5 +45,6 @@ fn the_human_is_notified_through_the_local_herdr() {
     tool(&d.path(), "herdr", "#!/bin/sh\nexit 3\n");
     human.notify("t", "b");
     human.log("a line");
-    assert!(format!("{:?}", LocalHuman::new(&Interrupt::new())).contains("machine: None"));
+    assert!(format!("{:?}", LocalHuman::new(Box::new(ProcessHerdr::new(None, &Interrupt::new()))))
+        .contains("machine: None"));
 }

@@ -208,7 +208,7 @@ impl Fixture {
     pub fn collaborators(&self) -> Collaborators<'_> {
         Collaborators {
             host: &*self.host as &dyn Host,
-            herdr: &*self.herdr,
+            agents: &*self.herdr,
             clocks: &*self.clock,
             human: &self.told,
             interrupt: &self.interrupt,

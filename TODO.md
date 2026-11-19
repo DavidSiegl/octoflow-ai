@@ -42,6 +42,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **Two CLI texts still say herdr's words behind the `Agents`/`RunPlaces` seam.** `Turn::wait_for_startup`
+  (`engine/src/workflow/turn.rs`) logs "answer in the pane", and `Plan::summary` (`engine/src/cli/close.rs`) records
+  "workspace closed" / "workspace already gone", whatever backend the run used. Both were kept so the herdr-only text
+  stays unchanged; a run on the ACP backend (`.scratch/herdr-gui-decoupling`, ticket 02) would get them wrong. Closes
+  when that backend lands and these take their wording from the backend (`Agents::whereabouts`, `RunPlaces::place`).
+
 - **A resumed done run's late summary.md or metrics.json can miss the desktop app.** Raised by cross-review 238 (F3):
   a done run stopped before its ending wrote them is finished by a resume that writes them without saving state.json
   after (`Workflow::end_done_run`, `ending_left`'s `release: false`), so serve's event stream, which stopped listing

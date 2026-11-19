@@ -20,7 +20,7 @@ use crate::workflow_file::{load_workflow_file, named_workflow};
 
 /// A new run's state from run's flags, and its workflow, for the project at cwd; with spec, run --spec's file, the run
 /// starts at the step after the contract step. Its prompts are the prompt files' as they are now (load_prompts), and
-/// its herdr server world's herdr's (Herdr::server).
+/// bound to world's agent backend (Agents::bind).
 ///
 /// Errors: as load_prompts; the workflow cannot be found or loaded, or with spec has no step to start at; a
 /// --role-model or --role-agent names a role the workflow lacks; no run id can be made.
@@ -48,7 +48,7 @@ pub fn new_state(
     };
     let mut state = RunState::new(&run_id, &task, cwd);
     state.machine = args.target.machine.clone();
-    state.herdr_server = world.with.herdr.server();
+    world.with.agents.bind(&mut state);
     state.phase = first.id.clone();
     state.workflow = pipeline.name().to_string();
     state.prompt_overrides = prompts.overrides();
@@ -103,8 +103,8 @@ pub(crate) fn new_run_id(wall: f64, zone: &jiff::tz::TimeZone) -> Result<String,
 }
 
 /// The state of the run args.run_ref names among cwd's runs and its workflow, as resumable_state finds them, with the
-/// quality gate turned on or off as args asks (turn_quality_gate_on and _off), and its herdr server world's herdr's
-/// (Herdr::server), where it starts its agents from now on; a done run's as resumable_state gives it. Changes nothing
+/// quality gate turned on or off as args asks (turn_quality_gate_on and _off), and bound to world's agent backend
+/// (Agents::bind), where it starts its agents from now on; a done run's as resumable_state gives it. Changes nothing
 /// on disk but the gate's job --no-quality-gate stops (turn_quality_gate_off), which stays stopped even when the resume
 /// fails later, before the run is saved; a resume after that judges the round again.
 ///
@@ -125,7 +125,7 @@ pub fn resumed_state(
     if state.phase == DONE {
         return Ok((state, pipeline));
     }
-    state.herdr_server = w.herdr.server();
+    w.agents.bind(&mut state);
     // A build kept in ci means a Jenkins job, even one named `local`, as a release before 0.63.0 took it.
     let jenkins = !state.ci.is_empty();
     if let Some(job) = state.quality_job.take_if(|job| !job.is_empty() && (job != LOCAL_GATE || jenkins)) {

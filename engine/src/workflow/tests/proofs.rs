@@ -782,7 +782,7 @@ fn proving_on(
     let (clock, told) = (FakeClock::default(), Told::default());
     let with = Collaborators {
         host,
-        herdr: &herdr,
+        agents: &herdr,
         clocks: &clock,
         human: &told,
         interrupt,

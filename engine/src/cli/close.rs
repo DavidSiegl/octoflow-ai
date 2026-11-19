@@ -1,23 +1,23 @@
 //! Cleaning up after a run nothing drives any more: the `close` command, for one run or every run of a project.
 
 use super::{record_in_state, Connected};
+use crate::agents::RunPlaces;
 use crate::constants::{EXIT_ERROR, RUNS_DIR};
 use crate::error::OrchestratorError;
-use crate::herdr::Workspaces;
 use crate::host::{git_status, Host};
 use crate::interrupt::Interrupt;
 use crate::runs::RUNNING;
 use crate::state::{find_run, refs_prefix, RunState, SavedRun};
 
-/// What close talks to: the project's host, its runs' herdr workspaces, this machine's processes, and where it says
+/// What close talks to: the project's host, its runs' agents' places, this machine's processes, and where it says
 /// what it does: the CLI's from its Connected (Closer::of), or any other caller's from what it reaches a project
 /// with.
 #[derive(Clone, Copy)]
 pub struct Closer<'a> {
     /// The machine the project is on: its runs' state, worktrees, branches and refs.
     pub host: &'a dyn Host,
-    /// Where each run's herdr workspace is told and closed, in the server the run saved.
-    pub workspaces: &'a dyn Workspaces,
+    /// Where each run's agents' place is told and closed, from what the run saved.
+    pub places: &'a dyn RunPlaces,
     /// Once raised, close_all starts no further run.
     pub interrupt: &'a Interrupt,
     /// Whether a process of a pid exists on this machine, for telling a run still running (RunState::health).
@@ -98,8 +98,9 @@ enum Decision<'r> {
 struct Plan<'r> {
     /// The run's state as read.
     state: &'r RunState,
-    /// The herdr workspace to close; None when the run never had one or herdr no longer has it.
-    workspace: Option<&'r str>,
+    /// The run's place to close, as a message names it (RunPlaces::place); None when the run never had one or it is
+    /// gone.
+    place: Option<String>,
     /// What becomes of the run's worktree.
     worktree: WorktreeFate<'r>,
     /// True when the run's local refs (crate::state::refs_prefix) are to be deleted: it locked files, so it has or had
@@ -155,19 +156,19 @@ pub fn close_command(
 }
 
 /// Clean up after the run of the project at cwd that run_ref names, by its id or key, on world's host and in its
-/// workspace's herdr server, record what was done as the run's closed in its state.json, so that resume refuses it,
+/// agents' place (RunPlaces), record what was done as the run's closed in its state.json, so that resume refuses it,
 /// and return that. Says each step through world. With dry_run, change nothing: say what would be discarded with the
 /// worktree and a line naming each thing closing would close, delete or keep (Plan::preview), and return that line.
 ///
-/// Every run loses its workspace and its local refs (crate::state::refs_prefix), which hold the files its steps locked
+/// Every run loses its agents' place and its local refs (crate::state::refs_prefix), which hold the files its steps locked
 /// and which nothing else deletes once it is closed. A failed or stale --worktree run also loses its worktree, changes
 /// and all (listed first), and its branch if that holds no commit beyond the run's base. A finished run's worktree is a
 /// --no-pr run's change, and an in-place run's checkout and branch are the human's to sort out, so both stay. Each step
 /// skips what is already gone, so a close that failed part way can be run again; closed is recorded only once every
 /// step has succeeded. A run already closed is left as it is, and its closed returned.
 ///
-/// Errors: no run or several match run_ref; the run is Decision::Refused; herdr or git cannot tell what is there; a
-/// step fails; or the state.json changed since it was read.
+/// Errors: no run or several match run_ref; the run is Decision::Refused; its agents' backend or git cannot tell what
+/// is there; a step fails; or the state.json changed since it was read.
 pub fn close_run(world: &Closer, cwd: &str, run_ref: &str, dry_run: bool) -> Result<String, OrchestratorError> {
     let runs = world.host.run_states(cwd)?;
     match decide(world, cwd, find_run(&runs, run_ref, cwd)?)? {
@@ -256,7 +257,7 @@ fn closed_as_read(run: &SavedRun) -> Option<String> {
 /// Read the run of the project at cwd whose id is run_id again, and close it as close_all says, or with dry_run say
 /// what closing it would do; a run whose state.json is gone is skipped, as nothing is left to close. With previewed,
 /// a run whose plan is no longer what the dry run said is skipped. A close that
-/// fails is Outcome::Failed. Errors: its state.json cannot be read, or herdr or git cannot tell what is there.
+/// fails is Outcome::Failed. Errors: its state.json cannot be read, or its agents' backend or git cannot tell what is there.
 fn sweep_run(
     world: &Closer,
     cwd: &str,
@@ -287,8 +288,8 @@ fn sweep_run(
     })
 }
 
-/// What closing run, of the project at cwd, would do now, as world's host and the run's herdr server find it; changes
-/// nothing. Errors: herdr or git cannot tell what is there.
+/// What closing run, of the project at cwd, would do now, as world's host and the run's agents' backend find it;
+/// changes nothing. Errors: the backend or git cannot tell what is there.
 fn decide<'r>(world: &Closer, cwd: &str, run: &'r SavedRun) -> Result<Decision<'r>, OrchestratorError> {
     let host = world.host;
     let state = match run.state() {
@@ -307,10 +308,7 @@ fn decide<'r>(world: &Closer, cwd: &str, run: &'r SavedRun) -> Result<Decision<'
     }
     // Stale and not done: its orchestrator died mid-run. A done run stale while ending finished its change.
     let failed = state.error.as_deref().is_some_and(|e| !e.is_empty()) || (health.is_some() && !state.done());
-    let workspace = match Some(state.workspace_id.as_str()).filter(|w| !w.is_empty()) {
-        Some(w) if world.workspaces.workspace_exists(w, state.herdr_server.as_ref())? => Some(w),
-        _ => None,
-    };
+    let place = world.places.place(state)?;
     let worktree = match state.worktree.as_deref().filter(|w| !w.is_empty()) {
         Some(path) if failed => {
             let changes = match host.is_worktree(cwd, path)? {
@@ -330,7 +328,7 @@ fn decide<'r>(world: &Closer, cwd: &str, run: &'r SavedRun) -> Result<Decision<'
             |e: OrchestratorError| OrchestratorError(format!("could not read the refs under {prefix}: {e}"));
         host.git_head(cwd)?.is_some() && !host.refs(cwd, &prefix).map_err(unreadable)?.is_empty()
     };
-    Ok(Decision::Close(Plan { state, workspace, worktree, refs }))
+    Ok(Decision::Close(Plan { state, place, worktree, refs }))
 }
 
 /// The branch in cwd of the failed run of state and what close does to it; None when it has none or it is gone.
@@ -358,7 +356,7 @@ impl<'a> Closer<'a> {
     pub fn of(world: &Connected<'a>) -> Closer<'a> {
         Closer {
             host: world.with.host,
-            workspaces: world.with.herdr,
+            places: world.with.agents,
             interrupt: world.with.interrupt,
             pid_alive: world.with.pid_alive,
             local_host: world.local_host,
@@ -376,7 +374,7 @@ impl Plan<'_> {
     /// What closing records as the run's closed, the steps in order, such as "workspace closed; worktree deleted;
     /// branch deleted; refs deleted".
     fn summary(&self) -> String {
-        let workspace = if self.workspace.is_some() { "workspace closed" } else { "workspace already gone" };
+        let workspace = if self.place.is_some() { "workspace closed" } else { "workspace already gone" };
         let mut done = vec![workspace.to_string()];
         match &self.worktree {
             WorktreeFate::None => {}
@@ -401,8 +399,8 @@ impl Plan<'_> {
     /// refs/orchestrator/a1b2c3/". summary is what closing records instead, once it is done.
     fn preview(&self) -> String {
         let mut steps = vec![];
-        if let Some(workspace) = self.workspace {
-            steps.push(format!("close workspace {workspace}"));
+        if let Some(place) = &self.place {
+            steps.push(format!("close {place}"));
         }
         match &self.worktree {
             WorktreeFate::None => {}
@@ -438,9 +436,9 @@ impl Plan<'_> {
             return Ok(preview);
         }
         let closed = self.summary();
-        if let Some(workspace) = self.workspace {
-            world.workspaces.close_workspace(workspace, self.state.herdr_server.as_ref())?;
-            world.say(&format!("closed workspace {workspace}"));
+        if let Some(place) = &self.place {
+            world.places.end(self.state)?;
+            world.say(&format!("closed {place}"));
         }
         if let WorktreeFate::Discarded { path, changes, branch } = &self.worktree {
             if changes.is_some() {

@@ -10,12 +10,13 @@ use std::sync::Arc;
 
 use super::start::{RunRequest, StartWait, Started};
 use super::Reached;
+use crate::agents::RunPlaces;
 use crate::cli::close::{close_all, Closer, RunClosed, Sweep};
 use crate::cli::forget::{self, forget_all, Forgetter, RunForgotten};
 use crate::cli::listing::run_record;
 use crate::constants::RUNS_DIR;
 use crate::error::OrchestratorError;
-use crate::herdr::{AgentAddress, AgentConsole, HerdrError, Launcher, Workspaces};
+use crate::herdr::{AgentAddress, AgentConsole, HerdrError, Launcher};
 use crate::host::{Host, RunFileText};
 use crate::interrupt::Interrupt;
 use crate::json::{object, Object, ValueExt};
@@ -78,8 +79,8 @@ pub struct ProjectRuns {
     host: Arc<dyn Host + Send + Sync>,
     /// Reaches the project's runs' agents, each in the herdr server its run saved.
     console: Arc<dyn AgentConsole>,
-    /// Tells and closes the project's runs' herdr workspaces, each in the server its run saved.
-    workspaces: Arc<dyn Workspaces + Send + Sync>,
+    /// Tells and closes the project's runs' agents' places, each from what its run saved.
+    places: Arc<dyn RunPlaces + Send + Sync>,
     /// Starts a run's process where the human can watch it (Reached::launcher).
     launcher: Arc<dyn Launcher>,
     /// Where a run's process starts (Reached::launch_dir).
@@ -96,9 +97,9 @@ pub struct ProjectRuns {
 impl ProjectRuns {
     /// The project reached; target is as the field says.
     pub fn new(reached: Reached, target: Vec<String>) -> ProjectRuns {
-        let Reached { host, dir, console, workspaces, launcher, launch_dir } = reached;
+        let Reached { host, dir, console, places, launcher, launch_dir } = reached;
         let pid_alive = Arc::new(pid_alive);
-        ProjectRuns { host, console, workspaces, launcher, launch_dir, cwd: dir, target, pid_alive }
+        ProjectRuns { host, console, places, launcher, launch_dir, cwd: dir, target, pid_alive }
     }
 
     /// As new, a run's owner on this machine taken to be alive by pid_alive instead.
@@ -120,7 +121,7 @@ impl ProjectRuns {
         let here = local_host();
         let closer = Closer {
             host: &*self.host,
-            workspaces: &*self.workspaces,
+            places: &*self.places,
             interrupt: stopping,
             pid_alive: &*self.pid_alive,
             local_host: &here,
@@ -236,7 +237,7 @@ impl ProjectRuns {
     }
 
     /// Start the run request asks for, as run_id, by program, the orchestrator's binary, in a new herdr workspace
-    /// (Launcher::launch, labelled as the run labels its own, crate::workflow::workspace_label), and wait
+    /// (Launcher::launch, labelled as the run labels its own, crate::herdr::workspace_label), and wait
     /// (StartWait::until) for it to save its state.json or for its command to exit without one. The project is given to
     /// `run` as `--cwd` and the directory serve resolved, for a project here, and as the client named it, with its
     /// `--machine`, for one on a machine. Once the run is launched a look that fails, at its state.json or its pane, is
@@ -256,7 +257,7 @@ impl ProjectRuns {
         stopping: &Interrupt,
     ) -> Result<(Started, Option<String>), RunReadError> {
         let state = format!("{}/state.json", self.dir(run_id)?);
-        let label = crate::workflow::workspace_label(run_id, &request.task);
+        let label = crate::herdr::workspace_label(run_id, &request.task);
         // The pane starts in the resolved directory too, where a relative cwd or one with ~ would resolve elsewhere.
         let target = if self.remote() { self.target.clone() } else { vec!["--cwd".to_string(), self.cwd.clone()] };
         let argv = request.argv(program, run_id, &target);

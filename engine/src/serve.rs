@@ -12,13 +12,14 @@ use std::time::Duration;
 use nix::sys::signal::{SigSet, Signal};
 use tiny_http::{Header, Request, Response};
 
+use crate::agents::RunPlaces;
 use crate::cli::close::{Outcome, RunClosed, Sweep};
 use crate::cli::forget::{self, Left, RunForgotten};
 use crate::cli::listing::RUN_RECORD_VERSION;
 use crate::constants::EXIT_ERROR;
 use crate::env::ConfigDir;
 use crate::error::{os_error, OrchestratorError};
-use crate::herdr::{AgentConsole, Launcher, ProcessHerdr, Workspaces};
+use crate::herdr::{AgentConsole, Launcher, ProcessHerdr};
 use crate::host::{Host, ProcessHost};
 use crate::interrupt::Interrupt;
 use runs::{plain_name, AgentInput, Event, ProjectRuns, RunReadError, RunWatch};
@@ -68,8 +69,8 @@ pub struct Reached {
     pub dir: String,
     /// Reaches its runs' agents, each by its AgentAddress.
     pub console: Arc<dyn AgentConsole>,
-    /// Tells and closes its runs' herdr workspaces, each in the server its run saved, for POST /close.
-    pub workspaces: Arc<dyn Workspaces + Send + Sync>,
+    /// Tells and closes its runs' agents' places, each from what its run saved, for POST /close.
+    pub places: Arc<dyn RunPlaces + Send + Sync>,
     /// Starts a run's process for POST /run, in a pane of this machine's herdr (Launcher::launch says which server),
     /// for a project here and one on a machine alike: a machine's run is driven from here, as from the CLI.
     pub launcher: Arc<dyn Launcher>,
@@ -158,7 +159,7 @@ pub fn project_host(machine: &str, cwd: &str, stopping: &Interrupt) -> Result<Re
     let launch_dir = if machine.is_empty() { dir.clone() } else { serve_dir()? };
     let launcher = Arc::new(ProcessHerdr::new(None, stopping));
     let herdr = Arc::new(herdr);
-    Ok(Reached { host: Arc::new(host), dir, console: herdr.clone(), workspaces: herdr, launcher, launch_dir })
+    Ok(Reached { host: Arc::new(host), dir, console: herdr.clone(), places: herdr, launcher, launch_dir })
 }
 
 /// serve's working directory. Errors: it cannot be told, or is not UTF-8.

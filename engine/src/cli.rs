@@ -192,7 +192,7 @@ pub fn main(argv: impl IntoIterator<Item = OsString>) -> i32 {
     };
     let ended = match herdrless_command(&command, &local) {
         Some(ended) => ended,
-        None => connect(&command, &local, &LocalHuman::new(interrupt)),
+        None => connect(&command, &local, &LocalHuman::new(Box::new(ProcessHerdr::new(None, interrupt)))),
     };
     let status = ended_status(ended, &command, &print);
     match unwritten.take() {
@@ -266,7 +266,7 @@ fn connect(command: &Command, local: &Local, human: &LocalHuman) -> Result<Ended
     let world = Connected {
         with: Collaborators {
             host: &host,
-            herdr: &herdr,
+            agents: &herdr,
             clocks: &clocks,
             human,
             interrupt,
