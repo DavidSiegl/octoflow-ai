@@ -14,7 +14,8 @@ use crate::serve::Reached;
 use crate::state::SavedRun;
 use serde_json::Value;
 
-/// A Host whose files are `files`, whose run_states_inside reads the state.json of each run among them, whose
+/// A Host whose files are `files`, whose run_states_inside and run_state_inside read the state.json of each run among
+/// them that names the run its directory is named for, whose
 /// run_files_inside lists those under a run directory by their `mtimes`, as the real Host's does, and which records
 /// the path of every read, read_inside's included, in `reads`. It runs no command but crate::herdr::pane_shell's,
 /// which it answers from `pane_shell`, and none of its files is a link, so every one stays inside its run directory.
@@ -37,7 +38,8 @@ pub struct Files {
     pub reads: Vec<String>,
     /// While set, what run_states_inside fails with.
     pub run_states_inside_error: Option<String>,
-    /// How many times run_states_inside was called: a poll of the project each.
+    /// How many times run_states_inside was called: a poll of the project each, or a close or forget sweep's first
+    /// read of its runs.
     pub run_states_inside_calls: usize,
     /// How many times run_files_inside was called: one listing of a run's directory each.
     pub run_files_inside_calls: usize,
@@ -74,6 +76,31 @@ impl ServeHost {
     pub fn state(&self) -> MutexGuard<'_, Files> {
         self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+
+    /// The runs under the project at cwd as run_states_inside reads them, only the one named only when given; fails
+    /// with run_states_inside_error while it is set.
+    fn runs_inside(&self, cwd: &str, only: Option<&str>) -> Result<Vec<SavedRun>, OrchestratorError> {
+        let s = self.state();
+        if let Some(e) = &s.run_states_inside_error {
+            return Err(OrchestratorError(e.clone()));
+        }
+        let runs = format!("{cwd}/{RUNS_DIR}/");
+        let mut states = vec![];
+        for (path, text) in &s.files {
+            let Some((dir, "state.json")) = path.strip_prefix(&runs).and_then(|rest| rest.split_once('/')) else {
+                continue;
+            };
+            if only.is_some_and(|only| only != dir) {
+                continue;
+            }
+            let saved = serde_json::from_str::<Value>(text).map_err(|e| OrchestratorError(e.to_string()))?;
+            let run = SavedRun::read(s.ages.get(dir).copied().unwrap_or(0), saved)?;
+            if run.shown().run_id == dir {
+                states.push(run);
+            }
+        }
+        Ok(states)
+    }
 }
 
 impl Host for ServeHost {
@@ -99,20 +126,12 @@ impl Host for ServeHost {
     }
 
     fn run_states_inside(&self, cwd: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
-        let mut s = self.state();
-        s.run_states_inside_calls += 1;
-        if let Some(e) = &s.run_states_inside_error {
-            return Err(OrchestratorError(e.clone()));
-        }
-        let runs = format!("{cwd}/{RUNS_DIR}/");
-        let mut states = vec![];
-        for (path, text) in &s.files {
-            if let Some((run_id, "state.json")) = path.strip_prefix(&runs).and_then(|rest| rest.split_once('/')) {
-                let saved = serde_json::from_str::<Value>(text).map_err(|e| OrchestratorError(e.to_string()))?;
-                states.push(SavedRun::read(s.ages.get(run_id).copied().unwrap_or(0), saved)?);
-            }
-        }
-        Ok(states)
+        self.state().run_states_inside_calls += 1;
+        self.runs_inside(cwd, None)
+    }
+
+    fn run_state_inside(&self, cwd: &str, run_id: &str) -> Result<Option<SavedRun>, OrchestratorError> {
+        Ok(self.runs_inside(cwd, Some(run_id))?.into_iter().next())
     }
 
     fn read_inside(&self, run_dir: &str, name: &str) -> Result<RunFileText, OrchestratorError> {

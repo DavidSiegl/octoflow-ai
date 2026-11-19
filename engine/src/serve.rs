@@ -857,7 +857,7 @@ fn run_forgotten(run: &RunForgotten) -> Value {
         forget::Outcome::Left(Left::NotClosed) => ("not closed", ""),
         forget::Outcome::Left(Left::AwaitsPrune) => ("waiting for prune", forget::AWAITS_PRUNE),
         forget::Outcome::Left(Left::Unreadable(why)) => ("skipped", why.as_str()),
-        forget::Outcome::Gone => ("skipped", "there is no such run any more"),
+        forget::Outcome::Gone => ("skipped", "the overview shows no such run any more"),
         forget::Outcome::Failed(error) => ("failed", error.as_str()),
     };
     object([

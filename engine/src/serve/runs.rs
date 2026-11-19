@@ -16,7 +16,7 @@ use crate::cli::listing::run_record;
 use crate::constants::RUNS_DIR;
 use crate::error::OrchestratorError;
 use crate::herdr::{AgentAddress, AgentConsole, HerdrError, Launcher, Workspaces};
-use crate::host::{Host, RunFileText};
+use crate::host::{Host, RunFileText, RunScope};
 use crate::interrupt::Interrupt;
 use crate::json::{object, Object, ValueExt};
 use crate::local_gate::SetUpFile;
@@ -127,9 +127,9 @@ impl ProjectRuns {
         crate::local_gate::set_up(&*self.host, &self.cwd, None)
     }
 
-    /// Close the project's runs that sweep names, as crate::cli::close::close_all does, and give each run's outcome;
-    /// the lines close prints are dropped, as the outcomes hold what they say. A raised stopping starts no further
-    /// run. Errors: as close_all's.
+    /// Close the project's runs that sweep names, as crate::cli::close::close_all does, of those records shows
+    /// (RunScope::Inside), and give each run's outcome; the lines close prints are dropped, as the outcomes hold what
+    /// they say. A raised stopping starts no further run. Errors: as close_all's.
     pub fn close_all(&self, sweep: Sweep, stopping: &Interrupt) -> Result<Vec<RunClosed>, OrchestratorError> {
         let here = local_host();
         let closer = Closer {
@@ -139,13 +139,15 @@ impl ProjectRuns {
             pid_alive: &*self.pid_alive,
             local_host: &here,
             stdout: &|_| {},
+            scope: RunScope::Inside,
         };
         close_all(&closer, &self.cwd, sweep)
     }
 
-    /// Forget the project's closed runs that sweep names, as crate::cli::forget::forget_all does, and give each run's
-    /// outcome; the lines forget prints are dropped, as the outcomes hold what they say. A sweep waits for one of the
-    /// project's already under way to end. A raised stopping starts no further run. Errors: as forget_all's.
+    /// Forget the project's closed runs that sweep names, as crate::cli::forget::forget_all does, of those records
+    /// shows (RunScope::Inside), and give each run's outcome; the lines forget prints are dropped, as the outcomes hold
+    /// what they say. A sweep waits for one of the project's already under way to end. A raised stopping starts no
+    /// further run. Errors: as forget_all's.
     pub fn forget_all(
         &self,
         sweep: forget::Sweep,
@@ -153,7 +155,7 @@ impl ProjectRuns {
     ) -> Result<Vec<RunForgotten>, OrchestratorError> {
         // A sweep that panicked left nothing half-done that the next could trip on: each run is read at its turn.
         let _one_at_a_time = self.forgetting.lock().unwrap_or_else(PoisonError::into_inner);
-        let forgetter = Forgetter { host: &*self.host, interrupt: stopping, stdout: &|_| {} };
+        let forgetter = Forgetter { host: &*self.host, interrupt: stopping, stdout: &|_| {}, scope: RunScope::Inside };
         forget_all(&forgetter, &self.cwd, sweep)
     }
 

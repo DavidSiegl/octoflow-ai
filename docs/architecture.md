@@ -310,16 +310,16 @@ started, as the human would start one from a herdr pane.
   symbolic link is followed only as far as it stays inside: a file that, links resolved, is not in its run
   directory, links resolved, and every file of a run directory that is not in the project's `.octoflow-ai/runs`,
   are refused with 403 by `/file` and left out of `/files` and the event stream's `files` events. A run whose
-  `state.json` is refused so is no run: `/runs` and the stream's `record` events leave it out, as a run without a
-  `state.json`, and `/agent` answers 404. The links are resolved on the project's host, over SSH too
-  (`Host::run_states_inside`, `run_files_inside` and `read_inside`); the engine's own reads of a run's files and
-  states still follow them. An
-  agent is named only by its run and role, which `ProjectRuns` looks up in the run's `state.json`, so a client can
-  read or type into no other herdr agent; a POST body is read to at most 64 KiB (`MAX_BODY_BYTES`). `POST /run`
-  runs a command a client chose only within `run`'s flags: the program is serve's own, each flag's value is joined
-  to its flag and the task comes after `--`, so no value is taken for another flag, and no word is typed into the
-  shell, where a quote, a `$` or a control character such as ^U could make it a command of its own: the shell
-  gets each one as an environment variable.
+  `state.json` is refused so, or names a run other than its directory's name, is no run: `/runs` and the stream's
+  `record` events leave it out, as a run without a `state.json`, `POST /close` and `POST /forget` neither list nor act
+  on it (`RunScope::Inside`), and `/agent` answers 404. The links are resolved on the project's host, over SSH too
+  (`Host::run_states_inside`, `run_state_inside`, `run_files_inside` and `read_inside`); the engine's own reads of a
+  run's files and states still follow them. An agent is named only by its run and role, which `ProjectRuns` looks up in
+  the run's `state.json`, so a client can read or type into no other herdr agent; a POST body is read to at most 64 KiB
+  (`MAX_BODY_BYTES`). `POST /run` runs a command a client chose only within `run`'s flags: the program is serve's own,
+  each flag's value is joined to its flag and the task comes after `--`, so no value is taken for another flag, and no
+  word is typed into the shell, where a quote, a `$` or a control character such as ^U could make it a command of its
+  own: the shell gets each one as an environment variable.
 - **Streams.** An event stream to an HTTP/1.1 client is chunked, so that it ends with its last chunk at a stop; to
   an HTTP/1.0 client it ends with the connection. The malformed requests tiny_http answers abruptly or
   silently are `TODO.md`'s Open issue "serve answers some malformed requests abruptly or silently".

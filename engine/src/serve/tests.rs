@@ -1496,7 +1496,7 @@ fn a_forget_dry_run_names_the_closed_run_and_a_listed_forget_deletes_it_keeping_
 
     // Forgotten since the dry run, as by a second client: skipped, and nothing else is looked at.
     let again = forgotten_runs(&served.post(&target, &body));
-    assert_eq!(again, [(FORGET_CLOSED.into(), "skipped".into(), "there is no such run any more".into())]);
+    assert_eq!(again, [(FORGET_CLOSED.into(), "skipped".into(), "the overview shows no such run any more".into())]);
 }
 
 /// The real Host, but each read of the metrics archive waits, after reading it, until a second has been made or a
@@ -1558,6 +1558,35 @@ fn two_forgets_of_one_run_at_once_forget_it_once() {
     assert_eq!(sorted, ["forgotten", "skipped"], "{outcomes:?}");
     let archive = std::fs::read_to_string(project.0.join(".octoflow-ai/metrics-archive.jsonl")).unwrap();
     assert_eq!(archive.matches(FORGET_CLOSED).count(), 1, "{archive}");
+}
+
+#[test]
+fn the_sweeps_leave_out_a_run_the_overview_does_not_show() {
+    // A run directory linked from outside the runs directory: the overview leaves it out (Host::run_states_inside),
+    // so close and forget, which act on what it shows, must too (todo/75, #507).
+    const OUTSIDE: &str = "20261001-120200-0a0b0c";
+    let project = Project::new();
+    project.save(FORGET_CLOSED, &[("closed", Value::from("workspace closed"))]);
+    project.write(&format!("elsewhere/{OUTSIDE}/state.json"), &serve_state(OUTSIDE, &[("closed", Value::from("x"))]));
+    project.write(&format!("elsewhere/{OUTSIDE}/metrics.json"), &format!("{{\"run_id\": \"{OUTSIDE}\"}}\n"));
+    let (outside, link) =
+        (project.0.join(&format!("elsewhere/{OUTSIDE}")), project.0.join(&format!("{RUNS_DIR}/{OUTSIDE}")));
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+    let served = Served::real();
+
+    let closing = closed_runs(&served.post(&project.query("/close"), r#"{"dry_run": true}"#));
+    assert_eq!(closing.iter().map(|r| r.0.as_str()).collect::<Vec<_>>(), [FORGET_CLOSED]);
+    let forgetting = forgotten_runs(&served.post(&project.query("/forget"), r#"{"dry_run": true}"#));
+    assert_eq!(forgetting.iter().map(|r| r.0.as_str()).collect::<Vec<_>>(), [FORGET_CLOSED]);
+
+    let body = serde_json::json!({ "forget": [OUTSIDE] }).to_string();
+    let forgotten = forgotten_runs(&served.post(&project.query("/forget"), &body));
+    assert_eq!(forgotten, [(OUTSIDE.into(), "skipped".into(), "the overview shows no such run any more".into())]);
+    assert!(std::path::Path::new(&link).exists(), "the link is kept");
+    assert!(
+        !std::path::Path::new(&project.0.join(".octoflow-ai/metrics-archive.jsonl")).exists(),
+        "no metrics archived"
+    );
 }
 
 #[test]
