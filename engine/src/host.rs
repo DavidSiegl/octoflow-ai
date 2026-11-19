@@ -1028,9 +1028,10 @@ pub trait Host {
 
     /// As run_states, but serve's view of the runs: a run whose directory, every link resolved, is not below the
     /// runs directory, links resolved, or whose state.json, links resolved, is not below its run directory, is left
-    /// out, as a run without a state.json is; so is one whose state.json names a run other than its directory's name,
-    /// as a run directory linked or copied under another name does, since close and forget act on the run a state.json
-    /// names. The links are resolved on this host, as BELOW says. Errors: as run_states'.
+    /// out, as a run without a state.json is; so is a run directory listed under a link's name rather than its own,
+    /// and one whose state.json names a run other than its directory's name, as a copy under another name does, since
+    /// close and forget act on the run a state.json names. The links are resolved on this host, as BELOW says.
+    /// Errors: as run_states'.
     fn run_states_inside(&self, cwd: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
         let script = run_states_inside_script("*");
         parsed_inside_run_states(cwd, &run_states_output(self, &["sh", "-c", &script, "_", cwd])?)
@@ -1217,10 +1218,16 @@ impl RunScope {
 /// sh printing what run_states_loop prints for the runs of the project $1 whose directory names match the sh word
 /// runs, but only of those Host::run_states_inside keeps.
 fn run_states_inside_script(runs: &str) -> String {
-    // Without a runs directory there are no runs; f becomes the resolved path, which is what is stat'ed and read.
+    // Without a runs directory there are no runs; f becomes the resolved path, which is what is stat'ed and read. A
+    // run directory counts only under its own name, not under a link's: an unreadable state.json names no run, so its
+    // run is the one its directory is named for (SavedRun::read), and a link to it would list it twice.
     format!(
         "{BELOW}now=$(date +%s) || exit 1; runs=$(cd -P -- \"$1/{RUNS_DIR}\" 2>/dev/null && pwd -P) || exit 0; {}",
-        run_states_loop(RUNS_DIR, runs, "below \"${f%/*}\" \"$runs\" && below \"$f\" \"$r\" && f=$r")
+        run_states_loop(
+            RUNS_DIR,
+            runs,
+            "below \"${f%/*}\" \"$runs\" && [ \"${r##*/}\" = \"$d\" ] && below \"$f\" \"$r\" && f=$r"
+        )
     )
 }
 
