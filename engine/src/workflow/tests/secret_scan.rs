@@ -204,16 +204,18 @@ fn a_secret_on_the_branch_stops_publish_until_it_is_rewritten() {
 
 #[test]
 fn a_run_that_pushes_or_is_gated_needs_gitleaks_before_the_interview_and_is_told_why() {
-    // A gated run without a pull request pushes nothing: the gate scans its snapshots.
-    let cases = [(false, "this run pushes, and every push is scanned"), (true, "the quality gate scans each snapshot")];
-    for (gate, why) in cases {
+    // A gated run without a pull request pushes nothing: the gate scans its snapshots. One with both is told of its
+    // pushes.
+    let (pushes, snapshots) = ("this run pushes, and every push is scanned", "the quality gate scans each snapshot");
+    for (gate, pr, why) in [(false, true, pushes), (true, false, snapshots), (true, true, pushes)] {
         let host = FakeHost::default();
         host.state().gitleaks_missing = true;
         let f = Fixture::on(Rc::new(host), new_state(), approved());
-        let (f, settings) = if gate { (f.gated(), no_pr()) } else { (f, RunSettings::default()) };
+        let f = if gate { f.gated() } else { f };
+        let settings = if pr { RunSettings::default() } else { no_pr() };
         let e = failure(f.workflow(settings).run());
-        assert!(e.starts_with(why) && e.contains("install gitleaks 8.19"), "gate {gate}: {e}");
-        assert!(names(&f, "start").is_empty(), "gate {gate}");
+        assert!(e.starts_with(why) && e.contains("install gitleaks 8.19"), "gate {gate}, pr {pr}: {e}");
+        assert!(names(&f, "start").is_empty(), "gate {gate}, pr {pr}");
     }
 }
 
