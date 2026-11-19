@@ -277,8 +277,8 @@ struct Shared {
     stopping: Interrupt,
     /// How a request's project is reached (Connect).
     connect: Box<Connect>,
-    /// By the machine and directory a request names, the one project connect gave for them that every request for
-    /// them shares.
+    /// By the machine and directory a request names, as it spells them, the one project that every request for that
+    /// machine and directory shares: two spellings of one directory (`~/proj`, `/home/u/proj/`) map to the same.
     projects: Mutex<HashMap<(String, String), Arc<ProjectRuns>>>,
     /// What /setup and /setup/checked answer from.
     setup: Setup,
@@ -428,9 +428,12 @@ impl Shared {
         }
         let reached = (self.connect)(machine, cwd, &self.stopping)?;
         let project = Arc::new(ProjectRuns::new(reached, target_args(machine, cwd)));
-        // Two first requests for a project may both have connected: each gets the one stored first, whose lock
-        // (ProjectRuns::forgetting) the project's sweeps must share.
-        Ok(Arc::clone(self.lock_projects().entry(key).or_insert(project)))
+        // Every request for one directory, however it spells it and however many connected at once, gets the project
+        // stored first, whose lock (ProjectRuns::forgetting) the directory's sweeps must share.
+        let mut projects = self.lock_projects();
+        let stored = projects.iter().find(|((m, _), p)| m == machine && p.cwd() == project.cwd()).map(|(_, p)| p);
+        let project = Arc::clone(stored.unwrap_or(&project));
+        Ok(Arc::clone(projects.entry(key).or_insert(project)))
     }
 
     fn lock_projects(&self) -> std::sync::MutexGuard<'_, HashMap<(String, String), Arc<ProjectRuns>>> {

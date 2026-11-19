@@ -91,8 +91,9 @@ pub struct ProjectRuns {
     /// Whether a process of an id runs on this machine, as RunState::health asks it: crate::runs::pid_alive, but in
     /// tests.
     pid_alive: Arc<dyn Fn(i64) -> bool + Send + Sync>,
-    /// Held through each forget sweep, so that the project's sweeps run one after the other: a run that two at once
-    /// list (two app windows, a double submit) is forgotten by the first, and the second finds it gone.
+    /// Held through each forget sweep, so that this serve's sweeps of the project run one after the other: a run that
+    /// two of its requests list at once (a double submit) is forgotten by the first, and the second finds it gone.
+    /// Another process's sweep (a second app, `octoflow forget`) is not held back (TODO.md).
     forgetting: Mutex<()>,
 }
 
@@ -154,6 +155,11 @@ impl ProjectRuns {
         let _one_at_a_time = self.forgetting.lock().unwrap_or_else(PoisonError::into_inner);
         let forgetter = Forgetter { host: &*self.host, interrupt: stopping, stdout: &|_| {} };
         forget_all(&forgetter, &self.cwd, sweep)
+    }
+
+    /// The project's absolute directory on its machine, as Host::resolve_dir gives it.
+    pub fn cwd(&self) -> &str {
+        &self.cwd
     }
 
     /// Whether the project is on another machine, read over SSH.

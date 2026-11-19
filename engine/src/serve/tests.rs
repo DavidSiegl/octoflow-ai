@@ -1456,13 +1456,13 @@ const FORGET_CLOSED: &str = "20261001-120000-a1b2c3";
 const FORGET_OPEN: &str = "20261001-120100-d4e5f6";
 
 /// A project with FORGET_CLOSED, closed, with a metrics.json, and FORGET_OPEN, not closed; and a server that reaches it.
-fn forgetting() -> (Project, Served) {
+fn forgetting() -> Project {
     let project = Project::new();
     project.save(FORGET_CLOSED, &[("closed", Value::from("workspace closed"))]);
     project
         .write(&format!("{RUNS_DIR}/{FORGET_CLOSED}/metrics.json"), &format!("{{\"run_id\": \"{FORGET_CLOSED}\"}}\n"));
     project.save(FORGET_OPEN, &[]);
-    (project, Served::real())
+    project
 }
 
 /// The runs of a 200 answer to POST /forget, each as (run, outcome, detail).
@@ -1475,7 +1475,7 @@ fn forgotten_runs(reply: &Reply) -> Vec<(String, String, String)> {
 
 #[test]
 fn a_forget_dry_run_names_the_closed_run_and_a_listed_forget_deletes_it_keeping_its_metrics() {
-    let (project, served) = forgetting();
+    let (project, served) = (forgetting(), Served::real());
     let target = project.query("/forget");
     let closed_dir = project.0.join(&format!("{RUNS_DIR}/{FORGET_CLOSED}"));
     let preview = forgotten_runs(&served.post(&target, r#"{"dry_run": true}"#));
@@ -1502,9 +1502,11 @@ fn a_forget_dry_run_names_the_closed_run_and_a_listed_forget_deletes_it_keeping_
 /// The real Host, but each read of the metrics archive waits, after reading it, until a second has been made or a
 /// second has passed: two forget sweeps that reach it together both read it before either appends to it.
 struct ArchiveReadsMeet {
+    /// The Host every call goes to.
     host: Arc<dyn crate::host::Host + Send + Sync>,
     /// How many reads of the archive have been made.
     reads: Mutex<usize>,
+    /// Notified each time reads grows.
     met: std::sync::Condvar,
 }
 
@@ -1536,16 +1538,19 @@ impl crate::host::Host for ArchiveReadsMeet {
 
 #[test]
 fn two_forgets_of_one_run_at_once_forget_it_once() {
-    let (project, _) = forgetting();
+    let project = forgetting();
     let connect = |machine: &str, cwd: &str, stopping: &Interrupt| {
         let mut reached = project_host(machine, cwd, stopping)?;
         reached.host = Arc::new(ArchiveReadsMeet { host: reached.host, reads: Mutex::new(0), met: Default::default() });
         Ok(reached)
     };
     let served = Served::start(Box::new(connect), &[], Arc::default(), Options::default());
-    let (target, body) = (project.query("/forget"), serde_json::json!({ "forget": [FORGET_CLOSED] }).to_string());
+    // The project spelled two ways, as two clients may name it: both are one project to the lock.
+    let spelled_with_slash = format!("/forget?{}", urlencode(&[("cwd", &format!("{}/", project.root()))]));
+    let targets = [project.query("/forget"), spelled_with_slash];
+    let body = serde_json::json!({ "forget": [FORGET_CLOSED] }).to_string();
     let outcomes: Vec<String> = std::thread::scope(|scope| {
-        let asks: Vec<_> = (0..2).map(|_| scope.spawn(|| forgotten_runs(&served.post(&target, &body)))).collect();
+        let asks: Vec<_> = targets.iter().map(|t| scope.spawn(|| forgotten_runs(&served.post(t, &body)))).collect();
         asks.into_iter().map(|ask| ask.join().unwrap()[0].1.clone()).collect()
     });
     let mut sorted = outcomes.clone();
