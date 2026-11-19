@@ -147,8 +147,10 @@ fn the_workspace_is_told_and_closed_in_the_server_the_run_saved() {
     c.cli.f.herdr.state().server = Some(pane);
     let saved = serde_json::json!({"HERDR_SOCKET_PATH": null, "HERDR_SESSION": OWN_SESSION});
     c.add(STALE_SECONDS + 1, true, &[("herdr_server", saved.clone())]);
-    assert_eq!(c.close(&[]).0, 0);
     let run_s = serde_json::from_value::<HerdrServer>(saved).ok();
+    // The run's workspace is open in its own server, not in the one close's environment reaches.
+    c.cli.f.herdr.state().foreign_workspaces.insert((run_s.clone().unwrap(), "w1".into()));
+    assert_eq!(c.close(&[]).0, 0);
     let reached = c.cli.f.herdr.state().reached.clone();
     assert_eq!(reached, [("w1".to_string(), run_s.clone()), ("w1".to_string(), run_s)]);
     assert_eq!(c.calls(), closing_w1());

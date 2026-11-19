@@ -842,26 +842,67 @@ impl<'a> Workflow<'a> {
         self.state.base_branch.clone().ok_or_else(|| OrchestratorError("the run has no base branch yet".into()))
     }
 
-    /// Open the run's herdr workspace, or find it from before.
+    /// Open the run's herdr workspace, or find it from before in the herdr server the run saved
+    /// (keeps_saved_workspace). The run saves this engine's server only once it has a workspace in it, and saves it
+    /// too when it resumes in a workspace while it had saved none.
     fn prepare(&mut self) -> Outcome<()> {
-        let s = &mut self.state;
-        if !s.workspace_id.is_empty() {
-            if self.herdr.workspace_exists(&s.workspace_id, None)? {
-                self.human.log(&format!("run {} resumes in herdr workspace {}", s.run_id, s.workspace_id));
-                return Ok(());
+        if self.keeps_saved_workspace()? {
+            let s = &mut self.state;
+            self.human.log(&format!("run {} resumes in herdr workspace {}", s.run_id, s.workspace_id));
+            if s.herdr_server.is_none() && self.herdr.server().is_some() {
+                s.herdr_server = self.herdr.server();
+                return self.save();
             }
-            // The handoff files are the whole contract between roles, so a new workspace loses nothing a role
-            // needs; its panes went with the old one.
-            self.human.log(&format!("herdr workspace {} is gone; opening a new one", s.workspace_id));
-            for agent in s.agents.values_mut() {
-                agent.pane.clear();
-            }
+            return Ok(());
         }
+        let s = &mut self.state;
         let label = workspace_label(&s.run_id, &s.task);
         let (workspace, root) = self.herdr.create_workspace(s.work_dir(), &label)?;
         (s.workspace_id, s.root_pane) = (workspace, root);
+        s.herdr_server = self.herdr.server();
         self.human.log(&format!("run {} in herdr workspace {}", s.run_id, s.workspace_id));
         self.save()
+    }
+
+    /// Whether the run resumes in the workspace it saved: true when that workspace still exists in the herdr server
+    /// the run saved, and that server is the one this engine's herdr reaches (Herdr::reaches); a run that saved no
+    /// server looks in the one this engine reaches. False for a run with no workspace yet. When false for a run that
+    /// had one, its agents' panes are cleared, as a new workspace is to be opened, and a workspace still open in
+    /// another server is closed there, since the engine could give its panes no command; a close that fails is only
+    /// logged. Errors: herdr cannot be asked whether the server is reached or the workspace exists.
+    fn keeps_saved_workspace(&mut self) -> Outcome<bool> {
+        let s = &mut self.state;
+        if s.workspace_id.is_empty() {
+            return Ok(false);
+        }
+        let saved = s.herdr_server.as_ref();
+        let elsewhere = match saved {
+            Some(saved) => !self.herdr.reaches(saved)?,
+            None => false,
+        };
+        let exists = self.herdr.workspace_exists(&s.workspace_id, saved)?;
+        if exists && !elsewhere {
+            return Ok(true);
+        }
+        if exists {
+            self.human.log(&format!(
+                "herdr workspace {} is in another herdr server than this one; closing it there and opening a new one \
+                 here",
+                s.workspace_id
+            ));
+            // A workspace left open is only a stray one; the run goes on without it.
+            if let Err(e) = self.herdr.close_workspace(&s.workspace_id, saved) {
+                self.human.log(&format!("cannot close herdr workspace {}: {e}", s.workspace_id));
+            }
+        } else {
+            self.human.log(&format!("herdr workspace {} is gone; opening a new one", s.workspace_id));
+        }
+        // The handoff files are the whole contract between roles, so a new workspace loses nothing a role needs; its
+        // panes went with the old one.
+        for agent in s.agents.values_mut() {
+            agent.pane.clear();
+        }
+        Ok(false)
     }
 
     /// The quality-gated step, whose quality round phase quality is. Errors: the workflow has none, which check_phase
@@ -1210,11 +1251,11 @@ impl<'a> Workflow<'a> {
         Ok(reviews)
     }
 
-    /// Close the run's workspace once the pull request carries the change; a failure leaves only clutter behind, so
-    /// it is only logged.
+    /// Close the run's workspace, in the herdr server the run saved, once the pull request carries the change; a
+    /// failure leaves only clutter behind, so it is only logged.
     fn close_workspace(&self) {
         let workspace = &self.state.workspace_id;
-        if let Err(e) = self.herdr.close_workspace(workspace, None) {
+        if let Err(e) = self.herdr.close_workspace(workspace, self.state.herdr_server.as_ref()) {
             self.human.log(&format!("could not close herdr workspace {workspace}: {e}"));
         }
     }

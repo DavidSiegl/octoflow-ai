@@ -17,7 +17,7 @@ use crate::json::Object;
 use crate::local_gate::LOCAL_GATE;
 use crate::runs::local_host;
 use crate::state::SavedRun;
-use crate::test_support::{quick, resumable, solo, TempDir};
+use crate::test_support::{herdr_server, quick, resumable, solo, TempDir};
 use crate::workflow::fixture::{quality_state, review_turn, saved_run, Fixture};
 use crate::workflow_file::{workflow_definition, workflow_toml};
 use serde_json::Value;
@@ -518,11 +518,11 @@ fn a_run_of_the_jenkins_gate_past_round_0_needs_the_local_gates_preflight() {
 
 /// The herdr server whose session is session, its socket path unset.
 fn session(session: &str) -> HerdrServer {
-    serde_json::from_value(serde_json::json!({"HERDR_SESSION": session})).unwrap()
+    herdr_server(None, Some(session))
 }
 
 #[test]
-fn a_run_saves_the_herdr_server_it_starts_or_resumes_its_agents_in() {
+fn a_run_saves_the_herdr_server_it_starts_in_and_a_resume_keeps_it() {
     let (f, d) = (Fixture::new(vec![]), TempDir::new());
     let config = ConfigDir::at(&d.path());
     let world = connected(&f, &config);
@@ -535,7 +535,8 @@ fn a_run_saves_the_herdr_server_it_starts_or_resumes_its_agents_in() {
     let (state, _) = new_state(&on_box, "/proj", None, &world).unwrap();
     assert_eq!(state.herdr_server, None);
 
-    // A resume saves the server it reaches, over the one the run saved.
+    // A resume keeps the server the run saved: its workspace is there, and Workflow::prepare replaces the server
+    // only when it opens a new workspace.
     let host = Rc::new(FakeHost::default());
     let mut saved = saved_run("build", 1, &["spec", "build"]);
     saved.herdr_server = Some(session("old"));
@@ -545,9 +546,5 @@ fn a_run_saves_the_herdr_server_it_starts_or_resumes_its_agents_in() {
     let world = connected(&f, &config);
     f.herdr.state().server = Some(session("new"));
     let (state, _) = resumed_state(&resume_args(&["a1b2c3"]), "/proj", &world).unwrap();
-    assert_eq!(state.herdr_server, Some(session("new")));
-    f.herdr.state().server = None;
-    let on_box = resume_args(&["a1b2c3", "--machine", "box", "--cwd", "/p"]);
-    let (state, _) = resumed_state(&on_box, "/proj", &world).unwrap();
-    assert_eq!(state.herdr_server, None);
+    assert_eq!(state.herdr_server, Some(session("old")));
 }

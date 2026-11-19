@@ -506,6 +506,15 @@ pub fn resumable(flags: &[&str], saved: &Object) -> Result<crate::state::RunStat
     crate::cli::resumable_state(&runs, &args, "/proj", "here", &|_| false).map(|(state, _)| state)
 }
 
+/// The herdr server a herdr CLI reaches with HERDR_SOCKET_PATH set to socket and HERDR_SESSION to session, each None
+/// for a variable left unset.
+pub fn herdr_server(socket: Option<&str>, session: Option<&str>) -> crate::herdr::HerdrServer {
+    let set = [(crate::herdr::HERDR_SOCKET_PATH, socket), (crate::herdr::HERDR_SESSION, session)];
+    let vars: Vec<(std::ffi::OsString, std::ffi::OsString)> =
+        set.iter().filter_map(|&(k, v)| Some((k.into(), v?.into()))).collect();
+    crate::herdr::HerdrServer::of_environment(&vars).expect("UTF-8 values")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -5,9 +5,11 @@
 
 use std::cell::RefCell;
 
+use super::pull_request::rounds;
 use super::*;
 use crate::json::object;
 use crate::pipeline::{METRICS_FILE, SUMMARY_FILE};
+use crate::test_support::herdr_server;
 
 /// saved_run, its prompt for file counted as delivered.
 fn prompted(mut state: RunState, file: &str) -> RunState {
@@ -766,4 +768,125 @@ fn recorded_reviewer_is_not_started_twice() {
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
     assert!(starts(&f).is_empty());
     assert_eq!(prompts_to(&f, "review-a1b2c3"), 1);
+}
+
+/// The herdr server whose session is session, its socket path unset.
+fn session(session: &str) -> HerdrServer {
+    herdr_server(None, Some(session))
+}
+
+/// A run saved in phase spec in herdr server saved, its spec approved, resumed by a fake herdr reaching current.
+fn resumed_from(saved: Option<HerdrServer>, current: Option<HerdrServer>) -> Fixture {
+    let mut state = saved_run("spec", 0, &["spec"]);
+    state.herdr_server = saved;
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, approved(), &[], &[]);
+    f.herdr.state().server = current;
+    f
+}
+
+/// Whether f's herdr was asked to open or close a workspace.
+fn opened_or_closed(f: &Fixture) -> bool {
+    f.herdr.state().calls.iter().any(|c| matches!(c, Call::Workspace { .. } | Call::Close { .. }))
+}
+
+#[test]
+fn a_new_run_saves_the_herdr_server_it_opens_its_workspace_in() {
+    let f = Fixture::new(rounds(&[APPROVE]));
+    f.herdr.state().server = Some(session("work"));
+    let mut wf = f.workflow(RunSettings::default());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert_eq!(wf.state().herdr_server, Some(session("work")));
+    // A herdr forwarding to a machine reaches none of this machine's.
+    let f = Fixture::new(rounds(&[APPROVE]));
+    let mut wf = f.workflow(RunSettings::default());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert_eq!(wf.state().herdr_server, None);
+}
+
+#[test]
+fn a_resume_from_another_herdr_server_closes_the_old_workspace_there_and_opens_one_here() {
+    // Started in the app's session, resumed from a shell in another, which has a w1 of its own that must not be
+    // taken for the run's.
+    let f = resumed_from(Some(session("octoflow")), Some(session("work")));
+    f.herdr.state().foreign_workspaces.insert((session("octoflow"), "w1".into()));
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    let reached = f.herdr.state().reached.clone();
+    assert_eq!(
+        reached[..2],
+        [("w1".to_string(), Some(session("octoflow"))), ("w1".to_string(), Some(session("octoflow")))]
+    );
+    assert!(called(&f, &Call::Close { workspace: "w1".into() }));
+    assert!(f.herdr.state().foreign_workspaces.is_empty());
+    assert!(f.herdr.state().calls.iter().any(|c| matches!(c, Call::Workspace { .. })));
+    assert_eq!(wf.state().herdr_server, Some(session("work")));
+}
+
+#[test]
+fn a_workspace_gone_from_the_run_s_herdr_server_is_not_found_in_another() {
+    // w1 is open only in the resuming server: another run's, which the resume must not take for its own.
+    let f = resumed_from(Some(session("octoflow")), Some(session("work")));
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert_eq!(f.herdr.state().reached[0], ("w1".to_string(), Some(session("octoflow"))));
+    assert!(!called(&f, &Call::Close { workspace: "w1".into() }));
+    assert!(f.told.lines().contains(&"herdr workspace w1 is gone; opening a new one".into()));
+    assert!(f.herdr.state().calls.iter().any(|c| matches!(c, Call::Workspace { .. })));
+    assert_eq!(wf.state().herdr_server, Some(session("work")));
+}
+
+#[test]
+fn the_run_s_herdr_server_named_another_way_is_the_same_server() {
+    // Started from a plain terminal (default server), resumed from a pane of that server, whose HERDR_SOCKET_PATH
+    // names it by its socket.
+    let pane = herdr_server(Some("/h/herdr.sock"), None);
+    let f = resumed_from(Some(herdr_server(None, None)), Some(pane.clone()));
+    f.herdr.state().aliases.push(herdr_server(None, None));
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert!(!opened_or_closed(&f), "{:?}", f.herdr.state().calls);
+    assert_eq!(wf.state().herdr_server, Some(herdr_server(None, None)));
+}
+
+#[test]
+fn a_resume_forwarded_to_the_run_s_machine_goes_on_in_its_workspace() {
+    // Started on box, resumed from a laptop with --machine box: the forwarded herdr reaches no server of this
+    // machine's, and box's own picks the one the run is in.
+    let f = resumed_from(Some(session("work")), None);
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert!(!opened_or_closed(&f), "{:?}", f.herdr.state().calls);
+}
+
+#[test]
+fn a_run_that_saved_no_herdr_server_saves_the_one_it_resumes_in() {
+    let f = resumed_from(None, Some(session("work")));
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert!(!opened_or_closed(&f), "{:?}", f.herdr.state().calls);
+    assert_eq!(wf.state().herdr_server, Some(session("work")));
+}
+
+#[test]
+fn a_workspace_that_cannot_be_closed_in_another_server_is_left_there() {
+    let f = resumed_from(Some(session("octoflow")), Some(session("work")));
+    f.herdr.state().foreign_workspaces.insert((session("octoflow"), "w1".into()));
+    f.herdr.state().close_error = Some(crate::herdr::HerdrError::new("server_not_running", "down"));
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    let line = "cannot close herdr workspace w1: herdr server_not_running: down";
+    assert!(f.told.lines().contains(&line.into()), "{:?}", f.told.lines());
+    assert_eq!(wf.state().herdr_server, Some(session("work")));
+}
+
+#[test]
+fn a_resume_from_the_run_s_own_herdr_server_goes_on_in_its_workspace() {
+    let mut state = saved_run("spec", 0, &["spec"]);
+    state.herdr_server = Some(session("work"));
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, approved(), &["spec"], &[]);
+    f.herdr.state().server = Some(session("work"));
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert!(!opened_or_closed(&f), "{:?}", f.herdr.state().calls);
+    assert_eq!(wf.state().herdr_server, Some(session("work")));
 }

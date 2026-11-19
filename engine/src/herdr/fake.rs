@@ -61,8 +61,10 @@ pub(crate) struct FakeHerdrState {
     pub lost_sessions: HashSet<String>,
     /// (name, kind) of each agent started, in order.
     pub kinds: Vec<(String, String)>,
-    /// The workspaces open.
+    /// The workspaces open in the fake's own server (server).
     pub workspaces: HashSet<String>,
+    /// The workspaces open in other herdr servers of this machine, each with its server.
+    pub foreign_workspaces: HashSet<(HerdrServer, String)>,
     /// The panes open.
     pub live_panes: HashSet<String>,
     /// The until of each wait but a delivery check's.
@@ -97,6 +99,8 @@ pub(crate) struct FakeHerdrState {
     pub prompt_with: Option<PromptWith>,
     /// What server answers: the herdr server the fake stands for. None, as for a herdr machine, unless a test sets it.
     pub server: Option<HerdrServer>,
+    /// Other names of the fake's server, each naming it another way, as herdr resolves them (Herdr::reaches).
+    pub aliases: Vec<HerdrServer>,
     /// (workspace, server) of each Workspaces call, in order, the server being the one the call reached: the one it
     /// was given, else server's.
     pub reached: Vec<(String, Option<HerdrServer>)>,
@@ -125,6 +129,7 @@ impl FakeHerdr {
                 lost_sessions: HashSet::new(),
                 kinds: vec![],
                 workspaces: HashSet::new(),
+                foreign_workspaces: HashSet::new(),
                 live_panes: HashSet::new(),
                 waits: vec![],
                 deliveries: vec![],
@@ -140,6 +145,7 @@ impl FakeHerdr {
                 interrupt: None,
                 prompt_with: None,
                 server: None,
+                aliases: vec![],
                 reached: vec![],
             }),
         }
@@ -191,6 +197,15 @@ impl FakeHerdr {
 }
 
 impl FakeHerdrState {
+    /// Whether server, None meaning the fake's own, is the fake's server: any is, for a fake standing for a herdr
+    /// machine (server None), as a forwarded command reaches the machine's whatever server it is given.
+    fn is_own(&self, server: Option<&HerdrServer>) -> bool {
+        match (server, &self.server) {
+            (None, _) | (_, None) => true,
+            (Some(other), Some(own)) => other == own || self.aliases.contains(other),
+        }
+    }
+
     /// A new pane of workspace w1.
     fn pane(&mut self) -> String {
         self.panes += 1;
@@ -318,13 +333,22 @@ impl Herdr for FakeHerdr {
     fn server(&self) -> Option<HerdrServer> {
         self.state().server.clone()
     }
+
+    fn reaches(&self, server: &HerdrServer) -> Result<bool, HerdrError> {
+        Ok(self.state().is_own(Some(server)))
+    }
 }
 
-/// The workspaces are one set, whatever server a call reaches; each call's server is recorded in reached.
+/// A call reaching the fake's own server finds workspaces, one reaching another server foreign_workspaces; each
+/// call's server is recorded in reached.
 impl Workspaces for FakeHerdr {
     fn workspace_exists(&self, workspace: &str, server: Option<&HerdrServer>) -> Result<bool, HerdrError> {
         self.reach(workspace, server);
-        Ok(self.state().workspaces.contains(workspace))
+        let s = self.state();
+        Ok(match server.filter(|srv| !s.is_own(Some(srv))) {
+            None => s.workspaces.contains(workspace),
+            Some(srv) => s.foreign_workspaces.contains(&(srv.clone(), workspace.to_string())),
+        })
     }
 
     fn close_workspace(&self, workspace: &str, server: Option<&HerdrServer>) -> Result<(), HerdrError> {
@@ -334,7 +358,10 @@ impl Workspaces for FakeHerdr {
         if let Some(e) = s.close_error.clone() {
             return Err(e);
         }
-        s.workspaces.remove(workspace);
+        match server.filter(|srv| !s.is_own(Some(srv))).cloned() {
+            None => s.workspaces.remove(workspace),
+            Some(srv) => s.foreign_workspaces.remove(&(srv, workspace.to_string())),
+        };
         Ok(())
     }
 }

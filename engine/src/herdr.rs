@@ -95,7 +95,7 @@ pub const HERDR_SESSION: &str = "HERDR_SESSION";
 /// HERDR_SOCKET_PATH and HERDR_SESSION, each as it was set or unset. herdr's own `--session` flag, which wins over
 /// both, is never given. state.json holds it as {"HERDR_SOCKET_PATH": ..., "HERDR_SESSION": ...}, each a string, or
 /// null for a variable that was unset; one missing from the object is unset.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct HerdrServer {
     /// HERDR_SOCKET_PATH's value; None when it is unset.
     #[serde(rename = "HERDR_SOCKET_PATH", default)]
@@ -208,8 +208,8 @@ impl Direction {
 
 /// The commands a run gives herdr: workspaces and panes to show the agents in, and the agents themselves. Every
 /// error names herdr's code where herdr gave one (HerdrError::code); each method says which codes it answers instead
-/// of failing. A run's own workspace is told and closed through Workspaces, with no server: the one these commands
-/// reach.
+/// of failing. A run's own workspace is told and closed through Workspaces, in the server the run saved
+/// (RunState::herdr_server), which need not be the one these commands reach (reaches).
 pub trait Herdr: Workspaces {
     /// Create a workspace labelled label whose root pane starts in cwd, without focusing it; gives (workspace id,
     /// root pane id).
@@ -256,6 +256,14 @@ pub trait Herdr: Workspaces {
     /// Which of this machine's herdr servers the commands reach, without asking herdr; None when they are forwarded
     /// to a herdr machine, or when the server cannot be told (HerdrServer::of_environment).
     fn server(&self) -> Option<HerdrServer>;
+
+    /// Whether these commands reach server's herdr server: true when they are forwarded to a herdr machine, whose
+    /// herdr picks its own; else whether server and the one this herdr's environment picks are one API socket as herdr
+    /// resolves them, so that one server named two ways, by HERDR_SOCKET_PATH or by the session it is the socket of,
+    /// counts once. Asks this machine's herdr, whether or not a server runs, unless server is named as the
+    /// environment names its own. Errors: bad_response for an answer that
+    /// names no socket; exec's.
+    fn reaches(&self, server: &HerdrServer) -> Result<bool, HerdrError>;
 }
 
 /// A run's herdr workspace, by its id and the server of this machine it is in: what close tells and closes after the
@@ -474,6 +482,16 @@ impl ProcessHerdr {
     fn server_runs(&self, limit: Duration) -> Result<bool, HerdrError> {
         let out = self.exec(&["status", "server"], Some(limit))?;
         Ok(out.lines().any(|line| line.trim() == "status: running"))
+    }
+
+    /// The API socket of the herdr server this herdr's environment picks, as `herdr status server` names it (herdr
+    /// 0.9.1 resolves it whether or not the server runs). Errors: bad_response for an answer without a socket line;
+    /// exec's.
+    fn socket(&self) -> Result<String, HerdrError> {
+        let out = self.exec(&["status", "server"], Some(Duration::from_secs(CALL_LIMIT_SECONDS)))?;
+        let socket = out.lines().find_map(|line| line.trim().strip_prefix("socket:"));
+        let socket = socket.ok_or_else(|| HerdrError::new("bad_response", "status server: no socket line"))?;
+        Ok(socket.trim().to_string())
     }
 
     /// Returns once pane's shell is at its prompt, its own process group in the foreground, looking again within
@@ -901,6 +919,13 @@ impl Herdr for ProcessHerdr {
             Some(_) => None,
             None => HerdrServer::of_environment(&self.env),
         }
+    }
+
+    fn reaches(&self, server: &HerdrServer) -> Result<bool, HerdrError> {
+        if self.machine.is_some() || self.server().as_ref() == Some(server) {
+            return Ok(true);
+        }
+        Ok(self.socket()? == self.in_server(server).socket()?)
     }
 }
 

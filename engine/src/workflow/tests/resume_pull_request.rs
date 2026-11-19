@@ -7,6 +7,7 @@
 use super::pull_request::{git_calls, BRANCH, FAST_FORWARD, FETCH, MERGE};
 use super::*;
 use crate::host::GIT_STATUS_ARGS;
+use crate::test_support::herdr_server;
 
 const ON_BRANCH: &[&str] = &["rev-parse", "--abbrev-ref", "HEAD"];
 /// The git commands that would change the tree, the branch or origin.
@@ -257,4 +258,17 @@ fn runs_without_a_branch_to_guard_are_not_checked() {
         assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE), "{name}");
         assert_eq!(count(&git_calls(&f), ON_BRANCH), 0, "{name}");
     }
+}
+
+#[test]
+fn publish_resumed_from_another_herdr_server_closes_the_workspace_in_the_run_s() {
+    // Publish skips prepare, so the run's workspace is still the one in the server it saved.
+    let mut state = approved_publish();
+    state.herdr_server = Some(herdr_server(None, Some("octoflow")));
+    let f = Fixture::resume(host_on("def456", BRANCH), state, vec![], &[], &[]);
+    f.herdr.state().server = Some(herdr_server(None, Some("work")));
+    assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
+    assert!(called(&f, &Call::Close { workspace: "w1".into() }));
+    let reached = f.herdr.state().reached.clone();
+    assert_eq!(reached.last(), Some(&("w1".to_string(), Some(herdr_server(None, Some("octoflow"))))));
 }

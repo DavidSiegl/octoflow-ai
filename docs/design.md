@@ -22,7 +22,10 @@ the process that drives them. `resume` picks the run up where `state.json` says 
 - `resume --agent` and `--role-agent` change the harness of each role's next agent; a role whose agent still
   runs keeps it until it exits. A state saved by 0.3.0 resumes with every role on claude and its saved
   permission mode.
-- A closed pane is split again from a surviving one, and a closed workspace is replaced by a new one.
+- A closed pane is split again from a surviving one, and a closed workspace is replaced by a new one. The workspace
+  is looked for in the herdr server the run saved; one still open there while the resume reaches another server is
+  closed and replaced by a new one in the resume's. A resume with `--machine` reaches the machine's herdr, whatever
+  server the run saved.
 - The diff under review stays against the commit the run started from, even if you commit in between.
 - A run stopped while opening its pull request does not commit twice, merge the base branch twice, or open a
   second pull request. A merge it left half done is aborted before anything is committed, so conflict markers
