@@ -2,7 +2,7 @@
 //! RunState.turns.
 
 use super::{How, Outcome, Stopped, Workflow};
-use crate::agents::{AgentError, AgentLaunch, Seen, Started, Status};
+use crate::agents::{Activity, AgentError, AgentLaunch, Seen, Started};
 use crate::constants::{
     APPROVE, CHANGES_REQUESTED, HEARTBEAT_SECONDS, POLL_SECONDS, PROMPT_DELIVERY_SECONDS, STALL_SECONDS,
 };
@@ -420,13 +420,13 @@ impl Workflow<'_> {
                     ))));
                 }
             }
-            if seen.status != Status::Idle {
+            if seen.activity != Activity::Idle {
                 quiet_since = None;
             } else if quiet_since.is_none() {
                 quiet_since = Some(now);
             }
             let stalled = watch_stalls && quiet_since.is_some_and(|since| now - since >= STALL_SECONDS as f64);
-            told = self.tell_human(role, seen.status, stalled, told, &file);
+            told = self.tell_human(role, seen.activity, stalled, told, &file);
             self.heartbeat()?;
             self.pause(POLL_SECONDS)?;
         }
@@ -436,12 +436,12 @@ impl Workflow<'_> {
     fn tell_human(
         &self,
         role: &str,
-        status: Status,
+        activity: Activity,
         stalled: bool,
         told: Option<&'static str>,
         file: &str,
     ) -> Option<&'static str> {
-        if status == Status::Blocked && told != Some("blocked") {
+        if activity == Activity::Blocked && told != Some("blocked") {
             self.ask_human(role, "needs your answer");
             return Some("blocked");
         }
@@ -449,7 +449,7 @@ impl Workflow<'_> {
             self.ask_human(role, &format!("is idle without writing {file}"));
             return Some("stalled");
         }
-        if status == Status::Working {
+        if activity == Activity::Working {
             None
         } else {
             told
@@ -601,13 +601,13 @@ impl Workflow<'_> {
         let mut found = self.agents.find(&self.state, role)?;
         let mut how = known.unprompted.map_or(How::Alive, How::Started);
         if known.unprompted.is_some() {
-            match found.as_ref().map(|seen| seen.status) {
+            match found.as_ref().map(|seen| seen.activity) {
                 // A startup dialog, or a question about a prompt taken but not recorded; both need the human.
-                Some(Status::Blocked) => {
+                Some(Activity::Blocked) => {
                     self.wait_for_startup(role)?;
                     found = self.agents.find(&self.state, role)?;
                 }
-                Some(Status::Working) => {
+                Some(Activity::Working) => {
                     how = How::Alive;
                     self.state.agents.get_mut(role).expect("the record just read").unprompted = None;
                     self.save()?;

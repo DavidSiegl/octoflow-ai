@@ -160,12 +160,12 @@ pub fn close_command(
 /// and return that. Says each step through world. With dry_run, change nothing: say what would be discarded with the
 /// worktree and a line naming each thing closing would close, delete or keep (Plan::preview), and return that line.
 ///
-/// Every run loses its agents' place and its local refs (crate::state::refs_prefix), which hold the files its steps locked
-/// and which nothing else deletes once it is closed. A failed or stale --worktree run also loses its worktree, changes
-/// and all (listed first), and its branch if that holds no commit beyond the run's base. A finished run's worktree is a
-/// --no-pr run's change, and an in-place run's checkout and branch are the human's to sort out, so both stay. Each step
-/// skips what is already gone, so a close that failed part way can be run again; closed is recorded only once every
-/// step has succeeded. A run already closed is left as it is, and its closed returned.
+/// Every run loses its agents' place and its local refs (crate::state::refs_prefix), which hold the files its steps
+/// locked and which nothing else deletes once it is closed. A failed or stale --worktree run also loses its worktree,
+/// changes and all (listed first), and its branch if that holds no commit beyond the run's base. A finished run's
+/// worktree is a --no-pr run's change, and an in-place run's checkout and branch are the human's to sort out, so both
+/// stay. Each step skips what is already gone, so a close that failed part way can be run again; closed is recorded
+/// only once every step has succeeded. A run already closed is left as it is, and its closed returned.
 ///
 /// Errors: no run or several match run_ref; the run is Decision::Refused; its agents' backend or git cannot tell what
 /// is there; a step fails; or the state.json changed since it was read.
@@ -256,8 +256,8 @@ fn closed_as_read(run: &SavedRun) -> Option<String> {
 
 /// Read the run of the project at cwd whose id is run_id again, and close it as close_all says, or with dry_run say
 /// what closing it would do; a run whose state.json is gone is skipped, as nothing is left to close. With previewed,
-/// a run whose plan is no longer what the dry run said is skipped. A close that
-/// fails is Outcome::Failed. Errors: its state.json cannot be read, or its agents' backend or git cannot tell what is there.
+/// a run whose plan is no longer what the dry run said is skipped. A close that fails is Outcome::Failed. Errors: its
+/// state.json cannot be read, or its agents' backend or git cannot tell what is there.
 fn sweep_run(
     world: &Closer,
     cwd: &str,

@@ -4,8 +4,13 @@
 //! state; [`Notify`] tells the human. herdr is the one backend so far: every `crate::herdr::Herdr` is an `Agents`, and
 //! every `crate::herdr::Workspaces` a `RunPlaces` (crate::herdr::agents).
 //!
-//! A backend keeps what it needs in the run's state (RunState), in fields only it reads or writes; for herdr those are
-//! `herdr_server`, `workspace_id`, `root_pane`, and each AgentRecord's `name` and `pane`.
+//! A backend keeps what it needs in the run's state (RunState), in fields only it writes; for herdr those are
+//! `herdr_server`, `workspace_id`, `root_pane`, and each AgentRecord's `name` and `pane`. Two readers outside the
+//! backend remain: list and show print `workspace_id` and `pane` (crate::cli::listing), and serve reaches a run's
+//! agents through `herdr_server`, its AgentConsole being herdr's own (crate::serve::runs).
+//!
+//! Every method's AgentError is Failed when the backend cannot be reached or fails, unless its comment says when it
+//! is Refused.
 
 use std::fmt;
 
@@ -49,7 +54,7 @@ impl From<OrchestratorError> for AgentError {
 
 /// What a role's agent is doing, as its backend sees it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Status {
+pub enum Activity {
     /// Working on a prompt.
     Working,
     /// Waiting on the human: a question, a permission, a dialog.
@@ -63,7 +68,8 @@ pub enum Status {
 /// A role's agent that is running.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Seen {
-    pub status: Status,
+    /// What it was doing when the backend was asked.
+    pub activity: Activity,
     /// The id of the harness's session it runs in; None while the backend does not know it.
     pub session: Option<String>,
 }
@@ -108,8 +114,8 @@ pub trait Agents: RunPlaces {
     /// run changed, to be saved.
     fn open(&self, run: &mut RunState, human: &dyn Human) -> Result<bool, AgentError>;
 
-    /// End the run's agents and close their place, once the run is over. A failure is only logged to human: it leaves
-    /// clutter, nothing the run needs.
+    /// RunPlaces::end for the orchestrator, once the run is over: a failure is only logged to human, in the
+    /// backend's words, since it leaves clutter and nothing the run needs.
     fn close(&self, run: &RunState, human: &dyn Human);
 
     /// The record of the role's next agent, which the caller fills in and saves before Agents::start starts it: in
@@ -157,7 +163,7 @@ pub trait RunPlaces {
     /// had one, or it is gone.
     fn place(&self, run: &RunState) -> Result<Option<String>, AgentError>;
 
-    /// Close the run's place, with any agent still in it.
+    /// Close the run's place, with any agent still in it; nothing to do when the run never had one.
     fn end(&self, run: &RunState) -> Result<(), AgentError>;
 }
 

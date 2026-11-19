@@ -3,7 +3,7 @@
 //! its root pane, the server it is in, and each agent's herdr name and pane.
 
 use super::{workspace_label, Agent, Direction, Herdr, HerdrError, Workspaces};
-use crate::agents::{AgentError, AgentLaunch, Agents, RunPlaces, Seen, Started, Status};
+use crate::agents::{Activity, AgentError, AgentLaunch, Agents, RunPlaces, Seen, Started};
 use crate::error::OrchestratorError;
 use crate::harness::harness;
 use crate::state::{AgentRecord, RunState};
@@ -45,9 +45,8 @@ impl<H: Herdr + ?Sized> Agents for H {
     }
 
     fn close(&self, run: &RunState, human: &dyn Human) {
-        let workspace = &run.workspace_id;
-        if let Err(e) = self.close_workspace(workspace, None) {
-            human.log(&format!("could not close herdr workspace {workspace}: {e}"));
+        if let Err(e) = self.end(run) {
+            human.log(&format!("could not close herdr workspace {}: {e}", run.workspace_id));
         }
     }
 
@@ -155,6 +154,9 @@ impl<W: Workspaces + ?Sized> RunPlaces for W {
     }
 
     fn end(&self, run: &RunState) -> Result<(), AgentError> {
+        if run.workspace_id.is_empty() {
+            return Ok(());
+        }
         Ok(self.close_workspace(&run.workspace_id, run.herdr_server.as_ref())?)
     }
 }
@@ -171,11 +173,11 @@ fn pane<'r>(run: &'r RunState, role: &str) -> &'r str {
 
 /// herdr's record of an agent as the backend reports it: idle and done are both Idle.
 fn seen(agent: Agent) -> Seen {
-    let status = match agent.status.as_str() {
-        "working" => Status::Working,
-        "blocked" => Status::Blocked,
-        "idle" | "done" => Status::Idle,
-        _ => Status::Unknown,
+    let activity = match agent.status.as_str() {
+        "working" => Activity::Working,
+        "blocked" => Activity::Blocked,
+        "idle" | "done" => Activity::Idle,
+        _ => Activity::Unknown,
     };
-    Seen { status, session: agent.session.filter(|s| !s.is_empty()) }
+    Seen { activity, session: agent.session.filter(|s| !s.is_empty()) }
 }

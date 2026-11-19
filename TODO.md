@@ -42,11 +42,14 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
-- **Two CLI texts still say herdr's words behind the `Agents`/`RunPlaces` seam.** `Turn::wait_for_startup`
+- **herdr's words and fields still reach past the `Agents`/`RunPlaces` seam.** `Turn::wait_for_startup`
   (`engine/src/workflow/turn.rs`) logs "answer in the pane", and `Plan::summary` (`engine/src/cli/close.rs`) records
-  "workspace closed" / "workspace already gone", whatever backend the run used. Both were kept so the herdr-only text
-  stays unchanged; a run on the ACP backend (`.scratch/herdr-gui-decoupling`, ticket 02) would get them wrong. Closes
-  when that backend lands and these take their wording from the backend (`Agents::whereabouts`, `RunPlaces::place`).
+  "workspace closed" / "workspace already gone", whatever backend the run used; list and show print the run's
+  `workspace_id` and each agent's `pane` straight from the state (`run_record`, `show_run` in
+  `engine/src/cli/listing.rs`). All were kept so the herdr-only text stays unchanged; a run on the ACP backend
+  (`.scratch/herdr-gui-decoupling`, ticket 02) would print them wrong or empty. Closes when that backend lands and
+  these take their wording from the backend (`Agents::whereabouts`, `RunPlaces::place`). serve reading
+  `herdr_server` (`engine/src/serve/runs.rs`) is by design: its `AgentConsole` stays herdr's own.
 
 - **A resumed done run's late summary.md or metrics.json can miss the desktop app.** Raised by cross-review 238 (F3):
   a done run stopped before its ending wrote them is finished by a resume that writes them without saving state.json
