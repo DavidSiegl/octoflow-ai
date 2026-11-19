@@ -17,7 +17,7 @@ use crate::json::Object;
 use crate::local_gate::LOCAL_GATE;
 use crate::runs::local_host;
 use crate::state::SavedRun;
-use crate::test_support::{quick, resumable, solo, TempDir};
+use crate::test_support::{herdr_server, quick, resumable, solo, TempDir};
 use crate::workflow::fixture::{quality_state, review_turn, saved_run, Fixture};
 use crate::workflow_file::{workflow_definition, workflow_toml};
 use serde_json::Value;
@@ -518,7 +518,7 @@ fn a_run_of_the_jenkins_gate_past_round_0_needs_the_local_gates_preflight() {
 
 /// The herdr server whose session is session, its socket path unset.
 fn session(session: &str) -> HerdrServer {
-    serde_json::from_value(serde_json::json!({"HERDR_SESSION": session})).unwrap()
+    herdr_server(None, Some(session))
 }
 
 #[test]

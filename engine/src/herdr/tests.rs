@@ -566,6 +566,43 @@ fn the_server_herdr_reaches_is_its_environment_s() {
     assert_eq!(HerdrServer::of_environment(&odd), None);
 }
 
+#[test]
+fn one_herdr_server_named_two_ways_is_reached_by_either() {
+    // A herdr that resolves the socket as herdr 0.9.1 does: HERDR_SOCKET_PATH, else the session's, else the default.
+    let d = TempDir::new();
+    let script = r#"#!/bin/sh
+if [ -n "${HERDR_SOCKET_PATH+x}" ]; then s=$HERDR_SOCKET_PATH
+elif [ -n "${HERDR_SESSION+x}" ]; then s=/h/sessions/$HERDR_SESSION/herdr.sock
+else s=/h/herdr.sock; fi
+echo 'status: not running'; echo "socket: $s"
+"#;
+    tool(&d.path(), "herdr", script);
+    let herdr = |machine: Option<&str>, set: &[(&str, &str)]| {
+        let mut vars = environment(Some(&d.path()), &[]);
+        vars.retain(|(k, _)| !k.to_string_lossy().starts_with("HERDR_"));
+        vars.extend(set.iter().map(|(k, v)| (OsString::from(k), OsString::from(v))));
+        ProcessHerdr::in_environment(machine, vars.into_iter(), &Interrupt::new())
+    };
+    let default = HerdrServer::of_environment(&[]).unwrap();
+    let work: HerdrServer = serde_json::from_str(r#"{"HERDR_SESSION": "work"}"#).unwrap();
+    // A pane of the default server names it by its socket.
+    let pane = herdr(None, &[("HERDR_SOCKET_PATH", "/h/herdr.sock")]);
+    assert!(pane.reaches(&default).unwrap());
+    assert!(!pane.reaches(&work).unwrap());
+    assert!(herdr(None, &[("HERDR_SESSION", "work")]).reaches(&work).unwrap());
+    // Forwarded to a machine, whose herdr picks its own server, any is reached, without asking herdr.
+    let (forwarded, ran) = answering(Some("box"), 1, "", "");
+    assert!(forwarded.reaches(&work).unwrap());
+    assert!(ran.lock().unwrap().is_empty());
+    // Named as the environment names it, without asking herdr.
+    let (plain, ran) = answering(None, 1, "", "");
+    assert!(plain.reaches(&default).unwrap());
+    assert!(ran.lock().unwrap().is_empty());
+    // An answer without its socket line.
+    let (odd, _) = answering(None, 0, "status: running\n", "");
+    assert_eq!(odd.reaches(&work).unwrap_err().code(), Some("bad_response"));
+}
+
 // -- Lookups ---------------------------------------------------------------------------------------------------------
 
 #[test]

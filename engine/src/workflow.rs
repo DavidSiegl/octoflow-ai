@@ -843,17 +843,25 @@ impl<'a> Workflow<'a> {
     }
 
     /// Open the run's herdr workspace, or find it from before in the herdr server the run saved. One found in a
-    /// server other than the one this engine's herdr reaches is closed there, as the engine could give its panes no
-    /// command, and a new one opened here; the run saves this server only once it has a workspace in it.
+    /// server other than the one this engine's herdr reaches (Herdr::reaches) is closed there, as the engine could
+    /// give its panes no command, and a new one opened here; the run saves this server only once it has a workspace
+    /// in it, and saves it too when it resumes in a workspace while it had saved none.
     fn prepare(&mut self) -> Outcome<()> {
         let s = &mut self.state;
         if !s.workspace_id.is_empty() {
             let saved = s.herdr_server.as_ref();
             // A run that saved no server looks for its workspace in the one this environment reaches.
-            let elsewhere = saved.is_some() && saved != self.herdr.server().as_ref();
+            let elsewhere = match saved {
+                Some(saved) => !self.herdr.reaches(saved)?,
+                None => false,
+            };
             let exists = self.herdr.workspace_exists(&s.workspace_id, saved)?;
             if exists && !elsewhere {
                 self.human.log(&format!("run {} resumes in herdr workspace {}", s.run_id, s.workspace_id));
+                if s.herdr_server.is_none() && self.herdr.server().is_some() {
+                    s.herdr_server = self.herdr.server();
+                    return self.save();
+                }
                 return Ok(());
             }
             if exists {
@@ -1229,11 +1237,11 @@ impl<'a> Workflow<'a> {
         Ok(reviews)
     }
 
-    /// Close the run's workspace once the pull request carries the change; a failure leaves only clutter behind, so
-    /// it is only logged.
+    /// Close the run's workspace, in the herdr server the run saved, once the pull request carries the change; a
+    /// failure leaves only clutter behind, so it is only logged.
     fn close_workspace(&self) {
         let workspace = &self.state.workspace_id;
-        if let Err(e) = self.herdr.close_workspace(workspace, None) {
+        if let Err(e) = self.herdr.close_workspace(workspace, self.state.herdr_server.as_ref()) {
             self.human.log(&format!("could not close herdr workspace {workspace}: {e}"));
         }
     }

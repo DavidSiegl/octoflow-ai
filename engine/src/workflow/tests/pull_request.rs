@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use super::*;
 
 /// The default run with one review round per verdict, each Builder turn changing /proj/limiter.py.
-fn rounds(verdicts: &[&str]) -> Script {
+pub(super) fn rounds(verdicts: &[&str]) -> Script {
     let n = verdicts.len() as u32;
     let reviews = verdicts.iter().zip(1..).map(|(v, i)| review_turn(i, v)).collect();
     vec![("spec", vec![spec_turn()]), ("build", (1..=n).map(build_turn).collect()), ("review", reviews)]
