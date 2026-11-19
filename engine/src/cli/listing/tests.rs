@@ -338,6 +338,22 @@ fn a_run_an_earlier_release_saved_lists_as_unreadable_with_what_to_do() {
 }
 
 #[test]
+fn a_state_json_that_is_not_json_or_names_no_run_lists_by_its_directory_as_not_running() {
+    let cli = Cli::new();
+    {
+        let files = &mut cli.f.host.state().files;
+        files.insert("/proj/.octoflow-ai/runs/broken/state.json".into(), "{\"run_id\": \n".into());
+        files.insert("/proj/.octoflow-ai/runs/nameless/state.json".into(), "{\"phase\": \"build\"}\n".into());
+    }
+    assert_eq!(cli.main(&["list", "--cwd", "/proj"]), 0);
+    let out = cli.take_out();
+    assert!(out.contains("error: /proj/.octoflow-ai/runs/broken/state.json is not JSON ("), "{out}");
+    let nameless = "error: /proj/.octoflow-ai/runs/nameless/state.json is not a JSON object with a run_id";
+    assert!(out.contains(nameless), "{out}");
+    assert!(!out.contains(RUNNING), "{out}");
+}
+
+#[test]
 fn a_workflow_this_orchestrator_cannot_load() {
     let state = with(run("build"), &[("workflow", Value::from("gone")), ("quality_round", Value::from(2))]);
     let record = record(&state, 40, true, &[]);

@@ -92,7 +92,7 @@ impl ServeHost {
             if only.is_some_and(|only| only != dir) {
                 continue;
             }
-            let run = SavedRun::read(s.ages.get(dir).copied().unwrap_or(0), &format!("{runs}{dir}"), text);
+            let run = SavedRun::read(s.ages.get(dir).copied().unwrap_or(0), &format!("{runs}{dir}"), text.as_bytes());
             if run.shown().run_id == dir {
                 states.push(run);
             }

@@ -621,31 +621,38 @@ impl RunState {
     }
 }
 
-/// A run's state.json as read back (Host::run_states): its age, and either its RunState or why it cannot be read. The commands that act on a run take state(), which refuses an unreadable one; list and show take shown(),
-/// which shows one too. Not a Result of RunState and the problem: list would lose an unreadable run's task, phase
-/// and round, which the desktop app types as never null (ui/src/api.ts).
+/// A run's state.json as read back (Host::run_states): its age, and either its RunState or why it cannot be read.
+/// The commands that act on a run take state(), which refuses an unreadable one; list and show take shown(), which
+/// shows one too. Not a Result of RunState and the problem: list would lose an unreadable run's task, phase and
+/// round, which the desktop app types as never null (ui/src/api.ts).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SavedRun {
     /// Seconds since the state.json was last written, by the clock of the host that wrote it.
     age: u64,
     /// The state as saved; for an unreadable run, as much of it as reads (RunState::from_readable_fields).
     state: RunState,
-    /// Why the state cannot be read, naming the run and what to do with it; None for a readable one.
+    /// Why the state cannot be read, and what to do with it; None for a readable one.
     problem: Option<String>,
+    /// False when the state.json is not a JSON object with a run_id: no orchestrator of any release writes one, so
+    /// none drives it (SavedRun::health).
+    pub(crate) names_run: bool,
 }
 
 impl SavedRun {
     /// The run in the directory run_dir, a path whose last component is the directory's name, whose state.json,
-    /// written age seconds ago, holds text. Unreadable when text is not JSON, or not an object with a run_id (a
-    /// non-empty string), the problem naming the file, and the run named by its directory, as far as the object
-    /// reads; or when it is not of STATE_FORMAT or a field of it does not read (RunState::from_saved).
-    pub fn read(age: u64, run_dir: &str, text: &str) -> SavedRun {
+    /// written age seconds ago, holds text. Unreadable when text is not UTF-8, not JSON, or not an object with a
+    /// run_id (a non-empty string), the problem naming the file, and the run named by its directory, as far as the
+    /// object reads; or when it is not of STATE_FORMAT or a field of it does not read (RunState::from_saved).
+    pub fn read(age: u64, run_dir: &str, text: &[u8]) -> SavedRun {
         let dir_name = run_dir.rsplit('/').next().unwrap_or(run_dir);
         let unreadable = |saved: &Object, what: String| {
             let mut state = RunState::from_readable_fields(saved);
             state.run_id = dir_name.to_string();
             let problem = format!("{run_dir}/state.json {what}; fix it, or remove {run_dir}");
-            SavedRun { age, state, problem: Some(problem) }
+            SavedRun { age, state, problem: Some(problem), names_run: false }
+        };
+        let Ok(text) = std::str::from_utf8(text) else {
+            return unreadable(&Object::new(), "is not UTF-8 text".to_string());
         };
         let saved = match serde_json::from_str::<Value>(text) {
             Err(e) => return unreadable(&Object::new(), format!("is not JSON ({e})")),
@@ -660,8 +667,10 @@ impl SavedRun {
             }
         };
         match RunState::from_saved(&saved) {
-            Ok(state) => SavedRun { age, state, problem: None },
-            Err(e) => SavedRun { age, state: RunState::from_readable_fields(&saved), problem: Some(e.0) },
+            Ok(state) => SavedRun { age, state, problem: None, names_run: true },
+            Err(e) => {
+                SavedRun { age, state: RunState::from_readable_fields(&saved), problem: Some(e.0), names_run: true }
+            }
         }
     }
 
@@ -684,8 +693,9 @@ impl SavedRun {
         &self.state
     }
 
-    /// Why the run's state cannot be read, naming the run and what to do with it: format_problem's text, or the
-    /// field from_saved could not read; None for a readable run.
+    /// Why the run's state cannot be read and what to do with it: for a state.json that is not UTF-8, not JSON or names
+    /// no run, naming the file (SavedRun::read); else naming the run, format_problem's text or the field from_saved
+    /// could not read. None for a readable run.
     pub fn problem(&self) -> Option<&str> {
         self.problem.as_deref()
     }

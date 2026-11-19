@@ -498,7 +498,7 @@ pub fn object(text: &str) -> Object {
 /// r when it names none (SavedRun::read).
 pub fn read_saved(age: u64, saved: &serde_json::Value) -> crate::state::SavedRun {
     let id = saved.get("run_id").and_then(serde_json::Value::as_str).filter(|id| !id.is_empty()).unwrap_or("r");
-    crate::state::SavedRun::read(age, &crate::state::run_dir("/proj", id), &saved.to_string())
+    crate::state::SavedRun::read(age, &crate::state::run_dir("/proj", id), saved.to_string().as_bytes())
 }
 
 /// resumable_state for `resume a1b2c3` with flags over one run, saved as saved 10^4 s ago, in /proj, on host "here",

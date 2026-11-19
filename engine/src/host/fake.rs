@@ -1061,7 +1061,7 @@ impl Host for FakeHost {
             };
             if name == "state.json" {
                 let age = s.ages.get(run_id).copied().unwrap_or(0);
-                states.push(SavedRun::read(age, &format!("{runs}{run_id}"), text));
+                states.push(SavedRun::read(age, &format!("{runs}{run_id}"), text.as_bytes()));
             }
         }
         Ok(states)

@@ -434,26 +434,39 @@ fn a_state_json_that_is_not_json_or_names_no_run_is_an_unreadable_run_named_by_i
     let mut runs = host.run_states(&d.path()).unwrap();
     runs.sort_by(|x, y| x.shown().run_id.cmp(&y.shown().run_id));
     let listed: Vec<(&str, Option<&str>)> = runs.iter().map(|r| (r.shown().run_id.as_str(), r.problem())).collect();
+    let runs_dir = format!("{}/{RUNS_DIR}", d.path());
     let a = format!(
-        "{}/{RUNS_DIR}/a/state.json is not JSON (EOF while parsing a value at line 1 column 11); fix \
-                     it, or remove {}/{RUNS_DIR}/a",
-        d.path(),
-        d.path()
+        "{runs_dir}/a/state.json is not JSON (EOF while parsing a value at line 1 column 11); fix it, or remove \
+         {runs_dir}/a"
     );
-    let b = format!(
-        "{}/{RUNS_DIR}/b/state.json is not a JSON object with a run_id; fix it, or remove \
-                     {}/{RUNS_DIR}/b",
-        d.path(),
-        d.path()
-    );
+    let b = format!("{runs_dir}/b/state.json is not a JSON object with a run_id; fix it, or remove {runs_dir}/b");
     assert_eq!(listed, [("a", Some(a.as_str())), ("b", Some(b.as_str())), ("c", None)]);
     let a = host.run_state(&d.path(), "a").unwrap().unwrap();
     assert_eq!(a.state().unwrap_err().0, listed[0].1.unwrap());
 }
 
 #[test]
+fn bytes_that_are_not_utf_8_in_a_run_s_directory_name_or_state_json_fail_only_that_run() {
+    use std::os::unix::ffi::OsStrExt;
+    let d = TempDir::new();
+    let runs = std::path::PathBuf::from(format!("{}/{RUNS_DIR}", d.path()));
+    let odd = runs.join(std::ffi::OsStr::from_bytes(b"x\xff"));
+    std::fs::create_dir_all(&odd).unwrap();
+    std::fs::write(odd.join("state.json"), RunState::new("x", "t", &d.path()).to_text()).unwrap();
+    std::fs::create_dir_all(runs.join("y")).unwrap();
+    std::fs::write(runs.join("y/state.json"), b"{\"run_id\": \"y\xff\"}\n").unwrap();
+    let host = ProcessHost::local(&Interrupt::new());
+    let mut listed = host.run_states(&d.path()).unwrap();
+    listed.sort_by(|a, b| a.shown().run_id.cmp(&b.shown().run_id));
+    assert_eq!((listed[0].shown().run_id.as_str(), listed[0].problem()), ("x", None));
+    let y = format!("{}/y/state.json is not UTF-8 text; fix it, or remove {}/y", runs.display(), runs.display());
+    assert_eq!((listed[1].shown().run_id.as_str(), listed[1].problem()), ("y", Some(y.as_str())));
+    assert_eq!(listed.len(), 2);
+}
+
+#[test]
 fn a_run_state_whose_age_is_not_a_number_is_corrupt() {
-    let e = parsed_run_states("/p", RUNS_DIR, "12x {}\0").unwrap_err();
+    let e = parsed_run_states("/p", RUNS_DIR, b"12x {}\0").unwrap_err();
     assert_eq!(e.0, format!("corrupt run state under /p/{RUNS_DIR}: an age that is not a whole number: \"12x\""));
 }
 

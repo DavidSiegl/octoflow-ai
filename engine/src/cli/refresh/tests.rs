@@ -283,6 +283,20 @@ fn a_run_an_earlier_release_saved_is_skipped_saying_why() {
 }
 
 #[test]
+fn a_state_json_that_is_not_json_or_names_no_run_does_not_stop_a_refresh_of_the_others() {
+    let t = Refresh::new();
+    t.add_run(&[]);
+    {
+        let files = &mut t.cli.f.host.state().files;
+        files.insert(state_path("broken"), "{\"run_id\": \n".into());
+        files.insert(state_path("nameless"), "{\"phase\": \"done\"}\n".into());
+    }
+    let (status, out) = t.refresh(&[]);
+    assert_eq!(status, 0, "{out}");
+    assert_eq!(out, format!("{REFRESH_ID}: conflict cleared, ready for review  {REFRESH_URL}\n"));
+}
+
+#[test]
 fn without_a_run_and_nothing_to_refresh() {
     let t = Refresh::new();
     t.add(REFRESH_ID, REFRESH_URL, &[], APPROVE, None, &[]);

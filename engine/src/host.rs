@@ -1012,8 +1012,8 @@ pub trait Host {
     /// Each run under the project at cwd as its state.json reads back (SavedRun), its age measured by this host's own
     /// clock, the one that stamped the file, so clock skew between the machines involved cannot shift it. A run whose
     /// directory is removed while the runs are read, as prune removes one, is among them or not, never an error; one
-    /// of a format this engine does not read, or not JSON naming its run, is among them, as unreadable (SavedRun::read).
-    /// Errors: a state.json that is still there cannot be stat'ed or read.
+    /// of a format this engine does not read, or not UTF-8 JSON naming its run, is among them, as unreadable
+    /// (SavedRun::read). Errors: a state.json that is still there cannot be stat'ed or read.
     fn run_states(&self, cwd: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
         run_states_in(self, cwd, RUNS_DIR)
     }
@@ -1022,7 +1022,7 @@ pub trait Host {
     /// when it has none. Errors: as run_states'.
     fn run_state(&self, cwd: &str, run_id: &str) -> Result<Option<SavedRun>, OrchestratorError> {
         let script = format!("now=$(date +%s) || exit 1; {}", run_states_loop(RUNS_DIR, "\"$2\"", "true"));
-        let out = self.check(&["sh", "-c", &script, "_", cwd, run_id], None, DEFAULT_TIMEOUT)?;
+        let out = run_states_output(self, &["sh", "-c", &script, "_", cwd, run_id])?;
         Ok(parsed_run_states(cwd, RUNS_DIR, &out)?.into_iter().next())
     }
 
@@ -1033,14 +1033,14 @@ pub trait Host {
     /// names. The links are resolved on this host, as BELOW says. Errors: as run_states'.
     fn run_states_inside(&self, cwd: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
         let script = run_states_inside_script("*");
-        parsed_inside_run_states(cwd, &self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?)
+        parsed_inside_run_states(cwd, &run_states_output(self, &["sh", "-c", &script, "_", cwd])?)
     }
 
     /// As run_state, but serve's view of the run, as run_states_inside's: None also for a run that view leaves out.
     /// Errors: as run_states'.
     fn run_state_inside(&self, cwd: &str, run_id: &str) -> Result<Option<SavedRun>, OrchestratorError> {
         let script = run_states_inside_script("\"$2\"");
-        let out = self.check(&["sh", "-c", &script, "_", cwd, run_id], None, DEFAULT_TIMEOUT)?;
+        let out = run_states_output(self, &["sh", "-c", &script, "_", cwd, run_id])?;
         Ok(parsed_inside_run_states(cwd, &out)?.into_iter().next())
     }
 
@@ -1177,7 +1177,13 @@ pub(crate) fn run_states_in<H: Host + ?Sized>(
     runs_dir: &str,
 ) -> Result<Vec<SavedRun>, OrchestratorError> {
     let script = format!("now=$(date +%s) || exit 1; {}", run_states_loop(runs_dir, "*", "true"));
-    parsed_run_states(cwd, runs_dir, &host.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?)
+    parsed_run_states(cwd, runs_dir, &run_states_output(host, &["sh", "-c", &script, "_", cwd])?)
+}
+
+/// What the run_states_loop script argv prints, verbatim, so that a run whose directory name or state.json is not
+/// UTF-8 is that run's problem, not the listing's. Errors: argv fails (checked).
+fn run_states_output<H: Host + ?Sized>(host: &H, argv: &[&str]) -> Result<Vec<u8>, OrchestratorError> {
+    checked(host, argv, host.run_verbatim(argv, None, DEFAULT_TIMEOUT)?)
 }
 
 /// Which of a project's runs a command reads: Every run with a state.json, as the CLI does, or only those Inside the
@@ -1232,36 +1238,50 @@ fn run_states_loop(runs_dir: &str, runs: &str, keep: &str) -> String {
     )
 }
 
-/// The runs run_states_loop printed as out, under the project at cwd's runs_dir, as run_states gives them. Errors:
-/// an entry not of run_states_loop's shape, its age not a number or no run directory's name in it.
-fn parsed_run_states(cwd: &str, runs_dir: &str, out: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
+/// The runs run_states_loop printed as out, under the project at cwd's runs_dir, as run_states gives them; a run
+/// directory's name that is not UTF-8 has each such byte replaced, as it only names the run. Errors: an entry not of
+/// run_states_loop's shape, its age not a number or no run directory's name in it.
+fn parsed_run_states(cwd: &str, runs_dir: &str, out: &[u8]) -> Result<Vec<SavedRun>, OrchestratorError> {
     Ok(parsed_named_run_states(cwd, runs_dir, out)?.into_iter().map(|(_, run)| run).collect())
 }
 
 /// As parsed_run_states, under the project at cwd's runs directory, but only the runs whose state.json names the run
 /// its directory is named for, as Host::run_states_inside keeps them. An unreadable run whose state.json names no run
 /// is named for its directory (SavedRun::read), so it is kept.
-fn parsed_inside_run_states(cwd: &str, out: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
+fn parsed_inside_run_states(cwd: &str, out: &[u8]) -> Result<Vec<SavedRun>, OrchestratorError> {
     let runs = parsed_named_run_states(cwd, RUNS_DIR, out)?;
     Ok(runs.into_iter().filter(|(dir, run)| run.shown().run_id == *dir).map(|(_, run)| run).collect())
 }
 
 /// The runs parsed_run_states reads from out, each with the name of the directory it was read from.
-fn parsed_named_run_states(cwd: &str, runs_dir: &str, out: &str) -> Result<Vec<(String, SavedRun)>, OrchestratorError> {
+fn parsed_named_run_states(
+    cwd: &str,
+    runs_dir: &str,
+    out: &[u8],
+) -> Result<Vec<(String, SavedRun)>, OrchestratorError> {
     let mut runs = vec![];
-    for entry in out.split('\0') {
-        if entry.trim().is_empty() {
+    for entry in out.split(|&b| b == 0) {
+        if entry.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
         let corrupt = |e: String| OrchestratorError(format!("corrupt run state under {cwd}/{runs_dir}: {e}"));
-        let (age, named) = entry.split_once(' ').unwrap_or((entry, ""));
+        let (age, named) = split_at_byte(entry, b' ').unwrap_or((entry, b""));
+        let age = String::from_utf8_lossy(age);
         let not_int = || corrupt(format!("an age that is not a whole number: {age:?}"));
-        let age: i64 = decimal_int(age).ok_or_else(not_int)?;
-        let (dir, text) = named.split_once('/').ok_or_else(|| corrupt(format!("no run directory in {named:?}")))?;
+        let age: i64 = decimal_int(&age).ok_or_else(not_int)?;
+        let no_dir = || corrupt(format!("no run directory in {:?}", String::from_utf8_lossy(named)));
+        let (dir, text) = split_at_byte(named, b'/').ok_or_else(no_dir)?;
+        let dir = String::from_utf8_lossy(dir).into_owned();
         let run = SavedRun::read(age.max(0).unsigned_abs(), &format!("{cwd}/{runs_dir}/{dir}"), text);
-        runs.push((dir.to_string(), run));
+        runs.push((dir, run));
     }
     Ok(runs)
+}
+
+/// bytes before and after the first at in them; None when at is not there.
+fn split_at_byte(bytes: &[u8], at: u8) -> Option<(&[u8], &[u8])> {
+    let i = bytes.iter().position(|&b| b == at)?;
+    Some((&bytes[..i], &bytes[i + 1..]))
 }
 
 /// sh printing, for each file $f in the directory $1 that run_files lists and for which the sh condition keep

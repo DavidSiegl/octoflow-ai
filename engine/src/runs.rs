@@ -52,8 +52,12 @@ impl RunState {
 
 impl SavedRun {
     /// The health of the run as far as its state reads (SavedRun::shown), its age being the state.json's: as
-    /// RunState::health.
+    /// RunState::health. None for a state.json that is not JSON naming a run, which nothing drives, whatever fields
+    /// of it read; one of a format this engine does not read may be driven by another release, so its fields count.
     pub fn health(&self, local_host: &str, pid_alive: &dyn Fn(i64) -> bool) -> Option<(&'static str, String)> {
+        if !self.names_run {
+            return None;
+        }
         self.shown().health(self.age(), local_host, pid_alive)
     }
 }

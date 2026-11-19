@@ -359,7 +359,7 @@ fn a_saved_run_that_is_not_json_or_names_no_run_is_unreadable_and_named_by_its_d
         (saved_with(&[("run_id", Some("\"\""))]), not_named, "spec"),
     ];
     for (text, problem, phase) in cases {
-        let run = SavedRun::read(3, dir, &text);
+        let run = SavedRun::read(3, dir, text.as_bytes());
         assert_eq!(run.problem(), Some(problem.as_str()), "{text}");
         assert_eq!(run.state().unwrap_err().0, problem, "{text}");
         assert_eq!((run.age(), run.shown().run_id.as_str()), (3, "r9"), "{text}");

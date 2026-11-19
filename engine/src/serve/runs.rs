@@ -248,8 +248,12 @@ impl ProjectRuns {
         let RunFileText::Text(text) = self.host.read_inside(&dir, "state.json")? else {
             return Err(RunReadError::Missing(format!("no run {run_id}")));
         };
-        let run = SavedRun::read(0, &dir, &text);
-        let state = run.state().map_err(|e| OrchestratorError(format!("{path}: {e}")))?;
+        let run = SavedRun::read(0, &dir, text.as_bytes());
+        // A problem with the file's text names the file already; one with its fields names only the run.
+        let state = run.state().map_err(|e| match e.0.starts_with(&path) {
+            true => e,
+            false => OrchestratorError(format!("{path}: {e}")),
+        })?;
         let name = state.agents.get(role).map(|a| &a.name).filter(|n| !n.is_empty());
         let Some(name) = name else {
             return Err(RunReadError::Missing(format!("run {run_id} has no {role} agent")));
@@ -393,7 +397,8 @@ impl<'p> RunWatch<'p> {
         for run in self.project.saved_runs()? {
             let record = self.project.record(&run, &here);
             let saved_at = run.shown().heartbeat_at.clone();
-            // A state.json's run_id is a string; one that is not names the run as its JSON.
+            // Always a string: the run's id, or its directory's name for a state.json that names no run
+            // (SavedRun::read).
             let id = record.get("id").cloned().unwrap_or(Value::Null);
             let run_id = id.text();
             let mut key = record.clone();

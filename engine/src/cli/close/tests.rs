@@ -947,6 +947,8 @@ fn a_state_json_that_is_not_json_or_names_no_run_is_skipped_and_named_beside_a_r
     // close names one by its directory, and refuses it with the same reason.
     let e = c.cli.error(&["close", "--cwd", "/proj", "broken"]);
     assert!(e.contains("/proj/.octoflow-ai/runs/broken/state.json is not JSON ("), "{e}");
+    let e = c.cli.error(&["close", "--cwd", "/proj", "nameless"]);
+    assert!(e.contains("/proj/.octoflow-ai/runs/nameless/state.json is not a JSON object with a run_id"), "{e}");
 }
 
 #[test]
