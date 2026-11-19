@@ -704,7 +704,8 @@ fn list_names_a_non_default_workflow() {
 #[test]
 fn record_in_state_refuses_a_changed_file_naming_what_it_does_not_record() {
     let path = "/proj/.octoflow-ai/runs/r1/state.json";
-    let read = crate::state::RunState::new("r1", "a task", "/proj");
+    // Saved before the project moved from /old to /proj: the file is found under the cwd argument, not read.cwd.
+    let read = crate::state::RunState::new("r1", "a task", "/old");
     let mut now = read.clone();
     now.round = 3;
     let host = FakeHost::default();

@@ -402,8 +402,9 @@ fn runs_command(runs: &RunsCommand, world: &Connected, cwd: &str, target: &[Stri
 
 /// Make change to read, the run's state as a command read it, and write the result to the run's state.json in the
 /// project at cwd on host, in one write, unless the file no longer holds read; for what prune, close, refresh and drain
-/// write about a run they do not drive. The file keeps its modification time, which is the run's heartbeat: a stale run must not look
-/// live. meanwhile says what was being done, for the error.
+/// write about a run they do not drive. The file is looked up under cwd, the project the command found the run in, not
+/// under read.cwd, which goes stale once the project moves. The file keeps its modification time, which is the run's
+/// heartbeat: a stale run must not look live. meanwhile says what was being done, for the error.
 ///
 /// Errors: the file is gone, or no longer reads as read (naming the fields change gives new values, and meanwhile;
 /// nothing is recorded), or cannot be read or written.
