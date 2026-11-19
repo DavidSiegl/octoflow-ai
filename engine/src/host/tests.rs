@@ -1751,10 +1751,10 @@ fn worktree_through_a_symlink() {
     assert!(c.host.is_worktree(&c.a, &format!("{}/wt", c.a)).unwrap());
 }
 
-/// The lines added_lines finds in a change_diff, by file.
-fn changed_lines(diff: &[u8]) -> Vec<(String, Vec<u64>)> {
-    let added = crate::patch::added_lines(diff).unwrap();
-    added.iter().map(|(p, lines)| (p.to_string(), lines.keys().copied().collect())).collect()
+/// Each file changed_line_counts finds from base to commit in cwd, with the lines it adds and removes.
+fn line_counts(host: &ProcessHost, cwd: &str, base: &str, commit: &str) -> Vec<(String, u64, u64)> {
+    let counts = host.changed_line_counts(cwd, base, commit).unwrap();
+    counts.into_iter().map(|f| (f.path, f.added, f.removed)).collect()
 }
 
 #[test]
@@ -1767,9 +1767,7 @@ fn snapshot_in_a_worktree_holds_only_its_change() {
     c.put("mine.py", Some("mine\n"));
     put(&format!("{wt}/feature.py"), "feature\n");
     let sha = c.host.snapshot(&wt, &base, "snapshot").unwrap();
-    assert_eq!(c.sh(&["git", "-C", &wt, "diff", "--name-only", &base, &sha]), "feature.py\n");
-    let diff = c.host.change_diff(&wt, &base, Some(&sha)).unwrap();
-    assert_eq!(changed_lines(&diff), [("feature.py".to_string(), vec![1])]);
+    assert_eq!(line_counts(&c.host, &wt, &base, &sha), [("feature.py".to_string(), 1, 0)]);
     assert_eq!(c.sh(&["git", "-C", &c.a, "status", "--porcelain"]), " M app.py\n?? mine.py\n");
 }
 
@@ -1849,11 +1847,7 @@ fn a_change_is_read_whole_from_a_subdirectory_under_diff_relative() {
     let base = c.commit(&c.a, "sub/lib.py", "lib\n");
     let sub = c.diff_relative_sub();
     let head = c.commit(&c.a, "app.py", "one\ntwo\n");
-    let diff = c.host.change_diff(&sub, &base, Some(&head)).unwrap();
-    assert_eq!(changed_lines(&diff), [("app.py".to_string(), vec![2])]);
-    let counts = c.host.changed_line_counts(&sub, &base, &head).unwrap();
-    let paths: Vec<&str> = counts.iter().map(|f| f.path.as_str()).collect();
-    assert_eq!(paths, ["app.py"]);
+    assert_eq!(line_counts(&c.host, &sub, &base, &head), [("app.py".to_string(), 1, 0)]);
 }
 
 #[test]
@@ -2295,11 +2289,9 @@ fn snapshot_of_the_working_tree() {
     assert_eq!(r.git(&["rev-parse", &format!("{sha}^")]), r.git(&["rev-parse", &base]));
     assert_eq!(r.git(&["log", "--format=%s", "-n", "1", &sha]).trim(), "snapshot");
     assert_eq!(
-        changed_lines(&r.host.change_diff(&r.path, &base, Some(&sha)).unwrap()),
-        [("mod.py".to_string(), vec![2, 3]), ("untracked.py".to_string(), vec![1])]
+        line_counts(&r.host, &r.path, &base, &sha),
+        [("del.py".to_string(), 0, 1), ("mod.py".to_string(), 2, 1), ("untracked.py".to_string(), 1, 0)]
     );
-    // Without a commit, the diff is the working tree's tracked files'.
-    assert_eq!(changed_lines(&r.host.change_diff(&r.path, &base, None).unwrap()), [("mod.py".to_string(), vec![2, 3])]);
 }
 
 #[test]

@@ -228,7 +228,6 @@ fn the_change_s_files_and_counts() {
     host.state().diff = "diff --git a/f.py b/f.py\n+++ b/f.py\n@@ -0,0 +1,2 @@\n+a\n+b\n".into();
     let counts = host.changed_line_counts("/proj", "abc123", "snap1").unwrap();
     assert_eq!(counts, [ChangedFile { base_path: "f.py".into(), path: "f.py".into(), added: 2, removed: 0 }]);
-    assert_eq!(host.change_diff("/proj", "abc123", Some("snap1")).unwrap(), host.state().diff.as_bytes());
     host.state().line_counts = Some(vec![]);
     assert!(host.changed_line_counts("/proj", "abc123", "snap1").unwrap().is_empty());
     host.state().committed.insert(("abc123".into(), "pyproject.toml".into()), "[project]\n".into());

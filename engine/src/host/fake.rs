@@ -193,7 +193,7 @@ pub(crate) struct FakeState {
     pub list_remote_error: Option<String>,
     /// How many more `ls-remote`s fail with list_remote_error, the ones after them succeeding; None: every one.
     pub list_remote_failures_left: Option<u32>,
-    /// What `git diff -U0` from the base to a snapshot prints.
+    /// The change from the base to a snapshot, as `git diff -U0` prints it.
     pub diff: String,
     /// The checkout has an origin at all.
     pub has_origin: bool,
@@ -484,9 +484,6 @@ impl FakeState {
             }
             ["push", ..] => return self.git_push(args),
             ["ls-remote", ..] => return self.git_ls_remote(args),
-            ["-c", "core.quotePath=false", "diff", "--no-relative", diff @ ..] if change_diff_args(diff) => {
-                return ok(&self.diff)
-            }
             ["remote", "get-url", "origin"] => {
                 if !self.has_origin {
                     return Completed::new(2, "", "error: No such remote 'origin'");
@@ -1151,13 +1148,6 @@ impl Host for FakeHost {
         let s = self.state();
         Ok(s.session_logs.get(&(name.to_string(), session.to_string())).map(|log| log.clone().into_bytes()))
     }
-}
-
-/// Whether args, a diff's arguments after `--no-relative`, are those Host::change_diff sends: from a base, to a
-/// commit or the working tree.
-fn change_diff_args(args: &[&str]) -> bool {
-    let fixed = ["-U0", "-M", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/"];
-    args.starts_with(&fixed) && matches!(&args[fixed.len()..], [_, "--"] | [_, _, "--"])
 }
 
 /// Whether args, a commit's arguments after its two messages, are `--trailer <trailer>` pairs.

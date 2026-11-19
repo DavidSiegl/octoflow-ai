@@ -1,4 +1,5 @@
-//! Reading a `git diff -U0` in the one shape Host::change_diff gives it: added_lines.
+//! Reading the lines a patch adds (added_lines), from git's `-U0` patch output in the shape host::scan's
+//! allow_comments asks `git log -p` for (its argv gives the options).
 
 use std::collections::BTreeMap;
 
