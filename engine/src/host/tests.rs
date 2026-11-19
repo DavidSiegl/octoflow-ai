@@ -1767,7 +1767,6 @@ fn snapshot_in_a_worktree_holds_only_its_change() {
     c.put("mine.py", Some("mine\n"));
     put(&format!("{wt}/feature.py"), "feature\n");
     let sha = c.host.snapshot(&wt, &base, "snapshot").unwrap();
-    assert_eq!(c.sh(&["git", "-C", &wt, "diff", "--name-only", &base, &sha]), "feature.py\n");
     assert_eq!(line_counts(&c.host, &wt, &base, &sha), [("feature.py".to_string(), 1, 0)]);
     assert_eq!(c.sh(&["git", "-C", &c.a, "status", "--porcelain"]), " M app.py\n?? mine.py\n");
 }

@@ -193,8 +193,7 @@ pub(crate) struct FakeState {
     pub list_remote_error: Option<String>,
     /// How many more `ls-remote`s fail with list_remote_error, the ones after them succeeding; None: every one.
     pub list_remote_failures_left: Option<u32>,
-    /// The change from the base to a snapshot, as `git diff -U0` prints it; changed_line_counts reads it when
-    /// line_counts is None.
+    /// The change from the base to a snapshot, as `git diff -U0` prints it.
     pub diff: String,
     /// The checkout has an origin at all.
     pub has_origin: bool,

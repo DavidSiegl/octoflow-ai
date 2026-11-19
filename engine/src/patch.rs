@@ -1,5 +1,5 @@
-//! Reading the lines a patch adds (added_lines), from git's `-p -U0` output with `--no-color --no-ext-diff
-//! --src-prefix=a/ --dst-prefix=b/` under `core.quotePath=false`: the shape host::scan's `git log -p` asks for.
+//! Reading the lines a patch adds (added_lines), from git's `-U0` patch output in the shape host::scan's
+//! allow_comments asks `git log -p` for (its argv gives the options).
 
 use std::collections::BTreeMap;
 
