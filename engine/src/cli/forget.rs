@@ -28,7 +28,7 @@ pub enum Sweep<'p> {
     /// Every run of the project.
     All,
     /// Only the runs with these ids, in this order, as an earlier DryRun gave them, each read only at its turn: a run
-    /// that is not there then (forgotten since, say) is Outcome::Gone. Each is still forgotten only if decide lets it.
+    /// that is not there then (forgotten since, say), or that the Forgetter's scope leaves out, is Outcome::Gone. Each is still forgotten only if decide lets it.
     Listed(&'p [String]),
 }
 
@@ -48,7 +48,7 @@ pub enum Outcome {
     Forgotten,
     /// Left as it is, and why.
     Left(Left),
-    /// A Sweep::Listed run the project did not have at its turn.
+    /// A Sweep::Listed run the project did not have at its turn, or that the Forgetter's scope left out.
     Gone,
     /// Its forget failed, and why; part of its directory may be gone. For a Sweep::Listed run, also its state.json
     /// that could not be read at its turn, or is not a JSON object naming its run.
@@ -122,8 +122,8 @@ pub fn forget_command(
 }
 
 /// Forget the closed runs of the project at cwd that sweep names, as forget_command says, printing a line per run
-/// forgotten (or to be), skipped or failed, then a count of each outcome. The runs are every run of the project, in
-/// run id order, or a Sweep::Listed's, in its order. A raised Interrupt starts no further run.
+/// forgotten (or to be), skipped or failed, then a count of each outcome. The runs are every run of the project
+/// world's scope reads (RunScope), in run id order, or a Sweep::Listed's, in its order. A raised Interrupt starts no further run.
 ///
 /// Returns each run looked at, in that order; none after an Interrupt. Errors: for Sweep::DryRun and Sweep::All, the
 /// project's runs cannot be read at the start (a Sweep::Listed run that cannot be read at its turn is Outcome::Failed).

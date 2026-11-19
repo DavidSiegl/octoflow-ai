@@ -185,7 +185,8 @@ pub fn close_run(world: &Closer, cwd: &str, run_ref: &str, dry_run: bool) -> Res
 
 /// Close the runs of the project at cwd that sweep names as close_run does, or with Sweep::DryRun say what closing
 /// each would do, then say a count of the runs closed (or to close), skipped and already closed, and failed if any.
-/// The runs are every run of the project, in run id order, or a Sweep::Previewed's, in the preview's order. A
+/// The runs are every run of the project world's scope reads (RunScope), in run id order, or a Sweep::Previewed's, in
+/// the preview's order. A
 /// Decision::Refused run is skipped with a line saying why; one already closed is only counted. Each run is read again
 /// just before it is closed, so one that started running, or was removed, since the sweep began is skipped. A run
 /// whose close fails gets a line with the error, and the rest are still closed. A raised Interrupt starts no further
@@ -256,7 +257,7 @@ fn closed_as_read(run: &SavedRun) -> Option<String> {
 }
 
 /// Read the run of the project at cwd whose id is run_id again, and close it as close_all says, or with dry_run say
-/// what closing it would do; a run whose state.json is gone is skipped, as nothing is left to close. With previewed,
+/// what closing it would do; a run whose state.json is gone, or that world's scope leaves out, is skipped. With previewed,
 /// a run whose plan is no longer what the dry run said is skipped. A close that
 /// fails is Outcome::Failed. Errors: its state.json cannot be read, or herdr or git cannot tell what is there.
 fn sweep_run(
@@ -267,9 +268,13 @@ fn sweep_run(
     previewed: Option<Preview>,
 ) -> Result<Outcome, OrchestratorError> {
     let Some(run) = world.scope.state(world.host, cwd, run_id)? else {
-        return Ok(Outcome::Skipped(format!(
-            "run {run_id} is gone: its state.json was removed from {cwd}/{RUNS_DIR} since the sweep began"
-        )));
+        let gone = format!("its state.json was removed from {cwd}/{RUNS_DIR} since the sweep began");
+        return Ok(Outcome::Skipped(match world.scope {
+            RunScope::Every => format!("run {run_id} is gone: {gone}"),
+            RunScope::Inside => {
+                format!("run {run_id} is not shown: {gone}, or it leads out of there or names another run")
+            }
+        }));
     };
     Ok(match decide(world, cwd, &run)? {
         Decision::AlreadyClosed(state) => Outcome::AlreadyClosed(state.closed.clone().unwrap_or_default()),

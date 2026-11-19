@@ -97,7 +97,8 @@ const OUTSIDE_STATUS: i32 = 5;
 /// sh has on Linux and macOS alike: `cd -P` and `pwd -P` resolve a directory, and links are followed one at a time
 /// with readlink without options (POSIX.1-2024, and GNU, BSD and BusyBox readlink alike, unlike readlink -f or
 /// realpath), at most 40 deep, as Linux follows them. serve's view of a run (Host::run_files_inside, read_inside,
-/// run_states_inside and run_state_inside) is what stays below the run directory, and the run directory below the runs directory.
+/// run_states_inside and run_state_inside) is what stays below the run directory, and the run directory below the runs
+/// directory.
 const BELOW: &str = "below() { p=$1 n=0; \
      while [ -L \"$p\" ]; do n=$((n + 1)); [ \"$n\" -le 40 ] || return 2; t=$(readlink -- \"$p\") || return 2; \
        case $t in /*) p=$t;; *) p=${p%/*}/$t;; esac; done; \
@@ -1035,11 +1036,12 @@ pub trait Host {
 
     /// As run_states, but serve's view of the runs: a run whose directory, every link resolved, is not below the
     /// runs directory, links resolved, or whose state.json, links resolved, is not below its run directory, is left
-    /// out, as a run without a state.json is. The links are resolved on this host, as BELOW says. Errors: as
-    /// run_states'.
+    /// out, as a run without a state.json is; so is one whose state.json names a run other than its directory's name,
+    /// as a run directory linked or copied under another name does, since close and forget act on the run a state.json
+    /// names. The links are resolved on this host, as BELOW says. Errors: as run_states'.
     fn run_states_inside(&self, cwd: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
         let script = run_states_inside_script("*");
-        parsed_run_states(cwd, RUNS_DIR, &self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?)
+        parsed_inside_run_states(cwd, &self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?)
     }
 
     /// As run_state, but serve's view of the run, as run_states_inside's: None also for a run that view leaves out.
@@ -1047,7 +1049,7 @@ pub trait Host {
     fn run_state_inside(&self, cwd: &str, run_id: &str) -> Result<Option<SavedRun>, OrchestratorError> {
         let script = run_states_inside_script("\"$2\"");
         let out = self.check(&["sh", "-c", &script, "_", cwd, run_id], None, DEFAULT_TIMEOUT)?;
-        Ok(parsed_run_states(cwd, RUNS_DIR, &out)?.into_iter().next())
+        Ok(parsed_inside_run_states(cwd, &out)?.into_iter().next())
     }
 
     /// The log in which the harness named name keeps a session's token usage (crate::harness::SessionLog), found in
@@ -1226,30 +1228,44 @@ fn run_states_inside_script(runs: &str) -> String {
 
 /// sh printing, for each state.json $f of a run in the directory runs_dir of the project $1, relative to it, whose
 /// directory name matches the sh word runs, such as `*`, and for which the sh condition keep succeeds, its age in
-/// seconds by $now, a blank and its text, ended by a NUL, which no JSON text holds: what parsed_run_states reads. A
-/// state.json a human pretty-printed reads as well as the engine's one line.
+/// seconds by $now, a blank, the run directory's name as $f names it, a slash, which no name holds, and its text,
+/// ended by a NUL, which no JSON text holds: what parsed_run_states reads. A state.json a human pretty-printed reads
+/// as well as the engine's one line.
 fn run_states_loop(runs_dir: &str, runs: &str, keep: &str) -> String {
     format!(
-        "for f in \"$1\"/{runs_dir}/{runs}/state.json; do [ -f \"$f\" ] || continue; {keep} || continue; \
-         {MTIME_OF_F} || {SKIP_F_IF_GONE}; s=$(cat -- \"$f\") || {SKIP_F_IF_GONE}; \
-         printf \"%s %s\\000\" \"$((now - m))\" \"$s\"; done; true"
+        "for f in \"$1\"/{runs_dir}/{runs}/state.json; do [ -f \"$f\" ] || continue; d=${{f%/*}}; d=${{d##*/}}; \
+         {keep} || continue; {MTIME_OF_F} || {SKIP_F_IF_GONE}; s=$(cat -- \"$f\") || {SKIP_F_IF_GONE}; \
+         printf \"%s %s/%s\\000\" \"$((now - m))\" \"$d\" \"$s\"; done; true"
     )
 }
 
 /// The runs run_states_loop printed as out, under the project at cwd's runs_dir, as run_states gives them. Errors:
 /// an age that is not a number, or a state that is not JSON naming its run (SavedRun::read).
 fn parsed_run_states(cwd: &str, runs_dir: &str, out: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
+    Ok(parsed_named_run_states(cwd, runs_dir, out)?.into_iter().map(|(_, run)| run).collect())
+}
+
+/// As parsed_run_states, under the project at cwd's runs directory, but only the runs whose state.json names the run
+/// its directory is named for, as Host::run_states_inside keeps them.
+fn parsed_inside_run_states(cwd: &str, out: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
+    let runs = parsed_named_run_states(cwd, RUNS_DIR, out)?;
+    Ok(runs.into_iter().filter(|(dir, run)| run.shown().run_id == *dir).map(|(_, run)| run).collect())
+}
+
+/// The runs parsed_run_states reads from out, each with the name of the directory it was read from.
+fn parsed_named_run_states(cwd: &str, runs_dir: &str, out: &str) -> Result<Vec<(String, SavedRun)>, OrchestratorError> {
     let mut runs = vec![];
     for entry in out.split('\0') {
         if entry.trim().is_empty() {
             continue;
         }
-        let (age, text) = entry.split_once(' ').unwrap_or((entry, ""));
+        let (age, named) = entry.split_once(' ').unwrap_or((entry, ""));
+        let (dir, text) = named.split_once('/').unwrap_or(("", named));
         let corrupt = |e: String| OrchestratorError(format!("corrupt run state under {cwd}/{runs_dir}: {e}"));
         let not_int = || corrupt(format!("an age that is not a whole number: {age:?}"));
         let age: i64 = decimal_int(age).ok_or_else(not_int)?;
         let saved = serde_json::from_str::<Value>(text).map_err(|e| corrupt(e.to_string()))?;
-        runs.push(SavedRun::read(age.max(0).unsigned_abs(), saved).map_err(|e| corrupt(e.0))?);
+        runs.push((dir.to_string(), SavedRun::read(age.max(0).unsigned_abs(), saved).map_err(|e| corrupt(e.0))?));
     }
     Ok(runs)
 }

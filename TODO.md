@@ -53,6 +53,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   reads that only test_support needs it. Raised by cross-review 240 (F1); left out of todo/81 because any change to
   engine/Cargo.toml raises the version (`ci/version-raised.sh`). Closes with the comment naming engine/tests' own
   directories too, in the next change that raises the version (todo/82's branch carries it).
+- **serve's POST /forget archives a run's metrics.json through a link out of its run directory.** serve's sweeps act
+  only on runs inside the runs directory (`RunScope::Inside`, todo/75), but `Host::forget_run` reads the run's
+  `metrics.json` with a plain `read`, so a run directory inside whose `metrics.json` is a link to a file outside has
+  that file's JSON added to the project's metrics archive before the directory is removed. Reading it as `read_inside`
+  does, an outside one taken as none, would close it (cross-review 248).
 - **Two processes forgetting one run at once can both forget it.** serve holds a per-project lock through each
   forget sweep (`ProjectRuns::forgetting`, todo/74), but that lock is the process's own: a second app instance, each
   with its own `serve` sidecar, or `octoflow forget` from a shell next to the app, can both read a closed run before

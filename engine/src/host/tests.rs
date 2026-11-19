@@ -885,17 +885,25 @@ fn what_leads_out_of_a_run_directory_is_neither_listed_nor_read_over_ssh() {
         (read("r", "loop.md"), read("r", "nosuch.md"), read("nosuch", "a.md")),
         (RunFileText::Missing, RunFileText::Missing, RunFileText::Missing)
     );
-    // A run's state.json is read only from a run directory below the runs directory, alias being r's again, and
-    // only when it stays in its run directory.
+    // A run's state.json is read only from a run directory below the runs directory, and only when it stays in its
+    // run directory and names the run its directory is named for: alias is r's again, and m's names away, a link out,
+    // which close and forget, acting on the run a state.json names, would reach through it.
     put(&format!("{runs}/r/state.json"), "{\"run_id\": \"r\"}");
     put(&d.join("state.json"), "{\"run_id\": \"away\"}");
     std::fs::create_dir_all(format!("{runs}/s")).unwrap();
     link(&d.join("state.json"), &format!("{runs}/s/state.json"));
+    std::fs::create_dir_all(format!("{runs}/m")).unwrap();
+    put(&format!("{runs}/m/state.json"), "{\"run_id\": \"away\"}");
     let states = ssh.host.run_states_inside(&d.join("proj")).unwrap();
     let ids: Vec<&str> = states.iter().map(|s| s.shown().run_id.as_str()).collect();
-    assert_eq!(ids, ["r", "r"]);
+    assert_eq!(ids, ["r"]);
+    let state = |run: &str| ssh.host.run_state_inside(&d.join("proj"), run).unwrap().map(|s| s.shown().run_id.clone());
+    assert_eq!(
+        ["r", "alias", "s", "m", "away", "nosuch"].map(state),
+        [Some("r".to_string()), None, None, None, None, None]
+    );
     // Each listing and each read is one command over ssh.
-    assert_eq!(ssh.calls().len(), 4 + 9 + 1);
+    assert_eq!(ssh.calls().len(), 4 + 9 + 1 + 6);
 }
 
 /// A program called name on PATH that removes the file gone when given it, then runs the system's program of that

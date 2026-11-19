@@ -1496,7 +1496,7 @@ fn a_forget_dry_run_names_the_closed_run_and_a_listed_forget_deletes_it_keeping_
 
     // Forgotten since the dry run, as by a second client: skipped, and nothing else is looked at.
     let again = forgotten_runs(&served.post(&target, &body));
-    assert_eq!(again, [(FORGET_CLOSED.into(), "skipped".into(), "there is no such run any more".into())]);
+    assert_eq!(again, [(FORGET_CLOSED.into(), "skipped".into(), "the overview shows no such run any more".into())]);
 }
 
 /// The real Host, but each read of the metrics archive waits, after reading it, until a second has been made or a
@@ -1581,7 +1581,7 @@ fn the_sweeps_leave_out_a_run_the_overview_does_not_show() {
 
     let body = serde_json::json!({ "forget": [OUTSIDE] }).to_string();
     let forgotten = forgotten_runs(&served.post(&project.query("/forget"), &body));
-    assert_eq!(forgotten, [(OUTSIDE.into(), "skipped".into(), "there is no such run any more".into())]);
+    assert_eq!(forgotten, [(OUTSIDE.into(), "skipped".into(), "the overview shows no such run any more".into())]);
     assert!(std::path::Path::new(&link).exists(), "the link is kept");
     assert!(
         !std::path::Path::new(&project.0.join(".octoflow-ai/metrics-archive.jsonl")).exists(),
