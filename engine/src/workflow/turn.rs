@@ -2,13 +2,13 @@
 //! RunState.turns.
 
 use super::{How, Outcome, Stopped, Workflow};
+use crate::agents::{Activity, AgentError, AgentLaunch, Seen, Started};
 use crate::constants::{
     APPROVE, CHANGES_REQUESTED, HEARTBEAT_SECONDS, POLL_SECONDS, PROMPT_DELIVERY_SECONDS, STALL_SECONDS,
 };
 use crate::error::OrchestratorError;
 use crate::handoff::{parse_blocked, parse_verdict};
 use crate::harness::harness;
-use crate::herdr::{Agent, Direction, HerdrError};
 use crate::json::{object, Object, ValueExt};
 use crate::paths::{file_name, split_extension};
 use crate::prompts::Prompt;
@@ -20,9 +20,9 @@ use serde_json::Value;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Announce {
     Nothing,
-    /// The human-paced step's: focus the agent's pane and tell the human it waits for them.
+    /// The human-paced step's: bring the agent before the human (Agents::show) and tell them it waits for them.
     Interview,
-    /// A blocked turn's wait for the human's answer: focus the agent's pane and tell the human its question.
+    /// A blocked turn's wait for the human's answer: bring the agent before the human and tell them its question.
     Blocked {
         question: String,
     },
@@ -57,10 +57,10 @@ pub(super) enum Judged {
     Blocking,
 }
 
-/// Why an agent could not be started: herdr refused, with its code, which a resume into a saved session gets past by
-/// starting a fresh one; or the run stops.
+/// Why an agent could not be started: its backend refused (AgentError::Refused), which a resume into a saved session
+/// gets past by starting a fresh one; or the run stops.
 enum StartFailure {
-    Herdr(HerdrError),
+    Refused(AgentError),
     Stopped(Stopped),
 }
 
@@ -76,11 +76,11 @@ impl From<OrchestratorError> for StartFailure {
     }
 }
 
-impl From<HerdrError> for StartFailure {
-    fn from(e: HerdrError) -> StartFailure {
+impl From<AgentError> for StartFailure {
+    fn from(e: AgentError) -> StartFailure {
         match e {
-            HerdrError::Herdr { .. } => StartFailure::Herdr(e),
-            HerdrError::Failed(e) => StartFailure::Stopped(Stopped::Failed(e)),
+            AgentError::Refused(_) => StartFailure::Refused(e),
+            AgentError::Failed(e) => StartFailure::Stopped(Stopped::Failed(e)),
         }
     }
 }
@@ -88,7 +88,7 @@ impl From<HerdrError> for StartFailure {
 impl From<StartFailure> for Stopped {
     fn from(e: StartFailure) -> Stopped {
         match e {
-            StartFailure::Herdr(e) => e.into(),
+            StartFailure::Refused(e) => e.into(),
             StartFailure::Stopped(e) => e,
         }
     }
@@ -165,7 +165,7 @@ impl Workflow<'_> {
         let how = self.agent(role)?;
         let message = self.prompt_for(how, &file, &t.text, t.fresh_text.as_deref(), path)?;
         self.announce(role, how, message.is_some(), &t.announce)?;
-        self.human.log(&format!("[{role}] working in pane {}", self.pane(role)));
+        self.human.log(&format!("[{role}] working in {}", self.whereabouts(role)));
         if let Some(message) = message {
             // A resumed or restarted turn keeps its record and start. Read before the prompt goes out, so that no
             // agent can write its file before its turn started (its mtime still can: end_turn counts that as the
@@ -206,8 +206,8 @@ impl Workflow<'_> {
             Announce::Nothing => Ok(()),
             Announce::Interview if !prompting => Ok(()),
             Announce::Interview => {
-                let (name, pane) = (self.agent_name(role), self.pane(role));
-                self.herdr.focus(name)?;
+                self.agents.show(&self.state, role)?;
+                let place = self.whereabouts(role);
                 let label = self.label(role);
                 // One past its startup (AgentRecord::past_startup) went on from its restart with the human already.
                 let past_startup = self.state.agents.get(role).is_some_and(|a| a.past_startup);
@@ -216,12 +216,12 @@ impl Workflow<'_> {
                 } else {
                     "is waiting for you"
                 };
-                self.human.notify(&format!("{label} {what}"), &format!("pane {pane}: {}", self.state.task));
-                self.human.log(&format!("[{role}] answer the {label} in pane {pane}"));
+                self.human.notify(&format!("{label} {what}"), &format!("{place}: {}", self.state.task));
+                self.human.log(&format!("[{role}] answer the {label} in {place}"));
                 Ok(())
             }
             Announce::Blocked { question } => {
-                self.herdr.focus(self.agent_name(role))?;
+                self.agents.show(&self.state, role)?;
                 self.ask_human(role, &format!("is blocked: {question}"));
                 Ok(())
             }
@@ -281,7 +281,7 @@ impl Workflow<'_> {
         Ok(())
     }
 
-    /// The role's report once the human has answered the BLOCKED question of block, RunState::blocked, in its pane.
+    /// The role's report once the human has answered the BLOCKED question of block, RunState::blocked, where it runs.
     ///
     /// As for the interview: no turn timeout and no stall notice, since the agent waits for the human. A resumed wait
     /// announces itself again, and prompts as prompt_for does, with BLOCKED_PROMPT in place of the step's.
@@ -304,47 +304,42 @@ impl Workflow<'_> {
 
     /// Prompt the role's agent with message until it takes it (taken), sending it at most twice.
     ///
-    /// Errors: the agent takes neither prompt, naming what a resume does about it, or exits meanwhile; herdr fails.
+    /// Errors: the agent takes neither prompt, naming what a resume does about it, or exits meanwhile; its backend
+    /// fails.
     fn deliver(&mut self, role: &str, path: &str, message: &str) -> Outcome<()> {
-        let name = self.agent_name(role);
-        self.herdr.prompt(name, message)?;
+        self.agents.prompt(&self.state, role, message)?;
         if self.taken(role, path)? {
             return Ok(());
         }
         self.human
             .log(&format!("[{role}] did not take its prompt within {PROMPT_DELIVERY_SECONDS}s; sending it again"));
-        self.herdr.prompt(name, message)?;
+        self.agents.prompt(&self.state, role, message)?;
         if !self.taken(role, path)? {
-            let (label, pane) = (self.label(role), self.pane(role));
+            let (label, place) = (self.label(role), self.whereabouts(role));
             return Err(Stopped::Failed(OrchestratorError(format!(
-                "the {label} did not take its prompt to write {path}, sent twice; see pane {pane}, and resume to send \
-                 it again"
+                "the {label} did not take its prompt to write {path}, sent twice; see {place}, and resume to send it \
+                 again"
             ))));
         }
         Ok(())
     }
 
-    /// Whether the role's agent took the prompt just sent, within PROMPT_DELIVERY_SECONDS: herdr reports it working
-    /// or blocked, or path, its handoff file, exists. idle and done do not count, since an agent shows them before
-    /// taking a prompt too.
+    /// Whether the role's agent took the prompt just sent, within PROMPT_DELIVERY_SECONDS: its backend says so
+    /// (Agents::wait_taken), or path, its handoff file, exists.
     ///
-    /// Errors: the agent exits without writing path; herdr fails otherwise than by the wait running out.
+    /// Errors: the agent exits without writing path; its backend fails.
     fn taken(&self, role: &str, path: &str) -> Outcome<bool> {
-        let name = self.agent_name(role);
         // First, for a turn so quick that the agent is done before the wait begins.
         if self.host.read(path)?.is_some() {
             return Ok(true);
         }
-        match self.herdr.wait(name, Some(PROMPT_DELIVERY_SECONDS * 1000), &["working", "blocked"]) {
-            Ok(_) => return Ok(true),
-            // herdr's wait on an agent that has exited fails with agent_not_found, which is told apart below.
-            Err(e) if matches!(e.code(), Some("timeout" | "agent_not_found")) => {}
-            Err(e) => return Err(e.into()),
+        if self.agents.wait_taken(&self.state, role, PROMPT_DELIVERY_SECONDS)? {
+            return Ok(true);
         }
         if self.host.read(path)?.is_some() {
             return Ok(true);
         }
-        if self.herdr.agent(name)?.is_none() {
+        if self.agents.find(&self.state, role)?.is_none() {
             let label = self.label(role);
             return Err(Stopped::Failed(OrchestratorError(format!("the {label} exited without writing {path}"))));
         }
@@ -422,26 +417,26 @@ impl Workflow<'_> {
             if let Some(out) = self.host.read(path)? {
                 return Ok(out);
             }
-            let Some(record) = self.herdr.agent(self.agent_name(role))? else {
+            let Some(seen) = self.agents.find(&self.state, role)? else {
                 return Err(Stopped::Failed(OrchestratorError(format!("the {label} exited without writing {path}"))));
             };
-            self.note_session(role, &record)?;
+            self.note_session(role, &seen)?;
             let now = self.clocks.monotonic();
             if let (Some(deadline), Some(timeout)) = (deadline, timeout) {
                 if now > deadline {
-                    let pane = self.pane(role);
+                    let place = self.whereabouts(role);
                     return Err(Stopped::Failed(OrchestratorError(format!(
-                        "the {label} did not write {path} within {timeout}s; see pane {pane}"
+                        "the {label} did not write {path} within {timeout}s; see {place}"
                     ))));
                 }
             }
-            if !matches!(record.status.as_str(), "idle" | "done") {
+            if seen.activity != Activity::Idle {
                 quiet_since = None;
             } else if quiet_since.is_none() {
                 quiet_since = Some(now);
             }
             let stalled = watch_stalls && quiet_since.is_some_and(|since| now - since >= STALL_SECONDS as f64);
-            told = self.tell_human(role, &record.status, stalled, told, &file);
+            told = self.tell_human(role, seen.activity, stalled, told, &file);
             self.heartbeat()?;
             self.pause(POLL_SECONDS)?;
         }
@@ -451,12 +446,12 @@ impl Workflow<'_> {
     fn tell_human(
         &self,
         role: &str,
-        status: &str,
+        activity: Activity,
         stalled: bool,
         told: Option<&'static str>,
         file: &str,
     ) -> Option<&'static str> {
-        if status == "blocked" && told != Some("blocked") {
+        if activity == Activity::Blocked && told != Some("blocked") {
             self.ask_human(role, "needs your answer");
             return Some("blocked");
         }
@@ -464,7 +459,7 @@ impl Workflow<'_> {
             self.ask_human(role, &format!("is idle without writing {file}"));
             return Some("stalled");
         }
-        if status == "working" {
+        if activity == Activity::Working {
             None
         } else {
             told
@@ -569,10 +564,11 @@ impl Workflow<'_> {
                 return Ok(how);
             }
         }
-        let pane = self.pane_for(role)?;
+        let next = self.next_harness(role)?;
+        let order = self.shown_order(role);
+        let record = self.agents.next_record(&self.state, role, &order, &next)?;
         let session = known.as_ref().and_then(|a| a.session.clone()).filter(|s| !s.is_empty());
         let ran = self.state.harness(role).to_string();
-        let next = self.next_harness(role)?;
         if let Some(session) = &session {
             if ran != next {
                 self.human.log(&format!(
@@ -580,10 +576,10 @@ impl Workflow<'_> {
                 ));
             } else {
                 // Keeps the conversation: for the Spec Collector that is the interview itself.
-                match self.start(role, &pane, AgentStart::Resumed) {
+                match self.start(role, record.clone(), AgentStart::Resumed) {
                     Ok(true) => return Ok(How::Started(AgentStart::Resumed)),
                     Ok(false) => {}
-                    Err(StartFailure::Herdr(e)) => {
+                    Err(StartFailure::Refused(e)) => {
                         self.human.log(&format!("[{role}] could not resume session {session}: {e}"));
                     }
                     Err(StartFailure::Stopped(e)) => return Err(e),
@@ -594,30 +590,31 @@ impl Workflow<'_> {
         // A role whose last agent never took a prompt, nor got past its startup, lost no conversation with it.
         let lost = known.is_some_and(|k| k.unprompted != Some(AgentStart::New) || k.past_startup);
         let start = if lost { AgentStart::Restarted } else { AgentStart::New };
-        self.start(role, &pane, start)?;
+        self.start(role, record, start)?;
         Ok(How::Started(start))
     }
 
-    /// How the role's agent of the record known is ready, when herdr finds it alive; None when it has exited.
+    /// How the role's agent of the record known is ready, when its backend finds it alive; None when it has exited.
     ///
-    /// An agent found alive has the session herdr reports for it saved, when that is not the one its record holds,
-    /// so the turn recorded next is in it and its tokens can be counted. The record holds none when an orchestrator
-    /// stopped between `start`'s two saves, and an older one when the agent moved to a new session (a human's
-    /// `/clear` in its pane, say) while no orchestrator watched it, `await_handoff` noting sessions only while one does.
-    /// An agent marked as not yet prompted (AgentRecord::unprompted) is prompted as the start that launched it would
-    /// have, once the human has answered what it is blocked on (wait_out_block), unless it exits there; found working,
-    /// it took a prompt the stopped orchestrator sent but did not record, and goes on as one found alive (waited on if
-    /// prompted already names its file, else sent its prompt once more, the duplicate `written` accepts).
+    /// An agent found alive has the session its backend reports for it saved, when that is not the one its record
+    /// holds, so the turn recorded next is in it and its tokens can be counted. The record holds none when an
+    /// orchestrator stopped between `start`'s two saves, and an older one when the agent moved to a new session (a
+    /// human's `/clear` in its pane, say) while no orchestrator watched it, `await_handoff` noting sessions only while
+    /// one does. An agent marked as not yet prompted (AgentRecord::unprompted) is prompted as the start that launched
+    /// it would have, once the human has answered what it is blocked on (wait_out_block), unless it exits there; found
+    /// working, it took a prompt the stopped orchestrator sent but did not record, and goes on as one found alive
+    /// (waited on if prompted already names its file, else sent its prompt once more, the duplicate `written`
+    /// accepts).
     fn alive(&mut self, role: &str, known: &AgentRecord) -> Outcome<Option<How>> {
-        let mut found = self.herdr.agent(&known.name)?;
+        let mut found = self.agents.find(&self.state, role)?;
         let mut how = known.unprompted.map_or(How::Alive, How::Started);
         if known.unprompted.is_some() {
-            match found.as_ref().map(|r| r.status.as_str()) {
-                Some("blocked") => {
+            match found.as_ref().map(|seen| seen.activity) {
+                Some(Activity::Blocked) => {
                     self.wait_out_block(role)?;
-                    found = self.herdr.agent(&known.name)?;
+                    found = self.agents.find(&self.state, role)?;
                 }
-                Some("working") => {
+                Some(Activity::Working) => {
                     how = How::Alive;
                     self.clear_unprompted(role);
                     self.save()?;
@@ -625,51 +622,17 @@ impl Workflow<'_> {
                 _ => {}
             }
         }
-        let Some(record) = found else { return Ok(None) };
-        self.note_session(role, &record)?;
+        let Some(seen) = found else { return Ok(None) };
+        self.note_session(role, &seen)?;
         Ok(Some(how))
     }
 
-    /// The pane for the role's next agent: its old one if that survives, else a new split.
-    fn pane_for(&self, role: &str) -> Outcome<String> {
-        let s = &self.state;
-        let roles = self.pane_order(role);
-        let i = roles.iter().position(|r| r == role).unwrap_or(0);
-        let pane_of = |r: &str| s.agents.get(r).map(|a| a.pane.clone()).filter(|p| !p.is_empty());
-        let old = pane_of(role).unwrap_or_else(|| if i == 0 { s.root_pane.clone() } else { String::new() });
-        if !old.is_empty() && self.herdr.pane_exists(&old)? {
-            return Ok(old);
-        }
-        // The layout: the second role to the right of the root pane, each further one below the one before.
-        let (parent, direction) = if i >= 2 {
-            (pane_of(&roles[i - 1]).unwrap_or_default(), Direction::Down)
-        } else {
-            (s.root_pane.clone(), Direction::Right)
-        };
-        let mut survivors = vec![parent, s.root_pane.clone()];
-        survivors.extend(s.agents.values().map(|a| a.pane.clone()));
-        let mut tried = vec![];
-        for pane in survivors {
-            if pane.is_empty() || pane == old || tried.contains(&pane) {
-                continue;
-            }
-            if self.herdr.pane_exists(&pane)? {
-                return Ok(self.herdr.split(&pane, direction, s.work_dir())?);
-            }
-            tried.push(pane);
-        }
-        Err(Stopped::Failed(OrchestratorError(format!(
-            "no pane of run {} is left in herdr workspace {}",
-            s.run_id, s.workspace_id
-        ))))
-    }
-
-    /// The roles in the order their panes are laid out, the root pane going to the first.
+    /// The roles in the order the human sees them (Agents::next_record), the first in the run's first place.
     ///
     /// That is the workflow's order, unless the run skipped its contract step (run --spec): then the first role to
     /// take a turn leads, and the contract's role, which may still have a later step, comes last. RunState.agents
     /// keeps the order the roles' agents first started in, and the role asking now is the first when none has.
-    fn pane_order(&self, role: &str) -> Vec<String> {
+    fn shown_order(&self, role: &str) -> Vec<String> {
         let roles: Vec<String> = self.pipeline.roles().keys().map(String::from).collect();
         let first = self.state.agents.keys().next().map_or(role, String::as_str).to_string();
         let Some(contract) = self.pipeline.contract().map(|c| c.role.clone()).filter(|c| *c != first) else {
@@ -681,14 +644,14 @@ impl Workflow<'_> {
         order
     }
 
-    /// Start the role's agent in the pane as start says: Resumed relaunches it into the session its record holds,
-    /// which must hold one. False when it exited at once.
+    /// Start the role's agent, of record (Agents::next_record's), as start says: Resumed relaunches it into the session
+    /// the role's saved record holds, which must hold one. False when it exited at once.
     ///
     /// The agent's record is saved, in the session it resumes and marked with start until its first prompt is taken
-    /// (AgentRecord::unprompted), before herdr starts it; so an orchestrator stopped while herdr or the human is
-    /// past a startup dialog leaves an agent the resume finds, waits for and prompts, never one unknown to the run.
-    fn start(&mut self, role: &str, pane: &str, start: AgentStart) -> Result<bool, StartFailure> {
-        let name = format!("{role}-{}", self.state.key());
+    /// (AgentRecord::unprompted), before its backend starts it; so an orchestrator stopped while the backend or the
+    /// human is past a startup dialog leaves an agent the resume finds, waits for and prompts, never one unknown to
+    /// the run.
+    fn start(&mut self, role: &str, mut record: AgentRecord, start: AgentStart) -> Result<bool, StartFailure> {
         let session = match start {
             AgentStart::Resumed => self.state.agents.get(role).and_then(|a| a.session.clone()),
             AgentStart::New | AgentStart::Restarted => None,
@@ -703,31 +666,32 @@ impl Workflow<'_> {
                 ));
             }
         }
-        let mut record = AgentRecord::new(&name, pane, h.kind);
         record.session.clone_from(&session);
         record.unprompted = Some(start);
         self.state.agents.insert(role.to_string(), record);
         self.save()?;
-        self.herdr.rename_pane(pane, &self.label(role))?;
+        let label = self.label(role);
+        let s = &self.state;
         // The handoff files are outside a worktree run's working directory.
-        let extra_dir = self.state.worktree.as_ref().map(|_| self.state.dir());
-        let model = self.state.models.get(role).cloned();
-        let launch =
-            h.launch(self.state.permission_mode.as_deref(), model.as_deref(), session.as_deref(), extra_dir.as_deref());
-        if !launch.env.is_empty() {
-            self.herdr.export(pane, &launch.env)?;
-        }
-        let ready = self.herdr.start_agent(&name, pane, h.kind, &launch.args)?;
-        if !ready {
+        let extra_dir = s.worktree.as_ref().map(|_| s.dir());
+        let launch = AgentLaunch {
+            label: &label,
+            harness: h.kind,
+            permission_mode: s.permission_mode.as_deref(),
+            model: s.models.get(role).map(String::as_str),
+            session: session.as_deref(),
+            extra_dir: extra_dir.as_deref(),
+        };
+        if self.agents.start(s, role, &launch)? == Started::Asking {
             self.wait_out_block(role)?;
         }
-        let Some(record) = self.herdr.agent(&name)? else { return Ok(false) };
-        self.note_session(role, &record)?;
+        let Some(seen) = self.agents.find(&self.state, role)? else { return Ok(false) };
+        self.note_session(role, &seen)?;
         Ok(true)
     }
 
-    /// Ask the human to answer what the role's agent is blocked on, then wait until it is answered: the agent idle or
-    /// done, or exited, as when the human refuses what it asks. The role must have an agent.
+    /// Ask the human to answer what the role's agent is blocked on, then wait until it is answered: the agent idle,
+    /// or exited, as when the human refuses what it asks. The role must have an agent.
     ///
     /// The alert names a startup dialog, unless the agent is past its startup (AgentRecord::past_startup): then it is a
     /// question about what it was last given, by the run or in its pane. The human decides how long that takes, as
@@ -735,8 +699,7 @@ impl Workflow<'_> {
     /// looking stale.
     fn wait_out_block(&mut self, role: &str) -> Result<(), StartFailure> {
         let agent = self.state.agents.get(role).ok_or_else(|| OrchestratorError(format!("no agent of {role}")))?;
-        let (name, past_startup) = (agent.name.clone(), agent.past_startup);
-        if past_startup {
+        if agent.past_startup {
             self.ask_human(role, "needs your answer");
             self.human.log(&format!(
                 "[{role}] it is asking about what it was last given, or what was typed in its pane; answer there, and \
@@ -749,21 +712,16 @@ impl Workflow<'_> {
                  it has not run in; answer in the pane, and the run goes on"
             ));
         }
-        loop {
-            match self.herdr.wait(&name, Some(HEARTBEAT_SECONDS * 1000), &["idle", "done"]) {
-                Ok(_) => return Ok(()),
-                Err(e) if e.code() == Some("agent_not_found") => return Ok(()),
-                Err(e) if e.code() == Some("timeout") => {}
-                Err(e) => return Err(e.into()),
-            }
+        while !self.agents.wait_ready(&self.state, role, HEARTBEAT_SECONDS)? {
             self.heartbeat()?;
         }
+        Ok(())
     }
 
-    /// Save the session herdr reports the role's agent in as soon as it does, so an agent that exits later can be
-    /// resumed into it.
-    fn note_session(&mut self, role: &str, record: &Agent) -> Outcome<()> {
-        let Some(session) = record.session.as_deref().filter(|s| !s.is_empty()) else { return Ok(()) };
+    /// Save the session the role's agent's backend reports it in as soon as it does, so an agent that exits later can
+    /// be resumed into it.
+    fn note_session(&mut self, role: &str, seen: &Seen) -> Outcome<()> {
+        let Some(session) = seen.session.as_deref() else { return Ok(()) };
         let agent = self.state.agents.get_mut(role).ok_or_else(|| OrchestratorError(format!("no agent of {role}")))?;
         if agent.session.as_deref() != Some(session) {
             agent.session = Some(session.to_string());
@@ -772,21 +730,16 @@ impl Workflow<'_> {
         Ok(())
     }
 
-    /// Tell the human the role's agent is in a state that needs them, naming its pane.
+    /// Tell the human the role's agent is in a state that needs them, saying where it is.
     pub(super) fn ask_human(&self, role: &str, what: &str) {
-        let pane = self.pane(role);
-        self.human.notify(&format!("{} {what}", self.label(role)), &format!("pane {pane}"));
-        self.human.log(&format!("[{role}] {what} (pane {pane})"));
+        let place = self.whereabouts(role);
+        self.human.notify(&format!("{} {what}", self.label(role)), &place);
+        self.human.log(&format!("[{role}] {what} ({place})"));
     }
 
-    /// The herdr name of the role's agent; "" before it has one.
-    fn agent_name(&self, role: &str) -> &str {
-        self.state.agents.get(role).map_or("", |a| &a.name)
-    }
-
-    /// The pane of the role's agent; "" before it has one, or once its workspace was found gone.
-    fn pane(&self, role: &str) -> &str {
-        self.state.agents.get(role).map_or("", |a| &a.pane)
+    /// Where the human finds the role's agent (Agents::whereabouts).
+    fn whereabouts(&self, role: &str) -> String {
+        self.agents.whereabouts(&self.state, role)
     }
 
     /// The harness the role's next agent starts in, which a resume's --role-agent may have made another than the one

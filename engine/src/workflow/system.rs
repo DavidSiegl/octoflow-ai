@@ -7,7 +7,7 @@ use nix::time::{clock_gettime, ClockId};
 
 use super::{Clocks, Human};
 use crate::error::OrchestratorError;
-use crate::herdr::ProcessHerdr;
+use crate::human::Notify;
 use crate::interrupt::Interrupt;
 
 /// This machine's zone, as jiff's TimeZone::try_system finds it from TZ, else /etc/localtime; UTC when neither
@@ -62,25 +62,25 @@ impl Clocks for SystemClocks {
     }
 }
 
-/// The human at this machine: notified through the herdr the orchestrator runs beside, where they are watching, never
-/// the run's --machine, and told everything else on stderr, each line indented by two spaces.
-#[derive(Clone, Debug)]
+/// The human at this machine: notified where they are watching, never on the run's --machine, and told everything
+/// else on stderr, each line indented by two spaces.
+#[derive(Debug)]
 pub struct LocalHuman {
-    /// The herdr on this machine.
-    herdr: ProcessHerdr,
+    /// Where the human is watching on this machine.
+    notifier: Box<dyn Notify>,
 }
 
 impl LocalHuman {
-    /// The human, whose notifications interrupt stops as it stops every herdr command.
-    pub fn new(interrupt: &Interrupt) -> LocalHuman {
-        LocalHuman { herdr: ProcessHerdr::new(None, interrupt) }
+    /// The human, shown notifications by notifier.
+    pub fn new(notifier: Box<dyn Notify>) -> LocalHuman {
+        LocalHuman { notifier }
     }
 }
 
 impl Human for LocalHuman {
-    /// A notification herdr fails to show costs only itself, and is logged.
+    /// A notification that cannot be shown costs only itself, and is logged.
     fn notify(&self, title: &str, body: &str) {
-        if let Err(e) = self.herdr.notify(title, body) {
+        if let Err(e) = self.notifier.notify(title, body) {
             self.log(&format!("notification failed: {e}"));
         }
     }

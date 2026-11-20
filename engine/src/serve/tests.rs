@@ -1066,7 +1066,7 @@ fn a_run_that_saves_its_state_is_answered_with_its_id_and_runs_its_own_program_i
     let launches = served.console.state().launches.clone();
     let [(cwd, label, argv)] = &launches[..] else { panic!("one launch: {launches:?}") };
     assert_eq!(cwd, "/proj");
-    assert_eq!(*label, crate::workflow::workspace_label(&id, "--add a rate limiter"));
+    assert_eq!(*label, crate::herdr::workspace_label(&id, "--add a rate limiter"));
     let program = std::env::current_exe().unwrap().into_os_string().into_string().unwrap();
     let expected = [
         program.as_str(),
@@ -1311,7 +1311,7 @@ fn closing() -> (Repo, String, Served) {
     let connect = move |_: &str, _: &str, stopping: &Interrupt| {
         let host = Arc::new(ProcessHost::local(stopping));
         let (console, workspaces, launcher) = (herdr.clone(), herdr.clone(), herdr.clone());
-        Ok(Reached { host, dir: dir.clone(), console, workspaces, launcher, launch_dir: dir.clone() })
+        Ok(Reached { host, dir: dir.clone(), console, places: workspaces, launcher, launch_dir: dir.clone() })
     };
     let served = Served::start(Box::new(connect), &[], Arc::default(), Options::default());
     (repo, wt, Served { console, ..served })

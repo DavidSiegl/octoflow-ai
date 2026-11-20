@@ -508,7 +508,7 @@ fn a_run_saves_the_herdr_server_it_starts_in_and_a_resume_keeps_it() {
     let (state, _) = new_state(&on_box, "/proj", None, &world).unwrap();
     assert_eq!(state.herdr_server, None);
 
-    // A resume keeps the server the run saved: its workspace is there, and Workflow::prepare replaces the server
+    // A resume keeps the server the run saved: its workspace is there, and Agents::open replaces the server
     // only when it opens a new workspace.
     let host = Rc::new(FakeHost::default());
     let mut saved = saved_run("build", 1, &["spec", "build"]);

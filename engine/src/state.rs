@@ -36,7 +36,7 @@ pub struct RunState {
     pub machine: Option<String>,
     /// The herdr server of this machine the run's workspace and agents are in: the one the engine that started the run
     /// reached, saved with the run's first state before its workspace opens, which a resume from another server
-    /// replaces once it opens a new workspace there (Workflow::prepare). serve reaches the agents there, from whatever environment it runs in. None for a
+    /// replaces once it opens a new workspace there (Agents::open). serve reaches the agents there, from whatever environment it runs in. None for a
     /// run on a machine, whose herdr serves it, and for one whose server could not be told
     /// (HerdrServer::of_environment): serve then reaches the server its own environment picks.
     pub herdr_server: Option<HerdrServer>,

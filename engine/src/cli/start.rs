@@ -20,7 +20,7 @@ use crate::workflow_file::{load_workflow_file, named_workflow};
 
 /// A new run's state from run's flags, and its workflow, for the project at cwd; with spec, run --spec's file, the run
 /// starts at the step after the contract step. Its prompts are the prompt files' as they are now (load_prompts), and
-/// its herdr server world's herdr's (Herdr::server).
+/// it is bound to world's agent backend (Agents::bind).
 ///
 /// Errors: as load_prompts; the workflow cannot be found or loaded, or with spec has no step to start at; a
 /// --role-model or --role-agent names a role the workflow lacks; no run id can be made.
@@ -48,7 +48,7 @@ pub fn new_state(
     };
     let mut state = RunState::new(&run_id, &task, cwd);
     state.machine = args.target.machine.clone();
-    state.herdr_server = world.with.herdr.server();
+    world.with.agents.bind(&mut state);
     state.phase = first.id.clone();
     state.workflow = pipeline.name().to_string();
     state.prompt_overrides = prompts.overrides();
@@ -104,8 +104,7 @@ pub(crate) fn new_run_id(wall: f64, zone: &jiff::tz::TimeZone) -> Result<String,
 
 /// The state of the run args.run_ref names among cwd's runs and its workflow, as resumable_state finds them, with the
 /// quality gate turned on or off as args asks (turn_quality_gate_on and _off); a done run's as resumable_state gives
-/// it. Its herdr server stays the one it saved, where its workspace is: Workflow::prepare replaces it only when it
-/// opens a new workspace. Changes nothing
+/// it. Where its agents run stays what it saved: Agents::open moves it only when it opens a new place. Changes nothing
 /// on disk but the gate's job --no-quality-gate stops (turn_quality_gate_off), which stays stopped even when the resume
 /// fails later, before the run is saved; a resume after that judges the round again.
 ///

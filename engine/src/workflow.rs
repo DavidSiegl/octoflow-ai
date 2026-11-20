@@ -1,5 +1,5 @@
-//! The phase machine: [`Workflow`] drives one run through the steps of its workflow in a herdr workspace, and is the
-//! same code for a new run and a resumed one.
+//! The phase machine: [`Workflow`] drives one run through the steps of its workflow, its role agents run by an agent
+//! backend (crate::agents), and is the same code for a new run and a resumed one.
 //!
 //! How it is given what it talks to (decided by design-it-twice): borrowed [`Collaborators`], the
 //! real ones from the CLI and the fakes from the tests, which keep the fakes and read them afterwards; the state it
@@ -11,6 +11,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::rc::Rc;
 
+use crate::agents::{AgentError, Agents};
 use crate::constants::{
     APPROVE, CHANGES_REQUESTED, DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
     FINISHED, HEARTBEAT_SECONDS, PROJECT_DIR, QUALITY_GATE_FAILED, REMOTE, SUCCEEDED,
@@ -18,8 +19,8 @@ use crate::constants::{
 use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
 use crate::harness::{harness, AgentSettings};
-use crate::herdr::{Herdr, HerdrError};
 use crate::host::{git_status, Host, PushError, Scanned};
+use crate::human::Human;
 use crate::interrupt::Interrupt;
 use crate::json::{object, Object, ValueExt};
 use crate::local_gate::{self, LOCAL_GATE};
@@ -68,21 +69,13 @@ pub trait Clocks {
     fn zone(&self) -> jiff::tz::TimeZone;
 }
 
-/// The human watching the run: told what needs them in a notification, and everything else in log lines.
-pub trait Human {
-    /// A notification, with its title and body.
-    fn notify(&self, title: &str, body: &str);
-    /// One log line, without the indent the terminal shows it with.
-    fn log(&self, line: &str);
-}
-
 /// What a Workflow talks to, each borrowed for as long as it runs.
 #[derive(Clone, Copy)]
 pub struct Collaborators<'a> {
     /// The machine the agents run on: the project's files and git, gh and gitleaks.
     pub host: &'a dyn Host,
-    /// The herdr the agents run in.
-    pub herdr: &'a dyn Herdr,
+    /// Where the role agents run, and how the run reaches them.
+    pub agents: &'a dyn Agents,
     /// The time the run keeps: its deadlines, pauses and the times state.json records.
     pub clocks: &'a dyn Clocks,
     /// Who is told what needs them, and everything the run does.
@@ -167,8 +160,8 @@ impl From<OrchestratorError> for Stopped {
     }
 }
 
-impl From<HerdrError> for Stopped {
-    fn from(e: HerdrError) -> Stopped {
+impl From<AgentError> for Stopped {
+    fn from(e: AgentError) -> Stopped {
         Stopped::Failed(e.into())
     }
 }
@@ -186,9 +179,9 @@ enum How {
     Started(AgentStart),
 }
 
-/// Drives one run through the steps of its workflow in a herdr workspace.
+/// Drives one run through the steps of its workflow, its role agents run by Collaborators::agents.
 ///
-/// A role's turn ends when it writes its handoff file, not when herdr reports it settled: an agent can end a turn
+/// A role's turn ends when it writes its handoff file, not when its backend reports it settled: an agent can end a turn
 /// while a background task it started is still running and resume when the task completes, as Claude Code does, so
 /// idle or done can come mid-work.
 ///
@@ -205,7 +198,7 @@ enum How {
 /// up to max_quality_rounds analyses per round, before the next step.
 pub struct Workflow<'a> {
     host: &'a dyn Host,
-    herdr: &'a dyn Herdr,
+    agents: &'a dyn Agents,
     clocks: &'a dyn Clocks,
     human: &'a dyn Human,
     interrupt: &'a Interrupt,
@@ -291,7 +284,7 @@ impl<'a> Workflow<'a> {
         ]);
         Ok(Workflow {
             host: with.host,
-            herdr: with.herdr,
+            agents: with.agents,
             clocks: with.clocks,
             human: with.human,
             interrupt: with.interrupt,
@@ -430,7 +423,7 @@ impl<'a> Workflow<'a> {
         self.human.notify(&title, body);
         self.check_interrupt()?;
         if self.state.pull_request {
-            self.close_workspace();
+            self.agents.close(&self.state, self.human);
         }
         self.check_interrupt()
     }
@@ -848,67 +841,12 @@ impl<'a> Workflow<'a> {
         self.state.base_branch.clone().ok_or_else(|| OrchestratorError("the run has no base branch yet".into()))
     }
 
-    /// Open the run's herdr workspace, or find it from before in the herdr server the run saved
-    /// (keeps_saved_workspace). The run saves this engine's server only once it has a workspace in it, and saves it
-    /// too when it resumes in a workspace while it had saved none.
+    /// Have a place for the run's agents, the one from before when it is still there (Agents::open).
     fn prepare(&mut self) -> Outcome<()> {
-        if self.keeps_saved_workspace()? {
-            let s = &mut self.state;
-            self.human.log(&format!("run {} resumes in herdr workspace {}", s.run_id, s.workspace_id));
-            if s.herdr_server.is_none() && self.herdr.server().is_some() {
-                s.herdr_server = self.herdr.server();
-                return self.save();
-            }
-            return Ok(());
+        if self.agents.open(&mut self.state, self.human)? {
+            self.save()?;
         }
-        let s = &mut self.state;
-        let label = workspace_label(&s.run_id, &s.task);
-        let (workspace, root) = self.herdr.create_workspace(s.work_dir(), &label)?;
-        (s.workspace_id, s.root_pane) = (workspace, root);
-        s.herdr_server = self.herdr.server();
-        self.human.log(&format!("run {} in herdr workspace {}", s.run_id, s.workspace_id));
-        self.save()
-    }
-
-    /// Whether the run resumes in the workspace it saved: true when that workspace still exists in the herdr server
-    /// the run saved, and that server is the one this engine's herdr reaches (Herdr::reaches); a run that saved no
-    /// server looks in the one this engine reaches. False for a run with no workspace yet. When false for a run that
-    /// had one, its agents' panes are cleared, as a new workspace is to be opened, and a workspace still open in
-    /// another server is closed there, since the engine could give its panes no command; a close that fails is only
-    /// logged. Errors: herdr cannot be asked whether the server is reached or the workspace exists.
-    fn keeps_saved_workspace(&mut self) -> Outcome<bool> {
-        let s = &mut self.state;
-        if s.workspace_id.is_empty() {
-            return Ok(false);
-        }
-        let saved = s.herdr_server.as_ref();
-        let elsewhere = match saved {
-            Some(saved) => !self.herdr.reaches(saved)?,
-            None => false,
-        };
-        let exists = self.herdr.workspace_exists(&s.workspace_id, saved)?;
-        if exists && !elsewhere {
-            return Ok(true);
-        }
-        if exists {
-            self.human.log(&format!(
-                "herdr workspace {} is in another herdr server than this one; closing it there and opening a new one \
-                 here",
-                s.workspace_id
-            ));
-            // A workspace left open is only a stray one; the run goes on without it.
-            if let Err(e) = self.herdr.close_workspace(&s.workspace_id, saved) {
-                self.human.log(&format!("cannot close herdr workspace {}: {e}", s.workspace_id));
-            }
-        } else {
-            self.human.log(&format!("herdr workspace {} is gone; opening a new one", s.workspace_id));
-        }
-        // The handoff files are the whole contract between roles, so a new workspace loses nothing a role needs; its
-        // panes went with the old one.
-        for agent in s.agents.values_mut() {
-            agent.pane.clear();
-        }
-        Ok(false)
+        Ok(())
     }
 
     /// The quality-gated step, whose quality round phase quality is. Errors: the workflow has none, which check_phase
@@ -1257,15 +1195,6 @@ impl<'a> Workflow<'a> {
         Ok(reviews)
     }
 
-    /// Close the run's workspace, in the herdr server the run saved, once the pull request carries the change; a
-    /// failure leaves only clutter behind, so it is only logged.
-    fn close_workspace(&self) {
-        let workspace = &self.state.workspace_id;
-        if let Err(e) = self.herdr.close_workspace(workspace, self.state.herdr_server.as_ref()) {
-            self.human.log(&format!("could not close herdr workspace {workspace}: {e}"));
-        }
-    }
-
     /// What the quality gate said of round n's change, the run's final one: round n's last quality file, or for an
     /// unjudged change (unjudged) the run's last one from any round.
     fn gate_evidence(&self, n: u32) -> Result<GateEvidence, OrchestratorError> {
@@ -1392,10 +1321,4 @@ struct Ending {
 
 impl Ending {
     const WHOLE: Ending = Ending { count_tokens: true, write_summary: true, write_metrics: true, release: true };
-}
-
-/// The label of the herdr workspace of the run run_id, for task: its key and its task, the first 40 characters, so
-/// that the human can tell a run's workspace in herdr's list. serve labels the workspace it starts a run in so too.
-pub fn workspace_label(run_id: &str, task: &str) -> String {
-    format!("{} {task}", crate::state::run_key(run_id)).chars().take(40).collect()
 }

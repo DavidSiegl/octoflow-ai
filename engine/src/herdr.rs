@@ -19,10 +19,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::constants::AGENT_START_TIMEOUT_MS;
 use crate::error::{os_error, OrchestratorError};
 use crate::host::{last_lines, line_ends_as_lf, run_process, Host, ProcessError, DEFAULT_TIMEOUT};
+use crate::human::Notify;
 use crate::interrupt::Interrupt;
 use crate::json::ValueExt;
 use serde_json::Value;
 
+mod agents;
 #[cfg(test)]
 pub(crate) mod fake;
 
@@ -278,6 +280,12 @@ pub trait Workspaces {
 
     /// Close the workspace in server, with its panes.
     fn close_workspace(&self, workspace: &str, server: Option<&HerdrServer>) -> Result<(), HerdrError>;
+}
+
+/// The label of the herdr workspace of the run run_id, for task: its key and its task, the first 40 characters, so
+/// that the human can tell a run's workspace in herdr's list. serve labels the workspace it starts a run in so too.
+pub fn workspace_label(run_id: &str, task: &str) -> String {
+    format!("{} {task}", crate::state::run_key(run_id)).chars().take(40).collect()
 }
 
 /// A run's agent, as a console reaches it: its herdr name, and the herdr server it runs in.
@@ -654,11 +662,6 @@ impl ProcessHerdr {
         Err(HerdrError::Failed(OrchestratorError(format!("no saved herdr machine named {machine}"))))
     }
 
-    /// Show a desktop notification with title and body, and a sound, from herdr.
-    pub fn notify(&self, title: &str, body: &str) -> Result<(), HerdrError> {
-        self.call(&["notification", "show", title, "--body", body, "--sound", "request"]).map(drop)
-    }
-
     /// call_within, its process given CALL_LIMIT_SECONDS: for a command that does not wait on an agent.
     fn call(&self, args: &[&str]) -> Result<Value, HerdrError> {
         self.call_within(args, Some(Duration::from_secs(CALL_LIMIT_SECONDS)))
@@ -967,6 +970,13 @@ impl Herdr for ProcessHerdr {
             return Ok(true);
         }
         Ok(self.socket()? == self.in_server(server).socket()?)
+    }
+}
+
+impl Notify for ProcessHerdr {
+    /// A desktop notification from herdr, with a sound.
+    fn notify(&self, title: &str, body: &str) -> Result<(), OrchestratorError> {
+        Ok(self.call(&["notification", "show", title, "--body", body, "--sound", "request"]).map(drop)?)
     }
 }
 
