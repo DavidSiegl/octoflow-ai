@@ -1468,7 +1468,7 @@ fn a_desktop_app_s_run_is_closed_through_its_socket_while_running_and_from_state
     };
     let running = save(APP_RUNNING, None);
     save(APP_STOPPED, Some("interrupted"));
-    let sock_dir = TempDir::new();
+    let sock_dir = TempDir::for_sockets();
     let commands = fake_orchestrator(running, &sock_dir.path(), || {});
     let console = Arc::new(FakeConsole::default());
     let (herdr, dir) = (Arc::clone(&console), repo.path.clone());
@@ -1502,7 +1502,7 @@ fn a_running_app_run_that_changes_while_it_stops_is_skipped_saying_it_was_stoppe
     (running.worktree, running.branch, running.base) =
         (Some(wt.clone()), Some(CLOSE_BRANCH.into()), Some(repo.base().to_string()));
     repo.host.write(&format!("{}/state.json", running.dir()), &running.to_text(), false).unwrap();
-    let sock_dir = TempDir::new();
+    let sock_dir = TempDir::for_sockets();
     let new_file = format!("{wt}/new.py");
     let commands = fake_orchestrator(running, &sock_dir.path(), move || crate::host::tests::put(&new_file, "new\n"));
     let target = format!("/close?{}", urlencode(&[("cwd", &repo.path)]));

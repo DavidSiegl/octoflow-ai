@@ -109,6 +109,13 @@ impl TempDir {
         TempDir(tempfile::Builder::new().prefix("octoflow-engine-test-").tempdir().expect("a temporary directory"))
     }
 
+    /// A directory in /tmp, whatever TMPDIR says, whose paths are short enough for a Unix socket's address: Jenkins's
+    /// TMPDIR is too long for one (sun_path holds 108 bytes on Linux).
+    pub fn for_sockets() -> Self {
+        let dir = tempfile::Builder::new().prefix("octoflow-sock-").tempdir_in("/tmp");
+        TempDir(dir.expect("a temporary directory in /tmp"))
+    }
+
     /// The directory's path, as a str.
     pub fn path(&self) -> String {
         self.0.path().to_str().expect("a UTF-8 path").to_string()
