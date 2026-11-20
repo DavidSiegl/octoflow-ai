@@ -109,6 +109,14 @@ pub struct RunState {
     /// quality-fix turn that ends after resume --no-quality-gate leaves it one past the last quality round, which
     /// never runs.
     pub quality_round: u32,
+    /// The octoflow-gate release, as a ci/gate.pin `<version> <sha256>` line, that judges the run's snapshots while
+    /// its base has no ci/gate.pin: the crate::local_gate::BUILT_IN_PIN of the engine that started the run's first
+    /// quality round, saved before that round's gate starts, so that an engine with another built-in pin, resuming
+    /// the run, judges its later rounds by the same release. Saved for a run whose base has ci/gate.pin too, which
+    /// never reads it (that pin judges), as whether the base has one is read only as the gate starts. None before the
+    /// first quality round, and in a state.json saved by an engine that did not keep it, whose run takes the resuming
+    /// engine's at its next quality round.
+    pub built_in_gate_pin: Option<String>,
     /// Empty but in a state.json a release before 0.72.0 saved, which kept a Jenkins quality build in flight here; a
     /// resume drops it (cli::start::resumed_state). Still written, as those releases read no state.json without it.
     pub ci: Object,
@@ -368,6 +376,7 @@ impl RunState {
             quality_gate_disabled: false,
             max_quality_rounds: DEFAULT_MAX_QUALITY_ROUNDS,
             quality_round: 0,
+            built_in_gate_pin: None,
             ci: Object::new(),
             workflow: "default".to_string(),
             workflow_definition: None,

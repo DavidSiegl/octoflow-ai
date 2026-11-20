@@ -578,6 +578,9 @@ pub(crate) struct FakeGate {
     pub jobs: Vec<Vec<String>>,
     /// How many times a job was stopped.
     pub stops: usize,
+    /// The run's state.json as saved when each job that judged or could not judge left its files, in order (None:
+    /// none saved yet): what a resume finds after the engine was killed before it read them.
+    pub saved_at_end: Vec<Option<String>>,
     /// The job running, if one is: its directory, what it does, and how many more probes see it running (None: all).
     running: Option<(String, GateRun, Option<u32>)>,
 }
@@ -595,7 +598,7 @@ impl FakeGate {
             GateRun::Hangs => None,
         };
         if probes == Some(0) {
-            leave_files(host, &out, run);
+            self.end(host, &out, run);
         } else {
             self.running = Some((out, run, probes));
         }
@@ -613,10 +616,17 @@ impl FakeGate {
         };
         if !running {
             if let Some((out, run, _)) = self.running.take() {
-                leave_files(host, &out, run);
+                self.end(host, &out, run);
             }
         }
         running
+    }
+
+    /// End the job of directory out as run says, noting the run's state.json as saved then.
+    fn end(&mut self, host: &FakeHost, out: &str, run: GateRun) {
+        let saved = host.state().files.iter().find(|(path, _)| path.ends_with("/state.json")).map(|(_, t)| t.clone());
+        self.saved_at_end.push(saved);
+        leave_files(host, out, run);
     }
 }
 

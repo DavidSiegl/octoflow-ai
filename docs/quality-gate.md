@@ -72,10 +72,11 @@ Each round, the orchestrator:
    gitleaks scan the change alone, the snapshot's commits that the base does not have; a snapshot holding a secret
    is not judged, and the round's file is `GATE: LEAK`;
 2. reads `ci/gate.pin`, `gate.toml` and `pyproject.toml` from the run's base commit, not from the working tree, so a
-   change cannot loosen how it is itself judged; a base without `ci/gate.pin` follows the octoflow that runs it, and
-   is judged by the release that engine was built with (`BUILT_IN_PIN`, this repository's own `ci/gate.pin`), one
-   without `gate.toml` by the gate's defaults and one without `pyproject.toml` by the linters' own, never by the
-   change's;
+   change cannot loosen how it is itself judged; a base without `ci/gate.pin` follows the octoflow that starts the
+   run's first quality round, and is judged by the release that engine was built with (`BUILT_IN_PIN`, this
+   repository's own `ci/gate.pin`), which the run keeps in its state, so a resume by an octoflow built with another
+   release still judges every round by the first one's; a base without `gate.toml` is judged by the gate's defaults
+   and one without `pyproject.toml` by the linters' own, never by the change's;
 3. checks the snapshot out as a worktree of the run's repository into `gate-<n>-<q>/job-<k>/tree` under the run's
    directory, `k` counting the round's starts, as a resume starts it again: the gate judges the files the Builder
    never told git about, and what the gate and the tests write never reaches the run's
@@ -475,7 +476,8 @@ secret is rewritten out of it.
 
 `state.json` holds `quality_job` (None for a run without the gate, as for one saved before it; `local` for the
 [local gate](#the-local-gate)),
-`max_quality_rounds` and `quality_round`; `ci` held the build in flight of a Jenkins round, before 0.72.0, and a
+`max_quality_rounds`, `quality_round` and, for a base without `ci/gate.pin`, `built_in_gate_pin`, the release that
+judges every round (step 2 above); `ci` held the build in flight of a Jenkins round, before 0.72.0, and a
 resume empties it. Phase `build` with q = 0 goes to `quality` q = 1; `quality` q goes to `review` on `OK` or at q ≥
 `max_quality_rounds`, else to the fix turn, `build` with the same q, then `quality` q + 1; `CHANGES_REQUESTED`
 goes to `build`, round n + 1, q = 0. `list` shows the phase `quality` and, in `build` and `quality`, the quality

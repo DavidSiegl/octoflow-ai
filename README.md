@@ -62,8 +62,9 @@ octoflow run "add a token-bucket rate limiter" --role-agent review=codex --role-
 `octoflow doctor` checks these, here and where the agents run, and says how to fix each one that
 is missing. It also checks, as optional, what [the local quality gate](docs/quality-gate.md#the-local-gate) needs
 there, and which gate release judges the project; `doctor --setup-gate` writes a starter `gate.toml` into the
-project, and with `--pin-gate <version>` a `ci/gate.pin` holding it at that release. Without a pin, a project is
-judged by the release built into the octoflow that runs it, so updating octoflow updates the gate.
+project, and with `--pin-gate <version>` a `ci/gate.pin` holding it at that release. Without a pin, a run is judged
+by the release built into the octoflow that started its first quality round, so updating octoflow updates the gate
+for the runs that start after it.
 
 - herdr 0.9+ where the agents run, with the integration of each harness a run uses
   (`herdr integration install <integration>`: the kind's own name, e.g. `herdr integration install claude`, but

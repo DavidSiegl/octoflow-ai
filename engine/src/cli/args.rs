@@ -491,8 +491,8 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         .arg(Arg::new("setup-gate").long("setup-gate").action(ArgAction::SetTrue).help(
             "After the checks, write at the project's top level what --quality-gate local reads, where missing: a \
              gate.toml whose test commands are guessed from the project's kind, and with --pin-gate ci/gate.pin. A \
-             file already there is kept. Without a pin the project is judged by the gate release built into the \
-             octoflow that runs it. Nothing is committed: a run's gate reads them from its base commit",
+             file already there is kept. Without a pin a run is judged by the gate release built into the octoflow \
+             that started its first quality round. Nothing is committed: a run's gate reads them from its base commit",
         ))
         .arg(
             Arg::new("pin-gate")

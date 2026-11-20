@@ -67,9 +67,14 @@ impl Normalizer {
     }
 
     /// Number the runs and git objects in record in the order they appear in its JSON text, keys in the record's
-    /// order, after those learnt before.
+    /// order, after those learnt before. What a literal covers is not numbered, so a sha inside one, such as the
+    /// built-in gate pin's, leaves the numbering of the others alone.
     pub fn learn(&mut self, record: &Value) {
-        let text: Vec<char> = record.to_string().chars().collect();
+        let mut text = record.to_string();
+        for (literal, placeholder) in &self.literals {
+            text = text.replace(literal.as_str(), placeholder);
+        }
+        let text: Vec<char> = text.chars().collect();
         let mut i = 0;
         while i < text.len() {
             match run_id(&text, i) {
@@ -442,6 +447,16 @@ mod tests {
             n.text("run 20260101-120000-abc123 (key abc123), commit 0123456789abcdef0123456789abcdef01234567", false);
         assert_eq!(text, "run <run:1> (key <key:1>), commit <sha:1>");
         assert_eq!(n.text("20991231-000000-ffffff", false), "<run:?>");
+    }
+
+    #[test]
+    fn a_sha_inside_a_literal_is_not_numbered() {
+        let pin = "1.2.3 ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+        let mut n = Normalizer::new();
+        n.literal(pin, "<pin>");
+        n.learn(&Value::from(format!("{pin} then 0123456789abcdef0123456789abcdef01234567")));
+        let text = n.text(&format!("{pin} then 0123456789abcdef0123456789abcdef01234567"), false);
+        assert_eq!(text, "<pin> then <sha:1>");
     }
 
     #[test]

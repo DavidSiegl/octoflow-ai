@@ -239,6 +239,9 @@ impl World {
         let mut normalizer = Normalizer::new();
         normalizer.literal(&root.to_string_lossy(), "<world>");
         normalizer.literal(&checkout().to_string_lossy(), "<checkout>");
+        // A pinless run saves the engine's built-in pin (RunState::built_in_gate_pin); raising ci/gate.pin must not
+        // change the recordings.
+        normalizer.literal(octoflow_engine::local_gate::BUILT_IN_PIN, "<built-in-pin>");
         let project = root.join("project");
         let origin = root.join("origin.git");
         let script = octoflow_engine::json::object([

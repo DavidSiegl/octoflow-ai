@@ -1,6 +1,6 @@
 [package]
 name = "octoflow-engine"
-version = "0.92.8"
+version = "0.92.9"
 description = "The orchestrator's engine: its library and the octoflow program"
 edition = "2021"
 license = "MIT OR Apache-2.0"
@@ -48,8 +48,8 @@ tiny_http = "0.12"
 toml = { version = "1", default-features = false, features = ["parse", "preserve_order", "serde", "std"] }
 
 [dev-dependencies]
-# The tests' scratch directories (test_support::TempDir), removed when dropped. Approved by the user for ticket 48,
-# 2026-11-13.
+# The tests' scratch directories, removed when dropped: test_support::TempDir, and engine/tests' own (program.rs's
+# Dir, signals.rs's scratch_dir). Approved by the user for ticket 48, 2026-11-13.
 tempfile = "3"
 
 # The octoflow program: crate::cli::main.
