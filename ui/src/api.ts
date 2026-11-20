@@ -43,6 +43,57 @@ export interface AgentRef {
  * (`esc`, `enter`, `up`, `ctrl+c`). */
 export type AgentInput = { text: string } | { keys: string[] };
 
+/** One line of an ACP agent's journal (the engine's acp/journal.rs), by kind; every line has seq, from 1 up, and at,
+ * RFC 3339. update and permission's toolCall and options are ACP's own objects, passed on as the agent sent them
+ * (https://agentclientprotocol.com/protocol/schema). A kind the app does not know is skipped. */
+export type AgentEvent = { seq: number; at: string } & (
+  | { kind: "session"; session: string; harness: string; resumed: boolean }
+  | { kind: "prompt"; text: string; from: "orchestrator" | "human" }
+  | { kind: "update"; update: AcpUpdate }
+  | { kind: "permission"; request: number; toolCall: AcpToolCall | null; options: AcpPermissionOption[] | null }
+  | { kind: "answered"; request: number; option: string; by: "human" | "stop" }
+  | { kind: "turn_end"; stopReason: string | null }
+  | { kind: "waiting"; why: "interview" | "blocked" | "idle" }
+  | { kind: "exited"; error?: string }
+);
+
+/** ACP's session/update, of the kinds the conversation shows; the rest are skipped. */
+export type AcpUpdate =
+  | { sessionUpdate: "agent_message_chunk" | "agent_thought_chunk" | "user_message_chunk"; content: AcpContent }
+  | ({ sessionUpdate: "tool_call" | "tool_call_update" } & AcpToolCall)
+  | { sessionUpdate: string };
+
+/** ACP's content block; only text is shown. */
+export interface AcpContent {
+  type: string;
+  text?: string;
+}
+
+/** ACP's tool call, as a tool_call update, its later tool_call_updates (which carry only what changed), and a
+ * permission request have it. */
+export interface AcpToolCall {
+  toolCallId: string;
+  title?: string;
+  kind?: string;
+  status?: "pending" | "in_progress" | "completed" | "failed";
+}
+
+/** An option a permission request offers. */
+export interface AcpPermissionOption {
+  optionId: string;
+  name: string;
+  kind: string;
+}
+
+/** An ACP agent's current session, as GET /agent/events gives it after a seq: session_start the seq the session
+ * started at (null before any), events those after the seq asked for, and answerable whether the run can be
+ * answered now, its orchestrator listening. */
+export interface Conversation {
+  session_start: number | null;
+  events: AgentEvent[];
+  answerable: boolean;
+}
+
 /** One handoff file's turn as the run saved it (the engine's Workflow::turn_record); null means not known, or not
  * yet. `recording.test.ts` holds the keys to what the server sends, but not those of tokens' counts, of which the
  * recording has no example. */
@@ -95,6 +146,9 @@ export interface RunRecord {
   pane: string | null;
   /** The agents the run has started, in the order it started them; absent from a server before 0.51.0. */
   agents?: AgentRef[];
+  /** Where its agents run: "acp" for a run whose agents the app reads from their journals and answers
+   * (Api.agentEvents), "herdr" for one in herdr panes; absent from a server before 0.93.2, which ran only herdr. */
+  backend?: "herdr" | "acp";
   health: "running" | "stale" | null;
   health_reason: string | null;
   /** Seconds since state.json was written, when the server read it. */
@@ -341,6 +395,38 @@ export class Api {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
+    });
+  }
+
+  /** The current session of the run's ACP agent of role, its events after the seq after; rejects with the server's
+   * error message, with status 404 for a run or role without a journal and 409 for a run of another version. */
+  async agentEvents(project: Project, run: string, role: string, after: number): Promise<Conversation> {
+    const body = (await this.json(this.url("/agent/events", project, { run, role, after: String(after) }))) as Partial<
+      Conversation
+    >;
+    if (!Array.isArray(body.events)) {
+      throw new HttpError(200, "the answer has no events");
+    }
+    return { session_start: body.session_start ?? null, events: body.events, answerable: body.answerable === true };
+  }
+
+  /** Answer the permission request numbered request of the run's ACP agent of role with the option of optionId;
+   * rejects with the server's error message, status 409 when another answer came first or the run is not running. */
+  async answerPermission(project: Project, run: string, role: string, request: number, option: string): Promise<void> {
+    await this.json(this.url("/agent/answer", project, { run, role }), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ request, option }),
+    });
+  }
+
+  /** Send the run's ACP agent of role text, the human's message, as its next prompt; rejects with the server's error
+   * message, status 409 when the agent is not waiting for one or the run is not running. */
+  async messageAgent(project: Project, run: string, role: string, text: string): Promise<void> {
+    await this.json(this.url("/agent/message", project, { run, role }), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
     });
   }
 

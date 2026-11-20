@@ -48,3 +48,34 @@ fn a_host_over_ssh_says_where() {
     let vars = [("A".into(), "1".into()), ("A".into(), "2".into())];
     assert_eq!(ProcessHost::in_environment(vars.into_iter(), &Interrupt::new()).var("A").as_deref(), Some("2"));
 }
+
+#[test]
+fn a_detached_process_is_not_a_child_runs_in_a_session_of_its_own_and_writes_to_its_log() {
+    let tmp = TempDir::new();
+    let (pid_file, log) = (tmp.join("pid"), tmp.join("run.log"));
+    let script = "echo $$ > \"$1\"; echo out; echo err >&2; exec sleep 30";
+    let argv: Vec<String> = ["sh", "-c", script, "sh", &pid_file].map(String::from).to_vec();
+
+    let detached = spawn_detached(&argv, &tmp.path(), &log).expect("started");
+
+    assert!(crate::test_support::eventually(|| std::fs::read_to_string(&log).is_ok_and(|l| l.contains("err"))));
+    assert_eq!(std::fs::read_to_string(&pid_file).unwrap().trim(), detached.pid.to_string());
+    assert_eq!(std::fs::read_to_string(&log).unwrap(), "out\nerr\n");
+    let session = nix::unistd::getsid(Some(Pid::from_raw(detached.pid))).expect("a session");
+    assert_ne!(session, nix::unistd::getsid(None).expect("our session"));
+    let waited = nix::sys::wait::waitpid(Pid::from_raw(detached.pid), Some(nix::sys::wait::WaitPidFlag::WNOHANG));
+    assert_eq!(waited, Err(nix::errno::Errno::ECHILD), "it is our child");
+    assert!(!detached.exited());
+    nix::sys::signal::kill(Pid::from_raw(detached.pid), Signal::SIGKILL).expect("killed");
+    assert!(crate::test_support::eventually(|| detached.exited()));
+}
+
+#[test]
+fn a_detached_program_that_cannot_start_is_an_error_naming_it() {
+    let tmp = TempDir::new();
+    let argv = vec!["/no/such/program".to_string()];
+
+    let refused = spawn_detached(&argv, &tmp.path(), &tmp.join("run.log")).err().expect("refused");
+
+    assert!(refused.0.starts_with("cannot start /no/such/program: "), "{}", refused.0);
+}

@@ -101,7 +101,7 @@ fn every_flag_of_run() {
         "--no-pr",
         "task",
     ]);
-    assert_eq!(args.target, Target { machine: Some("box".into()), cwd: Some("/p".into()) });
+    assert_eq!(args.target, Target { machine: Some("box".into()), cwd: Some("/p".into()), acp: false });
     assert_eq!(args.target.flags(), ["--machine", "box", "--cwd", "/p"]);
     let s = &args.settings;
     assert_eq!((s.max_rounds, s.timeout, s.max_quality_rounds), (Some(4), Some(90), Some(2)));
@@ -351,7 +351,7 @@ fn quality_flag_checks() {
 
 #[test]
 fn the_commands_about_runs_and_workflows() {
-    let target = Target { machine: Some("m".into()), cwd: Some("~/p".into()) };
+    let target = Target { machine: Some("m".into()), cwd: Some("~/p".into()), acp: false };
     let cases: [(&[&str], Command); 10] = [
         (&["list"], Command::Runs(Target::default(), RunsCommand::List { json: false, pr_state: false })),
         (
@@ -364,7 +364,7 @@ fn the_commands_about_runs_and_workflows() {
         (
             &["close", "--cwd", "~/p", "a1b2c3"],
             Command::Close {
-                target: Target { machine: None, cwd: Some("~/p".into()) },
+                target: Target { machine: None, cwd: Some("~/p".into()), acp: false },
                 run_ref: Some("a1b2c3".into()),
                 dry_run: false,
             },

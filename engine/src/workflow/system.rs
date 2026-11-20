@@ -1,6 +1,11 @@
 //! The Clocks and the Human of a real run on this machine, which the CLI gives a Workflow: the system's clocks, a
-//! notification through the local herdr, and log lines on stderr.
+//! notification through the local herdr or, for a run over ACP, the desktop's own command (DesktopNotify), and log
+//! lines on stderr.
 
+use std::ffi::OsString;
+use std::io::ErrorKind;
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use nix::time::{clock_gettime, ClockId};
@@ -90,6 +95,88 @@ impl Human for LocalHuman {
         use std::io::Write;
         let _ = writeln!(std::io::stderr(), "  {line}");
     }
+}
+
+/// Notifications shown by the desktop's own command, whether the app is open or not, as a run over ACP shows them:
+/// `notify-send` on Linux and other Unix desktops, `osascript` on macOS (desktop_command).
+#[derive(Debug)]
+pub struct DesktopNotify {
+    /// The environment the command runs in, its PATH being where it is found.
+    env: Vec<(OsString, OsString)>,
+    /// True once a notification found the command missing: that one's error said so, and every later one is dropped
+    /// without an error, so that the log says it once.
+    missing_told: AtomicBool,
+}
+
+impl DesktopNotify {
+    /// Notifications by this machine's command, found on this process's PATH.
+    pub fn new() -> DesktopNotify {
+        DesktopNotify::in_environment(std::env::vars_os())
+    }
+
+    /// As new, the command run in the environment vars alone.
+    fn in_environment(vars: impl Iterator<Item = (OsString, OsString)>) -> DesktopNotify {
+        DesktopNotify { env: vars.collect(), missing_told: AtomicBool::new(false) }
+    }
+}
+
+impl Default for DesktopNotify {
+    fn default() -> DesktopNotify {
+        DesktopNotify::new()
+    }
+}
+
+impl Notify for DesktopNotify {
+    /// Errors: the command is missing, the first time only; it cannot be run, or fails, saying what it printed.
+    fn notify(&self, title: &str, body: &str) -> Result<(), OrchestratorError> {
+        let argv = desktop_command(std::env::consts::OS, title, body);
+        let (program, args) = argv.split_first().expect("a desktop command has a program");
+        let output = Command::new(program)
+            .args(args)
+            .env_clear()
+            .envs(self.env.iter().cloned())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output();
+        match output {
+            Err(e) if e.kind() == ErrorKind::NotFound => match self.missing_told.swap(true, Ordering::Relaxed) {
+                true => Ok(()),
+                false => Err(OrchestratorError(format!(
+                    "{program} is not installed, so the run shows no desktop notification, this one or any later"
+                ))),
+            },
+            Err(e) => Err(OrchestratorError(format!("cannot run {program}: {e}"))),
+            Ok(out) if !out.status.success() => Err(OrchestratorError(format!(
+                "{program} failed ({}): {}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))),
+            Ok(_) => Ok(()),
+        }
+    }
+}
+
+/// The command that shows a desktop notification with title and body on the system os names
+/// (std::env::consts::OS): osascript on `macos`, the title and body passed as arguments rather than spliced into its
+/// script; notify-send on any other.
+fn desktop_command(os: &str, title: &str, body: &str) -> Vec<String> {
+    let mut argv: Vec<String> = match os {
+        "macos" => [
+            "osascript",
+            "-e",
+            "on run argv",
+            "-e",
+            "display notification (item 2 of argv) with title (item 1 of argv)",
+            "-e",
+            "end run",
+        ]
+        .map(String::from)
+        .to_vec(),
+        _ => ["notify-send", "--app-name", "octoflow", "--"].map(String::from).to_vec(),
+    };
+    argv.extend([title.to_string(), body.to_string()]);
+    argv
 }
 
 #[cfg(test)]

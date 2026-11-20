@@ -94,6 +94,20 @@ fn a_run_outside_a_herdr_pane_without_a_machine_is_refused() {
 }
 
 #[test]
+fn an_acp_resume_outside_a_herdr_pane_is_not_refused_and_acp_with_a_machine_is_a_usage_error() {
+    let dir = Dir::new("acp");
+    let out = program(&dir, &["resume", "b0b0b0", "--acp"], None).output().expect("the program runs");
+    let both = program(&dir, &["run", "--acp", "--machine", "m", "a task"], None).output().expect("the program runs");
+    let help = program(&dir, &["run", "--help"], None).output().expect("the program runs");
+
+    let project = std::fs::canonicalize(dir.path()).expect("the directory resolves");
+    assert_eq!(stderr(&out), format!("error: no run b0b0b0 under {}/.octoflow-ai/runs\n", project.display()));
+    assert_eq!(both.status.code(), Some(2), "{}", stderr(&both));
+    assert!(stderr(&both).contains("--machine"), "{}", stderr(&both));
+    assert!(!String::from_utf8_lossy(&help.stdout).contains("--acp"));
+}
+
+#[test]
 fn a_command_about_runs_outside_a_herdr_pane_is_refused_but_workflows_is_not() {
     // The workflows command needs no herdr.
     let dir = Dir::new("herdrless");

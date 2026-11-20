@@ -40,6 +40,8 @@ pub const BLOCKED_STATUS: &str = "blocked";
 ///   workflow cannot be loaded, and pane also before the role's agent is started.
 /// - agents: each role's agent the run has started, {"role", "name", "kind"}, in the order they were started: its
 ///   herdr name and harness; [] before the first.
+/// - backend: where its agents run, "herdr" or "acp" (crate::state::Backend): an "acp" run's agents are read from
+///   their journals and answered through its socket (crate::acp), not through herdr.
 /// - health, health_reason: RUNNING or STALE and why, as RunState::health has them; null for a run nothing drives.
 ///   heartbeat_age is the run's age.
 /// - waiting: what the run waits on the human for, {"reason", "detail"}, else null. Reasons, first match wins:
@@ -95,6 +97,8 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
     record.insert("role".into(), optional(role));
     record.insert("pane".into(), optional(pane));
     record.insert("agents".into(), agent_refs(&s.agents));
+    // A unit variant serializes to its name without fail.
+    record.insert("backend".into(), serde_json::to_value(s.backend).expect("a backend serializes"));
     record.insert("health".into(), optional(health.as_ref().map(|(h, _)| h.to_string())));
     record.insert("health_reason".into(), optional(health.map(|(_, why)| why)));
     record.insert("heartbeat_age".into(), Value::from(run.age() as i64));

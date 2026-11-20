@@ -15,7 +15,8 @@ use crate::test_support::{ended, eventually, TempDir};
 /// `info.json` (after a comma; none without one), or not at all where `mute` is beside it; and `session/new`, `session/load` and
 /// `session/resume` with session `s-1` plus the result fields in `opened.json` (each after a comma; none without
 /// one); `session/load` and `session/resume` with an error where `refuse` is beside it. A prompt's text decides its
-/// answer: ASK asks a permission (request 900) and answers end_turn once it is given, READ asks to read a file
+/// answer: ASK asks a permission (request 900, offering allow and deny) and answers end_turn once it is given,
+/// UPDATE sends a session update (an agent_message_chunk) and answers end_turn, READ asks to read a file
 /// (request 901) and answers end_turn once refused, FAIL answers with an error, EXIT exits, HANG never answers, FORK
 /// starts a `sleep` that holds its output, its pid in `forked` beside it, and answers end_turn; CANCELLED, MAXTOKENS
 /// and REFUSAL answer with that stop reason, PARTIAL with a usage of no kind the engine counts, NOCACHE with input and
@@ -51,8 +52,11 @@ while IFS= read -r line; do
   session/prompt)
     case "$line" in
     *ASK*)
-      printf '{"jsonrpc":"2.0","id":900,"method":"session/request_permission","params":{"options":[{"optionId":"allow"}]}}\n'
+      printf '{"jsonrpc":"2.0","id":900,"method":"session/request_permission","params":{"sessionId":"s-1","toolCall":{"toolCallId":"t1"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"},{"optionId":"deny","name":"Deny","kind":"reject_once"}]}}\n'
       await 900
+      reply "$id" '{"stopReason":"end_turn"}' ;;
+    *UPDATE*)
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hi"}}}}\n'
       reply "$id" '{"stopReason":"end_turn"}' ;;
     *READ*)
       printf '{"jsonrpc":"2.0","id":901,"method":"fs/read_text_file","params":{"path":"/etc/hosts"}}\n'
@@ -97,6 +101,8 @@ impl Heard {
 struct Fixture {
     tmp: TempDir,
     run: RunState,
+    /// The run's Ctrl-C, which a `stop` on its socket raises.
+    interrupt: Interrupt,
 }
 
 impl Fixture {
@@ -108,7 +114,7 @@ impl Fixture {
         for program in ["agy", "opencode"] {
             tool(&tmp.join("bin"), program, FAKE_AGENT);
         }
-        Fixture { tmp, run }
+        Fixture { tmp, run, interrupt: Interrupt::new() }
     }
 
     fn bin(&self) -> String {
@@ -118,7 +124,11 @@ impl Fixture {
     /// The run's agents, started in this process's environment with the bin directory first on PATH and every git
     /// pathspec switch set, besides KEEP_ME (with_pathspec_switches).
     fn agents<'h>(&self, human: &'h dyn Human) -> AcpAgents<'h> {
-        AcpAgents::in_environment(human, environment(Some(&self.bin()), &with_pathspec_switches()).into_iter())
+        AcpAgents::in_environment(
+            human,
+            &self.interrupt,
+            environment(Some(&self.bin()), &with_pathspec_switches()).into_iter(),
+        )
     }
 
     /// Give the fake agent's file of this name the text.
@@ -223,13 +233,13 @@ fn a_permission_the_agent_asks_for_blocks_it_until_answered() {
     let human = Heard::default();
     let agents = f.agents(&human);
     agents.start(&f.run, "builder", &launch("agy")).expect("start");
-    assert!(agents.answer("builder", "allow").is_err(), "no permission is asked yet");
+    assert_eq!(agents.answer("builder", 1, "allow"), Err(CommandError::NoRequest), "no permission is asked yet");
 
     agents.prompt(&f.run, "builder", "ASK").expect("prompt");
 
     assert!(eventually(|| activity(&agents, &f.run) == Some(Activity::Blocked)));
     assert!(!agents.wait_ready(&f.run, "builder", 0).expect("wait_ready"));
-    agents.answer("builder", "allow").expect("answer");
+    agents.answer("builder", 1, "allow").expect("answer");
     assert!(eventually(|| activity(&agents, &f.run) == Some(Activity::Idle)));
     let answer = r#" {"jsonrpc":"2.0","id":900,"result":{"outcome":{"outcome":"selected","optionId":"allow"}}}"#;
     assert!(f.log().contains(answer), "{}", f.log());
@@ -609,10 +619,13 @@ fn a_probe_reports_what_the_agent_says_of_itself() {
     let unnamed = probed(&f, "opencode", long, &Interrupt::new()).expect("an answer");
     f.put("info.json", r#","agentInfo":{"name":"agy","version":"1.5.11"}"#);
     let named = probed(&f, "agy", long, &Interrupt::new()).expect("an answer");
+    f.put("info.json", r#","agentInfo":{"name":"agy"}"#);
+    let unversioned = probed(&f, "agy", long, &Interrupt::new()).expect("an answer");
     let refused = probed(&f, "claude", long, &Interrupt::new()).expect_err("claude has no ACP launch");
 
     assert_eq!((unnamed.as_str(), named.as_str()), ("answers over ACP", "agy 1.5.11"));
-    assert_eq!(f.methods(), ["initialize", "initialize"]);
+    assert_eq!(unversioned, "agy");
+    assert_eq!(f.methods(), ["initialize", "initialize", "initialize"]);
     assert!(f.log().contains("argv acp\n"), "{}", f.log());
     assert_eq!(refused.0, "claude has no ACP launch");
 }
@@ -652,13 +665,18 @@ fn a_probe_fails_for_an_agent_that_is_missing_exits_or_does_not_answer_and_stops
 #[test]
 fn a_request_of_an_agent_that_has_exited_fails_as_exited_also_when_it_cannot_be_written_to() {
     let tmp = TempDir::new();
+    let records = Records {
+        stderr: "/dev/null",
+        usage: "/dev/null",
+        group: "/dev/null",
+        journal: Arc::new(Journal::open("/dev/null").expect("a journal")),
+    };
     let connection = Connection::spawn(
         "/bin/sh",
         &["-c".to_string(), "exit 0".to_string()],
         std::iter::empty(),
         &tmp.path(),
-        "/dev/null",
-        "/dev/null".into(),
+        records,
     )
     .expect("sh starts");
     // Gone before the request is written, so the write meets a closed pipe.
@@ -667,4 +685,206 @@ fn a_request_of_an_agent_that_has_exited_fails_as_exited_also_when_it_cannot_be_
     let failure = connection.request("initialize", json!({}), Duration::from_secs(5)).expect_err("no answer");
 
     assert!(matches!(failure, Failure::Exited), "{failure:?}");
+}
+
+/// The run's journal of the builder, each line read, with `at` taken out after it is checked to be a time.
+fn journal(f: &Fixture) -> Vec<Value> {
+    let text = read(&format!("{}/builder.events.jsonl", f.run.dir()));
+    let lines = text.lines().map(|l| serde_json::from_str::<Value>(l).expect("a JSON line"));
+    lines
+        .map(|mut line| {
+            if let Some(at) = line.as_object_mut().and_then(|o| o.remove("at")) {
+                assert!(crate::summary::epoch_time(at.as_str().expect("a text")).is_ok(), "{at}");
+            }
+            line
+        })
+        .collect()
+}
+
+#[test]
+fn the_journal_records_the_session_prompts_updates_permissions_answers_turn_ends_and_the_exit() {
+    let f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    agents.start(&f.run, "builder", &launch("agy")).expect("start");
+
+    agents.prompt(&f.run, "builder", "UPDATE").expect("prompt");
+    assert!(eventually(|| journal(&f).len() == 5));
+    agents.prompt(&f.run, "builder", "ASK").expect("prompt");
+    assert!(eventually(|| activity(&agents, &f.run) == Some(Activity::Blocked)));
+    agents.answer("builder", 1, "deny").expect("answer");
+    assert!(eventually(|| activity(&agents, &f.run) == Some(Activity::Idle)));
+    agents.prompt(&f.run, "builder", "FAIL").expect("prompt");
+    assert!(eventually(|| activity(&agents, &f.run).is_none()));
+    agents.end(&f.run).expect("end");
+
+    let options = json!([
+        {"optionId": "allow", "name": "Allow", "kind": "allow_once"},
+        {"optionId": "deny", "name": "Deny", "kind": "reject_once"},
+    ]);
+    let update = json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "hi"}});
+    assert_eq!(
+        journal(&f),
+        [
+            json!({"journal": 1}),
+            json!({"seq": 1, "kind": "session", "session": "s-1", "harness": "agy", "resumed": false}),
+            json!({"seq": 2, "kind": "prompt", "text": "UPDATE", "from": "orchestrator"}),
+            json!({"seq": 3, "kind": "update", "update": update}),
+            json!({"seq": 4, "kind": "turn_end", "stopReason": "end_turn"}),
+            json!({"seq": 5, "kind": "prompt", "text": "ASK", "from": "orchestrator"}),
+            json!({"seq": 6, "kind": "permission", "request": 1, "toolCall": {"toolCallId": "t1"}, "options": options}),
+            json!({"seq": 7, "kind": "answered", "request": 1, "option": "deny", "by": "human"}),
+            json!({"seq": 8, "kind": "turn_end", "stopReason": "end_turn"}),
+            json!({"seq": 9, "kind": "prompt", "text": "FAIL", "from": "orchestrator"}),
+            json!({"seq": 10, "kind": "exited", "error": "not logged in"}),
+        ]
+    );
+}
+
+#[test]
+fn a_resumed_role_s_journal_goes_on_numbering_and_its_reopened_session_is_journaled_before_the_agent_answers() {
+    let f = Fixture::new();
+    f.put("caps.json", r#"{"loadSession":true}"#);
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    agents.start(&f.run, "builder", &launch("agy")).expect("start");
+    agents.prompt(&f.run, "builder", "ASK").expect("prompt");
+    assert!(eventually(|| activity(&agents, &f.run) == Some(Activity::Blocked)));
+    drop(agents);
+
+    let agents = f.agents(&human);
+    agents.start(&f.run, "builder", &AgentLaunch { session: Some("s-1"), ..launch("agy") }).expect("start");
+    agents.prompt(&f.run, "builder", "ASK").expect("prompt");
+    assert!(eventually(|| activity(&agents, &f.run) == Some(Activity::Blocked)));
+
+    let lines = journal(&f);
+    let kinds: Vec<&str> = lines.iter().filter_map(|l| l["kind"].as_str()).collect();
+    assert_eq!(kinds, ["session", "prompt", "permission", "exited", "session", "prompt", "permission"]);
+    let seqs: Vec<u64> = lines.iter().filter_map(|l| l["seq"].as_u64()).collect();
+    assert_eq!(seqs, [1, 2, 3, 4, 5, 6, 7]);
+    assert_eq!(lines[5]["resumed"], true);
+    assert_eq!(lines[7]["request"], 2);
+    // Request 1 was the session before's: this connection never had it.
+    assert_eq!(agents.answer("builder", 1, "allow"), Err(CommandError::NoRequest));
+}
+
+#[test]
+fn the_first_answer_to_a_permission_wins_and_an_option_it_does_not_offer_is_refused() {
+    let f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    agents.start(&f.run, "builder", &launch("agy")).expect("start");
+    agents.prompt(&f.run, "builder", "ASK").expect("prompt");
+    assert!(eventually(|| activity(&agents, &f.run) == Some(Activity::Blocked)));
+
+    let bad = agents.answer("builder", 1, "maybe");
+    let first = agents.answer("builder", 1, "allow");
+    let second = agents.answer("builder", 1, "deny");
+    let nobody = agents.answer("reviewer", 1, "allow");
+
+    assert_eq!(bad, Err(CommandError::BadOption));
+    assert_eq!(first, Ok(()));
+    assert_eq!(second, Err(CommandError::AlreadyAnswered { option: "allow".into(), by: "human".into() }));
+    assert_eq!(nobody, Err(CommandError::NoAgent));
+    assert!(eventually(|| activity(&agents, &f.run) == Some(Activity::Idle)));
+    assert_eq!(f.log().matches(r#""id":900,"result""#).count(), 1, "{}", f.log());
+}
+
+#[test]
+fn stop_cancels_each_permission_and_each_prompt_pending_then_raises_the_interrupt() {
+    let f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    agents.start(&f.run, "builder", &launch("agy")).expect("start");
+    agents.start(&f.run, "reviewer", &launch("agy")).expect("start");
+    agents.prompt(&f.run, "builder", "ASK").expect("prompt");
+    agents.prompt(&f.run, "reviewer", "HANG").expect("prompt");
+    assert!(eventually(|| activity(&agents, &f.run) == Some(Activity::Blocked)));
+
+    agents.stop();
+
+    assert!(f.interrupt.is_raised());
+    let cancelled = r#" {"jsonrpc":"2.0","id":900,"result":{"outcome":{"outcome":"cancelled"}}}"#;
+    assert!(eventually(|| f.log().contains(cancelled)), "{}", f.log());
+    let cancel = r#"session/cancel {"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"s-1"}}"#;
+    assert!(eventually(|| f.log().contains(cancel)), "{}", f.log());
+    let answered = journal(&f).into_iter().find(|l| l["kind"] == "answered").expect("an answered line");
+    assert_eq!((&answered["option"], &answered["by"]), (&json!("cancelled"), &json!("stop")));
+    assert_eq!(
+        agents.answer("builder", 1, "allow"),
+        Err(CommandError::AlreadyAnswered { option: "cancelled".into(), by: "stop".into() })
+    );
+}
+
+#[test]
+fn an_open_run_listens_on_its_socket_whose_stop_raises_the_interrupt_and_closes_it_when_dropped() {
+    let mut f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    agents.open(&mut f.run, &human).expect("open");
+    agents.start(&f.run, "builder", &launch("agy")).expect("start");
+    agents.prompt(&f.run, "builder", "ASK").expect("prompt");
+    assert!(eventually(|| activity(&agents, &f.run) == Some(Activity::Blocked)));
+
+    let answered = ask(&f.run.dir(), &json!({"answer": {"role": "builder", "request": 1, "option": "allow"}}));
+    let stopped = ask(&f.run.dir(), &json!({"stop": {}}));
+
+    assert_eq!((answered, stopped), (Ok(json!({})), Ok(json!({}))));
+    assert!(eventually(|| f.interrupt.is_raised()));
+    drop(agents);
+    assert!(matches!(ask(&f.run.dir(), &json!({"stop": {}})), Err(SocketError::Unreachable(_))));
+}
+
+#[test]
+fn an_agent_s_group_is_recorded_and_one_an_earlier_orchestrator_left_is_ended_before_the_role_starts_again() {
+    let f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    agents.start(&f.run, "builder", &launch("agy")).expect("start");
+    agents.prompt(&f.run, "builder", "FORK").expect("prompt");
+    assert!(eventually(|| activity(&agents, &f.run) == Some(Activity::Idle)));
+    let record: Value = serde_json::from_str(&read(&format!("{}/builder.acp.group", f.run.dir()))).expect("JSON");
+    assert!(record["pgid"].as_i64().is_some() && record["started"].as_str().is_some(), "{record}");
+    // As a SIGKILLed orchestrator leaves it: the agent and its group run on.
+    std::mem::forget(agents);
+
+    let agents = f.agents(&human);
+    agents.start(&f.run, "builder", &launch("agy")).expect("start");
+
+    assert!(ended(&format!("{}/forked", f.bin())), "the earlier agent's sleep outlived the new start");
+    assert_eq!(human.lines(), ["[builder] ended the agent an earlier orchestrator of the run left"]);
+}
+
+#[test]
+fn a_message_is_refused_until_the_run_waits_on_the_human_and_then_sent_once_as_the_human_s_prompt() {
+    let mut f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    agents.open(&mut f.run, &human).expect("open");
+    agents.start(&f.run, "builder", &launch("agy")).expect("start");
+    agents.prompt(&f.run, "builder", "HANG").expect("prompt");
+
+    // Working, and then idle but not waited on: no message reaches it.
+    agents.await_human(&f.run, "builder", Waiting::Interview);
+    let working = agents.message("builder", "use 10");
+    let nobody = agents.message("reviewer", "use 10");
+    assert_eq!((working, nobody), (Err(CommandError::NotWaiting), Err(CommandError::NoAgent)));
+    agents.start(&f.run, "builder", &launch("agy")).expect("start again");
+    assert_eq!(agents.message("builder", "use 10"), Err(CommandError::NotWaiting));
+
+    agents.await_human(&f.run, "builder", Waiting::Blocked);
+    agents.await_human(&f.run, "builder", Waiting::Blocked);
+    let sent = ask(&f.run.dir(), &json!({"message": {"role": "builder", "text": "use 10"}}));
+    assert_eq!(sent, Ok(json!({})));
+    assert!(eventually(|| activity(&agents, &f.run) == Some(Activity::Idle) && f.usage_written()));
+    let again = ask(&f.run.dir(), &json!({"message": {"role": "builder", "text": "use 10"}}));
+    assert!(matches!(&again, Err(SocketError::Refused { code, .. }) if code == "not_waiting"), "{again:?}");
+
+    let lines = journal(&f);
+    let waiting: Vec<&Value> = lines.iter().filter(|l| l["kind"] == "waiting").collect();
+    assert_eq!(waiting.len(), 1, "one waiting line until the next prompt: {lines:?}");
+    assert_eq!(waiting[0]["why"], "blocked");
+    let last_prompt = lines.iter().rev().find(|l| l["kind"] == "prompt").expect("a prompt");
+    assert_eq!((&last_prompt["text"], &last_prompt["from"]), (&json!("use 10"), &json!("human")));
+    assert_eq!(f.log().matches("use 10").count(), 1, "{}", f.log());
 }

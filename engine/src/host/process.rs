@@ -385,6 +385,86 @@ fn unblock_signals(command: &mut Command) {
     }
 }
 
+/// A process spawn_detached started, which is no child of this one.
+pub(crate) struct Detached {
+    /// Its pid.
+    pub pid: i32,
+}
+
+impl Detached {
+    /// Whether it has exited: no process has its pid any more, or (on Linux) the one that has it is a zombie its new
+    /// parent has not reaped yet.
+    pub(crate) fn exited(&self) -> bool {
+        if nix::sys::signal::kill(Pid::from_raw(self.pid), None).is_err() {
+            return true;
+        }
+        #[cfg(target_os = "linux")]
+        {
+            // The state is the field after the command name, which is in parentheses (proc(5)).
+            let stat = std::fs::read_to_string(format!("/proc/{}/stat", self.pid)).unwrap_or_default();
+            let state = stat.rsplit_once(')').and_then(|(_, rest)| rest.split_whitespace().next());
+            matches!(state, Some("Z" | "X") | None)
+        }
+        #[cfg(not(target_os = "linux"))]
+        false
+    }
+}
+
+/// Start argv, argv[0] found on PATH, in this process's environment, working in cwd, so that it outlives this
+/// process and is none of its children: by a double fork with setsid between, the middle process exiting at once, so
+/// that the started process is reparented and runs in a session of its own, which no terminal's hangup or Ctrl-C
+/// reaches. Its stdin is /dev/null, its stdout and stderr appended to the file at log, and SIGINT, SIGTERM and SIGHUP
+/// are unblocked in it (unblock_signals). Returns its pid, as the middle process passed it back. Errors: log cannot
+/// be opened, the pipe cannot be made, or the program cannot be started (the fork fails, or the exec does: argv[0]
+/// is not found or not executable), naming argv[0].
+pub(crate) fn spawn_detached(argv: &[String], cwd: &str, log: &str) -> Result<Detached, OrchestratorError> {
+    use nix::unistd::{fork, setsid, ForkResult};
+    let program = &argv[0];
+    let cannot = |what: &str, e: std::io::Error| OrchestratorError(format!("cannot {what}: {}", os_error(&e, None)));
+    let out = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log)
+        .map_err(|e| cannot(&format!("open {log}"), e))?;
+    let err = out.try_clone().map_err(|e| cannot(&format!("open {log}"), e))?;
+    let (mut pid_pipe, pid_writer) = std::io::pipe().map_err(|e| cannot("make a pipe", e))?;
+    let mut command = Command::new(program);
+    command.args(&argv[1..]).current_dir(cwd).stdin(Stdio::null()).stdout(out).stderr(err);
+    unblock_signals(&mut command);
+    // SAFETY: the closure runs in the child between fork and exec, where only async-signal-safe functions may be
+    // called: setsid, fork, write and raise are (signal-safety(7)), and it allocates nothing, the pipe being made
+    // before. The middle process never returns from it: it raises SIGKILL, so none of std's code runs after the fork
+    // there; the grandchild returns Ok and std execs argv in it, reporting an exec that fails over std's own pipe,
+    // which the grandchild holds until its exec.
+    #[allow(
+        unsafe_code,
+        reason = "CommandExt::pre_exec and fork are unsafe, and nix has no safe way to start a process detached"
+    )]
+    unsafe {
+        command.pre_exec(move || {
+            setsid().map_err(std::io::Error::from)?;
+            match fork().map_err(std::io::Error::from)? {
+                ForkResult::Child => Ok(()),
+                ForkResult::Parent { child } => {
+                    // A pid not written is an EOF to the reader, which reports it; the kill cannot fail on itself.
+                    let _ = nix::unistd::write(&pid_writer, &child.as_raw().to_ne_bytes());
+                    let _ = nix::sys::signal::raise(Signal::SIGKILL);
+                    Ok(())
+                }
+            }
+        });
+    }
+    let spawned = command.spawn();
+    // The writer goes with the command, so that a middle process that died before it wrote leaves the pipe at EOF.
+    drop(command);
+    let mut middle = spawned.map_err(|e| cannot(&format!("start {program}"), e))?;
+    // The middle process ends at once; a wait that fails leaves a zombie of it until serve exits, and nothing else.
+    let _ = middle.wait();
+    let mut pid = [0u8; 4];
+    pid_pipe.read_exact(&mut pid).map_err(|e| cannot(&format!("tell the pid of {program}"), e))?;
+    Ok(Detached { pid: i32::from_ne_bytes(pid) })
+}
+
 /// What one of a command's pipes ended with: its input written (Input), or one of its outputs read to the end, by
 /// number, 0 for stdout and 1 for stderr (Output); or the Interrupt was raised (Interrupted).
 enum Piped {

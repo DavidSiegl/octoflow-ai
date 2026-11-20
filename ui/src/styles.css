@@ -680,6 +680,84 @@ ul.files time {
   flex: 1;
 }
 
+/* An agent over ACP: its conversation, scrolled as a terminal is, and the box for the human's message. */
+.conversation ol {
+  height: 24em;
+  margin: 8px 0;
+  padding: 8px;
+  overflow: auto;
+  list-style: none;
+  border-radius: 4px;
+  background: var(--navy-dark);
+}
+
+.conversation .item {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.conversation .item p {
+  margin: 0;
+}
+
+.conversation .note,
+.conversation .session,
+.conversation .turn-end,
+.conversation .thought,
+.conversation .who {
+  color: var(--muted-mint);
+  font-size: 0.85em;
+}
+
+.conversation .prompt {
+  padding-left: 8px;
+  border-left: 2px solid var(--navy-hover);
+}
+
+.conversation .prompt.from-human {
+  border-left-color: var(--mint);
+}
+
+.conversation .tool .status {
+  color: var(--muted-mint);
+  font-size: 0.85em;
+}
+
+.conversation .tool.status-completed .status {
+  color: var(--mint);
+}
+
+.conversation .tool.status-failed .status {
+  color: var(--coral);
+}
+
+.conversation .permission {
+  padding: 6px 8px;
+  border: 1px solid var(--amber);
+  border-radius: 4px;
+}
+
+.conversation .permission .options {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.conversation form.message {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.conversation form.message textarea {
+  min-height: 4em;
+  font: inherit;
+}
+
+.conversation form.message button {
+  align-self: flex-end;
+}
+
 /* The dialogs (setup, the run form, About, cleaning up runs), over the rest of the window. */
 .dialog-backdrop {
   position: fixed;

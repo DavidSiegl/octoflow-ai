@@ -51,7 +51,7 @@ mod turn;
 
 pub use gate_switch::{check_gate_mid_run, turn_quality_gate_off, turn_quality_gate_on};
 pub(crate) use origin::{origin_unreachable, reaching_origin};
-pub use system::{machine_zone, LocalHuman, SystemClocks};
+pub use system::{machine_zone, DesktopNotify, LocalHuman, SystemClocks};
 
 #[cfg(test)]
 pub(crate) mod fixture;

@@ -12,19 +12,22 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::OnceLock;
 
+use crate::acp::AcpAgents;
+use crate::agents::Agents;
 use crate::constants::{EXIT_CHANGES_REQUESTED, EXIT_CONFLICT, EXIT_ERROR, EXIT_INTERRUPTED, NO_VERDICT, SUCCEEDED};
 use crate::env::ConfigDir;
 use crate::error::OrchestratorError;
 use crate::harness::AgentSettings;
 use crate::herdr::ProcessHerdr;
 use crate::host::{shlex_join, Host, ProcessHost};
+use crate::human::Notify;
 use crate::interrupt::Interrupt;
 use crate::package_index::PackageIndexes;
 use crate::pipeline::{Pipeline, STATE_FILE};
 use crate::runs::{local_host, pid_alive};
 use crate::spec_file::{read_spec_file, SpecFile};
 use crate::state::{run_dir, RunState};
-use crate::workflow::{Collaborators, LocalHuman, RunSettings, Stopped, SystemClocks, Workflow};
+use crate::workflow::{Collaborators, DesktopNotify, LocalHuman, RunSettings, Stopped, SystemClocks, Workflow};
 use serde_json::Value;
 
 pub mod args;
@@ -40,7 +43,7 @@ mod workflows;
 
 pub use args::{parse_args, Command, RunsCommand, Target};
 pub(crate) use start::new_run_id;
-pub use start::{new_state, resumable_state, resumed_state};
+pub use start::{new_state, resumable_state, resumed_state, START_LOG};
 
 /// What a command talks to once connected: the Workflow's collaborators and where the orchestrator's configuration
 /// is.
@@ -192,7 +195,14 @@ pub fn main(argv: impl IntoIterator<Item = OsString>) -> i32 {
     };
     let ended = match herdrless_command(&command, &local) {
         Some(ended) => ended,
-        None => connect(&command, &local, &LocalHuman::new(Box::new(ProcessHerdr::new(None, interrupt)))),
+        None => {
+            // A run over ACP has no herdr to show its notifications, and runs whether the app is open or not.
+            let notifier: Box<dyn Notify> = match command.target().is_some_and(|t| t.acp) {
+                true => Box::new(DesktopNotify::new()),
+                false => Box::new(ProcessHerdr::new(None, interrupt)),
+            };
+            connect(&command, &local, &LocalHuman::new(notifier))
+        }
     };
     let status = ended_status(ended, &command, &print);
     match unwritten.take() {
@@ -247,26 +257,33 @@ fn ended_status(ended: Result<Ended, Stop>, command: &Command, print: &dyn Fn(&s
 }
 
 /// Connect to the herdr and the host command names, on this machine (which must be a herdr pane) or over SSH to its
-/// --machine, reached from local's host, and run it, printing by local's stdout and stderr, telling human.
+/// --machine, reached from local's host, and run it, printing by local's stdout and stderr, telling human. With
+/// --acp the agents run over ACP instead (crate::acp), on this machine, in or out of a herdr pane.
 fn connect(command: &Command, local: &Local, human: &LocalHuman) -> Result<Ended, Stop> {
     let Local { interrupt, config, stdout, stderr, .. } = *local;
     let stopped = |e: OrchestratorError| stop(e, interrupt, None);
-    let machine = command.target().and_then(|t| t.machine.as_deref());
+    let target = command.target();
+    let machine = target.and_then(|t| t.machine.as_deref());
+    let acp = target.is_some_and(|t| t.acp);
     let herdr = ProcessHerdr::new(machine, interrupt);
     let host = match machine {
         Some(_) => local.host.over_ssh(&herdr.ssh_target().map_err(|e| stopped(e.into()))?),
-        None if !in_herdr_pane() => {
+        None if !acp && !in_herdr_pane() => {
             return Err(stopped(OrchestratorError::new("not inside a herdr pane; run from herdr, or pass --machine")))
         }
         None => local.host.clone(),
     };
+    // The agents are driven from this thread, the main one, which lives as long as the run: an ACP agent dies with
+    // the thread that started it (crate::acp's Connection::spawn).
+    let acp_agents = AcpAgents::new(human, interrupt);
+    let agents: &dyn Agents = if acp { &acp_agents } else { &herdr };
     let clocks = SystemClocks::new(interrupt).map_err(stopped)?;
     let indexes = PackageIndexes::from_env();
     let here = local_host();
     let world = Connected {
         with: Collaborators {
             host: &host,
-            agents: &herdr,
+            agents,
             clocks: &clocks,
             human,
             interrupt,

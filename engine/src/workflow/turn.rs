@@ -2,7 +2,7 @@
 //! RunState.turns.
 
 use super::{How, Outcome, Stopped, Workflow};
-use crate::agents::{Activity, AgentError, AgentLaunch, Seen};
+use crate::agents::{Activity, AgentError, AgentLaunch, Seen, Waiting};
 use crate::constants::{
     APPROVE, CHANGES_REQUESTED, HEARTBEAT_SECONDS, POLL_SECONDS, PROMPT_DELIVERY_SECONDS, STALL_SECONDS,
 };
@@ -26,6 +26,17 @@ pub(super) enum Announce {
     Blocked {
         question: String,
     },
+}
+
+impl Announce {
+    /// What the turn waits on the human for all through: an interview's or a block's answer; None for neither.
+    fn waiting(&self) -> Option<Waiting> {
+        match self {
+            Announce::Nothing => None,
+            Announce::Interview => Some(Waiting::Interview),
+            Announce::Blocked { .. } => Some(Waiting::Blocked),
+        }
+    }
 }
 
 /// The turn a step asks of a role.
@@ -182,7 +193,7 @@ impl Workflow<'_> {
             }
             self.save()?;
         }
-        let out = self.await_handoff(role, path, t.timeout, t.watch_stalls)?;
+        let out = self.await_handoff(role, path, t)?;
         self.human.log(&format!("[{role}] wrote {file}"));
         self.end_turn(role, path)?;
         Ok(out)
@@ -405,8 +416,11 @@ impl Workflow<'_> {
         Ok(None)
     }
 
-    /// Poll until the role writes path, telling the human when it is blocked or stalled.
-    fn await_handoff(&mut self, role: &str, path: &str, timeout: Option<u64>, watch_stalls: bool) -> Outcome<String> {
+    /// Poll until the role writes path, t's handoff file, telling the human when it is blocked or stalled, and letting
+    /// their message reach the agent while it is idle and the turn waits on them (Agents::await_human): all through
+    /// an interview or a block's wait, and once it has stalled.
+    fn await_handoff(&mut self, role: &str, path: &str, t: &Turn) -> Outcome<String> {
+        let (timeout, watch_stalls, paced) = (t.timeout, t.watch_stalls, t.announce.waiting());
         let (label, file) = (self.label(role), file_name(path).to_string());
         let deadline = timeout.map(|t| self.clocks.monotonic() + t as f64);
         // Since when the agent has shown idle or done without the file; None while it works.
@@ -436,9 +450,21 @@ impl Workflow<'_> {
                 quiet_since = Some(now);
             }
             let stalled = watch_stalls && quiet_since.is_some_and(|since| now - since >= STALL_SECONDS as f64);
+            self.open_to_human(role, seen.activity, paced, stalled);
             told = self.tell_human(role, seen.activity, stalled, told, &file);
             self.heartbeat()?;
             self.pause(POLL_SECONDS)?;
+        }
+    }
+
+    /// Let the human's message reach the role's agent while its activity is idle and the turn waits on them: through
+    /// paced, the wait of an interview or a block, else once it has stalled (Agents::await_human).
+    fn open_to_human(&self, role: &str, activity: Activity, paced: Option<Waiting>, stalled: bool) {
+        if activity != Activity::Idle {
+            return;
+        }
+        if let Some(why) = paced.or(stalled.then_some(Waiting::Idle)) {
+            self.agents.await_human(&self.state, role, why);
         }
     }
 

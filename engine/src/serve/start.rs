@@ -51,7 +51,8 @@ pub enum Started {
     /// The run saved its state.json: it is among the project's runs.
     Listed,
     /// `run` exited without saving one, as it does on an error before it claims the run (an unknown workflow, a role
-    /// the workflow lacks, a refused run id); what its pane showed last.
+    /// the workflow lacks, a refused run id): where its last lines were and what they said, as "its pane showed:\n…"
+    /// or "its log ends:\n…".
     Exited(String),
     /// StartWait's limit passed with neither: it may still save one.
     Unlisted,

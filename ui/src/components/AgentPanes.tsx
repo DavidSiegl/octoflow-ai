@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { type AgentInput, type AgentRef, type Api, HttpError, type Project, type RunRecord } from "../api";
+import { Conversation } from "./Conversation";
 
 /** How often the shown agent's terminal is read again, in milliseconds. */
 export const AGENT_POLL_MS = 2000;
@@ -22,8 +23,9 @@ interface Props {
   record: RunRecord;
 }
 
-/** The run's agents, a tab each: what the chosen one's pane shows, read again every AGENT_POLL_MS while it is shown,
- * and a box and keys to type into it, as into its herdr pane. The current role's agent is chosen until another is. */
+/** The run's agents, a tab each: for a run in herdr, what the chosen one's pane shows, read again every AGENT_POLL_MS
+ * while it is shown, and a box and keys to type into it, as into its herdr pane; for a run over ACP, its conversation
+ * (Conversation). The current role's agent is chosen until another is. */
 export function AgentPanes({ api, project, record }: Props) {
   const agents = record.agents ?? [];
   const [chosen, setChosen] = useState<string | null>(null);
@@ -52,7 +54,11 @@ export function AgentPanes({ api, project, record }: Props) {
         ))}
       </div>
       {/* Keyed by the agent, so another one starts from nothing read and nothing typed. */}
-      <AgentPane key={shown.name} api={api} project={project} run={record.id} agent={shown} />
+      {record.backend === "acp" ? (
+        <Conversation key={shown.name} api={api} project={project} run={record.id} role={shown.role} />
+      ) : (
+        <AgentPane key={shown.name} api={api} project={project} run={record.id} agent={shown} />
+      )}
     </section>
   );
 }

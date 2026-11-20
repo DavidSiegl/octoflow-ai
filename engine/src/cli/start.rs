@@ -78,11 +78,20 @@ pub(super) fn flagged_workflow(
     }
 }
 
-/// id, run --run-id's, once no run of the project at cwd has it: its directory is not there. Errors: it is, or that
+/// The file serve's POST /run starts a detached run with its output appended to (crate::host::spawn_detached), in the
+/// run's directory, which serve makes for it before the run starts.
+pub const START_LOG: &str = "run.log";
+
+/// id, run --run-id's, once no run of the project at cwd has it: its directory is not there, or holds the START_LOG
+/// that serve made it for and no state.json yet, as for the run serve is starting. Errors: it is otherwise, or that
 /// cannot be told.
 fn given_run_id(id: &str, cwd: &str, world: &Connected) -> Result<String, OrchestratorError> {
     let dir = run_dir(cwd, id);
-    if world.with.host.exists(&dir)? {
+    let host = world.with.host;
+    let starting = || -> Result<bool, OrchestratorError> {
+        Ok(host.exists(&format!("{dir}/{START_LOG}"))? && !host.exists(&format!("{dir}/state.json"))?)
+    };
+    if host.exists(&dir)? && !starting()? {
         return Err(OrchestratorError(format!("{dir} exists already; a new run needs an id of its own")));
     }
     Ok(id.to_string())

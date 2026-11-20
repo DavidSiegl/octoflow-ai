@@ -151,6 +151,14 @@ timed when the prompt was sent, so that a prompt answered after its handoff file
 no response gave a `usage` for has `"unknown"` tokens. ACP's `usage_update` notification is not read: it carries the
 context window and a cost, not the four kinds.
 
+An ACP run also keeps, in its run directory, each role's journal `<role>.events.jsonl`: every session the role ran,
+each prompt, ACP's session updates verbatim, each permission asked (numbered by the journal) and its answer, each
+turn's end and the agent's exit, one JSON line each after a `{"journal": 1}` header, for the app to replay. Each
+agent's process group is recorded as `<role>.acp.group` (its pgid and its leader's start time), so that a resume ends
+a group the orchestrator before it left behind, if it is still the recorded one, before starting the role again.
+While the run runs, `socket` names the Unix socket it listens on, by which the app answers a permission or stops
+the run; a run started by serve keeps its output in `run.log`.
+
 ## Evals
 
 The unit tests and the e2e scenarios check what the engine does, never how well the agents do with it: a prompt
