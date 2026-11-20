@@ -2461,6 +2461,42 @@ fn a_resume_ends_the_run_s_leftover_agents_then_starts_resume_detached_until_it_
 }
 
 #[test]
+fn of_two_resumes_of_one_run_at_once_the_second_finds_it_taken_up_by_the_first() {
+    let tmp = TempDir::new();
+    let stopping = Interrupt::new();
+    let project = detached_project(&tmp.path(), &stopping);
+    let id = "20261120-000000-abcdef";
+    let dir = save_app_run(&tmp.path(), id, |_| {});
+    // What resume saves once it has taken the run up: the run, its error cleared, owned by a live process here, this
+    // test's.
+    let mut taken: Value =
+        serde_json::from_str(&std::fs::read_to_string(format!("{dir}/state.json")).unwrap()).unwrap();
+    taken["owner"] = object([
+        ("host", Value::from(crate::runs::local_host())),
+        ("pid", Value::from(i64::from(std::process::id()))),
+        ("started_at", Value::from("x")),
+    ]);
+    taken["error"] = Value::Null;
+    let taken_file = format!("{}/taken.json", tmp.path());
+    std::fs::write(&taken_file, taken.to_string()).unwrap();
+    let script = format!(r#"echo "$@" >> "$3/resumes"; sleep 0.1; cp "{taken_file}" "{dir}/state.json"; exec sleep 5"#);
+    let program = run_program(&tmp.path(), &script);
+    let wait = StartWait { every: Duration::from_millis(10), limit: Duration::from_secs(5) };
+
+    let mut ended: Vec<_> = std::thread::scope(|s| {
+        let both = [(); 2].map(|()| s.spawn(|| project.resume(&program, id, wait, &stopping)));
+        both.map(|t| t.join().expect("a resume does not panic")).into()
+    });
+
+    ended.sort_by_key(Result::is_err);
+    assert_eq!(ended[0], Ok(Started::Listed));
+    let Err(RunReadError::Conflict(why)) = &ended[1] else { panic!("not a conflict: {:?}", ended[1]) };
+    assert!(why.starts_with(&format!("run {id} looks alive")), "{why}");
+    let resumes = std::fs::read_to_string(format!("{}/resumes", tmp.path())).unwrap();
+    assert_eq!(resumes.lines().count(), 1, "{resumes}");
+}
+
+#[test]
 fn a_resume_refuses_a_run_it_would_not_take_up_before_starting_anything() {
     let tmp = TempDir::new();
     let stopping = Interrupt::new();
