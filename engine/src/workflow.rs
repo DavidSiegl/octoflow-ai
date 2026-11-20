@@ -11,6 +11,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::rc::Rc;
 
+use crate::acp;
 use crate::agents::{AgentError, Agents};
 use crate::constants::{
     APPROVE, CHANGES_REQUESTED, DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
@@ -18,7 +19,7 @@ use crate::constants::{
 };
 use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
-use crate::harness::{harness, AgentSettings};
+use crate::harness::{harness, AgentSettings, Usage};
 use crate::host::{git_status, Host, PushError, Scanned};
 use crate::human::Human;
 use crate::interrupt::Interrupt;
@@ -33,7 +34,7 @@ use crate::pull_request::{branch_name, commit_note, pr_body, provenance, spec_ti
 use crate::quality::parse_gate;
 use crate::runs::{local_host, RUNNING};
 use crate::spec_file::SpecFile;
-use crate::state::{AgentStart, RunState};
+use crate::state::{AgentStart, Backend, RunState};
 use crate::summary::{iso_utc, run_metrics, run_summary, turn_tokens};
 use crate::workflow_file::{run_pipeline, workflow_definition};
 use serde_json::Value;
@@ -220,8 +221,8 @@ pub struct Workflow<'a> {
     /// When state.json was last written by this orchestrator, or a failed heartbeat last tried to, on the monotonic
     /// clock; 0 before.
     last_write: f64,
-    /// The roles whose harness has no equivalent of the permission mode and that the log has said so for.
-    told_dropped: HashSet<String>,
+    /// What a role's agent started without (Started::unpassed), as (role, sentence), that the log has said once.
+    told_unpassed: HashSet<(String, String)>,
     /// Seconds one proof may run before GNU timeout stops it (Workflow::run_proof): PROOF_TIMEOUT.
     proof_timeout: u64,
 }
@@ -297,7 +298,7 @@ impl<'a> Workflow<'a> {
             spec: settings.spec,
             me,
             last_write: 0.0,
-            told_dropped: HashSet::new(),
+            told_unpassed: HashSet::new(),
             proof_timeout: PROOF_TIMEOUT,
         })
     }
@@ -712,7 +713,7 @@ impl<'a> Workflow<'a> {
     }
 
     /// Give each agent turn the tokens its harness recorded for it (turn_tokens), "unknown" where it recorded none
-    /// the orchestrator can read. A session log that cannot be read costs only its turns' counts.
+    /// the orchestrator can read (session_usage). A record that cannot be read costs only its turns' counts.
     fn count_tokens(&mut self) {
         let mut usage = std::collections::HashMap::new();
         for i in 0..self.state.turns.len() {
@@ -720,15 +721,8 @@ impl<'a> Workflow<'a> {
             let Some(kind) = t.harness.clone() else { continue };
             let key = (kind, t.session.clone().unwrap_or_default());
             if !usage.contains_key(&key) {
-                let read = || -> Result<_, OrchestratorError> {
-                    if key.1.is_empty() {
-                        return Ok(None);
-                    }
-                    let Some(log) = self.host.session_log(&key.0, &key.1)? else { return Ok(None) };
-                    Ok(Some(harness(&key.0)?.session_usage(&log)))
-                };
-                let counted = read().unwrap_or_else(|e| {
-                    self.human.log(&format!("could not read the {} session log of {}: {e}", key.0, key.1));
+                let counted = self.session_usage(&key.0, &key.1).unwrap_or_else(|e| {
+                    self.human.log(&format!("could not read the token usage of {} session {}: {e}", key.0, key.1));
                     None
                 });
                 usage.insert(key.clone(), counted);
@@ -736,6 +730,23 @@ impl<'a> Workflow<'a> {
             let tokens = turn_tokens(t, usage[&key].as_deref());
             self.state.turns[i].tokens = tokens;
         }
+    }
+
+    /// The token usage recorded for session, of harness kind, oldest first: a herdr run's from the harness's session
+    /// log, an ACP run's from the usage its agents answered prompts with (crate::acp::session_usage). None where none
+    /// is recorded: an empty session, a harness without a session log, an ACP session no answer of carried a usage.
+    /// Errors: the record cannot be read, or kind is no harness.
+    fn session_usage(&self, kind: &str, session: &str) -> Result<Option<Vec<Usage>>, OrchestratorError> {
+        if session.is_empty() {
+            return Ok(None);
+        }
+        if self.state.backend == Backend::Acp {
+            let Some(log) = self.host.read(&acp::usage_file(&self.state))? else { return Ok(None) };
+            let usage = acp::session_usage(&log, session);
+            return Ok((!usage.is_empty()).then_some(usage));
+        }
+        let Some(log) = self.host.session_log(kind, session)? else { return Ok(None) };
+        Ok(Some(harness(kind)?.session_usage(&log)))
     }
 
     /// Per round, its quality gates and the verdict of each verdict step that judged it, as its handoff files say.

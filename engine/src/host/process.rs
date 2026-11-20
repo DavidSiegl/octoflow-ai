@@ -265,9 +265,8 @@ pub(crate) fn run_process(
         .envs(env.iter().map(|(k, v)| (k, v)))
         .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .process_group(0);
-    unblock_signals(&mut command);
+        .stderr(Stdio::piped());
+    own_group(&mut command);
     let mut child = command.spawn().map_err(ProcessError::Start)?;
     // Input and output each on a thread of their own, so that a command that writes much before it reads all its
     // input, or fills one pipe while the other is read, never waits on the engine, and the engine waits on none of
@@ -361,6 +360,13 @@ fn wait_for_exit(
     }
 }
 
+/// Have command start as the engine starts every child: in a process group of its own, which kill_group ends whole,
+/// with SIGINT, SIGTERM and SIGHUP unblocked (unblock_signals).
+pub(crate) fn own_group(command: &mut Command) {
+    command.process_group(0);
+    unblock_signals(command);
+}
+
 /// Have command start with SIGINT, SIGTERM and SIGHUP unblocked (crate::interrupt::SIGNALS). The engine blocks them
 /// in every thread for the thread that waits for them (crate::interrupt::by_signals), a child inherits that across
 /// exec, and std's Command leaves it so; unblocked, the command, and an agent or a herdr server it starts, hears a
@@ -435,7 +441,7 @@ fn abandon(child: &mut Child, why: ProcessError) -> ProcessError {
 
 /// Send signal to the process group child leads, which child must not have been reaped from yet; a group with no
 /// process left to signal is no error.
-fn kill_group(child: &Child, signal: Signal) -> std::io::Result<()> {
+pub(crate) fn kill_group(child: &Child, signal: Signal) -> std::io::Result<()> {
     let group = Pid::from_raw(i32::try_from(child.id()).expect("a pid fits an i32"));
     // ESRCH: every process of the group has exited. EPERM: macOS refuses a group of zombies.
     match killpg(group, signal) {

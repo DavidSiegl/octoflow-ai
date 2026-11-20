@@ -144,6 +144,13 @@ A turn's session is the agent's when its prompt went out; a turn whose agent end
 restart, has `"unknown"` tokens, since part of its work is in a log that is not its session's. The answer that an
 agent gives after writing its handoff file, if any, counts for no turn.
 
+An ACP run (one the app starts over the [Agent Client Protocol](https://agentclientprotocol.com)) reads no session
+log: its tokens are the `usage` each `session/prompt` response carries (`inputTokens`, `outputTokens`,
+`cachedReadTokens`, `cachedWriteTokens`), which the orchestrator appends to `acp-usage.jsonl` in the run directory,
+timed when the prompt was sent, so that a prompt answered after its handoff file still counts for its turn. A session
+no response gave a `usage` for has `"unknown"` tokens. ACP's `usage_update` notification is not read: it carries the
+context window and a cost, not the four kinds.
+
 ## Evals
 
 The unit tests and the e2e scenarios check what the engine does, never how well the agents do with it: a prompt
@@ -553,7 +560,9 @@ or conflicts (`.github/workflows/automerge.yml` says which wait).
   | `auto`, `dontAsk`, any other | passed through | dropped | dropped | dropped |
 
 - **`state.json` says its format, and a run an earlier release saved is refused, not migrated.** `"format": 2`
-  leads the file since 0.54.0; a `state.json` without it is
+  leads the file since 0.54.0, and `"format": 3` with `"backend": "acp"` a run whose agents speak ACP (0.92.16), so
+  that a release before it refuses such a run rather than resuming it in herdr; a format that is not its backend's
+  is refused too. A `state.json` without a format is
   refused by `resume` with what to do (finish or close the run with the release that started it, or remove its run
   directory), and `list` shows it as unreadable, the same hint as its error. `prune` and `close` read only the
   fields they need, so they work on such a run too. Migrating each earlier shape would keep code for states no run

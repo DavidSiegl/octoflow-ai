@@ -7,7 +7,7 @@ use crate::agents::{Activity, AgentError, AgentLaunch, Agents, RunPlaces, Seen, 
 use crate::error::OrchestratorError;
 use crate::harness::harness;
 use crate::human::Human;
-use crate::state::{AgentRecord, RunState};
+use crate::state::{AgentRecord, Backend, RunState};
 
 impl From<HerdrError> for AgentError {
     /// herdr's own errors, with a code, are refusals; the rest are failures.
@@ -27,6 +27,12 @@ impl<H: Herdr + ?Sized> Agents for H {
     /// The run's workspace is kept only in the server the run saved, and only when that is the one this Herdr reaches
     /// (keeps_saved_workspace); a new one is opened in the server reached, which the run then saves.
     fn open(&self, run: &mut RunState, human: &dyn Human) -> Result<bool, AgentError> {
+        if run.backend != Backend::Herdr {
+            return Err(AgentError::Failed(OrchestratorError(format!(
+                "run {} runs its agents over ACP, not in herdr; the desktop app drives it",
+                run.run_id
+            ))));
+        }
         if keeps_saved_workspace(self, run, human)? {
             human.log(&format!("run {} resumes in herdr workspace {}", run.run_id, run.workspace_id));
             // A run that saved no server, from before runs saved one, saves the one it is now found in.
@@ -100,10 +106,10 @@ impl<H: Herdr + ?Sized> Agents for H {
         if !args.env.is_empty() {
             self.export(pane, &args.env)?;
         }
-        match self.start_agent(name, pane, h.kind, &args.args)? {
-            true => Ok(Started::Running),
-            false => Ok(Started::Asking),
-        }
+        let asking = !self.start_agent(name, pane, h.kind, &args.args)?;
+        let mode = launch.permission_mode.filter(|m| !m.is_empty());
+        let unpassed = mode.filter(|mode| h.permission_args(mode).is_none()).map(|mode| h.without_mode(mode));
+        Ok(Started { asking, unpassed: unpassed.into_iter().collect() })
     }
 
     fn wait_ready(&self, run: &RunState, role: &str, seconds: u64) -> Result<bool, AgentError> {

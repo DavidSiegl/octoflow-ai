@@ -91,14 +91,15 @@ pub struct AgentLaunch<'l> {
     pub extra_dir: Option<&'l str>,
 }
 
-/// How a role's agent came out of Agents::start.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Started {
-    /// Started; it may still exit at once, which Agents::find tells.
-    Running,
-    /// Started, and asking the human something before it takes a prompt, such as Claude Code whether to trust a folder
-    /// it has not run in (Agents::wait_ready).
-    Asking,
+/// How a role's agent came out of Agents::start. It may still exit at once, which Agents::find tells.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Started {
+    /// Whether it is asking the human something before it takes a prompt, such as Claude Code whether to trust a
+    /// folder it has not run in (Agents::wait_ready).
+    pub asking: bool,
+    /// What of the launch it started without, each as a sentence about its harness for the log: a permission mode the
+    /// harness has no equivalent of, a model it cannot be given.
+    pub unpassed: Vec<String>,
 }
 
 /// A run's agents as the orchestrator that drives the run reaches them: their place, starting them, prompting them,
@@ -112,7 +113,8 @@ pub trait Agents: RunPlaces {
     /// Have a place for the run's agents: the one run saved, when it is still there and this backend can reach it,
     /// else a new one, every agent's place in the old one forgotten, and run records where the place is (herdr: the
     /// run's workspace and its server). Tells human which, in a log line. Returns whether run changed, to be saved.
-    /// Errors: the backend cannot tell whether the saved place is there, or cannot open a new one.
+    /// Errors: run's agents run in another backend (RunState::backend); the backend cannot tell whether the saved place
+    /// is there, or cannot open a new one.
     fn open(&self, run: &mut RunState, human: &dyn Human) -> Result<bool, AgentError>;
 
     /// RunPlaces::end for the orchestrator, once the run is over: a failure is only logged to human, in the
@@ -136,7 +138,7 @@ pub trait Agents: RunPlaces {
     /// it cannot resume.
     fn start(&self, run: &RunState, role: &str, launch: &AgentLaunch) -> Result<Started, AgentError>;
 
-    /// Wait at most seconds for the role's agent to stop waiting on the human (Started::Asking, Activity::Blocked), as
+    /// Wait at most seconds for the role's agent to stop waiting on the human (Started::asking, Activity::Blocked), as
     /// the human answers; true once it has, or has exited, false when the time runs out first.
     fn wait_ready(&self, run: &RunState, role: &str, seconds: u64) -> Result<bool, AgentError>;
 

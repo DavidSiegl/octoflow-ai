@@ -1395,3 +1395,17 @@ fn pane_shell_names_a_config_it_cannot_read() {
     std::fs::create_dir(&config).unwrap();
     assert!(pane_shell_with(&[("HOME", &home.path()), ("SHELL", "/bin/bash")]).is_err());
 }
+
+#[test]
+fn herdr_does_not_open_a_run_whose_agents_run_over_acp() {
+    let (herdr, ran) = answering(None, 0, "", "");
+    let mut run = RunState::new("20261120-000000-abcd", "a task", "/project");
+    run.backend = crate::state::Backend::Acp;
+    let told = crate::workflow::fixture::Told::default();
+
+    let opened = crate::agents::Agents::open(&herdr, &mut run, &told);
+
+    let refusal = "run 20261120-000000-abcd runs its agents over ACP, not in herdr; the desktop app drives it";
+    assert!(matches!(&opened, Err(crate::agents::AgentError::Failed(e)) if e.0 == refusal), "{opened:?}");
+    assert!(ran.lock().unwrap().is_empty());
+}
