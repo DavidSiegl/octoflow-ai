@@ -115,9 +115,34 @@ fn a_state_without_the_format_is_refused_with_what_to_do_with_its_run() {
              remove .octoflow-ai/runs/r1"
         )
     );
-    let other = saved_with(&[("format", Some("3"))]);
+    let other = saved_with(&[("format", Some("4"))]);
     let e = RunState::from_text(&other).unwrap_err();
-    assert_eq!(e.0, "run r1 has state format 3, which this octoflow does not read; it reads format 2");
+    assert_eq!(e.0, "run r1 has state format 4, which this octoflow does not read; it reads formats 2 and 3");
+}
+
+#[test]
+fn an_acp_run_is_saved_in_format_3_and_a_herdr_run_as_before() {
+    let mut state = RunState::new("r1", "t", "/proj");
+    let herdr = state.to_json();
+    assert_eq!(herdr["format"], STATE_FORMAT);
+    assert!(herdr.get("backend").is_none(), "{herdr}");
+    state.backend = Backend::Acp;
+    let acp = state.to_json();
+    // A release that reads only format 2 refuses it (format_problem's own check, before this engine's).
+    assert_eq!(acp["format"], 3);
+    assert_ne!(acp["format"], STATE_FORMAT);
+    assert_eq!(acp["backend"], "acp");
+    assert_eq!(RunState::from_text(&state.to_text()).unwrap(), state);
+}
+
+#[test]
+fn a_format_that_is_not_its_backend_s_is_refused() {
+    let mismatch = "run r1 has state format {f} with another backend than that format's; state format 2 is a herdr \
+                    run's, 3 an ACP run's";
+    let acp_in_2 = saved_with(&[("backend", Some("\"acp\""))]);
+    assert_eq!(RunState::from_text(&acp_in_2).unwrap_err().0, mismatch.replace("{f}", "2"));
+    let herdr_in_3 = saved_with(&[("format", Some("3"))]);
+    assert_eq!(RunState::from_text(&herdr_in_3).unwrap_err().0, mismatch.replace("{f}", "3"));
 }
 
 #[test]

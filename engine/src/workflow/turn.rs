@@ -2,7 +2,7 @@
 //! RunState.turns.
 
 use super::{How, Outcome, Stopped, Workflow};
-use crate::agents::{Activity, AgentError, AgentLaunch, Seen, Started};
+use crate::agents::{Activity, AgentError, AgentLaunch, Seen};
 use crate::constants::{
     APPROVE, CHANGES_REQUESTED, HEARTBEAT_SECONDS, POLL_SECONDS, PROMPT_DELIVERY_SECONDS, STALL_SECONDS,
 };
@@ -657,15 +657,6 @@ impl Workflow<'_> {
             AgentStart::New | AgentStart::Restarted => None,
         };
         let h = harness(&self.next_harness(role)?)?;
-        let mode = self.state.permission_mode.clone().filter(|m| !m.is_empty());
-        if let Some(mode) = &mode {
-            if h.permission_args(mode).is_none() && self.told_dropped.insert(role.to_string()) {
-                self.human.log(&format!(
-                    "[{role}] {} has no equivalent of --permission-mode {mode}; starting it without one",
-                    h.kind
-                ));
-            }
-        }
         record.session.clone_from(&session);
         record.unprompted = Some(start);
         self.state.agents.insert(role.to_string(), record);
@@ -682,7 +673,13 @@ impl Workflow<'_> {
             session: session.as_deref(),
             extra_dir: extra_dir.as_deref(),
         };
-        if self.agents.start(s, role, &launch)? == Started::Asking {
+        let started = self.agents.start(s, role, &launch)?;
+        for line in started.unpassed {
+            if self.told_unpassed.insert((role.to_string(), line.clone())) {
+                self.human.log(&format!("[{role}] {line}"));
+            }
+        }
+        if started.asking {
             self.wait_out_block(role)?;
         }
         let Some(seen) = self.agents.find(&self.state, role)? else { return Ok(false) };

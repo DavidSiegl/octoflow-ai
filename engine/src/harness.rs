@@ -1,7 +1,8 @@
 //! The agent harnesses a role can run in (HARNESS_NAMES, herdr's `--kind`): how each harness's agent starts, resumes a
 //! saved session and is granted a directory ([`Harness::launch`]), and where and how it records the tokens a session
 //! used ([`SessionLog`], [`Harness::session_usage`]). opencode takes its model and granted directory from its config
-//! instead of its arguments (Config::OpencodeEnv).
+//! instead of its arguments (Config::OpencodeEnv). A harness that speaks the Agent Client Protocol also has an ACP
+//! launch ([`Harness::acp_launch`]), for the ACP backend (crate::acp).
 //!
 //! Everything a harness differs in, its permission, resume and directory arguments and its session logs, is one row
 //! per harness, in [`HARNESSES`], so that adding a harness is adding a row.
@@ -45,6 +46,65 @@ pub struct Harness {
     /// Where and how it records the tokens of a session; None when it records none the engine reads, so that its
     /// turns' tokens are "unknown" (docs/design.md, Token usage).
     pub session_log: Option<SessionLog>,
+    /// How its agent starts speaking the Agent Client Protocol; None when the engine starts none of it that way.
+    acp: Option<Acp>,
+}
+
+/// How a harness's agent starts as an ACP agent: its program, given these arguments, speaks ACP on its stdin and stdout.
+#[derive(Debug, PartialEq, Eq)]
+struct Acp {
+    /// The arguments that make the program speak ACP: its subcommand.
+    args: &'static [&'static str],
+    /// The equivalent of each Claude Code permission mode it has one of; a mode not listed has none.
+    modes: &'static [(&'static str, AcpMode)],
+    /// How it is given a directory outside its working directory, and a model at launch. A model it cannot be given
+    /// at launch is set once its session is open (AcpLaunch::model).
+    config: AcpConfig,
+}
+
+/// An ACP agent's equivalent of a permission mode.
+#[derive(Debug, PartialEq, Eq)]
+enum AcpMode {
+    /// The mode of this id, among the modes its session offers (ACP's session modes).
+    Id(&'static str),
+    /// These launch arguments, as agy's bypass, which none of its session modes is.
+    Args(&'static [&'static str]),
+}
+
+/// How an ACP agent takes a granted directory and a model at launch.
+#[derive(Debug, PartialEq, Eq)]
+enum AcpConfig {
+    /// The directory after this flag, when there is one; a model only once its session is open.
+    AddDir(Option<&'static str>),
+    /// Both in OPENCODE_CONFIG_CONTENT, as Config::OpencodeEnv: `opencode acp` takes no flags.
+    OpencodeEnv,
+}
+
+/// How a role's agent starts as an ACP agent (Harness::acp_launch).
+#[derive(Debug, PartialEq, Eq)]
+pub struct AcpLaunch {
+    /// The program, found on PATH.
+    pub program: &'static str,
+    /// Its arguments.
+    pub args: Vec<String>,
+    /// Environment variables, as (name, value), set for it alone.
+    pub env: Vec<(String, String)>,
+    /// What becomes of the permission mode.
+    pub mode: ModeSetting,
+    /// The model to set once its session is open, which the launch could not pass; None when it passed it, or there is
+    /// none.
+    pub model: Option<String>,
+}
+
+/// What an ACP launch does with the run's permission mode.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ModeSetting {
+    /// Its equivalent is the session mode of this id, set once the session is open if the session offers it.
+    Set(&'static str),
+    /// Its equivalent is in the launch's arguments.
+    Launched,
+    /// The harness has no equivalent of it.
+    NoEquivalent,
 }
 
 /// How a harness takes --permission-mode.
@@ -126,6 +186,18 @@ pub const HARNESSES: [Harness; 5] = [
         config: Config::Flags { add_dir: Some("--add-dir") },
         // Its conversations are SQLite databases of protobuf rows with no published schema (GitHub issue #124).
         session_log: None,
+        // agy 1.5.6's session modes, from the herdr-free spike (.scratch/herdr-gui-decoupling/proposal.md); bypass is
+        // no mode of its, only the flag.
+        acp: Some(Acp {
+            args: &["acp"],
+            modes: &[
+                ("default", AcpMode::Id("default")),
+                ("acceptEdits", AcpMode::Id("accept-edits")),
+                ("bypassPermissions", AcpMode::Args(&["--dangerously-skip-permissions"])),
+                ("plan", AcpMode::Id("plan")),
+            ],
+            config: AcpConfig::AddDir(Some("--add-dir")),
+        }),
     },
     Harness {
         kind: "claude",
@@ -134,6 +206,8 @@ pub const HARNESSES: [Harness; 5] = [
         resume: Resume::Flag("--resume"),
         config: Config::Flags { add_dir: Some("--add-dir") },
         session_log: Some(SessionLog { glob: ".claude/projects/*/{session}.jsonl", format: LogFormat::ClaudeCode }),
+        // Over ACP only through its Node adapter, which the app is to install (herdr-gui-decoupling ticket 07).
+        acp: None,
     },
     Harness {
         kind: "codex",
@@ -148,6 +222,8 @@ pub const HARNESSES: [Harness; 5] = [
         resume: Resume::Subcommand("resume"),
         config: Config::Flags { add_dir: Some("--add-dir") },
         session_log: None,
+        // Its ACP adapter is still to be tried (herdr-gui-decoupling ticket 08).
+        acp: None,
     },
     Harness {
         kind: "opencode",
@@ -156,6 +232,9 @@ pub const HARNESSES: [Harness; 5] = [
         resume: Resume::Flag("--session"),
         config: Config::OpencodeEnv,
         session_log: None,
+        // Its modes come from its config, which herdr-gui-decoupling ticket 12 waits on (opencode-ask-bash ticket 01);
+        // until then it has the equivalent of none, as its TUI.
+        acp: Some(Acp { args: &["acp"], modes: &[], config: AcpConfig::OpencodeEnv }),
     },
     Harness {
         kind: "pi",
@@ -165,6 +244,8 @@ pub const HARNESSES: [Harness; 5] = [
         // pi asks before no tool call, inside its working directory or outside it, so it needs no grant.
         config: Config::Flags { add_dir: None },
         session_log: Some(SessionLog { glob: ".pi/agent/sessions/*/*_{session}.jsonl", format: LogFormat::Pi }),
+        // pi speaks no ACP.
+        acp: None,
     },
 ];
 
@@ -245,23 +326,58 @@ impl Harness {
                 }
             }
             Config::OpencodeEnv => {
-                let mut config = serde_json::Map::new();
-                if let Some(model) = model {
-                    config.insert("model".to_string(), model.into());
-                }
-                if let Some(dir) = extra_dir.filter(|d| !d.contains(['*', '?', '\\'])) {
-                    let grant = serde_json::json!({ "external_directory": { format!("{dir}/*"): "allow" } });
-                    config.insert("permission".to_string(), grant);
-                }
-                if !config.is_empty() {
+                if let Some(config) = opencode_config(model, extra_dir) {
                     args.push("--standalone".to_string());
                     // A backslash as \u005c, not \\, which fish's single quotes would read as one (Herdr::export).
-                    let json = Value::Object(config).to_string().replace(r"\\", r"\u005c");
-                    env.push(("OPENCODE_CONFIG_CONTENT".to_string(), json));
+                    env.push((OPENCODE_CONFIG.to_string(), config.replace(r"\\", r"\u005c")));
                 }
             }
         }
         Launch { args, env }
+    }
+
+    /// The log's sentence for an agent of this harness started without mode, a permission mode it has no equivalent of.
+    pub fn without_mode(&self, mode: &str) -> String {
+        format!("{} has no equivalent of --permission-mode {mode}; starting it without one", self.kind)
+    }
+
+    /// How a role's agent starts in this harness as an ACP agent, with permission_mode's equivalent, on model if given
+    /// one, and with access to extra_dir and every file under it where the harness can grant it, as launch's; None for
+    /// a harness the engine starts no ACP agent of. An empty model or extra_dir is none. permission_mode is in Claude
+    /// Code's names; an ACP run always has one, `default` when the human gave none, so that no agent starts in a
+    /// harness's own looser default.
+    pub fn acp_launch(&self, permission_mode: &str, model: Option<&str>, extra_dir: Option<&str>) -> Option<AcpLaunch> {
+        let acp = self.acp.as_ref()?;
+        let (model, extra_dir) = (model.filter(|m| !m.is_empty()), extra_dir.filter(|d| !d.is_empty()));
+        let mut launch = AcpLaunch {
+            program: self.kind,
+            args: acp.args.iter().map(|a| a.to_string()).collect(),
+            env: vec![],
+            mode: ModeSetting::NoEquivalent,
+            model: model.map(String::from),
+        };
+        match acp.modes.iter().find(|(m, _)| *m == permission_mode).map(|(_, equivalent)| equivalent) {
+            Some(AcpMode::Id(id)) => launch.mode = ModeSetting::Set(id),
+            Some(AcpMode::Args(args)) => {
+                launch.args.extend(args.iter().map(|a| a.to_string()));
+                launch.mode = ModeSetting::Launched;
+            }
+            None => {}
+        }
+        match acp.config {
+            AcpConfig::AddDir(flag) => {
+                if let (Some(dir), Some(flag)) = (extra_dir, flag) {
+                    launch.args.extend([flag.to_string(), dir.to_string()]);
+                }
+            }
+            AcpConfig::OpencodeEnv => {
+                if let Some(config) = opencode_config(model, extra_dir) {
+                    launch.env.push((OPENCODE_CONFIG.to_string(), config));
+                }
+                launch.model = None;
+            }
+        }
+        Some(launch)
     }
 
     /// The token usage this harness's session log, as its SessionLog finds it, records for each answer of the model,
@@ -281,6 +397,23 @@ impl Harness {
         }
         out
     }
+}
+
+/// The variable opencode reads a JSON config from, over its config files.
+const OPENCODE_CONFIG: &str = "OPENCODE_CONFIG_CONTENT";
+
+/// opencode's config, as JSON, with model and a grant of extra_dir and every file under it (Harness::launch says which
+/// directories get none); None when it has neither.
+fn opencode_config(model: Option<&str>, extra_dir: Option<&str>) -> Option<String> {
+    let mut config = serde_json::Map::new();
+    if let Some(model) = model {
+        config.insert("model".to_string(), model.into());
+    }
+    if let Some(dir) = extra_dir.filter(|d| !d.contains(['*', '?', '\\'])) {
+        let grant = serde_json::json!({ "external_directory": { format!("{dir}/*"): "allow" } });
+        config.insert("permission".to_string(), grant);
+    }
+    (!config.is_empty()).then(|| Value::Object(config).to_string())
 }
 
 /// The tokens of one answer of the model, as a session log records them.

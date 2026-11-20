@@ -47,8 +47,10 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `Plan::summary` (`engine/src/cli/close.rs`) records "workspace closed" / "workspace already gone", whatever backend
   the run used; list and show print the run's `workspace_id` and each agent's `pane` straight from the state
   (`run_record`, `show_run` in `engine/src/cli/listing.rs`). All were kept so the herdr-only text stays unchanged; a
-  run on the ACP backend (`.scratch/herdr-gui-decoupling`, ticket 02) would print them wrong or empty. Closes when that
-  backend lands and these take their wording from the backend (`Agents::whereabouts`, `RunPlaces::place`). serve
+  run on the ACP backend (`engine/src/acp.rs`) would print them wrong or empty. No ACP run reaches them until the app
+  starts one (`.scratch/herdr-gui-decoupling`, ticket 03), and no ticket of that feature rewords them: closes when
+  these take their wording from the backend (`Agents::whereabouts`, `RunPlaces::place`), before ticket 12 turns the
+  app over to ACP. serve
   reading `herdr_server` (`engine/src/serve/runs.rs`) is by design: its `AgentConsole` stays herdr's own.
 
 - **A resumed done run's late summary.md or metrics.json can miss the desktop app.** Raised by cross-review 238 (F3):

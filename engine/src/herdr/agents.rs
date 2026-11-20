@@ -100,10 +100,10 @@ impl<H: Herdr + ?Sized> Agents for H {
         if !args.env.is_empty() {
             self.export(pane, &args.env)?;
         }
-        match self.start_agent(name, pane, h.kind, &args.args)? {
-            true => Ok(Started::Running),
-            false => Ok(Started::Asking),
-        }
+        let asking = !self.start_agent(name, pane, h.kind, &args.args)?;
+        let mode = launch.permission_mode.filter(|m| !m.is_empty());
+        let unpassed = mode.filter(|mode| h.permission_args(mode).is_none()).map(|mode| h.without_mode(mode));
+        Ok(Started { asking, unpassed: unpassed.into_iter().collect() })
     }
 
     fn wait_ready(&self, run: &RunState, role: &str, seconds: u64) -> Result<bool, AgentError> {

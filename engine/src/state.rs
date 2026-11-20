@@ -32,6 +32,9 @@ pub struct RunState {
     pub task: String,
     /// The project's checkout, which holds the run directory (dir) and .octoflow-ai/.gitignore.
     pub cwd: String,
+    /// The backend the run's agents run in; saved only for an ACP run, which it makes one of ACP_STATE_FORMAT.
+    #[serde(default, skip_serializing_if = "Backend::is_herdr")]
+    pub backend: Backend,
     /// The herdr machine the agents run on; None for this one.
     pub machine: Option<String>,
     /// The herdr server of this machine the run's workspace and agents are in: the one the engine that started the run
@@ -322,7 +325,30 @@ pub fn judged_by_several(verdicts: &[StepVerdict]) -> bool {
     verdicts.iter().any(|v| v.step != verdicts[0].step)
 }
 
-/// The format of state.json this engine reads and writes, which its "format" field holds. A state.json written by a
+/// Where a run's agents run (crate::agents): the backend that starts them and reaches them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Backend {
+    /// In herdr panes (crate::herdr): every run the CLI starts.
+    #[default]
+    Herdr,
+    /// As child processes of the run's orchestrator, over the Agent Client Protocol (crate::acp).
+    Acp,
+}
+
+impl Backend {
+    /// Whether this is herdr, which state.json does not name.
+    fn is_herdr(&self) -> bool {
+        *self == Backend::Herdr
+    }
+}
+
+/// The format of an ACP run's state.json (Backend::Acp), first written by 0.92.16: STATE_FORMAT's fields and
+/// `"backend": "acp"`. A release that reads only STATE_FORMAT refuses it (format_problem), rather than resume its
+/// agents in herdr.
+pub const ACP_STATE_FORMAT: u64 = 3;
+
+/// The format of state.json this engine reads and writes for a herdr run, which its "format" field holds. A state.json written by a
 /// release before STATE_FORMAT_SINCE has no format, and is refused rather than read (RunState::from_saved): it was
 /// written in an earlier format no release reads any more.
 pub const STATE_FORMAT: u64 = 2;
@@ -348,6 +374,7 @@ impl RunState {
             run_id: run_id.to_string(),
             task: task.to_string(),
             cwd: cwd.to_string(),
+            backend: Backend::Herdr,
             machine: None,
             herdr_server: None,
             phase: "spec".to_string(),
@@ -418,10 +445,7 @@ impl RunState {
         // serde passes over the fields RunState does not have; unknown keeps them, in their order.
         let mut state: RunState = serde_json::from_value(Value::Object(fields.clone()))
             .map_err(|e| OrchestratorError(format!("run state {run_id} is invalid: {e}")))?;
-        // RunState writes every field it has, so a blank state's keys are all it knows.
-        let Value::Object(known) = RunState::new("", "", "").to_json() else {
-            unreachable!("a run state is an object")
-        };
+        let known = blank_fields();
         state.unknown = fields.into_iter().filter(|(k, _)| !known.contains_key(k)).collect();
         Ok(state)
     }
@@ -430,10 +454,7 @@ impl RunState {
     /// reads as RunState's field of that name, every other field at new's defaults, and the fields RunState does not
     /// have in unknown. For showing a run of another format (SavedRun::shown), never for acting on it.
     fn from_readable_fields(saved: &Object) -> RunState {
-        let Value::Object(mut fields) = RunState::new("", "", "").to_json() else {
-            unreachable!("a run state is an object")
-        };
-        // RunState writes every field it has, format included, so a blank state's keys are all it knows.
+        let mut fields = blank_fields();
         let known: std::collections::HashSet<String> = fields.keys().cloned().collect();
         fields.shift_remove("format");
         let reads = |fields: &Object| serde_json::from_value::<RunState>(Value::Object(fields.clone())).is_ok();
@@ -484,7 +505,11 @@ impl RunState {
     /// The state as state.json holds it: "format", then the fields in RunState's order, then the unknown ones.
     pub fn to_json(&self) -> Value {
         let mut saved = Object::new();
-        saved.insert("format".into(), Value::from(STATE_FORMAT));
+        let format = match self.backend {
+            Backend::Herdr => STATE_FORMAT,
+            Backend::Acp => ACP_STATE_FORMAT,
+        };
+        saved.insert("format".into(), Value::from(format));
         // A struct of strings, numbers and JSON values serializes as an object without fail.
         let Ok(Value::Object(fields)) = serde_json::to_value(self) else { unreachable!("a run state is an object") };
         saved.extend(fields);
@@ -733,19 +758,37 @@ pub fn find_run<'r>(runs: &'r [SavedRun], run_ref: &str, cwd: &str) -> Result<&'
     }
 }
 
+/// Every field of state.json, format included, each with a new run's value: all the fields RunState knows.
+fn blank_fields() -> Object {
+    let Value::Object(mut fields) = RunState::new("", "", "").to_json() else {
+        unreachable!("a run state is an object")
+    };
+    // The one field a herdr run's state leaves out (RunState::backend).
+    fields.insert("backend".into(), Value::from("herdr"));
+    fields
+}
+
 /// Why this engine does not read the saved state.json object saved, naming its run and what to do with it: it has no
-/// format, as every state a release before STATE_FORMAT_SINCE wrote, or another format than STATE_FORMAT. None for a
-/// state of STATE_FORMAT, whose fields may still be wrong (from_saved).
+/// format, as every state a release before STATE_FORMAT_SINCE wrote, or another format than STATE_FORMAT and
+/// ACP_STATE_FORMAT, or its format is not its backend's. None for a state this engine reads, whose fields may still be
+/// wrong (from_saved).
 pub fn format_problem(saved: &Object) -> Option<String> {
     let run_id = saved.get("run_id").and_then(Value::as_str).unwrap_or("?");
-    match saved.get("format") {
+    let acp = saved.get("backend").and_then(Value::as_str) == Some("acp");
+    match saved.get("format").map(|f| (f, f.as_u64())) {
         None => Some(format!(
             "run {run_id} was saved by an octoflow before {STATE_FORMAT_SINCE}; finish or close it with that release, \
              or remove {RUNS_DIR}/{run_id}"
         )),
-        Some(format) if format.as_u64() == Some(STATE_FORMAT) => None,
-        Some(format) => Some(format!(
-            "run {run_id} has state format {format}, which this octoflow does not read; it reads format {STATE_FORMAT}"
+        Some((_, Some(STATE_FORMAT))) if !acp => None,
+        Some((_, Some(ACP_STATE_FORMAT))) if acp => None,
+        Some((format, Some(STATE_FORMAT | ACP_STATE_FORMAT))) => Some(format!(
+            "run {run_id} has state format {format} with another backend than that format's; state format \
+             {STATE_FORMAT} is a herdr run's, {ACP_STATE_FORMAT} an ACP run's"
+        )),
+        Some((format, _)) => Some(format!(
+            "run {run_id} has state format {format}, which this octoflow does not read; it reads formats \
+             {STATE_FORMAT} and {ACP_STATE_FORMAT}"
         )),
     }
 }
