@@ -13,7 +13,6 @@ use super::Reached;
 use crate::cli::close::{close_all, Closer, RunClosed, Sweep};
 use crate::cli::forget::{self, forget_all, Forgetter, RunForgotten};
 use crate::cli::listing::run_record;
-use crate::constants::RUNS_DIR;
 use crate::error::OrchestratorError;
 use crate::herdr::{AgentAddress, AgentConsole, HerdrError, Launcher, Workspaces};
 use crate::host::{Host, RunFileText, RunScope};
@@ -23,7 +22,7 @@ use crate::local_gate::SetUpFile;
 use crate::paths::file_name;
 use crate::runs::{local_host, pid_alive};
 use crate::serve::FINISHED_RUN_WRITES;
-use crate::state::SavedRun;
+use crate::state::{run_dir, SavedRun};
 use serde_json::Value;
 
 /// The keys of a run record that grow with every read of it while nothing happens; a change in them alone is no
@@ -301,7 +300,7 @@ impl ProjectRuns {
     }
 
     fn dir(&self, run_id: &str) -> Result<String, RunReadError> {
-        Ok(format!("{}/{RUNS_DIR}/{}", self.cwd, plain_name(run_id)?))
+        Ok(run_dir(&self.cwd, plain_name(run_id)?))
     }
 }
 

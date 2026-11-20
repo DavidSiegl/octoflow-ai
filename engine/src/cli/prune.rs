@@ -7,7 +7,7 @@
 use indexmap::IndexMap;
 
 use super::{record_in_state, Connected};
-use crate::constants::{BRANCH_PREFIX, CLOSED_BRANCH_GRACE, RUNS_DIR, WORKTREES_DIR};
+use crate::constants::{BRANCH_PREFIX, CLOSED_BRANCH_GRACE, WORKTREES_DIR};
 use crate::error::OrchestratorError;
 use crate::host::{git_status, GhError, Host, PullRequest};
 use crate::runs::RUNNING;
@@ -190,8 +190,7 @@ fn prune_run(
         if kept.is_empty() { BRANCH_DELETED.to_string() } else { format!("{BRANCH_KEPT}{}", kept.join("; ")) };
     run.cleanup = Some(cleanup.clone());
     if !dry_run {
-        let path = format!("{cwd}/{RUNS_DIR}/{}/state.json", state.run_id);
-        record_in_state(host, &path, state, |s| s.branch_cleanup = Some(cleanup), "its branch was pruned")
+        record_in_state(host, cwd, state, |s| s.branch_cleanup = Some(cleanup), "its branch was pruned")
             .map_err(failed)?;
     }
     Ok(())

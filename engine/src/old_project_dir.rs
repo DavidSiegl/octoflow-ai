@@ -7,7 +7,8 @@ use serde_json::Value;
 use crate::constants::{PROJECT_DIR, WORKTREES_DIR};
 use crate::error::OrchestratorError;
 use crate::host::{run_states_in, Host, DEFAULT_TIMEOUT};
-use crate::state::SavedRun;
+use crate::pipeline::STATE_FILE;
+use crate::state::{run_dir, SavedRun};
 
 /// A project's own directory under its old name, relative to the project, as PROJECT_DIR is.
 const OLD_PROJECT_DIR: &str = ".orchestrator";
@@ -94,7 +95,7 @@ fn carry_worktrees(host: &dyn Host, cwd: &str, runs: &[SavedRun]) -> String {
         if !run.worktree.as_deref().is_some_and(|w| w.ends_with(&old_tail)) {
             continue;
         }
-        let state = format!("{cwd}/{PROJECT_DIR}/runs/{}/state.json", run.run_id);
+        let state = format!("{}/{STATE_FILE}", run_dir(cwd, &run.run_id));
         let tree = format!("{worktrees}/{}", run.key());
         if let Err(e) = resave_worktree(host, &state, &tree) {
             said.push_str(&format!("; {e}: set its worktree to {tree} by hand"));

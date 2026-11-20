@@ -5,14 +5,14 @@
 use indexmap::IndexMap;
 
 use super::{resume_command, Connected};
-use crate::constants::{APPROVE, RUNS_DIR};
+use crate::constants::APPROVE;
 use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
 use crate::json::{object, Object, ValueExt};
 use crate::local_gate::LOCAL_GATE;
 use crate::pipeline::{workflow_shape, Pipeline, Step, QUALITY};
 use crate::runs::{RUNNING, STALE};
-use crate::state::{find_run, judged_by_several, AgentRecord, RunState, SavedRun, StepVerdict, TurnRecord};
+use crate::state::{find_run, judged_by_several, run_dir, AgentRecord, RunState, SavedRun, StepVerdict, TurnRecord};
 use crate::summary::turn_lines;
 use serde_json::Value;
 
@@ -306,7 +306,7 @@ pub fn show_run(world: &Connected, cwd: &str, run_ref: &str, target: &[String]) 
     world.say(&run_line(row));
     world.say(&format!("    {}", s.task));
     // The directory state.json was found in, which outlives a project moved since the run saved its cwd.
-    let run_dir = format!("{cwd}/{RUNS_DIR}/{}", row[0]);
+    let dir = run_dir(cwd, &row[0]);
     let pipeline = s.pipeline().ok();
     world.say("");
     match &pipeline {
@@ -336,9 +336,9 @@ pub fn show_run(world: &Connected, cwd: &str, run_ref: &str, target: &[String]) 
     let zone = world.with.clocks.zone();
     print_section(world, &format!("turns, started in {}", zone_name(&zone, turns)), turn_lines(turns, &zone));
     print_section(world, "verdicts", verdict_lines(&s.verdicts));
-    print_section(world, "files", host.run_files(&run_dir)?.into_iter().map(|f| f.path).collect());
+    print_section(world, "files", host.run_files(&dir)?.into_iter().map(|f| f.path).collect());
     let review = match &pipeline {
-        Some(p) => last_review(world, &run_dir, p, s.round)?,
+        Some(p) => last_review(world, &dir, p, s.round)?,
         None => None,
     };
     if let Some((path, text)) = review {
