@@ -48,6 +48,7 @@ fn run_on(f: &Fixture, argv: &[&str]) -> Result<Ran, Stop> {
         stdout: &|_| {},
         stderr: &|_| {},
         workflow: &run_workflow,
+        acp: false,
     };
     match run_command(&command(argv), &world)? {
         Ended::Ran(ran) => Ok(*ran),

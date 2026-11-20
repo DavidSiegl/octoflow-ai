@@ -71,7 +71,7 @@ pub struct Reached {
     pub dir: String,
     /// Reaches its runs' agents, each by its AgentAddress.
     pub console: Arc<dyn AgentConsole>,
-    /// Tells and closes its runs' agents' places, each from what its run saved, for POST /close.
+    /// Tells and closes its herdr runs' agents' places, each from what its run saved, for POST /close.
     pub places: Arc<dyn RunPlaces + Send + Sync>,
     /// How POST /run starts a run's process.
     pub launch: Launch,
@@ -989,7 +989,7 @@ fn run_forgotten(run: &RunForgotten) -> Value {
         forget::Outcome::Forgotten => ("forgotten", ""),
         forget::Outcome::Left(Left::NotClosed) => ("not closed", ""),
         forget::Outcome::Left(Left::AwaitsPrune) => ("waiting for prune", forget::AWAITS_PRUNE),
-        forget::Outcome::Left(Left::Unreadable(why)) => ("skipped", why.as_str()),
+        forget::Outcome::Left(Left::Unreadable(why) | Left::AppRun(why)) => ("skipped", why.as_str()),
         forget::Outcome::Gone => ("skipped", "the overview shows no such run any more"),
         forget::Outcome::Failed(error) => ("failed", error.as_str()),
     };

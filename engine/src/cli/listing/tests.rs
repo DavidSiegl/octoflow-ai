@@ -1227,3 +1227,11 @@ fn the_metrics_command_prints_a_line_per_run_that_is_done() {
     cli.take_out();
     assert_eq!(cli.main(&argv), EXIT_ERROR);
 }
+
+#[test]
+fn a_stale_run_of_the_desktop_app_s_waits_with_no_command_to_resume_it() {
+    let app = with(mine(), &[("backend", Value::from("acp")), ("format", Value::from(crate::state::ACP_STATE_FORMAT))]);
+    let stale = record(&app, STALE_SECONDS + 1, true, &[]);
+    assert_eq!(key(&stale, "waiting"), json(r#"{"reason": "stale", "detail": null}"#));
+    assert_eq!(key(&stale, "resume_command"), Value::Null);
+}

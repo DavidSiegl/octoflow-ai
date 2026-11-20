@@ -17,7 +17,7 @@ mod groups;
 mod journal;
 mod socket;
 
-pub use groups::end_leftovers;
+pub use groups::{end_leftovers, leftovers};
 pub use journal::{replay, Replay, PROTOCOL};
 pub use socket::{ask, SocketError, SOCKET_RECORD};
 
@@ -336,6 +336,24 @@ impl RunPlaces for AcpAgents<'_> {
         for (_, agent) in self.lock().drain() {
             agent.connection.kill();
         }
+        Ok(())
+    }
+}
+
+/// What is left of an ACP run's agents once its orchestrator is gone, as after a SIGKILL: the process groups it
+/// recorded that still have members (groups' module comment). close sees them as the run's place, and ends them.
+pub struct LeftoverGroups;
+
+impl RunPlaces for LeftoverGroups {
+    /// The roles of the leftover groups, as "the leftover agents of builder, reviewer"; None when there are none.
+    fn place(&self, run: &RunState) -> Result<Option<String>, AgentError> {
+        let roles = leftovers(&run.dir())?;
+        Ok((!roles.is_empty()).then(|| format!("the leftover agents of {}", roles.join(", "))))
+    }
+
+    /// Kill each leftover group.
+    fn end(&self, run: &RunState) -> Result<(), AgentError> {
+        end_leftovers(&run.dir())?;
         Ok(())
     }
 }

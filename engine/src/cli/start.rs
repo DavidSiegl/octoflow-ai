@@ -4,7 +4,7 @@
 use indexmap::IndexMap;
 
 use super::args::{ResumeArgs, RunArgs, Settings};
-use super::Connected;
+use super::{refuse_app_run, Connected};
 use crate::constants::{DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT, WORKTREES_DIR};
 use crate::error::OrchestratorError;
 use crate::harness::harness;
@@ -160,8 +160,8 @@ pub fn resumed_state(
 /// and prompts it saved.
 ///
 /// The run's health is judged from local_host by pid_alive (RunState::health). Errors: no run or several match
-/// args.run_ref; its state cannot be read (SavedRun::problem), or its saved workflow or prompts; it was closed; it
-/// looks alive and args.force is not given; it is past the round limit it would have; a --role-model or --role-agent
+/// args.run_ref; its state cannot be read (SavedRun::problem), or its saved workflow or prompts; it is the desktop
+/// app's and args has no --acp (refuse_app_run); it was closed; it looks alive and args.force is not given; it is past the round limit it would have; a --role-model or --role-agent
 /// names a role its workflow lacks; or its quality round limit does not hold (resume_quality_limit).
 pub fn resumable_state(
     runs: &[SavedRun],
@@ -172,6 +172,7 @@ pub fn resumable_state(
 ) -> Result<(RunState, Pipeline), OrchestratorError> {
     let run = find_run(runs, &args.run_ref, cwd)?;
     let mut state = run.state()?.clone();
+    refuse_app_run(&state, "resume", args.target.acp)?;
     // Not even with --force: close may have deleted its worktree and branch.
     if state.is_closed() {
         return Err(OrchestratorError(format!("run {} was closed; start a new run", state.run_id)));

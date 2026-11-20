@@ -1418,6 +1418,75 @@ fn a_run_that_changed_since_the_preview_is_skipped_and_one_not_previewed_is_not_
     assert!(served.console.state().workspaces.contains("w-fin"));
 }
 
+const APP_RUNNING: &str = "20261001-150000-eeeee5";
+const APP_STOPPED: &str = "20261001-160000-fffff6";
+
+/// The orchestrator of a desktop app's run, as its socket answers serve (crate::acp's socket): it greets, takes one
+/// command, answers it ok, and then, for a `stop`, releases the run as interrupted by saving state so. Listens at
+/// sock_dir/run.sock, recorded in state's run directory. Gives each command it took.
+fn fake_orchestrator(state: RunState, sock_dir: &str) -> mpsc::Receiver<Value> {
+    use std::io::Write;
+    use std::os::unix::net::UnixListener;
+    let path = format!("{sock_dir}/run.sock");
+    let listener = UnixListener::bind(&path).expect("the socket binds");
+    std::fs::write(format!("{}/{}", state.dir(), crate::acp::SOCKET_RECORD), format!("{path}\n")).unwrap();
+    let (took, commands) = mpsc::channel();
+    std::thread::spawn(move || {
+        let Ok((stream, _)) = listener.accept() else { return };
+        let mut out = stream.try_clone().unwrap();
+        let mut lines = BufReader::new(stream).lines();
+        let _hello = lines.next();
+        writeln!(out, r#"{{"hello": {{"protocol": {}, "run": "{}"}}}}"#, crate::acp::PROTOCOL, state.run_id).unwrap();
+        let command: Value = serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap();
+        writeln!(out, r#"{{"ok": {{}}}}"#).unwrap();
+        if command.get("stop").is_some() {
+            let mut released = state.clone();
+            released.error = Some("interrupted".into());
+            std::fs::write(format!("{}/state.json", released.dir()), released.to_text()).unwrap();
+        }
+        let _ = took.send(command);
+    });
+    commands
+}
+
+#[test]
+fn a_desktop_app_s_run_is_closed_through_its_socket_while_running_and_from_state_once_not_never_asking_herdr() {
+    let repo = Repo::new(&[("app.py", "one\n"), (".octoflow-ai/.gitignore", "*\n")]);
+    let save = |id: &str, error: Option<&str>| {
+        let mut state = RunState::new(id, "a task", &repo.path);
+        (state.phase, state.round, state.backend) = ("build".into(), 1, Backend::Acp);
+        state.error = error.map(String::from);
+        repo.host.write(&format!("{}/state.json", state.dir()), &state.to_text(), false).unwrap();
+        state
+    };
+    let running = save(APP_RUNNING, None);
+    save(APP_STOPPED, Some("interrupted"));
+    let sock_dir = TempDir::new();
+    let commands = fake_orchestrator(running, &sock_dir.path());
+    let console = Arc::new(FakeConsole::default());
+    let (herdr, dir) = (Arc::clone(&console), repo.path.clone());
+    let connect = move |_: &str, _: &str, stopping: &Interrupt| {
+        let host = Arc::new(ProcessHost::local(stopping));
+        let (console, workspaces, launch) = (herdr.clone(), herdr.clone(), Launch::Herdr(herdr.clone()));
+        Ok(Reached { host, dir: dir.clone(), console, places: workspaces, launch, launch_dir: dir.clone() })
+    };
+    let served = Served::start(Box::new(connect), &[], Arc::default(), Options::default());
+    let target = format!("/close?{}", urlencode(&[("cwd", &repo.path)]));
+
+    let preview = closed_runs(&served.post(&target, r#"{"dry_run": true}"#));
+    let runs = closed_runs(&served.post(&target, &close_body(&preview)));
+
+    let nothing_left = "record it as closed; nothing else is left".to_string();
+    let closed = |id: &str, detail: &str| (id.to_string(), "closed".to_string(), detail.to_string(), vec![]);
+    assert_eq!(preview, [closed(APP_RUNNING, &format!("stop it; {nothing_left}")), closed(APP_STOPPED, &nothing_left)]);
+    assert_eq!(runs, [closed(APP_RUNNING, "no agent left"), closed(APP_STOPPED, "no agent left")]);
+    assert_eq!(commands.recv_timeout(Duration::from_secs(5)).unwrap(), json!({"stop": {}}));
+    assert_eq!(saved_closed(&repo, APP_RUNNING).as_deref(), Some("no agent left"));
+    assert_eq!(saved_closed(&repo, APP_STOPPED).as_deref(), Some("no agent left"));
+    let s = console.state();
+    assert!(s.workspace_calls.is_empty() && s.typed.is_empty(), "herdr was asked: {:?}", s.workspace_calls);
+}
+
 #[test]
 fn a_bad_close_body_is_refused_before_the_project_is_reached() {
     let connects = Arc::new(Mutex::new(vec![]));

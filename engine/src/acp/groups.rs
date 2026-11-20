@@ -29,14 +29,13 @@ pub(super) fn record(path: &str, pid: u32) -> Result<(), OrchestratorError> {
         .map_err(|e| OrchestratorError(format!("cannot write {path}: {e}")))
 }
 
-/// Kill the group recorded at path (SIGKILL to every member) when it still has members and is the recorded one, as
-/// the module's comment tells it. Returns whether it was killed: false for no record at path, a group with no member
-/// left, and another user's or another leader's group. Errors: the record cannot be read or is not one record wrote;
-/// the group cannot be signalled.
-pub(super) fn end_leftover(path: &str) -> Result<bool, OrchestratorError> {
+/// The group recorded at path, when it still has members and is the recorded one, as the module's comment tells it:
+/// its pgid. None for no record at path, a group with no member left, and another user's or another leader's group.
+/// Errors: the record cannot be read or is not one record wrote.
+fn recorded_group(path: &str) -> Result<Option<i32>, OrchestratorError> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(OrchestratorError(format!("cannot read {path}: {e}"))),
     };
     let saved: Option<(i32, String)> = serde_json::from_str::<Value>(&text).ok().and_then(|record| {
@@ -54,9 +53,13 @@ pub(super) fn end_leftover(path: &str) -> Result<bool, OrchestratorError> {
             _ => start_time(pgid).is_some_and(|t| t == started),
         },
     };
-    if !ours {
-        return Ok(false);
-    }
+    Ok(ours.then_some(pgid))
+}
+
+/// Kill the group recorded at path (SIGKILL to every member) when recorded_group finds it. Returns whether it was
+/// killed. Errors: recorded_group's; the group cannot be signalled.
+pub(super) fn end_leftover(path: &str) -> Result<bool, OrchestratorError> {
+    let Some(pgid) = recorded_group(path)? else { return Ok(false) };
     match kill(Pid::from_raw(-pgid), Signal::SIGKILL) {
         // Its last member exited since the look above.
         Ok(()) | Err(Errno::ESRCH) => Ok(true),
@@ -64,22 +67,43 @@ pub(super) fn end_leftover(path: &str) -> Result<bool, OrchestratorError> {
     }
 }
 
+/// The roles whose group is recorded in the run directory dir and still alive, as recorded_group finds each, sorted:
+/// what end_leftovers would end. Errors: dir cannot be listed, or recorded_group's for a record.
+pub fn leftovers(dir: &str) -> Result<Vec<String>, OrchestratorError> {
+    let mut alive = vec![];
+    for (role, path) in records(dir)? {
+        if recorded_group(&path)?.is_some() {
+            alive.push(role);
+        }
+    }
+    Ok(alive)
+}
+
 /// End every leftover group recorded in the run directory dir, as end_leftover ends each: what a resume of the run
-/// does before it starts any agent. Returns the roles whose group was killed. Errors: dir cannot be listed, or
-/// end_leftover's for a record.
+/// does before it starts any agent. Returns the roles whose group was killed, sorted. Errors: dir cannot be listed,
+/// or end_leftover's for a record.
 pub fn end_leftovers(dir: &str) -> Result<Vec<String>, OrchestratorError> {
-    let entries = std::fs::read_dir(dir).map_err(|e| OrchestratorError(format!("cannot list {dir}: {e}")))?;
     let mut ended = vec![];
+    for (role, path) in records(dir)? {
+        if end_leftover(&path)? {
+            ended.push(role);
+        }
+    }
+    Ok(ended)
+}
+
+/// Each group record in the run directory dir: its role and path, sorted by role. Errors: dir cannot be listed.
+fn records(dir: &str) -> Result<Vec<(String, String)>, OrchestratorError> {
+    let entries = std::fs::read_dir(dir).map_err(|e| OrchestratorError(format!("cannot list {dir}: {e}")))?;
+    let mut records = vec![];
     for entry in entries {
         let entry = entry.map_err(|e| OrchestratorError(format!("cannot list {dir}: {e}")))?;
         let name = entry.file_name();
         let Some(role) = name.to_str().and_then(|n| n.strip_suffix(GROUP_SUFFIX)) else { continue };
-        if end_leftover(&format!("{dir}/{}", name.to_string_lossy()))? {
-            ended.push(role.to_string());
-        }
+        records.push((role.to_string(), format!("{dir}/{}", name.to_string_lossy())));
     }
-    ended.sort();
-    Ok(ended)
+    records.sort();
+    Ok(records)
 }
 
 /// When process pid started, as an opaque text that is equal for the same process and differs for another one that
@@ -177,6 +201,21 @@ mod tests {
         let none = end_leftover(&tmp.join("reviewer.acp.group")).expect("no record");
 
         assert_eq!((killed, again, none), (true, false, false));
+    }
+
+    #[test]
+    fn leftovers_names_the_live_groups_and_kills_none() {
+        let tmp = TempDir::new();
+        let mut leader = group("sleep 30");
+        record(&tmp.join("builder.acp.group"), leader.id()).expect("recorded");
+        std::fs::write(tmp.join("reviewer.acp.group"), r#"{"pgid":2147483646,"started":"gone"}"#).unwrap();
+
+        let alive_roles = leftovers(&tmp.path()).expect("looked");
+
+        assert_eq!(alive_roles, ["builder"]);
+        assert!(alive(leader.id()), "leftovers killed it");
+        assert_eq!(end_leftovers(&tmp.path()).expect("ended"), ["builder"]);
+        leader.wait().expect("reaped");
     }
 
     #[test]

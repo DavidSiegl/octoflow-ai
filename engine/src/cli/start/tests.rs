@@ -312,6 +312,7 @@ fn connected<'a>(f: &'a Fixture, config: &'a ConfigDir) -> Connected<'a> {
         stdout: &|_| {},
         stderr: &|_| {},
         workflow: &crate::cli::run_workflow,
+        acp: false,
     }
 }
 

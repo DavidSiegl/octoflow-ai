@@ -180,6 +180,7 @@ impl World {
             stdout: &|_| {},
             stderr: &|_| {},
             workflow: &run_workflow,
+            acp: false,
         };
         if !resume {
             return run_workflow(&world, self.f.state.clone(), self.pipeline.clone(), None);

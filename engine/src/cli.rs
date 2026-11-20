@@ -26,7 +26,7 @@ use crate::package_index::PackageIndexes;
 use crate::pipeline::{Pipeline, STATE_FILE};
 use crate::runs::{local_host, pid_alive};
 use crate::spec_file::{read_spec_file, SpecFile};
-use crate::state::{run_dir, RunState};
+use crate::state::{run_dir, Backend, RunState};
 use crate::workflow::{Collaborators, DesktopNotify, LocalHuman, RunSettings, Stopped, SystemClocks, Workflow};
 use serde_json::Value;
 
@@ -61,6 +61,9 @@ pub struct Connected<'a> {
     pub stderr: &'a dyn Fn(&str),
     /// How a run is driven to its verdict: run_workflow, which a test replaces to script the run.
     pub workflow: &'a RunWorkflow<'a>,
+    /// True when the command was given --acp (Target::acp), which only serve passes: its agents run over ACP, and it
+    /// may act on the desktop app's runs, which the CLI's commands otherwise refuse (refuse_app_run).
+    pub acp: bool,
 }
 
 /// Drives the run a state describes through its workflow, as run_workflow does: given the world, the state, the
@@ -295,8 +298,22 @@ fn connect(command: &Command, local: &Local, human: &LocalHuman) -> Result<Ended
         stdout,
         stderr,
         workflow: &run_workflow,
+        acp,
     };
     run_command(command, &world)
+}
+
+/// Refuse run to command (close, forget, refresh or resume) when it is the desktop app's (Backend::Acp) and acp, the
+/// command's --acp, is false: the app manages its runs, through serve, which alone passes --acp. Errors: so refused,
+/// naming the run, the app and command.
+pub(crate) fn refuse_app_run(run: &RunState, command: &str, acp: bool) -> Result<(), OrchestratorError> {
+    if acp || run.backend != Backend::Acp {
+        return Ok(());
+    }
+    Err(OrchestratorError(format!(
+        "run {} is the desktop app's: its agents run over ACP, so manage it from the app; the CLI does not {command} it",
+        run.run_id
+    )))
 }
 
 /// Whether this process runs in a pane herdr manages, which a run without a machine needs: without a machine, herdr

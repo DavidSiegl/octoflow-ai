@@ -987,3 +987,62 @@ fn all_and_a_run_exclude_each_other() {
         assert_eq!(refused.exit_code(), 2, "{argv:?}");
     }
 }
+
+/// The fields that make add's run the desktop app's (crate::state::Backend::Acp).
+fn app_run() -> [(&'static str, Value); 2] {
+    [("backend", Value::from("acp")), ("format", Value::from(crate::state::ACP_STATE_FORMAT))]
+}
+
+#[test]
+fn the_cli_refuses_the_desktop_app_s_runs_without_acp_and_lets_them_through_with_it() {
+    let c = Close::new();
+    let refusal = |command: &str| {
+        format!(
+            "run {CLOSE_ID} is the desktop app's: its agents run over ACP, so manage it from the app; the CLI does not \
+             {command} it"
+        )
+    };
+    // Each command meets the next check it makes once let through: close closes, the others refuse the run for
+    // what it is (open, failed, alive).
+    let cases: [(&str, Fields, &str); 4] = [
+        ("close", &[], "closed run"),
+        ("forget", &[], "is not closed"),
+        ("refresh", &[], "is not done"),
+        ("resume", &[("error", Value::Null), ("owner", me())], "looks alive"),
+    ];
+    for (command, fields, let_through) in cases {
+        let fields: Vec<_> = app_run().into_iter().chain(fields.iter().cloned()).collect();
+        c.add(0, true, &fields);
+        c.cli.f.herdr.state().calls.clear();
+        let before = c.project();
+        let argv = [command, "--cwd", "/proj", "a1b2c3"];
+
+        assert_eq!(c.cli.main(&argv), EXIT_ERROR, "{command}");
+        assert_eq!(c.cli.error(&argv), refusal(command));
+        assert!(c.calls().is_empty(), "{command} asked herdr: {:?}", c.calls());
+        assert_eq!(c.project(), before, "{command} changed the project");
+
+        let with_acp = [&argv[..], &["--acp"]].concat();
+        let said = match c.cli.ended(&with_acp) {
+            Ok(_) => c.cli.take_out(),
+            Err(crate::cli::Stop::Failed(e)) => e.0,
+            Err(crate::cli::Stop::Interrupted(_)) => panic!("{command} --acp was interrupted"),
+        };
+        assert!(said.contains(let_through), "{command} --acp: {said}");
+    }
+}
+
+#[test]
+fn a_sweep_of_the_cli_skips_the_desktop_app_s_runs() {
+    let c = Close::new();
+    c.add(0, true, &app_run());
+    let before = c.project();
+
+    let (status, out) = c.close(&["--all"]);
+
+    assert_eq!(status, 0);
+    assert!(out.contains(&format!("skipped: run {CLOSE_ID} is the desktop app's")), "{out}");
+    assert!(out.ends_with("0 closed, 1 skipped, 0 already closed\n"), "{out}");
+    assert!(c.calls().is_empty());
+    assert_eq!(c.project(), before);
+}

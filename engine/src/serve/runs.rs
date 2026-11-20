@@ -11,7 +11,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use super::start::{RunRequest, StartWait, Started};
 use super::{Launch, Reached};
 use crate::acp;
-use crate::agents::RunPlaces;
+use crate::acp::LeftoverGroups;
+use crate::agents::{EitherBackend, RunPlaces};
 use crate::cli::close::{close_all, Closer, RunClosed, Sweep};
 use crate::cli::forget::{self, forget_all, Forgetter, RunForgotten};
 use crate::cli::listing::run_record;
@@ -84,7 +85,7 @@ pub struct ProjectRuns {
     host: Arc<dyn Host + Send + Sync>,
     /// Reaches the project's runs' agents, each in the herdr server its run saved.
     console: Arc<dyn AgentConsole>,
-    /// Tells and closes the project's runs' agents' places, each from what its run saved.
+    /// Tells and closes the project's herdr runs' agents' places, each from what its run saved.
     places: Arc<dyn RunPlaces + Send + Sync>,
     /// How a run's process starts (Reached::launch).
     launch: Launch,
@@ -135,17 +136,20 @@ impl ProjectRuns {
 
     /// Close the project's runs that sweep names, as crate::cli::close::close_all does, of those records shows
     /// (RunScope::Inside), and give each run's outcome; the lines close prints are dropped, as the outcomes hold what
-    /// they say. A raised stopping starts no further run. Errors: as close_all's.
+    /// they say. A desktop app's run (crate::state::Backend::Acp) still running is stopped through its socket first,
+    /// and its leftover agents, not herdr, are its place (crate::acp::LeftoverGroups). A raised stopping starts no
+    /// further run. Errors: as close_all's.
     pub fn close_all(&self, sweep: Sweep, stopping: &Interrupt) -> Result<Vec<RunClosed>, OrchestratorError> {
         let here = local_host();
         let closer = Closer {
             host: &*self.host,
-            places: &*self.places,
+            places: &EitherBackend { herdr: &*self.places, acp: &LeftoverGroups },
             interrupt: stopping,
             pid_alive: &*self.pid_alive,
             local_host: &here,
             stdout: &|_| {},
             scope: RunScope::Inside,
+            acp: true,
         };
         close_all(&closer, &self.cwd, sweep)
     }
@@ -161,7 +165,8 @@ impl ProjectRuns {
     ) -> Result<Vec<RunForgotten>, OrchestratorError> {
         // A sweep that panicked left nothing half-done that the next could trip on: each run is read at its turn.
         let _one_at_a_time = self.forgetting.lock().unwrap_or_else(PoisonError::into_inner);
-        let forgetter = Forgetter { host: &*self.host, interrupt: stopping, stdout: &|_| {}, scope: RunScope::Inside };
+        let forgetter =
+            Forgetter { host: &*self.host, interrupt: stopping, stdout: &|_| {}, scope: RunScope::Inside, acp: true };
         forget_all(&forgetter, &self.cwd, sweep)
     }
 

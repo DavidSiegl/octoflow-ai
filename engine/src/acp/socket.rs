@@ -361,6 +361,21 @@ pub enum SocketError {
     Refused { code: String, message: String },
 }
 
+impl std::fmt::Display for SocketError {
+    /// What went wrong, for a human: the Unreachable text, the version the run is from, or the refusal's message and
+    /// code.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SocketError::Unreachable(why) => f.write_str(why),
+            SocketError::Protocol { hello } => {
+                let engine = hello.get("engine").and_then(Value::as_str).unwrap_or("another release");
+                write!(f, "the run is from octoflow {engine}, which speaks another protocol")
+            }
+            SocketError::Refused { code, message } => write!(f, "{message} ({code})"),
+        }
+    }
+}
+
 /// Send command, one of the module's comment's commands, to the socket of the run whose directory is run_dir, and
 /// return its `ok` reply's object. The connection is closed after it. Errors: SocketError's, as it says.
 pub fn ask(run_dir: &str, command: &Value) -> Result<Value, SocketError> {
