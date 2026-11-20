@@ -43,8 +43,8 @@ pub enum RunReadError {
     Refused(String),
     /// There is no such run, or no agent of the role in it, or the agent has exited. serve answers it with 404.
     Missing(String),
-    /// What was asked cannot be had of the run as it is: its journal is from another version of octoflow. serve
-    /// answers it with 409.
+    /// What was asked cannot be had of the run, or the project, as it is: its journal is from another version of
+    /// octoflow, or it is not a run the project resumes (ProjectRuns::resume). serve answers it with 409.
     Conflict(String),
     /// The project could not be read, or herdr failed.
     Failed(OrchestratorError),

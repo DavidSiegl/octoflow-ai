@@ -153,7 +153,9 @@ export interface RunRecord {
   health_reason: string | null;
   /** Seconds since state.json was written, when the server read it. */
   heartbeat_age: number;
-  waiting: { reason: "blocked" | "interview" | "stale"; detail: string } | null;
+  /** detail: a blocked run's question, an interview's role, a stale run's resume command; null when the run saved
+   * none, and for a stale "acp" run, which the app resumes (Api.resumeRun). */
+  waiting: { reason: "blocked" | "interview" | "stale"; detail: string | null } | null;
   verdict: string | null;
   /** Each verdict a verdict step gave, in the order given; absent from a server before 0.58.0. */
   verdicts?: StepVerdict[];
