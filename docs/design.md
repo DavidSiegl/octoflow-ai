@@ -559,6 +559,18 @@ or conflicts (`.github/workflows/automerge.yml` says which wait).
   | `plan` | `--permission-mode plan` | `--mode plan` | `--sandbox read-only` | dropped |
   | `auto`, `dontAsk`, any other | passed through | dropped | dropped | dropped |
 
+- **opencode gets no ask-before-commands rule for `default` or `acceptEdits`.** The rule would be
+  `"permission": {"bash": "ask"}` in the `OPENCODE_CONFIG_CONTENT` its launch already sends. opencode 2.0.24 merges
+  that inline config after every config file, and its permission check takes the last rule that matches. A
+  catch-all `ask` sent last would therefore turn the user's own `deny` rules, such as `"git push *": "deny"` in
+  `~/.config/opencode/opencode.json` or the project's `opencode.json`, into `ask`.
+  Sending the rule only to users who have no shell rule of their own would need the engine to repeat opencode's
+  config discovery: org config from a server, the global directory, `~/.claude` and `~/.agents`, `OPENCODE_CONFIG`,
+  and each project directory up to the git root, in JSONC. Asking opencode itself (`opencode debug config`) goes
+  through its background service, which the call starts, or which answers from the config it read when it started.
+  Decided against (the user's ruling, 2026-11-20, opencode-ask-bash ticket 01): opencode keeps no equivalent of
+  either mode, so under them it asks before what its own config says, and runs bash unasked where that config is
+  silent.
 - **`state.json` says its format, and a run an earlier release saved is refused, not migrated.** `"format": 2`
   leads the file since 0.54.0, and `"format": 3` with `"backend": "acp"` a run whose agents speak ACP (0.92.16), so
   that a release before it refuses such a run rather than resuming it in herdr; a format that is not its backend's
