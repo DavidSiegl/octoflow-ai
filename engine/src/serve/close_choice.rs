@@ -38,7 +38,7 @@ impl CloseChoice {
         let path = config.close_choice_path();
         match std::fs::read_to_string(&path) {
             Ok(text) => CloseChoice::named(text.trim_end())
-                .ok_or_else(|| format!("{path} holds {:?}, not keep or stop", text.trim_end())),
+                .ok_or_else(|| format!("{path} holds {:?}, not ask, keep or stop", text.trim_end())),
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(CloseChoice::Ask),
             Err(e) => Err(format!("cannot read {path}: {}", os_error(&e, None))),
         }
@@ -87,6 +87,6 @@ mod tests {
         let config = ConfigDir::at(&dir.path());
         std::fs::write(config.close_choice_path(), "maybe\n").unwrap();
         let path = config.close_choice_path();
-        assert_eq!(CloseChoice::read(&config), Err(format!("{path} holds \"maybe\", not keep or stop")));
+        assert_eq!(CloseChoice::read(&config), Err(format!("{path} holds \"maybe\", not ask, keep or stop")));
     }
 }

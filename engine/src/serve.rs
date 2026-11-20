@@ -130,7 +130,7 @@ pub fn serve_command(origins: &[String], config: &ConfigDir) -> i32 {
     }
     let backend = app_backend(std::env::var_os(APP_BACKEND_VARIABLE).as_deref());
     let connect = move |machine: &str, cwd: &str, stopping: &Interrupt| project_host(machine, cwd, stopping, backend);
-    let started = RunServer::start(origins, Box::new(connect), Setup::of(config, backend), config.clone());
+    let started = RunServer::start(origins, Box::new(connect), Setup::of(config, backend), config.clone(), backend);
     serve(started, &mut io::stdout(), &mut io::stderr(), || signals.wait().map(drop).map_err(io::Error::from))
 }
 
@@ -307,7 +307,8 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 ///   fails does not stop the others. 400 for a body of another shape and 413 as for /agent/input, both before the
 ///   project is reached; 502 for a project that cannot be reached or whose runs cannot be read.
 /// - /close-choice: {"choice"}, what the app does with its running runs when its window closes (CloseChoice): "ask",
-///   "keep" or "stop"; 500 when it cannot be read.
+///   "keep" or "stop"; null when the app's runs are in herdr (APP_BACKEND_VARIABLE), which closing it never stops, so
+///   that the app neither asks nor offers the setting. 500 when it cannot be read.
 /// - POST /close-choice: saves the JSON body's {"choice": "ask" | "keep" | "stop"} and answers {"choice"}; 400 for a
 ///   body of another shape and 413 as for /agent/input, 500 when it cannot be saved.
 /// - /events: a text/event-stream of RunWatch's events, polled every SERVE_POLL.local, every SERVE_POLL.remote for a
@@ -361,6 +362,9 @@ struct Shared {
     config: ConfigDir,
     /// How POST /run waits for the run it starts.
     start_wait: StartWait,
+    /// The backend of the app's runs, APP_BACKEND_VARIABLE's. With Herdr, closing the app never stops one of them,
+    /// so there is no close choice to make (/close-choice).
+    app_backend: Backend,
 }
 
 impl RunServer {
@@ -368,8 +372,14 @@ impl RunServer {
     /// such as tauri://localhost), each project reached by connect, its setup checked and marked by setup, the
     /// workflows a run can be started with read from config. Errors: no port can be bound, or no token made from the
     /// system's random bytes, or no thread started.
-    pub fn start(origins: &[String], connect: Box<Connect>, setup: Setup, config: ConfigDir) -> io::Result<RunServer> {
-        RunServer::start_polling(origins, connect, setup, config, SERVE_POLL, START_WAIT)
+    pub fn start(
+        origins: &[String],
+        connect: Box<Connect>,
+        setup: Setup,
+        config: ConfigDir,
+        app_backend: Backend,
+    ) -> io::Result<RunServer> {
+        RunServer::start_polling(origins, connect, setup, config, app_backend, SERVE_POLL, START_WAIT)
     }
 
     /// As start, the event streams polling every polls, and POST /run waiting as start_wait says.
@@ -378,6 +388,7 @@ impl RunServer {
         connect: Box<Connect>,
         setup: Setup,
         config: ConfigDir,
+        app_backend: Backend,
         polls: Polls,
         start_wait: StartWait,
     ) -> io::Result<RunServer> {
@@ -399,6 +410,7 @@ impl RunServer {
             polls,
             config,
             start_wait,
+            app_backend,
         });
         let listening = Arc::new(Mutex::new(Some(Arc::new(on(&listener)?))));
         let (dispatched, to) = (Arc::clone(&listening), Arc::clone(&shared));
@@ -717,6 +729,7 @@ fn unreached_answer(shared: &Shared, path: &str, query: &HashMap<String, String>
             Err(e) => (500, error(&e.0)),
         },
         WORKFLOW => workflows::read(&shared.config, query),
+        CLOSE_CHOICE if shared.app_backend == Backend::Herdr => (200, object([("choice", Value::Null)])),
         CLOSE_CHOICE => match CloseChoice::read(&shared.config) {
             Ok(choice) => (200, object([("choice", Value::from(choice.name()))])),
             Err(why) => (500, error(&why)),

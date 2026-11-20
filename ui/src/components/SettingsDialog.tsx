@@ -8,9 +8,9 @@ const CHOICES: { choice: CloseChoice; label: string }[] = [
   { choice: "stop", label: "Stop them" },
 ];
 
-/** The app's settings, this computer's for every project: what closing the window does with runs still running
- * (CloseGuard), which "Don't ask again" in its dialog sets. A choice is saved as soon as it is picked; onClose is
- * called on Close or Escape. */
+/** The app's settings, this computer's for every project: what closing the window does with the open project's runs
+ * still running (CloseGuard), which "Don't ask again" in its dialog sets. A choice is saved as soon as it is picked;
+ * onClose is called on Close or Escape. Opened only when there is a choice to make (Api.closeChoice). */
 export function SettingsDialog({ api, onClose }: { api: Api; onClose: () => void }) {
   // The saved choice; null while it is read, or when it could not be.
   const [choice, setChoice] = useState<CloseChoice | null>(null);
@@ -18,7 +18,8 @@ export function SettingsDialog({ api, onClose }: { api: Api; onClose: () => void
   useEffect(() => {
     let current = true;
     api.closeChoice().then(
-      (saved) => current && setChoice(saved),
+      (saved) =>
+        current && (saved ? setChoice(saved) : setProblem("There is nothing to set: the app's runs are in herdr.")),
       (error: Error) => current && setProblem(`Could not read the setting: ${error.message}`),
     );
     return () => {
@@ -42,7 +43,7 @@ export function SettingsDialog({ api, onClose }: { api: Api; onClose: () => void
   return (
     <Dialog label="settings" title="Settings" className="settings">
       <fieldset disabled={choice === null && problem === null}>
-        <legend>When the app closes with runs running</legend>
+        <legend>When the app closes with the open project's runs running</legend>
         {CHOICES.map(({ choice: value, label }) => (
           <label key={value} className="check">
             <input type="radio" name="close-choice" checked={choice === value} onChange={() => pick(value)} />

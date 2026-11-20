@@ -387,7 +387,8 @@ browser, at a far smaller download.
   state; the overview's `StepProgress` and the run detail's `RunMap` both draw it) and the wording helpers, which follow `format_age` and `run_round`. A `RunEntry` keeps when its record
   arrived, so `heartbeatAge` ticks with `useNow` between events. The components are `ProjectBar`, `RunsOverview`,
   `RunForm` (a new run, selected once `POST /run` answers; its Edit… and New… open `WorkflowEditor`), `SetupDialog`, `About` (the logo's button opens it),
-  `CleanUpDialog`, `ForgetDialog` (the overview's "Delete closed runs…"), `SettingsDialog` (the top bar's "Settings…"), and `WorkflowsDialog` (the top bar's "Workflows…", which reaches no project) with its
+  `CleanUpDialog`, `ForgetDialog` (the overview's "Delete closed runs…"), `SettingsDialog` (the top bar's "Settings…",
+  offered only when `/close-choice` has a choice to make, so not while the app's runs are in herdr), and `WorkflowsDialog` (the top bar's "Workflows…", which reaches no project) with its
   `WorkflowEditor`, each a `Dialog`, `CloseGuard` (asks, when the window is closed with ACP runs running, whether to keep them running or stop them; Tauri's `onCloseRequested` in the webview, no close handler in Rust), `RunDetail`,
   `AgentPanes`, `StepProgress`, `RunMap` (the run as an octopus, hand-written SVG: `runMap.ts` places the arms and
   shapes them, and a `requestAnimationFrame` loop sways them unless the viewer prefers reduced motion), `Conversation` (an

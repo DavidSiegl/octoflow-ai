@@ -60,11 +60,19 @@ struct Options {
     config: ConfigDir,
     /// How POST /run waits.
     wait: StartWait,
+    /// The backend of the app's runs; by default Herdr, as without APP_BACKEND_VARIABLE.
+    backend: Backend,
 }
 
 impl Default for Options {
     fn default() -> Options {
-        Options { polls: SERVE_POLL, setup: unchecked(), config: ConfigDir::at("/nowhere/config"), wait: START_WAIT }
+        Options {
+            polls: SERVE_POLL,
+            setup: unchecked(),
+            config: ConfigDir::at("/nowhere/config"),
+            wait: START_WAIT,
+            backend: Backend::Herdr,
+        }
     }
 }
 
@@ -114,9 +122,9 @@ impl Served {
         options: Options,
     ) -> Served {
         let origins: Vec<String> = origins.iter().map(|o| o.to_string()).collect();
-        let Options { polls, setup, config, wait } = options;
-        let server =
-            RunServer::start_polling(&origins, connect, setup, config, polls, wait).expect("the server starts");
+        let Options { polls, setup, config, wait, backend } = options;
+        let server = RunServer::start_polling(&origins, connect, setup, config, backend, polls, wait)
+            .expect("the server starts");
         let port = port_of(server.url());
         Served { server, port, connects, console: Arc::default() }
     }
@@ -1520,6 +1528,10 @@ fn a_running_app_run_that_changes_while_it_stops_is_skipped_saying_it_was_stoppe
     assert_eq!(saved_closed(&repo, APP_RUNNING), None);
 }
 
+/// serve's side of Stop all: each running app run's socket is sent `stop`, and the run is waited for until released.
+/// The orchestrator's side, which this fake stands in for (each pending permission answered cancelled, session/cancel
+/// sent, the run interrupted), is crate::acp's, tested by
+/// stop_cancels_each_permission_and_each_prompt_pending_then_raises_the_interrupt.
 #[test]
 fn stop_all_stops_each_running_app_run_through_its_socket_and_leaves_herdr_s_and_stopped_ones() {
     let repo = Repo::new(&[("app.py", "one\n"), (".octoflow-ai/.gitignore", "*\n")]);
@@ -1597,7 +1609,7 @@ fn a_bad_stop_body_is_refused_before_the_project_is_reached() {
 fn the_close_choice_is_saved_in_the_configuration_directory_and_read_back() {
     let d = Project::new();
     let config = ConfigDir::at(&format!("{}/config", d.root()));
-    let options = Options { config: config.clone(), ..Options::default() };
+    let options = Options { config: config.clone(), backend: Backend::Acp, ..Options::default() };
     let served =
         Served::start(Box::new(|_: &str, _: &str, _: &Interrupt| unreachable!()), &[], Arc::default(), options);
     let choice = |served: &Served| served.get("/close-choice", &[]).json().get("choice").cloned();
@@ -1615,6 +1627,18 @@ fn the_close_choice_is_saved_in_the_configuration_directory_and_read_back() {
     }
     std::fs::write(config.close_choice_path(), "maybe\n").unwrap();
     assert_eq!(served.get("/close-choice", &[]).status, Some(500));
+}
+
+#[test]
+fn with_the_app_s_runs_in_herdr_there_is_no_close_choice_whatever_is_saved() {
+    let d = Project::new();
+    let config = ConfigDir::at(&format!("{}/config", d.root()));
+    CloseChoice::Stop.save(&config).unwrap();
+    let options = Options { config, ..Options::default() };
+    let served =
+        Served::start(Box::new(|_: &str, _: &str, _: &Interrupt| unreachable!()), &[], Arc::default(), options);
+    let reply = served.get("/close-choice", &[]);
+    assert_eq!((reply.status, reply.body.as_str()), (Some(200), r#"{"choice":null}"#));
 }
 
 #[test]
@@ -2358,7 +2382,7 @@ fn in_process() {
     let serving = std::thread::spawn(move || {
         let mut err = vec![];
         let status = serve(
-            RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config")),
+            RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config"), Backend::Herdr),
             &mut Lines(lines),
             &mut err,
             || stopped.recv().map_err(io::Error::other),
@@ -2400,7 +2424,9 @@ impl Write for BrokenPipe {
 #[test]
 fn an_unprintable_line_ends_it() {
     let connect = |_: &str, _: &str, _: &Interrupt| Err(OrchestratorError::new("not asked"));
-    let started = RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config")).unwrap();
+    let started =
+        RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config"), Backend::Herdr)
+            .unwrap();
     let port = port_of(started.url());
     let mut err = vec![];
     let status = serve(Ok(started), &mut BrokenPipe, &mut err, || -> io::Result<()> { panic!("serve waited") });
@@ -2421,7 +2447,9 @@ fn no_port() {
 #[test]
 fn a_wait_for_the_signals_that_fails_ends_it() {
     let connect = |_: &str, _: &str, _: &Interrupt| Err(OrchestratorError::new("not asked"));
-    let started = RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config")).unwrap();
+    let started =
+        RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config"), Backend::Herdr)
+            .unwrap();
     let port = port_of(started.url());
     let (mut out, mut err) = (vec![], vec![]);
     let status = serve(Ok(started), &mut out, &mut err, || Err(io::Error::from_raw_os_error(22)));

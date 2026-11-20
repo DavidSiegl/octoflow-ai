@@ -38,9 +38,10 @@ function saveProject(project: Project): void {
   }
 }
 
-/** The app: the top bar (logo and name, which open About, the project bar, Workflows… and Settings…), and the
- * project's runs or one run in detail. connect resolves to the sidecar's server, or rejects with why it could not be
- * started; appWindow is the window the app is in, whose close it guards while runs are running (CloseGuard). */
+/** The app: the top bar (logo and name, which open About, the project bar, Workflows… and, with the app's runs over
+ * ACP, Settings…), and the project's runs or one run in detail. connect resolves to the sidecar's server, or rejects
+ * with why it could not be started; appWindow is the window the app is in, whose close it guards while runs are
+ * running (CloseGuard). */
 export function App({ connect, appWindow }: { connect: () => Promise<Connection>; appWindow: AppWindow }) {
   const [connection, setConnection] = useState<Connection | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -64,6 +65,19 @@ function Connected({ connection, appWindow }: { connection: Connection; appWindo
   const [aboutOpen, setAboutOpen] = useState(false);
   const [workflowsOpen, setWorkflowsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Whether Settings… is offered: not while the app's runs are in herdr, with no close choice to set
+  // (Api.closeChoice). A choice that cannot be read still offers it, and its dialog says why.
+  const [hasSettings, setHasSettings] = useState(false);
+  useEffect(() => {
+    let current = true;
+    api.closeChoice().then(
+      (choice) => current && setHasSettings(choice !== null),
+      () => current && setHasSettings(true),
+    );
+    return () => {
+      current = false;
+    };
+  }, [api]);
   // On start, with a project, the setup dialog opens by itself until it has been closed with every required check
   // passed. When the server cannot tell whether it has, the dialog stays closed: "Check setup…" still opens it.
   const [startedWithProject] = useState(project.cwd !== "");
@@ -102,9 +116,11 @@ function Connected({ connection, appWindow }: { connection: Connection; appWindo
         <button type="button" className="workflows-button" onClick={() => setWorkflowsOpen(true)}>
           Workflows…
         </button>
-        <button type="button" className="settings-button" onClick={() => setSettingsOpen(true)}>
-          Settings…
-        </button>
+        {hasSettings && (
+          <button type="button" className="settings-button" onClick={() => setSettingsOpen(true)}>
+            Settings…
+          </button>
+        )}
       </header>
       {project.cwd ? (
         // Keyed by the project, so opening another one starts from its overview.

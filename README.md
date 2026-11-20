@@ -183,9 +183,6 @@ first time when a browser downloaded it, as it does the binary.
   started or last resumed in, wherever the window was opened, in herdr or not.
 - **About:** the logo and name at the top open it: the release version, the copyright and the license, with links to
   this repository, its releases, Ko-fi, and the third-party licenses the app bundles, each opened in your browser.
-- **Settings:** "Settings…" in the top bar sets what closing the window does while runs the app started outside
-  herdr are still running: ask each time ("Keep running" or "Stop all", and "Don't ask again", which sets this),
-  keep them running, or stop them, as Ctrl-C would, to resume later. Runs in herdr go on either way.
 - **Project bar:** a project folder and, for agents on another machine, a saved herdr machine. The app reopens
   the project you opened last.
 - **Setup:** "Check setup…" shows what `octoflow doctor --machine --cwd` checks for the open project, with

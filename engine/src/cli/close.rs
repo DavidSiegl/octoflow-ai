@@ -287,8 +287,9 @@ pub struct RunStopped {
 }
 
 /// Stop every desktop app run (Backend::Acp) of the project at cwd that world's scope reads as RUNNING, as the app's
-/// "Stop all" does, or with dry_run only say which: each is told to stop at once (tell_stop), then each is waited for
-/// until it is released as interrupted (await_release), so that the wait is STOP_WAIT for all of them, not for each.
+/// "Stop all" does, or with dry_run only say which: each is told to stop in turn (tell_stop), then each is waited for
+/// until it is released as interrupted (await_release), for at most STOP_WAIT from when it was told, so that the waits
+/// overlap rather than add up, and a run told late, after others' sockets were slow to answer, still gets all of it.
 /// A run of herdr's is left running: its human stops it in its pane. Returns the runs, in run id order, each with its
 /// failure, if any: one run that fails does not keep the others from stopping. Errors: the project's runs cannot be
 /// read.
@@ -304,12 +305,17 @@ pub fn stop_all(world: &Closer, cwd: &str, dry_run: bool) -> Result<Vec<RunStopp
     if dry_run {
         return Ok(running.into_iter().map(|state| stopped(state, None)).collect());
     }
-    let told_at = Instant::now();
-    let told: Vec<_> = running.into_iter().map(|state| (state, tell_stop(world, state))).collect();
+    let told: Vec<_> = running
+        .into_iter()
+        .map(|state| {
+            let at = Instant::now();
+            (state, tell_stop(world, state).map(|()| at))
+        })
+        .collect();
     Ok(told
         .into_iter()
         .map(|(state, told)| {
-            let released = told.and_then(|()| await_release(world, cwd, &state.run_id, told_at));
+            let released = told.and_then(|at| await_release(world, cwd, &state.run_id, at));
             stopped(state, released.err().map(|e| e.to_string()))
         })
         .collect())

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Api, Project, StoppedRun } from "../api";
 import { Dialog } from "./Dialog";
 
@@ -12,38 +12,61 @@ export interface AppWindow {
   destroy(): Promise<void>;
 }
 
+/** How long, in milliseconds, a close waits to learn whether runs are running before it closes anyway, as it does
+ * when the server cannot be asked: the window cannot close while it waits, and nothing shows that it does. */
+export const CLOSE_CHECK_WAIT = 5000;
+
 /** Where the close dialog is: asking, with the runs running when the window was asked to close; stopping them; or
- * done stopping, with the runs that failed to stop, or the error that kept the server from stopping any. */
+ * failed, with the runs that did not stop, or a sentence saying why nothing could be stopped or the window closed. */
 type Closing =
   | { step: "ask"; running: StoppedRun[] }
   | { step: "stopping"; running: StoppedRun[] }
   | { step: "failed"; failed: StoppedRun[] | string };
 
-/** Guards the window's close while the project has "acp" runs running (Api.previewStop): it asks whether to keep them
- * running or stop them, unless a choice was saved with "Don't ask again" (Api.closeChoice), and then closes the
- * window. Runs in herdr, which the app never stops, do not keep it from closing at once; nor does a server that cannot
- * be asked, which could not stop a run either. A run keeps running whether or not the app does. */
+/** Guards the window's close while the open project has "acp" runs running (Api.previewStop): it asks whether to
+ * keep them running or stop them, unless a choice was saved with "Don't ask again" (Api.closeChoice), and then closes
+ * the window. It closes at once when there is no choice to make (the app's runs are in herdr, which the app never
+ * stops), when no run is running, and when the server cannot say within CLOSE_CHECK_WAIT, since it could not stop a
+ * run either. Asked to close again while it asks or stops, it carries on with that. A run keeps running whether or not
+ * the app does. */
 export function CloseGuard({ api, project, appWindow }: { api: Api; project: Project; appWindow: AppWindow }) {
   const [closing, setClosing] = useState<Closing | null>(null);
+  // closing, for the close handler, which outlives the render it was made in.
+  const closingNow = useRef<Closing | null>(null);
+  useEffect(() => {
+    closingNow.current = closing;
+  }, [closing]);
+
   useEffect(() => {
     let current = true;
     const listening = appWindow.onCloseRequested(async (event) => {
+      if (closingNow.current) {
+        event.preventDefault();
+        return;
+      }
       if (!project.cwd) {
         return;
       }
-      let running: StoppedRun[];
-      let choice: string;
+      const check = async () => {
+        const choice = await api.closeChoice();
+        if (choice === null || choice === "keep") {
+          return null;
+        }
+        const running = await api.previewStop(project);
+        return running.length === 0 ? null : { choice, running };
+      };
+      let found: Awaited<ReturnType<typeof check>>;
       try {
-        [running, choice] = await Promise.all([api.previewStop(project), api.closeChoice()]);
+        found = await withDeadline(check(), CLOSE_CHECK_WAIT);
       } catch {
         return;
       }
-      if (running.length === 0 || choice === "keep") {
+      if (!found) {
         return;
       }
       event.preventDefault();
       if (current) {
-        setClosing({ step: choice === "stop" ? "stopping" : "ask", running });
+        setClosing({ step: found.choice === "stop" ? "stopping" : "ask", running: found.running });
       }
     });
     return () => {
@@ -52,29 +75,41 @@ export function CloseGuard({ api, project, appWindow }: { api: Api; project: Pro
     };
   }, [api, project, appWindow]);
 
+  const close = useCallback(() => {
+    appWindow.destroy().catch((error: Error) => {
+      setClosing({ step: "failed", failed: `Could not close the window: ${error.message}` });
+    });
+  }, [appWindow]);
+
   // A saved "stop" goes straight to stopping, as does Stop all.
   const stopping = closing?.step === "stopping";
   useEffect(() => {
     if (!stopping) {
       return;
     }
+    let current = true;
     api.stopRuns(project).then(
       (stopped) => {
+        if (!current) {
+          return;
+        }
         const failed = stopped.filter((r) => r.error !== null);
         if (failed.length === 0) {
-          void appWindow.destroy();
+          close();
         } else {
           setClosing({ step: "failed", failed });
         }
       },
-      (error: Error) => setClosing({ step: "failed", failed: error.message }),
+      (error: Error) => current && setClosing({ step: "failed", failed: `Could not stop the runs: ${error.message}` }),
     );
-  }, [stopping, api, project, appWindow]);
+    return () => {
+      current = false;
+    };
+  }, [stopping, api, project, close]);
 
   if (!closing) {
     return null;
   }
-  const close = () => void appWindow.destroy();
   if (closing.step === "ask") {
     return (
       <AskDialog
@@ -91,7 +126,7 @@ export function CloseGuard({ api, project, appWindow }: { api: Api; project: Pro
       {closing.step === "stopping" ? (
         <p className="loading">Stopping {count(closing.running.length)}…</p>
       ) : typeof closing.failed === "string" ? (
-        <p className="problem">Could not stop the runs: {closing.failed}</p>
+        <p className="problem">{closing.failed}</p>
       ) : (
         <ul className="checks">
           {closing.failed.map((r) => (
@@ -157,6 +192,15 @@ function AskDialog({
       </footer>
     </Dialog>
   );
+}
+
+/** promise's value, or a rejection once ms milliseconds pass before it settles. */
+function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`no answer within ${ms} ms`)), ms);
+  });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
 }
 
 function count(runs: number): string {

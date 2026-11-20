@@ -617,10 +617,14 @@ export class Api {
     return this.sweep("/stop", project, { dry_run: false });
   }
 
-  /** The choice saved for closing the window with runs running; rejects with the server's error when it cannot be
-   * read. */
-  async closeChoice(): Promise<CloseChoice> {
+  /** The choice saved for closing the window with runs running; null when there is none to make, the app's runs being
+   * in herdr, which closing it never stops (a release's app, without the developer setting OCTOFLOW_APP_BACKEND=acp).
+   * Rejects with the server's error when it cannot be read. */
+  async closeChoice(): Promise<CloseChoice | null> {
     const body = (await this.json(`${this.connection.url}/close-choice`)) as { choice?: unknown };
+    if (body.choice === null) {
+      return null;
+    }
     if (body.choice !== "ask" && body.choice !== "keep" && body.choice !== "stop") {
       throw new HttpError(200, "the answer has no choice");
     }
