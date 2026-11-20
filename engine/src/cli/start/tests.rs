@@ -307,6 +307,7 @@ fn resume_limit_needs_the_gate() {
 fn connected<'a>(f: &'a Fixture, config: &'a ConfigDir) -> Connected<'a> {
     Connected {
         with: f.collaborators(),
+        places: &*f.herdr,
         config,
         local_host: "here",
         stdout: &|_| {},

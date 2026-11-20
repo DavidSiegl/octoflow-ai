@@ -43,6 +43,7 @@ fn run_on(f: &Fixture, argv: &[&str]) -> Result<Ran, Stop> {
     let config = ConfigDir::at("/nowhere");
     let world = Connected {
         with: f.collaborators(),
+        places: &*f.herdr,
         config: &config,
         local_host: "here",
         stdout: &|_| {},

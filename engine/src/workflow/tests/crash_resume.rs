@@ -175,6 +175,7 @@ impl World {
         let config = ConfigDir::at("/nowhere");
         let world = Connected {
             with: self.f.collaborators(),
+            places: &*self.f.herdr,
             config: &config,
             local_host: "here",
             stdout: &|_| {},

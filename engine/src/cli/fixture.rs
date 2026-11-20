@@ -64,6 +64,7 @@ impl Cli {
         let stderr = |text: &str| self.err.borrow_mut().push_str(text);
         let world = Connected {
             with: self.f.collaborators(),
+            places: &*self.f.herdr,
             config: &self.config,
             local_host: "here",
             stdout: &print,

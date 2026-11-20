@@ -12,8 +12,8 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::OnceLock;
 
-use crate::acp::AcpAgents;
-use crate::agents::Agents;
+use crate::acp::{AcpAgents, LeftoverGroups};
+use crate::agents::{Agents, EitherBackend, RunPlaces};
 use crate::constants::{EXIT_CHANGES_REQUESTED, EXIT_CONFLICT, EXIT_ERROR, EXIT_INTERRUPTED, NO_VERDICT, SUCCEEDED};
 use crate::env::ConfigDir;
 use crate::error::OrchestratorError;
@@ -51,6 +51,9 @@ pub use start::{new_state, resumable_state, resumed_state, START_LOG};
 pub struct Connected<'a> {
     /// Every collaborator a Workflow is given.
     pub with: Collaborators<'a>,
+    /// Where the project's runs have agents, read from their saved state, as close tells and ends them: a herdr run's
+    /// workspace, an ACP run's leftover agents (crate::agents::EitherBackend), whichever backend with.agents drives.
+    pub places: &'a dyn RunPlaces,
     /// The orchestrator's configuration directory on this machine: its prompt and workflow files.
     pub config: &'a ConfigDir,
     /// This machine's name, which an owner record of a run here names (crate::runs::local_host).
@@ -280,6 +283,7 @@ fn connect(command: &Command, local: &Local, human: &LocalHuman) -> Result<Ended
     // the thread that started it (crate::acp's Connection::spawn).
     let acp_agents = AcpAgents::new(human, interrupt);
     let agents: &dyn Agents = if acp { &acp_agents } else { &herdr };
+    let places = EitherBackend { herdr: &herdr, acp: &LeftoverGroups };
     let clocks = SystemClocks::new(interrupt).map_err(stopped)?;
     let indexes = PackageIndexes::from_env();
     let here = local_host();
@@ -293,6 +297,7 @@ fn connect(command: &Command, local: &Local, human: &LocalHuman) -> Result<Ended
             pid_alive: &pid_alive,
             indexes: &indexes,
         },
+        places: &places,
         config,
         local_host: &here,
         stdout,

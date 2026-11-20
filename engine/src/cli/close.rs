@@ -424,7 +424,7 @@ impl<'a> Closer<'a> {
     pub fn of(world: &Connected<'a>) -> Closer<'a> {
         Closer {
             host: world.with.host,
-            places: world.with.agents,
+            places: world.places,
             interrupt: world.with.interrupt,
             pid_alive: world.with.pid_alive,
             local_host: world.local_host,
