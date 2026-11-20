@@ -4,7 +4,7 @@
 
 use indexmap::IndexMap;
 
-use super::start::resumable;
+use super::resume_check::resumable;
 use super::{resume_command, Connected};
 use crate::constants::APPROVE;
 use crate::error::OrchestratorError;
@@ -60,7 +60,7 @@ pub const BLOCKED_STATUS: &str = "blocked";
 /// - turns: the turn records as saved, [] for a run saved before them.
 /// - resume_command: the command that resumes a stale run that is not closed; null otherwise, and for an "acp" run,
 ///   which the app resumes and the CLI refuses.
-/// - resumable: whether a resume would take the run up and have something left to do (crate::cli::start::resumable):
+/// - resumable: whether a resume would take the run up and have something left to do (crate::cli::resume_check::resumable):
 ///   a stale run, one released as interrupted or with a failure, or a done one its orchestrator did not release or
 ///   that lacks its summary or metrics; an "acp" run is resumed with serve's POST /resume.
 pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> bool, target: &[String]) -> Object {

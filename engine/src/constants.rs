@@ -14,6 +14,13 @@ macro_rules! project_dir {
 pub const PROJECT_DIR: &str = project_dir!();
 /// Where a project keeps its runs' directories, relative to it.
 pub const RUNS_DIR: &str = concat!(project_dir!(), "/runs");
+/// A run directory's files the engine itself writes and reads; crate::pipeline::is_run_file names the rest.
+/// The run's state, RunState, in the run directory.
+pub const STATE_FILE: &str = "state.json";
+/// Written into the run directory whenever the run ends: what it did, and where its time went.
+pub const SUMMARY_FILE: &str = "summary.md";
+/// Written into the run directory when the run is done: crate::summary::run_metrics, for the metrics command.
+pub const METRICS_FILE: &str = "metrics.json";
 /// Where run --worktree puts each run's worktree, named by the run's key.
 pub const WORKTREES_DIR: &str = concat!(project_dir!(), "/worktrees");
 

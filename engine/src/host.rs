@@ -8,7 +8,7 @@
 
 use indexmap::IndexMap;
 
-use crate::constants::{CONSOLE_TAIL_LINES, NETWORK_TIMEOUT, REMOTE, RUNS_DIR};
+use crate::constants::{CONSOLE_TAIL_LINES, METRICS_FILE, NETWORK_TIMEOUT, REMOTE, RUNS_DIR, SUMMARY_FILE};
 use crate::error::OrchestratorError;
 use crate::harness::{harness, SessionLog};
 use crate::json::ValueExt;
@@ -23,7 +23,6 @@ pub use process::ProcessHost;
 pub(crate) use process::{kill_group, own_group, run_process, spawn_detached, ssh_argv, ProcessError};
 pub use scan::{LeaksFound, Scanned};
 
-use crate::pipeline::SUMMARY_FILE;
 use crate::quality::Leak;
 use crate::state::{run_dir, SavedRun};
 
@@ -66,8 +65,6 @@ exec git -C "$c" "$@""#;
 /// host killed it for running past that: crate::workflow::origin_unreachable tries it again. No other command's error
 /// says it.
 pub const ORIGIN_SILENT: &str = "origin did not answer within";
-/// The name of a run directory's file that the engine's metrics command reads (crate::summary::run_metrics).
-const METRICS_FILE: &str = "metrics.json";
 /// Where, relative to a project, forget_run keeps the metrics of the runs it deleted: one line of JSON per run, each
 /// its METRICS_FILE's object, in the order they were forgotten.
 const METRICS_ARCHIVE: &str = concat!(crate::project_dir!(), "/metrics-archive.jsonl");

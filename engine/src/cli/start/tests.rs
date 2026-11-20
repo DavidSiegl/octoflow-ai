@@ -586,9 +586,9 @@ fn a_run_is_resumable_exactly_when_resume_takes_it_and_has_something_left_to_do(
     for (what, saved, age, alive, lacking, expected) in cases {
         let run = read_saved(age, &Value::Object(saved)).lacking_ending_file(lacking);
         let pid_alive = move |_: i64| alive;
-        assert_eq!(super::resumable(&run, "here", &pid_alive).is_ok(), expected, "{what}");
+        assert_eq!(crate::cli::resume_check::resumable(&run, "here", &pid_alive).is_ok(), expected, "{what}");
         let backend = run.shown().backend;
-        let argv: &[&str] = if backend == Backend::Acp { &["a1b2c3", "--acp"] } else { &["a1b2c3"] };
+        let argv: &[&str] = if backend == crate::state::Backend::Acp { &["a1b2c3", "--acp"] } else { &["a1b2c3"] };
         let taken = resumable_state(std::slice::from_ref(&run), &resume_args(argv), "/proj", "here", &pid_alive);
         // resume also takes a finished run, which it leaves as it is (Workflow::run).
         assert_eq!(taken.is_ok(), expected || what == "finished", "{what}: {:?}", taken.err());

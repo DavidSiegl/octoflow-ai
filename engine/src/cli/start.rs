@@ -4,7 +4,8 @@
 use indexmap::IndexMap;
 
 use super::args::{ResumeArgs, RunArgs, Settings};
-use super::{refuse_app_run, Connected};
+use super::resume_check::resume_gate;
+use super::Connected;
 use crate::constants::{DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT, WORKTREES_DIR};
 use crate::error::OrchestratorError;
 use crate::harness::harness;
@@ -12,9 +13,8 @@ use crate::json::Object;
 use crate::local_gate::LOCAL_GATE;
 use crate::pipeline::{Pipeline, DONE, QUALITY};
 use crate::prompts::{load_prompts, Prompts};
-use crate::runs::RUNNING;
 use crate::spec_file::SpecFile;
-use crate::state::{find_run, run_dir, Backend, RunState, SavedRun};
+use crate::state::{find_run, run_dir, RunState, SavedRun};
 use crate::workflow::{check_gate_mid_run, turn_quality_gate_off, turn_quality_gate_on};
 use crate::workflow_file::{load_workflow_file, named_workflow};
 
@@ -207,52 +207,6 @@ pub fn resumable_state(
     // The herdr this resume addresses: the saved one may name the same herdr reached another way.
     state.machine = args.target.machine.clone();
     Ok((state, pipeline))
-}
-
-/// run's saved state and its workflow, as resume takes the run up before its flags apply, with its health judged
-/// from local_host by pid_alive (RunState::health); acp is resume's --acp and force its --force.
-///
-/// Errors: its state cannot be read (SavedRun::problem), or its saved workflow or prompts; it is the desktop app's and
-/// acp is false (refuse_app_run); it was closed; or it looks alive and force is false.
-pub(crate) fn resume_gate<'r>(
-    run: &'r SavedRun,
-    acp: bool,
-    force: bool,
-    local_host: &str,
-    pid_alive: &dyn Fn(i64) -> bool,
-) -> Result<(&'r RunState, Pipeline), OrchestratorError> {
-    let state = run.state()?;
-    refuse_app_run(state, "resume", acp)?;
-    // Not even with --force: close may have deleted its worktree and branch.
-    if state.is_closed() {
-        return Err(OrchestratorError(format!("run {} was closed; start a new run", state.run_id)));
-    }
-    let pipeline = state.pipeline()?;
-    if let Some((RUNNING, why)) = run.health(local_host, pid_alive) {
-        if !force {
-            return Err(OrchestratorError(format!(
-                "run {} looks alive ({why}); pass --force to take it over",
-                state.run_id
-            )));
-        }
-    }
-    Ok((state, pipeline))
-}
-
-/// Ok when a resume of run, without --force, would take it up (resume_gate, with the --acp its backend needs) and
-/// find something left to do: a run not done, or a done one with its ending left (Workflow::ending_left), which
-/// Workflow::run ends again: one whose orchestrator stopped before releasing it, or one released without a file its
-/// ending writes, as far as the reader of run looked (SavedRun::lacks_ending_file). local_host and pid_alive are
-/// resume_gate's.
-///
-/// Errors: why not, resume_gate's or that the run is finished.
-pub fn resumable(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> bool) -> Result<(), OrchestratorError> {
-    let acp = run.shown().backend == Backend::Acp;
-    let (state, _) = resume_gate(run, acp, false, local_host, pid_alive)?;
-    if state.done() && state.owner.is_none() && !run.lacks_ending_file() {
-        return Err(OrchestratorError(format!("run {} is finished; nothing is left to resume", state.run_id)));
-    }
-    Ok(())
 }
 
 /// Apply resume's --max-quality-rounds to state, of workflow pipeline, and check the limit, given or saved, against

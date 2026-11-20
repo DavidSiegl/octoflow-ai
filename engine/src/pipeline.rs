@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 
 use indexmap::IndexMap;
 
-use crate::constants::{DEFAULT_MAX_FILES, DEFAULT_MAX_LINES, ROLE_LABELS};
+use crate::constants::{DEFAULT_MAX_FILES, DEFAULT_MAX_LINES, METRICS_FILE, ROLE_LABELS, STATE_FILE, SUMMARY_FILE};
 use crate::error::OrchestratorError;
 use crate::harness::harness;
 use crate::paths::split_extension;
@@ -42,13 +42,6 @@ pub fn prompt_placeholders<'a>(step_ids: impl IntoIterator<Item = &'a str>) -> V
 fn path_names(id: &str) -> impl Iterator<Item = (String, &'static str)> + '_ {
     PATH_FIELDS.iter().map(move |(pre, post)| (format!("{pre}{id}{post}"), *pre))
 }
-
-/// The run's state, RunState, in the run directory.
-pub const STATE_FILE: &str = "state.json";
-/// Written into the run directory whenever the run ends: what it did, and where its time went.
-pub const SUMMARY_FILE: &str = "summary.md";
-/// Written into the run directory when the run is done: run_metrics, for the metrics command.
-pub const METRICS_FILE: &str = "metrics.json";
 
 /// Whether name is one the run writes into its directory itself, beside the steps' handoff files: state.json,
 /// SUMMARY_FILE, METRICS_FILE, or quality-*, locked-* or proofs-*, the * holding no newline.

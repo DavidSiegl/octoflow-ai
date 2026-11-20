@@ -4,10 +4,10 @@
 
 use serde_json::Value;
 
+use crate::constants::STATE_FILE;
 use crate::constants::{PROJECT_DIR, WORKTREES_DIR};
 use crate::error::OrchestratorError;
 use crate::host::{run_states_in, Host, DEFAULT_TIMEOUT};
-use crate::pipeline::STATE_FILE;
 use crate::state::{run_dir, SavedRun};
 
 /// A project's own directory under its old name, relative to the project, as PROJECT_DIR is.

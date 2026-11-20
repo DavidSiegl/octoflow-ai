@@ -16,7 +16,7 @@ use crate::agents::{EitherBackend, RunPlaces};
 use crate::cli::close::{close_all, Closer, RunClosed, Sweep};
 use crate::cli::forget::{self, forget_all, Forgetter, RunForgotten};
 use crate::cli::listing::run_record;
-use crate::cli::start::resumable;
+use crate::cli::resume_check::resumable;
 use crate::cli::START_LOG;
 use crate::error::OrchestratorError;
 use crate::herdr::{AgentAddress, AgentConsole, HerdrError, Launcher};
@@ -345,7 +345,7 @@ impl ProjectRuns {
     }
 
     /// Resume run_id, a desktop app's run (crate::state::Backend::Acp) that a resume would take up and find something
-    /// left to do in (crate::cli::start::resumable), the way start starts a detached run: its leftover agents ended
+    /// left to do in (crate::cli::resume_check::resumable), the way start starts a detached run: its leftover agents ended
     /// first (crate::acp::end_leftovers), then `program resume --cwd DIR --acp -- RUN_ID` started detached, and waited for
     /// (StartWait::until) until it saves the run's state.json anew, which it does once it has taken the run up, or
     /// exits without. Each agent then continues its saved session (crate::acp's AcpAgents::start). Gives how the wait

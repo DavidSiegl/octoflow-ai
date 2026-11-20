@@ -7,8 +7,9 @@ use std::cell::RefCell;
 
 use super::pull_request::rounds;
 use super::*;
+use crate::constants::{METRICS_FILE, SUMMARY_FILE};
 use crate::json::object;
-use crate::pipeline::{DEFAULT_WORKFLOW, METRICS_FILE, SUMMARY_FILE};
+use crate::pipeline::DEFAULT_WORKFLOW;
 use crate::test_support::herdr_server;
 use crate::workflow_file::workflow_definition;
 

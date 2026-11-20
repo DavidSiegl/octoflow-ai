@@ -14,6 +14,7 @@ use std::sync::OnceLock;
 
 use crate::acp::{AcpAgents, LeftoverGroups};
 use crate::agents::{Agents, EitherBackend, RunPlaces};
+use crate::constants::STATE_FILE;
 use crate::constants::{EXIT_CHANGES_REQUESTED, EXIT_CONFLICT, EXIT_ERROR, EXIT_INTERRUPTED, NO_VERDICT, SUCCEEDED};
 use crate::env::ConfigDir;
 use crate::error::OrchestratorError;
@@ -23,7 +24,7 @@ use crate::host::{shlex_join, Host, ProcessHost};
 use crate::human::Notify;
 use crate::interrupt::Interrupt;
 use crate::package_index::PackageIndexes;
-use crate::pipeline::{Pipeline, STATE_FILE};
+use crate::pipeline::Pipeline;
 use crate::runs::{local_host, pid_alive};
 use crate::spec_file::{read_spec_file, SpecFile};
 use crate::state::{run_dir, Backend, RunState};
@@ -38,6 +39,7 @@ pub mod forget;
 pub mod listing;
 pub mod prune;
 pub mod refresh;
+pub(crate) mod resume_check;
 pub(crate) mod start;
 mod workflows;
 

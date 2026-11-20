@@ -338,22 +338,27 @@ fn sweep_run(
                 )));
             }
             if plan.stop && !dry_run {
-                // Decided again once released: what it discards then must be what was shown, or it is skipped.
-                let once_stopped = previewed.map(|_| (plan.preview_once_stopped(), plan.discarded().to_vec()));
-                stop_run(world, cwd, plan.state)?;
-                let previewed = once_stopped.as_ref().map(|(done, discarded)| (done.as_str(), &discarded[..]));
-                return Ok(match sweep_run(world, cwd, run_id, dry_run, previewed)? {
-                    Outcome::Skipped(why) => {
-                        Outcome::Skipped(format!("run {run_id} was stopped, but not closed: {why}"))
-                    }
-                    closed => closed,
-                });
+                return stop_then_sweep(world, cwd, &plan, previewed.is_some());
             }
             match plan.close(world, cwd, dry_run) {
                 Ok(done) => Outcome::Closed { done, discarded: plan.discarded().to_vec() },
                 Err(e) => Outcome::Failed { error: e.to_string(), discarded: plan.discarded_by_now(world.host, cwd) },
             }
         }
+    })
+}
+
+/// Stop the running run of plan, of the project at cwd, then close it as sweep_run does, decided again once it is
+/// released; with previewed, what closing it discards then must be what the preview showed, or it is skipped.
+/// Errors: as stop_run's and sweep_run's.
+fn stop_then_sweep(world: &Closer, cwd: &str, plan: &Plan, previewed: bool) -> Result<Outcome, OrchestratorError> {
+    let run_id = &plan.state.run_id;
+    let once_stopped = previewed.then(|| (plan.preview_once_stopped(), plan.discarded().to_vec()));
+    stop_run(world, cwd, plan.state)?;
+    let previewed = once_stopped.as_ref().map(|(done, discarded)| (done.as_str(), &discarded[..]));
+    Ok(match sweep_run(world, cwd, run_id, false, previewed)? {
+        Outcome::Skipped(why) => Outcome::Skipped(format!("run {run_id} was stopped, but not closed: {why}")),
+        closed => closed,
     })
 }
 

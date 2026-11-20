@@ -5,8 +5,8 @@ use std::ffi::OsString;
 use std::os::unix::fs::PermissionsExt;
 
 use super::*;
+use crate::constants::SUMMARY_FILE;
 use crate::interrupt::Interrupt;
-use crate::pipeline::SUMMARY_FILE;
 use crate::state::RunState;
 use crate::test_support::{ended, oracle, raise_once_written, TempDir, HEARS_SIGINT};
 

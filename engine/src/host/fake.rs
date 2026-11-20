@@ -12,9 +12,9 @@ use super::{
     ChangedFile, Completed, Exec, ExecError, Host, PutBack, RestoreError, Scanned, GIT_STATUS_ARGS, ORIGIN_READ,
 };
 use crate::constants::WORKTREES_DIR;
+use crate::constants::{METRICS_FILE, SUMMARY_FILE};
 use crate::error::OrchestratorError;
 use crate::host::tests::FAKE_TOKEN;
-use crate::pipeline::{METRICS_FILE, SUMMARY_FILE};
 use crate::quality::Leak;
 use crate::state::SavedRun;
 use serde_json::Value;
