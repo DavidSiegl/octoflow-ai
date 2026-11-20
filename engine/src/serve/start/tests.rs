@@ -14,7 +14,7 @@ fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
 fn a_body_with_only_its_task_leaves_every_flag_to_run() {
     assert_eq!(parsed(r#"{"task": "t"}"#), Ok(RunRequest { task: "t".into(), ..RunRequest::default() }));
     let nulls = r#"{"task": "t", "workflow": null, "agent": null, "model": null, "role_agents": null,
-                    "role_models": null, "no_pr": null, "worktree": null}"#;
+                    "role_models": null, "permission_mode": null, "no_pr": null, "worktree": null}"#;
     assert_eq!(parsed(nulls), Ok(RunRequest { task: "t".into(), ..RunRequest::default() }));
 }
 
@@ -22,7 +22,7 @@ fn a_body_with_only_its_task_leaves_every_flag_to_run() {
 fn every_field_of_a_body() {
     let body = r#"{"task": "t", "workflow": "quick", "agent": "pi", "model": "m",
                    "role_agents": {"review": "codex", "build": "agy"}, "role_models": {"spec": "s"},
-                   "no_pr": true, "worktree": false}"#;
+                   "permission_mode": "acceptEdits", "no_pr": true, "worktree": false}"#;
     let expected = RunRequest {
         task: "t".into(),
         workflow: Some("quick".into()),
@@ -30,10 +30,25 @@ fn every_field_of_a_body() {
         model: Some("m".into()),
         role_agents: pairs(&[("review", "codex"), ("build", "agy")]),
         role_models: pairs(&[("spec", "s")]),
+        permission_mode: Some("acceptEdits".into()),
         no_pr: true,
         worktree: false,
     };
     assert_eq!(parsed(body), Ok(expected));
+}
+
+#[test]
+fn each_permission_mode_offered_is_taken_and_no_other() {
+    for mode in PERMISSION_MODES {
+        let body = format!(r#"{{"task": "t", "permission_mode": "{mode}"}}"#);
+        assert_eq!(parsed(&body).map(|r| r.permission_mode), Ok(Some(mode.to_string())), "{mode}");
+    }
+    let why = "permission_mode must be one of default, acceptEdits, plan, bypassPermissions";
+    // `run` takes these two, but the app does not offer them.
+    for mode in [r#""auto""#, r#""dontAsk""#, r#""""#, r#""Default""#, "true", "[]"] {
+        let body = format!(r#"{{"task": "t", "permission_mode": {mode}}}"#);
+        assert_eq!(parsed(&body), Err(why.to_string()), "{mode}");
+    }
 }
 
 #[test]
@@ -57,9 +72,10 @@ fn a_body_of_another_shape_is_refused_naming_what_is_wrong() {
         (r#"{"task": "t", "role_models": {"a=b": "m"}}"#, "role_models must be an object of role to a string that is not empty"),
         (r#"{"task": "t", "role_models": {"": "m"}}"#, "role_models must be an object of role to a string that is not empty"),
         (r#"{"task": "t", "role_models": {"build": ""}}"#, "role_models must be an object of role to a string that is not empty"),
+        (r#"{"task": "t", "no_pr": 1, "permission_mode": "yes"}"#, "permission_mode must be one of default, acceptEdits, plan, bypassPermissions"),
         (r#"{"task": "t\u0000"}"#, "the body's strings must hold no NUL character, which no command's argument can"),
         (r#"{"task": "t", "role_models": {"b\u0000": "m"}}"#, "the body's strings must hold no NUL character, which no command's argument can"),
-        (r#"{"task": "t", "spec": "/s.md"}"#,"unknown field \"spec\"; the fields are task, workflow, agent, model, role_agents, role_models, no_pr, worktree"),
+        (r#"{"task": "t", "spec": "/s.md"}"#,"unknown field \"spec\"; the fields are task, workflow, agent, model, role_agents, role_models, permission_mode, no_pr, worktree"),
     ];
     for (body, why) in cases {
         assert_eq!(parsed(body), Err(why.to_string()), "{body}");
@@ -81,6 +97,7 @@ fn the_command_is_run_with_the_id_the_target_and_each_flag_as_one_word_then_the_
         model: Some("--m".into()),
         role_agents: pairs(&[("b", "codex")]),
         role_models: pairs(&[("b", "x=y")]),
+        permission_mode: Some("plan".into()),
         no_pr: true,
         worktree: true,
     };
@@ -93,6 +110,7 @@ fn the_command_is_run_with_the_id_the_target_and_each_flag_as_one_word_then_the_
             "--workflow=w",
             "--agent=pi",
             "--model=--m",
+            "--permission-mode=plan",
             "--role-agent=b=codex",
             "--role-model=b=x=y",
             "--no-pr",
@@ -112,6 +130,7 @@ fn run_reads_the_command_back_as_the_request() {
         model: Some("-m".into()),
         role_agents: pairs(&[("build", "codex")]),
         role_models: pairs(&[("review", "x=y")]),
+        permission_mode: Some("bypassPermissions".into()),
         no_pr: true,
         worktree: true,
     };
@@ -125,5 +144,6 @@ fn run_reads_the_command_back_as_the_request() {
         (args.settings.role_agent, args.settings.role_model),
         (pairs(&[("build", "codex")]), pairs(&[("review", "x=y")]))
     );
+    assert_eq!(args.settings.permission_mode.as_deref(), Some("bypassPermissions"));
     assert_eq!(args.target.cwd.as_deref(), Some("/p"));
 }

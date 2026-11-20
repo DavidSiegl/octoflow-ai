@@ -588,11 +588,12 @@ describe("the run form", () => {
     expect(within(form).getByText("Spec, build and review.")).toBeInTheDocument();
     expect(within(form).getByLabelText("No pull request")).not.toBeChecked();
     expect(within(form).getByLabelText("Separate worktree")).toBeChecked();
+    expect(within(form).getByLabelText("Permission mode")).toHaveValue("default");
     typeTask(form, " Add a rate limiter ");
     fireEvent.click(within(form).getByRole("button", { name: "Start" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(start.requests).toEqual([
-      { cwd: "/home/me/proj", body: { task: "Add a rate limiter", workflow: "default", no_pr: false, worktree: true } },
+      { cwd: "/home/me/proj", body: { task: "Add a rate limiter", workflow: "default", permission_mode: "default", no_pr: false, worktree: true } },
     ]);
     act(() => source.replay("a run started its interview"));
     expect(screen.getByRole("region", { name: "run c0ffee" })).toBeInTheDocument();
@@ -616,6 +617,7 @@ describe("the run form", () => {
       workflow: "tdd",
       agent: "codex",
       model: "o3",
+      permission_mode: "default",
       no_pr: true,
       worktree: false,
     });
@@ -714,6 +716,7 @@ describe("the run form", () => {
     fireEvent.click(within(form).getByRole("button", { name: "Start" }));
     await waitFor(() => expect(start.requests).toHaveLength(1));
     expect(start.requests?.[0]?.body.workflow).toBe("default");
+    expect(start.requests?.[0]?.body.permission_mode).toBe("default");
   });
 
   it("asks for a workflow when the default one does not load", async () => {
@@ -762,6 +765,23 @@ describe("the run form", () => {
     expect(roleRows(form)).toEqual(["role Test Writer", "role Builder"]);
   });
 
+  it("offers each permission mode, says what plan does, and sends the one chosen", async () => {
+    const start: FakeStart = {};
+    const { form } = await openForm(start);
+    const mode = within(form).getByLabelText("Permission mode");
+    expect(within(mode).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "default",
+      "acceptEdits",
+      "plan: agents write nothing, so the run stops at its first handoff",
+      "bypassPermissions",
+    ]);
+    typeTask(form, "Add a rate limiter");
+    fireEvent.change(mode, { target: { value: "acceptEdits" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(start.requests).toHaveLength(1));
+    expect(start.requests?.[0]?.body.permission_mode).toBe("acceptEdits");
+  });
+
   it("shows a role's default agent and model, unless the run's replace them", async () => {
     const { form } = await openForm();
     const reviewerAgent = within(form).getByLabelText("Reviewer agent");
@@ -795,7 +815,7 @@ describe("the run form", () => {
     typeTask(form, "Add a rate limiter");
     fireEvent.click(within(form).getByRole("button", { name: "Start" }));
     await waitFor(() => expect(start.requests).toHaveLength(1));
-    expect(start.requests?.[0]?.body).toEqual({ task: "Add a rate limiter", workflow: "default", no_pr: false, worktree: true });
+    expect(start.requests?.[0]?.body).toEqual({ task: "Add a rate limiter", workflow: "default", permission_mode: "default", no_pr: false, worktree: true });
   });
 
   it("sends the roles' agents and models that are set, and no others", async () => {
@@ -812,6 +832,7 @@ describe("the run form", () => {
       workflow: "default",
       role_agents: { review: "codex" },
       role_models: { build: "g2" },
+      permission_mode: "default",
       no_pr: false,
       worktree: true,
     });

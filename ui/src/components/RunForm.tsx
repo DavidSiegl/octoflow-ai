@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { type Api, DEFAULT_WORKFLOW, type OfferedRole, type OfferedWorkflow, type Project, type RunOptions, type StartedRun } from "../api";
+import { type Api, DEFAULT_PERMISSION_MODE, DEFAULT_WORKFLOW, type OfferedRole, type OfferedWorkflow, type Project, type RunOptions, type StartedRun } from "../api";
 import { Dialog } from "./Dialog";
 import { type Opening, WorkflowEditor } from "./WorkflowEditor";
 
@@ -42,8 +42,11 @@ function setByRole(choices: Map<string, RoleChoice>, roles: OfferedRole[], field
   return set.length > 0 ? Object.fromEntries(set) : undefined;
 }
 
+/** What the run form says of a permission mode beside its name, where its name does not say enough. */
+const MODE_NOTES = new Map([["plan", "agents write nothing, so the run stops at its first handoff"]]);
+
 /** A form for a new run in project: its task, workflow, agent and model, an agent and a model for each role of the
- * workflow, and whether it opens a pull request and runs in a worktree of its own. Under the workflow, Edit… and
+ * workflow, the permission mode of every role, and whether it opens a pull request and runs in a worktree of its own. Under the workflow, Edit… and
  * New… open the workflow editor on the one picked or on a copy of the default one; the form waits while it is open,
  * and after a save reads the workflows again and picks the one saved, where it loads. Start starts it; an error the
  * server answers stays in the form, with what was entered, until the next Start. */
@@ -61,6 +64,7 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
   // may be for a role no row shows, which setByRole leaves out. A Map, since a role key such as `constructor` names a
   // member every object has.
   const [choices, setChoices] = useState<Map<string, RoleChoice>>(new Map());
+  const [permissionMode, setPermissionMode] = useState(DEFAULT_PERMISSION_MODE);
   const [noPr, setNoPr] = useState(false);
   const [worktree, setWorktree] = useState(true);
   // True from Start until the server answers: the form can then be neither changed, sent again nor closed.
@@ -156,6 +160,7 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
       model: model.trim() || undefined,
       role_agents: setByRole(choices, roles, "agent"),
       role_models: setByRole(choices, roles, "model"),
+      permission_mode: permissionMode,
       no_pr: noPr,
       worktree,
     };
@@ -240,6 +245,20 @@ export function RunForm({ api, project, onStarted, onClose }: Props) {
                 </div>
               );
             })}
+            <label>
+              Permission mode
+              <select value={permissionMode} onChange={(e) => setPermissionMode(e.target.value)}>
+                {/* Until /workflows answers, and when it failed, the one mode every server takes. */}
+                {(options?.permission_modes ?? [DEFAULT_PERMISSION_MODE]).map((mode) => {
+                  const note = MODE_NOTES.get(mode);
+                  return (
+                    <option key={mode} value={mode}>
+                      {note ? `${mode}: ${note}` : mode}
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
             <label className="check">
               <input type="checkbox" checked={noPr} onChange={(e) => setNoPr(e.target.checked)} />
               No pull request

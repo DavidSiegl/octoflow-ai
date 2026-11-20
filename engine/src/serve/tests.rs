@@ -1059,7 +1059,7 @@ fn a_run_that_saves_its_state_is_answered_with_its_id_and_runs_its_own_program_i
     }));
     let body = r#"{"task": "--add a rate limiter", "workflow": "quick", "agent": "codex", "model": "-m",
                    "role_agents": {"review": "pi", "build": "claude"}, "role_models": {"review": "o3"},
-                   "no_pr": true, "worktree": true}"#;
+                   "permission_mode": "default", "no_pr": true, "worktree": true}"#;
     let reply = served.post(&Served::query("/run", &[("machine", "box")]), body);
     assert_eq!(reply.status, Some(201), "{}", reply.body);
     let id = reply.json()["run"].as_str().expect("the run's id").to_string();
@@ -1079,6 +1079,7 @@ fn a_run_that_saves_its_state_is_answered_with_its_id_and_runs_its_own_program_i
         "--workflow=quick",
         "--agent=codex",
         "--model=-m",
+        "--permission-mode=default",
         "--role-agent=review=pi",
         "--role-agent=build=claude",
         "--role-model=review=o3",
@@ -1665,6 +1666,7 @@ fn workflows_are_the_configuration_s_with_their_roles_and_the_harnesses() {
     assert_eq!(reply.status, Some(200), "{}", reply.body);
     let answer = reply.json();
     assert_eq!(answer["agents"], serde_json::json!(crate::constants::HARNESS_NAMES));
+    assert_eq!(answer["permission_modes"], serde_json::json!(["default", "acceptEdits", "plan", "bypassPermissions"]));
     let workflows = answer["workflows"].as_array().unwrap();
     let names: Vec<&str> = workflows.iter().map(|w| w["name"].as_str().unwrap()).collect();
     let mut expected: Vec<&str> = crate::workflow_file::WORKFLOWS.iter().copied().chain(["broken", "solo"]).collect();

@@ -168,12 +168,16 @@ export interface OfferedRole {
  * has none. */
 export type OfferedWorkflow = { name: string; description: string; roles: OfferedRole[] } | { name: string; error: string };
 
-/** What a run can be started with: the workflows, in the order `octoflow workflows` lists them, and the
- * harnesses an agent can run in. */
+/** What a run can be started with: the workflows, in the order `octoflow workflows` lists them, the
+ * harnesses an agent can run in, and the permission modes, by Claude Code's names, a run can give every role. */
 export interface RunOptions {
   workflows: OfferedWorkflow[];
   agents: string[];
+  permission_modes: string[];
 }
+
+/** The permission mode the run form picks until the user picks another: every harness asks before it runs a command. */
+export const DEFAULT_PERMISSION_MODE = "default";
 
 /** A run to start, as POST /run takes it, each field the `run` flag or argument of its name. A field left out is
  * left to `run`, as a flag not given is: workflow `default`, and the workflow's agents and models. role_agents and
@@ -185,6 +189,8 @@ export interface RunRequest {
   model?: string;
   role_agents?: Record<string, string>;
   role_models?: Record<string, string>;
+  /** One of RunOptions.permission_modes; left out, each harness starts in its own default. */
+  permission_mode?: string;
   no_pr: boolean;
   worktree: boolean;
 }

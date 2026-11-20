@@ -73,6 +73,8 @@ pub struct RunRequest {
     pub role_agents: Vec<(String, String)>,
     /// Each --role-model, (role, model), in the body's order.
     pub role_models: Vec<(String, String)>,
+    /// --permission-mode, one of PERMISSION_MODES.
+    pub permission_mode: Option<String>,
     /// --no-pr.
     pub no_pr: bool,
     /// --worktree.
@@ -80,16 +82,23 @@ pub struct RunRequest {
 }
 
 /// The body's fields, as the doc comment of RunRequest::parse gives them.
-const FIELDS: [&str; 8] = ["task", "workflow", "agent", "model", "role_agents", "role_models", "no_pr", "worktree"];
+const FIELDS: [&str; 9] =
+    ["task", "workflow", "agent", "model", "role_agents", "role_models", "permission_mode", "no_pr", "worktree"];
+
+/// The permission modes a run started from serve may ask for, by Claude Code's names as `run --permission-mode`
+/// takes them, in the order the app offers them. `run` itself takes any name; serve takes only these four, the ones
+/// harness.rs maps to each harness's own flags (harness::Permissions).
+pub const PERMISSION_MODES: [&str; 4] = ["default", "acceptEdits", "plan", "bypassPermissions"];
 
 impl RunRequest {
     /// The run body asks for: a JSON object with "task", a string that is not empty, and any of "workflow", "agent"
     /// and "model", each a string that is not empty, "agent" a harness kind; "role_agents" and "role_models", each an
-    /// object of role to harness kind or to model, each role and model not empty and a role without `=`; and "no_pr"
-    /// and "worktree", each a boolean; null for any of them but "task" is leaving it out. Errors: why the body is not
-    /// so, in words a client can show, naming the first field that is wrong in FIELDS' order; for a kind that is not a
-    /// harness, the refusal of crate::harness::harness, as the CLI's --agent gives it, after the field and the role for
-    /// one of role_agents (`role_agents build: agent vim is not a harness …`).
+    /// object of role to harness kind or to model, each role and model not empty and a role without `=`;
+    /// "permission_mode", one of PERMISSION_MODES; and "no_pr" and "worktree", each a boolean; null for any of them
+    /// but "task" is leaving it out. Errors: why the body is not so, in words a client can show, naming the first
+    /// field that is wrong in FIELDS' order; for a kind that is not a harness, the refusal of crate::harness::harness,
+    /// as the CLI's --agent gives it, after the field and the role for one of role_agents (`role_agents build: agent
+    /// vim is not a harness …`).
     pub fn parse(body: &[u8]) -> Result<RunRequest, String> {
         let Some(fields) = super::json_object(body) else { return Err("the body must be a JSON object".to_string()) };
         if let Some(unknown) = fields.keys().find(|k| !FIELDS.contains(&k.as_str())) {
@@ -122,13 +131,20 @@ impl RunRequest {
         for (role, kind) in &role_agents {
             harness(kind).map_err(|e| format!("role_agents {role}: {}", e.0))?;
         }
+        let role_models = by_role(given("role_models"), "role_models")?;
+        let permission_mode = match given("permission_mode") {
+            None => None,
+            Some(Value::String(mode)) if PERMISSION_MODES.contains(&mode.as_str()) => Some(mode.clone()),
+            Some(_) => return Err(format!("permission_mode must be one of {}", PERMISSION_MODES.join(", "))),
+        };
         Ok(RunRequest {
             task,
             workflow,
             agent,
             model,
             role_agents,
-            role_models: by_role(given("role_models"), "role_models")?,
+            role_models,
+            permission_mode,
             no_pr: flag("no_pr")?,
             worktree: flag("worktree")?,
         })
@@ -140,7 +156,12 @@ impl RunRequest {
     pub fn argv(&self, program: &str, run_id: &str, target: &[String]) -> Vec<String> {
         let mut argv = vec![program.to_string(), "run".to_string(), format!("--run-id={run_id}")];
         argv.extend(target.iter().cloned());
-        let flags = [("workflow", &self.workflow), ("agent", &self.agent), ("model", &self.model)];
+        let flags = [
+            ("workflow", &self.workflow),
+            ("agent", &self.agent),
+            ("model", &self.model),
+            ("permission-mode", &self.permission_mode),
+        ];
         for (name, given) in flags {
             argv.extend(given.as_ref().map(|setting| format!("--{name}={setting}")));
         }
@@ -156,13 +177,13 @@ impl RunRequest {
     }
 }
 
-/// What GET /workflows answers: {"workflows", "agents"}. workflows is each workflow `run --workflow` offers from
-/// config (workflow_names), in that order, as {"name", "description", "roles"}, roles being each of its roles in pane
-/// order as {"role", "label", "agent", "model"}: the harness the role runs in unless the run names another, its
-/// workflow's or DEFAULT_HARNESS, and its workflow's model, null for the harness's own; one that does not load, as a
-/// workflow file may not, is {"name", "error"} instead, its error as `run --workflow` would give it
-/// (named_workflow). agents is HARNESS_NAMES. The workflows are worded by the built-in prompts, which change no role,
-/// harness or model. Errors: the workflows directory cannot be listed.
+/// What GET /workflows answers: {"workflows", "agents", "permission_modes"}. workflows is each workflow
+/// `run --workflow` offers from config (workflow_names), in that order, as {"name", "description", "roles"}, roles
+/// being each of its roles in pane order as {"role", "label", "agent", "model"}: the harness the role runs in unless
+/// the run names another, its workflow's or DEFAULT_HARNESS, and its workflow's model, null for the harness's own; one
+/// that does not load, as a workflow file may not, is {"name", "error"} instead, its error as `run --workflow` would
+/// give it (named_workflow). agents is HARNESS_NAMES, permission_modes PERMISSION_MODES. The workflows are worded by
+/// the built-in prompts, which change no role, harness or model. Errors: the workflows directory cannot be listed.
 pub fn offered_workflows(config: &ConfigDir) -> Result<Value, OrchestratorError> {
     let built_in = Prompts::default();
     let mut workflows = vec![];
@@ -173,7 +194,7 @@ pub fn offered_workflows(config: &ConfigDir) -> Result<Value, OrchestratorError>
         };
         workflows.push(entry);
     }
-    Ok(json!({"workflows": workflows, "agents": HARNESS_NAMES}))
+    Ok(json!({"workflows": workflows, "agents": HARNESS_NAMES, "permission_modes": PERMISSION_MODES}))
 }
 
 /// pipeline's roles, as offered_workflows gives them.
