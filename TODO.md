@@ -42,6 +42,15 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **App runs on opencode under `default` will run bash unasked.** opencode gets no ask-before-commands rule
+  (docs/design.md, Harnesses: the user's ruling of 2026-11-20 closed opencode-ask-bash ticket 01 as wontfix). Ticket
+  12 of `.scratch/herdr-gui-decoupling` waited on that ticket so that no ACP opencode agent under `default` would run
+  bash unasked. It needs another answer before the switch turns on: let opencode run as its own config says, or
+  refuse opencode on app runs under `default` and `acceptEdits`, as the app refuses pi. The comment on
+  opencode's `HARNESSES` row in `engine/src/harness.rs` still says its modes wait on ticket 01. Reword it with the
+  next engine change. It is left as it is now because any change under `engine/src` must raise the version, and open
+  PR #563 already raises it.
+
 - **herdr's words and fields still reach past the `Agents`/`RunPlaces` seam.** `Workflow::wait_out_block`
   (`engine/src/workflow/turn.rs`) logs "answer in the pane" and "typed in its pane; answer there", and
   `Plan::summary` (`engine/src/cli/close.rs`) records "workspace closed" / "workspace already gone", whatever backend
