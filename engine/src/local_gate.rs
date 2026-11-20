@@ -29,14 +29,16 @@ pub const BUILT_IN_PIN: &str = pin_line(include_str!("../../ci/gate.pin"));
 const _: () = assert!(!BUILT_IN_PIN.is_empty(), "ci/gate.pin has no `<version> <sha256>` line");
 
 /// Where a pin's release is downloaded from: the GitHub release `v<version>` of octoflow-gate, with {v} the version.
-const RELEASE_URL: &str = "https://github.com/DavidSiegl/octoflow-gate/releases/download/v{v}/octoflow-gate-{v}.tar.gz";
+/// Public for xtask's raise-gate-pin, whose tests check that it downloads from the same address.
+pub const RELEASE_URL: &str =
+    "https://github.com/DavidSiegl/octoflow-gate/releases/download/v{v}/octoflow-gate-{v}.tar.gz";
 
 /// The pin file, relative to the top level of the judged repository.
 const PIN_PATH: &str = "ci/gate.pin";
 
 /// The first octoflow-gate release, as (major, minor), that ships `gate`; the ones before ship gate.py, which this
-/// engine no longer runs.
-const FIRST_WITH_GATE: (u64, u64) = (0, 7);
+/// engine no longer runs. Public for xtask's raise-gate-pin, whose tests check that it refuses the same releases.
+pub const FIRST_WITH_GATE: (u64, u64) = (0, 7);
 
 /// What the preflight needs: a machine the release's gate is built for (the module's comment), the job's fetch
 /// (curl, tar, and sha256sum or shasum) and LAUNCH's setsid on PATH, an env that restores a signal's default as
