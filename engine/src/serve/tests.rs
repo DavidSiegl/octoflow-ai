@@ -2256,3 +2256,12 @@ fn a_request_names_its_target_flags() {
     assert_eq!(target_args("box", "/p"), ["--machine", "box", "--cwd", "/p"]);
     assert_eq!(target_args("", ""), Vec::<String>::new());
 }
+
+#[test]
+fn only_acp_puts_the_apps_runs_on_acp() {
+    use std::ffi::OsStr;
+    assert_eq!(app_backend(Some(OsStr::new("acp"))), Backend::Acp);
+    for other in [None, Some(OsStr::new("herdr")), Some(OsStr::new("ACP")), Some(OsStr::new(""))] {
+        assert_eq!(app_backend(other), Backend::Herdr, "{other:?}");
+    }
+}

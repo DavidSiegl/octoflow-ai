@@ -198,11 +198,7 @@ pub fn check_setup(
     });
     let mut integrations = IntegrationStatus::new(agents);
     for Harness { kind, integration, .. } in HARNESSES {
-        let (level, note) = if kind == DEFAULT_HARNESS {
-            (Level::Required, String::new())
-        } else {
-            (Level::Optional, format!("needed only for a role that runs in {kind}"))
-        };
+        let (level, note) = harness_level(kind);
         let fix = format!("install the {kind} CLI where the agents run");
         check(&mut checks, &format!("{kind} CLI"), level, &fix, on_machine.as_ref(), &note, &mut || {
             on_path(agents, kind)
@@ -212,14 +208,75 @@ pub fn check_setup(
             integrations.current(integration)
         });
     }
+    check_tools(&mut checks, agents, on_machine.as_ref(), cwd);
+    checks
+}
+
+/// check_setup for the desktop app's runs over ACP (crate::acp), which run on this machine and need no herdr: for each
+/// harness, at the level check_setup gives its CLI, that its command is on host's PATH and answers `initialize`, as
+/// answers says, given the harness (crate::acp::probe is the real one; a harness the app cannot run yet is answered as
+/// not); then git, gh, gitleaks, with cwd the project's checkout and origin, and the local quality gate, as
+/// check_setup checks them. Makes no error, as check_setup; it changes nothing itself, but answers may start
+/// each agent, which may write its own state.
+pub fn check_acp_setup(
+    host: &ProcessHost,
+    cwd: Option<&str>,
+    answers: &dyn Fn(&'static Harness) -> Result<String, OrchestratorError>,
+) -> Vec<Check> {
+    let mut checks: Vec<Check> = Vec::new();
+    for h in &HARNESSES {
+        let (level, note) = harness_level(h.kind);
+        // Installing the CLI of a harness the app cannot run yet would not make its check pass.
+        let fix = match h.acp_launch("default", None, None) {
+            Some(_) => format!("install the {} CLI", h.kind),
+            None => unrunnable_fix(h),
+        };
+        check(&mut checks, &format!("{} over ACP", h.kind), level, &fix, None, &note, &mut || {
+            let path = on_path(host, h.kind)?;
+            let answer = answers(h).map_err(|e| Unmet::with_fix(e.0, &unrunnable_fix(h)))?;
+            Ok(format!("{path}: {answer}"))
+        });
+    }
+    check_tools(&mut checks, host, None, cwd);
+    checks
+}
+
+/// The level of the checks of harness kind's CLI, and the note a failed one gets: Required for DEFAULT_HARNESS, which
+/// a role runs in unless the workflow names another, and Optional for any other, which only some roles run in.
+fn harness_level(kind: &str) -> (Level, String) {
+    if kind == DEFAULT_HARNESS {
+        (Level::Required, String::new())
+    } else {
+        (Level::Optional, format!("needed only for a role that runs in {kind}"))
+    }
+}
+
+/// The fix of a harness h that does not answer over ACP: for one without an ACP launch, which the app cannot run yet,
+/// what stands in for its install, whether its CLI is installed or not; for the others, whose CLI is installed, to
+/// make it answer.
+fn unrunnable_fix(h: &Harness) -> String {
+    match (h.acp_launch("default", None, None), h.kind == DEFAULT_HARNESS) {
+        // claude speaks ACP only through its adapter, whose install the app is to offer (herdr-gui-decoupling 07).
+        (None, true) => format!("needs install: the app does not install {}'s ACP adapter yet", h.kind),
+        (None, false) => format!("run its roles in another harness: the app does not run {} yet", h.kind),
+        (Some(how), _) => {
+            format!("update the {} CLI, or check that `{} {}` starts", h.kind, how.program, how.args.join(" "))
+        }
+    }
+}
+
+/// Add to checks the Checks every run needs whatever runs its agents, made on agents, the host they run on, each
+/// skipped when on_machine, the Check of reaching that host, is given and not ok: git, gh, gitleaks, with cwd the
+/// project's checkout and its origin, and the local quality gate, with the release that judges the project.
+fn check_tools(checks: &mut Vec<Check>, agents: &ProcessHost, on_machine: Option<&Check>, cwd: Option<&str>) {
     let fix = format!("install git {} or later", dotted(&GIT_MIN_VERSION));
-    let git = check(&mut checks, "git", Level::Required, &fix, on_machine.as_ref(), "", &mut || {
+    let git = check(checks, "git", Level::Required, &fix, on_machine, "", &mut || {
         tool_version(agents, "git", &GIT_MIN_VERSION)
     });
     let fix = "install gh (https://cli.github.com)";
-    check(&mut checks, "gh", Level::NeededForPr, fix, on_machine.as_ref(), "", &mut || gh_logged_in(agents));
+    check(checks, "gh", Level::NeededForPr, fix, on_machine, "", &mut || gh_logged_in(agents));
     let level = Level::NeededForPr;
-    let gitleaks = check(&mut checks, "gitleaks", level, GITLEAKS_INSTALL, on_machine.as_ref(), "", &mut || {
+    let gitleaks = check(checks, "gitleaks", level, GITLEAKS_INSTALL, on_machine, "", &mut || {
         agents.gitleaks_problem().map_or_else(|| Ok("`gitleaks git` runs".to_string()), |p| Err(Unmet::new(p)))
     });
     // The project's checkout's Check, when cwd is given.
@@ -227,9 +284,9 @@ pub fn check_setup(
     if let Some(cwd) = cwd {
         let fix = "choose a git checkout as the project (--cwd), or make one with git clone or git init";
         let checkout =
-            check(&mut checks, "git checkout", Level::NeededForPr, fix, Some(&git), "", &mut || top_level(agents, cwd));
+            check(checks, "git checkout", Level::NeededForPr, fix, Some(&git), "", &mut || top_level(agents, cwd));
         let fix = format!("git remote add {REMOTE} <url>");
-        check(&mut checks, "origin", Level::NeededForPr, &fix, Some(&checkout), "", &mut || {
+        check(checks, "origin", Level::NeededForPr, &fix, Some(&checkout), "", &mut || {
             Ok(agents.git(&checkout.detail, &["remote", "get-url", REMOTE])?.trim().to_string())
         });
         top = Some(checkout);
@@ -241,7 +298,7 @@ pub fn check_setup(
     // given, or not a checkout, does not skip it.
     let fix = "install or fix what it names where the agents run (docs/quality-gate.md, \"The local gate\")";
     let note = "needed only for --quality-gate local";
-    check(&mut checks, "local quality gate", Level::Optional, fix, on_machine.as_ref(), note, &mut || {
+    check(checks, "local quality gate", Level::Optional, fix, on_machine, note, &mut || {
         let judged = judging_release(agents, top.as_ref().filter(|c| c.ok).map(|c| c.detail.as_str()))?;
         if !gitleaks.ok {
             let detail = format!("{}, and the gate scans each snapshot for secrets with it; {judged}", gitleaks.detail);
@@ -250,7 +307,6 @@ pub fn check_setup(
         local_gate::preflight(agents).map_err(|e| Unmet::new(format!("{}; {judged}", e.0)))?;
         Ok(format!("gitleaks, and all the gate's preflight asks for, are ready; {judged}"))
     });
-    checks
 }
 
 /// Which octoflow-gate release judges the runs of the project whose checkout's top level is top on host, as the

@@ -1181,3 +1181,95 @@ fn a_version_number_is_the_first_run_of_dotted_digits() {
         assert_eq!(version_number(text), want, "{text}");
     }
 }
+
+/// check_acp_setup's checks on tools, by name, with their order, each harness answered as answers says; the harnesses
+/// answers was asked about, in order.
+fn acp_setup(
+    tools: &FakeTools,
+    answers: impl Fn(&str) -> Result<String, OrchestratorError>,
+) -> (BTreeMap<String, Check>, Vec<String>, Vec<String>) {
+    let asked = RefCell::new(vec![]);
+    let answer = |h: &'static Harness| {
+        asked.borrow_mut().push(h.kind.to_string());
+        answers(h.kind)
+    };
+    let checks = check_acp_setup(&tools.host(&[]), Some("/proj"), &answer);
+    let order = checks.iter().map(|c| c.name.clone()).collect();
+    (checks.into_iter().map(|c| (c.name.clone(), c)).collect(), order, asked.into_inner())
+}
+
+/// What the ACP harnesses answer `initialize` with, and why the others cannot answer, as crate::acp::probe says.
+fn acp_answers(kind: &str) -> Result<String, OrchestratorError> {
+    match kind {
+        "agy" | "opencode" => Ok(format!("{kind} 1.0")),
+        _ => Err(OrchestratorError(format!("{kind} has no ACP launch"))),
+    }
+}
+
+#[test]
+fn the_app_s_acp_setup_checks_each_harness_over_acp_and_nothing_of_herdr() {
+    let tools = FakeTools::new();
+    let (checks, order, asked) = acp_setup(&tools, acp_answers);
+
+    let mut want: Vec<String> = HARNESS_NAMES.iter().map(|kind| format!("{kind} over ACP")).collect();
+    want.extend(["git", "gh", "gitleaks", "git checkout", "origin", "local quality gate"].map(String::from));
+    assert_eq!(order, want);
+    assert_eq!(asked, HARNESS_NAMES);
+    assert_eq!(checks["agy over ACP"], check_of("agy over ACP", Level::Optional, true, "/usr/bin/agy: agy 1.0", ""));
+    assert!(checks["opencode over ACP"].ok);
+    let needs_install = "needs install: the app does not install claude's ACP adapter yet";
+    assert_eq!(
+        checks["claude over ACP"],
+        check_of("claude over ACP", Level::Required, false, "claude has no ACP launch", needs_install)
+    );
+    let codex = check_of(
+        "codex over ACP",
+        Level::Optional,
+        false,
+        "codex has no ACP launch; needed only for a role that runs in codex",
+        "run its roles in another harness: the app does not run codex yet",
+    );
+    assert_eq!(checks["codex over ACP"], codex);
+    assert!(checks["origin"].ok && checks["git"].ok, "{checks:?}");
+    let herdr_calls = tools.tools().calls.iter().filter(|(_, argv)| argv.iter().any(|a| a == "herdr")).count();
+    assert_eq!(herdr_calls, 0, "{:?}", tools.tools().calls);
+}
+
+#[test]
+fn a_harness_off_path_is_missing_without_being_started_and_one_that_does_not_answer_is_told_how_to_check_it() {
+    let tools = FakeTools::new();
+    tools.remove("agy");
+    tools.remove("claude");
+    let silent = |kind: &str| match kind {
+        "opencode" => Err(OrchestratorError::new("opencode initialize: no answer within 30s")),
+        kind => acp_answers(kind),
+    };
+    let (checks, _, asked) = acp_setup(&tools, silent);
+
+    let off_path = check_of(
+        "agy over ACP",
+        Level::Optional,
+        false,
+        "agy is not on PATH; needed only for a role that runs in agy",
+        "install the agy CLI",
+    );
+    assert_eq!(checks["agy over ACP"], off_path);
+    assert!(!asked.contains(&"agy".to_string()), "{asked:?}");
+    // Its CLI installed, claude would still fail, so the fix is what the app lacks.
+    let claude = check_of(
+        "claude over ACP",
+        Level::Required,
+        false,
+        "claude is not on PATH",
+        "needs install: the app does not install claude's ACP adapter yet",
+    );
+    assert_eq!(checks["claude over ACP"], claude);
+    let silent = check_of(
+        "opencode over ACP",
+        Level::Optional,
+        false,
+        "opencode initialize: no answer within 30s; needed only for a role that runs in opencode",
+        "update the opencode CLI, or check that `opencode acp` starts",
+    );
+    assert_eq!(checks["opencode over ACP"], silent);
+}

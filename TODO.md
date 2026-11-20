@@ -53,6 +53,13 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   app over to ACP. serve
   reading `herdr_server` (`engine/src/serve/runs.rs`) is by design: its `AgentConsole` stays herdr's own.
 
+- **The app's setup marker does not say which backend's checks passed.** Raised by cross-review 258 (F6): herdr's
+  and ACP's checks share one marker (`Setup::of`, `engine/src/serve/setup.rs`, `setup_checked_path`). A marker
+  written after herdr's checks passed keeps the dialog shut once the app runs over ACP, where claude's Required check
+  can fail. Nobody meets it while `OCTOFLOW_APP_BACKEND` stays a developer setting. Closes before ticket 12 of
+  `.scratch/herdr-gui-decoupling` puts every app run on ACP: either the marker names its backend, or that release
+  clears it.
+
 - **An ACP turn's usage is lost when its prompt is still pending at count time or at a kill.** Raised by
   cross-review 257 (F7): `acp-usage.jsonl` gets a prompt's line only when the agent answers its `session/prompt`
   (`engine/src/acp/connection.rs`, `replied`), which can come after the handoff file that ends the turn; nothing

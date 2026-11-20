@@ -10,8 +10,9 @@ use crate::host::tests::{assert_scrubbed, environment, put, read, tool, with_pat
 use crate::test_support::{ended, eventually, TempDir};
 
 /// The fake ACP agent. It writes its environment to `env` beside it, and appends to `log` beside it its argv
-/// (`argv …`) and each message it gets (`<method> <line>`; a reply to its own request as ` <line>`). It answers `initialize` with the
-/// agentCapabilities in `caps.json` beside it (`{}` without one), and `session/new`, `session/load` and
+/// (`argv …`) and each message it gets (`<method> <line>`; a reply to its own request as ` <line>`). It answers
+/// `initialize` with the agentCapabilities in `caps.json` beside it (`{}` without one) and the result fields in
+/// `info.json` (after a comma; none without one), or not at all where `mute` is beside it; and `session/new`, `session/load` and
 /// `session/resume` with session `s-1` plus the result fields in `opened.json` (each after a comma; none without
 /// one); `session/load` and `session/resume` with an error where `refuse` is beside it. A prompt's text decides its
 /// answer: ASK asks a permission (request 900) and answers end_turn once it is given, READ asks to read a file
@@ -26,6 +27,7 @@ echo "argv $*" >> "$log"
 env > "$here/env"
 caps=$(cat "$here/caps.json" 2>/dev/null || echo '{}')
 opened=$(cat "$here/opened.json" 2>/dev/null)
+info=$(cat "$here/info.json" 2>/dev/null)
 reply() { printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$1" "$2"; }
 refuse() { printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"%s"}}\n' "$1" "$2"; }
 # Read messages until the reply to this agent's request $1.
@@ -40,7 +42,7 @@ while IFS= read -r line; do
   method=$(printf '%s' "$line" | sed -n 's/^{[^{]*"method":"\([^"]*\)".*/\1/p')
   echo "$method $line" >> "$log"
   case "$method" in
-  initialize) reply "$id" "{\"protocolVersion\":1,\"agentCapabilities\":$caps}" ;;
+  initialize) [ -e "$here/mute" ] || reply "$id" "{\"protocolVersion\":1,\"agentCapabilities\":$caps$info}" ;;
   session/new) reply "$id" "{\"sessionId\":\"s-1\"$opened}" ;;
   session/load|session/resume)
     if [ -e "$here/refuse" ]; then refuse "$id" "no such session"; else reply "$id" "{\"x\":0$opened}"; fi ;;
@@ -590,4 +592,79 @@ fn a_usage_without_input_or_output_tokens_is_not_recorded_and_one_without_cache_
     let usage = session_usage(&read(&usage_file(&f.run)), "s-1");
     let tokens: Vec<Tokens> = usage.into_iter().map(|u| u.tokens).collect();
     assert_eq!(tokens, [Tokens { input: 1, output: 2, cache_read: 0, cache_write: 0 }]);
+}
+
+/// probe of harness kind's fake agent, in the fixture's environment, given timeout and stopping.
+fn probed(f: &Fixture, kind: &str, timeout: Duration, stopping: &Interrupt) -> Result<String, OrchestratorError> {
+    let env = environment(Some(&f.bin()), &with_pathspec_switches());
+    probe(harness(kind).unwrap(), &env, &f.tmp.join("project"), timeout, stopping)
+}
+
+#[test]
+fn a_probe_reports_what_the_agent_says_of_itself() {
+    let f = Fixture::new();
+    std::fs::create_dir_all(f.tmp.join("project")).expect("the project");
+    let long = Duration::from_secs(30);
+
+    let unnamed = probed(&f, "opencode", long, &Interrupt::new()).expect("an answer");
+    f.put("info.json", r#","agentInfo":{"name":"agy","version":"1.5.11"}"#);
+    let named = probed(&f, "agy", long, &Interrupt::new()).expect("an answer");
+    let refused = probed(&f, "claude", long, &Interrupt::new()).expect_err("claude has no ACP launch");
+
+    assert_eq!((unnamed.as_str(), named.as_str()), ("answers over ACP", "agy 1.5.11"));
+    assert_eq!(f.methods(), ["initialize", "initialize"]);
+    assert!(f.log().contains("argv acp\n"), "{}", f.log());
+    assert_eq!(refused.0, "claude has no ACP launch");
+}
+
+#[test]
+fn a_probe_fails_for_an_agent_that_is_missing_exits_or_does_not_answer_and_stops_when_interrupted() {
+    let f = Fixture::new();
+    std::fs::create_dir_all(f.tmp.join("project")).expect("the project");
+    f.put("mute", "");
+
+    let silent = probed(&f, "agy", Duration::from_secs(1), &Interrupt::new()).expect_err("no answer");
+    let stopping = Interrupt::new();
+    let raiser = stopping.clone();
+    let raise = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(200));
+        raiser.raise();
+    });
+    let started = std::time::Instant::now();
+    let interrupted = probed(&f, "agy", Duration::from_secs(30), &stopping).expect_err("interrupted");
+    raise.join().unwrap();
+    tool(&f.bin(), "opencode", "#!/bin/sh\nexit 0\n");
+    let exited = probed(&f, "opencode", Duration::from_secs(30), &Interrupt::new()).expect_err("exited");
+    // The bin directory alone on PATH, so that no agy installed on this machine is found.
+    let only_bin = [(OsString::from("PATH"), OsString::from(f.bin()))];
+    std::fs::remove_file(format!("{}/agy", f.bin())).expect("agy removed");
+    let missing =
+        probe(harness("agy").unwrap(), &only_bin, &f.tmp.join("project"), Duration::from_secs(30), &Interrupt::new())
+            .expect_err("missing");
+
+    assert_eq!(silent.0, "agy initialize: no answer within 1s");
+    assert_eq!(interrupted.0, "interrupted");
+    assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
+    assert_eq!(exited.0, "opencode initialize: it exited");
+    assert!(missing.0.starts_with("cannot start agy: "), "{}", missing.0);
+}
+
+#[test]
+fn a_request_of_an_agent_that_has_exited_fails_as_exited_also_when_it_cannot_be_written_to() {
+    let tmp = TempDir::new();
+    let connection = Connection::spawn(
+        "/bin/sh",
+        &["-c".to_string(), "exit 0".to_string()],
+        std::iter::empty(),
+        &tmp.path(),
+        "/dev/null",
+        "/dev/null".into(),
+    )
+    .expect("sh starts");
+    // Gone before the request is written, so the write meets a closed pipe.
+    assert!(eventually(|| connection.activity().is_none()), "sh exited");
+
+    let failure = connection.request("initialize", json!({}), Duration::from_secs(5)).expect_err("no answer");
+
+    assert!(matches!(failure, Failure::Exited), "{failure:?}");
 }
