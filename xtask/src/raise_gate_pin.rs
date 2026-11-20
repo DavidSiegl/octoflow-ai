@@ -282,7 +282,8 @@ fn release_sha256(version: Version) -> Result<String, Error> {
 
 /// The address of version's release tarball, which the engine's RELEASE_URL gives too (tests.rs's
 /// a_release_is_downloaded_from_where_the_engine_downloads_it checks that); the raise reads only the `.sha256` asset
-/// next to it. ci/fetch-gate.sh, which downloads the tarball, keeps its own copy of the address, which no test checks.
+/// next to it. ci/fetch-gate.sh, which downloads the tarball, keeps its own copy of the address;
+/// xtask/tests/fetch_gate.rs checks that copy against a literal, but no test ties it to the engine's.
 fn release_url(version: Version) -> String {
     format!("https://github.com/{GATE_REPO}/releases/download/v{version}/octoflow-gate-{version}.tar.gz")
 }
@@ -334,8 +335,9 @@ fn replace_golden(dir: &Path, golden: &[(String, Vec<u8>)]) -> Result<(), Error>
 
 /// The version and sha256 of pin's first line that is not a comment. For a well-formed pin this is the engine's
 /// parse_pin's reading, as tests.rs's a_pin_reads_as_the_engine_reads_it checks; on a malformed one they differ:
-/// pin_of takes a `v` prefix and any text as the sha, which parse_pin and ci/fetch-gate.sh refuse, and refuses a
-/// pre-release, which parse_pin takes.
+/// pin_of takes any text as the sha, which parse_pin and ci/fetch-gate.sh refuse, and a `v` prefix, which parse_pin
+/// refuses and ci/fetch-gate.sh passes on to a download address that does not exist; and it refuses a pre-release,
+/// which parse_pin takes.
 fn pin_of(pin: &str) -> Option<(Version, &str)> {
     let (version, sha) = pin.lines().find(|l| !l.starts_with('#'))?.split_once(' ')?;
     Some((Version::parse(version)?, sha))

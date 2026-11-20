@@ -48,8 +48,9 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   the run's files once they settled, lists them again only at the record's next change (`RunWatch::poll`). A failed
   run's release saves again after its summary (todo/70); would close when this ending does the same.
 - **raise-gate-pin's pin_of reads a malformed ci/gate.pin otherwise than the engine.** `pin_of`
-  (`xtask/src/raise_gate_pin.rs`) takes `v0.9.2 <sha>` or a sha that is not 64 hex digits, which the engine's
-  `parse_pin` and `ci/fetch-gate.sh` refuse, and refuses a pre-release such as `1.0.0-rc1`, which `parse_pin` takes;
+  (`xtask/src/raise_gate_pin.rs`) takes a sha that is not 64 hex digits, which the engine's `parse_pin` and
+  `ci/fetch-gate.sh` refuse, and `v0.9.2 <sha>`, which `parse_pin` refuses and `ci/fetch-gate.sh` passes on to a
+  download address that does not exist; and it refuses a pre-release such as `1.0.0-rc1`, which `parse_pin` takes;
   the test holding the two together (`a_pin_reads_as_the_engine_reads_it`) feeds only well-formed pins. Raised
   by cross-review 256 (F1). Closes with pin_of calling the engine's reading, or the test feeding the diverging cases
   and the two agreeing on them.
