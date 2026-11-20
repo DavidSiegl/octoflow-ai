@@ -10,6 +10,7 @@ use crate::herdr::{
     AgentAddress, AgentConsole, HerdrError, HerdrServer, Launched, Launcher, Workspaces, PANE_SHELL_SCRIPT,
 };
 use crate::host::{Exec, ExecError, Host, RunFile, RunFileText};
+use crate::pipeline::{METRICS_FILE, SUMMARY_FILE};
 use crate::serve::{Launch, Reached};
 use crate::state::SavedRun;
 
@@ -76,8 +77,9 @@ impl ServeHost {
         self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// The runs under the project at cwd as run_states_inside reads them, only the one named only when given; fails
-    /// with run_states_inside_error while it is set.
+    /// The runs under the project at cwd as run_states_inside reads them, only the one named only when given, each
+    /// lacking an ending file when `files` has no summary.md or metrics.json in its directory; fails with
+    /// run_states_inside_error while it is set.
     fn runs_inside(&self, cwd: &str, only: Option<&str>) -> Result<Vec<SavedRun>, OrchestratorError> {
         let s = self.state();
         if let Some(e) = &s.run_states_inside_error {
@@ -92,7 +94,10 @@ impl ServeHost {
             if only.is_some_and(|only| only != dir) {
                 continue;
             }
-            let run = SavedRun::read(s.ages.get(dir).copied().unwrap_or(0), &format!("{runs}{dir}"), text.as_bytes());
+            let path = format!("{runs}{dir}");
+            let lacks = [SUMMARY_FILE, METRICS_FILE].iter().any(|f| !s.files.contains_key(&format!("{path}/{f}")));
+            let run = SavedRun::read(s.ages.get(dir).copied().unwrap_or(0), &path, text.as_bytes())
+                .lacking_ending_file(lacks);
             if run.shown().run_id == dir {
                 states.push(run);
             }

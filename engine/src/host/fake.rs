@@ -14,6 +14,7 @@ use super::{
 use crate::constants::WORKTREES_DIR;
 use crate::error::OrchestratorError;
 use crate::host::tests::FAKE_TOKEN;
+use crate::pipeline::{METRICS_FILE, SUMMARY_FILE};
 use crate::quality::Leak;
 use crate::state::SavedRun;
 use serde_json::Value;
@@ -1061,7 +1062,9 @@ impl Host for FakeHost {
             };
             if name == "state.json" {
                 let age = s.ages.get(run_id).copied().unwrap_or(0);
-                states.push(SavedRun::read(age, &format!("{runs}{run_id}"), text.as_bytes()));
+                let dir = format!("{runs}{run_id}");
+                let lacks = [SUMMARY_FILE, METRICS_FILE].iter().any(|f| !s.files.contains_key(&format!("{dir}/{f}")));
+                states.push(SavedRun::read(age, &dir, text.as_bytes()).lacking_ending_file(lacks));
             }
         }
         Ok(states)

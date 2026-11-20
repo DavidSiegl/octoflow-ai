@@ -539,32 +539,51 @@ fn a_run_is_resumable_exactly_when_resume_takes_it_and_has_something_left_to_do(
     };
     let acp = [("backend", Value::from("acp")), ("format", Value::from(crate::state::ACP_STATE_FORMAT))];
     let late = HEARTBEAT_SECONDS + 1;
-    // Each: what it is, its state.json, its age, whether its owner's pid is alive, whether it is resumable.
+    let done_released = || saved_settings(&[("phase", Value::from("done")), ("verdict", Value::from(APPROVE))]);
+    // Each: what it is, its state.json, its age, whether its owner's pid is alive, whether its directory lacks a file
+    // the ending writes, whether it is resumable.
     let cases = [
-        ("stale", saved_settings(&[("owner", me())]), late, false, true),
-        ("interrupted", saved_settings(&[("error", Value::from("interrupted"))]), late, false, true),
+        ("stale", saved_settings(&[("owner", me())]), late, false, false, true),
+        ("interrupted", saved_settings(&[("error", Value::from("interrupted"))]), late, false, false, true),
         (
             "failed",
             saved_settings(&[("error", Value::from("[build] claude failed: not logged in"))]),
             late,
             false,
+            false,
             true,
         ),
-        ("the app's, stale", saved_settings(&[("owner", me()), acp[0].clone(), acp[1].clone()]), late, false, true),
-        ("done, not released", saved_settings(&[("phase", Value::from("done")), ("owner", me())]), late, false, true),
-        ("running", saved_settings(&[("owner", me())]), 30, true, false),
-        ("closed", saved_settings(&[("owner", me()), ("closed", Value::from("workspace closed"))]), late, false, false),
-        ("unreadable", saved_settings(&[("format", Value::from(99))]), late, false, false),
         (
-            "finished",
-            saved_settings(&[("phase", Value::from("done")), ("verdict", Value::from(APPROVE))]),
+            "the app's, stale",
+            saved_settings(&[("owner", me()), acp[0].clone(), acp[1].clone()]),
             late,
             false,
             false,
+            true,
         ),
+        (
+            "done, not released",
+            saved_settings(&[("phase", Value::from("done")), ("owner", me())]),
+            late,
+            false,
+            false,
+            true,
+        ),
+        ("running", saved_settings(&[("owner", me())]), 30, true, false, false),
+        (
+            "closed",
+            saved_settings(&[("owner", me()), ("closed", Value::from("workspace closed"))]),
+            late,
+            false,
+            false,
+            false,
+        ),
+        ("unreadable", saved_settings(&[("format", Value::from(99))]), late, false, false, false),
+        ("finished", done_released(), late, false, false, false),
+        ("done, released without its summary", done_released(), late, false, true, true),
     ];
-    for (what, saved, age, alive, expected) in cases {
-        let run = read_saved(age, &Value::Object(saved));
+    for (what, saved, age, alive, lacking, expected) in cases {
+        let run = read_saved(age, &Value::Object(saved)).lacking_ending_file(lacking);
         let pid_alive = move |_: i64| alive;
         assert_eq!(super::resumable(&run, "here", &pid_alive).is_ok(), expected, "{what}");
         let backend = run.shown().backend;

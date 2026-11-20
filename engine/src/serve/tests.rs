@@ -15,6 +15,7 @@ use crate::herdr::{HerdrError, HerdrServer, OWN_SESSION};
 use crate::host::tests::Repo;
 use crate::http::quote;
 use crate::json::{Object, ValueExt};
+use crate::pipeline::{METRICS_FILE, SUMMARY_FILE};
 use crate::serve::fake::{reached, FakeConsole, ServeHost};
 use crate::state::RunState;
 use crate::test_support::TempDir;
@@ -2465,7 +2466,10 @@ fn a_resume_refuses_a_run_it_would_not_take_up_before_starting_anything() {
     let stopping = Interrupt::new();
     let project = detached_project(&tmp.path(), &stopping);
     save_app_run(&tmp.path(), "20261120-000000-aaaaaa", |s| s.backend = Backend::Herdr);
-    save_app_run(&tmp.path(), "20261120-000000-bbbbbb", |s| (s.phase, s.error) = ("done".into(), None));
+    let finished = save_app_run(&tmp.path(), "20261120-000000-bbbbbb", |s| (s.phase, s.error) = ("done".into(), None));
+    for file in [SUMMARY_FILE, METRICS_FILE] {
+        std::fs::write(format!("{finished}/{file}"), "{}").unwrap();
+    }
     save_app_run(&tmp.path(), "20261120-000000-cccccc", |s| s.closed = Some("no agent left".into()));
     // Never started: a start would fail as Failed.
     let resume = |id: &str| project.resume("/nonexistent/octoflow", id, QUICK_WAIT, &stopping).unwrap_err();

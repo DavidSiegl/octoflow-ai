@@ -240,16 +240,16 @@ pub(crate) fn resume_gate<'r>(
 }
 
 /// Ok when a resume of run, without --force, would take it up (resume_gate, with the --acp its backend needs) and
-/// find something left to do: a run not done, or a done one whose orchestrator stopped before releasing it, which
-/// Workflow::run ends again. A done run released without a file its ending writes, which resume would also write
-/// (Workflow::ending_left), is not counted: telling it apart needs a look at the run directory. local_host and
-/// pid_alive are resume_gate's.
+/// find something left to do: a run not done, or a done one with its ending left (Workflow::ending_left), which
+/// Workflow::run ends again: one whose orchestrator stopped before releasing it, or one released without a file its
+/// ending writes, as far as the reader of run looked (SavedRun::lacks_ending_file). local_host and pid_alive are
+/// resume_gate's.
 ///
 /// Errors: why not, resume_gate's or that the run is finished.
 pub fn resumable(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> bool) -> Result<(), OrchestratorError> {
     let acp = run.shown().backend == Backend::Acp;
     let (state, _) = resume_gate(run, acp, false, local_host, pid_alive)?;
-    if state.done() && state.owner.is_none() {
+    if state.done() && state.owner.is_none() && !run.lacks_ending_file() {
         return Err(OrchestratorError(format!("run {} is finished; nothing is left to resume", state.run_id)));
     }
     Ok(())
