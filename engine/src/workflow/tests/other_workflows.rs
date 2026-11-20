@@ -492,9 +492,10 @@ fn a_run_keeps_its_workflow_when_the_file_is_gone() {
 }
 
 #[test]
-fn a_built_in_workflow_is_saved_by_name_only() {
+fn a_built_in_workflow_is_saved_with_its_definition() {
     let f = Fixture::new(approved());
     let mut wf = f.workflow(no_pr());
     wf.run().unwrap();
-    assert_eq!((wf.state().workflow.as_str(), wf.state().workflow_definition.as_ref()), ("default", None));
+    let definition = crate::workflow_file::workflow_definition(&crate::pipeline::DEFAULT_WORKFLOW);
+    assert_eq!((wf.state().workflow.as_str(), wf.state().workflow_definition.as_ref()), ("default", Some(&definition)));
 }

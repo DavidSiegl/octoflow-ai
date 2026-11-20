@@ -45,6 +45,16 @@ pub enum Scanned {
     SinceBase,
 }
 
+impl Scanned {
+    /// Why a run whose scans read these commits needs gitleaks, as a clause that opens an error.
+    pub(super) fn why_gitleaks(self) -> &'static str {
+        match self {
+            Scanned::Unpublished => "this run pushes, and every push is scanned for secrets first",
+            Scanned::SinceBase => "the quality gate scans each snapshot for secrets before it judges it",
+        }
+    }
+}
+
 /// Host::scan_secrets, which says what it does.
 pub(super) fn scan_secrets<H: Host + ?Sized>(
     host: &H,
@@ -143,8 +153,8 @@ fn findings(text: &str) -> Result<Option<Vec<Leak>>, String> {
 }
 
 /// A Leak for each line holding `gitleaks:allow` that the commits log_opts selects add, as git log -p shows them, read
-/// as change_diff's diffs are. git runs as gitleaks does, in source under git_env (scan_git_env), so both read the same
-/// patch.
+/// by crate::patch::added_lines. git runs as gitleaks does, in source under git_env (scan_git_env), so both read the
+/// same patch.
 fn allow_comments<H: Host + ?Sized>(
     host: &H,
     git_env: &[String],

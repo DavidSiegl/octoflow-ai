@@ -327,7 +327,7 @@ fn a_failed_preflight_refuses_before_any_turn() {
         Some(Ok(Exec { command, status: 1, stdout: Vec::new(), stderr }))
     }));
     let cases = [
-        ("no gitleaks", no_gitleaks, "every push is scanned for secrets first"),
+        ("no gitleaks", no_gitleaks, "the quality gate scans each snapshot for secrets"),
         ("no curl", no_curl, "curl is not on PATH"),
     ];
     for (name, host, why) in cases {

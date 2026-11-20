@@ -42,26 +42,42 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
-- **herdr's words and fields still reach past the `Agents`/`RunPlaces` seam.** `Turn::wait_for_startup`
-  (`engine/src/workflow/turn.rs`) logs "answer in the pane", and `Plan::summary` (`engine/src/cli/close.rs`) records
-  "workspace closed" / "workspace already gone", whatever backend the run used; list and show print the run's
-  `workspace_id` and each agent's `pane` straight from the state (`run_record`, `show_run` in
-  `engine/src/cli/listing.rs`). All were kept so the herdr-only text stays unchanged; a run on the ACP backend
-  (`.scratch/herdr-gui-decoupling`, ticket 02) would print them wrong or empty. Closes when that backend lands and
-  these take their wording from the backend (`Agents::whereabouts`, `RunPlaces::place`). serve reading
-  `herdr_server` (`engine/src/serve/runs.rs`) is by design: its `AgentConsole` stays herdr's own.
+- **herdr's words and fields still reach past the `Agents`/`RunPlaces` seam.** `Workflow::wait_out_block`
+  (`engine/src/workflow/turn.rs`) logs "answer in the pane" and "typed in its pane; answer there", and
+  `Plan::summary` (`engine/src/cli/close.rs`) records "workspace closed" / "workspace already gone", whatever backend
+  the run used; list and show print the run's `workspace_id` and each agent's `pane` straight from the state
+  (`run_record`, `show_run` in `engine/src/cli/listing.rs`). All were kept so the herdr-only text stays unchanged; a
+  run on the ACP backend (`.scratch/herdr-gui-decoupling`, ticket 02) would print them wrong or empty. Closes when that
+  backend lands and these take their wording from the backend (`Agents::whereabouts`, `RunPlaces::place`). serve
+  reading `herdr_server` (`engine/src/serve/runs.rs`) is by design: its `AgentConsole` stays herdr's own.
 
 - **A resumed done run's late summary.md or metrics.json can miss the desktop app.** Raised by cross-review 238 (F3):
   a done run stopped before its ending wrote them is finished by a resume that writes them without saving state.json
   after (`Workflow::end_done_run`, `ending_left`'s `release: false`), so serve's event stream, which stopped listing
   the run's files once they settled, lists them again only at the record's next change (`RunWatch::poll`). A failed
   run's release saves again after its summary (todo/70); would close when this ending does the same.
-- **engine/Cargo.toml says only test_support needs tempfile.** The dev-dependency's comment reads "The tests'
-  scratch directories (test_support::TempDir)", but todo/81 made engine/tests/program.rs (`Dir`) and
-  engine/tests/signals.rs (`scratch_dir`) use `tempfile::Builder` directly, so a reader judging whether tempfile can go
-  reads that only test_support needs it. Raised by cross-review 240 (F1); left out of todo/81 because any change to
-  engine/Cargo.toml raises the version (`ci/version-raised.sh`). Closes with the comment naming engine/tests' own
-  directories too, in the next change that raises the version (todo/82's branch carries it).
+- **raise-gate-pin's pin_of reads a malformed ci/gate.pin otherwise than the engine.** `pin_of`
+  (`xtask/src/raise_gate_pin.rs`) takes a sha that is not 64 hex digits, which the engine's `parse_pin` and
+  `ci/fetch-gate.sh` refuse, and `v0.9.2 <sha>`, which `parse_pin` refuses and `ci/fetch-gate.sh` passes on to a
+  download address that does not exist; and it refuses a pre-release such as `1.0.0-rc1`, which `parse_pin` takes;
+  the test holding the two together (`a_pin_reads_as_the_engine_reads_it`) feeds only well-formed pins. Raised
+  by cross-review 256 (F1). Closes with pin_of calling the engine's reading, or the test feeding the diverging cases
+  and the two agreeing on them.
+- **serve's POST /forget archives a run's metrics.json through a link out of its run directory.** serve's sweeps act
+  only on runs inside the runs directory (`RunScope::Inside`, todo/75), but `Host::forget_run` reads the run's
+  `metrics.json` with a plain `read`, so a run directory inside whose `metrics.json` is a link to a file outside has
+  that file's JSON added to the project's metrics archive before the directory is removed. Reading it as `read_inside`
+  does, an outside one taken as none, would close it (cross-review 248).
+- **Two processes forgetting one run at once can both forget it.** serve holds a per-project lock through each
+  forget sweep (`ProjectRuns::forgetting`, todo/74), but that lock is the process's own: a second app instance, each
+  with its own `serve` sidecar, or `octoflow forget` from a shell next to the app, can both read a closed run before
+  either deletes it, both answer "forgotten", and `Host::forget_run`'s check-then-append can archive two metrics lines.
+  Raised by cross-review 245 (F1). Closes with a lock file in the project's `.octoflow-ai/` that `forget_all` holds,
+  over SSH too.
+- **A resumed pull-request run past round 0 does not check gitleaks before its turns.** `Workflow::check_start`
+  (`engine/src/workflow.rs`) runs `check_before_interview`, which checks gitleaks, only at round 0, so an ungated
+  `--pr` run resumed after gitleaks was removed spends its remaining turns and fails only at publish. A gated run is
+  checked again on resume (`gate_switch::check_gate_mid_run`). Raised by cross-review 250 (pre-existing).
 - **Nothing checks that a workflow's actions stay pinned by sha.** todo/65 pinned every `uses:` in
   `.github/workflows/` by commit sha, and `.github/dependabot.yml` keeps a sha a sha, but the Gate stage's actionlint
   accepts a tag: a later `uses: actions/cache@v4` in a job that holds `AUTOMERGE_TOKEN` passes every check and brings

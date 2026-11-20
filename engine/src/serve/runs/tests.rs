@@ -11,7 +11,7 @@ use crate::serve::{FINISHED_RUN_WRITES, SERVE_POLL};
 const SERVE_ID: &str = "20261024-120000-5e7e00";
 
 fn run_dir() -> String {
-    format!("/proj/{RUNS_DIR}/{SERVE_ID}")
+    crate::state::run_dir("/proj", SERVE_ID)
 }
 
 /// A run's state.json as serve's tests save it: a fresh run in round 1's build, with the extra keys.
@@ -208,13 +208,13 @@ fn a_run_whose_state_is_gone_gets_a_null_record() {
 }
 
 #[test]
-fn a_run_id_that_is_not_a_plain_name_is_a_problem() {
-    // A state.json whose run_id would lead the file listing out of the runs directory.
+fn a_run_id_that_is_not_its_directory_name_is_no_run() {
+    // A state.json whose run_id would lead the file listing out of the runs directory: serve's view of the runs
+    // leaves out a run named for another directory (Host::run_states_inside), so nothing is listed.
     let w = Watched::new();
     w.host.state().files.insert(format!("{}/state.json", run_dir()), r#"{"run_id": "../.."}"#.to_string());
     let events = RunWatch::new(&w.project).poll();
-    assert_eq!(events[0].payload.to_string(), r#"{"error":"\"../..\" is not a name in the run directory"}"#);
-    assert_eq!(events.len(), 1);
+    assert!(events.is_empty(), "{events:?}");
 }
 
 #[test]
@@ -289,5 +289,9 @@ fn an_agent_is_reached_in_the_herdr_server_its_run_saved() {
     save(Some(r#""work""#));
     let e = project.agent_text(SERVE_ID, "build", 10).unwrap_err();
     assert_eq!(e.to_string(), format!("{}/state.json: run state {SERVE_ID} is invalid: invalid type: string \"work\", expected struct HerdrServer", run_dir()));
+    // One whose text is not JSON names its file once (cross-review 251 F6).
+    host.state().files.insert(format!("{}/state.json", run_dir()), "{\"run_id\": \n".to_string());
+    let e = project.agent_text(SERVE_ID, "build", 10).unwrap_err().to_string();
+    assert!(e.starts_with(&format!("{}/state.json is not JSON (", run_dir())), "{e}");
     assert_eq!(console.state().typed.len(), 5);
 }

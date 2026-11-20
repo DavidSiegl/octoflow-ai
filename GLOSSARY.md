@@ -12,5 +12,6 @@ it by that name, its `--kind`. A role's next agent may run in another harness th
 _Avoid_: agent kind, kind (outside herdr's flag and those saved keys)
 
 **Saved run**:
-A run's `state.json` as read back: its age, and either its `RunState` or why its format cannot be read.
+A run's `state.json` as read back: its age, and either its `RunState` or why it cannot be read (not JSON naming a run,
+or of a format this engine does not read).
 _Avoid_: run state (for the file read back), raw state

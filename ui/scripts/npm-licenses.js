@@ -15,17 +15,16 @@ import { fileURLToPath } from "node:url";
 /**
  * The dev packages that write code of their own into the bundle, so that it ships theirs too: Vite its module preload
  * polyfill, Rolldown, which Vite bundles with, its runtime (\0vite/... and \0rolldown/... modules in an unminified
- * build). A plugin that injects a runtime belongs here as well. Each is looked up at the top of node_modules. Since
- * such code may be copied from others, as Rolldown's runtime credits esbuild, each ships its third-party license files
- * too (THIRD_PARTY).
+ * build). A plugin that injects a runtime belongs here as well. Each is looked up at the top of node_modules.
  */
 export const BUILD_CODE = ["vite", "rolldown"];
 
-// The names of the files that hold the licenses of code a package copied from others, wherever in the name and in
-// whatever case: THIRD-PARTY-LICENSE, THIRD_PARTY_LICENSES, ThirdPartyNotices.txt, LICENSE-THIRD-PARTY. Never taken for
-// the package's own license text. Shipped for BUILD_CODE's packages, and for any package when the name also starts
-// with NOTICE; a production package's other third-party files are not looked for (GitHub #503).
-const THIRD_PARTY = /third[-_ ]?party/i;
+// The names of the files that hold the licenses of code a package copied from others: "third party" and "license" or
+// "notice", in either order, anywhere in the name and in whatever case: THIRD-PARTY-LICENSE, THIRD_PARTY_LICENSES,
+// ThirdPartyNotices.txt, LICENSE-THIRD-PARTY. Third party alone names code as often (thirdParty.js), which would be
+// pasted in as a license. Never taken for the package's own license text. Shipped with every package's notice, since
+// its code may be copied from others, as Rolldown's runtime credits esbuild.
+const THIRD_PARTY = /third[-_ ]?party.*(licen[cs]e|notice)|(licen[cs]e|notice).*third[-_ ]?party/i;
 
 /**
  * The licenses about.toml's `accepted` array lists, in its order: the licenses a dependency may be used under.
@@ -44,7 +43,7 @@ export function acceptedLicenses(aboutToml) {
 /**
  * The notices of the packages the app's bundle holds code of, installed under ui, as an HTML page: one section per
  * license and text, naming the packages that ship it. A package's text is its license text followed by its NOTICE*
- * files, which Apache-2.0 §4(d) has redistributed with the work, and, for BUILD_CODE's, its third-party license files.
+ * files, which Apache-2.0 §4(d) has redistributed with the work, and its third-party license files (THIRD_PARTY).
  *
  * @param {string} ui the directory holding package-lock.json and the node_modules npm ci installed from it
  * @param {string[]} accepted the licenses a package may be under, first preferred, as acceptedLicenses gives them. A
@@ -86,7 +85,7 @@ export function npmNotices(ui, accepted) {
       problems.push(`${name}: ${notice.problem} in ${path}`);
       continue;
     }
-    notice.text = withNotices(dir, notice.text, buildCode);
+    notice.text = withNotices(dir, notice.text);
     const key = `${notice.license}\n${notice.text}`;
     const section = sections.get(key) ?? { ...notice, packages: [] };
     section.packages.push({ name: pkg.name, version: pkg.version });
@@ -135,10 +134,10 @@ function licenseNotice(dir, offered, usable) {
   return { license: expression, text: files[0].text };
 }
 
-// text followed by the files in dir it ships with, by name, each headed by its name: each NOTICE* file, whatever
-// else its name says, and every other THIRD_PARTY file when thirdParty.
-function withNotices(dir, text, thirdParty) {
-  const extra = noticeFiles(dir, (name) => /^notice/i.test(name) || (thirdParty && THIRD_PARTY.test(name)));
+// text followed by the files in dir it ships with, by name, each headed by its name: each NOTICE* and each
+// THIRD_PARTY file.
+function withNotices(dir, text) {
+  const extra = noticeFiles(dir, (name) => /^notice/i.test(name) || THIRD_PARTY.test(name));
   return [text, ...extra.map((f) => `${f.name}:\n\n${f.text}`)].join("\n\n");
 }
 

@@ -209,7 +209,7 @@ impl Host for ProcessHost {
 }
 
 /// The ssh command that runs argv on target, sharing a connection as options say (ssh_sharing_options).
-fn ssh_argv(target: &str, options: Vec<String>, argv: &[&str]) -> Vec<String> {
+pub(crate) fn ssh_argv(target: &str, options: Vec<String>, argv: &[&str]) -> Vec<String> {
     // BatchMode fails fast instead of hanging on a password prompt nobody can see.
     let batch = ["ssh", "-o", "BatchMode=yes"].map(String::from);
     batch.into_iter().chain(options).chain([target.to_string(), shlex_join(argv)]).collect()

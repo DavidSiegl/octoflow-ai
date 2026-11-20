@@ -7,7 +7,8 @@ use serde_json::Value;
 use crate::constants::{PROJECT_DIR, WORKTREES_DIR};
 use crate::error::OrchestratorError;
 use crate::host::{run_states_in, Host, DEFAULT_TIMEOUT};
-use crate::state::SavedRun;
+use crate::pipeline::STATE_FILE;
+use crate::state::{run_dir, SavedRun};
 
 /// A project's own directory under its old name, relative to the project, as PROJECT_DIR is.
 const OLD_PROJECT_DIR: &str = ".orchestrator";
@@ -24,7 +25,8 @@ const OLD_PROJECT_DIR: &str = ".orchestrator";
 /// whose run could not be saved with its new path, each with what to do by hand; None when nothing had to move: no
 /// engine's directory under the old name, something at PROJECT_DIR already, or another engine moved it first.
 ///
-/// Errors: a run under the old name is not closed, which the error names, so that the human finishes and closes it
+/// Errors: a state.json under the old name is not JSON naming a run, which the error names; a run under the old
+/// name is not closed, which the error names, so that the human finishes and closes it
 /// with the older engine first; dry_run and a move is due; a state under the old name cannot be read; or the rename
 /// fails. Once the rename is made, what fails after it is named in the returned line instead.
 pub fn move_project_dir(host: &dyn Host, cwd: &str, dry_run: bool) -> Result<Option<String>, OrchestratorError> {
@@ -37,6 +39,10 @@ pub fn move_project_dir(host: &dyn Host, cwd: &str, dry_run: bool) -> Result<Opt
         return Ok(None);
     }
     let runs = run_states_in(host, cwd, &format!("{OLD_PROJECT_DIR}/runs"))?;
+    // No engine can close a run whose state.json names none, so it is not "left open" by one.
+    if let Some(problem) = runs.iter().filter(|r| !r.names_run).find_map(SavedRun::problem) {
+        return Err(OrchestratorError(format!("{old} holds a run state no engine reads: {problem}")));
+    }
     let open: Vec<&str> =
         runs.iter().map(|r| r.shown()).filter(|s| !s.is_closed()).map(|s| s.run_id.as_str()).collect();
     if !open.is_empty() {
@@ -89,7 +95,7 @@ fn carry_worktrees(host: &dyn Host, cwd: &str, runs: &[SavedRun]) -> String {
         if !run.worktree.as_deref().is_some_and(|w| w.ends_with(&old_tail)) {
             continue;
         }
-        let state = format!("{cwd}/{PROJECT_DIR}/runs/{}/state.json", run.run_id);
+        let state = format!("{}/{STATE_FILE}", run_dir(cwd, &run.run_id));
         let tree = format!("{worktrees}/{}", run.key());
         if let Err(e) = resave_worktree(host, &state, &tree) {
             said.push_str(&format!("; {e}: set its worktree to {tree} by hand"));

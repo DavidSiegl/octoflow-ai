@@ -1103,21 +1103,42 @@ fn a_run_of_a_project_here_is_given_the_directory_serve_resolved() {
     assert_eq!(argv[3..], ["--cwd", "/proj", "--", "t"]);
 }
 
-#[test]
-fn a_run_is_refused_before_its_workspace_opens_when_herdrs_panes_start_a_shell_it_cannot_type_into() {
-    let host = Arc::new(ServeHost::on(None));
-    let served = starting(&host);
-    host.state().pane_shell = "/usr/bin/nu\n/home/me/.config/herdr/config.toml\n".to_string();
+/// POST /run's reply when the panes of one herdr, the launcher's or the machine's, start nu: refused before the
+/// launcher opened a workspace, naming the shell.
+fn refused_for_nu(served: &Served) {
     let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#);
     assert_eq!(reply.status, Some(502), "{}", reply.body);
     let why = reply.json()["error"].as_str().unwrap_or_default().to_string();
     assert!(why.starts_with("herdr's panes start /usr/bin/nu ($SHELL)"), "{why}");
     assert!(why.ends_with("POSIX shell (sh, bash, zsh, dash, ksh) or fish"), "{why}");
     assert!(served.console.state().launches.is_empty());
+}
+
+const NU: &str = "/usr/bin/nu\n/home/me/.config/herdr/config.toml\n";
+
+#[test]
+fn a_run_is_refused_before_its_workspace_opens_when_herdrs_panes_start_a_shell_it_cannot_type_into() {
+    let host = Arc::new(ServeHost::on(None));
+    let served = starting(&host);
+    served.console.state().pane_shell = NU.to_string();
+    refused_for_nu(&served);
     // One herdr's config.toml names, which wins over $SHELL.
-    host.state().pane_shell.push_str("[terminal]\ndefault_shell = \"zsh\"\n");
+    served.console.state().pane_shell.push_str("[terminal]\ndefault_shell = \"zsh\"\n");
     assert_eq!(served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#).status, Some(202));
     assert_eq!(served.console.state().launches.len(), 1);
+}
+
+#[test]
+fn a_run_on_a_machine_is_refused_when_either_herdrs_panes_start_a_shell_it_cannot_type_into() {
+    let host = Arc::new(ServeHost::on(Some("me@box")));
+    let served = starting(&host);
+    // This machine's, which the run's command line is typed into, though the machine's takes it.
+    served.console.state().pane_shell = NU.to_string();
+    refused_for_nu(&served);
+    // The machine's, which its agents' exports are typed into.
+    served.console.state().pane_shell = String::new();
+    host.state().pane_shell = NU.to_string();
+    refused_for_nu(&served);
 }
 
 #[test]
@@ -1432,11 +1453,15 @@ fn a_bad_close_body_is_refused_before_the_project_is_reached() {
 }
 
 #[test]
-fn a_close_of_runs_that_cannot_be_read_is_a_bad_gateway() {
+fn a_close_skips_a_run_whose_state_json_is_not_json_saying_why() {
     let project = Project::new();
     project.write(&format!("{RUNS_DIR}/{SERVE_ID}/state.json"), "not JSON");
     let reply = Served::real().post(&project.query("/close"), r#"{"dry_run": true}"#);
-    assert_eq!(reply.status, Some(502), "{reply:?}");
+    assert_eq!(reply.status, Some(200), "{reply:?}");
+    let runs = reply.json().get("runs").and_then(Value::as_array).cloned().unwrap();
+    let [run] = runs.as_slice() else { panic!("{runs:?}") };
+    assert_eq!((run.get("run"), run.get("outcome")), (Some(&Value::from(SERVE_ID)), Some(&Value::from("skipped"))));
+    assert!(run.get("detail").unwrap().text().contains(&format!("{SERVE_ID}/state.json is not JSON (")), "{run:?}");
 }
 
 #[test]
@@ -1456,13 +1481,13 @@ const FORGET_CLOSED: &str = "20261001-120000-a1b2c3";
 const FORGET_OPEN: &str = "20261001-120100-d4e5f6";
 
 /// A project with FORGET_CLOSED, closed, with a metrics.json, and FORGET_OPEN, not closed; and a server that reaches it.
-fn forgetting() -> (Project, Served) {
+fn forgetting() -> Project {
     let project = Project::new();
     project.save(FORGET_CLOSED, &[("closed", Value::from("workspace closed"))]);
     project
         .write(&format!("{RUNS_DIR}/{FORGET_CLOSED}/metrics.json"), &format!("{{\"run_id\": \"{FORGET_CLOSED}\"}}\n"));
     project.save(FORGET_OPEN, &[]);
-    (project, Served::real())
+    project
 }
 
 /// The runs of a 200 answer to POST /forget, each as (run, outcome, detail).
@@ -1475,7 +1500,7 @@ fn forgotten_runs(reply: &Reply) -> Vec<(String, String, String)> {
 
 #[test]
 fn a_forget_dry_run_names_the_closed_run_and_a_listed_forget_deletes_it_keeping_its_metrics() {
-    let (project, served) = forgetting();
+    let (project, served) = (forgetting(), Served::real());
     let target = project.query("/forget");
     let closed_dir = project.0.join(&format!("{RUNS_DIR}/{FORGET_CLOSED}"));
     let preview = forgotten_runs(&served.post(&target, r#"{"dry_run": true}"#));
@@ -1496,7 +1521,97 @@ fn a_forget_dry_run_names_the_closed_run_and_a_listed_forget_deletes_it_keeping_
 
     // Forgotten since the dry run, as by a second client: skipped, and nothing else is looked at.
     let again = forgotten_runs(&served.post(&target, &body));
-    assert_eq!(again, [(FORGET_CLOSED.into(), "skipped".into(), "there is no such run any more".into())]);
+    assert_eq!(again, [(FORGET_CLOSED.into(), "skipped".into(), "the overview shows no such run any more".into())]);
+}
+
+/// The real Host, but each read of the metrics archive waits, after reading it, until a second has been made or a
+/// second has passed: two forget sweeps that reach it together both read it before either appends to it.
+struct ArchiveReadsMeet {
+    /// The Host every call goes to.
+    host: Arc<dyn crate::host::Host + Send + Sync>,
+    /// How many reads of the archive have been made.
+    reads: Mutex<usize>,
+    /// Notified each time reads grows.
+    met: std::sync::Condvar,
+}
+
+impl crate::host::Host for ArchiveReadsMeet {
+    fn ssh_target(&self) -> Option<&str> {
+        self.host.ssh_target()
+    }
+
+    fn exec(
+        &self,
+        argv: &[&str],
+        stdin: Option<&[u8]>,
+        timeout: u64,
+    ) -> Result<crate::host::Exec, crate::host::ExecError> {
+        self.host.exec(argv, stdin, timeout)
+    }
+
+    fn read(&self, path: &str) -> Result<Option<String>, OrchestratorError> {
+        let text = self.host.read(path);
+        if path.ends_with("/metrics-archive.jsonl") {
+            let mut reads = self.reads.lock().unwrap();
+            *reads += 1;
+            self.met.notify_all();
+            drop(self.met.wait_timeout_while(reads, Duration::from_secs(1), |n| *n < 2).unwrap());
+        }
+        text
+    }
+}
+
+#[test]
+fn two_forgets_of_one_run_at_once_forget_it_once() {
+    let project = forgetting();
+    let connect = |machine: &str, cwd: &str, stopping: &Interrupt| {
+        let mut reached = project_host(machine, cwd, stopping)?;
+        reached.host = Arc::new(ArchiveReadsMeet { host: reached.host, reads: Mutex::new(0), met: Default::default() });
+        Ok(reached)
+    };
+    let served = Served::start(Box::new(connect), &[], Arc::default(), Options::default());
+    // The project spelled two ways, as two clients may name it: both are one project to the lock.
+    let spelled_with_slash = format!("/forget?{}", urlencode(&[("cwd", &format!("{}/", project.root()))]));
+    let targets = [project.query("/forget"), spelled_with_slash];
+    let body = serde_json::json!({ "forget": [FORGET_CLOSED] }).to_string();
+    let outcomes: Vec<String> = std::thread::scope(|scope| {
+        let asks: Vec<_> = targets.iter().map(|t| scope.spawn(|| forgotten_runs(&served.post(t, &body)))).collect();
+        asks.into_iter().map(|ask| ask.join().unwrap()[0].1.clone()).collect()
+    });
+    let mut sorted = outcomes.clone();
+    sorted.sort();
+    assert_eq!(sorted, ["forgotten", "skipped"], "{outcomes:?}");
+    let archive = std::fs::read_to_string(project.0.join(".octoflow-ai/metrics-archive.jsonl")).unwrap();
+    assert_eq!(archive.matches(FORGET_CLOSED).count(), 1, "{archive}");
+}
+
+#[test]
+fn the_sweeps_leave_out_a_run_the_overview_does_not_show() {
+    // A run directory linked from outside the runs directory: the overview leaves it out (Host::run_states_inside),
+    // so close and forget, which act on what it shows, must too (todo/75, #507).
+    const OUTSIDE: &str = "20261001-120200-0a0b0c";
+    let project = Project::new();
+    project.save(FORGET_CLOSED, &[("closed", Value::from("workspace closed"))]);
+    project.write(&format!("elsewhere/{OUTSIDE}/state.json"), &serve_state(OUTSIDE, &[("closed", Value::from("x"))]));
+    project.write(&format!("elsewhere/{OUTSIDE}/metrics.json"), &format!("{{\"run_id\": \"{OUTSIDE}\"}}\n"));
+    let (outside, link) =
+        (project.0.join(&format!("elsewhere/{OUTSIDE}")), project.0.join(&format!("{RUNS_DIR}/{OUTSIDE}")));
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+    let served = Served::real();
+
+    let closing = closed_runs(&served.post(&project.query("/close"), r#"{"dry_run": true}"#));
+    assert_eq!(closing.iter().map(|r| r.0.as_str()).collect::<Vec<_>>(), [FORGET_CLOSED]);
+    let forgetting = forgotten_runs(&served.post(&project.query("/forget"), r#"{"dry_run": true}"#));
+    assert_eq!(forgetting.iter().map(|r| r.0.as_str()).collect::<Vec<_>>(), [FORGET_CLOSED]);
+
+    let body = serde_json::json!({ "forget": [OUTSIDE] }).to_string();
+    let forgotten = forgotten_runs(&served.post(&project.query("/forget"), &body));
+    assert_eq!(forgotten, [(OUTSIDE.into(), "skipped".into(), "the overview shows no such run any more".into())]);
+    assert!(std::path::Path::new(&link).exists(), "the link is kept");
+    assert!(
+        !std::path::Path::new(&project.0.join(".octoflow-ai/metrics-archive.jsonl")).exists(),
+        "no metrics archived"
+    );
 }
 
 #[test]
@@ -1897,18 +2012,24 @@ fn nothing_while_nothing_changes() {
 }
 
 #[test]
-fn an_unreadable_project_is_a_problem_event() {
+fn a_state_json_that_is_not_json_is_the_record_of_an_unreadable_run() {
+    // Not a problem of the whole project, which would hide every other run (cross-review 194 F1).
     let d = Project::new();
     d.write(&format!("{RUNS_DIR}/{SERVE_ID}/state.json"), "{not json");
     let served = Served::real();
     let stream = EventStream::open(&served, &d.query("/events"), "");
     let (kind, payload) = stream.next(Duration::from_secs(2));
-    assert_eq!(kind, "problem");
-    assert!(payload.get("error").unwrap().text().contains("corrupt run state"), "{payload:?}");
+    assert_eq!(kind, "record");
+    assert_eq!(payload.get("run").unwrap().text(), SERVE_ID);
+    let error = payload.get("record").unwrap().get("error").unwrap().text();
+    assert!(error.contains(&format!("{SERVE_ID}/state.json is not JSON (")), "{payload:?}");
     let started = Instant::now();
     d.save(SERVE_ID, &[]);
-    assert_eq!(stream.next(Duration::from_secs(3)), ("problem".to_string(), object([("error", Value::Null)])));
-    assert_eq!(stream.next(Duration::from_secs(3)).0, "record");
+    // The poll that finds the run readable also tells its files, in either order.
+    let payload = std::iter::repeat_with(|| stream.next(Duration::from_secs(3)))
+        .find_map(|(kind, payload)| (kind == "record").then_some(payload))
+        .unwrap();
+    assert_eq!(payload.get("record").unwrap().get("error"), Some(&Value::Null), "{payload:?}");
     assert!(started.elapsed() <= Duration::from_secs(2), "{:?}", started.elapsed());
 }
 

@@ -81,9 +81,15 @@ impl<'a> Workflow<'a> {
                 (text, None, false)
             }
             None => {
-                if self.open_turn(&file).is_none() {
+                // Saved before the gate starts: a quality file a resume finds written was judged by this release.
+                let unsaved_pin = self.state.built_in_gate_pin.is_none();
+                self.state.built_in_gate_pin.get_or_insert_with(|| local_gate::BUILT_IN_PIN.to_string());
+                let opened = self.open_turn(&file).is_none();
+                if opened {
                     let record = self.turn_record(QUALITY, &file, Some(self.host.now()?));
                     self.state.turns.push(record);
+                }
+                if opened || unsaved_pin {
                     self.save()?;
                 }
                 let (text, judged) = self.judged_snapshot(n, q)?;
@@ -129,7 +135,8 @@ impl<'a> Workflow<'a> {
             Err(PushError::Failed(e)) => return Err(e.into()),
             Err(PushError::Leaks(found)) => return Ok((self.leak_report(n, q, &found), None)),
         }
-        let job = local_gate::start(self.host, &work_dir, &snapshot, &base, &self.state.gate_dir(n, q))?;
+        let built_in_pin = self.state.built_in_gate_pin.clone().unwrap_or_else(|| local_gate::BUILT_IN_PIN.to_string());
+        let job = local_gate::start(self.host, &work_dir, &snapshot, &base, &built_in_pin, &self.state.gate_dir(n, q))?;
         let waited = self.poll(&job, deadline);
         if waited.is_err() {
             let host = self.host;

@@ -5,7 +5,7 @@ use indexmap::IndexMap;
 
 use super::args::{ResumeArgs, RunArgs, Settings};
 use super::Connected;
-use crate::constants::{DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT, RUNS_DIR, WORKTREES_DIR};
+use crate::constants::{DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT, WORKTREES_DIR};
 use crate::error::OrchestratorError;
 use crate::harness::harness;
 use crate::json::Object;
@@ -14,13 +14,13 @@ use crate::pipeline::{Pipeline, DONE, QUALITY};
 use crate::prompts::{load_prompts, Prompts};
 use crate::runs::RUNNING;
 use crate::spec_file::SpecFile;
-use crate::state::{find_run, RunState, SavedRun};
+use crate::state::{find_run, run_dir, RunState, SavedRun};
 use crate::workflow::{check_gate_mid_run, turn_quality_gate_off, turn_quality_gate_on};
 use crate::workflow_file::{load_workflow_file, named_workflow};
 
 /// A new run's state from run's flags, and its workflow, for the project at cwd; with spec, run --spec's file, the run
 /// starts at the step after the contract step. Its prompts are the prompt files' as they are now (load_prompts), and
-/// bound to world's agent backend (Agents::bind).
+/// it is bound to world's agent backend (Agents::bind).
 ///
 /// Errors: as load_prompts; the workflow cannot be found or loaded, or with spec has no step to start at; a
 /// --role-model or --role-agent names a role the workflow lacks; no run id can be made.
@@ -81,7 +81,7 @@ pub(super) fn flagged_workflow(
 /// id, run --run-id's, once no run of the project at cwd has it: its directory is not there. Errors: it is, or that
 /// cannot be told.
 fn given_run_id(id: &str, cwd: &str, world: &Connected) -> Result<String, OrchestratorError> {
-    let dir = format!("{cwd}/{RUNS_DIR}/{id}");
+    let dir = run_dir(cwd, id);
     if world.with.host.exists(&dir)? {
         return Err(OrchestratorError(format!("{dir} exists already; a new run needs an id of its own")));
     }
@@ -103,8 +103,8 @@ pub(crate) fn new_run_id(wall: f64, zone: &jiff::tz::TimeZone) -> Result<String,
 }
 
 /// The state of the run args.run_ref names among cwd's runs and its workflow, as resumable_state finds them, with the
-/// quality gate turned on or off as args asks (turn_quality_gate_on and _off), and bound to world's agent backend
-/// (Agents::bind), where it starts its agents from now on; a done run's as resumable_state gives it. Changes nothing
+/// quality gate turned on or off as args asks (turn_quality_gate_on and _off); a done run's as resumable_state gives
+/// it. Where its agents run stays what it saved: Agents::open moves it only when it opens a new place. Changes nothing
 /// on disk but the gate's job --no-quality-gate stops (turn_quality_gate_off), which stays stopped even when the resume
 /// fails later, before the run is saved; a resume after that judges the round again.
 ///
@@ -125,7 +125,6 @@ pub fn resumed_state(
     if state.phase == DONE {
         return Ok((state, pipeline));
     }
-    w.agents.bind(&mut state);
     // A build kept in ci means a Jenkins job, even one named `local`, as a release before 0.63.0 took it.
     let jenkins = !state.ci.is_empty();
     if let Some(job) = state.quality_job.take_if(|job| !job.is_empty() && (job != LOCAL_GATE || jenkins)) {
@@ -165,7 +164,7 @@ pub fn resumable_state(
     let run = find_run(runs, &args.run_ref, cwd)?;
     let mut state = run.state()?.clone();
     // Not even with --force: close may have deleted its worktree and branch.
-    if state.closed.is_some() {
+    if state.is_closed() {
         return Err(OrchestratorError(format!("run {} was closed; start a new run", state.run_id)));
     }
     let pipeline = state.pipeline()?;

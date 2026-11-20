@@ -278,7 +278,8 @@ struct Shared {
     stopping: Interrupt,
     /// How a request's project is reached (Connect).
     connect: Box<Connect>,
-    /// By the machine and directory a request names, the project connect gave for them, each connected once.
+    /// By the machine and directory a request names, as it spells them, the one project that every request for that
+    /// machine and directory shares: two spellings of one directory (`~/proj`, `/home/u/proj/`) map to the same.
     projects: Mutex<HashMap<(String, String), Arc<ProjectRuns>>>,
     /// What /setup and /setup/checked answer from.
     setup: Setup,
@@ -428,8 +429,12 @@ impl Shared {
         }
         let reached = (self.connect)(machine, cwd, &self.stopping)?;
         let project = Arc::new(ProjectRuns::new(reached, target_args(machine, cwd)));
-        self.lock_projects().insert(key, Arc::clone(&project));
-        Ok(project)
+        // Every request for one directory, however it spells it and however many connected at once, gets the project
+        // stored first, whose lock (ProjectRuns::forgetting) the directory's sweeps must share.
+        let mut projects = self.lock_projects();
+        let stored = projects.iter().find(|((m, _), p)| m == machine && p.cwd() == project.cwd()).map(|(_, p)| p);
+        let project = Arc::clone(stored.unwrap_or(&project));
+        Ok(Arc::clone(projects.entry(key).or_insert(project)))
     }
 
     fn lock_projects(&self) -> std::sync::MutexGuard<'_, HashMap<(String, String), Arc<ProjectRuns>>> {
@@ -853,7 +858,7 @@ fn run_forgotten(run: &RunForgotten) -> Value {
         forget::Outcome::Left(Left::NotClosed) => ("not closed", ""),
         forget::Outcome::Left(Left::AwaitsPrune) => ("waiting for prune", forget::AWAITS_PRUNE),
         forget::Outcome::Left(Left::Unreadable(why)) => ("skipped", why.as_str()),
-        forget::Outcome::Gone => ("skipped", "there is no such run any more"),
+        forget::Outcome::Gone => ("skipped", "the overview shows no such run any more"),
         forget::Outcome::Failed(error) => ("failed", error.as_str()),
     };
     object([

@@ -5,7 +5,7 @@
 use super::turn::turn_started;
 use super::Human;
 use crate::error::OrchestratorError;
-use crate::host::Host;
+use crate::host::{Host, Scanned};
 use crate::local_gate::LOCAL_GATE;
 use crate::paths::file_name;
 use crate::pipeline::{Pipeline, Step, DONE, PUBLISH, QUALITY};
@@ -59,7 +59,7 @@ pub fn turn_quality_gate_on(
 /// Errors: either check fails.
 pub fn check_gate_mid_run(state: &RunState, host: &dyn Host) -> Result<(), OrchestratorError> {
     if state.round > 0 {
-        host.check_gitleaks()?;
+        host.check_gitleaks(Scanned::SinceBase)?;
         crate::local_gate::preflight(host)?;
     }
     Ok(())

@@ -24,22 +24,22 @@ impl<H: Herdr + ?Sized> Agents for H {
         run.herdr_server = self.server();
     }
 
+    /// The run's workspace is kept only in the server the run saved, and only when that is the one this Herdr reaches
+    /// (keeps_saved_workspace); a new one is opened in the server reached, which the run then saves.
     fn open(&self, run: &mut RunState, human: &dyn Human) -> Result<bool, AgentError> {
-        if !run.workspace_id.is_empty() {
-            if self.workspace_exists(&run.workspace_id, None)? {
-                human.log(&format!("run {} resumes in herdr workspace {}", run.run_id, run.workspace_id));
-                return Ok(false);
+        if keeps_saved_workspace(self, run, human)? {
+            human.log(&format!("run {} resumes in herdr workspace {}", run.run_id, run.workspace_id));
+            // A run that saved no server, from before runs saved one, saves the one it is now found in.
+            if run.herdr_server.is_none() && self.server().is_some() {
+                run.herdr_server = self.server();
+                return Ok(true);
             }
-            // The handoff files are the whole contract between roles, so a new workspace loses nothing a role
-            // needs; its panes went with the old one.
-            human.log(&format!("herdr workspace {} is gone; opening a new one", run.workspace_id));
-            for agent in run.agents.values_mut() {
-                agent.pane.clear();
-            }
+            return Ok(false);
         }
         let label = workspace_label(&run.run_id, &run.task);
         let (workspace, root) = self.create_workspace(run.work_dir(), &label)?;
         (run.workspace_id, run.root_pane) = (workspace, root);
+        run.herdr_server = self.server();
         human.log(&format!("run {} in herdr workspace {}", run.run_id, run.workspace_id));
         Ok(true)
     }
@@ -159,6 +159,49 @@ impl<W: Workspaces + ?Sized> RunPlaces for W {
         }
         Ok(self.close_workspace(&run.workspace_id, run.herdr_server.as_ref())?)
     }
+}
+
+/// Whether the run resumes in the workspace it saved: true when that workspace still exists in the herdr server the run
+/// saved, and that server is the one herdr reaches (Herdr::reaches); a run that saved no server looks in the one herdr
+/// reaches. False for a run with no workspace yet. When false for a run that had one, its agents' panes are cleared, as
+/// a new workspace is to be opened, and a workspace still open in another server is closed there, since the engine
+/// could give its panes no command; a close that fails is only logged. Errors: herdr cannot be asked whether the
+/// server is reached or the workspace exists.
+fn keeps_saved_workspace<H: Herdr + ?Sized>(
+    herdr: &H,
+    run: &mut RunState,
+    human: &dyn Human,
+) -> Result<bool, HerdrError> {
+    if run.workspace_id.is_empty() {
+        return Ok(false);
+    }
+    let saved = run.herdr_server.as_ref();
+    let elsewhere = match saved {
+        Some(saved) => !herdr.reaches(saved)?,
+        None => false,
+    };
+    let exists = herdr.workspace_exists(&run.workspace_id, saved)?;
+    if exists && !elsewhere {
+        return Ok(true);
+    }
+    if exists {
+        human.log(&format!(
+            "herdr workspace {} is in another herdr server than this one; closing it there and opening a new one here",
+            run.workspace_id
+        ));
+        // A workspace left open is only a stray one; the run goes on without it.
+        if let Err(e) = herdr.close_workspace(&run.workspace_id, saved) {
+            human.log(&format!("cannot close herdr workspace {}: {e}", run.workspace_id));
+        }
+    } else {
+        human.log(&format!("herdr workspace {} is gone; opening a new one", run.workspace_id));
+    }
+    // The handoff files are the whole contract between roles, so a new workspace loses nothing a role needs; its panes
+    // went with the old one.
+    for agent in run.agents.values_mut() {
+        agent.pane.clear();
+    }
+    Ok(false)
 }
 
 /// The herdr name of the role's agent; "" before it has one.

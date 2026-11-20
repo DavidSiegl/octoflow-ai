@@ -5,14 +5,14 @@
 use indexmap::IndexMap;
 
 use super::{resume_command, Connected};
-use crate::constants::{APPROVE, RUNS_DIR};
+use crate::constants::APPROVE;
 use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
 use crate::json::{object, Object, ValueExt};
 use crate::local_gate::LOCAL_GATE;
 use crate::pipeline::{workflow_shape, Pipeline, Step, QUALITY};
 use crate::runs::{RUNNING, STALE};
-use crate::state::{find_run, judged_by_several, AgentRecord, RunState, SavedRun, StepVerdict, TurnRecord};
+use crate::state::{find_run, judged_by_several, run_dir, AgentRecord, RunState, SavedRun, StepVerdict, TurnRecord};
 use crate::summary::turn_lines;
 use serde_json::Value;
 
@@ -57,7 +57,6 @@ pub const BLOCKED_STATUS: &str = "blocked";
 pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> bool, target: &[String]) -> Object {
     let s = run.shown();
     let unreadable = run.problem();
-    let set = |text: &Option<String>| text.as_deref().filter(|t| !t.is_empty()).is_some();
     let pipeline = s.pipeline().ok();
     let step = pipeline.as_ref().and_then(|p| p.step(&s.phase));
     let role = step.map(|st| st.role.clone());
@@ -65,7 +64,7 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
     let stale = health.as_ref().is_some_and(|(h, _)| *h == STALE);
     let running = health.as_ref().is_some_and(|(h, _)| *h == RUNNING);
     // resume refuses a run whose state.json it cannot read.
-    let resume = (stale && !set(&s.closed) && unreadable.is_none()).then(|| resume_command(&s.run_id, target));
+    let resume = (stale && !s.is_closed() && unreadable.is_none()).then(|| resume_command(&s.run_id, target));
     let last_turn = s.turns.iter().rev().find(|t| t.step == s.phase);
     let blocked = s.blocked.as_ref().filter(|b| !b.is_empty());
     let waiting = if running && blocked.is_some() {
@@ -307,7 +306,7 @@ pub fn show_run(world: &Connected, cwd: &str, run_ref: &str, target: &[String]) 
     world.say(&run_line(row));
     world.say(&format!("    {}", s.task));
     // The directory state.json was found in, which outlives a project moved since the run saved its cwd.
-    let run_dir = format!("{cwd}/{RUNS_DIR}/{}", row[0]);
+    let dir = run_dir(cwd, &row[0]);
     let pipeline = s.pipeline().ok();
     world.say("");
     match &pipeline {
@@ -337,9 +336,9 @@ pub fn show_run(world: &Connected, cwd: &str, run_ref: &str, target: &[String]) 
     let zone = world.with.clocks.zone();
     print_section(world, &format!("turns, started in {}", zone_name(&zone, turns)), turn_lines(turns, &zone));
     print_section(world, "verdicts", verdict_lines(&s.verdicts));
-    print_section(world, "files", host.run_files(&run_dir)?.into_iter().map(|f| f.path).collect());
+    print_section(world, "files", host.run_files(&dir)?.into_iter().map(|f| f.path).collect());
     let review = match &pipeline {
-        Some(p) => last_review(world, &run_dir, p, s.round)?,
+        Some(p) => last_review(world, &dir, p, s.round)?,
         None => None,
     };
     if let Some((path, text)) = review {

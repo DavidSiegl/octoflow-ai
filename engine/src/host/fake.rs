@@ -193,7 +193,7 @@ pub(crate) struct FakeState {
     pub list_remote_error: Option<String>,
     /// How many more `ls-remote`s fail with list_remote_error, the ones after them succeeding; None: every one.
     pub list_remote_failures_left: Option<u32>,
-    /// What `git diff -U0` from the base to a snapshot prints.
+    /// The change from the base to a snapshot, as `git diff -U0` prints it.
     pub diff: String,
     /// The checkout has an origin at all.
     pub has_origin: bool,
@@ -238,7 +238,7 @@ pub(crate) struct FakeState {
     pub leaks: Vec<Leak>,
     /// Each scan, in order.
     pub scans: Vec<Scan>,
-    /// check_gitleaks fails as on a machine without gitleaks.
+    /// gitleaks_problem, and so check_gitleaks, finds gitleaks missing, as on a machine without it.
     pub gitleaks_missing: bool,
     /// The text of each file in a commit, by (commit, path); file_at reads it, and records each read in file_reads.
     pub committed: HashMap<(String, String), String>,
@@ -484,9 +484,6 @@ impl FakeState {
             }
             ["push", ..] => return self.git_push(args),
             ["ls-remote", ..] => return self.git_ls_remote(args),
-            ["-c", "core.quotePath=false", "diff", "--no-relative", diff @ ..] if change_diff_args(diff) => {
-                return ok(&self.diff)
-            }
             ["remote", "get-url", "origin"] => {
                 if !self.has_origin {
                     return Completed::new(2, "", "error: No such remote 'origin'");
@@ -963,14 +960,8 @@ impl Host for FakeHost {
             .collect())
     }
 
-    fn check_gitleaks(&self) -> Result<(), OrchestratorError> {
-        if self.state().gitleaks_missing {
-            return Err(OrchestratorError(format!(
-                "this run pushes, and every push is scanned for secrets first: {}",
-                crate::constants::GITLEAKS_INSTALL
-            )));
-        }
-        Ok(())
+    fn gitleaks_problem(&self) -> Option<String> {
+        self.state().gitleaks_missing.then(|| "gitleaks cannot be started (not found)".to_string())
     }
 
     fn scan_secrets(
@@ -1069,8 +1060,8 @@ impl Host for FakeHost {
                 continue;
             };
             if name == "state.json" {
-                let state = serde_json::from_str::<Value>(text).map_err(|e| OrchestratorError(e.to_string()))?;
-                states.push(SavedRun::read(s.ages.get(run_id).copied().unwrap_or(0), state)?);
+                let age = s.ages.get(run_id).copied().unwrap_or(0);
+                states.push(SavedRun::read(age, &format!("{runs}{run_id}"), text.as_bytes()));
             }
         }
         Ok(states)
@@ -1151,13 +1142,6 @@ impl Host for FakeHost {
         let s = self.state();
         Ok(s.session_logs.get(&(name.to_string(), session.to_string())).map(|log| log.clone().into_bytes()))
     }
-}
-
-/// Whether args, a diff's arguments after `--no-relative`, are those Host::change_diff sends: from a base, to a
-/// commit or the working tree.
-fn change_diff_args(args: &[&str]) -> bool {
-    let fixed = ["-U0", "-M", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/"];
-    args.starts_with(&fixed) && matches!(&args[fixed.len()..], [_, "--"] | [_, _, "--"])
 }
 
 /// Whether args, a commit's arguments after its two messages, are `--trailer <trailer>` pairs.

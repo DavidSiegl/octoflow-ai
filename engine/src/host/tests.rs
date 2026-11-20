@@ -6,6 +6,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use super::*;
 use crate::interrupt::Interrupt;
+use crate::state::RunState;
 use crate::test_support::{ended, oracle, raise_once_written, TempDir, HEARS_SIGINT};
 
 /// A token-shaped string, built so that no scanner takes this file for a leak.
@@ -424,16 +425,48 @@ fn run_states() {
 }
 
 #[test]
-fn run_states_corrupt() {
+fn a_state_json_that_is_not_json_or_names_no_run_is_an_unreadable_run_named_by_its_directory() {
     let d = TempDir::new();
     put(&d.join(&format!("{RUNS_DIR}/a/state.json")), "{\"run_id\": \n");
-    let e = ProcessHost::local(&Interrupt::new()).run_states(&d.path()).unwrap_err();
-    assert!(e.0.starts_with(&format!("corrupt run state under {}/{RUNS_DIR}: ", d.path())), "{e}");
+    put(&d.join(&format!("{RUNS_DIR}/b/state.json")), "[1]\n");
+    put(&d.join(&format!("{RUNS_DIR}/c/state.json")), &RunState::new("c", "t", &d.path()).to_text());
+    let host = ProcessHost::local(&Interrupt::new());
+    let mut runs = host.run_states(&d.path()).unwrap();
+    runs.sort_by(|x, y| x.shown().run_id.cmp(&y.shown().run_id));
+    let listed: Vec<(&str, Option<&str>)> = runs.iter().map(|r| (r.shown().run_id.as_str(), r.problem())).collect();
+    let runs_dir = format!("{}/{RUNS_DIR}", d.path());
+    let a = format!(
+        "{runs_dir}/a/state.json is not JSON (EOF while parsing a value at line 1 column 11); fix it, or remove \
+         {runs_dir}/a"
+    );
+    let b = format!("{runs_dir}/b/state.json is not a JSON object with a run_id; fix it, or remove {runs_dir}/b");
+    assert_eq!(listed, [("a", Some(a.as_str())), ("b", Some(b.as_str())), ("c", None)]);
+    let a = host.run_state(&d.path(), "a").unwrap().unwrap();
+    assert_eq!(a.state().unwrap_err().0, listed[0].1.unwrap());
+}
+
+#[test]
+fn bytes_that_are_not_utf_8_in_a_run_s_directory_name_or_state_json_fail_only_that_run() {
+    use std::os::unix::ffi::OsStrExt;
+    let d = TempDir::new();
+    let runs = std::path::PathBuf::from(format!("{}/{RUNS_DIR}", d.path()));
+    let odd = runs.join(std::ffi::OsStr::from_bytes(b"x\xff"));
+    std::fs::create_dir_all(&odd).unwrap();
+    std::fs::write(odd.join("state.json"), RunState::new("x", "t", &d.path()).to_text()).unwrap();
+    std::fs::create_dir_all(runs.join("y")).unwrap();
+    std::fs::write(runs.join("y/state.json"), b"{\"run_id\": \"y\xff\"}\n").unwrap();
+    let host = ProcessHost::local(&Interrupt::new());
+    let mut listed = host.run_states(&d.path()).unwrap();
+    listed.sort_by(|a, b| a.shown().run_id.cmp(&b.shown().run_id));
+    assert_eq!((listed[0].shown().run_id.as_str(), listed[0].problem()), ("x", None));
+    let y = format!("{}/y/state.json is not UTF-8 text; fix it, or remove {}/y", runs.display(), runs.display());
+    assert_eq!((listed[1].shown().run_id.as_str(), listed[1].problem()), ("y", Some(y.as_str())));
+    assert_eq!(listed.len(), 2);
 }
 
 #[test]
 fn a_run_state_whose_age_is_not_a_number_is_corrupt() {
-    let e = parsed_run_states("/p", RUNS_DIR, "12x {}\0").unwrap_err();
+    let e = parsed_run_states("/p", RUNS_DIR, b"12x {}\0").unwrap_err();
     assert_eq!(e.0, format!("corrupt run state under /p/{RUNS_DIR}: an age that is not a whole number: \"12x\""));
 }
 
@@ -885,17 +918,32 @@ fn what_leads_out_of_a_run_directory_is_neither_listed_nor_read_over_ssh() {
         (read("r", "loop.md"), read("r", "nosuch.md"), read("nosuch", "a.md")),
         (RunFileText::Missing, RunFileText::Missing, RunFileText::Missing)
     );
-    // A run's state.json is read only from a run directory below the runs directory, alias being r's again, and
-    // only when it stays in its run directory.
+    // A run's state.json is read only from a run directory below the runs directory, and only when it stays in its
+    // run directory and names the run its directory is named for: alias is r's again, and m's names away, a link out,
+    // which close and forget, acting on the run a state.json names, would reach through it.
     put(&format!("{runs}/r/state.json"), "{\"run_id\": \"r\"}");
     put(&d.join("state.json"), "{\"run_id\": \"away\"}");
     std::fs::create_dir_all(format!("{runs}/s")).unwrap();
     link(&d.join("state.json"), &format!("{runs}/s/state.json"));
+    std::fs::create_dir_all(format!("{runs}/m")).unwrap();
+    put(&format!("{runs}/m/state.json"), "{\"run_id\": \"away\"}");
+    // An unreadable state.json names no run, so it is the run its directory is named for (SavedRun::read): u's is
+    // kept, but not under ualias, a link to u, nor t's, a link out.
+    put(&format!("{runs}/u/state.json"), "not json");
+    link("u", &format!("{runs}/ualias"));
+    put(&d.join("t.json"), "not json");
+    std::fs::create_dir_all(format!("{runs}/t")).unwrap();
+    link(&d.join("t.json"), &format!("{runs}/t/state.json"));
     let states = ssh.host.run_states_inside(&d.join("proj")).unwrap();
     let ids: Vec<&str> = states.iter().map(|s| s.shown().run_id.as_str()).collect();
-    assert_eq!(ids, ["r", "r"]);
+    assert_eq!(ids, ["r", "u"]);
+    let state = |run: &str| ssh.host.run_state_inside(&d.join("proj"), run).unwrap().map(|s| s.shown().run_id.clone());
+    assert_eq!(
+        ["r", "alias", "s", "m", "away", "nosuch", "u", "ualias", "t"].map(state),
+        [Some("r".to_string()), None, None, None, None, None, Some("u".to_string()), None, None]
+    );
     // Each listing and each read is one command over ssh.
-    assert_eq!(ssh.calls().len(), 4 + 9 + 1);
+    assert_eq!(ssh.calls().len(), 4 + 9 + 1 + 9);
 }
 
 /// A program called name on PATH that removes the file gone when given it, then runs the system's program of that
@@ -1743,10 +1791,10 @@ fn worktree_through_a_symlink() {
     assert!(c.host.is_worktree(&c.a, &format!("{}/wt", c.a)).unwrap());
 }
 
-/// The lines added_lines finds in a change_diff, by file.
-fn changed_lines(diff: &[u8]) -> Vec<(String, Vec<u64>)> {
-    let added = crate::patch::added_lines(diff).unwrap();
-    added.iter().map(|(p, lines)| (p.to_string(), lines.keys().copied().collect())).collect()
+/// Each file changed_line_counts finds from base to commit in cwd, with the lines it adds and removes.
+fn line_counts(host: &ProcessHost, cwd: &str, base: &str, commit: &str) -> Vec<(String, u64, u64)> {
+    let counts = host.changed_line_counts(cwd, base, commit).unwrap();
+    counts.into_iter().map(|f| (f.path, f.added, f.removed)).collect()
 }
 
 #[test]
@@ -1759,9 +1807,7 @@ fn snapshot_in_a_worktree_holds_only_its_change() {
     c.put("mine.py", Some("mine\n"));
     put(&format!("{wt}/feature.py"), "feature\n");
     let sha = c.host.snapshot(&wt, &base, "snapshot").unwrap();
-    assert_eq!(c.sh(&["git", "-C", &wt, "diff", "--name-only", &base, &sha]), "feature.py\n");
-    let diff = c.host.change_diff(&wt, &base, Some(&sha)).unwrap();
-    assert_eq!(changed_lines(&diff), [("feature.py".to_string(), vec![1])]);
+    assert_eq!(line_counts(&c.host, &wt, &base, &sha), [("feature.py".to_string(), 1, 0)]);
     assert_eq!(c.sh(&["git", "-C", &c.a, "status", "--porcelain"]), " M app.py\n?? mine.py\n");
 }
 
@@ -1841,11 +1887,7 @@ fn a_change_is_read_whole_from_a_subdirectory_under_diff_relative() {
     let base = c.commit(&c.a, "sub/lib.py", "lib\n");
     let sub = c.diff_relative_sub();
     let head = c.commit(&c.a, "app.py", "one\ntwo\n");
-    let diff = c.host.change_diff(&sub, &base, Some(&head)).unwrap();
-    assert_eq!(changed_lines(&diff), [("app.py".to_string(), vec![2])]);
-    let counts = c.host.changed_line_counts(&sub, &base, &head).unwrap();
-    let paths: Vec<&str> = counts.iter().map(|f| f.path.as_str()).collect();
-    assert_eq!(paths, ["app.py"]);
+    assert_eq!(line_counts(&c.host, &sub, &base, &head), [("app.py".to_string(), 1, 0)]);
 }
 
 #[test]
@@ -2287,11 +2329,9 @@ fn snapshot_of_the_working_tree() {
     assert_eq!(r.git(&["rev-parse", &format!("{sha}^")]), r.git(&["rev-parse", &base]));
     assert_eq!(r.git(&["log", "--format=%s", "-n", "1", &sha]).trim(), "snapshot");
     assert_eq!(
-        changed_lines(&r.host.change_diff(&r.path, &base, Some(&sha)).unwrap()),
-        [("mod.py".to_string(), vec![2, 3]), ("untracked.py".to_string(), vec![1])]
+        line_counts(&r.host, &r.path, &base, &sha),
+        [("del.py".to_string(), 0, 1), ("mod.py".to_string(), 2, 1), ("untracked.py".to_string(), 1, 0)]
     );
-    // Without a commit, the diff is the working tree's tracked files'.
-    assert_eq!(changed_lines(&r.host.change_diff(&r.path, &base, None).unwrap()), [("mod.py".to_string(), vec![2, 3])]);
 }
 
 #[test]

@@ -263,10 +263,9 @@ pub struct Refreshed {
 pub fn forget_cleared(world: &Connected, cwd: &str, taken: &[RunState]) -> Result<(), OrchestratorError> {
     for state in taken {
         let run_id = &state.run_id;
-        let path = format!("{cwd}/{RUNS_DIR}/{run_id}/state.json");
         record_in_state(
             world.with.host,
-            &path,
+            cwd,
             state,
             |s| s.conflict_cleared = None,
             "drain took up its cleared conflict",
@@ -487,7 +486,7 @@ fn unfinished_run(
         return (format!("is not under {}/{RUNS_DIR}", prs.cwd), start_over);
     };
     let s = run.shown();
-    if let Some(closed) = s.closed.as_deref().filter(|c| !c.is_empty()) {
+    if let Some(closed) = s.closed_line() {
         return (format!("was closed ({closed})"), start_over);
     }
     let world = prs.world;

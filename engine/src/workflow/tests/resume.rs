@@ -5,9 +5,12 @@
 
 use std::cell::RefCell;
 
+use super::pull_request::rounds;
 use super::*;
 use crate::json::object;
-use crate::pipeline::{METRICS_FILE, SUMMARY_FILE};
+use crate::pipeline::{DEFAULT_WORKFLOW, METRICS_FILE, SUMMARY_FILE};
+use crate::test_support::herdr_server;
+use crate::workflow_file::workflow_definition;
 
 /// saved_run, its prompt for file counted as delivered.
 fn prompted(mut state: RunState, file: &str) -> RunState {
@@ -167,6 +170,76 @@ fn resumed_builder_not_yet_prompted_gets_its_normal_prompt() {
     assert!(seen.borrow()[0].starts_with("Changes were requested"), "{}", seen.borrow()[0]);
 }
 
+#[test]
+fn a_built_in_workflow_resumes_on_the_definition_saved_with_the_run_not_on_this_engine_s_built_in() {
+    // The run was started by a release whose default workflow asked the Builder again in other words.
+    let mut definition = workflow_definition(&DEFAULT_WORKFLOW);
+    let steps = definition["steps"].as_array_mut().unwrap();
+    let build = steps.iter_mut().find(|step| step["id"] == "build").unwrap();
+    build["again"] = Value::from("Mend the findings in {findings}; report to {build_path}.");
+    let mut state = prompted(saved_run("build", 2, FULL), "review-1.md");
+    state.workflow_definition = Some(definition.clone());
+    let seen = seen();
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state,
+        build_and_approve(2, &seen),
+        &["review"],
+        &[("build", "s-build")],
+    );
+
+    f.workflow(f.as_saved()).run().unwrap();
+
+    assert!(seen.borrow()[0].starts_with("Mend the findings in "), "{}", seen.borrow()[0]);
+    assert_eq!(f.saved().get("workflow_definition"), Some(&definition));
+}
+
+#[test]
+fn a_built_in_run_started_here_resumes_on_the_definition_it_saved_once_the_built_in_changed() {
+    // An engine starts a run of the built-in default workflow, which stops in round 1 with changes requested.
+    let f = Fixture::new(vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)])]);
+    f.play("review", vec![then_interrupted(&f.interrupt, review_turn(1, CHANGES_REQUESTED))]);
+    assert_eq!(f.workflow(RunSettings::default()).run(), Err(Stopped::Interrupted));
+    // A release whose default workflow asks the Builder again in other words resumes it: the saved definition is
+    // that engine's built-in, edited here as the resuming engine's built-in differs from it.
+    let mut saved = f.saved();
+    let definition = saved.get_mut("workflow_definition").expect("a built-in run saves its definition");
+    let steps = definition["steps"].as_array_mut().unwrap();
+    let build = steps.iter_mut().find(|step| step["id"] == "build").unwrap();
+    build["again"] = Value::from("Mend the findings in {findings}; report to {build_path}.");
+    let seen = seen();
+    let resumed = Fixture::resume(
+        Rc::clone(&f.host),
+        RunState::from_saved(&saved).unwrap(),
+        build_and_approve(2, &seen),
+        &[],
+        &[],
+    );
+
+    resumed.workflow(resumed.as_saved()).run().unwrap();
+
+    assert!(seen.borrow()[0].starts_with("Mend the findings in "), "{}", seen.borrow()[0]);
+}
+
+#[test]
+fn a_built_in_workflow_saved_without_its_definition_resumes_on_this_engine_s_built_in_and_saves_it() {
+    let mut state = prompted(saved_run("build", 2, FULL), "review-1.md");
+    state.workflow_definition = None;
+    let seen = seen();
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state,
+        build_and_approve(2, &seen),
+        &["review"],
+        &[("build", "s-build")],
+    );
+
+    f.workflow(f.as_saved()).run().unwrap();
+
+    assert!(seen.borrow()[0].starts_with("Changes were requested"), "{}", seen.borrow()[0]);
+    assert_eq!(f.saved().get("workflow_definition"), Some(&workflow_definition(&DEFAULT_WORKFLOW)));
+}
+
 /// The role's saved agent, marked as started the way start says and not yet prompted.
 fn unprompted(mut state: RunState, role: &str, start: AgentStart) -> RunState {
     state.agents.get_mut(role).expect("a saved agent").unprompted = Some(start);
@@ -296,6 +369,96 @@ fn a_marked_agent_found_working_took_its_prompt_and_is_only_waited_on() {
     assert_eq!(prompts_to(&f, "build-a1b2c3"), 0);
     assert!(!f.told.lines().iter().any(|l| l.contains("needs your answer")), "{:?}", f.told.lines());
     assert_eq!(wf.state().agents.get("build").unwrap().unprompted, None);
+}
+
+#[test]
+fn a_marked_agent_blocked_after_its_file_was_written_is_not_said_to_be_starting() {
+    // The orchestrator stopped after relaunching the Builder, before the prompt went out; the human had it write
+    // build-2.md in its pane. In round 3 it is blocked, which may be on what the human typed: the human is asked, with
+    // no claim that it is starting, and it is prompted once it is answered.
+    let state = unprompted(saved_run("build", 2, FULL), "build", AgentStart::Resumed);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state,
+        vec![
+            ("review", vec![review_turn(2, CHANGES_REQUESTED), review_turn(3, APPROVE)]),
+            ("build", vec![build_turn(3)]),
+        ],
+        &["build", "review"],
+        &[("build", "s-build")],
+    );
+    f.put(&f.state.build_path(2), "built");
+    f.herdr.state().statuses.insert("build-a1b2c3".into(), "blocked".into());
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert!(!f.told.lines().iter().any(|l| l.contains("before it starts")), "{:?}", f.told.lines());
+    assert!(f.told.lines().iter().any(|l| l.starts_with("[build] needs your answer (")), "{:?}", f.told.lines());
+    assert_eq!(prompts_to(&f, "build-a1b2c3"), 1);
+    assert_eq!(wf.state().agents.get("build").unwrap().unprompted, None);
+}
+
+/// f's saved settings, its workflow quick with a human-paced Builder, whose fresh session is told of its earlier
+/// reports.
+fn interviewing_builder(f: &Fixture) -> RunSettings {
+    use crate::pipeline::{Pipeline, Step};
+    use crate::test_support::{again, roles};
+    let mut build = again(
+        Step::new("build", "build", "build-{n}.md", "Build {task} in {cwd}; report to {build_path}."),
+        "Fix {prev_review_path}; report to {build_path}.",
+    );
+    (build.edits, build.human_paced) = (true, true);
+    build.fresh_note = Some("Earlier reports: {earlier_build_paths}.".into());
+    let mut review = again(
+        Step::new("review", "review", "review-{n}.md", "Review {change} against {task}; write {review_path}."),
+        "Recheck {build_path}; write {review_path}.",
+    );
+    review.loop_to = Some("build".into());
+    let p = Pipeline::new("quick", roles(&[("build", "Builder"), ("review", "Reviewer")]), vec![build, review]);
+    RunSettings { pipeline: Some(p.expect("a valid workflow")), ..f.as_saved() }
+}
+
+/// A saved quick run in round 2 whose Builder, started as start says, was never prompted, yet wrote build-2.md: the
+/// human had it do so in its pane while no orchestrator ran. It loops back to round 3, recording the Builder's prompt in
+/// seen; alive names the roles herdr finds running.
+fn written_by_an_unprompted_builder(start: AgentStart, alive: &[&str], seen: &Rc<RefCell<Vec<String>>>) -> Fixture {
+    let state = unprompted(saved_run("build", 2, &["build", "review"]), "build", start);
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state,
+        vec![
+            ("review", vec![review_turn(2, CHANGES_REQUESTED), review_turn(3, APPROVE)]),
+            ("build", vec![recording(build_turn(3), seen)]),
+        ],
+        alive,
+        &[],
+    );
+    f.put(&f.state.build_path(2), "built");
+    f
+}
+
+#[test]
+fn a_restarted_agent_past_its_startup_gets_the_fresh_prompt_and_is_not_said_to_have_restarted() {
+    let seen = seen();
+    let f = written_by_an_unprompted_builder(AgentStart::Restarted, &["build", "review"], &seen);
+    f.herdr.state().statuses.insert("build-a1b2c3".into(), "idle".into());
+    let mut wf = f.workflow(interviewing_builder(&f));
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert!(seen.borrow()[0].contains("Earlier reports:"), "{}", seen.borrow()[0]);
+    assert!(f.told.titles().contains(&"Builder is waiting for you".to_string()), "{:?}", f.told.titles());
+    assert!(!f.told.titles().iter().any(|t| t.contains("restarted")), "{:?}", f.told.titles());
+}
+
+#[test]
+fn a_new_agent_past_its_startup_that_exited_lost_a_conversation_and_is_restarted() {
+    let seen = seen();
+    let f = written_by_an_unprompted_builder(AgentStart::New, &["review"], &seen);
+    let mut wf = f.workflow(interviewing_builder(&f));
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert!(
+        f.told.titles().contains(&"Builder restarted; the interview starts over".to_string()),
+        "{:?}",
+        f.told.titles()
+    );
 }
 
 #[test]
@@ -448,6 +611,16 @@ fn an_ending_writes_the_files_before_it_releases_the_run() {
     let release = last(&path(&f, "state.json"));
     assert!(last(&path(&f, SUMMARY_FILE)) < release && last(&path(&f, METRICS_FILE)) < release, "{writes:?}");
     assert_eq!(f.saved().get("owner"), Some(&Value::Null));
+}
+
+#[test]
+fn a_done_run_saved_without_its_definition_ends_without_one() {
+    // Its record keeps what it ran with; this engine's built-in may have other steps.
+    let mut state = stopped_after_saving_done();
+    state.workflow_definition = None;
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![], &[], &[]);
+    assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
+    assert_eq!(f.saved().get("workflow_definition").filter(|d| !d.is_null()), None);
 }
 
 #[test]
@@ -676,4 +849,125 @@ fn recorded_reviewer_is_not_started_twice() {
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
     assert!(starts(&f).is_empty());
     assert_eq!(prompts_to(&f, "review-a1b2c3"), 1);
+}
+
+/// The herdr server whose session is session, its socket path unset.
+fn session(session: &str) -> HerdrServer {
+    herdr_server(None, Some(session))
+}
+
+/// A run saved in phase spec in herdr server saved, its spec approved, resumed by a fake herdr reaching current.
+fn resumed_from(saved: Option<HerdrServer>, current: Option<HerdrServer>) -> Fixture {
+    let mut state = saved_run("spec", 0, &["spec"]);
+    state.herdr_server = saved;
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, approved(), &[], &[]);
+    f.herdr.state().server = current;
+    f
+}
+
+/// Whether f's herdr was asked to open or close a workspace.
+fn opened_or_closed(f: &Fixture) -> bool {
+    f.herdr.state().calls.iter().any(|c| matches!(c, Call::Workspace { .. } | Call::Close { .. }))
+}
+
+#[test]
+fn a_new_run_saves_the_herdr_server_it_opens_its_workspace_in() {
+    let f = Fixture::new(rounds(&[APPROVE]));
+    f.herdr.state().server = Some(session("work"));
+    let mut wf = f.workflow(RunSettings::default());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert_eq!(wf.state().herdr_server, Some(session("work")));
+    // A herdr forwarding to a machine reaches none of this machine's.
+    let f = Fixture::new(rounds(&[APPROVE]));
+    let mut wf = f.workflow(RunSettings::default());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert_eq!(wf.state().herdr_server, None);
+}
+
+#[test]
+fn a_resume_from_another_herdr_server_closes_the_old_workspace_there_and_opens_one_here() {
+    // Started in the app's session, resumed from a shell in another, which has a w1 of its own that must not be
+    // taken for the run's.
+    let f = resumed_from(Some(session("octoflow")), Some(session("work")));
+    f.herdr.state().foreign_workspaces.insert((session("octoflow"), "w1".into()));
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    let reached = f.herdr.state().reached.clone();
+    assert_eq!(
+        reached[..2],
+        [("w1".to_string(), Some(session("octoflow"))), ("w1".to_string(), Some(session("octoflow")))]
+    );
+    assert!(called(&f, &Call::Close { workspace: "w1".into() }));
+    assert!(f.herdr.state().foreign_workspaces.is_empty());
+    assert!(f.herdr.state().calls.iter().any(|c| matches!(c, Call::Workspace { .. })));
+    assert_eq!(wf.state().herdr_server, Some(session("work")));
+}
+
+#[test]
+fn a_workspace_gone_from_the_run_s_herdr_server_is_not_found_in_another() {
+    // w1 is open only in the resuming server: another run's, which the resume must not take for its own.
+    let f = resumed_from(Some(session("octoflow")), Some(session("work")));
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert_eq!(f.herdr.state().reached[0], ("w1".to_string(), Some(session("octoflow"))));
+    assert!(!called(&f, &Call::Close { workspace: "w1".into() }));
+    assert!(f.told.lines().contains(&"herdr workspace w1 is gone; opening a new one".into()));
+    assert!(f.herdr.state().calls.iter().any(|c| matches!(c, Call::Workspace { .. })));
+    assert_eq!(wf.state().herdr_server, Some(session("work")));
+}
+
+#[test]
+fn the_run_s_herdr_server_named_another_way_is_the_same_server() {
+    // Started from a plain terminal (default server), resumed from a pane of that server, whose HERDR_SOCKET_PATH
+    // names it by its socket.
+    let pane = herdr_server(Some("/h/herdr.sock"), None);
+    let f = resumed_from(Some(herdr_server(None, None)), Some(pane.clone()));
+    f.herdr.state().aliases.push(herdr_server(None, None));
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert!(!opened_or_closed(&f), "{:?}", f.herdr.state().calls);
+    assert_eq!(wf.state().herdr_server, Some(herdr_server(None, None)));
+}
+
+#[test]
+fn a_resume_forwarded_to_the_run_s_machine_goes_on_in_its_workspace() {
+    // Started on box, resumed from a laptop with --machine box: the forwarded herdr reaches no server of this
+    // machine's, and box's own picks the one the run is in.
+    let f = resumed_from(Some(session("work")), None);
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert!(!opened_or_closed(&f), "{:?}", f.herdr.state().calls);
+}
+
+#[test]
+fn a_run_that_saved_no_herdr_server_saves_the_one_it_resumes_in() {
+    let f = resumed_from(None, Some(session("work")));
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert!(!opened_or_closed(&f), "{:?}", f.herdr.state().calls);
+    assert_eq!(wf.state().herdr_server, Some(session("work")));
+}
+
+#[test]
+fn a_workspace_that_cannot_be_closed_in_another_server_is_left_there() {
+    let f = resumed_from(Some(session("octoflow")), Some(session("work")));
+    f.herdr.state().foreign_workspaces.insert((session("octoflow"), "w1".into()));
+    f.herdr.state().close_error = Some(crate::herdr::HerdrError::new("server_not_running", "down"));
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    let line = "cannot close herdr workspace w1: herdr server_not_running: down";
+    assert!(f.told.lines().contains(&line.into()), "{:?}", f.told.lines());
+    assert_eq!(wf.state().herdr_server, Some(session("work")));
+}
+
+#[test]
+fn a_resume_from_the_run_s_own_herdr_server_goes_on_in_its_workspace() {
+    let mut state = saved_run("spec", 0, &["spec"]);
+    state.herdr_server = Some(session("work"));
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, approved(), &["spec"], &[]);
+    f.herdr.state().server = Some(session("work"));
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert!(!opened_or_closed(&f), "{:?}", f.herdr.state().calls);
+    assert_eq!(wf.state().herdr_server, Some(session("work")));
 }

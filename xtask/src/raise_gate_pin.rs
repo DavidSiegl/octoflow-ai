@@ -32,8 +32,8 @@ use crate::Error;
 
 /// The repository octoflow-gate releases are published from, as gh names it.
 const GATE_REPO: &str = "DavidSiegl/octoflow-gate";
-/// The first release that ships `gate`, which the Jenkinsfile's Gate stage and the engine's local gate run; as
-/// engine/src/local_gate.rs's FIRST_WITH_GATE.
+/// The first release that ships `gate`, which the Jenkinsfile's Gate stage and the engine's local gate run; the
+/// engine's FIRST_WITH_GATE, as tests.rs's the_first_release_with_gate_is_the_engine_s checks.
 const FIRST_WITH_GATE: Version = Version(0, 7, 0);
 
 /// The files of a raise, relative to the checkout's top level.
@@ -271,14 +271,21 @@ fn releases() -> Result<Vec<Release>, Error> {
 
 /// The sha256 of version's tarball, as its release's `.sha256` asset gives it.
 fn release_sha256(version: Version) -> Result<String, Error> {
-    let url =
-        format!("https://github.com/{GATE_REPO}/releases/download/v{version}/octoflow-gate-{version}.tar.gz.sha256");
+    let url = format!("{}.sha256", release_url(version));
     let asset = run(command("curl").args(["-fsSL", &url]), &format!("downloading {url}"))?;
     let sha = asset.split_whitespace().next().unwrap_or("");
     if sha.len() != 64 || !sha.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
         return Err(Error(format!("{url} holds no sha256: {asset:?}")));
     }
     Ok(sha.to_owned())
+}
+
+/// The address of version's release tarball, which the engine's RELEASE_URL gives too (tests.rs's
+/// a_release_is_downloaded_from_where_the_engine_downloads_it checks that); the raise reads only the `.sha256` asset
+/// next to it. ci/fetch-gate.sh, which downloads the tarball, keeps its own copy of the address;
+/// xtask/tests/fetch_gate.rs checks that copy against a literal, but no test ties it to the engine's.
+fn release_url(version: Version) -> String {
+    format!("https://github.com/{GATE_REPO}/releases/download/v{version}/octoflow-gate-{version}.tar.gz")
 }
 
 /// The golden reports of version's release: its tarball is downloaded into dir and unpacked there by top's
@@ -326,7 +333,11 @@ fn replace_golden(dir: &Path, golden: &[(String, Vec<u8>)]) -> Result<(), Error>
     Ok(())
 }
 
-/// The version and sha256 of pin's first line that is not a comment, as ci/fetch-gate.sh reads it.
+/// The version and sha256 of pin's first line that is not a comment. For a well-formed pin this is the engine's
+/// parse_pin's reading, as tests.rs's a_pin_reads_as_the_engine_reads_it checks; on a malformed one they differ:
+/// pin_of takes any text as the sha, which parse_pin and ci/fetch-gate.sh refuse, and a `v` prefix, which parse_pin
+/// refuses and ci/fetch-gate.sh passes on to a download address that does not exist; and it refuses a pre-release,
+/// which parse_pin takes.
 fn pin_of(pin: &str) -> Option<(Version, &str)> {
     let (version, sha) = pin.lines().find(|l| !l.starts_with('#'))?.split_once(' ')?;
     Some((Version::parse(version)?, sha))
@@ -425,3 +436,6 @@ fn read(path: &Path) -> Result<String, Error> {
 fn write(path: &Path, text: &str) -> Result<(), Error> {
     fs::write(path, text).map_err(|e| Error(format!("could not write {}: {e}", path.display())))
 }
+
+#[cfg(test)]
+mod tests;

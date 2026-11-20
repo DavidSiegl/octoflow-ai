@@ -105,13 +105,14 @@ pub enum Started {
 /// and watching them. Every method takes the run's state and the role, never a backend's own names, and changes only
 /// the backend's fields of the state (see the module); saving the state is the caller's.
 pub trait Agents: RunPlaces {
-    /// Record in run that its agents run in this backend from now on (herdr: the server it reaches), for a run about
-    /// to be started or resumed here.
+    /// Record in a new run, with its first state, where its agents will run (herdr: the server it reaches); a resume
+    /// leaves that to Agents::open.
     fn bind(&self, run: &mut RunState);
 
-    /// Have a place for the run's agents: the one run saved, when it is still there, else a new one, every agent's
-    /// place in the old one forgotten (herdr: the run's workspace). Tells human which, in a log line. Returns whether
-    /// run changed, to be saved.
+    /// Have a place for the run's agents: the one run saved, when it is still there and this backend can reach it,
+    /// else a new one, every agent's place in the old one forgotten, and run records where the place is (herdr: the
+    /// run's workspace and its server). Tells human which, in a log line. Returns whether run changed, to be saved.
+    /// Errors: the backend cannot tell whether the saved place is there, or cannot open a new one.
     fn open(&self, run: &mut RunState, human: &dyn Human) -> Result<bool, AgentError>;
 
     /// RunPlaces::end for the orchestrator, once the run is over: a failure is only logged to human, in the
@@ -135,8 +136,8 @@ pub trait Agents: RunPlaces {
     /// it cannot resume.
     fn start(&self, run: &RunState, role: &str, launch: &AgentLaunch) -> Result<Started, AgentError>;
 
-    /// Wait at most seconds for the role's agent to be done asking (Started::Asking), as the human answers; true once
-    /// it is, or has exited, false when the time runs out first.
+    /// Wait at most seconds for the role's agent to stop waiting on the human (Started::Asking, Activity::Blocked), as
+    /// the human answers; true once it has, or has exited, false when the time runs out first.
     fn wait_ready(&self, run: &RunState, role: &str, seconds: u64) -> Result<bool, AgentError>;
 
     /// The role's agent as it runs now; None when it has exited, or the role has none.

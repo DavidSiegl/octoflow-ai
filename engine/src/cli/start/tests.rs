@@ -16,8 +16,7 @@ use crate::json::object;
 use crate::json::Object;
 use crate::local_gate::LOCAL_GATE;
 use crate::runs::local_host;
-use crate::state::SavedRun;
-use crate::test_support::{quick, resumable, solo, TempDir};
+use crate::test_support::{herdr_server, quick, read_saved, resumable, solo, TempDir};
 use crate::workflow::fixture::{quality_state, review_turn, saved_run, Fixture};
 use crate::workflow_file::{workflow_definition, workflow_toml};
 use serde_json::Value;
@@ -117,25 +116,13 @@ fn live_run_needs_force() {
     let me = [("host", Value::from("here")), ("pid", Value::from(42)), ("started_at", Value::from("x"))];
     let saved = Value::Object(saved_settings(&[("owner", Value::Object(object(me)))]));
     let alive = |_: i64| true;
-    let e = resumable_state(
-        &[SavedRun::read(30, saved.clone()).unwrap()],
-        &resume_args(&["a1b2c3"]),
-        "/proj",
-        "here",
-        &alive,
-    )
-    .unwrap_err();
+    let e = resumable_state(&[read_saved(30, &saved)], &resume_args(&["a1b2c3"]), "/proj", "here", &alive).unwrap_err();
     assert_eq!(
         e.0,
         "run 20260929-120000-a1b2c3 looks alive (pid 42 on here, beat 30s ago); pass --force to take it over"
     );
-    let forced = resumable_state(
-        &[SavedRun::read(30, saved).unwrap()],
-        &resume_args(&["a1b2c3", "--force"]),
-        "/proj",
-        "here",
-        &alive,
-    );
+    let forced =
+        resumable_state(&[read_saved(30, &saved)], &resume_args(&["a1b2c3", "--force"]), "/proj", "here", &alive);
     assert_eq!(forced.unwrap().0.run_id, "20260929-120000-a1b2c3");
 }
 
@@ -145,14 +132,7 @@ fn a_done_run_still_ending_needs_force() {
     let done = [("phase", Value::from("done")), ("owner", Value::Object(object(me)))];
     let saved = Value::Object(saved_settings(&done));
     let alive = |_: i64| true;
-    let e = resumable_state(
-        &[SavedRun::read(30, saved.clone()).unwrap()],
-        &resume_args(&["a1b2c3"]),
-        "/proj",
-        "here",
-        &alive,
-    )
-    .unwrap_err();
+    let e = resumable_state(&[read_saved(30, &saved)], &resume_args(&["a1b2c3"]), "/proj", "here", &alive).unwrap_err();
     assert_eq!(
         e.0,
         "run 20260929-120000-a1b2c3 looks alive (pid 42 on here, beat 30s ago); pass --force to take it over"
@@ -160,14 +140,7 @@ fn a_done_run_still_ending_needs_force() {
     // Once its orchestrator is gone, it is resumed so that its ending is finished.
     let dead = |_: i64| false;
     let late = HEARTBEAT_SECONDS + 1;
-    assert!(resumable_state(
-        &[SavedRun::read(late, saved).unwrap()],
-        &resume_args(&["a1b2c3"]),
-        "/proj",
-        "here",
-        &dead
-    )
-    .is_ok());
+    assert!(resumable_state(&[read_saved(late, &saved)], &resume_args(&["a1b2c3"]), "/proj", "here", &dead).is_ok());
 }
 
 #[test]
@@ -195,6 +168,13 @@ fn machine_of_the_resume_is_saved() {
 fn a_closed_run_is_not_resumed_even_with_force() {
     let saved = saved_settings(&[("closed", Value::from("2026-10-01T00:00:00+00:00"))]);
     assert_eq!(error(resumable(&["--force"], &saved)), "run 20260929-120000-a1b2c3 was closed; start a new run");
+}
+
+#[test]
+fn a_run_whose_closed_is_empty_is_resumed() {
+    // close never writes "", and RunState::is_closed reads it as not closed, as list and drain do.
+    let state = resumable(&[], &saved_settings(&[("closed", Value::from(""))])).unwrap();
+    assert_eq!(state.closed.as_deref(), Some(""));
 }
 
 // -- resume --force against another run of the checkout ------------------------------------------------------------
@@ -503,7 +483,7 @@ fn a_run_of_the_jenkins_gate_past_round_0_needs_the_local_gates_preflight() {
     let config = ConfigDir::at("/nowhere");
     let world = connected(&f, &config);
     let e = resumed_state(&resume_args(&["a1b2c3"]), "/proj", &world).unwrap_err();
-    assert!(e.0.contains("every push is scanned for secrets first"), "{e}");
+    assert!(e.0.contains("the quality gate scans each snapshot for secrets"), "{e}");
     // A run whose gate goes off needs none of it.
     let (resumed, _) = resumed_state(&resume_args(&["a1b2c3", "--no-quality-gate"]), "/proj", &world).unwrap();
     assert_eq!((resumed.quality_job, resumed.quality_gate_disabled), (None, true));
@@ -511,11 +491,11 @@ fn a_run_of_the_jenkins_gate_past_round_0_needs_the_local_gates_preflight() {
 
 /// The herdr server whose session is session, its socket path unset.
 fn session(session: &str) -> HerdrServer {
-    serde_json::from_value(serde_json::json!({"HERDR_SESSION": session})).unwrap()
+    herdr_server(None, Some(session))
 }
 
 #[test]
-fn a_run_saves_the_herdr_server_it_starts_or_resumes_its_agents_in() {
+fn a_run_saves_the_herdr_server_it_starts_in_and_a_resume_keeps_it() {
     let (f, d) = (Fixture::new(vec![]), TempDir::new());
     let config = ConfigDir::at(&d.path());
     let world = connected(&f, &config);
@@ -528,7 +508,8 @@ fn a_run_saves_the_herdr_server_it_starts_or_resumes_its_agents_in() {
     let (state, _) = new_state(&on_box, "/proj", None, &world).unwrap();
     assert_eq!(state.herdr_server, None);
 
-    // A resume saves the server it reaches, over the one the run saved.
+    // A resume keeps the server the run saved: its workspace is there, and Agents::open replaces the server
+    // only when it opens a new workspace.
     let host = Rc::new(FakeHost::default());
     let mut saved = saved_run("build", 1, &["spec", "build"]);
     saved.herdr_server = Some(session("old"));
@@ -538,9 +519,5 @@ fn a_run_saves_the_herdr_server_it_starts_or_resumes_its_agents_in() {
     let world = connected(&f, &config);
     f.herdr.state().server = Some(session("new"));
     let (state, _) = resumed_state(&resume_args(&["a1b2c3"]), "/proj", &world).unwrap();
-    assert_eq!(state.herdr_server, Some(session("new")));
-    f.herdr.state().server = None;
-    let on_box = resume_args(&["a1b2c3", "--machine", "box", "--cwd", "/p"]);
-    let (state, _) = resumed_state(&on_box, "/proj", &world).unwrap();
-    assert_eq!(state.herdr_server, None);
+    assert_eq!(state.herdr_server, Some(session("old")));
 }

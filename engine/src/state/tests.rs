@@ -1,5 +1,5 @@
 use super::*;
-use crate::test_support::{denormalized, recordings};
+use crate::test_support::{denormalized, read_saved, recordings};
 
 /// The state.json texts the e2e recordings hold among their run files, denormalized, as a turn record's seconds must
 /// be a number.
@@ -200,6 +200,21 @@ fn an_agents_start_is_kept_until_it_is_prompted_and_reads_as_none_where_an_older
 }
 
 #[test]
+fn an_agent_past_its_startup_is_saved_so_and_reads_as_not_where_an_older_engine_saved_nothing() {
+    let past =
+        r#"{"build": {"name": "build-r1", "pane": "p2", "kind": "pi", "unprompted": "new", "past_startup": true}}"#;
+    let text = saved_with(&[("agents", Some(past))]);
+    let state = RunState::from_text(&text).unwrap();
+    assert!(state.agents.get("build").unwrap().past_startup);
+    assert_eq!(state.to_text(), text + "\n");
+    let older = r#"{"build": {"name": "build-r1", "pane": "p2", "kind": "pi", "unprompted": "new"}}"#;
+    let older = saved_with(&[("agents", Some(older))]);
+    let state = RunState::from_text(&older).unwrap();
+    assert!(!state.agents.get("build").unwrap().past_startup);
+    assert_eq!(state.to_text(), older + "\n", "false is not saved");
+}
+
+#[test]
 fn an_agent_or_turn_record_without_a_field_its_engine_writes_is_refused() {
     let agentless =
         [r#"{"build": {"name": "build-r1", "pane": "p2"}}"#, r#"{"build": {"name": "b", "kind": 1, "pane": ""}}"#];
@@ -300,7 +315,7 @@ fn saved_object(fields: &[(&str, Option<&str>)]) -> Value {
 
 #[test]
 fn a_saved_run_of_this_format_is_its_state() {
-    let run = SavedRun::read(40, saved_object(&[("phase", Some("\"build\""))])).unwrap();
+    let run = read_saved(40, &saved_object(&[("phase", Some("\"build\""))]));
     assert_eq!((run.age(), run.problem()), (40, None));
     assert_eq!(run.state().unwrap().phase, "build");
     assert_eq!(run.shown(), run.state().unwrap());
@@ -319,7 +334,7 @@ fn an_unreadable_saved_run_is_refused_but_shown_as_far_as_it_reads() {
         (saved_object(&[("round", Some("\"2\"")), ("phase", Some("\"build\""))]), "run state r1 is invalid: ", "build"),
     ];
     for (saved, problem, phase) in cases {
-        let run = SavedRun::read(7, saved.clone()).unwrap();
+        let run = read_saved(7, &saved);
         assert!(run.problem().is_some_and(|p| p.starts_with(problem)), "{saved}: {:?}", run.problem());
         assert_eq!(run.state().unwrap_err().0, run.problem().unwrap());
         assert_eq!((run.age(), run.shown().phase.as_str()), (7, phase), "{saved}");
@@ -327,19 +342,30 @@ fn an_unreadable_saved_run_is_refused_but_shown_as_far_as_it_reads() {
 }
 
 #[test]
-fn a_saved_run_names_its_run() {
+fn a_saved_run_that_is_not_json_or_names_no_run_is_unreadable_and_named_by_its_directory() {
+    let dir = "/p/.octoflow-ai/runs/r9";
+    let not_named = format!("{dir}/state.json is not a JSON object with a run_id; fix it, or remove {dir}");
     let cases = [
-        Value::from("a run"),
-        saved_object(&[("run_id", None)]),
-        saved_object(&[("run_id", Some("5"))]),
-        saved_object(&[("run_id", Some("\"\""))]),
+        (
+            "{\"run_id\": ".to_string(),
+            format!(
+                "{dir}/state.json is not JSON (EOF while parsing a value at line 1 column 11); fix it, or remove {dir}"
+            ),
+            "",
+        ),
+        ("\"a run\"".to_string(), not_named.clone(), ""),
+        (saved_with(&[("run_id", None), ("phase", Some("\"build\""))]), not_named.clone(), "build"),
+        (saved_with(&[("run_id", Some("5"))]), not_named.clone(), "spec"),
+        (saved_with(&[("run_id", Some("\"\""))]), not_named, "spec"),
     ];
-    for saved in cases {
-        assert_eq!(
-            SavedRun::read(0, saved.clone()).unwrap_err().0,
-            "a run state is a JSON object with its run_id",
-            "{saved}"
-        );
+    for (text, problem, phase) in cases {
+        let run = SavedRun::read(3, dir, text.as_bytes());
+        assert_eq!(run.problem(), Some(problem.as_str()), "{text}");
+        assert_eq!(run.state().unwrap_err().0, problem, "{text}");
+        assert_eq!((run.age(), run.shown().run_id.as_str()), (3, "r9"), "{text}");
+        if !phase.is_empty() {
+            assert_eq!(run.shown().phase, phase, "{text}");
+        }
     }
 }
 
@@ -352,7 +378,7 @@ fn an_unreadable_field_is_shown_at_its_default_and_the_others_as_saved() {
         ("later", Some("1")),
         ("owner", Some("{\"host\": \"here\", \"pid\": 1}")),
     ]);
-    let shown = SavedRun::read(0, saved).unwrap().shown().clone();
+    let shown = read_saved(0, &saved).shown().clone();
     assert_eq!((shown.round, shown.task.as_str(), shown.run_id.as_str()), (0, "add a rate limiter", "r1"));
     assert_eq!(shown.owner.map(|o| o.len()), Some(2));
     assert_eq!(shown.unknown, crate::json::object([("later", Value::from(1))]));
@@ -411,7 +437,7 @@ fn runs() -> Vec<SavedRun> {
     ["20260930-070000-c0ffee", "20260930-080000-beef00", "20260929-080000-beef00"]
         .iter()
         .zip(1..)
-        .map(|(id, age)| SavedRun::read(age, RunState::new(id, "a task", "/p").to_json()).unwrap())
+        .map(|(id, age)| read_saved(age, &RunState::new(id, "a task", "/p").to_json()))
         .collect()
 }
 
@@ -420,9 +446,7 @@ fn by_key_or_full_id() {
     assert_eq!(find_run(&runs(), "c0ffee", "/p").unwrap().age(), 1);
     assert_eq!(find_run(&runs(), "20260929-080000-beef00", "/p").unwrap().age(), 3);
     // Unreadable or not.
-    let old =
-        SavedRun::read(4, Value::Object(crate::json::object([("run_id", Value::from("20260928-080000-0dd000"))])))
-            .unwrap();
+    let old = read_saved(4, &Value::Object(crate::json::object([("run_id", Value::from("20260928-080000-0dd000"))])));
     assert_eq!(find_run(&[old], "0dd000", "/p").unwrap().age(), 4);
 }
 

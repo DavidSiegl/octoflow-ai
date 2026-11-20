@@ -429,8 +429,9 @@ fn run_a_built_in_workflow_or_a_workflow_file() {
     let cli = Cli::new();
     let saved = started(&cli, &["task", "--workflow", "product-team"]);
     assert_eq!((field(&saved, "workflow"), field(&saved, "phase")), (r#""product-team""#.into(), r#""spec""#.into()));
-    // A built-in workflow is saved by name; its name and the run's prompts give it back.
-    assert_eq!(saved.get("workflow_definition"), Some(&Value::Null));
+    // A built-in workflow's definition is saved too, so that a resume by a release whose built-in differs keeps it.
+    let product_team = find_workflow("product-team", &Default::default()).unwrap();
+    assert_eq!(saved.get("workflow_definition"), Some(&workflow_definition(&product_team)));
     assert_eq!(field(&saved, "models"), r#"{"tests":"sonnet"}"#);
     let mine = built_in_as_file(&d, "quick", "mine");
     let saved = started(&cli, &["task", "--workflow-file", &mine]);
@@ -703,7 +704,8 @@ fn list_names_a_non_default_workflow() {
 #[test]
 fn record_in_state_refuses_a_changed_file_naming_what_it_does_not_record() {
     let path = "/proj/.octoflow-ai/runs/r1/state.json";
-    let read = crate::state::RunState::new("r1", "a task", "/proj");
+    // Saved before the project moved from /old to /proj: the file is found under the cwd argument, not read.cwd.
+    let read = crate::state::RunState::new("r1", "a task", "/old");
     let mut now = read.clone();
     now.round = 3;
     let host = FakeHost::default();
@@ -722,7 +724,7 @@ fn record_in_state_refuses_a_changed_file_naming_what_it_does_not_record() {
         ),
     ];
     for (change, end) in cases {
-        let e = record_in_state(&host, path, &read, change, "it was closed").unwrap_err();
+        let e = record_in_state(&host, "/proj", &read, change, "it was closed").unwrap_err();
         assert_eq!(e.0, format!("{path} changed while it was closed; {end}"));
     }
     assert!(host.state().writes.is_empty());

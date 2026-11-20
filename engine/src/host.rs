@@ -20,7 +20,7 @@ mod process;
 mod scan;
 
 pub use process::ProcessHost;
-pub(crate) use process::{run_process, ProcessError};
+pub(crate) use process::{run_process, ssh_argv, ProcessError};
 pub use scan::{LeaksFound, Scanned};
 
 use crate::quality::Leak;
@@ -96,8 +96,9 @@ const OUTSIDE_STATUS: i32 = 5;
 /// cannot be resolved, as when it, or a link on its way, was removed meanwhile, or its links loop. It uses only what
 /// sh has on Linux and macOS alike: `cd -P` and `pwd -P` resolve a directory, and links are followed one at a time
 /// with readlink without options (POSIX.1-2024, and GNU, BSD and BusyBox readlink alike, unlike readlink -f or
-/// realpath), at most 40 deep, as Linux follows them. serve's view of a run (Host::run_files_inside, read_inside and
-/// run_states_inside) is what stays below the run directory, and the run directory below the runs directory.
+/// realpath), at most 40 deep, as Linux follows them. serve's view of a run (Host::run_files_inside, read_inside,
+/// run_states_inside and run_state_inside) is what stays below the run directory, and the run directory below the runs
+/// directory.
 const BELOW: &str = "below() { p=$1 n=0; \
      while [ -L \"$p\" ]; do n=$((n + 1)); [ \"$n\" -le 40 ] || return 2; t=$(readlink -- \"$p\") || return 2; \
        case $t in /*) p=$t;; *) p=${p%/*}/$t;; esac; done; \
@@ -672,17 +673,6 @@ pub trait Host {
         Ok(!listed.is_empty())
     }
 
-    /// `git diff -U0` from base to commit, or to the working tree's tracked files without one, in the one shape
-    /// crate::patch::added_lines parses, whatever the user's git config (git_diff). Verbatim: a line that is not
-    /// UTF-8, such as Latin-1 text or a binary file git diffs as text, is kept, so a change to such a file is judged
-    /// like any other, and only git's "\n" ends a line, so nothing inside an added line can pass for a header.
-    fn change_diff(&self, cwd: &str, base: &str, commit: Option<&str>) -> Result<Vec<u8>, OrchestratorError> {
-        let mut args = vec!["-U0", "-M", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", base];
-        args.extend(commit);
-        args.push("--");
-        git_diff(self, cwd, &args)
-    }
-
     /// The file at path, relative to the repository's top level and taken literally, as commit has it, its bytes as
     /// git stores them; None where commit has no file there. A symbolic link gives the path it points to. Errors: git
     /// cannot read commit, or cwd is not in a git repository.
@@ -690,7 +680,7 @@ pub trait Host {
         Ok(scan::blob_at(self, cwd, commit, path)?.map(|(text, _)| text))
     }
 
-    /// Each file the change from base to commit touches, a rename paired as change_diff pairs it, with the lines it
+    /// Each file the change from base to commit touches, a rename (git's -M) as one file, with the lines it
     /// adds and removes, from `git diff --numstat`. Errors: git fails, or names a path that is not UTF-8.
     fn changed_line_counts(&self, cwd: &str, base: &str, commit: &str) -> Result<Vec<ChangedFile>, OrchestratorError> {
         let out = git_diff(self, cwd, &["--numstat", "-z", "-M", "--no-ext-diff", base, commit])?;
@@ -717,13 +707,16 @@ pub trait Host {
         }
     }
 
-    /// Errors, saying how to install it, when gitleaks_problem finds a problem.
-    fn check_gitleaks(&self) -> Result<(), OrchestratorError> {
+    /// Check that gitleaks can run here, for a run whose secret scans read scanned's commits.
+    ///
+    /// Errors, when it cannot (gitleaks_problem), as "<why the run needs gitleaks>, but <problem>: <how to install
+    /// it>", the reason being scanned's: the pushes for Scanned::Unpublished, the gate's snapshots for SinceBase.
+    fn check_gitleaks(&self, scanned: Scanned) -> Result<(), OrchestratorError> {
         match self.gitleaks_problem() {
-            Some(problem) => Err(OrchestratorError(format!(
-                "this run pushes, and every push is scanned for secrets first, but {problem}: {}",
-                crate::constants::GITLEAKS_INSTALL
-            ))),
+            Some(problem) => {
+                let why = scanned.why_gitleaks();
+                Err(OrchestratorError(format!("{why}, but {problem}: {}", crate::constants::GITLEAKS_INSTALL)))
+            }
             None => Ok(()),
         }
     }
@@ -1019,8 +1012,8 @@ pub trait Host {
     /// Each run under the project at cwd as its state.json reads back (SavedRun), its age measured by this host's own
     /// clock, the one that stamped the file, so clock skew between the machines involved cannot shift it. A run whose
     /// directory is removed while the runs are read, as prune removes one, is among them or not, never an error; one
-    /// of a format this engine does not read is among them, as unreadable. Errors: a state.json that is still there
-    /// cannot be stat'ed or read, or is not JSON naming its run (SavedRun::read).
+    /// of a format this engine does not read, or not UTF-8 JSON naming its run, is among them, as unreadable
+    /// (SavedRun::read). Errors: a state.json that is still there cannot be stat'ed or read.
     fn run_states(&self, cwd: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
         run_states_in(self, cwd, RUNS_DIR)
     }
@@ -1029,21 +1022,27 @@ pub trait Host {
     /// when it has none. Errors: as run_states'.
     fn run_state(&self, cwd: &str, run_id: &str) -> Result<Option<SavedRun>, OrchestratorError> {
         let script = format!("now=$(date +%s) || exit 1; {}", run_states_loop(RUNS_DIR, "\"$2\"", "true"));
-        let out = self.check(&["sh", "-c", &script, "_", cwd, run_id], None, DEFAULT_TIMEOUT)?;
+        let out = run_states_output(self, &["sh", "-c", &script, "_", cwd, run_id])?;
         Ok(parsed_run_states(cwd, RUNS_DIR, &out)?.into_iter().next())
     }
 
     /// As run_states, but serve's view of the runs: a run whose directory, every link resolved, is not below the
     /// runs directory, links resolved, or whose state.json, links resolved, is not below its run directory, is left
-    /// out, as a run without a state.json is. The links are resolved on this host, as BELOW says. Errors: as
-    /// run_states'.
+    /// out, as a run without a state.json is; so is a run directory listed under a link's name rather than its own,
+    /// and one whose state.json names a run other than its directory's name, as a copy under another name does, since
+    /// close and forget act on the run a state.json names. The links are resolved on this host, as BELOW says.
+    /// Errors: as run_states'.
     fn run_states_inside(&self, cwd: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
-        // Without a runs directory there are no runs; f becomes the resolved path, which is what is stat'ed and read.
-        let script = format!(
-            "{BELOW}now=$(date +%s) || exit 1; runs=$(cd -P -- \"$1/{RUNS_DIR}\" 2>/dev/null && pwd -P) || exit 0; {}",
-            run_states_loop(RUNS_DIR, "*", "below \"${f%/*}\" \"$runs\" && below \"$f\" \"$r\" && f=$r")
-        );
-        parsed_run_states(cwd, RUNS_DIR, &self.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?)
+        let script = run_states_inside_script("*");
+        parsed_inside_run_states(cwd, &run_states_output(self, &["sh", "-c", &script, "_", cwd])?)
+    }
+
+    /// As run_state, but serve's view of the run, as run_states_inside's: None also for a run that view leaves out.
+    /// Errors: as run_states'.
+    fn run_state_inside(&self, cwd: &str, run_id: &str) -> Result<Option<SavedRun>, OrchestratorError> {
+        let script = run_states_inside_script("\"$2\"");
+        let out = run_states_output(self, &["sh", "-c", &script, "_", cwd, run_id])?;
+        Ok(parsed_inside_run_states(cwd, &out)?.into_iter().next())
     }
 
     /// The log in which the harness named name keeps a session's token usage (crate::harness::SessionLog), found in
@@ -1179,37 +1178,117 @@ pub(crate) fn run_states_in<H: Host + ?Sized>(
     runs_dir: &str,
 ) -> Result<Vec<SavedRun>, OrchestratorError> {
     let script = format!("now=$(date +%s) || exit 1; {}", run_states_loop(runs_dir, "*", "true"));
-    parsed_run_states(cwd, runs_dir, &host.check(&["sh", "-c", &script, "_", cwd], None, DEFAULT_TIMEOUT)?)
+    parsed_run_states(cwd, runs_dir, &run_states_output(host, &["sh", "-c", &script, "_", cwd])?)
+}
+
+/// What the run_states_loop script argv prints, verbatim, so that a run whose directory name or state.json is not
+/// UTF-8 is that run's problem, not the listing's. Errors: argv fails (checked).
+fn run_states_output<H: Host + ?Sized>(host: &H, argv: &[&str]) -> Result<Vec<u8>, OrchestratorError> {
+    checked(host, argv, host.run_verbatim(argv, None, DEFAULT_TIMEOUT)?)
+}
+
+/// Which of a project's runs a command reads: Every run with a state.json, as the CLI does, or only those Inside the
+/// runs directory, as serve shows them to the desktop app (Host::run_states_inside), so that serve never acts on a run
+/// the app does not show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunScope {
+    Every,
+    Inside,
+}
+
+impl RunScope {
+    /// The runs of the project at cwd this scope reads, as Host::run_states gives them. Errors: as run_states'.
+    pub fn states(self, host: &dyn Host, cwd: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
+        match self {
+            RunScope::Every => host.run_states(cwd),
+            RunScope::Inside => host.run_states_inside(cwd),
+        }
+    }
+
+    /// The run of the project at cwd whose id is run_id, as Host::run_state gives it; None also for a run this scope
+    /// leaves out. Errors: as run_states'.
+    pub fn state(self, host: &dyn Host, cwd: &str, run_id: &str) -> Result<Option<SavedRun>, OrchestratorError> {
+        match self {
+            RunScope::Every => host.run_state(cwd, run_id),
+            RunScope::Inside => host.run_state_inside(cwd, run_id),
+        }
+    }
+}
+
+/// sh printing what run_states_loop prints for the runs of the project $1 whose directory names match the sh word
+/// runs, but only of those Host::run_states_inside keeps.
+fn run_states_inside_script(runs: &str) -> String {
+    // Without a runs directory there are no runs; f becomes the resolved path, which is what is stat'ed and read. A
+    // run directory counts only under its own name, not under a link's: an unreadable state.json names no run, so its
+    // run is the one its directory is named for (SavedRun::read), and a link to it would list it twice.
+    format!(
+        "{BELOW}now=$(date +%s) || exit 1; runs=$(cd -P -- \"$1/{RUNS_DIR}\" 2>/dev/null && pwd -P) || exit 0; {}",
+        run_states_loop(
+            RUNS_DIR,
+            runs,
+            "below \"${f%/*}\" \"$runs\" && [ \"${r##*/}\" = \"$d\" ] && below \"$f\" \"$r\" && f=$r"
+        )
+    )
 }
 
 /// sh printing, for each state.json $f of a run in the directory runs_dir of the project $1, relative to it, whose
 /// directory name matches the sh word runs, such as `*`, and for which the sh condition keep succeeds, its age in
-/// seconds by $now, a blank and its text, ended by a NUL, which no JSON text holds: what parsed_run_states reads. A
-/// state.json a human pretty-printed reads as well as the engine's one line.
+/// seconds by $now, a blank, the run directory's name as $f names it, a slash, which no name holds, and its text,
+/// ended by a NUL, which no JSON text holds: what parsed_run_states reads. A state.json a human pretty-printed reads
+/// as well as the engine's one line.
 fn run_states_loop(runs_dir: &str, runs: &str, keep: &str) -> String {
+    // d is taken before keep, which may point f at the file a link resolves to.
     format!(
-        "for f in \"$1\"/{runs_dir}/{runs}/state.json; do [ -f \"$f\" ] || continue; {keep} || continue; \
-         {MTIME_OF_F} || {SKIP_F_IF_GONE}; s=$(cat -- \"$f\") || {SKIP_F_IF_GONE}; \
-         printf \"%s %s\\000\" \"$((now - m))\" \"$s\"; done; true"
+        "for f in \"$1\"/{runs_dir}/{runs}/state.json; do [ -f \"$f\" ] || continue; d=${{f%/*}}; d=${{d##*/}}; \
+         {keep} || continue; {MTIME_OF_F} || {SKIP_F_IF_GONE}; s=$(cat -- \"$f\") || {SKIP_F_IF_GONE}; \
+         printf \"%s %s/%s\\000\" \"$((now - m))\" \"$d\" \"$s\"; done; true"
     )
 }
 
-/// The runs run_states_loop printed as out, under the project at cwd's runs_dir, as run_states gives them. Errors:
-/// an age that is not a number, or a state that is not JSON naming its run (SavedRun::read).
-fn parsed_run_states(cwd: &str, runs_dir: &str, out: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
+/// The runs run_states_loop printed as out, under the project at cwd's runs_dir, as run_states gives them; a run
+/// directory's name that is not UTF-8 has each such byte replaced, as it only names the run. Errors: an entry not of
+/// run_states_loop's shape, its age not a number or no run directory's name in it.
+fn parsed_run_states(cwd: &str, runs_dir: &str, out: &[u8]) -> Result<Vec<SavedRun>, OrchestratorError> {
+    Ok(parsed_named_run_states(cwd, runs_dir, out)?.into_iter().map(|(_, run)| run).collect())
+}
+
+/// As parsed_run_states, under the project at cwd's runs directory, but only the runs whose state.json names the run
+/// its directory is named for, as Host::run_states_inside keeps them. An unreadable run whose state.json names no run
+/// is named for its directory (SavedRun::read), so it is kept.
+fn parsed_inside_run_states(cwd: &str, out: &[u8]) -> Result<Vec<SavedRun>, OrchestratorError> {
+    let runs = parsed_named_run_states(cwd, RUNS_DIR, out)?;
+    Ok(runs.into_iter().filter(|(dir, run)| run.shown().run_id == *dir).map(|(_, run)| run).collect())
+}
+
+/// The runs parsed_run_states reads from out, each with the name of the directory it was read from.
+fn parsed_named_run_states(
+    cwd: &str,
+    runs_dir: &str,
+    out: &[u8],
+) -> Result<Vec<(String, SavedRun)>, OrchestratorError> {
     let mut runs = vec![];
-    for entry in out.split('\0') {
-        if entry.trim().is_empty() {
+    for entry in out.split(|&b| b == 0) {
+        if entry.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
-        let (age, text) = entry.split_once(' ').unwrap_or((entry, ""));
         let corrupt = |e: String| OrchestratorError(format!("corrupt run state under {cwd}/{runs_dir}: {e}"));
+        let (age, named) = split_at_byte(entry, b' ').unwrap_or((entry, b""));
+        let age = String::from_utf8_lossy(age);
         let not_int = || corrupt(format!("an age that is not a whole number: {age:?}"));
-        let age: i64 = decimal_int(age).ok_or_else(not_int)?;
-        let saved = serde_json::from_str::<Value>(text).map_err(|e| corrupt(e.to_string()))?;
-        runs.push(SavedRun::read(age.max(0).unsigned_abs(), saved).map_err(|e| corrupt(e.0))?);
+        let age: i64 = decimal_int(&age).ok_or_else(not_int)?;
+        let no_dir = || corrupt(format!("no run directory in {:?}", String::from_utf8_lossy(named)));
+        let (dir, text) = split_at_byte(named, b'/').ok_or_else(no_dir)?;
+        let dir = String::from_utf8_lossy(dir).into_owned();
+        let run = SavedRun::read(age.max(0).unsigned_abs(), &format!("{cwd}/{runs_dir}/{dir}"), text);
+        runs.push((dir, run));
     }
     Ok(runs)
+}
+
+/// bytes before and after the first at in them; None when at is not there.
+fn split_at_byte(bytes: &[u8], at: u8) -> Option<(&[u8], &[u8])> {
+    let i = bytes.iter().position(|&b| b == at)?;
+    Some((&bytes[..i], &bytes[i + 1..]))
 }
 
 /// sh printing, for each file $f in the directory $1 that run_files lists and for which the sh condition keep

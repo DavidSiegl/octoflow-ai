@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use super::start::{RunRequest, StartWait, Started};
 use super::Reached;
@@ -14,17 +14,16 @@ use crate::agents::RunPlaces;
 use crate::cli::close::{close_all, Closer, RunClosed, Sweep};
 use crate::cli::forget::{self, forget_all, Forgetter, RunForgotten};
 use crate::cli::listing::run_record;
-use crate::constants::RUNS_DIR;
 use crate::error::OrchestratorError;
 use crate::herdr::{AgentAddress, AgentConsole, HerdrError, Launcher};
-use crate::host::{Host, RunFileText};
+use crate::host::{Host, RunFileText, RunScope};
 use crate::interrupt::Interrupt;
 use crate::json::{object, Object, ValueExt};
 use crate::local_gate::SetUpFile;
 use crate::paths::file_name;
 use crate::runs::{local_host, pid_alive};
 use crate::serve::FINISHED_RUN_WRITES;
-use crate::state::SavedRun;
+use crate::state::{run_dir, SavedRun};
 use serde_json::Value;
 
 /// The keys of a run record that grow with every read of it while nothing happens; a change in them alone is no
@@ -92,6 +91,10 @@ pub struct ProjectRuns {
     /// Whether a process of an id runs on this machine, as RunState::health asks it: crate::runs::pid_alive, but in
     /// tests.
     pid_alive: Arc<dyn Fn(i64) -> bool + Send + Sync>,
+    /// Held through each forget sweep, so that this serve's sweeps of the project run one after the other: a run that
+    /// two of its requests list at once (a double submit) is forgotten by the first, and the second finds it gone.
+    /// Another process's sweep (a second app, `octoflow forget`) is not held back (TODO.md).
+    forgetting: Mutex<()>,
 }
 
 impl ProjectRuns {
@@ -99,7 +102,17 @@ impl ProjectRuns {
     pub fn new(reached: Reached, target: Vec<String>) -> ProjectRuns {
         let Reached { host, dir, console, places, launcher, launch_dir } = reached;
         let pid_alive = Arc::new(pid_alive);
-        ProjectRuns { host, console, places, launcher, launch_dir, cwd: dir, target, pid_alive }
+        ProjectRuns {
+            host,
+            console,
+            places,
+            launcher,
+            launch_dir,
+            cwd: dir,
+            target,
+            pid_alive,
+            forgetting: Mutex::new(()),
+        }
     }
 
     /// As new, a run's owner on this machine taken to be alive by pid_alive instead.
@@ -114,9 +127,9 @@ impl ProjectRuns {
         crate::local_gate::set_up(&*self.host, &self.cwd, None)
     }
 
-    /// Close the project's runs that sweep names, as crate::cli::close::close_all does, and give each run's outcome;
-    /// the lines close prints are dropped, as the outcomes hold what they say. A raised stopping starts no further
-    /// run. Errors: as close_all's.
+    /// Close the project's runs that sweep names, as crate::cli::close::close_all does, of those records shows
+    /// (RunScope::Inside), and give each run's outcome; the lines close prints are dropped, as the outcomes hold what
+    /// they say. A raised stopping starts no further run. Errors: as close_all's.
     pub fn close_all(&self, sweep: Sweep, stopping: &Interrupt) -> Result<Vec<RunClosed>, OrchestratorError> {
         let here = local_host();
         let closer = Closer {
@@ -126,20 +139,29 @@ impl ProjectRuns {
             pid_alive: &*self.pid_alive,
             local_host: &here,
             stdout: &|_| {},
+            scope: RunScope::Inside,
         };
         close_all(&closer, &self.cwd, sweep)
     }
 
-    /// Forget the project's closed runs that sweep names, as crate::cli::forget::forget_all does, and give each run's
-    /// outcome; the lines forget prints are dropped, as the outcomes hold what they say. A raised stopping starts no
+    /// Forget the project's closed runs that sweep names, as crate::cli::forget::forget_all does, of those records
+    /// shows (RunScope::Inside), and give each run's outcome; the lines forget prints are dropped, as the outcomes hold
+    /// what they say. A sweep waits for one of the project's already under way to end. A raised stopping starts no
     /// further run. Errors: as forget_all's.
     pub fn forget_all(
         &self,
         sweep: forget::Sweep,
         stopping: &Interrupt,
     ) -> Result<Vec<RunForgotten>, OrchestratorError> {
-        let forgetter = Forgetter { host: &*self.host, interrupt: stopping, stdout: &|_| {} };
+        // A sweep that panicked left nothing half-done that the next could trip on: each run is read at its turn.
+        let _one_at_a_time = self.forgetting.lock().unwrap_or_else(PoisonError::into_inner);
+        let forgetter = Forgetter { host: &*self.host, interrupt: stopping, stdout: &|_| {}, scope: RunScope::Inside };
         forget_all(&forgetter, &self.cwd, sweep)
+    }
+
+    /// The project's absolute directory on its machine, as Host::resolve_dir gives it.
+    pub fn cwd(&self) -> &str {
+        &self.cwd
     }
 
     /// Whether the project is on another machine, read over SSH.
@@ -226,9 +248,12 @@ impl ProjectRuns {
         let RunFileText::Text(text) = self.host.read_inside(&dir, "state.json")? else {
             return Err(RunReadError::Missing(format!("no run {run_id}")));
         };
-        let saved = serde_json::from_str::<Value>(&text).map_err(|e| OrchestratorError(format!("{path}: {e}")))?;
-        let run = SavedRun::read(0, saved).map_err(|e| OrchestratorError(format!("{path}: {e}")))?;
-        let state = run.state().map_err(|e| OrchestratorError(format!("{path}: {e}")))?;
+        let run = SavedRun::read(0, &dir, text.as_bytes());
+        // A problem with the file's text names the file already; one with its fields names only the run.
+        let state = run.state().map_err(|e| match e.0.starts_with(&path) {
+            true => e,
+            false => OrchestratorError(format!("{path}: {e}")),
+        })?;
         let name = state.agents.get(role).map(|a| &a.name).filter(|n| !n.is_empty());
         let Some(name) = name else {
             return Err(RunReadError::Missing(format!("run {run_id} has no {role} agent")));
@@ -243,11 +268,10 @@ impl ProjectRuns {
     /// `--machine`, for one on a machine. Once the run is launched a look that fails, at its state.json or its pane, is
     /// no answer: the wait goes on, so that the client still gets the id of a run that is running. Gives how the wait
     /// ended, and the named herdr session the run's pane is in (Launched::herdr_session). Errors: Refused for a run
-    /// id that is not a plain name; Failed, before any workspace opens, when the panes of the project's host's herdr
-    /// start a shell that the lines a run types cannot be typed into or that cannot be told (crate::herdr::pane_shell),
-    /// and when herdr cannot launch it (Launcher::launch). For a project on a machine that is the machine's herdr,
-    /// where the agents run; the pane of this machine's that the run's command is typed into is not checked
-    /// (GitHub #518).
+    /// id that is not a plain name; Failed, before any workspace opens, when the panes of a herdr the run types into
+    /// start a shell that its lines cannot be typed into or that cannot be told (crate::herdr::pane_shell): the
+    /// launcher's, which the run's command is typed into, and for a project on a machine also the machine's, where
+    /// its agents run; and when herdr cannot launch it (Launcher::launch).
     pub fn start(
         &self,
         request: &RunRequest,
@@ -261,7 +285,10 @@ impl ProjectRuns {
         // The pane starts in the resolved directory too, where a relative cwd or one with ~ would resolve elsewhere.
         let target = if self.remote() { self.target.clone() } else { vec!["--cwd".to_string(), self.cwd.clone()] };
         let argv = request.argv(program, run_id, &target);
-        crate::herdr::pane_shell(&*self.host)?;
+        // The launcher checks its own panes; a project here has its agents in those too.
+        if self.remote() {
+            crate::herdr::pane_shell(&*self.host)?;
+        }
         let launched = self.launcher.launch(&self.launch_dir, &label, &argv).map_err(OrchestratorError::from)?;
         let saved = || self.host.read(&state).is_ok_and(|text| text.is_some());
         let ended = wait.until(stopping, || {
@@ -276,7 +303,7 @@ impl ProjectRuns {
     }
 
     fn dir(&self, run_id: &str) -> Result<String, RunReadError> {
-        Ok(format!("{}/{RUNS_DIR}/{}", self.cwd, plain_name(run_id)?))
+        Ok(run_dir(&self.cwd, plain_name(run_id)?))
     }
 }
 
@@ -372,7 +399,8 @@ impl<'p> RunWatch<'p> {
         for run in self.project.saved_runs()? {
             let record = self.project.record(&run, &here);
             let saved_at = run.shown().heartbeat_at.clone();
-            // A state.json's run_id is a string; one that is not names the run as its JSON.
+            // Always a string: the run's id, or its directory's name for a state.json that names no run
+            // (SavedRun::read).
             let id = record.get("id").cloned().unwrap_or(Value::Null);
             let run_id = id.text();
             let mut key = record.clone();

@@ -34,9 +34,9 @@ pub struct RunState {
     pub cwd: String,
     /// The herdr machine the agents run on; None for this one.
     pub machine: Option<String>,
-    /// The herdr server of this machine the run's agents run in: the one the engine that started the run, or last
-    /// resumed it, reached, where it finds or starts each agent it comes to (one a resume has not come to yet may
-    /// still be in an earlier server). serve reaches them there, from whatever environment it runs in. None for a
+    /// The herdr server of this machine the run's workspace and agents are in: the one the engine that started the run
+    /// reached, saved with the run's first state before its workspace opens, which a resume from another server
+    /// replaces once it opens a new workspace there (Agents::open). serve reaches the agents there, from whatever environment it runs in. None for a
     /// run on a machine, whose herdr serves it, and for one whose server could not be told
     /// (HerdrServer::of_environment): serve then reaches the server its own environment picks.
     pub herdr_server: Option<HerdrServer>,
@@ -52,8 +52,9 @@ pub struct RunState {
     pub branch: Option<String>,
     pub pr_url: Option<String>,
     /// The run's verdict: CHANGES_REQUESTED from a verdict step's request for changes on, APPROVE once the last
-    /// verdict step approved a round, which every earlier verdict step approved before it (Workflow::take_turn); so
-    /// while a round is between verdict steps it is still the verdict of the round before. For a workflow without a
+    /// verdict step approved a round (Workflow::take_turn); so while a round is between verdict steps it is still the
+    /// verdict of the round before. Every earlier verdict step approved that round too, except in round max_rounds,
+    /// where a rejection goes on to a later human-paced step (Workflow::after_rejection). For a workflow without a
     /// verdict step, FINISHED or QUALITY_GATE_FAILED once its last step is done. None before either.
     pub verdict: Option<String>,
     /// Each verdict a verdict step gave, in the order given, a round's in the order of its verdict steps. Empty for a
@@ -73,6 +74,9 @@ pub struct RunState {
     pub error: Option<String>,
     /// Per role that has started an agent, its last one, in the order the roles first started theirs.
     pub agents: IndexMap<String, AgentRecord>,
+    /// The last round the verdict steps' loops may take (RunSettings::max_rounds): the --max-rounds the run started
+    /// or last resumed with, raised by one for each request for changes a human-paced verdict step gave in the last
+    /// round, so it can be above the flag given. A resume's --max-rounds below the round the run is in is refused.
     pub max_rounds: u32,
     /// Seconds a turn may take.
     pub turn_timeout: u64,
@@ -105,12 +109,23 @@ pub struct RunState {
     /// quality-fix turn that ends after resume --no-quality-gate leaves it one past the last quality round, which
     /// never runs.
     pub quality_round: u32,
+    /// The octoflow-gate release, as a ci/gate.pin `<version> <sha256>` line, that judges the run's snapshots while
+    /// its base has no ci/gate.pin: the crate::local_gate::BUILT_IN_PIN of the engine that started the run's first
+    /// quality round, saved before that round's gate starts, so that an engine with another built-in pin, resuming
+    /// the run, judges its later rounds by the same release. Saved for a run whose base has ci/gate.pin too, which
+    /// never reads it (that pin judges), as whether the base has one is read only as the gate starts. None before the
+    /// first quality round, and in a state.json saved by an engine that did not keep it, whose run takes the resuming
+    /// engine's at its next quality round.
+    pub built_in_gate_pin: Option<String>,
     /// Empty but in a state.json a release before 0.72.0 saved, which kept a Jenkins quality build in flight here; a
     /// resume drops it (cli::start::resumed_state). Still written, as those releases read no state.json without it.
     pub ci: Object,
     /// The name of the run's workflow.
     pub workflow: String,
-    /// The workflow_definition of one that is not built in, so a resume does not depend on its file.
+    /// The workflow_definition of the run's workflow, built in or not, so that a resume runs the steps the run was
+    /// started with, whatever the workflow's file or the resuming engine's built-in of its name says now. None only in
+    /// a state.json saved by an engine that saved no definition for a built-in workflow, which resumes on the resuming
+    /// engine's built-in of its name (crate::workflow_file::run_pipeline) and saves that from then on.
     pub workflow_definition: Option<Value>,
     /// Prompts::overrides of the prompts the run started with (load_prompts), so a resume does not depend on the
     /// prompt files either; empty for the built-in texts.
@@ -170,7 +185,8 @@ pub struct StepVerdict {
 }
 
 /// A role's agent as the run started it (RunState::agents). Saved as {"name", "pane", "kind"}, "session" once known,
-/// "unprompted" until the agent takes its first prompt, then the fields this engine does not know.
+/// "unprompted" until the agent takes its first prompt, "past_startup" while that holds and the agent is past its
+/// startup, then the fields this engine does not know.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentRecord {
     /// The agent's herdr name, `<role>-<key>`.
@@ -189,13 +205,19 @@ pub struct AgentRecord {
     /// that did not keep it reads as None.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unprompted: Option<AgentStart>,
+    /// True when the agent, still unprompted, is known to be past its startup: a file of its role was found written,
+    /// as by a human working with it in its pane. Such an agent has a conversation a relaunch would lose, and a
+    /// question it is blocked on is not a startup dialog. Always false once unprompted is None; saved only when true,
+    /// so a record saved by an engine that did not keep it reads as false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub past_startup: bool,
     /// The fields of the record this engine does not know, as read, written after its own.
     #[serde(flatten)]
     pub unknown: Object,
 }
 
-/// How a role's agent came to run (AgentRecord::unprompted), which decides what its first prompt is. Saved in
-/// lowercase.
+/// How a role's agent came to run (AgentRecord::unprompted), which decides what its first prompt from the run is.
+/// Saved in lowercase.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentStart {
@@ -254,10 +276,18 @@ pub struct TurnRecord {
 
 impl AgentRecord {
     /// The record of an agent as name, in pane, in harness: its session not yet known, and no mark of a prompt it is
-    /// owed (unprompted), which Workflow::start sets on the record of an agent it starts.
+    /// owed (unprompted, past_startup), which Workflow::start sets on the record of an agent it starts.
     pub fn new(name: &str, pane: &str, harness: &str) -> AgentRecord {
         let (name, pane, harness) = (name.into(), pane.into(), harness.into());
-        AgentRecord { name, pane, harness, session: None, unprompted: None, unknown: Object::new() }
+        AgentRecord {
+            name,
+            pane,
+            harness,
+            session: None,
+            unprompted: None,
+            past_startup: false,
+            unknown: Object::new(),
+        }
     }
 }
 
@@ -349,6 +379,7 @@ impl RunState {
             quality_gate_disabled: false,
             max_quality_rounds: DEFAULT_MAX_QUALITY_ROUNDS,
             quality_round: 0,
+            built_in_gate_pin: None,
             ci: Object::new(),
             workflow: "default".to_string(),
             workflow_definition: None,
@@ -494,9 +525,16 @@ impl RunState {
         run_key(&self.run_id)
     }
 
-    /// Whether close recorded that it closed the run (closed is set and not empty).
+    /// What close recorded when it closed the run (closed), or None when the run is not closed: closed is unset or
+    /// empty. An empty closed, which close never writes, is not closed; every reader that decides on closed asks this
+    /// or is_closed rather than the field.
+    pub fn closed_line(&self) -> Option<&str> {
+        self.closed.as_deref().filter(|c| !c.is_empty())
+    }
+
+    /// Whether the run is closed, as closed_line says.
     pub fn is_closed(&self) -> bool {
-        self.closed.as_deref().is_some_and(|c| !c.is_empty())
+        self.closed_line().is_some()
     }
 
     /// The run directory, in the project's checkout.
@@ -595,35 +633,57 @@ impl RunState {
     }
 }
 
-/// A run's state.json as read back (Host::run_states): its age, and either its RunState or why its format cannot be
-/// read. The commands that act on a run take state(), which refuses an unreadable one; list and show take shown(),
-/// which shows one too. Not a Result of RunState and the problem: list would lose an unreadable run's task, phase
-/// and round, which the desktop app types as never null (ui/src/api.ts).
+/// A run's state.json as read back (Host::run_states): its age, and either its RunState or why it cannot be read.
+/// The commands that act on a run take state(), which refuses an unreadable one; list and show take shown(), which
+/// shows one too. Not a Result of RunState and the problem: list would lose an unreadable run's task, phase and
+/// round, which the desktop app types as never null (ui/src/api.ts).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SavedRun {
     /// Seconds since the state.json was last written, by the clock of the host that wrote it.
     age: u64,
     /// The state as saved; for an unreadable run, as much of it as reads (RunState::from_readable_fields).
     state: RunState,
-    /// Why the state cannot be read, naming the run and what to do with it; None for a readable one.
+    /// Why the state cannot be read, and what to do with it; None for a readable one.
     problem: Option<String>,
+    /// False when the state.json is not a JSON object with a run_id: no orchestrator of any release writes one, so
+    /// none drives it (SavedRun::health).
+    pub(crate) names_run: bool,
 }
 
 impl SavedRun {
-    /// The run whose state.json holds saved, written age seconds ago: unreadable when saved is not of STATE_FORMAT or
-    /// a field of it does not read (RunState::from_saved). Errors: saved is not an object with a run_id, a non-empty
-    /// string, so that it names no run to show or act on.
-    pub fn read(age: u64, saved: Value) -> Result<SavedRun, OrchestratorError> {
-        let saved = match saved {
-            Value::Object(saved) if saved.get("run_id").and_then(Value::as_str).is_some_and(|id| !id.is_empty()) => {
+    /// The run in the directory run_dir, a path whose last component is the directory's name, whose state.json,
+    /// written age seconds ago, holds text. Unreadable when text is not UTF-8, not JSON, or not an object with a
+    /// run_id (a non-empty string), the problem naming the file, and the run named by its directory, as far as the
+    /// object reads; or when it is not of STATE_FORMAT or a field of it does not read (RunState::from_saved).
+    pub fn read(age: u64, run_dir: &str, text: &[u8]) -> SavedRun {
+        let dir_name = run_dir.rsplit('/').next().unwrap_or(run_dir);
+        let unreadable = |saved: &Object, what: String| {
+            let mut state = RunState::from_readable_fields(saved);
+            state.run_id = dir_name.to_string();
+            let problem = format!("{run_dir}/state.json {what}; fix it, or remove {run_dir}");
+            SavedRun { age, state, problem: Some(problem), names_run: false }
+        };
+        let Ok(text) = std::str::from_utf8(text) else {
+            return unreadable(&Object::new(), "is not UTF-8 text".to_string());
+        };
+        let saved = match serde_json::from_str::<Value>(text) {
+            Err(e) => return unreadable(&Object::new(), format!("is not JSON ({e})")),
+            Ok(Value::Object(saved))
+                if saved.get("run_id").and_then(Value::as_str).is_some_and(|id| !id.is_empty()) =>
+            {
                 saved
             }
-            _ => return Err(OrchestratorError("a run state is a JSON object with its run_id".to_string())),
+            Ok(saved) => {
+                let fields = saved.as_object().cloned().unwrap_or_default();
+                return unreadable(&fields, "is not a JSON object with a run_id".to_string());
+            }
         };
-        Ok(match RunState::from_saved(&saved) {
-            Ok(state) => SavedRun { age, state, problem: None },
-            Err(e) => SavedRun { age, state: RunState::from_readable_fields(&saved), problem: Some(e.0) },
-        })
+        match RunState::from_saved(&saved) {
+            Ok(state) => SavedRun { age, state, problem: None, names_run: true },
+            Err(e) => {
+                SavedRun { age, state: RunState::from_readable_fields(&saved), problem: Some(e.0), names_run: true }
+            }
+        }
     }
 
     /// Seconds since the state.json was last written, by the clock of the host that wrote it.
@@ -645,8 +705,9 @@ impl SavedRun {
         &self.state
     }
 
-    /// Why the run's state cannot be read, naming the run and what to do with it: format_problem's text, or the
-    /// field from_saved could not read; None for a readable run.
+    /// Why the run's state cannot be read and what to do with it: for a state.json that is not UTF-8, not JSON or names
+    /// no run, naming the file (SavedRun::read); else naming the run, format_problem's text or the field from_saved
+    /// could not read. None for a readable run.
     pub fn problem(&self) -> Option<&str> {
         self.problem.as_deref()
     }

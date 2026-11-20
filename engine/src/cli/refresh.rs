@@ -2,7 +2,7 @@
 //! once it merges cleanly, is merged or is closed. drain refreshes the runs of its specs so too (crate::cli::drain).
 
 use super::{record_in_state, Connected};
-use crate::constants::{EXIT_WAITING, RUNS_DIR, SUCCEEDED};
+use crate::constants::{EXIT_WAITING, SUCCEEDED};
 use crate::error::OrchestratorError;
 use crate::pull_request::without_conflict_warning;
 use crate::state::{find_run, RunState, SavedRun};
@@ -102,7 +102,6 @@ pub fn refresh_conflict(
         if check.ready {
             host.mark_pr_ready(cwd, &url)?;
         }
-        let path = format!("{cwd}/{RUNS_DIR}/{run_id}/state.json");
         let cleared = for_later_drain.then(|| url.clone());
         let record = |s: &mut RunState| {
             s.conflicts.clear();
@@ -110,7 +109,7 @@ pub fn refresh_conflict(
                 s.conflict_cleared = Some(url);
             }
         };
-        record_in_state(host, &path, state, record, "its pull request was refreshed")?;
+        record_in_state(host, cwd, state, record, "its pull request was refreshed")?;
         Ok(check)
     };
     refreshed().map_err(|e| OrchestratorError(format!("run {run_id}: {e}")))

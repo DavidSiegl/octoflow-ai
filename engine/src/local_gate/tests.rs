@@ -88,7 +88,7 @@ impl Bench {
     /// start judging a snapshot of the repository's working tree on its base, into <dir>/out.
     fn start(&self) -> Result<Judging, OrchestratorError> {
         let (host, cwd, base) = (&self.repo.host, &self.repo.path, self.repo.base());
-        start(host, cwd, &host.snapshot(cwd, base, "snapshot").unwrap(), base, &self.out())
+        start(host, cwd, &host.snapshot(cwd, base, "snapshot").unwrap(), base, BUILT_IN_PIN, &self.out())
     }
 
     /// What judging comes to, asked after until it ends.
@@ -438,7 +438,7 @@ fn a_gate_whose_directorys_path_is_not_ascii_is_stopped() {
     put(&bench.dir.join("hang"), "");
     let (host, cwd, base) = (&bench.repo.host, &bench.repo.path, bench.repo.base());
     let out = bench.dir.join("jürgen/out");
-    let judging = start(host, cwd, &host.snapshot(cwd, base, "snapshot").unwrap(), base, &out).unwrap();
+    let judging = start(host, cwd, &host.snapshot(cwd, base, "snapshot").unwrap(), base, BUILT_IN_PIN, &out).unwrap();
     bench.until_the_gate_runs();
 
     judging.stop(host).unwrap();

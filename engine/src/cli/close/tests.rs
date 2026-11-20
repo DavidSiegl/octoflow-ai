@@ -147,8 +147,10 @@ fn the_workspace_is_told_and_closed_in_the_server_the_run_saved() {
     c.cli.f.herdr.state().server = Some(pane);
     let saved = serde_json::json!({"HERDR_SOCKET_PATH": null, "HERDR_SESSION": OWN_SESSION});
     c.add(STALE_SECONDS + 1, true, &[("herdr_server", saved.clone())]);
-    assert_eq!(c.close(&[]).0, 0);
     let run_s = serde_json::from_value::<HerdrServer>(saved).ok();
+    // The run's workspace is open in its own server, not in the one close's environment reaches.
+    c.cli.f.herdr.state().foreign_workspaces.insert((run_s.clone().unwrap(), "w1".into()));
+    assert_eq!(c.close(&[]).0, 0);
     let reached = c.cli.f.herdr.state().reached.clone();
     assert_eq!(reached, [("w1".to_string(), run_s.clone()), ("w1".to_string(), run_s)]);
     assert_eq!(c.calls(), closing_w1());
@@ -924,6 +926,29 @@ fn an_unreadable_run_is_skipped_and_named_not_failed() {
     let problem = format_problem(&c.saved()).unwrap();
     assert_eq!(c.close(&["--all"]), (0, format!("skipped: {problem}\n0 closed, 1 skipped, 0 already closed\n")));
     assert!(c.calls().is_empty() && c.cli.f.host.state().writes.is_empty());
+}
+
+#[test]
+fn a_state_json_that_is_not_json_or_names_no_run_is_skipped_and_named_beside_a_run_that_closes() {
+    // Either stopped every command that lists the runs, close --all closing nothing (cross-review 194 F1).
+    let c = Close::new();
+    c.add(1_000_000, false, &[]);
+    {
+        let files = &mut c.cli.f.host.state().files;
+        files.insert("/proj/.octoflow-ai/runs/broken/state.json".into(), "{\"run_id\": \n".into());
+        files.insert("/proj/.octoflow-ai/runs/nameless/state.json".into(), "{\"phase\": \"build\"}\n".into());
+    }
+    let (status, out) = c.close(&["--all"]);
+    assert_eq!(status, 0, "{out}");
+    assert!(out.contains("skipped: /proj/.octoflow-ai/runs/broken/state.json is not JSON ("), "{out}");
+    let nameless = "skipped: /proj/.octoflow-ai/runs/nameless/state.json is not a JSON object with a run_id";
+    assert!(out.contains(nameless), "{out}");
+    assert!(out.ends_with("1 closed, 2 skipped, 0 already closed\n"), "{out}");
+    // close names one by its directory, and refuses it with the same reason.
+    let e = c.cli.error(&["close", "--cwd", "/proj", "broken"]);
+    assert!(e.contains("/proj/.octoflow-ai/runs/broken/state.json is not JSON ("), "{e}");
+    let e = c.cli.error(&["close", "--cwd", "/proj", "nameless"]);
+    assert!(e.contains("/proj/.octoflow-ai/runs/nameless/state.json is not a JSON object with a run_id"), "{e}");
 }
 
 #[test]

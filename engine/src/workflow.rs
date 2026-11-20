@@ -34,7 +34,7 @@ use crate::runs::{local_host, RUNNING};
 use crate::spec_file::SpecFile;
 use crate::state::{AgentStart, RunState};
 use crate::summary::{iso_utc, run_metrics, run_summary, turn_tokens};
-use crate::workflow_file::{is_built_in, run_pipeline, workflow_definition};
+use crate::workflow_file::{run_pipeline, workflow_definition};
 use serde_json::Value;
 use step_prompt::RunView;
 
@@ -102,8 +102,10 @@ pub struct Collaborators<'a> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct RunSettings {
     /// How many rounds the verdict steps' loops take at most, together: a verdict other than APPROVE in a round
-    /// before round max_rounds sends the run back to its step's loop target in the next round, and from round
-    /// max_rounds on the run goes on past the last verdict step whatever the verdict (Workflow::take_turn).
+    /// before round max_rounds sends the run back to its step's loop target in the next round. From round max_rounds
+    /// on, a verdict step that is not human-paced sends the run on to the next human-paced verdict step, or past the
+    /// last verdict step when there is none, whatever the verdict; a human-paced one's request for changes raises
+    /// max_rounds by one, as saved, and sends the run back as in an earlier round (Workflow::after_rejection).
     pub max_rounds: u32,
     /// Seconds a turn of a step that is not human-paced may take.
     pub turn_timeout: u64,
@@ -262,8 +264,11 @@ impl<'a> Workflow<'a> {
             )));
         }
         state.workflow = pipeline.name().to_string();
-        state.workflow_definition =
-            if is_built_in(&pipeline, &prompts) { None } else { Some(workflow_definition(&pipeline)) };
+        // A done run's record keeps what it ran with (cli::start's resumable_state), which a resuming engine's
+        // built-in need not be.
+        if state.phase != DONE {
+            state.workflow_definition = Some(workflow_definition(&pipeline));
+        }
         state.max_rounds = settings.max_rounds;
         state.turn_timeout = settings.turn_timeout;
         let agents = settings.agents;
@@ -486,11 +491,15 @@ impl<'a> Workflow<'a> {
         if self.state.worktree.is_some() {
             self.open_worktree()?;
         }
+        // A run that publishes scans what it pushes, and a gated one each snapshot; one that does both is told of
+        // its pushes, which it asked for with its pull request.
+        if self.state.pull_request {
+            self.host.check_gitleaks(Scanned::Unpublished)?;
+        } else if self.quality_gate_on {
+            self.host.check_gitleaks(Scanned::SinceBase)?;
+        }
         if self.quality_gate_on {
             self.check_gate()?;
-        } else if self.state.pull_request {
-            // Publishing scans what it pushes; the gate's preflight checks gitleaks itself.
-            self.host.check_gitleaks()?;
         }
         if self.state.pull_request && self.state.worktree.is_none() {
             self.check_repo()?;
@@ -499,8 +508,8 @@ impl<'a> Workflow<'a> {
     }
 
     /// Fail before the interview if the quality gate could not judge the run's change: cwd has no commit, a run in it
-    /// has changes the snapshots would take, gitleaks, which scans every snapshot first, cannot run, or the host fails
-    /// local_gate::preflight.
+    /// has changes the snapshots would take, or the host fails local_gate::preflight. gitleaks, which scans every
+    /// snapshot first, is checked by check_before_interview.
     fn check_gate(&self) -> Result<(), OrchestratorError> {
         let cwd = &self.state.cwd;
         if self.host.git_head(cwd)?.is_none() {
@@ -513,7 +522,6 @@ impl<'a> Workflow<'a> {
             // A snapshot takes every change in the tree, so the tree must start with none.
             self.require_clean()?;
         }
-        self.host.check_gitleaks()?;
         local_gate::preflight(self.host)
     }
 
@@ -901,9 +909,7 @@ impl<'a> Workflow<'a> {
     /// The step's turn in round n: the id of the step the run goes on after, the step's own or, for a verdict that
     /// ends the last round early, the last verdict step's; None when the run goes on elsewhere, saved already.
     ///
-    /// A round runs the verdict steps in order, and ends at the first that does not approve: in a round before
-    /// max_rounds back to its loop's target, in the next round, and in round max_rounds past the last verdict step.
-    /// So a later verdict step never judges a change an earlier one rejected.
+    /// A round runs the verdict steps in order, and ends at the first that does not approve (after_rejection).
     fn take_turn(&mut self, step: &Step, n: u32) -> Outcome<Option<String>> {
         let pipeline = Rc::clone(&self.pipeline);
         let proves = pipeline.proves(step);
@@ -942,13 +948,36 @@ impl<'a> Workflow<'a> {
         if verdict == APPROVE {
             return Ok(Some(step.id.clone()));
         }
-        if n < self.state.max_rounds {
-            self.state.quality_round = 0;
-            let target = pipeline.step(loop_to).ok_or_else(|| OrchestratorError(format!("no step {loop_to}")))?;
-            self.goto(target, n + 1)?;
+        self.after_rejection(step, loop_to, n, last_verdict_step)
+    }
+
+    /// Where a verdict step's rejection in round n sends the run, as take_turn gives it: loop_to is the step's loop
+    /// target and last_verdict_step the pipeline's last verdict step's id.
+    ///
+    /// In a round before max_rounds the run goes back to loop_to, in the next round. In round max_rounds it goes on
+    /// past last_verdict_step (returned), so a later verdict step never judges a change an earlier one rejected,
+    /// except that the human is always asked: the run goes on to the next human-paced verdict step instead, and a
+    /// human-paced step's own rejection takes one round more, raising max_rounds (RunSettings::max_rounds). Errors:
+    /// loop_to names no step; goto's.
+    fn after_rejection(
+        &mut self,
+        step: &Step,
+        loop_to: &str,
+        n: u32,
+        last_verdict_step: Option<String>,
+    ) -> Outcome<Option<String>> {
+        let pipeline = Rc::clone(&self.pipeline);
+        if n >= self.state.max_rounds && !step.human_paced {
+            let human = pipeline.verdict_steps().skip_while(|s| s.id != step.id).skip(1).find(|s| s.human_paced);
+            let Some(human) = human else { return Ok(last_verdict_step) };
+            self.goto(human, n)?;
             return Ok(None);
         }
-        Ok(last_verdict_step)
+        self.state.max_rounds = self.state.max_rounds.max(n + 1);
+        self.state.quality_round = 0;
+        let target = pipeline.step(loop_to).ok_or_else(|| OrchestratorError(format!("no step {loop_to}")))?;
+        self.goto(target, n + 1)?;
+        Ok(None)
     }
 
     /// Make step the current one, in round n, and save that; the first editing step starts round 1.

@@ -12,9 +12,9 @@ use crate::herdr::{
 use crate::host::{Exec, ExecError, Host, RunFile, RunFileText};
 use crate::serve::Reached;
 use crate::state::SavedRun;
-use serde_json::Value;
 
-/// A Host whose files are `files`, whose run_states_inside reads the state.json of each run among them, whose
+/// A Host whose files are `files`, whose run_states_inside and run_state_inside read the state.json of each run among
+/// them that names the run its directory is named for, whose
 /// run_files_inside lists those under a run directory by their `mtimes`, as the real Host's does, and which records
 /// the path of every read, read_inside's included, in `reads`. It runs no command but crate::herdr::pane_shell's,
 /// which it answers from `pane_shell`, and none of its files is a link, so every one stays inside its run directory.
@@ -37,7 +37,8 @@ pub struct Files {
     pub reads: Vec<String>,
     /// While set, what run_states_inside fails with.
     pub run_states_inside_error: Option<String>,
-    /// How many times run_states_inside was called: a poll of the project each.
+    /// How many times run_states_inside was called: a poll of the project each, or a close or forget sweep's first
+    /// read of its runs.
     pub run_states_inside_calls: usize,
     /// How many times run_files_inside was called: one listing of a run's directory each.
     pub run_files_inside_calls: usize,
@@ -74,6 +75,30 @@ impl ServeHost {
     pub fn state(&self) -> MutexGuard<'_, Files> {
         self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+
+    /// The runs under the project at cwd as run_states_inside reads them, only the one named only when given; fails
+    /// with run_states_inside_error while it is set.
+    fn runs_inside(&self, cwd: &str, only: Option<&str>) -> Result<Vec<SavedRun>, OrchestratorError> {
+        let s = self.state();
+        if let Some(e) = &s.run_states_inside_error {
+            return Err(OrchestratorError(e.clone()));
+        }
+        let runs = format!("{cwd}/{RUNS_DIR}/");
+        let mut states = vec![];
+        for (path, text) in &s.files {
+            let Some((dir, "state.json")) = path.strip_prefix(&runs).and_then(|rest| rest.split_once('/')) else {
+                continue;
+            };
+            if only.is_some_and(|only| only != dir) {
+                continue;
+            }
+            let run = SavedRun::read(s.ages.get(dir).copied().unwrap_or(0), &format!("{runs}{dir}"), text.as_bytes());
+            if run.shown().run_id == dir {
+                states.push(run);
+            }
+        }
+        Ok(states)
+    }
 }
 
 impl Host for ServeHost {
@@ -99,20 +124,12 @@ impl Host for ServeHost {
     }
 
     fn run_states_inside(&self, cwd: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
-        let mut s = self.state();
-        s.run_states_inside_calls += 1;
-        if let Some(e) = &s.run_states_inside_error {
-            return Err(OrchestratorError(e.clone()));
-        }
-        let runs = format!("{cwd}/{RUNS_DIR}/");
-        let mut states = vec![];
-        for (path, text) in &s.files {
-            if let Some((run_id, "state.json")) = path.strip_prefix(&runs).and_then(|rest| rest.split_once('/')) {
-                let saved = serde_json::from_str::<Value>(text).map_err(|e| OrchestratorError(e.to_string()))?;
-                states.push(SavedRun::read(s.ages.get(run_id).copied().unwrap_or(0), saved)?);
-            }
-        }
-        Ok(states)
+        self.state().run_states_inside_calls += 1;
+        self.runs_inside(cwd, None)
+    }
+
+    fn run_state_inside(&self, cwd: &str, run_id: &str) -> Result<Option<SavedRun>, OrchestratorError> {
+        Ok(self.runs_inside(cwd, Some(run_id))?.into_iter().next())
     }
 
     fn read_inside(&self, run_dir: &str, name: &str) -> Result<RunFileText, OrchestratorError> {
@@ -136,8 +153,9 @@ impl Host for ServeHost {
 /// An AgentConsole whose agents show `screens`, by herdr name, whatever server they are addressed in, and which
 /// records what is typed into them in `typed`, and the server of each in `servers`. An agent without a screen has
 /// exited (herdr's agent_not_found). As Workspaces, its open workspaces are `workspaces`, and it records each call in
-/// `workspace_calls`. As a Launcher, it records each launch in `launches`, plays it by `on_launch`, and
-/// gives every launch pane LAUNCHED_PANE, whose command has exited once `exited` is set.
+/// `workspace_calls`. As a Launcher, it refuses a launch, as ProcessHerdr does, when `pane_shell` names a shell a run
+/// cannot type into; else it records each launch in `launches`, plays it by `on_launch`, and gives every launch pane
+/// LAUNCHED_PANE, whose command has exited once `exited` is set.
 #[derive(Default)]
 pub struct FakeConsole {
     state: Mutex<Consoled>,
@@ -166,6 +184,9 @@ pub struct Consoled {
     pub exited: Option<String>,
     /// While set, what every launch fails with, having launched nothing.
     pub launch_error: Option<HerdrError>,
+    /// What crate::herdr::PANE_SHELL_SCRIPT prints where the launcher's herdr runs, as ServeHost's `pane_shell`;
+    /// empty, the default, names no shell, so panes start /bin/sh, which a run can type into.
+    pub pane_shell: String,
     /// While set, what every look at whether a launched command has exited fails with.
     pub exited_error: Option<HerdrError>,
     /// The server each launch's pane is in (Launched::server); None for the one the launcher's environment picks.
@@ -246,6 +267,7 @@ impl Launcher for FakeConsole {
         if let Some(e) = &s.launch_error {
             return Err(e.clone());
         }
+        crate::herdr::shell_of_panes(&s.pane_shell).map_err(HerdrError::Failed)?;
         s.launches.push((cwd.to_string(), label.to_string(), argv.to_vec()));
         if let Some(play) = s.on_launch.as_mut() {
             play(argv);

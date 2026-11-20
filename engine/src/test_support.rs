@@ -494,6 +494,13 @@ pub fn object(text: &str) -> Object {
     }
 }
 
+/// The run whose state.json, written age seconds ago, holds saved, in /proj's run directory named by its run_id, or
+/// r when it names none (SavedRun::read).
+pub fn read_saved(age: u64, saved: &serde_json::Value) -> crate::state::SavedRun {
+    let id = saved.get("run_id").and_then(serde_json::Value::as_str).filter(|id| !id.is_empty()).unwrap_or("r");
+    crate::state::SavedRun::read(age, &crate::state::run_dir("/proj", id), saved.to_string().as_bytes())
+}
+
 /// resumable_state for `resume a1b2c3` with flags over one run, saved as saved 10^4 s ago, in /proj, on host "here",
 /// whose pids are all dead.
 pub fn resumable(flags: &[&str], saved: &Object) -> Result<crate::state::RunState, crate::error::OrchestratorError> {
@@ -502,8 +509,17 @@ pub fn resumable(flags: &[&str], saved: &Object) -> Result<crate::state::RunStat
     else {
         panic!("not a resume: {flags:?}")
     };
-    let runs = [crate::state::SavedRun::read(10_000, serde_json::Value::Object(saved.clone())).unwrap()];
+    let runs = [read_saved(10_000, &serde_json::Value::Object(saved.clone()))];
     crate::cli::resumable_state(&runs, &args, "/proj", "here", &|_| false).map(|(state, _)| state)
+}
+
+/// The herdr server a herdr CLI reaches with HERDR_SOCKET_PATH set to socket and HERDR_SESSION to session, each None
+/// for a variable left unset.
+pub fn herdr_server(socket: Option<&str>, session: Option<&str>) -> crate::herdr::HerdrServer {
+    let set = [(crate::herdr::HERDR_SOCKET_PATH, socket), (crate::herdr::HERDR_SESSION, session)];
+    let vars: Vec<(std::ffi::OsString, std::ffi::OsString)> =
+        set.iter().filter_map(|&(k, v)| Some((k.into(), v?.into()))).collect();
+    crate::herdr::HerdrServer::of_environment(&vars).expect("UTF-8 values")
 }
 
 #[cfg(test)]
