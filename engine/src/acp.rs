@@ -23,6 +23,7 @@ use crate::env::without_withheld;
 use crate::error::OrchestratorError;
 use crate::harness::{harness, Harness, ModeSetting, Tokens, Usage};
 use crate::human::Human;
+use crate::interrupt::Interrupt;
 use crate::state::{AgentRecord, Backend, RunState};
 use connection::{Connection, Failure};
 
@@ -281,6 +282,42 @@ pub fn session_usage(log: &str, session: &str) -> Vec<Usage> {
     out
 }
 
+/// What harness h's ACP agent says of itself when asked `initialize`, started as an ACP run starts it in `default`
+/// mode (Harness::acp_launch, with no model and no extra directory), from env's PATH and with env alone, working in
+/// cwd: its `agentInfo` as "<name> <version>", or "answers over ACP" when it gives none. The agent is killed once it
+/// answers, and its stderr dropped. Errors: h has no ACP launch; its program does not start; it exits, or does not
+/// answer within timeout; stopping is raised before it answers, which kills it.
+pub fn probe(
+    h: &Harness,
+    env: &[(OsString, OsString)],
+    cwd: &str,
+    timeout: Duration,
+    stopping: &Interrupt,
+) -> Result<String, OrchestratorError> {
+    let Some(how) = h.acp_launch("default", None, None) else {
+        return Err(OrchestratorError(format!("{} has no ACP launch", h.kind)));
+    };
+    // It answers no prompt, so its usage file stays unwritten.
+    let connection =
+        Arc::new(Connection::spawn(how.program, &how.args, env.iter().cloned(), cwd, "/dev/null", "/dev/null".into())?);
+    let killed = connection.clone();
+    let Some(watch) = stopping.watch(move || killed.kill()) else {
+        return Err(OrchestratorError::new("interrupted"));
+    };
+    let init = json!({"protocolVersion": PROTOCOL_VERSION, "clientCapabilities": {}});
+    let answer = connection.request("initialize", init, timeout);
+    if watch.interrupted() {
+        return Err(OrchestratorError::new("interrupted"));
+    }
+    let info = answer.map_err(|e| unanswered(h, "initialize", e, timeout))?.get("agentInfo").cloned();
+    let field = |key: &str| info.as_ref().and_then(|i| i.get(key)).and_then(Value::as_str).map(String::from);
+    Ok(match (field("name"), field("version")) {
+        (Some(name), Some(version)) => format!("{name} {version}"),
+        (Some(name), None) => name,
+        _ => "answers over ACP".to_string(),
+    })
+}
+
 /// Where run's USAGE_FILE is.
 pub fn usage_file(run: &RunState) -> String {
     format!("{}/{USAGE_FILE}", run.dir())
@@ -401,15 +438,20 @@ fn offers(opened: &Value, group: &str, list: &str, key: &str, id: &str) -> bool 
     choices.is_some_and(|choices| choices.iter().any(|c| c.get(key).and_then(Value::as_str) == Some(id)))
 }
 
-/// The error of harness h's agent's request of method that got no result.
+/// The error of harness h's agent's request of method that got no result, waited for REQUEST_SECONDS.
 fn failed(h: &Harness, method: &str, failure: Failure) -> AgentError {
+    AgentError::Failed(unanswered(h, method, failure, Duration::from_secs(REQUEST_SECONDS)))
+}
+
+/// Why harness h's agent's request of method, waited for at most timeout, got no result.
+fn unanswered(h: &Harness, method: &str, failure: Failure, timeout: Duration) -> OrchestratorError {
     let why = match failure {
         Failure::Refused(e) => e,
         Failure::Exited => "it exited".to_string(),
-        Failure::TimedOut => format!("no answer within {REQUEST_SECONDS}s"),
+        Failure::TimedOut => format!("no answer within {}s", timeout.as_secs()),
         Failure::Unwritten(e) => e.0,
     };
-    AgentError::Failed(OrchestratorError(format!("{} {method}: {why}", h.kind)))
+    OrchestratorError(format!("{} {method}: {why}", h.kind))
 }
 
 /// The error of a role that has no agent.

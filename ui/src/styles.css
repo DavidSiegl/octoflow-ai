@@ -772,8 +772,10 @@ button.link:hover:not(:disabled) {
   white-space: normal;
 }
 
+/* Wraps, so that a dialog with several action buttons, as the setup dialog, still fits its width. */
 .dialog footer {
   display: flex;
+  flex-wrap: wrap;
   justify-content: end;
   gap: 8px;
 }

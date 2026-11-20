@@ -1,14 +1,17 @@
-//! What serve gives the desktop app's setup dialog: crate::cli::doctor's checks of a project, and the marker that the
-//! dialog once closed with every Required check passed, which keeps it from opening by itself again.
+//! What serve gives the desktop app's setup dialog: crate::cli::doctor's checks of a project, for the backend the app's
+//! runs use (herdr's, or over ACP without herdr), and the marker that the dialog once closed with every Required check
+//! passed, which keeps it from opening by itself again.
 
 use std::io;
+use std::time::Duration;
 
-use crate::cli::doctor::{check_setup, Check, Level};
+use crate::cli::doctor::{check_acp_setup, check_setup, Check, Level};
 use crate::env::ConfigDir;
 use crate::error::os_error;
 use crate::herdr::ProcessHerdr;
 use crate::host::ProcessHost;
 use crate::interrupt::Interrupt;
+use crate::state::Backend;
 use serde_json::Value;
 
 use super::object;
@@ -27,9 +30,14 @@ pub struct Setup {
 }
 
 impl Setup {
-    /// The real one: project_checks, and the marker in config.
-    pub fn of(config: &ConfigDir) -> Setup {
-        Setup::new(Box::new(project_checks), config.setup_checked_path())
+    /// The real one, for app runs whose agents run in backend: project_checks or acp_project_checks, and the marker in
+    /// config.
+    pub fn of(config: &ConfigDir, backend: Backend) -> Setup {
+        let check: Box<CheckProject> = match backend {
+            Backend::Herdr => Box::new(project_checks),
+            Backend::Acp => Box::new(acp_project_checks),
+        };
+        Setup::new(check, config.setup_checked_path())
     }
 
     /// One that checks a project by check, its marker at path.
@@ -80,6 +88,21 @@ pub fn project_checks(machine: &str, cwd: &str, stopping: &Interrupt) -> Vec<Che
     let host = ProcessHost::local(stopping);
     let herdr = ProcessHerdr::new(Some(machine), stopping);
     checks_through(&host, &herdr, cwd, crate::cli::in_herdr_pane())
+}
+
+/// How long an ACP agent has to answer `initialize` in acp_project_checks: long enough for a CLI's first start, which
+/// may update itself, short enough that the dialog does not hang on one that never answers.
+const PROBE_SECONDS: u64 = 30;
+
+/// The checks of the project in cwd for app runs over ACP (check_acp_setup), each harness's agent asked `initialize`
+/// by crate::acp::probe in the engine's environment, working in the home directory. machine is not used: such runs
+/// run on this machine.
+pub fn acp_project_checks(_machine: &str, cwd: &str, stopping: &Interrupt) -> Vec<Check> {
+    let host = ProcessHost::local(stopping);
+    let env = crate::env::child_env();
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
+    let answers = |h| crate::acp::probe(h, &env, &home, Duration::from_secs(PROBE_SECONDS), stopping);
+    check_acp_setup(&host, Some(cwd), &answers)
 }
 
 /// project_checks through host and herdr, from a herdr pane or not as in_herdr_pane says.

@@ -22,6 +22,7 @@ use crate::error::{os_error, OrchestratorError};
 use crate::herdr::{AgentConsole, Launcher, ProcessHerdr};
 use crate::host::{Host, ProcessHost};
 use crate::interrupt::Interrupt;
+use crate::state::Backend;
 use runs::{plain_name, AgentInput, Event, ProjectRuns, RunReadError, RunWatch};
 use serde_json::Value;
 use setup::Setup;
@@ -84,6 +85,20 @@ pub struct Reached {
 /// which must stop the Host's commands. Errors: the project cannot be reached. [`project_host`] is the real one.
 pub type Connect = dyn Fn(&str, &str, &Interrupt) -> Result<Reached, OrchestratorError> + Send + Sync;
 
+/// The environment variable that selects the backend of the desktop app's runs, read when serve starts: a hidden
+/// developer setting until herdr-gui-decoupling ticket 12 puts every app run on ACP and drops it. Set before the app
+/// starts, since serve inherits the app's environment.
+pub const APP_BACKEND_VARIABLE: &str = "OCTOFLOW_APP_BACKEND";
+
+/// The backend the app's runs use, given APP_BACKEND_VARIABLE's value: Acp for `acp`, Herdr for any other or none.
+fn app_backend(value: Option<&std::ffi::OsStr>) -> Backend {
+    if value.is_some_and(|v| v == "acp") {
+        Backend::Acp
+    } else {
+        Backend::Herdr
+    }
+}
+
 /// The program's `serve`: start a RunServer that also answers origins, its setup marker and workflows in config, print {"url", "token"} as one JSON line on
 /// standard output, and serve until SIGINT or SIGTERM; returns 0 then, the server stopped. Returns EXIT_ERROR, with
 /// one line on standard error, when no port can be bound, or when the line cannot be printed, as when whoever
@@ -100,7 +115,8 @@ pub fn serve_command(origins: &[String], config: &ConfigDir) -> i32 {
         eprintln!("error: cannot wait for SIGINT and SIGTERM: {e}");
         return EXIT_ERROR;
     }
-    let started = RunServer::start(origins, Box::new(project_host), Setup::of(config), config.clone());
+    let backend = app_backend(std::env::var_os(APP_BACKEND_VARIABLE).as_deref());
+    let started = RunServer::start(origins, Box::new(project_host), Setup::of(config, backend), config.clone());
     serve(started, &mut io::stdout(), &mut io::stderr(), || signals.wait().map(drop).map_err(io::Error::from))
 }
 
