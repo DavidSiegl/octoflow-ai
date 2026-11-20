@@ -1239,6 +1239,7 @@ fn the_app_s_acp_setup_checks_each_harness_over_acp_and_nothing_of_herdr() {
 fn a_harness_off_path_is_missing_without_being_started_and_one_that_does_not_answer_is_told_how_to_check_it() {
     let tools = FakeTools::new();
     tools.remove("agy");
+    tools.remove("claude");
     let silent = |kind: &str| match kind {
         "opencode" => Err(OrchestratorError::new("opencode initialize: no answer within 30s")),
         kind => acp_answers(kind),
@@ -1254,6 +1255,15 @@ fn a_harness_off_path_is_missing_without_being_started_and_one_that_does_not_ans
     );
     assert_eq!(checks["agy over ACP"], off_path);
     assert!(!asked.contains(&"agy".to_string()), "{asked:?}");
+    // Its CLI installed, claude would still fail, so the fix is what the app lacks.
+    let claude = check_of(
+        "claude over ACP",
+        Level::Required,
+        false,
+        "claude is not on PATH",
+        "needs install: the app does not install claude's ACP adapter yet",
+    );
+    assert_eq!(checks["claude over ACP"], claude);
     let silent = check_of(
         "opencode over ACP",
         Level::Optional,

@@ -216,7 +216,8 @@ pub fn check_setup(
 /// harness, at the level check_setup gives its CLI, that its command is on host's PATH and answers `initialize`, as
 /// answers says, given the harness (crate::acp::probe is the real one; a harness the app cannot run yet is answered as
 /// not); then git, gh, gitleaks, with cwd the project's checkout and origin, and the local quality gate, as
-/// check_setup checks them. Only reads, and makes no error, as check_setup.
+/// check_setup checks them. Makes no error, as check_setup; it changes nothing itself, but answers may start
+/// each agent, which may write its own state.
 pub fn check_acp_setup(
     host: &ProcessHost,
     cwd: Option<&str>,
@@ -225,7 +226,11 @@ pub fn check_acp_setup(
     let mut checks: Vec<Check> = Vec::new();
     for h in &HARNESSES {
         let (level, note) = harness_level(h.kind);
-        let fix = format!("install the {} CLI", h.kind);
+        // Installing the CLI of a harness the app cannot run yet would not make its check pass.
+        let fix = match h.acp_launch("default", None, None) {
+            Some(_) => format!("install the {} CLI", h.kind),
+            None => unrunnable_fix(h),
+        };
         check(&mut checks, &format!("{} over ACP", h.kind), level, &fix, None, &note, &mut || {
             let path = on_path(host, h.kind)?;
             let answer = answers(h).map_err(|e| Unmet::with_fix(e.0, &unrunnable_fix(h)))?;

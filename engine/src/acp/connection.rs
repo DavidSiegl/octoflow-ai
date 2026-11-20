@@ -34,7 +34,7 @@ pub(super) enum Failure {
     Exited,
     /// No answer came within the time given.
     TimedOut,
-    /// The request could not be written to it.
+    /// The request could not be written to it, and it did not exit within the time given.
     Unwritten(OrchestratorError),
 }
 
@@ -121,10 +121,9 @@ impl Connection {
             state.replies.insert(id, None);
             id
         };
-        if let Err(e) = self.send(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params})) {
-            self.shared.lock().replies.remove(&id);
-            return Err(Failure::Unwritten(e));
-        }
+        // A write that fails is waited out too: an agent that has exited closes its stdin before its output ends, and
+        // is reported as exited rather than as unwritable once the reading thread sees that end.
+        let unwritten = self.send(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params})).err();
         let deadline = Instant::now() + timeout;
         let mut state = self.shared.lock();
         loop {
@@ -139,7 +138,7 @@ impl Connection {
             }
             let Some(left) = deadline.checked_duration_since(Instant::now()) else {
                 state.replies.remove(&id);
-                return Err(Failure::TimedOut);
+                return Err(unwritten.map_or(Failure::TimedOut, Failure::Unwritten));
             };
             state = self.shared.wait(state, left);
         }

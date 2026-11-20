@@ -103,7 +103,7 @@ fn app_backend(value: Option<&std::ffi::OsStr>) -> Backend {
 /// standard output, and serve until SIGINT or SIGTERM; returns 0 then, the server stopped. Returns EXIT_ERROR, with
 /// one line on standard error, when no port can be bound, or when the line cannot be printed, as when whoever
 /// started serve has stopped reading its standard output: nobody could reach the server then. SIGHUP keeps its
-/// default, ending the process.
+/// default, ending the process. Its /setup checks are those of the backend APP_BACKEND_VARIABLE selects.
 ///
 /// Must be called on the main thread before any other thread starts, as crate::interrupt::by_signals must, and
 /// instead of it: SIGINT and SIGTERM are blocked in every thread and waited for here, also when the process started

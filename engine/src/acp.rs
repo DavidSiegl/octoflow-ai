@@ -118,11 +118,8 @@ impl<'h> AcpAgents<'h> {
         let ask = |method: &str, params: Value| {
             connection.request(method, params, Duration::from_secs(REQUEST_SECONDS)).map_err(|e| failed(h, method, e))
         };
-        let init = json!({
-            "protocolVersion": PROTOCOL_VERSION,
-            "clientCapabilities": {"fs": {"readTextFile": false, "writeTextFile": false}, "terminal": false},
-        });
-        let capabilities = ask("initialize", init)?.get("agentCapabilities").cloned().unwrap_or(Value::Null);
+        let capabilities =
+            ask("initialize", initialize_params())?.get("agentCapabilities").cloned().unwrap_or(Value::Null);
         let mut unpassed = vec![];
         let mut params = json!({"cwd": run.work_dir(), "mcpServers": []});
         if let Some(dir) = how.extra_dir {
@@ -304,8 +301,7 @@ pub fn probe(
     let Some(watch) = stopping.watch(move || killed.kill()) else {
         return Err(OrchestratorError::new("interrupted"));
     };
-    let init = json!({"protocolVersion": PROTOCOL_VERSION, "clientCapabilities": {}});
-    let answer = connection.request("initialize", init, timeout);
+    let answer = connection.request("initialize", initialize_params(), timeout);
     if watch.interrupted() {
         return Err(OrchestratorError::new("interrupted"));
     }
@@ -315,6 +311,15 @@ pub fn probe(
         (Some(name), Some(version)) => format!("{name} {version}"),
         (Some(name), None) => name,
         _ => "answers over ACP".to_string(),
+    })
+}
+
+/// The params of the engine's `initialize`: the protocol version it speaks, and that it offers its agents neither
+/// file access nor terminals, which they then do themselves.
+fn initialize_params() -> Value {
+    json!({
+        "protocolVersion": PROTOCOL_VERSION,
+        "clientCapabilities": {"fs": {"readTextFile": false, "writeTextFile": false}, "terminal": false},
     })
 }
 

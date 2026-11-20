@@ -18,7 +18,8 @@ use super::object;
 
 /// How a Setup checks a project: given the saved herdr machine (empty for this one), the project's directory, which
 /// may start with ~, and the Interrupt the server raises when it stops, which must stop the checks' commands; the
-/// checks, in check_setup's order. [`project_checks`] is the real one.
+/// checks, in the order check_setup or check_acp_setup gives them. [`project_checks`] and [`acp_project_checks`] are
+/// the real ones, Setup::of picking one by backend.
 pub type CheckProject = dyn Fn(&str, &str, &Interrupt) -> Vec<Check> + Send + Sync;
 
 /// The setup checks a RunServer answers /setup with, and the marker /setup/checked reads and writes.

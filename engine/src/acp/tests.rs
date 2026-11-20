@@ -648,3 +648,23 @@ fn a_probe_fails_for_an_agent_that_is_missing_exits_or_does_not_answer_and_stops
     assert_eq!(exited.0, "opencode initialize: it exited");
     assert!(missing.0.starts_with("cannot start agy: "), "{}", missing.0);
 }
+
+#[test]
+fn a_request_of_an_agent_that_has_exited_fails_as_exited_also_when_it_cannot_be_written_to() {
+    let tmp = TempDir::new();
+    let connection = Connection::spawn(
+        "/bin/sh",
+        &["-c".to_string(), "exit 0".to_string()],
+        std::iter::empty(),
+        &tmp.path(),
+        "/dev/null",
+        "/dev/null".into(),
+    )
+    .expect("sh starts");
+    // Gone before the request is written, so the write meets a closed pipe.
+    assert!(eventually(|| connection.activity().is_none()), "sh exited");
+
+    let failure = connection.request("initialize", json!({}), Duration::from_secs(5)).expect_err("no answer");
+
+    assert!(matches!(failure, Failure::Exited), "{failure:?}");
+}
