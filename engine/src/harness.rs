@@ -345,7 +345,8 @@ impl Harness {
     /// one, and with access to extra_dir and every file under it where the harness can grant it, as launch's; None for
     /// a harness the engine starts no ACP agent of. An empty model or extra_dir is none. permission_mode is in Claude
     /// Code's names; an ACP run always has one, `default` when the human gave none, so that no agent starts in a
-    /// harness's own looser default.
+    /// harness's own looser default where the harness has an equivalent of `default`. One without (opencode, until
+    /// herdr-gui-decoupling ticket 12 gives it modes) starts in its own, and its launch says so (ModeSetting::NoEquivalent).
     pub fn acp_launch(&self, permission_mode: &str, model: Option<&str>, extra_dir: Option<&str>) -> Option<AcpLaunch> {
         let acp = self.acp.as_ref()?;
         let (model, extra_dir) = (model.filter(|m| !m.is_empty()), extra_dir.filter(|d| !d.is_empty()));

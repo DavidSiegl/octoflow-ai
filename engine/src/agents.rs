@@ -113,7 +113,8 @@ pub trait Agents: RunPlaces {
     /// Have a place for the run's agents: the one run saved, when it is still there and this backend can reach it,
     /// else a new one, every agent's place in the old one forgotten, and run records where the place is (herdr: the
     /// run's workspace and its server). Tells human which, in a log line. Returns whether run changed, to be saved.
-    /// Errors: the backend cannot tell whether the saved place is there, or cannot open a new one.
+    /// Errors: run's agents run in another backend (RunState::backend); the backend cannot tell whether the saved place
+    /// is there, or cannot open a new one.
     fn open(&self, run: &mut RunState, human: &dyn Human) -> Result<bool, AgentError>;
 
     /// RunPlaces::end for the orchestrator, once the run is over: a failure is only logged to human, in the

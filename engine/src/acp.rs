@@ -12,12 +12,14 @@
 mod connection;
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use serde_json::{json, Value};
 
 use crate::agents::{AgentError, AgentLaunch, Agents, RunPlaces, Seen, Started};
+use crate::env::without_withheld;
 use crate::error::OrchestratorError;
 use crate::harness::{harness, Harness, ModeSetting, Tokens, Usage};
 use crate::human::Human;
@@ -40,8 +42,9 @@ const PROTOCOL_VERSION: u64 = 1;
 pub struct AcpAgents<'h> {
     /// Told an agent's error, as find comes upon it.
     human: &'h dyn Human,
-    /// The directory the harnesses' programs are taken from; None for PATH, as every run but a test's.
-    bin: Option<String>,
+    /// The environment every agent starts in, besides its launch's (AcpLaunch::env), as crate::env::child_env gives
+    /// it; its PATH is where the harnesses' programs are found.
+    env: Vec<(OsString, OsString)>,
     /// Each role's running agent, by role.
     agents: Mutex<HashMap<String, Agent>>,
 }
@@ -57,15 +60,16 @@ struct Agent {
 }
 
 impl<'h> AcpAgents<'h> {
-    /// A run's ACP agents, none started yet, with the harnesses' programs on PATH; an agent's error is told to human.
+    /// A run's ACP agents, none started yet, each to start in this process's environment as child_env gives it; an
+    /// agent's error is told to human.
     pub fn new(human: &'h dyn Human) -> AcpAgents<'h> {
-        AcpAgents { human, bin: None, agents: Mutex::new(HashMap::new()) }
+        AcpAgents::in_environment(human, std::env::vars_os())
     }
 
-    /// As new, the harnesses' programs taken from the directory bin rather than PATH: a test's fake agents.
-    #[cfg(test)]
-    fn in_bin(human: &'h dyn Human, bin: &str) -> AcpAgents<'h> {
-        AcpAgents { bin: Some(bin.to_string()), ..AcpAgents::new(human) }
+    /// As new, in the environment vars as child_env would give it, were vars the engine's own: what the tests give
+    /// in place of the process's environment, which is shared by every test.
+    fn in_environment(human: &'h dyn Human, vars: impl Iterator<Item = (OsString, OsString)>) -> AcpAgents<'h> {
+        AcpAgents { human, env: without_withheld(vars), agents: Mutex::new(HashMap::new()) }
     }
 
     /// Answer the role's agent's oldest request for a permission with the option of option_id, one of those the
@@ -94,24 +98,19 @@ impl<'h> AcpAgents<'h> {
         h: &'static Harness,
         launch: &AgentLaunch,
     ) -> Result<(Agent, Vec<String>), AgentError> {
-        // A run without a mode runs as `default`, but only a mode the run names is reported unpassed, as herdr does.
-        let named = launch.permission_mode.filter(|m| !m.is_empty());
-        let mode = named.unwrap_or("default");
+        let mode = launch.permission_mode.filter(|m| !m.is_empty()).unwrap_or("default");
         let Some(how) = h.acp_launch(mode, launch.model, launch.extra_dir) else {
             return Err(AgentError::Failed(OrchestratorError(format!(
                 "{} cannot run in a run the app starts: the app does not offer it yet",
                 h.kind
             ))));
         };
-        let program = match &self.bin {
-            Some(bin) => format!("{bin}/{}", how.program),
-            None => how.program.to_string(),
-        };
         let dir = run.dir();
+        let env = self.env.iter().cloned().chain(how.env.iter().map(|(k, v)| (k.into(), v.into())));
         let connection = Connection::spawn(
-            &program,
+            how.program,
             &how.args,
-            &how.env,
+            env,
             run.work_dir(),
             &format!("{dir}/{role}.acp.log"),
             format!("{dir}/{USAGE_FILE}"),
@@ -136,15 +135,7 @@ impl<'h> AcpAgents<'h> {
             }
         };
         let mut unpassed = vec![];
-        match how.mode {
-            ModeSetting::Set(id) if offers(&opened, "modes", "availableModes", "id", id) => {
-                if opened.pointer("/modes/currentModeId").and_then(Value::as_str) != Some(id) {
-                    ask("session/set_mode", json!({"sessionId": session, "modeId": id}))?;
-                }
-            }
-            ModeSetting::Launched => {}
-            ModeSetting::Set(_) | ModeSetting::NoEquivalent => unpassed.extend(named.map(|m| h.without_mode(m))),
-        }
+        unpassed.extend(set_mode(h, &ask, &session, &opened, mode, &how.mode)?);
         if let Some(model) = how.model {
             if offers(&opened, "models", "availableModels", "modelId", &model) {
                 ask("session/set_model", json!({"sessionId": session, "modelId": model}))?;
@@ -318,6 +309,35 @@ fn reopen(
         Ok(opened) => Ok(opened),
         Err(Failure::Refused(e)) => Err(AgentError::Refused(OrchestratorError(format!("{} {method}: {e}", h.kind)))),
         Err(e) => Err(failed(h, method, e)),
+    }
+}
+
+/// Put the session that the agent of harness h opened, as its answer opened has it, in mode's equivalent as setting
+/// says, asking the agent by ask. Setting a mode is this function alone: ACP's session modes are to become session
+/// config options ([session modes](https://agentclientprotocol.com/protocol/session-modes)). Returns the log's
+/// sentence when the agent runs without the equivalent: h has none, or the session does not offer it. Errors: the
+/// agent refuses `session/set_mode`, or does not answer it.
+fn set_mode(
+    h: &Harness,
+    ask: &dyn Fn(&str, Value) -> Result<Value, AgentError>,
+    session: &str,
+    opened: &Value,
+    mode: &str,
+    setting: &ModeSetting,
+) -> Result<Option<String>, AgentError> {
+    match *setting {
+        ModeSetting::Launched => Ok(None),
+        ModeSetting::NoEquivalent => Ok(Some(h.without_mode(mode))),
+        ModeSetting::Set(id) if !offers(opened, "modes", "availableModes", "id", id) => Ok(Some(format!(
+            "{}'s session offers no mode {id}, its equivalent of --permission-mode {mode}; starting it without one",
+            h.kind
+        ))),
+        ModeSetting::Set(id) => {
+            if opened.pointer("/modes/currentModeId").and_then(Value::as_str) != Some(id) {
+                ask("session/set_mode", json!({"sessionId": session, "modeId": id}))?;
+            }
+            Ok(None)
+        }
     }
 }
 

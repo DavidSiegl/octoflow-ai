@@ -7,7 +7,7 @@ use crate::agents::{Activity, AgentError, AgentLaunch, Agents, RunPlaces, Seen, 
 use crate::error::OrchestratorError;
 use crate::harness::harness;
 use crate::human::Human;
-use crate::state::{AgentRecord, RunState};
+use crate::state::{AgentRecord, Backend, RunState};
 
 impl From<HerdrError> for AgentError {
     /// herdr's own errors, with a code, are refusals; the rest are failures.
@@ -27,6 +27,12 @@ impl<H: Herdr + ?Sized> Agents for H {
     /// The run's workspace is kept only in the server the run saved, and only when that is the one this Herdr reaches
     /// (keeps_saved_workspace); a new one is opened in the server reached, which the run then saves.
     fn open(&self, run: &mut RunState, human: &dyn Human) -> Result<bool, AgentError> {
+        if run.backend != Backend::Herdr {
+            return Err(AgentError::Failed(OrchestratorError(format!(
+                "run {} runs its agents over ACP, not in herdr; the desktop app drives it",
+                run.run_id
+            ))));
+        }
         if keeps_saved_workspace(self, run, human)? {
             human.log(&format!("run {} resumes in herdr workspace {}", run.run_id, run.workspace_id));
             // A run that saved no server, from before runs saved one, saves the one it is now found in.

@@ -1,27 +1,31 @@
 //! The ACP backend against a fake agent: a shell script that speaks enough of the protocol for each job, put in a
-//! test's bin directory under a harness's program name (AcpAgents::in_bin).
+//! test's bin directory under a harness's program name, first on the agents' PATH (AcpAgents::in_environment).
 
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::*;
 use crate::agents::Activity;
-use crate::host::tests::{put, read, tool};
-use crate::test_support::{eventually, TempDir};
+use crate::host::tests::{assert_scrubbed, environment, put, read, tool, with_pathspec_switches};
+use crate::test_support::{ended, eventually, TempDir};
 
-/// The fake ACP agent. It appends to `log` beside it its argv (`argv …`), its OPENCODE_CONFIG_CONTENT (`config …`) and
-/// each message it gets (`<method> <line>`; a reply to its own request as ` <line>`). It answers `initialize` with the
+/// The fake ACP agent. It writes its environment to `env` beside it, and appends to `log` beside it its argv
+/// (`argv …`), its OPENCODE_CONFIG_CONTENT (`config …`) and each
+/// message it gets (`<method> <line>`; a reply to its own request as ` <line>`). It answers `initialize` with the
 /// agentCapabilities in `caps.json` beside it (`{}` without one), and `session/new`, `session/load` and
 /// `session/resume` with session `s-1` plus the result fields in `opened.json` (each after a comma; none without
 /// one); `session/load` and `session/resume` with an error where `refuse` is beside it. A prompt's text decides its
 /// answer: ASK asks a permission (request 900) and answers end_turn once it is given, READ asks to read a file
-/// (request 901) and answers end_turn once refused, FAIL answers with an error, EXIT exits, HANG never answers, and
-/// anything else answers end_turn with usage 10/20/30/40.
+/// (request 901) and answers end_turn once refused, FAIL answers with an error, EXIT exits, HANG never answers, FORK
+/// starts a `sleep` that holds its output, its pid in `forked` beside it, and answers end_turn; CANCELLED, MAXTOKENS
+/// and REFUSAL answer with that stop reason, PARTIAL with a usage of no kind the engine counts, NOCACHE with input and
+/// output tokens alone (1 and 2); anything else answers end_turn with usage 10/20/30/40.
 const FAKE_AGENT: &str = r#"#!/bin/sh
 here=$(dirname "$0")
 log="$here/log"
 echo "argv $*" >> "$log"
 echo "config ${OPENCODE_CONFIG_CONTENT-}" >> "$log"
+env > "$here/env"
 caps=$(cat "$here/caps.json" 2>/dev/null || echo '{}')
 opened=$(cat "$here/opened.json" 2>/dev/null)
 reply() { printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$1" "$2"; }
@@ -56,6 +60,15 @@ while IFS= read -r line; do
     *FAIL*) refuse "$id" "not logged in" ;;
     *EXIT*) exit 0 ;;
     *HANG*) ;;
+    *FORK*)
+      sleep 30 &
+      echo $! > "$here/forked"
+      reply "$id" '{"stopReason":"end_turn"}' ;;
+    *CANCELLED*) reply "$id" '{"stopReason":"cancelled"}' ;;
+    *MAXTOKENS*) reply "$id" '{"stopReason":"max_tokens"}' ;;
+    *REFUSAL*) reply "$id" '{"stopReason":"refusal"}' ;;
+    *PARTIAL*) reply "$id" '{"stopReason":"end_turn","usage":{"totalTokens":5}}' ;;
+    *NOCACHE*) reply "$id" '{"stopReason":"end_turn","usage":{"inputTokens":1,"outputTokens":2}}' ;;
     *) reply "$id" '{"stopReason":"end_turn","usage":{"inputTokens":10,"outputTokens":20,"cachedReadTokens":30,"cachedWriteTokens":40,"totalTokens":100}}' ;;
     esac ;;
   esac
@@ -99,6 +112,12 @@ impl Fixture {
 
     fn bin(&self) -> String {
         self.tmp.join("bin")
+    }
+
+    /// The run's agents, started in this process's environment with the bin directory first on PATH and every git
+    /// pathspec switch set, besides KEEP_ME (with_pathspec_switches).
+    fn agents<'h>(&self, human: &'h dyn Human) -> AcpAgents<'h> {
+        AcpAgents::in_environment(human, environment(Some(&self.bin()), &with_pathspec_switches()).into_iter())
     }
 
     /// Give the fake agent's file of this name the text.
@@ -146,11 +165,13 @@ fn now() -> f64 {
 fn a_start_initializes_the_agent_and_opens_a_session_whose_id_find_tells_before_any_prompt() {
     let f = Fixture::new();
     let human = Heard::default();
-    let agents = AcpAgents::in_bin(&human, &f.bin());
+    let agents = f.agents(&human);
 
     let started = agents.start(&f.run, "builder", &launch("agy")).expect("start");
 
-    assert_eq!(started, Started { asking: false, unpassed: vec![] });
+    let no_default = "agy's session offers no mode default, its equivalent of --permission-mode default; starting it \
+                      without one";
+    assert_eq!(started, Started { asking: false, unpassed: vec![no_default.to_string()] });
     assert_eq!(f.methods(), ["initialize", "session/new"]);
     let cwd = format!(r#""params":{{"cwd":"{}","#, f.run.work_dir());
     assert!(f.log().contains(&cwd), "{}", f.log());
@@ -163,7 +184,7 @@ fn a_start_initializes_the_agent_and_opens_a_session_whose_id_find_tells_before_
 fn a_prompt_is_taken_as_sent_works_until_answered_and_its_usage_is_recorded_as_of_its_sending() {
     let f = Fixture::new();
     let human = Heard::default();
-    let agents = AcpAgents::in_bin(&human, &f.bin());
+    let agents = f.agents(&human);
     agents.start(&f.run, "builder", &launch("agy")).expect("start");
 
     agents.prompt(&f.run, "builder", "HANG").expect("prompt");
@@ -187,7 +208,7 @@ fn a_prompt_is_taken_as_sent_works_until_answered_and_its_usage_is_recorded_as_o
 fn an_answered_prompt_leaves_the_agent_idle() {
     let f = Fixture::new();
     let human = Heard::default();
-    let agents = AcpAgents::in_bin(&human, &f.bin());
+    let agents = f.agents(&human);
     agents.start(&f.run, "builder", &launch("agy")).expect("start");
 
     agents.prompt(&f.run, "builder", "build it").expect("prompt");
@@ -199,7 +220,7 @@ fn an_answered_prompt_leaves_the_agent_idle() {
 fn a_permission_the_agent_asks_for_blocks_it_until_answered() {
     let f = Fixture::new();
     let human = Heard::default();
-    let agents = AcpAgents::in_bin(&human, &f.bin());
+    let agents = f.agents(&human);
     agents.start(&f.run, "builder", &launch("agy")).expect("start");
     assert!(agents.answer("builder", "allow").is_err(), "no permission is asked yet");
 
@@ -218,7 +239,7 @@ fn a_permission_the_agent_asks_for_blocks_it_until_answered() {
 fn a_request_the_engine_does_not_offer_is_refused_as_no_such_method() {
     let f = Fixture::new();
     let human = Heard::default();
-    let agents = AcpAgents::in_bin(&human, &f.bin());
+    let agents = f.agents(&human);
     agents.start(&f.run, "builder", &launch("agy")).expect("start");
 
     agents.prompt(&f.run, "builder", "READ").expect("prompt");
@@ -231,7 +252,7 @@ fn a_request_the_engine_does_not_offer_is_refused_as_no_such_method() {
 fn an_agent_that_exits_is_found_gone() {
     let f = Fixture::new();
     let human = Heard::default();
-    let agents = AcpAgents::in_bin(&human, &f.bin());
+    let agents = f.agents(&human);
     agents.start(&f.run, "builder", &launch("agy")).expect("start");
 
     agents.prompt(&f.run, "builder", "EXIT").expect("prompt");
@@ -245,12 +266,16 @@ fn an_agent_that_exits_is_found_gone() {
 fn an_agent_that_answers_a_prompt_with_an_error_is_told_to_the_human_and_found_gone() {
     let f = Fixture::new();
     let human = Heard::default();
-    let agents = AcpAgents::in_bin(&human, &f.bin());
+    let agents = f.agents(&human);
     agents.start(&f.run, "builder", &launch("agy")).expect("start");
 
     agents.prompt(&f.run, "builder", "FAIL").expect("prompt");
 
-    assert!(eventually(|| activity(&agents, &f.run).is_none()));
+    // The find that tells the error finds the agent gone, not idle.
+    assert!(eventually(|| {
+        let seen = activity(&agents, &f.run);
+        !human.lines().is_empty() && seen.is_none()
+    }));
     assert_eq!(human.lines(), ["[builder] agy failed: not logged in"]);
 }
 
@@ -259,7 +284,7 @@ fn a_saved_session_is_loaded_where_the_agent_can_load_one() {
     let f = Fixture::new();
     f.put("caps.json", r#"{"loadSession":true,"sessionCapabilities":{"resume":{}}}"#);
     let human = Heard::default();
-    let agents = AcpAgents::in_bin(&human, &f.bin());
+    let agents = f.agents(&human);
 
     agents.start(&f.run, "builder", &AgentLaunch { session: Some("s-9"), ..launch("agy") }).expect("start");
 
@@ -273,7 +298,7 @@ fn a_saved_session_is_resumed_where_the_agent_can_resume_but_not_load_one() {
     let f = Fixture::new();
     f.put("caps.json", r#"{"loadSession":false,"sessionCapabilities":{"resume":{}}}"#);
     let human = Heard::default();
-    let agents = AcpAgents::in_bin(&human, &f.bin());
+    let agents = f.agents(&human);
 
     agents.start(&f.run, "builder", &AgentLaunch { session: Some("s-9"), ..launch("agy") }).expect("start");
 
@@ -284,7 +309,7 @@ fn a_saved_session_is_resumed_where_the_agent_can_resume_but_not_load_one() {
 fn a_saved_session_is_refused_where_the_agent_can_neither_load_nor_resume_one_or_refuses_it() {
     let f = Fixture::new();
     let human = Heard::default();
-    let agents = AcpAgents::in_bin(&human, &f.bin());
+    let agents = f.agents(&human);
     let resumed = AgentLaunch { session: Some("s-9"), ..launch("agy") };
 
     let neither = agents.start(&f.run, "builder", &resumed);
@@ -308,7 +333,7 @@ fn a_permission_mode_the_session_offers_is_set_once_it_is_open_unless_it_is_alre
     let modes = r#","modes":{"currentModeId":"default","availableModes":[{"id":"default"},{"id":"accept-edits"}]}"#;
     f.put("opened.json", modes);
     let human = Heard::default();
-    let agents = AcpAgents::in_bin(&human, &f.bin());
+    let agents = f.agents(&human);
     let accept_edits = AgentLaunch { permission_mode: Some("acceptEdits"), ..launch("agy") };
 
     let default = agents.start(&f.run, "builder", &launch("agy")).expect("start");
@@ -323,7 +348,7 @@ fn a_permission_mode_the_session_offers_is_set_once_it_is_open_unless_it_is_alre
 fn bypass_is_passed_at_launch_and_a_mode_the_session_or_harness_lacks_is_reported_unpassed() {
     let f = Fixture::new();
     let human = Heard::default();
-    let agents = AcpAgents::in_bin(&human, &f.bin());
+    let agents = f.agents(&human);
     let mode = |harness, mode| AgentLaunch { permission_mode: Some(mode), ..launch(harness) };
 
     let bypass = agents.start(&f.run, "builder", &mode("agy", "bypassPermissions")).expect("start");
@@ -332,7 +357,9 @@ fn bypass_is_passed_at_launch_and_a_mode_the_session_or_harness_lacks_is_reporte
 
     assert_eq!(bypass.unpassed, Vec::<String>::new());
     assert!(f.log().contains("argv acp --dangerously-skip-permissions\n"), "{}", f.log());
-    assert_eq!(not_offered.unpassed, [harness("agy").unwrap().without_mode("plan")]);
+    let no_plan =
+        "agy's session offers no mode plan, its equivalent of --permission-mode plan; starting it without one";
+    assert_eq!(not_offered.unpassed, [no_plan]);
     assert_eq!(no_equivalent.unpassed, [harness("opencode").unwrap().without_mode("acceptEdits")]);
     assert_eq!(f.asked("session/set_mode"), 0, "{:?}", f.methods());
 }
@@ -340,9 +367,13 @@ fn bypass_is_passed_at_launch_and_a_mode_the_session_or_harness_lacks_is_reporte
 #[test]
 fn a_model_the_launch_cannot_pass_is_set_where_the_session_offers_it_and_reported_unpassed_where_not() {
     let f = Fixture::new();
-    f.put("opened.json", r#","models":{"currentModelId":"a","availableModels":[{"modelId":"a"},{"modelId":"b"}]}"#);
+    let models = r#""models":{"currentModelId":"a","availableModels":[{"modelId":"a"},{"modelId":"b"}]}"#;
+    f.put(
+        "opened.json",
+        &format!(r#","modes":{{"currentModeId":"default","availableModes":[{{"id":"default"}}]}},{models}"#),
+    );
     let human = Heard::default();
-    let agents = AcpAgents::in_bin(&human, &f.bin());
+    let agents = f.agents(&human);
     let model = |model| AgentLaunch { model: Some(model), ..launch("agy") };
 
     let offered = agents.start(&f.run, "builder", &model("b")).expect("start");
@@ -358,7 +389,7 @@ fn a_model_the_launch_cannot_pass_is_set_where_the_session_offers_it_and_reporte
 fn opencode_takes_its_model_and_grant_in_its_environment_and_agy_its_grant_as_a_flag() {
     let f = Fixture::new();
     let human = Heard::default();
-    let agents = AcpAgents::in_bin(&human, &f.bin());
+    let agents = f.agents(&human);
     let granted = |harness| AgentLaunch { model: Some("m/x"), extra_dir: Some("/runs"), ..launch(harness) };
 
     let opencode = agents.start(&f.run, "builder", &granted("opencode")).expect("start");
@@ -368,14 +399,15 @@ fn opencode_takes_its_model_and_grant_in_its_environment_and_agy_its_grant_as_a_
     let config = r#"config {"model":"m/x","permission":{"external_directory":{"/runs/*":"allow"}}}"#;
     assert!(log.contains(config), "{log}");
     assert!(log.contains("argv acp --add-dir /runs\n"), "{log}");
-    assert_eq!(opencode.unpassed, Vec::<String>::new());
+    // opencode has no equivalent of any mode yet, `default` included, which a run without one runs in.
+    assert_eq!(opencode.unpassed, [harness("opencode").unwrap().without_mode("default")]);
 }
 
 #[test]
 fn a_harness_without_an_acp_launch_is_refused_saying_the_app_does_not_offer_it_yet() {
     let f = Fixture::new();
     let human = Heard::default();
-    let agents = AcpAgents::in_bin(&human, &f.bin());
+    let agents = f.agents(&human);
 
     let started = agents.start(&f.run, "builder", &launch("pi"));
 
@@ -390,7 +422,7 @@ fn a_harness_without_an_acp_launch_is_refused_saying_the_app_does_not_offer_it_y
 fn a_new_start_of_a_role_kills_its_agent_before_and_end_kills_them_all() {
     let f = Fixture::new();
     let human = Heard::default();
-    let agents = AcpAgents::in_bin(&human, &f.bin());
+    let agents = f.agents(&human);
     agents.start(&f.run, "builder", &launch("agy")).expect("start");
     agents.start(&f.run, "builder", &launch("agy")).expect("start");
     agents.start(&f.run, "reviewer", &launch("agy")).expect("start");
@@ -406,7 +438,7 @@ fn a_new_start_of_a_role_kills_its_agent_before_and_end_kills_them_all() {
 fn a_run_binds_to_acp_and_a_herdr_run_is_not_opened() {
     let mut f = Fixture::new();
     let human = Heard::default();
-    let agents = AcpAgents::in_bin(&human, &f.bin());
+    let agents = f.agents(&human);
     let mut herdr = RunState::new("20261120-000000-abcd", "a task", &f.tmp.join("project"));
 
     let refused = agents.open(&mut herdr, &human);
@@ -431,4 +463,81 @@ fn session_usage_passes_over_lines_that_do_not_read() {
     let usage = session_usage(&log, "s");
 
     assert_eq!(usage, [Usage { when: 1.5, tokens: Tokens { input: 1, output: 2, cache_read: 3, cache_write: 4 } }]);
+}
+
+#[test]
+fn an_agent_starts_without_the_git_pathspec_switches_and_hears_the_signals_the_engine_blocks() {
+    let f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    let terminate: nix::sys::signal::SigSet = crate::interrupt::SIGNALS.into_iter().collect();
+
+    // agy logs the signals it was started with blocked, as /proc has them, and then runs the fake agent: a shell
+    // clears its mask as it starts, so the fake agent cannot tell.
+    tool(&f.bin(), "fake-agent", FAKE_AGENT);
+    let bin = f.bin();
+    let logs_mask = format!(
+        "#!/usr/bin/env -S awk -f\nBEGIN {{\n  while ((getline l < \"/proc/self/status\") > 0) if (l ~ /^SigBlk:/) print l >> \"{bin}/log\"\n  close(\"{bin}/log\")\n  exit system(\"exec {bin}/fake-agent\")\n}}\n"
+    );
+    tool(&bin, "agy", &logs_mask);
+    // Started from a thread that blocks the signals, as every thread of the engine does (crate::interrupt::by_signals).
+    terminate.thread_block().expect("blocking the signals");
+    let started = agents.start(&f.run, "builder", &launch("agy"));
+    terminate.thread_unblock().expect("unblocking the signals");
+
+    started.expect("start");
+    assert_scrubbed(&read(&format!("{}/env", f.bin())));
+    let blocked = f.log().lines().find_map(|l| l.strip_prefix("SigBlk:").map(|mask| mask.trim().to_string()));
+    let blocked = u64::from_str_radix(blocked.as_deref().expect("a SigBlk line"), 16).expect("a hex mask");
+    for signal in crate::interrupt::SIGNALS {
+        assert_eq!(blocked & (1 << (signal as u64 - 1)), 0, "{signal} is blocked: {blocked:x}");
+    }
+}
+
+#[test]
+fn ending_an_agent_kills_what_it_started_too() {
+    let f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    agents.start(&f.run, "builder", &launch("agy")).expect("start");
+    agents.prompt(&f.run, "builder", "FORK").expect("prompt");
+    assert!(eventually(|| activity(&agents, &f.run) == Some(Activity::Idle)));
+
+    agents.end(&f.run).expect("end");
+
+    assert!(ended(&format!("{}/forked", f.bin())), "the agent's sleep outlived it");
+}
+
+#[test]
+fn an_agent_that_stops_for_another_reason_than_end_turn_is_idle_and_not_failed() {
+    let f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    agents.start(&f.run, "builder", &launch("agy")).expect("start");
+
+    for reason in ["CANCELLED", "MAXTOKENS", "REFUSAL"] {
+        agents.prompt(&f.run, "builder", reason).expect("prompt");
+        assert!(
+            eventually(|| f.log().contains(reason) && activity(&agents, &f.run) == Some(Activity::Idle)),
+            "{reason}"
+        );
+    }
+
+    assert_eq!(human.lines(), Vec::<String>::new());
+}
+
+#[test]
+fn a_usage_without_input_or_output_tokens_is_not_recorded_and_one_without_cache_counts_counts_them_0() {
+    let f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    agents.start(&f.run, "builder", &launch("agy")).expect("start");
+
+    agents.prompt(&f.run, "builder", "PARTIAL").expect("prompt");
+    agents.prompt(&f.run, "builder", "NOCACHE").expect("prompt");
+
+    assert!(eventually(|| f.usage_written() && activity(&agents, &f.run) == Some(Activity::Idle)));
+    let usage = session_usage(&read(&usage_file(&f.run)), "s-1");
+    let tokens: Vec<Tokens> = usage.into_iter().map(|u| u.tokens).collect();
+    assert_eq!(tokens, [Tokens { input: 1, output: 2, cache_read: 0, cache_write: 0 }]);
 }

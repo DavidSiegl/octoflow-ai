@@ -5,6 +5,7 @@
 //! refused, since the engine offers it neither files nor terminals.
 
 use std::collections::{HashMap, VecDeque};
+use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -14,9 +15,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
+use nix::sys::signal::Signal;
+
 use crate::agents::Activity;
 use crate::error::OrchestratorError;
 use crate::harness::Tokens;
+use crate::host::{kill_group, own_group};
 
 /// JSON-RPC's code for a method the receiver does not have.
 const METHOD_NOT_FOUND: i64 = -32601;
@@ -36,8 +40,9 @@ pub(super) enum Failure {
 
 /// A running ACP agent: requests to it, and what it is doing. Dropping it kills the agent.
 pub(super) struct Connection {
-    /// The agent's process; reaped once it is killed.
-    child: Mutex<Child>,
+    /// The agent's process, leading a process group of its own; None once it and its group are killed and it is
+    /// reaped.
+    child: Mutex<Option<Child>>,
     /// Its stdin, where every message to it goes, one at a time.
     input: Arc<Mutex<ChildStdin>>,
     /// What the reading thread has seen, and the id of the next request.
@@ -55,7 +60,8 @@ struct Shared {
 struct State {
     /// The id the next request takes.
     next_id: u64,
-    /// True once its output ended: it exited, or closed its stdout, which it cannot be reached without.
+    /// True once its output ended, or it was killed: it exited, or closed its stdout, which it cannot be reached
+    /// without.
     exited: bool,
     /// The replies to Connection::request's requests, by id: None until one comes.
     replies: HashMap<u64, Option<Result<Value, String>>>,
@@ -69,13 +75,14 @@ struct State {
 }
 
 impl Connection {
-    /// Start the agent as program with args and, besides this process's environment, env, working in cwd; its
+    /// Start the agent as program, found on env's PATH, with args and the environment env alone, working in cwd, in a
+    /// process group of its own as the engine starts every child (crate::host::own_group); its
     /// stderr is appended to the file at stderr, and the usage of each prompt it answers to the file at usage
     /// (usage_line). Errors: the program does not start, or the stderr file cannot be opened.
     pub(super) fn spawn(
         program: &str,
         args: &[String],
-        env: &[(String, String)],
+        env: impl Iterator<Item = (OsString, OsString)>,
         cwd: &str,
         stderr: &str,
         usage: String,
@@ -85,15 +92,17 @@ impl Connection {
             .append(true)
             .open(stderr)
             .map_err(|e| OrchestratorError(format!("cannot open {stderr}: {e}")))?;
-        let mut child = Command::new(program)
+        let mut command = Command::new(program);
+        command
             .args(args)
-            .envs(env.iter().map(|(k, v)| (k, v)))
+            .env_clear()
+            .envs(env)
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(log)
-            .spawn()
-            .map_err(|e| OrchestratorError(format!("cannot start {program}: {e}")))?;
+            .stderr(log);
+        own_group(&mut command);
+        let mut child = command.spawn().map_err(|e| OrchestratorError(format!("cannot start {program}: {e}")))?;
         let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
             unreachable!("stdin and stdout are piped")
         };
@@ -101,7 +110,7 @@ impl Connection {
         let shared = Arc::new(Shared { state: Mutex::new(State::default()), changed: Condvar::new() });
         let (reader_input, reader_shared) = (input.clone(), shared.clone());
         thread::spawn(move || read(BufReader::new(stdout), &reader_input, &reader_shared, &usage));
-        Ok(Connection { child: Mutex::new(child), input, shared })
+        Ok(Connection { child: Mutex::new(Some(child)), input, shared })
     }
 
     /// Ask the agent method with params and wait at most timeout for its result.
@@ -188,12 +197,15 @@ impl Connection {
         self.shared.lock().failure.take()
     }
 
-    /// Kill the agent and reap it; nothing to do for one already gone.
+    /// Kill the agent and every process of its group, and reap it; nothing to do once done. From then on it is
+    /// exited (activity), whether or not its output has ended yet.
     pub(super) fn kill(&self) {
-        let mut child = self.child.lock().unwrap_or_else(|e| e.into_inner());
-        // An agent that already exited cannot be killed, and is reaped all the same.
-        let _ = child.kill();
+        let Some(mut child) = self.child.lock().unwrap_or_else(|e| e.into_inner()).take() else { return };
+        // A group that cannot be signalled has no process left; the wait reaps the agent all the same.
+        let _ = kill_group(&child, Signal::SIGKILL);
         let _ = child.wait();
+        self.shared.lock().exited = true;
+        self.shared.changed.notify_all();
     }
 
     /// Write message to the agent, as one line.
@@ -312,17 +324,18 @@ fn replied(state: &mut State, id: Option<u64>, message: &serde_json::Map<String,
 }
 
 /// The line of the usage file (super::session_usage) for a prompt sent in session at sent, in seconds since the epoch,
-/// from the result the agent answered it with: None when that has no usage. The time is the prompt's sending, not its
+/// from the result the agent answered it with: None when that has no usage, or one without its input or output
+/// tokens. A cache count it leaves out is 0. The time is the prompt's sending, not its
 /// answer's, so the usage counts to the turn that sent it (crate::summary::turn_tokens), even when the agent answers
 /// after it has written the turn's handoff file.
 fn usage_line(session: &str, sent: f64, result: &Value) -> Option<String> {
     let usage = result.get("usage")?.as_object()?;
-    let count = |key: &str| usage.get(key).and_then(Value::as_i64).unwrap_or(0);
+    let count = |key: &str| usage.get(key).and_then(Value::as_i64);
     let tokens = Tokens {
-        input: count("inputTokens"),
-        output: count("outputTokens"),
-        cache_read: count("cachedReadTokens"),
-        cache_write: count("cachedWriteTokens"),
+        input: count("inputTokens")?,
+        output: count("outputTokens")?,
+        cache_read: count("cachedReadTokens").unwrap_or(0),
+        cache_write: count("cachedWriteTokens").unwrap_or(0),
     };
     Some(json!({"session": session, "when": sent, "tokens": tokens.to_json()}).to_string() + "\n")
 }

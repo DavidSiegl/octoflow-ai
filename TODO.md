@@ -53,6 +53,15 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   app over to ACP. serve
   reading `herdr_server` (`engine/src/serve/runs.rs`) is by design: its `AgentConsole` stays herdr's own.
 
+- **An ACP turn's usage is lost when its prompt is still pending at count time or at a kill.** Raised by
+  cross-review 257 (F7): `acp-usage.jsonl` gets a prompt's line only when the agent answers its `session/prompt`
+  (`engine/src/acp/connection.rs`, `replied`), which can come after the handoff file that ends the turn; nothing
+  waits for prompts in flight before `Workflow::count_tokens`, and `AcpAgents::start` and `end` kill agents with
+  pending prompts, whose usage is never written. The last turn of a run, or a turn whose role was restarted, is
+  counted "unknown" although the agent reported usage. Closes when the backend lets a pending prompt settle (a
+  bounded wait, or a cancel whose response carries the usage) before tokens are counted or an agent is killed: a
+  seam change, so for when ACP runs exist (herdr-gui-decoupling ticket 03).
+
 - **A resumed done run's late summary.md or metrics.json can miss the desktop app.** Raised by cross-review 238 (F3):
   a done run stopped before its ending wrote them is finished by a resume that writes them without saving state.json
   after (`Workflow::end_done_run`, `ending_left`'s `release: false`), so serve's event stream, which stopped listing

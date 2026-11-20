@@ -435,10 +435,9 @@ fn tokens_come_from_the_session_the_turn_ran_in() {
 
 #[test]
 fn an_acp_run_s_tokens_come_from_the_usage_its_agents_answered_prompts_with() {
-    let mut f = Fixture::new(vec![("spec", vec![spec_turn()]), ("build", vec![taking(100, build_turn(1))])]);
-    f.state.backend = crate::state::Backend::Acp;
+    let f = Fixture::new(vec![("spec", vec![spec_turn()]), ("build", vec![taking(100, build_turn(1))])]);
     // The usage file is written during the review, once the build agent's session is known; the review's session
-    // has none.
+    // has none. The run is herdr's, which the fakes play, until its tokens are counted again as an ACP run's.
     let (herdr, usage_file) = (Rc::clone(&f.herdr), crate::acp::usage_file(&f.state));
     let mut review = review_turn(1, APPROVE);
     let with_usage: Turn = Box::new(move |prompt, state, host| {
@@ -454,6 +453,8 @@ fn an_acp_run_s_tokens_come_from_the_usage_its_agents_answered_prompts_with() {
     f.play("review", vec![taking(60, with_usage)]);
     let mut wf = f.workflow(RunSettings::default());
     assert_eq!(wf.run(), verdict(APPROVE));
+    wf.state.backend = crate::state::Backend::Acp;
+    wf.count_tokens();
     let tokens: Vec<String> = wf.state().turns.iter().map(|t| t.tokens.to_string()).collect();
     assert_eq!(tokens, [r#""unknown""#, r#"{"input":11,"output":4,"cache_read":6,"cache_write":8}"#, r#""unknown""#]);
 }
