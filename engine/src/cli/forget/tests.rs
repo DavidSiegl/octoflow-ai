@@ -215,7 +215,7 @@ fn on_a_machine() {
         (0, format!("forgot run {CLOSED}: deleted {}\n1 forgotten, 0 not closed, 0 skipped\n", dir(CLOSED)))
     );
     assert!(!kept(&cli, CLOSED));
-    let target = Target { machine: Some("m".into()), cwd: Some("/proj".into()) };
+    let target = Target { machine: Some("m".into()), cwd: Some("/proj".into()), acp: false };
     assert_eq!(cli.command(&["forget", "--cwd", "/proj", CLOSED, "--machine", "m"]).target(), Some(&target));
 }
 

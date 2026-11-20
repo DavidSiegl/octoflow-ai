@@ -3,7 +3,7 @@
 //! its root pane, the server it is in, and each agent's herdr name and pane.
 
 use super::{workspace_label, Agent, Direction, Herdr, HerdrError, Workspaces};
-use crate::agents::{Activity, AgentError, AgentLaunch, Agents, RunPlaces, Seen, Started};
+use crate::agents::{Activity, AgentError, AgentLaunch, Agents, RunPlaces, Seen, Started, Waiting};
 use crate::error::OrchestratorError;
 use crate::harness::harness;
 use crate::human::Human;
@@ -133,6 +133,9 @@ impl<H: Herdr + ?Sized> Agents for H {
     fn show(&self, run: &RunState, role: &str) -> Result<(), AgentError> {
         Ok(self.focus(agent_name(run, role))?)
     }
+
+    /// The human types into the agent's pane, which needs nothing of herdr.
+    fn await_human(&self, _run: &RunState, _role: &str, _why: Waiting) {}
 
     fn whereabouts(&self, run: &RunState, role: &str) -> String {
         format!("pane {}", pane(run, role))

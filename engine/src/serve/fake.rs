@@ -10,7 +10,7 @@ use crate::herdr::{
     AgentAddress, AgentConsole, HerdrError, HerdrServer, Launched, Launcher, Workspaces, PANE_SHELL_SCRIPT,
 };
 use crate::host::{Exec, ExecError, Host, RunFile, RunFileText};
-use crate::serve::Reached;
+use crate::serve::{Launch, Reached};
 use crate::state::SavedRun;
 
 /// A Host whose files are `files`, whose run_states_inside and run_state_inside read the state.json of each run among
@@ -208,7 +208,7 @@ pub fn reached(host: &Arc<ServeHost>, console: &Arc<FakeConsole>) -> Reached {
         dir,
         console: console.clone(),
         places: console.clone(),
-        launcher: console.clone(),
+        launch: Launch::Herdr(console.clone()),
     }
 }
 

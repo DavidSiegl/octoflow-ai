@@ -357,7 +357,7 @@ fn show_no_longer_lists_the_conflicts() {
 #[test]
 fn args() {
     let t = Refresh::new();
-    let target = Target { machine: Some("m".into()), cwd: Some("~/proj".into()) };
+    let target = Target { machine: Some("m".into()), cwd: Some("~/proj".into()), acp: false };
     let command = t.cli.command(&["refresh", "a1b2c3", "--machine", "m", "--cwd", "~/proj"]);
     assert_eq!(command, Command::Refresh(target, Some("a1b2c3".into())));
     assert_eq!(t.cli.command(&["refresh"]), Command::Refresh(Target::default(), None));

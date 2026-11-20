@@ -384,6 +384,14 @@ fn a_new_run_takes_the_run_id_given_unless_its_directory_is_there() {
     f.host.state().files.insert(format!("/proj/.octoflow-ai/runs/{id}/log.md"), String::new());
     let e = new_state(&run_args(&["--run-id", id, "t"], &config), "/proj", None, &world).unwrap_err();
     assert_eq!(e.0, format!("/proj/.octoflow-ai/runs/{id} exists already; a new run needs an id of its own"));
+    // One serve made for the run it starts, with the start's log alone, is not.
+    f.host.state().files.shift_remove(&format!("/proj/.octoflow-ai/runs/{id}/log.md"));
+    f.host.state().files.insert(format!("/proj/.octoflow-ai/runs/{id}/{START_LOG}"), String::new());
+    let (state, _) = new_state(&run_args(&["--run-id", id, "t"], &config), "/proj", None, &world).unwrap();
+    assert_eq!(state.run_id, id);
+    f.host.state().files.insert(format!("/proj/.octoflow-ai/runs/{id}/state.json"), String::new());
+    let e = new_state(&run_args(&["--run-id", id, "t"], &config), "/proj", None, &world).unwrap_err();
+    assert!(e.0.ends_with("exists already; a new run needs an id of its own"), "{}", e.0);
     // Another project's run of that id is no matter.
     let (state, _) = new_state(&run_args(&["--run-id", id, "t"], &config), "/other", None, &world).unwrap();
     assert_eq!(state.run_id, id);

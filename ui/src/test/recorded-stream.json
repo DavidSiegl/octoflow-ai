@@ -56,6 +56,7 @@
        "kind": "claude"
       }
      ],
+     "backend": "herdr",
      "health": null,
      "health_reason": null,
      "heartbeat_age": 1,
@@ -210,6 +211,7 @@
        "kind": "claude"
       }
      ],
+     "backend": "herdr",
      "health": "running",
      "health_reason": "pid 4003 on devbox, beat 1s ago",
      "heartbeat_age": 1,
@@ -303,6 +305,7 @@
        "kind": "claude"
       }
      ],
+     "backend": "herdr",
      "health": "running",
      "health_reason": "pid 4003 on devbox, beat 1s ago",
      "heartbeat_age": 1,
@@ -413,6 +416,7 @@
        "kind": "claude"
       }
      ],
+     "backend": "herdr",
      "health": "running",
      "health_reason": "pid 4003 on devbox, beat 1s ago",
      "heartbeat_age": 1,
@@ -550,6 +554,7 @@
        "kind": "claude"
       }
      ],
+     "backend": "herdr",
      "health": "running",
      "health_reason": "pid 4003 on devbox, beat 1s ago",
      "heartbeat_age": 1,

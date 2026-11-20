@@ -65,6 +65,28 @@ pub enum Activity {
     Unknown,
 }
 
+/// Why a run waits on the human's message to a role's agent that is idle in its turn (Agents::await_human).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Waiting {
+    /// The human-paced step's agent asks the human its questions.
+    Interview,
+    /// The agent wrote a BLOCKED report, and waits for the human's answer.
+    Blocked,
+    /// The agent went idle without writing its handoff file, for STALL_SECONDS.
+    Idle,
+}
+
+impl Waiting {
+    /// Its name in an ACP run's journal (`waiting`'s `why`).
+    pub fn name(self) -> &'static str {
+        match self {
+            Waiting::Interview => "interview",
+            Waiting::Blocked => "blocked",
+            Waiting::Idle => "idle",
+        }
+    }
+}
+
 /// A role's agent that is running.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Seen {
@@ -155,6 +177,12 @@ pub trait Agents: RunPlaces {
 
     /// Bring the role's agent before the human (herdr: focus its pane).
     fn show(&self, run: &RunState, role: &str) -> Result<(), AgentError>;
+
+    /// Let the human's message reach the role's agent, which is idle in its turn while the run waits on the human for
+    /// the reason why, until the agent's next prompt (ACP: the socket's `message` sends it as that prompt; herdr:
+    /// nothing to do, the human types into its pane). Called on every look at an agent that still waits; a backend
+    /// does it once until the next prompt.
+    fn await_human(&self, run: &RunState, role: &str, why: Waiting);
 
     /// Where the human finds the role's agent, as a message names it (herdr: `pane w1:p2`).
     fn whereabouts(&self, run: &RunState, role: &str) -> String;

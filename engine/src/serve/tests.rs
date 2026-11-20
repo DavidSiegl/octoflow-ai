@@ -18,6 +18,7 @@ use crate::json::{Object, ValueExt};
 use crate::serve::fake::{reached, FakeConsole, ServeHost};
 use crate::state::RunState;
 use crate::test_support::TempDir;
+use serde_json::json;
 
 /// The pairs as a query string, each name and value quoted (crate::http::quote), in the order given.
 fn urlencode(pairs: &[(&str, &str)]) -> String {
@@ -99,9 +100,11 @@ impl Served {
         Served { console, ..Served::start(Box::new(connect), origins, connects, options) }
     }
 
-    /// A server whose projects are the real directories here.
-    fn real() -> Served {
-        Served::start(Box::new(project_host), &[], Arc::default(), Options::default())
+    /// A server whose projects are the real directories here, their runs started as backend says.
+    fn real(backend: Backend) -> Served {
+        let connect =
+            move |machine: &str, cwd: &str, stopping: &Interrupt| project_host(machine, cwd, stopping, backend);
+        Served::start(Box::new(connect), &[], Arc::default(), Options::default())
     }
 
     fn start(
@@ -313,7 +316,7 @@ fn runs_are_list_json_records_locally() {
     let d = Project::new();
     d.save(SERVE_ID, &[]);
     d.save("x-beef00", &[("phase", Value::from("done")), ("verdict", Value::from(APPROVE))]);
-    let served = Served::real();
+    let served = Served::real(Backend::Herdr);
     let reply = served.get(&d.query("/runs"), &[]);
     assert_eq!(reply.status, Some(200));
     let target = ["--cwd".to_string(), d.root()];
@@ -441,7 +444,7 @@ fn a_link_that_leads_out_of_the_run_directory_is_refused() {
     link("spec.md", &format!("{runs}/{SERVE_ID}/in.md"));
     link(&d.root(), &format!("{runs}/elsewhere"));
     link(SERVE_ID, &format!("{runs}/alias"));
-    let served = Served::real();
+    let served = Served::real(Backend::Herdr);
     let file = |run: &str, name: &str| {
         served.get(&format!("/file?{}", urlencode(&[("cwd", &d.root()), ("run", run), ("name", name)])), &[])
     };
@@ -498,7 +501,7 @@ fn a_run_whose_state_json_leads_out_of_its_run_directory_is_no_run() {
     // A state.json that is a link inside its own run directory is that run's.
     d.write(&format!("{RUNS_DIR}/x-in0000/saved.json"), &serve_state("x-in0000", &[]));
     link("saved.json", &format!("{runs}/x-in0000/state.json"));
-    let served = Served::real();
+    let served = Served::real(Backend::Herdr);
     let reply = served.get(&d.query("/runs"), &[]);
     let mut ids: Vec<String> = reply
         .json()
@@ -639,7 +642,7 @@ fn the_setup_marker_needs_the_token() {
 #[test]
 fn setup_gate_names_each_file_and_pins_no_release() {
     let repo = crate::host::tests::Repo::new(&[]);
-    let served = Served::real();
+    let served = Served::real(Backend::Herdr);
     let path = format!("/setup/gate?{}", urlencode(&[("cwd", &repo.path)]));
     let reply = served.post(&path, "");
     assert_eq!(reply.status, Some(200), "{reply:?}");
@@ -652,7 +655,7 @@ fn setup_gate_names_each_file_and_pins_no_release() {
 #[test]
 fn setup_gate_needs_a_checkout_and_a_cwd() {
     let repo = crate::host::tests::Repo::new(&[]);
-    let served = Served::real();
+    let served = Served::real(Backend::Herdr);
     let reply = served.post(&format!("/setup/gate?{}", urlencode(&[("cwd", &repo.outside)])), "");
     assert_eq!(reply.status, Some(502), "{reply:?}");
     assert!(reply.error().contains("not a git repository"), "{reply:?}");
@@ -1311,8 +1314,8 @@ fn closing() -> (Repo, String, Served) {
     let (herdr, dir) = (Arc::clone(&console), repo.path.clone());
     let connect = move |_: &str, _: &str, stopping: &Interrupt| {
         let host = Arc::new(ProcessHost::local(stopping));
-        let (console, workspaces, launcher) = (herdr.clone(), herdr.clone(), herdr.clone());
-        Ok(Reached { host, dir: dir.clone(), console, places: workspaces, launcher, launch_dir: dir.clone() })
+        let (console, workspaces, launch) = (herdr.clone(), herdr.clone(), Launch::Herdr(herdr.clone()));
+        Ok(Reached { host, dir: dir.clone(), console, places: workspaces, launch, launch_dir: dir.clone() })
     };
     let served = Served::start(Box::new(connect), &[], Arc::default(), Options::default());
     (repo, wt, Served { console, ..served })
@@ -1457,7 +1460,7 @@ fn a_bad_close_body_is_refused_before_the_project_is_reached() {
 fn a_close_skips_a_run_whose_state_json_is_not_json_saying_why() {
     let project = Project::new();
     project.write(&format!("{RUNS_DIR}/{SERVE_ID}/state.json"), "not JSON");
-    let reply = Served::real().post(&project.query("/close"), r#"{"dry_run": true}"#);
+    let reply = Served::real(Backend::Herdr).post(&project.query("/close"), r#"{"dry_run": true}"#);
     assert_eq!(reply.status, Some(200), "{reply:?}");
     let runs = reply.json().get("runs").and_then(Value::as_array).cloned().unwrap();
     let [run] = runs.as_slice() else { panic!("{runs:?}") };
@@ -1501,7 +1504,7 @@ fn forgotten_runs(reply: &Reply) -> Vec<(String, String, String)> {
 
 #[test]
 fn a_forget_dry_run_names_the_closed_run_and_a_listed_forget_deletes_it_keeping_its_metrics() {
-    let (project, served) = (forgetting(), Served::real());
+    let (project, served) = (forgetting(), Served::real(Backend::Herdr));
     let target = project.query("/forget");
     let closed_dir = project.0.join(&format!("{RUNS_DIR}/{FORGET_CLOSED}"));
     let preview = forgotten_runs(&served.post(&target, r#"{"dry_run": true}"#));
@@ -1566,7 +1569,7 @@ impl crate::host::Host for ArchiveReadsMeet {
 fn two_forgets_of_one_run_at_once_forget_it_once() {
     let project = forgetting();
     let connect = |machine: &str, cwd: &str, stopping: &Interrupt| {
-        let mut reached = project_host(machine, cwd, stopping)?;
+        let mut reached = project_host(machine, cwd, stopping, Backend::Herdr)?;
         reached.host = Arc::new(ArchiveReadsMeet { host: reached.host, reads: Mutex::new(0), met: Default::default() });
         Ok(reached)
     };
@@ -1598,7 +1601,7 @@ fn the_sweeps_leave_out_a_run_the_overview_does_not_show() {
     let (outside, link) =
         (project.0.join(&format!("elsewhere/{OUTSIDE}")), project.0.join(&format!("{RUNS_DIR}/{OUTSIDE}")));
     std::os::unix::fs::symlink(&outside, &link).unwrap();
-    let served = Served::real();
+    let served = Served::real(Backend::Herdr);
 
     let closing = closed_runs(&served.post(&project.query("/close"), r#"{"dry_run": true}"#));
     assert_eq!(closing.iter().map(|r| r.0.as_str()).collect::<Vec<_>>(), [FORGET_CLOSED]);
@@ -1951,7 +1954,7 @@ fn the_stream() {
     let d = Project::new();
     d.save(SERVE_ID, &[]);
     d.write(&format!("{RUNS_DIR}/{SERVE_ID}/spec.md"), "# Spec\n");
-    let served = Served::real();
+    let served = Served::real(Backend::Herdr);
     let stream = EventStream::open(&served, &d.query("/events"), "");
     assert!(stream.head.starts_with("HTTP/1.1 200 OK\r\n"), "{}", stream.head);
     assert!(stream.head.contains("\r\nContent-Type: text/event-stream\r\n"), "{}", stream.head);
@@ -2018,7 +2021,7 @@ fn a_state_json_that_is_not_json_is_the_record_of_an_unreadable_run() {
     // Not a problem of the whole project, which would hide every other run (cross-review 194 F1).
     let d = Project::new();
     d.write(&format!("{RUNS_DIR}/{SERVE_ID}/state.json"), "{not json");
-    let served = Served::real();
+    let served = Served::real(Backend::Herdr);
     let stream = EventStream::open(&served, &d.query("/events"), "");
     let (kind, payload) = stream.next(Duration::from_secs(2));
     assert_eq!(kind, "record");
@@ -2266,4 +2269,198 @@ fn only_acp_puts_the_apps_runs_on_acp() {
     for other in [None, Some(OsStr::new("herdr")), Some(OsStr::new("ACP")), Some(OsStr::new(""))] {
         assert_eq!(app_backend(other), Backend::Herdr, "{other:?}");
     }
+}
+
+/// The project at dir, here, its runs started detached (Launch::Detached).
+fn detached_project(dir: &str, stopping: &Interrupt) -> ProjectRuns {
+    let console = Arc::new(FakeConsole::default());
+    let reached = Reached {
+        host: Arc::new(ProcessHost::local(stopping)),
+        dir: dir.to_string(),
+        console: console.clone(),
+        places: console,
+        launch: Launch::Detached,
+        launch_dir: dir.to_string(),
+    };
+    ProjectRuns::new(reached, vec![])
+}
+
+/// A program in dir's bin, as a run's: a shell script that does script, given the run's argv as its arguments.
+fn run_program(dir: &str, script: &str) -> String {
+    let path = format!("{dir}/bin/octoflow");
+    std::fs::create_dir_all(format!("{dir}/bin")).unwrap();
+    std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+    std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    path
+}
+
+#[test]
+fn a_detached_run_that_saves_its_state_is_listed_and_got_its_cwd_and_acp_with_its_output_in_its_log() {
+    let tmp = TempDir::new();
+    let stopping = Interrupt::new();
+    let project = detached_project(&tmp.path(), &stopping);
+    // Saves its state where its --run-id and --cwd say, after it says where it is.
+    let script = r#"id=${2#--run-id=}; echo "$@"; mkdir -p "$4/.octoflow-ai/runs/$id" && echo '{}' > "$4/.octoflow-ai/runs/$id/state.json"; exec sleep 5"#;
+    let program = run_program(&tmp.path(), script);
+    let request = RunRequest { task: "a task".into(), ..RunRequest::default() };
+    let id = "20261120-000000-abcdef";
+
+    let (ended, session) = project.start(&request, &program, id, QUICK_WAIT, &stopping).expect("started");
+
+    assert_eq!((ended, session), (Started::Listed, None));
+    let log = std::fs::read_to_string(format!("{}/.octoflow-ai/runs/{id}/run.log", tmp.path())).unwrap();
+    assert_eq!(log, format!("run --run-id={id} --cwd {} --acp -- a task\n", tmp.path()));
+}
+
+#[test]
+fn a_detached_run_that_exits_before_it_saves_its_state_is_reported_with_its_log_s_last_lines() {
+    let tmp = TempDir::new();
+    let stopping = Interrupt::new();
+    let project = detached_project(&tmp.path(), &stopping);
+    let program = run_program(&tmp.path(), "i=0; while [ $i -lt 25 ]; do i=$((i+1)); echo line $i; done; exit 1");
+    let request = RunRequest { task: "a task".into(), ..RunRequest::default() };
+    let wait = StartWait { every: Duration::from_millis(10), limit: Duration::from_secs(10) };
+
+    let (ended, _) = project.start(&request, &program, "20261120-000000-abcdef", wait, &stopping).expect("started");
+
+    let last: Vec<String> = (6..=25).map(|i| format!("line {i}")).collect();
+    assert_eq!(ended, Started::Exited(format!("its log ends:\n{}", last.join("\n"))));
+}
+
+#[test]
+fn a_detached_run_of_a_project_on_a_machine_is_refused() {
+    let host = Arc::new(ServeHost::on(Some("me@box")));
+    let console = Arc::new(FakeConsole::default());
+    let reached = Reached { launch: Launch::Detached, ..crate::serve::fake::reached(&host, &console) };
+    let project = ProjectRuns::new(reached, vec![]);
+    let request = RunRequest { task: "a task".into(), ..RunRequest::default() };
+
+    let refused = project.start(&request, "/bin/octoflow", "20261120-000000-abcdef", QUICK_WAIT, &Interrupt::new());
+
+    assert!(matches!(refused, Err(RunReadError::Failed(_))), "{refused:?}");
+}
+
+/// A journal of a role whose second session (seq 4) is current: an update, a permission and a wait on the human.
+const JOURNAL: &str = r#"{"journal": 1}
+{"seq": 1, "kind": "session", "session": "s-1", "harness": "agy", "resumed": false}
+{"seq": 2, "kind": "prompt", "text": "build it", "from": "orchestrator"}
+{"seq": 3, "kind": "exited", "error": "not logged in"}
+{"seq": 4, "kind": "session", "session": "s-2", "harness": "agy", "resumed": false}
+{"seq": 5, "kind": "update", "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "hi"}}}
+{"seq": 6, "kind": "permission", "request": 1, "toolCall": {"title": "rm"}, "options": []}
+{"seq": 7, "kind": "waiting", "why": "interview"}
+"#;
+
+#[test]
+fn an_acp_agent_s_events_are_its_current_session_after_the_seq_asked_for() {
+    let host = host_with_run(None);
+    host.state().files.insert(format!("{}/build.events.jsonl", run_dir()), JOURNAL.to_string());
+    let served = Served::fake(&host, &[]);
+    let events = |after: &[(&str, &str)]| {
+        let mut params = vec![("run", SERVE_ID), ("role", "build")];
+        params.extend_from_slice(after);
+        served.get(&Served::query("/agent/events", &params), &[])
+    };
+
+    let all = events(&[]).json();
+    let later = events(&[("after", "5")]).json();
+
+    let seqs = |doc: &Value| -> Vec<u64> {
+        doc["events"].as_array().unwrap().iter().map(|e| e["seq"].as_u64().unwrap()).collect()
+    };
+    assert_eq!((&all["run"], &all["role"], &all["session_start"]), (&json!(SERVE_ID), &json!("build"), &json!(4)));
+    assert_eq!(seqs(&all), vec![4, 5, 6, 7]);
+    assert_eq!(seqs(&later), vec![6, 7]);
+    assert_eq!(all["answerable"], false, "no socket is recorded");
+    host.state().files.insert(format!("{}/socket", run_dir()), "/tmp/x.sock\n".to_string());
+    assert_eq!(events(&[]).json()["answerable"], true);
+    assert_eq!(events(&[("after", "x")]).status, Some(400));
+}
+
+#[test]
+fn an_agent_without_a_journal_is_404_and_a_journal_of_another_version_409() {
+    let host = host_with_run(None);
+    host.state().files.insert(format!("{}/review.events.jsonl", run_dir()), "{\"journal\": 2}\n".to_string());
+    let served = Served::fake(&host, &[]);
+    let events = |role: &str| served.get(&Served::query("/agent/events", &[("run", SERVE_ID), ("role", role)]), &[]);
+
+    let (none, other) = (events("build"), events("review"));
+
+    assert_eq!((none.status, other.status), (Some(404), Some(409)));
+    assert!(other.error().contains("another version of octoflow"), "{}", other.error());
+}
+
+/// Listen on a socket in /tmp, recorded in dir as a run's orchestrator records its own, and answer each connection's
+/// hello, then its one command with replies' answer to it: what a run over ACP does for serve. Returns the commands
+/// it was sent. The socket is in /tmp, not dir, whose path may be too long for a socket address (as on Jenkins); it is
+/// left there for the system's cleaning of /tmp.
+fn run_socket(dir: &str, replies: fn(&Value) -> Value) -> Arc<Mutex<Vec<Value>>> {
+    use std::io::Write;
+    use std::os::unix::net::UnixListener;
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let path = format!("/tmp/octoflow-serve-test-{}-{nanos}.sock", std::process::id());
+    let listener = UnixListener::bind(&path).expect("the socket binds");
+    std::fs::write(format!("{dir}/{}", acp::SOCKET_RECORD), format!("{path}\n")).unwrap();
+    let sent = Arc::new(Mutex::new(vec![]));
+    let seen = Arc::clone(&sent);
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut out) = stream else { return };
+            let mut lines = BufReader::new(out.try_clone().unwrap()).lines();
+            let _hello = lines.next();
+            writeln!(out, "{}", json!({"hello": {"protocol": acp::PROTOCOL, "engine": "0", "run": "r"}})).unwrap();
+            let Some(Ok(line)) = lines.next() else { continue };
+            let command: Value = serde_json::from_str(&line).unwrap();
+            writeln!(out, "{}", replies(&command)).unwrap();
+            seen.lock().unwrap().push(command);
+        }
+    });
+    sent
+}
+
+#[test]
+fn an_answer_and_a_message_go_to_the_run_s_socket_and_its_refusals_come_back_by_code() {
+    let d = Project::new();
+    d.save(SERVE_ID, &[]);
+    let sent = run_socket(&d.0.join(&format!("{RUNS_DIR}/{SERVE_ID}")), |command| match &command["answer"]["option"] {
+        Value::String(o) if o == "allow" => json!({"ok": {}}),
+        Value::String(_) => json!({"error": {"code": "already_answered", "message": "request 1 was answered allow"}}),
+        _ => json!({"error": {"code": "not_waiting", "message": "the build agent is not waiting"}}),
+    });
+    let served = Served::real(Backend::Acp);
+    let to_agent = |endpoint: &str, body: &str| {
+        let target = format!("{endpoint}?{}", urlencode(&[("cwd", &d.root()), ("run", SERVE_ID), ("role", "build")]));
+        served.post(&target, body)
+    };
+
+    let answered = to_agent("/agent/answer", r#"{"request": 1, "option": "allow"}"#);
+    let late = to_agent("/agent/answer", r#"{"request": 1, "option": "deny"}"#);
+    let early = to_agent("/agent/message", r#"{"text": "use 10"}"#);
+    let shapeless = to_agent("/agent/message", r#"{"text": " "}"#);
+
+    assert_eq!(answered.status, Some(200), "{answered:?}");
+    assert_eq!((late.status, late.json()["code"].clone()), (Some(409), json!("already_answered")));
+    assert_eq!((early.status, early.json()["code"].clone()), (Some(409), json!("not_waiting")));
+    assert_eq!(shapeless.status, Some(400));
+    assert_eq!(
+        *sent.lock().unwrap(),
+        [
+            json!({"answer": {"role": "build", "request": 1, "option": "allow"}}),
+            json!({"answer": {"role": "build", "request": 1, "option": "deny"}}),
+            json!({"message": {"role": "build", "text": "use 10"}}),
+        ]
+    );
+}
+
+#[test]
+fn a_message_to_a_run_that_is_not_running_is_409() {
+    let d = Project::new();
+    d.save(SERVE_ID, &[]);
+    let served = Served::real(Backend::Acp);
+    let target = format!("/agent/message?{}", urlencode(&[("cwd", &d.root()), ("run", SERVE_ID), ("role", "build")]));
+
+    let reply = served.post(&target, r#"{"text": "use 10"}"#);
+
+    assert_eq!(reply.status, Some(409), "{reply:?}");
+    assert!(reply.error().starts_with("the run is not running"), "{}", reply.error());
 }
