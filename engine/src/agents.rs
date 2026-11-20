@@ -1,7 +1,7 @@
 //! The agent backend: where a run's role agents run and how the run reaches them, behind one interface, so that the
 //! workflow, `close` and serve name roles and runs, never a backend's own terms. [`Agents`] is what a run's
 //! orchestrator drives its agents through; [`RunPlaces`] is what anything else does to a run's agents from its saved
-//! state; [`Notify`] tells the human. herdr is the one backend so far: every `crate::herdr::Herdr` is an `Agents`, and
+//! state; the human is told through crate::human. herdr is the one backend so far: every `crate::herdr::Herdr` is an `Agents`, and
 //! every `crate::herdr::Workspaces` a `RunPlaces` (crate::herdr::agents).
 //!
 //! A backend keeps what it needs in the run's state (RunState), in fields only it writes; for herdr those are
@@ -15,8 +15,8 @@
 use std::fmt;
 
 use crate::error::OrchestratorError;
+use crate::human::Human;
 use crate::state::{AgentRecord, RunState};
-use crate::workflow::Human;
 
 /// Why a backend did not do what it was asked.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -166,10 +166,4 @@ pub trait RunPlaces {
 
     /// Close the run's place, with any agent still in it; nothing to do when the run never had one.
     fn end(&self, run: &RunState) -> Result<(), AgentError>;
-}
-
-/// Where the human is shown a notification.
-pub trait Notify: fmt::Debug {
-    /// Show a notification with title and body.
-    fn notify(&self, title: &str, body: &str) -> Result<(), OrchestratorError>;
 }

@@ -16,10 +16,10 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::agents::Notify;
 use crate::constants::AGENT_START_TIMEOUT_MS;
 use crate::error::{os_error, OrchestratorError};
 use crate::host::{last_lines, line_ends_as_lf, run_process, Host, ProcessError, DEFAULT_TIMEOUT};
+use crate::human::Notify;
 use crate::interrupt::Interrupt;
 use crate::json::ValueExt;
 use serde_json::Value;

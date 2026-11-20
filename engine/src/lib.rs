@@ -17,6 +17,7 @@ pub mod harness;
 pub mod herdr;
 pub mod host;
 pub mod http;
+pub mod human;
 pub mod interrupt;
 pub mod json;
 pub mod local_gate;

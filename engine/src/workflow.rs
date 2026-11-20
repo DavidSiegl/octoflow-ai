@@ -20,6 +20,7 @@ use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
 use crate::harness::{harness, AgentSettings};
 use crate::host::{git_status, Host, PushError, Scanned};
+use crate::human::Human;
 use crate::interrupt::Interrupt;
 use crate::json::{object, Object, ValueExt};
 use crate::local_gate::{self, LOCAL_GATE};
@@ -66,14 +67,6 @@ pub trait Clocks {
     fn wall(&self) -> f64;
     /// The zone this machine shows its local times in, such as show's turn starts.
     fn zone(&self) -> jiff::tz::TimeZone;
-}
-
-/// The human watching the run: told what needs them in a notification, and everything else in log lines.
-pub trait Human {
-    /// A notification, with its title and body.
-    fn notify(&self, title: &str, body: &str);
-    /// One log line, without the indent the terminal shows it with.
-    fn log(&self, line: &str);
 }
 
 /// What a Workflow talks to, each borrowed for as long as it runs.

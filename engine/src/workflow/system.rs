@@ -6,8 +6,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use nix::time::{clock_gettime, ClockId};
 
 use super::{Clocks, Human};
-use crate::agents::Notify;
 use crate::error::OrchestratorError;
+use crate::human::Notify;
 use crate::interrupt::Interrupt;
 
 /// This machine's zone, as jiff's TimeZone::try_system finds it from TZ, else /etc/localtime; UTC when neither

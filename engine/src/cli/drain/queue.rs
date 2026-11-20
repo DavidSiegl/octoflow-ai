@@ -6,9 +6,9 @@
 use std::collections::HashSet;
 
 use crate::error::{strerror, OrchestratorError};
+use crate::human::Human;
 use crate::paths::{file_name, replace_local_file};
 use crate::spec_file::{read_spec_file, SpecFile};
-use crate::workflow::Human;
 
 /// The keys of the spec header's lines that drain reads. It writes all but BLOCKED_BY_KEY. Blocked by: is a
 /// comma-separated list of the specs that must be SPEC_DONE first, each by its slug or a path ending in

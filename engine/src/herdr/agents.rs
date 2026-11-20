@@ -6,8 +6,8 @@ use super::{workspace_label, Agent, Direction, Herdr, HerdrError, Workspaces};
 use crate::agents::{Activity, AgentError, AgentLaunch, Agents, RunPlaces, Seen, Started};
 use crate::error::OrchestratorError;
 use crate::harness::harness;
+use crate::human::Human;
 use crate::state::{AgentRecord, RunState};
-use crate::workflow::Human;
 
 impl From<HerdrError> for AgentError {
     /// herdr's own errors, with a code, are refusals; the rest are failures.
@@ -107,12 +107,7 @@ impl<H: Herdr + ?Sized> Agents for H {
     }
 
     fn wait_ready(&self, run: &RunState, role: &str, seconds: u64) -> Result<bool, AgentError> {
-        match self.wait(agent_name(run, role), Some(seconds * 1000), &["idle", "done"]) {
-            Ok(_) => Ok(true),
-            Err(e) if e.code() == Some("agent_not_found") => Ok(true),
-            Err(e) if e.code() == Some("timeout") => Ok(false),
-            Err(e) => Err(e.into()),
-        }
+        wait_for(self, agent_name(run, role), seconds, &["idle", "done"], true)
     }
 
     fn find(&self, run: &RunState, role: &str) -> Result<Option<Seen>, AgentError> {
@@ -126,12 +121,7 @@ impl<H: Herdr + ?Sized> Agents for H {
     /// Taken once herdr reports the agent working or blocked; idle and done do not count, since an agent shows them
     /// before taking a prompt too.
     fn wait_taken(&self, run: &RunState, role: &str, seconds: u64) -> Result<bool, AgentError> {
-        match self.wait(agent_name(run, role), Some(seconds * 1000), &["working", "blocked"]) {
-            Ok(_) => Ok(true),
-            // herdr's wait on an agent that has exited fails with agent_not_found.
-            Err(e) if matches!(e.code(), Some("timeout" | "agent_not_found")) => Ok(false),
-            Err(e) => Err(e.into()),
-        }
+        wait_for(self, agent_name(run, role), seconds, &["working", "blocked"], false)
     }
 
     fn show(&self, run: &RunState, role: &str) -> Result<(), AgentError> {
@@ -202,6 +192,23 @@ fn keeps_saved_workspace<H: Herdr + ?Sized>(
         agent.pane.clear();
     }
     Ok(false)
+}
+
+/// Wait at most seconds for herdr's agent name to show one of statuses: true once it does, false when the time runs out
+/// first, and exited when the agent has exited (herdr's wait on one fails with agent_not_found).
+fn wait_for<H: Herdr + ?Sized>(
+    herdr: &H,
+    name: &str,
+    seconds: u64,
+    statuses: &[&str],
+    exited: bool,
+) -> Result<bool, AgentError> {
+    match herdr.wait(name, Some(seconds * 1000), statuses) {
+        Ok(_) => Ok(true),
+        Err(e) if e.code() == Some("agent_not_found") => Ok(exited),
+        Err(e) if e.code() == Some("timeout") => Ok(false),
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// The herdr name of the role's agent; "" before it has one.
