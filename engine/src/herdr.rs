@@ -781,9 +781,9 @@ fn herdr_error(status: i32, stdout: &str, stderr: &str) -> HerdrError {
 /// Herdr::export's `export NAME='value'`. The POSIX shells first, then fish.
 const PANE_SHELLS: [&str; 6] = ["sh", "bash", "zsh", "dash", "ksh", "fish"];
 
-/// The script pane_shell and ProcessHerdr's Launcher::launch (panes_shell) run: it prints $SHELL, then the path of herdr's config.toml as herdr 0.9.1 finds it
-/// (HERDR_CONFIG_PATH, else ~/.config/herdr/config.toml), each on a line of its own, then the file's text when there is
-/// a file, failing when it cannot be read.
+/// The script pane_shell and ProcessHerdr's Launcher::launch (panes_shell) run: it prints $SHELL, then the path of
+/// herdr's config.toml as herdr 0.9.1 finds it (HERDR_CONFIG_PATH, else ~/.config/herdr/config.toml), each on a line
+/// of its own, then the file's text when there is a file, failing when it cannot be read.
 pub(crate) const PANE_SHELL_SCRIPT: &str = r#"f=${HERDR_CONFIG_PATH:-$HOME/.config/herdr/config.toml}
 printf '%s\n%s\n' "$SHELL" "$f"
 [ ! -e "$f" ] || cat -- "$f""#;
