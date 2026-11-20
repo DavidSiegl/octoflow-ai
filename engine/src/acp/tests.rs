@@ -10,8 +10,7 @@ use crate::host::tests::{assert_scrubbed, environment, put, read, tool, with_pat
 use crate::test_support::{ended, eventually, TempDir};
 
 /// The fake ACP agent. It writes its environment to `env` beside it, and appends to `log` beside it its argv
-/// (`argv …`), its OPENCODE_CONFIG_CONTENT (`config …`) and each
-/// message it gets (`<method> <line>`; a reply to its own request as ` <line>`). It answers `initialize` with the
+/// (`argv …`) and each message it gets (`<method> <line>`; a reply to its own request as ` <line>`). It answers `initialize` with the
 /// agentCapabilities in `caps.json` beside it (`{}` without one), and `session/new`, `session/load` and
 /// `session/resume` with session `s-1` plus the result fields in `opened.json` (each after a comma; none without
 /// one); `session/load` and `session/resume` with an error where `refuse` is beside it. A prompt's text decides its
@@ -24,7 +23,6 @@ const FAKE_AGENT: &str = r#"#!/bin/sh
 here=$(dirname "$0")
 log="$here/log"
 echo "argv $*" >> "$log"
-echo "config ${OPENCODE_CONFIG_CONTENT-}" >> "$log"
 env > "$here/env"
 caps=$(cat "$here/caps.json" 2>/dev/null || echo '{}')
 opened=$(cat "$here/opened.json" 2>/dev/null)
@@ -47,6 +45,7 @@ while IFS= read -r line; do
   session/load|session/resume)
     if [ -e "$here/refuse" ]; then refuse "$id" "no such session"; else reply "$id" "{\"x\":0$opened}"; fi ;;
   session/set_mode|session/set_model) reply "$id" '{}' ;;
+  session/set_config_option) reply "$id" '{"configOptions":[]}' ;;
   session/prompt)
     case "$line" in
     *ASK*)
@@ -289,7 +288,7 @@ fn a_saved_session_is_loaded_where_the_agent_can_load_one() {
     agents.start(&f.run, "builder", &AgentLaunch { session: Some("s-9"), ..launch("agy") }).expect("start");
 
     assert_eq!(f.methods(), ["initialize", "session/load"]);
-    assert!(f.log().contains(r#""params":{"sessionId":"s-9","#), "{}", f.log());
+    assert!(f.log().contains(r#""mcpServers":[],"sessionId":"s-9"}"#), "{}", f.log());
     assert_eq!(agents.find(&f.run, "builder").expect("find").and_then(|s| s.session), Some("s-9".to_string()));
 }
 
@@ -386,21 +385,72 @@ fn a_model_the_launch_cannot_pass_is_set_where_the_session_offers_it_and_reporte
 }
 
 #[test]
-fn opencode_takes_its_model_and_grant_in_its_environment_and_agy_its_grant_as_a_flag() {
+fn a_model_is_set_by_the_session_s_model_config_option_where_it_has_one() {
     let f = Fixture::new();
+    let options = r#"[{"group":"g","name":"G","options":[{"value":"a","name":"A"},{"value":"b","name":"B"}]}]"#;
+    let model_option =
+        format!(r#"{{"id":"m","category":"model","type":"select","currentValue":"a","options":{options}}}"#);
+    let effort = r#"{"id":"effort","category":"thought_level","type":"select","currentValue":"b","options":[]}"#;
+    f.put("opened.json", &format!(r#","configOptions":[{effort},{model_option}]"#));
     let human = Heard::default();
     let agents = f.agents(&human);
-    let granted = |harness| AgentLaunch { model: Some("m/x"), extra_dir: Some("/runs"), ..launch(harness) };
+    let model = |model| AgentLaunch { model: Some(model), ..launch("opencode") };
+
+    let current = agents.start(&f.run, "builder", &model("a")).expect("start");
+    let offered = agents.start(&f.run, "builder", &model("b")).expect("start");
+    let not_offered = agents.start(&f.run, "builder", &model("z")).expect("start");
+
+    let without_mode = harness("opencode").unwrap().without_mode("default");
+    assert_eq!((&current.unpassed, &offered.unpassed), (&vec![without_mode.clone()], &vec![without_mode.clone()]));
+    assert_eq!(not_offered.unpassed, [without_mode, "opencode offers no model z; starting it on its own".to_string()]);
+    assert!(f.log().contains(r#""params":{"sessionId":"s-1","configId":"m","value":"b"}"#), "{}", f.log());
+    assert_eq!(f.asked("session/set_config_option"), 1, "{:?}", f.methods());
+    assert_eq!(f.asked("session/set_model"), 0, "{:?}", f.methods());
+}
+
+#[test]
+fn opencode_s_grant_is_a_root_of_its_session_and_agy_s_a_flag() {
+    let f = Fixture::new();
+    f.put("caps.json", r#"{"sessionCapabilities":{"additionalDirectories":{}}}"#);
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    let granted = |harness| AgentLaunch { extra_dir: Some("/runs"), ..launch(harness) };
 
     let opencode = agents.start(&f.run, "builder", &granted("opencode")).expect("start");
     agents.start(&f.run, "builder", &granted("agy")).expect("start");
 
     let log = f.log();
-    let config = r#"config {"model":"m/x","permission":{"external_directory":{"/runs/*":"allow"}}}"#;
-    assert!(log.contains(config), "{log}");
+    let roots = |line: &&str| line.contains(r#""additionalDirectories":["/runs"]"#);
+    let news: Vec<&str> = log.lines().filter(|l| l.starts_with("session/new ")).collect();
+    assert_eq!(news.iter().map(roots).collect::<Vec<_>>(), [true, false], "{log}");
+    assert!(log.contains("argv acp\n"), "{log}");
     assert!(log.contains("argv acp --add-dir /runs\n"), "{log}");
     // opencode has no equivalent of any mode yet, `default` included, which a run without one runs in.
     assert_eq!(opencode.unpassed, [harness("opencode").unwrap().without_mode("default")]);
+}
+
+#[test]
+fn a_session_root_is_granted_again_to_a_resumed_session_and_reported_unpassed_where_the_agent_takes_none() {
+    let f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    let granted = AgentLaunch { extra_dir: Some("/runs"), ..launch("opencode") };
+
+    let unoffered = agents.start(&f.run, "builder", &granted).expect("start");
+    f.put("caps.json", r#"{"loadSession":true,"sessionCapabilities":{"additionalDirectories":{}}}"#);
+    agents.start(&f.run, "builder", &AgentLaunch { session: Some("s-0"), ..granted }).expect("start");
+
+    let log = f.log();
+    let new = log.lines().find(|l| l.starts_with("session/new ")).expect("a session/new");
+    assert!(!new.contains("additionalDirectories"), "{log}");
+    let load = r#""params":{"cwd":"#;
+    let loaded = log.lines().find(|l| l.starts_with("session/load ")).expect("a session/load");
+    assert!(
+        loaded.contains(load) && loaded.contains(r#""additionalDirectories":["/runs"],"sessionId":"s-0"}"#),
+        "{log}"
+    );
+    let ungranted = "opencode cannot be granted /runs; it may ask before each write there";
+    assert_eq!(unoffered.unpassed[0], ungranted);
 }
 
 #[test]

@@ -42,8 +42,8 @@ const PROTOCOL_VERSION: u64 = 1;
 pub struct AcpAgents<'h> {
     /// Told an agent's error, as find comes upon it.
     human: &'h dyn Human,
-    /// The environment every agent starts in, besides its launch's (AcpLaunch::env), as crate::env::child_env gives
-    /// it; its PATH is where the harnesses' programs are found.
+    /// The environment every agent starts in, as crate::env::child_env gives it; its PATH is where the harnesses'
+    /// programs are found.
     env: Vec<(OsString, OsString)>,
     /// Each role's running agent, by role.
     agents: Mutex<HashMap<String, Agent>>,
@@ -106,11 +106,10 @@ impl<'h> AcpAgents<'h> {
             ))));
         };
         let dir = run.dir();
-        let env = self.env.iter().cloned().chain(how.env.iter().map(|(k, v)| (k.into(), v.into())));
         let connection = Connection::spawn(
             how.program,
             &how.args,
-            env,
+            self.env.iter().cloned(),
             run.work_dir(),
             &format!("{dir}/{role}.acp.log"),
             format!("{dir}/{USAGE_FILE}"),
@@ -123,25 +122,28 @@ impl<'h> AcpAgents<'h> {
             "clientCapabilities": {"fs": {"readTextFile": false, "writeTextFile": false}, "terminal": false},
         });
         let capabilities = ask("initialize", init)?.get("agentCapabilities").cloned().unwrap_or(Value::Null);
-        let cwd = run.work_dir();
+        let mut unpassed = vec![];
+        let mut params = json!({"cwd": run.work_dir(), "mcpServers": []});
+        if let Some(dir) = how.extra_dir {
+            if capable(&capabilities, "/sessionCapabilities/additionalDirectories") {
+                params["additionalDirectories"] = json!([dir]);
+            } else {
+                unpassed.push(format!("{} cannot be granted {dir}; it may ask before each write there", h.kind));
+            }
+        }
         let (session, opened) = match launch.session.filter(|s| !s.is_empty()) {
-            Some(session) => (session.to_string(), reopen(h, &connection, &capabilities, session, cwd)?),
+            Some(session) => (session.to_string(), reopen(h, &connection, &capabilities, session, params)?),
             None => {
-                let opened = ask("session/new", json!({"cwd": cwd, "mcpServers": []}))?;
+                let opened = ask("session/new", params)?;
                 let session = opened.get("sessionId").and_then(Value::as_str).ok_or_else(|| {
                     AgentError::Failed(OrchestratorError(format!("{} opened a session with no sessionId", h.kind)))
                 })?;
                 (session.to_string(), opened)
             }
         };
-        let mut unpassed = vec![];
         unpassed.extend(set_mode(h, &ask, &session, &opened, mode, &how.mode)?);
         if let Some(model) = how.model {
-            if offers(&opened, "models", "availableModels", "modelId", &model) {
-                ask("session/set_model", json!({"sessionId": session, "modelId": model}))?;
-            } else {
-                unpassed.push(format!("{} offers no model {model}; starting it on its own", h.kind));
-            }
+            unpassed.extend(set_model(h, &ask, &session, &opened, &model)?);
         }
         Ok((Agent { connection: Arc::new(connection), session, harness: h.kind }, unpassed))
     }
@@ -284,19 +286,20 @@ pub fn usage_file(run: &RunState) -> String {
     format!("{}/{USAGE_FILE}", run.dir())
 }
 
-/// Open session again in connection's agent of harness h, which answered `initialize` with capabilities, working in
-/// cwd: loaded where it can load one, else resumed where it can. Returns the agent's answer, as `session/new`'s.
-/// Errors: Refused when it can do neither, or refuses; Failed when it does not answer.
+/// Open session again in connection's agent of harness h, which answered `initialize` with capabilities, with params
+/// as `session/new` takes them (its working directory and roots): loaded where it can load one, else resumed where it
+/// can. Returns the agent's answer, as `session/new`'s. Errors: Refused when it can do neither, or refuses; Failed
+/// when it does not answer.
 fn reopen(
     h: &Harness,
     connection: &Connection,
     capabilities: &Value,
     session: &str,
-    cwd: &str,
+    mut params: Value,
 ) -> Result<Value, AgentError> {
     let method = if capabilities.get("loadSession").and_then(Value::as_bool) == Some(true) {
         "session/load"
-    } else if capabilities.pointer("/sessionCapabilities/resume").is_some_and(|r| !r.is_null() && r != false) {
+    } else if capable(capabilities, "/sessionCapabilities/resume") {
         "session/resume"
     } else {
         return Err(AgentError::Refused(OrchestratorError(format!(
@@ -304,7 +307,7 @@ fn reopen(
             h.kind
         ))));
     };
-    let params = json!({"sessionId": session, "cwd": cwd, "mcpServers": []});
+    params["sessionId"] = session.into();
     match connection.request(method, params, Duration::from_secs(REQUEST_SECONDS)) {
         Ok(opened) => Ok(opened),
         Err(Failure::Refused(e)) => Err(AgentError::Refused(OrchestratorError(format!("{} {method}: {e}", h.kind)))),
@@ -339,6 +342,56 @@ fn set_mode(
             Ok(None)
         }
     }
+}
+
+/// Put the session that the agent of harness h opened, as its answer opened has it, on model, asking the agent by ask:
+/// by the session config option of category `model` where the session has one (ACP's
+/// [session config options](https://agentclientprotocol.com/protocol/session-config-options)), else by the session's
+/// models (`session/set_model`). Returns the log's sentence when the session does not offer model. Errors: the agent
+/// refuses the request, or does not answer it.
+fn set_model(
+    h: &Harness,
+    ask: &dyn Fn(&str, Value) -> Result<Value, AgentError>,
+    session: &str,
+    opened: &Value,
+    model: &str,
+) -> Result<Option<String>, AgentError> {
+    let options = opened.get("configOptions").and_then(Value::as_array);
+    let option = options.and_then(|o| o.iter().find(|o| o.get("category").and_then(Value::as_str) == Some("model")));
+    let offered = match option {
+        Some(option) => option_offers(option, model),
+        None => offers(opened, "models", "availableModels", "modelId", model),
+    };
+    if !offered {
+        return Ok(Some(format!("{} offers no model {model}; starting it on its own", h.kind)));
+    }
+    match option {
+        Some(option) if option.get("currentValue").and_then(Value::as_str) != Some(model) => {
+            ask("session/set_config_option", json!({"sessionId": session, "configId": option["id"], "value": model}))?;
+        }
+        Some(_) => {}
+        None if opened.pointer("/models/currentModelId").and_then(Value::as_str) != Some(model) => {
+            ask("session/set_model", json!({"sessionId": session, "modelId": model}))?;
+        }
+        None => {}
+    }
+    Ok(None)
+}
+
+/// Whether the select config option offers value: among its `options`, flat or in groups.
+fn option_offers(option: &Value, value: &str) -> bool {
+    let is = |o: &Value| o.get("value").and_then(Value::as_str) == Some(value);
+    let mut options = option.get("options").and_then(Value::as_array).into_iter().flatten();
+    options.any(|o| match o.get("options").and_then(Value::as_array) {
+        Some(group) => group.iter().any(is),
+        None => is(o),
+    })
+}
+
+/// Whether the agent's capabilities, as it answered `initialize`, have the one at pointer: present, and neither null
+/// nor false (an empty object is one).
+fn capable(capabilities: &Value, pointer: &str) -> bool {
+    capabilities.pointer(pointer).is_some_and(|c| !c.is_null() && c != false)
 }
 
 /// Whether the session the agent opened, as its answer opened has it, offers the choice of id among

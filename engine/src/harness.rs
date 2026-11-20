@@ -57,9 +57,9 @@ struct Acp {
     args: &'static [&'static str],
     /// The equivalent of each Claude Code permission mode it has one of; a mode not listed has none.
     modes: &'static [(&'static str, AcpMode)],
-    /// How it is given a directory outside its working directory, and a model at launch. A model it cannot be given
-    /// at launch is set once its session is open (AcpLaunch::model).
-    config: AcpConfig,
+    /// The flag before a directory it is granted at launch; None when it has none, and the directory is granted as an
+    /// additional root of its session instead, where the agent offers that (AcpLaunch::extra_dir).
+    add_dir: Option<&'static str>,
 }
 
 /// An ACP agent's equivalent of a permission mode.
@@ -71,15 +71,6 @@ enum AcpMode {
     Args(&'static [&'static str]),
 }
 
-/// How an ACP agent takes a granted directory and a model at launch.
-#[derive(Debug, PartialEq, Eq)]
-enum AcpConfig {
-    /// The directory after this flag, when there is one; a model only once its session is open.
-    AddDir(Option<&'static str>),
-    /// Both in OPENCODE_CONFIG_CONTENT, as Config::OpencodeEnv: `opencode acp` takes no flags.
-    OpencodeEnv,
-}
-
 /// How a role's agent starts as an ACP agent (Harness::acp_launch).
 #[derive(Debug, PartialEq, Eq)]
 pub struct AcpLaunch {
@@ -87,13 +78,13 @@ pub struct AcpLaunch {
     pub program: &'static str,
     /// Its arguments.
     pub args: Vec<String>,
-    /// Environment variables, as (name, value), set for it alone.
-    pub env: Vec<(String, String)>,
     /// What becomes of the permission mode.
     pub mode: ModeSetting,
-    /// The model to set once its session is open, which the launch could not pass; None when it passed it, or there is
-    /// none.
+    /// The model to set once its session is open; None for the agent's own. No ACP agent takes one at launch.
     pub model: Option<String>,
+    /// The directory to grant as an additional root of its session (ACP's `additionalDirectories`), which args do not
+    /// grant; None when they do, or there is none.
+    pub extra_dir: Option<String>,
 }
 
 /// What an ACP launch does with the run's permission mode.
@@ -196,7 +187,7 @@ pub const HARNESSES: [Harness; 5] = [
                 ("bypassPermissions", AcpMode::Args(&["--dangerously-skip-permissions"])),
                 ("plan", AcpMode::Id("plan")),
             ],
-            config: AcpConfig::AddDir(Some("--add-dir")),
+            add_dir: Some("--add-dir"),
         }),
     },
     Harness {
@@ -233,8 +224,9 @@ pub const HARNESSES: [Harness; 5] = [
         config: Config::OpencodeEnv,
         session_log: None,
         // Its modes come from its config, which herdr-gui-decoupling ticket 12 waits on (opencode-ask-bash ticket 01);
-        // until then it has the equivalent of none, as its TUI.
-        acp: Some(Acp { args: &["acp"], modes: &[], config: AcpConfig::OpencodeEnv }),
+        // until then it has the equivalent of none, as its TUI. `opencode acp` 2.0.24 takes no flags and ignores
+        // OPENCODE_CONFIG_CONTENT, so its model and grant go over ACP: a session config option and a session root.
+        acp: Some(Acp { args: &["acp"], modes: &[], add_dir: None }),
     },
     Harness {
         kind: "pi",
@@ -353,9 +345,9 @@ impl Harness {
         let mut launch = AcpLaunch {
             program: self.kind,
             args: acp.args.iter().map(|a| a.to_string()).collect(),
-            env: vec![],
             mode: ModeSetting::NoEquivalent,
             model: model.map(String::from),
+            extra_dir: None,
         };
         match acp.modes.iter().find(|(m, _)| *m == permission_mode).map(|(_, equivalent)| equivalent) {
             Some(AcpMode::Id(id)) => launch.mode = ModeSetting::Set(id),
@@ -365,18 +357,10 @@ impl Harness {
             }
             None => {}
         }
-        match acp.config {
-            AcpConfig::AddDir(flag) => {
-                if let (Some(dir), Some(flag)) = (extra_dir, flag) {
-                    launch.args.extend([flag.to_string(), dir.to_string()]);
-                }
-            }
-            AcpConfig::OpencodeEnv => {
-                if let Some(config) = opencode_config(model, extra_dir) {
-                    launch.env.push((OPENCODE_CONFIG.to_string(), config));
-                }
-                launch.model = None;
-            }
+        match (extra_dir, acp.add_dir) {
+            (Some(dir), Some(flag)) => launch.args.extend([flag.to_string(), dir.to_string()]),
+            (dir, None) => launch.extra_dir = dir.map(String::from),
+            (None, Some(_)) => {}
         }
         Some(launch)
     }
