@@ -1932,6 +1932,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases",
  "libc",
+ "memoffset",
 ]
 
 [[package]]
@@ -2184,7 +2185,7 @@ dependencies = [
 
 [[package]]
 name = "octoflow-engine"
-version = "0.92.10"
+version = "0.92.11"
 dependencies = [
  "clap",
  "indexmap 2.14.2",
