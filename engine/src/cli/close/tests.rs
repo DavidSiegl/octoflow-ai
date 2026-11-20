@@ -669,14 +669,14 @@ fn on_a_machine() {
     let c = Close::new();
     c.add(0, true, &[]);
     assert_eq!(c.close(&["a1b2c3", "--machine", "m"]).0, 0);
-    let target = Target { machine: Some("m".into()), cwd: Some("/proj".into()) };
+    let target = Target { machine: Some("m".into()), cwd: Some("/proj".into()), acp: false };
     assert_eq!(c.cli.command(&["close", "--cwd", "/proj", "a1b2c3", "--machine", "m"]).target(), Some(&target));
 }
 
 #[test]
 fn args() {
     let c = Cli::new();
-    let target = Target { machine: Some("m".into()), cwd: Some("~/proj".into()) };
+    let target = Target { machine: Some("m".into()), cwd: Some("~/proj".into()), acp: false };
     assert_eq!(
         c.command(&["close", "a1b2c3", "--machine", "m", "--cwd", "~/proj"]),
         Command::Close { target, run_ref: Some("a1b2c3".into()), dry_run: false }
@@ -977,7 +977,7 @@ fn ctrl_c_stops_the_sweep_between_runs() {
 #[test]
 fn all_and_a_run_exclude_each_other() {
     let c = Cli::new();
-    let target = Target { machine: None, cwd: Some("/proj".into()) };
+    let target = Target { machine: None, cwd: Some("/proj".into()), acp: false };
     assert_eq!(
         c.command(&["close", "--cwd", "/proj", "--all", "--dry-run"]),
         Command::Close { target, run_ref: None, dry_run: true }

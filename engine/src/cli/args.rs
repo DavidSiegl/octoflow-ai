@@ -74,13 +74,16 @@ pub enum RunsCommand {
     Prune { dry_run: bool },
 }
 
-/// Where the project is: `--machine` and `--cwd`.
+/// Where the project is and its agents run: `--machine`, `--cwd` and the hidden `--acp`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Target {
     /// The saved herdr machine the agents run on; None for this one. Never empty: an empty --machine is none.
     pub machine: Option<String>,
     /// The project directory, on the machine if there is one; None for the current directory.
     pub cwd: Option<String>,
+    /// True for `--acp`: the agents run over ACP, as children of this process (crate::acp), not in herdr. Only serve
+    /// passes it, for the runs the desktop app starts; it is not in `--help`, and never comes with machine.
+    pub acp: bool,
 }
 
 /// How a run goes, as run and resume take them. Each is None when not given: run then takes the default, and resume
@@ -209,7 +212,8 @@ impl Command {
 }
 
 impl Target {
-    /// The --machine and --cwd flags as the human gave them, to repeat in a command the human is told to run.
+    /// The --machine and --cwd flags as the human gave them, to repeat in a command the human is told to run; never
+    /// --acp, which is serve's, not the human's.
     pub fn flags(&self) -> Vec<String> {
         let mut out = Vec::new();
         if let Some(machine) = &self.machine {
@@ -541,11 +545,12 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
 /// What a RUN argument takes.
 const RUN_REF_HELP: &str = "The run id, or the six-character key at its end";
 
-/// --machine and --cwd.
+/// --machine, --cwd and the hidden --acp (Target::acp).
 fn target_args() -> Vec<Arg> {
     vec![
         Arg::new("machine").long("machine").help("Saved herdr machine to run the agents on"),
         Arg::new("cwd").long("cwd").help("Project directory (on the machine, if --machine is given)"),
+        Arg::new("acp").long("acp").action(ArgAction::SetTrue).conflicts_with("machine").hide(true),
     ]
 }
 
@@ -773,7 +778,11 @@ fn string(m: &ArgMatches, id: &str) -> Option<String> {
 
 /// The Target in m.
 fn target(m: &ArgMatches) -> Target {
-    Target { machine: string(m, "machine").filter(|s| !s.is_empty()), cwd: string(m, "cwd").filter(|s| !s.is_empty()) }
+    Target {
+        machine: string(m, "machine").filter(|s| !s.is_empty()),
+        cwd: string(m, "cwd").filter(|s| !s.is_empty()),
+        acp: m.get_flag("acp"),
+    }
 }
 
 /// The Settings in m.

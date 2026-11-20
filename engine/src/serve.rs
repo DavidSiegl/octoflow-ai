@@ -72,12 +72,22 @@ pub struct Reached {
     pub console: Arc<dyn AgentConsole>,
     /// Tells and closes its runs' agents' places, each from what its run saved, for POST /close.
     pub places: Arc<dyn RunPlaces + Send + Sync>,
-    /// Starts a run's process for POST /run, in a pane of this machine's herdr (Launcher::launch says which server),
-    /// for a project here and one on a machine alike: a machine's run is driven from here, as from the CLI.
-    pub launcher: Arc<dyn Launcher>,
+    /// How POST /run starts a run's process.
+    pub launch: Launch,
     /// The directory of this machine a run's process starts in: dir for a project here, serve's own working
     /// directory for one on a machine, which the run reaches over SSH.
     pub launch_dir: String,
+}
+
+/// How POST /run starts a run's process, on this machine.
+pub enum Launch {
+    /// In a pane of this machine's herdr, by the Launcher (Launcher::launch says which server), for a project here and
+    /// one on a machine alike: a machine's run is driven from here, as from the CLI. The run's agents run in herdr.
+    Herdr(Arc<dyn Launcher>),
+    /// Detached from serve (crate::host::spawn_detached), so that it outlives serve and the app, its output in the
+    /// run directory's START_LOG, its agents over ACP (`--acp`, crate::acp); for a project here only. The app's runs
+    /// when APP_BACKEND_VARIABLE selects ACP.
+    Detached,
 }
 
 /// How a RunServer reaches the project a request names: given the saved herdr machine (empty for this one) and the
@@ -116,7 +126,8 @@ pub fn serve_command(origins: &[String], config: &ConfigDir) -> i32 {
         return EXIT_ERROR;
     }
     let backend = app_backend(std::env::var_os(APP_BACKEND_VARIABLE).as_deref());
-    let started = RunServer::start(origins, Box::new(project_host), Setup::of(config, backend), config.clone());
+    let connect = move |machine: &str, cwd: &str, stopping: &Interrupt| project_host(machine, cwd, stopping, backend);
+    let started = RunServer::start(origins, Box::new(connect), Setup::of(config, backend), config.clone());
     serve(started, &mut io::stdout(), &mut io::stderr(), || signals.wait().map(drop).map_err(io::Error::from))
 }
 
@@ -155,14 +166,20 @@ fn serve(
 /// directory, cwd's, which may start with ~, and the console that reaches its agents, this machine's herdr
 /// forwarding to machine. Each command is stopped by stopping. Unlike connect, it does not check for a
 /// herdr pane, since reading a project sends herdr no command, so a window started from a file manager reads it too.
-/// A run it starts is launched in this machine's herdr (Reached::launcher).
+/// A run it starts is launched in this machine's herdr (Launch::Herdr), or detached (Launch::Detached) when backend,
+/// the one APP_BACKEND_VARIABLE selects, is ACP.
 /// On this machine, an agent's commands go to the herdr server its run saved (RunState::herdr_server), whatever
 /// server serve's own environment picks; an agent of a run saved before runs saved it is reached in the one serve's
 /// environment picks (HERDR_SOCKET_PATH, else HERDR_SESSION, else the default session). Errors: the machine is not
 /// saved or enabled, or the directory cannot be entered; for a project on a machine, serve's own working directory
 /// cannot be told; the project's own directory has to move from its old name, and that is refused or fails
 /// (crate::old_project_dir::move_project_dir, whose line saying it moved goes to serve's standard error).
-pub fn project_host(machine: &str, cwd: &str, stopping: &Interrupt) -> Result<Reached, OrchestratorError> {
+pub fn project_host(
+    machine: &str,
+    cwd: &str,
+    stopping: &Interrupt,
+    backend: Backend,
+) -> Result<Reached, OrchestratorError> {
     let here = ProcessHost::local(stopping);
     let herdr = ProcessHerdr::new(Some(machine), stopping);
     let host = if machine.is_empty() { here } else { here.over_ssh(&herdr.ssh_target()?) };
@@ -173,9 +190,12 @@ pub fn project_host(machine: &str, cwd: &str, stopping: &Interrupt) -> Result<Re
         let _ = writeln!(io::stderr(), "{moved}");
     }
     let launch_dir = if machine.is_empty() { dir.clone() } else { serve_dir()? };
-    let launcher = Arc::new(ProcessHerdr::new(None, stopping));
+    let launch = match backend {
+        Backend::Acp => Launch::Detached,
+        Backend::Herdr => Launch::Herdr(Arc::new(ProcessHerdr::new(None, stopping))),
+    };
     let herdr = Arc::new(herdr);
-    Ok(Reached { host: Arc::new(host), dir, console: herdr.clone(), places: herdr, launcher, launch_dir })
+    Ok(Reached { host: Arc::new(host), dir, console: herdr.clone(), places: herdr, launch, launch_dir })
 }
 
 /// serve's working directory. Errors: it cannot be told, or is not UTF-8.
@@ -225,14 +245,15 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 ///   removal that failed. Each of the three workflow POSTs answers 400 for a body of another shape and 413 for one
 ///   over MAX_BODY_BYTES.
 /// - POST /run?cwd=DIR: starts the run the JSON body asks for (start::RunRequest::parse), as a new run id, in a new
-///   herdr workspace of this machine (Reached::launcher) where its `run` command can be watched and interrupted, and
-///   waits for it (start::START_WAIT, ProjectRuns::start). 201 {"run"} once it has saved its state.json; 422 {"error",
-///   "run"} when `run` exited without saving one, error ending with the last lines its pane showed; 202 {"run",
-///   "listed": false} after 30 seconds of neither. A 201 or 202 adds "herdr_session", the named herdr session the
-///   run's workspace is in, when serve started one to launch it in (herdr::OWN_SESSION); without it, the workspace
-///   is in the herdr server serve's own environment reaches. 400 for a body RunRequest::parse refuses and 413 as for
-///   /agent/input, both before the project is reached; 502 when herdr cannot launch it, as when it has
-///   no server running here and none can be started.
+///   herdr workspace of this machine where its `run` command can be watched and interrupted, or detached, its agents
+///   over ACP (Reached::launch), and waits for it (start::START_WAIT, ProjectRuns::start). 201 {"run"} once it has
+///   saved its state.json; 422 {"error", "run"} when `run` exited without saving one, error ending with the last lines
+///   its pane showed or its log holds; 202 {"run", "listed": false} after 30 seconds of neither. A 201 or 202 adds
+///   "herdr_session", the named herdr session the run's workspace is in, when serve started one to launch it in
+///   (herdr::OWN_SESSION); without it, the workspace is in the herdr server serve's own environment reaches. 400 for a
+///   body RunRequest::parse refuses and 413 as for /agent/input, both before the project is reached; 502 when herdr
+///   cannot launch it, as when it has no server running here and none can be started, or when it cannot be started
+///   detached, as for a project on a machine.
 /// - POST /close?cwd=DIR: with the JSON body {"dry_run": true}, says what closing each run of the project that
 ///   `close --all` closes would do, changing nothing; with {"close": [{"run", "detail", "discarded"}, ...]}, the
 ///   "closed" runs of such a dry run's answer, closes those runs and no other, each only while closing it would still
@@ -911,7 +932,10 @@ fn run_closed(run: &RunClosed) -> Value {
 /// The answer to POST /run once its body is run and its project project: the run started, by this program, as a new
 /// run id, and waited for.
 fn start_answer(shared: &Shared, project: &ProjectRuns, run: &RunRequest) -> Answer {
-    let program = match serve_program() {
+    // Under an AppImage serve's program is in its mount, which ends with the app; the AppImage file itself starts
+    // the same program (ui/src-tauri/src/lib.rs's CLI dispatch) for a detached run, which outlives the app.
+    let appimage = std::env::var("APPIMAGE").ok().filter(|_| project.detached()).filter(|p| !p.is_empty());
+    let program = match appimage.map_or_else(serve_program, Ok) {
         Ok(path) => path,
         Err(why) => return (500, error(&why)),
     };
@@ -925,7 +949,7 @@ fn start_answer(shared: &Shared, project: &ProjectRuns, run: &RunRequest) -> Ans
         Err(e) => return read_failure(e),
     };
     if let Started::Exited(shown) = ended {
-        let why = format!("run {run_id} exited before it saved its state; its pane showed:\n{shown}");
+        let why = format!("run {run_id} exited before it saved its state; {shown}");
         return (422, object([("error", Value::from(why)), ("run", Value::from(run_id))]));
     }
     // A run that started: its id, whether it is listed yet, and the herdr session it is in.
@@ -1098,7 +1122,7 @@ fn error(message: &str) -> Value {
 /// The --machine and --cwd flags a request's machine and cwd stand for, each left out when empty.
 fn target_args(machine: &str, cwd: &str) -> Vec<String> {
     let given = |flag: &str| (!flag.is_empty()).then(|| flag.to_string());
-    crate::cli::Target { machine: given(machine), cwd: given(cwd) }.flags()
+    crate::cli::Target { machine: given(machine), cwd: given(cwd), acp: false }.flags()
 }
 
 /// Whether given and expected are the same bytes, in a time that depends on their lengths alone and not on where

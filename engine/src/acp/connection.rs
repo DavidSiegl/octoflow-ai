@@ -1,10 +1,10 @@
 //! One ACP agent as a child process: JSON-RPC 2.0 over its stdin and stdout, one message a line
 //! ([ACP's transport](https://agentclientprotocol.com/protocol/transports)). A thread of its own reads what the agent
 //! sends: the replies to the requests made of it, its requests for a permission, which wait for an answer
-//! (Connection::answer), and the session updates, which nothing reads yet. Every other request of the agent's is
-//! refused, since the engine offers it neither files nor terminals.
+//! (Connection::answer), and the session updates. What it does goes to its role's journal (super::journal). Every
+//! other request of the agent's is refused, since the engine offers it neither files nor terminals.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
@@ -17,6 +17,9 @@ use serde_json::{json, Value};
 
 use nix::sys::signal::Signal;
 
+use super::groups;
+use super::journal::Journal;
+use super::AnswerError;
 use crate::agents::Activity;
 use crate::error::OrchestratorError;
 use crate::harness::Tokens;
@@ -38,6 +41,18 @@ pub(super) enum Failure {
     Unwritten(OrchestratorError),
 }
 
+/// Where an agent's connection keeps what it records of the agent, each a path but journal.
+pub(super) struct Records<'a> {
+    /// The file its stderr is appended to.
+    pub stderr: &'a str,
+    /// The file the usage of each prompt it answers is appended to (usage_line).
+    pub usage: &'a str,
+    /// The file its process group is recorded in (groups::record), before it is asked anything.
+    pub group: &'a str,
+    /// Its role's journal.
+    pub journal: Arc<Journal>,
+}
+
 /// A running ACP agent: requests to it, and what it is doing. Dropping it kills the agent.
 pub(super) struct Connection {
     /// The agent's process, leading a process group of its own; None once it and its group are killed and it is
@@ -49,10 +64,22 @@ pub(super) struct Connection {
     shared: Arc<Shared>,
 }
 
-/// What the reading thread knows, with the condition variable it signals on each change.
+/// What the reading thread knows, with the condition variable it signals on each change, and the journal it and the
+/// Connection write to.
 struct Shared {
     state: Mutex<State>,
     changed: Condvar,
+    journal: Arc<Journal>,
+}
+
+/// A request of the agent's for a permission, not yet answered.
+struct Pending {
+    /// The number the journal gave it, which an answer names it by.
+    number: u64,
+    /// Its JSON-RPC id, as the agent sent it.
+    id: Value,
+    /// The optionId of each option it offers.
+    options: Vec<String>,
 }
 
 /// The agent as its messages so far show it.
@@ -63,30 +90,39 @@ struct State {
     /// True once its output ended, or it was killed: it exited, or closed its stdout, which it cannot be reached
     /// without.
     exited: bool,
+    /// True once the journal has its `exited` line: at its exit, or at the error it answered a prompt with, which
+    /// ends it for the run (super::AcpAgents::find), whichever came first.
+    exit_journaled: bool,
     /// The replies to Connection::request's requests, by id: None until one comes.
     replies: HashMap<u64, Option<Result<Value, String>>>,
     /// The prompts sent and not yet answered, by request id: when each was sent, in seconds since the epoch, and the
     /// session it was sent in.
     prompts: HashMap<u64, (f64, String)>,
-    /// Its requests for a permission not yet answered, oldest first: each one's id and params, as it sent them.
-    permissions: VecDeque<(Value, Value)>,
+    /// Its requests for a permission not yet answered, oldest first.
+    permissions: Vec<Pending>,
+    /// Each of its requests for a permission answered, by number: the optionId it was answered with, or `cancelled`,
+    /// and by whom, as the journal's `answered` says.
+    answered: HashMap<u64, (String, String)>,
     /// The error it answered a prompt with, until Connection::failure takes it.
     failure: Option<String>,
 }
 
 impl Connection {
     /// Start the agent as program, found on env's PATH, with args and the environment env alone, working in cwd, in a
-    /// process group of its own as the engine starts every child (crate::host::own_group); its
-    /// stderr is appended to the file at stderr, and the usage of each prompt it answers to the file at usage
-    /// (usage_line). Errors: the program does not start, or the stderr file cannot be opened.
+    /// process group of its own as the engine starts every child (crate::host::own_group), recorded where records
+    /// says before anything is asked of it, and kept as records says. On Linux it is killed when the thread that
+    /// spawns it exits (PR_SET_PDEATHSIG fires at the end of the forking *thread*, prctl(2)), so it must be called on
+    /// a thread that lives as long as the orchestrator: the main thread, which drives the Workflow. Errors: the
+    /// program does not start, the stderr file cannot be opened, or the group cannot be recorded (the agent is
+    /// killed then).
     pub(super) fn spawn(
         program: &str,
         args: &[String],
         env: impl Iterator<Item = (OsString, OsString)>,
         cwd: &str,
-        stderr: &str,
-        usage: String,
+        records: Records,
     ) -> Result<Connection, OrchestratorError> {
+        let stderr = records.stderr;
         let log = OpenOptions::new()
             .create(true)
             .append(true)
@@ -102,13 +138,22 @@ impl Connection {
             .stdout(Stdio::piped())
             .stderr(log);
         own_group(&mut command);
+        #[cfg(target_os = "linux")]
+        die_with_parent(&mut command);
         let mut child = command.spawn().map_err(|e| OrchestratorError(format!("cannot start {program}: {e}")))?;
+        if let Err(e) = groups::record(records.group, child.id()) {
+            // As in kill.
+            let _ = kill_group(&child, Signal::SIGKILL);
+            let _ = child.wait();
+            return Err(e);
+        }
         let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
             unreachable!("stdin and stdout are piped")
         };
         let input = Arc::new(Mutex::new(stdin));
-        let shared = Arc::new(Shared { state: Mutex::new(State::default()), changed: Condvar::new() });
-        let (reader_input, reader_shared) = (input.clone(), shared.clone());
+        let shared =
+            Arc::new(Shared { state: Mutex::new(State::default()), changed: Condvar::new(), journal: records.journal });
+        let (reader_input, reader_shared, usage) = (input.clone(), shared.clone(), records.usage.to_string());
         thread::spawn(move || read(BufReader::new(stdout), &reader_input, &reader_shared, &usage));
         Ok(Connection { child: Mutex::new(Some(child)), input, shared })
     }
@@ -144,9 +189,10 @@ impl Connection {
         }
     }
 
-    /// Send text as a prompt in session, without waiting for the agent's answer, which ends the prompt (activity).
-    /// Errors: it cannot be written to the agent.
+    /// Send text as the orchestrator's prompt in session, without waiting for the agent's answer, which ends the
+    /// prompt (activity). Errors: it cannot be written to the agent.
     pub(super) fn prompt(&self, session: &str, text: &str) -> Result<(), OrchestratorError> {
+        self.shared.journal.write("prompt", json!({"text": text, "from": "orchestrator"}));
         let id = {
             let mut state = self.shared.lock();
             let id = state.take_id();
@@ -181,14 +227,62 @@ impl Connection {
         }
     }
 
-    /// Answer the agent's oldest request for a permission with the option of option_id, one of those the request
-    /// offers. Returns false when no request waits. Errors: the answer cannot be written to the agent.
-    pub(super) fn answer(&self, option_id: &str) -> Result<bool, OrchestratorError> {
-        let Some((id, _)) = self.shared.lock().permissions.pop_front() else { return Ok(false) };
+    /// Answer the agent's request for a permission that the journal numbered request with option, the optionId of
+    /// one of the options it offers, as the human's answer. The first answer to a request wins: it is journaled
+    /// before it is sent, and a later one is refused. Errors: NoRequest for no such request of this connection's
+    /// agent, AlreadyAnswered for one answered, BadOption for an option the request does not offer, Unwritten when
+    /// the answer cannot be written to the agent (it is journaled all the same).
+    pub(super) fn answer(&self, request: u64, option: &str) -> Result<(), AnswerError> {
+        let mut state = self.shared.lock();
+        if let Some((option, by)) = state.answered.get(&request) {
+            return Err(AnswerError::AlreadyAnswered { option: option.clone(), by: by.clone() });
+        }
+        let Some(n) = state.permissions.iter().position(|p| p.number == request) else {
+            return Err(AnswerError::NoRequest);
+        };
+        if !state.permissions[n].options.iter().any(|o| o == option) {
+            return Err(AnswerError::BadOption);
+        }
+        let pending = state.permissions.remove(n);
+        let outcome = json!({"outcome": "selected", "optionId": option});
+        let sent = self.settle(&mut state, &pending, option, "human", outcome);
+        drop(state);
         self.shared.changed.notify_all();
-        let outcome = json!({"outcome": {"outcome": "selected", "optionId": option_id}});
-        self.send(&json!({"jsonrpc": "2.0", "id": id, "result": outcome}))?;
-        Ok(true)
+        sent.map_err(AnswerError::Unwritten)
+    }
+
+    /// Stop what the agent is doing, as "Stop all" does: answer each of its requests for a permission `cancelled`,
+    /// and cancel each prompt it has not answered yet (ACP's `session/cancel`), which it then answers with the stop
+    /// reason `cancelled`. An agent that cannot be written to has exited, and has nothing left to stop.
+    pub(super) fn stop(&self) {
+        let mut state = self.shared.lock();
+        for pending in std::mem::take(&mut state.permissions) {
+            let _ = self.settle(&mut state, &pending, "cancelled", "stop", json!({"outcome": "cancelled"}));
+        }
+        let mut sessions: Vec<String> = state.prompts.values().map(|(_, session)| session.clone()).collect();
+        sessions.sort();
+        sessions.dedup();
+        for session in sessions {
+            let _ = self.send(&json!({"jsonrpc": "2.0", "method": "session/cancel", "params": {"sessionId": session}}));
+        }
+        drop(state);
+        self.shared.changed.notify_all();
+    }
+
+    /// Record the answer to pending, taken out of state's permissions, in state and the journal as option given by
+    /// by, then send the agent outcome as its reply. Called holding state's lock, so that the first answer is the
+    /// one journaled and sent. Errors: the reply cannot be written to the agent.
+    fn settle(
+        &self,
+        state: &mut State,
+        pending: &Pending,
+        option: &str,
+        by: &str,
+        outcome: Value,
+    ) -> Result<(), OrchestratorError> {
+        state.answered.insert(pending.number, (option.to_string(), by.to_string()));
+        self.shared.journal.write("answered", json!({"request": pending.number, "option": option, "by": by}));
+        self.send(&json!({"jsonrpc": "2.0", "id": pending.id, "result": {"outcome": outcome}}))
     }
 
     /// The error the agent answered a prompt with, once: None when it answered none with one, or it was taken before.
@@ -203,8 +297,7 @@ impl Connection {
         // A group that cannot be signalled has no process left; the wait reaps the agent all the same.
         let _ = kill_group(&child, Signal::SIGKILL);
         let _ = child.wait();
-        self.shared.lock().exited = true;
-        self.shared.changed.notify_all();
+        self.shared.exit();
     }
 
     /// Write message to the agent, as one line.
@@ -223,6 +316,17 @@ impl Shared {
     /// The state, whatever thread panicked holding it: every change to it is whole.
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Take the agent as exited, and journal it so where nothing has yet.
+    fn exit(&self) {
+        let mut state = self.lock();
+        state.exited = true;
+        if !std::mem::replace(&mut state.exit_journaled, true) {
+            self.journal.write("exited", json!({}));
+        }
+        drop(state);
+        self.changed.notify_all();
     }
 
     /// Wait at most timeout for a change to state.
@@ -273,28 +377,39 @@ fn read(output: impl BufRead, input: &Mutex<ChildStdin>, shared: &Shared, usage:
         match (message.get("method").and_then(Value::as_str), id) {
             (Some("session/request_permission"), Some(id)) => {
                 let params = message.get("params").cloned().unwrap_or(Value::Null);
-                shared.lock().permissions.push_back((id, params));
+                let options = params.get("options").and_then(Value::as_array).into_iter().flatten();
+                let options = options.filter_map(|o| o.get("optionId").and_then(Value::as_str).map(String::from));
+                let options = options.collect();
+                // Numbered and journaled under the state's lock, so that no answer can come before it is pending.
+                let mut state = shared.lock();
+                let number = shared.journal.permission(&params);
+                state.permissions.push(Pending { number, id, options });
             }
             (Some(_), Some(id)) => {
                 let refusal = json!({"code": METHOD_NOT_FOUND, "message": "the client offers no such method"});
                 // An agent that cannot be written to has exited, which the end of its output tells.
                 let _ = send(input, &json!({"jsonrpc": "2.0", "id": id, "error": refusal}));
             }
-            // A notification: a session update.
+            (Some("session/update"), None) => {
+                let update = message.get("params").and_then(|p| p.get("update")).cloned().unwrap_or(Value::Null);
+                shared.journal.write("update", json!({"update": update}));
+                continue;
+            }
+            // Another notification, which ACP's client has none of.
             (Some(_), None) => continue,
-            (None, Some(id)) => replied(&mut shared.lock(), id.as_u64(), &message, usage),
+            (None, Some(id)) => replied(shared, &mut shared.lock(), id.as_u64(), &message, usage),
             (None, None) => continue,
         }
         shared.changed.notify_all();
     }
-    shared.lock().exited = true;
-    shared.changed.notify_all();
+    shared.exit();
 }
 
-/// Take the agent's reply message to the request of id into state: a prompt's ends it, its usage appended to the
-/// file at usage and its error kept as the agent's failure; a request's is handed to the Connection::request waiting
-/// for it. A reply to no request still waiting is passed over.
-fn replied(state: &mut State, id: Option<u64>, message: &serde_json::Map<String, Value>, usage: &str) {
+/// Take the agent's reply message to the request of id into state, shared's: a prompt's ends it, its usage appended
+/// to the file at usage and journaled as `turn_end`, or its error kept as the agent's failure and journaled as
+/// `exited`; a request's is handed to the Connection::request waiting for it. A reply to no request still waiting is
+/// passed over.
+fn replied(shared: &Shared, state: &mut State, id: Option<u64>, message: &serde_json::Map<String, Value>, usage: &str) {
     let Some(id) = id else { return };
     let reply = match (message.get("result"), message.get("error")) {
         (_, Some(error)) => Err(error.get("message").and_then(Value::as_str).unwrap_or("an error").to_string()),
@@ -304,6 +419,8 @@ fn replied(state: &mut State, id: Option<u64>, message: &serde_json::Map<String,
     if let Some((sent, session)) = state.prompts.remove(&id) {
         match reply {
             Ok(result) => {
+                let reason = result.get("stopReason").cloned().unwrap_or(Value::Null);
+                shared.journal.write("turn_end", json!({"stopReason": reason}));
                 if let Some(line) = usage_line(&session, sent, &result) {
                     // A usage not recorded costs only its turn's token count.
                     let _ = OpenOptions::new()
@@ -313,7 +430,12 @@ fn replied(state: &mut State, id: Option<u64>, message: &serde_json::Map<String,
                         .and_then(|mut f: File| f.write_all(line.as_bytes()));
                 }
             }
-            Err(e) => state.failure = Some(e),
+            Err(e) => {
+                if !std::mem::replace(&mut state.exit_journaled, true) {
+                    shared.journal.write("exited", json!({"error": e}));
+                }
+                state.failure = Some(e);
+            }
         }
         return;
     }
@@ -337,6 +459,30 @@ fn usage_line(session: &str, sent: f64, result: &Value) -> Option<String> {
         cache_write: count("cachedWriteTokens").unwrap_or(0),
     };
     Some(json!({"session": session, "when": sent, "tokens": tokens.to_json()}).to_string() + "\n")
+}
+
+/// Have command's process killed (SIGKILL) when the thread that spawns it exits (PR_SET_PDEATHSIG), and never start
+/// when that thread is gone before the setting took: its parent is no longer the spawning process then.
+#[cfg(target_os = "linux")]
+fn die_with_parent(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    let parent = nix::unistd::getpid();
+    // SAFETY: the closure runs in the child between fork and exec, where only async-signal-safe functions may be
+    // called; prctl, getppid and raise are system calls that allocate nothing (signal-safety(7) lists getppid and
+    // raise; prctl is a plain system call).
+    #[allow(
+        unsafe_code,
+        reason = "CommandExt::pre_exec is unsafe, and nix has no safe way to set a child's death signal"
+    )]
+    unsafe {
+        command.pre_exec(move || {
+            nix::sys::prctl::set_pdeathsig(Signal::SIGKILL).map_err(std::io::Error::from)?;
+            if nix::unistd::getppid() != parent {
+                nix::sys::signal::raise(Signal::SIGKILL).map_err(std::io::Error::from)?;
+            }
+            Ok(())
+        });
+    }
 }
 
 /// The time, in seconds since the epoch.

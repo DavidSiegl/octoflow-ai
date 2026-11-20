@@ -12,6 +12,8 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::OnceLock;
 
+use crate::acp::AcpAgents;
+use crate::agents::Agents;
 use crate::constants::{EXIT_CHANGES_REQUESTED, EXIT_CONFLICT, EXIT_ERROR, EXIT_INTERRUPTED, NO_VERDICT, SUCCEEDED};
 use crate::env::ConfigDir;
 use crate::error::OrchestratorError;
@@ -40,7 +42,7 @@ mod workflows;
 
 pub use args::{parse_args, Command, RunsCommand, Target};
 pub(crate) use start::new_run_id;
-pub use start::{new_state, resumable_state, resumed_state};
+pub use start::{new_state, resumable_state, resumed_state, START_LOG};
 
 /// What a command talks to once connected: the Workflow's collaborators and where the orchestrator's configuration
 /// is.
@@ -247,26 +249,33 @@ fn ended_status(ended: Result<Ended, Stop>, command: &Command, print: &dyn Fn(&s
 }
 
 /// Connect to the herdr and the host command names, on this machine (which must be a herdr pane) or over SSH to its
-/// --machine, reached from local's host, and run it, printing by local's stdout and stderr, telling human.
+/// --machine, reached from local's host, and run it, printing by local's stdout and stderr, telling human. With
+/// --acp the agents run over ACP instead (crate::acp), on this machine, in or out of a herdr pane.
 fn connect(command: &Command, local: &Local, human: &LocalHuman) -> Result<Ended, Stop> {
     let Local { interrupt, config, stdout, stderr, .. } = *local;
     let stopped = |e: OrchestratorError| stop(e, interrupt, None);
-    let machine = command.target().and_then(|t| t.machine.as_deref());
+    let target = command.target();
+    let machine = target.and_then(|t| t.machine.as_deref());
+    let acp = target.is_some_and(|t| t.acp);
     let herdr = ProcessHerdr::new(machine, interrupt);
     let host = match machine {
         Some(_) => local.host.over_ssh(&herdr.ssh_target().map_err(|e| stopped(e.into()))?),
-        None if !in_herdr_pane() => {
+        None if !acp && !in_herdr_pane() => {
             return Err(stopped(OrchestratorError::new("not inside a herdr pane; run from herdr, or pass --machine")))
         }
         None => local.host.clone(),
     };
+    // The agents are driven from this thread, the main one, which lives as long as the run: an ACP agent dies with
+    // the thread that started it (crate::acp's Connection::spawn).
+    let acp_agents = AcpAgents::new(human, interrupt);
+    let agents: &dyn Agents = if acp { &acp_agents } else { &herdr };
     let clocks = SystemClocks::new(interrupt).map_err(stopped)?;
     let indexes = PackageIndexes::from_env();
     let here = local_host();
     let world = Connected {
         with: Collaborators {
             host: &host,
-            agents: &herdr,
+            agents,
             clocks: &clocks,
             human,
             interrupt,

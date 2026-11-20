@@ -3,13 +3,22 @@
 //! (crate::harness::Harness::acp_launch). [`AcpAgents`] is the crate::agents::Agents of such a run, which the
 //! run's state names (crate::state::Backend::Acp, saved as state format 3).
 //!
-//! An agent's run directory gets, besides the handoff files, `<role>.acp.log` (each agent's stderr, appended) and
-//! USAGE_FILE (each answered prompt's tokens, session_usage).
+//! A run's directory gets, besides the handoff files, for each role `<role>.acp.log` (its agents' stderr, appended),
+//! `<role>.events.jsonl` (its journal, journal), and `<role>.acp.group` (its agent's process group, groups); and
+//! USAGE_FILE (each answered prompt's tokens, session_usage), and while its orchestrator runs, its socket's record
+//! (socket::SOCKET_RECORD) and maybe its socket (in `sock/`).
 //!
 //! The ACP backend runs no agent the human sees in a terminal: it shows nothing (Agents::show), answers nothing on its
-//! own, and a permission an agent asks for waits until AcpAgents::answer gives it.
+//! own, and a permission an agent asks for waits until AcpAgents::answer gives it, as the run's socket asks.
 
 mod connection;
+mod groups;
+mod journal;
+mod socket;
+
+pub use groups::end_leftovers;
+pub use journal::PROTOCOL;
+pub use socket::{ask, SocketError, SOCKET_RECORD};
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -25,7 +34,9 @@ use crate::harness::{harness, Harness, ModeSetting, Tokens, Usage};
 use crate::human::Human;
 use crate::interrupt::Interrupt;
 use crate::state::{AgentRecord, Backend, RunState};
-use connection::{Connection, Failure};
+use connection::{Connection, Failure, Records};
+use journal::Journal;
+use socket::{Commands, Listener};
 
 /// The file in the run directory that holds the tokens of every prompt an agent answered, one JSON object a line:
 /// `{"session", "when", "tokens"}`, as session_usage reads them.
@@ -39,15 +50,41 @@ const REQUEST_SECONDS: u64 = 120;
 const PROTOCOL_VERSION: u64 = 1;
 
 /// The agents of one run, which its orchestrator drives over ACP: each role's, once started, until it exits or is
-/// ended. Dropping it kills them (Connection's drop).
+/// ended; and the run's socket, from the run's open on. Dropping it kills the agents (Connection's drop) and closes
+/// the socket.
 pub struct AcpAgents<'h> {
     /// Told an agent's error, as find comes upon it.
     human: &'h dyn Human,
     /// The environment every agent starts in, as crate::env::child_env gives it; its PATH is where the harnesses'
     /// programs are found.
     env: Vec<(OsString, OsString)>,
+    /// The run's socket, once open bound it. Before running, so that it closes, its threads stopped, before the
+    /// agents are dropped.
+    listener: Mutex<Option<Listener>>,
+    /// The agents, shared with the socket's threads.
+    running: Arc<Running>,
+}
+
+/// A run's running agents, and the run's Ctrl-C, which a `stop` raises.
+struct Running {
     /// Each role's running agent, by role.
     agents: Mutex<HashMap<String, Agent>>,
+    interrupt: Interrupt,
+}
+
+/// Why AcpAgents::answer did not answer.
+#[derive(Debug, PartialEq)]
+pub enum AnswerError {
+    /// The role has no agent running.
+    NoAgent,
+    /// The role's agent's session has no request for a permission of that number.
+    NoRequest,
+    /// The request was answered before, with option, by `human` or `stop`.
+    AlreadyAnswered { option: String, by: String },
+    /// The request offers no such option.
+    BadOption,
+    /// The answer was taken, but could not be written to the agent, which has exited.
+    Unwritten(OrchestratorError),
 }
 
 /// A role's agent that started.
@@ -62,31 +99,39 @@ struct Agent {
 
 impl<'h> AcpAgents<'h> {
     /// A run's ACP agents, none started yet, each to start in this process's environment as child_env gives it; an
-    /// agent's error is told to human.
-    pub fn new(human: &'h dyn Human) -> AcpAgents<'h> {
-        AcpAgents::in_environment(human, std::env::vars_os())
+    /// agent's error is told to human, and a `stop` on the run's socket raises interrupt.
+    pub fn new(human: &'h dyn Human, interrupt: &Interrupt) -> AcpAgents<'h> {
+        AcpAgents::in_environment(human, interrupt, std::env::vars_os())
     }
 
     /// As new, in the environment vars as child_env would give it, were vars the engine's own: what the tests give
     /// in place of the process's environment, which is shared by every test.
-    fn in_environment(human: &'h dyn Human, vars: impl Iterator<Item = (OsString, OsString)>) -> AcpAgents<'h> {
-        AcpAgents { human, env: without_withheld(vars), agents: Mutex::new(HashMap::new()) }
+    fn in_environment(
+        human: &'h dyn Human,
+        interrupt: &Interrupt,
+        vars: impl Iterator<Item = (OsString, OsString)>,
+    ) -> AcpAgents<'h> {
+        let running = Running { agents: Mutex::new(HashMap::new()), interrupt: interrupt.clone() };
+        AcpAgents { human, env: without_withheld(vars), listener: Mutex::new(None), running: Arc::new(running) }
     }
 
-    /// Answer the role's agent's oldest request for a permission with the option of option_id, one of those the
-    /// request offers. Errors: the role has no agent, or it waits on no permission; the answer cannot be sent.
-    pub fn answer(&self, role: &str, option_id: &str) -> Result<(), AgentError> {
-        let agents = self.lock();
-        let agent = agents.get(role).ok_or_else(|| no_agent(role))?;
-        if !agent.connection.answer(option_id)? {
-            return Err(AgentError::Failed(OrchestratorError(format!("the {role} agent asks for no permission"))));
-        }
-        Ok(())
+    /// Answer the permission that the role's agent asked for and its journal numbered request with option, one of
+    /// the optionIds the request offers, as the human's answer: what the socket's `answer` does. The first answer
+    /// wins. Errors: AnswerError's, as it says.
+    pub fn answer(&self, role: &str, request: u64, option: &str) -> Result<(), AnswerError> {
+        self.running.answer(role, request, option)
+    }
+
+    /// Stop the run, as a Ctrl-C does, its agents first told: what the socket's `stop` does. Each agent's pending
+    /// permissions are answered `cancelled` and its unanswered prompts cancelled (ACP's `session/cancel`), then the
+    /// run's Interrupt is raised, which releases the run as interrupted. A second stop does the same again.
+    pub fn stop(&self) {
+        self.running.stop();
     }
 
     /// The agents, whatever thread panicked holding them: every change to them is whole.
     fn lock(&self) -> MutexGuard<'_, HashMap<String, Agent>> {
-        self.agents.lock().unwrap_or_else(|e| e.into_inner())
+        self.running.lock()
     }
 
     /// Start harness h's agent for the role of run as launch says, in a new session or, for launch's session, that
@@ -107,14 +152,17 @@ impl<'h> AcpAgents<'h> {
             ))));
         };
         let dir = run.dir();
-        let connection = Connection::spawn(
-            how.program,
-            &how.args,
-            self.env.iter().cloned(),
-            run.work_dir(),
-            &format!("{dir}/{role}.acp.log"),
-            format!("{dir}/{USAGE_FILE}"),
-        )?;
+        let journal = Arc::new(Journal::open(&format!("{dir}/{role}.events.jsonl"))?);
+        let records = Records {
+            stderr: &format!("{dir}/{role}.acp.log"),
+            usage: &format!("{dir}/{USAGE_FILE}"),
+            group: &group_record(&dir, role),
+            journal: journal.clone(),
+        };
+        let connection = Connection::spawn(how.program, &how.args, self.env.iter().cloned(), run.work_dir(), records)?;
+        let journal_session = |session: &str, resumed: bool| {
+            journal.write("session", json!({"session": session, "harness": h.kind, "resumed": resumed}));
+        };
         let ask = |method: &str, params: Value| {
             connection.request(method, params, Duration::from_secs(REQUEST_SECONDS)).map_err(|e| failed(h, method, e))
         };
@@ -129,13 +177,19 @@ impl<'h> AcpAgents<'h> {
                 unpassed.push(format!("{} cannot be granted {dir}; it may ask before each write there", h.kind));
             }
         }
+        // A session reopened is journaled before it is asked for, since the agent replays its conversation as
+        // updates before it answers (ACP's session/load); one refused is followed by a new one, journaled after it.
         let (session, opened) = match launch.session.filter(|s| !s.is_empty()) {
-            Some(session) => (session.to_string(), reopen(h, &connection, &capabilities, session, params)?),
+            Some(session) => {
+                journal_session(session, true);
+                (session.to_string(), reopen(h, &connection, &capabilities, session, params)?)
+            }
             None => {
                 let opened = ask("session/new", params)?;
                 let session = opened.get("sessionId").and_then(Value::as_str).ok_or_else(|| {
                     AgentError::Failed(OrchestratorError(format!("{} opened a session with no sessionId", h.kind)))
                 })?;
+                journal_session(session, false);
                 (session.to_string(), opened)
             }
         };
@@ -152,8 +206,9 @@ impl Agents for AcpAgents<'_> {
         run.backend = Backend::Acp;
     }
 
-    /// Nothing outlives an orchestrator, so there is no place to keep: a run resumes with no agent. Errors: run's
-    /// agents run in another backend.
+    /// Nothing outlives an orchestrator, so there is no place to keep: a run resumes with no agent. Opens the run's
+    /// socket (socket's module comment); a socket that cannot be opened is told to human, and the run goes on
+    /// without one, which the app then shows read-only. Errors: run's agents run in another backend.
     fn open(&self, run: &mut RunState, human: &dyn Human) -> Result<bool, AgentError> {
         if run.backend != Backend::Acp {
             return Err(AgentError::Failed(OrchestratorError(format!(
@@ -162,6 +217,11 @@ impl Agents for AcpAgents<'_> {
             ))));
         }
         human.log(&format!("run {} runs its agents over ACP", run.run_id));
+        let commands: Arc<dyn Commands> = self.running.clone();
+        match Listener::bind(&run.dir(), &run.run_id, run.key(), commands) {
+            Ok(listener) => *self.listener.lock().unwrap_or_else(|e| e.into_inner()) = Some(listener),
+            Err(e) => human.log(&format!("run {} has no socket, so the app cannot answer it: {e}", run.run_id)),
+        }
         Ok(false)
     }
 
@@ -186,10 +246,16 @@ impl Agents for AcpAgents<'_> {
     /// equivalent, `default`'s for a run without one, and to its model. A session it resumes is loaded where it
     /// can load one (ACP's `loadSession`), else resumed where it can (`sessionCapabilities.resume`); with neither, or
     /// when the agent refuses it, the start is Refused, so a fresh session follows. The role's agent before it, if
-    /// still running, is killed first.
+    /// still running, is killed first, and so is the process group of one an orchestrator of the run before left
+    /// running (groups::end_leftover), told to the human.
     fn start(&self, run: &RunState, role: &str, launch: &AgentLaunch) -> Result<Started, AgentError> {
         if let Some(old) = self.lock().remove(role) {
             old.connection.kill();
+        }
+        match groups::end_leftover(&group_record(&run.dir(), role)) {
+            Ok(false) => {}
+            Ok(true) => self.human.log(&format!("[{role}] ended the agent an earlier orchestrator of the run left")),
+            Err(e) => self.human.log(&format!("[{role}] cannot end what an earlier agent left: {e}")),
         }
         let h = harness(launch.harness)?;
         let (agent, unpassed) = self.launch(run, role, h, launch)?;
@@ -256,6 +322,33 @@ impl RunPlaces for AcpAgents<'_> {
     }
 }
 
+impl Running {
+    /// As AcpAgents::lock.
+    fn lock(&self) -> MutexGuard<'_, HashMap<String, Agent>> {
+        self.agents.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+impl Commands for Running {
+    fn answer(&self, role: &str, request: u64, option: &str) -> Result<(), AnswerError> {
+        let connection = self.lock().get(role).map(|a| a.connection.clone()).ok_or(AnswerError::NoAgent)?;
+        connection.answer(request, option)
+    }
+
+    fn stop(&self) {
+        let connections: Vec<Arc<Connection>> = self.lock().values().map(|a| a.connection.clone()).collect();
+        for connection in connections {
+            connection.stop();
+        }
+        self.interrupt.raise();
+    }
+}
+
+/// The path of the record of the role's agent's process group in the run directory dir.
+fn group_record(dir: &str, role: &str) -> String {
+    format!("{dir}/{role}{}", groups::GROUP_SUFFIX)
+}
+
 /// The token usage the run recorded for session, oldest first (Usage::when being when the prompt was sent), from log,
 /// the run's USAGE_FILE as it is on disk. A line that does not read is passed over.
 pub fn session_usage(log: &str, session: &str) -> Vec<Usage> {
@@ -294,9 +387,14 @@ pub fn probe(
     let Some(how) = h.acp_launch("default", None, None) else {
         return Err(OrchestratorError(format!("{} has no ACP launch", h.kind)));
     };
-    // It answers no prompt, so its usage file stays unwritten.
-    let connection =
-        Arc::new(Connection::spawn(how.program, &how.args, env.iter().cloned(), cwd, "/dev/null", "/dev/null".into())?);
+    // It answers no prompt and is no run's, so nothing of it is kept.
+    let records = Records {
+        stderr: "/dev/null",
+        usage: "/dev/null",
+        group: "/dev/null",
+        journal: Arc::new(Journal::open("/dev/null")?),
+    };
+    let connection = Arc::new(Connection::spawn(how.program, &how.args, env.iter().cloned(), cwd, records)?);
     let killed = connection.clone();
     let Some(watch) = stopping.watch(move || killed.kill()) else {
         return Err(OrchestratorError::new("interrupted"));

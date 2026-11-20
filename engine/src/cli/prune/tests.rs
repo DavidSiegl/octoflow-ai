@@ -920,7 +920,7 @@ fn unusable_gh_is_not_an_error() {
 #[test]
 fn target_flags() {
     let cli = Cli::new();
-    let target = Target { machine: Some("m".into()), cwd: Some("~/proj".into()) };
+    let target = Target { machine: Some("m".into()), cwd: Some("~/proj".into()), acp: false };
     assert_eq!(
         cli.command(&["prune", "--dry-run", "--machine", "m", "--cwd", "~/proj"]),
         Command::Runs(target, RunsCommand::Prune { dry_run: true })

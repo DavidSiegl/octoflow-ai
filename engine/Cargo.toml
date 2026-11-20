@@ -1,6 +1,6 @@
 [package]
 name = "octoflow-engine"
-version = "0.93.0"
+version = "0.93.1"
 description = "The orchestrator's engine: its library and the octoflow program"
 edition = "2021"
 license = "MIT OR Apache-2.0"
@@ -22,8 +22,11 @@ jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-sy
 # Process groups and signals, the user's id, the machine's name and its monotonic clock, through nix's safe API: a Host
 # command's group is killed when it runs out of time or at a Ctrl-C, a SIGTERM or a SIGHUP (host/process.rs), which a
 # thread waits for and the program ends by (interrupt.rs), a run's owner record names its host and pid (runs.rs), and a
-# run's deadlines are kept on the system's monotonic clock (workflow/system.rs).
-nix = { version = "0.31", default-features = false, features = ["hostname", "signal", "time", "user"] }
+# run's deadlines are kept on the system's monotonic clock (workflow/system.rs). process: an ACP agent dies with its
+# orchestrator (PR_SET_PDEATHSIG, acp/connection.rs), and serve detaches the runs it starts by a fork and setsid
+# (host/process.rs, spawn_detached); signal brings it already. socket: the peer's uid on a run's socket (acp/socket.rs),
+# approved by the user with herdr-gui-decoupling ticket 03's design, 2026-11-20.
+nix = { version = "0.31", default-features = false, features = ["hostname", "process", "signal", "socket", "time", "user"] }
 # derive: RunState's state.json (state.rs).
 serde = { version = "1", features = ["derive"] }
 # JSON (crate::json): preserve_order keeps an object's keys in the order they came, so that a record written back,
