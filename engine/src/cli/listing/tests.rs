@@ -26,7 +26,7 @@ const SHOW_DIR: &str = "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3";
 const JOB: &str = "Octoflow-AI/octoflow-ai-quality";
 
 /// The keys of a run record, in the order run_record gives them.
-const RUN_RECORD_KEYS: [&str; 26] = [
+const RUN_RECORD_KEYS: [&str; 27] = [
     "id",
     "key",
     "task",
@@ -53,6 +53,7 @@ const RUN_RECORD_KEYS: [&str; 26] = [
     "pr",
     "turns",
     "resume_command",
+    "resumable",
 ];
 
 /// The default workflow's steps as a run record gives them for a run without the quality gate.

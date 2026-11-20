@@ -4,6 +4,7 @@
 
 use indexmap::IndexMap;
 
+use super::start::resumable;
 use super::{resume_command, Connected};
 use crate::constants::APPROVE;
 use crate::error::OrchestratorError;
@@ -59,6 +60,9 @@ pub const BLOCKED_STATUS: &str = "blocked";
 /// - turns: the turn records as saved, [] for a run saved before them.
 /// - resume_command: the command that resumes a stale run that is not closed; null otherwise, and for an "acp" run,
 ///   which the app resumes and the CLI refuses.
+/// - resumable: whether a resume would take the run up and have something left to do (crate::cli::start::resumable):
+///   a stale run, one released as interrupted or with a failure, or a done one its orchestrator did not release; an
+///   "acp" run is resumed with serve's POST /resume.
 pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> bool, target: &[String]) -> Object {
     let s = run.shown();
     let unreadable = run.problem();
@@ -129,6 +133,7 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
     // Records of strings, numbers and JSON values serialize without fail.
     record.insert("turns".into(), serde_json::to_value(&s.turns).expect("turns serialize"));
     record.insert("resume_command".into(), optional(resume));
+    record.insert("resumable".into(), Value::from(resumable(run, local_host, pid_alive).is_ok()));
     record
 }
 

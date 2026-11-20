@@ -170,7 +170,8 @@ fn a_run_of_this_host_whose_orchestrator_exited_is_stale() {
     });
     let events = RunWatch::new(&project).poll();
     assert_eq!(kinds(&events), ["record", "files"]);
-    assert_eq!(ASKED.load(Ordering::SeqCst), 1);
+    // The project's pid_alive judged it, for its health and for whether it is resumable.
+    assert_ne!(ASKED.load(Ordering::SeqCst), 0);
     let record = events[0].payload.get("record").unwrap();
     assert_eq!(
         (record.get("health"), record.get("health_reason")),

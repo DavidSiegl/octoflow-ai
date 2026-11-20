@@ -530,3 +530,47 @@ fn a_run_saves_the_herdr_server_it_starts_in_and_a_resume_keeps_it() {
     let (state, _) = resumed_state(&resume_args(&["a1b2c3"]), "/proj", &world).unwrap();
     assert_eq!(state.herdr_server, Some(session("old")));
 }
+
+#[test]
+fn a_run_is_resumable_exactly_when_resume_takes_it_and_has_something_left_to_do() {
+    let me = || {
+        let owner = [("host", Value::from("here")), ("pid", Value::from(42)), ("started_at", Value::from("x"))];
+        Value::Object(object(owner))
+    };
+    let acp = [("backend", Value::from("acp")), ("format", Value::from(crate::state::ACP_STATE_FORMAT))];
+    let late = HEARTBEAT_SECONDS + 1;
+    // Each: what it is, its state.json, its age, whether its owner's pid is alive, whether it is resumable.
+    let cases = [
+        ("stale", saved_settings(&[("owner", me())]), late, false, true),
+        ("interrupted", saved_settings(&[("error", Value::from("interrupted"))]), late, false, true),
+        (
+            "failed",
+            saved_settings(&[("error", Value::from("[build] claude failed: not logged in"))]),
+            late,
+            false,
+            true,
+        ),
+        ("the app's, stale", saved_settings(&[("owner", me()), acp[0].clone(), acp[1].clone()]), late, false, true),
+        ("done, not released", saved_settings(&[("phase", Value::from("done")), ("owner", me())]), late, false, true),
+        ("running", saved_settings(&[("owner", me())]), 30, true, false),
+        ("closed", saved_settings(&[("owner", me()), ("closed", Value::from("workspace closed"))]), late, false, false),
+        ("unreadable", saved_settings(&[("format", Value::from(99))]), late, false, false),
+        (
+            "finished",
+            saved_settings(&[("phase", Value::from("done")), ("verdict", Value::from(APPROVE))]),
+            late,
+            false,
+            false,
+        ),
+    ];
+    for (what, saved, age, alive, expected) in cases {
+        let run = read_saved(age, &Value::Object(saved));
+        let pid_alive = move |_: i64| alive;
+        assert_eq!(super::resumable(&run, "here", &pid_alive).is_ok(), expected, "{what}");
+        let backend = run.shown().backend;
+        let argv: &[&str] = if backend == Backend::Acp { &["a1b2c3", "--acp"] } else { &["a1b2c3"] };
+        let taken = resumable_state(std::slice::from_ref(&run), &resume_args(argv), "/proj", "here", &pid_alive);
+        // resume also takes a finished run, which it leaves as it is (Workflow::run).
+        assert_eq!(taken.is_ok(), expected || what == "finished", "{what}: {:?}", taken.err());
+    }
+}

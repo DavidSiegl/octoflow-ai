@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Api, Project } from "../api";
+import type { Api, Project, RunRecord } from "../api";
 import type { RunEntry } from "../runs";
 import { formatRound, heartbeatAge, outcome } from "../runs";
 import { AgentPanes } from "./AgentPanes";
@@ -35,6 +35,7 @@ export function RunDetail({ api, project, entry, now, onClose }: Props) {
           {record.role && ` · ${record.role}`} · {outcome(record, heartbeatAge(entry, now))}
         </p>
         {record.waiting?.reason === "blocked" && <p className="blocked">blocked: {record.waiting.detail}</p>}
+        {record.resumable && record.backend === "acp" && <ResumeButton api={api} project={project} record={record} />}
         {record.pr && (
           <OutsideLink target={{ page: record.pr.url }}>{record.pr.url}</OutsideLink>
         )}
@@ -65,5 +66,32 @@ export function RunDetail({ api, project, entry, now, onClose }: Props) {
       </div>
       <AgentPanes api={api} project={project} record={record} />
     </section>
+  );
+}
+
+/** Resume, for a desktop app's run a resume would take up (RunRecord.resumable), and why the last resume failed. The
+ * run's next record, from the event stream, shows it resumed. */
+function ResumeButton({ api, project, record }: { api: Api; project: Project; record: RunRecord }) {
+  // True from the click until the server answers: a second click would start a second resume.
+  const [resuming, setResuming] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const resume = () => {
+    setResuming(true);
+    setProblem(null);
+    api.resumeRun(project, record.id).then(
+      () => setResuming(false),
+      (e: unknown) => {
+        setResuming(false);
+        setProblem(e instanceof Error ? e.message : String(e));
+      },
+    );
+  };
+  return (
+    <p className="resume">
+      <button type="button" onClick={resume} disabled={resuming}>
+        {resuming ? "Resuming…" : "Resume"}
+      </button>
+      {problem && <span className="problem"> {problem}</span>}
+    </p>
   );
 }

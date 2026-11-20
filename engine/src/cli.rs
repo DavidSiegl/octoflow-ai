@@ -38,7 +38,7 @@ pub mod forget;
 pub mod listing;
 pub mod prune;
 pub mod refresh;
-mod start;
+pub(crate) mod start;
 mod workflows;
 
 pub use args::{parse_args, Command, RunsCommand, Target};

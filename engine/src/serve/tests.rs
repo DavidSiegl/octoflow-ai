@@ -2409,6 +2409,102 @@ fn a_detached_run_of_a_project_on_a_machine_is_refused() {
     assert!(matches!(refused, Err(RunReadError::Failed(_))), "{refused:?}");
 }
 
+/// Save in the project at dir the run run_id, a desktop app's run in build released as interrupted, as change
+/// leaves it; gives its run directory.
+fn save_app_run(dir: &str, run_id: &str, change: impl FnOnce(&mut RunState)) -> String {
+    let mut state = RunState::new(run_id, "a task", dir);
+    (state.phase, state.round, state.backend) = ("build".into(), 1, Backend::Acp);
+    state.error = Some("interrupted".into());
+    change(&mut state);
+    std::fs::create_dir_all(state.dir()).unwrap();
+    std::fs::write(format!("{}/state.json", state.dir()), state.to_text()).unwrap();
+    state.dir()
+}
+
+#[test]
+fn a_resume_ends_the_run_s_leftover_agents_then_starts_resume_detached_until_it_takes_the_run_up() {
+    let tmp = TempDir::new();
+    let stopping = Interrupt::new();
+    let project = detached_project(&tmp.path(), &stopping);
+    let id = "20261120-000000-abcdef";
+    let dir = save_app_run(&tmp.path(), id, |_| {});
+    // A builder's agent an orchestrator SIGKILLed left: a group whose leader exited and whose member lives.
+    let pid_file = format!("{dir}/member");
+    use std::os::unix::process::CommandExt;
+    let mut leader = std::process::Command::new("/bin/sh")
+        .args(["-c", "sleep 30 & echo $! > \"$1\"", "sh", &pid_file])
+        .process_group(0)
+        .spawn()
+        .expect("sh starts");
+    let pgid = i32::try_from(leader.id()).unwrap();
+    leader.wait().expect("the leader exited and is reaped");
+    let started = Instant::now();
+    while !std::fs::read_to_string(&pid_file).is_ok_and(|t| t.ends_with('\n')) {
+        assert!(started.elapsed() < Duration::from_secs(5), "the member did not start");
+    }
+    std::fs::write(format!("{dir}/build.acp.group"), format!(r#"{{"pgid":{pgid},"started":"long ago"}}"#)).unwrap();
+    // Says what it got, then takes the run up as resume does, by saving its state.json anew.
+    let script = r#"echo "$@"; echo '{}' > "$3/.octoflow-ai/runs/$6/state.json"; exec sleep 5"#;
+    let program = run_program(&tmp.path(), script);
+
+    let ended = project.resume(&program, id, QUICK_WAIT, &stopping).expect("resumed");
+
+    assert_eq!(ended, Started::Listed);
+    let log = std::fs::read_to_string(format!("{dir}/run.log")).unwrap();
+    assert_eq!(log, format!("resume --cwd {} --acp -- {id}\n", tmp.path()));
+    let group_gone = || nix::sys::signal::kill(nix::unistd::Pid::from_raw(-pgid), None).is_err();
+    while !group_gone() {
+        assert!(started.elapsed() < Duration::from_secs(10), "the leftover agent outlived the resume");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn a_resume_refuses_a_run_it_would_not_take_up_before_starting_anything() {
+    let tmp = TempDir::new();
+    let stopping = Interrupt::new();
+    let project = detached_project(&tmp.path(), &stopping);
+    save_app_run(&tmp.path(), "20261120-000000-aaaaaa", |s| s.backend = Backend::Herdr);
+    save_app_run(&tmp.path(), "20261120-000000-bbbbbb", |s| (s.phase, s.error) = ("done".into(), None));
+    save_app_run(&tmp.path(), "20261120-000000-cccccc", |s| s.closed = Some("no agent left".into()));
+    // Never started: a start would fail as Failed.
+    let resume = |id: &str| project.resume("/nonexistent/octoflow", id, QUICK_WAIT, &stopping).unwrap_err();
+
+    let refused = ["aaaaaa", "bbbbbb", "cccccc", "dddddd"].map(|key| resume(&format!("20261120-000000-{key}")));
+
+    assert_eq!(
+        refused,
+        [
+            RunReadError::Conflict("run 20261120-000000-aaaaaa runs in herdr; resume it with its command".into()),
+            RunReadError::Conflict("run 20261120-000000-bbbbbb is finished; nothing is left to resume".into()),
+            RunReadError::Conflict("run 20261120-000000-cccccc was closed; start a new run".into()),
+            RunReadError::Missing("no run 20261120-000000-dddddd".into()),
+        ]
+    );
+    let in_herdr = ProjectRuns::new(reached(&Arc::new(ServeHost::on(None)), &Arc::new(FakeConsole::default())), vec![]);
+    let refused = in_herdr.resume("/nonexistent/octoflow", "20261120-000000-aaaaaa", QUICK_WAIT, &stopping);
+    assert!(matches!(refused, Err(RunReadError::Conflict(_))), "{refused:?}");
+}
+
+#[test]
+fn post_resume_names_the_run_and_answers_404_for_no_such_run() {
+    let tmp = TempDir::new();
+    let dir = tmp.path();
+    let connect = move |_: &str, _: &str, stopping: &Interrupt| {
+        let host = Arc::new(ProcessHost::local(stopping));
+        let console = Arc::new(FakeConsole::default());
+        let (dir, launch_dir) = (dir.clone(), dir.clone());
+        Ok(Reached { host, dir, console: console.clone(), places: console, launch: Launch::Detached, launch_dir })
+    };
+    let served = Served::start(Box::new(connect), &[], Arc::default(), Options::default());
+
+    let unnamed = served.post(&format!("/resume?{}", urlencode(&[("cwd", &tmp.path())])), "");
+    let missing = served.post(&format!("/resume?{}", urlencode(&[("cwd", &tmp.path()), ("run", "nope")])), "");
+
+    assert_eq!((unnamed.status, unnamed.json()), (Some(400), json!({"error": "missing parameter run"})));
+    assert_eq!((missing.status, missing.json()), (Some(404), json!({"error": "no run nope"})));
+}
+
 /// A journal of a role whose second session (seq 4) is current: an update, a permission and a wait on the human.
 const JOURNAL: &str = r#"{"journal": 1}
 {"seq": 1, "kind": "session", "session": "s-1", "harness": "agy", "resumed": false}
