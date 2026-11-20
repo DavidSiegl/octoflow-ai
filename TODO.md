@@ -64,6 +64,10 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   either deletes it, both answer "forgotten", and `Host::forget_run`'s check-then-append can archive two metrics lines.
   Raised by cross-review 245 (F1). Closes with a lock file in the project's `.octoflow-ai/` that `forget_all` holds,
   over SSH too.
+- **A resumed pull-request run past round 0 does not check gitleaks before its turns.** `Workflow::check_start`
+  (`engine/src/workflow.rs`) runs `check_before_interview`, which checks gitleaks, only at round 0, so an ungated
+  `--pr` run resumed after gitleaks was removed spends its remaining turns and fails only at publish. A gated run is
+  checked again on resume (`gate_switch::check_gate_mid_run`). Raised by cross-review 250 (pre-existing).
 - **Nothing checks that a workflow's actions stay pinned by sha.** todo/65 pinned every `uses:` in
   `.github/workflows/` by commit sha, and `.github/dependabot.yml` keeps a sha a sha, but the Gate stage's actionlint
   accepts a tag: a later `uses: actions/cache@v4` in a job that holds `AUTOMERGE_TOKEN` passes every check and brings

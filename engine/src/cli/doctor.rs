@@ -234,7 +234,7 @@ pub fn check_setup(
         });
         top = Some(checkout);
     }
-    // What a run with --quality-gate local checks before its interview (Workflow::check_gate's gitleaks and
+    // What a run with --quality-gate local checks before its interview (Workflow::check_before_interview's gitleaks and
     // local_gate::preflight), so the check cannot ask for less or more, and which release would judge the project. The
     // release is read first, so that a check failing for a tool still names it; a pin every run refuses fails the
     // check before the tools are asked after, one fix at a time. It asks nothing else of a checkout, so a project not

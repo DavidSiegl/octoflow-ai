@@ -707,13 +707,16 @@ pub trait Host {
         }
     }
 
-    /// Errors, saying how to install it, when gitleaks_problem finds a problem.
-    fn check_gitleaks(&self) -> Result<(), OrchestratorError> {
+    /// Check that gitleaks can run here, for a run whose secret scans read scanned's commits.
+    ///
+    /// Errors, when it cannot (gitleaks_problem), as "<why the run needs gitleaks>, but <problem>: <how to install
+    /// it>", the reason being scanned's: the pushes for Scanned::Unpublished, the gate's snapshots for SinceBase.
+    fn check_gitleaks(&self, scanned: Scanned) -> Result<(), OrchestratorError> {
         match self.gitleaks_problem() {
-            Some(problem) => Err(OrchestratorError(format!(
-                "this run pushes, and every push is scanned for secrets first, but {problem}: {}",
-                crate::constants::GITLEAKS_INSTALL
-            ))),
+            Some(problem) => {
+                let why = scanned.why_gitleaks();
+                Err(OrchestratorError(format!("{why}, but {problem}: {}", crate::constants::GITLEAKS_INSTALL)))
+            }
             None => Ok(()),
         }
     }

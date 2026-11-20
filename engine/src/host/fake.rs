@@ -238,7 +238,7 @@ pub(crate) struct FakeState {
     pub leaks: Vec<Leak>,
     /// Each scan, in order.
     pub scans: Vec<Scan>,
-    /// check_gitleaks fails as on a machine without gitleaks.
+    /// gitleaks_problem, and so check_gitleaks, finds gitleaks missing, as on a machine without it.
     pub gitleaks_missing: bool,
     /// The text of each file in a commit, by (commit, path); file_at reads it, and records each read in file_reads.
     pub committed: HashMap<(String, String), String>,
@@ -960,14 +960,8 @@ impl Host for FakeHost {
             .collect())
     }
 
-    fn check_gitleaks(&self) -> Result<(), OrchestratorError> {
-        if self.state().gitleaks_missing {
-            return Err(OrchestratorError(format!(
-                "this run pushes, and every push is scanned for secrets first: {}",
-                crate::constants::GITLEAKS_INSTALL
-            )));
-        }
-        Ok(())
+    fn gitleaks_problem(&self) -> Option<String> {
+        self.state().gitleaks_missing.then(|| "gitleaks cannot be started (not found)".to_string())
     }
 
     fn scan_secrets(

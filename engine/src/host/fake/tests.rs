@@ -106,9 +106,9 @@ fn pushes_scan_first_and_land_on_its_origin() {
     assert_eq!(found.leaks[0].commit, "c2");
     assert!(host.read("/r/leaks.json").unwrap().unwrap().contains(FAKE_TOKEN));
     assert!(host.remote_branch_commit("/proj", "b").unwrap().is_none());
-    host.check_gitleaks().unwrap();
+    host.check_gitleaks(Scanned::Unpublished).unwrap();
     host.state().gitleaks_missing = true;
-    assert!(host.check_gitleaks().unwrap_err().0.contains("install gitleaks"));
+    assert!(host.check_gitleaks(Scanned::Unpublished).unwrap_err().0.contains("install gitleaks"));
 }
 
 #[test]

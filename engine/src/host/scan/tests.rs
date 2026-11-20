@@ -464,15 +464,17 @@ fn a_report_left_by_an_earlier_scan_is_not_read() {
 #[test]
 fn the_preflight_needs_gitleaks_git() {
     let s = Scan::new();
-    s.repo.host.check_gitleaks().unwrap();
+    s.repo.host.check_gitleaks(Scanned::SinceBase).unwrap();
     s.mode("old");
-    let e = s.repo.host.check_gitleaks().unwrap_err();
-    assert!(e.0.contains("`gitleaks git` does not run: install gitleaks 8.19"), "{e}");
+    let e = s.repo.host.check_gitleaks(Scanned::SinceBase).unwrap_err();
+    let why = "the quality gate scans each snapshot for secrets before it judges it, but ";
+    assert!(e.0.starts_with(why) && e.0.contains("`gitleaks git` does not run: install gitleaks 8.19"), "{e}");
     // No gitleaks at all.
     let nowhere =
         ProcessHost::in_environment(environment(None, &[("PATH", &s.run_dir)]).into_iter(), &Interrupt::new());
-    let e = nowhere.check_gitleaks().unwrap_err();
-    assert!(e.0.contains("gitleaks cannot be started (") && e.0.contains("install gitleaks 8.19"), "{e}");
+    let e = nowhere.check_gitleaks(Scanned::Unpublished).unwrap_err();
+    let why = "this run pushes, and every push is scanned for secrets first, but gitleaks cannot be started (";
+    assert!(e.0.starts_with(why) && e.0.contains("install gitleaks 8.19"), "{e}");
 }
 
 #[test]

@@ -488,11 +488,15 @@ impl<'a> Workflow<'a> {
         if self.state.worktree.is_some() {
             self.open_worktree()?;
         }
+        // A run that publishes scans what it pushes, and a gated one each snapshot; one that does both is told of
+        // its pushes, which it asked for with its pull request.
+        if self.state.pull_request {
+            self.host.check_gitleaks(Scanned::Unpublished)?;
+        } else if self.quality_gate_on {
+            self.host.check_gitleaks(Scanned::SinceBase)?;
+        }
         if self.quality_gate_on {
             self.check_gate()?;
-        } else if self.state.pull_request {
-            // Publishing scans what it pushes; the gate's preflight checks gitleaks itself.
-            self.host.check_gitleaks()?;
         }
         if self.state.pull_request && self.state.worktree.is_none() {
             self.check_repo()?;
@@ -501,8 +505,8 @@ impl<'a> Workflow<'a> {
     }
 
     /// Fail before the interview if the quality gate could not judge the run's change: cwd has no commit, a run in it
-    /// has changes the snapshots would take, gitleaks, which scans every snapshot first, cannot run, or the host fails
-    /// local_gate::preflight.
+    /// has changes the snapshots would take, or the host fails local_gate::preflight. gitleaks, which scans every
+    /// snapshot first, is checked by check_before_interview.
     fn check_gate(&self) -> Result<(), OrchestratorError> {
         let cwd = &self.state.cwd;
         if self.host.git_head(cwd)?.is_none() {
@@ -515,7 +519,6 @@ impl<'a> Workflow<'a> {
             // A snapshot takes every change in the tree, so the tree must start with none.
             self.require_clean()?;
         }
-        self.host.check_gitleaks()?;
         local_gate::preflight(self.host)
     }
 
