@@ -2184,7 +2184,7 @@ dependencies = [
 
 [[package]]
 name = "octoflow-engine"
-version = "0.92.7"
+version = "0.92.8"
 dependencies = [
  "clap",
  "indexmap 2.14.2",
