@@ -142,9 +142,11 @@ first time when a browser downloaded it, as it does the binary.
   "New…" on a copy of `default`; the form waits while the editor is open, and then picks the workflow saved, if it
   loads), an agent and a model for the whole run (the workflow's own unless you pick them), one row per role of the
   workflow for its own agent and model (each `--role-agent` and `--role-model`, with what an empty
-  one falls back to shown greyed; a role the next workflow you pick also has keeps its row's values), and two
-  boxes: "No pull request", off as on the CLI, and "Separate worktree", on, so that runs started side by side do
-  not share the checkout. Start runs `octoflow run` with them in a new workspace of the herdr server on this
+  one falls back to shown greyed; a role the next workflow you pick also has keeps its row's values), a permission
+  mode for every role (`default`, `acceptEdits`, `plan` or `bypassPermissions`, given as `--permission-mode`;
+  `default` unless you pick another, so every harness asks before it runs a command), and two boxes: "No pull
+  request", off as on the CLI, and "Separate worktree", on, so that runs started side by side do not share the
+  checkout. Start runs `octoflow run` with them in a new workspace of the herdr server on this
   computer, where you can watch and interrupt it as one you started by hand; the app then opens the run. That is
   so for a project on a machine too, whose agents then run there. With no herdr server running here, the app
   starts one of its own without a window, the herdr session `octoflow`, which stays up after the app closes:
