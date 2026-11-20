@@ -265,21 +265,72 @@ pub fn close_all(world: &Closer, cwd: &str, sweep: Sweep) -> Result<Vec<RunClose
     Ok(looked_at)
 }
 
-/// How long stop_run waits for a run it stopped to be released: its orchestrator answers every pending permission,
-/// cancels its agents' prompts, ends them and saves, which takes a few seconds.
+/// How long await_release waits for a run told to stop to be released: its orchestrator answers every pending
+/// permission, cancels its agents' prompts, ends them and saves, which takes a few seconds.
 const STOP_WAIT: Duration = Duration::from_secs(60);
 
-/// Stop the desktop app's running run of state, of the project at cwd, as the app's "Stop all" does: send `stop` to
-/// its socket (crate::acp::ask), then wait until it is no longer RUNNING, read again by world's scope, for at most
-/// STOP_WAIT. It is then released as interrupted, unless it was done (Workflow::run). Errors: the socket cannot be
-/// reached or refuses; the run cannot be read again, or is gone; it is still running after STOP_WAIT, or when world's
-/// interrupt is raised.
+/// Stop the desktop app's running run of state, of the project at cwd: tell it to (tell_stop), then wait for it to be
+/// released (await_release). Errors: as theirs.
 fn stop_run(world: &Closer, cwd: &str, state: &RunState) -> Result<(), OrchestratorError> {
+    let told = Instant::now();
+    tell_stop(world, state)?;
+    await_release(world, cwd, &state.run_id, told)
+}
+
+/// One run stop_all stopped, or with a dry run would stop.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunStopped {
+    /// The run's id.
+    pub run_id: String,
+    /// Why it could not be stopped, as tell_stop or await_release says; None once it is released, and with a dry run.
+    pub failure: Option<String>,
+}
+
+/// Stop every desktop app run (Backend::Acp) of the project at cwd that world's scope reads as RUNNING, as the app's
+/// "Stop all" does, or with dry_run only say which: each is told to stop at once (tell_stop), then each is waited for
+/// until it is released as interrupted (await_release), so that the wait is STOP_WAIT for all of them, not for each.
+/// A run of herdr's is left running: its human stops it in its pane. Returns the runs, in run id order, each with its
+/// failure, if any: one run that fails does not keep the others from stopping. Errors: the project's runs cannot be
+/// read.
+pub fn stop_all(world: &Closer, cwd: &str, dry_run: bool) -> Result<Vec<RunStopped>, OrchestratorError> {
+    let runs = world.scope.states(world.host, cwd)?;
+    let mut running: Vec<&RunState> = runs
+        .iter()
+        .filter(|run| matches!(run.health(world.local_host, world.pid_alive), Some((RUNNING, _))))
+        .filter_map(|run| run.state().ok().filter(|state| state.backend == Backend::Acp))
+        .collect();
+    running.sort_by(|a, b| a.run_id.cmp(&b.run_id));
+    let stopped = |state: &RunState, failure: Option<String>| RunStopped { run_id: state.run_id.clone(), failure };
+    if dry_run {
+        return Ok(running.into_iter().map(|state| stopped(state, None)).collect());
+    }
+    let told_at = Instant::now();
+    let told: Vec<_> = running.into_iter().map(|state| (state, tell_stop(world, state))).collect();
+    Ok(told
+        .into_iter()
+        .map(|(state, told)| {
+            let released = told.and_then(|()| await_release(world, cwd, &state.run_id, told_at));
+            stopped(state, released.err().map(|e| e.to_string()))
+        })
+        .collect())
+}
+
+/// Send `stop` to the socket of the desktop app's run of state (crate::acp::ask), and say so through world: its
+/// orchestrator answers every pending permission `cancelled`, cancels its agents' prompts, and stops the run as a
+/// Ctrl-C does (crate::acp's Commands::stop). Errors: the socket cannot be reached or refuses.
+fn tell_stop(world: &Closer, state: &RunState) -> Result<(), OrchestratorError> {
     let run_id = &state.run_id;
     crate::acp::ask(&state.dir(), &json!({"stop": {}}))
         .map_err(|e| OrchestratorError(format!("cannot stop run {run_id}: {e}")))?;
     world.say(&format!("stopping run {run_id}"));
-    let start = Instant::now();
+    Ok(())
+}
+
+/// Wait until the run run_id of the project at cwd, told to stop at told, is no longer RUNNING, read again by world's
+/// scope, for at most STOP_WAIT from told. It is then released as interrupted, unless it was done (Workflow::run).
+/// Errors: the run cannot be read again, or is gone; it is still running after STOP_WAIT, or when world's interrupt
+/// is raised.
+fn await_release(world: &Closer, cwd: &str, run_id: &str, told: Instant) -> Result<(), OrchestratorError> {
     loop {
         let run = world
             .scope
@@ -291,10 +342,10 @@ fn stop_run(world: &Closer, cwd: &str, state: &RunState) -> Result<(), Orchestra
         if world.interrupt.is_raised() {
             return Err(OrchestratorError(format!("run {run_id} was told to stop; interrupted before it released")));
         }
-        if start.elapsed() >= STOP_WAIT {
+        if told.elapsed() >= STOP_WAIT {
             return Err(OrchestratorError(format!(
                 "run {run_id} was told to stop, but is still running after {} s",
-                start.elapsed().as_secs()
+                told.elapsed().as_secs()
             )));
         }
         std::thread::sleep(Duration::from_millis(100));

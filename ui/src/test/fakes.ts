@@ -1,5 +1,16 @@
 import { vi } from "vitest";
-import type { ClosedRun, ForgottenRun, GateFile, RunOptions, RunRequest, SetupReport, WorkflowDefinition } from "../api";
+import type { AppWindow } from "../components/CloseGuard";
+import type {
+  CloseChoice,
+  ClosedRun,
+  ForgottenRun,
+  GateFile,
+  RunOptions,
+  RunRequest,
+  SetupReport,
+  StoppedRun,
+  WorkflowDefinition,
+} from "../api";
 import recorded from "./recorded-stream.json";
 
 /** The events the engine's `serve` sent over a scripted run, recorded off the real server: each batch is what it
@@ -171,6 +182,50 @@ export interface FakeResume {
   requests?: { cwd: string | null; run: string | null }[];
 }
 
+/** What a stubbed server's POST /stop and /close-choice answer: `running` to a dry run of /stop (none unless given),
+ * and `stopped` to a stop (each of `running` stopped unless given), or a 502 with `error`; a stop is answered once
+ * `held`, if given, resolves, and counted in `stops`. GET /close-choice answers `choice` ("ask" unless given), or a 500
+ * with `choiceError`, and POST /close-choice sets `choice`. */
+export interface FakeStop {
+  running?: StoppedRun[];
+  stopped?: StoppedRun[];
+  error?: string;
+  held?: Promise<void>;
+  stops?: number;
+  choice?: CloseChoice;
+  choiceError?: string;
+}
+
+/** A window the test asks to close as its user would (requestClose); `destroyed` is true once it closed. */
+export class FakeWindow implements AppWindow {
+  destroyed = false;
+  private handlers: ((event: { preventDefault(): void }) => Promise<void>)[] = [];
+
+  onCloseRequested(handler: (event: { preventDefault(): void }) => Promise<void>): Promise<() => void> {
+    this.handlers.push(handler);
+    return Promise.resolve(() => {
+      this.handlers = this.handlers.filter((h) => h !== handler);
+    });
+  }
+
+  destroy(): Promise<void> {
+    this.destroyed = true;
+    return Promise.resolve();
+  }
+
+  /** Ask to close the window, as Tauri does: call each handler, then close it unless one prevented it; resolves once
+   * the handlers have. */
+  async requestClose(): Promise<void> {
+    let prevented = false;
+    for (const handler of this.handlers) {
+      await handler({ preventDefault: () => (prevented = true) });
+    }
+    if (!prevented) {
+      this.destroyed = true;
+    }
+  }
+}
+
 /** The definition of the built-in workflow `default` a stubbed server reads: two roles, each with a step, the review
  * looping back to the build. */
 export const DEFAULT_DEFINITION: WorkflowDefinition = {
@@ -224,7 +279,8 @@ export interface FakeEdit {
  * any input; whose /setup endpoints answer as `setup` says, a POST of /setup/checked setting its `checked`, and a
  * POST of /setup/gate recording its cwd; and
  * whose /workflows and POST /run answer as `start` says, POST /close as `close` says, the workflow endpoints as
- * `edit` says, POST /forget as `forget` says, and POST /resume as `resume` says. */
+ * `edit` says, POST /forget as `forget` says, POST /resume as `resume` says, and POST /stop and /close-choice as
+ * `stop` says. */
 export function stubServer(
   files: Record<string, string>,
   agents: Record<string, string> = {},
@@ -234,6 +290,7 @@ export function stubServer(
   edit: FakeEdit = {},
   forget: FakeForget = {},
   resume: FakeResume = {},
+  stop: FakeStop = {},
 ) {
   FakeEventSource.opened = [];
   vi.stubGlobal("EventSource", FakeEventSource);
@@ -312,6 +369,21 @@ export function stubServer(
       resume.requests = [...(resume.requests ?? []), { cwd: searchParams.get("cwd"), run }];
       await resume.held;
       return answer(resume.status ?? 200, resume.body ?? { run });
+    }
+    if (pathname === "/stop" && init?.method === "POST") {
+      const { dry_run } = JSON.parse(String(init.body)) as { dry_run: boolean };
+      if (!dry_run) {
+        stop.stops = (stop.stops ?? 0) + 1;
+      }
+      return swept(stop, dry_run, dry_run ? stop.running : (stop.stopped ?? stop.running));
+    }
+    if (pathname === "/close-choice") {
+      if (init?.method === "POST") {
+        stop.choice = (JSON.parse(String(init.body)) as { choice: CloseChoice }).choice;
+      } else if (stop.choiceError !== undefined) {
+        return answer(500, { error: stop.choiceError });
+      }
+      return answer(200, { choice: stop.choice ?? "ask" });
     }
     if (pathname === "/agent/input") {
       return init?.method === "POST" ? answer(200, { run: "r", role }) : answer(501, {});

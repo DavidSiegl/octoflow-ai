@@ -25,7 +25,7 @@ pub(crate) fn without_withheld(vars: impl Iterator<Item = (OsString, OsString)>)
 pub const CONFIG_DIR_NAME: &str = "octoflow-ai";
 
 /// The orchestrator's own configuration directory, on the machine it runs on, and where in it each of its files is:
-/// the prompt files, the workflow files and the desktop app's setup marker.
+/// the prompt files, the workflow files, and the desktop app's setup marker and close choice.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfigDir {
     /// The directory's path, without a trailing "/".
@@ -73,6 +73,12 @@ impl ConfigDir {
     /// that it no longer opens by itself (crate::serve::setup); empty.
     pub fn setup_checked_path(&self) -> String {
         self.join("setup-checked")
+    }
+
+    /// The file that holds what the desktop app does with its running runs when its window closes, once the user chose
+    /// not to be asked again (crate::serve::close_choice).
+    pub fn close_choice_path(&self) -> String {
+        self.join("close-choice")
     }
 
     fn join(&self, name: &str) -> String {

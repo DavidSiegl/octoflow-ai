@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { Api, type Connection, type Project, type StartedRun } from "./api";
 import { About } from "./components/About";
 import { CleanUpDialog } from "./components/CleanUpDialog";
+import { CloseGuard, type AppWindow } from "./components/CloseGuard";
 import { ForgetDialog } from "./components/ForgetDialog";
 import { ProjectBar } from "./components/ProjectBar";
 import { RunDetail } from "./components/RunDetail";
 import { RunForm } from "./components/RunForm";
 import { RunsOverview } from "./components/RunsOverview";
+import { SettingsDialog } from "./components/SettingsDialog";
 import { SetupDialog } from "./components/SetupDialog";
 import { WorkflowsDialog } from "./components/WorkflowsDialog";
 import { useNow, useRunStream } from "./hooks";
@@ -36,9 +38,10 @@ function saveProject(project: Project): void {
   }
 }
 
-/** The app: the top bar (logo and name, which open About, the project bar, and Workflows…), and the project's runs or one run
- * in detail. connect resolves to the sidecar's server, or rejects with why it could not be started. */
-export function App({ connect }: { connect: () => Promise<Connection> }) {
+/** The app: the top bar (logo and name, which open About, the project bar, Workflows… and Settings…), and the
+ * project's runs or one run in detail. connect resolves to the sidecar's server, or rejects with why it could not be
+ * started; appWindow is the window the app is in, whose close it guards while runs are running (CloseGuard). */
+export function App({ connect, appWindow }: { connect: () => Promise<Connection>; appWindow: AppWindow }) {
   const [connection, setConnection] = useState<Connection | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   useEffect(() => {
@@ -47,15 +50,20 @@ export function App({ connect }: { connect: () => Promise<Connection> }) {
   if (failure) {
     return <p className="problem">Could not start the orchestrator: {failure}</p>;
   }
-  return connection ? <Connected connection={connection} /> : <p className="loading">Starting the orchestrator…</p>;
+  return connection ? (
+    <Connected connection={connection} appWindow={appWindow} />
+  ) : (
+    <p className="loading">Starting the orchestrator…</p>
+  );
 }
 
-function Connected({ connection }: { connection: Connection }) {
+function Connected({ connection, appWindow }: { connection: Connection; appWindow: AppWindow }) {
   const api = useMemo(() => new Api(connection), [connection]);
   const [project, setProject] = useState(() => savedProject(connection.project));
   const [settingUp, setSettingUp] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [workflowsOpen, setWorkflowsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // On start, with a project, the setup dialog opens by itself until it has been closed with every required check
   // passed. When the server cannot tell whether it has, the dialog stays closed: "Check setup…" still opens it.
   const [startedWithProject] = useState(project.cwd !== "");
@@ -94,6 +102,9 @@ function Connected({ connection }: { connection: Connection }) {
         <button type="button" className="workflows-button" onClick={() => setWorkflowsOpen(true)}>
           Workflows…
         </button>
+        <button type="button" className="settings-button" onClick={() => setSettingsOpen(true)}>
+          Settings…
+        </button>
       </header>
       {project.cwd ? (
         // Keyed by the project, so opening another one starts from its overview.
@@ -107,6 +118,8 @@ function Connected({ connection }: { connection: Connection }) {
       )}
       {workflowsOpen && <WorkflowsDialog api={api} onClose={() => setWorkflowsOpen(false)} />}
       {aboutOpen && <About version={connection.version} onClose={() => setAboutOpen(false)} />}
+      {settingsOpen && <SettingsDialog api={api} onClose={() => setSettingsOpen(false)} />}
+      <CloseGuard api={api} project={project} appWindow={appWindow} />
     </main>
   );
 }
