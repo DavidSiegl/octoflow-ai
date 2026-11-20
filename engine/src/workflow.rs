@@ -15,9 +15,8 @@ use crate::acp;
 use crate::agents::{AgentError, Agents};
 use crate::constants::{
     APPROVE, CHANGES_REQUESTED, DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
-    FINISHED, HEARTBEAT_SECONDS, PROJECT_DIR, QUALITY_GATE_FAILED, REMOTE, SUCCEEDED,
+    FINISHED, HEARTBEAT_SECONDS, METRICS_FILE, PROJECT_DIR, QUALITY_GATE_FAILED, REMOTE, SUCCEEDED, SUMMARY_FILE,
 };
-use crate::constants::{METRICS_FILE, SUMMARY_FILE};
 use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
 use crate::harness::{harness, AgentSettings, Usage};

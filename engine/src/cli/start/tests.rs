@@ -7,6 +7,7 @@ use std::rc::Rc;
 
 use super::*;
 use crate::cli::args::{parse_args, Command};
+use crate::cli::resume_check;
 use crate::constants::{APPROVE, HEARTBEAT_SECONDS};
 use crate::env::ConfigDir;
 use crate::herdr::HerdrServer;
@@ -16,6 +17,7 @@ use crate::json::object;
 use crate::json::Object;
 use crate::local_gate::LOCAL_GATE;
 use crate::runs::local_host;
+use crate::state::Backend;
 use crate::test_support::{herdr_server, quick, read_saved, resumable, solo, TempDir};
 use crate::workflow::fixture::{quality_state, review_turn, saved_run, Fixture};
 use crate::workflow_file::{workflow_definition, workflow_toml};
@@ -586,9 +588,9 @@ fn a_run_is_resumable_exactly_when_resume_takes_it_and_has_something_left_to_do(
     for (what, saved, age, alive, lacking, expected) in cases {
         let run = read_saved(age, &Value::Object(saved)).lacking_ending_file(lacking);
         let pid_alive = move |_: i64| alive;
-        assert_eq!(crate::cli::resume_check::resumable(&run, "here", &pid_alive).is_ok(), expected, "{what}");
+        assert_eq!(resume_check::resumable(&run, "here", &pid_alive).is_ok(), expected, "{what}");
         let backend = run.shown().backend;
-        let argv: &[&str] = if backend == crate::state::Backend::Acp { &["a1b2c3", "--acp"] } else { &["a1b2c3"] };
+        let argv: &[&str] = if backend == Backend::Acp { &["a1b2c3", "--acp"] } else { &["a1b2c3"] };
         let taken = resumable_state(std::slice::from_ref(&run), &resume_args(argv), "/proj", "here", &pid_alive);
         // resume also takes a finished run, which it leaves as it is (Workflow::run).
         assert_eq!(taken.is_ok(), expected || what == "finished", "{what}: {:?}", taken.err());

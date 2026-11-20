@@ -4,8 +4,7 @@
 
 use serde_json::Value;
 
-use crate::constants::STATE_FILE;
-use crate::constants::{PROJECT_DIR, WORKTREES_DIR};
+use crate::constants::{PROJECT_DIR, STATE_FILE, WORKTREES_DIR};
 use crate::error::OrchestratorError;
 use crate::host::{run_states_in, Host, DEFAULT_TIMEOUT};
 use crate::state::{run_dir, SavedRun};

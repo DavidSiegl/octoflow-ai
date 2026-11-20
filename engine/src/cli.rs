@@ -3,7 +3,8 @@
 //! joins as a [`Command`] arm of [`run_command`], given the same [`Connected`], or, when it needs no herdr pane, of
 //! [`herdrless_command`], given the same [`Local`]. serve is neither: it is crate::serve's, which main runs before it
 //! starts the other commands' signal handling. `run`
-//! and `resume` are here and in crate::cli::start; the commands about a project's runs in crate::cli::listing, prune
+//! and `resume` are here and in crate::cli::start, resume's check of the run it takes up in crate::cli::resume_check;
+//! the commands about a project's runs in crate::cli::listing, prune
 //! and close; `workflows`, `drain`, `refresh` and `doctor` in modules of their names.
 
 use std::cell::Cell;
@@ -14,8 +15,9 @@ use std::sync::OnceLock;
 
 use crate::acp::{AcpAgents, LeftoverGroups};
 use crate::agents::{Agents, EitherBackend, RunPlaces};
-use crate::constants::STATE_FILE;
-use crate::constants::{EXIT_CHANGES_REQUESTED, EXIT_CONFLICT, EXIT_ERROR, EXIT_INTERRUPTED, NO_VERDICT, SUCCEEDED};
+use crate::constants::{
+    EXIT_CHANGES_REQUESTED, EXIT_CONFLICT, EXIT_ERROR, EXIT_INTERRUPTED, NO_VERDICT, STATE_FILE, SUCCEEDED,
+};
 use crate::env::ConfigDir;
 use crate::error::OrchestratorError;
 use crate::harness::AgentSettings;

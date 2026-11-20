@@ -345,12 +345,12 @@ impl ProjectRuns {
     }
 
     /// Resume run_id, a desktop app's run (crate::state::Backend::Acp) that a resume would take up and find something
-    /// left to do in (crate::cli::resume_check::resumable), the way start starts a detached run: its leftover agents ended
-    /// first (crate::acp::end_leftovers), then `program resume --cwd DIR --acp -- RUN_ID` started detached, and waited for
-    /// (StartWait::until) until it saves the run's state.json anew, which it does once it has taken the run up, or
-    /// exits without. Each agent then continues its saved session (crate::acp's AcpAgents::start). Gives how the wait
-    /// ended, Listed meaning taken up. This serve's resumes of the project run one after the other, so a second resume
-    /// of a run finds it taken up, and is refused.
+    /// left to do in (crate::cli::resume_check::resumable), the way start starts a detached run: its leftover agents
+    /// ended first (crate::acp::end_leftovers), then `program resume --cwd DIR --acp -- RUN_ID` started detached, and
+    /// waited for (StartWait::until) until it saves the run's state.json anew, which it does once it has taken the run
+    /// up, or exits without. Each agent then continues its saved session (crate::acp's AcpAgents::start). Gives how the
+    /// wait ended, Listed meaning taken up. This serve's resumes of the project run one after the other, so a second
+    /// resume of a run finds it taken up, and is refused.
     ///
     /// Errors: Refused for a run id that is not a plain name; Missing for no such run; Conflict for a run that is not
     /// the app's or not resumable, saying why, or a project whose runs start in herdr; Failed for a project on a
