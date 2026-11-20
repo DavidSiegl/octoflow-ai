@@ -112,6 +112,19 @@ fn a_run_not_closed_under_the_old_directory_refuses_the_move() {
 }
 
 #[test]
+fn a_state_json_naming_no_run_under_the_old_directory_refuses_the_move_naming_the_file() {
+    let repo = Repo::new(&[("a.txt", "a\n")]);
+    let cwd = &repo.path;
+    put(&old_state(cwd), "{not json");
+
+    let e = move_project_dir(&repo.host, cwd, false).expect_err("refused");
+
+    let start = format!("{cwd}/.orchestrator holds a run state no engine reads: {}", old_state(cwd));
+    assert!(e.0.starts_with(&format!("{start} is not JSON")), "{}", e.0);
+    assert!(!Path::new(&format!("{cwd}/.octoflow-ai")).exists());
+}
+
+#[test]
 fn a_dry_run_refuses_a_due_move_and_moves_nothing() {
     let repo = Repo::new(&[("a.txt", "a\n")]);
     let cwd = &repo.path;

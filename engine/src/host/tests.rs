@@ -6,6 +6,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use super::*;
 use crate::interrupt::Interrupt;
+use crate::state::RunState;
 use crate::test_support::{ended, oracle, raise_once_written, TempDir, HEARS_SIGINT};
 
 /// A token-shaped string, built so that no scanner takes this file for a leak.
@@ -424,16 +425,48 @@ fn run_states() {
 }
 
 #[test]
-fn run_states_corrupt() {
+fn a_state_json_that_is_not_json_or_names_no_run_is_an_unreadable_run_named_by_its_directory() {
     let d = TempDir::new();
     put(&d.join(&format!("{RUNS_DIR}/a/state.json")), "{\"run_id\": \n");
-    let e = ProcessHost::local(&Interrupt::new()).run_states(&d.path()).unwrap_err();
-    assert!(e.0.starts_with(&format!("corrupt run state under {}/{RUNS_DIR}: ", d.path())), "{e}");
+    put(&d.join(&format!("{RUNS_DIR}/b/state.json")), "[1]\n");
+    put(&d.join(&format!("{RUNS_DIR}/c/state.json")), &RunState::new("c", "t", &d.path()).to_text());
+    let host = ProcessHost::local(&Interrupt::new());
+    let mut runs = host.run_states(&d.path()).unwrap();
+    runs.sort_by(|x, y| x.shown().run_id.cmp(&y.shown().run_id));
+    let listed: Vec<(&str, Option<&str>)> = runs.iter().map(|r| (r.shown().run_id.as_str(), r.problem())).collect();
+    let runs_dir = format!("{}/{RUNS_DIR}", d.path());
+    let a = format!(
+        "{runs_dir}/a/state.json is not JSON (EOF while parsing a value at line 1 column 11); fix it, or remove \
+         {runs_dir}/a"
+    );
+    let b = format!("{runs_dir}/b/state.json is not a JSON object with a run_id; fix it, or remove {runs_dir}/b");
+    assert_eq!(listed, [("a", Some(a.as_str())), ("b", Some(b.as_str())), ("c", None)]);
+    let a = host.run_state(&d.path(), "a").unwrap().unwrap();
+    assert_eq!(a.state().unwrap_err().0, listed[0].1.unwrap());
+}
+
+#[test]
+fn bytes_that_are_not_utf_8_in_a_run_s_directory_name_or_state_json_fail_only_that_run() {
+    use std::os::unix::ffi::OsStrExt;
+    let d = TempDir::new();
+    let runs = std::path::PathBuf::from(format!("{}/{RUNS_DIR}", d.path()));
+    let odd = runs.join(std::ffi::OsStr::from_bytes(b"x\xff"));
+    std::fs::create_dir_all(&odd).unwrap();
+    std::fs::write(odd.join("state.json"), RunState::new("x", "t", &d.path()).to_text()).unwrap();
+    std::fs::create_dir_all(runs.join("y")).unwrap();
+    std::fs::write(runs.join("y/state.json"), b"{\"run_id\": \"y\xff\"}\n").unwrap();
+    let host = ProcessHost::local(&Interrupt::new());
+    let mut listed = host.run_states(&d.path()).unwrap();
+    listed.sort_by(|a, b| a.shown().run_id.cmp(&b.shown().run_id));
+    assert_eq!((listed[0].shown().run_id.as_str(), listed[0].problem()), ("x", None));
+    let y = format!("{}/y/state.json is not UTF-8 text; fix it, or remove {}/y", runs.display(), runs.display());
+    assert_eq!((listed[1].shown().run_id.as_str(), listed[1].problem()), ("y", Some(y.as_str())));
+    assert_eq!(listed.len(), 2);
 }
 
 #[test]
 fn a_run_state_whose_age_is_not_a_number_is_corrupt() {
-    let e = parsed_run_states("/p", RUNS_DIR, "12x {}\0").unwrap_err();
+    let e = parsed_run_states("/p", RUNS_DIR, b"12x {}\0").unwrap_err();
     assert_eq!(e.0, format!("corrupt run state under /p/{RUNS_DIR}: an age that is not a whole number: \"12x\""));
 }
 
@@ -894,16 +927,23 @@ fn what_leads_out_of_a_run_directory_is_neither_listed_nor_read_over_ssh() {
     link(&d.join("state.json"), &format!("{runs}/s/state.json"));
     std::fs::create_dir_all(format!("{runs}/m")).unwrap();
     put(&format!("{runs}/m/state.json"), "{\"run_id\": \"away\"}");
+    // An unreadable state.json names no run, so it is the run its directory is named for (SavedRun::read): u's is
+    // kept, but not under ualias, a link to u, nor t's, a link out.
+    put(&format!("{runs}/u/state.json"), "not json");
+    link("u", &format!("{runs}/ualias"));
+    put(&d.join("t.json"), "not json");
+    std::fs::create_dir_all(format!("{runs}/t")).unwrap();
+    link(&d.join("t.json"), &format!("{runs}/t/state.json"));
     let states = ssh.host.run_states_inside(&d.join("proj")).unwrap();
     let ids: Vec<&str> = states.iter().map(|s| s.shown().run_id.as_str()).collect();
-    assert_eq!(ids, ["r"]);
+    assert_eq!(ids, ["r", "u"]);
     let state = |run: &str| ssh.host.run_state_inside(&d.join("proj"), run).unwrap().map(|s| s.shown().run_id.clone());
     assert_eq!(
-        ["r", "alias", "s", "m", "away", "nosuch"].map(state),
-        [Some("r".to_string()), None, None, None, None, None]
+        ["r", "alias", "s", "m", "away", "nosuch", "u", "ualias", "t"].map(state),
+        [Some("r".to_string()), None, None, None, None, None, Some("u".to_string()), None, None]
     );
     // Each listing and each read is one command over ssh.
-    assert_eq!(ssh.calls().len(), 4 + 9 + 1 + 6);
+    assert_eq!(ssh.calls().len(), 4 + 9 + 1 + 9);
 }
 
 /// A program called name on PATH that removes the file gone when given it, then runs the system's program of that

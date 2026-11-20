@@ -1060,8 +1060,8 @@ impl Host for FakeHost {
                 continue;
             };
             if name == "state.json" {
-                let state = serde_json::from_str::<Value>(text).map_err(|e| OrchestratorError(e.to_string()))?;
-                states.push(SavedRun::read(s.ages.get(run_id).copied().unwrap_or(0), state)?);
+                let age = s.ages.get(run_id).copied().unwrap_or(0);
+                states.push(SavedRun::read(age, &format!("{runs}{run_id}"), text.as_bytes()));
             }
         }
         Ok(states)

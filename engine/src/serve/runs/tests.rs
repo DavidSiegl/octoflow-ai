@@ -289,5 +289,9 @@ fn an_agent_is_reached_in_the_herdr_server_its_run_saved() {
     save(Some(r#""work""#));
     let e = project.agent_text(SERVE_ID, "build", 10).unwrap_err();
     assert_eq!(e.to_string(), format!("{}/state.json: run state {SERVE_ID} is invalid: invalid type: string \"work\", expected struct HerdrServer", run_dir()));
+    // One whose text is not JSON names its file once (cross-review 251 F6).
+    host.state().files.insert(format!("{}/state.json", run_dir()), "{\"run_id\": \n".to_string());
+    let e = project.agent_text(SERVE_ID, "build", 10).unwrap_err().to_string();
+    assert!(e.starts_with(&format!("{}/state.json is not JSON (", run_dir())), "{e}");
     assert_eq!(console.state().typed.len(), 5);
 }

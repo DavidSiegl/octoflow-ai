@@ -929,6 +929,29 @@ fn an_unreadable_run_is_skipped_and_named_not_failed() {
 }
 
 #[test]
+fn a_state_json_that_is_not_json_or_names_no_run_is_skipped_and_named_beside_a_run_that_closes() {
+    // Either stopped every command that lists the runs, close --all closing nothing (cross-review 194 F1).
+    let c = Close::new();
+    c.add(1_000_000, false, &[]);
+    {
+        let files = &mut c.cli.f.host.state().files;
+        files.insert("/proj/.octoflow-ai/runs/broken/state.json".into(), "{\"run_id\": \n".into());
+        files.insert("/proj/.octoflow-ai/runs/nameless/state.json".into(), "{\"phase\": \"build\"}\n".into());
+    }
+    let (status, out) = c.close(&["--all"]);
+    assert_eq!(status, 0, "{out}");
+    assert!(out.contains("skipped: /proj/.octoflow-ai/runs/broken/state.json is not JSON ("), "{out}");
+    let nameless = "skipped: /proj/.octoflow-ai/runs/nameless/state.json is not a JSON object with a run_id";
+    assert!(out.contains(nameless), "{out}");
+    assert!(out.ends_with("1 closed, 2 skipped, 0 already closed\n"), "{out}");
+    // close names one by its directory, and refuses it with the same reason.
+    let e = c.cli.error(&["close", "--cwd", "/proj", "broken"]);
+    assert!(e.contains("/proj/.octoflow-ai/runs/broken/state.json is not JSON ("), "{e}");
+    let e = c.cli.error(&["close", "--cwd", "/proj", "nameless"]);
+    assert!(e.contains("/proj/.octoflow-ai/runs/nameless/state.json is not a JSON object with a run_id"), "{e}");
+}
+
+#[test]
 fn an_unreadable_run_that_says_closed_is_skipped_not_counted_as_closed() {
     // As a release after this one could save it: closed is only acted on in a state this engine reads.
     let c = Close::new();

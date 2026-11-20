@@ -1432,11 +1432,15 @@ fn a_bad_close_body_is_refused_before_the_project_is_reached() {
 }
 
 #[test]
-fn a_close_of_runs_that_cannot_be_read_is_a_bad_gateway() {
+fn a_close_skips_a_run_whose_state_json_is_not_json_saying_why() {
     let project = Project::new();
     project.write(&format!("{RUNS_DIR}/{SERVE_ID}/state.json"), "not JSON");
     let reply = Served::real().post(&project.query("/close"), r#"{"dry_run": true}"#);
-    assert_eq!(reply.status, Some(502), "{reply:?}");
+    assert_eq!(reply.status, Some(200), "{reply:?}");
+    let runs = reply.json().get("runs").and_then(Value::as_array).cloned().unwrap();
+    let [run] = runs.as_slice() else { panic!("{runs:?}") };
+    assert_eq!((run.get("run"), run.get("outcome")), (Some(&Value::from(SERVE_ID)), Some(&Value::from("skipped"))));
+    assert!(run.get("detail").unwrap().text().contains(&format!("{SERVE_ID}/state.json is not JSON (")), "{run:?}");
 }
 
 #[test]
@@ -1987,18 +1991,24 @@ fn nothing_while_nothing_changes() {
 }
 
 #[test]
-fn an_unreadable_project_is_a_problem_event() {
+fn a_state_json_that_is_not_json_is_the_record_of_an_unreadable_run() {
+    // Not a problem of the whole project, which would hide every other run (cross-review 194 F1).
     let d = Project::new();
     d.write(&format!("{RUNS_DIR}/{SERVE_ID}/state.json"), "{not json");
     let served = Served::real();
     let stream = EventStream::open(&served, &d.query("/events"), "");
     let (kind, payload) = stream.next(Duration::from_secs(2));
-    assert_eq!(kind, "problem");
-    assert!(payload.get("error").unwrap().text().contains("corrupt run state"), "{payload:?}");
+    assert_eq!(kind, "record");
+    assert_eq!(payload.get("run").unwrap().text(), SERVE_ID);
+    let error = payload.get("record").unwrap().get("error").unwrap().text();
+    assert!(error.contains(&format!("{SERVE_ID}/state.json is not JSON (")), "{payload:?}");
     let started = Instant::now();
     d.save(SERVE_ID, &[]);
-    assert_eq!(stream.next(Duration::from_secs(3)), ("problem".to_string(), object([("error", Value::Null)])));
-    assert_eq!(stream.next(Duration::from_secs(3)).0, "record");
+    // The poll that finds the run readable also tells its files, in either order.
+    let payload = std::iter::repeat_with(|| stream.next(Duration::from_secs(3)))
+        .find_map(|(kind, payload)| (kind == "record").then_some(payload))
+        .unwrap();
+    assert_eq!(payload.get("record").unwrap().get("error"), Some(&Value::Null), "{payload:?}");
     assert!(started.elapsed() <= Duration::from_secs(2), "{:?}", started.elapsed());
 }
 

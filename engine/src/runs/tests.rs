@@ -92,6 +92,19 @@ fn a_failed_run_with_an_empty_error_is_judged_by_its_heartbeat() {
 }
 
 #[test]
+fn a_state_json_naming_no_run_is_driven_by_nothing() {
+    let dir = "/proj/.octoflow-ai/runs/20260930-070000-c0ffee";
+    let owned = Value::Object(owner("here")).to_string();
+    for text in ["{not json".to_string(), format!(r#"{{"done": true, "owner": {owned}}}"#), "[]".to_string()] {
+        let run = SavedRun::read(40, dir, text.as_bytes());
+        assert_eq!(run.health("here", &|_| true), None, "{text}");
+    }
+    // One of a format this engine does not read may be another release's, which may still drive it.
+    let other = format!(r#"{{"run_id": "20260930-070000-c0ffee", "format": 999, "owner": {owned}}}"#);
+    assert_eq!(SavedRun::read(40, dir, other.as_bytes()).health("here", &|_| true).unwrap().0, RUNNING);
+}
+
+#[test]
 fn own_process_is_alive() {
     assert!(pid_alive(i64::from(std::process::id())));
 }
