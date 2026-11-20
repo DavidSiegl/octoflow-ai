@@ -251,8 +251,9 @@ fn harness_level(kind: &str) -> (Level, String) {
     }
 }
 
-/// The fix of a harness h whose CLI is installed but does not answer over ACP: for one without an ACP launch, which
-/// the app cannot run yet, what stands in for its install; for the others, to make the CLI answer.
+/// The fix of a harness h that does not answer over ACP: for one without an ACP launch, which the app cannot run yet,
+/// what stands in for its install, whether its CLI is installed or not; for the others, whose CLI is installed, to
+/// make it answer.
 fn unrunnable_fix(h: &Harness) -> String {
     match (h.acp_launch("default", None, None), h.kind == DEFAULT_HARNESS) {
         // claude speaks ACP only through its adapter, whose install the app is to offer (herdr-gui-decoupling 07).
