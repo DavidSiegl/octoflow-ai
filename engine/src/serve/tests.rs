@@ -1423,9 +1423,14 @@ const APP_RUNNING: &str = "20261001-150000-eeeee5";
 const APP_STOPPED: &str = "20261001-160000-fffff6";
 
 /// The orchestrator of a desktop app's run, as its socket answers serve (crate::acp's socket): it greets, takes one
-/// command, answers it ok, and then, for a `stop`, releases the run as interrupted by saving state so. Listens at
-/// sock_dir/run.sock, recorded in state's run directory. Gives each command it took.
-fn fake_orchestrator(state: RunState, sock_dir: &str) -> mpsc::Receiver<Value> {
+/// command, answers it ok, and then, for a `stop`, calls on_stop, as an agent still at work would change the run, and
+/// releases the run as interrupted by saving state so. Listens at sock_dir/run.sock, recorded in state's run
+/// directory. Gives each command it took.
+fn fake_orchestrator(
+    state: RunState,
+    sock_dir: &str,
+    on_stop: impl FnOnce() + Send + 'static,
+) -> mpsc::Receiver<Value> {
     use std::io::Write;
     use std::os::unix::net::UnixListener;
     let path = format!("{sock_dir}/run.sock");
@@ -1441,6 +1446,7 @@ fn fake_orchestrator(state: RunState, sock_dir: &str) -> mpsc::Receiver<Value> {
         let command: Value = serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap();
         writeln!(out, r#"{{"ok": {{}}}}"#).unwrap();
         if command.get("stop").is_some() {
+            on_stop();
             let mut released = state.clone();
             released.error = Some("interrupted".into());
             std::fs::write(format!("{}/state.json", released.dir()), released.to_text()).unwrap();
@@ -1463,7 +1469,7 @@ fn a_desktop_app_s_run_is_closed_through_its_socket_while_running_and_from_state
     let running = save(APP_RUNNING, None);
     save(APP_STOPPED, Some("interrupted"));
     let sock_dir = TempDir::new();
-    let commands = fake_orchestrator(running, &sock_dir.path());
+    let commands = fake_orchestrator(running, &sock_dir.path(), || {});
     let console = Arc::new(FakeConsole::default());
     let (herdr, dir) = (Arc::clone(&console), repo.path.clone());
     let connect = move |_: &str, _: &str, stopping: &Interrupt| {
@@ -1486,6 +1492,34 @@ fn a_desktop_app_s_run_is_closed_through_its_socket_while_running_and_from_state
     assert_eq!(saved_closed(&repo, APP_STOPPED).as_deref(), Some("no agent left"));
     let s = console.state();
     assert!(s.workspace_calls.is_empty() && s.typed.is_empty(), "herdr was asked: {:?}", s.workspace_calls);
+}
+
+#[test]
+fn a_running_app_run_that_changes_while_it_stops_is_skipped_saying_it_was_stopped() {
+    let (repo, wt, served) = closing();
+    let mut running = RunState::new(APP_RUNNING, "a task", &repo.path);
+    (running.phase, running.round, running.backend) = ("build".into(), 1, Backend::Acp);
+    (running.worktree, running.branch, running.base) =
+        (Some(wt.clone()), Some(CLOSE_BRANCH.into()), Some(repo.base().to_string()));
+    repo.host.write(&format!("{}/state.json", running.dir()), &running.to_text(), false).unwrap();
+    let sock_dir = TempDir::new();
+    let new_file = format!("{wt}/new.py");
+    let commands = fake_orchestrator(running, &sock_dir.path(), move || crate::host::tests::put(&new_file, "new\n"));
+    let target = format!("/close?{}", urlencode(&[("cwd", &repo.path)]));
+    let preview = closed_runs(&served.post(&target, r#"{"dry_run": true}"#));
+    let app_only: Vec<_> = preview.into_iter().filter(|(run, _, _, _)| run == APP_RUNNING).collect();
+
+    let runs = closed_runs(&served.post(&target, &close_body(&app_only)));
+
+    assert_eq!(commands.recv_timeout(Duration::from_secs(5)).unwrap(), json!({"stop": {}}));
+    let now = format!("delete worktree {wt}; delete branch {CLOSE_BRANCH}");
+    let skipped = format!(
+        "run {APP_RUNNING} was stopped, but not closed: run {APP_RUNNING} changed since the preview: closing it would \
+         now {now}"
+    );
+    assert_eq!(runs, [(APP_RUNNING.to_string(), "skipped".to_string(), skipped, vec![])]);
+    assert!(std::path::Path::new(&wt).exists());
+    assert_eq!(saved_closed(&repo, APP_RUNNING), None);
 }
 
 #[test]

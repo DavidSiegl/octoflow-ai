@@ -60,7 +60,7 @@ pub enum Outcome {
     /// Closed before, by close or since the sweep began: what close recorded then.
     AlreadyClosed(String),
     /// Not closed, and why: Decision::Refused's reason, the run is gone, or it changed since the preview of a
-    /// Sweep::Previewed.
+    /// Sweep::Previewed; a running run that was stopped to be closed says it was.
     Skipped(String),
     /// Its close failed; what it did before the failure stays done.
     Failed {
@@ -288,7 +288,10 @@ fn stop_run(world: &Closer, cwd: &str, state: &RunState) -> Result<(), Orchestra
         if !matches!(run.health(world.local_host, world.pid_alive), Some((RUNNING, _))) {
             return Ok(());
         }
-        if world.interrupt.is_raised() || start.elapsed() >= STOP_WAIT {
+        if world.interrupt.is_raised() {
+            return Err(OrchestratorError(format!("run {run_id} was told to stop; interrupted before it released")));
+        }
+        if start.elapsed() >= STOP_WAIT {
             return Err(OrchestratorError(format!(
                 "run {run_id} was told to stop, but is still running after {} s",
                 start.elapsed().as_secs()
@@ -339,7 +342,12 @@ fn sweep_run(
                 let once_stopped = previewed.map(|_| (plan.preview_once_stopped(), plan.discarded().to_vec()));
                 stop_run(world, cwd, plan.state)?;
                 let previewed = once_stopped.as_ref().map(|(done, discarded)| (done.as_str(), &discarded[..]));
-                return sweep_run(world, cwd, run_id, dry_run, previewed);
+                return Ok(match sweep_run(world, cwd, run_id, dry_run, previewed)? {
+                    Outcome::Skipped(why) => {
+                        Outcome::Skipped(format!("run {run_id} was stopped, but not closed: {why}"))
+                    }
+                    closed => closed,
+                });
             }
             match plan.close(world, cwd, dry_run) {
                 Ok(done) => Outcome::Closed { done, discarded: plan.discarded().to_vec() },
