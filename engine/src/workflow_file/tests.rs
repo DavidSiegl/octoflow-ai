@@ -53,10 +53,10 @@ fn the_built_in_workflows() {
     for name in WORKFLOWS {
         let p = built_in_workflow(name);
         assert_eq!(p.name(), name);
-        assert!(is_built_in(&p, &built_in()), "{name}");
+        // Every run of it saves its definition and resumes on what that reads back to.
+        assert_eq!(run_pipeline(name, Some(&workflow_definition(&p)), &built_in()).unwrap(), p, "{name}");
     }
     assert_eq!(built_in_workflow("default"), *DEFAULT_WORKFLOW);
-    assert!(!is_built_in(&quick(), &built_in()), "the fixture named quick is not the built-in");
     assert_eq!(
         find_workflow("nope", &built_in()).unwrap_err().0,
         "unknown workflow nope; this orchestrator has default, design, peer-review, product-team, quick"
@@ -71,14 +71,16 @@ fn a_built_in_workflow_is_worded_by_the_prompts_its_steps_take_from_the_default(
     let prompts = Prompts::from_overrides(&overrides).unwrap();
     let default = find_workflow("default", &prompts).unwrap();
     assert_eq!(default.step("build").unwrap().prompt, "Build {spec_path} in {cwd}; report to {build_path}.");
-    assert!(is_built_in(&default, &prompts));
-    assert!(!is_built_in(&default, &built_in()));
+    assert_ne!(default, find_workflow("default", &built_in()).unwrap());
     // quick's build step has a prompt of its own and takes again from the default's, as its file would.
     let quick = find_workflow("quick", &prompts).unwrap();
     let build = quick.step("build").unwrap();
     assert!(build.prompt.starts_with("You are the Builder, the first of two roles"), "{}", build.prompt);
     assert_eq!(build.again.as_deref(), Some(prompts.text(Prompt::FixPrompt)));
-    assert!(is_built_in(&quick, &prompts));
+    // A run worded by those prompts saves and resumes on the same steps.
+    for p in [&default, &quick] {
+        assert_eq!(&run_pipeline(p.name(), Some(&workflow_definition(p)), &prompts).unwrap(), p, "{}", p.name());
+    }
     // product-team words every text of the steps it uses itself, so no prompt file changes it.
     assert_eq!(find_workflow("product-team", &prompts).unwrap(), built_in_workflow("product-team"));
 }
@@ -108,7 +110,6 @@ fn a_run_saved_from_a_workflow_file_of_a_built_in_name_keeps_its_definition() {
     let p = run_pipeline("quick", Some(&saved), &built_in()).unwrap();
     assert_eq!(p.models(), &roles(&[("review", "opus")]));
     assert_ne!(p, built_in_workflow("quick"));
-    assert!(!is_built_in(&p, &built_in()), "so a resumed run saves it again");
 }
 
 #[test]
@@ -131,11 +132,6 @@ fn every_workflow_parses_to_the_definition_workflows_json_records() {
                 assert_eq!(workflow_definition(&p), definition, "{from}");
                 assert_eq!(workflow_toml(&p), field("toml"), "{from}");
                 assert_eq!(workflow_shape(&p), field("shape"), "{from}");
-                assert_eq!(
-                    Some(is_built_in(&p, &built_in())),
-                    outcome.get("built_in").and_then(Value::as_bool),
-                    "{from}"
-                );
                 // The definition as state.json saves it gives the workflow back too.
                 let saved = serde_json::from_str::<Value>(field("definition")).unwrap();
                 assert_eq!(run_pipeline(name, Some(&saved), &built_in()).unwrap(), p, "{from}");

@@ -429,8 +429,9 @@ fn run_a_built_in_workflow_or_a_workflow_file() {
     let cli = Cli::new();
     let saved = started(&cli, &["task", "--workflow", "product-team"]);
     assert_eq!((field(&saved, "workflow"), field(&saved, "phase")), (r#""product-team""#.into(), r#""spec""#.into()));
-    // A built-in workflow is saved by name; its name and the run's prompts give it back.
-    assert_eq!(saved.get("workflow_definition"), Some(&Value::Null));
+    // A built-in workflow's definition is saved too, so that a resume by a release whose built-in differs keeps it.
+    let product_team = find_workflow("product-team", &Default::default()).unwrap();
+    assert_eq!(saved.get("workflow_definition"), Some(&workflow_definition(&product_team)));
     assert_eq!(field(&saved, "models"), r#"{"tests":"sonnet"}"#);
     let mine = built_in_as_file(&d, "quick", "mine");
     let saved = started(&cli, &["task", "--workflow-file", &mine]);

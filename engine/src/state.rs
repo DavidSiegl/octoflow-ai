@@ -122,7 +122,10 @@ pub struct RunState {
     pub ci: Object,
     /// The name of the run's workflow.
     pub workflow: String,
-    /// The workflow_definition of one that is not built in, so a resume does not depend on its file.
+    /// The workflow_definition of the run's workflow, built in or not, so that a resume runs the steps the run was
+    /// started with, whatever the workflow's file or the resuming engine's built-in of its name says now. None only in
+    /// a state.json saved by an engine that saved no definition for a built-in workflow, which resumes on the resuming
+    /// engine's built-in of its name (crate::workflow_file::run_pipeline) and saves that from then on.
     pub workflow_definition: Option<Value>,
     /// Prompts::overrides of the prompts the run started with (load_prompts), so a resume does not depend on the
     /// prompt files either; empty for the built-in texts.

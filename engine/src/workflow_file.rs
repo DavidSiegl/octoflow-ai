@@ -98,12 +98,6 @@ pub fn find_workflow(name: &str, prompts: &Prompts) -> Result<Pipeline, Orchestr
     Err(OrchestratorError(format!("unknown workflow {name}; this orchestrator has {}", WORKFLOWS.join(", "))))
 }
 
-/// Whether p is the built-in workflow of its name as prompts word it, which a run need not save the definition of:
-/// its name and prompts give it back (run_pipeline).
-pub fn is_built_in(p: &Pipeline, prompts: &Prompts) -> bool {
-    WORKFLOWS.contains(&p.name()) && find_workflow(p.name(), prompts).is_ok_and(|built_in| &built_in == p)
-}
-
 /// Name -> path of each workflow file in config's workflows_dir, unparsed, in name order; none without the
 /// directory. Errors: the directory cannot be listed.
 pub fn workflow_files(config: &ConfigDir) -> Result<IndexMap<String, String>, OrchestratorError> {
@@ -714,7 +708,8 @@ fn expect_base(path: &str, base: Option<&str>) -> Result<(), WorkflowEditError> 
 pub fn run_pipeline(name: &str, definition: Option<&Value>, prompts: &Prompts) -> Result<Pipeline, OrchestratorError> {
     match definition {
         None => find_workflow(name, prompts),
-        // A saved definition is canonical, with no use for prompts to word.
+        // A saved definition is canonical, with no use for prompts to word. Its texts are checked against today's
+        // placeholders, a built-in workflow's too (crate::prompts' EARLIER_PLACEHOLDERS).
         Some(definition) => parse_workflow(name, &with_replaced_agents(definition), prompts).map_err(|e| {
             OrchestratorError(format!("the definition of workflow {name} saved with the run is invalid: {e}"))
         }),

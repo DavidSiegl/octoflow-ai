@@ -328,7 +328,10 @@ pub(crate) fn prompt_error(name: &str, e: &TemplateError) -> OrchestratorError {
 }
 
 /// The placeholders an earlier release's built-in text of a prompt took, where they differ from today's: an override
-/// saved with a run that release started may use them (saved_prompts); a prompt file read today may not.
+/// saved with a run that release started may use them (saved_prompts); a prompt file read today may not. A
+/// workflow definition saved with a run, a built-in workflow's included, is read against today's placeholders
+/// (crate::workflow_file::run_pipeline): a release that renames or drops a placeholder a built-in step text uses
+/// keeps every run an earlier release started from resuming, unless it lets saved definitions use the old one too.
 ///
 /// FIX_PROMPT took {build_path} and {prev_review_path} until 0.58.0 gave it {findings}. Its text words only the
 /// default workflow's build step's `again` (pipeline::default_workflow), where {prev_review_path} is still a
