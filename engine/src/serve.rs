@@ -71,7 +71,7 @@ pub struct Reached {
     pub dir: String,
     /// Reaches its runs' agents, each by its AgentAddress.
     pub console: Arc<dyn AgentConsole>,
-    /// Tells and closes its runs' agents' places, each from what its run saved, for POST /close.
+    /// Tells and closes its herdr runs' agents' places, each from what its run saved, for POST /close.
     pub places: Arc<dyn RunPlaces + Send + Sync>,
     /// How POST /run starts a run's process.
     pub launch: Launch,
@@ -207,7 +207,7 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 
 /// serve's HTTP server, on a free port of 127.0.0.1, with its token, answering until it is dropped. Its endpoints
 /// but /setup/checked and the workflow ones each name the project by ?cwd= and an optional ?machine=, and answer JSON;
-/// each is a GET but the ten POSTs:
+/// each is a GET but the eleven POSTs:
 ///
 /// - /runs: {"version", "runs"}, as `list --json` prints it.
 /// - /files?run=ID: {"run", "files"}, the run's files as ProjectRuns::files lists them.
@@ -269,6 +269,13 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 ///   body RunRequest::parse refuses and 413 as for /agent/input, both before the project is reached; 502 when herdr
 ///   cannot launch it, as when it has no server running here and none can be started, or when it cannot be started
 ///   detached, as for a project on a machine.
+/// - POST /resume?cwd=DIR&run=ID: resumes the desktop app's run ID (ProjectRuns::resume): ends its leftover agents,
+///   starts its `resume` detached, and waits for it as POST /run waits for a run. 200 {"run"} once it has taken the run
+///   up; 422 {"error", "run"} when `resume` exited without, error ending with its log's last lines; 202 {"run",
+///   "listed": false} after 30 seconds of neither. The body is not read. 403 for a run id that is not a plain name,
+///   404 for no such run, 409 for a run not the app's or that a resume would not take up or would find nothing left
+///   to do in (the listing's resumable false), or a project whose runs start in herdr; 502 for a project that cannot
+///   be reached, or one on a machine, or a resume that cannot be started.
 /// - POST /close?cwd=DIR: with the JSON body {"dry_run": true}, says what closing each run of the project that
 ///   `close --all` closes would do, changing nothing; with {"close": [{"run", "detail", "discarded"}, ...]}, the
 ///   "closed" runs of such a dry run's answer, closes those runs and no other, each only while closing it would still
@@ -544,6 +551,7 @@ const AGENT_MESSAGE: &str = "/agent/message";
 const SETUP_CHECKED: &str = "/setup/checked";
 const SETUP_GATE: &str = "/setup/gate";
 const RUN: &str = "/run";
+const RESUME: &str = "/resume";
 const CLOSE: &str = "/close";
 const FORGET: &str = "/forget";
 const WORKFLOW_CHECK: &str = "/workflow/check";
@@ -568,6 +576,7 @@ fn answer(shared: &Shared, request: Request) {
         "POST" if path == SETUP_CHECKED => post_checked(shared, request, &query),
         "POST" if path == SETUP_GATE => post_setup_gate(shared, request, &query),
         "POST" if path == RUN => post_run(shared, request, &query),
+        "POST" if path == RESUME => post_resume(shared, request, &query),
         "POST" if path == CLOSE => post_close(shared, request, &query),
         "POST" if path == FORGET => post_forget(shared, request, &query),
         "POST" if path == WORKFLOW_CHECK => post_workflow(shared, request, &query, |_, body| workflows::check(body)),
@@ -989,7 +998,7 @@ fn run_forgotten(run: &RunForgotten) -> Value {
         forget::Outcome::Forgotten => ("forgotten", ""),
         forget::Outcome::Left(Left::NotClosed) => ("not closed", ""),
         forget::Outcome::Left(Left::AwaitsPrune) => ("waiting for prune", forget::AWAITS_PRUNE),
-        forget::Outcome::Left(Left::Unreadable(why)) => ("skipped", why.as_str()),
+        forget::Outcome::Left(Left::Unreadable(why) | Left::AppRun(why)) => ("skipped", why.as_str()),
         forget::Outcome::Gone => ("skipped", "the overview shows no such run any more"),
         forget::Outcome::Failed(error) => ("failed", error.as_str()),
     };
@@ -1027,10 +1036,7 @@ fn run_closed(run: &RunClosed) -> Value {
 /// The answer to POST /run once its body is run and its project project: the run started, by this program, as a new
 /// run id, and waited for.
 fn start_answer(shared: &Shared, project: &ProjectRuns, run: &RunRequest) -> Answer {
-    // Under an AppImage serve's program is in its mount, which ends with the app; the AppImage file itself starts
-    // the same program (ui/src-tauri/src/lib.rs's CLI dispatch) for a detached run, which outlives the app.
-    let appimage = std::env::var("APPIMAGE").ok().filter(|_| project.detached()).filter(|p| !p.is_empty());
-    let program = match appimage.map_or_else(serve_program, Ok) {
+    let program = match run_program(project) {
         Ok(path) => path,
         Err(why) => return (500, error(&why)),
     };
@@ -1059,6 +1065,49 @@ fn start_answer(shared: &Shared, project: &ProjectRuns, run: &RunRequest) -> Ans
         fields.insert("herdr_session".to_string(), Value::from(session));
     }
     (code, Value::Object(fields))
+}
+
+/// Answer a POST of /resume with the query's parameters: resume the run it names, as RunServer's doc comment says.
+fn post_resume(shared: &Shared, request: Request, query: &HashMap<String, String>) {
+    if let Some((code, body)) = refusal(shared, &request, query) {
+        return send_json(request, code, &body);
+    }
+    let (code, body) = match project_of(shared, query, &["cwd", "run"]) {
+        Ok(project) => resume_answer(shared, &project, query.get("run").map_or("", String::as_str)),
+        Err(answer) => answer,
+    };
+    send_json(request, code, &body);
+}
+
+/// POST /resume's answer, once its project is reached, for the run run_id.
+fn resume_answer(shared: &Shared, project: &ProjectRuns, run_id: &str) -> Answer {
+    let program = match run_program(project) {
+        Ok(path) => path,
+        Err(why) => return (500, error(&why)),
+    };
+    let fields = |more: Option<(&str, Value)>| {
+        let mut fields = crate::json::object([("run", Value::from(run_id))]);
+        fields.extend(more.map(|(key, value)| (key.to_string(), value)));
+        Value::Object(fields)
+    };
+    match project.resume(&program, run_id, shared.start_wait, &shared.stopping) {
+        Ok(Started::Listed) => (200, fields(None)),
+        Ok(Started::Unlisted) => (202, fields(Some(("listed", Value::from(false))))),
+        Ok(Started::Exited(shown)) => {
+            let why = format!("the resume of run {run_id} exited before it took the run up; {shown}");
+            (422, fields(Some(("error", Value::from(why)))))
+        }
+        Err(e) => read_failure(e),
+    }
+}
+
+/// The program a run of project, or its resume, is started by: serve's own (serve_program), but under an AppImage,
+/// for a detached run, the AppImage file. Errors: serve_program's.
+fn run_program(project: &ProjectRuns) -> Result<String, String> {
+    // Under an AppImage serve's program is in its mount, which ends with the app; the AppImage file itself starts
+    // the same program (ui/src-tauri/src/lib.rs's CLI dispatch) for a detached run, which outlives the app.
+    let appimage = std::env::var("APPIMAGE").ok().filter(|_| project.detached()).filter(|p| !p.is_empty());
+    appimage.map_or_else(serve_program, Ok)
 }
 
 /// The path of serve's own program, which POST /run starts its runs by. Errors: it cannot be told, or is not UTF-8.

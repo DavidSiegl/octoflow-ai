@@ -1,7 +1,7 @@
 //! Deleting what is left of closed runs: the `forget` command, for one run or every closed run of a project.
 
 use super::prune::awaits_prune;
-use super::Connected;
+use super::{refuse_app_run, Connected};
 use crate::constants::EXIT_ERROR;
 use crate::error::OrchestratorError;
 use crate::host::{Host, RunScope};
@@ -18,6 +18,8 @@ pub struct Forgetter<'a> {
     pub stdout: &'a dyn Fn(&str),
     /// Which of the project's runs forget reads, and so can forget.
     pub scope: RunScope,
+    /// True when forget may forget the desktop app's runs (refuse_app_run): serve's, and the CLI's given --acp.
+    pub acp: bool,
 }
 
 /// Which runs forget_all looks at, and whether it deletes.
@@ -68,6 +70,8 @@ pub enum Left {
     AwaitsPrune,
     /// Its state cannot be read (SavedRun::problem), so that neither is known; why.
     Unreadable(String),
+    /// It is the desktop app's, and the Forgetter's acp is false; why, as refuse_app_run says it.
+    AppRun(String),
 }
 
 impl<'a> Forgetter<'a> {
@@ -78,6 +82,7 @@ impl<'a> Forgetter<'a> {
             interrupt: world.with.interrupt,
             stdout: world.stdout,
             scope: RunScope::Every,
+            acp: world.acp,
         }
     }
 
@@ -109,7 +114,7 @@ pub fn forget_command(
     let runs = world.with.host.run_states(cwd)?;
     let run = find_run(&runs, run_ref, cwd)?;
     let run_id = &run.shown().run_id;
-    match decide(run) {
+    match decide(run, forgetter.acp) {
         Ok(()) => forget(&forgetter, cwd, run_id, dry_run).map(|()| 0),
         Err(Left::NotClosed) => {
             Err(OrchestratorError(format!("run {run_id} is not closed: close it before forgetting it")))
@@ -117,7 +122,7 @@ pub fn forget_command(
         Err(Left::AwaitsPrune) => {
             Err(OrchestratorError(format!("run {run_id} is closed, but {AWAITS_PRUNE}: forget it after that")))
         }
-        Err(Left::Unreadable(why)) => Err(OrchestratorError(why)),
+        Err(Left::Unreadable(why) | Left::AppRun(why)) => Err(OrchestratorError(why)),
     }
 }
 
@@ -162,7 +167,7 @@ pub fn forget_all(world: &Forgetter, cwd: &str, sweep: Sweep) -> Result<Vec<RunF
 /// forget fails, and silent when it is left for being open or awaiting prune, which only the count reports.
 fn sweep_one(world: &Forgetter, cwd: &str, run: &SavedRun, dry_run: bool) -> Outcome {
     let run_id = &run.shown().run_id;
-    let outcome = match decide(run) {
+    let outcome = match decide(run, world.acp) {
         Ok(()) => match forget(world, cwd, run_id, dry_run) {
             Ok(()) => Outcome::Forgotten,
             Err(e) => Outcome::Failed(e.0),
@@ -170,7 +175,7 @@ fn sweep_one(world: &Forgetter, cwd: &str, run: &SavedRun, dry_run: bool) -> Out
         Err(left) => Outcome::Left(left),
     };
     match &outcome {
-        Outcome::Left(Left::Unreadable(why)) => world.say(&format!("skipped: {why}")),
+        Outcome::Left(Left::Unreadable(why) | Left::AppRun(why)) => world.say(&format!("skipped: {why}")),
         Outcome::Failed(why) => world.say(&format!("could not forget run {run_id}: {why}")),
         Outcome::Forgotten | Outcome::Gone | Outcome::Left(Left::NotClosed | Left::AwaitsPrune) => {}
     }
@@ -184,7 +189,7 @@ fn say_counts(world: &Forgetter, outcomes: &[RunForgotten], dry_run: bool) {
     let forgotten = count(|o| *o == Outcome::Forgotten);
     let open = count(|o| *o == Outcome::Left(Left::NotClosed));
     let pruning = count(|o| *o == Outcome::Left(Left::AwaitsPrune));
-    let skipped = count(|o| matches!(o, Outcome::Left(Left::Unreadable(_)) | Outcome::Gone));
+    let skipped = count(|o| matches!(o, Outcome::Left(Left::Unreadable(_) | Left::AppRun(_)) | Outcome::Gone));
     let failed = count(|o| matches!(o, Outcome::Failed(_)));
     let verb = if dry_run { "to forget" } else { "forgotten" };
     let pruning = if pruning > 0 { format!(", {pruning} waiting for prune") } else { String::new() };
@@ -193,9 +198,11 @@ fn say_counts(world: &Forgetter, outcomes: &[RunForgotten], dry_run: bool) {
 }
 
 /// Whether run may be forgotten, as it was read, or why not: only a closed run may, as nothing drives it and resume
-/// refuses it, and of those only one whose branch prune is done with.
-fn decide(run: &SavedRun) -> Result<(), Left> {
+/// refuses it, and of those only one whose branch prune is done with; and a desktop app's run only with acp
+/// (refuse_app_run).
+fn decide(run: &SavedRun, acp: bool) -> Result<(), Left> {
     let state = run.state().map_err(|e| Left::Unreadable(e.0))?;
+    refuse_app_run(state, "forget", acp).map_err(|e| Left::AppRun(e.0))?;
     if !state.is_closed() {
         Err(Left::NotClosed)
     } else if awaits_prune(state) {

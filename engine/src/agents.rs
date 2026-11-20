@@ -16,7 +16,7 @@ use std::fmt;
 
 use crate::error::OrchestratorError;
 use crate::human::Human;
-use crate::state::{AgentRecord, RunState};
+use crate::state::{AgentRecord, Backend, RunState};
 
 /// Why a backend did not do what it was asked.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -196,4 +196,33 @@ pub trait RunPlaces {
 
     /// Close the run's place, with any agent still in it; nothing to do when the run never had one.
     fn end(&self, run: &RunState) -> Result<(), AgentError>;
+}
+
+/// The places of runs of either backend: each run's told and closed by the backend it saved (RunState::backend), so
+/// that neither is asked about the other's runs.
+pub struct EitherBackend<'a> {
+    /// A herdr run's (crate::herdr).
+    pub herdr: &'a dyn RunPlaces,
+    /// An ACP run's (crate::acp::LeftoverGroups, once its orchestrator is gone).
+    pub acp: &'a dyn RunPlaces,
+}
+
+impl EitherBackend<'_> {
+    /// The places of run's backend.
+    fn of(&self, run: &RunState) -> &dyn RunPlaces {
+        match run.backend {
+            Backend::Herdr => self.herdr,
+            Backend::Acp => self.acp,
+        }
+    }
+}
+
+impl RunPlaces for EitherBackend<'_> {
+    fn place(&self, run: &RunState) -> Result<Option<String>, AgentError> {
+        self.of(run).place(run)
+    }
+
+    fn end(&self, run: &RunState) -> Result<(), AgentError> {
+        self.of(run).end(run)
+    }
 }

@@ -4,6 +4,7 @@
 
 use indexmap::IndexMap;
 
+use super::resume_check::resumable;
 use super::{resume_command, Connected};
 use crate::constants::APPROVE;
 use crate::error::OrchestratorError;
@@ -12,7 +13,9 @@ use crate::json::{object, Object, ValueExt};
 use crate::local_gate::LOCAL_GATE;
 use crate::pipeline::{workflow_shape, Pipeline, Step, QUALITY};
 use crate::runs::{RUNNING, STALE};
-use crate::state::{find_run, judged_by_several, run_dir, AgentRecord, RunState, SavedRun, StepVerdict, TurnRecord};
+use crate::state::{
+    find_run, judged_by_several, run_dir, AgentRecord, Backend, RunState, SavedRun, StepVerdict, TurnRecord,
+};
 use crate::summary::turn_lines;
 use serde_json::Value;
 
@@ -47,7 +50,7 @@ pub const BLOCKED_STATUS: &str = "blocked";
 /// - waiting: what the run waits on the human for, {"reason", "detail"}, else null. Reasons, first match wins:
 ///   "blocked" (detail: the question) while a running run's turn waits on a BLOCKED report; "interview" (detail: the
 ///   role) while a running run's current step is human-paced and its last turn has not ended; "stale" (detail: the
-///   resume command) for a stale run that is not closed.
+///   resume command, null for an "acp" run) for a stale run that is not closed.
 /// - verdict: the run's, as saved. verdicts: each verdict a verdict step gave, {"round", "step", "verdict"}, as
 ///   saved (RunState::verdicts); [] for a run saved before them.
 /// - error, closed, branch, worktree: as saved, but error, for a state.json this engine does not read, why not
@@ -55,7 +58,12 @@ pub const BLOCKED_STATUS: &str = "blocked";
 /// - pr: null without a pull request, else {"url", "state", "error"}; state and error are null here, and
 ///   fill_pr_states sets one of them.
 /// - turns: the turn records as saved, [] for a run saved before them.
-/// - resume_command: the command that resumes a stale run that is not closed; null otherwise.
+/// - resume_command: the command that resumes a stale run that is not closed; null otherwise, and for an "acp" run,
+///   which the app resumes and the CLI refuses.
+/// - resumable: whether a resume would take the run up and have something left to do
+///   (crate::cli::resume_check::resumable): a stale run, one released as interrupted or with a failure, or a done one
+///   its orchestrator did not release or that lacks its summary or metrics; an "acp" run is resumed with serve's POST
+///   /resume.
 pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> bool, target: &[String]) -> Object {
     let s = run.shown();
     let unreadable = run.problem();
@@ -65,8 +73,10 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
     let health = run.health(local_host, pid_alive);
     let stale = health.as_ref().is_some_and(|(h, _)| *h == STALE);
     let running = health.as_ref().is_some_and(|(h, _)| *h == RUNNING);
-    // resume refuses a run whose state.json it cannot read.
-    let resume = (stale && !s.is_closed() && unreadable.is_none()).then(|| resume_command(&s.run_id, target));
+    // resume refuses a run whose state.json it cannot read. A stale run of the desktop app's is resumed from the app,
+    // and the CLI refuses it (crate::cli::refuse_app_run), so it has no command.
+    let resumable_stale = stale && !s.is_closed() && unreadable.is_none();
+    let resume = (resumable_stale && s.backend != Backend::Acp).then(|| resume_command(&s.run_id, target));
     let last_turn = s.turns.iter().rev().find(|t| t.step == s.phase);
     let blocked = s.blocked.as_ref().filter(|b| !b.is_empty());
     let waiting = if running && blocked.is_some() {
@@ -75,7 +85,7 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
     } else if running && step.is_some_and(|st| st.human_paced) && last_turn.is_some_and(TurnRecord::under_way) {
         Some(("interview", role.clone().map_or(Value::Null, Value::from)))
     } else {
-        resume.clone().map(|command| (STALE, Value::from(command)))
+        resumable_stale.then(|| (STALE, resume.clone().map_or(Value::Null, Value::from)))
     };
     // A workflow this orchestrator lacks has no gated step known, so only phase quality has a quality round then.
     let in_quality = pipeline.as_ref().map_or(s.phase == QUALITY, |p| s.in_quality(p));
@@ -124,6 +134,7 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
     // Records of strings, numbers and JSON values serialize without fail.
     record.insert("turns".into(), serde_json::to_value(&s.turns).expect("turns serialize"));
     record.insert("resume_command".into(), optional(resume));
+    record.insert("resumable".into(), Value::from(resumable(run, local_host, pid_alive).is_ok()));
     record
 }
 

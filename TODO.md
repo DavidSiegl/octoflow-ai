@@ -46,10 +46,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   (docs/design.md, Harnesses: the user's ruling of 2026-11-20 closed opencode-ask-bash ticket 01 as wontfix). Ticket
   12 of `.scratch/herdr-gui-decoupling` waited on that ticket so that no ACP opencode agent under `default` would run
   bash unasked. It needs another answer before the switch turns on: let opencode run as its own config says, or
-  refuse opencode on app runs under `default` and `acceptEdits`, as the app refuses pi. The comment on
-  opencode's `HARNESSES` row in `engine/src/harness.rs` still says its modes wait on ticket 01. Reword it with the
-  next engine change. It is left as it is now because any change under `engine/src` must raise the version, and open
-  PR #563 already raises it.
+  refuse opencode on app runs under `default` and `acceptEdits`, as the app refuses pi.
 
 - **herdr's words and fields still reach past the `Agents`/`RunPlaces` seam.** `Workflow::wait_out_block`
   (`engine/src/workflow/turn.rs`) logs "answer in the pane" and "typed in its pane; answer there", and
@@ -61,6 +58,18 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   these take their wording from the backend (`Agents::whereabouts`, `RunPlaces::place`), before ticket 12 turns the
   app over to ACP. serve
   reading `herdr_server` (`engine/src/serve/runs.rs`) is by design: its `AgentConsole` stays herdr's own.
+
+- **POST /resume of a project on a machine ends leftovers on a local path before refusing.** Raised by cross-review
+  259 (F7): `ProjectRuns::resume` (`engine/src/serve/runs.rs`) runs `end_leftovers` on the remote run directory's path
+  on this machine before `start_detached` checks `remote()`, so the client gets "cannot list ..." instead of "a run
+  over ACP starts on this machine only" (both 502). Nothing is ended, as no such path exists here. Closes when resume
+  checks `remote()` before `end_leftovers`.
+
+- **Resume shows for an app run whose project starts its runs in herdr.** Raised by cross-review 259 (F8):
+  `RunDetail.tsx` shows the button for any `resumable && backend === "acp"` run, but with the developer switch off
+  `ProjectRuns::resume` always answers 409 ("this app's runs start in herdr"). The error is clear; the button cannot
+  work. Closes when serve tells the app how its project launches runs (or the switch is gone, ticket 12 of
+  `.scratch/herdr-gui-decoupling`).
 
 - **The app's setup marker does not say which backend's checks passed.** Raised by cross-review 258 (F6): herdr's
   and ACP's checks share one marker (`Setup::of`, `engine/src/serve/setup.rs`, `setup_checked_path`). A marker

@@ -125,7 +125,8 @@
        "seconds": 300
       }
      ],
-     "resume_command": null
+     "resume_command": null,
+     "resumable": false
     }
    },
    {
@@ -243,7 +244,8 @@
        "seconds": null
       }
      ],
-     "resume_command": null
+     "resume_command": null,
+     "resumable": false
     }
    },
    {
@@ -349,7 +351,8 @@
        "seconds": null
       }
      ],
-     "resume_command": null
+     "resume_command": null,
+     "resumable": false
     }
    },
    {
@@ -478,7 +481,8 @@
        "seconds": null
       }
      ],
-     "resume_command": null
+     "resume_command": null,
+     "resumable": false
     }
    },
    {
@@ -628,7 +632,8 @@
        "seconds": null
       }
      ],
-     "resume_command": null
+     "resume_command": null,
+     "resumable": false
     }
    },
    {

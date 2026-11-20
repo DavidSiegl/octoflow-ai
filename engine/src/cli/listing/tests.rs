@@ -26,7 +26,7 @@ const SHOW_DIR: &str = "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3";
 const JOB: &str = "Octoflow-AI/octoflow-ai-quality";
 
 /// The keys of a run record, in the order run_record gives them.
-const RUN_RECORD_KEYS: [&str; 26] = [
+const RUN_RECORD_KEYS: [&str; 27] = [
     "id",
     "key",
     "task",
@@ -53,6 +53,7 @@ const RUN_RECORD_KEYS: [&str; 26] = [
     "pr",
     "turns",
     "resume_command",
+    "resumable",
 ];
 
 /// The default workflow's steps as a run record gives them for a run without the quality gate.
@@ -1226,4 +1227,12 @@ fn the_metrics_command_prints_a_line_per_run_that_is_done() {
     std::fs::write(format!("{runs}/3-cccccc/metrics.json"), "{\"run_id\": ").unwrap();
     cli.take_out();
     assert_eq!(cli.main(&argv), EXIT_ERROR);
+}
+
+#[test]
+fn a_stale_run_of_the_desktop_app_s_waits_with_no_command_to_resume_it() {
+    let app = with(mine(), &[("backend", Value::from("acp")), ("format", Value::from(crate::state::ACP_STATE_FORMAT))]);
+    let stale = record(&app, STALE_SECONDS + 1, true, &[]);
+    assert_eq!(key(&stale, "waiting"), json(r#"{"reason": "stale", "detail": null}"#));
+    assert_eq!(key(&stale, "resume_command"), Value::Null);
 }

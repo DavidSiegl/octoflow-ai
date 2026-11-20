@@ -5,6 +5,7 @@ use std::ffi::OsString;
 use std::os::unix::fs::PermissionsExt;
 
 use super::*;
+use crate::constants::SUMMARY_FILE;
 use crate::interrupt::Interrupt;
 use crate::state::RunState;
 use crate::test_support::{ended, oracle, raise_once_written, TempDir, HEARS_SIGINT};
@@ -465,9 +466,32 @@ fn bytes_that_are_not_utf_8_in_a_run_s_directory_name_or_state_json_fail_only_th
 }
 
 #[test]
+fn a_run_lacks_an_ending_file_when_its_directory_has_no_summary_or_no_metrics() {
+    let d = TempDir::new();
+    let runs = format!("{}/{RUNS_DIR}", d.path());
+    for (id, files) in [("both", &[SUMMARY_FILE, METRICS_FILE][..]), ("summary", &[SUMMARY_FILE]), ("none", &[])] {
+        put(&format!("{runs}/{id}/state.json"), &RunState::new(id, "t", &d.path()).to_text());
+        for file in files {
+            put(&format!("{runs}/{id}/{file}"), "x");
+        }
+    }
+    let host = ProcessHost::local(&Interrupt::new());
+    for (scope, listed) in [("every", host.run_states(&d.path())), ("inside", host.run_states_inside(&d.path()))] {
+        let mut listed = listed.unwrap();
+        listed.sort_by(|a, b| a.shown().run_id.cmp(&b.shown().run_id));
+        let lacks: Vec<(&str, bool)> =
+            listed.iter().map(|r| (r.shown().run_id.as_str(), r.lacks_ending_file())).collect();
+        assert_eq!(lacks, [("both", false), ("none", true), ("summary", true)], "{scope}");
+    }
+    assert!(host.run_state(&d.path(), "none").unwrap().unwrap().lacks_ending_file());
+}
+
+#[test]
 fn a_run_state_whose_age_is_not_a_number_is_corrupt() {
-    let e = parsed_run_states("/p", RUNS_DIR, b"12x {}\0").unwrap_err();
+    let e = parsed_run_states("/p", RUNS_DIR, b"12x 0 a/{}\0").unwrap_err();
     assert_eq!(e.0, format!("corrupt run state under /p/{RUNS_DIR}: an age that is not a whole number: \"12x\""));
+    let e = parsed_run_states("/p", RUNS_DIR, b"12 a/{}\0").unwrap_err();
+    assert_eq!(e.0, format!("corrupt run state under /p/{RUNS_DIR}: no 0 or 1 after the age in \"a/{{}}\""));
 }
 
 #[test]

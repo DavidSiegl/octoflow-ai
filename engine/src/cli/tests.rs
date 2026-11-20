@@ -43,11 +43,13 @@ fn run_on(f: &Fixture, argv: &[&str]) -> Result<Ran, Stop> {
     let config = ConfigDir::at("/nowhere");
     let world = Connected {
         with: f.collaborators(),
+        places: &*f.herdr,
         config: &config,
         local_host: "here",
         stdout: &|_| {},
         stderr: &|_| {},
         workflow: &run_workflow,
+        acp: false,
     };
     match run_command(&command(argv), &world)? {
         Ended::Ran(ran) => Ok(*ran),

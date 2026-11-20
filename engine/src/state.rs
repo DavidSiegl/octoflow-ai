@@ -673,6 +673,9 @@ pub struct SavedRun {
     /// False when the state.json is not a JSON object with a run_id: no orchestrator of any release writes one, so
     /// none drives it (SavedRun::health).
     pub(crate) names_run: bool,
+    /// True when the run directory, looked at as its state.json was read, lacked summary.md or metrics.json, which a
+    /// done run's ending writes (crate::workflow's ending_left); false also when nobody looked (lacking_ending_file).
+    lacks_ending_file: bool,
 }
 
 impl SavedRun {
@@ -686,7 +689,7 @@ impl SavedRun {
             let mut state = RunState::from_readable_fields(saved);
             state.run_id = dir_name.to_string();
             let problem = format!("{run_dir}/state.json {what}; fix it, or remove {run_dir}");
-            SavedRun { age, state, problem: Some(problem), names_run: false }
+            SavedRun { age, state, problem: Some(problem), names_run: false, lacks_ending_file: false }
         };
         let Ok(text) = std::str::from_utf8(text) else {
             return unreadable(&Object::new(), "is not UTF-8 text".to_string());
@@ -704,11 +707,27 @@ impl SavedRun {
             }
         };
         match RunState::from_saved(&saved) {
-            Ok(state) => SavedRun { age, state, problem: None, names_run: true },
-            Err(e) => {
-                SavedRun { age, state: RunState::from_readable_fields(&saved), problem: Some(e.0), names_run: true }
-            }
+            Ok(state) => SavedRun { age, state, problem: None, names_run: true, lacks_ending_file: false },
+            Err(e) => SavedRun {
+                age,
+                state: RunState::from_readable_fields(&saved),
+                problem: Some(e.0),
+                names_run: true,
+                lacks_ending_file: false,
+            },
         }
+    }
+
+    /// This run, its directory having lacked summary.md or metrics.json when its state.json was read, as lacks says;
+    /// a run read gets false until then. Only a reader that looked at the directory, as Host::run_states does, sets it.
+    pub fn lacking_ending_file(self, lacks: bool) -> SavedRun {
+        SavedRun { lacks_ending_file: lacks, ..self }
+    }
+
+    /// Whether the run directory lacked summary.md or metrics.json, a file a done run's ending writes, when the
+    /// state.json was read; false when the reader did not look (lacking_ending_file).
+    pub fn lacks_ending_file(&self) -> bool {
+        self.lacks_ending_file
     }
 
     /// Seconds since the state.json was last written, by the clock of the host that wrote it.

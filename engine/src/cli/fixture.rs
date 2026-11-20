@@ -64,11 +64,13 @@ impl Cli {
         let stderr = |text: &str| self.err.borrow_mut().push_str(text);
         let world = Connected {
             with: self.f.collaborators(),
+            places: &*self.f.herdr,
             config: &self.config,
             local_host: "here",
             stdout: &print,
             stderr: &stderr,
             workflow,
+            acp: false,
         };
         f(&world)
     }
@@ -99,7 +101,9 @@ impl Cli {
         if let Some(ended) = herdrless_command(&command, &local) {
             return ended;
         }
-        self.with(|world| run_command(&command, world))
+        // As connect gives it: --acp lets the command act on the desktop app's runs.
+        let acp = command.target().is_some_and(|t| t.acp);
+        self.with(|world| run_command(&command, &Connected { acp, ..*world }))
     }
 
     /// main's exit status for argv, its last line printed as the command's output, its error or interrupted note

@@ -162,6 +162,15 @@ export interface FakeForget {
   requests?: { cwd: string | null; body: ForgetBody }[];
 }
 
+/** What a stubbed server's POST /resume answers: `status` and `body` (200 {"run": the run} unless given), sent once
+ * `held`, if given, resolves. `requests` gets the query's cwd and run of each, in order. */
+export interface FakeResume {
+  status?: number;
+  body?: unknown;
+  held?: Promise<void>;
+  requests?: { cwd: string | null; run: string | null }[];
+}
+
 /** The definition of the built-in workflow `default` a stubbed server reads: two roles, each with a step, the review
  * looping back to the build. */
 export const DEFAULT_DEFINITION: WorkflowDefinition = {
@@ -215,7 +224,7 @@ export interface FakeEdit {
  * any input; whose /setup endpoints answer as `setup` says, a POST of /setup/checked setting its `checked`, and a
  * POST of /setup/gate recording its cwd; and
  * whose /workflows and POST /run answer as `start` says, POST /close as `close` says, the workflow endpoints as
- * `edit` says, and POST /forget as `forget` says. */
+ * `edit` says, POST /forget as `forget` says, and POST /resume as `resume` says. */
 export function stubServer(
   files: Record<string, string>,
   agents: Record<string, string> = {},
@@ -224,6 +233,7 @@ export function stubServer(
   close: FakeClose = {},
   edit: FakeEdit = {},
   forget: FakeForget = {},
+  resume: FakeResume = {},
 ) {
   FakeEventSource.opened = [];
   vi.stubGlobal("EventSource", FakeEventSource);
@@ -296,6 +306,12 @@ export function stubServer(
       forget.requests = [...(forget.requests ?? []), { cwd: searchParams.get("cwd"), body }];
       const dryRun = "dry_run" in body;
       return swept(forget, dryRun, dryRun ? forget.preview : forget.forgotten);
+    }
+    if (pathname === "/resume" && init?.method === "POST") {
+      const run = searchParams.get("run");
+      resume.requests = [...(resume.requests ?? []), { cwd: searchParams.get("cwd"), run }];
+      await resume.held;
+      return answer(resume.status ?? 200, resume.body ?? { run });
     }
     if (pathname === "/agent/input") {
       return init?.method === "POST" ? answer(200, { run: "r", role }) : answer(501, {});

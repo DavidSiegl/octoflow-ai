@@ -11,10 +11,12 @@ use std::sync::{Arc, Mutex, PoisonError};
 use super::start::{RunRequest, StartWait, Started};
 use super::{Launch, Reached};
 use crate::acp;
-use crate::agents::RunPlaces;
+use crate::acp::LeftoverGroups;
+use crate::agents::{EitherBackend, RunPlaces};
 use crate::cli::close::{close_all, Closer, RunClosed, Sweep};
 use crate::cli::forget::{self, forget_all, Forgetter, RunForgotten};
 use crate::cli::listing::run_record;
+use crate::cli::resume_check::resumable;
 use crate::cli::START_LOG;
 use crate::error::OrchestratorError;
 use crate::herdr::{AgentAddress, AgentConsole, HerdrError, Launcher};
@@ -26,7 +28,7 @@ use crate::local_gate::SetUpFile;
 use crate::paths::file_name;
 use crate::runs::{local_host, pid_alive};
 use crate::serve::FINISHED_RUN_WRITES;
-use crate::state::{run_dir, SavedRun};
+use crate::state::{run_dir, Backend, SavedRun};
 use serde_json::Value;
 
 /// The keys of a run record that grow with every read of it while nothing happens; a change in them alone is no
@@ -41,8 +43,8 @@ pub enum RunReadError {
     Refused(String),
     /// There is no such run, or no agent of the role in it, or the agent has exited. serve answers it with 404.
     Missing(String),
-    /// What was asked cannot be had of the run as it is: its journal is from another version of octoflow. serve
-    /// answers it with 409.
+    /// What was asked cannot be had of the run, or the project, as it is: its journal is from another version of
+    /// octoflow, or it is not a run the project resumes (ProjectRuns::resume). serve answers it with 409.
     Conflict(String),
     /// The project could not be read, or herdr failed.
     Failed(OrchestratorError),
@@ -84,7 +86,7 @@ pub struct ProjectRuns {
     host: Arc<dyn Host + Send + Sync>,
     /// Reaches the project's runs' agents, each in the herdr server its run saved.
     console: Arc<dyn AgentConsole>,
-    /// Tells and closes the project's runs' agents' places, each from what its run saved.
+    /// Tells and closes the project's herdr runs' agents' places, each from what its run saved.
     places: Arc<dyn RunPlaces + Send + Sync>,
     /// How a run's process starts (Reached::launch).
     launch: Launch,
@@ -101,6 +103,9 @@ pub struct ProjectRuns {
     /// two of its requests list at once (a double submit) is forgotten by the first, and the second finds it gone.
     /// Another process's sweep (a second app, `octoflow forget`) is not held back (TODO.md).
     forgetting: Mutex<()>,
+    /// Held through each resume, from its check that the run is resumable until the run is taken up or the wait for
+    /// it ends, so that a second resume of the run (two windows, a click again) finds it taken up and is refused.
+    resuming: Mutex<()>,
 }
 
 impl ProjectRuns {
@@ -118,6 +123,7 @@ impl ProjectRuns {
             target,
             pid_alive,
             forgetting: Mutex::new(()),
+            resuming: Mutex::new(()),
         }
     }
 
@@ -135,17 +141,20 @@ impl ProjectRuns {
 
     /// Close the project's runs that sweep names, as crate::cli::close::close_all does, of those records shows
     /// (RunScope::Inside), and give each run's outcome; the lines close prints are dropped, as the outcomes hold what
-    /// they say. A raised stopping starts no further run. Errors: as close_all's.
+    /// they say. A desktop app's run (crate::state::Backend::Acp) still running is stopped through its socket first,
+    /// and its leftover agents, not herdr, are its place (crate::acp::LeftoverGroups). A raised stopping starts no
+    /// further run. Errors: as close_all's.
     pub fn close_all(&self, sweep: Sweep, stopping: &Interrupt) -> Result<Vec<RunClosed>, OrchestratorError> {
         let here = local_host();
         let closer = Closer {
             host: &*self.host,
-            places: &*self.places,
+            places: &EitherBackend { herdr: &*self.places, acp: &LeftoverGroups },
             interrupt: stopping,
             pid_alive: &*self.pid_alive,
             local_host: &here,
             stdout: &|_| {},
             scope: RunScope::Inside,
+            acp: true,
         };
         close_all(&closer, &self.cwd, sweep)
     }
@@ -161,7 +170,8 @@ impl ProjectRuns {
     ) -> Result<Vec<RunForgotten>, OrchestratorError> {
         // A sweep that panicked left nothing half-done that the next could trip on: each run is read at its turn.
         let _one_at_a_time = self.forgetting.lock().unwrap_or_else(PoisonError::into_inner);
-        let forgetter = Forgetter { host: &*self.host, interrupt: stopping, stdout: &|_| {}, scope: RunScope::Inside };
+        let forgetter =
+            Forgetter { host: &*self.host, interrupt: stopping, stdout: &|_| {}, scope: RunScope::Inside, acp: true };
         forget_all(&forgetter, &self.cwd, sweep)
     }
 
@@ -326,28 +336,82 @@ impl ProjectRuns {
         match &self.launch {
             Launch::Herdr(launcher) => self.start_in_herdr(&**launcher, request, program, run_id, wait, stopping),
             Launch::Detached => {
-                if self.remote() {
-                    return Err(
-                        OrchestratorError::new("a run over ACP starts on this machine only, not on a machine").into()
-                    );
-                }
-                let log = format!("{dir}/{START_LOG}");
-                std::fs::create_dir_all(&dir).map_err(|e| OrchestratorError(format!("cannot make {dir}: {e}")))?;
                 let target = ["--cwd".to_string(), self.cwd.clone(), "--acp".to_string()];
-                let run = spawn_detached(&request.argv(program, run_id, &target), &self.launch_dir, &log)?;
-                let ended = wait.until(stopping, || {
-                    if saved() {
-                        return Some(Started::Listed);
-                    }
-                    if !run.exited() {
-                        return None;
-                    }
-                    // As for a run in herdr.
-                    Some(if saved() { Started::Listed } else { Started::Exited(log_tail(&log)) })
-                });
+                let ended =
+                    self.start_detached(&request.argv(program, run_id, &target), &dir, wait, stopping, saved)?;
                 Ok((ended, None))
             }
         }
+    }
+
+    /// Resume run_id, a desktop app's run (crate::state::Backend::Acp) that a resume would take up and find something
+    /// left to do in (crate::cli::resume_check::resumable), the way start starts a detached run: its leftover agents
+    /// ended first (crate::acp::end_leftovers), then `program resume --cwd DIR --acp -- RUN_ID` started detached, and
+    /// waited for (StartWait::until) until it saves the run's state.json anew, which it does once it has taken the run
+    /// up, or exits without. Each agent then continues its saved session (crate::acp's AcpAgents::start). Gives how the
+    /// wait ended, Listed meaning taken up. This serve's resumes of the project run one after the other, so a second
+    /// resume of a run finds it taken up, and is refused.
+    ///
+    /// Errors: Refused for a run id that is not a plain name; Missing for no such run; Conflict for a run that is not
+    /// the app's or not resumable, saying why, or a project whose runs start in herdr; Failed for a project on a
+    /// machine, runs that cannot be read, leftover agents that cannot be ended, and start_detached's.
+    pub fn resume(
+        &self,
+        program: &str,
+        run_id: &str,
+        wait: StartWait,
+        stopping: &Interrupt,
+    ) -> Result<Started, RunReadError> {
+        let dir = self.dir(run_id)?;
+        if !self.detached() {
+            return Err(RunReadError::Conflict("this app's runs start in herdr; resume one with its command".into()));
+        }
+        // A resume that panicked left nothing half-done: the next reads the run anew.
+        let _one_at_a_time = self.resuming.lock().unwrap_or_else(PoisonError::into_inner);
+        let runs = self.saved_runs()?;
+        let Some(run) = runs.iter().find(|run| run.shown().run_id == run_id) else {
+            return Err(RunReadError::Missing(format!("no run {run_id}")));
+        };
+        if run.shown().backend != Backend::Acp {
+            return Err(RunReadError::Conflict(format!("run {run_id} runs in herdr; resume it with its command")));
+        }
+        resumable(run, &local_host(), &*self.pid_alive).map_err(|e| RunReadError::Conflict(e.0))?;
+        let state = format!("{dir}/state.json");
+        let before = self.host.read(&state)?;
+        acp::end_leftovers(&dir)?;
+        let argv: Vec<String> = [program, "resume", "--cwd", &self.cwd, "--acp", "--", run_id].map(String::from).into();
+        let saved_anew = || self.host.read(&state).is_ok_and(|text| text.is_some() && text != before);
+        self.start_detached(&argv, &dir, wait, stopping, saved_anew)
+    }
+
+    /// Start argv detached (spawn_detached), in the project's launch directory, its output appended to the run
+    /// directory dir's START_LOG, and wait (StartWait::until) for saved to hold or for it to exit: Listed once saved
+    /// holds, Exited with its log's last lines when it exits before. Errors: Failed for a project on a machine, which
+    /// starts no run over ACP, and when dir cannot be made or the process cannot be started.
+    fn start_detached(
+        &self,
+        argv: &[String],
+        dir: &str,
+        wait: StartWait,
+        stopping: &Interrupt,
+        saved: impl Fn() -> bool,
+    ) -> Result<Started, RunReadError> {
+        if self.remote() {
+            return Err(OrchestratorError::new("a run over ACP starts on this machine only, not on a machine").into());
+        }
+        let log = format!("{dir}/{START_LOG}");
+        std::fs::create_dir_all(dir).map_err(|e| OrchestratorError(format!("cannot make {dir}: {e}")))?;
+        let run = spawn_detached(argv, &self.launch_dir, &log)?;
+        Ok(wait.until(stopping, || {
+            if saved() {
+                return Some(Started::Listed);
+            }
+            if !run.exited() {
+                return None;
+            }
+            // It may have saved just before it exited, as a run that fails after its claim does.
+            Some(if saved() { Started::Listed } else { Started::Exited(log_tail(&log)) })
+        }))
     }
 
     /// start's run in a new workspace of launcher's herdr, labelled as the run labels its own

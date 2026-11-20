@@ -15,12 +15,11 @@ use crate::cli::drain::{DRAIN_DIR, SPEC_DONE, SPEC_FOR_HUMAN, SPEC_IN_REVIEW, SP
 use crate::cli::listing::RUN_RECORD_VERSION;
 use crate::constants::{
     CLOSED_BRANCH_GRACE, DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
-    EXIT_ERROR, EXIT_WAITING, HARNESS_NAMES, REMOTE, ROLE_LABELS,
+    EXIT_ERROR, EXIT_WAITING, HARNESS_NAMES, METRICS_FILE, REMOTE, ROLE_LABELS,
 };
 use crate::env::ConfigDir;
 use crate::harness::harness;
 use crate::local_gate::LOCAL_GATE;
-use crate::pipeline::METRICS_FILE;
 use crate::workflow_file::workflow_names;
 use crate::workflow_file::WORKFLOWS;
 

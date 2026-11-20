@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { AGENT_POLL_MS } from "./components/AgentPanes";
 import type { ForgottenRun } from "./api";
-import { CONNECTION, FakeEventSource, OPTIONS, RECORDED, stubServer, type FakeClose, type FakeForget, type FakeSetup, type FakeStart } from "./test/fakes";
+import { CONNECTION, FakeEventSource, OPTIONS, RECORDED, stubServer, type FakeClose, type FakeForget, type FakeResume, type FakeSetup, type FakeStart } from "./test/fakes";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -264,6 +264,48 @@ describe("the run detail", () => {
     fireEvent.click(within(detail).getByRole("button", { name: target.page }));
     expect(invoke).toHaveBeenCalledTimes(3);
     expect(invoke).toHaveBeenLastCalledWith("open_outside", { target });
+  });
+});
+
+describe("resuming a run", () => {
+  /** The app on a server that answers POST /resume as resume says, its stream showing the finished run DONE as a
+   * desktop app's run with resumable and the detail of DONE open. */
+  async function openResumable(resume: FakeResume, resumable = true) {
+    stubServer({}, {}, {}, {}, {}, {}, {}, resume);
+    render(<App connect={connect} />);
+    await waitFor(() => expect(FakeEventSource.opened).toHaveLength(1));
+    const source = FakeEventSource.last;
+    const done = RECORDED[0]?.events.find((e) => e.kind === "record")?.record as Record<string, unknown>;
+    act(() => source.emit("record", { run: DONE, record: { ...done, backend: "acp", resumable, error: "interrupted" } }));
+    fireEvent.click(row(DONE));
+    return source;
+  }
+
+  it("resumes a resumable run of the app's once while the resume is under way", async () => {
+    let release = () => {};
+    const resume: FakeResume = { held: new Promise((resolve) => (release = resolve)) };
+    await openResumable(resume);
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    const busy = screen.getByRole("button", { name: "Resuming…" });
+    expect(busy).toBeDisabled();
+    fireEvent.click(busy);
+    await act(async () => release());
+    expect(await screen.findByRole("button", { name: "Resume" })).toBeEnabled();
+    expect(resume.requests).toEqual([{ cwd: CONNECTION.project, run: DONE }]);
+  });
+
+  it("says why a resume failed", async () => {
+    await openResumable({ status: 422, body: { error: "the resume of run x exited before it took the run up", run: DONE } });
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    expect(await screen.findByText("the resume of run x exited before it took the run up")).toBeInTheDocument();
+  });
+
+  it("offers no resume for a run that is not resumable, or not the app's", async () => {
+    const source = await openResumable({}, false);
+    expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
+    const done = RECORDED[0]?.events.find((e) => e.kind === "record")?.record as Record<string, unknown>;
+    act(() => source.emit("record", { run: DONE, record: { ...done, backend: "herdr", resumable: true } }));
+    expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
   });
 });
 

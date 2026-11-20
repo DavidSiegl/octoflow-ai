@@ -1,7 +1,7 @@
 //! `refresh`: what became of the pull request a finished run opened over conflicts with its base, and the clean-up
 //! once it merges cleanly, is merged or is closed. drain refreshes the runs of its specs so too (crate::cli::drain).
 
-use super::{record_in_state, Connected};
+use super::{record_in_state, refuse_app_run, Connected};
 use crate::constants::{EXIT_WAITING, SUCCEEDED};
 use crate::error::OrchestratorError;
 use crate::pull_request::without_conflict_warning;
@@ -119,14 +119,16 @@ pub fn refresh_conflict(
 /// printing a line each (ConflictCheck::line); there, a run that has_conflict as far as its state reads, but whose
 /// state cannot be read, gets a line saying why it is skipped (SavedRun::problem). Returns the exit status: 0 when each
 /// conflict was forgotten, or there was none to refresh, and EXIT_WAITING when any pull request still conflicts or is
-/// not known to merge yet, a skipped run's among them. Errors: run_ref names no run, one whose state cannot be read, or
-/// one that is not done; and as refresh_conflict.
+/// not known to merge yet, a skipped run's among them. A desktop app's run is skipped with a line saying so unless
+/// world has --acp (refuse_app_run), and does not make the status EXIT_WAITING. Errors: run_ref names no run, one
+/// whose state cannot be read, one that is not done, or one refuse_app_run refuses; and as refresh_conflict.
 pub fn refresh_command(world: &Connected, cwd: &str, run_ref: Option<&str>) -> Result<i32, OrchestratorError> {
     let all = world.with.host.run_states(cwd)?;
     let runs: Vec<&SavedRun> = match run_ref {
         Some(run_ref) => {
             let run = find_run(&all, run_ref, cwd)?;
             let state = run.state()?;
+            refuse_app_run(state, "refresh", world.acp)?;
             if !state.done() {
                 return Err(OrchestratorError(format!(
                     "run {} is not done; refresh only looks at a finished run's pull request",
@@ -156,6 +158,11 @@ pub fn refresh_command(world: &Connected, cwd: &str, run_ref: Option<&str>) -> R
                 continue;
             }
         };
+        // The app's runs are not the CLI's to refresh, and say nothing of when the CLI's conflicts clear.
+        if let Err(e) = refuse_app_run(state, "refresh", world.acp) {
+            world.say(&format!("{}: skipped: {e}", state.run_id));
+            continue;
+        }
         let check = refresh_conflict(world, cwd, state, false, true)?;
         world.say(&check.line());
         waiting = waiting || !check.clears();

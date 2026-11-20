@@ -153,7 +153,9 @@ export interface RunRecord {
   health_reason: string | null;
   /** Seconds since state.json was written, when the server read it. */
   heartbeat_age: number;
-  waiting: { reason: "blocked" | "interview" | "stale"; detail: string } | null;
+  /** detail: a blocked run's question, an interview's role, a stale run's resume command; null when the run saved
+   * none, and for a stale "acp" run, which the app resumes (Api.resumeRun). */
+  waiting: { reason: "blocked" | "interview" | "stale"; detail: string | null } | null;
   verdict: string | null;
   /** Each verdict a verdict step gave, in the order given; absent from a server before 0.58.0. */
   verdicts?: StepVerdict[];
@@ -164,6 +166,10 @@ export interface RunRecord {
   pr: { url: string; state: string | null; error: string | null } | null;
   turns: Turn[];
   resume_command: string | null;
+  /** Whether a resume would take the run up and find something left to do: a stale run, one stopped as interrupted or
+   * with a failure, or a done one whose orchestrator stopped before releasing it. An "acp" run is resumed with
+   * Api.resumeRun; absent from a server before 0.93.3. */
+  resumable?: boolean;
 }
 
 /** A file in a run directory; mtime is in seconds since the epoch. */
@@ -538,6 +544,16 @@ export class Api {
       throw new HttpError(200, "the answer has no run");
     }
     return { run: body.run, herdrSession: typeof body.herdr_session === "string" ? body.herdr_session : null };
+  }
+
+  /** Resume run, a resumable "acp" run of project (RunRecord.resumable): its leftover agents are ended, and its
+   * resume started detached, each agent continuing its saved session. Resolves once the resume has taken the run up,
+   * or the server's 30 seconds of waiting for that have passed. Rejects with the server's error message: status 404
+   * for no such run, 409 for a run that is not the app's or not resumable, 422 for a resume that exited before taking
+   * the run up, the message ending with its log's last lines, and 502 for a project it cannot reach or a resume that
+   * cannot be started. */
+  async resumeRun(project: Project, run: string): Promise<void> {
+    await this.json(this.url("/resume", project, { run }), { method: "POST" });
   }
 
   /** What closing each run of the project that `close --all` closes would do, as its dry run says, changing

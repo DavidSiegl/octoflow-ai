@@ -11,7 +11,7 @@ use indexmap::IndexMap;
 use super::{
     ChangedFile, Completed, Exec, ExecError, Host, PutBack, RestoreError, Scanned, GIT_STATUS_ARGS, ORIGIN_READ,
 };
-use crate::constants::WORKTREES_DIR;
+use crate::constants::{METRICS_FILE, SUMMARY_FILE, WORKTREES_DIR};
 use crate::error::OrchestratorError;
 use crate::host::tests::FAKE_TOKEN;
 use crate::quality::Leak;
@@ -1061,7 +1061,9 @@ impl Host for FakeHost {
             };
             if name == "state.json" {
                 let age = s.ages.get(run_id).copied().unwrap_or(0);
-                states.push(SavedRun::read(age, &format!("{runs}{run_id}"), text.as_bytes()));
+                let dir = format!("{runs}{run_id}");
+                let lacks = [SUMMARY_FILE, METRICS_FILE].iter().any(|f| !s.files.contains_key(&format!("{dir}/{f}")));
+                states.push(SavedRun::read(age, &dir, text.as_bytes()).lacking_ending_file(lacks));
             }
         }
         Ok(states)

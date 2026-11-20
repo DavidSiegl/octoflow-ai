@@ -1,13 +1,17 @@
 //! Cleaning up after a run nothing drives any more: the `close` command, for one run or every run of a project.
 
-use super::{record_in_state, Connected};
+use super::{record_in_state, refuse_app_run, Connected};
+use std::time::{Duration, Instant};
+
+use serde_json::json;
+
 use crate::agents::RunPlaces;
 use crate::constants::{EXIT_ERROR, RUNS_DIR};
 use crate::error::OrchestratorError;
 use crate::host::{git_status, Host, RunScope};
 use crate::interrupt::Interrupt;
 use crate::runs::RUNNING;
-use crate::state::{find_run, refs_prefix, RunState, SavedRun};
+use crate::state::{find_run, refs_prefix, Backend, RunState, SavedRun};
 
 /// What close talks to: the project's host, its runs' agents' places, this machine's processes, and where it says
 /// what it does: the CLI's from its Connected (Closer::of), or any other caller's from what it reaches a project
@@ -28,6 +32,8 @@ pub struct Closer<'a> {
     pub stdout: &'a dyn Fn(&str),
     /// Which of the project's runs close reads, and so can close.
     pub scope: RunScope,
+    /// True when close may close the desktop app's runs (refuse_app_run): serve's, and the CLI's given --acp.
+    pub acp: bool,
 }
 
 /// One run close_all looked at, and what became of it.
@@ -54,7 +60,7 @@ pub enum Outcome {
     /// Closed before, by close or since the sweep began: what close recorded then.
     AlreadyClosed(String),
     /// Not closed, and why: Decision::Refused's reason, the run is gone, or it changed since the preview of a
-    /// Sweep::Previewed.
+    /// Sweep::Previewed; a running run that was stopped to be closed says it was.
     Skipped(String),
     /// Its close failed; what it did before the failure stays done.
     Failed {
@@ -88,8 +94,8 @@ type Preview<'p> = (&'p str, &'p [String]);
 enum Decision<'r> {
     /// The run is closed already: its id, and what close recorded then (RunState::closed_line).
     AlreadyClosed { run_id: &'r str, closed: &'r str },
-    /// The run must not be closed now, and why, naming it: its state cannot be read (SavedRun::problem), or it is still
-    /// running or done but still ending (RunState::health, as a done run still ending may be deleting its refs itself,
+    /// The run must not be closed now, and why, naming it: its state cannot be read (SavedRun::problem), it is the
+    /// desktop app's and the Closer's acp is false (refuse_app_run), or it is still running or done but still ending (RunState::health, as a done run still ending may be deleting its refs itself,
     /// Workflow::clean_up_locks).
     Refused(OrchestratorError),
     /// The run is to be closed as the plan says.
@@ -100,6 +106,10 @@ enum Decision<'r> {
 struct Plan<'r> {
     /// The run's state as read.
     state: &'r RunState,
+    /// True when the run is the desktop app's and still running: it is stopped through its socket first (stop_run),
+    /// and the rest of the plan is what closing it will do once it is released as interrupted. Only a dry run carries
+    /// such a plan out; a close stops the run and decides again (close_run, sweep_run).
+    stop: bool,
     /// The run's place to close, as a message names it (RunPlaces::place); None when the run never had one or it is
     /// gone.
     place: Option<String>,
@@ -179,6 +189,11 @@ pub fn close_run(world: &Closer, cwd: &str, run_ref: &str, dry_run: bool) -> Res
             Ok(closed.to_string())
         }
         Decision::Refused(e) => Err(e),
+        Decision::Close(plan) if plan.stop && !dry_run => {
+            stop_run(world, cwd, plan.state)?;
+            // Released now, so not stopped again.
+            close_run(world, cwd, run_ref, dry_run)
+        }
         Decision::Close(plan) => plan.close(world, cwd, dry_run),
     }
 }
@@ -250,6 +265,42 @@ pub fn close_all(world: &Closer, cwd: &str, sweep: Sweep) -> Result<Vec<RunClose
     Ok(looked_at)
 }
 
+/// How long stop_run waits for a run it stopped to be released: its orchestrator answers every pending permission,
+/// cancels its agents' prompts, ends them and saves, which takes a few seconds.
+const STOP_WAIT: Duration = Duration::from_secs(60);
+
+/// Stop the desktop app's running run of state, of the project at cwd, as the app's "Stop all" does: send `stop` to
+/// its socket (crate::acp::ask), then wait until it is no longer RUNNING, read again by world's scope, for at most
+/// STOP_WAIT. It is then released as interrupted, unless it was done (Workflow::run). Errors: the socket cannot be
+/// reached or refuses; the run cannot be read again, or is gone; it is still running after STOP_WAIT, or when world's
+/// interrupt is raised.
+fn stop_run(world: &Closer, cwd: &str, state: &RunState) -> Result<(), OrchestratorError> {
+    let run_id = &state.run_id;
+    crate::acp::ask(&state.dir(), &json!({"stop": {}}))
+        .map_err(|e| OrchestratorError(format!("cannot stop run {run_id}: {e}")))?;
+    world.say(&format!("stopping run {run_id}"));
+    let start = Instant::now();
+    loop {
+        let run = world
+            .scope
+            .state(world.host, cwd, run_id)?
+            .ok_or_else(|| OrchestratorError(format!("run {run_id} is gone since it was told to stop")))?;
+        if !matches!(run.health(world.local_host, world.pid_alive), Some((RUNNING, _))) {
+            return Ok(());
+        }
+        if world.interrupt.is_raised() {
+            return Err(OrchestratorError(format!("run {run_id} was told to stop; interrupted before it released")));
+        }
+        if start.elapsed() >= STOP_WAIT {
+            return Err(OrchestratorError(format!(
+                "run {run_id} was told to stop, but is still running after {} s",
+                start.elapsed().as_secs()
+            )));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 /// What run's state.json, as close_all first read it, records as its closed; None when it records none or cannot be
 /// read.
 fn closed_as_read(run: &SavedRun) -> Option<String> {
@@ -286,11 +337,28 @@ fn sweep_run(
                     plan.preview()
                 )));
             }
+            if plan.stop && !dry_run {
+                return stop_then_sweep(world, cwd, &plan, previewed.is_some());
+            }
             match plan.close(world, cwd, dry_run) {
                 Ok(done) => Outcome::Closed { done, discarded: plan.discarded().to_vec() },
                 Err(e) => Outcome::Failed { error: e.to_string(), discarded: plan.discarded_by_now(world.host, cwd) },
             }
         }
+    })
+}
+
+/// Stop the running run of plan, of the project at cwd, then close it as sweep_run does, decided again once it is
+/// released; with previewed, what closing it discards then must be what the preview showed, or it is skipped.
+/// Errors: as stop_run's and sweep_run's.
+fn stop_then_sweep(world: &Closer, cwd: &str, plan: &Plan, previewed: bool) -> Result<Outcome, OrchestratorError> {
+    let run_id = &plan.state.run_id;
+    let once_stopped = previewed.then(|| (plan.preview_once_stopped(), plan.discarded().to_vec()));
+    stop_run(world, cwd, plan.state)?;
+    let previewed = once_stopped.as_ref().map(|(done, discarded)| (done.as_str(), &discarded[..]));
+    Ok(match sweep_run(world, cwd, run_id, false, previewed)? {
+        Outcome::Skipped(why) => Outcome::Skipped(format!("run {run_id} was stopped, but not closed: {why}")),
+        closed => closed,
     })
 }
 
@@ -305,16 +373,23 @@ fn decide<'r>(world: &Closer, cwd: &str, run: &'r SavedRun) -> Result<Decision<'
     if let Some(closed) = state.closed_line() {
         return Ok(Decision::AlreadyClosed { run_id: &state.run_id, closed });
     }
+    if let Err(e) = refuse_app_run(state, "close", world.acp) {
+        return Ok(Decision::Refused(e));
+    }
     let health = run.health(world.local_host, world.pid_alive);
-    if let Some((RUNNING, why)) = &health {
+    // Only the desktop app's runs can be stopped from here, through their socket; refuse_app_run passed it already.
+    let stop = matches!(&health, Some((RUNNING, _))) && state.backend == Backend::Acp;
+    if let (Some((RUNNING, why)), false) = (&health, stop) {
         return Ok(Decision::Refused(OrchestratorError(format!(
             "run {} is still running ({why}); stop it before closing it",
             state.run_id
         ))));
     }
-    // Stale and not done: its orchestrator died mid-run. A done run stale while ending finished its change.
+    // Stale and not done: its orchestrator died mid-run. A done run stale while ending finished its change. A run to
+    // stop is planned as it will be once released: interrupted, and so failed unless done.
     let failed = state.error.as_deref().is_some_and(|e| !e.is_empty()) || (health.is_some() && !state.done());
-    let place = world.places.place(state)?;
+    // A stopped run's orchestrator ends its agents itself.
+    let place = if stop { None } else { world.places.place(state)? };
     let worktree = match state.worktree.as_deref().filter(|w| !w.is_empty()) {
         Some(path) if failed => {
             let changes = match host.is_worktree(cwd, path)? {
@@ -334,7 +409,7 @@ fn decide<'r>(world: &Closer, cwd: &str, run: &'r SavedRun) -> Result<Decision<'
             |e: OrchestratorError| OrchestratorError(format!("could not read the refs under {prefix}: {e}"));
         host.git_head(cwd)?.is_some() && !host.refs(cwd, &prefix).map_err(unreadable)?.is_empty()
     };
-    Ok(Decision::Close(Plan { state, place, worktree, refs }))
+    Ok(Decision::Close(Plan { state, stop, place, worktree, refs }))
 }
 
 /// The branch in cwd of the failed run of state and what close does to it; None when it has none or it is gone.
@@ -362,12 +437,13 @@ impl<'a> Closer<'a> {
     pub fn of(world: &Connected<'a>) -> Closer<'a> {
         Closer {
             host: world.with.host,
-            places: world.with.agents,
+            places: world.places,
             interrupt: world.with.interrupt,
             pid_alive: world.with.pid_alive,
             local_host: world.local_host,
             stdout: world.stdout,
             scope: RunScope::Every,
+            acp: world.acp,
         }
     }
 
@@ -379,10 +455,15 @@ impl<'a> Closer<'a> {
 
 impl Plan<'_> {
     /// What closing records as the run's closed, the steps in order, such as "workspace closed; worktree deleted;
-    /// branch deleted; refs deleted".
+    /// branch deleted; refs deleted"; a desktop app's run's first step is "leftover agents ended" or "no agent left".
     fn summary(&self) -> String {
-        let workspace = if self.place.is_some() { "workspace closed" } else { "workspace already gone" };
-        let mut done = vec![workspace.to_string()];
+        let place = match (self.state.backend, self.place.is_some()) {
+            (Backend::Herdr, true) => "workspace closed",
+            (Backend::Herdr, false) => "workspace already gone",
+            (Backend::Acp, true) => "leftover agents ended",
+            (Backend::Acp, false) => "no agent left",
+        };
+        let mut done = vec![place.to_string()];
         match &self.worktree {
             WorktreeFate::None => {}
             WorktreeFate::Kept(path) => done.push(format!("worktree kept: {path}")),
@@ -405,6 +486,15 @@ impl Plan<'_> {
     /// worktree /proj/.octoflow-ai/worktrees/a1b2c3; delete branch orchestrator/a1b2c3; delete the refs under
     /// refs/orchestrator/a1b2c3/". summary is what closing records instead, once it is done.
     fn preview(&self) -> String {
+        match self.stop {
+            true => format!("stop it; {}", self.preview_once_stopped()),
+            false => self.preview_once_stopped(),
+        }
+    }
+
+    /// preview, but for the run's stop (Plan::stop): what closing it would do once it is released, as the plan
+    /// decided again then previews it, when nothing else changed meanwhile.
+    fn preview_once_stopped(&self) -> String {
         let mut steps = vec![];
         if let Some(place) = &self.place {
             steps.push(format!("close {place}"));
@@ -442,6 +532,7 @@ impl Plan<'_> {
             world.say(&format!("would close run {run_id}: {preview}"));
             return Ok(preview);
         }
+        debug_assert!(!self.stop, "run {run_id} is closed only once stopped and decided again");
         let closed = self.summary();
         if let Some(place) = &self.place {
             world.places.end(self.state)?;

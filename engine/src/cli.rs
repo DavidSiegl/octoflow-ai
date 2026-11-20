@@ -3,7 +3,8 @@
 //! joins as a [`Command`] arm of [`run_command`], given the same [`Connected`], or, when it needs no herdr pane, of
 //! [`herdrless_command`], given the same [`Local`]. serve is neither: it is crate::serve's, which main runs before it
 //! starts the other commands' signal handling. `run`
-//! and `resume` are here and in crate::cli::start; the commands about a project's runs in crate::cli::listing, prune
+//! and `resume` are here and in crate::cli::start, resume's check of the run it takes up in crate::cli::resume_check;
+//! the commands about a project's runs in crate::cli::listing, prune
 //! and close; `workflows`, `drain`, `refresh` and `doctor` in modules of their names.
 
 use std::cell::Cell;
@@ -12,9 +13,11 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::OnceLock;
 
-use crate::acp::AcpAgents;
-use crate::agents::Agents;
-use crate::constants::{EXIT_CHANGES_REQUESTED, EXIT_CONFLICT, EXIT_ERROR, EXIT_INTERRUPTED, NO_VERDICT, SUCCEEDED};
+use crate::acp::{AcpAgents, LeftoverGroups};
+use crate::agents::{Agents, EitherBackend, RunPlaces};
+use crate::constants::{
+    EXIT_CHANGES_REQUESTED, EXIT_CONFLICT, EXIT_ERROR, EXIT_INTERRUPTED, NO_VERDICT, STATE_FILE, SUCCEEDED,
+};
 use crate::env::ConfigDir;
 use crate::error::OrchestratorError;
 use crate::harness::AgentSettings;
@@ -23,10 +26,10 @@ use crate::host::{shlex_join, Host, ProcessHost};
 use crate::human::Notify;
 use crate::interrupt::Interrupt;
 use crate::package_index::PackageIndexes;
-use crate::pipeline::{Pipeline, STATE_FILE};
+use crate::pipeline::Pipeline;
 use crate::runs::{local_host, pid_alive};
 use crate::spec_file::{read_spec_file, SpecFile};
-use crate::state::{run_dir, RunState};
+use crate::state::{run_dir, Backend, RunState};
 use crate::workflow::{Collaborators, DesktopNotify, LocalHuman, RunSettings, Stopped, SystemClocks, Workflow};
 use serde_json::Value;
 
@@ -38,7 +41,8 @@ pub mod forget;
 pub mod listing;
 pub mod prune;
 pub mod refresh;
-mod start;
+pub(crate) mod resume_check;
+pub(crate) mod start;
 mod workflows;
 
 pub use args::{parse_args, Command, RunsCommand, Target};
@@ -51,6 +55,9 @@ pub use start::{new_state, resumable_state, resumed_state, START_LOG};
 pub struct Connected<'a> {
     /// Every collaborator a Workflow is given.
     pub with: Collaborators<'a>,
+    /// Where the project's runs have agents, read from their saved state, as close tells and ends them: a herdr run's
+    /// workspace, an ACP run's leftover agents (crate::agents::EitherBackend), whichever backend with.agents drives.
+    pub places: &'a dyn RunPlaces,
     /// The orchestrator's configuration directory on this machine: its prompt and workflow files.
     pub config: &'a ConfigDir,
     /// This machine's name, which an owner record of a run here names (crate::runs::local_host).
@@ -61,6 +68,9 @@ pub struct Connected<'a> {
     pub stderr: &'a dyn Fn(&str),
     /// How a run is driven to its verdict: run_workflow, which a test replaces to script the run.
     pub workflow: &'a RunWorkflow<'a>,
+    /// True when the command was given --acp (Target::acp), which only serve passes: its agents run over ACP, and it
+    /// may act on the desktop app's runs, which the CLI's commands otherwise refuse (refuse_app_run).
+    pub acp: bool,
 }
 
 /// Drives the run a state describes through its workflow, as run_workflow does: given the world, the state, the
@@ -277,6 +287,7 @@ fn connect(command: &Command, local: &Local, human: &LocalHuman) -> Result<Ended
     // the thread that started it (crate::acp's Connection::spawn).
     let acp_agents = AcpAgents::new(human, interrupt);
     let agents: &dyn Agents = if acp { &acp_agents } else { &herdr };
+    let places = EitherBackend { herdr: &herdr, acp: &LeftoverGroups };
     let clocks = SystemClocks::new(interrupt).map_err(stopped)?;
     let indexes = PackageIndexes::from_env();
     let here = local_host();
@@ -290,13 +301,28 @@ fn connect(command: &Command, local: &Local, human: &LocalHuman) -> Result<Ended
             pid_alive: &pid_alive,
             indexes: &indexes,
         },
+        places: &places,
         config,
         local_host: &here,
         stdout,
         stderr,
         workflow: &run_workflow,
+        acp,
     };
     run_command(command, &world)
+}
+
+/// Refuse run to command (close, forget, refresh or resume) when it is the desktop app's (Backend::Acp) and acp, the
+/// command's --acp, is false: the app manages its runs, through serve, which alone passes --acp. Errors: so refused,
+/// naming the run, the app and command.
+pub(crate) fn refuse_app_run(run: &RunState, command: &str, acp: bool) -> Result<(), OrchestratorError> {
+    if acp || run.backend != Backend::Acp {
+        return Ok(());
+    }
+    Err(OrchestratorError(format!(
+        "run {} is the desktop app's: its agents run over ACP, so manage it from the app; the CLI does not {command} it",
+        run.run_id
+    )))
 }
 
 /// Whether this process runs in a pane herdr manages, which a run without a machine needs: without a machine, herdr

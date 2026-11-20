@@ -8,7 +8,7 @@
 
 use indexmap::IndexMap;
 
-use crate::constants::{CONSOLE_TAIL_LINES, NETWORK_TIMEOUT, REMOTE, RUNS_DIR};
+use crate::constants::{CONSOLE_TAIL_LINES, METRICS_FILE, NETWORK_TIMEOUT, REMOTE, RUNS_DIR, SUMMARY_FILE};
 use crate::error::OrchestratorError;
 use crate::harness::{harness, SessionLog};
 use crate::json::ValueExt;
@@ -65,8 +65,6 @@ exec git -C "$c" "$@""#;
 /// host killed it for running past that: crate::workflow::origin_unreachable tries it again. No other command's error
 /// says it.
 pub const ORIGIN_SILENT: &str = "origin did not answer within";
-/// The name of a run directory's file that the engine's metrics command reads (crate::summary::run_metrics).
-const METRICS_FILE: &str = "metrics.json";
 /// Where, relative to a project, forget_run keeps the metrics of the runs it deleted: one line of JSON per run, each
 /// its METRICS_FILE's object, in the order they were forgotten.
 const METRICS_ARCHIVE: &str = concat!(crate::project_dir!(), "/metrics-archive.jsonl");
@@ -1233,15 +1231,17 @@ fn run_states_inside_script(runs: &str) -> String {
 
 /// sh printing, for each state.json $f of a run in the directory runs_dir of the project $1, relative to it, whose
 /// directory name matches the sh word runs, such as `*`, and for which the sh condition keep succeeds, its age in
-/// seconds by $now, a blank, the run directory's name as $f names it, a slash, which no name holds, and its text,
-/// ended by a NUL, which no JSON text holds: what parsed_run_states reads. A state.json a human pretty-printed reads
-/// as well as the engine's one line.
+/// seconds by $now, a blank, 1 when the directory $f is in lacks SUMMARY_FILE or METRICS_FILE and 0 when it has both
+/// (SavedRun::lacks_ending_file), a blank, the run directory's name as $f names it, a slash, which no name holds, and
+/// its text, ended by a NUL, which no JSON text holds: what parsed_run_states reads. A state.json a human
+/// pretty-printed reads as well as the engine's one line.
 fn run_states_loop(runs_dir: &str, runs: &str, keep: &str) -> String {
     // d is taken before keep, which may point f at the file a link resolves to.
     format!(
         "for f in \"$1\"/{runs_dir}/{runs}/state.json; do [ -f \"$f\" ] || continue; d=${{f%/*}}; d=${{d##*/}}; \
          {keep} || continue; {MTIME_OF_F} || {SKIP_F_IF_GONE}; s=$(cat -- \"$f\") || {SKIP_F_IF_GONE}; \
-         printf \"%s %s/%s\\000\" \"$((now - m))\" \"$d\" \"$s\"; done; true"
+         l=0; [ -e \"${{f%/*}}/{SUMMARY_FILE}\" ] && [ -e \"${{f%/*}}/{METRICS_FILE}\" ] || l=1; \
+         printf \"%s %s %s/%s\\000\" \"$((now - m))\" \"$l\" \"$d\" \"$s\"; done; true"
     )
 }
 
@@ -1272,14 +1272,21 @@ fn parsed_named_run_states(
             continue;
         }
         let corrupt = |e: String| OrchestratorError(format!("corrupt run state under {cwd}/{runs_dir}: {e}"));
-        let (age, named) = split_at_byte(entry, b' ').unwrap_or((entry, b""));
+        let (age, rest) = split_at_byte(entry, b' ').unwrap_or((entry, b""));
         let age = String::from_utf8_lossy(age);
         let not_int = || corrupt(format!("an age that is not a whole number: {age:?}"));
         let age: i64 = decimal_int(&age).ok_or_else(not_int)?;
+        let (lacks, named) = split_at_byte(rest, b' ').unwrap_or((rest, b""));
+        let lacks = match lacks {
+            b"0" => false,
+            b"1" => true,
+            _ => return Err(corrupt(format!("no 0 or 1 after the age in {:?}", String::from_utf8_lossy(rest)))),
+        };
         let no_dir = || corrupt(format!("no run directory in {:?}", String::from_utf8_lossy(named)));
         let (dir, text) = split_at_byte(named, b'/').ok_or_else(no_dir)?;
         let dir = String::from_utf8_lossy(dir).into_owned();
-        let run = SavedRun::read(age.max(0).unsigned_abs(), &format!("{cwd}/{runs_dir}/{dir}"), text);
+        let run = SavedRun::read(age.max(0).unsigned_abs(), &format!("{cwd}/{runs_dir}/{dir}"), text)
+            .lacking_ending_file(lacks);
         runs.push((dir, run));
     }
     Ok(runs)

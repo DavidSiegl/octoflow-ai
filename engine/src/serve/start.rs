@@ -48,7 +48,8 @@ pub const START_WAIT: StartWait = StartWait { every: Duration::from_millis(500),
 /// How a started run's wait ended (ProjectRuns::start).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Started {
-    /// The run saved its state.json: it is among the project's runs.
+    /// The run saved its state.json: it is among the project's runs. For a resume (ProjectRuns::resume): saved it
+    /// anew, having taken the run up.
     Listed,
     /// `run` exited without saving one, as it does on an error before it claims the run (an unknown workflow, a role
     /// the workflow lacks, a refused run id): where its last lines were and what they said, as "its pane showed:\n…"

@@ -223,8 +223,8 @@ pub const HARNESSES: [Harness; 5] = [
         resume: Resume::Flag("--session"),
         config: Config::OpencodeEnv,
         session_log: None,
-        // Its modes come from its config, which herdr-gui-decoupling ticket 12 waits on (opencode-ask-bash ticket 01);
-        // until then it has the equivalent of none, as its TUI. `opencode acp` 2.0.24 takes no flags and ignores
+        // It has no modes: it runs as its own config says, as its TUI does, so under `default` it runs bash unasked
+        // (TODO.md, Open issues, on opencode app runs). `opencode acp` 2.0.24 takes no flags and ignores
         // OPENCODE_CONFIG_CONTENT, so its model and grant go over ACP: a session config option and a session root.
         acp: Some(Acp { args: &["acp"], modes: &[], add_dir: None }),
     },

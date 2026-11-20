@@ -15,7 +15,7 @@ use crate::acp;
 use crate::agents::{AgentError, Agents};
 use crate::constants::{
     APPROVE, CHANGES_REQUESTED, DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
-    FINISHED, HEARTBEAT_SECONDS, PROJECT_DIR, QUALITY_GATE_FAILED, REMOTE, SUCCEEDED,
+    FINISHED, HEARTBEAT_SECONDS, METRICS_FILE, PROJECT_DIR, QUALITY_GATE_FAILED, REMOTE, SUCCEEDED, SUMMARY_FILE,
 };
 use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
@@ -27,7 +27,7 @@ use crate::json::{object, Object, ValueExt};
 use crate::local_gate::{self, LOCAL_GATE};
 use crate::package_index::PackageIndexes;
 use crate::paths::file_name;
-use crate::pipeline::{Pipeline, Step, DONE, METRICS_FILE, PUBLISH, QUALITY, SUMMARY_FILE};
+use crate::pipeline::{Pipeline, Step, DONE, PUBLISH, QUALITY};
 use crate::prompts::Prompts;
 use crate::proofs::PROOF_TIMEOUT;
 use crate::pull_request::{branch_name, commit_note, pr_body, provenance, spec_title, GateEvidence, QualityFile};

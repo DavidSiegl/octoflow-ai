@@ -10,7 +10,7 @@ use std::time::Instant;
 use super::*;
 use crate::cli::doctor::{Check, Level};
 use crate::cli::listing::run_record;
-use crate::constants::{APPROVE, RUNS_DIR, STALE_SECONDS, WORKTREES_DIR};
+use crate::constants::{APPROVE, METRICS_FILE, RUNS_DIR, STALE_SECONDS, SUMMARY_FILE, WORKTREES_DIR};
 use crate::herdr::{HerdrError, HerdrServer, OWN_SESSION};
 use crate::host::tests::Repo;
 use crate::http::quote;
@@ -1418,6 +1418,109 @@ fn a_run_that_changed_since_the_preview_is_skipped_and_one_not_previewed_is_not_
     assert!(served.console.state().workspaces.contains("w-fin"));
 }
 
+const APP_RUNNING: &str = "20261001-150000-eeeee5";
+const APP_STOPPED: &str = "20261001-160000-fffff6";
+
+/// The orchestrator of a desktop app's run, as its socket answers serve (crate::acp's socket): it greets, takes one
+/// command, answers it ok, and then, for a `stop`, calls on_stop, as an agent still at work would change the run, and
+/// releases the run as interrupted by saving state so. Listens at sock_dir/run.sock, recorded in state's run
+/// directory. Gives each command it took.
+fn fake_orchestrator(
+    state: RunState,
+    sock_dir: &str,
+    on_stop: impl FnOnce() + Send + 'static,
+) -> mpsc::Receiver<Value> {
+    use std::io::Write;
+    use std::os::unix::net::UnixListener;
+    let path = format!("{sock_dir}/run.sock");
+    let listener = UnixListener::bind(&path).expect("the socket binds");
+    std::fs::write(format!("{}/{}", state.dir(), crate::acp::SOCKET_RECORD), format!("{path}\n")).unwrap();
+    let (took, commands) = mpsc::channel();
+    std::thread::spawn(move || {
+        let Ok((stream, _)) = listener.accept() else { return };
+        let mut out = stream.try_clone().unwrap();
+        let mut lines = BufReader::new(stream).lines();
+        let _hello = lines.next();
+        writeln!(out, r#"{{"hello": {{"protocol": {}, "run": "{}"}}}}"#, crate::acp::PROTOCOL, state.run_id).unwrap();
+        let command: Value = serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap();
+        writeln!(out, r#"{{"ok": {{}}}}"#).unwrap();
+        if command.get("stop").is_some() {
+            on_stop();
+            let mut released = state.clone();
+            released.error = Some("interrupted".into());
+            std::fs::write(format!("{}/state.json", released.dir()), released.to_text()).unwrap();
+        }
+        let _ = took.send(command);
+    });
+    commands
+}
+
+#[test]
+fn a_desktop_app_s_run_is_closed_through_its_socket_while_running_and_from_state_once_not_never_asking_herdr() {
+    let repo = Repo::new(&[("app.py", "one\n"), (".octoflow-ai/.gitignore", "*\n")]);
+    let save = |id: &str, error: Option<&str>| {
+        let mut state = RunState::new(id, "a task", &repo.path);
+        (state.phase, state.round, state.backend) = ("build".into(), 1, Backend::Acp);
+        state.error = error.map(String::from);
+        repo.host.write(&format!("{}/state.json", state.dir()), &state.to_text(), false).unwrap();
+        state
+    };
+    let running = save(APP_RUNNING, None);
+    save(APP_STOPPED, Some("interrupted"));
+    let sock_dir = TempDir::for_sockets();
+    let commands = fake_orchestrator(running, &sock_dir.path(), || {});
+    let console = Arc::new(FakeConsole::default());
+    let (herdr, dir) = (Arc::clone(&console), repo.path.clone());
+    let connect = move |_: &str, _: &str, stopping: &Interrupt| {
+        let host = Arc::new(ProcessHost::local(stopping));
+        let (console, workspaces, launch) = (herdr.clone(), herdr.clone(), Launch::Herdr(herdr.clone()));
+        Ok(Reached { host, dir: dir.clone(), console, places: workspaces, launch, launch_dir: dir.clone() })
+    };
+    let served = Served::start(Box::new(connect), &[], Arc::default(), Options::default());
+    let target = format!("/close?{}", urlencode(&[("cwd", &repo.path)]));
+
+    let preview = closed_runs(&served.post(&target, r#"{"dry_run": true}"#));
+    let runs = closed_runs(&served.post(&target, &close_body(&preview)));
+
+    let nothing_left = "record it as closed; nothing else is left".to_string();
+    let closed = |id: &str, detail: &str| (id.to_string(), "closed".to_string(), detail.to_string(), vec![]);
+    assert_eq!(preview, [closed(APP_RUNNING, &format!("stop it; {nothing_left}")), closed(APP_STOPPED, &nothing_left)]);
+    assert_eq!(runs, [closed(APP_RUNNING, "no agent left"), closed(APP_STOPPED, "no agent left")]);
+    assert_eq!(commands.recv_timeout(Duration::from_secs(5)).unwrap(), json!({"stop": {}}));
+    assert_eq!(saved_closed(&repo, APP_RUNNING).as_deref(), Some("no agent left"));
+    assert_eq!(saved_closed(&repo, APP_STOPPED).as_deref(), Some("no agent left"));
+    let s = console.state();
+    assert!(s.workspace_calls.is_empty() && s.typed.is_empty(), "herdr was asked: {:?}", s.workspace_calls);
+}
+
+#[test]
+fn a_running_app_run_that_changes_while_it_stops_is_skipped_saying_it_was_stopped() {
+    let (repo, wt, served) = closing();
+    let mut running = RunState::new(APP_RUNNING, "a task", &repo.path);
+    (running.phase, running.round, running.backend) = ("build".into(), 1, Backend::Acp);
+    (running.worktree, running.branch, running.base) =
+        (Some(wt.clone()), Some(CLOSE_BRANCH.into()), Some(repo.base().to_string()));
+    repo.host.write(&format!("{}/state.json", running.dir()), &running.to_text(), false).unwrap();
+    let sock_dir = TempDir::for_sockets();
+    let new_file = format!("{wt}/new.py");
+    let commands = fake_orchestrator(running, &sock_dir.path(), move || crate::host::tests::put(&new_file, "new\n"));
+    let target = format!("/close?{}", urlencode(&[("cwd", &repo.path)]));
+    let preview = closed_runs(&served.post(&target, r#"{"dry_run": true}"#));
+    let app_only: Vec<_> = preview.into_iter().filter(|(run, _, _, _)| run == APP_RUNNING).collect();
+
+    let runs = closed_runs(&served.post(&target, &close_body(&app_only)));
+
+    assert_eq!(commands.recv_timeout(Duration::from_secs(5)).unwrap(), json!({"stop": {}}));
+    let now = format!("delete worktree {wt}; delete branch {CLOSE_BRANCH}");
+    let skipped = format!(
+        "run {APP_RUNNING} was stopped, but not closed: run {APP_RUNNING} changed since the preview: closing it would \
+         now {now}"
+    );
+    assert_eq!(runs, [(APP_RUNNING.to_string(), "skipped".to_string(), skipped, vec![])]);
+    assert!(std::path::Path::new(&wt).exists());
+    assert_eq!(saved_closed(&repo, APP_RUNNING), None);
+}
+
 #[test]
 fn a_bad_close_body_is_refused_before_the_project_is_reached() {
     let connects = Arc::new(Mutex::new(vec![]));
@@ -2338,6 +2441,141 @@ fn a_detached_run_of_a_project_on_a_machine_is_refused() {
     let refused = project.start(&request, "/bin/octoflow", "20261120-000000-abcdef", QUICK_WAIT, &Interrupt::new());
 
     assert!(matches!(refused, Err(RunReadError::Failed(_))), "{refused:?}");
+}
+
+/// Save in the project at dir the run run_id, a desktop app's run in build released as interrupted, as change
+/// leaves it; gives its run directory.
+fn save_app_run(dir: &str, run_id: &str, change: impl FnOnce(&mut RunState)) -> String {
+    let mut state = RunState::new(run_id, "a task", dir);
+    (state.phase, state.round, state.backend) = ("build".into(), 1, Backend::Acp);
+    state.error = Some("interrupted".into());
+    change(&mut state);
+    std::fs::create_dir_all(state.dir()).unwrap();
+    std::fs::write(format!("{}/state.json", state.dir()), state.to_text()).unwrap();
+    state.dir()
+}
+
+#[test]
+fn a_resume_ends_the_run_s_leftover_agents_then_starts_resume_detached_until_it_takes_the_run_up() {
+    let tmp = TempDir::new();
+    let stopping = Interrupt::new();
+    let project = detached_project(&tmp.path(), &stopping);
+    let id = "20261120-000000-abcdef";
+    let dir = save_app_run(&tmp.path(), id, |_| {});
+    // A builder's agent an orchestrator SIGKILLed left: a group whose leader exited and whose member lives.
+    let pid_file = format!("{dir}/member");
+    use std::os::unix::process::CommandExt;
+    let mut leader = std::process::Command::new("/bin/sh")
+        .args(["-c", "sleep 30 & echo $! > \"$1\"", "sh", &pid_file])
+        .process_group(0)
+        .spawn()
+        .expect("sh starts");
+    let pgid = i32::try_from(leader.id()).unwrap();
+    leader.wait().expect("the leader exited and is reaped");
+    let started = Instant::now();
+    while !std::fs::read_to_string(&pid_file).is_ok_and(|t| t.ends_with('\n')) {
+        assert!(started.elapsed() < Duration::from_secs(5), "the member did not start");
+    }
+    std::fs::write(format!("{dir}/build.acp.group"), format!(r#"{{"pgid":{pgid},"started":"long ago"}}"#)).unwrap();
+    // Says what it got, then takes the run up as resume does, by saving its state.json anew.
+    let script = r#"echo "$@"; echo '{}' > "$3/.octoflow-ai/runs/$6/state.json"; exec sleep 5"#;
+    let program = run_program(&tmp.path(), script);
+
+    let ended = project.resume(&program, id, QUICK_WAIT, &stopping).expect("resumed");
+
+    assert_eq!(ended, Started::Listed);
+    let log = std::fs::read_to_string(format!("{dir}/run.log")).unwrap();
+    assert_eq!(log, format!("resume --cwd {} --acp -- {id}\n", tmp.path()));
+    let group_gone = || nix::sys::signal::kill(nix::unistd::Pid::from_raw(-pgid), None).is_err();
+    while !group_gone() {
+        assert!(started.elapsed() < Duration::from_secs(10), "the leftover agent outlived the resume");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn of_two_resumes_of_one_run_at_once_the_second_finds_it_taken_up_by_the_first() {
+    let tmp = TempDir::new();
+    let stopping = Interrupt::new();
+    let project = detached_project(&tmp.path(), &stopping);
+    let id = "20261120-000000-abcdef";
+    let dir = save_app_run(&tmp.path(), id, |_| {});
+    // What resume saves once it has taken the run up: the run, its error cleared, owned by a live process here, this
+    // test's.
+    let mut taken: Value =
+        serde_json::from_str(&std::fs::read_to_string(format!("{dir}/state.json")).unwrap()).unwrap();
+    taken["owner"] = object([
+        ("host", Value::from(crate::runs::local_host())),
+        ("pid", Value::from(i64::from(std::process::id()))),
+        ("started_at", Value::from("x")),
+    ]);
+    taken["error"] = Value::Null;
+    let taken_file = format!("{}/taken.json", tmp.path());
+    std::fs::write(&taken_file, taken.to_string()).unwrap();
+    let script = format!(r#"echo "$@" >> "$3/resumes"; sleep 0.1; cp "{taken_file}" "{dir}/state.json"; exec sleep 5"#);
+    let program = run_program(&tmp.path(), &script);
+    let wait = StartWait { every: Duration::from_millis(10), limit: Duration::from_secs(5) };
+
+    let mut ended: Vec<_> = std::thread::scope(|s| {
+        let both = [(); 2].map(|()| s.spawn(|| project.resume(&program, id, wait, &stopping)));
+        both.map(|t| t.join().expect("a resume does not panic")).into()
+    });
+
+    ended.sort_by_key(Result::is_err);
+    assert_eq!(ended[0], Ok(Started::Listed));
+    let Err(RunReadError::Conflict(why)) = &ended[1] else { panic!("not a conflict: {:?}", ended[1]) };
+    assert!(why.starts_with(&format!("run {id} looks alive")), "{why}");
+    let resumes = std::fs::read_to_string(format!("{}/resumes", tmp.path())).unwrap();
+    assert_eq!(resumes.lines().count(), 1, "{resumes}");
+}
+
+#[test]
+fn a_resume_refuses_a_run_it_would_not_take_up_before_starting_anything() {
+    let tmp = TempDir::new();
+    let stopping = Interrupt::new();
+    let project = detached_project(&tmp.path(), &stopping);
+    save_app_run(&tmp.path(), "20261120-000000-aaaaaa", |s| s.backend = Backend::Herdr);
+    let finished = save_app_run(&tmp.path(), "20261120-000000-bbbbbb", |s| (s.phase, s.error) = ("done".into(), None));
+    for file in [SUMMARY_FILE, METRICS_FILE] {
+        std::fs::write(format!("{finished}/{file}"), "{}").unwrap();
+    }
+    save_app_run(&tmp.path(), "20261120-000000-cccccc", |s| s.closed = Some("no agent left".into()));
+    // Never started: a start would fail as Failed.
+    let resume = |id: &str| project.resume("/nonexistent/octoflow", id, QUICK_WAIT, &stopping).unwrap_err();
+
+    let refused = ["aaaaaa", "bbbbbb", "cccccc", "dddddd"].map(|key| resume(&format!("20261120-000000-{key}")));
+
+    assert_eq!(
+        refused,
+        [
+            RunReadError::Conflict("run 20261120-000000-aaaaaa runs in herdr; resume it with its command".into()),
+            RunReadError::Conflict("run 20261120-000000-bbbbbb is finished; nothing is left to resume".into()),
+            RunReadError::Conflict("run 20261120-000000-cccccc was closed; start a new run".into()),
+            RunReadError::Missing("no run 20261120-000000-dddddd".into()),
+        ]
+    );
+    let in_herdr = ProjectRuns::new(reached(&Arc::new(ServeHost::on(None)), &Arc::new(FakeConsole::default())), vec![]);
+    let refused = in_herdr.resume("/nonexistent/octoflow", "20261120-000000-aaaaaa", QUICK_WAIT, &stopping);
+    assert!(matches!(refused, Err(RunReadError::Conflict(_))), "{refused:?}");
+}
+
+#[test]
+fn post_resume_names_the_run_and_answers_404_for_no_such_run() {
+    let tmp = TempDir::new();
+    let dir = tmp.path();
+    let connect = move |_: &str, _: &str, stopping: &Interrupt| {
+        let host = Arc::new(ProcessHost::local(stopping));
+        let console = Arc::new(FakeConsole::default());
+        let (dir, launch_dir) = (dir.clone(), dir.clone());
+        Ok(Reached { host, dir, console: console.clone(), places: console, launch: Launch::Detached, launch_dir })
+    };
+    let served = Served::start(Box::new(connect), &[], Arc::default(), Options::default());
+
+    let unnamed = served.post(&format!("/resume?{}", urlencode(&[("cwd", &tmp.path())])), "");
+    let missing = served.post(&format!("/resume?{}", urlencode(&[("cwd", &tmp.path()), ("run", "nope")])), "");
+
+    assert_eq!((unnamed.status, unnamed.json()), (Some(400), json!({"error": "missing parameter run"})));
+    assert_eq!((missing.status, missing.json()), (Some(404), json!({"error": "no run nope"})));
 }
 
 /// A journal of a role whose second session (seq 4) is current: an update, a permission and a wait on the human.

@@ -175,11 +175,13 @@ impl World {
         let config = ConfigDir::at("/nowhere");
         let world = Connected {
             with: self.f.collaborators(),
+            places: &*self.f.herdr,
             config: &config,
             local_host: "here",
             stdout: &|_| {},
             stderr: &|_| {},
             workflow: &run_workflow,
+            acp: false,
         };
         if !resume {
             return run_workflow(&world, self.f.state.clone(), self.pipeline.clone(), None);

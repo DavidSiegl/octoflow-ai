@@ -7,6 +7,7 @@ use std::rc::Rc;
 
 use super::*;
 use crate::cli::args::{parse_args, Command};
+use crate::cli::resume_check;
 use crate::constants::{APPROVE, HEARTBEAT_SECONDS};
 use crate::env::ConfigDir;
 use crate::herdr::HerdrServer;
@@ -16,6 +17,7 @@ use crate::json::object;
 use crate::json::Object;
 use crate::local_gate::LOCAL_GATE;
 use crate::runs::local_host;
+use crate::state::Backend;
 use crate::test_support::{herdr_server, quick, read_saved, resumable, solo, TempDir};
 use crate::workflow::fixture::{quality_state, review_turn, saved_run, Fixture};
 use crate::workflow_file::{workflow_definition, workflow_toml};
@@ -307,11 +309,13 @@ fn resume_limit_needs_the_gate() {
 fn connected<'a>(f: &'a Fixture, config: &'a ConfigDir) -> Connected<'a> {
     Connected {
         with: f.collaborators(),
+        places: &*f.herdr,
         config,
         local_host: "here",
         stdout: &|_| {},
         stderr: &|_| {},
         workflow: &crate::cli::run_workflow,
+        acp: false,
     }
 }
 
@@ -528,4 +532,67 @@ fn a_run_saves_the_herdr_server_it_starts_in_and_a_resume_keeps_it() {
     f.herdr.state().server = Some(session("new"));
     let (state, _) = resumed_state(&resume_args(&["a1b2c3"]), "/proj", &world).unwrap();
     assert_eq!(state.herdr_server, Some(session("old")));
+}
+
+#[test]
+fn a_run_is_resumable_exactly_when_resume_takes_it_and_has_something_left_to_do() {
+    let me = || {
+        let owner = [("host", Value::from("here")), ("pid", Value::from(42)), ("started_at", Value::from("x"))];
+        Value::Object(object(owner))
+    };
+    let acp = [("backend", Value::from("acp")), ("format", Value::from(crate::state::ACP_STATE_FORMAT))];
+    let late = HEARTBEAT_SECONDS + 1;
+    let done_released = || saved_settings(&[("phase", Value::from("done")), ("verdict", Value::from(APPROVE))]);
+    // Each: what it is, its state.json, its age, whether its owner's pid is alive, whether its directory lacks a file
+    // the ending writes, whether it is resumable.
+    let cases = [
+        ("stale", saved_settings(&[("owner", me())]), late, false, false, true),
+        ("interrupted", saved_settings(&[("error", Value::from("interrupted"))]), late, false, false, true),
+        (
+            "failed",
+            saved_settings(&[("error", Value::from("[build] claude failed: not logged in"))]),
+            late,
+            false,
+            false,
+            true,
+        ),
+        (
+            "the app's, stale",
+            saved_settings(&[("owner", me()), acp[0].clone(), acp[1].clone()]),
+            late,
+            false,
+            false,
+            true,
+        ),
+        (
+            "done, not released",
+            saved_settings(&[("phase", Value::from("done")), ("owner", me())]),
+            late,
+            false,
+            false,
+            true,
+        ),
+        ("running", saved_settings(&[("owner", me())]), 30, true, false, false),
+        (
+            "closed",
+            saved_settings(&[("owner", me()), ("closed", Value::from("workspace closed"))]),
+            late,
+            false,
+            false,
+            false,
+        ),
+        ("unreadable", saved_settings(&[("format", Value::from(99))]), late, false, false, false),
+        ("finished", done_released(), late, false, false, false),
+        ("done, released without its summary", done_released(), late, false, true, true),
+    ];
+    for (what, saved, age, alive, lacking, expected) in cases {
+        let run = read_saved(age, &Value::Object(saved)).lacking_ending_file(lacking);
+        let pid_alive = move |_: i64| alive;
+        assert_eq!(resume_check::resumable(&run, "here", &pid_alive).is_ok(), expected, "{what}");
+        let backend = run.shown().backend;
+        let argv: &[&str] = if backend == Backend::Acp { &["a1b2c3", "--acp"] } else { &["a1b2c3"] };
+        let taken = resumable_state(std::slice::from_ref(&run), &resume_args(argv), "/proj", "here", &pid_alive);
+        // resume also takes a finished run, which it leaves as it is (Workflow::run).
+        assert_eq!(taken.is_ok(), expected || what == "finished", "{what}: {:?}", taken.err());
+    }
 }
