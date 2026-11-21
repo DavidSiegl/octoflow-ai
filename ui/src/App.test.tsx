@@ -469,18 +469,35 @@ describe("the setup dialog", () => {
       { name: "gh", level: "needed-for-pr", ok: false, detail: "gh auth status fails", fix: "gh auth login" },
     ],
     passed: true,
-    claude_install: null,
+    adapters: [],
   } as const;
-  const FAILED = { checks: [{ name: "git", level: "required", ok: false, detail: "git is not on PATH", fix: "install git 2.36 or later" }], passed: false, claude_install: null } as const;
+  const FAILED = { checks: [{ name: "git", level: "required", ok: false, detail: "git is not on PATH", fix: "install git 2.36 or later" }], passed: false, adapters: [] } as const;
   const CLAUDE_MISSING = {
     checks: [{ name: "claude", level: "required", ok: false, detail: "claude's ACP adapter is not installed", fix: "install it from the setup dialog" }],
     passed: false,
-    claude_install: { installed: false, megabytes: 913 },
+    adapters: [
+      { agent: "claude", installed: false, megabytes: 913 },
+      { agent: "codex", installed: true, megabytes: 649 },
+    ],
   } as const;
   const CLAUDE_INSTALLED = {
     checks: [{ name: "claude", level: "required", ok: true, detail: "claude-agent-acp 0.101.0", fix: "" }],
     passed: true,
-    claude_install: { installed: true, megabytes: 913 },
+    adapters: [
+      { agent: "claude", installed: true, megabytes: 913 },
+      { agent: "codex", installed: true, megabytes: 649 },
+    ],
+  } as const;
+  const CODEX_MISSING = {
+    checks: [
+      { name: "claude", level: "required", ok: true, detail: "claude-agent-acp 0.101.0", fix: "" },
+      { name: "codex", level: "optional", ok: false, detail: "codex's ACP adapter is not installed", fix: "install it" },
+    ],
+    passed: true,
+    adapters: [
+      { agent: "claude", installed: true, megabytes: 913 },
+      { agent: "codex", installed: false, megabytes: 649 },
+    ],
   } as const;
   const INSTALL = "Install claude's ACP adapter (about 913 MB)";
 
@@ -496,7 +513,7 @@ describe("the setup dialog", () => {
   }
 
   it("opens by itself without the marker, and checks the open project", async () => {
-    const fetch = await openWith({ checked: false, report: { ...REPORT, checks: [...REPORT.checks] } });
+    const fetch = await openWith({ checked: false, report: { ...REPORT, checks: [...REPORT.checks], adapters: [...REPORT.adapters] } });
     const dialog = await screen.findByRole("dialog", { name: "setup" });
     expect(await within(dialog).findByText("herdr 0.9.1", { exact: false })).toBeInTheDocument();
     const required = within(dialog).getByRole("region", { name: "Needed for any run" });
@@ -518,7 +535,7 @@ describe("the setup dialog", () => {
   });
 
   it("opens from Check setup…, for the open project", async () => {
-    const fetch = await openWith({ checked: true, report: { ...REPORT, checks: [...REPORT.checks] } });
+    const fetch = await openWith({ checked: true, report: { ...REPORT, checks: [...REPORT.checks], adapters: [...REPORT.adapters] } });
     fireEvent.change(screen.getByLabelText("Machine"), { target: { value: "devbox" } });
     fireEvent.click(screen.getByRole("button", { name: "Check setup…" }));
     const dialog = await screen.findByRole("dialog", { name: "setup" });
@@ -528,7 +545,7 @@ describe("the setup dialog", () => {
   });
 
   it("writes the marker on Close when every required check passed", async () => {
-    const setup: FakeSetup = { checked: false, report: { ...REPORT, checks: [...REPORT.checks] } };
+    const setup: FakeSetup = { checked: false, report: { ...REPORT, checks: [...REPORT.checks], adapters: [...REPORT.adapters] } };
     await openWith(setup);
     const dialog = await screen.findByRole("dialog", { name: "setup" });
     await within(dialog).findByText("herdr 0.9.1", { exact: false });
@@ -538,7 +555,7 @@ describe("the setup dialog", () => {
   });
 
   it("writes the marker once for a double click on Close", async () => {
-    const setup: FakeSetup = { checked: false, report: { ...REPORT, checks: [...REPORT.checks] } };
+    const setup: FakeSetup = { checked: false, report: { ...REPORT, checks: [...REPORT.checks], adapters: [...REPORT.adapters] } };
     await openWith(setup);
     const dialog = await screen.findByRole("dialog", { name: "setup" });
     await within(dialog).findByText("herdr 0.9.1", { exact: false });
@@ -556,7 +573,7 @@ describe("the setup dialog", () => {
   });
 
   it("does not write the marker when a required check failed", async () => {
-    const setup: FakeSetup = { checked: false, report: { ...FAILED, checks: [...FAILED.checks] } };
+    const setup: FakeSetup = { checked: false, report: { ...FAILED, checks: [...FAILED.checks], adapters: [...FAILED.adapters] } };
     await openWith(setup);
     const dialog = await screen.findByRole("dialog", { name: "setup" });
     expect(await within(dialog).findByText("fix: install git 2.36 or later")).toBeInTheDocument();
@@ -566,7 +583,7 @@ describe("the setup dialog", () => {
   });
 
   it("shows a marker that cannot be written, and closes without it the next time", async () => {
-    const setup: FakeSetup = { checked: false, report: { ...REPORT, checks: [...REPORT.checks] }, markError: "cannot write /cfg/setup-checked: Permission denied" };
+    const setup: FakeSetup = { checked: false, report: { ...REPORT, checks: [...REPORT.checks], adapters: [...REPORT.adapters] }, markError: "cannot write /cfg/setup-checked: Permission denied" };
     await openWith(setup);
     const dialog = await screen.findByRole("dialog", { name: "setup" });
     await within(dialog).findByText("herdr 0.9.1", { exact: false });
@@ -582,7 +599,7 @@ describe("the setup dialog", () => {
     [false, "kept"],
   ])("sets the quality gate up for the open project, and shows gate.toml as written: %s", async (written, word) => {
     const files = [{ path: "gate.toml", written }];
-    const setup: FakeSetup = { checked: false, report: { ...REPORT, checks: [...REPORT.checks] }, gateFiles: files };
+    const setup: FakeSetup = { checked: false, report: { ...REPORT, checks: [...REPORT.checks], adapters: [...REPORT.adapters] }, gateFiles: files };
     await openWith(setup);
     const dialog = await screen.findByRole("dialog", { name: "setup" });
     await within(dialog).findByText("herdr 0.9.1", { exact: false });
@@ -597,7 +614,7 @@ describe("the setup dialog", () => {
   });
 
   it("shows why the quality gate could not be set up", async () => {
-    const setup: FakeSetup = { checked: false, report: { ...REPORT, checks: [...REPORT.checks] }, gateError: "/home/me/proj is in no git checkout" };
+    const setup: FakeSetup = { checked: false, report: { ...REPORT, checks: [...REPORT.checks], adapters: [...REPORT.adapters] }, gateError: "/home/me/proj is in no git checkout" };
     await openWith(setup);
     const dialog = await screen.findByRole("dialog", { name: "setup" });
     await within(dialog).findByText("herdr 0.9.1", { exact: false });
@@ -606,29 +623,41 @@ describe("the setup dialog", () => {
     expect(await within(gate).findByText("/home/me/proj is in no git checkout")).toBeInTheDocument();
   });
 
-  it("offers no install of claude's ACP adapter for app runs in herdr", async () => {
-    await openWith({ checked: false, report: { ...REPORT, checks: [...REPORT.checks] } });
+  it("offers no install of an ACP adapter for app runs in herdr", async () => {
+    await openWith({ checked: false, report: { ...REPORT, checks: [...REPORT.checks], adapters: [...REPORT.adapters] } });
     const dialog = await screen.findByRole("dialog", { name: "setup" });
     await within(dialog).findByText("herdr 0.9.1", { exact: false });
+    expect(within(dialog).queryByRole("button", { name: /Install/ })).not.toBeInTheDocument();
+  });
+
+  it("installs codex's ACP adapter by its own button, offering none for claude's, which is installed", async () => {
+    const setup: FakeSetup = { checked: false, report: { ...CODEX_MISSING, checks: [...CODEX_MISSING.checks], adapters: [...CODEX_MISSING.adapters] } };
+    await openWith(setup);
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
+    const button = await within(dialog).findByRole("button", { name: "Install codex's ACP adapter (about 649 MB)" });
     expect(within(dialog).queryByRole("button", { name: /Install claude/ })).not.toBeInTheDocument();
+    setup.report = { ...CLAUDE_INSTALLED, checks: [...CLAUDE_INSTALLED.checks], adapters: [...CLAUDE_INSTALLED.adapters] };
+    fireEvent.click(button);
+    await waitFor(() => expect(within(dialog).queryByRole("button", { name: /Install codex/ })).not.toBeInTheDocument());
+    expect(setup.installed).toEqual(["codex"]);
   });
 
   it("installs claude's ACP adapter, and checks again", async () => {
-    const setup: FakeSetup = { checked: false, report: { ...CLAUDE_MISSING, checks: [...CLAUDE_MISSING.checks] } };
+    const setup: FakeSetup = { checked: false, report: { ...CLAUDE_MISSING, checks: [...CLAUDE_MISSING.checks], adapters: [...CLAUDE_MISSING.adapters] } };
     const fetch = await openWith(setup);
     const dialog = await screen.findByRole("dialog", { name: "setup" });
     await within(dialog).findByText("fix: install it from the setup dialog");
-    setup.report = { ...CLAUDE_INSTALLED, checks: [...CLAUDE_INSTALLED.checks] };
+    setup.report = { ...CLAUDE_INSTALLED, checks: [...CLAUDE_INSTALLED.checks], adapters: [...CLAUDE_INSTALLED.adapters] };
     fireEvent.click(within(dialog).getByRole("button", { name: INSTALL }));
     expect(await within(dialog).findByText("claude-agent-acp 0.101.0", { exact: false })).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: /Install claude/ })).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("region", { name: "claude's ACP adapter" })).not.toBeInTheDocument();
-    expect(setup.claudeInstalls).toBe(1);
+    expect(setup.installed).toEqual(["claude"]);
     expect(setupCalls(fetch)).toHaveLength(2);
   });
 
   it("shows that claude's ACP adapter is installing, with its button disabled", async () => {
-    const setup: FakeSetup = { checked: false, report: { ...CLAUDE_MISSING, checks: [...CLAUDE_MISSING.checks] } };
+    const setup: FakeSetup = { checked: false, report: { ...CLAUDE_MISSING, checks: [...CLAUDE_MISSING.checks], adapters: [...CLAUDE_MISSING.adapters] } };
     await openWith(setup);
     const dialog = await screen.findByRole("dialog", { name: "setup" });
     const button = await within(dialog).findByRole("button", { name: INSTALL });
@@ -640,23 +669,23 @@ describe("the setup dialog", () => {
   });
 
   it("shows why claude's ACP adapter could not be installed, and offers it again", async () => {
-    const setup: FakeSetup = { checked: false, report: { ...CLAUDE_MISSING, checks: [...CLAUDE_MISSING.checks] }, claudeError: "node-v22.23.4-linux-x64.tar.gz: sha256 does not match SHASUMS256.txt" };
+    const setup: FakeSetup = { checked: false, report: { ...CLAUDE_MISSING, checks: [...CLAUDE_MISSING.checks], adapters: [...CLAUDE_MISSING.adapters] }, installError: "node-v22.23.4-linux-x64.tar.gz: sha256 does not match SHASUMS256.txt" };
     await openWith(setup);
     const dialog = await screen.findByRole("dialog", { name: "setup" });
     fireEvent.click(await within(dialog).findByRole("button", { name: INSTALL }));
     const section = await within(dialog).findByRole("region", { name: "claude's ACP adapter" });
     expect(await within(section).findByText(/sha256 does not match/)).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: INSTALL }));
-    await waitFor(() => expect(setup.claudeInstalls).toBe(2));
+    await waitFor(() => expect(setup.installed).toEqual(["claude", "claude"]));
   });
 
   it("stops showing a failed install once a round of checks finds claude's ACP adapter installed", async () => {
-    const setup: FakeSetup = { checked: false, report: { ...CLAUDE_MISSING, checks: [...CLAUDE_MISSING.checks] }, claudeError: "cannot download node: HTTP 503" };
+    const setup: FakeSetup = { checked: false, report: { ...CLAUDE_MISSING, checks: [...CLAUDE_MISSING.checks], adapters: [...CLAUDE_MISSING.adapters] }, installError: "cannot download node: HTTP 503" };
     await openWith(setup);
     const dialog = await screen.findByRole("dialog", { name: "setup" });
     fireEvent.click(await within(dialog).findByRole("button", { name: INSTALL }));
     expect(await within(dialog).findByText("cannot download node: HTTP 503")).toBeInTheDocument();
-    setup.report = { ...CLAUDE_INSTALLED, checks: [...CLAUDE_INSTALLED.checks] };
+    setup.report = { ...CLAUDE_INSTALLED, checks: [...CLAUDE_INSTALLED.checks], adapters: [...CLAUDE_INSTALLED.adapters] };
     fireEvent.click(within(dialog).getByRole("button", { name: "Check again" }));
     expect(await within(dialog).findByText("claude-agent-acp 0.101.0", { exact: false })).toBeInTheDocument();
     expect(within(dialog).queryByText("cannot download node: HTTP 503")).not.toBeInTheDocument();
@@ -670,11 +699,11 @@ describe("the setup dialog", () => {
   });
 
   it("checks again", async () => {
-    const setup: FakeSetup = { checked: false, report: { ...FAILED, checks: [...FAILED.checks] } };
+    const setup: FakeSetup = { checked: false, report: { ...FAILED, checks: [...FAILED.checks], adapters: [...FAILED.adapters] } };
     const fetch = await openWith(setup);
     const dialog = await screen.findByRole("dialog", { name: "setup" });
     await within(dialog).findByText("fix: install git 2.36 or later");
-    setup.report = { ...REPORT, checks: [...REPORT.checks] };
+    setup.report = { ...REPORT, checks: [...REPORT.checks], adapters: [...REPORT.adapters] };
     fireEvent.click(within(dialog).getByRole("button", { name: "Check again" }));
     expect(await within(dialog).findByText("herdr 0.9.1", { exact: false })).toBeInTheDocument();
     expect(within(dialog).queryByText("fix: install git 2.36 or later")).not.toBeInTheDocument();

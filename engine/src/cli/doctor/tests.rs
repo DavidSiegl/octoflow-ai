@@ -7,9 +7,11 @@ use std::ffi::OsString;
 use std::sync::{Arc, Mutex};
 
 use super::*;
+use crate::acp_adapter::Installs;
 use crate::cli::{ended_status, herdrless_command, parse_args, Local};
 use crate::constants::HARNESS_NAMES;
 use crate::env::ConfigDir;
+use crate::harness::Adapter;
 use crate::host::ProcessError;
 use crate::interrupt::Interrupt;
 use crate::test_support::TempDir;
@@ -1183,11 +1185,11 @@ fn a_version_number_is_the_first_run_of_dotted_digits() {
     }
 }
 
-/// check_acp_setup's checks on tools and claude, by name, with their order, each harness answered as answers says; the
-/// harnesses answers was asked about, in order.
+/// check_acp_setup's checks on tools and the adapters installed in env, by name, with their order, each harness
+/// answered as answers says; the harnesses answers was asked about, in order.
 fn acp_setup(
     tools: &FakeTools,
-    claude: &ClaudeAcp,
+    env: &[(OsString, OsString)],
     answers: impl Fn(&str) -> Result<String, OrchestratorError>,
 ) -> (BTreeMap<String, Check>, Vec<String>, Vec<String>) {
     let asked = RefCell::new(vec![]);
@@ -1195,27 +1197,34 @@ fn acp_setup(
         asked.borrow_mut().push(h.kind.to_string());
         answers(h.kind)
     };
-    let checks = check_acp_setup(&tools.host(&[]), claude, Some("/proj"), &answer);
+    let checks = check_acp_setup(&tools.host(&[]), env, Some("/proj"), &answer);
     let order = checks.iter().map(|c| c.name.clone()).collect();
     (checks.into_iter().map(|c| (c.name.clone(), c)).collect(), order, asked.into_inner())
 }
 
-/// claude's installs in the data directory data_home, none made yet.
-fn claude_installs(data_home: &TempDir) -> ClaudeAcp {
-    ClaudeAcp::in_environment(vec![("XDG_DATA_HOME".into(), data_home.path().into())])
+/// An environment whose data directory is data_home, its HOME a directory with no codex login, and extra.
+fn acp_env(data_home: &TempDir, extra: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
+    let base = [("XDG_DATA_HOME", data_home.path()), ("HOME", data_home.join("home"))];
+    let extra = extra.iter().map(|(k, v)| (*k, v.to_string()));
+    base.into_iter().chain(extra).map(|(k, v)| (OsString::from(k), OsString::from(v))).collect()
+}
+
+/// adapter's installs in env, as check_acp_setup finds them.
+fn installs_in(adapter: Adapter, env: &[(OsString, OsString)]) -> Installs {
+    Installs::in_environment(adapter, env.to_vec())
 }
 
 #[test]
 fn claude_s_adapter_installed_but_not_answering_is_told_how_it_starts() {
     let tools = FakeTools::new();
     let data_home = TempDir::new();
-    let claude = claude_installs(&data_home);
-    let installed = claude.install_fake("");
+    let env = acp_env(&data_home, &[]);
+    let installed = installs_in(Adapter::Claude, &env).install_fake("");
     let silent = |kind: &str| match kind {
         "claude" => Err(OrchestratorError::new("claude initialize: no answer within 30s")),
         kind => acp_answers(kind),
     };
-    let (checks, _, _) = acp_setup(&tools, &claude, silent);
+    let (checks, _, _) = acp_setup(&tools, &env, silent);
 
     let fix = format!("check that `{} {}` starts", installed.node, installed.script);
     let silent = check_of("claude over ACP", Level::Required, false, "claude initialize: no answer within 30s", &fix);
@@ -1227,6 +1236,7 @@ fn acp_answers(kind: &str) -> Result<String, OrchestratorError> {
     match kind {
         "agy" | "opencode" => Ok(format!("{kind} 1.0")),
         "claude" => Ok("@agentclientprotocol/claude-agent-acp 0.101.0".to_string()),
+        "codex" => Ok("@agentclientprotocol/codex-acp 2.5.0".to_string()),
         _ => Err(OrchestratorError(format!("{kind} has no ACP launch"))),
     }
 }
@@ -1235,9 +1245,13 @@ fn acp_answers(kind: &str) -> Result<String, OrchestratorError> {
 fn the_app_s_acp_setup_checks_each_harness_over_acp_and_nothing_of_herdr() {
     let tools = FakeTools::new();
     let data_home = TempDir::new();
-    let claude = claude_installs(&data_home);
-    let installed = claude.install_fake("");
-    let (checks, order, asked) = acp_setup(&tools, &claude, acp_answers);
+    let env = acp_env(&data_home, &[]);
+    // codex's login.
+    std::fs::create_dir_all(data_home.join("home/.codex")).unwrap();
+    std::fs::write(data_home.join("home/.codex/auth.json"), "{}").unwrap();
+    let installed = installs_in(Adapter::Claude, &env).install_fake("");
+    let codex_installed = installs_in(Adapter::Codex, &env).install_fake("");
+    let (checks, order, asked) = acp_setup(&tools, &env, acp_answers);
 
     let mut want: Vec<String> = HARNESS_NAMES.iter().map(|kind| format!("{kind} over ACP")).collect();
     want.extend(["git", "gh", "gitleaks", "git checkout", "origin", "local quality gate"].map(String::from));
@@ -1247,14 +1261,16 @@ fn the_app_s_acp_setup_checks_each_harness_over_acp_and_nothing_of_herdr() {
     assert!(checks["opencode over ACP"].ok);
     let adapter = format!("{}: @agentclientprotocol/claude-agent-acp 0.101.0", installed.script);
     assert_eq!(checks["claude over ACP"], check_of("claude over ACP", Level::Required, true, &adapter, ""));
-    let codex = check_of(
-        "codex over ACP",
+    let codex = format!("{}: @agentclientprotocol/codex-acp 2.5.0", codex_installed.script);
+    assert_eq!(checks["codex over ACP"], check_of("codex over ACP", Level::Optional, true, &codex, ""));
+    let pi = check_of(
+        "pi over ACP",
         Level::Optional,
         false,
-        "codex has no ACP launch; needed only for a role that runs in codex",
-        "run its roles in another harness: the app does not run codex yet",
+        "pi has no ACP launch; needed only for a role that runs in pi",
+        "run its roles in another harness: the app does not run pi yet",
     );
-    assert_eq!(checks["codex over ACP"], codex);
+    assert_eq!(checks["pi over ACP"], pi);
     assert!(checks["origin"].ok && checks["git"].ok, "{checks:?}");
     let herdr_calls = tools.tools().calls.iter().filter(|(_, argv)| argv.iter().any(|a| a == "herdr")).count();
     assert_eq!(herdr_calls, 0, "{:?}", tools.tools().calls);
@@ -1269,7 +1285,7 @@ fn a_harness_off_path_is_missing_without_being_started_and_one_that_does_not_ans
         "opencode" => Err(OrchestratorError::new("opencode initialize: no answer within 30s")),
         kind => acp_answers(kind),
     };
-    let (checks, _, asked) = acp_setup(&tools, &claude_installs(&data_home), silent);
+    let (checks, _, asked) = acp_setup(&tools, &acp_env(&data_home, &[]), silent);
 
     let off_path = check_of(
         "agy over ACP",
@@ -1279,7 +1295,8 @@ fn a_harness_off_path_is_missing_without_being_started_and_one_that_does_not_ans
         "install the agy CLI",
     );
     assert_eq!(checks["agy over ACP"], off_path);
-    assert!(!asked.contains(&"agy".to_string()) && !asked.contains(&"claude".to_string()), "{asked:?}");
+    let unasked = ["agy", "claude", "codex"].map(String::from);
+    assert!(unasked.iter().all(|kind| !asked.contains(kind)), "{asked:?}");
     // Whether or not the claude CLI is on PATH: the adapter brings its own.
     let claude = check_of(
         "claude over ACP",
@@ -1297,4 +1314,20 @@ fn a_harness_off_path_is_missing_without_being_started_and_one_that_does_not_ans
         "update the opencode CLI, or check that `opencode acp` starts",
     );
     assert_eq!(checks["opencode over ACP"], silent);
+}
+
+#[test]
+fn codex_installed_and_answering_but_not_logged_in_is_told_how_to_log_in() {
+    let tools = FakeTools::new();
+    let data_home = TempDir::new();
+    let env = acp_env(&data_home, &[]);
+    let installs = installs_in(Adapter::Codex, &env);
+    installs.install_fake("");
+    let (checks, _, asked) = acp_setup(&tools, &env, acp_answers);
+
+    assert!(asked.contains(&"codex".to_string()), "{asked:?}");
+    let not_logged_in = installs.logged_in().unwrap_err();
+    let detail = format!("{}; needed only for a role that runs in codex", not_logged_in.detail);
+    let codex = check_of("codex over ACP", Level::Optional, false, &detail, &not_logged_in.fix);
+    assert_eq!(checks["codex over ACP"], codex);
 }

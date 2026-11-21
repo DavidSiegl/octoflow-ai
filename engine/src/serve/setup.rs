@@ -1,15 +1,17 @@
 //! What serve gives the desktop app's setup dialog: crate::cli::doctor's checks of a project, for the backend the app's
-//! runs use (herdr's, or over ACP without herdr); for runs over ACP, the install of claude's ACP adapter
-//! (crate::claude_acp); and the marker that the dialog once closed with every Required check passed, which, as
+//! runs use (herdr's, or over ACP without herdr); for runs over ACP, the installs of the ACP adapters
+//! (crate::acp_adapter); and the marker that the dialog once closed with every Required check passed, which, as
 //! Setup::checked says, keeps it from opening by itself again.
 
 use std::io;
 use std::time::Duration;
 
-use crate::claude_acp::{ClaudeAcp, INSTALL_MEGABYTES};
+use crate::acp_adapter::Installs;
 use crate::cli::doctor::{check_acp_setup, check_setup, Check, Level};
+use crate::constants::DEFAULT_HARNESS;
 use crate::env::ConfigDir;
 use crate::error::os_error;
+use crate::harness::Adapter;
 use crate::herdr::ProcessHerdr;
 use crate::host::ProcessHost;
 use crate::interrupt::Interrupt;
@@ -24,43 +26,45 @@ use super::object;
 /// the real ones, Setup::of picking one by backend.
 pub type CheckProject = dyn Fn(&str, &str, &Interrupt) -> Vec<Check> + Send + Sync;
 
-/// The setup checks a RunServer answers /setup with, the install of claude's ACP adapter that POST /setup/claude makes,
+/// The setup checks a RunServer answers /setup with, the installs of the ACP adapters that POST /setup/adapter makes,
 /// and the marker /setup/checked reads and writes.
 pub struct Setup {
     /// How a project is checked.
     check: Box<CheckProject>,
-    /// claude's ACP adapter's installs, for app runs over ACP; None for app runs in herdr, whose claude is the claude
-    /// CLI.
-    claude: Option<ClaudeAcp>,
-    /// The marker's path (ConfigDir::setup_checked_path, or acp_setup_checked_path); its parent is created when the marker is written.
+    /// The installs of each ACP adapter, in Adapter::ALL's order, for app runs over ACP; empty for app runs in herdr,
+    /// whose agents are the harnesses' CLIs.
+    installs: Vec<Installs>,
+    /// The marker's path (ConfigDir::setup_checked_path, or acp_setup_checked_path); its parent is created when the
+    /// marker is written.
     marker: String,
 }
 
 impl Setup {
-    /// The real one, for app runs whose agents run in backend: project_checks, or acp_project_checks and claude's
-    /// installs in the engine's environment; and the marker in config.
+    /// The real one, for app runs whose agents run in backend: project_checks, or acp_project_checks and each
+    /// adapter's installs in the engine's environment (crate::env::child_env); and the marker in config.
     pub fn of(config: &ConfigDir, backend: Backend) -> Setup {
-        let (check, claude, marker): (Box<CheckProject>, _, _) = match backend {
-            Backend::Herdr => (Box::new(project_checks), None, config.setup_checked_path()),
+        match backend {
+            Backend::Herdr => Setup::new(Box::new(project_checks), vec![], config.setup_checked_path()),
             Backend::Acp => {
-                (Box::new(acp_project_checks), Some(ClaudeAcp::from_env()), config.acp_setup_checked_path())
+                let env = crate::env::child_env();
+                let installs = Adapter::ALL.iter().map(|a| Installs::in_environment(*a, env.clone())).collect();
+                Setup::new(Box::new(acp_project_checks), installs, config.acp_setup_checked_path())
             }
-        };
-        Setup::new(check, claude, marker)
+        }
     }
 
-    /// One that checks a project by check, installs claude's adapter in claude (None for none to install), and has
-    /// its marker at path.
-    pub fn new(check: Box<CheckProject>, claude: Option<ClaudeAcp>, marker: String) -> Setup {
-        Setup { check, claude, marker }
+    /// One that checks a project by check, installs the adapters of installs (none for none to install), and has its
+    /// marker at path.
+    pub fn new(check: Box<CheckProject>, installs: Vec<Installs>, marker: String) -> Setup {
+        Setup { check, installs, marker }
     }
 
-    /// /setup's answer for the project: {"checks": [...], "passed", "claude_install"}, each check as {"name", "level",
-    /// "ok", "detail", "fix"}, its level as Level::as_str names it, and passed true when every Required one is ok,
-    /// which is when the dialog may write the marker. claude_install is {"installed", "megabytes"}, whether claude's
-    /// ACP adapter is installed for the current pins and the disk an install takes (INSTALL_MEGABYTES), where the
-    /// dialog offers to install it, and null where it offers none, for app runs in herdr. A check that fails is part
-    /// of the answer, never an error.
+    /// /setup's answer for the project: {"checks": [...], "passed", "adapters": [...]}, each check as {"name",
+    /// "level", "ok", "detail", "fix"}, its level as Level::as_str names it, and passed true when every Required one
+    /// is ok, which is when the dialog may write the marker. adapters are the ACP adapters the dialog offers to
+    /// install, each as {"agent", "installed", "megabytes"}: its harness's name (Adapter::harness), whether it is
+    /// installed for the current pins, and the disk an install takes (Adapter::megabytes); empty for app runs in
+    /// herdr. A check that fails is part of the answer, never an error.
     ///
     /// passed is not doctor's exit status (crate::cli::doctor::report_checks), which a failed NeededForPr check also
     /// makes 1: a missing gh login stops a run at its pull request, which doctor is asked about, but it is no reason
@@ -69,32 +73,34 @@ impl Setup {
         let checks = (self.check)(machine, cwd, stopping);
         let passed = checks.iter().all(|c| c.ok || c.level != Level::Required);
         let checks = Value::Array(checks.iter().map(check_json).collect());
-        let claude_install = match &self.claude {
-            Some(claude) => object([
-                ("installed", Value::from(claude.installed().is_some())),
-                ("megabytes", Value::from(INSTALL_MEGABYTES)),
-            ]),
-            None => Value::Null,
-        };
-        object([("checks", checks), ("passed", Value::from(passed)), ("claude_install", claude_install)])
+        let adapters = self.installs.iter().map(|i| {
+            object([
+                ("agent", Value::from(i.adapter().harness())),
+                ("installed", Value::from(i.installed().is_some())),
+                ("megabytes", Value::from(i.adapter().megabytes())),
+            ])
+        });
+        object([("checks", checks), ("passed", Value::from(passed)), ("adapters", Value::Array(adapters.collect()))])
     }
 
-    /// Install claude's ACP adapter for the current pins, unless it is installed, as ClaudeAcp::install does; stopping
-    /// is the Interrupt the server raises when it stops, which stops it. Returns false when there is none to install,
-    /// for app runs in herdr. Errors: ClaudeAcp::install's.
-    pub fn install_claude(&self, stopping: &Interrupt) -> Result<bool, String> {
-        match &self.claude {
-            Some(claude) => claude.install(stopping).map(|_| true).map_err(|e| e.0),
+    /// Install adapter for the current pins, unless it is installed, as Installs::install does; stopping is the
+    /// Interrupt the server raises when it stops, which stops it. Returns false when there is none to install, for
+    /// app runs in herdr. Errors: Installs::install's.
+    pub fn install_adapter(&self, adapter: Adapter, stopping: &Interrupt) -> Result<bool, String> {
+        match self.installs.iter().find(|i| i.adapter() == adapter) {
+            Some(installs) => installs.install(stopping).map(|_| true).map_err(|e| e.0),
             None => Ok(false),
         }
     }
 
-    /// Whether the dialog need not open by itself: the marker is there and, for app runs over ACP, claude's ACP
-    /// adapter is installed for the current pins, whose absence fails a Required check, as after an upgrade raised a
-    /// pin. Errors: whether the marker is there cannot be told, as when the directory cannot be searched.
+    /// Whether the dialog need not open by itself: the marker is there and, for app runs over ACP, the adapter of
+    /// DEFAULT_HARNESS, if it has one, is installed for the current pins, whose absence fails a Required check, as
+    /// after an upgrade raised a pin; another adapter's check is Optional. Errors: whether the marker is there cannot
+    /// be told, as when the directory cannot be searched.
     pub fn checked(&self) -> Result<bool, String> {
         let marked = std::path::Path::new(&self.marker).try_exists().map_err(|e| self.failed("look for", &e))?;
-        Ok(marked && self.claude.as_ref().is_none_or(|claude| claude.installed().is_some()))
+        let required = self.installs.iter().filter(|i| i.adapter().harness() == DEFAULT_HARNESS);
+        Ok(marked && required.into_iter().all(|i| i.installed().is_some()))
     }
 
     /// Write the marker, an empty file, creating its directory when missing; one already there stays. It does not
@@ -128,14 +134,14 @@ pub fn project_checks(machine: &str, cwd: &str, stopping: &Interrupt) -> Vec<Che
 const PROBE_SECONDS: u64 = 30;
 
 /// The checks of the project in cwd for app runs over ACP (check_acp_setup), each harness's agent asked `initialize`
-/// by crate::acp::probe in the engine's environment, working in the home directory, claude's adapter as installed
-/// there. machine is not used: such runs run on this machine.
+/// by crate::acp::probe in the engine's environment, working in the home directory, the adapters as installed there.
+/// machine is not used: such runs run on this machine.
 pub fn acp_project_checks(_machine: &str, cwd: &str, stopping: &Interrupt) -> Vec<Check> {
     let host = ProcessHost::local(stopping);
     let env = crate::env::child_env();
     let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
     let answers = |h| crate::acp::probe(h, &env, &home, Duration::from_secs(PROBE_SECONDS), stopping);
-    check_acp_setup(&host, &ClaudeAcp::in_environment(env.clone()), Some(cwd), &answers)
+    check_acp_setup(&host, &env, Some(cwd), &answers)
 }
 
 /// project_checks through host and herdr, from a herdr pane or not as in_herdr_pane says.

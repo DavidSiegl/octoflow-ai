@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::*;
 use crate::agents::Activity;
+use crate::harness::Adapter;
 use crate::host::tests::{assert_scrubbed, environment, put, read, tool, with_pathspec_switches};
 use crate::test_support::{ended, eventually, TempDir};
 
@@ -623,30 +624,54 @@ fn a_probe_reports_what_the_agent_says_of_itself() {
     let named = probed(&f, "agy", long, &Interrupt::new()).expect("an answer");
     f.put("info.json", r#","agentInfo":{"name":"agy"}"#);
     let unversioned = probed(&f, "agy", long, &Interrupt::new()).expect("an answer");
-    let refused = probed(&f, "codex", long, &Interrupt::new()).expect_err("codex has no ACP launch");
-    let uninstalled = probed(&f, "claude", long, &Interrupt::new()).expect_err("claude's adapter is not installed");
+    let refused = probed(&f, "pi", long, &Interrupt::new()).expect_err("pi has no ACP launch");
+    let uninstalled = probed(&f, "codex", long, &Interrupt::new()).expect_err("codex's adapter is not installed");
 
     assert_eq!((unnamed.as_str(), named.as_str()), ("answers over ACP", "agy 1.5.11"));
     assert_eq!(unversioned, "agy");
     assert_eq!(f.methods(), ["initialize", "initialize", "initialize"]);
     assert!(f.log().contains("argv acp\n"), "{}", f.log());
-    assert_eq!(refused.0, "codex has no ACP launch");
-    let not_installed = "claude's ACP adapter is not installed: install it from the app's setup dialog (Check setup…)";
+    assert_eq!(refused.0, "pi has no ACP launch");
+    let not_installed = "codex's ACP adapter is not installed: install it from the app's setup dialog (Check setup…)";
     assert_eq!(uninstalled.0, not_installed);
 }
 
 #[test]
-fn claude_s_agent_is_its_installed_adapter_run_by_its_node() {
+fn an_adapter_s_agent_is_its_installed_adapter_run_by_its_node() {
+    for adapter in Adapter::ALL {
+        let f = Fixture::new();
+        std::fs::create_dir_all(f.tmp.join("project")).expect("the project");
+        let installs = Installs::in_environment(adapter, vec![("XDG_DATA_HOME".into(), f.tmp.join("data").into())]);
+        // A Node that is the fake agent, run from the bin directory, where it logs.
+        let installed = installs.install_fake(&format!("#!/bin/sh\nexec {}/agy \"$@\"\n", f.bin()));
+
+        let answer = probed(&f, adapter.harness(), Duration::from_secs(30), &Interrupt::new()).expect("an answer");
+
+        assert_eq!(answer, "answers over ACP");
+        assert!(f.log().contains(&format!("argv {}\n", installed.script)), "{adapter:?}: {}", f.log());
+    }
+}
+
+#[test]
+fn codex_s_adapter_starts_without_the_variables_that_would_choose_its_codex_mode_or_login() {
     let f = Fixture::new();
     std::fs::create_dir_all(f.tmp.join("project")).expect("the project");
-    let claude = ClaudeAcp::in_environment(vec![("XDG_DATA_HOME".into(), f.tmp.join("data").into())]);
-    // A Node that is the fake agent, run from the bin directory, where it logs.
-    let installed = claude.install_fake(&format!("#!/bin/sh\nexec {}/agy \"$@\"\n", f.bin()));
+    let data_home = f.tmp.join("data");
+    let installs = Installs::in_environment(Adapter::Codex, vec![("XDG_DATA_HOME".into(), data_home.clone().into())]);
+    installs.install_fake(&format!("#!/bin/sh\nexec {}/agy \"$@\"\n", f.bin()));
+    let withheld = ["CODEX_PATH", "INITIAL_AGENT_MODE", "DEFAULT_AUTH_REQUEST"];
+    let user = [("XDG_DATA_HOME", data_home.as_str()), ("CODEX_HOME", "/codex-home")];
+    let set: Vec<(&str, &str)> = withheld.iter().map(|w| (*w, "set")).chain(user).collect();
+    let env = environment(Some(&f.bin()), &set);
 
-    let answer = probed(&f, "claude", Duration::from_secs(30), &Interrupt::new()).expect("an answer");
+    probe(harness("codex").unwrap(), &env, &f.tmp.join("project"), Duration::from_secs(30), &Interrupt::new())
+        .expect("an answer");
 
-    assert_eq!(answer, "answers over ACP");
-    assert!(f.log().contains(&format!("argv {}\n", installed.script)), "{}", f.log());
+    let started = read(&format!("{}/env", f.bin()));
+    for name in withheld {
+        assert!(!started.lines().any(|l| l.starts_with(&format!("{name}="))), "{name} reached it:\n{started}");
+    }
+    assert!(started.lines().any(|l| l == "CODEX_HOME=/codex-home"), "{started}");
 }
 
 #[test]

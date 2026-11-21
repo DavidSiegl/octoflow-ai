@@ -73,14 +73,41 @@ enum AcpMode {
     Args(&'static [&'static str]),
 }
 
+/// An agent the app runs over ACP through an adapter it installs (crate::acp_adapter, which holds each one's pins and
+/// installs it), a Node program that brings its agent's own binary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Adapter {
+    Claude,
+    Codex,
+}
+
+impl Adapter {
+    /// Every adapter, in HARNESSES' order of their harnesses.
+    pub const ALL: [Adapter; 2] = [Adapter::Claude, Adapter::Codex];
+
+    /// The harness whose agent this adapter is, as HARNESSES names it; also what /setup and POST /setup/adapter call
+    /// the adapter.
+    pub fn harness(self) -> &'static str {
+        match self {
+            Adapter::Claude => "claude",
+            Adapter::Codex => "codex",
+        }
+    }
+
+    /// The adapter named name, as harness gives it; None for any other name.
+    pub fn named(name: &str) -> Option<Adapter> {
+        Adapter::ALL.into_iter().find(|a| a.harness() == name)
+    }
+}
+
 /// The program that speaks ACP for a harness.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AcpProgram {
     /// The program of this name, found on PATH: the harness's own CLI.
     OnPath(&'static str),
-    /// claude's ACP adapter, as the desktop app installs it (crate::claude_acp): its Node runs its script, which the
-    /// launch's arguments follow. It brings its own Claude Code, so the claude CLI need not be installed.
-    ClaudeAdapter,
+    /// This ACP adapter, as the desktop app installs it (crate::acp_adapter): its Node runs its script, which the
+    /// launch's arguments follow. It brings its own agent, so the harness's CLI need not be installed.
+    Adapter(Adapter),
 }
 
 /// How a role's agent starts as an ACP agent (Harness::acp_launch).
@@ -210,11 +237,11 @@ pub const HARNESSES: [Harness; 5] = [
         resume: Resume::Flag("--resume"),
         config: Config::Flags { add_dir: Some("--add-dir") },
         session_log: Some(SessionLog { glob: ".claude/projects/*/{session}.jsonl", format: LogFormat::ClaudeCode }),
-        // Through its adapter, 0.101.0 (crate::claude_acp), whose session modes are Claude Code's own: `default` (which
-        // it names Manual), acceptEdits, plan, bypassPermissions, and auto. It takes no flags; its session's model is
-        // a config option, and a directory it is granted is a session root (`additionalDirectories`).
+        // Through its adapter, 0.101.0 (crate::acp_adapter), whose session modes are Claude Code's own: `default`
+        // (which it names Manual), acceptEdits, plan, bypassPermissions, and auto. It takes no flags; its session's
+        // model is a config option, and a directory it is granted is a session root (`additionalDirectories`).
         acp: Some(Acp {
-            program: AcpProgram::ClaudeAdapter,
+            program: AcpProgram::Adapter(Adapter::Claude),
             args: &[],
             modes: &[
                 ("default", AcpMode::Id("default")),
@@ -238,8 +265,22 @@ pub const HARNESSES: [Harness; 5] = [
         resume: Resume::Subcommand("resume"),
         config: Config::Flags { add_dir: Some("--add-dir") },
         session_log: None,
-        // Its ACP adapter is still to be tried (herdr-gui-decoupling ticket 08).
-        acp: None,
+        // Through its adapter, 2.5.0 (crate::acp_adapter), whose session modes herdr-gui-decoupling ticket 08 found:
+        // read-only (asks before an edit or the network), workspace-write (edits the workspace, asks outside it),
+        // agent (asks only for what it judges unsafe, its own default, which no permission mode maps to), and
+        // agent-full-access. plan is read-only, as the CLI's `--sandbox read-only`. It takes no flags; its model is
+        // set over ACP, and a directory it is granted is a session root (`additionalDirectories`).
+        acp: Some(Acp {
+            program: AcpProgram::Adapter(Adapter::Codex),
+            args: &[],
+            modes: &[
+                ("default", AcpMode::Id("read-only")),
+                ("acceptEdits", AcpMode::Id("workspace-write")),
+                ("bypassPermissions", AcpMode::Id("agent-full-access")),
+                ("plan", AcpMode::Id("read-only")),
+            ],
+            add_dir: None,
+        }),
     },
     Harness {
         kind: "opencode",

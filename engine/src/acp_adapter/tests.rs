@@ -1,4 +1,4 @@
-//! The tests of claude_acp: installs made from a fake Node tarball, served by FakeDist in place of nodejs.org, whose
+//! The tests of acp_adapter: installs made from a fake Node tarball, served by FakeDist in place of nodejs.org, whose
 //! bin/node is FAKE_NODE, which stands in for npm too.
 
 use std::collections::HashMap;
@@ -17,7 +17,8 @@ const REGISTRY_URL: &str = "http://registry.test/";
 
 /// The bin/node of the fake tarball: run as npm-cli.js, it records its arguments in $FAKE_RECORD/argv, its
 /// environment in $FAKE_RECORD/env and the sizes of its --userconfig and --globalconfig in $FAKE_RECORD/config-bytes,
-/// then writes the adapter's script under --prefix as `npm ci` would, and a file in --cache. As npm 10.9.9 does, it
+/// then writes the script of the package that --prefix's package.json depends on under --prefix, as `npm ci` would,
+/// and a file in --cache. As npm 10.9.9 does, it
 /// fails when --userconfig and --globalconfig name the same file ("double-loading config"). With FAKE_NPM_FAILS set it
 /// fails first, with FAKE_NPM_SLOW set it takes a second.
 const FAKE_NODE: &str = r#"#!/bin/sh
@@ -36,8 +37,9 @@ while [ $# -gt 0 ]; do
 done
 [ "$user" = "$global" ] && { echo "double-loading config \"$global\" as \"global\"" >&2; exit 1; }
 echo "$(wc -c < "$user" | tr -d ' ') $(wc -c < "$global" | tr -d ' ')" > "$FAKE_RECORD/config-bytes"
-mkdir -p "$prefix/node_modules/@agentclientprotocol/claude-agent-acp/dist" "$cache"
-echo script > "$prefix/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"
+package=$(sed 's/.*"dependencies": *{ *"\([^"]*\)".*/\1/' "$prefix/package.json")
+mkdir -p "$prefix/node_modules/$package/dist" "$cache"
+echo script > "$prefix/node_modules/$package/dist/index.js"
 echo cached > "$cache/entry"
 "#;
 
@@ -67,15 +69,25 @@ impl Fixture {
         Fixture { tarball: tarball(&tmp, NODE), tmp }
     }
 
-    /// Pins of Node node, its tarball's sha256 being sha256, and adapter version adapter.
+    /// Pins of Node node, its tarball's sha256 being sha256, and claude's adapter at version adapter.
     fn pins(&self, node: &str, sha256: &str, adapter: &str) -> Pins {
-        let package_json = format!(r#"{{"dependencies": {{"{ADAPTER_PACKAGE}": "{adapter}"}}}}"#);
-        Pins::new(node, Some((PLATFORM.to_string(), sha256.to_string())), &package_json, "{}").unwrap()
+        pins_of(Adapter::Claude, node, sha256, adapter)
     }
 
-    /// The installs for pins, with the fake dist serving each tarball of tarballs (Node's version, its bytes) and the
-    /// environment holding extra as well as PATH, XDG_DATA_HOME and FAKE_RECORD.
-    fn installs(&self, pins: Pins, tarballs: &[(&str, &[u8])], extra: &[(&str, &str)]) -> (ClaudeAcp, Arc<FakeDist>) {
+    /// claude's installs for pins, as installs_of makes them.
+    fn installs(&self, pins: Pins, tarballs: &[(&str, &[u8])], extra: &[(&str, &str)]) -> (Installs, Arc<FakeDist>) {
+        self.installs_of(Adapter::Claude, pins, tarballs, extra)
+    }
+
+    /// adapter's installs for pins, with the fake dist serving each tarball of tarballs (Node's version, its bytes)
+    /// and the environment holding extra as well as PATH, XDG_DATA_HOME and FAKE_RECORD.
+    fn installs_of(
+        &self,
+        adapter: Adapter,
+        pins: Pins,
+        tarballs: &[(&str, &[u8])],
+        extra: &[(&str, &str)],
+    ) -> (Installs, Arc<FakeDist>) {
         let bodies = tarballs
             .iter()
             .map(|(node, body)| (format!("{DIST}/v{node}/node-v{node}-{PLATFORM}.tar.gz"), body.to_vec()));
@@ -87,18 +99,28 @@ impl Fixture {
         ];
         env.extend(extra.iter().map(|(k, v)| (k.to_string(), v.to_string())));
         let env = env.into_iter().map(|(k, v)| (OsString::from(k), OsString::from(v))).collect();
-        let installs = ClaudeAcp::in_environment(env).with_sources(pins, dist.clone(), DIST, REGISTRY_URL);
+        let installs = Installs::in_environment(adapter, env).with_sources(pins, dist.clone(), DIST, REGISTRY_URL);
         (installs, dist)
     }
 
-    /// The installs' directory.
+    /// claude's installs' directory.
     fn root(&self) -> String {
-        format!("{}/octoflow-ai/claude-acp", self.tmp.join("data"))
+        self.root_of(Adapter::Claude)
     }
 
-    /// The names in the installs' directory, sorted.
+    /// adapter's installs' directory.
+    fn root_of(&self, adapter: Adapter) -> String {
+        format!("{}/octoflow-ai/{}-acp", self.tmp.join("data"), adapter.harness())
+    }
+
+    /// The names in claude's installs' directory, sorted.
     fn entries(&self) -> Vec<String> {
-        let mut names: Vec<String> = std::fs::read_dir(self.root())
+        self.entries_of(Adapter::Claude)
+    }
+
+    /// The names in adapter's installs' directory, sorted.
+    fn entries_of(&self, adapter: Adapter) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(self.root_of(adapter))
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
@@ -110,6 +132,13 @@ impl Fixture {
     fn record(&self, name: &str) -> String {
         std::fs::read_to_string(self.tmp.join(&format!("record/{name}"))).unwrap()
     }
+}
+
+/// Pins of Node node, its tarball's sha256 being sha256, and adapter at version version.
+fn pins_of(adapter: Adapter, node: &str, sha256: &str, version: &str) -> Pins {
+    let package_json = format!(r#"{{"dependencies": {{"{}": "{version}"}}}}"#, adapter.package());
+    let tarball = Some((PLATFORM.to_string(), sha256.to_string()));
+    Pins::new(node, tarball, adapter.package(), &package_json, "{}").unwrap()
 }
 
 /// A Node tarball of version node for PLATFORM, made in tmp: FAKE_NODE as bin/node, and an empty npm-cli.js.
@@ -302,17 +331,17 @@ fn a_platform_without_a_pinned_node_is_refused() {
 #[test]
 fn the_installs_are_in_the_data_directory_of_the_environment() {
     let env = |pairs: &[(&str, &str)]| pairs.iter().map(|(k, v)| (OsString::from(k), OsString::from(v))).collect();
-    assert_eq!(ClaudeAcp::in_environment(env(&[("XDG_DATA_HOME", "/d/")])).root, "/d/octoflow-ai/claude-acp");
-    let home = ClaudeAcp::in_environment(env(&[("XDG_DATA_HOME", ""), ("HOME", "/h")]));
+    let in_d: Vec<_> = env(&[("XDG_DATA_HOME", "/d/")]);
+    assert_eq!(Installs::in_environment(Adapter::Claude, in_d.clone()).root, "/d/octoflow-ai/claude-acp");
+    assert_eq!(Installs::in_environment(Adapter::Codex, in_d).root, "/d/octoflow-ai/codex-acp");
+    let home = Installs::in_environment(Adapter::Claude, env(&[("XDG_DATA_HOME", ""), ("HOME", "/h")]));
     assert_eq!(home.root, "/h/.local/share/octoflow-ai/claude-acp");
 }
 
-/// The committed pins: the adapter's version, a Node 22 with a sha256 for each platform the app is built for, and a
-/// lockfile that pins every package with its integrity, the Agent SDK's binary for each of those platforms among them.
+/// Node's pins: a Node 22 with a sha256 for each platform the app is built for, this platform's taken.
 #[test]
-fn the_built_in_pins_pin_every_package_and_each_platforms_node() {
-    let pins = Pins::built_in();
-    assert_eq!(pins.adapter, "0.101.0");
+fn node_is_pinned_for_each_platform_the_app_is_built_for() {
+    let pins = Pins::built_in(Adapter::Claude);
     assert!(pins.node.starts_with("22."), "{}", pins.node);
     let platforms: Vec<&str> = NODE_SHA256.iter().map(|(p, _)| *p).collect();
     assert_eq!(platforms, ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"]);
@@ -324,20 +353,108 @@ fn the_built_in_pins_pin_every_package_and_each_platforms_node() {
     let here = node_platform(std::env::consts::OS, std::env::consts::ARCH).expect("a platform the app is built for");
     let sha256 = NODE_SHA256.iter().find(|(p, _)| *p == here).unwrap().1;
     assert_eq!(pins.tarball, Some((here.to_string(), sha256.to_string())), "this platform's tarball is pinned");
+}
 
-    let lock: serde_json::Value = serde_json::from_str(PACKAGE_LOCK).unwrap();
-    let packages = lock["packages"].as_object().unwrap();
-    let root = &packages[""]["dependencies"];
-    assert_eq!(root[ADAPTER_PACKAGE], "0.101.0", "the lockfile was made from package.json");
-    for (path, package) in packages.iter().filter(|(path, _)| !path.is_empty()) {
-        let integrity = package["integrity"].as_str().unwrap_or_default();
-        assert!(integrity.starts_with("sha512-"), "{path} has no sha512 integrity");
-        let resolved = package["resolved"].as_str().unwrap_or_default();
-        assert!(resolved.starts_with(REGISTRY), "{path} comes from {resolved}");
-        assert_ne!(package["hasInstallScript"], true, "{path} has an install script, which --ignore-scripts skips");
+/// Each adapter's committed pins: its version, and a lockfile made from its package.json that pins every package with
+/// its integrity, its agent's binary for each platform the app is built for among them.
+#[test]
+fn the_built_in_pins_pin_every_package_of_each_adapter() {
+    let binaries = |adapter| match adapter {
+        Adapter::Claude => {
+            ("0.101.0", "@anthropic-ai/claude-agent-sdk-", ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"])
+        }
+        Adapter::Codex => ("2.5.0", "@openai/codex-", ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"]),
+    };
+    for adapter in Adapter::ALL {
+        let (version, binary, platforms) = binaries(adapter);
+        let pins = Pins::built_in(adapter);
+        assert_eq!(pins.adapter, version, "{adapter:?}");
+        let lock: serde_json::Value = serde_json::from_str(&pins.lockfile).unwrap();
+        let packages = lock["packages"].as_object().unwrap();
+        let root = &packages[""]["dependencies"];
+        assert_eq!(root[adapter.package()], version, "{adapter:?}'s lockfile was made from its package.json");
+        for (path, package) in packages.iter().filter(|(path, _)| !path.is_empty()) {
+            let integrity = package["integrity"].as_str().unwrap_or_default();
+            assert!(integrity.starts_with("sha512-"), "{path} has no sha512 integrity");
+            let resolved = package["resolved"].as_str().unwrap_or_default();
+            assert!(resolved.starts_with(REGISTRY), "{path} comes from {resolved}");
+            assert_ne!(package["hasInstallScript"], true, "{path} has an install script, which --ignore-scripts skips");
+        }
+        for platform in platforms {
+            let path = format!("node_modules/{binary}{platform}");
+            assert!(packages.keys().any(|k| k.ends_with(&path)), "{path} is in {adapter:?}'s lockfile");
+        }
     }
-    for platform in ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"] {
-        let sdk = format!("node_modules/@anthropic-ai/claude-agent-sdk-{platform}");
-        assert!(packages.contains_key(&sdk), "{sdk} is in the lockfile");
+}
+
+#[test]
+fn codex_installs_beside_claude_and_neither_removes_the_other() {
+    let f = Fixture::new();
+    let sha256 = sha256_of(&f.tarball);
+    let (claude, _) = f.installs(f.pins(NODE, &sha256, "0.5.0"), &[(NODE, &f.tarball)], &[]);
+    let claude_installed = claude.install(&Interrupt::new()).unwrap();
+    let codex_pins = pins_of(Adapter::Codex, NODE, &sha256, "2.0.0");
+    let (codex, _) = f.installs_of(Adapter::Codex, codex_pins, &[(NODE, &f.tarball)], &[]);
+
+    let installed = codex.install(&Interrupt::new()).unwrap();
+
+    let dir = format!("{}/node-{NODE}-adapter-2.0.0", f.root_of(Adapter::Codex));
+    let script = format!("{dir}/adapter/node_modules/@agentclientprotocol/codex-acp/dist/index.js");
+    assert_eq!(installed, Installed { node: format!("{dir}/node/bin/node"), script });
+    assert_eq!(f.entries_of(Adapter::Codex), [".lock", "node-1.0.0-adapter-2.0.0"]);
+    assert_eq!(claude.installed(), Some(claude_installed));
+    assert_eq!(f.entries(), [".lock", "node-1.0.0-adapter-0.5.0"]);
+}
+
+/// codex's installs in an environment of vars, for the built-in pins.
+fn codex_in(vars: &[(&str, &str)]) -> Installs {
+    let env = vars.iter().map(|(k, v)| (OsString::from(k), OsString::from(v))).collect();
+    Installs::in_environment(Adapter::Codex, env)
+}
+
+#[test]
+fn codex_is_logged_in_by_its_auth_file_alone() {
+    let tmp = TempDir::new();
+    let home = tmp.join("home");
+    std::fs::create_dir_all(format!("{home}/.codex")).unwrap();
+    std::fs::create_dir_all(tmp.join("codex-home")).unwrap();
+    let in_codex_home = [("HOME", home.as_str()), ("CODEX_HOME", &tmp.join("codex-home"))];
+    assert!(codex_in(&in_codex_home).logged_in().is_err(), "~/.codex is not looked in while CODEX_HOME is set");
+    std::fs::write(tmp.join("codex-home/auth.json"), "{}").unwrap();
+    assert_eq!(codex_in(&in_codex_home).logged_in(), Ok(()));
+
+    assert!(codex_in(&[("HOME", &home)]).logged_in().is_err());
+    std::fs::write(format!("{home}/.codex/auth.json"), "{}").unwrap();
+    assert_eq!(codex_in(&[("HOME", &home)]).logged_in(), Ok(()));
+
+    // The adapter reads an API key only for an ACP `authenticate`, which the engine does not send.
+    for key in ["OPENAI_API_KEY", "CODEX_API_KEY"] {
+        assert!(codex_in(&[("HOME", "/nowhere"), (key, "sk-test")]).logged_in().is_err(), "{key}");
     }
+    let claude = Installs::in_environment(Adapter::Claude, vec![(OsString::from("HOME"), OsString::from("/nowhere"))]);
+    assert_eq!(claude.logged_in(), Ok(()), "claude's adapter reports no login before a turn");
+}
+
+#[test]
+fn codex_not_logged_in_is_told_to_log_in_with_the_installed_codex() {
+    let tmp = TempDir::new();
+    let data = tmp.path();
+    let vars = [("HOME", "/nowhere"), ("XDG_DATA_HOME", data.as_str())];
+    let expected = NotLoggedIn {
+        detail: "codex is not logged in: no /nowhere/.codex/auth.json".to_string(),
+        fix: "log in with `codex login`".to_string(),
+    };
+    assert_eq!(codex_in(&vars).logged_in(), Err(expected));
+
+    let installed = codex_in(&vars).install_fake("");
+    let modules = installed.script.trim_end_matches("@agentclientprotocol/codex-acp/dist/index.js");
+    let fix = format!("log in with `{} {modules}@openai/codex/bin/codex.js login`", installed.node);
+    assert_eq!(codex_in(&vars).logged_in().unwrap_err().fix, fix);
+}
+
+#[test]
+fn without_home_codex_s_home_is_the_user_s_in_passwd() {
+    let detail = codex_in(&[]).logged_in().map(|()| String::new()).unwrap_or_else(|e| e.detail);
+
+    assert!(!detail.contains('~'), "{detail}");
 }

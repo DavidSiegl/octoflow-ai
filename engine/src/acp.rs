@@ -28,8 +28,8 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
+use crate::acp_adapter::Installs;
 use crate::agents::{AgentError, AgentLaunch, Agents, RunPlaces, Seen, Started, Waiting};
-use crate::claude_acp::ClaudeAcp;
 use crate::env::without_withheld;
 use crate::error::OrchestratorError;
 use crate::harness::{harness, AcpLaunch, AcpProgram, Harness, ModeSetting, Tokens, Usage};
@@ -171,8 +171,8 @@ impl<'h> AcpAgents<'h> {
             group: &group_record(&dir, role),
             journal: journal.clone(),
         };
-        let (program, args) = command(&how, &self.env)?;
-        let connection = Connection::spawn(&program, &args, self.env.iter().cloned(), run.work_dir(), records)?;
+        let c = command(&how, &self.env)?;
+        let connection = Connection::spawn(&c.program, &c.args, c.env.into_iter(), run.work_dir(), records)?;
         let journal_session = |session: &str, resumed: bool| {
             journal.write("session", json!({"session": session, "harness": h.kind, "resumed": resumed}));
         };
@@ -446,8 +446,8 @@ pub fn probe(
         group: "/dev/null",
         journal: Arc::new(Journal::open("/dev/null")?),
     };
-    let (program, args) = command(&how, env)?;
-    let connection = Arc::new(Connection::spawn(&program, &args, env.iter().cloned(), cwd, records)?);
+    let c = command(&how, env)?;
+    let connection = Arc::new(Connection::spawn(&c.program, &c.args, c.env.into_iter(), cwd, records)?);
     let killed = connection.clone();
     let Some(watch) = stopping.watch(move || killed.kill()) else {
         return Err(OrchestratorError::new("interrupted"));
@@ -465,21 +465,35 @@ pub fn probe(
     })
 }
 
-/// The program and the arguments that start how's agent in env: a program on PATH by its name, which Connection::spawn
-/// finds on env's PATH, and claude's adapter as installed in env's data directory (crate::claude_acp). Errors: the
-/// adapter is not installed.
-fn command(how: &AcpLaunch, env: &[(OsString, OsString)]) -> Result<(String, Vec<String>), OrchestratorError> {
+/// The program, the arguments and the environment that start how's agent, given env, the one the engine gives its
+/// agents: a program on PATH by its name, which Connection::spawn finds on env's PATH, in env; and an adapter as
+/// installed in env's data directory (crate::acp_adapter), in the environment its adapter gives it
+/// (Adapter::environment). Errors: the adapter is not installed.
+fn command(how: &AcpLaunch, env: &[(OsString, OsString)]) -> Result<Command, OrchestratorError> {
     match how.program {
-        AcpProgram::OnPath(name) => Ok((name.to_string(), how.args.clone())),
-        AcpProgram::ClaudeAdapter => {
-            let Some(installed) = ClaudeAcp::in_environment(env.to_vec()).installed() else {
-                return Err(OrchestratorError::new(
-                    "claude's ACP adapter is not installed: install it from the app's setup dialog (Check setup…)",
-                ));
+        AcpProgram::OnPath(name) => {
+            Ok(Command { program: name.to_string(), args: how.args.clone(), env: env.to_vec() })
+        }
+        AcpProgram::Adapter(adapter) => {
+            let Some(installed) = Installs::in_environment(adapter, env.to_vec()).installed() else {
+                return Err(OrchestratorError(format!(
+                    "{}'s ACP adapter is not installed: install it from the app's setup dialog (Check setup…)",
+                    adapter.harness()
+                )));
             };
-            Ok((installed.node, [vec![installed.script], how.args.clone()].concat()))
+            let args = [vec![installed.script], how.args.clone()].concat();
+            Ok(Command { program: installed.node, args, env: adapter.environment(env) })
         }
     }
+}
+
+/// How an agent's process starts (command): Connection::spawn's program, arguments and environment.
+struct Command {
+    /// A path, or a name to find on env's PATH.
+    program: String,
+    args: Vec<String>,
+    /// The whole environment: the process inherits nothing else.
+    env: Vec<(OsString, OsString)>,
 }
 
 /// The params of the engine's `initialize`: the protocol version it speaks, and that it offers its agents neither

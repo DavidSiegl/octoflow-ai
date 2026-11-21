@@ -1,14 +1,16 @@
 //! `doctor`: what a run needs, checked before the first run fails on it (check_setup), and reported (report_checks).
 
 use super::{Local, Target};
-use crate::claude_acp::ClaudeAcp;
+use crate::acp_adapter::Installs;
 use crate::constants::{DEFAULT_HARNESS, EXIT_ERROR, GITLEAKS_INSTALL, NETWORK_TIMEOUT, REMOTE};
 use crate::error::OrchestratorError;
+use crate::harness::Adapter;
 use crate::harness::{AcpProgram, Harness, HARNESSES};
 use crate::herdr::ProcessHerdr;
 use crate::host::{checked, decoded, Completed, ExecError, Host, ProcessHost, DEFAULT_TIMEOUT};
 use crate::local_gate::{self, ProjectRelease};
 use std::cmp::Ordering;
+use std::ffi::OsString;
 
 /// The oldest herdr a run works with, by the numbers its --version prints.
 pub const HERDR_MIN_VERSION: [u64; 2] = [0, 9];
@@ -214,14 +216,16 @@ pub fn check_setup(
 }
 
 /// check_setup for the desktop app's runs over ACP (crate::acp), which run on this machine and need no herdr: for each
-/// harness, at the level check_setup gives its CLI, that its ACP program is there, its command on host's PATH or, for
-/// claude, its adapter installed in claude's installs, and answers `initialize`, as answers says, given the harness
-/// (crate::acp::probe is the real one; a harness the app cannot run yet is answered as not); then git, gh, gitleaks,
-/// with cwd the project's checkout and origin, and the local quality gate, as check_setup checks them. Makes no error,
-/// as check_setup; it changes nothing itself, but answers may start each agent, which may write its own state.
+/// harness, at the level check_setup gives its CLI, that its ACP program is there, its command on host's PATH or its
+/// adapter installed in env's data directory (crate::acp_adapter), that it answers `initialize`, as answers says, given
+/// the harness (crate::acp::probe is the real one; a harness the app cannot run yet is answered as not), and that an
+/// adapter's agent is logged in (Installs::logged_in); then git, gh, gitleaks, with cwd the project's checkout and
+/// origin, and the local quality gate, as check_setup checks them. env is the environment the app's runs start their
+/// agents in. Makes no error, as check_setup; it changes nothing itself, but answers may start each agent, which may
+/// write its own state.
 pub fn check_acp_setup(
     host: &ProcessHost,
-    claude: &ClaudeAcp,
+    env: &[(OsString, OsString)],
     cwd: Option<&str>,
     answers: &dyn Fn(&'static Harness) -> Result<String, OrchestratorError>,
 ) -> Vec<Check> {
@@ -229,27 +233,39 @@ pub fn check_acp_setup(
     for h in &HARNESSES {
         let (level, note) = harness_level(h.kind);
         let program = h.acp_launch("default", None, None).map(|how| how.program);
+        let installs = match program {
+            Some(AcpProgram::Adapter(adapter)) => Some(Installs::in_environment(adapter, env.to_vec())),
+            _ => None,
+        };
         // Installing the CLI of a harness the app cannot run yet would not make its check pass.
         let fix = match program {
             Some(AcpProgram::OnPath(name)) => format!("install the {name} CLI"),
-            Some(AcpProgram::ClaudeAdapter) => "install claude's ACP adapter with this dialog's button".to_string(),
-            None => unrunnable_fix(h, claude),
+            Some(AcpProgram::Adapter(adapter)) => install_fix(adapter),
+            None => unrunnable_fix(h, installs.as_ref()),
         };
         check(&mut checks, &format!("{} over ACP", h.kind), level, &fix, None, &note, &mut || {
-            let path = match program {
-                Some(AcpProgram::ClaudeAdapter) => match claude.installed() {
+            let path = match (program, &installs) {
+                (Some(AcpProgram::Adapter(adapter)), Some(installs)) => match installs.installed() {
                     Some(installed) => installed.script,
-                    None => return Err(Unmet::new("claude's ACP adapter is not installed")),
+                    None => return Err(Unmet::new(format!("{}'s ACP adapter is not installed", adapter.harness()))),
                 },
-                Some(AcpProgram::OnPath(name)) => on_path(host, name)?,
-                None => on_path(host, h.kind)?,
+                (Some(AcpProgram::OnPath(name)), _) => on_path(host, name)?,
+                _ => on_path(host, h.kind)?,
             };
-            let answer = answers(h).map_err(|e| Unmet::with_fix(e.0, &unrunnable_fix(h, claude)))?;
+            let answer = answers(h).map_err(|e| Unmet::with_fix(e.0, &unrunnable_fix(h, installs.as_ref())))?;
+            if let Some(installs) = &installs {
+                installs.logged_in().map_err(|e| Unmet::with_fix(e.detail, &e.fix))?;
+            }
             Ok(format!("{path}: {answer}"))
         });
     }
     check_tools(&mut checks, host, None, cwd);
     checks
+}
+
+/// The fix of an ACP check whose adapter is not installed.
+fn install_fix(adapter: Adapter) -> String {
+    format!("install {}'s ACP adapter with this dialog's button", adapter.harness())
 }
 
 /// The level of the checks of harness kind's CLI, and the note a failed one gets: Required for DEFAULT_HARNESS, which
@@ -264,19 +280,19 @@ fn harness_level(kind: &str) -> (Level, String) {
 
 /// The fix of a harness h that does not answer over ACP: for one without an ACP launch, which the app cannot run yet,
 /// what stands in for its install, whether its CLI is installed or not; for the others, whose program is there, to
-/// make it answer: claude's adapter as installed in claude's installs.
-fn unrunnable_fix(h: &Harness, claude: &ClaudeAcp) -> String {
+/// make it answer: its adapter as installed in installs, given for a harness whose program is an adapter.
+fn unrunnable_fix(h: &Harness, installs: Option<&Installs>) -> String {
     let Some(how) = h.acp_launch("default", None, None) else {
         return format!("run its roles in another harness: the app does not run {} yet", h.kind);
     };
-    match (how.program, claude.installed()) {
+    match (how.program, installs.and_then(Installs::installed)) {
         (AcpProgram::OnPath(name), _) => {
             format!("update the {} CLI, or check that `{name} {}` starts", h.kind, how.args.join(" "))
         }
-        (AcpProgram::ClaudeAdapter, Some(installed)) => {
+        (AcpProgram::Adapter(_), Some(installed)) => {
             format!("check that `{} {}` starts", installed.node, installed.script)
         }
-        (AcpProgram::ClaudeAdapter, None) => "install claude's ACP adapter with this dialog's button".to_string(),
+        (AcpProgram::Adapter(adapter), None) => install_fix(adapter),
     }
 }
 
