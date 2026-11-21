@@ -240,8 +240,8 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 ///   ACP adapter the dialog offers, as Setup::checks gives them; 400 for a cwd
 ///   missing or empty. It does not reach the project as the others do, so that a machine that is not saved or a
 ///   folder that is missing shows as a failed check, not as 502.
-/// - /setup/checked: {"checked"}, whether the setup dialog has closed with every Required check passed
-///   (Setup::checked); 500 when that cannot be told.
+/// - /setup/checked: {"checked"}, whether the setup dialog need not open by itself (Setup::checked); 500 when that
+///   cannot be told.
 /// - POST /setup/checked: records that it has (Setup::mark), whatever the checks say, and answers {"checked": true};
 ///   500 when the marker cannot be written.
 /// - POST /setup/claude: installs claude's ACP adapter (Setup::install_claude), which takes minutes, and answers

@@ -291,7 +291,7 @@ started, as the human would start one from a herdr pane.
   | `POST /agent/answer`, `POST /agent/message` (`?run=ID&role=ROLE`) | for a run over ACP, the body's `{"request", "option"}` answers a permission, `{"text"}` is the human's message while the run waits on them; both through the run's socket (`acp::ask`) |
   | `/events` | a `text/event-stream` of `record`, `files` and `problem` events; see Events below |
   | `/setup` | `{"checks", "passed", "claude_install"}`: `doctor`'s checks of the project (`serve::setup`), each `{"name", "level", "ok", "detail", "fix"}`, reaching herdr from a pane only `optional`, and whether every `required` one is ok; it does not connect the project, so one that cannot be reached is a failed check; `claude_install` is `{"installed", "megabytes"}` for app runs over ACP, null in herdr |
-  | `/setup/checked`, `POST /setup/checked` | `{"checked"}`: whether the setup marker is there; the POST writes it |
+  | `/setup/checked`, `POST /setup/checked` | `{"checked"}`: whether the dialog need not open by itself (`Setup::checked`: the setup marker is there and, for app runs over ACP, claude's ACP adapter is installed for the current pins); the POST writes the marker |
   | `POST /setup/claude` | `{"installed": true}`: installs claude's ACP adapter (`claude_acp`), which takes minutes; 409 in herdr, 502 for an install that fails |
   | `POST /setup/gate` | `{"files": [{"path", "written"}]}`: writes the project's missing starter `gate.toml` (`local_gate::set_up`), and no pin, `written` false when it kept one |
   | `/workflows` | `{"workflows", "agents"}`: each workflow `run --workflow` offers from serve's configuration directory, with its description and its roles' labels, harnesses and models, and the harnesses there are |

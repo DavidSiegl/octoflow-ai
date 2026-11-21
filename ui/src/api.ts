@@ -457,8 +457,9 @@ export class Api {
     return this.json(this.url("/setup", project, {})) as Promise<SetupReport>;
   }
 
-  /** Whether the setup dialog has been closed with every required check passed, on this computer, for any project;
-   * rejects when the server cannot tell. */
+  /** Whether the setup dialog need not open by itself, on this computer, for any project: it has been closed with
+   * every required check passed and, for app runs over ACP, claude's ACP adapter is installed for the pins this
+   * octoflow carries (serve's Setup::checked); rejects when the server cannot tell. */
   async setupChecked(): Promise<boolean> {
     const body = (await this.json(`${this.connection.url}/setup/checked`)) as { checked: boolean };
     return body.checked;

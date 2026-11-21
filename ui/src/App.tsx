@@ -78,8 +78,8 @@ function Connected({ connection, appWindow }: { connection: Connection; appWindo
       current = false;
     };
   }, [api]);
-  // On start, with a project, the setup dialog opens by itself until it has been closed with every required check
-  // passed. When the server cannot tell whether it has, the dialog stays closed: "Check setup…" still opens it.
+  // On start, with a project, the setup dialog opens by itself unless the server says it need not (setupChecked).
+  // When the server cannot tell, the dialog stays closed: "Check setup…" still opens it.
   const [startedWithProject] = useState(project.cwd !== "");
   useEffect(() => {
     if (!startedWithProject) {

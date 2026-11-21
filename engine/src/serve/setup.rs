@@ -1,7 +1,7 @@
 //! What serve gives the desktop app's setup dialog: crate::cli::doctor's checks of a project, for the backend the app's
 //! runs use (herdr's, or over ACP without herdr); for runs over ACP, the install of claude's ACP adapter
-//! (crate::claude_acp); and the marker that the dialog once closed with every Required check passed, which keeps it
-//! from opening by itself again.
+//! (crate::claude_acp); and the marker that the dialog once closed with every Required check passed, which, as
+//! Setup::checked says, keeps it from opening by itself again.
 
 use std::io;
 use std::time::Duration;
