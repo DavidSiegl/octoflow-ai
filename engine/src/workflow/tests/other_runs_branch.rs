@@ -71,3 +71,24 @@ fn a_worktree_run_on_a_live_runs_branch_is_told_to_wait_for_it() {
     );
     assert!(f.herdr.state().calls.is_empty());
 }
+
+#[test]
+fn a_run_with_no_base_recorded_is_named_by_where_it_started() {
+    // An empty base_branch counts as none, as take_base_branch takes the run's own.
+    for base in [Value::Null, Value::from("")] {
+        let saved = [
+            ("error", Value::from("interrupted")),
+            ("owner", Value::Null),
+            ("branch", Value::from(OTHER_BRANCH)),
+            ("base_branch", base.clone()),
+        ];
+        let host = host_with_other_run(0, &saved);
+        host.state().branch = OTHER_BRANCH.into();
+        let f = Fixture::on(host, new_state(), approved());
+        let message = failure(f.workflow(RunSettings::default()).run());
+        assert!(
+            message.contains("which is not closed; check out the branch it started from, and close"),
+            "{base}: {message}"
+        );
+    }
+}
