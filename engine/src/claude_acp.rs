@@ -216,7 +216,7 @@ impl ClaudeAcp {
 
     /// Install the current pins, unless they are installed already, and then remove every other install: download
     /// Node's tarball for this platform and check its sha256, unpack it with `tar`, and install the adapter with its
-    /// npm: `npm ci --ignore-scripts`, with `--userconfig` and `--globalconfig` an empty file, an explicit
+    /// npm: `npm ci --ignore-scripts`, with `--userconfig` and `--globalconfig` each an empty file, an explicit
     /// `--registry`, a cache of its own, and none of npm's `npm_config_*` variables, so that nothing of the user's npm
     /// setup applies; proxies and certificates come from the environment, as http.rs and npm read them. Waits for
     /// another install in progress, by this or another process, to end first. A failure leaves no install behind, and
@@ -287,11 +287,15 @@ impl ClaudeAcp {
         fs::create_dir(&adapter).map_err(|e| self.failed("create", &adapter, &e))?;
         write(&format!("{adapter}/package.json"), self.pins.package_json.as_bytes())?;
         write(&format!("{adapter}/package-lock.json"), self.pins.lockfile.as_bytes())?;
-        let (npmrc, cache) = (format!("{dir}/empty-npmrc"), format!("{dir}/npm-cache"));
-        write(&npmrc, b"")?;
+        // Two empty files: npm refuses to load one file as both, in @npmcli/config 9.0.0's `#loadObject`
+        // (lib/index.js, "double-loading config ... as global"), the version npm 10.9.9 bundles.
+        let (user_npmrc, global_npmrc) = (format!("{dir}/empty-user-npmrc"), format!("{dir}/empty-global-npmrc"));
+        let cache = format!("{dir}/npm-cache");
+        write(&user_npmrc, b"")?;
+        write(&global_npmrc, b"")?;
         let npm = format!("{dir}/node/lib/node_modules/npm/bin/npm-cli.js");
         let node_bin = format!("{dir}/node/bin/node");
-        let isolated = ["--userconfig", &npmrc, "--globalconfig", &npmrc, "--registry", &self.registry];
+        let isolated = ["--userconfig", &user_npmrc, "--globalconfig", &global_npmrc, "--registry", &self.registry];
         let quiet = ["--no-audit", "--no-fund", "--no-update-notifier"];
         let into = ["--prefix", &adapter, "--cache", &cache];
         let argv = [&[node_bin.as_str(), &npm, "ci", "--ignore-scripts"][..], &isolated, &into, &quiet].concat();
@@ -299,7 +303,7 @@ impl ClaudeAcp {
         if !Path::new(&self.at(dir).script).is_file() {
             return Err(OrchestratorError(format!("npm installed no {ADAPTER_PACKAGE} script in {adapter}")));
         }
-        for path in [&npmrc, &cache] {
+        for path in [&user_npmrc, &global_npmrc, &cache] {
             if Path::new(path).exists() {
                 let removed = if path == &cache { fs::remove_dir_all(path) } else { fs::remove_file(path) };
                 removed.map_err(|e| self.failed("remove", path, &e))?;
