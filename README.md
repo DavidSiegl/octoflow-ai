@@ -25,7 +25,8 @@ Spec Collector ──spec.md──▶ Builder ──build-N.md──▶ Reviewer
 ```
 
 Each role is a separate interactive agent session in its own herdr pane, so you can watch or step into any of
-them. The agents run on this machine or on another one saved in herdr. Each feature is built on its own branch
+them. The agents run on this machine or on another one saved in herdr. The [desktop app](#desktop-app) runs
+them without herdr, on this machine, and shows each one's conversation. Each feature is built on its own branch
 and ends as a pull request on GitHub, where you review it. With `--quality-gate local`, a quality gate run on the
 project's own machine judges the Builder's change (linters, tests, coverage of new code) before the Reviewer sees it
 ([quality gate](docs/quality-gate.md)).
@@ -66,11 +67,12 @@ project, and with `--pin-gate <version>` a `ci/gate.pin` holding it at that rele
 by the release built into the octoflow that started its first quality round, so updating octoflow updates the gate
 for the runs that start after it.
 
-- herdr 0.9+ where the agents run, with the integration of each harness a run uses
+- For the CLI, herdr 0.9+ where the agents run, with the integration of each harness a run uses
   (`herdr integration install <integration>`: the kind's own name, e.g. `herdr integration install claude`, but
   `antigravity-cli` for `agy`)
-- herdr's panes starting a POSIX shell (sh, bash, zsh, dash, ksh) or fish, which herdr takes from
-  `[terminal] default_shell` in its `config.toml`, else `$SHELL` ([Harnesses](#harnesses))
+- For the CLI, herdr's panes starting a POSIX shell (sh, bash, zsh, dash, ksh) or fish, which herdr takes from
+  `[terminal] default_shell` in its `config.toml`, else `$SHELL` ([Harnesses](#harnesses)). The desktop app needs
+  no herdr: its setup dialog checks what its runs need instead ([Desktop app](#desktop-app))
 - The CLI of each harness a run uses on `PATH` where the agents run: `claude` by default
 - Each harness able to start in the project directory without asking first. Claude Code, for one, asks once per
   folder whether to trust it: open `claude` there once, or answer in the pane when the run says the role
@@ -89,7 +91,7 @@ for the runs that start after it.
 - Nothing for the orchestrator itself, a single [binary](#install); to build it from a checkout, Rust by
   `rust-toolchain.toml`; [uv](https://github.com/astral-sh/uv), with the Python it brings, only for
   [running the gate by hand](docs/quality-gate.md#the-gate)
-- For `--machine`: the machine saved in herdr and non-interactive SSH to it, which the orchestrator's
+- For `--machine`, which only the CLI has: the machine saved in herdr and non-interactive SSH to it, which the orchestrator's
   commands share one connection to (OpenSSH's `ControlMaster`), unless its server refuses a second session; see
   [Running the agents on another machine](docs/design.md#running-the-agents-on-another-machine)
 - For `--quality-gate local`: a project on a Linux x86_64 machine, which the gate is built for, with curl, tar,
@@ -146,14 +148,11 @@ first time when a browser downloaded it, as it does the binary.
   mode for every role (`default`, `acceptEdits`, `plan` or `bypassPermissions`, given as `--permission-mode`;
   `default` unless you pick another, so every harness asks before it runs a command), and two boxes: "No pull
   request", off as on the CLI, and "Separate worktree", on, so that runs started side by side do not share the
-  checkout. Start runs `octoflow run` with them in a new workspace of the herdr server on this
-  computer, where you can watch and interrupt it as one you started by hand; the app then opens the run. That is
-  so for a project on a machine too, whose agents then run there. With no herdr server running here, the app
-  starts one of its own without a window, the herdr session `octoflow`, which stays up after the app closes:
-  `herdr session attach octoflow` shows its runs in a terminal, and `herdr session stop octoflow` ends it. Its
-  output goes to `octoflow/herdr-server.log` under `$XDG_STATE_HOME` (`~/.local/state` when that is unset or not
-  an absolute path), whose last lines the form shows when it does not come up. A run that fails before it starts,
-  such as one the checkout already holds, shows the last lines of its pane in the form.
+  checkout. Start runs `octoflow run` with them in the background, on this computer, its agents its own child
+  processes speaking the [Agent Client Protocol](https://agentclientprotocol.com), and the app then opens the run.
+  The run outlives the app, and its output goes to `run.log` in its run directory. A run that fails before it
+  starts, such as one the checkout already holds, shows that log's last lines in the form. The app does not run pi
+  yet, and refuses opencode under `default` and `acceptEdits`, where it would not ask before it runs a command.
 - **Clean up runs:** "Clean up runs…" above the overview shows what `octoflow close --all` would do to each
   run: the workspace, refs, worktree and branch it would close, delete or keep, the uncommitted changes that would
   go with a failed run's worktree, and why a run that is still running is skipped. Close closes the runs it showed,
@@ -176,18 +175,26 @@ first time when a browser downloaded it, as it does the binary.
   who holds it, the harness and model of its last turn, its rounds and a verdict step's last verdict. The working
   arm is amber, and arrows show where a verdict step loops back to. A bubble on the head asks for your answer when
   the run waits on you. Below the map are what runs now and the run's turns, newest first. Under it, the files in
-  the run's directory, the newest or the one you pick rendered as Markdown, updated as they are written.
-- **Agents:** a tab for each agent the run has started, showing the last lines of its herdr pane, read again every
-  two seconds, with a box to type a message to it and keys (Esc, Enter, ↑, ↓, Ctrl+C), as you would in the pane:
-  to answer a question it asked, or stop it. The window reaches each agent in the herdr session its run was
-  started or last resumed in, wherever the window was opened, in herdr or not.
+  the run's directory, the newest or the one you pick rendered as Markdown, updated as they are written. A run that
+  stopped, failed or lost its orchestrator has a Resume button, which continues each agent's saved session.
+- **Agents:** a tab for each role the run has started, showing its agent's conversation: what it says, its thoughts
+  (collapsed), its tool calls, and its permission requests, each answered with a button. While the run waits on you
+  (the interview, a blocked report's question) the tab has a box for your message. A run the app started in herdr
+  before 0.94.0 shows its agent's herdr pane instead, as long as herdr can be reached here, with a box to type to it;
+  such a run resumes from the CLI.
 - **About:** the logo and name at the top open it: the release version, the copyright and the license, with links to
   this repository, its releases, Ko-fi, and the third-party licenses the app bundles, each opened in your browser.
-- **Project bar:** a project folder and, for agents on another machine, a saved herdr machine. The app reopens
-  the project you opened last.
-- **Setup:** "Check setup…" shows what `octoflow doctor --machine --cwd` checks for the open project, with
-  the fix for each problem. It opens by itself when the app starts, until you have closed it once with everything
-  a run needs present. Its "Set up the quality gate" button does what `doctor --setup-gate` does, without a pin.
+- **Project bar:** a project folder on this computer; running agents on another machine is the CLI's `--machine`.
+  The app reopens the project you opened last.
+- **Setup:** "Check setup…" shows what the app's runs need for the open project, with the fix for each problem:
+  each harness's command on `PATH` and answering the protocol, a codex login, git, gh, gitleaks and the quality gate. claude and codex
+  run through an ACP adapter, which the dialog offers to install (several hundred MB each, in octoflow's data
+  directory). It opens by itself when the app starts, until you have closed it once with everything a run needs
+  present. Its "Set up the quality gate" button does what `doctor --setup-gate` does, without a pin.
+- **Settings:** "Settings…" in the top bar sets what closing the window does with the open project's runs still
+  running: ask each time (the default), keep them running, or stop them. Asked, "Keep running" leaves them running
+  without the app, and "Stop all" stops each as Ctrl-C stops a CLI run, for Resume to continue; "Don't ask again"
+  saves the answer as the setting.
 
 Each download is the CLI too, with the same commands and flags; started without arguments, the app opens its
 window:
@@ -226,9 +233,8 @@ cargo test -p octoflow-ui     # the shell's, which start and stop a real serve
 The app has the orchestrator built in: for its window it starts itself a second time, as `octoflow serve`, and
 stops that when the window closes. `serve` works without the app too: it prints one JSON line,
 `{"url": "http://127.0.0.1:<port>", "token": "..."}`, and serves the project's runs on that port until Ctrl-C or
-SIGTERM; besides reading them, it types into their agents and starts new runs, each in a new workspace of this
-machine's herdr server, or of the session `octoflow`, which it starts when none is running. Its endpoints and
-security checks are in [serve](docs/architecture.md#serve).
+SIGTERM; besides reading them, it answers their agents and starts, resumes and stops runs, each in the background on
+this machine. Its endpoints and security checks are in [serve](docs/architecture.md#serve).
 
 ## Usage
 
@@ -333,9 +339,8 @@ A role's harness is herdr's `--kind` for its agent. The precedence is `--role-ag
 role's `agent` in the workflow file, then `claude`. A model name is passed as it is, never translated, so give
 each role a model its harness knows. opencode, whose interactive interface takes no `--model`, gets it as `model` in
 an `OPENCODE_CONFIG_CONTENT` its pane's shell exports before starting it with `--standalone`, so that shell must take
-`export NAME='value'`, as sh, bash, zsh and fish do. The desktop app starts a run by typing its command into a new
-pane's shell too, so `doctor` checks which shell herdr's panes start and the app starts no run in any but a POSIX
-shell or fish ([Requirements](#requirements)). pi asks before no tool call, so a worktree run needs nothing for it
+`export NAME='value'`, as sh, bash, zsh and fish do, so `doctor` checks which shell herdr's panes start
+([Requirements](#requirements)). pi asks before no tool call, so a worktree run needs nothing for it
 (see Worktree runs).
 
 | `--permission-mode` | claude | agy | codex | pi, opencode |

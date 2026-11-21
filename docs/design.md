@@ -461,6 +461,8 @@ The new file goes on as the first would have, to the Reviewer in the same round;
 
 ## Running the agents on another machine
 
+A feature of the CLI: the desktop app runs projects on this computer only.
+
 Steps 1–3 run on the machine you start the orchestrator from.
 
 1. **Save the machine** in herdr: `herdr machine add --label <machine> <ssh-target>`.
@@ -491,8 +493,9 @@ saves the texts it started with, so editing or deleting a file does not change a
 
 ## The GUI
 
-The desktop app in `ui/` ([architecture](architecture.md#the-desktop-app-ui)) is the orchestrator's window. It is
-read-only so far.
+The desktop app in `ui/` ([architecture](architecture.md#the-desktop-app-ui)) is the orchestrator's window. Its
+runs drive their agents over ACP, as children of their own orchestrator, so it needs no herdr; herdr is the CLI's.
+Runs it started in herdr before 0.94.0 stay herdr runs, which it lists and shows and the CLI resumes.
 
 ## Builds and releases
 

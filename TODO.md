@@ -85,23 +85,10 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `Plan::summary` (`engine/src/cli/close.rs`) records "workspace closed" / "workspace already gone", whatever backend
   the run used; list and show print the run's `workspace_id` and each agent's `pane` straight from the state
   (`run_record`, `show_run` in `engine/src/cli/listing.rs`). All were kept so the herdr-only text stays unchanged; a
-  run on the ACP backend (`engine/src/acp.rs`) would print them wrong or empty. No ACP run reaches them until the app
-  starts one (`.scratch/herdr-gui-decoupling`, ticket 03), and no ticket of that feature rewords them: closes when
-  these take their wording from the backend (`Agents::whereabouts`, `RunPlaces::place`), before ticket 12 turns the
-  app over to ACP. serve
+  run on the ACP backend (`engine/src/acp.rs`) prints them wrong or empty, and since 0.94.0 every app run is one
+  (`.scratch/herdr-gui-decoupling`, ticket 12); no ticket of that feature rewords them: closes when these take their
+  wording from the backend (`Agents::whereabouts`, `RunPlaces::place`). serve
   reading `herdr_server` (`engine/src/serve/runs.rs`) is by design: its `AgentConsole` stays herdr's own.
-
-- **POST /resume of a project on a machine ends leftovers on a local path before refusing.** Raised by cross-review
-  259 (F7): `ProjectRuns::resume` (`engine/src/serve/runs.rs`) runs `end_leftovers` on the remote run directory's path
-  on this machine before `start_detached` checks `remote()`, so the client gets "cannot list ..." instead of "a run
-  over ACP starts on this machine only" (both 502). Nothing is ended, as no such path exists here. Closes when resume
-  checks `remote()` before `end_leftovers`.
-
-- **Resume shows for an app run whose project starts its runs in herdr.** Raised by cross-review 259 (F8):
-  `RunDetail.tsx` shows the button for any `resumable && backend === "acp"` run, but with the developer switch off
-  `ProjectRuns::resume` always answers 409 ("this app's runs start in herdr"). The error is clear; the button cannot
-  work. Closes when serve tells the app how its project launches runs (or the switch is gone, ticket 12 of
-  `.scratch/herdr-gui-decoupling`).
 
 - **An ACP turn's usage is lost when its prompt is still pending at count time or at a kill.** Raised by
   cross-review 257 (F7): `acp-usage.jsonl` gets a prompt's line only when the agent answers its `session/prompt`
