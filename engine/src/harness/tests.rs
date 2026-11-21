@@ -2,7 +2,6 @@
 //! permission mode, model, session and directory, and the token usage of sample session logs.
 
 use super::*;
-use crate::acp_adapter::Adapter;
 use crate::constants::DEFAULT_HARNESS;
 use crate::json::Object;
 use crate::test_support::{oracle, unhex};

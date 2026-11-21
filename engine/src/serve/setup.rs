@@ -6,11 +6,12 @@
 use std::io;
 use std::time::Duration;
 
-use crate::acp_adapter::{Adapter, Installs};
+use crate::acp_adapter::Installs;
 use crate::cli::doctor::{check_acp_setup, check_setup, Check, Level};
 use crate::constants::DEFAULT_HARNESS;
 use crate::env::ConfigDir;
 use crate::error::os_error;
+use crate::harness::Adapter;
 use crate::herdr::ProcessHerdr;
 use crate::host::ProcessHost;
 use crate::interrupt::Interrupt;

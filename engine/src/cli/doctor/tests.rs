@@ -7,10 +7,11 @@ use std::ffi::OsString;
 use std::sync::{Arc, Mutex};
 
 use super::*;
-use crate::acp_adapter::{Adapter, Installs};
+use crate::acp_adapter::Installs;
 use crate::cli::{ended_status, herdrless_command, parse_args, Local};
 use crate::constants::HARNESS_NAMES;
 use crate::env::ConfigDir;
+use crate::harness::Adapter;
 use crate::host::ProcessError;
 use crate::interrupt::Interrupt;
 use crate::test_support::TempDir;

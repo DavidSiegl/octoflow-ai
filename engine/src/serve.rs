@@ -13,7 +13,6 @@ use nix::sys::signal::{SigSet, Signal};
 use tiny_http::{Header, Request, Response};
 
 use crate::acp;
-use crate::acp_adapter::Adapter;
 use crate::agents::RunPlaces;
 use crate::cli::close::{Outcome, RunClosed, RunStopped, Sweep};
 use crate::cli::forget::{self, Left, RunForgotten};
@@ -21,6 +20,7 @@ use crate::cli::listing::RUN_RECORD_VERSION;
 use crate::constants::EXIT_ERROR;
 use crate::env::ConfigDir;
 use crate::error::{os_error, OrchestratorError};
+use crate::harness::Adapter;
 use crate::herdr::{AgentConsole, Launcher, ProcessHerdr};
 use crate::host::{Host, ProcessHost};
 use crate::interrupt::Interrupt;
@@ -246,7 +246,7 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 /// - POST /setup/checked: records that it has (Setup::mark), whatever the checks say, and answers {"checked": true};
 ///   500 when the marker cannot be written.
 /// - POST /setup/adapter?agent=NAME: installs the ACP adapter of harness NAME (Setup::install_adapter), which takes
-///   minutes, and answers {"installed": true}; 400 for a NAME that has no adapter (crate::acp_adapter::Adapter), 409
+///   minutes, and answers {"installed": true}; 400 for a NAME that has no adapter (crate::harness::Adapter), 409
 ///   for app runs in herdr, which have none to install, 502 for an install that fails.
 /// - POST /setup/gate?cwd=DIR: sets the project up for `--quality-gate local` (ProjectRuns::set_up_gate) and answers
 ///   {"files": [{"path", "written"}, ...]}, written false for a file it kept; 400 for a cwd missing, 502 for a project

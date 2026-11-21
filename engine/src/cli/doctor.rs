@@ -1,9 +1,10 @@
 //! `doctor`: what a run needs, checked before the first run fails on it (check_setup), and reported (report_checks).
 
 use super::{Local, Target};
-use crate::acp_adapter::{Adapter, Installs};
+use crate::acp_adapter::Installs;
 use crate::constants::{DEFAULT_HARNESS, EXIT_ERROR, GITLEAKS_INSTALL, NETWORK_TIMEOUT, REMOTE};
 use crate::error::OrchestratorError;
+use crate::harness::Adapter;
 use crate::harness::{AcpProgram, Harness, HARNESSES};
 use crate::herdr::ProcessHerdr;
 use crate::host::{checked, decoded, Completed, ExecError, Host, ProcessHost, DEFAULT_TIMEOUT};

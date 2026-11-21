@@ -5,8 +5,8 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::*;
-use crate::acp_adapter::Adapter;
 use crate::agents::Activity;
+use crate::harness::Adapter;
 use crate::host::tests::{assert_scrubbed, environment, put, read, tool, with_pathspec_switches};
 use crate::test_support::{ended, eventually, TempDir};
 

@@ -11,7 +11,6 @@ use std::collections::HashSet;
 
 use indexmap::IndexMap;
 
-use crate::acp_adapter::Adapter;
 use crate::constants::HARNESS_NAMES;
 use crate::error::OrchestratorError;
 use serde_json::Value;
@@ -72,6 +71,33 @@ enum AcpMode {
     Id(&'static str),
     /// These launch arguments, as agy's bypass, which none of its session modes is.
     Args(&'static [&'static str]),
+}
+
+/// An agent the app runs over ACP through an adapter it installs (crate::acp_adapter, which holds each one's pins and
+/// installs it), a Node program that brings its agent's own binary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Adapter {
+    Claude,
+    Codex,
+}
+
+impl Adapter {
+    /// Every adapter, in HARNESSES' order of their harnesses.
+    pub const ALL: [Adapter; 2] = [Adapter::Claude, Adapter::Codex];
+
+    /// The harness whose agent this adapter is, as HARNESSES names it; also what /setup and POST /setup/adapter call
+    /// the adapter.
+    pub fn harness(self) -> &'static str {
+        match self {
+            Adapter::Claude => "claude",
+            Adapter::Codex => "codex",
+        }
+    }
+
+    /// The adapter named name, as harness gives it; None for any other name.
+    pub fn named(name: &str) -> Option<Adapter> {
+        Adapter::ALL.into_iter().find(|a| a.harness() == name)
+    }
 }
 
 /// The program that speaks ACP for a harness.

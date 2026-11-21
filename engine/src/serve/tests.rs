@@ -8,10 +8,11 @@ use std::sync::mpsc;
 use std::time::Instant;
 
 use super::*;
-use crate::acp_adapter::{Adapter, Installs};
+use crate::acp_adapter::Installs;
 use crate::cli::doctor::{Check, Level};
 use crate::cli::listing::run_record;
 use crate::constants::{APPROVE, METRICS_FILE, RUNS_DIR, STALE_SECONDS, SUMMARY_FILE, WORKTREES_DIR};
+use crate::harness::Adapter;
 use crate::herdr::{HerdrError, HerdrServer, OWN_SESSION};
 use crate::host::tests::Repo;
 use crate::http::quote;

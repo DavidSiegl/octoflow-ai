@@ -25,6 +25,7 @@ use std::time::Duration;
 use sha2::{Digest, Sha256};
 
 use crate::error::{os_error, OrchestratorError};
+use crate::harness::Adapter;
 use crate::host::{run_process, ProcessError};
 use crate::http::{Http, HttpClient, HttpError, Request};
 use crate::interrupt::Interrupt;
@@ -43,37 +44,15 @@ const NODE_SHA256: [(&str, &str); 4] = [
     ("darwin-arm64", "c9e1dbc748b33ed2d14f42445191ecaf14c56259c7a9a26d0042c49ec2b66428"),
 ];
 
-/// An agent the app runs over ACP through an adapter it installs. Each adapter's pins are its directory in
-/// `engine/acp-adapters/`: package.json, which names the adapter's version, the newest release at least two weeks old
-/// when it was pinned, and the lockfile npm installs it from, every package with its integrity hash, made from
-/// package.json by the pinned Node's npm (10.9.9) with `npm install --package-lock-only --ignore-scripts`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Adapter {
-    /// `@agentclientprotocol/claude-agent-acp` 0.101.0 (2026-11-05), which brings its own Claude Code.
-    Claude,
-    /// `@agentclientprotocol/codex-acp` 2.5.0 (2026-10-29), which brings its own codex (`@openai/codex` 0.165.0) and
-    /// runs it, not a codex on PATH, while CODEX_PATH is unset.
-    Codex,
-}
-
+/// The install facts of each adapter (crate::harness::Adapter names which ones there are). Each adapter's pins are
+/// its directory in `engine/acp-adapters/`: package.json, which names the adapter's version, the newest release at
+/// least two weeks old when it was pinned, and the lockfile npm installs it from, every package with its integrity
+/// hash, made from package.json by the pinned Node's npm (10.9.9) with
+/// `npm install --package-lock-only --ignore-scripts`. Pinned now: claude's
+/// `@agentclientprotocol/claude-agent-acp` 0.101.0 (2026-11-05), which brings its own Claude Code; codex's
+/// `@agentclientprotocol/codex-acp` 2.5.0 (2026-10-29), which brings its own codex (`@openai/codex` 0.165.0) and
+/// runs it, not a codex on PATH, while CODEX_PATH is unset.
 impl Adapter {
-    /// Every adapter, in HARNESSES' order of their harnesses.
-    pub const ALL: [Adapter; 2] = [Adapter::Claude, Adapter::Codex];
-
-    /// The harness whose agent this adapter is, as crate::harness::HARNESSES names it; also what /setup and
-    /// POST /setup/adapter call the adapter.
-    pub fn harness(self) -> &'static str {
-        match self {
-            Adapter::Claude => "claude",
-            Adapter::Codex => "codex",
-        }
-    }
-
-    /// The adapter named name, as harness gives it; None for any other name.
-    pub fn named(name: &str) -> Option<Adapter> {
-        Adapter::ALL.into_iter().find(|a| a.harness() == name)
-    }
-
     /// The disk an install of the built-in pins takes, in megabytes, as the setup dialog's button says before it
     /// downloads, measured on linux-x64 on 2026-11-21 with Node's 203 MB. Measure it again when a pin is raised.
     pub fn megabytes(self) -> u64 {
