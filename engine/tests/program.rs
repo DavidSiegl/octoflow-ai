@@ -406,7 +406,8 @@ fn serve_reads_a_project_without_asking_herdr() {
     let state = r#"{"format": 2, "run_id": "20261024-120000-5e7e00", "task": "t", "phase": "build", "round": 1}"#;
     std::fs::write(project.join(".octoflow-ai/runs/20261024-120000-5e7e00/state.json"), state).unwrap();
     let serving = Serving::start(&dir, &[]);
-    let (status, body) = serving.get(&format!("/runs?cwd={}", encoded(&project)));
+    // A machine, as an app before 0.94.0 saved and sent it, is no parameter of serve's: the project is read here.
+    let (status, body) = serving.get(&format!("/runs?cwd={}&machine=box", encoded(&project)));
     assert_eq!(status, 200, "{body}");
     let record: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(record["runs"][0]["id"], "20261024-120000-5e7e00");
