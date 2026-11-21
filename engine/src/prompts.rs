@@ -99,15 +99,30 @@ pub const BLOCKED_NOTE: &str = concat!(
     "`BLOCKED: <your question>` instead.",
 );
 
+/// The sentence that opens QUALITY_FOLLOWS_NOTE and is all of QUALITY_FOLLOWS_NO_LIMIT_NOTE. Without it, Builders ran
+/// the gate themselves, several times a turn, and ran out of time before writing the report the gate waits for.
+macro_rules! quality_follows_sentence {
+    () => {
+        concat!(
+            "Once your report is written, the orchestrator runs the quality gate on your change, so do not run the ",
+            "gate yourself: run the tests your change touches.",
+        )
+    };
+}
+
 /// Appended at run time, before BLOCKED_NOTE, to every prompt of the quality-gated step in a run with the gate, when
 /// its turn has a deadline (RunView::turn_timeout); timeout is that deadline in seconds. It holds only until a
-/// BLOCKED report: the wait for the human's answer that follows has none (BLOCKED_PROMPT). Without the note, Builders
-/// ran the gate themselves, several times a turn, and ran out of time before writing the report the gate waits for.
+/// BLOCKED report: the wait for the human's answer that follows has none (BLOCKED_PROMPT). A turn without a deadline
+/// gets QUALITY_FOLLOWS_NO_LIMIT_NOTE instead.
 pub const QUALITY_FOLLOWS_NOTE: &str = concat!(
-    "Once your report is written, the orchestrator runs the quality gate on your change, so do not run the gate ",
-    "yourself: run the tests your change touches. This turn may take at most {timeout} seconds; write the report ",
-    "before then.",
+    quality_follows_sentence!(),
+    " This turn may take at most {timeout} seconds; write the report before then.",
 );
+
+/// QUALITY_FOLLOWS_NOTE for a turn without a deadline: a human-paced step's, or any under `--timeout 0`. A prompt of
+/// its own rather than QUALITY_FOLLOWS_NOTE without its last sentence, so that a QUALITY_FOLLOWS_NOTE.md written for
+/// 0.96.1, which must use {timeout}, still fits it.
+pub const QUALITY_FOLLOWS_NO_LIMIT_NOTE: &str = quality_follows_sentence!();
 
 /// Appended after BLOCKED_NOTE, as a paragraph of its own, to every prompt of a step that can block; waiting_path is the
 /// turn's waiting file (workflow::turn::waiting_path). Unlike a BLOCKED report, a wait asks the human nothing and
@@ -261,6 +276,7 @@ prompts! {
     RetryVerdictPrompt => RETRY_VERDICT_PROMPT,
     BlockedNote => BLOCKED_NOTE,
     QualityFollowsNote => QUALITY_FOLLOWS_NOTE,
+    QualityFollowsNoLimitNote => QUALITY_FOLLOWS_NO_LIMIT_NOTE,
     WaitingNote => WAITING_NOTE,
     BlockedPrompt => BLOCKED_PROMPT,
     RebuildNote => REBUILD_NOTE,

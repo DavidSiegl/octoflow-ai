@@ -116,9 +116,9 @@ verdict step) whose first line is `BLOCKED:` (`parse_blocked`) goes to `block`, 
 moves it aside to `.blocked-K`; `unblocked` then has `block_answer` notify the human and wait for the file again,
 as often as it comes back `BLOCKED:`, with `BLOCKED_PROMPT`, no timeout and no stall notice, and a resume with
 `blocked` set finishes an undone move (`finish_block`) and goes back into that wait. `step_prompt` appends
-`BLOCKED_NOTE` and `WAITING_NOTE` to every prompt of such a step, and before them `QUALITY_FOLLOWS_NOTE`, with the
-turn's deadline (`turn_timeout`), to every prompt of the quality-gated step in a gated run, unless the turn has no
-deadline: the step is human-paced, or the run's `turn_timeout` is 0 (`--timeout 0`). While the role's waiting file (`waiting_path`, `<stem>.waiting` beside its handoff file) stands,
+`BLOCKED_NOTE` and `WAITING_NOTE` to every prompt of such a step, and before them, to every prompt of the
+quality-gated step in a gated run, `QUALITY_FOLLOWS_NOTE` with the turn's deadline (`turn_timeout`), or
+`QUALITY_FOLLOWS_NO_LIMIT_NOTE` for a turn with none: a human-paced step's, or any under `--timeout 0`. While the role's waiting file (`waiting_path`, `<stem>.waiting` beside its handoff file) stands,
 `await_handoff` moves the turn's deadline on with the clock and tells no stall, telling the human of each wait as it
 starts (`waiting_on`); `written` deletes one left behind once the file is written (`Host::remove`). `save` checks the owner before every write and stops the run as `Stopped::TakenOver`
 after a takeover; `heartbeat` keeps `state.json` fresh while a turn runs. `written` and `quality` open a turn's

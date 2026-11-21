@@ -31,17 +31,19 @@ pub(crate) struct RunView<'a> {
 impl RunView<'_> {
     /// The step's prompt for its turn in round n, and the one for a fresh session that has not seen the turns before
     /// it (None when the two are the same: the step's first turn). The quality round is the state's, for the
-    /// quality-gated step; 0 for every other. Each ends with QUALITY_FOLLOWS_NOTE when the gate follows the turn and
-    /// the turn has a deadline, then with BLOCKED_NOTE and WAITING_NOTE when the step can block.
+    /// quality-gated step; 0 for every other. Each ends with QUALITY_FOLLOWS_NOTE when the gate follows the turn
+    /// (QUALITY_FOLLOWS_NO_LIMIT_NOTE when the turn has no deadline), then with BLOCKED_NOTE and WAITING_NOTE when
+    /// the step can block.
     ///
     /// Errors: a file cannot be read, a saved record is malformed, or a template cannot be filled in (prompt_error).
     pub(crate) fn step_prompt(&self, step: &Step, n: u32) -> Result<(String, Option<String>), OrchestratorError> {
         let (text, fresh) = self.as_worded(step, n)?;
         let mut notes = vec![];
-        if let Some(timeout) =
-            self.turn_timeout(step).filter(|_| step.quality_gated && self.state.quality_job.is_some())
-        {
-            notes.push(self.prompts.fill(Prompt::QualityFollowsNote, &[("timeout", &timeout.to_string())])?);
+        if step.quality_gated && self.state.quality_job.is_some() {
+            notes.push(match self.turn_timeout(step) {
+                Some(timeout) => self.prompts.fill(Prompt::QualityFollowsNote, &[("timeout", &timeout.to_string())])?,
+                None => self.prompts.fill(Prompt::QualityFollowsNoLimitNote, &[])?,
+            });
         }
         if step.can_block() {
             // Formatted with nothing, as each prompt is a template (Prompts): an override may write a brace as {{.

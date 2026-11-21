@@ -56,15 +56,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `cli::resume_command` adds both for the CLI's own hints. `workflow` cannot call into `cli`, which depends on it.
   Closed when the workflow is given the program name and the target flags (or a hint builder) by its caller.
 
-- **Under `--timeout 0` a gated Builder is not told that the orchestrator runs the gate.** Raised by cross-review 272
-  (F1): `step_prompt` (`engine/src/workflow/step_prompt.rs`) sends QUALITY_FOLLOWS_NOTE only to a turn with a
-  deadline, so a turn without one, a human-paced step's or any under `--timeout 0`, loses its "do not run the gate
-  yourself" along with "at most {timeout} seconds", the instruction the note was added for (todo/88). Kept as built,
-  as turn-timeout-waits/02's ticket asked; splitting the note, or replacing `{timeout}` with a sentence that can be
-  empty, changes the prompt file `QUALITY_FOLLOWS_NOTE.md` users may have written since 0.96.1 and needs
-  `EARLIER_PLACEHOLDERS` (`engine/src/prompts.rs`) for saved runs. Closes when the user rules which, and it is built
-  or dropped.
-
 - **"The run has the quality gate" is spelt two ways.** Raised by cross-review 268 (F6): `step_prompt.rs` tests
   `quality_job.is_some()`, while `gate_switch.rs`, `cli.rs` (resume's gate check) and `cli/listing.rs` test
   `quality_job.as_deref().is_some_and(|j| !j.is_empty())`; within a run they agree (workflow.rs sets quality_job from
