@@ -267,6 +267,21 @@ fn a_raised_pin_installs_beside_the_old_install_and_then_removes_it() {
     assert_eq!(old_installs.installed(), None);
 }
 
+/// Anything else in the installs' directory, a file or a link as much as a directory, goes once an install is in place.
+#[test]
+fn an_install_removes_files_and_links_beside_it() {
+    let f = Fixture::new();
+    let pins = f.pins(NODE, &sha256_of(&f.tarball), "0.5.0");
+    let (installs, _) = f.installs(pins, &[(NODE, &f.tarball)], &[]);
+    std::fs::create_dir_all(f.root()).unwrap();
+    std::fs::write(format!("{}/stray", f.root()), "").unwrap();
+    std::os::unix::fs::symlink(f.root(), format!("{}/loop", f.root())).unwrap();
+
+    installs.install(&Interrupt::new()).unwrap();
+
+    assert_eq!(f.entries(), [".lock".to_string(), format!("node-{NODE}-adapter-0.5.0")]);
+}
+
 #[test]
 fn a_platform_without_a_pinned_node_is_refused() {
     let f = Fixture::new();
