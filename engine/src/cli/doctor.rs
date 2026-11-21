@@ -215,8 +215,8 @@ pub fn check_setup(host: &ProcessHost, herdr: &ProcessHerdr, cwd: Option<&str>, 
 /// the harness (crate::acp::probe is the real one; a harness the app cannot run yet is answered as not), and that an
 /// adapter's agent is logged in, as its answer's reported login and env tell (Installs::logged_in); then git, gh,
 /// gitleaks, with cwd the project's checkout and origin, and the local quality gate, as check_setup checks them. env
-/// is the environment the app's runs start their agents in. Makes no error, as check_setup; it changes nothing itself, but answers may start each agent, which may
-/// write its own state.
+/// is the environment the app's runs start their agents in. Makes no error, as check_setup; it changes nothing itself,
+/// but answers may start each agent, which may write its own state.
 pub fn check_acp_setup(
     host: &ProcessHost,
     env: &[(OsString, OsString)],
