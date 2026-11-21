@@ -287,8 +287,9 @@ impl ClaudeAcp {
         fs::create_dir(&adapter).map_err(|e| self.failed("create", &adapter, &e))?;
         write(&format!("{adapter}/package.json"), self.pins.package_json.as_bytes())?;
         write(&format!("{adapter}/package-lock.json"), self.pins.lockfile.as_bytes())?;
-        // Two empty files, since npm 10.9.9 refuses one file as both ("double-loading config ... as global").
-        let (user_npmrc, global_npmrc) = (format!("{dir}/empty-npmrc"), format!("{dir}/empty-global-npmrc"));
+        // Two empty files: npm refuses to load one file as both, in @npmcli/config 9.0.0's `#loadObject`
+        // (lib/index.js, "double-loading config ... as global"), the version npm 10.9.9 bundles.
+        let (user_npmrc, global_npmrc) = (format!("{dir}/empty-user-npmrc"), format!("{dir}/empty-global-npmrc"));
         let cache = format!("{dir}/npm-cache");
         write(&user_npmrc, b"")?;
         write(&global_npmrc, b"")?;

@@ -171,9 +171,9 @@ fn npm_installs_from_the_lockfile_without_scripts_or_the_users_npm_settings() {
     let argv = f.record("argv");
     let dir = format!("{}/.tmp-node-{NODE}-adapter-0.5.0", f.root());
     let expected = format!(
-        "{dir}/node/lib/node_modules/npm/bin/npm-cli.js ci --ignore-scripts --userconfig {dir}/empty-npmrc \
-         --globalconfig {dir}/empty-global-npmrc --registry {REGISTRY_URL} --prefix {dir}/adapter --cache {dir}/npm-cache \
-         --no-audit --no-fund --no-update-notifier\n"
+        "{dir}/node/lib/node_modules/npm/bin/npm-cli.js ci --ignore-scripts --userconfig {dir}/empty-user-npmrc \
+         --globalconfig {dir}/empty-global-npmrc --registry {REGISTRY_URL} --prefix {dir}/adapter \
+         --cache {dir}/npm-cache --no-audit --no-fund --no-update-notifier\n"
     );
     assert_eq!(argv, expected);
     assert_eq!(f.record("config-bytes").trim(), "0 0");
