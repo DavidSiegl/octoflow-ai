@@ -20,7 +20,7 @@ mod process;
 mod scan;
 
 pub use process::ProcessHost;
-pub(crate) use process::{kill_group, own_group, run_process, spawn_detached, ssh_argv, ProcessError};
+pub(crate) use process::{kill_group, own_group, run_process, spawn_detached, ProcessError};
 pub use scan::{LeaksFound, Scanned};
 
 use crate::quality::Leak;

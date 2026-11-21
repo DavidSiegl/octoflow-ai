@@ -13,7 +13,7 @@ use crate::cli::fixture::Cli;
 use crate::cli::{Command, Target};
 use crate::constants::{APPROVE, EXIT_ERROR, EXIT_INTERRUPTED, HEARTBEAT_SECONDS, STALE_SECONDS, WORKTREES_DIR};
 use crate::herdr::fake::Call;
-use crate::herdr::{HerdrError, HerdrServer, OWN_SESSION};
+use crate::herdr::{HerdrError, HerdrServer};
 use crate::host::tests::Repo;
 use crate::host::{Host, GIT_STATUS_ARGS};
 use crate::json::object;
@@ -145,7 +145,7 @@ fn the_workspace_is_told_and_closed_in_the_server_the_run_saved() {
     let c = Close::new();
     let pane: HerdrServer = serde_json::from_str(r#"{"HERDR_SESSION": "work"}"#).unwrap();
     c.cli.f.herdr.state().server = Some(pane);
-    let saved = serde_json::json!({"HERDR_SOCKET_PATH": null, "HERDR_SESSION": OWN_SESSION});
+    let saved = serde_json::json!({"HERDR_SOCKET_PATH": null, "HERDR_SESSION": "octoflow"});
     c.add(STALE_SECONDS + 1, true, &[("herdr_server", saved.clone())]);
     let run_s = serde_json::from_value::<HerdrServer>(saved).ok();
     // The run's workspace is open in its own server, not in the one close's environment reaches.

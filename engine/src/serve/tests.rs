@@ -45,8 +45,8 @@ fn serve_state(run_id: &str, extra: &[(&str, Value)]) -> String {
 }
 
 /// A ServeHost for /proj that holds the run's state, as serve_state() saves it.
-fn host_with_run(ssh_target: Option<&str>) -> Arc<ServeHost> {
-    let host = Arc::new(ServeHost::on(ssh_target));
+fn host_with_run() -> Arc<ServeHost> {
+    let host = Arc::new(ServeHost::default());
     host.state().files.insert(format!("{}/state.json", run_dir()), serve_state(SERVE_ID, &[]));
     host
 }
@@ -306,7 +306,7 @@ fn runs_are_list_json_records_locally() {
 
 #[test]
 fn a_project_is_connected_once() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     served.get(&Served::query("/runs", &[]), &[]);
     served.get(&Served::query("/runs", &[]), &[]);
     assert_eq!(*served.connects.lock().unwrap(), ["~/proj"]);
@@ -314,7 +314,7 @@ fn a_project_is_connected_once() {
 
 #[test]
 fn files_with_their_mtimes() {
-    let host = host_with_run(None);
+    let host = host_with_run();
     {
         let mut s = host.state();
         s.files.insert(format!("{}/spec.md", run_dir()), "# Spec\n".to_string());
@@ -335,7 +335,7 @@ fn files_with_their_mtimes() {
 
 #[test]
 fn file() {
-    let host = Arc::new(ServeHost::on(None));
+    let host = Arc::new(ServeHost::default());
     host.state().files.insert(format!("{}/spec.md", run_dir()), "# Spec\n".to_string());
     let served = Served::fake(&host, &[]);
     let reply = served.get(&Served::query("/file", &[("run", SERVE_ID), ("name", "spec.md")]), &[]);
@@ -345,7 +345,7 @@ fn file() {
 
 #[test]
 fn missing_file() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     let reply = served.get(&Served::query("/file", &[("run", SERVE_ID), ("name", "review-1.md")]), &[]);
     assert_eq!(reply.status, Some(404));
     assert_eq!(reply.error(), format!("no file review-1.md in run {SERVE_ID}"));
@@ -353,7 +353,7 @@ fn missing_file() {
 
 #[test]
 fn paths_outside_the_run_directory_are_refused_unread() {
-    let host = host_with_run(None);
+    let host = host_with_run();
     host.state().files.insert("/proj/secret".to_string(), "secret".to_string());
     let served = Served::fake(&host, &[]);
     let run_dot_dot = format!("{SERVE_ID}/..");
@@ -386,7 +386,7 @@ fn paths_outside_the_run_directory_are_refused_unread() {
 
 #[test]
 fn files_of_a_run_outside_the_runs_directory_are_refused() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     for run in ["../..", "..", "/proj", ""] {
         assert_eq!(served.get(&Served::query("/files", &[("run", run)]), &[]).status, Some(403), "{run:?}");
     }
@@ -492,7 +492,7 @@ fn a_run_whose_state_json_leads_out_of_its_run_directory_is_no_run() {
 
 #[test]
 fn missing_parameter() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     for (path, missing) in [
         ("/runs".to_string(), "cwd"),
         (Served::query("/file", &[("run", SERVE_ID)]), "name"),
@@ -520,7 +520,7 @@ fn setup_served(marker: &str, checks: Vec<Check>) -> (Served, Asked) {
         checks.clone()
     };
     let setup = Setup::new(Box::new(check), vec![], marker.to_string());
-    (Served::fake_with(&Arc::new(ServeHost::on(None)), &[], Options { setup, ..Options::default() }), asked)
+    (Served::fake_with(&Arc::new(ServeHost::default()), &[], Options { setup, ..Options::default() }), asked)
 }
 
 fn a_check(name: &str, level: Level, ok: bool) -> Check {
@@ -618,7 +618,7 @@ fn a_setup_marker_that_cannot_be_written_or_looked_for_is_500() {
 /// A server whose Setup checks nothing and installs the adapters of installs.
 fn adapters_served(installs: Vec<Installs>) -> Served {
     let setup = Setup::new(Box::new(|_: &str, _: &Interrupt| vec![]), installs, "/nowhere/setup-checked".into());
-    Served::fake_with(&Arc::new(ServeHost::on(None)), &[], Options { setup, ..Options::default() })
+    Served::fake_with(&Arc::new(ServeHost::default()), &[], Options { setup, ..Options::default() })
 }
 
 #[test]
@@ -684,7 +684,7 @@ fn setup_gate_needs_a_checkout_and_a_cwd() {
 
 #[test]
 fn unknown_endpoint() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     let reply = served.get(&Served::query("/state", &[]), &[]);
     assert_eq!((reply.status, reply.error()), (Some(404), "no endpoint /state".to_string()));
 }
@@ -700,7 +700,7 @@ fn an_unreadable_project_is_a_bad_gateway() {
 
 #[test]
 fn runs_that_cannot_be_read_are_a_bad_gateway() {
-    let host = Arc::new(ServeHost::on(None));
+    let host = Arc::new(ServeHost::default());
     host.state().run_states_inside_error = Some("ssh: connection refused".to_string());
     let served = Served::fake(&host, &[]);
     let reply = served.get(&Served::query("/runs", &[]), &[]);
@@ -710,7 +710,7 @@ fn runs_that_cannot_be_read_are_a_bad_gateway() {
 #[test]
 fn a_target_read_as_http_server_reads_it() {
     // A path that starts with //, a fragment, an absolute URL, and a parameter given twice, the last one counting.
-    let host = Arc::new(ServeHost::on(None));
+    let host = Arc::new(ServeHost::default());
     host.state().files.insert(format!("{}/spec.md", run_dir()), "x".to_string());
     let served = Served::fake(&host, &[]);
     let base = format!("cwd=%7E%2Fproj&run={SERVE_ID}&name=nope&name=spec.md");
@@ -730,7 +730,7 @@ fn a_target_read_as_http_server_reads_it() {
 
 #[test]
 fn no_token() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     let reply = served.ask("GET", &Served::query("/runs", &[]), &[]);
     assert_eq!(reply.status, Some(401));
     assert_eq!(reply.header("WWW-Authenticate"), Some("Bearer"));
@@ -740,7 +740,7 @@ fn no_token() {
 
 #[test]
 fn wrong_token() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     let token = served.token();
     let longer = format!("Bearer {token}x");
     let shorter = format!("Bearer {}", &token[..token.len() - 1]);
@@ -759,7 +759,7 @@ fn wrong_token() {
 
 #[test]
 fn non_ascii_tokens() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     // é's UTF-8 bytes on the wire, each sent as a Latin-1 character. tiny_http closes the connection of a request with
     // a header beyond ASCII unanswered (TODO.md, "serve answers some malformed requests abruptly or silently").
     for header in ["Bearer \u{c3}\u{a9}".to_string(), format!("Bearer {}\u{c3}\u{a9}", served.token())] {
@@ -775,7 +775,7 @@ fn non_ascii_tokens() {
 
 #[test]
 fn token_in_the_query() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     let token = served.token();
     assert_eq!(served.ask("GET", &Served::query("/runs", &[("token", &token)]), &[]).status, Some(200));
     // Either place is enough: a wrong token in the other does not undo it.
@@ -786,7 +786,7 @@ fn token_in_the_query() {
 
 #[test]
 fn tokens_differ_per_server() {
-    let host = Arc::new(ServeHost::on(None));
+    let host = Arc::new(ServeHost::default());
     let (one, other) = (Served::fake(&host, &[]), Served::fake(&host, &[]));
     assert_ne!(one.token(), other.token());
     assert_eq!(one.token().len(), 43);
@@ -826,7 +826,7 @@ fn bytes_are_the_same_only_when_equal() {
 
 #[test]
 fn bound_to_loopback_only() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     assert_eq!(served.server.url(), format!("http://127.0.0.1:{}", served.port));
     let http = lock(&served.server.listening).clone().expect("it listens");
     let bound = http.server_addr().to_ip().map(|a| a.ip().to_string());
@@ -835,7 +835,7 @@ fn bound_to_loopback_only() {
 
 #[test]
 fn foreign_host_header() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     let port = served.port;
     for host in [
         "evil.example".to_string(),
@@ -855,7 +855,7 @@ fn foreign_host_header() {
 
 #[test]
 fn a_request_without_a_host_header_is_refused() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     let raw =
         format!("GET {} HTTP/1.0\r\nAuthorization: Bearer {}\r\n\r\n", Served::query("/runs", &[]), served.token());
     assert_eq!(exchange(served.port, raw.as_bytes()).status, Some(403));
@@ -863,7 +863,7 @@ fn a_request_without_a_host_header_is_refused() {
 
 #[test]
 fn own_host_headers() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     for host in [format!("127.0.0.1:{}", served.port), format!("localhost:{}", served.port)] {
         assert_eq!(served.get(&Served::query("/runs", &[]), &[("Host", &host)]).status, Some(200), "{host}");
     }
@@ -871,7 +871,7 @@ fn own_host_headers() {
 
 #[test]
 fn foreign_origin() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[TAURI_ORIGIN]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[TAURI_ORIGIN]);
     for origin in ["http://evil.example", "null", "http://localhost:1420", "", "TAURI://localhost"] {
         let reply = served.get(&Served::query("/runs", &[]), &[("Origin", origin)]);
         assert_eq!(reply.status, Some(403), "{origin:?}");
@@ -881,14 +881,14 @@ fn foreign_origin() {
 
 #[test]
 fn foreign_origin_even_without_a_token() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     let reply = served.ask("GET", &Served::query("/runs", &[]), &[("Origin", "http://evil.example")]);
     assert_eq!(reply.status, Some(403));
 }
 
 #[test]
 fn the_webview_origin_is_allowed_by_cors() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[TAURI_ORIGIN]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[TAURI_ORIGIN]);
     let reply = served.get(&Served::query("/runs", &[]), &[("Origin", TAURI_ORIGIN)]);
     assert_eq!(reply.status, Some(200));
     assert_eq!(reply.header("Access-Control-Allow-Origin"), Some(TAURI_ORIGIN));
@@ -900,7 +900,7 @@ fn the_webview_origin_is_allowed_by_cors() {
 
 #[test]
 fn own_origin_and_none() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     let reply = served.get(&Served::query("/runs", &[]), &[]);
     assert_eq!(reply.status, Some(200));
     assert_eq!(reply.header("Access-Control-Allow-Origin"), None);
@@ -911,7 +911,7 @@ fn own_origin_and_none() {
 
 #[test]
 fn preflight_of_the_webview() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[TAURI_ORIGIN]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[TAURI_ORIGIN]);
     let reply = served.ask("OPTIONS", "/runs", &[("Origin", TAURI_ORIGIN)]);
     assert_eq!(reply.status, Some(204));
     assert_eq!(reply.header("Access-Control-Allow-Origin"), Some(TAURI_ORIGIN));
@@ -922,7 +922,7 @@ fn preflight_of_the_webview() {
 
 #[test]
 fn preflight_of_a_foreign_origin() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[TAURI_ORIGIN]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[TAURI_ORIGIN]);
     let reply = served.ask("OPTIONS", "/runs", &[("Origin", "http://evil.example")]);
     assert_eq!(reply.status, Some(403));
     assert_eq!(reply.header("Access-Control-Allow-Origin"), None);
@@ -932,7 +932,7 @@ fn preflight_of_a_foreign_origin() {
 
 #[test]
 fn writes_are_not_served() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     for method in ["POST", "PUT", "DELETE", "PATCH", "HEAD", "get"] {
         let reply = served.get(&Served::query("/runs", &[]), &[]);
         assert_eq!(reply.status, Some(200));
@@ -951,7 +951,7 @@ fn writes_are_not_served() {
 
 /// A server whose project holds the run with a build agent named build-5e7e00, which shows "> ready".
 fn served_with_agent() -> Served {
-    let host = Arc::new(ServeHost::on(None));
+    let host = Arc::new(ServeHost::default());
     let agents = r#"{"spec": {"name": "", "pane": "", "kind": "claude"}, "build": {"name": "build-5e7e00", "pane": "w1:p2", "kind": "claude"}}"#;
     let state = serve_state(SERVE_ID, &[("agents", serde_json::from_str::<Value>(agents).unwrap())]);
     host.state().files.insert(format!("{}/state.json", run_dir()), state);
@@ -1113,7 +1113,7 @@ fn a_bad_run_body_is_refused_before_the_project_is_reached() {
 
 #[test]
 fn a_run_needs_the_token_and_the_server_s_own_origin() {
-    let host = Arc::new(ServeHost::on(None));
+    let host = Arc::new(ServeHost::default());
     let served = starting(&host);
     let (target, body) = (Served::query("/run", &[]), r#"{"task": "t"}"#);
     let length = body.len().to_string();
@@ -1521,7 +1521,7 @@ fn a_close_skips_a_run_whose_state_json_is_not_json_saying_why() {
 
 #[test]
 fn a_close_needs_the_token_and_the_server_s_own_origin() {
-    let host = Arc::new(ServeHost::on(None));
+    let host = Arc::new(ServeHost::default());
     let served = Served::fake(&host, &[]);
     let (target, body) = (Served::query("/close", &[]), r#"{"dry_run": true}"#);
     let length = body.len().to_string();
@@ -1712,7 +1712,7 @@ fn workflows_are_the_configuration_s_with_their_roles_and_the_harnesses() {
     std::fs::write(d.join("workflows/solo.toml"), solo).unwrap();
     std::fs::write(d.join("workflows/broken.toml"), "not toml [").unwrap();
     let served = Served::fake_with(
-        &Arc::new(ServeHost::on(None)),
+        &Arc::new(ServeHost::default()),
         &[],
         Options { config: ConfigDir::at(&d.path()), ..Options::default() },
     );
@@ -1748,7 +1748,7 @@ fn workflows_are_the_configuration_s_with_their_roles_and_the_harnesses() {
 /// A server whose workflow files are in dir's workflows directory, and whose projects are none it should reach.
 fn editing(dir: &TempDir) -> Served {
     Served::fake_with(
-        &Arc::new(ServeHost::on(None)),
+        &Arc::new(ServeHost::default()),
         &[],
         Options { config: ConfigDir::at(&dir.path()), ..Options::default() },
     )
@@ -2061,7 +2061,7 @@ fn the_stream() {
 
 #[test]
 fn nothing_while_nothing_changes() {
-    let served = Served::fake(&host_with_run(None), &[]);
+    let served = Served::fake(&host_with_run(), &[]);
     let stream = EventStream::open(&served, &Served::query("/events", &[]), "");
     stream.kinds(2);
     assert!(stream.events.recv_timeout(Duration::from_millis(2500)).is_err());
@@ -2091,7 +2091,7 @@ fn a_state_json_that_is_not_json_is_the_record_of_an_unreadable_run() {
 
 #[test]
 fn the_stream_ends_when_the_server_stops() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     let stream = EventStream::open(&served, &Served::query("/events", &[]), "");
     drop(served);
     assert!(stream.ended.recv_timeout(Duration::from_secs(3)).is_ok());
@@ -2099,7 +2099,7 @@ fn the_stream_ends_when_the_server_stops() {
 
 #[test]
 fn a_stream_to_an_http_1_0_client_ends_with_its_connection() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     let raw = format!(
         "GET {}&token={} HTTP/1.0\r\nHost: 127.0.0.1:{}\r\n\r\n",
         Served::query("/events", &[]),
@@ -2119,7 +2119,7 @@ fn a_stream_to_an_http_1_0_client_ends_with_its_connection() {
 #[test]
 fn a_client_that_goes_ends_its_stream() {
     // The stream's thread finds the client gone at a write, and polls no more.
-    let host = host_with_run(None);
+    let host = host_with_run();
     let served = Served::fake_polling(&host, &[], Duration::from_millis(20));
     let stream = EventStream::open(&served, &Served::query("/events", &[]), "");
     stream.kinds(2);
@@ -2133,7 +2133,7 @@ fn a_client_that_goes_ends_its_stream() {
 
 #[test]
 fn the_stream_allows_the_webview_origin() {
-    let served = Served::fake(&host_with_run(None), &[TAURI_ORIGIN]);
+    let served = Served::fake(&host_with_run(), &[TAURI_ORIGIN]);
     let stream = EventStream::open(&served, &Served::query("/events", &[]), &format!("Origin: {TAURI_ORIGIN}\r\n"));
     assert!(
         stream.head.contains(&format!("\r\nAccess-Control-Allow-Origin: {TAURI_ORIGIN}\r\nVary: Origin\r\n")),
@@ -2145,7 +2145,7 @@ fn the_stream_allows_the_webview_origin() {
 
 #[test]
 fn a_stream_is_refused_as_any_request() {
-    let served = Served::fake(&host_with_run(None), &[TAURI_ORIGIN]);
+    let served = Served::fake(&host_with_run(), &[TAURI_ORIGIN]);
     let events = Served::query("/events", &[]);
     assert_eq!(served.ask("GET", &events, &[]).status, Some(401));
     assert_eq!(served.ask("GET", &format!("{events}&token=x"), &[]).status, Some(401));
@@ -2172,7 +2172,7 @@ impl Write for Lines {
 
 #[test]
 fn in_process() {
-    let host = Arc::new(ServeHost::on(None));
+    let host = Arc::new(ServeHost::default());
     let connect = move |_: &str, _: &Interrupt| Ok(reached(&host, &Arc::default()));
     let (lines, printed) = mpsc::channel();
     let (stop, stopped) = mpsc::channel::<()>();
@@ -2257,7 +2257,7 @@ fn a_server_that_stops_accepting_is_started_again_on_the_port() {
     // Not faithful to an accept error: unblock makes the server's recv fail while the RunServer is not stopping, but
     // leaves its accept thread running, which a real accept error ends. That is why dispatch must drop the first server
     // before the new one accepts on the port.
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     // Weak: a strong reference here would keep the first server alive, and its accept thread with it, past the restart.
     let first = Arc::downgrade(&lock(&served.server.listening).clone().expect("it listens"));
     first.upgrade().expect("it is alive").unblock();
@@ -2479,7 +2479,7 @@ const JOURNAL: &str = r#"{"journal": 1}
 
 #[test]
 fn an_acp_agent_s_events_are_its_current_session_after_the_seq_asked_for() {
-    let host = host_with_run(None);
+    let host = host_with_run();
     host.state().files.insert(format!("{}/build.events.jsonl", run_dir()), JOURNAL.to_string());
     let served = Served::fake(&host, &[]);
     let events = |after: &[(&str, &str)]| {
@@ -2505,7 +2505,7 @@ fn an_acp_agent_s_events_are_its_current_session_after_the_seq_asked_for() {
 
 #[test]
 fn an_agent_without_a_journal_is_404_and_a_journal_of_another_version_409() {
-    let host = host_with_run(None);
+    let host = host_with_run();
     host.state().files.insert(format!("{}/review.events.jsonl", run_dir()), "{\"journal\": 2}\n".to_string());
     let served = Served::fake(&host, &[]);
     let events = |role: &str| served.get(&Served::query("/agent/events", &[("run", SERVE_ID), ("role", role)]), &[]);

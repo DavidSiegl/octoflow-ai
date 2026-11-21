@@ -1,14 +1,12 @@
 //! ServeHost, a Host that serve's threads can share, its files in memory; and FakeConsole, the herdr
-//! its runs' agents are in, which also launches the runs serve starts.
+//! its runs' agents are in.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::constants::{METRICS_FILE, RUNS_DIR, SUMMARY_FILE};
 use crate::error::OrchestratorError;
-use crate::herdr::{
-    AgentAddress, AgentConsole, HerdrError, HerdrServer, Launched, Launcher, Workspaces, PANE_SHELL_SCRIPT,
-};
+use crate::herdr::{AgentAddress, AgentConsole, HerdrError, HerdrServer, Workspaces};
 use crate::host::{Exec, ExecError, Host, RunFile, RunFileText};
 use crate::serve::Reached;
 use crate::state::SavedRun;
@@ -16,16 +14,15 @@ use crate::state::SavedRun;
 /// A Host whose files are `files`, whose run_states_inside and run_state_inside read the state.json of each run among
 /// them that names the run its directory is named for, whose
 /// run_files_inside lists those under a run directory by their `mtimes`, as the real Host's does, and which records
-/// the path of every read, read_inside's included, in `reads`. It runs no command but crate::herdr::pane_shell's,
-/// which it answers from `pane_shell`, and none of its files is a link, so every one stays inside its run directory.
+/// the path of every read, read_inside's included, in `reads`. It is this machine's, runs no command, and none of its
+/// files is a link, so every one stays inside its run directory.
 #[derive(Default)]
 pub struct ServeHost {
-    /// The SSH target it stands for; None for this machine.
-    pub ssh_target: Option<String>,
     state: Mutex<Files>,
 }
 
 /// What a ServeHost holds, changed by the tests while a server reads it.
+#[derive(Default)]
 pub struct Files {
     /// By path, each file's text.
     pub files: BTreeMap<String, String>,
@@ -44,33 +41,9 @@ pub struct Files {
     pub run_files_inside_calls: usize,
     /// While set, what every read fails with (still recorded in reads).
     pub read_error: Option<String>,
-    /// What crate::herdr::pane_shell's script prints: $SHELL, the path of herdr's config.toml, and its text. Bash and
-    /// no config.toml, in ServeHost::default.
-    pub pane_shell: String,
-}
-
-impl Default for Files {
-    fn default() -> Files {
-        Files {
-            files: BTreeMap::new(),
-            mtimes: BTreeMap::new(),
-            ages: BTreeMap::new(),
-            reads: Vec::new(),
-            run_states_inside_error: None,
-            run_states_inside_calls: 0,
-            run_files_inside_calls: 0,
-            read_error: None,
-            pane_shell: "/bin/bash\n/home/me/.config/herdr/config.toml\n".to_string(),
-        }
-    }
 }
 
 impl ServeHost {
-    /// One for a project on ssh_target, None for this machine.
-    pub fn on(ssh_target: Option<&str>) -> ServeHost {
-        ServeHost { ssh_target: ssh_target.map(String::from), ..ServeHost::default() }
-    }
-
     /// Its files, to read or change.
     pub fn state(&self) -> MutexGuard<'_, Files> {
         self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -107,15 +80,11 @@ impl ServeHost {
 
 impl Host for ServeHost {
     fn ssh_target(&self) -> Option<&str> {
-        self.ssh_target.as_deref()
+        None
     }
 
     fn exec(&self, argv: &[&str], _stdin: Option<&[u8]>, _timeout: u64) -> Result<Exec, ExecError> {
-        if argv == ["sh", "-c", PANE_SHELL_SCRIPT] {
-            let stdout = self.state().pane_shell.clone().into_bytes();
-            return Ok(Exec { command: argv.join(" "), status: 0, stdout, stderr: Vec::new() });
-        }
-        panic!("ServeHost runs no command but pane_shell's, asked for {argv:?}")
+        panic!("ServeHost runs no command, asked for {argv:?}")
     }
 
     fn read(&self, path: &str) -> Result<Option<String>, OrchestratorError> {
@@ -157,9 +126,7 @@ impl Host for ServeHost {
 /// An AgentConsole whose agents show `screens`, by herdr name, whatever server they are addressed in, and which
 /// records what is typed into them in `typed`, and the server of each in `servers`. An agent without a screen has
 /// exited (herdr's agent_not_found). As Workspaces, its open workspaces are `workspaces`, and it records each call in
-/// `workspace_calls`. As a Launcher, it refuses a launch, as ProcessHerdr does, when `pane_shell` names a shell a run
-/// cannot type into; else it records each launch in `launches`, plays it by `on_launch`, and gives every launch pane
-/// LAUNCHED_PANE, whose command has exited once `exited` is set.
+/// `workspace_calls`.
 #[derive(Default)]
 pub struct FakeConsole {
     state: Mutex<Consoled>,
@@ -180,30 +147,9 @@ pub struct Consoled {
     pub workspaces: BTreeSet<String>,
     /// Each workspace call, (`exists W` or `close W`, the server it was addressed to), in order.
     pub workspace_calls: Vec<(String, Option<HerdrServer>)>,
-    /// Each launch, (cwd, label, argv), in order.
-    pub launches: Vec<(String, String, Vec<String>)>,
-    /// What each launch then does, given its argv, as a run's command would: such as save a state.json.
-    pub on_launch: Option<OnLaunch>,
-    /// What LAUNCHED_PANE showed once its command exited; None while it runs.
-    pub exited: Option<String>,
-    /// While set, what every launch fails with, having launched nothing.
-    pub launch_error: Option<HerdrError>,
-    /// What crate::herdr::PANE_SHELL_SCRIPT prints where the launcher's herdr runs, as ServeHost's `pane_shell`;
-    /// empty, the default, names no shell, so panes start /bin/sh, which a run can type into.
-    pub pane_shell: String,
-    /// While set, what every look at whether a launched command has exited fails with.
-    pub exited_error: Option<HerdrError>,
-    /// The server each launch's pane is in (Launched::server); None for the one the launcher's environment picks.
-    pub launched_server: Option<HerdrServer>,
 }
 
-/// What a FakeConsole does at a launch, given its argv (Consoled::on_launch).
-pub type OnLaunch = Box<dyn FnMut(&[String]) + Send>;
-
-/// The pane a FakeConsole launches every command in.
-pub const LAUNCHED_PANE: &str = "w9:p1";
-
-/// The project /proj on host, its agents in console and its runs launched by it there.
+/// The project /proj on host, its agents in console.
 pub fn reached(host: &Arc<ServeHost>, console: &Arc<FakeConsole>) -> Reached {
     let dir = "/proj".to_string();
     Reached { host: host.clone(), dir, console: console.clone(), places: console.clone() }
@@ -255,29 +201,5 @@ impl Workspaces for FakeConsole {
         s.workspace_calls.push((format!("close {workspace}"), server.cloned()));
         s.workspaces.remove(workspace);
         Ok(())
-    }
-}
-
-impl Launcher for FakeConsole {
-    fn launch(&self, cwd: &str, label: &str, argv: &[String]) -> Result<Launched, HerdrError> {
-        let mut s = self.state();
-        if let Some(e) = &s.launch_error {
-            return Err(e.clone());
-        }
-        crate::herdr::shell_of_panes(&s.pane_shell).map_err(HerdrError::Failed)?;
-        s.launches.push((cwd.to_string(), label.to_string(), argv.to_vec()));
-        if let Some(play) = s.on_launch.as_mut() {
-            play(argv);
-        }
-        Ok(Launched { pane: LAUNCHED_PANE.to_string(), server: s.launched_server.clone() })
-    }
-
-    fn exited(&self, launched: &Launched, _lines: u32) -> Result<Option<String>, HerdrError> {
-        assert_eq!(launched.pane, LAUNCHED_PANE, "only a launched pane is asked about");
-        let s = self.state();
-        match &s.exited_error {
-            Some(e) => Err(e.clone()),
-            None => Ok(s.exited.clone()),
-        }
     }
 }

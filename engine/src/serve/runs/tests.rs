@@ -32,7 +32,7 @@ struct Watched {
 
 impl Watched {
     fn new() -> Watched {
-        let host = Arc::new(ServeHost::on(None));
+        let host = Arc::new(ServeHost::default());
         let project = ProjectRuns::new(reached(&host, &Arc::default()), vec![]);
         Watched { host, project }
     }
@@ -257,7 +257,7 @@ fn state_json_and_names_outside_the_run_are_refused_unread() {
 
 #[test]
 fn an_agent_is_reached_in_the_herdr_server_its_run_saved() {
-    let host = Arc::new(ServeHost::on(None));
+    let host = Arc::new(ServeHost::default());
     let console = Arc::new(FakeConsole::default());
     let project = ProjectRuns::new(reached(&host, &console), vec![]);
     console.state().screens.insert("build-5e7e00".to_string(), "> ready".to_string());
