@@ -465,8 +465,8 @@ export class Api {
     return body.checked;
   }
 
-  /** Record that the setup dialog has been closed with every required check passed, so that it no longer opens by
-   * itself; rejects with why it could not be recorded. */
+  /** Record that the setup dialog has been closed with every required check passed, which setupChecked() then counts
+   * as its comment says; rejects with why it could not be recorded. */
   async markSetupChecked(): Promise<void> {
     await this.json(`${this.connection.url}/setup/checked`, { method: "POST" });
   }

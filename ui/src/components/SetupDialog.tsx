@@ -27,7 +27,8 @@ type ClaudeOutcome = { error: string } | null;
  * one with its fix; a button that sets the project up for the local quality gate, showing which files it wrote
  * and which it kept; and, while the report offers it, a button that installs claude's ACP adapter, after which the
  * checks run again. Closing it records that setup was checked when every required check passed, which keeps the app
- * from opening it by itself as Api.setupChecked says; a failure to record that is shown, and closing once more closes without it. */
+ * from opening it by itself as Api.setupChecked says; a failure to record that is shown, and closing once more closes
+ * without it. */
 export function SetupDialog({ api, project, onClose }: Props) {
   // Which round of checks is shown: "Check again" starts the next.
   const [round, setRound] = useState(0);

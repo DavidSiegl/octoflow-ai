@@ -881,7 +881,8 @@ fn socket_failure(e: acp::SocketError) -> Answer {
 
 /// Answer a POST of /setup/checked, which needs no parameter, by writing the setup marker. It trusts the caller that
 /// every Required check passed rather than checking again, which would run the checks twice for one Close: the marker
-/// only keeps the dialog from opening by itself, and "Check setup…" opens it whatever the marker says.
+/// only keeps the dialog from opening by itself (Setup::checked), and "Check setup…" opens it whatever the marker
+/// says.
 fn post_checked(shared: &Shared, request: Request, query: &HashMap<String, String>) {
     if let Some((code, body)) = refusal(shared, &request, query) {
         return send_json(request, code, &body);
