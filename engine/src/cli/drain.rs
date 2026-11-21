@@ -130,8 +130,9 @@ fn next_startable(specs: &mut [QueuedSpec], by_slug: &HashMap<String, usize>, wo
 
 /// Run the spec as run --spec would with args's flags, and record the run and how it ended in its header.
 ///
-/// Returns None when the run succeeded without conflicts, and the spec is SPEC_IN_REVIEW or gone, or when the spec is
-/// found gone before the run starts, which it then does not; otherwise the exit status that stops the drain, having
+/// Returns None when the run succeeded without conflicts, and the spec is SPEC_IN_REVIEW, or SPEC_FOR_HUMAN for a run
+/// that opened no pull request (SPEC_READY's doc), or gone; or when the spec is found gone before the run starts,
+/// which it then does not; otherwise the exit status that stops the drain, having
 /// printed why on standard error. A header write to a gone spec is logged instead (QueuedSpec::update). Errors: the
 /// run's state cannot be made (new_state), or the spec cannot be written (Stop::Failed); the run was interrupted
 /// (Stop::Interrupted, with its id).
@@ -169,8 +170,7 @@ fn drain_spec(args: &DrainArgs, world: &Connected, cwd: &str, spec: &mut QueuedS
         Ok(ran) => {
             let status = finish(ran.verdict.as_deref(), &ran.state, &ran.pipeline, world.stdout);
             let pr = ran.state.pr_url.as_ref().filter(|u| !u.is_empty());
-            // In review only through a pull request, as finished_run_header has it: a run with nothing to publish
-            // opened none, so its spec is the human's.
+            // In review only through a pull request (SPEC_READY's doc).
             let in_review = status == 0 && pr.is_some();
             let mut entries: Entries =
                 vec![(STATUS_KEY, if in_review { SPEC_IN_REVIEW } else { SPEC_FOR_HUMAN }.into())];
@@ -446,7 +446,8 @@ fn pull_request_header(state: &str) -> Entries {
 }
 
 /// The header lines to set for the finished run run_id, on the spec's Run: line: SPEC_IN_REVIEW and its pull request
-/// for one that succeeded without conflicts, SPEC_FOR_HUMAN otherwise, with its pull request if it has one.
+/// for one that succeeded without conflicts and opened one, SPEC_FOR_HUMAN otherwise (SPEC_READY's doc), with its
+/// pull request if it has one.
 ///
 /// runs are Host::run_states's. Errors: the run is not finished, being running, stale, failed, closed or not among
 /// runs, or is done but cannot be read (SavedRun::problem); the message names the spec, the run and what to do about

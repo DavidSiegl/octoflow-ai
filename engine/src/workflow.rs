@@ -560,8 +560,8 @@ impl<'a> Workflow<'a> {
     fn check_worktree(&self) -> Result<(), OrchestratorError> {
         let s = &self.state;
         let worktree = s.worktree.as_deref().unwrap_or_default();
-        let published = !s.pr_url.as_deref().unwrap_or_default().is_empty() || s.nothing_to_publish;
-        if published || self.host.is_worktree(&s.cwd, worktree)? {
+        let nothing_to_lose = !s.pr_url.as_deref().unwrap_or_default().is_empty() || s.nothing_to_publish;
+        if nothing_to_lose || self.host.is_worktree(&s.cwd, worktree)? {
             return Ok(());
         }
         Err(OrchestratorError(format!(
@@ -1257,6 +1257,9 @@ impl<'a> Workflow<'a> {
                 if self.host.is_worktree(&s.cwd, worktree)? {
                     self.host.git(worktree, &["switch", "--quiet", "--detach"])?;
                     kept = format!("; what the run wrote is in worktree {worktree}");
+                } else {
+                    // Its directory gone, git still counts the branch as checked out there, and refuses to delete it.
+                    self.host.prune_worktrees(&s.cwd)?;
                 }
             }
         }

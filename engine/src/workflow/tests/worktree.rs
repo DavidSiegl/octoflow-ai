@@ -322,6 +322,9 @@ fn resume_with_nothing_to_publish_finishes_without_the_worktree() {
     let mut state = saved_worktree_run("publish", 1);
     (state.verdict, state.nothing_to_publish) = (Some(APPROVE.into()), true);
     let host = FakeHost::default();
+    // Its directory deleted, but git still has the branch checked out there until a prune.
+    host.state().worktrees.insert(WORKTREE.into(), RUN_BRANCH.into());
+    host.state().vanished_worktrees.insert(WORKTREE.into());
     host.state().branches.insert(RUN_BRANCH.into(), "abc123".into());
     let f = Fixture::resume(Rc::new(host), state, vec![], &[], &[]);
     let mut wf = f.workflow(f.as_saved());
