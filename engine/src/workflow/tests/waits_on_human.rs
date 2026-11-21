@@ -97,3 +97,33 @@ fn an_idle_interview_and_a_stalled_agent_wait_on_the_human_and_a_working_one_doe
     asked.dedup();
     assert_eq!(asked, [("spec".to_string(), Waiting::Interview), ("build".to_string(), Waiting::Idle)]);
 }
+
+#[test]
+fn an_agent_that_reports_a_wait_waits_on_the_human_before_it_would_stall() {
+    let f = Fixture::new(vec![
+        ("spec", vec![spec_turn()]),
+        ("build", vec![idle()]),
+        ("review", vec![review_turn(1, APPROVE)]),
+    ]);
+    let (host, spec, build) = (Rc::clone(&f.host), f.state.spec_path(), f.state.build_path(1));
+    let waiting = build.replace("build-1.md", "build-1.waiting");
+    // The report written well before STALL_SECONDS.
+    f.clock.hook(move |now| {
+        if host.read(&spec).unwrap().is_none() || host.read(&build).unwrap().is_some() {
+            return;
+        }
+        if host.read(&waiting).unwrap().is_none() {
+            host.write(&waiting, "the merge of pull request #526", false).unwrap();
+        } else if now > 60.0 {
+            host.write(&build, "report", false).unwrap();
+        }
+    });
+    let agents = Awaited { herdr: &f.herdr, asked: RefCell::default() };
+
+    let ran = Workflow::new(Collaborators { agents: &agents, ..f.collaborators() }, f.state.clone(), no_pr())
+        .expect("Workflow::new takes the settings")
+        .run();
+
+    assert_eq!(ran, verdict(APPROVE));
+    assert!(agents.asked.into_inner().contains(&("build".to_string(), Waiting::Idle)));
+}

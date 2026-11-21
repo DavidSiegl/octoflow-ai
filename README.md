@@ -592,7 +592,7 @@ place, with exactly the placeholders of the text it replaces.
 | `QUALITY_PASSED_NOTE.md`, `QUALITY_UNRESOLVED_NOTE.md`, `QUALITY_STUCK_NOTE.md`, `QUALITY_OFF_NOTE.md` | at the end of the verdict step's prompt, on how the quality gate ended |
 | `LOCKED_NOTE.md`, `PROOFS_NOTE.md`, `CARRIED_PROOFS_NOTE.md` | on restored locked files, and on the Reviewer's failing proofs |
 | `BLOCKED_NOTE.md`, `BLOCKED_PROMPT.md` | at the end of every prompt of a step that can block, and once its report asked the human |
-| `WAITING_NOTE.md` | after `BLOCKED_NOTE`, on how the agent reports a wait on something outside the run (`{waiting_path}`) |
+| `WAITING_NOTE.md` | after `BLOCKED_NOTE`, on how the agent reports a wait on something outside the run (`{waiting_path}`); a file replaces its text, but the paragraph is always sent |
 | `CONTINUE_PROMPT.md`, `RETRY_VERDICT_PROMPT.md` | to a session restarted mid-turn, and after a review without a verdict line |
 
 `workflows` lists the prompt files in effect. A bad file stops `run` or `drain` before any agent starts; see

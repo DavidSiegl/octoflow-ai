@@ -175,6 +175,13 @@ impl Workflow<'_> {
             return Ok(out);
         }
         let how = self.agent(role)?;
+        // A wait is the session's that reported it (waiting_path): one that is not the session prompted for this turn
+        // going on, as after its agent exited and was started again, knows nothing of it.
+        let goes_on = matches!(how, How::Alive | How::Started(AgentStart::Resumed))
+            && self.state.prompted.as_deref() == Some(file.as_str());
+        if !goes_on {
+            self.host.remove(&waiting_path(path))?;
+        }
         let message = self.prompt_for(how, &file, &t.text, t.fresh_text.as_deref(), path)?;
         self.announce(role, how, message.is_some(), &t.announce)?;
         self.human.log(&format!("[{role}] working in {}", self.whereabouts(role)));
@@ -425,8 +432,8 @@ impl Workflow<'_> {
     /// an interview or a block's wait, and once it has stalled.
     ///
     /// While the role reports a wait on something outside the run (waiting_on), the turn's deadline moves on with the
-    /// clock, so the timeout counts only the time it works, and no stall is told; the human is told of each wait as
-    /// it starts.
+    /// clock, so the timeout counts only the time it works, no stall is told, and an idle agent is open to the
+    /// human's message; the human is told of each wait once, as it starts.
     fn await_handoff(&mut self, role: &str, path: &str, t: &Turn) -> Outcome<String> {
         let (timeout, watch_stalls, paced) = (t.timeout, t.watch_stalls, t.announce.waiting());
         let (label, file) = (self.label(role), file_name(path).to_string());
@@ -436,8 +443,8 @@ impl Workflow<'_> {
         let mut quiet_since: Option<f64> = None;
         // What the human was last told about this turn.
         let mut told: Option<&'static str> = None;
-        // What the role reported it waits on at the last poll; None for no wait.
-        let mut waited: Option<String> = None;
+        // How many polls in a row have found the role's wait standing; 0 for none.
+        let mut waiting_polls = 0;
         loop {
             if let Some(out) = self.host.read(path)? {
                 return Ok(out);
@@ -454,12 +461,15 @@ impl Workflow<'_> {
                 deadline = deadline.map(|d| d + (now - last_poll));
                 quiet_since = None;
             }
-            if let Some(what) = waiting.as_deref().filter(|&w| waited.as_deref() != Some(w)) {
-                self.ask_human(role, &format!("is waiting on {what}"));
-            } else if waiting.is_none() && waited.is_some() {
-                self.human.log(&format!("[{role}] is no longer waiting"));
+            // Told at the wait's second poll, not its first: a poll can read the file between the agent's emptying it and
+            // its writing what it waits on.
+            match &waiting {
+                Some(what) if waiting_polls == 1 => self.ask_human(role, &format!("is waiting on {what}")),
+                None if waiting_polls > 0 => self.human.log(&format!("[{role}] is no longer waiting")),
+                _ => {}
             }
-            (waited, last_poll) = (waiting, now);
+            waiting_polls = if waiting.is_some() { waiting_polls + 1 } else { 0 };
+            last_poll = now;
             if let (Some(deadline), Some(timeout)) = (deadline, timeout) {
                 if now > deadline {
                     let place = self.whereabouts(role);
@@ -470,11 +480,13 @@ impl Workflow<'_> {
             }
             if seen.activity != Activity::Idle {
                 quiet_since = None;
-            } else if quiet_since.is_none() && waited.is_none() {
+            } else if quiet_since.is_none() && waiting.is_none() {
                 quiet_since = Some(now);
             }
             let stalled = watch_stalls && quiet_since.is_some_and(|since| now - since >= STALL_SECONDS as f64);
-            self.open_to_human(role, seen.activity, paced, stalled);
+            // A waiting agent is open to the human all through its wait, as a stalled one is: without a deadline that
+            // runs out, a wait never withdrawn has no other way out but the human's message.
+            self.open_to_human(role, seen.activity, paced, stalled || waiting.is_some());
             told = self.tell_human(role, seen.activity, stalled, told, &file);
             self.heartbeat()?;
             self.pause(POLL_SECONDS)?;
@@ -492,7 +504,8 @@ impl Workflow<'_> {
     }
 
     /// Let the human's message reach the role's agent while its activity is idle and the turn waits on them: through
-    /// paced, the wait of an interview or a block, else once it has stalled (Agents::await_human).
+    /// paced, the wait of an interview or a block, else once it has stalled or while it reports a wait, both given
+    /// as stalled (Agents::await_human).
     fn open_to_human(&self, role: &str, activity: Activity, paced: Option<Waiting>, stalled: bool) {
         if activity != Activity::Idle {
             return;

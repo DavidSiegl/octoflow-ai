@@ -728,8 +728,9 @@ fn a_note_file_reaches_every_workflow() {
     state.prompt_overrides = load_prompts(&config).unwrap().overrides();
     let (text, _) = step_prompt_in(&quick, &state, &FakeHost::default(), "build", 1);
     let stuck = "Stuck? Write `BLOCKED: <question>` {and stop}.";
-    let expected = format!("Build add a rate limiter in /proj; report to {D}/build-1.md.\n\n{stuck}");
-    assert!(text.starts_with(&format!("{expected}\n\nIf you must wait ")), "{text}");
+    let waiting = filled(crate::prompts::WAITING_NOTE, &[("waiting_path", &format!("{D}/build-1.waiting"))]);
+    let expected = format!("Build add a rate limiter in /proj; report to {D}/build-1.md.\n\n{stuck}\n\n{waiting}");
+    assert_eq!(text, expected);
 }
 
 #[test]

@@ -384,8 +384,10 @@ fn a_blocked_verdict_file_gets_the_verdict_retry() {
 #[test]
 fn workflow_definitions_do_not_contain_the_note() {
     let default = &*DEFAULT_WORKFLOW;
-    assert!(!workflow_toml(default).contains("BLOCKED"));
-    assert!(!default.steps().iter().flat_map(|st| st.templates()).any(|(_, t)| t.contains("BLOCKED")));
+    for note in ["BLOCKED", "If you must wait"] {
+        assert!(!workflow_toml(default).contains(note), "{note}");
+        assert!(!default.steps().iter().flat_map(|st| st.templates()).any(|(_, t)| t.contains(note)), "{note}");
+    }
 }
 
 #[test]

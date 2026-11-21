@@ -72,7 +72,8 @@ pub enum Waiting {
     Interview,
     /// The agent wrote a BLOCKED report, and waits for the human's answer.
     Blocked,
-    /// The agent went idle without writing its handoff file, for STALL_SECONDS.
+    /// The agent went idle without writing its handoff file, for STALL_SECONDS, or while it reports a wait on
+    /// something outside the run (workflow::turn::waiting_path).
     Idle,
 }
 

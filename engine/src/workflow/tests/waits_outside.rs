@@ -17,12 +17,12 @@ fn waiting_1() -> String {
     format!("{D}/build-1.waiting")
 }
 
-/// The titles of the human's notices that name the Builder's waits.
+/// How many of the human's notices name the Builder's wait.
 fn waits_told(f: &Fixture) -> usize {
     f.told.titles().iter().filter(|t| *t == &format!("Builder is waiting on {WHAT}")).count()
 }
 
-/// The titles of the human's notices of the Builder's stalls.
+/// How many of the human's notices name the Builder's stall.
 fn stalls_told(f: &Fixture) -> usize {
     f.told.titles().iter().filter(|t| *t == "Builder is idle without writing build-1.md").count()
 }
@@ -148,4 +148,47 @@ fn a_resume_that_finds_the_wait_standing_waits_too() {
     assert_eq!(wf.run(), verdict(APPROVE));
     assert_eq!(waits_told(&f), 1);
     assert_eq!(prompts_to(&f, "build-a1b2c3"), 0);
+}
+
+#[test]
+fn a_wait_whose_reason_is_rewritten_is_told_once() {
+    let f = Fixture::new(vec![
+        ("spec", vec![spec_turn()]),
+        ("build", vec![idle()]),
+        ("review", vec![review_turn(1, APPROVE)]),
+    ]);
+    let host = Rc::clone(&f.host);
+    let mut polls = 0;
+    f.clock.hook(move |_| {
+        if !host.state().files.contains_key(&format!("{D}/spec.md")) || host.state().files.contains_key(&build_1()) {
+            return;
+        }
+        polls += 1;
+        if polls < 10 {
+            host.write(&waiting_1(), &format!("checks of pull request #526: {polls} of 9 done"), false).unwrap();
+        } else {
+            host.write(&build_1(), "report 1", false).unwrap();
+        }
+    });
+    assert_eq!(f.workflow(no_pr()).run(), verdict(APPROVE));
+    let waits: Vec<String> = f.told.titles().into_iter().filter(|t| t.starts_with("Builder is waiting on ")).collect();
+    assert_eq!(waits, ["Builder is waiting on checks of pull request #526: 2 of 9 done"]);
+}
+
+#[test]
+fn a_wait_left_by_an_agent_that_exited_is_dropped_for_the_session_started_in_its_place() {
+    let mut state = saved_run("build", 1, &["spec", "build"]);
+    state.prompted = Some("build-1.md".to_string());
+    state.pull_request = false;
+    state.agents.get_mut("build").unwrap().session = None;
+    let host = Rc::new(FakeHost::default());
+    host.write(&format!("{D}/spec.md"), SPEC, false).unwrap();
+    host.write(&waiting_1(), WHAT, false).unwrap();
+    let f = Fixture::resume(Rc::clone(&host), state, vec![("build", vec![idle()])], &[], &[]);
+    // Without the drop the old wait would stand for good, and the turn never time out.
+    f.clock.hook(|now| assert!(now < 20_000.0, "the turn did not time out"));
+    let message = failure(f.workflow(f.as_saved()).run());
+    assert!(message.starts_with(&format!("the Builder did not write {} within ", build_1())), "{message}");
+    assert_eq!(waits_told(&f), 0);
+    assert!(!host.state().files.contains_key(&waiting_1()));
 }
