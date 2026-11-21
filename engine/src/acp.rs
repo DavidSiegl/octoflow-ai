@@ -29,9 +29,10 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use crate::agents::{AgentError, AgentLaunch, Agents, RunPlaces, Seen, Started, Waiting};
+use crate::claude_acp::ClaudeAcp;
 use crate::env::without_withheld;
 use crate::error::OrchestratorError;
-use crate::harness::{harness, Harness, ModeSetting, Tokens, Usage};
+use crate::harness::{harness, AcpLaunch, AcpProgram, Harness, ModeSetting, Tokens, Usage};
 use crate::human::Human;
 use crate::interrupt::Interrupt;
 use crate::state::{AgentRecord, Backend, RunState};
@@ -170,7 +171,8 @@ impl<'h> AcpAgents<'h> {
             group: &group_record(&dir, role),
             journal: journal.clone(),
         };
-        let connection = Connection::spawn(how.program, &how.args, self.env.iter().cloned(), run.work_dir(), records)?;
+        let (program, args) = command(&how, &self.env)?;
+        let connection = Connection::spawn(&program, &args, self.env.iter().cloned(), run.work_dir(), records)?;
         let journal_session = |session: &str, resumed: bool| {
             journal.write("session", json!({"session": session, "harness": h.kind, "resumed": resumed}));
         };
@@ -444,7 +446,8 @@ pub fn probe(
         group: "/dev/null",
         journal: Arc::new(Journal::open("/dev/null")?),
     };
-    let connection = Arc::new(Connection::spawn(how.program, &how.args, env.iter().cloned(), cwd, records)?);
+    let (program, args) = command(&how, env)?;
+    let connection = Arc::new(Connection::spawn(&program, &args, env.iter().cloned(), cwd, records)?);
     let killed = connection.clone();
     let Some(watch) = stopping.watch(move || killed.kill()) else {
         return Err(OrchestratorError::new("interrupted"));
@@ -460,6 +463,23 @@ pub fn probe(
         (Some(name), None) => name,
         _ => "answers over ACP".to_string(),
     })
+}
+
+/// The program and the arguments that start how's agent in env: a program on PATH by its name, which Connection::spawn
+/// finds on env's PATH, and claude's adapter as installed in env's data directory (crate::claude_acp). Errors: the
+/// adapter is not installed.
+fn command(how: &AcpLaunch, env: &[(OsString, OsString)]) -> Result<(String, Vec<String>), OrchestratorError> {
+    match how.program {
+        AcpProgram::OnPath(name) => Ok((name.to_string(), how.args.clone())),
+        AcpProgram::ClaudeAdapter => {
+            let Some(installed) = ClaudeAcp::in_environment(env.to_vec()).installed() else {
+                return Err(OrchestratorError::new(
+                    "claude's ACP adapter is not installed: install it from the app's setup dialog (Check setup…)",
+                ));
+            };
+            Ok((installed.node, [vec![installed.script], how.args.clone()].concat()))
+        }
+    }
 }
 
 /// The params of the engine's `initialize`: the protocol version it speaks, and that it offers its agents neither

@@ -1,0 +1,419 @@
+//! claude's ACP agent as the desktop app installs it on first use (herdr-gui-decoupling spec R6): claude speaks the
+//! Agent Client Protocol only through `@agentclientprotocol/claude-agent-acp`, a Node program that brings its own
+//! Claude Code binary, so the app installs a pinned Node and the pinned adapter, and runs the adapter's script with
+//! that Node ([`Installed`]).
+//!
+//! Both are pinned in the engine ([`Pins::built_in`]): Node by its version and the sha256 its release's
+//! `SHASUMS256.txt` gives each platform's tarball, which a download must match; the adapter by `engine/claude-acp/`,
+//! a package.json naming its version and the package-lock.json that pins every package it pulls in, with its
+//! `integrity`, which npm checks. npm installs from that lockfile alone (`npm ci`), running no package's scripts, and
+//! reads none of the user's npm settings ([`ClaudeAcp::install`] says how). Raising a pin is a change to this module or
+//! that directory, released like any other.
+//!
+//! An install is a directory named by its pins, `node-<node>-adapter-<adapter>`, among the installs in
+//! `claude-acp` in the engine's data directory (crate::env::data_dir). It is made in a temporary directory beside it
+//! and renamed into place whole, under a lock on a file there, so that a directory of that name is always a whole
+//! install, and two installs at once, from two of the app's windows, make one. A raised pin installs beside the old
+//! install, which goes once the new one is in place.
+
+use std::ffi::OsString;
+use std::fs::{self, File};
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
+
+use sha2::{Digest, Sha256};
+
+use crate::error::{os_error, OrchestratorError};
+use crate::host::{run_process, ProcessError};
+use crate::http::{Http, HttpClient, HttpError, Request};
+use crate::interrupt::Interrupt;
+
+/// The disk an install of the built-in pins takes, in megabytes, as the setup dialog's button says before it
+/// downloads: measured on linux-x64 on 2026-11-21, Node 203 MB and the adapter 710 MB. npm installs both the glibc and
+/// the musl build of the Agent SDK's Claude Code binary, about 310 MB each, since the lockfile records no package's
+/// libc. Measure it again when a pin is raised.
+pub const INSTALL_MEGABYTES: u64 = 913;
+
+/// Node's version: a 22 LTS, since the adapter declares `"engines": {"node": ">=22"}`. 22.23.4 is from 2026-10-20,
+/// the newest 22 at least two weeks old on 2026-11-21.
+const NODE_VERSION: &str = "22.23.4";
+
+/// The sha256 of Node NODE_VERSION's `node-v<version>-<platform>.tar.gz` for each platform the desktop app is built
+/// for (packaging/build-desktop.sh: Linux and macOS, x86_64 and arm64), as
+/// <https://nodejs.org/dist/v22.23.4/SHASUMS256.txt> lists it.
+const NODE_SHA256: [(&str, &str); 4] = [
+    ("linux-x64", "b8492284c76a54baf58d61668dd0e41ee0fc98adabf9503d30f05d08f55b4406"),
+    ("linux-arm64", "f7a1e486dbc8b286847815b477d4fb5e9fb963ed4489c3e1588853d685f589f9"),
+    ("darwin-x64", "efcc2b0db6f94bf53eddb038fe2b370277a042bd29e4f19b8f8e23598795b819"),
+    ("darwin-arm64", "c9e1dbc748b33ed2d14f42445191ecaf14c56259c7a9a26d0042c49ec2b66428"),
+];
+
+/// The adapter's package.json, which names its version, and the lockfile npm installs it from, made by the pinned
+/// Node's npm (10.9.9) with `npm install --package-lock-only --ignore-scripts`. The adapter, 0.101.0, is from
+/// 2026-11-05, the newest release at least two weeks old on 2026-11-21.
+const PACKAGE_JSON: &str = include_str!("../claude-acp/package.json");
+const PACKAGE_LOCK: &str = include_str!("../claude-acp/package-lock.json");
+
+/// The adapter's npm package, as package.json depends on it.
+const ADAPTER_PACKAGE: &str = "@agentclientprotocol/claude-agent-acp";
+
+/// Where Node's releases are downloaded from.
+const NODE_DIST: &str = "https://nodejs.org/dist";
+
+/// The npm registry the adapter's packages come from, as package-lock.json's `resolved` URLs name it.
+const REGISTRY: &str = "https://registry.npmjs.org/";
+
+/// How long connecting to Node's server, and then each read of its answer, may take, in seconds.
+const DOWNLOAD_TIMEOUT: u64 = 60;
+
+/// How long unpacking Node, and then npm's install of the adapter, may each take.
+const UNPACK_TIMEOUT: Duration = Duration::from_secs(600);
+const NPM_TIMEOUT: Duration = Duration::from_secs(3600);
+
+/// The start of the name of an install still being made, in the installs' directory, which no lookup takes for one.
+const TEMPORARY: &str = ".tmp-";
+
+/// What an install holds: Node's version and its tarball for this platform, and the adapter's package.json and
+/// lockfile.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Pins {
+    /// Node's version, as its release names it, without the `v`.
+    node: String,
+    /// Node's platform, as its tarballs name it (`linux-x64`), with the sha256 of its tarball, in lowercase hex; None
+    /// on a platform the app is not built for, which install refuses.
+    tarball: Option<(String, String)>,
+    /// The adapter's version, as package.json depends on it.
+    adapter: String,
+    package_json: String,
+    lockfile: String,
+}
+
+impl Pins {
+    /// The pins this engine was built with, for the platform it was built for.
+    pub fn built_in() -> Pins {
+        let platform = match (std::env::consts::OS, std::env::consts::ARCH) {
+            ("linux", "x86_64") => Some("linux-x64"),
+            ("linux", "aarch64") => Some("linux-arm64"),
+            ("macos", "x86_64") => Some("darwin-x64"),
+            ("macos", "aarch64") => Some("darwin-arm64"),
+            _ => None,
+        };
+        let tarball = platform.and_then(|p| NODE_SHA256.iter().find(|(q, _)| *q == p));
+        let tarball = tarball.map(|(p, sha256)| (p.to_string(), sha256.to_string()));
+        Pins::new(NODE_VERSION, tarball, PACKAGE_JSON, PACKAGE_LOCK)
+            .expect("engine/claude-acp/package.json names the adapter")
+    }
+
+    /// Pins of Node node, its tarball (platform, sha256) as Pins::tarball says, and the adapter package_json depends
+    /// on, installed from lockfile. Errors: package_json is not JSON, or names no version of ADAPTER_PACKAGE.
+    pub fn new(
+        node: &str,
+        tarball: Option<(String, String)>,
+        package_json: &str,
+        lockfile: &str,
+    ) -> Result<Pins, OrchestratorError> {
+        let manifest: serde_json::Value = serde_json::from_str(package_json)
+            .map_err(|e| OrchestratorError(format!("the adapter's package.json is not JSON: {e}")))?;
+        let adapter = manifest.pointer(&format!("/dependencies/{}", ADAPTER_PACKAGE.replace('/', "~1")));
+        let Some(adapter) = adapter.and_then(serde_json::Value::as_str) else {
+            return Err(OrchestratorError(format!("the adapter's package.json names no version of {ADAPTER_PACKAGE}")));
+        };
+        Ok(Pins {
+            node: node.to_string(),
+            tarball,
+            adapter: adapter.to_string(),
+            package_json: package_json.to_string(),
+            lockfile: lockfile.to_string(),
+        })
+    }
+
+    /// The name of these pins' install in the installs' directory.
+    fn install_name(&self) -> String {
+        format!("node-{}-adapter-{}", self.node, self.adapter)
+    }
+}
+
+/// How an install's agent starts: `<node> <script>`, then the launch's arguments.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Installed {
+    /// The install's Node, an absolute path.
+    pub node: String,
+    /// The adapter's script, which Node runs, an absolute path.
+    pub script: String,
+}
+
+/// The installs of claude's ACP adapter in one environment's data directory, and how a new one is made: for one set of
+/// pins, the current ones, with Node and the adapter downloaded from where it says.
+pub struct ClaudeAcp {
+    /// The directory the installs are in, `claude-acp` in the data directory; made by the first install.
+    root: String,
+    pins: Pins,
+    /// Where Node's releases are, without a trailing "/": NODE_DIST, or a test's server.
+    node_dist: String,
+    /// The npm registry, as npm's --registry takes it: REGISTRY, or a test's.
+    registry: String,
+    /// The environment npm and tar run in, and that the download's proxies and certificates come from: the one the
+    /// installs were found in, without npm's own variables (without_npm_config).
+    env: Vec<(OsString, OsString)>,
+    /// How Node is downloaded; None for the HttpClient of env, made when an install downloads.
+    http: Option<Arc<dyn Http>>,
+}
+
+impl ClaudeAcp {
+    /// The installs of the engine's own environment, as crate::env::child_env gives it, for the built-in pins.
+    pub fn from_env() -> ClaudeAcp {
+        ClaudeAcp::in_environment(crate::env::child_env())
+    }
+
+    /// The installs in the data directory of env, the environment of the processes the engine starts (an ACP run's
+    /// agents', which find the install there), for the built-in pins, downloaded from Node's and npm's own servers.
+    pub fn in_environment(env: Vec<(OsString, OsString)>) -> ClaudeAcp {
+        let var = |name: &str| {
+            let value = env.iter().find(|(k, _)| k == name).map(|(_, v)| v.to_string_lossy().into_owned());
+            value.filter(|v| !v.is_empty())
+        };
+        let root = format!("{}/claude-acp", crate::env::data_dir(&var));
+        ClaudeAcp {
+            root,
+            pins: Pins::built_in(),
+            node_dist: NODE_DIST.to_string(),
+            registry: REGISTRY.to_string(),
+            env: without_npm_config(env),
+            http: None,
+        }
+    }
+
+    /// These installs, but of pins, downloaded by http from node_dist (Node's releases, as NODE_DIST) and registry (as
+    /// REGISTRY): what the tests make in place of the network.
+    #[cfg(test)]
+    pub(crate) fn with_sources(self, pins: Pins, http: Arc<dyn Http>, node_dist: &str, registry: &str) -> ClaudeAcp {
+        let node_dist = node_dist.trim_end_matches('/').to_string();
+        ClaudeAcp { pins, http: Some(http), node_dist, registry: registry.to_string(), ..self }
+    }
+
+    /// Put in place an install of the current pins whose Node is a script of text and whose adapter script is empty,
+    /// as the tests of what runs an install want one.
+    #[cfg(test)]
+    pub(crate) fn install_fake(&self, node: &str) -> Installed {
+        use std::os::unix::fs::PermissionsExt;
+        let installed = self.at(&format!("{}/{}", self.root, self.pins.install_name()));
+        for path in [&installed.node, &installed.script] {
+            fs::create_dir_all(Path::new(path).parent().unwrap()).unwrap();
+        }
+        fs::write(&installed.node, node).unwrap();
+        fs::set_permissions(&installed.node, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(&installed.script, "").unwrap();
+        installed
+    }
+
+    /// The install of the current pins, when it is there; None when it is not, as before the first install or after a
+    /// pin was raised. It does not check that the install still runs.
+    pub fn installed(&self) -> Option<Installed> {
+        let installed = self.at(&format!("{}/{}", self.root, self.pins.install_name()));
+        Path::new(&installed.script).is_file().then_some(installed)
+    }
+
+    /// Install the current pins, unless they are installed already, and then remove every other install: download
+    /// Node's tarball for this platform and check its sha256, unpack it with `tar`, and install the adapter with its
+    /// npm: `npm ci --ignore-scripts`, with `--userconfig` and `--globalconfig` an empty file, an explicit
+    /// `--registry`, a cache of its own, and none of npm's `npm_config_*` variables, so that nothing of the user's npm
+    /// setup applies; proxies and certificates come from the environment, as http.rs and npm read them. Waits for
+    /// another install in progress, by this or another process, to end first. A failure leaves no install behind, and
+    /// whatever a failed or killed one left is removed when the next starts.
+    ///
+    /// Returns the install. Errors: this platform has no pinned Node; the installs' directory or a file in it cannot
+    /// be made, locked, written or removed; the download fails, or its sha256 is not the pin's; tar or npm fails, or
+    /// stopping is raised while either runs; npm's install has no adapter script.
+    pub fn install(&self, stopping: &Interrupt) -> Result<Installed, OrchestratorError> {
+        fs::create_dir_all(&self.root).map_err(|e| self.failed("create", &self.root, &e))?;
+        let lock_path = format!("{}/.lock", self.root);
+        let lock = File::create(&lock_path).map_err(|e| self.failed("create", &lock_path, &e))?;
+        lock.lock().map_err(|e| self.failed("lock", &lock_path, &e))?;
+        // Unlocked when lock is dropped, at the return, or by the system when the process dies.
+        let installed = match self.installed() {
+            Some(installed) => installed,
+            None => self.install_locked(stopping)?,
+        };
+        self.remove_others()?;
+        Ok(installed)
+    }
+
+    /// install's work once the lock is held and the current pins are not installed: clear what earlier attempts
+    /// left, make the install in a temporary directory, and rename it into place, removing the temporary directory
+    /// when any step fails.
+    fn install_locked(&self, stopping: &Interrupt) -> Result<Installed, OrchestratorError> {
+        let Some((platform, sha256)) = &self.pins.tarball else {
+            return Err(OrchestratorError(format!(
+                "the app installs claude's ACP adapter only on Linux and macOS, on x86_64 or arm64, not on {} {}",
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            )));
+        };
+        for name in self.entries()?.iter().filter(|n| n.starts_with(TEMPORARY)) {
+            self.remove(name)?;
+        }
+        let name = self.pins.install_name();
+        let temporary = format!("{TEMPORARY}{name}");
+        let dir = format!("{}/{temporary}", self.root);
+        fs::create_dir(&dir).map_err(|e| self.failed("create", &dir, &e))?;
+        let made = self.make(&dir, platform, sha256, stopping).and_then(|()| {
+            let path = format!("{}/{name}", self.root);
+            fs::rename(&dir, &path).map_err(|e| self.failed("rename into place", &dir, &e))?;
+            Ok(self.at(&path))
+        });
+        if made.is_err() {
+            // The failure is what the caller is told; what this removal leaves, the next install removes.
+            let _ = fs::remove_dir_all(&dir);
+        }
+        made
+    }
+
+    /// Make an install of the pins in dir, an empty directory: Node for platform, whose tarball has sha256, in
+    /// dir/node, and the adapter in dir/adapter.
+    fn make(&self, dir: &str, platform: &str, sha256: &str, stopping: &Interrupt) -> Result<(), OrchestratorError> {
+        let node = &self.pins.node;
+        let stem = format!("node-v{node}-{platform}");
+        let url = format!("{}/v{node}/{stem}.tar.gz", self.node_dist);
+        let tarball = self.download(&url, sha256)?;
+        let tarball_path = format!("{dir}/node.tar.gz");
+        write(&tarball_path, &tarball)?;
+        self.run(&["tar", "-xzf", &tarball_path, "-C", dir], UNPACK_TIMEOUT, stopping, "unpack Node")?;
+        let unpacked = format!("{dir}/{stem}");
+        fs::rename(&unpacked, format!("{dir}/node")).map_err(|e| self.failed("rename", &unpacked, &e))?;
+        fs::remove_file(&tarball_path).map_err(|e| self.failed("remove", &tarball_path, &e))?;
+
+        let adapter = format!("{dir}/adapter");
+        fs::create_dir(&adapter).map_err(|e| self.failed("create", &adapter, &e))?;
+        write(&format!("{adapter}/package.json"), self.pins.package_json.as_bytes())?;
+        write(&format!("{adapter}/package-lock.json"), self.pins.lockfile.as_bytes())?;
+        let (npmrc, cache) = (format!("{dir}/empty-npmrc"), format!("{dir}/npm-cache"));
+        write(&npmrc, b"")?;
+        let npm = format!("{dir}/node/lib/node_modules/npm/bin/npm-cli.js");
+        #[rustfmt::skip]
+        let argv = [
+            &format!("{dir}/node/bin/node"), &npm, "ci", "--ignore-scripts",
+            "--userconfig", &npmrc, "--globalconfig", &npmrc, "--registry", &self.registry,
+            "--prefix", &adapter, "--cache", &cache, "--no-audit", "--no-fund", "--no-update-notifier",
+        ];
+        self.run(&argv, NPM_TIMEOUT, stopping, "install claude's ACP adapter")?;
+        if !Path::new(&self.at(dir).script).is_file() {
+            return Err(OrchestratorError(format!("npm installed no {ADAPTER_PACKAGE} script in {adapter}")));
+        }
+        for path in [&npmrc, &cache] {
+            if Path::new(path).exists() {
+                let removed = if path == &cache { fs::remove_dir_all(path) } else { fs::remove_file(path) };
+                removed.map_err(|e| self.failed("remove", path, &e))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The body of url, which must have the sha256 pinned. Errors: no 2xx answer comes; its sha256 differs.
+    fn download(&self, url: &str, pinned: &str) -> Result<Vec<u8>, OrchestratorError> {
+        let request = Request { url: url.to_string(), headers: vec![], timeout: DOWNLOAD_TIMEOUT };
+        let answer = match &self.http {
+            Some(http) => http.send(&request),
+            None => {
+                let env = |name: &str| {
+                    let value = self.env.iter().find(|(k, _)| k == name);
+                    value.map(|(_, v)| v.to_string_lossy().into_owned())
+                };
+                HttpClient::with_env(&env).send(&request)
+            }
+        };
+        let body = answer
+            .map_err(|e| match e {
+                HttpError::Status(status) => OrchestratorError(format!("cannot download {url}: HTTP {status}")),
+                HttpError::NoAnswer(why) => OrchestratorError(format!("cannot download {url}: {why}")),
+            })?
+            .body;
+        let got: String = Sha256::digest(&body).iter().map(|b| format!("{b:02x}")).collect();
+        if got != pinned {
+            return Err(OrchestratorError(format!("{url} has sha256 {got}, not the pinned {pinned}; refused")));
+        }
+        Ok(body)
+    }
+
+    /// Run argv, argv[0] found on env's PATH, in env, for at most timeout. Errors: it does not start, does not exit 0,
+    /// runs out of time, or stopping is raised; the message starts "cannot <doing>" and ends with its standard error.
+    fn run(
+        &self,
+        argv: &[&str],
+        timeout: Duration,
+        stopping: &Interrupt,
+        doing: &str,
+    ) -> Result<(), OrchestratorError> {
+        let argv: Vec<String> = argv.iter().map(|a| a.to_string()).collect();
+        let why = match run_process(&argv, None, Some(timeout), &self.env, stopping) {
+            Ok((0, _, _)) => return Ok(()),
+            Ok((status, _, stderr)) => {
+                let stderr = String::from_utf8_lossy(&stderr);
+                format!("{} exited with status {status}: {}", argv[0], stderr.trim())
+            }
+            Err(ProcessError::Start(e)) => os_error(&e, Some(&argv[0])),
+            Err(ProcessError::Io(e)) => os_error(&e, None),
+            Err(ProcessError::Timeout) => format!("it took longer than {} seconds", timeout.as_secs()),
+            Err(ProcessError::Interrupted) => "interrupted".to_string(),
+        };
+        Err(OrchestratorError(format!("cannot {doing}: {why}")))
+    }
+
+    /// Remove every install but the current pins', and anything else in the installs' directory but its lock.
+    fn remove_others(&self) -> Result<(), OrchestratorError> {
+        let current = self.pins.install_name();
+        for name in self.entries()?.iter().filter(|n| **n != current && *n != ".lock") {
+            self.remove(name)?;
+        }
+        Ok(())
+    }
+
+    /// The names in the installs' directory.
+    fn entries(&self) -> Result<Vec<String>, OrchestratorError> {
+        let entries = fs::read_dir(&self.root).map_err(|e| self.failed("list", &self.root, &e))?;
+        let mut names = vec![];
+        for entry in entries {
+            let entry = entry.map_err(|e| self.failed("list", &self.root, &e))?;
+            names.push(entry.file_name().to_string_lossy().into_owned());
+        }
+        Ok(names)
+    }
+
+    /// Remove name, a file or a directory with everything in it, from the installs' directory.
+    fn remove(&self, name: &str) -> Result<(), OrchestratorError> {
+        let path = format!("{}/{name}", self.root);
+        let removed = match fs::symlink_metadata(&path) {
+            Ok(meta) if meta.is_dir() => fs::remove_dir_all(&path),
+            Ok(_) => fs::remove_file(&path),
+            Err(e) => Err(e),
+        };
+        removed.map_err(|e| self.failed("remove", &path, &e))
+    }
+
+    /// The Installed of an install in dir, whether or not it is there.
+    fn at(&self, dir: &str) -> Installed {
+        Installed {
+            node: format!("{dir}/node/bin/node"),
+            script: format!("{dir}/adapter/node_modules/{ADAPTER_PACKAGE}/dist/index.js"),
+        }
+    }
+
+    /// The error of doing to path that failed with e.
+    fn failed(&self, doing: &str, path: &str, e: &std::io::Error) -> OrchestratorError {
+        OrchestratorError(format!("cannot {doing} {}", os_error(e, Some(path))))
+    }
+}
+
+/// Write data to path, a new file. Errors: it cannot be written.
+fn write(path: &str, data: &[u8]) -> Result<(), OrchestratorError> {
+    fs::write(path, data).map_err(|e| OrchestratorError(format!("cannot write {}", os_error(&e, Some(path)))))
+}
+
+/// env without the variables npm reads its configuration from, `npm_config_*` in any case.
+fn without_npm_config(env: Vec<(OsString, OsString)>) -> Vec<(OsString, OsString)> {
+    let is_npm = |k: &OsString| k.to_string_lossy().to_ascii_lowercase().starts_with("npm_config_");
+    env.into_iter().filter(|(k, _)| !is_npm(k)).collect()
+}
+
+#[cfg(test)]
+mod tests;
