@@ -70,7 +70,8 @@ That is the default workflow's; in general a run's `phase` is the id of its curr
 `publish` or `done`. `Workflow::run` starts from the saved `phase` and `round`; a new run is a resume from the
 first step. Before anything else, `check_start` checks that the run can finish: `check_alone` refuses a run
 in the checkout while another one there is live (a worktree run neither refuses nor counts); in round 0 (before
-its first editing step), a worktree run's `open_worktree` checks for a branch and an `origin`, fetches the base
+its first editing step), the checked-out branch becomes the run's base by `take_base_branch`, which refuses the
+branch of another run that is not closed; a worktree run's `open_worktree` checks for a branch and an `origin`, fetches the base
 branch and adds the worktree at `origin`'s (or finds it from before), a run that pushes or is gated checks that
 gitleaks runs, `check_gate` checks the working tree and `local_gate::preflight`, and for an in-place run `check_repo` fast-forwards the base branch; in a later round,
 a worktree run's `check_worktree` refuses a run whose worktree is gone unless `pr_url` is set. Each fetch of the run, and its merge of `origin`'s base branch, goes through `reaching_origin` (`workflow/origin.rs`), which waits out a short

@@ -8,7 +8,7 @@ use crate::constants::{HEARTBEAT_SECONDS, STALE_SECONDS};
 use crate::json::object;
 use crate::runs::local_host;
 
-const OTHER_ID: &str = "20261009-220151-537935";
+pub(super) const OTHER_ID: &str = "20261009-220151-537935";
 
 fn other_dir() -> String {
     format!("/proj/.octoflow-ai/runs/{OTHER_ID}")
@@ -16,7 +16,7 @@ fn other_dir() -> String {
 
 /// A FakeHost whose /proj holds run OTHER_ID, which this host's orchestrator pid 3354482 last saved age seconds ago,
 /// its state.json's fields overridden by those of saved.
-fn host_with_other_run(age: u64, saved: &[(&str, Value)]) -> Rc<FakeHost> {
+pub(super) fn host_with_other_run(age: u64, saved: &[(&str, Value)]) -> Rc<FakeHost> {
     let host = FakeHost::default();
     let mut other = RunState::new(OTHER_ID, "another task", "/proj");
     other.phase = "build".into();

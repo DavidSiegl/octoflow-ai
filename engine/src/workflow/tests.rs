@@ -31,6 +31,7 @@ mod local_gate;
 mod locked_files;
 mod one_run;
 mod orchestrator_checks;
+mod other_runs_branch;
 mod other_workflows;
 mod prompt_delivery;
 mod proofs;

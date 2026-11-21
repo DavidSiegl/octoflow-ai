@@ -508,13 +508,17 @@ fn the_spec_reaches_the_workflow() {
     let fields = ["task", "phase", "round"].map(|k| field(&saved, k));
     assert_eq!(fields, [r#""Add a token-bucket rate limiter""#, r#""build""#, "1"]);
     assert_eq!(seeded(&cli, &saved).as_deref(), Some(GIVEN_SPEC));
+    // Each run below in a checkout of its own: a run given a spec stops on its own branch, which the next run in the
+    // same checkout would refuse as its base.
     // A given task is used unchanged.
-    let saved = started(&cli, &["  the task\nas typed", "--spec", &d.join("spec.md")]);
+    let saved = started(&Cli::new(), &["  the task\nas typed", "--spec", &d.join("spec.md")]);
     assert_eq!(field(&saved, "task"), r#""  the task\nas typed""#);
     // An untitled spec names the task after its file.
     std::fs::write(d.join("rate-limiter.v2.md"), "Limit the requests.\n").unwrap();
-    assert_eq!(field(&started(&cli, &["--spec", &d.join("rate-limiter.v2.md")]), "task"), r#""rate-limiter.v2""#);
+    let saved = started(&Cli::new(), &["--spec", &d.join("rate-limiter.v2.md")]);
+    assert_eq!(field(&saved, "task"), r#""rate-limiter.v2""#);
     // Without --spec, the run starts at the first step, with no spec of its own.
+    let cli = Cli::new();
     let saved = started(&cli, &["task"]);
     assert_eq!((field(&saved, "phase"), seeded(&cli, &saved)), (r#""spec""#.into(), None));
 }

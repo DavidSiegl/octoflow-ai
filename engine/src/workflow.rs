@@ -541,10 +541,7 @@ impl<'a> Workflow<'a> {
                 "--worktree starts the run from {REMOTE}'s branch, and {cwd} has no {REMOTE}"
             ))));
         }
-        // Kept once recorded, as check_repo keeps it.
-        if self.state.base_branch.as_deref().is_none_or(str::is_empty) {
-            self.state.base_branch = Some(branch);
-        }
+        self.take_base_branch(branch)?;
         let run_id = self.state.run_id.clone();
         // A resume before the first editing step: the run's worktree holds nothing it needs to keep.
         if self.host.is_worktree(&cwd, &worktree)? {
@@ -793,10 +790,7 @@ impl<'a> Workflow<'a> {
                 "{cwd} is on a detached HEAD; check out the branch the pull request targets"
             )));
         }
-        // Kept once recorded: a run resumed after it switched to its own branch still targets the first one.
-        if self.state.base_branch.as_deref().is_none_or(str::is_empty) {
-            self.state.base_branch = Some(branch.clone());
-        }
+        self.take_base_branch(branch.clone())?;
         self.require_clean()?;
         // So the Spec Collector reads current code. A resume already on the run's own branch leaves it to
         // switch_to_branch.
@@ -804,6 +798,36 @@ impl<'a> Workflow<'a> {
         if branch == base_branch {
             self.reaching_origin(|| self.host.fast_forward(&cwd, &base_branch))?;
         }
+        Ok(())
+    }
+
+    /// Record branch, the one checked out in the project, as the run's base branch, unless the run has one: a run
+    /// resumed after it switched to its own branch still targets the first one.
+    ///
+    /// Errors, before recording: branch is the branch of another run of the project that is not closed. An in-place
+    /// run that fails leaves the checkout on its branch for resume, and that branch reaches origin only when the run
+    /// publishes; taken as a base, it could not be fetched, or would get a pull request against another run's work.
+    fn take_base_branch(&mut self, branch: String) -> Result<(), OrchestratorError> {
+        let s = &self.state;
+        if s.base_branch.as_deref().is_some_and(|b| !b.is_empty()) {
+            return Ok(());
+        }
+        for run in self.host.run_states(&s.cwd)? {
+            let other = run.shown();
+            if other.run_id == s.run_id || other.branch.as_deref() != Some(branch.as_str()) || other.is_closed() {
+                continue;
+            }
+            let base = match other.base_branch.as_deref() {
+                Some(b) if !b.is_empty() => format!("its base branch, {b}"),
+                _ => "the branch it started from".to_string(),
+            };
+            return Err(OrchestratorError(format!(
+                "{} is on {branch}, the branch of run {}, which is not closed; check out {base}, or close that run \
+                 with `octoflow close {}`",
+                s.cwd, other.run_id, other.run_id
+            )));
+        }
+        self.state.base_branch = Some(branch);
         Ok(())
     }
 
