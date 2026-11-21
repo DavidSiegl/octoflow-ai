@@ -4,6 +4,7 @@
 use super::one_run::{host_with_other_run, OTHER_ID};
 use super::worktree::worktree_run;
 use super::*;
+use crate::runs::local_host;
 
 const OTHER_BRANCH: &str = "orchestrator/another-task-537935";
 
@@ -37,7 +38,7 @@ fn a_run_on_a_failed_runs_branch_is_refused_before_fetching() {
             message,
             format!(
                 "/proj is on {OTHER_BRANCH}, the branch of run {OTHER_ID}, which is not closed; check out its base \
-                 branch, main, or close that run with `octoflow close {OTHER_ID}`"
+                 branch, main, and close that run with `octoflow close 537935` once you are done with it"
             ),
             "worktree: {worktree}"
         );
@@ -52,4 +53,21 @@ fn a_run_on_a_closed_runs_branch_starts() {
     let mut wf = f.workflow(RunSettings::default());
     assert_eq!(wf.run(), verdict(APPROVE));
     assert_eq!(wf.state().base_branch.as_deref(), Some(OTHER_BRANCH));
+}
+
+#[test]
+fn a_worktree_run_on_a_live_runs_branch_is_told_to_wait_for_it() {
+    // An in-place run in its build round, its owner beating 16 s ago, on its branch in the checkout.
+    let host = host_with_other_run(16, &[("base_branch", Value::from("main")), ("branch", Value::from(OTHER_BRANCH))]);
+    host.state().branch = OTHER_BRANCH.into();
+    let f = worktree_run(host, None);
+    assert_eq!(
+        failure(f.workflow(RunSettings::default()).run()),
+        format!(
+            "/proj is on {OTHER_BRANCH}, the branch of run {OTHER_ID}, which is running (pid 3354482 on {}, beat 16s \
+             ago); wait for it to end, then check out its base branch, main",
+            local_host()
+        )
+    );
+    assert!(f.herdr.state().calls.is_empty());
 }

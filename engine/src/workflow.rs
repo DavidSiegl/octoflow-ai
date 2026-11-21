@@ -807,25 +807,33 @@ impl<'a> Workflow<'a> {
     /// Errors, before recording: branch is the branch of another run of the project that is not closed. An in-place
     /// run that fails leaves the checkout on its branch for resume, and that branch reaches origin only when the run
     /// publishes; taken as a base, it could not be fetched, or would get a pull request against another run's work.
+    /// The error says to check out that run's base, after the run ends when it is running: close leaves an in-place
+    /// run's checkout where it is (cli::close's WorktreeFate), so closing alone would not help.
     fn take_base_branch(&mut self, branch: String) -> Result<(), OrchestratorError> {
         let s = &self.state;
         if s.base_branch.as_deref().is_some_and(|b| !b.is_empty()) {
             return Ok(());
         }
+        let me = self.me.get("host").and_then(Value::as_str).unwrap_or_default();
         for run in self.host.run_states(&s.cwd)? {
             let other = run.shown();
             if other.run_id == s.run_id || other.branch.as_deref() != Some(branch.as_str()) || other.is_closed() {
                 continue;
             }
+            let id = &other.run_id;
             let base = match other.base_branch.as_deref() {
                 Some(b) if !b.is_empty() => format!("its base branch, {b}"),
                 _ => "the branch it started from".to_string(),
             };
-            return Err(OrchestratorError(format!(
-                "{} is on {branch}, the branch of run {}, which is not closed; check out {base}, or close that run \
-                 with `octoflow close {}`",
-                s.cwd, other.run_id, other.run_id
-            )));
+            let key = id.rsplit('-').next().unwrap_or(id);
+            let advice = match run.health(me, self.pid_alive) {
+                Some((RUNNING, why)) => format!("which is running ({why}); wait for it to end, then check out {base}"),
+                _ => format!(
+                    "which is not closed; check out {base}, and close that run with `octoflow close {key}` once \
+                     you are done with it"
+                ),
+            };
+            return Err(OrchestratorError(format!("{} is on {branch}, the branch of run {id}, {advice}", s.cwd)));
         }
         self.state.base_branch = Some(branch);
         Ok(())
