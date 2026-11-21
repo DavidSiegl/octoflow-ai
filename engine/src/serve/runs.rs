@@ -414,16 +414,23 @@ fn log_tail(log: &str) -> String {
 /// The most lines of its log that a run which exited before it saved its state.json gives as its error.
 const START_ERROR_LINES: u32 = 20;
 
-/// The RunReadError of herdr's failure e on role's agent: Missing when the agent has exited; else Failed, saying that
-/// the run is the CLI's to follow, since the app no longer needs herdr and may run where there is none.
+/// The RunReadError of herdr's failure e on role's agent: Missing when the agent has exited; Failed saying that the
+/// run is the CLI's to follow when herdr cannot be reached (not run, or no server running), since the app no longer
+/// needs herdr and may run where there is none; else Failed with herdr's own error.
 fn herdr_failure(role: &str, e: HerdrError) -> RunReadError {
-    if e.code() == Some("agent_not_found") {
-        return RunReadError::Missing(format!("the {role} agent has exited"));
+    let unreached = match e.code() {
+        Some("agent_not_found") => return RunReadError::Missing(format!("the {role} agent has exited")),
+        None | Some("server_not_running") => true,
+        Some(_) => false,
+    };
+    let e = OrchestratorError::from(e);
+    if !unreached {
+        return RunReadError::Failed(e);
     }
-    let e = OrchestratorError::from(e).0;
     RunReadError::Failed(OrchestratorError(format!(
-        "cannot reach herdr, which this run's {role} agent runs in: {e}; follow the run and resume it from octoflow's \
-         command line"
+        "cannot reach herdr, which this run's {role} agent runs in: {}; follow the run and resume it from octoflow's \
+         command line",
+        e.0
     )))
 }
 

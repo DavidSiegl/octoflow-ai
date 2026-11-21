@@ -512,11 +512,9 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
     let serve = clap::Command::new("serve")
         .about("Serve the runs of any project over HTTP on 127.0.0.1, and start new ones, for the desktop app")
         .long_about(
-            "Serve the runs of any project, local or on a saved herdr machine: the run records list --json prints, \
-             each run's files and their contents, and a stream of events as they change; type into a run's agents; \
-             and start a run, in a new workspace of this machine's herdr server, where it can be watched and \
-             interrupted as one started here; with no herdr server running, in the herdr session octoflow, which \
-             it starts and leaves running. Prints one JSON line, {\"url\": ..., \"token\": ...}, then serves on a \
+            "Serve the runs of any project on this machine: the run records list --json prints, each run's files \
+             and their contents, and a stream of events as they change; message a run's agents and answer what they \
+             ask; and start or resume a run, in the background, its agents over ACP. Prints one JSON line, {\"url\": ..., \"token\": ...}, then serves on a \
              free port of 127.0.0.1 until SIGINT or SIGTERM, and exits 0. Every request needs the token.",
         )
         .arg(Arg::new("origin").long("origin").value_name("ORIGIN").action(ArgAction::Append).help(

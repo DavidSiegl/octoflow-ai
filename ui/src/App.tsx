@@ -63,8 +63,8 @@ function Connected({ connection, appWindow }: { connection: Connection; appWindo
   const api = useMemo(() => new Api(connection), [connection]);
   const [saved] = useState(() => savedProject(connection.project));
   const [project, setProject] = useState(saved.project);
-  // The machine the project was saved with, while the note that the app runs no project on one is shown; saved again
-  // without it, so the note shows once.
+  // The machine the project was saved with, while the note that the app runs no project on one is shown: until it is
+  // dismissed or another project opens. Saved again without it, so the note shows once.
   const [droppedMachine, setDroppedMachine] = useState(saved.machine);
   useEffect(() => {
     if (saved.machine !== null) {
@@ -94,6 +94,7 @@ function Connected({ connection, appWindow }: { connection: Connection; appWindo
   const open = (next: Project) => {
     saveProject(next);
     setProject(next);
+    setDroppedMachine(null);
   };
   return (
     <main>

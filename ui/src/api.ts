@@ -205,7 +205,7 @@ export interface AdapterInstall {
 }
 
 /** A project's setup checks, in the order the server made them; passed is true when every `required` one is ok.
- * adapters are the ACP adapters the app installs, none for app runs in herdr, whose agents are the harnesses' CLIs. */
+ * adapters are the ACP adapters the app installs, one per harness that runs through one. */
 export interface SetupReport {
   checks: SetupCheck[];
   passed: boolean;
@@ -484,8 +484,8 @@ export class Api {
 
   /** Install, on this computer, the Node and the ACP adapter that agent's runs over ACP start, agent being an
    * AdapterInstall's, at the versions this octoflow pins, unless they are installed. It downloads them, so it takes
-   * minutes. Rejects with the server's error message: status 400 for an agent without an adapter, 409 for app runs
-   * in herdr, which have none to install, 502 for an install that fails. */
+   * minutes. Rejects with the server's error message: status 400 for an agent without an adapter, 502 for an install
+   * that fails. */
   async installAdapter(agent: string): Promise<void> {
     const query = new URLSearchParams({ agent });
     await this.json(`${this.connection.url}/setup/adapter?${query}`, { method: "POST" });

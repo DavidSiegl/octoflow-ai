@@ -296,3 +296,25 @@ fn an_agent_is_reached_in_the_herdr_server_its_run_saved() {
     assert!(e.starts_with(&format!("{}/state.json is not JSON (", run_dir())), "{e}");
     assert_eq!(console.state().typed.len(), 5);
 }
+
+#[test]
+fn herdr_unreached_sends_to_the_cli_and_an_answered_error_is_herdr_s_own() {
+    let failure = |e| match herdr_failure("build", e) {
+        RunReadError::Failed(e) => e.0,
+        other => panic!("{other:?}"),
+    };
+    let to_cli = "; follow the run and resume it from octoflow's command line";
+
+    let missing = failure(HerdrError::Failed(OrchestratorError::new("herdr is not on PATH")));
+    let stopped = failure(HerdrError::new("server_not_running", "no server"));
+    let answered = failure(HerdrError::new("pane_not_found", "no pane p2"));
+
+    assert_eq!(
+        missing,
+        format!("cannot reach herdr, which this run's build agent runs in: herdr is not on PATH{to_cli}")
+    );
+    assert!(
+        stopped.starts_with("cannot reach herdr, which this run's build agent runs in: ") && stopped.ends_with(to_cli)
+    );
+    assert_eq!(answered, OrchestratorError::from(HerdrError::new("pane_not_found", "no pane p2")).0);
+}

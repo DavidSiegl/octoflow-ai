@@ -172,6 +172,15 @@ describe("the runs overview", () => {
     expect(screen.queryByText(/^This project was opened on the machine/)).not.toBeInTheDocument();
   });
 
+  it("drops the note of a project saved with a machine once another project opens", async () => {
+    localStorage.setItem("orchestrator.project", JSON.stringify({ cwd: "~/remote", machine: "devbox" }));
+    await openApp();
+    expect(screen.getByText(/^This project was opened on the machine devbox/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "~/other" } });
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    expect(screen.queryByText(/^This project was opened on the machine/)).not.toBeInTheDocument();
+  });
+
   it("asks for a project when the orchestrator belongs to no checkout", async () => {
     stubServer({});
     render(<App connect={() => Promise.resolve({ ...CONNECTION, project: null })} appWindow={new FakeWindow()} />);
