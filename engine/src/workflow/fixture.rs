@@ -443,8 +443,8 @@ impl PartialEq<TurnRecord> for Record {
 
 /// What every prompt of a step that can block ends with, for the turn whose handoff file is at path.
 pub(crate) fn note(path: &str) -> String {
-    let fill = |template, value: &dyn Fn(&str) -> Option<String>| {
-        crate::prompts::template::fill(template, value).expect("the built-in note fills in")
+    let fill = |template, known: &dyn Fn(&str) -> Option<String>| {
+        crate::prompts::template::fill(template, known).expect("the built-in note fills in")
     };
     let blocked = fill(crate::prompts::BLOCKED_NOTE, &|_| None);
     let waiting_path = super::turn::waiting_path(path);
