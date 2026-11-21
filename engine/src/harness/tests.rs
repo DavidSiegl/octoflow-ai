@@ -291,3 +291,17 @@ fn codex_launches_as_its_installed_adapter_with_each_mode_set_over_acp_and_its_g
         assert_eq!(launch, expected, "{mode}");
     }
 }
+
+#[test]
+fn opencode_launches_over_acp_under_plan_and_bypass_and_is_refused_under_the_modes_that_ask_first() {
+    let opencode = harness("opencode").unwrap();
+    let modes = [
+        ("default", ModeSetting::Refused),
+        ("acceptEdits", ModeSetting::Refused),
+        ("bypassPermissions", ModeSetting::Set("build")),
+        ("plan", ModeSetting::Set("plan")),
+    ];
+    for (mode, setting) in modes {
+        assert_eq!(opencode.acp_launch(mode, None, None).unwrap().mode, setting, "{mode}");
+    }
+}

@@ -578,7 +578,9 @@ or conflicts (`.github/workflows/automerge.yml` says which wait).
   through its background service, which the call starts, or which answers from the config it read when it started.
   Decided against (the user's ruling, 2026-11-20, opencode-ask-bash ticket 01): opencode keeps no equivalent of
   either mode, so under them it asks before what its own config says, and runs bash unasked where that config is
-  silent.
+  silent. The desktop app's runs, whose agents speak ACP, refuse opencode under either mode instead (the user's
+  ruling, 2026-11-21, herdr-gui-decoupling ticket 12): its ACP modes are `plan`, for `plan`, and `build`, for
+  `bypassPermissions`, and neither asks before it acts.
 - **`state.json` says its format, and a run an earlier release saved is refused, not migrated.** `"format": 2`
   leads the file since 0.54.0, and `"format": 3` with `"backend": "acp"` a run whose agents speak ACP (0.92.16), so
   that a release before it refuses such a run rather than resuming it in herdr; a format that is not its backend's

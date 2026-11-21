@@ -163,6 +163,13 @@ impl<'h> AcpAgents<'h> {
                 h.kind
             ))));
         };
+        if how.mode == ModeSetting::Refused {
+            return Err(AgentError::Failed(OrchestratorError(format!(
+                "{} cannot run under --permission-mode {mode} in a run the app starts: none of its modes asks before it \
+                 acts; start the run under plan or bypassPermissions, or give the role another agent",
+                h.kind
+            ))));
+        }
         let dir = run.dir();
         let journal = Arc::new(Journal::open(&format!("{dir}/{}", journal_name(role)))?);
         let records = Records {
@@ -540,10 +547,9 @@ fn reopen(
 }
 
 /// Put the session that the agent of harness h opened, as its answer opened has it, in mode's equivalent as setting
-/// says, asking the agent by ask. Setting a mode is this function alone: ACP's session modes are to become session
-/// config options ([session modes](https://agentclientprotocol.com/protocol/session-modes)). Returns the log's
-/// sentence when the agent runs without the equivalent: h has none, or the session does not offer it. Errors: the
-/// agent refuses `session/set_mode`, or does not answer it.
+/// says, asking the agent by ask (choose). Setting a mode is this function alone. Returns the log's sentence when the
+/// agent runs without the equivalent: h has none, or the session does not offer it. Errors: the agent refuses the
+/// request, or does not answer it. setting is not ModeSetting::Refused, under which no agent starts (AcpAgents::launch).
 fn set_mode(
     h: &Harness,
     ask: &dyn Fn(&str, Value) -> Result<Value, AgentError>,
@@ -554,25 +560,19 @@ fn set_mode(
 ) -> Result<Option<String>, AgentError> {
     match *setting {
         ModeSetting::Launched => Ok(None),
-        ModeSetting::NoEquivalent => Ok(Some(h.without_mode(mode))),
-        ModeSetting::Set(id) if !offers(opened, "modes", "availableModes", "id", id) => Ok(Some(format!(
-            "{}'s session offers no mode {id}, its equivalent of --permission-mode {mode}; starting it without one",
-            h.kind
-        ))),
-        ModeSetting::Set(id) => {
-            if opened.pointer("/modes/currentModeId").and_then(Value::as_str) != Some(id) {
-                ask("session/set_mode", json!({"sessionId": session, "modeId": id}))?;
-            }
-            Ok(None)
-        }
+        ModeSetting::NoEquivalent | ModeSetting::Refused => Ok(Some(h.without_mode(mode))),
+        ModeSetting::Set(id) => Ok((!choose(ask, session, opened, &MODE, id)?).then(|| {
+            format!(
+                "{}'s session offers no mode {id}, its equivalent of --permission-mode {mode}; starting it without one",
+                h.kind
+            )
+        })),
     }
 }
 
-/// Put the session that the agent of harness h opened, as its answer opened has it, on model, asking the agent by ask:
-/// by the session config option of category `model` where the session has one (ACP's
-/// [session config options](https://agentclientprotocol.com/protocol/session-config-options)), else by the session's
-/// models (`session/set_model`). Returns the log's sentence when the session does not offer model. Errors: the agent
-/// refuses the request, or does not answer it.
+/// Put the session that the agent of harness h opened, as its answer opened has it, on model, asking the agent by ask
+/// (choose). Returns the log's sentence when the session does not offer model. Errors: the agent refuses the request,
+/// or does not answer it.
 fn set_model(
     h: &Harness,
     ask: &dyn Fn(&str, Value) -> Result<Value, AgentError>,
@@ -580,26 +580,79 @@ fn set_model(
     opened: &Value,
     model: &str,
 ) -> Result<Option<String>, AgentError> {
+    let offered = choose(ask, session, opened, &MODEL, model)?;
+    Ok((!offered).then(|| format!("{} offers no model {model}; starting it on its own", h.kind)))
+}
+
+/// A choice a session offers, as ACP names it two ways: a session config option of a category
+/// ([session config options](https://agentclientprotocol.com/protocol/session-config-options)), and the older list of
+/// the session's answer that ACP is replacing with it, with its own request.
+struct Choice {
+    /// The config option's category.
+    category: &'static str,
+    /// The pointer to the list's entries in the session's answer.
+    list: &'static str,
+    /// The key of an entry's id.
+    key: &'static str,
+    /// The pointer to the current id in the session's answer.
+    current: &'static str,
+    /// The request that sets it, and its parameter of the id.
+    method: &'static str,
+    param: &'static str,
+}
+
+/// A session's mode ([session modes](https://agentclientprotocol.com/protocol/session-modes)).
+const MODE: Choice = Choice {
+    category: "mode",
+    list: "/modes/availableModes",
+    key: "id",
+    current: "/modes/currentModeId",
+    method: "session/set_mode",
+    param: "modeId",
+};
+
+/// A session's model.
+const MODEL: Choice = Choice {
+    category: "model",
+    list: "/models/availableModels",
+    key: "modelId",
+    current: "/models/currentModelId",
+    method: "session/set_model",
+    param: "modelId",
+};
+
+/// Put the session, as its answer opened has it, on id for choice, asking its agent by ask unless it is on id already:
+/// by the session config option of choice's category where the session has one, else by choice's list and request.
+/// Returns false, asking nothing, when the session does not offer id. Errors: the agent refuses the request, or does
+/// not answer it.
+fn choose(
+    ask: &dyn Fn(&str, Value) -> Result<Value, AgentError>,
+    session: &str,
+    opened: &Value,
+    choice: &Choice,
+    id: &str,
+) -> Result<bool, AgentError> {
     let options = opened.get("configOptions").and_then(Value::as_array);
-    let option = options.and_then(|o| o.iter().find(|o| o.get("category").and_then(Value::as_str) == Some("model")));
-    let offered = match option {
-        Some(option) => option_offers(option, model),
-        None => offers(opened, "models", "availableModels", "modelId", model),
-    };
-    if !offered {
-        return Ok(Some(format!("{} offers no model {model}; starting it on its own", h.kind)));
-    }
-    match option {
-        Some(option) if option.get("currentValue").and_then(Value::as_str) != Some(model) => {
-            ask("session/set_config_option", json!({"sessionId": session, "configId": option["id"], "value": model}))?;
+    let category = |o: &&Value| o.get("category").and_then(Value::as_str) == Some(choice.category);
+    match options.and_then(|o| o.iter().find(category)) {
+        Some(option) if !option_offers(option, id) => Ok(false),
+        Some(option) => {
+            if option.get("currentValue").and_then(Value::as_str) != Some(id) {
+                ask("session/set_config_option", json!({"sessionId": session, "configId": option["id"], "value": id}))?;
+            }
+            Ok(true)
         }
-        Some(_) => {}
-        None if opened.pointer("/models/currentModelId").and_then(Value::as_str) != Some(model) => {
-            ask("session/set_model", json!({"sessionId": session, "modelId": model}))?;
+        None => {
+            let entries = opened.pointer(choice.list).and_then(Value::as_array);
+            if !entries.is_some_and(|e| e.iter().any(|e| e.get(choice.key).and_then(Value::as_str) == Some(id))) {
+                return Ok(false);
+            }
+            if opened.pointer(choice.current).and_then(Value::as_str) != Some(id) {
+                ask(choice.method, json!({"sessionId": session, choice.param: id}))?;
+            }
+            Ok(true)
         }
-        None => {}
     }
-    Ok(None)
 }
 
 /// Whether the select config option offers value: among its `options`, flat or in groups.
@@ -616,13 +669,6 @@ fn option_offers(option: &Value, value: &str) -> bool {
 /// nor false (an empty object is one).
 fn capable(capabilities: &Value, pointer: &str) -> bool {
     capabilities.pointer(pointer).is_some_and(|c| !c.is_null() && c != false)
-}
-
-/// Whether the session the agent opened, as its answer opened has it, offers the choice of id among
-/// `<group>.<list>[].<key>`: a mode (`modes.availableModes[].id`) or a model (`models.availableModels[].modelId`).
-fn offers(opened: &Value, group: &str, list: &str, key: &str, id: &str) -> bool {
-    let choices = opened.get(group).and_then(|g| g.get(list)).and_then(Value::as_array);
-    choices.is_some_and(|choices| choices.iter().any(|c| c.get(key).and_then(Value::as_str) == Some(id)))
 }
 
 /// The error of harness h's agent's request of method that got no result, waited for REQUEST_SECONDS.

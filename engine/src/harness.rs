@@ -67,10 +67,14 @@ struct Acp {
 /// An ACP agent's equivalent of a permission mode.
 #[derive(Debug, PartialEq, Eq)]
 enum AcpMode {
-    /// The mode of this id, among the modes its session offers (ACP's session modes).
+    /// The mode of this id, among the modes its session offers: a value of its session config option of category
+    /// `mode`, or else one of its session modes.
     Id(&'static str),
     /// These launch arguments, as agy's bypass, which none of its session modes is.
     Args(&'static [&'static str]),
+    /// None: the app starts no agent of the harness under this permission mode, since every mode the harness has would
+    /// act where the permission mode asks first.
+    Refused,
 }
 
 /// An agent the app runs over ACP through an adapter it installs (crate::acp_adapter, which holds each one's pins and
@@ -129,12 +133,14 @@ pub struct AcpLaunch {
 /// What an ACP launch does with the run's permission mode.
 #[derive(Debug, PartialEq, Eq)]
 pub enum ModeSetting {
-    /// Its equivalent is the session mode of this id, set once the session is open if the session offers it.
+    /// Its equivalent is the mode of this id (AcpMode::Id), set once the session is open if the session offers it.
     Set(&'static str),
     /// Its equivalent is in the launch's arguments.
     Launched,
     /// The harness has no equivalent of it.
     NoEquivalent,
+    /// The agent must not start under it (AcpMode::Refused).
+    Refused,
 }
 
 /// How a harness takes --permission-mode.
@@ -289,10 +295,22 @@ pub const HARNESSES: [Harness; 5] = [
         resume: Resume::Flag("--session"),
         config: Config::OpencodeEnv,
         session_log: None,
-        // It has no modes: it runs as its own config says, as its TUI does, so under `default` it runs bash unasked
-        // (TODO.md, Open issues, on opencode app runs). `opencode acp` 2.0.24 takes no flags and ignores
-        // OPENCODE_CONFIG_CONTENT, so its model and grant go over ACP: a session config option and a session root.
-        acp: Some(Acp { program: AcpProgram::OnPath("opencode"), args: &["acp"], modes: &[], add_dir: None }),
+        // `opencode acp` 2.0.24 offers two modes, as its session config option of category `mode`: build, which runs
+        // bash as its own config says (unasked, by default), and plan, which edits nothing. Neither asks before it
+        // acts as `default` and `acceptEdits` do, so it does not start under those (the user's ruling, 2026-11-21).
+        // It takes no flags and ignores OPENCODE_CONFIG_CONTENT, so its model and grant go over ACP: a session config
+        // option and a session root.
+        acp: Some(Acp {
+            program: AcpProgram::OnPath("opencode"),
+            args: &["acp"],
+            modes: &[
+                ("default", AcpMode::Refused),
+                ("acceptEdits", AcpMode::Refused),
+                ("bypassPermissions", AcpMode::Id("build")),
+                ("plan", AcpMode::Id("plan")),
+            ],
+            add_dir: None,
+        }),
     },
     Harness {
         kind: "pi",
@@ -403,8 +421,8 @@ impl Harness {
     /// one, and with access to extra_dir and every file under it where the harness can grant it, as launch's; None for
     /// a harness the engine starts no ACP agent of. An empty model or extra_dir is none. permission_mode is in Claude
     /// Code's names; an ACP run always has one, `default` when the human gave none, so that no agent starts in a
-    /// harness's own looser default where the harness has an equivalent of `default`. One without (opencode, until
-    /// herdr-gui-decoupling ticket 12 gives it modes) starts in its own, and its launch says so (ModeSetting::NoEquivalent).
+    /// harness's own looser default where the harness has an equivalent of `default`. One without starts in its own, and
+    /// its launch says so (ModeSetting::NoEquivalent); one the harness's row refuses is not to start (ModeSetting::Refused).
     pub fn acp_launch(&self, permission_mode: &str, model: Option<&str>, extra_dir: Option<&str>) -> Option<AcpLaunch> {
         let acp = self.acp.as_ref()?;
         let (model, extra_dir) = (model.filter(|m| !m.is_empty()), extra_dir.filter(|d| !d.is_empty()));
@@ -421,6 +439,7 @@ impl Harness {
                 launch.args.extend(args.iter().map(|a| a.to_string()));
                 launch.mode = ModeSetting::Launched;
             }
+            Some(AcpMode::Refused) => launch.mode = ModeSetting::Refused,
             None => {}
         }
         match (extra_dir, acp.add_dir) {

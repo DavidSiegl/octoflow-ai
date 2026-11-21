@@ -80,12 +80,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   double-loading refusal was) is caught only by a real install by hand. Closed by an opt-in test that installs with
   the pinned Node's npm against a local registry, or ignored by default and run before a pin raise.
 
-- **App runs on opencode under `default` will run bash unasked.** opencode gets no ask-before-commands rule
-  (docs/design.md, Harnesses: the user's ruling of 2026-11-20 closed opencode-ask-bash ticket 01 as wontfix). Ticket
-  12 of `.scratch/herdr-gui-decoupling` waited on that ticket so that no ACP opencode agent under `default` would run
-  bash unasked. It needs another answer before the switch turns on: let opencode run as its own config says, or
-  refuse opencode on app runs under `default` and `acceptEdits`, as the app refuses pi.
-
 - **herdr's words and fields still reach past the `Agents`/`RunPlaces` seam.** `Workflow::wait_out_block`
   (`engine/src/workflow/turn.rs`) logs "answer in the pane" and "typed in its pane; answer there", and
   `Plan::summary` (`engine/src/cli/close.rs`) records "workspace closed" / "workspace already gone", whatever backend
