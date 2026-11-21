@@ -520,6 +520,20 @@ fn gated_run(phase: &str, rnd: u32) -> RunState {
     state
 }
 
+/// A human-paced gated step's turn has no deadline, so its prompt names none: it gets no QUALITY_FOLLOWS_NOTE, nor,
+/// as a human-paced step cannot block, BLOCKED_NOTE.
+#[test]
+fn a_human_paced_gated_step_hears_no_time_limit() {
+    let mut steps = crate::test_support::impl_().steps().to_vec();
+    steps[0].human_paced = true;
+    let roles = crate::test_support::roles(&[("impl", "Implementer"), ("review", "Reviewer")]);
+    let pipeline = Pipeline::new("impl", roles, steps).unwrap();
+    let mut state = new_run(&pipeline);
+    state.quality_job = Some(crate::local_gate::LOCAL_GATE.to_string());
+    let (prompt, _) = step_prompt_in(&pipeline, &state, &FakeHost::default(), "impl", 1);
+    assert_eq!(prompt, format!("Implement {}; report to {D}/impl-1.md.", state.task));
+}
+
 #[test]
 fn fresh_builder_in_round_two_after_quality_rounds() {
     let state = gated_run("build", 2);

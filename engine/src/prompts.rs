@@ -100,8 +100,9 @@ pub const BLOCKED_NOTE: &str = concat!(
 );
 
 /// Appended at run time, before BLOCKED_NOTE, to every prompt of the quality-gated step in a run with the gate, when
-/// its turn has a deadline (RunView::turn_timeout); timeout is that deadline in seconds. Without it, Builders ran the
-/// gate themselves, several times a turn, and ran out of time before writing the report the gate waits for.
+/// its turn has a deadline (RunView::turn_timeout); timeout is that deadline in seconds. It holds only until a
+/// BLOCKED report: the wait for the human's answer that follows has none (BLOCKED_PROMPT). Without the note, Builders
+/// ran the gate themselves, several times a turn, and ran out of time before writing the report the gate waits for.
 pub const QUALITY_FOLLOWS_NOTE: &str = concat!(
     "Once your report is written, the orchestrator runs the quality gate on your change, so do not run the gate ",
     "yourself: run the tests your change touches. This turn may take at most {timeout} seconds; write the report ",

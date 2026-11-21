@@ -49,11 +49,26 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   refusal (`engine/src/workflow.rs`, `take_base_branch`) skips closed runs and its message says to check out the
   base. Closed when the check refuses any run's branch that has not reached `origin` (no `pr_url`, or absent on
   `origin`), or when `close` switches an in-place run's checkout back to its base.
+
 - **The workflow's errors name commands as a literal `octoflow`, without the project's `--machine`/`--cwd`.**
   Review 267: `take_base_branch`'s "close that run with `octoflow close <key>`" ignores `cli::program_name()`, and
   for a project given by `--machine` or `--cwd` the command finds no such run where it is typed;
   `cli::resume_command` adds both for the CLI's own hints. `workflow` cannot call into `cli`, which depends on it.
   Closed when the workflow is given the program name and the target flags (or a hint builder) by its caller.
+
+- **`resume --timeout 0` tells a gated Builder "This turn may take at most 0 seconds".** Raised by cross-review 268
+  (F2): "`resume --timeout 0` (or negative) sets `state.turn_timeout = 0` with no zero check, while `run`
+  (start.rs:57) maps 0 to DEFAULT_TURN_TIMEOUT. `RunView::turn_timeout` (step_prompt.rs:57) passes that 0 both to the
+  turn's deadline and ... into QUALITY_FOLLOWS_NOTE." The deadline half predates todo/88. Closes with
+  `.scratch/turn-timeout-waits/issues/02-timeout-zero-means-no-limit.md`: once `RunView::turn_timeout` gives None for
+  a `turn_timeout` of 0, the note is left out as for a human-paced step.
+
+- **"The run has the quality gate" is spelt two ways.** Raised by cross-review 268 (F6): `step_prompt.rs` tests
+  `quality_job.is_some()`, while `gate_switch.rs`, `cli.rs` (resume's gate check) and `cli/listing.rs` test
+  `quality_job.as_deref().is_some_and(|j| !j.is_empty())`; within a run they agree (workflow.rs sets quality_job from
+  the `quality_gate_on` the gate runs on). Closes with one `RunState` method, next to `had_quality_gate`, that every
+  site calls.
+
 - **claude's ACP install departs from spec R6 and R7 of `.scratch/herdr-gui-decoupling` (ticket 07), awaiting the
   user's ruling.** Review 262 (2026-11-21) found three departures, each kept as built until the spec owner amends the
   spec or asks for the code to change: (1) no in-run offer: "When claude is first needed by an ACP run ... the app
