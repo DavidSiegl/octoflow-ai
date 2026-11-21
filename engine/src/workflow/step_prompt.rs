@@ -29,20 +29,36 @@ pub(crate) struct RunView<'a> {
 impl RunView<'_> {
     /// The step's prompt for its turn in round n, and the one for a fresh session that has not seen the turns before
     /// it (None when the two are the same: the step's first turn). The quality round is the state's, for the
-    /// quality-gated step; 0 for every other. Each ends with BLOCKED_NOTE when the step can block.
+    /// quality-gated step; 0 for every other. Each ends with QUALITY_FOLLOWS_NOTE when the gate follows the turn and
+    /// the turn has a deadline, then with BLOCKED_NOTE when the step can block.
     ///
     /// Errors: a file cannot be read, a saved record is malformed, or a template cannot be filled in (prompt_error).
     pub(crate) fn step_prompt(&self, step: &Step, n: u32) -> Result<(String, Option<String>), OrchestratorError> {
         let (text, fresh) = self.as_worded(step, n)?;
-        if !step.can_block() {
+        let mut notes = vec![];
+        if let Some(timeout) =
+            self.turn_timeout(step).filter(|_| step.quality_gated && self.state.quality_job.is_some())
+        {
+            notes.push(self.prompts.fill(Prompt::QualityFollowsNote, &[("timeout", &timeout.to_string())])?);
+        }
+        if step.can_block() {
+            // Formatted with nothing, as each prompt is a template (Prompts): an override may write a brace as {{.
+            notes.push(self.prompts.fill(Prompt::BlockedNote, &[])?);
+        }
+        if notes.is_empty() {
             return Ok((text, fresh));
         }
-        // Formatted with nothing, as each prompt is a template (Prompts): an override may write a brace as {{.
-        let note = self.prompts.fill(Prompt::BlockedNote, &[])?;
-        Ok((format!("{text}\n\n{note}"), fresh.map(|f| if f.is_empty() { f } else { format!("{f}\n\n{note}") })))
+        let notes = notes.join("\n\n");
+        Ok((format!("{text}\n\n{notes}"), fresh.map(|f| if f.is_empty() { f } else { format!("{f}\n\n{notes}") })))
     }
 
-    /// step_prompt as the step's definition words it, without BLOCKED_NOTE.
+    /// Seconds the step's turn may take; None for a human-paced step, whose turn waits on the human and has no
+    /// deadline.
+    pub(crate) fn turn_timeout(&self, step: &Step) -> Option<u64> {
+        (!step.human_paced).then_some(self.state.turn_timeout)
+    }
+
+    /// step_prompt as the step's definition words it, without its notes.
     fn as_worded(&self, step: &Step, n: u32) -> Result<(String, Option<String>), OrchestratorError> {
         let s = self.state;
         let q = if step.quality_gated { s.quality_round } else { 0 };

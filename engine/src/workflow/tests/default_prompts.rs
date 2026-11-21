@@ -24,8 +24,8 @@ const D: &str = "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3";
 
 // The default workflow's prompts as commit d6bb100 sent them, recorded by running these scenarios on that commit's
 // code: since then, SPEC_PROMPT's "Separate Claude Code sessions" became "Separate agent sessions", FIX_PROMPT's "The
-// Reviewer requested changes" became "Changes were requested", and every prompt the Builder gets ends with
-// BLOCKED_NOTE.
+// Reviewer requested changes" became "Changes were requested", every prompt the Builder gets ends with
+// BLOCKED_NOTE, and in a gated run with QUALITY_FOLLOWS_NOTE before it.
 
 pub(super) const FRESH_BUILD_2: &str = concat!(
     "You are the Builder, the second of three roles (Spec Collector -> Builder -> Reviewer). The spec in ",
@@ -98,7 +98,10 @@ const BUILD_1: &str = concat!(
     "report.\n\nAs your last step, write a report to ",
     "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3/build-1.md in a single write; it hands the work ",
     "to the Reviewer: the files you changed and why, how you verified the change (commands and a ",
-    "summary of their results), and any acceptance criterion you did not meet, with the reason.\n\nIf ",
+    "summary of their results), and any acceptance criterion you did not meet, with the reason.\n\n",
+    "Once your report is written, the orchestrator runs the quality gate on your change, so do not run the ",
+    "gate yourself: run the tests your change touches. This turn may take at most 1800 seconds; write the ",
+    "report before then.\n\nIf ",
     "you cannot continue without a decision from the human, write the report with a first line ",
     "`BLOCKED: <your question>` instead.",
 );
@@ -111,7 +114,10 @@ const QUALITY_FIX_1_1: &str = concat!(
     "but the Reviewer reads your answers. Re-run the verification. Do not commit, push or switch ",
     "branches. As your last step, write a new report to ",
     "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3/build-1-q1.md in a single write, in the same ",
-    "shape as before, answering each numbered issue and finding to weigh by its number.\n\nIf you ",
+    "shape as before, answering each numbered issue and finding to weigh by its number.\n\n",
+    "Once your report is written, the orchestrator runs the quality gate on your change, so do not run the ",
+    "gate yourself: run the tests your change touches. This turn may take at most 1800 seconds; write the ",
+    "report before then.\n\nIf you ",
     "cannot continue without a decision from the human, write the report with a first line `BLOCKED: ",
     "<your question>` instead.",
 );
@@ -141,7 +147,10 @@ const FIX_2: &str = concat!(
     "your report why it is wrong. Re-run the verification. Do not commit, push or switch branches. ",
     "As your last step, write a new report to ",
     "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3/build-2.md in a single write, in the same shape ",
-    "as before, answering each finding by its number.\n\nIf you cannot continue without a decision ",
+    "as before, answering each finding by its number.\n\n",
+    "Once your report is written, the orchestrator runs the quality gate on your change, so do not run the ",
+    "gate yourself: run the tests your change touches. This turn may take at most 1800 seconds; write the ",
+    "report before then.\n\nIf you cannot continue without a decision ",
     "from the human, write the report with a first line `BLOCKED: <your question>` instead.",
 );
 
@@ -153,7 +162,10 @@ const QUALITY_FIX_2_1: &str = concat!(
     "but the Reviewer reads your answers. Re-run the verification. Do not commit, push or switch ",
     "branches. As your last step, write a new report to ",
     "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3/build-2-q1.md in a single write, in the same ",
-    "shape as before, answering each numbered issue and finding to weigh by its number.\n\nIf you ",
+    "shape as before, answering each numbered issue and finding to weigh by its number.\n\n",
+    "Once your report is written, the orchestrator runs the quality gate on your change, so do not run the ",
+    "gate yourself: run the tests your change touches. This turn may take at most 1800 seconds; write the ",
+    "report before then.\n\nIf you ",
     "cannot continue without a decision from the human, write the report with a first line `BLOCKED: ",
     "<your question>` instead.",
 );
@@ -228,7 +240,10 @@ const FRESH_BUILD_2_AFTER_QUALITY_ROUNDS: &str = concat!(
     "finding, or explain in your report why it is wrong. Re-run the verification. Do not commit, ",
     "push or switch branches. As your last step, write a new report to ",
     "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3/build-2.md in a single write, in the same shape ",
-    "as before, answering each finding by its number.\n\nIf you cannot continue without a decision ",
+    "as before, answering each finding by its number.\n\n",
+    "Once your report is written, the orchestrator runs the quality gate on your change, so do not run the ",
+    "gate yourself: run the tests your change touches. This turn may take at most 1800 seconds; write the ",
+    "report before then.\n\nIf you cannot continue without a decision ",
     "from the human, write the report with a first line `BLOCKED: <your question>` instead.",
 );
 
@@ -255,7 +270,10 @@ const FRESH_QUALITY_FIX_2_1: &str = concat!(
     "but the Reviewer reads your answers. Re-run the verification. Do not commit, push or switch ",
     "branches. As your last step, write a new report to ",
     "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3/build-2-q1.md in a single write, in the same ",
-    "shape as before, answering each numbered issue and finding to weigh by its number.\n\nIf you ",
+    "shape as before, answering each numbered issue and finding to weigh by its number.\n\n",
+    "Once your report is written, the orchestrator runs the quality gate on your change, so do not run the ",
+    "gate yourself: run the tests your change touches. This turn may take at most 1800 seconds; write the ",
+    "report before then.\n\nIf you ",
     "cannot continue without a decision from the human, write the report with a first line `BLOCKED: ",
     "<your question>` instead.",
 );

@@ -256,7 +256,7 @@ fn gated_step_with_another_name() {
     );
     assert_eq!(
         *impls.borrow(),
-        [format!("Implement add a rate limiter; report to {D}/impl-1.md.{}", note()), fix + &note()]
+        [format!("Implement add a rate limiter; report to {D}/impl-1.md.{}", gated_note()), fix + &gated_note()]
     );
     let passed = quality_note(QUALITY_PASSED_NOTE, &format!("{D}/quality-1-2.md"));
     assert_eq!(
@@ -297,7 +297,7 @@ fn fresh_gated_step_answering_a_quality_round() {
         *seen.borrow(),
         [format!(
             "Implement add a rate limiter; report to {D}/impl-1-q1.md.\n\nEarlier reports: {D}/impl-1.md.\n\n{fix}{}",
-            note()
+            gated_note()
         )]
     );
     // The second role goes to the right of the first.

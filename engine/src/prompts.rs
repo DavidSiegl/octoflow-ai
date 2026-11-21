@@ -99,6 +99,15 @@ pub const BLOCKED_NOTE: &str = concat!(
     "`BLOCKED: <your question>` instead.",
 );
 
+/// Appended at run time, before BLOCKED_NOTE, to every prompt of the quality-gated step in a run with the gate, when
+/// its turn has a deadline (RunView::turn_timeout); timeout is that deadline in seconds. Without it, Builders ran the
+/// gate themselves, several times a turn, and ran out of time before writing the report the gate waits for.
+pub const QUALITY_FOLLOWS_NOTE: &str = concat!(
+    "Once your report is written, the orchestrator runs the quality gate on your change, so do not run the gate ",
+    "yourself: run the tests your change touches. This turn may take at most {timeout} seconds; write the report ",
+    "before then.",
+);
+
 /// For an agent whose report was BLOCKED, while the human answers it in the agent's pane.
 pub const BLOCKED_PROMPT: &str = concat!(
     "Your report asked the human a question and has been moved to {blocked_path}. ",
@@ -241,6 +250,7 @@ prompts! {
     ContinuePrompt => CONTINUE_PROMPT,
     RetryVerdictPrompt => RETRY_VERDICT_PROMPT,
     BlockedNote => BLOCKED_NOTE,
+    QualityFollowsNote => QUALITY_FOLLOWS_NOTE,
     BlockedPrompt => BLOCKED_PROMPT,
     RebuildNote => REBUILD_NOTE,
     RereviewNote => REREVIEW_NOTE,
