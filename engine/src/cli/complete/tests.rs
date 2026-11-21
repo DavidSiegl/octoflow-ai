@@ -61,6 +61,19 @@ fn runs_that_share_a_key_are_offered_by_their_full_ids() {
 }
 
 #[test]
+fn a_run_whose_directory_was_copied_is_offered_once() {
+    let tmp = TempDir::new();
+    let cwd = tmp.join("proj");
+    save(&cwd, "20261101-090000-aaaaaa", "done", "one");
+    let saved = std::fs::read_to_string(format!("{}/state.json", run_dir(&cwd, "20261101-090000-aaaaaa"))).unwrap();
+    put(&format!("{}/state.json", run_dir(&cwd, "20261101-090000-copy00")), &saved);
+
+    let offered: Vec<String> = shown(&run_candidates(&host(&tmp.path()), &cwd)).into_iter().map(|(v, _)| v).collect();
+
+    assert_eq!(offered, ["20261101-090000-aaaaaa"]);
+}
+
+#[test]
 fn a_project_without_runs_or_a_directory_offers_none() {
     let tmp = TempDir::new();
     std::fs::create_dir_all(tmp.join("proj")).expect("the project");
@@ -79,15 +92,23 @@ fn a_cwd_under_home_is_read_with_its_tilde_expanded() {
     assert_eq!(offered, [("aaaaaa".to_string(), "build: t".to_string())]);
 }
 
+/// The target of the line words, the last one the word being completed, as parser's tree parses it.
+fn scanned(line: &[&str]) -> LineTarget {
+    LineTarget::scan(&parser(&ConfigDir::at("/nowhere")), &words(line))
+}
+
 #[test]
 fn the_line_s_cwd_is_read_in_each_form_a_shell_passes_and_the_last_one_wins() {
-    let cwd = |line: &[&str]| LineTarget::scan(&words(line)).cwd;
+    let cwd = |line: &[&str]| scanned(line).cwd;
 
     assert_eq!(cwd(&["octoflow", "resume", "--cwd", "~/dir", ""]), Some("~/dir".to_string()));
     assert_eq!(cwd(&["octoflow", "resume", "--cwd=/a/dir", ""]), Some("/a/dir".to_string()));
     assert_eq!(cwd(&["octoflow", "resume", "--cwd", "=", "/a/dir", ""]), Some("/a/dir".to_string()));
-    assert_eq!(cwd(&["octoflow", "--cwd", "/a", "resume", "--cwd=/b", ""]), Some("/b".to_string()));
+    assert_eq!(cwd(&["octoflow", "resume", "--cwd", "/a", "--cwd=/b", ""]), Some("/b".to_string()));
+    assert_eq!(cwd(&["octoflow", "show", "--cw", "/a/dir", "ab"]), Some("/a/dir".to_string()));
+    assert_eq!(cwd(&["octoflow", "resume", "--cw", "=", "/a/dir", ""]), Some("/a/dir".to_string()));
     assert_eq!(cwd(&["octoflow", "resume", ""]), None);
+    assert_eq!(cwd(&["octoflow", "resume", "--cwd", "/being-typed"]), None);
 }
 
 #[test]
@@ -95,10 +116,11 @@ fn a_line_with_machine_is_offered_no_runs() {
     let tmp = TempDir::new();
     let cwd = tmp.join("proj");
     save(&cwd, "20261101-090000-aaaaaa", "build", "t");
-    let line = |line: &[&str]| LineTarget::scan(&words(line));
-    let target = line(&["octoflow", "resume", "--machine", "box", "--cwd", &cwd, ""]);
+    let target = scanned(&["octoflow", "resume", "--machine", "box", "--cwd", &cwd, ""]);
     assert_eq!(target, LineTarget { cwd: Some(cwd.clone()), machine: true });
-    assert!(line(&["octoflow", "resume", "--machine=box", ""]).machine);
+    assert!(scanned(&["octoflow", "resume", "--machine=box", ""]).machine);
+    assert!(scanned(&["octoflow", "close", "--mach", "box", ""]).machine);
+    assert!(!scanned(&["octoflow", "resume", "--machine", "", ""]).machine);
 
     let command = with_run_candidates(parser(&ConfigDir::at("/nowhere")), target);
     let resume = command.find_subcommand("resume").expect("resume");

@@ -6,7 +6,7 @@
 //! Completion is read-only and stays local: no herdr, no signal handling, no move of an old project directory, nothing
 //! written, and no run ids for a line with --machine, whose runs would be read over ssh while the shell waits.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 
 use clap::builder::StyledStr;
@@ -31,7 +31,9 @@ use crate::state::run_key;
 pub fn answer_shell() {
     CompleteEnv::with_factory(|| {
         let words: Vec<OsString> = std::env::args_os().skip_while(|a| a != "--").skip(1).collect();
-        with_run_candidates(parser(&ConfigDir::from_env()), LineTarget::scan(&words))
+        let command = parser(&ConfigDir::from_env());
+        let target = LineTarget::scan(&command, &words);
+        with_run_candidates(command, target)
     })
     .completer(PROGRAM)
     .bin(PROGRAM)
@@ -39,37 +41,40 @@ pub fn answer_shell() {
 }
 
 /// Where the line being completed reads its runs, as its words name it. A closure that gives RUN's candidates sees
-/// none of the line (clap_complete's ValueCandidates takes no arguments), so the words are scanned before the command
+/// none of the line (clap_complete's ValueCandidates takes no arguments), so the words are parsed before the command
 /// tree is built.
 #[derive(Debug, PartialEq, Eq)]
 struct LineTarget {
     /// The --cwd given, as it was typed, a leading ~ not yet expanded; None for none, the shell's current directory.
     cwd: Option<String>,
-    /// Whether the line has --machine, with or without its value yet.
+    /// Whether the line gives a --machine, which an empty value does not, as when it parses (args.rs, target).
     machine: bool,
 }
 
 impl LineTarget {
-    /// The target of the line words, the words the shell passes the completer, the program's name first. Reads
-    /// `--cwd DIR`, `--cwd=DIR` and bash's `--cwd = DIR` (bash splits a word at `=`, one of its COMP_WORDBREAKS); the
-    /// last --cwd wins, as it does when the line parses.
-    fn scan(words: &[OsString]) -> LineTarget {
-        let words: Vec<&str> = words.iter().map(|w| w.to_str().unwrap_or("")).collect();
-        let mut target = LineTarget { cwd: None, machine: false };
-        for (i, word) in words.iter().enumerate() {
-            if *word == "--machine" || word.starts_with("--machine=") {
-                target.machine = true;
-            } else if let Some(dir) = word.strip_prefix("--cwd=") {
-                target.cwd = Some(dir.to_string());
-            } else if *word == "--cwd" {
-                let value = match words.get(i + 1) {
-                    Some(&"=") => words.get(i + 2),
-                    next => next,
-                };
-                target.cwd = value.map(|dir| dir.to_string());
+    /// The target of the line words, the words the shell passes the completer: the program's name first, the word
+    /// being completed last. The words before that one are parsed by command, parser's tree, as running the line
+    /// would parse them, errors ignored, so an abbreviated --cw or --mach counts as it does there; bash's split of
+    /// `--cwd=DIR` into `--cwd`, `=` and `DIR` (`=` is one of its COMP_WORDBREAKS) is joined back first. A word is
+    /// taken as typed: quotes, backslashes and variables are not undone, as the shell would (bash and zsh pass the
+    /// line's words raw).
+    fn scan(command: &clap::Command, words: &[OsString]) -> LineTarget {
+        let mut line: Vec<OsString> = vec![];
+        let mut typed = words[..words.len().saturating_sub(1)].iter();
+        while let Some(word) = typed.next() {
+            match line.last_mut() {
+                Some(flag) if word == "=" && flag.to_str().is_some_and(|f| f.starts_with("--")) => {
+                    flag.push("=");
+                    flag.push(typed.next().map_or(OsString::new(), OsString::clone));
+                }
+                _ => line.push(word.clone()),
             }
         }
-        target
+        let none = LineTarget { cwd: None, machine: false };
+        let Ok(matches) = command.clone().ignore_errors(true).try_get_matches_from(line) else { return none };
+        let Some((_, sub)) = matches.subcommand() else { return none };
+        let flag = |id| sub.try_get_one::<String>(id).ok().flatten().filter(|v| !v.is_empty()).cloned();
+        LineTarget { cwd: flag("cwd"), machine: flag("machine").is_some() }
     }
 }
 
@@ -110,9 +115,12 @@ fn run_candidates(host: &dyn Host, dir: &str) -> Vec<CompletionCandidate> {
     for run in &runs {
         *runs_by_key.entry(run_key(&run.shown().run_id)).or_default() += 1;
     }
-    // run_states gives the runs oldest first, as their ids, which start with when they started, sort.
+    // run_states gives the runs oldest first, as their ids, which start with when they started, sort. Two run
+    // directories whose state.json name one run, as a copy does, give it once.
+    let mut offered = HashSet::new();
     runs.iter()
         .rev()
+        .filter(|run| offered.insert(run.shown().run_id.as_str()))
         .map(|run| {
             let s = run.shown();
             let key = run_key(&s.run_id);

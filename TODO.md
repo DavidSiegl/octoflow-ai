@@ -42,6 +42,14 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **Tab completion answers to `COMPLETE`, a generic variable name.** Raised by cross-review 266 (F8): "any environment
+  exporting it (e.g. `COMPLETE=1`) makes every octoflow and desktop invocation print clap's error and exit before
+  running" (`engine/src/cli/complete.rs`, `answer_shell`; clap_complete takes `COMPLETE` unset, empty or `0` as no
+  completion and any other value as a shell's name). The spec (`.scratch/shell-completion/spec.md`) names
+  `COMPLETE`, as clap_complete's default does. Closes when the user rules: keep it, or answer to
+  `.var("OCTOFLOW_COMPLETE")`, before ticket 02 ships scripts and users copy README's lines into their rc files,
+  which would all change with it.
+
 - **claude's ACP install departs from spec R6 and R7 of `.scratch/herdr-gui-decoupling` (ticket 07), awaiting the
   user's ruling.** Review 262 (2026-11-21) found three departures, each kept as built until the spec owner amends the
   spec or asks for the code to change: (1) no in-run offer: "When claude is first needed by an ACP run ... the app

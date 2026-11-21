@@ -242,7 +242,9 @@ this machine. Its endpoints and security checks are in [serve](docs/architecture
 `resume`, `show`, `close`, `forget` and `refresh`, the runs of the project, newest first, by key (zsh and fish show
 each run's phase and task). The shell runs `octoflow` on each Tab, so new runs and workflow files show up at once.
 Runs are read from the project of `--cwd`, else the current directory, and only on this computer: with `--machine`,
-no runs are offered. Add the line for your shell to its startup file, with `octoflow` on your `PATH`:
+no runs are offered. bash and zsh read the `--cwd` as typed, so a quoted or escaped path, or one with a variable,
+gives no runs there; fish reads it only before the cursor. Add the line for your shell to its startup file, with
+`octoflow` on your `PATH`:
 
 ```bash
 source <(COMPLETE=bash octoflow)                                   # ~/.bashrc
