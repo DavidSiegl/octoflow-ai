@@ -197,10 +197,14 @@ export interface SetupCheck {
   fix: string;
 }
 
-/** A project's setup checks, in the order the server made them; passed is true when every `required` one is ok. */
+/** A project's setup checks, in the order the server made them; passed is true when every `required` one is ok.
+ * claude_install is what installClaude() would install: whether claude's ACP adapter is installed for the pins this
+ * octoflow carries, and the disk an install takes, in megabytes; null when there is none to install, for app runs in
+ * herdr, whose claude is the claude CLI. */
 export interface SetupReport {
   checks: SetupCheck[];
   passed: boolean;
+  claude_install: { installed: boolean; megabytes: number } | null;
 }
 
 /** A file the quality gate's setup looked after: its path from the project's top level, and whether the setup wrote
@@ -453,15 +457,16 @@ export class Api {
     return this.json(this.url("/setup", project, {})) as Promise<SetupReport>;
   }
 
-  /** Whether the setup dialog has been closed with every required check passed, on this computer, for any project;
-   * rejects when the server cannot tell. */
+  /** Whether the setup dialog need not open by itself, on this computer, for any project: it has been closed with
+   * every required check passed and, for app runs over ACP, claude's ACP adapter is installed for the pins this
+   * octoflow carries (serve's Setup::checked); rejects when the server cannot tell. */
   async setupChecked(): Promise<boolean> {
     const body = (await this.json(`${this.connection.url}/setup/checked`)) as { checked: boolean };
     return body.checked;
   }
 
-  /** Record that the setup dialog has been closed with every required check passed, so that it no longer opens by
-   * itself; rejects with why it could not be recorded. */
+  /** Record that the setup dialog has been closed with every required check passed, which setupChecked() then counts
+   * as its comment says; rejects with why it could not be recorded. */
   async markSetupChecked(): Promise<void> {
     await this.json(`${this.connection.url}/setup/checked`, { method: "POST" });
   }
@@ -478,6 +483,13 @@ export class Api {
       throw new HttpError(200, "the answer has no files");
     }
     return body.files as GateFile[];
+  }
+
+  /** Install, on this computer, the Node and claude's ACP adapter that claude's runs over ACP start, at the versions
+   * this octoflow pins, unless they are installed. It downloads them, so it takes minutes. Rejects with the server's
+   * error message: status 409 for app runs in herdr, which have none to install, 502 for an install that fails. */
+  async installClaude(): Promise<void> {
+    await this.json(`${this.connection.url}/setup/claude`, { method: "POST" });
   }
 
   /** What a run can be started with, from the configuration of this computer, where the server starts its runs, so

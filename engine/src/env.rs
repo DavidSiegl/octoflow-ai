@@ -41,12 +41,7 @@ impl ConfigDir {
 
     /// from_env for the environment env gives, by variable name, and home, the user's home without HOME.
     fn for_env(env: &dyn Fn(&str) -> Option<String>, home: &dyn Fn() -> Option<String>) -> ConfigDir {
-        let config = env("XDG_CONFIG_HOME").filter(|c| c.starts_with('/'));
-        let config = config.unwrap_or_else(|| match env("HOME").or_else(home) {
-            Some(home) => format!("{}/.config", home.trim_end_matches('/')),
-            None => "~/.config".to_string(),
-        });
-        ConfigDir::at(&format!("{}/{CONFIG_DIR_NAME}", config.trim_end_matches('/')))
+        ConfigDir::at(&xdg_dir(env, home, "XDG_CONFIG_HOME", ".config"))
     }
 
     /// The configuration directory at path.
@@ -69,10 +64,17 @@ impl ConfigDir {
         self.join("workflows")
     }
 
-    /// The file whose presence means the desktop app's setup dialog once closed with every Required check passed, so
-    /// that it no longer opens by itself (crate::serve::setup); empty.
+    /// The file whose presence means the desktop app's setup dialog once closed with every Required check passed for
+    /// app runs in herdr, which Setup::checked (crate::serve::setup) reads to tell whether the dialog opens by itself;
+    /// empty. App runs over ACP have their own (acp_setup_checked_path), since the two have their own Required checks
+    /// (claude's ACP adapter among ACP's), so passing one's says nothing of the other's.
     pub fn setup_checked_path(&self) -> String {
         self.join("setup-checked")
+    }
+
+    /// setup_checked_path's file for app runs over ACP.
+    pub fn acp_setup_checked_path(&self) -> String {
+        self.join("setup-checked-acp")
     }
 
     /// The file that holds what the desktop app does with its running runs when its window closes, once the user chose
@@ -84,6 +86,30 @@ impl ConfigDir {
     fn join(&self, name: &str) -> String {
         format!("{}/{name}", self.path.trim_end_matches('/'))
     }
+}
+
+/// The engine's data directory on this machine, where the desktop app keeps what it installs (crate::claude_acp):
+/// CONFIG_DIR_NAME in $XDG_DATA_HOME when that is an absolute path, else in ~/.local/share, ~ being $HOME, or without
+/// it the user's home in /etc/passwd, as env gives each variable by name. On macOS too, as ConfigDir is.
+pub fn data_dir(env: &dyn Fn(&str) -> Option<String>) -> String {
+    xdg_dir(env, &passwd_home, "XDG_DATA_HOME", ".local/share")
+}
+
+/// CONFIG_DIR_NAME in the XDG base directory that variable names, as env gives it, when that is an absolute path; else
+/// in fallback under the home directory, HOME's, or home's without it, or under ~ when neither names one. Without a
+/// trailing "/".
+fn xdg_dir(
+    env: &dyn Fn(&str) -> Option<String>,
+    home: &dyn Fn() -> Option<String>,
+    variable: &str,
+    fallback: &str,
+) -> String {
+    let base = env(variable).filter(|c| c.starts_with('/'));
+    let base = base.unwrap_or_else(|| match env("HOME").or_else(home) {
+        Some(home) => format!("{}/{fallback}", home.trim_end_matches('/')),
+        None => format!("~/{fallback}"),
+    });
+    format!("{}/{CONFIG_DIR_NAME}", base.trim_end_matches('/'))
 }
 
 /// The home directory /etc/passwd gives the user the engine runs as, which ~ stands for without HOME; None when

@@ -8,6 +8,7 @@ use std::sync::mpsc;
 use std::time::Instant;
 
 use super::*;
+use crate::claude_acp::ClaudeAcp;
 use crate::cli::doctor::{Check, Level};
 use crate::cli::listing::run_record;
 use crate::constants::{APPROVE, METRICS_FILE, RUNS_DIR, STALE_SECONDS, SUMMARY_FILE, WORKTREES_DIR};
@@ -247,6 +248,7 @@ fn status_at(port: u16) -> Option<u16> {
 fn unchecked() -> Setup {
     Setup::new(
         Box::new(|_: &str, _: &str, _: &Interrupt| panic!("no setup check was expected")),
+        None,
         "/nowhere/setup-checked".into(),
     )
 }
@@ -564,7 +566,7 @@ fn setup_served(marker: &str, checks: Vec<Check>) -> (Served, Asked) {
         seen.lock().unwrap().push((machine.to_string(), cwd.to_string()));
         checks.clone()
     };
-    let setup = Setup::new(Box::new(check), marker.to_string());
+    let setup = Setup::new(Box::new(check), None, marker.to_string());
     (Served::fake_with(&Arc::new(ServeHost::on(None)), &[], Options { setup, ..Options::default() }), asked)
 }
 
@@ -582,7 +584,8 @@ fn setup_checks_the_project_without_reaching_it() {
     assert_eq!(
         reply.body,
         r#"{"checks":[{"name":"herdr","level":"required","ok":true,"detail":"herdr detail","fix":""},"#.to_string()
-            + r#"{"name":"gh","level":"needed-for-pr","ok":false,"detail":"gh detail","fix":"install gh"}],"passed":true}"#
+            + r#"{"name":"gh","level":"needed-for-pr","ok":false,"detail":"gh detail","fix":"install gh"}],"passed":true,"#
+            + r#""claude_install":null}"#
     );
     assert_eq!(*asked.lock().unwrap(), [("box".to_string(), "~/proj".to_string())]);
     assert_eq!(*served.connects.lock().unwrap(), Vec::<(String, String)>::new(), "a project was reached");
@@ -623,6 +626,21 @@ fn the_setup_marker_is_written_and_read() {
     assert!(asked.lock().unwrap().is_empty(), "the marker needs no check");
 }
 
+/// Under ACP the marker keeps the dialog shut only while claude's ACP adapter is installed for the current pins, as it
+/// is not after an upgrade raised a pin.
+#[test]
+fn the_setup_marker_counts_under_acp_only_while_claude_s_adapter_is_installed() {
+    let d = Project::new();
+    let claude = ClaudeAcp::in_environment(vec![("XDG_DATA_HOME".into(), d.root().into())]);
+    let marker = format!("{}/config/setup-checked-acp", d.root());
+    let setup = Setup::new(Box::new(|_: &str, _: &str, _: &Interrupt| vec![]), Some(claude), marker);
+    setup.mark().unwrap();
+    assert_eq!(setup.checked(), Ok(false));
+
+    ClaudeAcp::in_environment(vec![("XDG_DATA_HOME".into(), d.root().into())]).install_fake("");
+    assert_eq!(setup.checked(), Ok(true));
+}
+
 #[test]
 fn a_setup_marker_that_cannot_be_written_or_looked_for_is_500() {
     let d = Project::new();
@@ -635,6 +653,34 @@ fn a_setup_marker_that_cannot_be_written_or_looked_for_is_500() {
     let reply = served.get("/setup/checked", &[]);
     assert_eq!(reply.status, Some(500));
     assert!(reply.error().starts_with(&format!("cannot look for {marker}: ")), "{}", reply.error());
+}
+
+/// A server whose Setup checks nothing and installs claude's ACP adapter in claude.
+fn claude_served(claude: Option<ClaudeAcp>) -> Served {
+    let setup = Setup::new(Box::new(|_: &str, _: &str, _: &Interrupt| vec![]), claude, "/nowhere/setup-checked".into());
+    Served::fake_with(&Arc::new(ServeHost::on(None)), &[], Options { setup, ..Options::default() })
+}
+
+#[test]
+fn setup_offers_claude_s_adapter_for_app_runs_over_acp_and_installs_it() {
+    let data_home = Project::new();
+    let claude = ClaudeAcp::in_environment(vec![("XDG_DATA_HOME".into(), data_home.root().into())]);
+    claude.install_fake("");
+    let served = claude_served(Some(claude));
+    let reply = served.get(&Served::query("/setup", &[]), &[]);
+    let offered = serde_json::json!({"installed": true, "megabytes": crate::claude_acp::INSTALL_MEGABYTES});
+    assert_eq!(reply.json()["claude_install"], offered);
+    // Installed already, the install has nothing to download.
+    let reply = served.post("/setup/claude", "");
+    assert_eq!((reply.status, reply.body.as_str()), (Some(200), r#"{"installed":true}"#));
+}
+
+#[test]
+fn app_runs_in_herdr_have_no_claude_adapter_to_install() {
+    let served = claude_served(None);
+    let reply = served.post("/setup/claude", "");
+    assert_eq!(reply.status, Some(409));
+    assert!(reply.error().contains("there is no adapter to install"), "{}", reply.error());
 }
 
 #[test]

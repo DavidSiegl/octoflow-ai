@@ -104,6 +104,10 @@ export interface FakeSetup {
   gateError?: string;
   /** The query's cwd of each POST /setup/gate, in order. */
   gateCwds?: (string | null)[];
+  /** What POST /setup/claude answers: {"installed": true}, or a 502 with claudeError when given. */
+  claudeError?: string;
+  /** Counts the POSTs of /setup/claude. */
+  claudeInstalls?: number;
 }
 
 /** The workflows a stubbed server offers unless told otherwise: `default`, `tdd`, and `broken`, which does not load.
@@ -285,7 +289,7 @@ export interface FakeEdit {
 /** Stub EventSource, and fetch with a server whose /file answers the text of `files` by name, else 404; whose /agent
  * answers the screen of `agents` by role, else 404 as for an agent that has exited; whose POST /agent/input takes
  * any input; whose /setup endpoints answer as `setup` says, a POST of /setup/checked setting its `checked`, and a
- * POST of /setup/gate recording its cwd; and
+ * POST of /setup/gate recording its cwd and one of /setup/claude counting itself; and
  * whose /workflows and POST /run answer as `start` says, POST /close as `close` says, the workflow endpoints as
  * `edit` says, POST /forget as `forget` says, POST /resume as `resume` says, and POST /stop and /close-choice as
  * `stop` says. */
@@ -317,11 +321,15 @@ export function stubServer(
       if (setup.reportText !== undefined) {
         return new Response(setup.reportText, { status: 200 });
       }
-      return answer(200, setup.report ?? { checks: [], passed: true });
+      return answer(200, setup.report ?? { checks: [], passed: true, claude_install: null });
     }
     if (pathname === "/setup/gate" && init?.method === "POST") {
       setup.gateCwds = [...(setup.gateCwds ?? []), searchParams.get("cwd")];
       return setup.gateError === undefined ? answer(200, { files: setup.gateFiles ?? [] }) : answer(502, { error: setup.gateError });
+    }
+    if (pathname === "/setup/claude" && init?.method === "POST") {
+      setup.claudeInstalls = (setup.claudeInstalls ?? 0) + 1;
+      return setup.claudeError === undefined ? answer(200, { installed: true }) : answer(502, { error: setup.claudeError });
     }
     if (pathname === "/setup/checked" && init?.method === "POST") {
       if (setup.markError !== undefined) {

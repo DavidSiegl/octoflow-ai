@@ -209,7 +209,7 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 
 /// serve's HTTP server, on a free port of 127.0.0.1, with its token, answering until it is dropped. Its endpoints
 /// but /setup/checked, /close-choice and the workflow ones each name the project by ?cwd= and an optional ?machine=,
-/// and answer JSON; each is a GET but the fourteen POSTs:
+/// and answer JSON; each is a GET but the fifteen POSTs:
 ///
 /// - /runs: {"version", "runs"}, as `list --json` prints it.
 /// - /files?run=ID: {"run", "files"}, the run's files as ProjectRuns::files lists them.
@@ -236,13 +236,16 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 ///   reached; 404 for a project on a machine; 409 for a run not running or of another version. A refusal of the run's
 ///   adds "code", the socket's error code: 404 for `no_agent` and `no_request`, 409 for `already_answered` (the
 ///   first answer won) and `not_waiting`, 400 for `bad_option`.
-/// - /setup?cwd=DIR: {"checks", "passed"}, the project's setup checks as Setup::checks gives them; 400 for a cwd
+/// - /setup?cwd=DIR: {"checks", "passed", "claude_install"}, the project's setup checks, and the install of claude's
+///   ACP adapter the dialog offers, as Setup::checks gives them; 400 for a cwd
 ///   missing or empty. It does not reach the project as the others do, so that a machine that is not saved or a
 ///   folder that is missing shows as a failed check, not as 502.
-/// - /setup/checked: {"checked"}, whether the setup dialog has closed with every Required check passed
-///   (Setup::checked); 500 when that cannot be told.
+/// - /setup/checked: {"checked"}, whether the setup dialog need not open by itself (Setup::checked); 500 when that
+///   cannot be told.
 /// - POST /setup/checked: records that it has (Setup::mark), whatever the checks say, and answers {"checked": true};
 ///   500 when the marker cannot be written.
+/// - POST /setup/claude: installs claude's ACP adapter (Setup::install_claude), which takes minutes, and answers
+///   {"installed": true}; 409 for app runs in herdr, which have none to install, 502 for an install that fails.
 /// - POST /setup/gate?cwd=DIR: sets the project up for `--quality-gate local` (ProjectRuns::set_up_gate) and answers
 ///   {"files": [{"path", "written"}, ...]}, written false for a file it kept; 400 for a cwd missing, 502 for a project
 ///   that cannot be reached or a setup that fails, as for a cwd in no git checkout.
@@ -575,6 +578,7 @@ const AGENT_ANSWER: &str = "/agent/answer";
 const AGENT_MESSAGE: &str = "/agent/message";
 const SETUP_CHECKED: &str = "/setup/checked";
 const SETUP_GATE: &str = "/setup/gate";
+const SETUP_CLAUDE: &str = "/setup/claude";
 const RUN: &str = "/run";
 const RESUME: &str = "/resume";
 const CLOSE: &str = "/close";
@@ -604,6 +608,7 @@ fn answer(shared: &Shared, request: Request) {
         "POST" if path == AGENT_ANSWER || path == AGENT_MESSAGE => post_to_agent(shared, request, &path, &query),
         "POST" if path == SETUP_CHECKED => post_checked(shared, request, &query),
         "POST" if path == SETUP_GATE => post_setup_gate(shared, request, &query),
+        "POST" if path == SETUP_CLAUDE => post_setup_claude(shared, request, &query),
         "POST" if path == RUN => post_run(shared, request, &query),
         "POST" if path == RESUME => post_resume(shared, request, &query),
         "POST" if path == CLOSE => post_close(shared, request, &query),
@@ -876,7 +881,8 @@ fn socket_failure(e: acp::SocketError) -> Answer {
 
 /// Answer a POST of /setup/checked, which needs no parameter, by writing the setup marker. It trusts the caller that
 /// every Required check passed rather than checking again, which would run the checks twice for one Close: the marker
-/// only keeps the dialog from opening by itself, and "Check setup…" opens it whatever the marker says.
+/// only keeps the dialog from opening by itself (Setup::checked), and "Check setup…" opens it whatever the marker
+/// says.
 fn post_checked(shared: &Shared, request: Request, query: &HashMap<String, String>) {
     if let Some((code, body)) = refusal(shared, &request, query) {
         return send_json(request, code, &body);
@@ -884,6 +890,21 @@ fn post_checked(shared: &Shared, request: Request, query: &HashMap<String, Strin
     let (code, body) = match shared.setup.mark() {
         Ok(()) => (200, object([("checked", Value::from(true))])),
         Err(why) => (500, error(&why)),
+    };
+    send_json(request, code, &body);
+}
+
+/// Answer a POST of /setup/claude, which needs no parameter, by installing claude's ACP adapter.
+fn post_setup_claude(shared: &Shared, request: Request, query: &HashMap<String, String>) {
+    if let Some((code, body)) = refusal(shared, &request, query) {
+        return send_json(request, code, &body);
+    }
+    let (code, body) = match shared.setup.install_claude(&shared.stopping) {
+        Ok(true) => (200, object([("installed", Value::from(true))])),
+        Ok(false) => {
+            (409, error("the app's runs are in herdr, whose claude is the claude CLI: there is no adapter to install"))
+        }
+        Err(why) => (502, error(&why)),
     };
     send_json(request, code, &body);
 }

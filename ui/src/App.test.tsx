@@ -469,8 +469,20 @@ describe("the setup dialog", () => {
       { name: "gh", level: "needed-for-pr", ok: false, detail: "gh auth status fails", fix: "gh auth login" },
     ],
     passed: true,
+    claude_install: null,
   } as const;
-  const FAILED = { checks: [{ name: "git", level: "required", ok: false, detail: "git is not on PATH", fix: "install git 2.36 or later" }], passed: false } as const;
+  const FAILED = { checks: [{ name: "git", level: "required", ok: false, detail: "git is not on PATH", fix: "install git 2.36 or later" }], passed: false, claude_install: null } as const;
+  const CLAUDE_MISSING = {
+    checks: [{ name: "claude", level: "required", ok: false, detail: "claude's ACP adapter is not installed", fix: "install it from the setup dialog" }],
+    passed: false,
+    claude_install: { installed: false, megabytes: 913 },
+  } as const;
+  const CLAUDE_INSTALLED = {
+    checks: [{ name: "claude", level: "required", ok: true, detail: "claude-agent-acp 0.101.0", fix: "" }],
+    passed: true,
+    claude_install: { installed: true, megabytes: 913 },
+  } as const;
+  const INSTALL = "Install claude's ACP adapter (about 913 MB)";
 
   async function openWith(setup: FakeSetup) {
     const fetch = stubServer({}, {}, setup);
@@ -592,6 +604,69 @@ describe("the setup dialog", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Set up the quality gate" }));
     const gate = await within(dialog).findByRole("region", { name: "Quality gate" });
     expect(await within(gate).findByText("/home/me/proj is in no git checkout")).toBeInTheDocument();
+  });
+
+  it("offers no install of claude's ACP adapter for app runs in herdr", async () => {
+    await openWith({ checked: false, report: { ...REPORT, checks: [...REPORT.checks] } });
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
+    await within(dialog).findByText("herdr 0.9.1", { exact: false });
+    expect(within(dialog).queryByRole("button", { name: /Install claude/ })).not.toBeInTheDocument();
+  });
+
+  it("installs claude's ACP adapter, and checks again", async () => {
+    const setup: FakeSetup = { checked: false, report: { ...CLAUDE_MISSING, checks: [...CLAUDE_MISSING.checks] } };
+    const fetch = await openWith(setup);
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
+    await within(dialog).findByText("fix: install it from the setup dialog");
+    setup.report = { ...CLAUDE_INSTALLED, checks: [...CLAUDE_INSTALLED.checks] };
+    fireEvent.click(within(dialog).getByRole("button", { name: INSTALL }));
+    expect(await within(dialog).findByText("claude-agent-acp 0.101.0", { exact: false })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /Install claude/ })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("region", { name: "claude's ACP adapter" })).not.toBeInTheDocument();
+    expect(setup.claudeInstalls).toBe(1);
+    expect(setupCalls(fetch)).toHaveLength(2);
+  });
+
+  it("shows that claude's ACP adapter is installing, with its button disabled", async () => {
+    const setup: FakeSetup = { checked: false, report: { ...CLAUDE_MISSING, checks: [...CLAUDE_MISSING.checks] } };
+    await openWith(setup);
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
+    const button = await within(dialog).findByRole("button", { name: INSTALL });
+    fireEvent.click(button);
+    const section = within(dialog).getByRole("region", { name: "claude's ACP adapter" });
+    expect(within(section).getByText("Installing…")).toBeInTheDocument();
+    expect(button).toBeDisabled();
+    await waitFor(() => expect(within(dialog).queryByText("Installing…")).not.toBeInTheDocument());
+  });
+
+  it("shows why claude's ACP adapter could not be installed, and offers it again", async () => {
+    const setup: FakeSetup = { checked: false, report: { ...CLAUDE_MISSING, checks: [...CLAUDE_MISSING.checks] }, claudeError: "node-v22.23.4-linux-x64.tar.gz: sha256 does not match SHASUMS256.txt" };
+    await openWith(setup);
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
+    fireEvent.click(await within(dialog).findByRole("button", { name: INSTALL }));
+    const section = await within(dialog).findByRole("region", { name: "claude's ACP adapter" });
+    expect(await within(section).findByText(/sha256 does not match/)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: INSTALL }));
+    await waitFor(() => expect(setup.claudeInstalls).toBe(2));
+  });
+
+  it("stops showing a failed install once a round of checks finds claude's ACP adapter installed", async () => {
+    const setup: FakeSetup = { checked: false, report: { ...CLAUDE_MISSING, checks: [...CLAUDE_MISSING.checks] }, claudeError: "cannot download node: HTTP 503" };
+    await openWith(setup);
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
+    fireEvent.click(await within(dialog).findByRole("button", { name: INSTALL }));
+    expect(await within(dialog).findByText("cannot download node: HTTP 503")).toBeInTheDocument();
+    setup.report = { ...CLAUDE_INSTALLED, checks: [...CLAUDE_INSTALLED.checks] };
+    fireEvent.click(within(dialog).getByRole("button", { name: "Check again" }));
+    expect(await within(dialog).findByText("claude-agent-acp 0.101.0", { exact: false })).toBeInTheDocument();
+    expect(within(dialog).queryByText("cannot download node: HTTP 503")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /Install claude/ })).not.toBeInTheDocument();
+    // Nor while the next round runs, nor after it.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Check again" }));
+    expect(within(dialog).queryByText("cannot download node: HTTP 503")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /Install claude/ })).not.toBeInTheDocument();
+    await within(dialog).findByText("claude-agent-acp 0.101.0", { exact: false });
+    expect(within(dialog).queryByText("cannot download node: HTTP 503")).not.toBeInTheDocument();
   });
 
   it("checks again", async () => {

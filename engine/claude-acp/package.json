@@ -1,0 +1,7 @@
+{
+  "name": "octoflow-claude-acp",
+  "private": true,
+  "dependencies": {
+    "@agentclientprotocol/claude-agent-acp": "0.101.0"
+  }
+}

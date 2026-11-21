@@ -53,6 +53,8 @@ pub struct Harness {
 /// How a harness's agent starts as an ACP agent: its program, given these arguments, speaks ACP on its stdin and stdout.
 #[derive(Debug, PartialEq, Eq)]
 struct Acp {
+    /// What its agent is started as.
+    program: AcpProgram,
     /// The arguments that make the program speak ACP: its subcommand.
     args: &'static [&'static str],
     /// The equivalent of each Claude Code permission mode it has one of; a mode not listed has none.
@@ -71,11 +73,21 @@ enum AcpMode {
     Args(&'static [&'static str]),
 }
 
+/// The program that speaks ACP for a harness.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AcpProgram {
+    /// The program of this name, found on PATH: the harness's own CLI.
+    OnPath(&'static str),
+    /// claude's ACP adapter, as the desktop app installs it (crate::claude_acp): its Node runs its script, which the
+    /// launch's arguments follow. It brings its own Claude Code, so the claude CLI need not be installed.
+    ClaudeAdapter,
+}
+
 /// How a role's agent starts as an ACP agent (Harness::acp_launch).
 #[derive(Debug, PartialEq, Eq)]
 pub struct AcpLaunch {
-    /// The program, found on PATH.
-    pub program: &'static str,
+    /// The program, which crate::acp resolves to a path to start.
+    pub program: AcpProgram,
     /// Its arguments.
     pub args: Vec<String>,
     /// What becomes of the permission mode.
@@ -180,6 +192,7 @@ pub const HARNESSES: [Harness; 5] = [
         // agy 1.5.6's session modes, from the herdr-free spike (.scratch/herdr-gui-decoupling/proposal.md); bypass is
         // no mode of its, only the flag.
         acp: Some(Acp {
+            program: AcpProgram::OnPath("agy"),
             args: &["acp"],
             modes: &[
                 ("default", AcpMode::Id("default")),
@@ -197,8 +210,20 @@ pub const HARNESSES: [Harness; 5] = [
         resume: Resume::Flag("--resume"),
         config: Config::Flags { add_dir: Some("--add-dir") },
         session_log: Some(SessionLog { glob: ".claude/projects/*/{session}.jsonl", format: LogFormat::ClaudeCode }),
-        // Over ACP only through its Node adapter, which the app is to install (herdr-gui-decoupling ticket 07).
-        acp: None,
+        // Through its adapter, 0.101.0 (crate::claude_acp), whose session modes are Claude Code's own: `default` (which
+        // it names Manual), acceptEdits, plan, bypassPermissions, and auto. It takes no flags; its session's model is
+        // a config option, and a directory it is granted is a session root (`additionalDirectories`).
+        acp: Some(Acp {
+            program: AcpProgram::ClaudeAdapter,
+            args: &[],
+            modes: &[
+                ("default", AcpMode::Id("default")),
+                ("acceptEdits", AcpMode::Id("acceptEdits")),
+                ("bypassPermissions", AcpMode::Id("bypassPermissions")),
+                ("plan", AcpMode::Id("plan")),
+            ],
+            add_dir: None,
+        }),
     },
     Harness {
         kind: "codex",
@@ -226,7 +251,7 @@ pub const HARNESSES: [Harness; 5] = [
         // It has no modes: it runs as its own config says, as its TUI does, so under `default` it runs bash unasked
         // (TODO.md, Open issues, on opencode app runs). `opencode acp` 2.0.24 takes no flags and ignores
         // OPENCODE_CONFIG_CONTENT, so its model and grant go over ACP: a session config option and a session root.
-        acp: Some(Acp { args: &["acp"], modes: &[], add_dir: None }),
+        acp: Some(Acp { program: AcpProgram::OnPath("opencode"), args: &["acp"], modes: &[], add_dir: None }),
     },
     Harness {
         kind: "pi",
@@ -343,7 +368,7 @@ impl Harness {
         let acp = self.acp.as_ref()?;
         let (model, extra_dir) = (model.filter(|m| !m.is_empty()), extra_dir.filter(|d| !d.is_empty()));
         let mut launch = AcpLaunch {
-            program: self.kind,
+            program: acp.program,
             args: acp.args.iter().map(|a| a.to_string()).collect(),
             mode: ModeSetting::NoEquivalent,
             model: model.map(String::from),

@@ -42,6 +42,30 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **claude's ACP install departs from spec R6 and R7 of `.scratch/herdr-gui-decoupling` (ticket 07), awaiting the
+  user's ruling.** Review 262 (2026-11-21) found three departures, each kept as built until the spec owner amends the
+  spec or asks for the code to change: (1) no in-run offer: "When claude is first needed by an ACP run ... the app
+  offers to install", but a claude ACP run without the install fails, naming the setup dialog, which opens by itself
+  under ACP until claude's Required check passes (its own marker, `setup-checked-acp`, counts only while the install
+  of the current pins is there, `Setup::checked`); (2) the claude check also asks
+  the adapter `initialize` (`cli/doctor.rs`, `check_acp_setup`), where R7 asks only that the install is present, so a
+  present install that does not answer within PROBE_SECONDS fails it; (3) the button says about 913 MB, the measured
+  size (`claude_acp::INSTALL_MEGABYTES`: npm installs both the glibc and the musl Agent SDK binary), not R6's 690.
+- **An install of claude's ACP adapter removes other pins' installs that runs may still use.** Review 262: runs outlive
+  the app (Keep running), so after an upgrade raises a pin, Install in the new app deletes the old pins' directory
+  under a live run of the old engine, whose next claude role then fails with "claude's ACP adapter is not installed"
+  (`claude_acp.rs`, `remove_others`). R6 asks for old versions to go once the new one is in place and does not cover
+  installs in use. Closed by keeping the previous install and removing only older ones, or by skipping installs a
+  running run uses.
+- **A successful install of claude's ACP adapter is reported as a failure when removing an old install fails.** Review
+  262: once the new install is in place, an error of `remove_others` makes POST /setup/claude answer 502, though the
+  adapter is installed; the dialog's next round shows it installed. Closed by reporting the leftover as a warning
+  beside a success, which /setup/claude's answer has no field for yet.
+- **POST /setup/claude holds one HTTP request for the whole install, up to NPM_TIMEOUT.** Review 262: closing and
+  reopening the setup dialog loses "Installing…" and offers Install again (a second click waits on the lock, then
+  succeeds). Whether WKWebView or WebKitGTK time out an idle fetch is unchecked; the macOS by-hand install of ticket 07
+  answers it. Closed by an install the server runs in the background, with its progress in /setup's answer.
+
 - **App runs on opencode under `default` will run bash unasked.** opencode gets no ask-before-commands rule
   (docs/design.md, Harnesses: the user's ruling of 2026-11-20 closed opencode-ask-bash ticket 01 as wontfix). Ticket
   12 of `.scratch/herdr-gui-decoupling` waited on that ticket so that no ACP opencode agent under `default` would run
@@ -70,13 +94,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `ProjectRuns::resume` always answers 409 ("this app's runs start in herdr"). The error is clear; the button cannot
   work. Closes when serve tells the app how its project launches runs (or the switch is gone, ticket 12 of
   `.scratch/herdr-gui-decoupling`).
-
-- **The app's setup marker does not say which backend's checks passed.** Raised by cross-review 258 (F6): herdr's
-  and ACP's checks share one marker (`Setup::of`, `engine/src/serve/setup.rs`, `setup_checked_path`). A marker
-  written after herdr's checks passed keeps the dialog shut once the app runs over ACP, where claude's Required check
-  can fail. Nobody meets it while `OCTOFLOW_APP_BACKEND` stays a developer setting. Closes before ticket 12 of
-  `.scratch/herdr-gui-decoupling` puts every app run on ACP: either the marker names its backend, or that release
-  clears it.
 
 - **An ACP turn's usage is lost when its prompt is still pending at count time or at a kill.** Raised by
   cross-review 257 (F7): `acp-usage.jsonl` gets a prompt's line only when the agent answers its `session/prompt`

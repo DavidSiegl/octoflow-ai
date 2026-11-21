@@ -11,6 +11,7 @@ fn path_follows_xdg_config_home() {
     let config = ConfigDir::for_env(&env, &|| None);
     assert_eq!(config.path(), format!("/xdg/{CONFIG_DIR_NAME}"));
     assert_eq!(config.setup_checked_path(), format!("/xdg/{CONFIG_DIR_NAME}/setup-checked"));
+    assert_eq!(config.acp_setup_checked_path(), format!("/xdg/{CONFIG_DIR_NAME}/setup-checked-acp"));
     let env = from(&[("XDG_CONFIG_HOME", "relative"), ("HOME", "/home/u/")]);
     let config = ConfigDir::for_env(&env, &|| None);
     assert_eq!(config.path(), format!("/home/u/.config/{CONFIG_DIR_NAME}"));

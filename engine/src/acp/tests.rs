@@ -606,7 +606,9 @@ fn a_usage_without_input_or_output_tokens_is_not_recorded_and_one_without_cache_
 
 /// probe of harness kind's fake agent, in the fixture's environment, given timeout and stopping.
 fn probed(f: &Fixture, kind: &str, timeout: Duration, stopping: &Interrupt) -> Result<String, OrchestratorError> {
-    let env = environment(Some(&f.bin()), &with_pathspec_switches());
+    let data_home = f.tmp.join("data");
+    let env =
+        environment(Some(&f.bin()), &[with_pathspec_switches().as_slice(), &[("XDG_DATA_HOME", &data_home)]].concat());
     probe(harness(kind).unwrap(), &env, &f.tmp.join("project"), timeout, stopping)
 }
 
@@ -621,13 +623,30 @@ fn a_probe_reports_what_the_agent_says_of_itself() {
     let named = probed(&f, "agy", long, &Interrupt::new()).expect("an answer");
     f.put("info.json", r#","agentInfo":{"name":"agy"}"#);
     let unversioned = probed(&f, "agy", long, &Interrupt::new()).expect("an answer");
-    let refused = probed(&f, "claude", long, &Interrupt::new()).expect_err("claude has no ACP launch");
+    let refused = probed(&f, "codex", long, &Interrupt::new()).expect_err("codex has no ACP launch");
+    let uninstalled = probed(&f, "claude", long, &Interrupt::new()).expect_err("claude's adapter is not installed");
 
     assert_eq!((unnamed.as_str(), named.as_str()), ("answers over ACP", "agy 1.5.11"));
     assert_eq!(unversioned, "agy");
     assert_eq!(f.methods(), ["initialize", "initialize", "initialize"]);
     assert!(f.log().contains("argv acp\n"), "{}", f.log());
-    assert_eq!(refused.0, "claude has no ACP launch");
+    assert_eq!(refused.0, "codex has no ACP launch");
+    let not_installed = "claude's ACP adapter is not installed: install it from the app's setup dialog (Check setup…)";
+    assert_eq!(uninstalled.0, not_installed);
+}
+
+#[test]
+fn claude_s_agent_is_its_installed_adapter_run_by_its_node() {
+    let f = Fixture::new();
+    std::fs::create_dir_all(f.tmp.join("project")).expect("the project");
+    let claude = ClaudeAcp::in_environment(vec![("XDG_DATA_HOME".into(), f.tmp.join("data").into())]);
+    // A Node that is the fake agent, run from the bin directory, where it logs.
+    let installed = claude.install_fake(&format!("#!/bin/sh\nexec {}/agy \"$@\"\n", f.bin()));
+
+    let answer = probed(&f, "claude", Duration::from_secs(30), &Interrupt::new()).expect("an answer");
+
+    assert_eq!(answer, "answers over ACP");
+    assert!(f.log().contains(&format!("argv {}\n", installed.script)), "{}", f.log());
 }
 
 #[test]
