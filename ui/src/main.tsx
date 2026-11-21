@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import type { Connection } from "./api";
@@ -10,6 +11,6 @@ const connect = () => invoke<Connection>("server");
 
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
-    <App connect={connect} />
+    <App connect={connect} appWindow={getCurrentWindow()} />
   </StrictMode>,
 );

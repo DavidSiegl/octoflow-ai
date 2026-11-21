@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../App";
-import { CONNECTION, stubServer } from "../test/fakes";
+import { CONNECTION, FakeWindow, stubServer } from "../test/fakes";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -17,7 +17,7 @@ afterEach(() => {
 /** The app with About opened from the top bar's button. */
 async function openAbout() {
   stubServer({}, {});
-  render(<App connect={() => Promise.resolve(CONNECTION)} />);
+  render(<App connect={() => Promise.resolve(CONNECTION)} appWindow={new FakeWindow()} />);
   clickBadge(await screen.findByRole("button", { name: "About Octoflow AI" }));
   return screen.getByRole("dialog", { name: "about" });
 }

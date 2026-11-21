@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { App } from "./App";
-import { CONNECTION, stubServer } from "./test/fakes";
+import { CONNECTION, FakeWindow, stubServer } from "./test/fakes";
 
 // Read from disk, not imported: Vite's dev server serves nothing outside ui/ by default (server.fs.allow), and
 // docs/logo.svg is outside it.
@@ -25,7 +25,7 @@ describe("the logo", () => {
 
   it("starts the top bar, beside the product's name and before the project folder", async () => {
     stubServer({}, {});
-    render(<App connect={() => Promise.resolve(CONNECTION)} />);
+    render(<App connect={() => Promise.resolve(CONNECTION)} appWindow={new FakeWindow()} />);
     const logo = await screen.findByRole("img", { name: title });
     expect(logo).toHaveAttribute("src", "/logo.svg");
     const bar = logo.closest(".top-bar");

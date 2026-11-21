@@ -2,14 +2,14 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { describe, expect, it, vi } from "vitest";
 import { STEP_FLAG_HELP, STEP_FLAGS, type WorkflowDefinition } from "../api";
 import { App } from "../App";
-import { CONNECTION, DEFAULT_DEFINITION, FakeEventSource, OPTIONS, stubServer, workflowAnswers, type Answer, type FakeEdit, type FakeStart } from "../test/fakes";
+import { CONNECTION, FakeWindow, DEFAULT_DEFINITION, FakeEventSource, OPTIONS, stubServer, workflowAnswers, type Answer, type FakeEdit, type FakeStart } from "../test/fakes";
 
 const connect = () => Promise.resolve(CONNECTION);
 
 /** The app with the Workflows dialog open, each entry read; the dialog. */
 async function openWorkflows(edit: FakeEdit = {}): Promise<HTMLElement> {
   stubServer({}, {}, {}, {}, {}, edit);
-  render(<App connect={connect} />);
+  render(<App connect={connect} appWindow={new FakeWindow()} />);
   await waitFor(() => expect(FakeEventSource.opened).toHaveLength(1));
   fireEvent.click(screen.getByRole("button", { name: "Workflows…" }));
   const dialog = screen.getByRole("dialog", { name: "workflows" });
@@ -436,7 +436,7 @@ describe("the run form's Edit… and New…", { timeout: EDITOR_TIMEOUT_MS }, ()
   /** The app with the run form open on `default`, the workflows read. */
   async function openForm(start: FakeStart, edit: FakeEdit = {}): Promise<HTMLElement> {
     stubServer({}, {}, {}, start, {}, edit);
-    render(<App connect={connect} />);
+    render(<App connect={connect} appWindow={new FakeWindow()} />);
     await waitFor(() => expect(FakeEventSource.opened).toHaveLength(1));
     fireEvent.click(screen.getByRole("button", { name: "New run…" }));
     const form = await screen.findByRole("dialog", { name: "new run" });

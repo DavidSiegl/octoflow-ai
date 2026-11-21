@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { AGENT_POLL_MS } from "./components/AgentPanes";
 import type { ForgottenRun } from "./api";
-import { CONNECTION, FakeEventSource, OPTIONS, RECORDED, stubServer, type FakeClose, type FakeForget, type FakeResume, type FakeSetup, type FakeStart } from "./test/fakes";
+import { CONNECTION, FakeWindow, FakeEventSource, OPTIONS, RECORDED, stubServer, type FakeClose, type FakeForget, type FakeResume, type FakeSetup, type FakeStart } from "./test/fakes";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -16,7 +16,7 @@ const SPEC = "# Add a token-bucket rate limiter\n\n- **10** requests a second\n\
 
 async function openApp(files: Record<string, string> = {}, agents: Record<string, string> = {}) {
   const fetch = stubServer(files, agents);
-  render(<App connect={connect} />);
+  render(<App connect={connect} appWindow={new FakeWindow()} />);
   // The stream opens in an effect, which may run after the first render shows.
   await waitFor(() => expect(FakeEventSource.opened).toHaveLength(1));
   return { fetch, source: FakeEventSource.last };
@@ -87,7 +87,7 @@ describe("the runs overview", () => {
     // Frozen time, which moves only when advanced: findBy's polling would need it to move by itself.
     vi.useFakeTimers();
     stubServer({});
-    render(<App connect={connect} />);
+    render(<App connect={connect} appWindow={new FakeWindow()} />);
     await act(async () => {});
     const source = FakeEventSource.last;
     act(() => source.replay("a run started its interview"));
@@ -163,7 +163,7 @@ describe("the runs overview", () => {
 
   it("asks for a project when the orchestrator belongs to no checkout", async () => {
     stubServer({});
-    render(<App connect={() => Promise.resolve({ ...CONNECTION, project: null })} />);
+    render(<App connect={() => Promise.resolve({ ...CONNECTION, project: null })} appWindow={new FakeWindow()} />);
     expect(await screen.findByText("Open a project folder to see its runs.")).toBeInTheDocument();
     expect(FakeEventSource.opened).toHaveLength(0);
     fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "~/proj" } });
@@ -172,7 +172,7 @@ describe("the runs overview", () => {
   });
 
   it("says why the orchestrator could not start", async () => {
-    render(<App connect={() => Promise.reject(new Error("sidecar: not found"))} />);
+    render(<App connect={() => Promise.reject(new Error("sidecar: not found"))} appWindow={new FakeWindow()} />);
     expect(await screen.findByText(/Could not start the orchestrator: Error: sidecar: not found/)).toBeInTheDocument();
   });
 });
@@ -272,7 +272,7 @@ describe("resuming a run", () => {
    * desktop app's run with resumable and the detail of DONE open. */
   async function openResumable(resume: FakeResume, resumable = true) {
     stubServer({}, {}, {}, {}, {}, {}, {}, resume);
-    render(<App connect={connect} />);
+    render(<App connect={connect} appWindow={new FakeWindow()} />);
     await waitFor(() => expect(FakeEventSource.opened).toHaveLength(1));
     const source = FakeEventSource.last;
     const done = RECORDED[0]?.events.find((e) => e.kind === "record")?.record as Record<string, unknown>;
@@ -349,7 +349,7 @@ describe("the agents", () => {
   it("reads the shown agent again while it is shown", async () => {
     vi.useFakeTimers();
     const fetch = stubServer({ "spec.md": SPEC }, { build: "> one\n" });
-    render(<App connect={connect} />);
+    render(<App connect={connect} appWindow={new FakeWindow()} />);
     await act(async () => {});
     const source = FakeEventSource.last;
     act(() => source.replay("the spec was written and the build started"));
@@ -422,7 +422,7 @@ describe("the agents", () => {
   it("stops reading an agent that has exited, until a send", async () => {
     vi.useFakeTimers();
     const fetch = stubServer({ "spec.md": SPEC }, {});
-    render(<App connect={connect} />);
+    render(<App connect={connect} appWindow={new FakeWindow()} />);
     await act(async () => {});
     const source = FakeEventSource.last;
     act(() => source.replay("the spec was written and the build started"));
@@ -474,7 +474,7 @@ describe("the setup dialog", () => {
 
   async function openWith(setup: FakeSetup) {
     const fetch = stubServer({}, {}, setup);
-    render(<App connect={connect} />);
+    render(<App connect={connect} appWindow={new FakeWindow()} />);
     await waitFor(() => expect(FakeEventSource.opened).toHaveLength(1));
     return fetch;
   }
@@ -612,7 +612,7 @@ describe("the run form", () => {
    * chosen `default`. */
   async function openForm(start: FakeStart = {}, workflow = "default") {
     stubServer({}, {}, {}, start);
-    render(<App connect={connect} />);
+    render(<App connect={connect} appWindow={new FakeWindow()} />);
     await waitFor(() => expect(FakeEventSource.opened).toHaveLength(1));
     fireEvent.click(screen.getByRole("button", { name: "New run…" }));
     const form = await screen.findByRole("dialog", { name: "new run" });
@@ -894,7 +894,7 @@ describe("cleaning up runs", () => {
   /** The app, its stream having listed DONE, with the dialog open once its dry run is answered. */
   async function openCleanUp(close: FakeClose) {
     stubServer({}, {}, {}, {}, close);
-    render(<App connect={connect} />);
+    render(<App connect={connect} appWindow={new FakeWindow()} />);
     await waitFor(() => expect(FakeEventSource.opened).toHaveLength(1));
     act(() => FakeEventSource.last.replay("the stream opened"));
     fireEvent.click(screen.getByRole("button", { name: "Clean up runs…" }));
@@ -1007,7 +1007,7 @@ describe("deleting closed runs", () => {
   /** The app, its stream having listed DONE and OLD, both closed, OLD with a task of its own. */
   async function openClosedRuns(forget: FakeForget) {
     stubServer({}, {}, {}, {}, {}, {}, forget);
-    render(<App connect={connect} />);
+    render(<App connect={connect} appWindow={new FakeWindow()} />);
     await waitFor(() => expect(FakeEventSource.opened).toHaveLength(1));
     const source = FakeEventSource.last;
     act(() => source.replay("the stream opened"));

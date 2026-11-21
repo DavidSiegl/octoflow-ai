@@ -14,7 +14,7 @@ use tiny_http::{Header, Request, Response};
 
 use crate::acp;
 use crate::agents::RunPlaces;
-use crate::cli::close::{Outcome, RunClosed, Sweep};
+use crate::cli::close::{Outcome, RunClosed, RunStopped, Sweep};
 use crate::cli::forget::{self, Left, RunForgotten};
 use crate::cli::listing::RUN_RECORD_VERSION;
 use crate::constants::EXIT_ERROR;
@@ -24,12 +24,14 @@ use crate::herdr::{AgentConsole, Launcher, ProcessHerdr};
 use crate::host::{Host, ProcessHost};
 use crate::interrupt::Interrupt;
 use crate::state::Backend;
+use close_choice::CloseChoice;
 use runs::{plain_name, AgentInput, Event, ProjectRuns, RunReadError, RunWatch};
 use serde_json::Value;
 use setup::Setup;
 use start::{RunRequest, StartWait, Started, START_WAIT};
 use url::{parse_qsl, urlsplit};
 
+pub mod close_choice;
 #[cfg(test)]
 mod fake;
 pub mod runs;
@@ -128,7 +130,7 @@ pub fn serve_command(origins: &[String], config: &ConfigDir) -> i32 {
     }
     let backend = app_backend(std::env::var_os(APP_BACKEND_VARIABLE).as_deref());
     let connect = move |machine: &str, cwd: &str, stopping: &Interrupt| project_host(machine, cwd, stopping, backend);
-    let started = RunServer::start(origins, Box::new(connect), Setup::of(config, backend), config.clone());
+    let started = RunServer::start(origins, Box::new(connect), Setup::of(config, backend), config.clone(), backend);
     serve(started, &mut io::stdout(), &mut io::stderr(), || signals.wait().map(drop).map_err(io::Error::from))
 }
 
@@ -206,8 +208,8 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 }
 
 /// serve's HTTP server, on a free port of 127.0.0.1, with its token, answering until it is dropped. Its endpoints
-/// but /setup/checked and the workflow ones each name the project by ?cwd= and an optional ?machine=, and answer JSON;
-/// each is a GET but the eleven POSTs:
+/// but /setup/checked, /close-choice and the workflow ones each name the project by ?cwd= and an optional ?machine=,
+/// and answer JSON; each is a GET but the fourteen POSTs:
 ///
 /// - /runs: {"version", "runs"}, as `list --json` prints it.
 /// - /files?run=ID: {"run", "files"}, the run's files as ProjectRuns::files lists them.
@@ -297,6 +299,18 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 ///   or "failed"; detail why, for "waiting for prune", "skipped" and "failed", else empty. A run that fails does not
 ///   stop the others. 400 for a body of another shape or a run id that is not a plain name, and 413 as for
 ///   /agent/input, both before the project is reached; 502 for a project whose runs cannot be read.
+/// - POST /stop?cwd=DIR: with the JSON body {"dry_run": true}, says which of the project's desktop app runs are
+///   running, which "Stop all" would stop, changing nothing; with {"dry_run": false}, stops each of them through its
+///   socket and waits for it to be released as interrupted (ProjectRuns::stop_all). A run in herdr is never stopped.
+///   Answers {"runs": [{"run", "error"}, ...]}, in run id order, error null for a run stopped (with a dry run: for
+///   every run), else why it could not be: its socket refused, or it still ran a minute after it was told. A run that
+///   fails does not stop the others. 400 for a body of another shape and 413 as for /agent/input, both before the
+///   project is reached; 502 for a project that cannot be reached or whose runs cannot be read.
+/// - /close-choice: {"choice"}, what the app does with its running runs when its window closes (CloseChoice): "ask",
+///   "keep" or "stop"; null when the app's runs are in herdr (APP_BACKEND_VARIABLE), which closing it never stops, so
+///   that the app neither asks nor offers the setting. 500 when it cannot be read.
+/// - POST /close-choice: saves the JSON body's {"choice": "ask" | "keep" | "stop"} and answers {"choice"}; 400 for a
+///   body of another shape and 413 as for /agent/input, 500 when it cannot be saved.
 /// - /events: a text/event-stream of RunWatch's events, polled every SERVE_POLL.local, every SERVE_POLL.remote for a
 ///   --machine project, until the client goes or the server stops. An HTTP/1.1 client gets it chunked, so that the
 ///   end of the stream is the end of the response; an HTTP/1.0 client's ends when the connection closes.
@@ -348,6 +362,9 @@ struct Shared {
     config: ConfigDir,
     /// How POST /run waits for the run it starts.
     start_wait: StartWait,
+    /// The backend of the app's runs, APP_BACKEND_VARIABLE's. With Herdr, closing the app never stops one of them,
+    /// so there is no close choice to make (/close-choice).
+    app_backend: Backend,
 }
 
 impl RunServer {
@@ -355,8 +372,14 @@ impl RunServer {
     /// such as tauri://localhost), each project reached by connect, its setup checked and marked by setup, the
     /// workflows a run can be started with read from config. Errors: no port can be bound, or no token made from the
     /// system's random bytes, or no thread started.
-    pub fn start(origins: &[String], connect: Box<Connect>, setup: Setup, config: ConfigDir) -> io::Result<RunServer> {
-        RunServer::start_polling(origins, connect, setup, config, SERVE_POLL, START_WAIT)
+    pub fn start(
+        origins: &[String],
+        connect: Box<Connect>,
+        setup: Setup,
+        config: ConfigDir,
+        app_backend: Backend,
+    ) -> io::Result<RunServer> {
+        RunServer::start_polling(origins, connect, setup, config, app_backend, SERVE_POLL, START_WAIT)
     }
 
     /// As start, the event streams polling every polls, and POST /run waiting as start_wait says.
@@ -365,6 +388,7 @@ impl RunServer {
         connect: Box<Connect>,
         setup: Setup,
         config: ConfigDir,
+        app_backend: Backend,
         polls: Polls,
         start_wait: StartWait,
     ) -> io::Result<RunServer> {
@@ -386,6 +410,7 @@ impl RunServer {
             polls,
             config,
             start_wait,
+            app_backend,
         });
         let listening = Arc::new(Mutex::new(Some(Arc::new(on(&listener)?))));
         let (dispatched, to) = (Arc::clone(&listening), Arc::clone(&shared));
@@ -554,11 +579,15 @@ const RUN: &str = "/run";
 const RESUME: &str = "/resume";
 const CLOSE: &str = "/close";
 const FORGET: &str = "/forget";
+const STOP: &str = "/stop";
+/// Also a GET, which unreached_answer answers.
+const CLOSE_CHOICE: &str = "/close-choice";
 const WORKFLOW_CHECK: &str = "/workflow/check";
 const WORKFLOW_SAVE: &str = "/workflow/save";
 const WORKFLOW_DELETE: &str = "/workflow/delete";
 /// The GET endpoints outside Endpoint, which reach no project (unreached_answer): the setup dialog's checks, the
-/// workflows a run can be started with, and one workflow to edit.
+/// workflows a run can be started with, and one workflow to edit; and /setup/checked and /close-choice, which are
+/// POSTs too.
 const SETUP: &str = "/setup";
 const WORKFLOWS: &str = "/workflows";
 const WORKFLOW: &str = "/workflow";
@@ -579,6 +608,8 @@ fn answer(shared: &Shared, request: Request) {
         "POST" if path == RESUME => post_resume(shared, request, &query),
         "POST" if path == CLOSE => post_close(shared, request, &query),
         "POST" if path == FORGET => post_forget(shared, request, &query),
+        "POST" if path == STOP => post_stop(shared, request, &query),
+        "POST" if path == CLOSE_CHOICE => post_close_choice(shared, request, &query),
         "POST" if path == WORKFLOW_CHECK => post_workflow(shared, request, &query, |_, body| workflows::check(body)),
         "POST" if path == WORKFLOW_SAVE => post_workflow(shared, request, &query, workflows::save),
         "POST" if path == WORKFLOW_DELETE => post_workflow(shared, request, &query, workflows::delete),
@@ -675,9 +706,10 @@ fn get(shared: &Shared, request: Request, path: &str, query: &HashMap<String, St
     send_json(request, code, &body);
 }
 
-/// The answer to a GET of /setup, /setup/checked, /workflows or /workflow at path with the query's parameters, as
-/// RunServer's doc comment gives them; None for any other path. Unlike Endpoint's they reach no project: the setup
-/// checks check what one needs, and the workflows are this machine's, where a run serve starts runs.
+/// The answer to a GET of /setup, /setup/checked, /workflows, /workflow or /close-choice at path with the query's
+/// parameters, as RunServer's doc comment gives them; None for any other path. Unlike Endpoint's they reach no
+/// project: the setup checks check what one needs, and the workflows and the close choice are this machine's, where a
+/// run serve starts runs.
 fn unreached_answer(shared: &Shared, path: &str, query: &HashMap<String, String>) -> Option<Answer> {
     Some(match path {
         SETUP => match query.get("cwd").map(String::as_str) {
@@ -697,6 +729,11 @@ fn unreached_answer(shared: &Shared, path: &str, query: &HashMap<String, String>
             Err(e) => (500, error(&e.0)),
         },
         WORKFLOW => workflows::read(&shared.config, query),
+        CLOSE_CHOICE if shared.app_backend == Backend::Herdr => (200, object([("choice", Value::Null)])),
+        CLOSE_CHOICE => match CloseChoice::read(&shared.config) {
+            Ok(choice) => (200, object([("choice", Value::from(choice.name()))])),
+            Err(why) => (500, error(&why)),
+        },
         _ => return None,
     })
 }
@@ -907,25 +944,40 @@ fn post_workflow(
 }
 
 /// Answer a POST of /close with the query's parameters, as target gives them: say what closing the project's runs
-/// would do, or close the runs a dry run gave, as RunServer's doc comment says. The body is read and checked before the
-/// project is reached, as post_input's.
+/// would do, or close the runs a dry run gave, as RunServer's doc comment says (post_sweep).
+fn post_close(shared: &Shared, request: Request, query: &HashMap<String, String>) {
+    post_sweep(shared, request, query, previewed_runs, |project, previewed, stopping| {
+        let sweep = previewed.as_deref().map_or(Sweep::DryRun, Sweep::Previewed);
+        Ok(project.close_all(sweep, stopping)?.iter().map(run_closed).collect())
+    });
+}
+
+/// Answer a POST of one of the endpoints that sweep through the project's runs, /close, /forget and /stop, with the
+/// query's parameters: read the body and check it by asked (a 400 or 413 Answer for a bad one) before the project is
+/// reached, as post_input does, then answer {"runs": [...]}, each run as sweep gives it, or 502 with the error sweep
+/// gives, as when the project's runs cannot be read. stopping, given to sweep, is raised when the server stops.
 ///
-/// serve closes in its own process, by the sweep `close --all` runs (ProjectRuns::close_all), rather than by starting
-/// its program as `close --all`, as POST /run starts `run`: the sweep's outcomes come back as values, with no output
-/// format of the CLI's to keep for serve to parse, and a close needs no pane for a human to watch.
-fn post_close(shared: &Shared, mut request: Request, query: &HashMap<String, String>) {
+/// serve sweeps in its own process, by the sweeps `close --all` and `forget --all` run (ProjectRuns), rather than by
+/// starting its program as `close --all`, as POST /run starts `run`: the sweep's outcomes come back as values, with no
+/// output format of the CLI's to keep for serve to parse, and a sweep needs no pane for a human to watch.
+fn post_sweep<Asked>(
+    shared: &Shared,
+    mut request: Request,
+    query: &HashMap<String, String>,
+    asked: fn(&[u8]) -> Result<Asked, Answer>,
+    sweep: impl FnOnce(&ProjectRuns, Asked, &Interrupt) -> Result<Vec<Value>, OrchestratorError>,
+) {
     if let Some((code, body)) = refusal(shared, &request, query) {
         return send_json(request, code, &body);
     }
-    let previewed = match read_body(&mut request).and_then(|body| previewed_runs(&body)) {
-        Ok(previewed) => previewed,
+    let asked = match read_body(&mut request).and_then(|body| asked(&body)) {
+        Ok(asked) => asked,
         Err((code, body)) => return send_json(request, code, &body),
     };
-    let sweep = previewed.as_deref().map_or(Sweep::DryRun, Sweep::Previewed);
-    let closed = project_of(shared, query, &["cwd"])
-        .and_then(|project| project.close_all(sweep, &shared.stopping).map_err(|e| (502, error(&e.0))));
-    let (code, body) = match closed {
-        Ok(runs) => (200, object([("runs", Value::Array(runs.iter().map(run_closed).collect()))])),
+    let swept = project_of(shared, query, &["cwd"])
+        .and_then(|project| sweep(&project, asked, &shared.stopping).map_err(|e| (502, error(&e.0))));
+    let (code, body) = match swept {
+        Ok(runs) => (200, object([("runs", Value::Array(runs))])),
         Err(answer) => answer,
     };
     send_json(request, code, &body);
@@ -959,21 +1011,45 @@ fn previewed_runs(body: &[u8]) -> Result<Option<Vec<RunClosed>>, Answer> {
 }
 
 /// Answer a POST of /forget with the query's parameters, as target gives them: say what forgetting the project's runs
-/// would do, or forget the runs a dry run gave, as RunServer's doc comment says. The body is read and checked before
-/// the project is reached, as post_close's, and serve forgets in its own process, as post_close says why it closes so.
-fn post_forget(shared: &Shared, mut request: Request, query: &HashMap<String, String>) {
+/// would do, or forget the runs a dry run gave, as RunServer's doc comment says (post_sweep).
+fn post_forget(shared: &Shared, request: Request, query: &HashMap<String, String>) {
+    post_sweep(shared, request, query, listed_runs, |project, listed, stopping| {
+        let sweep = listed.as_deref().map_or(forget::Sweep::DryRun, forget::Sweep::Listed);
+        Ok(project.forget_all(sweep, stopping)?.iter().map(run_forgotten).collect())
+    });
+}
+
+/// Answer a POST of /stop with the query's parameters, as target gives them: stop the project's running desktop app
+/// runs, or say which a stop would stop, as RunServer's doc comment says (post_sweep).
+fn post_stop(shared: &Shared, request: Request, query: &HashMap<String, String>) {
+    let dry_run = |body: &[u8]| {
+        sole_field(body, "dry_run")
+            .and_then(|dry_run| dry_run.as_bool())
+            .ok_or_else(|| (400, error(r#"the body must be {"dry_run": true} or {"dry_run": false}"#)))
+    };
+    post_sweep(shared, request, query, dry_run, |project, dry_run, stopping| {
+        let run = |r: &RunStopped| {
+            object([("run", Value::from(r.run_id.as_str())), ("error", Value::from(r.failure.clone()))])
+        };
+        Ok(project.stop_all(dry_run, stopping)?.iter().map(run).collect())
+    });
+}
+
+/// Answer a POST of /close-choice, which needs no parameter, by saving the choice its body names.
+fn post_close_choice(shared: &Shared, mut request: Request, query: &HashMap<String, String>) {
     if let Some((code, body)) = refusal(shared, &request, query) {
         return send_json(request, code, &body);
     }
-    let listed = match read_body(&mut request).and_then(|body| listed_runs(&body)) {
-        Ok(listed) => listed,
-        Err((code, body)) => return send_json(request, code, &body),
-    };
-    let sweep = listed.as_deref().map_or(forget::Sweep::DryRun, forget::Sweep::Listed);
-    let forgotten = project_of(shared, query, &["cwd"])
-        .and_then(|project| project.forget_all(sweep, &shared.stopping).map_err(|e| (502, error(&e.0))));
-    let (code, body) = match forgotten {
-        Ok(runs) => (200, object([("runs", Value::Array(runs.iter().map(run_forgotten).collect()))])),
+    let choice = read_body(&mut request).and_then(|body| {
+        sole_field(&body, "choice")
+            .and_then(|choice| choice.as_str().and_then(CloseChoice::named))
+            .ok_or_else(|| (400, error(r#"the body must be {"choice": "ask" | "keep" | "stop"}"#)))
+    });
+    let (code, body) = match choice {
+        Ok(choice) => match choice.save(&shared.config) {
+            Ok(()) => (200, object([("choice", Value::from(choice.name()))])),
+            Err(why) => (500, error(&why)),
+        },
         Err(answer) => answer,
     };
     send_json(request, code, &body);
@@ -1007,6 +1083,11 @@ fn run_forgotten(run: &RunForgotten) -> Value {
         ("outcome", Value::from(outcome)),
         ("detail", Value::from(detail)),
     ])
+}
+
+/// The value of key in body when body is a JSON object with that one key; None otherwise.
+fn sole_field(body: &[u8], key: &str) -> Option<Value> {
+    json_object(body).filter(|fields| fields.len() == 1)?.remove(key)
 }
 
 /// The fields of body, when it is a JSON object in UTF-8, as every POST's body is; None otherwise.

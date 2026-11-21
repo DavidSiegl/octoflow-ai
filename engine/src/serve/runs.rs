@@ -13,7 +13,7 @@ use super::{Launch, Reached};
 use crate::acp;
 use crate::acp::LeftoverGroups;
 use crate::agents::{EitherBackend, RunPlaces};
-use crate::cli::close::{close_all, Closer, RunClosed, Sweep};
+use crate::cli::close::{close_all, stop_all, Closer, RunClosed, RunStopped, Sweep};
 use crate::cli::forget::{self, forget_all, Forgetter, RunForgotten};
 use crate::cli::listing::run_record;
 use crate::cli::resume_check::resumable;
@@ -145,8 +145,22 @@ impl ProjectRuns {
     /// and its leftover agents, not herdr, are its place (crate::acp::LeftoverGroups). A raised stopping starts no
     /// further run. Errors: as close_all's.
     pub fn close_all(&self, sweep: Sweep, stopping: &Interrupt) -> Result<Vec<RunClosed>, OrchestratorError> {
+        self.closing(stopping, |closer| close_all(closer, &self.cwd, sweep))
+    }
+
+    /// Stop each of the project's desktop app runs (crate::state::Backend::Acp) still running, of those records shows
+    /// (RunScope::Inside), through its socket, and wait for each to be released as interrupted, as
+    /// crate::cli::close::stop_all does; with dry_run, only say which runs it would stop. Gives each run, in run id
+    /// order, with why it could not be stopped, if it could not. Errors: the runs cannot be read.
+    pub fn stop_all(&self, dry_run: bool, stopping: &Interrupt) -> Result<Vec<RunStopped>, OrchestratorError> {
+        self.closing(stopping, |closer| stop_all(closer, &self.cwd, dry_run))
+    }
+
+    /// What f gives, given what close talks to in this project for serve: the runs records shows, the app's runs
+    /// among them, its lines dropped, and stopping raised when the server stops.
+    fn closing<T>(&self, stopping: &Interrupt, f: impl FnOnce(&Closer) -> T) -> T {
         let here = local_host();
-        let closer = Closer {
+        f(&Closer {
             host: &*self.host,
             places: &EitherBackend { herdr: &*self.places, acp: &LeftoverGroups },
             interrupt: stopping,
@@ -155,8 +169,7 @@ impl ProjectRuns {
             stdout: &|_| {},
             scope: RunScope::Inside,
             acp: true,
-        };
-        close_all(&closer, &self.cwd, sweep)
+        })
     }
 
     /// Forget the project's closed runs that sweep names, as crate::cli::forget::forget_all does, of those records

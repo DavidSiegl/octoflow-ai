@@ -60,11 +60,19 @@ struct Options {
     config: ConfigDir,
     /// How POST /run waits.
     wait: StartWait,
+    /// The backend of the app's runs; by default Herdr, as without APP_BACKEND_VARIABLE.
+    backend: Backend,
 }
 
 impl Default for Options {
     fn default() -> Options {
-        Options { polls: SERVE_POLL, setup: unchecked(), config: ConfigDir::at("/nowhere/config"), wait: START_WAIT }
+        Options {
+            polls: SERVE_POLL,
+            setup: unchecked(),
+            config: ConfigDir::at("/nowhere/config"),
+            wait: START_WAIT,
+            backend: Backend::Herdr,
+        }
     }
 }
 
@@ -114,9 +122,9 @@ impl Served {
         options: Options,
     ) -> Served {
         let origins: Vec<String> = origins.iter().map(|o| o.to_string()).collect();
-        let Options { polls, setup, config, wait } = options;
-        let server =
-            RunServer::start_polling(&origins, connect, setup, config, polls, wait).expect("the server starts");
+        let Options { polls, setup, config, wait, backend } = options;
+        let server = RunServer::start_polling(&origins, connect, setup, config, backend, polls, wait)
+            .expect("the server starts");
         let port = port_of(server.url());
         Served { server, port, connects, console: Arc::default() }
     }
@@ -1309,8 +1317,14 @@ fn closing() -> (Repo, String, Served) {
     });
     save(CLOSE_RUNNING, &|_| {});
     save(CLOSE_CLOSED, &|s| (s.error, s.closed) = (Some("interrupted".into()), Some("workspace closed".into())));
+    let served = served_in(&repo);
+    served.console.state().workspaces.insert("w-fin".to_string());
+    (repo, wt, served)
+}
+
+/// A server whose every project is repo's, on this machine, its herdr a FakeConsole.
+fn served_in(repo: &Repo) -> Served {
     let console = Arc::new(FakeConsole::default());
-    console.state().workspaces.insert("w-fin".to_string());
     let (herdr, dir) = (Arc::clone(&console), repo.path.clone());
     let connect = move |_: &str, _: &str, stopping: &Interrupt| {
         let host = Arc::new(ProcessHost::local(stopping));
@@ -1318,7 +1332,7 @@ fn closing() -> (Repo, String, Served) {
         Ok(Reached { host, dir: dir.clone(), console, places: workspaces, launch, launch_dir: dir.clone() })
     };
     let served = Served::start(Box::new(connect), &[], Arc::default(), Options::default());
-    (repo, wt, Served { console, ..served })
+    Served { console, ..served }
 }
 
 /// The runs of a 200 answer to POST /close, each as (run, outcome, detail, discarded).
@@ -1469,14 +1483,7 @@ fn a_desktop_app_s_run_is_closed_through_its_socket_while_running_and_from_state
     save(APP_STOPPED, Some("interrupted"));
     let sock_dir = TempDir::for_sockets();
     let commands = fake_orchestrator(running, &sock_dir.path(), || {});
-    let console = Arc::new(FakeConsole::default());
-    let (herdr, dir) = (Arc::clone(&console), repo.path.clone());
-    let connect = move |_: &str, _: &str, stopping: &Interrupt| {
-        let host = Arc::new(ProcessHost::local(stopping));
-        let (console, workspaces, launch) = (herdr.clone(), herdr.clone(), Launch::Herdr(herdr.clone()));
-        Ok(Reached { host, dir: dir.clone(), console, places: workspaces, launch, launch_dir: dir.clone() })
-    };
-    let served = Served::start(Box::new(connect), &[], Arc::default(), Options::default());
+    let served = served_in(&repo);
     let target = format!("/close?{}", urlencode(&[("cwd", &repo.path)]));
 
     let preview = closed_runs(&served.post(&target, r#"{"dry_run": true}"#));
@@ -1489,7 +1496,7 @@ fn a_desktop_app_s_run_is_closed_through_its_socket_while_running_and_from_state
     assert_eq!(commands.recv_timeout(Duration::from_secs(5)).unwrap(), json!({"stop": {}}));
     assert_eq!(saved_closed(&repo, APP_RUNNING).as_deref(), Some("no agent left"));
     assert_eq!(saved_closed(&repo, APP_STOPPED).as_deref(), Some("no agent left"));
-    let s = console.state();
+    let s = served.console.state();
     assert!(s.workspace_calls.is_empty() && s.typed.is_empty(), "herdr was asked: {:?}", s.workspace_calls);
 }
 
@@ -1519,6 +1526,119 @@ fn a_running_app_run_that_changes_while_it_stops_is_skipped_saying_it_was_stoppe
     assert_eq!(runs, [(APP_RUNNING.to_string(), "skipped".to_string(), skipped, vec![])]);
     assert!(std::path::Path::new(&wt).exists());
     assert_eq!(saved_closed(&repo, APP_RUNNING), None);
+}
+
+/// serve's side of Stop all: each running app run's socket is sent `stop`, and the run is waited for until released.
+/// The orchestrator's side, which this fake stands in for (each pending permission answered cancelled, session/cancel
+/// sent, the run interrupted), is crate::acp's, tested by
+/// stop_cancels_each_permission_and_each_prompt_pending_then_raises_the_interrupt.
+#[test]
+fn stop_all_stops_each_running_app_run_through_its_socket_and_leaves_herdr_s_and_stopped_ones() {
+    let repo = Repo::new(&[("app.py", "one\n"), (".octoflow-ai/.gitignore", "*\n")]);
+    let save = |id: &str, backend: Backend, error: Option<&str>| {
+        let mut state = RunState::new(id, "a task", &repo.path);
+        (state.phase, state.round, state.backend) = ("build".into(), 1, backend);
+        state.error = error.map(String::from);
+        repo.host.write(&format!("{}/state.json", state.dir()), &state.to_text(), false).unwrap();
+        state
+    };
+    let running = save(APP_RUNNING, Backend::Acp, None);
+    save(APP_STOPPED, Backend::Acp, Some("interrupted"));
+    save(CLOSE_RUNNING, Backend::Herdr, None);
+    let sock_dir = TempDir::for_sockets();
+    let commands = fake_orchestrator(running, &sock_dir.path(), || {});
+    let served = served_in(&repo);
+    let target = format!("/stop?{}", urlencode(&[("cwd", &repo.path)]));
+    let stopped = |reply: &Reply| reply.json().get("runs").cloned();
+
+    let preview = served.post(&target, r#"{"dry_run": true}"#);
+    assert_eq!(preview.status, Some(200), "{}", preview.body);
+    assert_eq!(stopped(&preview), Some(json!([{"run": APP_RUNNING, "error": null}])));
+    assert!(commands.try_recv().is_err(), "a dry run told the run to stop");
+
+    let reply = served.post(&target, r#"{"dry_run": false}"#);
+    assert_eq!(stopped(&reply), Some(json!([{"run": APP_RUNNING, "error": null}])));
+    assert_eq!(commands.recv_timeout(Duration::from_secs(5)).unwrap(), json!({"stop": {}}));
+    let saved_error = |id: &str| {
+        let path = format!("{}/{RUNS_DIR}/{id}/state.json", repo.path);
+        RunState::from_text(&repo.host.read(&path).unwrap().unwrap()).unwrap().error
+    };
+    assert_eq!(saved_error(APP_RUNNING).as_deref(), Some("interrupted"));
+    assert_eq!(saved_error(CLOSE_RUNNING), None);
+    // Released, it is not stopped again.
+    assert_eq!(stopped(&served.post(&target, r#"{"dry_run": false}"#)), Some(json!([])));
+}
+
+#[test]
+fn a_running_app_run_whose_socket_is_gone_is_a_failure_of_its_own() {
+    let repo = Repo::new(&[("app.py", "one\n"), (".octoflow-ai/.gitignore", "*\n")]);
+    let mut state = RunState::new(APP_RUNNING, "a task", &repo.path);
+    (state.phase, state.round, state.backend) = ("build".into(), 1, Backend::Acp);
+    repo.host.write(&format!("{}/state.json", state.dir()), &state.to_text(), false).unwrap();
+    let served = served_in(&repo);
+    let target = format!("/stop?{}", urlencode(&[("cwd", &repo.path)]));
+    let reply = served.post(&target, r#"{"dry_run": false}"#);
+    assert_eq!(reply.status, Some(200), "{}", reply.body);
+    let runs = reply.json().get("runs").cloned().unwrap();
+    assert_eq!(runs[0]["run"], json!(APP_RUNNING));
+    let error = runs[0]["error"].as_str().unwrap_or_default();
+    assert!(error.starts_with(&format!("cannot stop run {APP_RUNNING}: ")), "{error}");
+}
+
+#[test]
+fn a_bad_stop_body_is_refused_before_the_project_is_reached() {
+    let connects = Arc::new(Mutex::new(vec![]));
+    let seen = Arc::clone(&connects);
+    let connect = move |machine: &str, cwd: &str, _: &Interrupt| {
+        seen.lock().unwrap().push((machine.to_string(), cwd.to_string()));
+        Err(OrchestratorError::new("ssh: connection refused"))
+    };
+    let served = Served::start(Box::new(connect), &[], Arc::clone(&connects), Options::default());
+    let target = Served::query("/stop", &[("machine", "box")]);
+    let wrong = r#"the body must be {"dry_run": true} or {"dry_run": false}"#;
+    for body in ["", "{}", r#"{"dry_run": 1}"#, r#"{"dry_run": true, "x": 1}"#, r#"{"stop": true}"#] {
+        let reply = served.post(&target, body);
+        assert_eq!((reply.status, reply.error()), (Some(400), wrong.to_string()), "{body}");
+    }
+    assert!(connects.lock().unwrap().is_empty(), "a bad body reached the project");
+    let reply = served.post(&target, r#"{"dry_run": true}"#);
+    assert_eq!((reply.status, reply.error()), (Some(502), "ssh: connection refused".to_string()));
+}
+
+#[test]
+fn the_close_choice_is_saved_in_the_configuration_directory_and_read_back() {
+    let d = Project::new();
+    let config = ConfigDir::at(&format!("{}/config", d.root()));
+    let options = Options { config: config.clone(), backend: Backend::Acp, ..Options::default() };
+    let served =
+        Served::start(Box::new(|_: &str, _: &str, _: &Interrupt| unreachable!()), &[], Arc::default(), options);
+    let choice = |served: &Served| served.get("/close-choice", &[]).json().get("choice").cloned();
+    assert_eq!(choice(&served), Some(json!("ask")));
+    let reply = served.post("/close-choice", r#"{"choice": "keep"}"#);
+    assert_eq!((reply.status, reply.body.as_str()), (Some(200), r#"{"choice":"keep"}"#));
+    assert_eq!(std::fs::read_to_string(config.close_choice_path()).unwrap(), "keep\n");
+    assert_eq!(choice(&served), Some(json!("keep")));
+    assert_eq!(served.post("/close-choice", r#"{"choice": "ask"}"#).status, Some(200));
+    assert_eq!(choice(&served), Some(json!("ask")));
+    let wrong = r#"the body must be {"choice": "ask" | "keep" | "stop"}"#;
+    for body in ["", r#"{"choice": "never"}"#, r#"{"choice": "stop", "x": 1}"#] {
+        let reply = served.post("/close-choice", body);
+        assert_eq!((reply.status, reply.error()), (Some(400), wrong.to_string()), "{body}");
+    }
+    std::fs::write(config.close_choice_path(), "maybe\n").unwrap();
+    assert_eq!(served.get("/close-choice", &[]).status, Some(500));
+}
+
+#[test]
+fn with_the_app_s_runs_in_herdr_there_is_no_close_choice_whatever_is_saved() {
+    let d = Project::new();
+    let config = ConfigDir::at(&format!("{}/config", d.root()));
+    CloseChoice::Stop.save(&config).unwrap();
+    let options = Options { config, ..Options::default() };
+    let served =
+        Served::start(Box::new(|_: &str, _: &str, _: &Interrupt| unreachable!()), &[], Arc::default(), options);
+    let reply = served.get("/close-choice", &[]);
+    assert_eq!((reply.status, reply.body.as_str()), (Some(200), r#"{"choice":null}"#));
 }
 
 #[test]
@@ -2262,7 +2382,7 @@ fn in_process() {
     let serving = std::thread::spawn(move || {
         let mut err = vec![];
         let status = serve(
-            RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config")),
+            RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config"), Backend::Herdr),
             &mut Lines(lines),
             &mut err,
             || stopped.recv().map_err(io::Error::other),
@@ -2304,7 +2424,9 @@ impl Write for BrokenPipe {
 #[test]
 fn an_unprintable_line_ends_it() {
     let connect = |_: &str, _: &str, _: &Interrupt| Err(OrchestratorError::new("not asked"));
-    let started = RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config")).unwrap();
+    let started =
+        RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config"), Backend::Herdr)
+            .unwrap();
     let port = port_of(started.url());
     let mut err = vec![];
     let status = serve(Ok(started), &mut BrokenPipe, &mut err, || -> io::Result<()> { panic!("serve waited") });
@@ -2325,7 +2447,9 @@ fn no_port() {
 #[test]
 fn a_wait_for_the_signals_that_fails_ends_it() {
     let connect = |_: &str, _: &str, _: &Interrupt| Err(OrchestratorError::new("not asked"));
-    let started = RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config")).unwrap();
+    let started =
+        RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config"), Backend::Herdr)
+            .unwrap();
     let port = port_of(started.url());
     let (mut out, mut err) = (vec![], vec![]);
     let status = serve(Ok(started), &mut out, &mut err, || Err(io::Error::from_raw_os_error(22)));

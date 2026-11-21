@@ -363,6 +363,17 @@ export interface WorkflowCheck {
   placeholders: string[];
 }
 
+/** A running "acp" run that Stop all stopped, or with a preview would stop: error null once it is stopped (and in a
+ * preview), else why it could not be, as when it was still running a minute after it was told. */
+export interface StoppedRun {
+  run: string;
+  error: string | null;
+}
+
+/** What the app does with the project's running "acp" runs when its window closes: ask each time, or, once the user
+ * chose not to be asked again, keep them running or stop them. Kept by the server in its configuration directory. */
+export type CloseChoice = "ask" | "keep" | "stop";
+
 /** A request the server did not answer as asked, with the HTTP status it answered and its error message. */
 export class HttpError extends Error {
   constructor(
@@ -591,9 +602,44 @@ export class Api {
     return this.sweep("/forget", project, { forget });
   }
 
-  /** The runs of a POST of body to path, /close or /forget, for the project, as the methods that sweep through it
-   * resolve to them. */
-  private async sweep<Run>(path: "/close" | "/forget", project: Project, body: unknown): Promise<Run[]> {
+  /** The project's "acp" runs that are running, which stopRuns would stop, changing nothing; runs in herdr are never
+   * among them. Resolves to each, in run id order. Rejects with the server's error message, status 502 for a project
+   * it cannot reach or whose runs cannot be read. */
+  previewStop(project: Project): Promise<StoppedRun[]> {
+    return this.sweep("/stop", project, { dry_run: true });
+  }
+
+  /** Stop each of the project's running "acp" runs as Ctrl-C stops a CLI run, through its socket: each agent's pending
+   * permission is answered cancelled and its prompt cancelled, and the run is released as interrupted, which Resume
+   * continues. Resolves, once each is released or has failed, to each run, in run id order, a run that fails not
+   * stopping the others. Rejects as previewStop does. */
+  stopRuns(project: Project): Promise<StoppedRun[]> {
+    return this.sweep("/stop", project, { dry_run: false });
+  }
+
+  /** The choice saved for closing the window with runs running; null when there is none to make, the app's runs being
+   * in herdr, which closing it never stops (a release's app, without the developer setting OCTOFLOW_APP_BACKEND=acp).
+   * Rejects with the server's error when it cannot be read. */
+  async closeChoice(): Promise<CloseChoice | null> {
+    const body = (await this.json(`${this.connection.url}/close-choice`)) as { choice?: unknown };
+    if (body.choice === null) {
+      return null;
+    }
+    if (body.choice !== "ask" && body.choice !== "keep" && body.choice !== "stop") {
+      throw new HttpError(200, "the answer has no choice");
+    }
+    return body.choice;
+  }
+
+  /** Save choice for closing the window with runs running; rejects with the server's error when it cannot be
+   * saved. */
+  async saveCloseChoice(choice: CloseChoice): Promise<void> {
+    await this.post("/close-choice", { choice });
+  }
+
+  /** The runs of a POST of body to path, /close, /forget or /stop, for the project, as the methods that sweep through
+   * it resolve to them. */
+  private async sweep<Run>(path: "/close" | "/forget" | "/stop", project: Project, body: unknown): Promise<Run[]> {
     const answer = (await this.json(this.url(path, project, {}), {
       method: "POST",
       headers: { "Content-Type": "application/json" },

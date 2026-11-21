@@ -947,7 +947,7 @@ button.link:hover:not(:disabled) {
   font-family: ui-monospace, monospace;
 }
 
-/* The top bar's Workflows… button, at the end of the bar. */
+/* The top bar's Workflows… button, at the end of the bar, before Settings…. */
 .workflows-button {
   margin-left: auto;
 }
