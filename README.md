@@ -247,9 +247,9 @@ gives no runs there; fish reads it only before the cursor. Add the line for your
 `octoflow` on your `PATH`:
 
 ```bash
-source <(COMPLETE=bash octoflow)                                   # ~/.bashrc
-source <(COMPLETE=zsh octoflow)                                    # ~/.zshrc
-COMPLETE=fish octoflow | source                                    # ~/.config/fish/config.fish
+source <(OCTOFLOW_COMPLETE=bash octoflow)                          # ~/.bashrc
+source <(OCTOFLOW_COMPLETE=zsh octoflow)                           # ~/.zshrc
+OCTOFLOW_COMPLETE=fish octoflow | source                           # ~/.config/fish/config.fish
 ```
 
 The line asks the binary for its script at each shell start, so the script always matches the binary. The

@@ -152,8 +152,8 @@ pub(super) enum Stop {
 /// what a command prints is its product; an interrupted command keeps EXIT_INTERRUPTED. Either way the command runs on,
 /// the rest of what it prints lost.
 ///
-/// With COMPLETE set, the call is a shell's Tab instead: complete::answer_shell answers it from the process's own
-/// arguments, not argv, and exits the process.
+/// With OCTOFLOW_COMPLETE set, the call is a shell's Tab instead: complete::answer_shell answers it from the process's
+/// own arguments, not argv, and exits the process.
 ///
 /// Must be called on the main thread before any other thread starts, since it starts the process's handling of
 /// SIGINT, SIGTERM and SIGHUP: serve's own, or else crate::interrupt::by_signals, which those signals then raise

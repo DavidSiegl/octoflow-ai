@@ -1,6 +1,6 @@
 //! Tab completion, computed by the program: the shell's registration script runs `octoflow` again on each Tab, with
-//! COMPLETE set to the shell's name and the words of the line after `--` (clap_complete's [`CompleteEnv`]), and
-//! [`answer_shell`] answers it from [`parser`]'s command tree, so completion cannot drift from what parses. Beyond
+//! OCTOFLOW_COMPLETE set to the shell's name and the words of the line after `--` (clap_complete's [`CompleteEnv`]),
+//! and [`answer_shell`] answers it from [`parser`]'s command tree, so completion cannot drift from what parses. Beyond
 //! that tree it adds the saved runs of the project as the candidates of each command's RUN.
 //!
 //! Completion is read-only and stays local: no herdr, no signal handling, no move of an old project directory, nothing
@@ -20,11 +20,14 @@ use crate::host::{Host, ProcessHost};
 use crate::interrupt::Interrupt;
 use crate::state::run_key;
 
-/// When the environment's COMPLETE names a shell (bash, zsh, fish, elvish or powershell), answer it on standard output
-/// and exit the process with status 0: with no words after `--` in the arguments, the shell's registration script,
-/// which names the completer `octoflow` as PATH finds it, not the path this binary was run by; else the candidates for
-/// the line those words are. A COMPLETE naming no shell it knows prints clap's error and exits with its status.
-/// Otherwise, COMPLETE unset, empty or `0`, returns having done nothing.
+/// When the environment's OCTOFLOW_COMPLETE names a shell (bash, zsh, fish, elvish or powershell), answer it on
+/// standard output and exit the process with status 0: with no words after `--` in the arguments, the shell's
+/// registration script, which names the completer `octoflow` as PATH finds it, not the path this binary was run by;
+/// else the candidates for the line those words are. An OCTOFLOW_COMPLETE naming no shell it knows prints clap's error
+/// and exits with its status. Otherwise, OCTOFLOW_COMPLETE unset, empty or `0`, returns having done nothing.
+///
+/// The variable is not clap_complete's default, COMPLETE: a name that generic may be exported for something else, and
+/// would then end every octoflow call with clap's error (the user's ruling, 2026-11-21).
 ///
 /// Call it first in main, before anything is printed to standard output or a signal handler is installed: an answer
 /// is all a completing process prints, and a Tab must not wait on anything but reading the runs.
@@ -38,6 +41,7 @@ pub fn answer_shell() {
         let target = LineTarget::scan(&command, &words, cursor);
         with_run_candidates(command, target)
     })
+    .var("OCTOFLOW_COMPLETE")
     .completer(PROGRAM)
     .bin(PROGRAM)
     .complete();
