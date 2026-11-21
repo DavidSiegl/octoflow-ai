@@ -94,7 +94,20 @@ fn a_cwd_under_home_is_read_with_its_tilde_expanded() {
 
 /// The target of the line words, the last one the word being completed, as parser's tree parses it.
 fn scanned(line: &[&str]) -> LineTarget {
-    LineTarget::scan(&parser(&ConfigDir::at("/nowhere")), &words(line))
+    LineTarget::scan(&parser(&ConfigDir::at("/nowhere")), &words(line), None)
+}
+
+#[test]
+fn the_words_after_the_cursor_count_and_only_the_one_being_completed_is_left_out() {
+    let at = |cursor, line: &[&str]| LineTarget::scan(&parser(&ConfigDir::at("/nowhere")), &words(line), Some(cursor));
+
+    let before_cwd = at(2, &["octoflow", "resume", "", "--cwd", "/a/dir"]);
+    let before_machine = at(2, &["octoflow", "resume", "", "--machine", "box"]);
+    let split_after = at(2, &["octoflow", "resume", "ab", "--cwd", "=", "/a/dir"]);
+
+    assert_eq!(before_cwd, LineTarget { cwd: Some("/a/dir".to_string()), machine: false });
+    assert!(before_machine.machine);
+    assert_eq!(split_after.cwd, Some("/a/dir".to_string()));
 }
 
 #[test]

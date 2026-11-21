@@ -31,8 +31,11 @@ use crate::state::run_key;
 pub fn answer_shell() {
     CompleteEnv::with_factory(|| {
         let words: Vec<OsString> = std::env::args_os().skip_while(|a| a != "--").skip(1).collect();
+        // bash's and zsh's registration scripts say which word the cursor is on, as clap_complete reads it; fish's
+        // passes the line up to the cursor only.
+        let cursor = std::env::var("_CLAP_COMPLETE_INDEX").ok().and_then(|i| i.parse().ok());
         let command = parser(&ConfigDir::from_env());
-        let target = LineTarget::scan(&command, &words);
+        let target = LineTarget::scan(&command, &words, cursor);
         with_run_candidates(command, target)
     })
     .completer(PROGRAM)
@@ -52,15 +55,17 @@ struct LineTarget {
 }
 
 impl LineTarget {
-    /// The target of the line words, the words the shell passes the completer: the program's name first, the word
-    /// being completed last. The words before that one are parsed by command, parser's tree, as running the line
-    /// would parse them, errors ignored, so an abbreviated --cw or --mach counts as it does there; bash's split of
+    /// The target of the line words, the words the shell passes the completer, the program's name first. The word
+    /// being completed, at index cursor (None for the last), is left out, and the others, those after it too, are
+    /// parsed by command, parser's tree, as running the line would parse them, errors ignored, so an abbreviated --cw
+    /// or --mach counts as it does there; bash's split of
     /// `--cwd=DIR` into `--cwd`, `=` and `DIR` (`=` is one of its COMP_WORDBREAKS) is joined back first. A word is
     /// taken as typed: quotes, backslashes and variables are not undone, as the shell would (bash and zsh pass the
     /// line's words raw).
-    fn scan(command: &clap::Command, words: &[OsString]) -> LineTarget {
+    fn scan(command: &clap::Command, words: &[OsString], cursor: Option<usize>) -> LineTarget {
+        let completed = cursor.unwrap_or(words.len().saturating_sub(1));
         let mut line: Vec<OsString> = vec![];
-        let mut typed = words[..words.len().saturating_sub(1)].iter();
+        let mut typed = words.iter().enumerate().filter(|(i, _)| *i != completed).map(|(_, w)| w);
         while let Some(word) = typed.next() {
             match line.last_mut() {
                 Some(flag) if word == "=" && flag.to_str().is_some_and(|f| f.starts_with("--")) => {
