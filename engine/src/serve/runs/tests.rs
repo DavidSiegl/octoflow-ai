@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 use super::*;
 use crate::constants::{APPROVE, HEARTBEAT_SECONDS, STALE_SECONDS};
+use crate::herdr::ProcessHerdr;
 use crate::runs::STALE;
 use crate::serve::fake::{reached, FakeConsole, ServeHost};
 use crate::serve::{FINISHED_RUN_WRITES, SERVE_POLL};
@@ -297,6 +298,27 @@ fn an_agent_is_reached_in_the_herdr_server_its_run_saved() {
     assert_eq!(console.state().typed.len(), 5);
 }
 
+/// Text herdr would take for its own option, typed to an earlier app run's herdr agent, is refused in its own words,
+/// herdr not run: herdr was not unreachable (cross-review 265).
+#[test]
+fn a_text_herdr_would_take_for_its_option_is_refused_as_such_not_as_herdr_unreached() {
+    let host = Arc::new(ServeHost::default());
+    let console = Arc::new(FakeConsole::default());
+    let herdr = ProcessHerdr::with_runner(None, |argv, _| panic!("herdr is run: {argv:?}"));
+    let project = ProjectRuns::new(Reached { console: Arc::new(herdr), ..reached(&host, &console) }, vec![]);
+    let agents = r#"{"build": {"name": "build-5e7e00", "pane": "w1:p2", "kind": "claude"}}"#;
+    let agents = serde_json::from_str::<Value>(agents).unwrap();
+    host.state().files.insert(format!("{}/state.json", run_dir()), serve_state(&[("agents", agents)]));
+
+    let typed = project.type_into(SERVE_ID, "build", &AgentInput::Text("--help".to_string()));
+    let keyed = project.type_into(SERVE_ID, "build", &AgentInput::Keys(vec!["--help".to_string()]));
+
+    let refused =
+        |what: &str| format!("{what} cannot start with -- and a letter or digit: herdr may take it for its own option");
+    assert!(matches!(&typed, Err(RunReadError::Failed(e)) if e.0 == refused("a prompt")), "{typed:?}");
+    assert!(matches!(&keyed, Err(RunReadError::Failed(e)) if e.0 == refused("a key")), "{keyed:?}");
+}
+
 #[test]
 fn herdr_unreached_sends_to_the_cli_and_an_answered_error_is_herdr_s_own() {
     let failure = |e| match herdr_failure("build", e) {
@@ -305,9 +327,12 @@ fn herdr_unreached_sends_to_the_cli_and_an_answered_error_is_herdr_s_own() {
     };
     let to_cli = "; follow the run and resume it from octoflow's command line";
 
-    let missing = failure(HerdrError::Failed(OrchestratorError::new("herdr is not on PATH")));
+    let missing = failure(HerdrError::Unreached(OrchestratorError::new("herdr is not on PATH")));
     let stopped = failure(HerdrError::new("server_not_running", "no server"));
     let answered = failure(HerdrError::new("pane_not_found", "no pane p2"));
+    // A text herdr would take for its own option is refused before herdr is asked (cross-review 265).
+    let refused = "a key cannot start with -- and a letter or digit: herdr may take it for its own option";
+    let typed = failure(HerdrError::Failed(OrchestratorError::new(refused)));
 
     assert_eq!(
         missing,
@@ -317,4 +342,5 @@ fn herdr_unreached_sends_to_the_cli_and_an_answered_error_is_herdr_s_own() {
         stopped.starts_with("cannot reach herdr, which this run's build agent runs in: ") && stopped.ends_with(to_cli)
     );
     assert_eq!(answered, OrchestratorError::from(HerdrError::new("pane_not_found", "no pane p2")).0);
+    assert_eq!(typed, refused);
 }

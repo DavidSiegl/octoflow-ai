@@ -14,7 +14,7 @@ impl From<HerdrError> for AgentError {
     fn from(e: HerdrError) -> AgentError {
         match e {
             HerdrError::Herdr { .. } => AgentError::Refused(e.into()),
-            HerdrError::Failed(e) => AgentError::Failed(e),
+            HerdrError::Unreached(e) | HerdrError::Failed(e) => AgentError::Failed(e),
         }
     }
 }

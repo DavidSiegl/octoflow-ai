@@ -46,7 +46,10 @@ pub enum HerdrError {
     /// herdr answered with an error, by herdr's code (such as agent_not_found or timeout; `bad_response` for an
     /// answer that is not one, and `exit_<status>` for a failure herdr gave no code for).
     Herdr { code: String, message: String },
-    /// herdr could not be asked, or what it answered is not what was asked for.
+    /// herdr could not be run: it is not on PATH, or its process could not be started or its output read.
+    Unreached(OrchestratorError),
+    /// herdr was not asked, as for an argument it would take for its own option, or what it answered is not what
+    /// was asked for.
     Failed(OrchestratorError),
 }
 
@@ -60,7 +63,7 @@ impl HerdrError {
     pub fn code(&self) -> Option<&str> {
         match self {
             HerdrError::Herdr { code, .. } => Some(code),
-            HerdrError::Failed(_) => None,
+            HerdrError::Unreached(_) | HerdrError::Failed(_) => None,
         }
     }
 }
@@ -69,7 +72,7 @@ impl fmt::Display for HerdrError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             HerdrError::Herdr { code, message } => write!(f, "herdr {code}: {message}"),
-            HerdrError::Failed(e) => write!(f, "{e}"),
+            HerdrError::Unreached(e) | HerdrError::Failed(e) => write!(f, "{e}"),
         }
     }
 }
@@ -79,7 +82,7 @@ impl std::error::Error for HerdrError {}
 impl From<HerdrError> for OrchestratorError {
     fn from(e: HerdrError) -> OrchestratorError {
         match e {
-            HerdrError::Failed(e) => e,
+            HerdrError::Unreached(e) | HerdrError::Failed(e) => e,
             herdr => OrchestratorError(herdr.to_string()),
         }
     }
@@ -481,9 +484,12 @@ impl ProcessHerdr {
         let (status, stdout, stderr) = match (self.run)(&argv, &self.env, limit) {
             Ok(ran) => ran,
             Err(ProcessError::Start(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Err(HerdrError::Failed(OrchestratorError::new("herdr is not on PATH")))
+                return Err(HerdrError::Unreached(OrchestratorError::new("herdr is not on PATH")))
             }
-            Err(ProcessError::Start(e) | ProcessError::Io(e)) => return Err(failed(os_error(&e, None))),
+            Err(ProcessError::Start(e) | ProcessError::Io(e)) => {
+                let why = format!("herdr {command}: {}", os_error(&e, None));
+                return Err(HerdrError::Unreached(OrchestratorError(why)));
+            }
             Err(ProcessError::Timeout) => {
                 return Err(HerdrError::new("timeout", format!("herdr {command} did not return")));
             }

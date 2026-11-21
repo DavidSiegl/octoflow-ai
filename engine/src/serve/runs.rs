@@ -418,10 +418,13 @@ const START_ERROR_LINES: u32 = 20;
 /// run is the CLI's to follow when herdr cannot be reached (not run, or no server running), since the app no longer
 /// needs herdr and may run where there is none; else Failed with herdr's own error.
 fn herdr_failure(role: &str, e: HerdrError) -> RunReadError {
-    let unreached = match e.code() {
-        Some("agent_not_found") => return RunReadError::Missing(format!("the {role} agent has exited")),
-        None | Some("server_not_running") => true,
-        Some(_) => false,
+    let unreached = match &e {
+        HerdrError::Herdr { code, .. } if code == "agent_not_found" => {
+            return RunReadError::Missing(format!("the {role} agent has exited"))
+        }
+        HerdrError::Herdr { code, .. } => code == "server_not_running",
+        HerdrError::Unreached(_) => true,
+        HerdrError::Failed(_) => false,
     };
     let e = OrchestratorError::from(e);
     if !unreached {

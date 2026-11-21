@@ -168,7 +168,7 @@ impl FakeConsole {
         s.typed.push(command);
         s.servers.push(agent.server.clone());
         if s.down {
-            return Err(HerdrError::Failed(OrchestratorError::new("herdr is not on PATH")));
+            return Err(HerdrError::Unreached(OrchestratorError::new("herdr is not on PATH")));
         }
         let name = &agent.name;
         s.screens.get(name).cloned().ok_or_else(|| HerdrError::new("agent_not_found", format!("no agent {name}")))
