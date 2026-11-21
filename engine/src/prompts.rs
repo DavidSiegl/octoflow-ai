@@ -109,6 +109,15 @@ pub const QUALITY_FOLLOWS_NOTE: &str = concat!(
     "before then.",
 );
 
+/// Appended after BLOCKED_NOTE, as a paragraph of its own, to every prompt of a step that can block; waiting_path is the
+/// turn's waiting file (workflow::turn::waiting_path). Unlike a BLOCKED report, a wait asks the human nothing and
+/// ends no turn: the agent goes on by itself once what it waits on happens.
+pub const WAITING_NOTE: &str = concat!(
+    "If you must wait for something outside this run before you can go on, such as another pull request merging, ",
+    "write what you are waiting for to {waiting_path} and delete that file when you go back to work, as the turn's ",
+    "time limit stands still while it is there.",
+);
+
 /// For an agent whose report was BLOCKED, while the human answers it in the agent's pane.
 pub const BLOCKED_PROMPT: &str = concat!(
     "Your report asked the human a question and has been moved to {blocked_path}. ",
@@ -252,6 +261,7 @@ prompts! {
     RetryVerdictPrompt => RETRY_VERDICT_PROMPT,
     BlockedNote => BLOCKED_NOTE,
     QualityFollowsNote => QUALITY_FOLLOWS_NOTE,
+    WaitingNote => WAITING_NOTE,
     BlockedPrompt => BLOCKED_PROMPT,
     RebuildNote => REBUILD_NOTE,
     RereviewNote => REREVIEW_NOTE,

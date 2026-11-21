@@ -41,7 +41,7 @@ fn the_local_gate_fails_then_passes_with_nothing_pushed() {
         "{quality}"
     );
     assert!(quality.contains("1. `limiter.py:3` error ruff F401: `os` imported but unused\n"));
-    assert_eq!(*builds.borrow(), [quality_fix(state, 1, 1) + &gated_note()]);
+    assert_eq!(*builds.borrow(), [quality_fix(state, 1, 1) + &gated_note(&state.quality_build_path(1, 1))]);
     assert!(reviews.borrow()[0].contains(&quality_note(QUALITY_PASSED_NOTE, &state.quality_path(1, 2))));
     assert!(f.quality_file(1, 2).starts_with("GATE: OK"));
     // Each round judges a checkout of its snapshot, gone once judged, its files in a directory of its own.

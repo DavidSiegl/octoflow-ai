@@ -331,7 +331,7 @@ octoflow metrics | jq -s 'map(.rounds) | add / length'
 | `--machine NAME` | Saved herdr machine to run the agents on. Requires `--cwd`. |
 | `--cwd PATH` | Project directory, on the machine if `--machine` is given. Default: current directory. |
 | `--max-rounds N` | Review rounds before giving up (default 3). |
-| `--timeout SECONDS` | How long one Builder or Reviewer turn may take (default 1800). The interview has no limit. |
+| `--timeout SECONDS` | How long one Builder or Reviewer turn may take (default 1800), not counting the time its agent reports it waits on something outside the run. The interview has no limit. |
 | `--agent KIND` | The [harness](#harnesses) every role runs in. Overrides a role's `agent` in the workflow file. |
 | `--role-agent ROLE=KIND` | The harness of one role, by its key, e.g. `review=codex`. Overrides `--agent`; repeatable. |
 | `--permission-mode MODE` | Permission mode for every role, by Claude Code's names; each other harness gets its [equivalent](#harnesses). Which to choose for a run nobody watches: [unattended runs](#unattended-runs). |
@@ -592,6 +592,7 @@ place, with exactly the placeholders of the text it replaces.
 | `QUALITY_PASSED_NOTE.md`, `QUALITY_UNRESOLVED_NOTE.md`, `QUALITY_STUCK_NOTE.md`, `QUALITY_OFF_NOTE.md` | at the end of the verdict step's prompt, on how the quality gate ended |
 | `LOCKED_NOTE.md`, `PROOFS_NOTE.md`, `CARRIED_PROOFS_NOTE.md` | on restored locked files, and on the Reviewer's failing proofs |
 | `BLOCKED_NOTE.md`, `BLOCKED_PROMPT.md` | at the end of every prompt of a step that can block, and once its report asked the human |
+| `WAITING_NOTE.md` | after `BLOCKED_NOTE`, on how the agent reports a wait on something outside the run (`{waiting_path}`); a file replaces its text, but the paragraph is always sent |
 | `CONTINUE_PROMPT.md`, `RETRY_VERDICT_PROMPT.md` | to a session restarted mid-turn, and after a review without a verdict line |
 
 `workflows` lists the prompt files in effect. A bad file stops `run` or `drain` before any agent starts; see

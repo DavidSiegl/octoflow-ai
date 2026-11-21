@@ -19,6 +19,8 @@ As your last step, write a report to /proj/.octoflow-ai/runs/20260929-120000-a1b
 
 If you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead.
 
+If you must wait for something outside this run before you can go on, such as another pull request merging, write what you are waiting for to /proj/.octoflow-ai/runs/20260929-120000-a1b2c3/build-1.waiting and delete that file when you go back to work, as the turn's time limit stands still while it is there.
+
 ## review, round 1
 
 You are the Reviewer, the last of three roles (Spec Collector -> Builder -> Reviewer). You did not write this change. Judge it only against the spec in /proj/.octoflow-ai/runs/20260929-120000-a1b2c3/spec.md and the code itself.
@@ -34,6 +36,8 @@ Changes were requested; the findings are in /proj/.octoflow-ai/runs/20260929-120
 
 If you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead.
 
+If you must wait for something outside this run before you can go on, such as another pull request merging, write what you are waiting for to /proj/.octoflow-ai/runs/20260929-120000-a1b2c3/build-2.waiting and delete that file when you go back to work, as the turn's time limit stands still while it is there.
+
 ## build, round 2, a fresh session
 
 You are the Builder, the second of three roles (Spec Collector -> Builder -> Reviewer). The spec in /proj/.octoflow-ai/runs/20260929-120000-a1b2c3/spec.md was agreed with the human by a separate session; it is your contract.
@@ -47,6 +51,8 @@ This is round 2, and you are a fresh session. An earlier Builder session did the
 Changes were requested; the findings are in /proj/.octoflow-ai/runs/20260929-120000-a1b2c3/review-1.md. Fix each finding, or explain in your report why it is wrong. Re-run the verification. Do not commit, push or switch branches. As your last step, write a new report to /proj/.octoflow-ai/runs/20260929-120000-a1b2c3/build-2.md in a single write, in the same shape as before, answering each finding by its number.
 
 If you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead.
+
+If you must wait for something outside this run before you can go on, such as another pull request merging, write what you are waiting for to /proj/.octoflow-ai/runs/20260929-120000-a1b2c3/build-2.waiting and delete that file when you go back to work, as the turn's time limit stands still while it is there.
 
 ## review, round 2
 

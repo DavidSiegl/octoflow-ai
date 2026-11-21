@@ -170,10 +170,18 @@ impl Workflow<'_> {
             if let Some(agent) = self.state.agents.get_mut(role).filter(|a| a.unprompted.is_some()) {
                 agent.past_startup = true;
             }
+            self.host.remove(&waiting_path(path))?;
             self.end_turn(role, path)?;
             return Ok(out);
         }
         let how = self.agent(role)?;
+        // A wait is the session's that reported it (waiting_path): one that is not the session prompted for this turn
+        // going on, as after its agent exited and was started again, knows nothing of it.
+        let goes_on = matches!(how, How::Alive | How::Started(AgentStart::Resumed))
+            && self.state.prompted.as_deref() == Some(file.as_str());
+        if !goes_on {
+            self.host.remove(&waiting_path(path))?;
+        }
         let message = self.prompt_for(how, &file, &t.text, t.fresh_text.as_deref(), path)?;
         self.announce(role, how, message.is_some(), &t.announce)?;
         self.human.log(&format!("[{role}] working in {}", self.whereabouts(role)));
@@ -195,6 +203,9 @@ impl Workflow<'_> {
         }
         let out = self.await_handoff(role, path, t)?;
         self.human.log(&format!("[{role}] wrote {file}"));
+        // The turn's file withdraws its wait: a later turn that writes the same file, a retry's or a block's, must not
+        // find it standing.
+        self.host.remove(&waiting_path(path))?;
         self.end_turn(role, path)?;
         Ok(out)
     }
@@ -419,14 +430,20 @@ impl Workflow<'_> {
     /// Poll until the role writes path, t's handoff file, telling the human when it is blocked or stalled, and letting
     /// their message reach the agent while it is idle and the turn waits on them (Agents::await_human): all through
     /// an interview or a block's wait, and once it has stalled.
+    ///
+    /// While the role reports a wait on something outside the run (poll_wait), the turn's clock stands still
+    /// (TurnClock), so the timeout counts only the time it works, no stall is told, and an idle agent is open to the
+    /// human's message.
     fn await_handoff(&mut self, role: &str, path: &str, t: &Turn) -> Outcome<String> {
-        let (timeout, watch_stalls, paced) = (t.timeout, t.watch_stalls, t.announce.waiting());
+        let (watch_stalls, paced) = (t.watch_stalls, t.announce.waiting());
         let (label, file) = (self.label(role), file_name(path).to_string());
-        let deadline = timeout.map(|t| self.clocks.monotonic() + t as f64);
-        // Since when the agent has shown idle or done without the file; None while it works.
+        let mut clock = TurnClock::new(t.timeout, self.clocks.monotonic());
+        // Since when the agent has shown idle or done without the file; None while it works or waits.
         let mut quiet_since: Option<f64> = None;
         // What the human was last told about this turn.
         let mut told: Option<&'static str> = None;
+        // How many polls in a row have found the role's wait standing; 0 for none.
+        let mut waiting_polls = 0;
         loop {
             if let Some(out) = self.host.read(path)? {
                 return Ok(out);
@@ -436,29 +453,56 @@ impl Workflow<'_> {
             };
             self.note_session(role, &seen)?;
             let now = self.clocks.monotonic();
-            if let (Some(deadline), Some(timeout)) = (deadline, timeout) {
-                if now > deadline {
-                    let place = self.whereabouts(role);
-                    return Err(Stopped::Failed(OrchestratorError(format!(
-                        "the {label} did not write {path} within {timeout}s; see {place}"
-                    ))));
-                }
+            let waiting = self.poll_wait(role, path, &mut waiting_polls)?;
+            if let Some(timeout) = clock.run_out(now, waiting) {
+                let place = self.whereabouts(role);
+                return Err(Stopped::Failed(OrchestratorError(format!(
+                    "the {label} did not write {path} within {timeout}s; see {place}"
+                ))));
             }
-            if seen.activity != Activity::Idle {
+            if waiting || seen.activity != Activity::Idle {
                 quiet_since = None;
             } else if quiet_since.is_none() {
                 quiet_since = Some(now);
             }
             let stalled = watch_stalls && quiet_since.is_some_and(|since| now - since >= STALL_SECONDS as f64);
-            self.open_to_human(role, seen.activity, paced, stalled);
+            // A waiting agent is open to the human all through its wait, as a stalled one is: without a deadline that
+            // runs out, a wait never withdrawn has no other way out but the human's message.
+            self.open_to_human(role, seen.activity, paced, stalled || waiting);
             told = self.tell_human(role, seen.activity, stalled, told, &file);
             self.heartbeat()?;
             self.pause(POLL_SECONDS)?;
         }
     }
 
+    /// Whether the role's wait on something outside the run stands at this poll (waiting_on), polls counting the polls
+    /// in a row before it that found it standing, which this one updates. The human is told of a wait once, at its
+    /// second poll, not its first: a poll can read the file between the agent's emptying it and its writing what it
+    /// waits on. A rewritten reason is not told again; a withdrawal goes to the log. Errors: as waiting_on's.
+    fn poll_wait(&self, role: &str, path: &str, polls: &mut u32) -> Result<bool, OrchestratorError> {
+        let waiting = self.waiting_on(path)?;
+        match &waiting {
+            Some(what) if *polls == 1 => self.ask_human(role, &format!("is waiting on {what}")),
+            None if *polls > 0 => self.human.log(&format!("[{role}] is no longer waiting")),
+            _ => {}
+        }
+        *polls = if waiting.is_some() { *polls + 1 } else { 0 };
+        Ok(waiting.is_some())
+    }
+
+    /// What the role reports its turn waits on, from the waiting file of its handoff file at path (waiting_path): the
+    /// file's first line that is not blank; None while there is no such file. Errors: the file cannot be read.
+    fn waiting_on(&self, path: &str) -> Result<Option<String>, OrchestratorError> {
+        let text = self.host.read(&waiting_path(path))?;
+        Ok(text.map(|t| {
+            let what = t.lines().map(str::trim).find(|l| !l.is_empty());
+            what.unwrap_or("something it did not name").to_string()
+        }))
+    }
+
     /// Let the human's message reach the role's agent while its activity is idle and the turn waits on them: through
-    /// paced, the wait of an interview or a block, else once it has stalled (Agents::await_human).
+    /// paced, the wait of an interview or a block, else once it has stalled or while it reports a wait, both given
+    /// as stalled (Agents::await_human).
     fn open_to_human(&self, role: &str, activity: Activity, paced: Option<Waiting>, stalled: bool) {
         if activity != Activity::Idle {
             return;
@@ -810,6 +854,43 @@ fn block_number(block: &Object) -> Result<i64, OrchestratorError> {
 /// does.
 fn block_field<'b>(block: &'b Object, key: &str) -> Result<&'b Value, OrchestratorError> {
     block.get(key).ok_or_else(|| OrchestratorError(format!("the block saved in state.json has no {key}")))
+}
+
+/// A turn's time limit, read by Clocks::monotonic, which stands still while its role reports a wait on something
+/// outside the run (Workflow::await_handoff).
+struct TurnClock {
+    /// The seconds the turn may take; None for no limit.
+    timeout: Option<u64>,
+    /// When the turn's time runs out; None for no limit.
+    deadline: Option<f64>,
+    /// The reading at the last poll, or at the start before any.
+    last_poll: f64,
+}
+
+impl TurnClock {
+    /// The clock of a turn of timeout seconds (None: no limit) that starts at now.
+    fn new(timeout: Option<u64>, now: f64) -> TurnClock {
+        TurnClock { timeout, deadline: timeout.map(|t| now + t as f64), last_poll: now }
+    }
+
+    /// Poll at now, with waiting saying whether the role's wait stood at this poll: the time since the last poll is
+    /// then added to the deadline whole, though the wait may be younger, a poll's worth of the turn's time at most.
+    /// The turn's timeout once its time has run out; None while it has not, or for a turn without a limit.
+    fn run_out(&mut self, now: f64, waiting: bool) -> Option<u64> {
+        if waiting {
+            self.deadline = self.deadline.map(|d| d + (now - self.last_poll));
+        }
+        self.last_poll = now;
+        self.timeout.filter(|_| self.deadline.is_some_and(|d| now > d))
+    }
+}
+
+/// Where the role whose handoff file is at path reports, while its turn goes on, that it waits on something outside
+/// the run (WAITING_NOTE): the file is the report, its text what the role waits on, and the role deletes it once it
+/// goes back to work. The turn's end deletes one left behind (Workflow::written).
+pub(super) fn waiting_path(path: &str) -> String {
+    let (stem, _) = split_extension(path);
+    format!("{stem}.waiting")
 }
 
 /// Where a malformed verdict file is moved, for its retry.

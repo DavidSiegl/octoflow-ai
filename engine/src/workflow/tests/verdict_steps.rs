@@ -74,7 +74,10 @@ fn the_second_requests_changes_and_the_next_round_runs_both_again() {
     let mut wf = f.workflow(with_pipeline(&p, 3));
     assert_eq!(wf.run(), verdict(APPROVE));
     // The Builder is pointed at the acceptance that sent the round back, not at the review that approved.
-    assert_eq!(*built.borrow(), [format!("Fix {D}/accept-1.md; report to {D}/build-2.md.{}", note())]);
+    assert_eq!(
+        *built.borrow(),
+        [format!("Fix {D}/accept-1.md; report to {D}/build-2.md.{}", note(&format!("{D}/build-2.md")))]
+    );
     assert_eq!(seen.borrow()[1], format!("Accept again; write {D}/accept-2.md."));
     assert_eq!(
         names(&f, "prompt"),
@@ -106,7 +109,10 @@ fn the_first_requests_changes_and_the_second_does_not_run() {
     let mut wf = f.workflow(with_pipeline(&p, 3));
     assert_eq!(wf.run(), verdict(APPROVE));
     assert_eq!(names(&f, "prompt"), ["build", "review", "build", "review", "accept"].map(|r| format!("{r}-a1b2c3")));
-    assert_eq!(*built.borrow(), [format!("Fix {D}/review-1.md; report to {D}/build-2.md.{}", note())]);
+    assert_eq!(
+        *built.borrow(),
+        [format!("Fix {D}/review-1.md; report to {D}/build-2.md.{}", note(&format!("{D}/build-2.md")))]
+    );
     // The acceptance's first turn, in round 2, gets its first prompt, not the one for a step that has judged before.
     assert_eq!(
         *accepted.borrow(),

@@ -25,6 +25,8 @@ Do not commit, push or switch branches. As your last step, write /proj/.octoflow
 
 If you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead.
 
+If you must wait for something outside this run before you can go on, such as another pull request merging, write what you are waiting for to /proj/.octoflow-ai/runs/20260929-120000-a1b2c3/concepts.waiting and delete that file when you go back to work, as the turn's time limit stands still while it is there.
+
 ## direction, round 1
 
 You are the Creative Director, the first of three roles (Creative Director -> Designer -> Design Critic): you hold the work to the brief in /proj/.octoflow-ai/runs/20260929-120000-a1b2c3/brief.md, and you record the human's choices; at the end you will show them the finished work for their verdict. The Designer made the concepts described in /proj/.octoflow-ai/runs/20260929-120000-a1b2c3/concepts.md against that brief.
@@ -46,6 +48,8 @@ Render every deliverable at every size and breakpoint the brief names, and save 
 As your last step, write a report to /proj/.octoflow-ai/runs/20260929-120000-a1b2c3/build-1.md in a single write; it hands the work to the Design Critic: each deliverable's path and what it is, the screenshots of each, how you checked accessibility, and any part of the brief or the direction you could not meet, with the reason.
 
 If you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead.
+
+If you must wait for something outside this run before you can go on, such as another pull request merging, write what you are waiting for to /proj/.octoflow-ai/runs/20260929-120000-a1b2c3/build-1.waiting and delete that file when you go back to work, as the turn's time limit stands still while it is there.
 
 ## critique, round 1
 
@@ -77,6 +81,8 @@ As your last step, write a new report to /proj/.octoflow-ai/runs/20260929-120000
 
 If you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead.
 
+If you must wait for something outside this run before you can go on, such as another pull request merging, write what you are waiting for to /proj/.octoflow-ai/runs/20260929-120000-a1b2c3/build-2.waiting and delete that file when you go back to work, as the turn's time limit stands still while it is there.
+
 ## design, round 2, a fresh session
 
 You are the Designer, the second of three roles. The brief in /proj/.octoflow-ai/runs/20260929-120000-a1b2c3/brief.md is your contract, and the human chose the direction in /proj/.octoflow-ai/runs/20260929-120000-a1b2c3/direction.md from the concepts in /proj/.octoflow-ai/runs/20260929-120000-a1b2c3/concepts.md.
@@ -94,6 +100,8 @@ Changes were requested, by the Design Critic or by the human through the Creativ
 As your last step, write a new report to /proj/.octoflow-ai/runs/20260929-120000-a1b2c3/build-2.md in a single write, in the same shape as before, answering each finding by its number.
 
 If you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead.
+
+If you must wait for something outside this run before you can go on, such as another pull request merging, write what you are waiting for to /proj/.octoflow-ai/runs/20260929-120000-a1b2c3/build-2.waiting and delete that file when you go back to work, as the turn's time limit stands still while it is there.
 
 ## critique, round 2
 

@@ -144,7 +144,10 @@ fn a_contract_role_with_a_later_step_lays_out_last() {
     ];
     let (f, verdict_given, _) = run_seeded(script, GIVEN_SPEC, &planned);
     assert_eq!(verdict_given, verdict(APPROVE));
-    assert_eq!(*seen.borrow(), [format!("Build {D}/plan.md; report to {D}/build-1.md.{}", note())]);
+    assert_eq!(
+        *seen.borrow(),
+        [format!("Build {D}/plan.md; report to {D}/build-1.md.{}", note(&format!("{D}/build-1.md")))]
+    );
     assert_eq!(started(&f), agents_started(&[("build-a1b2c3", "w1:p1"), ("plan-a1b2c3", "w1:p2")]));
     assert_eq!(calls_of(&f, "split"), [split("w1:p1", Direction::Right)]);
     let copied = format!("[plan] plan.md is a copy of {SPEC_SOURCE}; skipping the Planner's turn");

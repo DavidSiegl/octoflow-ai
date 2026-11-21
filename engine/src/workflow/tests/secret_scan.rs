@@ -82,7 +82,7 @@ fn a_secret_in_a_snapshot_goes_back_to_the_builder() {
     let in_snapshot = Leak { commit: "snap1".into(), ..leak() };
     assert!(quality.contains(&format!("## Secrets found\n\n1. {in_snapshot}\n")), "{quality}");
     assert_eq!(wf.state().quality_rounds[0].get("gate"), Some(&Value::from(QUALITY_LEAK)));
-    assert_eq!(*builds.borrow(), [quality_fix(state, 1, 1) + &gated_note()]);
+    assert_eq!(*builds.borrow(), [quality_fix(state, 1, 1) + &gated_note(&state.quality_build_path(1, 1))]);
     // Only the clean second snapshot was judged.
     assert_eq!(judged(&f), [format!("{}/job-1", state.gate_dir(1, 2))]);
     assert!(f.quality_file(1, 2).starts_with("GATE: OK"));

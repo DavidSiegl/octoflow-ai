@@ -441,22 +441,26 @@ impl PartialEq<TurnRecord> for Record {
     }
 }
 
-/// What every prompt of a step that can block ends with.
-pub(crate) fn note() -> String {
-    let text =
-        crate::prompts::template::fill(crate::prompts::BLOCKED_NOTE, &|_| None).expect("the built-in note fills in");
-    format!("\n\n{text}")
+/// What every prompt of a step that can block ends with, for the turn whose handoff file is at path.
+pub(crate) fn note(path: &str) -> String {
+    let fill = |template, known: &dyn Fn(&str) -> Option<String>| {
+        crate::prompts::template::fill(template, known).expect("the built-in note fills in")
+    };
+    let blocked = fill(crate::prompts::BLOCKED_NOTE, &|_| None);
+    let waiting_path = super::turn::waiting_path(path);
+    let waiting = fill(crate::prompts::WAITING_NOTE, &|name| (name == "waiting_path").then(|| waiting_path.clone()));
+    format!("\n\n{blocked}\n\n{waiting}")
 }
 
-/// What every prompt of the quality-gated step ends with in a gated run at the default turn timeout:
-/// QUALITY_FOLLOWS_NOTE, then note().
-pub(crate) fn gated_note() -> String {
+/// What every prompt of the quality-gated step ends with in a gated run at the default turn timeout, for the turn
+/// whose handoff file is at path: QUALITY_FOLLOWS_NOTE, then note(path).
+pub(crate) fn gated_note(path: &str) -> String {
     let timeout = crate::constants::DEFAULT_TURN_TIMEOUT.to_string();
     let follows = crate::prompts::template::fill(crate::prompts::QUALITY_FOLLOWS_NOTE, &|name| {
         (name == "timeout").then(|| timeout.clone())
     })
     .expect("the built-in note fills in");
-    format!("\n\n{follows}{}", note())
+    format!("\n\n{follows}{}", note(path))
 }
 
 /// A RunState saved by an earlier orchestrator in phase and round rnd, in workspace w1 whose root pane is w1:p1, with

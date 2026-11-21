@@ -83,6 +83,13 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   (`engine/src/cli/listing.rs`, `run_record`). Closes when the run record carries `RunState::nothing_to_publish` and
   `show` and the app word it.
 
+- **A turn's waits on something outside the run show in its log only.** turn-timeout-waits/01 left out: the time an
+  agent reported waiting (`<stem>.waiting`, `Workflow::await_handoff`) is not in its turn record (`TurnRecord`), so
+  `summary.md`'s turn table, `turn-duration-clock`'s durations and the desktop app count a turn's time with its waits
+  in, and none of them shows that the agent is waiting; only the human's notice and the run's log say so. Closes when
+  the user decides whether a turn records its waited seconds and the run view shows a standing wait, and that is
+  built or dropped.
+
 - **claude's ACP install departs from spec R6 and R7 of `.scratch/herdr-gui-decoupling` (ticket 07), awaiting the
   user's ruling.** Review 262 (2026-11-21) found three departures, each kept as built until the spec owner amends the
   spec or asks for the code to change: (1) no in-run offer: "When claude is first needed by an ACP run ... the app

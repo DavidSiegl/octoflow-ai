@@ -1017,7 +1017,7 @@
      "agent",
      "prompt",
      "build-<key:1>",
-     "Build what <world>/project/.octoflow-ai/runs/<run:1>/spec.md says, in <world>/project. As your last step, report to <world>/project/.octoflow-ai/runs/<run:1>/build-1.md.\n\nIf you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead."
+     "Build what <world>/project/.octoflow-ai/runs/<run:1>/spec.md says, in <world>/project. As your last step, report to <world>/project/.octoflow-ai/runs/<run:1>/build-1.md.\n\nIf you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead.\n\nIf you must wait for something outside this run before you can go on, such as another pull request merging, write what you are waiting for to <world>/project/.octoflow-ai/runs/<run:1>/build-1.waiting and delete that file when you go back to work, as the turn's time limit stands still while it is there."
     ]
    },
    {

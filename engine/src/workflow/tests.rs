@@ -45,6 +45,7 @@ mod seeded_spec;
 mod turn_timings;
 mod verdict_steps;
 mod waits_on_human;
+mod waits_outside;
 mod worktree;
 
 type Script = Vec<(&'static str, Vec<Turn>)>;
@@ -531,9 +532,9 @@ fn only_the_steps_that_can_block_hear_the_blocked_note() {
         ("review", vec![recording(review_turn(1, APPROVE), &review)]),
     ]);
     f.workflow(RunSettings::default()).run().unwrap();
-    assert!(build.borrow()[0].ends_with(&note()));
-    assert!(!spec.borrow()[0].ends_with(&note()));
-    assert!(!review.borrow()[0].ends_with(&note()));
+    assert!(build.borrow()[0].ends_with(&note(&f.state.build_path(1))));
+    assert!(!spec.borrow()[0].ends_with(&note(&f.state.spec_path())));
+    assert!(!review.borrow()[0].ends_with(&note(&f.state.review_path(1))));
 }
 
 /// A step before the first editing step is in round 0, so its prev_ placeholders name round -1's file, and its earlier_

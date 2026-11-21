@@ -42,11 +42,13 @@ fn the_gated_builder_hears_that_the_gate_follows_and_its_turns_time_limit() {
         ]
     };
     let (gated_builds, plain_builds) = (seen(), seen());
-    assert_eq!(gated(script(&gated_builds)).workflow(settings()).run(), verdict(APPROVE));
+    let f = gated(script(&gated_builds));
+    assert_eq!(f.workflow(settings()).run(), verdict(APPROVE));
     assert_eq!(Fixture::new(script(&plain_builds)).workflow(settings()).run(), verdict(APPROVE));
-    assert!(gated_builds.borrow()[0].ends_with(&format!("\n\n{follows}{}", note())), "{}", gated_builds.borrow()[0]);
+    let end = note(&f.state.build_path(1));
+    assert!(gated_builds.borrow()[0].ends_with(&format!("\n\n{follows}{end}")), "{}", gated_builds.borrow()[0]);
     let plain = &plain_builds.borrow()[0];
-    assert!(plain.ends_with(&note()) && !plain.contains("quality gate") && !plain.contains("seconds"), "{plain}");
+    assert!(plain.ends_with(&end) && !plain.contains("quality gate") && !plain.contains("seconds"), "{plain}");
 }
 
 #[test]
@@ -121,7 +123,7 @@ fn gate_fails_then_passes() {
         built_in_gate()
     )));
     assert!(quality.contains("1. `limiter.py:3` error ruff F401: `os` imported but unused\n"));
-    assert_eq!(*builds.borrow(), [quality_fix(state, 1, 1) + &gated_note()]);
+    assert_eq!(*builds.borrow(), [quality_fix(state, 1, 1) + &gated_note(&state.quality_build_path(1, 1))]);
     assert!(reviews.borrow()[0].contains(&format!("The Builder's report is in {}", state.quality_build_path(1, 1))));
     assert!(reviews.borrow()[0].contains(&quality_note(QUALITY_PASSED_NOTE, &state.quality_path(1, 2))));
     assert!(f.quality_file(1, 2).starts_with("GATE: OK"));

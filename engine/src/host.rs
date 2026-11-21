@@ -413,6 +413,12 @@ pub trait Host {
         self.check(&["mv", "-f", "--", path, new_path], None, DEFAULT_TIMEOUT).map(drop)
     }
 
+    /// Delete the file at path; a path with nothing there is left as it is. Errors: the file is there and cannot be
+    /// deleted, or the host cannot be reached.
+    fn remove(&self, path: &str) -> Result<(), OrchestratorError> {
+        self.check(&["rm", "-f", "--", path], None, DEFAULT_TIMEOUT).map(drop)
+    }
+
     /// The time on this host, in seconds since the epoch. now and mtime both read this host, the one that stamps the
     /// handoff files, so skew between machines cannot distort a turn's duration; an mtime can still trail now by a few
     /// milliseconds (Workflow::end_turn says why). Errors: date prints what is not a time.

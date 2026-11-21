@@ -280,7 +280,7 @@ fn a_blocked_quality_answer_waits_then_goes_back_to_the_quality_round() {
     let mut wf = f.workflow(RunSettings::default());
     assert_eq!(wf.run(), verdict(APPROVE));
     assert_eq!(blocked_files(&f.host), ["build-1-q1.blocked-1.md"]);
-    assert!(blocks.borrow()[0].ends_with(&note()));
+    assert!(blocks.borrow()[0].ends_with(&note(&format!("{D}/build-1-q1.md"))));
     assert_eq!(blocks.borrow()[1], blocked_prompt(&format!("{D}/build-1-q1.md"), 1));
     assert!(f.told.titles().contains(&"Builder is blocked: which database?".to_string()));
     let quality = f.host.state().files.get(&format!("{D}/quality-1-2.md")).cloned().unwrap_or_default();
@@ -311,8 +311,9 @@ fn the_note_is_in_every_prompt_of_the_steps_that_can_block_only() {
     // First, quality fix and again; the fresh prompts are in default_prompts.rs's golden texts.
     let blocked_note = crate::prompts::template::fill(crate::prompts::BLOCKED_NOTE, &|_| None).unwrap();
     assert_eq!(builds.borrow().len(), 3);
-    for prompt in builds.borrow().iter() {
-        assert!(prompt.ends_with(&note()));
+    let paths = [format!("{D}/build-1.md"), format!("{D}/build-1-q1.md"), format!("{D}/build-2.md")];
+    for (prompt, path) in builds.borrow().iter().zip(&paths) {
+        assert!(prompt.ends_with(&note(path)), "{prompt}");
         assert_eq!(prompt.matches(blocked_note.as_str()).count(), 1);
     }
     // The Reviewer's first, retry and again.
@@ -355,7 +356,7 @@ fn a_step_of_a_workflow_other_than_the_default_can_block() {
     let settings = RunSettings { pipeline: Some(team), ..RunSettings::default() };
     assert_eq!(f.workflow(settings).run(), verdict(APPROVE));
     assert_eq!(blocked_files(&f.host), ["tests.blocked-1.md"]);
-    assert!(blocks.borrow()[0].ends_with(&note()));
+    assert!(blocks.borrow()[0].ends_with(&note(&format!("{D}/tests.md"))));
     assert_eq!(blocks.borrow()[1], blocked_prompt(&format!("{D}/tests.md"), 1));
     let note = ("QA Engineer is blocked: which test runner?".to_string(), "pane w1:p3".to_string());
     assert!(f.told.notes.borrow().contains(&note));
@@ -383,8 +384,10 @@ fn a_blocked_verdict_file_gets_the_verdict_retry() {
 #[test]
 fn workflow_definitions_do_not_contain_the_note() {
     let default = &*DEFAULT_WORKFLOW;
-    assert!(!workflow_toml(default).contains("BLOCKED"));
-    assert!(!default.steps().iter().flat_map(|st| st.templates()).any(|(_, t)| t.contains("BLOCKED")));
+    for note in ["BLOCKED", "If you must wait"] {
+        assert!(!workflow_toml(default).contains(note), "{note}");
+        assert!(!default.steps().iter().flat_map(|st| st.templates()).any(|(_, t)| t.contains(note)), "{note}");
+    }
 }
 
 #[test]
