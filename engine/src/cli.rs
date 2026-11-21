@@ -35,6 +35,7 @@ use serde_json::Value;
 
 pub mod args;
 pub mod close;
+pub mod complete;
 pub mod doctor;
 pub mod drain;
 pub mod forget;
@@ -155,6 +156,7 @@ pub(super) enum Stop {
 /// SIGINT, SIGTERM and SIGHUP: serve's own, or else crate::interrupt::by_signals, which those signals then raise
 /// rather than end the process.
 pub fn main(argv: impl IntoIterator<Item = OsString>) -> i32 {
+    complete::answer_shell();
     let mut argv = argv.into_iter();
     if let Some(name) = argv.next().as_deref().map(Path::new).and_then(Path::file_name) {
         let _ = INVOKED_AS.set(name.to_string_lossy().into_owned());

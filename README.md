@@ -236,6 +236,23 @@ stops that when the window closes. `serve` works without the app too: it prints 
 SIGTERM; besides reading them, it answers their agents and starts, resumes and stops runs, each in the background on
 this machine. Its endpoints and security checks are in [serve](docs/architecture.md#serve).
 
+### Tab completion
+
+`octoflow` completes its own command line: subcommands, flags, `--workflow` names (yours included) and, after
+`resume`, `show`, `close`, `forget` and `refresh`, the runs of the project, newest first, by key (zsh and fish show
+each run's phase and task). The shell runs `octoflow` on each Tab, so new runs and workflow files show up at once.
+Runs are read from the project of `--cwd`, else the current directory, and only on this computer: with `--machine`,
+no runs are offered. Add the line for your shell to its startup file, with `octoflow` on your `PATH`:
+
+```bash
+source <(COMPLETE=bash octoflow)                                   # ~/.bashrc
+source <(COMPLETE=zsh octoflow)                                    # ~/.zshrc
+COMPLETE=fish octoflow | source                                    # ~/.config/fish/config.fish
+```
+
+The line asks the binary for its script at each shell start, so the script always matches the binary. The
+AppImage is not supported: each Tab would mount it, or without FUSE extract its 340 MB again.
+
 ## Usage
 
 ```bash
