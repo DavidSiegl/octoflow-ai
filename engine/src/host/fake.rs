@@ -436,6 +436,10 @@ impl FakeState {
                 self.worktrees.insert(cwd.to_string(), name.to_string());
                 Some(ok(""))
             }
+            ["switch", "--quiet", "--detach"] => {
+                self.worktrees.insert(cwd.to_string(), "HEAD".to_string());
+                Some(ok(""))
+            }
             args if args == GIT_STATUS_ARGS => Some(ok(&porcelain(&self.changed_in(cwd)))),
             ["commit", "--quiet", "-m", _, "-m", _, trailers @ ..] if trailer_args(trailers) => {
                 let changed = self.changed_in(cwd);

@@ -427,7 +427,9 @@ configuration instead.
    round, or if the merge conflicts; then you resolve the conflict and run `refresh`
    ([Refreshing a conflicted pull request](docs/design.md#refreshing-a-conflicted-pull-request)). The workspace
    is closed, and the branch stays until a later run's sweep or `prune` deletes it
-   ([Deleting run branches](docs/design.md#deleting-run-branches)).
+   ([Deleting run branches](docs/design.md#deleting-run-branches)). An approved run that changed nothing git
+   tracks, its work only in ignored files, opens no pull request: it checks the base branch out again (a `--worktree`
+   run keeps its worktree, detached) and deletes its branch, and its summary says there was nothing to publish.
 7. **Summary.** Whenever the run ends, it writes `summary.md`: the outcome, the pull request, each role's harness
    and model, and a table of the turns with their durations, which the pull request gets too. A finished run also
    writes `metrics.json`, which `metrics` prints

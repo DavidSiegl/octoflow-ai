@@ -536,4 +536,7 @@ without a verdict step ends `FINISHED`. `show` prints the job on a `quality` lin
   too. A run refuses to start or resume while another run in its checkout is live, so the two never overlap.
   A `run --worktree` run snapshots its own worktree, which holds only its change, so worktree runs go in
   parallel in one checkout, beside each other and beside one run in the checkout itself.
-- **No change**: the gate passes, and `_publish` refuses the empty change.
+- **No change**: a Builder report that leaves nothing git tracks changed since the base is not judged, and the
+  run goes on to the Reviewer with no quality round, as the log says. Only the round's first report is spared: a fix
+  turn that undoes the whole change is judged as before. At publish, an approved run with no change opens no pull
+  request; one with changes still requested fails, as it did.

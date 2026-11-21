@@ -50,6 +50,25 @@ fn the_gated_builder_hears_that_the_gate_follows_and_its_turns_time_limit() {
 }
 
 #[test]
+fn a_builder_turn_that_changed_nothing_tracked_skips_the_quality_step() {
+    let f = gated(vec![
+        ("spec", vec![spec_turn()]),
+        ("build", vec![writes(|s| s.build_path(1), "wrote the design to .scratch/, which git ignores", "done")]),
+        ("review", vec![review_turn(1, APPROVE)]),
+    ]);
+    assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
+    assert!(f.gate.borrow().jobs.is_empty());
+    assert!(f.host.state().snapshots.is_empty());
+    assert!(!f.host.state().files.contains_key(&f.state.quality_path(1, 1)));
+    let saved = f.saved();
+    assert_eq!(saved.get("quality_round"), Some(&Value::from(0)));
+    assert_eq!(saved.get("nothing_to_publish"), Some(&Value::Bool(true)));
+    let skipped = "[quality] round 1: nothing tracked changed since the base, so there is nothing to judge; skipping \
+                   the quality step";
+    assert!(f.told.lines().contains(&skipped.to_string()), "{:?}", f.told.lines());
+}
+
+#[test]
 fn gate_passes_first_time() {
     let seen = seen();
     let f = gated(vec![
