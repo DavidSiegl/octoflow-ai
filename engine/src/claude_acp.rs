@@ -92,13 +92,7 @@ pub struct Pins {
 impl Pins {
     /// The pins this engine was built with, for the platform it was built for.
     pub fn built_in() -> Pins {
-        let platform = match (std::env::consts::OS, std::env::consts::ARCH) {
-            ("linux", "x86_64") => Some("linux-x64"),
-            ("linux", "aarch64") => Some("linux-arm64"),
-            ("macos", "x86_64") => Some("darwin-x64"),
-            ("macos", "aarch64") => Some("darwin-arm64"),
-            _ => None,
-        };
+        let platform = node_platform(std::env::consts::OS, std::env::consts::ARCH);
         let tarball = platform.and_then(|p| NODE_SHA256.iter().find(|(q, _)| *q == p));
         let tarball = tarball.map(|(p, sha256)| (p.to_string(), sha256.to_string()));
         Pins::new(NODE_VERSION, tarball, PACKAGE_JSON, PACKAGE_LOCK)
@@ -170,8 +164,8 @@ impl ClaudeAcp {
     /// agents', which find the install there), for the built-in pins, downloaded from Node's and npm's own servers.
     pub fn in_environment(env: Vec<(OsString, OsString)>) -> ClaudeAcp {
         let var = |name: &str| {
-            let value = env.iter().find(|(k, _)| k == name).map(|(_, v)| v.to_string_lossy().into_owned());
-            value.filter(|v| !v.is_empty())
+            let found = env.iter().find(|(k, _)| k == name).map(|(_, v)| v.to_string_lossy().into_owned());
+            found.filter(|v| !v.is_empty())
         };
         let root = format!("{}/claude-acp", crate::env::data_dir(&var));
         ClaudeAcp {
@@ -324,7 +318,7 @@ impl ClaudeAcp {
         };
         let body = answer
             .map_err(|e| match e {
-                HttpError::Status(status) => OrchestratorError(format!("cannot download {url}: HTTP {status}")),
+                HttpError::Status(code) => OrchestratorError(format!("cannot download {url}: HTTP {code}")),
                 HttpError::NoAnswer(why) => OrchestratorError(format!("cannot download {url}: {why}")),
             })?
             .body;
@@ -404,9 +398,21 @@ impl ClaudeAcp {
     }
 }
 
-/// Write data to path, a new file. Errors: it cannot be written.
-fn write(path: &str, data: &[u8]) -> Result<(), OrchestratorError> {
-    fs::write(path, data).map_err(|e| OrchestratorError(format!("cannot write {}", os_error(&e, Some(path)))))
+/// Write bytes to path, a new file. Errors: it cannot be written.
+fn write(path: &str, bytes: &[u8]) -> Result<(), OrchestratorError> {
+    fs::write(path, bytes).map_err(|e| OrchestratorError(format!("cannot write {}", os_error(&e, Some(path)))))
+}
+
+/// Node's name for the platform of os and arch, as std::env::consts name them, in its tarballs' names (`linux-x64`);
+/// None for a platform the app is not built for (packaging/build-desktop.sh).
+fn node_platform(os: &str, arch: &str) -> Option<&'static str> {
+    match (os, arch) {
+        ("linux", "x86_64") => Some("linux-x64"),
+        ("linux", "aarch64") => Some("linux-arm64"),
+        ("macos", "x86_64") => Some("darwin-x64"),
+        ("macos", "aarch64") => Some("darwin-arm64"),
+        _ => None,
+    }
 }
 
 /// env without the variables npm reads its configuration from, `npm_config_*` in any case.

@@ -648,8 +648,8 @@ fn claude_served(claude: Option<ClaudeAcp>) -> Served {
 
 #[test]
 fn setup_offers_claude_s_adapter_for_app_runs_over_acp_and_installs_it() {
-    let data = Project::new();
-    let claude = ClaudeAcp::in_environment(vec![("XDG_DATA_HOME".into(), data.root().into())]);
+    let data_home = Project::new();
+    let claude = ClaudeAcp::in_environment(vec![("XDG_DATA_HOME".into(), data_home.root().into())]);
     claude.install_fake("");
     let served = claude_served(Some(claude));
     let reply = served.get(&Served::query("/setup", &[]), &[]);

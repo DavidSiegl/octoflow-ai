@@ -1200,16 +1200,16 @@ fn acp_setup(
     (checks.into_iter().map(|c| (c.name.clone(), c)).collect(), order, asked.into_inner())
 }
 
-/// claude's installs in the data directory data, none made yet.
-fn claude_installs(data: &TempDir) -> ClaudeAcp {
-    ClaudeAcp::in_environment(vec![("XDG_DATA_HOME".into(), data.path().into())])
+/// claude's installs in the data directory data_home, none made yet.
+fn claude_installs(data_home: &TempDir) -> ClaudeAcp {
+    ClaudeAcp::in_environment(vec![("XDG_DATA_HOME".into(), data_home.path().into())])
 }
 
 #[test]
 fn claude_s_adapter_installed_but_not_answering_is_told_how_it_starts() {
     let tools = FakeTools::new();
-    let data = TempDir::new();
-    let claude = claude_installs(&data);
+    let data_home = TempDir::new();
+    let claude = claude_installs(&data_home);
     let installed = claude.install_fake("");
     let silent = |kind: &str| match kind {
         "claude" => Err(OrchestratorError::new("claude initialize: no answer within 30s")),
@@ -1234,8 +1234,8 @@ fn acp_answers(kind: &str) -> Result<String, OrchestratorError> {
 #[test]
 fn the_app_s_acp_setup_checks_each_harness_over_acp_and_nothing_of_herdr() {
     let tools = FakeTools::new();
-    let data = TempDir::new();
-    let claude = claude_installs(&data);
+    let data_home = TempDir::new();
+    let claude = claude_installs(&data_home);
     let installed = claude.install_fake("");
     let (checks, order, asked) = acp_setup(&tools, &claude, acp_answers);
 
@@ -1264,12 +1264,12 @@ fn the_app_s_acp_setup_checks_each_harness_over_acp_and_nothing_of_herdr() {
 fn a_harness_off_path_is_missing_without_being_started_and_one_that_does_not_answer_is_told_how_to_check_it() {
     let tools = FakeTools::new();
     tools.remove("agy");
-    let data = TempDir::new();
+    let data_home = TempDir::new();
     let silent = |kind: &str| match kind {
         "opencode" => Err(OrchestratorError::new("opencode initialize: no answer within 30s")),
         kind => acp_answers(kind),
     };
-    let (checks, _, asked) = acp_setup(&tools, &claude_installs(&data), silent);
+    let (checks, _, asked) = acp_setup(&tools, &claude_installs(&data_home), silent);
 
     let off_path = check_of(
         "agy over ACP",

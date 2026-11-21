@@ -606,8 +606,9 @@ fn a_usage_without_input_or_output_tokens_is_not_recorded_and_one_without_cache_
 
 /// probe of harness kind's fake agent, in the fixture's environment, given timeout and stopping.
 fn probed(f: &Fixture, kind: &str, timeout: Duration, stopping: &Interrupt) -> Result<String, OrchestratorError> {
-    let data = f.tmp.join("data");
-    let env = environment(Some(&f.bin()), &[with_pathspec_switches().as_slice(), &[("XDG_DATA_HOME", &data)]].concat());
+    let data_home = f.tmp.join("data");
+    let env =
+        environment(Some(&f.bin()), &[with_pathspec_switches().as_slice(), &[("XDG_DATA_HOME", &data_home)]].concat());
     probe(harness(kind).unwrap(), &env, &f.tmp.join("project"), timeout, stopping)
 }
 

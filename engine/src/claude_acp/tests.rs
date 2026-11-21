@@ -119,8 +119,8 @@ fn tarball(tmp: &TempDir, node: &str) -> Vec<u8> {
     std::fs::set_permissions(&node_path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     std::fs::write(format!("{staging}/{stem}/lib/node_modules/npm/bin/npm-cli.js"), "").unwrap();
     let out = format!("{staging}.tar.gz");
-    let status = Command::new("tar").args(["-czf", &out, "-C", &staging, &stem]).status().unwrap();
-    assert!(status.success(), "tar made the fake tarball");
+    let tarred = Command::new("tar").args(["-czf", &out, "-C", &staging, &stem]).status().unwrap();
+    assert!(tarred.success(), "tar made the fake tarball");
     std::fs::read(out).unwrap()
 }
 
@@ -279,6 +279,11 @@ fn the_built_in_pins_pin_every_package_and_each_platforms_node() {
     let platforms: Vec<&str> = NODE_SHA256.iter().map(|(p, _)| *p).collect();
     assert_eq!(platforms, ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"]);
     assert!(NODE_SHA256.iter().all(|(_, s)| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())));
+    let built = [("linux", "x86_64"), ("linux", "aarch64"), ("macos", "x86_64"), ("macos", "aarch64")];
+    let named: Vec<Option<&str>> = built.iter().map(|(os, arch)| node_platform(os, arch)).collect();
+    assert_eq!(named, platforms.iter().copied().map(Some).collect::<Vec<_>>(), "each built platform has its Node");
+    assert_eq!(node_platform("windows", "x86_64"), None);
+    assert!(pins.tarball.is_some(), "the platform these tests run on is one the app is built for");
 
     let lock: serde_json::Value = serde_json::from_str(PACKAGE_LOCK).unwrap();
     let packages = lock["packages"].as_object().unwrap();
