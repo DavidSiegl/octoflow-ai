@@ -7,8 +7,9 @@
 #
 #   packaging/completions/generate.sh
 #
-# The .deb ships the scripts with the binary they call, from the same exact-pinned clap_complete, so the
-# script-to-binary protocol, which clap_complete keeps unstable, cannot differ between them.
+# The scripts call `octoflow` as PATH finds it. The .deb ships them with its /usr/bin/octoflow, from the same
+# exact-pinned clap_complete, so the script-to-binary protocol, which clap_complete keeps unstable, matches for that
+# binary; another octoflow earlier on PATH, of another version, answers in its place and may offer nothing.
 set -eu
 
 cd "$(dirname "$0")/../.."

@@ -6,7 +6,9 @@
 # holds build-binary.sh's third-party licenses, the crates', as THIRD-PARTY-LICENSES.html among the app's resources, and
 # beside it as THIRD-PARTY-LICENSES-NPM.html those of the npm packages its window bundles, which
 # ui/scripts/npm-licenses.js writes here to dist/octoflow-desktop-npm-licenses.html, the release's copy. The app's
-# version is the release's, as ci/release-version.sh reads it. Run build-binary.sh first. Jenkins's Package stage builds
+# version is the release's, as ci/release-version.sh reads it. The .deb also installs octoflow's Tab completion for
+# bash, zsh and fish, packaging/completions' scripts, and the build fails on a .deb without them or without the
+# licenses. Run build-binary.sh first. Jenkins's Package stage builds
 # the Linux app with it, and .github/workflows/macos-binary.yml the macOS one.
 set -eu
 
@@ -40,7 +42,8 @@ deb_completions="usr/share/bash-completion/completions/octoflow usr/share/zsh/ve
 usr/share/fish/vendor_completions.d/octoflow.fish"
 deb_files=""
 for completion in $deb_completions; do
-    deb_files="${deb_files:+$deb_files, }\"/$completion\": \"$PWD/packaging/completions/${completion##*/}\""
+    # Relative to ui/src-tauri, as Tauri reads a bundled file's source path.
+    deb_files="${deb_files:+$deb_files, }\"/$completion\": \"../../packaging/completions/${completion##*/}\""
 done
 
 # Merged over tauri.conf.json, which bundles nothing, so that cargo test and tauri dev need no license files on
