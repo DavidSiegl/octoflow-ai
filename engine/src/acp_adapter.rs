@@ -218,16 +218,18 @@ pub struct Installs {
     http: Option<Arc<dyn Http>>,
 }
 
+/// The variable name of env, lossily decoded; None when env has no such variable, or it is empty.
+fn variable(env: &[(OsString, OsString)], name: &str) -> Option<String> {
+    let set = env.iter().find(|(k, _)| k == name).map(|(_, v)| v.to_string_lossy().into_owned());
+    set.filter(|v| !v.is_empty())
+}
+
 impl Installs {
     /// adapter's installs in the data directory of env, the environment of the processes the engine starts (an ACP
     /// run's agents', which find the install there), for the built-in pins, downloaded from Node's and npm's own
     /// servers.
     pub fn in_environment(adapter: Adapter, env: Vec<(OsString, OsString)>) -> Installs {
-        let var = |name: &str| {
-            let found = env.iter().find(|(k, _)| k == name).map(|(_, v)| v.to_string_lossy().into_owned());
-            found.filter(|v| !v.is_empty())
-        };
-        let root = format!("{}/{}-acp", crate::env::data_dir(&var), adapter.harness());
+        let root = format!("{}/{}-acp", crate::env::data_dir(&|name| variable(&env, name)), adapter.harness());
         Installs {
             adapter,
             root,
@@ -284,10 +286,7 @@ impl Installs {
         if self.adapter != Adapter::Codex {
             return Ok(());
         }
-        let var = |name: &str| {
-            let value = self.env.iter().find(|(k, _)| k == name).map(|(_, v)| v.to_string_lossy().into_owned());
-            value.filter(|v| !v.is_empty())
-        };
+        let var = |name: &str| variable(&self.env, name);
         let home = match var("CODEX_HOME") {
             Some(codex_home) => codex_home,
             None => format!("{}/.codex", var("HOME").or_else(crate::env::passwd_home).unwrap_or_default()),

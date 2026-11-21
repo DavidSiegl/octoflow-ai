@@ -331,9 +331,9 @@ fn a_platform_without_a_pinned_node_is_refused() {
 #[test]
 fn the_installs_are_in_the_data_directory_of_the_environment() {
     let env = |pairs: &[(&str, &str)]| pairs.iter().map(|(k, v)| (OsString::from(k), OsString::from(v))).collect();
-    let data: Vec<_> = env(&[("XDG_DATA_HOME", "/d/")]);
-    assert_eq!(Installs::in_environment(Adapter::Claude, data.clone()).root, "/d/octoflow-ai/claude-acp");
-    assert_eq!(Installs::in_environment(Adapter::Codex, data).root, "/d/octoflow-ai/codex-acp");
+    let in_d: Vec<_> = env(&[("XDG_DATA_HOME", "/d/")]);
+    assert_eq!(Installs::in_environment(Adapter::Claude, in_d.clone()).root, "/d/octoflow-ai/claude-acp");
+    assert_eq!(Installs::in_environment(Adapter::Codex, in_d).root, "/d/octoflow-ai/codex-acp");
     let home = Installs::in_environment(Adapter::Claude, env(&[("XDG_DATA_HOME", ""), ("HOME", "/h")]));
     assert_eq!(home.root, "/h/.local/share/octoflow-ai/claude-acp");
 }
