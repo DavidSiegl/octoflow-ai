@@ -198,7 +198,8 @@ pub struct Installed {
 /// An adapter's agent that cannot log in on its own (Installs::logged_in).
 #[derive(Debug, PartialEq, Eq)]
 pub struct NotLoggedIn {
-    /// What is missing: the files and variables looked for.
+    /// What stands for a login and is missing: what the agent reported of its login, or that it reported none, and
+    /// that no API key is in the variables it would log in with.
     pub detail: String,
     /// One sentence on how to log in: with the codex of the current pins' install, or the codex CLI before there is
     /// one.
@@ -313,7 +314,7 @@ impl Installs {
             }
             None => "`codex login`".to_string(),
         };
-        let detail = format!("{how}, and neither {} nor {} is set", API_KEYS[0], API_KEYS[1]);
+        let detail = format!("{how}, and no API key is in {} or {}", API_KEYS[0], API_KEYS[1]);
         Err(NotLoggedIn { detail, fix: format!("log in with {codex}") })
     }
 

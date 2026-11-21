@@ -154,9 +154,9 @@ pub(super) fn doctor_command(
     Ok(status)
 }
 
-/// A Check of each thing a run needs, in this order: herdr, reaching herdr, with herdr's machine herdr on that
-/// machine, the shell herdr's panes start (crate::herdr::pane_shell), each harness's CLI and herdr integration, git,
-/// gh, gitleaks, with cwd the project's git checkout and its origin, and the local quality gate, with the release that
+/// A Check of each thing a run needs, in this order: herdr, reaching herdr, with herdr's machine herdr on that machine,
+/// the shell herdr's panes start (crate::herdr::pane_shell), each harness's CLI and herdr integration, git, gh,
+/// gitleaks, with cwd the project's git checkout and its origin, and the local quality gate, with the release that
 /// judges the project.
 ///
 /// host runs commands on this machine, where the orchestrator runs and whose herdr a run drives. Without a machine the
@@ -213,9 +213,9 @@ pub fn check_setup(host: &ProcessHost, herdr: &ProcessHerdr, cwd: Option<&str>, 
 /// harness, at the level check_setup gives its CLI, that its ACP program is there, its command on host's PATH or its
 /// adapter installed in env's data directory (crate::acp_adapter), that it answers `initialize`, as answers says, given
 /// the harness (crate::acp::probe is the real one; a harness the app cannot run yet is answered as not), and that an
-/// adapter's agent is logged in, as its answer's reported login and env tell (Installs::logged_in); then git, gh, gitleaks, with cwd the project's checkout and
-/// origin, and the local quality gate, as check_setup checks them. env is the environment the app's runs start their
-/// agents in. Makes no error, as check_setup; it changes nothing itself, but answers may start each agent, which may
+/// adapter's agent is logged in, as its answer's reported login and env tell (Installs::logged_in); then git, gh,
+/// gitleaks, with cwd the project's checkout and origin, and the local quality gate, as check_setup checks them. env
+/// is the environment the app's runs start their agents in. Makes no error, as check_setup; it changes nothing itself, but answers may start each agent, which may
 /// write its own state.
 pub fn check_acp_setup(
     host: &ProcessHost,

@@ -438,13 +438,13 @@ fn codex_not_logged_in_is_told_to_log_in_with_the_installed_codex() {
     let data = tmp.path();
     let vars = [("HOME", "/nowhere"), ("XDG_DATA_HOME", data.as_str())];
     let expected = NotLoggedIn {
-        detail: "codex is not logged in, as its agent reports, and neither CODEX_API_KEY nor OPENAI_API_KEY is set"
+        detail: "codex is not logged in, as its agent reports, and no API key is in CODEX_API_KEY or OPENAI_API_KEY"
             .to_string(),
         fix: "log in with `codex login`".to_string(),
     };
     assert_eq!(codex_in(&vars).logged_in(Some("none")), Err(expected));
     let unreported = codex_in(&vars).logged_in(None).unwrap_err().detail;
-    let silent = "codex's agent did not report its login, and neither CODEX_API_KEY nor OPENAI_API_KEY is set";
+    let silent = "codex's agent did not report its login, and no API key is in CODEX_API_KEY or OPENAI_API_KEY";
     assert_eq!(unreported, silent);
 
     let installed = codex_in(&vars).install_fake("");

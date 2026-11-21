@@ -1,8 +1,9 @@
 //! One ACP agent as a child process: JSON-RPC 2.0 over its stdin and stdout, one message a line
 //! ([ACP's transport](https://agentclientprotocol.com/protocol/transports)). A thread of its own reads what the agent
 //! sends: the replies to the requests made of it, its requests for a permission, which wait for an answer
-//! (Connection::answer), the session updates, and the login it reports of itself (Connection::reported_login). What it does goes to its role's journal (super::journal). Every
-//! other request of the agent's is refused, since the engine offers it neither files nor terminals.
+//! (Connection::answer), the session updates, and the login it reports of itself (Connection::reported_login). What
+//! it does goes to its role's journal (super::journal). Every other request of the agent's is refused, since the
+//! engine offers it neither files nor terminals.
 
 use std::collections::HashMap;
 use std::ffi::OsString;

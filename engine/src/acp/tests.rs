@@ -10,19 +10,19 @@ use crate::harness::Adapter;
 use crate::host::tests::{assert_scrubbed, environment, put, read, tool, with_pathspec_switches};
 use crate::test_support::{ended, eventually, TempDir};
 
-/// The fake ACP agent. It writes its environment to `env` beside it, and appends to `log` beside it its argv
-/// (`argv …`) and each message it gets (`<method> <line>`; a reply to its own request as ` <line>`). It answers
-/// `initialize` with the agentCapabilities in `caps.json` beside it (`{}` without one) and the result fields in
-/// `info.json` (after a comma; none without one), or not at all where `mute` is beside it, and then reports the login
-/// kind in `login` beside it in an `_auth/status_update`, as codex-acp does (nothing without one); and `session/new`, `session/load` and
-/// `session/resume` with session `s-1` plus the result fields in `opened.json` (each after a comma; none without
-/// one); `session/load` and `session/resume` with an error where `refuse` is beside it. A prompt's text decides its
-/// answer: ASK asks a permission (request 900, offering allow and deny) and answers end_turn once it is given,
-/// UPDATE sends a session update (an agent_message_chunk) and answers end_turn, READ asks to read a file
-/// (request 901) and answers end_turn once refused, FAIL answers with an error, EXIT exits, HANG never answers, FORK
-/// starts a `sleep` that holds its output, its pid in `forked` beside it, and answers end_turn; CANCELLED, MAXTOKENS
-/// and REFUSAL answer with that stop reason, PARTIAL with a usage of no kind the engine counts, NOCACHE with input and
-/// output tokens alone (1 and 2); anything else answers end_turn with usage 10/20/30/40.
+/// The fake ACP agent. It writes its environment to `env` beside it, and appends to `log` beside it its argv (`argv …`)
+/// and each message it gets (`<method> <line>`; a reply to its own request as ` <line>`). It answers `initialize` with
+/// the agentCapabilities in `caps.json` beside it (`{}` without one) and the result fields in `info.json` (after a
+/// comma; none without one), or not at all where `mute` is beside it, and then reports the login kind in `login` beside
+/// it in an `_auth/status_update`, as codex-acp does (nothing without one); and `session/new`, `session/load` and
+/// `session/resume` with session `s-1` plus the result fields in `opened.json` (each after a comma; none without one);
+/// `session/load` and `session/resume` with an error where `refuse` is beside it. A prompt's text decides its answer:
+/// ASK asks a permission (request 900, offering allow and deny) and answers end_turn once it is given, UPDATE sends a
+/// session update (an agent_message_chunk) and answers end_turn, READ asks to read a file (request 901) and answers
+/// end_turn once refused, FAIL answers with an error, EXIT exits, HANG never answers, FORK starts a `sleep` that holds
+/// its output, its pid in `forked` beside it, and answers end_turn; CANCELLED, MAXTOKENS and REFUSAL answer with that
+/// stop reason, PARTIAL with a usage of no kind the engine counts, NOCACHE with input and output tokens alone (1 and
+/// 2); anything else answers end_turn with usage 10/20/30/40.
 const FAKE_AGENT: &str = r#"#!/bin/sh
 here=$(dirname "$0")
 log="$here/log"
