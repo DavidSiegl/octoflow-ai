@@ -653,6 +653,28 @@ fn an_adapter_s_agent_is_its_installed_adapter_run_by_its_node() {
 }
 
 #[test]
+fn codex_s_adapter_starts_without_the_variables_that_would_choose_its_codex_mode_or_login() {
+    let f = Fixture::new();
+    std::fs::create_dir_all(f.tmp.join("project")).expect("the project");
+    let data_home = f.tmp.join("data");
+    let installs = Installs::in_environment(Adapter::Codex, vec![("XDG_DATA_HOME".into(), data_home.clone().into())]);
+    installs.install_fake(&format!("#!/bin/sh\nexec {}/agy \"$@\"\n", f.bin()));
+    let withheld = ["CODEX_PATH", "INITIAL_AGENT_MODE", "DEFAULT_AUTH_REQUEST"];
+    let user = [("XDG_DATA_HOME", data_home.as_str()), ("CODEX_HOME", "/codex-home")];
+    let set: Vec<(&str, &str)> = withheld.iter().map(|w| (*w, "set")).chain(user).collect();
+    let env = environment(Some(&f.bin()), &set);
+
+    probe(harness("codex").unwrap(), &env, &f.tmp.join("project"), Duration::from_secs(30), &Interrupt::new())
+        .expect("an answer");
+
+    let started = read(&format!("{}/env", f.bin()));
+    for name in withheld {
+        assert!(!started.lines().any(|l| l.starts_with(&format!("{name}="))), "{name} reached it:\n{started}");
+    }
+    assert!(started.lines().any(|l| l == "CODEX_HOME=/codex-home"), "{started}");
+}
+
+#[test]
 fn a_probe_fails_for_an_agent_that_is_missing_exits_or_does_not_answer_and_stops_when_interrupted() {
     let f = Fixture::new();
     std::fs::create_dir_all(f.tmp.join("project")).expect("the project");

@@ -1245,7 +1245,10 @@ fn acp_answers(kind: &str) -> Result<String, OrchestratorError> {
 fn the_app_s_acp_setup_checks_each_harness_over_acp_and_nothing_of_herdr() {
     let tools = FakeTools::new();
     let data_home = TempDir::new();
-    let env = acp_env(&data_home, &[("OPENAI_API_KEY", "sk-test")]);
+    let env = acp_env(&data_home, &[]);
+    // codex's login.
+    std::fs::create_dir_all(data_home.join("home/.codex")).unwrap();
+    std::fs::write(data_home.join("home/.codex/auth.json"), "{}").unwrap();
     let installed = installs_in(Adapter::Claude, &env).install_fake("");
     let codex_installed = installs_in(Adapter::Codex, &env).install_fake("");
     let (checks, order, asked) = acp_setup(&tools, &env, acp_answers);

@@ -413,7 +413,7 @@ fn codex_in(vars: &[(&str, &str)]) -> Installs {
 }
 
 #[test]
-fn codex_is_logged_in_by_its_auth_file_or_an_api_key() {
+fn codex_is_logged_in_by_its_auth_file_alone() {
     let tmp = TempDir::new();
     let home = tmp.join("home");
     std::fs::create_dir_all(format!("{home}/.codex")).unwrap();
@@ -427,9 +427,9 @@ fn codex_is_logged_in_by_its_auth_file_or_an_api_key() {
     std::fs::write(format!("{home}/.codex/auth.json"), "{}").unwrap();
     assert_eq!(codex_in(&[("HOME", &home)]).logged_in(), Ok(()));
 
+    // The adapter reads an API key only for an ACP `authenticate`, which the engine does not send.
     for key in ["OPENAI_API_KEY", "CODEX_API_KEY"] {
-        assert_eq!(codex_in(&[("HOME", "/nowhere"), (key, "sk-test")]).logged_in(), Ok(()), "{key}");
-        assert!(codex_in(&[("HOME", "/nowhere"), (key, "")]).logged_in().is_err(), "an empty {key}");
+        assert!(codex_in(&[("HOME", "/nowhere"), (key, "sk-test")]).logged_in().is_err(), "{key}");
     }
     let claude = Installs::in_environment(Adapter::Claude, vec![(OsString::from("HOME"), OsString::from("/nowhere"))]);
     assert_eq!(claude.logged_in(), Ok(()), "claude's adapter reports no login before a turn");
@@ -441,7 +441,7 @@ fn codex_not_logged_in_is_told_to_log_in_with_the_installed_codex() {
     let data = tmp.path();
     let vars = [("HOME", "/nowhere"), ("XDG_DATA_HOME", data.as_str())];
     let expected = NotLoggedIn {
-        detail: "codex is not logged in: no /nowhere/.codex/auth.json, no OPENAI_API_KEY".to_string(),
+        detail: "codex is not logged in: no /nowhere/.codex/auth.json".to_string(),
         fix: "log in with `codex login`".to_string(),
     };
     assert_eq!(codex_in(&vars).logged_in(), Err(expected));
@@ -450,4 +450,11 @@ fn codex_not_logged_in_is_told_to_log_in_with_the_installed_codex() {
     let modules = installed.script.trim_end_matches("@agentclientprotocol/codex-acp/dist/index.js");
     let fix = format!("log in with `{} {modules}@openai/codex/bin/codex.js login`", installed.node);
     assert_eq!(codex_in(&vars).logged_in().unwrap_err().fix, fix);
+}
+
+#[test]
+fn without_home_codex_s_home_is_the_user_s_in_passwd() {
+    let detail = codex_in(&[]).logged_in().map(|()| String::new()).unwrap_or_else(|e| e.detail);
+
+    assert!(!detail.contains('~'), "{detail}");
 }

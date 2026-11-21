@@ -88,7 +88,7 @@ impl ConfigDir {
     }
 }
 
-/// The engine's data directory on this machine, where the desktop app keeps what it installs (crate::claude_acp):
+/// The engine's data directory on this machine, where the desktop app keeps what it installs (crate::acp_adapter):
 /// CONFIG_DIR_NAME in $XDG_DATA_HOME when that is an absolute path, else in ~/.local/share, ~ being $HOME, or without
 /// it the user's home in /etc/passwd, as env gives each variable by name. On macOS too, as ConfigDir is.
 pub fn data_dir(env: &dyn Fn(&str) -> Option<String>) -> String {
@@ -115,7 +115,7 @@ fn xdg_dir(
 /// The home directory /etc/passwd gives the user the engine runs as, which ~ stands for without HOME; None when
 /// either file cannot be read or names none. It reads the file alone, not whatever else the system's name service
 /// has, such as LDAP.
-fn passwd_home() -> Option<String> {
+pub(crate) fn passwd_home() -> Option<String> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
     let uid = status.lines().find_map(|line| line.strip_prefix("Uid:"))?.split_whitespace().next()?.to_string();
     home_of(&std::fs::read_to_string("/etc/passwd").ok()?, &uid)

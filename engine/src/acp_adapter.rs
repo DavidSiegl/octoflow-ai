@@ -51,7 +51,7 @@ const NODE_SHA256: [(&str, &str); 4] = [
 /// `npm install --package-lock-only --ignore-scripts`. Pinned now: claude's
 /// `@agentclientprotocol/claude-agent-acp` 0.101.0 (2026-11-05), which brings its own Claude Code; codex's
 /// `@agentclientprotocol/codex-acp` 2.5.0 (2026-10-29), which brings its own codex (`@openai/codex` 0.165.0) and
-/// runs it, not a codex on PATH, while CODEX_PATH is unset.
+/// runs it, not a codex on PATH: its agent starts without CODEX_PATH (Adapter::environment).
 impl Adapter {
     /// The disk an install of the built-in pins takes, in megabytes, as the setup dialog's button says before it
     /// downloads, measured on linux-x64 on 2026-11-21 with Node's 203 MB. Measure it again when a pin is raised.
@@ -63,6 +63,18 @@ impl Adapter {
             // @openai/codex's linux-x64 build is 426 MB of it.
             Adapter::Codex => 649,
         }
+    }
+
+    /// The environment the adapter's agent starts in, given the one the engine gives its agents: env without the
+    /// variables through which codex-acp 2.5.0 would choose its codex (CODEX_PATH, else its bundled one), its first
+    /// mode (INITIAL_AGENT_MODE) or a login (DEFAULT_AUTH_REQUEST), which the engine decides instead: the pinned codex,
+    /// and the mode crate::harness's row sets. claude's in env unchanged.
+    pub fn environment(self, env: &[(OsString, OsString)]) -> Vec<(OsString, OsString)> {
+        let withheld: &[&str] = match self {
+            Adapter::Claude => &[],
+            Adapter::Codex => &["CODEX_PATH", "INITIAL_AGENT_MODE", "DEFAULT_AUTH_REQUEST"],
+        };
+        env.iter().filter(|(k, _)| !withheld.iter().any(|w| k == w)).cloned().collect()
     }
 
     /// The adapter's npm package, as its package.json depends on it.
@@ -264,22 +276,21 @@ impl Installs {
     }
 
     /// Whether the adapter's agent can log in on its own, as far as the files and variables of the installs'
-    /// environment tell: codex when `auth.json` is in its home (CODEX_HOME, else ~/.codex) or OPENAI_API_KEY or
-    /// CODEX_API_KEY is set, which is what codex-acp 2.5.0 reads; claude always, its adapter reporting no login it
-    /// lacks until a turn. Errors: codex is not logged in.
+    /// environment tell: codex when `auth.json` is in its home (CODEX_HOME, else ~/.codex, ~ being HOME or without it
+    /// the user's home in /etc/passwd); claude always, its adapter reporting no login it lacks until a turn. An API key
+    /// alone does not count: codex-acp 2.5.0 reads OPENAI_API_KEY or CODEX_API_KEY only for an ACP `authenticate`,
+    /// which the engine does not send. Errors: codex is not logged in.
     pub fn logged_in(&self) -> Result<(), NotLoggedIn> {
         if self.adapter != Adapter::Codex {
             return Ok(());
         }
-        let var =
-            |name: &str| self.env.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone()).filter(|v| !v.is_empty());
-        if var("OPENAI_API_KEY").is_some() || var("CODEX_API_KEY").is_some() {
-            return Ok(());
-        }
-        let home = match (var("CODEX_HOME"), var("HOME")) {
-            (Some(codex_home), _) => codex_home.to_string_lossy().into_owned(),
-            (None, Some(home)) => format!("{}/.codex", home.to_string_lossy()),
-            (None, None) => "~/.codex".to_string(),
+        let var = |name: &str| {
+            let value = self.env.iter().find(|(k, _)| k == name).map(|(_, v)| v.to_string_lossy().into_owned());
+            value.filter(|v| !v.is_empty())
+        };
+        let home = match var("CODEX_HOME") {
+            Some(codex_home) => codex_home,
+            None => format!("{}/.codex", var("HOME").or_else(crate::env::passwd_home).unwrap_or_default()),
         };
         if Path::new(&format!("{home}/auth.json")).is_file() {
             return Ok(());
@@ -291,7 +302,7 @@ impl Installs {
             }
             None => "`codex login`".to_string(),
         };
-        let detail = format!("codex is not logged in: no {home}/auth.json, no OPENAI_API_KEY");
+        let detail = format!("codex is not logged in: no {home}/auth.json");
         Err(NotLoggedIn { detail, fix: format!("log in with {codex}") })
     }
 
