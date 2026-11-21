@@ -213,6 +213,25 @@ fn a_failure_halfway_leaves_no_install_and_a_retry_starts_clean() {
     assert_eq!(f.entries(), [".lock".to_string(), format!("node-{NODE}-adapter-0.5.0")]);
 }
 
+/// An install of the current pins with a part deleted, its Node or its script, is not taken for one, and the next
+/// install replaces it.
+#[test]
+fn a_damaged_install_is_not_found_and_an_install_replaces_it() {
+    let f = Fixture::new();
+    let pins = f.pins(NODE, &sha256_of(&f.tarball), "0.5.0");
+    let (installs, dist) = f.installs(pins, &[(NODE, &f.tarball)], &[]);
+    let installed = installs.install(&Interrupt::new()).unwrap();
+
+    for part in [&installed.node, &installed.script] {
+        std::fs::remove_file(part).unwrap();
+        assert_eq!(installs.installed(), None, "without {part}");
+        assert_eq!(installs.install(&Interrupt::new()).unwrap(), installed);
+        assert_eq!(installs.installed(), Some(installed.clone()));
+    }
+    assert_eq!(dist.asked.lock().unwrap().len(), 3);
+    assert_eq!(f.entries(), [".lock".to_string(), format!("node-{NODE}-adapter-0.5.0")]);
+}
+
 #[test]
 fn two_installs_at_once_make_one() {
     let f = Fixture::new();

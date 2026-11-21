@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io::Read;
 
 use crate::constants::GIT_PATHSPEC_ENV;
+use crate::state::Backend;
 
 /// The environment for every process the orchestrator starts: its own, without GIT_PATHSPEC_ENV.
 ///
@@ -64,10 +65,15 @@ impl ConfigDir {
         self.join("workflows")
     }
 
-    /// The file whose presence means the desktop app's setup dialog once closed with every Required check passed, so
-    /// that it no longer opens by itself (crate::serve::setup); empty.
-    pub fn setup_checked_path(&self) -> String {
-        self.join("setup-checked")
+    /// The file whose presence means the desktop app's setup dialog once closed with every Required check passed for
+    /// app runs in backend, so that it no longer opens by itself (crate::serve::setup); empty. `setup-checked` for
+    /// herdr and `setup-checked-acp` for ACP: the two have their own Required checks (claude's ACP adapter among
+    /// ACP's), so passing one's says nothing of the other's.
+    pub fn setup_checked_path(&self, backend: Backend) -> String {
+        match backend {
+            Backend::Herdr => self.join("setup-checked"),
+            Backend::Acp => self.join("setup-checked-acp"),
+        }
     }
 
     /// The file that holds what the desktop app does with its running runs when its window closes, once the user chose

@@ -20,8 +20,7 @@ type Outcome = { report: SetupReport } | { error: string } | null;
 /** What setting up the quality gate gave: the files it looked after, the error it failed with, or null while it runs. */
 type GateOutcome = { files: GateFile[] } | { error: string } | null;
 
-/** What installing claude's ACP adapter gave, until the next round of checks shows it installed: the error it failed
- * with, or null while it runs. */
+/** What installing claude's ACP adapter gave: the error it failed with, or null while it runs. */
 type ClaudeOutcome = { error: string } | null;
 
 /** What the project needs for a run, checked where its agents run, grouped by how much each check matters, a failed
@@ -39,8 +38,8 @@ export function SetupDialog({ api, project, onClose }: Props) {
   const [markError, setMarkError] = useState<string | null>(null);
   // The quality gate's setup: undefined until asked for, then as GateOutcome says.
   const [gate, setGate] = useState<GateOutcome | undefined>(undefined);
-  // The install of claude's ACP adapter: undefined until asked for and again once it succeeds, then as ClaudeOutcome
-  // says.
+  // The latest install of claude's ACP adapter: undefined until asked for and again once it succeeds, then as
+  // ClaudeOutcome says. A failure stops showing once a round reports the adapter installed, as by another window.
   const [claude, setClaude] = useState<ClaudeOutcome | undefined>(undefined);
   useEffect(() => {
     let current = true;
@@ -82,6 +81,8 @@ export function SetupDialog({ api, project, onClose }: Props) {
     );
   };
   const offered = outcome && "report" in outcome ? outcome.report.claude_install : null;
+  const installing = claude === null;
+  const failed = claude && !offered?.installed ? claude : undefined;
   return (
     <Dialog label="setup" title="Setup" project={project} className="setup">
       {outcome === null && <p className="loading">Checking…</p>}
@@ -92,7 +93,7 @@ export function SetupDialog({ api, project, onClose }: Props) {
           <CheckGroup key={level} heading={heading} checks={outcome.report.checks.filter((c) => c.level === level)} />
         ))}
       {gate !== undefined && <GateSetup outcome={gate} />}
-      {claude !== undefined && <ClaudeInstall outcome={claude} />}
+      {(installing || failed) && <ClaudeInstall outcome={failed ?? null} />}
       {markError !== null && <p className="problem">Could not record that setup was checked: {markError}</p>}
       <footer>
         <button type="button" onClick={() => setRound((r) => r + 1)} disabled={outcome === null || marking}>
@@ -101,8 +102,8 @@ export function SetupDialog({ api, project, onClose }: Props) {
         <button type="button" onClick={setUpGate} disabled={gate === null || marking}>
           Set up the quality gate
         </button>
-        {(claude !== undefined || (offered && !offered.installed)) && (
-          <button type="button" onClick={installClaude} disabled={claude === null || marking}>
+        {(installing || failed || (offered && !offered.installed)) && (
+          <button type="button" onClick={installClaude} disabled={installing || marking}>
             Install claude's ACP adapter{offered && ` (about ${offered.megabytes} MB)`}
           </button>
         )}

@@ -53,6 +53,7 @@ pub struct Harness {
 /// How a harness's agent starts as an ACP agent: its program, given these arguments, speaks ACP on its stdin and stdout.
 #[derive(Debug, PartialEq, Eq)]
 struct Acp {
+    /// What its agent is started as.
     program: AcpProgram,
     /// The arguments that make the program speak ACP: its subcommand.
     args: &'static [&'static str],
@@ -85,6 +86,7 @@ pub enum AcpProgram {
 /// How a role's agent starts as an ACP agent (Harness::acp_launch).
 #[derive(Debug, PartialEq, Eq)]
 pub struct AcpLaunch {
+    /// The program, which crate::acp resolves to a path to start.
     pub program: AcpProgram,
     /// Its arguments.
     pub args: Vec<String>,

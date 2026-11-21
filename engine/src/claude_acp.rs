@@ -49,10 +49,11 @@ const NODE_SHA256: [(&str, &str); 4] = [
     ("darwin-arm64", "c9e1dbc748b33ed2d14f42445191ecaf14c56259c7a9a26d0042c49ec2b66428"),
 ];
 
-/// The adapter's package.json, which names its version, and the lockfile npm installs it from, made by the pinned
-/// Node's npm (10.9.9) with `npm install --package-lock-only --ignore-scripts`. The adapter, 0.101.0, is from
-/// 2026-11-05, the newest release at least two weeks old on 2026-11-21.
+/// The adapter's package.json, which names its version. The adapter, 0.101.0, is from 2026-11-05, the newest release
+/// at least two weeks old on 2026-11-21.
 const PACKAGE_JSON: &str = include_str!("../claude-acp/package.json");
+/// The lockfile npm installs the adapter from, every package with its integrity hash, made from PACKAGE_JSON by the
+/// pinned Node's npm (10.9.9) with `npm install --package-lock-only --ignore-scripts`.
 const PACKAGE_LOCK: &str = include_str!("../claude-acp/package-lock.json");
 
 /// The adapter's npm package, as package.json depends on it.
@@ -67,8 +68,9 @@ const REGISTRY: &str = "https://registry.npmjs.org/";
 /// How long connecting to Node's server, and then each read of its answer, may take, in seconds.
 const DOWNLOAD_TIMEOUT: u64 = 60;
 
-/// How long unpacking Node, and then npm's install of the adapter, may each take.
+/// How long unpacking Node may take.
 const UNPACK_TIMEOUT: Duration = Duration::from_secs(600);
+/// How long npm's install of the adapter may take: it downloads most of an install's megabytes.
 const NPM_TIMEOUT: Duration = Duration::from_secs(3600);
 
 /// The start of the name of an install still being made, in the installs' directory, which no lookup takes for one.
@@ -85,7 +87,9 @@ pub struct Pins {
     tarball: Option<(String, String)>,
     /// The adapter's version, as package.json depends on it.
     adapter: String,
+    /// The text of the adapter's package.json, written into an install for npm to read.
     package_json: String,
+    /// The text of the lockfile npm installs package_json's dependencies from, written beside it.
     lockfile: String,
 }
 
@@ -142,6 +146,7 @@ pub struct Installed {
 pub struct ClaudeAcp {
     /// The directory the installs are in, `claude-acp` in the data directory; made by the first install.
     root: String,
+    /// The pins of the one install this looks for and makes; installs of any others are removed by the next install.
     pins: Pins,
     /// Where Node's releases are, without a trailing "/": NODE_DIST, or a test's server.
     node_dist: String,
@@ -201,11 +206,13 @@ impl ClaudeAcp {
         installed
     }
 
-    /// The install of the current pins, when it is there; None when it is not, as before the first install or after a
-    /// pin was raised. It does not check that the install still runs.
+    /// The install of the current pins, when it is there, its Node and its script; None when it is not, as before the
+    /// first install, after a pin was raised, or when part of it was deleted. It does not check that the install
+    /// still runs.
     pub fn installed(&self) -> Option<Installed> {
         let installed = self.at(&format!("{}/{}", self.root, self.pins.install_name()));
-        Path::new(&installed.script).is_file().then_some(installed)
+        let whole = Path::new(&installed.node).is_file() && Path::new(&installed.script).is_file();
+        whole.then_some(installed)
     }
 
     /// Install the current pins, unless they are installed already, and then remove every other install: download
@@ -234,8 +241,8 @@ impl ClaudeAcp {
     }
 
     /// install's work once the lock is held and the current pins are not installed: clear what earlier attempts
-    /// left, make the install in a temporary directory, and rename it into place, removing the temporary directory
-    /// when any step fails.
+    /// left, and what is left of a damaged install of these pins, make the install in a temporary directory, and
+    /// rename it into place, removing the temporary directory when any step fails.
     fn install_locked(&self, stopping: &Interrupt) -> Result<Installed, OrchestratorError> {
         let Some((platform, sha256)) = &self.pins.tarball else {
             return Err(OrchestratorError(format!(
@@ -244,10 +251,10 @@ impl ClaudeAcp {
                 std::env::consts::ARCH
             )));
         };
-        for name in self.entries()?.iter().filter(|n| n.starts_with(TEMPORARY)) {
-            self.remove(name)?;
-        }
         let name = self.pins.install_name();
+        for left in self.entries()?.iter().filter(|n| n.starts_with(TEMPORARY) || **n == name) {
+            self.remove(left)?;
+        }
         let temporary = format!("{TEMPORARY}{name}");
         let dir = format!("{}/{temporary}", self.root);
         fs::create_dir(&dir).map_err(|e| self.failed("create", &dir, &e))?;
@@ -256,11 +263,11 @@ impl ClaudeAcp {
             fs::rename(&dir, &path).map_err(|e| self.failed("rename into place", &dir, &e))?;
             Ok(self.at(&path))
         });
-        if made.is_err() {
-            // The failure is what the caller is told; what this removal leaves, the next install removes.
-            let _ = fs::remove_dir_all(&dir);
-        }
-        made
+        // What a removal that fails leaves, the next install removes; the caller is told of both failures.
+        made.map_err(|e| match fs::remove_dir_all(&dir) {
+            Ok(()) => e,
+            Err(removing) => OrchestratorError(format!("{}; and {}", e.0, self.failed("remove", &dir, &removing).0)),
+        })
     }
 
     /// Make an install of the pins in dir, an empty directory: Node for platform, whose tarball has sha256, in
@@ -284,12 +291,11 @@ impl ClaudeAcp {
         let (npmrc, cache) = (format!("{dir}/empty-npmrc"), format!("{dir}/npm-cache"));
         write(&npmrc, b"")?;
         let npm = format!("{dir}/node/lib/node_modules/npm/bin/npm-cli.js");
-        #[rustfmt::skip]
-        let argv = [
-            &format!("{dir}/node/bin/node"), &npm, "ci", "--ignore-scripts",
-            "--userconfig", &npmrc, "--globalconfig", &npmrc, "--registry", &self.registry,
-            "--prefix", &adapter, "--cache", &cache, "--no-audit", "--no-fund", "--no-update-notifier",
-        ];
+        let node_bin = format!("{dir}/node/bin/node");
+        let isolated = ["--userconfig", &npmrc, "--globalconfig", &npmrc, "--registry", &self.registry];
+        let quiet = ["--no-audit", "--no-fund", "--no-update-notifier"];
+        let into = ["--prefix", &adapter, "--cache", &cache];
+        let argv = [&[node_bin.as_str(), &npm, "ci", "--ignore-scripts"][..], &isolated, &into, &quiet].concat();
         self.run(&argv, NPM_TIMEOUT, stopping, "install claude's ACP adapter")?;
         if !Path::new(&self.at(dir).script).is_file() {
             return Err(OrchestratorError(format!("npm installed no {ADAPTER_PACKAGE} script in {adapter}")));

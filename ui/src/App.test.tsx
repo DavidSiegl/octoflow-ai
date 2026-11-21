@@ -650,6 +650,19 @@ describe("the setup dialog", () => {
     await waitFor(() => expect(setup.claudeInstalls).toBe(2));
   });
 
+  it("stops showing a failed install once a round of checks finds claude's ACP adapter installed", async () => {
+    const setup: FakeSetup = { checked: false, report: { ...CLAUDE_MISSING, checks: [...CLAUDE_MISSING.checks] }, claudeError: "cannot download node: HTTP 503" };
+    await openWith(setup);
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
+    fireEvent.click(await within(dialog).findByRole("button", { name: INSTALL }));
+    expect(await within(dialog).findByText("cannot download node: HTTP 503")).toBeInTheDocument();
+    setup.report = { ...CLAUDE_INSTALLED, checks: [...CLAUDE_INSTALLED.checks] };
+    fireEvent.click(within(dialog).getByRole("button", { name: "Check again" }));
+    expect(await within(dialog).findByText("claude-agent-acp 0.101.0", { exact: false })).toBeInTheDocument();
+    expect(within(dialog).queryByText("cannot download node: HTTP 503")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /Install claude/ })).not.toBeInTheDocument();
+  });
+
   it("checks again", async () => {
     const setup: FakeSetup = { checked: false, report: { ...FAILED, checks: [...FAILED.checks] } };
     const fetch = await openWith(setup);

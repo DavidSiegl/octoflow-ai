@@ -239,7 +239,7 @@ round trip holds up ends too. Like `doctor`, it needs no herdr pane. It reads th
 the local quality gate's, by `POST /setup/gate` (`local_gate::set_up`); it installs claude's ACP adapter in the
 orchestrator's data directory, by `POST /setup/claude` (`claude_acp`); it changes otherwise only what a run's agent is
 given to read, by `/agent/input`, as the human would type it into the agent's pane; the desktop app's setup marker,
-`setup-checked` in its configuration directory (`ConfigDir`), by `POST /setup/checked`, and its close choice, `close-choice` there, by `POST /close-choice`; the runs `POST /stop` stops, as a Ctrl-C would; the workflow files in that
+`setup-checked` in its configuration directory (`ConfigDir`; `setup-checked-acp` for app runs over ACP), by `POST /setup/checked`, and its close choice, `close-choice` there, by `POST /close-choice`; the runs `POST /stop` stops, as a Ctrl-C would; the workflow files in that
 directory's `workflows`, by `POST /workflow/save` and `/workflow/delete`; and, by `POST /run`, which runs
 started, as the human would start one from a herdr pane.
 
@@ -293,7 +293,7 @@ started, as the human would start one from a herdr pane.
   | `/setup` | `{"checks", "passed", "claude_install"}`: `doctor`'s checks of the project (`serve::setup`), each `{"name", "level", "ok", "detail", "fix"}`, reaching herdr from a pane only `optional`, and whether every `required` one is ok; it does not connect the project, so one that cannot be reached is a failed check; `claude_install` is `{"installed", "megabytes"}` for app runs over ACP, null in herdr |
   | `/setup/checked`, `POST /setup/checked` | `{"checked"}`: whether the setup marker is there; the POST writes it |
   | `POST /setup/claude` | `{"installed": true}`: installs claude's ACP adapter (`claude_acp`), which takes minutes; 409 in herdr, 502 for an install that fails |
-| `POST /setup/gate` | `{"files": [{"path", "written"}]}`: writes the project's missing starter `gate.toml` (`local_gate::set_up`), and no pin, `written` false when it kept one |
+  | `POST /setup/gate` | `{"files": [{"path", "written"}]}`: writes the project's missing starter `gate.toml` (`local_gate::set_up`), and no pin, `written` false when it kept one |
   | `/workflows` | `{"workflows", "agents"}`: each workflow `run --workflow` offers from serve's configuration directory, with its description and its roles' labels, harnesses and models, and the harnesses there are |
   | `/workflow?name=NAME` | `{"name", "built_in", "path", "text", "hand_written", "definition"}`: one workflow to edit (`read_workflow`), `path` and `text` null for a built-in one; 404 for no such workflow, 422 `{"error", "path", "text"}` for a file that does not load, its text the `base` a delete of it takes |
   | `POST /workflow/check` | `{"problem", "placeholders"}` for the body's `{"name", "definition"}` (`check_workflow`), `problem` null when there is none |
