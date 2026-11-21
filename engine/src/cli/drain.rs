@@ -22,8 +22,9 @@ use queue::{entry, merge, read_queue, Entries, QueuedSpec, PR_KEY, RUN_KEY, STAT
 /// Where drain looks for specs when given no DIR, relative to the current directory.
 pub const DRAIN_DIR: &str = ".scratch";
 /// The values of a spec's Status: line that drain acts on. A spec moves from SPEC_READY to SPEC_IN_REVIEW, its pull
-/// request open, to SPEC_DONE, merged; or to SPEC_FOR_HUMAN, which drain leaves only for SPEC_IN_REVIEW, once a
-/// succeeded run's conflict is cleared (refreshed_headers). Drain leaves a spec with any other value, or none, alone.
+/// request open, to SPEC_DONE, merged; or to SPEC_FOR_HUMAN, for a run that failed, did not succeed, conflicts, or
+/// opened no pull request (RunState::nothing_to_publish), which drain leaves only for SPEC_IN_REVIEW, once a succeeded
+/// run's conflict is cleared (refreshed_headers). Drain leaves a spec with any other value, or none, alone.
 pub const SPEC_READY: &str = "ready-for-agent";
 pub const SPEC_IN_REVIEW: &str = "in-review";
 pub const SPEC_DONE: &str = "done";
@@ -167,9 +168,13 @@ fn drain_spec(args: &DrainArgs, world: &Connected, cwd: &str, spec: &mut QueuedS
         }
         Ok(ran) => {
             let status = finish(ran.verdict.as_deref(), &ran.state, &ran.pipeline, world.stdout);
+            let pr = ran.state.pr_url.as_ref().filter(|u| !u.is_empty());
+            // In review only through a pull request, as finished_run_header has it: a run with nothing to publish
+            // opened none, so its spec is the human's.
+            let in_review = status == 0 && pr.is_some();
             let mut entries: Entries =
-                vec![(STATUS_KEY, if status == 0 { SPEC_IN_REVIEW } else { SPEC_FOR_HUMAN }.into())];
-            if let Some(pr) = ran.state.pr_url.as_ref().filter(|u| !u.is_empty()) {
+                vec![(STATUS_KEY, if in_review { SPEC_IN_REVIEW } else { SPEC_FOR_HUMAN }.into())];
+            if let Some(pr) = pr {
                 entries.push((PR_KEY, pr.clone()));
             }
             spec.update(&entries, true, human).map_err(stopped)?;

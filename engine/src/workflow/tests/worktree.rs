@@ -318,6 +318,22 @@ fn resume_with_a_pull_request_finishes_without_the_worktree() {
 }
 
 #[test]
+fn resume_with_nothing_to_publish_finishes_without_the_worktree() {
+    let mut state = saved_worktree_run("publish", 1);
+    (state.verdict, state.nothing_to_publish) = (Some(APPROVE.into()), true);
+    let host = FakeHost::default();
+    host.state().branches.insert(RUN_BRANCH.into(), "abc123".into());
+    let f = Fixture::resume(Rc::new(host), state, vec![], &[], &[]);
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert_eq!((wf.state().phase.as_str(), wf.state().branch.as_deref()), ("done", None));
+    assert!(git_in(&f.host, "/proj").contains(&strings(&["branch", "--quiet", "-D", RUN_BRANCH])));
+    assert!(!ran(&f.host, &["switch"]));
+    let said = format!("branch {RUN_BRANCH} deleted");
+    assert!(f.told.lines().iter().any(|l| l.ends_with(&said)), "{:?}", f.told.lines());
+}
+
+#[test]
 fn a_state_saved_without_worktree_resumes_in_place() {
     let mut state = saved_run("review", 1, FULL);
     state.pull_request = true;

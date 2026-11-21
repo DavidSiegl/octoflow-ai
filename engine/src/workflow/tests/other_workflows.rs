@@ -315,6 +315,19 @@ fn phase_outside_the_workflow_is_refused() {
 // -- A workflow without a verdict -------------------------------------------------------------------------------
 
 #[test]
+fn a_finished_run_that_changed_nothing_tracked_opens_no_pull_request() {
+    let solo = solo();
+    let report_only: Turn = Box::new(|_, state, host| {
+        host.write(&format!("{}/build.md", state.dir()), "wrote only ignored files", false).expect("written");
+        "done".to_string()
+    });
+    let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&solo), vec![("build", vec![report_only])]);
+    assert_eq!(f.workflow(with_pipeline(&solo)).run(), verdict(FINISHED));
+    assert!(f.host.state().prs.is_empty());
+    assert_eq!(f.saved().get("nothing_to_publish"), Some(&Value::Bool(true)));
+}
+
+#[test]
 fn a_run_finishes_and_opens_a_ready_pull_request() {
     let solo = solo();
     let f = Fixture::on(Rc::new(FakeHost::default()), new_run(&solo), vec![("build", vec![solo_turn()])]);

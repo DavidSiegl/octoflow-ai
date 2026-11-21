@@ -69,6 +69,20 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   the `quality_gate_on` the gate runs on). Closes with one `RunState` method, next to `had_quality_gate`, that every
   site calls.
 
+- **With the gate on, only a round's first Builder report that changes nothing tracked skips the quality step.**
+  Raised by cross-review 270 (F5): todo ticket 90 says "a Builder turn whose tracked tree matches the base skips the
+  quality step"; "a fix turn after a quality round that leaves the tracked tree at the base is still judged"
+  (`engine/src/workflow.rs`, `take_turn`'s `unjudgeable`). From quality round 1 on, the round's quality files are the
+  gate's record and the next step reads the Builder's report by `quality_round` (`Step::last_path`), so skipping there
+  needs `quality_round` advanced with no quality file, which `gate_passed`, `quality_note` and `gate_evidence` would
+  then read as a failed or missing analysis. Closes when the user rules the narrowing fine, or those readers learn a
+  skipped quality round.
+
+- **A run with nothing to publish says so only in summary.md and the log.** Raised by cross-review 270 (F7): "`show`,
+  the listing JSON and the desktop app see `pr: null` and cannot tell 'nothing to publish' from 'never opened'"
+  (`engine/src/cli/listing.rs`, `run_record`). Closes when the run record carries `RunState::nothing_to_publish` and
+  `show` and the app word it.
+
 - **claude's ACP install departs from spec R6 and R7 of `.scratch/herdr-gui-decoupling` (ticket 07), awaiting the
   user's ruling.** Review 262 (2026-11-21) found three departures, each kept as built until the spec owner amends the
   spec or asks for the code to change: (1) no in-run offer: "When claude is first needed by an ACP run ... the app
