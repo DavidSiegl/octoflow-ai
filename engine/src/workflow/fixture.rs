@@ -448,6 +448,17 @@ pub(crate) fn note() -> String {
     format!("\n\n{text}")
 }
 
+/// What every prompt of the quality-gated step ends with in a gated run at the default turn timeout:
+/// QUALITY_FOLLOWS_NOTE, then note().
+pub(crate) fn gated_note() -> String {
+    let timeout = crate::constants::DEFAULT_TURN_TIMEOUT.to_string();
+    let follows = crate::prompts::template::fill(crate::prompts::QUALITY_FOLLOWS_NOTE, &|name| {
+        (name == "timeout").then(|| timeout.clone())
+    })
+    .expect("the built-in note fills in");
+    format!("\n\n{follows}{}", note())
+}
+
 /// A RunState saved by an earlier orchestrator in phase and round rnd, in workspace w1 whose root pane is w1:p1, with
 /// agents for roles. Its base is abc123 past the spec phase.
 pub(crate) fn saved_run(phase: &str, rnd: u32, roles: &[&str]) -> RunState {

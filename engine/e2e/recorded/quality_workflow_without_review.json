@@ -435,7 +435,7 @@
      "agent",
      "prompt",
      "build-<key:1>",
-     "Implement Add a subtract function in <world>/project; report to <world>/project/.octoflow-ai/runs/<run:1>/build-1.md.\n\nIf you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead."
+     "Implement Add a subtract function in <world>/project; report to <world>/project/.octoflow-ai/runs/<run:1>/build-1.md.\n\nOnce your report is written, the orchestrator runs the quality gate on your change, so do not run the gate yourself: run the tests your change touches. This turn may take at most 1800 seconds; write the report before then.\n\nIf you cannot continue without a decision from the human, write the report with a first line `BLOCKED: <your question>` instead."
     ]
    },
    {

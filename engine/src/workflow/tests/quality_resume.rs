@@ -53,7 +53,7 @@ fn fresh_builder_answering_a_quality_round_is_briefed() {
          working tree, and its reports are {}.",
         f.state.build_path(1)
     )));
-    assert!(first.ends_with(&(quality_fix(&f.state, 1, 1) + &note())), "{first}");
+    assert!(first.ends_with(&(quality_fix(&f.state, 1, 1) + &gated_note())), "{first}");
     assert_eq!(wf.state().quality_round, 2);
 }
 

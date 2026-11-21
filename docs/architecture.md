@@ -116,7 +116,8 @@ verdict step) whose first line is `BLOCKED:` (`parse_blocked`) goes to `block`, 
 moves it aside to `.blocked-K`; `unblocked` then has `block_answer` notify the human and wait for the file again,
 as often as it comes back `BLOCKED:`, with `BLOCKED_PROMPT`, no timeout and no stall notice, and a resume with
 `blocked` set finishes an undone move (`finish_block`) and goes back into that wait. `step_prompt` appends
-`BLOCKED_NOTE` to every prompt of such a step. `save` checks the owner before every write and stops the run as `Stopped::TakenOver`
+`BLOCKED_NOTE` to every prompt of such a step, and before it `QUALITY_FOLLOWS_NOTE`, with the turn's deadline
+(`turn_timeout`), to every prompt of the quality-gated step in a gated run, unless the step is human-paced. `save` checks the owner before every write and stops the run as `Stopped::TakenOver`
 after a takeover; `heartbeat` keeps `state.json` fresh while a turn runs. `written` and `quality` open a turn's
 record in `turns` (`turn_record`, started by `Host::now`) and `end_turn` closes it at the handoff file's
 `Host::mtime`, or at the start when that mtime reads earlier; both read the project host. The end of `run` and

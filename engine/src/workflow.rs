@@ -1051,9 +1051,8 @@ impl<'a> Workflow<'a> {
             path: self.view().own_path(step, n),
             text,
             fresh_text,
-            // Paced by the human, so the turn has no deadline, and an idle agent is normal: it is waiting for the
-            // human's reply.
-            timeout: (!step.human_paced).then_some(self.state.turn_timeout),
+            timeout: self.view().turn_timeout(step),
+            // Paced by the human, an idle agent is normal: it is waiting for the human's reply.
             watch_stalls: !step.human_paced,
             announce: if step.human_paced { turn::Announce::Interview } else { turn::Announce::Nothing },
             judged: if step.loop_to.is_some() {
