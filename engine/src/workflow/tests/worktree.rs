@@ -218,11 +218,31 @@ fn no_pr_keeps_the_worktree_with_the_change() {
 }
 
 #[test]
-fn a_failed_run_keeps_the_worktree() {
+fn an_approved_run_that_changed_nothing_tracked_keeps_its_worktree_detached_and_deletes_its_branch() {
     let f = worktree_run(Rc::new(FakeHost::default()), None);
+    let nothing = writes(|s| s.build_path(1), "wrote the design to .scratch/, which git ignores", "done");
+    f.herdr.state().script.insert("build".into(), VecDeque::from(vec![nothing]));
+    assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
+    let s = f.host.state();
+    assert!(s.prs.is_empty());
+    assert_eq!(
+        s.worktrees.iter().map(|(p, b)| (p.to_string(), b.clone())).collect::<Vec<_>>(),
+        [(WORKTREE.into(), "HEAD".into())]
+    );
+    drop(s);
+    assert!(git_in(&f.host, "/proj").contains(&strings(&["branch", "--quiet", "-D", RUN_BRANCH])));
+    assert!(!ran(&f.host, &["worktree", "remove"]) && !ran(&f.host, &["commit"]) && !ran(&f.host, &["push"]));
+    let said = format!("branch {RUN_BRANCH} deleted; what the run wrote is in worktree {WORKTREE}");
+    assert!(f.told.lines().iter().any(|l| l.ends_with(&said)), "{:?}", f.told.lines());
+}
+
+#[test]
+fn a_failed_run_keeps_the_worktree() {
+    let script = vec![("spec", vec![spec_turn()]), ("review", vec![review_turn(1, CHANGES_REQUESTED)])];
+    let f = worktree_run(Rc::new(FakeHost::default()), Some(script));
     let nothing = writes(|s| s.build_path(1), "nothing to do", "done");
     f.herdr.state().script.insert("build".into(), VecDeque::from(vec![nothing]));
-    let error = failure(f.workflow(RunSettings::default()).run());
+    let error = failure(f.workflow(max_rounds(1)).run());
     assert!(error.contains("changed no files"), "{error}");
     let worktrees = f.host.state().worktrees.clone();
     assert_eq!(
@@ -295,6 +315,25 @@ fn resume_with_a_pull_request_finishes_without_the_worktree() {
     assert_eq!(wf.state().phase, "done");
     assert!(!ran(&f.host, &["worktree"]) && !ran(&f.host, &["switch"]));
     assert_eq!(f.herdr.state().calls.last(), Some(&Call::Close { workspace: "w1".into() }));
+}
+
+#[test]
+fn resume_with_nothing_to_publish_finishes_without_the_worktree() {
+    let mut state = saved_worktree_run("publish", 1);
+    (state.verdict, state.nothing_to_publish) = (Some(APPROVE.into()), true);
+    let host = FakeHost::default();
+    // Its directory deleted, but git still has the branch checked out there until a prune.
+    host.state().worktrees.insert(WORKTREE.into(), RUN_BRANCH.into());
+    host.state().vanished_worktrees.insert(WORKTREE.into());
+    host.state().branches.insert(RUN_BRANCH.into(), "abc123".into());
+    let f = Fixture::resume(Rc::new(host), state, vec![], &[], &[]);
+    let mut wf = f.workflow(f.as_saved());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    assert_eq!((wf.state().phase.as_str(), wf.state().branch.as_deref()), ("done", None));
+    assert!(git_in(&f.host, "/proj").contains(&strings(&["branch", "--quiet", "-D", RUN_BRANCH])));
+    assert!(!ran(&f.host, &["switch"]));
+    let said = format!("branch {RUN_BRANCH} deleted");
+    assert!(f.told.lines().iter().any(|l| l.ends_with(&said)), "{:?}", f.told.lines());
 }
 
 #[test]

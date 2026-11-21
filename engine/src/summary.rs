@@ -165,7 +165,11 @@ pub fn run_summary(state: &RunState, pipeline: &Pipeline, rounds: &[String], now
         let model = s.models.get(role).filter(|m| !m.is_empty()).map_or("default", String::as_str);
         format!("| {label} ({role}) | {harness} | {model} |")
     });
-    let pr = s.pr_url.as_deref().filter(|u| !u.is_empty()).unwrap_or("none");
+    let pr = match s.pr_url.as_deref().filter(|u| !u.is_empty()) {
+        Some(url) => url,
+        None if s.nothing_to_publish => "none: nothing tracked changed since the base, so there was nothing to publish",
+        None => "none",
+    };
     let branch = s.branch.as_deref().filter(|b| !b.is_empty()).map_or("none".to_string(), |b| format!("`{b}`"));
     let mut lines = vec![
         format!("# Run {}", s.run_id),

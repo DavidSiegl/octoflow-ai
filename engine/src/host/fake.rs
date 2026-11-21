@@ -436,6 +436,10 @@ impl FakeState {
                 self.worktrees.insert(cwd.to_string(), name.to_string());
                 Some(ok(""))
             }
+            ["switch", "--quiet", "--detach"] => {
+                self.worktrees.insert(cwd.to_string(), "HEAD".to_string());
+                Some(ok(""))
+            }
             args if args == GIT_STATUS_ARGS => Some(ok(&porcelain(&self.changed_in(cwd)))),
             ["commit", "--quiet", "-m", _, "-m", _, trailers @ ..] if trailer_args(trailers) => {
                 let changed = self.changed_in(cwd);
@@ -500,6 +504,14 @@ impl FakeState {
                 return ok(&format!("{n}\n"));
             }
             ["branch", "--quiet", "-D", b] => {
+                // As git: a branch a worktree has checked out, one whose directory is gone but not yet pruned too.
+                if let Some((path, _)) = self.worktrees.iter().find(|(_, held)| held.as_str() == *b) {
+                    return Completed::new(
+                        1,
+                        "",
+                        &format!("error: cannot delete branch '{b}' used by worktree at '{path}'"),
+                    );
+                }
                 self.branches.shift_remove(*b);
             }
             // What a fetch brings is set up in the state beforehand (upstream, missing_commits), not fetched.

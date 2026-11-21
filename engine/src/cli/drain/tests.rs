@@ -303,6 +303,19 @@ fn independent_specs_run_in_slug_order() {
 }
 
 #[test]
+fn an_approved_run_with_nothing_to_publish_leaves_its_spec_to_the_human() {
+    let d = Drain::new();
+    d.spec("a", &ready("First"));
+    let nothing: Outcome = Box::new(|state| {
+        (state.nothing_to_publish, state.branch, state.phase) = (true, None, DONE.into());
+        Ok(Some(APPROVE.into()))
+    });
+    let r = d.drain(vec![nothing], &[]);
+    assert_eq!(r.status, 0, "{}", r.err);
+    assert_eq!(d.header("a"), (some(SPEC_FOR_HUMAN), Some(d.run_id(0)), None));
+}
+
+#[test]
 fn each_run_is_a_run_spec_run_of_its_spec() {
     let d = Drain::new();
     d.spec("a", &ready("First"));

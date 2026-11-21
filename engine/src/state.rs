@@ -24,8 +24,9 @@ pub fn run_dir(cwd: &str, run_id: &str) -> String {
 ///
 /// state.json is one line of JSON, an object: "format", STATE_FORMAT, then these fields in this order, then the fields
 /// of unknown. Every field that is not an Option must be there, but verdicts, which a state saved by an earlier
-/// release lacks; a missing Option is None. The records a field holds as JSON are kept as they were read, key order
-/// included; the agent and turn records are typed (AgentRecord, TurnRecord).
+/// release lacks, and nothing_to_publish, saved only when true; a missing Option is None. The records a field holds as
+/// JSON are kept as they were read, key order included; the agent and turn records are typed (AgentRecord,
+/// TurnRecord).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RunState {
     pub run_id: String,
@@ -52,8 +53,13 @@ pub struct RunState {
     /// The commit the change is judged against, fixed before the first editing step.
     pub base: Option<String>,
     pub base_branch: Option<String>,
+    /// The run's own branch, from round 0 on; None again once publish deleted it for a run with nothing to publish.
     pub branch: Option<String>,
     pub pr_url: Option<String>,
+    /// True once publish found that the run changed nothing git tracks, its working tree and HEAD as they were at
+    /// base, and so opened no pull request though the run succeeded (Workflow::publish). Saved only when true.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub nothing_to_publish: bool,
     /// The run's verdict: CHANGES_REQUESTED from a verdict step's request for changes on, APPROVE once the last
     /// verdict step approved a round (Workflow::take_turn); so while a round is between verdict steps it is still the
     /// verdict of the round before. Every earlier verdict step approved that round too, except in round max_rounds,
@@ -385,6 +391,7 @@ impl RunState {
             base_branch: None,
             branch: None,
             pr_url: None,
+            nothing_to_publish: false,
             verdict: None,
             verdicts: Vec::new(),
             conflicts: Vec::new(),
@@ -782,8 +789,9 @@ fn blank_fields() -> Object {
     let Value::Object(mut fields) = RunState::new("", "", "").to_json() else {
         unreachable!("a run state is an object")
     };
-    // The one field a herdr run's state leaves out (RunState::backend).
+    // The fields a state leaves out at their defaults: backend for a herdr run, and nothing_to_publish.
     fields.insert("backend".into(), Value::from("herdr"));
+    fields.insert("nothing_to_publish".into(), Value::Bool(false));
     fields
 }
 

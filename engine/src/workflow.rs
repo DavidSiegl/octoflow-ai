@@ -555,11 +555,13 @@ impl<'a> Workflow<'a> {
         self.save()
     }
 
-    /// Fail if the run's worktree, which holds its change, is gone; unless the pull request has the change.
+    /// Fail if the run's worktree, which holds its change, is gone; unless the pull request has the change, or the run
+    /// has none to lose (RunState::nothing_to_publish).
     fn check_worktree(&self) -> Result<(), OrchestratorError> {
         let s = &self.state;
         let worktree = s.worktree.as_deref().unwrap_or_default();
-        if !s.pr_url.as_deref().unwrap_or_default().is_empty() || self.host.is_worktree(&s.cwd, worktree)? {
+        let nothing_to_lose = !s.pr_url.as_deref().unwrap_or_default().is_empty() || s.nothing_to_publish;
+        if nothing_to_lose || self.host.is_worktree(&s.cwd, worktree)? {
             return Ok(());
         }
         Err(OrchestratorError(format!(
@@ -850,13 +852,15 @@ impl<'a> Workflow<'a> {
         Ok(())
     }
 
-    /// Fail if HEAD is not the run's branch, which holds the Builder's uncommitted change until publishing.
+    /// Fail if HEAD is not the run's branch, which holds the Builder's uncommitted change until publishing; a run
+    /// with nothing to publish, whose branch publish is leaving, is not checked.
     ///
     /// Otherwise the commit lands on whatever the human checked out, and the run's branch is pushed without it.
     fn check_branch(&self) -> Result<(), OrchestratorError> {
         let s = &self.state;
+        let unpublished = s.pull_request && !s.nothing_to_publish && s.pr_url.as_deref().is_none_or(str::is_empty);
         let branch = match &s.branch {
-            Some(b) if s.pull_request && !b.is_empty() && s.pr_url.as_deref().is_none_or(str::is_empty) => b,
+            Some(b) if unpublished && !b.is_empty() => b,
             _ => return Ok(()),
         };
         let current = self.host.git(s.work_dir(), &["rev-parse", "--abbrev-ref", "HEAD"])?.trim().to_string();
@@ -868,6 +872,15 @@ impl<'a> Workflow<'a> {
             )));
         }
         Ok(())
+    }
+
+    /// Whether the run's work dir holds nothing git tracks that differs from the run's base: no change git status
+    /// shows, ignored files aside, and HEAD still at base. False for a run without a base yet.
+    fn tracked_unchanged(&self) -> Result<bool, OrchestratorError> {
+        let work_dir = self.state.work_dir();
+        Ok(git_status(self.host, work_dir)?.trim().is_empty()
+            && self.state.base.is_some()
+            && self.host.git_head(work_dir)? == self.state.base)
     }
 
     /// Fail if the working tree has uncommitted changes: the commit takes every change in it, so it must hold only
@@ -968,7 +981,16 @@ impl<'a> Workflow<'a> {
             // Before the quality round, so the gate judges the locked files.
             self.hold_locks(step, n)?;
         }
-        if step.quality_gated && (self.quality_gate_on || self.state.quality_round > 0) {
+        // Only the round's first report is spared the gate: from quality round 1 on, the round's quality files are the
+        // gate's record of it, and the report the next step reads is numbered by quality_round (Step::last_path).
+        let unjudgeable =
+            step.quality_gated && self.quality_gate_on && self.state.quality_round == 0 && self.tracked_unchanged()?;
+        if unjudgeable {
+            self.human.log(&format!(
+                "[quality] round {n}: nothing tracked changed since the base, so there is nothing to judge; skipping \
+                 the quality step"
+            ));
+        } else if step.quality_gated && (self.quality_gate_on || self.state.quality_round > 0) {
             // The report goes to the next quality round. A round whose gate resume turned off since its last quality
             // round never analyses it, and the next step reads the report all the same (Step::last_path).
             self.state.quality_round += 1;
@@ -1104,12 +1126,19 @@ impl<'a> Workflow<'a> {
 
     /// Commit the change, merge the latest base into it, push its branch and open a pull request for it.
     ///
+    /// A run that succeeded (SUCCEEDED) without changing anything git tracks, as when its work is only in ignored
+    /// files, has nothing to publish: it opens no pull request and leaves its branch (drop_unpublished_branch). One
+    /// that did not succeed fails for it, keeping its branch.
+    ///
     /// Each step first checks whether an earlier orchestrator already took it, so a resume in this phase finishes the
     /// job instead of committing, merging or opening a second pull request.
     fn publish(&mut self) -> Outcome<()> {
         let pipeline = Rc::clone(&self.pipeline);
         self.state.phase = PUBLISH.to_string();
         self.save()?;
+        if self.state.nothing_to_publish {
+            return self.drop_unpublished_branch();
+        }
         if self.state.pr_url.as_deref().is_none_or(str::is_empty) {
             let wd = self.state.work_dir().to_string();
             let branch = self.state.branch.clone();
@@ -1123,27 +1152,13 @@ impl<'a> Workflow<'a> {
             if self.host.abort_merge(&wd)? {
                 self.human.log(&format!("aborted the merge an earlier orchestrator left in {wd}"));
             }
-            let spec = self.last_text(pipeline.contract(), 0)?;
-            let s = &self.state;
-            let first_line = s.task.trim().split('\n').next().unwrap_or_default().to_string();
-            let title = spec_title(&spec).filter(|t| !t.is_empty()).unwrap_or(first_line);
-            let title: String = if title.is_empty() { s.run_id.clone() } else { title }.chars().take(72).collect();
-            let quality = self.gate_evidence(s.round)?;
-            if !git_status(self.host, &wd)?.trim().is_empty() {
-                self.host.git(&wd, &["add", "--all"])?;
-                let trailers: Vec<String> = provenance(s, &quality)
-                    .into_iter()
-                    .flat_map(|(key, said)| ["--trailer".to_string(), format!("{key}: {said}")])
-                    .collect();
-                let note = commit_note(s);
-                let mut args = vec!["commit", "--quiet", "-m", &title, "-m", &note];
-                args.extend(trailers.iter().map(String::as_str));
-                self.host.git(&wd, &args)?;
-            } else if self.host.git_head(&wd)? == s.base {
-                return Err(Stopped::Failed(OrchestratorError(format!(
-                    "the Builder changed no files; there is nothing to commit on {branch}"
-                ))));
+            if self.found_nothing_to_publish(&branch, &verdict)? {
+                return self.drop_unpublished_branch();
             }
+            let spec = self.last_text(pipeline.contract(), 0)?;
+            let title = self.change_title(&spec);
+            let quality = self.gate_evidence(self.state.round)?;
+            self.commit_change(&wd, &title, &quality)?;
             let leaks = self.state.leaks_path("publish");
             // Scanned before the merge too, so that rewriting the run's commits never has to undo a merge.
             self.rewrite_on_leak(|host, base, branch| {
@@ -1178,6 +1193,86 @@ impl<'a> Workflow<'a> {
             }
         }
         Ok(self.leave_work_dir()?)
+    }
+
+    /// Whether the run, on branch with verdict, changed nothing git tracks (tracked_unchanged) and so has nothing to
+    /// publish; saved as RunState::nothing_to_publish when it does. Errors: the run changed nothing and its verdict is
+    /// not one of SUCCEEDED, so its failure is the Builder's; saving fails.
+    fn found_nothing_to_publish(&mut self, branch: &str, verdict: &str) -> Outcome<bool> {
+        if !self.tracked_unchanged()? {
+            return Ok(false);
+        }
+        if !SUCCEEDED.contains(&verdict) {
+            return Err(Stopped::Failed(OrchestratorError(format!(
+                "the Builder changed no files; there is nothing to commit on {branch}"
+            ))));
+        }
+        self.state.nothing_to_publish = true;
+        self.save()?;
+        Ok(true)
+    }
+
+    /// The title of the run's commit and pull request, at most 72 characters: spec's title, else the first line of
+    /// the task, else the run id.
+    fn change_title(&self, spec: &str) -> String {
+        let s = &self.state;
+        let first_line = s.task.trim().split('\n').next().unwrap_or_default().to_string();
+        let title = spec_title(spec).filter(|t| !t.is_empty()).unwrap_or(first_line);
+        if title.is_empty() { s.run_id.clone() } else { title }.chars().take(72).collect()
+    }
+
+    /// Commit every change in the work dir wd, if it has any, as the run's one commit: title, commit_note, and the
+    /// provenance trailers, quality among them. None is no error: an earlier orchestrator already committed it.
+    fn commit_change(&self, wd: &str, title: &str, quality: &GateEvidence) -> Result<(), OrchestratorError> {
+        if git_status(self.host, wd)?.trim().is_empty() {
+            return Ok(());
+        }
+        self.host.git(wd, &["add", "--all"])?;
+        let s = &self.state;
+        let trailers: Vec<String> = provenance(s, quality)
+            .into_iter()
+            .flat_map(|(key, said)| ["--trailer".to_string(), format!("{key}: {said}")])
+            .collect();
+        let note = commit_note(s);
+        let mut args = vec!["commit", "--quiet", "-m", title, "-m", &note];
+        args.extend(trailers.iter().map(String::as_str));
+        self.host.git(wd, &args).map(drop)
+    }
+
+    /// For a run with nothing to publish (RunState::nothing_to_publish): take its work dir off its branch and delete
+    /// the branch, which has no commits of its own, then say so. The project's checkout goes back to the base branch,
+    /// as leave_work_dir has it; a worktree is kept, detached, since removing it would delete what the run wrote in
+    /// ignored files. Each step is safe to take again, for a resume that finds an earlier orchestrator stopped in it.
+    fn drop_unpublished_branch(&mut self) -> Outcome<()> {
+        let s = &self.state;
+        let Some(branch) = s.branch.clone() else { return Ok(()) };
+        let there = self.host.branch_commit(&s.cwd, &branch)?.is_some();
+        let mut kept = String::new();
+        match &s.worktree {
+            None => {
+                let base_branch = self.base_branch()?;
+                self.host.git(&s.cwd, &["switch", "--quiet", &base_branch])?;
+            }
+            Some(worktree) => {
+                if self.host.is_worktree(&s.cwd, worktree)? {
+                    self.host.git(worktree, &["switch", "--quiet", "--detach"])?;
+                    kept = format!("; what the run wrote is in worktree {worktree}");
+                } else {
+                    // Its directory gone, git still counts the branch as checked out there, and refuses to delete it.
+                    self.host.prune_worktrees(&s.cwd)?;
+                }
+            }
+        }
+        if there {
+            self.host.delete_branch(&s.cwd, &branch)?;
+        }
+        self.state.branch = None;
+        self.save()?;
+        self.human.log(&format!(
+            "nothing tracked changed since the base, so there was nothing to publish: no pull request, and branch \
+             {branch} deleted{kept}"
+        ));
+        Ok(())
     }
 
     /// push(host, base, branch), a scan of the run's branch, or its push, at publish. A secret found becomes the

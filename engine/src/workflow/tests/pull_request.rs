@@ -110,15 +110,48 @@ fn not_a_git_repo_needs_no_pr() {
     assert!(failure(f.workflow(RunSettings::default()).run()).contains("--no-pr"));
 }
 
+/// A Builder turn of round n that writes its report and nothing git tracks: whatever else it did is in ignored files.
+fn report_only(n: u32) -> Turn {
+    writes(move |s| s.build_path(n), "wrote the design to .scratch/, which git ignores", "done")
+}
+
 #[test]
-fn no_changes_keeps_the_workspace_open() {
+fn an_approved_run_that_changed_nothing_tracked_opens_no_pull_request_and_leaves_the_base_checked_out() {
     let f = Fixture::new(vec![
         ("spec", vec![spec_turn()]),
-        ("build", vec![writes(|s| s.build_path(1), "nothing to do", "done")]),
+        ("build", vec![report_only(1)]),
         ("review", vec![review_turn(1, APPROVE)]),
     ]);
-    assert!(failure(f.workflow(RunSettings::default()).run()).contains("changed no files"));
+    assert_eq!(f.workflow(RunSettings::default()).run(), verdict(APPROVE));
+    let calls = git_calls(&f);
+    assert!(calls.contains(&strings(&["branch", "--quiet", "-D", BRANCH])), "{calls:?}");
+    assert!(!calls.iter().any(|c| c[0] == "commit" || c[0] == "push"), "{calls:?}");
+    let host = f.host.state();
+    assert!(host.prs.is_empty());
+    assert_eq!(host.branch, "main");
+    let summary = host.files.get(&format!("{}/summary.md", f.state.dir())).cloned().unwrap_or_default();
+    drop(host);
+    let saved = f.saved();
+    assert_eq!(
+        (text(&saved, "phase"), text(&saved, "error"), text(&saved, "branch"), saved.get("nothing_to_publish")),
+        (Some("done".into()), None, None, Some(&Value::Bool(true)))
+    );
+    let said = "nothing tracked changed since the base, so there was nothing to publish";
+    assert!(f.told.lines().iter().any(|l| l.contains(said)), "{:?}", f.told.lines());
+    assert!(summary.contains("- **Pull request:** none: nothing tracked changed"), "{summary}");
+    assert!(f.herdr.state().calls.contains(&Call::Close { workspace: "w1".into() }));
+}
+
+#[test]
+fn a_rejected_run_that_changed_nothing_fails_and_keeps_its_branch_and_workspace() {
+    let f = Fixture::new(vec![
+        ("spec", vec![spec_turn()]),
+        ("build", vec![report_only(1)]),
+        ("review", vec![review_turn(1, CHANGES_REQUESTED)]),
+    ]);
+    assert!(failure(f.workflow(max_rounds(1)).run()).contains("changed no files"));
     assert!(f.host.state().prs.is_empty());
+    assert_eq!(f.host.state().branch, BRANCH);
     assert!(!f.herdr.state().calls.contains(&Call::Close { workspace: "w1".into() }));
 }
 
