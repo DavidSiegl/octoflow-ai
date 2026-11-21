@@ -93,7 +93,7 @@ fn flags_override_saved_settings() {
 }
 
 #[test]
-fn a_resume_timeout_of_0_or_less_is_no_limit() {
+fn a_resume_timeout_of_0_or_less_is_saved_as_0() {
     for given in ["0", "-5"] {
         let state = resumable(&["--timeout", given], &saved_settings(&[])).unwrap();
         assert_eq!(state.turn_timeout, 0, "--timeout {given}");

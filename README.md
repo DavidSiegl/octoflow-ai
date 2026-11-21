@@ -588,7 +588,7 @@ place, with exactly the placeholders of the text it replaces.
 | `FIX_PROMPT.md`, `RECHECK_PROMPT.md` | the Builder's and the Reviewer's prompt in a later round |
 | `REBUILD_NOTE.md`, `REREVIEW_NOTE.md` | to a fresh Builder or Reviewer session in a later round |
 | `QUALITY_FIX_PROMPT.md` | to the quality-gated step when the gate did not pass |
-| `QUALITY_FOLLOWS_NOTE.md` | at the end of every prompt of the quality-gated step in a run with the gate, saying the gate follows and giving the turn's `--timeout` |
+| `QUALITY_FOLLOWS_NOTE.md` | at the end of every prompt of the quality-gated step in a run with the gate whose turn has a time limit (not a human-paced step, nor under `--timeout 0`), saying the gate follows and giving the turn's `--timeout` |
 | `QUALITY_PASSED_NOTE.md`, `QUALITY_UNRESOLVED_NOTE.md`, `QUALITY_STUCK_NOTE.md`, `QUALITY_OFF_NOTE.md` | at the end of the verdict step's prompt, on how the quality gate ended |
 | `LOCKED_NOTE.md`, `PROOFS_NOTE.md`, `CARRIED_PROOFS_NOTE.md` | on restored locked files, and on the Reviewer's failing proofs |
 | `BLOCKED_NOTE.md`, `BLOCKED_PROMPT.md` | at the end of every prompt of a step that can block, and once its report asked the human |
