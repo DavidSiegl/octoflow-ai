@@ -164,6 +164,14 @@ fn launch(harness: &str) -> AgentLaunch<'_> {
     AgentLaunch { label: "Builder", harness, permission_mode: None, model: None, session: None, extra_dir: None }
 }
 
+/// The launch of opencode under bypassPermissions, a mode it starts under (its mode build).
+fn opencode_launch() -> AgentLaunch<'static> {
+    AgentLaunch { permission_mode: Some("bypassPermissions"), ..launch("opencode") }
+}
+
+/// opencode 2.0.24's session config option of its modes, as `opened.json` gives it after a comma, on build.
+const OPENCODE_MODES: &str = r#"{"id":"mode","category":"mode","type":"select","currentValue":"build","options":[{"value":"build","name":"build"},{"value":"plan","name":"plan"}]}"#;
+
 fn activity(agents: &AcpAgents, run: &RunState) -> Option<Activity> {
     agents.find(run, "builder").expect("find").map(|seen| seen.activity)
 }
@@ -357,7 +365,7 @@ fn a_permission_mode_the_session_offers_is_set_once_it_is_open_unless_it_is_alre
 }
 
 #[test]
-fn bypass_is_passed_at_launch_and_a_mode_the_session_or_harness_lacks_is_reported_unpassed() {
+fn bypass_is_passed_at_launch_and_a_mode_the_session_lacks_is_reported_unpassed() {
     let f = Fixture::new();
     let human = Heard::default();
     let agents = f.agents(&human);
@@ -365,15 +373,92 @@ fn bypass_is_passed_at_launch_and_a_mode_the_session_or_harness_lacks_is_reporte
 
     let bypass = agents.start(&f.run, "builder", &mode("agy", "bypassPermissions")).expect("start");
     let not_offered = agents.start(&f.run, "builder", &mode("agy", "plan")).expect("start");
-    let no_equivalent = agents.start(&f.run, "builder", &mode("opencode", "acceptEdits")).expect("start");
 
     assert_eq!(bypass.unpassed, Vec::<String>::new());
     assert!(f.log().contains("argv acp --dangerously-skip-permissions\n"), "{}", f.log());
     let no_plan =
         "agy's session offers no mode plan, its equivalent of --permission-mode plan; starting it without one";
     assert_eq!(not_offered.unpassed, [no_plan]);
-    assert_eq!(no_equivalent.unpassed, [harness("opencode").unwrap().without_mode("acceptEdits")]);
     assert_eq!(f.asked("session/set_mode"), 0, "{:?}", f.methods());
+}
+
+#[test]
+fn opencode_is_refused_under_plan_when_its_session_offers_no_plan_but_runs_on_under_bypass() {
+    let f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    let plan = AgentLaunch { permission_mode: Some("plan"), ..launch("opencode") };
+
+    let planned = agents.start(&f.run, "builder", &plan);
+    let bypassed = agents.start(&f.run, "builder", &opencode_launch()).expect("start");
+
+    let refusal = "opencode's session offers no mode plan, its equivalent of --permission-mode plan, and its own \
+                   mode acts without asking";
+    assert!(matches!(&planned, Err(AgentError::Failed(e)) if e.0 == refusal), "{planned:?}");
+    let no_build = "opencode's session offers no mode build, its equivalent of --permission-mode bypassPermissions; \
+                    starting it without one";
+    assert_eq!(bypassed.unpassed, [no_build]);
+}
+
+#[test]
+fn a_mode_is_set_by_the_session_s_mode_config_option_where_it_has_one() {
+    let f = Fixture::new();
+    f.put("opened.json", &format!(r#","configOptions":[{OPENCODE_MODES}]"#));
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    let plan = AgentLaunch { permission_mode: Some("plan"), ..launch("opencode") };
+
+    let current = agents.start(&f.run, "builder", &opencode_launch()).expect("start");
+    let set = agents.start(&f.run, "builder", &plan).expect("start");
+
+    assert_eq!((current.unpassed, set.unpassed), (vec![], vec![]));
+    assert!(f.log().contains(r#""params":{"sessionId":"s-1","configId":"mode","value":"plan"}"#), "{}", f.log());
+    assert_eq!(f.asked("session/set_config_option"), 1, "{:?}", f.methods());
+    assert_eq!(f.asked("session/set_mode"), 0, "{:?}", f.methods());
+}
+
+#[test]
+fn opencode_is_refused_under_default_and_accept_edits_before_it_starts() {
+    let f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+
+    for mode in [None, Some("default"), Some("acceptEdits")] {
+        let started = agents.start(&f.run, "builder", &AgentLaunch { permission_mode: mode, ..launch("opencode") });
+
+        let named = mode.unwrap_or("default");
+        let refusal = format!(
+            "opencode cannot run under --permission-mode {named} in a run the app starts: none of its modes asks \
+             before it acts; start the run under plan or bypassPermissions, or give the role another agent"
+        );
+        assert!(matches!(&started, Err(AgentError::Failed(e)) if e.0 == refusal), "{mode:?}: {started:?}");
+    }
+    assert!(!std::path::Path::new(&format!("{}/log", f.bin())).exists(), "an agent started");
+}
+
+#[test]
+fn a_run_with_a_role_no_agent_can_start_for_is_refused_when_it_opens() {
+    let mut f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    f.run.next_harnesses.insert("builder".into(), "claude".into());
+    f.run.next_harnesses.insert("reviewer".into(), "opencode".into());
+
+    f.run.permission_mode = Some("plan".into());
+    let planned = agents.open(&mut f.run, &human);
+    f.run.permission_mode = None;
+    let defaulted = agents.open(&mut f.run, &human);
+    f.run.next_harnesses.insert("reviewer".into(), "pi".into());
+    f.run.permission_mode = Some("plan".into());
+    let pi = agents.open(&mut f.run, &human);
+
+    assert!(matches!(planned, Ok(false)), "{planned:?}");
+    let refusal = "the reviewer's opencode cannot run under --permission-mode default in a run the app starts: none \
+                   of its modes asks before it acts; start the run under plan or bypassPermissions, or give the role \
+                   another agent";
+    assert!(matches!(&defaulted, Err(AgentError::Failed(e)) if e.0 == refusal), "{defaulted:?}");
+    let refusal = "the reviewer's pi cannot run in a run the app starts: the app does not offer it yet";
+    assert!(matches!(&pi, Err(AgentError::Failed(e)) if e.0 == refusal), "{pi:?}");
 }
 
 #[test]
@@ -404,18 +489,17 @@ fn a_model_is_set_by_the_session_s_model_config_option_where_it_has_one() {
     let model_option =
         format!(r#"{{"id":"m","category":"model","type":"select","currentValue":"a","options":{options}}}"#);
     let effort = r#"{"id":"effort","category":"thought_level","type":"select","currentValue":"b","options":[]}"#;
-    f.put("opened.json", &format!(r#","configOptions":[{effort},{model_option}]"#));
+    f.put("opened.json", &format!(r#","configOptions":[{effort},{model_option},{OPENCODE_MODES}]"#));
     let human = Heard::default();
     let agents = f.agents(&human);
-    let model = |model| AgentLaunch { model: Some(model), ..launch("opencode") };
+    let model = |model| AgentLaunch { model: Some(model), ..opencode_launch() };
 
     let current = agents.start(&f.run, "builder", &model("a")).expect("start");
     let offered = agents.start(&f.run, "builder", &model("b")).expect("start");
     let not_offered = agents.start(&f.run, "builder", &model("z")).expect("start");
 
-    let without_mode = harness("opencode").unwrap().without_mode("default");
-    assert_eq!((&current.unpassed, &offered.unpassed), (&vec![without_mode.clone()], &vec![without_mode.clone()]));
-    assert_eq!(not_offered.unpassed, [without_mode, "opencode offers no model z; starting it on its own".to_string()]);
+    assert_eq!((current.unpassed, offered.unpassed), (vec![], vec![]));
+    assert_eq!(not_offered.unpassed, ["opencode offers no model z; starting it on its own"]);
     assert!(f.log().contains(r#""params":{"sessionId":"s-1","configId":"m","value":"b"}"#), "{}", f.log());
     assert_eq!(f.asked("session/set_config_option"), 1, "{:?}", f.methods());
     assert_eq!(f.asked("session/set_model"), 0, "{:?}", f.methods());
@@ -425,12 +509,13 @@ fn a_model_is_set_by_the_session_s_model_config_option_where_it_has_one() {
 fn opencode_s_grant_is_a_root_of_its_session_and_agy_s_a_flag() {
     let f = Fixture::new();
     f.put("caps.json", r#"{"sessionCapabilities":{"additionalDirectories":{}}}"#);
+    f.put("opened.json", &format!(r#","configOptions":[{OPENCODE_MODES}]"#));
     let human = Heard::default();
     let agents = f.agents(&human);
-    let granted = |harness| AgentLaunch { extra_dir: Some("/runs"), ..launch(harness) };
 
-    let opencode = agents.start(&f.run, "builder", &granted("opencode")).expect("start");
-    agents.start(&f.run, "builder", &granted("agy")).expect("start");
+    let opencode = AgentLaunch { extra_dir: Some("/runs"), ..opencode_launch() };
+    let opencode = agents.start(&f.run, "builder", &opencode).expect("start");
+    agents.start(&f.run, "builder", &AgentLaunch { extra_dir: Some("/runs"), ..launch("agy") }).expect("start");
 
     let log = f.log();
     let roots = |line: &&str| line.contains(r#""additionalDirectories":["/runs"]"#);
@@ -438,8 +523,7 @@ fn opencode_s_grant_is_a_root_of_its_session_and_agy_s_a_flag() {
     assert_eq!(news.iter().map(roots).collect::<Vec<_>>(), [true, false], "{log}");
     assert!(log.contains("argv acp\n"), "{log}");
     assert!(log.contains("argv acp --add-dir /runs\n"), "{log}");
-    // opencode has no equivalent of any mode yet, `default` included, which a run without one runs in.
-    assert_eq!(opencode.unpassed, [harness("opencode").unwrap().without_mode("default")]);
+    assert_eq!(opencode.unpassed, Vec::<String>::new());
 }
 
 #[test]
@@ -447,7 +531,7 @@ fn a_session_root_is_granted_again_to_a_resumed_session_and_reported_unpassed_wh
     let f = Fixture::new();
     let human = Heard::default();
     let agents = f.agents(&human);
-    let granted = AgentLaunch { extra_dir: Some("/runs"), ..launch("opencode") };
+    let granted = AgentLaunch { extra_dir: Some("/runs"), ..opencode_launch() };
 
     let unoffered = agents.start(&f.run, "builder", &granted).expect("start");
     f.put("caps.json", r#"{"loadSession":true,"sessionCapabilities":{"additionalDirectories":{}}}"#);

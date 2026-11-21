@@ -32,7 +32,7 @@ struct Watched {
 
 impl Watched {
     fn new() -> Watched {
-        let host = Arc::new(ServeHost::on(None));
+        let host = Arc::new(ServeHost::default());
         let project = ProjectRuns::new(reached(&host, &Arc::default()), vec![]);
         Watched { host, project }
     }
@@ -114,7 +114,7 @@ fn a_finished_runs_files_are_read_until_they_settle_and_then_only_when_it_change
 fn a_finished_runs_file_written_later_than_a_poll_interval_is_still_sent() {
     let w = Watched::new();
     let done = [("phase", Value::from("done")), ("verdict", Value::from(APPROVE))];
-    let late = SERVE_POLL.local.as_secs() * 3;
+    let late = SERVE_POLL.as_secs() * 3;
     assert!(late < FINISHED_RUN_WRITES.as_secs());
     w.save(0, &done);
     let mut watch = RunWatch::new(&w.project);
@@ -257,7 +257,7 @@ fn state_json_and_names_outside_the_run_are_refused_unread() {
 
 #[test]
 fn an_agent_is_reached_in_the_herdr_server_its_run_saved() {
-    let host = Arc::new(ServeHost::on(None));
+    let host = Arc::new(ServeHost::default());
     let console = Arc::new(FakeConsole::default());
     let project = ProjectRuns::new(reached(&host, &console), vec![]);
     console.state().screens.insert("build-5e7e00".to_string(), "> ready".to_string());
@@ -295,4 +295,26 @@ fn an_agent_is_reached_in_the_herdr_server_its_run_saved() {
     let e = project.agent_text(SERVE_ID, "build", 10).unwrap_err().to_string();
     assert!(e.starts_with(&format!("{}/state.json is not JSON (", run_dir())), "{e}");
     assert_eq!(console.state().typed.len(), 5);
+}
+
+#[test]
+fn herdr_unreached_sends_to_the_cli_and_an_answered_error_is_herdr_s_own() {
+    let failure = |e| match herdr_failure("build", e) {
+        RunReadError::Failed(e) => e.0,
+        other => panic!("{other:?}"),
+    };
+    let to_cli = "; follow the run and resume it from octoflow's command line";
+
+    let missing = failure(HerdrError::Failed(OrchestratorError::new("herdr is not on PATH")));
+    let stopped = failure(HerdrError::new("server_not_running", "no server"));
+    let answered = failure(HerdrError::new("pane_not_found", "no pane p2"));
+
+    assert_eq!(
+        missing,
+        format!("cannot reach herdr, which this run's build agent runs in: herdr is not on PATH{to_cli}")
+    );
+    assert!(
+        stopped.starts_with("cannot reach herdr, which this run's build agent runs in: ") && stopped.ends_with(to_cli)
+    );
+    assert_eq!(answered, OrchestratorError::from(HerdrError::new("pane_not_found", "no pane p2")).0);
 }

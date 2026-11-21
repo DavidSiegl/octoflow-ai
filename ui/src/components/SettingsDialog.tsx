@@ -10,7 +10,7 @@ const CHOICES: { choice: CloseChoice; label: string }[] = [
 
 /** The app's settings, this computer's for every project: what closing the window does with the open project's runs
  * still running (CloseGuard), which "Don't ask again" in its dialog sets. A choice is saved as soon as it is picked;
- * onClose is called on Close or Escape. Opened only when there is a choice to make (Api.closeChoice). */
+ * onClose is called on Close or Escape. */
 export function SettingsDialog({ api, onClose }: { api: Api; onClose: () => void }) {
   // The saved choice; null while it is read, or when it could not be.
   const [choice, setChoice] = useState<CloseChoice | null>(null);
@@ -18,8 +18,7 @@ export function SettingsDialog({ api, onClose }: { api: Api; onClose: () => void
   useEffect(() => {
     let current = true;
     api.closeChoice().then(
-      (saved) =>
-        current && (saved ? setChoice(saved) : setProblem("There is nothing to set: the app's runs are in herdr.")),
+      (saved) => current && setChoice(saved),
       (error: Error) => current && setProblem(`Could not read the setting: ${error.message}`),
     );
     return () => {

@@ -717,22 +717,23 @@ impl Workflow<'_> {
     /// or exited, as when the human refuses what it asks. The role must have an agent.
     ///
     /// The alert names a startup dialog, unless the agent is past its startup (AgentRecord::past_startup): then it is a
-    /// question about what it was last given, by the run or in its pane. The human decides how long that takes, as
-    /// with the interview, so there is no deadline; the wait is cut into steps so the heartbeat keeps the run from
-    /// looking stale.
+    /// question about what it was last given, by the run or the human. Both say where to answer (Agents::whereabouts).
+    /// The human decides how long that takes, as with the interview, so there is no deadline; the wait is cut into
+    /// steps so the heartbeat keeps the run from looking stale.
     fn wait_out_block(&mut self, role: &str) -> Result<(), StartFailure> {
         let agent = self.state.agents.get(role).ok_or_else(|| OrchestratorError(format!("no agent of {role}")))?;
+        let place = self.whereabouts(role);
         if agent.past_startup {
             self.ask_human(role, "needs your answer");
             self.human.log(&format!(
-                "[{role}] it is asking about what it was last given, or what was typed in its pane; answer there, and \
+                "[{role}] it is asking about what it was last given, or what was sent to it; answer it in {place}, and \
                  the run goes on"
             ));
         } else {
             self.ask_human(role, "needs your answer before it starts");
             self.human.log(&format!(
                 "[{role}] a harness may ask something before it starts, such as Claude Code whether to trust a folder \
-                 it has not run in; answer in the pane, and the run goes on"
+                 it has not run in; answer it in {place}, and the run goes on"
             ));
         }
         while !self.agents.wait_ready(&self.state, role, HEARTBEAT_SECONDS)? {

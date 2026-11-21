@@ -97,14 +97,6 @@ describe("closing the app", () => {
     expect(win.destroyed).toBe(true);
   });
 
-  it("closes at once, asking the server nothing about runs, while the app's runs are in herdr", async () => {
-    const previewHeld = new Promise<void>(() => {});
-    const stop: FakeStop = { running: [{ run: RUN, error: null }], inHerdr: true, previewHeld };
-    const win = await openApp(stop);
-    await close(win);
-    expect(win.destroyed).toBe(true);
-  });
-
   it("closes once the server has not said within CLOSE_CHECK_WAIT whether runs are running", async () => {
     const previewHeld = new Promise<void>(() => {});
     const win = await openApp({ running: [{ run: RUN, error: null }], previewHeld });
@@ -202,12 +194,6 @@ describe("the settings", () => {
     expect(within(dialog).getByRole("radio", { name: "Ask each time" })).toBeChecked();
     fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("dialog", { name: "settings" })).not.toBeInTheDocument();
-  });
-
-  it("are not offered while the app's runs are in herdr", async () => {
-    await openApp({ inHerdr: true });
-    expect(screen.getByRole("button", { name: "Workflows…" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Settings…" })).not.toBeInTheDocument();
   });
 
   it("show a choice that could not be read", async () => {

@@ -149,16 +149,36 @@ describe("the runs overview", () => {
     expect(screen.getByRole("checkbox", { name: "Show closed runs (2)" })).toBeInTheDocument();
   });
 
-  it("opens another project, on a machine, and remembers it", async () => {
+  it("opens another project and remembers it", async () => {
     const { source } = await openApp();
     fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: " ~/other " } });
-    fireEvent.change(screen.getByLabelText("Machine"), { target: { value: "devbox" } });
     fireEvent.click(screen.getByRole("button", { name: "Open" }));
     expect(source.closed).toBe(true);
     const url = new URL(FakeEventSource.last.url);
     expect(url.searchParams.get("cwd")).toBe("~/other");
-    expect(url.searchParams.get("machine")).toBe("devbox");
-    expect(JSON.parse(localStorage.getItem("orchestrator.project") ?? "")).toEqual({ cwd: "~/other", machine: "devbox" });
+    expect(JSON.parse(localStorage.getItem("orchestrator.project") ?? "")).toEqual({ cwd: "~/other" });
+  });
+
+  it("opens a project saved with a machine here, saying once that machines are the command line's", async () => {
+    localStorage.setItem("orchestrator.project", JSON.stringify({ cwd: "~/remote", machine: "devbox" }));
+    await openApp();
+    const url = new URL(FakeEventSource.last.url);
+    expect(url.searchParams.get("cwd")).toBe("~/remote");
+    expect(url.searchParams.has("machine")).toBe(false);
+    const note = screen.getByText(/^This project was opened on the machine devbox/);
+    expect(note).toHaveTextContent("octoflow run --machine devbox");
+    expect(JSON.parse(localStorage.getItem("orchestrator.project") ?? "")).toEqual({ cwd: "~/remote" });
+    fireEvent.click(within(note).getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByText(/^This project was opened on the machine/)).not.toBeInTheDocument();
+  });
+
+  it("drops the note of a project saved with a machine once another project opens", async () => {
+    localStorage.setItem("orchestrator.project", JSON.stringify({ cwd: "~/remote", machine: "devbox" }));
+    await openApp();
+    expect(screen.getByText(/^This project was opened on the machine devbox/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "~/other" } });
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    expect(screen.queryByText(/^This project was opened on the machine/)).not.toBeInTheDocument();
   });
 
   it("asks for a project when the orchestrator belongs to no checkout", async () => {
@@ -536,12 +556,12 @@ describe("the setup dialog", () => {
 
   it("opens from Check setup…, for the open project", async () => {
     const fetch = await openWith({ checked: true, report: { ...REPORT, checks: [...REPORT.checks], adapters: [...REPORT.adapters] } });
-    fireEvent.change(screen.getByLabelText("Machine"), { target: { value: "devbox" } });
+    fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "~/elsewhere" } });
     fireEvent.click(screen.getByRole("button", { name: "Check setup…" }));
     const dialog = await screen.findByRole("dialog", { name: "setup" });
     expect(within(dialog).getByText("/home/me/proj on this computer")).toBeInTheDocument();
     await within(dialog).findByText("herdr 0.9.1", { exact: false });
-    expect(setupCalls(fetch)[0]?.searchParams.has("machine")).toBe(false);
+    expect(setupCalls(fetch)[0]?.searchParams.get("cwd")).toBe("/home/me/proj");
   });
 
   it("writes the marker on Close when every required check passed", async () => {
@@ -830,20 +850,11 @@ describe("the run form", () => {
     typeTask(form, "Add a rate limiter");
     fireEvent.click(within(form).getByRole("button", { name: "Start" }));
     const hint = await screen.findByText(new RegExp(`^Run ${RUN} has started but is not listed yet`));
-    expect(hint).toHaveTextContent(/If it never is, its herdr workspace shows why\.$/);
+    expect(hint).toHaveTextContent(`If it never is, its log, .octoflow-ai/runs/${RUN}/run.log in the project, shows why.`);
     act(() => source.replay("a run started its interview"));
     expect(screen.getByRole("region", { name: "run c0ffee" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "‹ Runs" }));
     expect(screen.queryByText(/is not listed yet/)).not.toBeInTheDocument();
-  });
-
-  it("names the herdr session to attach to for a run not listed yet that is in one", async () => {
-    const { form } = await openForm({ runStatus: 202, runBody: { run: RUN, listed: false, herdr_session: "octoflow" } });
-    typeTask(form, "Add a rate limiter");
-    fireEvent.click(within(form).getByRole("button", { name: "Start" }));
-    const hint = await screen.findByText(new RegExp(`^Run ${RUN} has started but is not listed yet`));
-    expect(hint).toHaveTextContent(/If it never is, herdr session attach octoflow shows why\.$/);
-    expect(within(hint).getByText("herdr session attach octoflow").tagName).toBe("CODE");
   });
 
   it("stops waiting for a run that is not listed", async () => {

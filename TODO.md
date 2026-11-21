@@ -80,34 +80,17 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   double-loading refusal was) is caught only by a real install by hand. Closed by an opt-in test that installs with
   the pinned Node's npm against a local registry, or ignored by default and run before a pin raise.
 
-- **App runs on opencode under `default` will run bash unasked.** opencode gets no ask-before-commands rule
-  (docs/design.md, Harnesses: the user's ruling of 2026-11-20 closed opencode-ask-bash ticket 01 as wontfix). Ticket
-  12 of `.scratch/herdr-gui-decoupling` waited on that ticket so that no ACP opencode agent under `default` would run
-  bash unasked. It needs another answer before the switch turns on: let opencode run as its own config says, or
-  refuse opencode on app runs under `default` and `acceptEdits`, as the app refuses pi.
+- **serve calls every `HerdrError::Failed` "cannot reach herdr".** Raised by cross-review 265, round 2:
+  `herdr_failure` (`engine/src/serve/runs.rs`) sends the user to the CLI for every `Failed`, but `argument()`
+  (`engine/src/herdr.rs`) also gives `Failed` for text or a key starting with `--` and a letter, as do non-UTF-8 output
+  and I/O errors; so typing "--help" to an earlier app run's herdr agent says herdr cannot be reached. Only the wording
+  is wrong. Closes when `HerdrError` tells "not reached" apart from a refused argument, and `herdr_failure` keys on that.
 
-- **herdr's words and fields still reach past the `Agents`/`RunPlaces` seam.** `Workflow::wait_out_block`
-  (`engine/src/workflow/turn.rs`) logs "answer in the pane" and "typed in its pane; answer there", and
-  `Plan::summary` (`engine/src/cli/close.rs`) records "workspace closed" / "workspace already gone", whatever backend
-  the run used; list and show print the run's `workspace_id` and each agent's `pane` straight from the state
-  (`run_record`, `show_run` in `engine/src/cli/listing.rs`). All were kept so the herdr-only text stays unchanged; a
-  run on the ACP backend (`engine/src/acp.rs`) would print them wrong or empty. No ACP run reaches them until the app
-  starts one (`.scratch/herdr-gui-decoupling`, ticket 03), and no ticket of that feature rewords them: closes when
-  these take their wording from the backend (`Agents::whereabouts`, `RunPlaces::place`), before ticket 12 turns the
-  app over to ACP. serve
-  reading `herdr_server` (`engine/src/serve/runs.rs`) is by design: its `AgentConsole` stays herdr's own.
-
-- **POST /resume of a project on a machine ends leftovers on a local path before refusing.** Raised by cross-review
-  259 (F7): `ProjectRuns::resume` (`engine/src/serve/runs.rs`) runs `end_leftovers` on the remote run directory's path
-  on this machine before `start_detached` checks `remote()`, so the client gets "cannot list ..." instead of "a run
-  over ACP starts on this machine only" (both 502). Nothing is ended, as no such path exists here. Closes when resume
-  checks `remote()` before `end_leftovers`.
-
-- **Resume shows for an app run whose project starts its runs in herdr.** Raised by cross-review 259 (F8):
-  `RunDetail.tsx` shows the button for any `resumable && backend === "acp"` run, but with the developer switch off
-  `ProjectRuns::resume` always answers 409 ("this app's runs start in herdr"). The error is clear; the button cannot
-  work. Closes when serve tells the app how its project launches runs (or the switch is gone, ticket 12 of
-  `.scratch/herdr-gui-decoupling`).
+- **An ACP run's open checks the harness of every role, finished ones too.** Raised by cross-review 265, round 2:
+  `AcpAgents::open` (`engine/src/acp.rs`) refuses a run when any role's next harness cannot start under the run's
+  permission mode, so a CLI resume of an app run that changes `--permission-mode` to `default` is refused for a
+  finished role on opencode, which never starts again; `--role-agent` gets past it, and serve's resume takes no mode,
+  so the app cannot reach it. Closes when `open` checks only the roles the run's remaining steps start.
 
 - **An ACP turn's usage is lost when its prompt is still pending at count time or at a kill.** Raised by
   cross-review 257 (F7): `acp-usage.jsonl` gets a prompt's line only when the agent answers its `session/prompt`

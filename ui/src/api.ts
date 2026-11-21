@@ -13,10 +13,9 @@ export interface Connection {
   version: string;
 }
 
-/** A project as the server takes it: a directory, on the saved herdr machine or, with machine empty, here. */
+/** A project as the server takes it: a directory on this computer, which may start with ~. */
 export interface Project {
   cwd: string;
-  machine: string;
 }
 
 /** One of the workflow's steps as the run record gives it. role_label, loop_to and quality_gated are absent from a
@@ -206,7 +205,7 @@ export interface AdapterInstall {
 }
 
 /** A project's setup checks, in the order the server made them; passed is true when every `required` one is ok.
- * adapters are the ACP adapters the app installs, none for app runs in herdr, whose agents are the harnesses' CLIs. */
+ * adapters are the ACP adapters the app installs, one per harness that runs through one. */
 export interface SetupReport {
   checks: SetupCheck[];
   passed: boolean;
@@ -263,14 +262,6 @@ export interface RunRequest {
   permission_mode?: string;
   no_pr: boolean;
   worktree: boolean;
-}
-
-/** A run POST /run started: its id, and the named herdr session its workspace is in, which
- * `herdr session attach <herdrSession>` shows; null when it is in the herdr server the sidecar's environment
- * reaches, which the user's own herdr shows. */
-export interface StartedRun {
-  run: string;
-  herdrSession: string | null;
 }
 
 /** One run a sweep of POST /close looked at, as `close --all` would: its outcome "closed" (for a dry run: would be
@@ -457,8 +448,8 @@ export class Api {
     });
   }
 
-  /** What the project needs for a run, checked where its agents run. The checks take a few seconds, longer on a
-   * machine; a check that fails is part of the report, not a rejection. */
+  /** What the project needs for a run. The checks take a few seconds; a check that fails is part of the report, not a
+   * rejection. */
   async setupChecks(project: Project): Promise<SetupReport> {
     return this.json(this.url("/setup", project, {})) as Promise<SetupReport>;
   }
@@ -493,8 +484,8 @@ export class Api {
 
   /** Install, on this computer, the Node and the ACP adapter that agent's runs over ACP start, agent being an
    * AdapterInstall's, at the versions this octoflow pins, unless they are installed. It downloads them, so it takes
-   * minutes. Rejects with the server's error message: status 400 for an agent without an adapter, 409 for app runs
-   * in herdr, which have none to install, 502 for an install that fails. */
+   * minutes. Rejects with the server's error message: status 400 for an agent without an adapter, 502 for an install
+   * that fails. */
   async installAdapter(agent: string): Promise<void> {
     const query = new URLSearchParams({ agent });
     await this.json(`${this.connection.url}/setup/adapter?${query}`, { method: "POST" });
@@ -558,23 +549,22 @@ export class Api {
     return this.path(await this.post("/workflow/delete", { name, base }));
   }
 
-  /** Start the run request asks for in project, in a new workspace of this computer's herdr, and resolve to
-   * the run started (StartedRun) once it has saved its state or the server's 30 seconds of waiting for that have
-   * passed, whichever is first: the run may not be in the event stream yet, and one that exits after the wait never
-   * will be. Rejects with
-   * the server's error message: status 400 for a request it refuses, 413 for one too long, 422 for a run that exited
-   * before saving its state, the message ending with the last lines its pane showed, 500 when the server cannot tell
-   * its own program or make a run id, and 502 for a project it cannot reach or a run herdr cannot start. */
-  async startRun(project: Project, request: RunRequest): Promise<StartedRun> {
+  /** Start the run request asks for in project, its agents over ACP, and resolve to the id of the run started once it
+   * has saved its state or the server's 30 seconds of waiting for that have passed, whichever is first: the run may
+   * not be in the event stream yet, and one that exits after the wait never will be. Rejects with the server's error
+   * message: status 400 for a request it refuses, 413 for one too long, 422 for a run that exited before saving its
+   * state, the message ending with the last lines of its log, 500 when the server cannot tell its own program or make
+   * a run id, and 502 for a project it cannot reach or a run it cannot start. */
+  async startRun(project: Project, request: RunRequest): Promise<string> {
     const body = (await this.json(this.url("/run", project, {}), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
-    })) as { run?: unknown; herdr_session?: unknown };
+    })) as { run?: unknown };
     if (typeof body.run !== "string") {
       throw new HttpError(200, "the answer has no run");
     }
-    return { run: body.run, herdrSession: typeof body.herdr_session === "string" ? body.herdr_session : null };
+    return body.run;
   }
 
   /** Resume run, a resumable "acp" run of project (RunRecord.resumable): its leftover agents are ended, and its
@@ -637,14 +627,10 @@ export class Api {
     return this.sweep("/stop", project, { dry_run: false });
   }
 
-  /** The choice saved for closing the window with runs running; null when there is none to make, the app's runs being
-   * in herdr, which closing it never stops (a release's app, without the developer setting OCTOFLOW_APP_BACKEND=acp).
-   * Rejects with the server's error when it cannot be read. */
-  async closeChoice(): Promise<CloseChoice | null> {
+  /** The choice saved for closing the window with runs running. Rejects with the server's error when it cannot be
+   * read. */
+  async closeChoice(): Promise<CloseChoice> {
     const body = (await this.json(`${this.connection.url}/close-choice`)) as { choice?: unknown };
-    if (body.choice === null) {
-      return null;
-    }
     if (body.choice !== "ask" && body.choice !== "keep" && body.choice !== "stop") {
       throw new HttpError(200, "the answer has no choice");
     }
@@ -722,9 +708,6 @@ export class Api {
 
   private url(path: string, project: Project, params: Record<string, string>): string {
     const query = new URLSearchParams({ cwd: project.cwd, ...params });
-    if (project.machine) {
-      query.set("machine", project.machine);
-    }
     return `${this.connection.url}${path}?${query}`;
   }
 }

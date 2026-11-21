@@ -125,6 +125,10 @@ a {
   color: var(--coral);
 }
 
+.notice {
+  color: var(--muted-mint);
+}
+
 .empty,
 .loading {
   color: var(--muted-mint);

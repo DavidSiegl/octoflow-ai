@@ -397,34 +397,21 @@ fn serve_with_a_closed_stdout_ends_naming_why() {
 }
 
 #[test]
-fn serve_reaches_a_machine_by_its_saved_target() {
-    // herdr names the machine's SSH target, and ssh, played by a script here, runs each command
-    // where the project is; with no machine, herdr is not asked.
-    let dir = Dir::new("serve-machine");
+fn serve_reads_a_project_without_asking_herdr() {
+    let dir = Dir::new("serve-no-herdr");
     let asked = dir.path().join("asked");
-    let machines = r#"[{"label": "box", "id": "m1", "enabled": true, "target": "me@box"}]"#;
-    dir.tool("herdr", &format!("#!/bin/sh\necho \"herdr $*\" >> '{}'\necho '{machines}'\n", asked.display()));
-    let ssh =
-        format!("#!/bin/sh\nfor a; do last=$a; done\necho \"ssh $*\" >> '{}'\nexec sh -c \"$last\"\n", asked.display());
-    dir.tool("ssh", &ssh);
+    dir.tool("herdr", &format!("#!/bin/sh\necho \"herdr $*\" >> '{}'\n", asked.display()));
     let project = dir.path().join("proj");
     std::fs::create_dir_all(project.join(".octoflow-ai/runs/20261024-120000-5e7e00")).unwrap();
     let state = r#"{"format": 2, "run_id": "20261024-120000-5e7e00", "task": "t", "phase": "build", "round": 1}"#;
     std::fs::write(project.join(".octoflow-ai/runs/20261024-120000-5e7e00/state.json"), state).unwrap();
     let serving = Serving::start(&dir, &[]);
-    let (status, body) = serving.get(&format!("/runs?cwd={}", encoded(&project)));
-    assert_eq!(status, 200, "{body}");
-    assert!(!asked.exists(), "{:?}", std::fs::read_to_string(&asked));
+    // A machine, as an app before 0.94.0 saved and sent it, is no parameter of serve's: the project is read here.
     let (status, body) = serving.get(&format!("/runs?cwd={}&machine=box", encoded(&project)));
     assert_eq!(status, 200, "{body}");
     let record: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(record["runs"][0]["id"], "20261024-120000-5e7e00");
-    let log = std::fs::read_to_string(&asked).expect("herdr and ssh were asked");
-    let mut lines = log.lines();
-    assert_eq!(lines.next(), Some("herdr machine list --json"));
-    assert!(lines.all(|l| l.starts_with("ssh -o BatchMode=yes ") && l.contains(" me@box ")), "{log}");
-    let (status, body) = serving.get(&format!("/runs?cwd={}&machine=nosuch", encoded(&project)));
-    assert_eq!((status, body.as_str()), (502, r#"{"error":"no saved herdr machine named nosuch"}"#));
+    assert!(!asked.exists(), "{:?}", std::fs::read_to_string(&asked));
     let (ended, _, err) = serving.stop(Signal::SIGTERM);
     assert_eq!(ended.code(), Some(0), "{err}");
 }

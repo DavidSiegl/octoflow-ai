@@ -25,8 +25,7 @@ type Closing =
 
 /** Guards the window's close while the open project has "acp" runs running (Api.previewStop): it asks whether to
  * keep them running or stop them, unless a choice was saved with "Don't ask again" (Api.closeChoice), and then closes
- * the window. It closes at once when there is no choice to make (the app's runs are in herdr, which the app never
- * stops), when no run is running, and when the server cannot say within CLOSE_CHECK_WAIT, since it could not stop a
+ * the window. It closes at once when the choice is to keep them running, when no run is running, and when the server cannot say within CLOSE_CHECK_WAIT, since it could not stop a
  * run either. Asked to close again while it asks or stops, it carries on with that. A run keeps running whether or not
  * the app does. */
 export function CloseGuard({ api, project, appWindow }: { api: Api; project: Project; appWindow: AppWindow }) {
@@ -49,7 +48,7 @@ export function CloseGuard({ api, project, appWindow }: { api: Api; project: Pro
       }
       const check = async () => {
         const choice = await api.closeChoice();
-        if (choice === null || choice === "keep") {
+        if (choice === "keep") {
           return null;
         }
         const running = await api.previewStop(project);

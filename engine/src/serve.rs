@@ -21,10 +21,9 @@ use crate::constants::EXIT_ERROR;
 use crate::env::ConfigDir;
 use crate::error::{os_error, OrchestratorError};
 use crate::harness::Adapter;
-use crate::herdr::{AgentConsole, Launcher, ProcessHerdr};
+use crate::herdr::{AgentConsole, ProcessHerdr};
 use crate::host::{Host, ProcessHost};
 use crate::interrupt::Interrupt;
-use crate::state::Backend;
 use close_choice::CloseChoice;
 use runs::{plain_name, AgentInput, Event, ProjectRuns, RunReadError, RunWatch};
 use serde_json::Value;
@@ -41,24 +40,14 @@ pub mod start;
 pub mod url;
 mod workflows;
 
-/// How often an event stream reads its project's runs again. A read of a local project starts a few short processes;
-/// on a --machine, each of them is an SSH round trip, so a machine's project is read less often.
-pub const SERVE_POLL: Polls = Polls { local: Duration::from_secs(1), remote: Duration::from_secs(5) };
+/// How often an event stream reads its project's runs again.
+pub const SERVE_POLL: Duration = Duration::from_secs(1);
 
 /// How long after the save that finishes a run the engine may still be writing the run's files: summary.md and
-/// metrics.json (workflow.rs, end_done_run; release writes summary.md), which on a --machine's project read the round
-/// results over SSH first. It must cover those writes on a slow machine, whatever SERVE_POLL is; an event stream lists
-/// a finished run's files on every poll until its state.json is this old (RunWatch::poll).
+/// metrics.json (workflow.rs, end_done_run; release writes summary.md). It must cover those writes on a slow machine,
+/// whatever SERVE_POLL is; an event stream lists a finished run's files on every poll until its state.json is this old
+/// (RunWatch::poll).
 pub const FINISHED_RUN_WRITES: Duration = Duration::from_secs(60);
-
-/// How often an event stream polls its project, by where the project is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Polls {
-    /// For a project on this machine.
-    pub local: Duration,
-    /// For a project on a --machine, read over SSH.
-    pub remote: Duration,
-}
 
 /// The lines of an agent's terminal /agent gives without ?lines=, and the most it gives with one.
 pub const AGENT_LINES: (u32, u32) = (200, 2000);
@@ -66,58 +55,30 @@ pub const AGENT_LINES: (u32, u32) = (200, 2000);
 /// The most bytes of a POST's body serve reads; a longer one gets 413.
 pub const MAX_BODY_BYTES: usize = 64 * 1024;
 
-/// A project as Connect reaches it.
+/// A project on this machine as Connect reaches it. A run serve starts in it runs detached, its agents over ACP
+/// (ProjectRuns::start); the herdr it names is only for the runs started in herdr before, by the CLI or by an app
+/// before 0.94.0, whose agents' panes the agent tab still shows.
 pub struct Reached {
     /// Reaches the project's files; must stop its commands when the server stops.
     pub host: Arc<dyn Host + Send + Sync>,
-    /// The project's absolute directory on host.
+    /// The project's absolute directory.
     pub dir: String,
-    /// Reaches its runs' agents, each by its AgentAddress.
+    /// Reaches its herdr runs' agents, each by its AgentAddress.
     pub console: Arc<dyn AgentConsole>,
     /// Tells and closes its herdr runs' agents' places, each from what its run saved, for POST /close.
     pub places: Arc<dyn RunPlaces + Send + Sync>,
-    /// How POST /run starts a run's process.
-    pub launch: Launch,
-    /// The directory of this machine a run's process starts in: dir for a project here, serve's own working
-    /// directory for one on a machine, which the run reaches over SSH.
-    pub launch_dir: String,
 }
 
-/// How POST /run starts a run's process, on this machine.
-pub enum Launch {
-    /// In a pane of this machine's herdr, by the Launcher (Launcher::launch says which server), for a project here and
-    /// one on a machine alike: a machine's run is driven from here, as from the CLI. The run's agents run in herdr.
-    Herdr(Arc<dyn Launcher>),
-    /// Detached from serve (crate::host::spawn_detached), so that it outlives serve and the app, its output in the
-    /// run directory's START_LOG, its agents over ACP (`--acp`, crate::acp); for a project here only. The app's runs
-    /// when APP_BACKEND_VARIABLE selects ACP.
-    Detached,
-}
-
-/// How a RunServer reaches the project a request names: given the saved herdr machine (empty for this one) and the
-/// directory, which may start with ~, as the request gives them, and the Interrupt the server raises when it stops,
-/// which must stop the Host's commands. Errors: the project cannot be reached. [`project_host`] is the real one.
-pub type Connect = dyn Fn(&str, &str, &Interrupt) -> Result<Reached, OrchestratorError> + Send + Sync;
-
-/// The environment variable that selects the backend of the desktop app's runs, read when serve starts: a hidden
-/// developer setting until herdr-gui-decoupling ticket 12 puts every app run on ACP and drops it. Set before the app
-/// starts, since serve inherits the app's environment.
-pub const APP_BACKEND_VARIABLE: &str = "OCTOFLOW_APP_BACKEND";
-
-/// The backend the app's runs use, given APP_BACKEND_VARIABLE's value: Acp for `acp`, Herdr for any other or none.
-fn app_backend(value: Option<&std::ffi::OsStr>) -> Backend {
-    if value.is_some_and(|v| v == "acp") {
-        Backend::Acp
-    } else {
-        Backend::Herdr
-    }
-}
+/// How a RunServer reaches the project a request names: given its directory on this machine, which may start with ~,
+/// as the request gives it, and the Interrupt the server raises when it stops, which must stop the Host's commands.
+/// Errors: the project cannot be reached. [`project_host`] is the real one.
+pub type Connect = dyn Fn(&str, &Interrupt) -> Result<Reached, OrchestratorError> + Send + Sync;
 
 /// The program's `serve`: start a RunServer that also answers origins, its setup marker and workflows in config, print {"url", "token"} as one JSON line on
 /// standard output, and serve until SIGINT or SIGTERM; returns 0 then, the server stopped. Returns EXIT_ERROR, with
 /// one line on standard error, when no port can be bound, or when the line cannot be printed, as when whoever
 /// started serve has stopped reading its standard output: nobody could reach the server then. SIGHUP keeps its
-/// default, ending the process. Its /setup checks are those of the backend APP_BACKEND_VARIABLE selects.
+/// default, ending the process.
 ///
 /// Must be called on the main thread before any other thread starts, as crate::interrupt::by_signals must, and
 /// instead of it: SIGINT and SIGTERM are blocked in every thread and waited for here, also when the process started
@@ -129,9 +90,7 @@ pub fn serve_command(origins: &[String], config: &ConfigDir) -> i32 {
         eprintln!("error: cannot wait for SIGINT and SIGTERM: {e}");
         return EXIT_ERROR;
     }
-    let backend = app_backend(std::env::var_os(APP_BACKEND_VARIABLE).as_deref());
-    let connect = move |machine: &str, cwd: &str, stopping: &Interrupt| project_host(machine, cwd, stopping, backend);
-    let started = RunServer::start(origins, Box::new(connect), Setup::of(config, backend), config.clone(), backend);
+    let started = RunServer::start(origins, Box::new(project_host), Setup::of(config), config.clone());
     serve(started, &mut io::stdout(), &mut io::stderr(), || signals.wait().map(drop).map_err(io::Error::from))
 }
 
@@ -166,51 +125,28 @@ fn serve(
     }
 }
 
-/// The project on the saved herdr machine or, with machine empty, here: the Host that reaches it, its absolute
-/// directory, cwd's, which may start with ~, and the console that reaches its agents, this machine's herdr
-/// forwarding to machine. Each command is stopped by stopping. Unlike connect, it does not check for a
-/// herdr pane, since reading a project sends herdr no command, so a window started from a file manager reads it too.
-/// A run it starts is launched in this machine's herdr (Launch::Herdr), or detached (Launch::Detached) when backend,
-/// the one APP_BACKEND_VARIABLE selects, is ACP.
-/// On this machine, an agent's commands go to the herdr server its run saved (RunState::herdr_server), whatever
-/// server serve's own environment picks; an agent of a run saved before runs saved it is reached in the one serve's
-/// environment picks (HERDR_SOCKET_PATH, else HERDR_SESSION, else the default session). Errors: the machine is not
-/// saved or enabled, or the directory cannot be entered; for a project on a machine, serve's own working directory
-/// cannot be told; the project's own directory has to move from its old name, and that is refused or fails
+/// The project in cwd on this machine, which may start with ~: the Host that reaches it, its absolute directory, and
+/// this machine's herdr as its herdr runs' console and places. Each command is stopped by stopping. Reading a project
+/// sends herdr no command, so a project without herdr is read too. An agent's commands go to the herdr server its run
+/// saved (RunState::herdr_server); an agent of a run saved before runs saved it is reached in the one serve's
+/// environment picks (HERDR_SOCKET_PATH, else HERDR_SESSION, else the default session). Errors: the directory cannot
+/// be entered; the project's own directory has to move from its old name, and that is refused or fails
 /// (crate::old_project_dir::move_project_dir, whose line saying it moved goes to serve's standard error).
-pub fn project_host(
-    machine: &str,
-    cwd: &str,
-    stopping: &Interrupt,
-    backend: Backend,
-) -> Result<Reached, OrchestratorError> {
-    let here = ProcessHost::local(stopping);
-    let herdr = ProcessHerdr::new(Some(machine), stopping);
-    let host = if machine.is_empty() { here } else { here.over_ssh(&herdr.ssh_target()?) };
+pub fn project_host(cwd: &str, stopping: &Interrupt) -> Result<Reached, OrchestratorError> {
+    let host = ProcessHost::local(stopping);
     let dir = host.resolve_dir(cwd)?;
     let moved = crate::old_project_dir::move_project_dir(&host, &dir, false)?;
     if let Some(moved) = moved {
         // Nowhere else to say it, if stderr does not take it.
         let _ = writeln!(io::stderr(), "{moved}");
     }
-    let launch_dir = if machine.is_empty() { dir.clone() } else { serve_dir()? };
-    let launch = match backend {
-        Backend::Acp => Launch::Detached,
-        Backend::Herdr => Launch::Herdr(Arc::new(ProcessHerdr::new(None, stopping))),
-    };
-    let herdr = Arc::new(herdr);
-    Ok(Reached { host: Arc::new(host), dir, console: herdr.clone(), places: herdr, launch, launch_dir })
-}
-
-/// serve's working directory. Errors: it cannot be told, or is not UTF-8.
-fn serve_dir() -> Result<String, OrchestratorError> {
-    let dir = std::env::current_dir().map_err(|e| OrchestratorError(format!("cannot tell serve's directory: {e}")))?;
-    dir.into_os_string().into_string().map_err(|d| OrchestratorError(format!("serve's directory {d:?} is not UTF-8")))
+    let herdr = Arc::new(ProcessHerdr::new(None, stopping));
+    Ok(Reached { host: Arc::new(host), dir, console: herdr.clone(), places: herdr })
 }
 
 /// serve's HTTP server, on a free port of 127.0.0.1, with its token, answering until it is dropped. Its endpoints
-/// but /setup/checked, /close-choice and the workflow ones each name the project by ?cwd= and an optional ?machine=,
-/// and answer JSON; each is a GET but the fifteen POSTs:
+/// but /setup/checked, /close-choice and the workflow ones each name a project on this machine by ?cwd=, and answer
+/// JSON; each is a GET but the fifteen POSTs:
 ///
 /// - /runs: {"version", "runs"}, as `list --json` prints it.
 /// - /files?run=ID: {"run", "files"}, the run's files as ProjectRuns::files lists them.
@@ -234,20 +170,19 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 ///   socket (crate::acp::ask); POST /agent/message?run=ID&role=ROLE sends the body's {"text": "..."} as the human's
 ///   message, the agent's next prompt, while the run waits on the human (the journal's pending `waiting`). Both
 ///   answer {"run", "role"}; 400 for a body of another shape and 413 as for /agent/input, both before the project is
-///   reached; 404 for a project on a machine; 409 for a run not running or of another version. A refusal of the run's
+///   reached; 409 for a run not running or of another version. A refusal of the run's
 ///   adds "code", the socket's error code: 404 for `no_agent` and `no_request`, 409 for `already_answered` (the
 ///   first answer won) and `not_waiting`, 400 for `bad_option`.
 /// - /setup?cwd=DIR: {"checks", "passed", "adapters"}, the project's setup checks, and the ACP adapters the dialog
 ///   offers to install, as Setup::checks gives them; 400 for a cwd missing or empty. It does not reach the project as
-///   the others do, so that a machine that is not saved or a folder that is missing shows as a failed check, not as
-///   502.
+///   the others do, so that a folder that is missing shows as a failed check, not as 502.
 /// - /setup/checked: {"checked"}, whether the setup dialog need not open by itself (Setup::checked); 500 when that
 ///   cannot be told.
 /// - POST /setup/checked: records that it has (Setup::mark), whatever the checks say, and answers {"checked": true};
 ///   500 when the marker cannot be written.
 /// - POST /setup/adapter?agent=NAME: installs the ACP adapter of harness NAME (Setup::install_adapter), which takes
-///   minutes, and answers {"installed": true}; 400 for a NAME that has no adapter (crate::harness::Adapter), 409
-///   for app runs in herdr, which have none to install, 502 for an install that fails.
+///   minutes, and answers {"installed": true}; 400 for a NAME that has no adapter (crate::harness::Adapter), 502 for
+///   an install that fails.
 /// - POST /setup/gate?cwd=DIR: sets the project up for `--quality-gate local` (ProjectRuns::set_up_gate) and answers
 ///   {"files": [{"path", "written"}, ...]}, written false for a file it kept; 400 for a cwd missing, 502 for a project
 ///   that cannot be reached or a setup that fails, as for a cwd in no git checkout.
@@ -266,23 +201,18 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 ///   answers {"path"}; 400 for a built-in workflow, 404 for no such file, 409 when the file is not base, 500 for a
 ///   removal that failed. Each of the three workflow POSTs answers 400 for a body of another shape and 413 for one
 ///   over MAX_BODY_BYTES.
-/// - POST /run?cwd=DIR: starts the run the JSON body asks for (start::RunRequest::parse), as a new run id, in a new
-///   herdr workspace of this machine where its `run` command can be watched and interrupted, or detached, its agents
-///   over ACP (Reached::launch), and waits for it (start::START_WAIT, ProjectRuns::start). 201 {"run"} once it has
-///   saved its state.json; 422 {"error", "run"} when `run` exited without saving one, error ending with the last lines
-///   its pane showed or its log holds; 202 {"run", "listed": false} after 30 seconds of neither. A 201 or 202 adds
-///   "herdr_session", the named herdr session the run's workspace is in, when serve started one to launch it in
-///   (herdr::OWN_SESSION); without it, the workspace is in the herdr server serve's own environment reaches. 400 for a
-///   body RunRequest::parse refuses and 413 as for /agent/input, both before the project is reached; 502 when herdr
-///   cannot launch it, as when it has no server running here and none can be started, or when it cannot be started
-///   detached, as for a project on a machine.
+/// - POST /run?cwd=DIR: starts the run the JSON body asks for (start::RunRequest::parse), as a new run id, detached,
+///   its agents over ACP (ProjectRuns::start), and waits for it (start::START_WAIT). 201 {"run"} once it has saved its
+///   state.json; 422 {"error", "run"} when `run` exited without saving one, error ending with the last lines its log
+///   holds; 202 {"run", "listed": false} after 30 seconds of neither. 400 for a body RunRequest::parse refuses and 413
+///   as for /agent/input, both before the project is reached; 502 when it cannot be started.
 /// - POST /resume?cwd=DIR&run=ID: resumes the desktop app's run ID (ProjectRuns::resume): ends its leftover agents,
 ///   starts its `resume` detached, and waits for it as POST /run waits for a run. 200 {"run"} once it has taken the run
 ///   up; 422 {"error", "run"} when `resume` exited without, error ending with its log's last lines; 202 {"run",
 ///   "listed": false} after 30 seconds of neither. The body is not read. 403 for a run id that is not a plain name,
-///   404 for no such run, 409 for a run not the app's or that a resume would not take up or would find nothing left
-///   to do in (the listing's resumable false), or a project whose runs start in herdr; 502 for a project that cannot
-///   be reached, or one on a machine, or a resume that cannot be started.
+///   404 for no such run, 409 for a run not the app's (a run in herdr resumes from the CLI) or that a resume would not
+///   take up or would find nothing left to do in (the listing's resumable false); 502 for a project that cannot be
+///   reached, or a resume that cannot be started.
 /// - POST /close?cwd=DIR: with the JSON body {"dry_run": true}, says what closing each run of the project that
 ///   `close --all` closes would do, changing nothing; with {"close": [{"run", "detail", "discarded"}, ...]}, the
 ///   "closed" runs of such a dry run's answer, closes those runs and no other, each only while closing it would still
@@ -312,12 +242,11 @@ fn serve_dir() -> Result<String, OrchestratorError> {
 ///   fails does not stop the others. 400 for a body of another shape and 413 as for /agent/input, both before the
 ///   project is reached; 502 for a project that cannot be reached or whose runs cannot be read.
 /// - /close-choice: {"choice"}, what the app does with its running runs when its window closes (CloseChoice): "ask",
-///   "keep" or "stop"; null when the app's runs are in herdr (APP_BACKEND_VARIABLE), which closing it never stops, so
-///   that the app neither asks nor offers the setting. 500 when it cannot be read.
+///   "keep" or "stop". 500 when it cannot be read.
 /// - POST /close-choice: saves the JSON body's {"choice": "ask" | "keep" | "stop"} and answers {"choice"}; 400 for a
 ///   body of another shape and 413 as for /agent/input, 500 when it cannot be saved.
-/// - /events: a text/event-stream of RunWatch's events, polled every SERVE_POLL.local, every SERVE_POLL.remote for a
-///   --machine project, until the client goes or the server stops. An HTTP/1.1 client gets it chunked, so that the
+/// - /events: a text/event-stream of RunWatch's events, polled every SERVE_POLL, until the client goes or the server
+///   stops. An HTTP/1.1 client gets it chunked, so that the
 ///   end of the stream is the end of the response; an HTTP/1.0 client's ends when the connection closes.
 ///
 /// Every request is checked in this order: a Host header other than the server's own address, or an Origin other
@@ -356,20 +285,17 @@ struct Shared {
     stopping: Interrupt,
     /// How a request's project is reached (Connect).
     connect: Box<Connect>,
-    /// By the machine and directory a request names, as it spells them, the one project that every request for that
-    /// machine and directory shares: two spellings of one directory (`~/proj`, `/home/u/proj/`) map to the same.
-    projects: Mutex<HashMap<(String, String), Arc<ProjectRuns>>>,
+    /// By the directory a request names, as it spells it, the one project that every request for that directory
+    /// shares: two spellings of one directory (`~/proj`, `/home/u/proj/`) map to the same.
+    projects: Mutex<HashMap<String, Arc<ProjectRuns>>>,
     /// What /setup and /setup/checked answer from.
     setup: Setup,
     /// How often its event streams poll their projects.
-    polls: Polls,
+    poll: Duration,
     /// Where /workflows finds the workflow files.
     config: ConfigDir,
     /// How POST /run waits for the run it starts.
     start_wait: StartWait,
-    /// The backend of the app's runs, APP_BACKEND_VARIABLE's. With Herdr, closing the app never stops one of them,
-    /// so there is no close choice to make (/close-choice).
-    app_backend: Backend,
 }
 
 impl RunServer {
@@ -377,24 +303,17 @@ impl RunServer {
     /// such as tauri://localhost), each project reached by connect, its setup checked and marked by setup, the
     /// workflows a run can be started with read from config. Errors: no port can be bound, or no token made from the
     /// system's random bytes, or no thread started.
-    pub fn start(
-        origins: &[String],
-        connect: Box<Connect>,
-        setup: Setup,
-        config: ConfigDir,
-        app_backend: Backend,
-    ) -> io::Result<RunServer> {
-        RunServer::start_polling(origins, connect, setup, config, app_backend, SERVE_POLL, START_WAIT)
+    pub fn start(origins: &[String], connect: Box<Connect>, setup: Setup, config: ConfigDir) -> io::Result<RunServer> {
+        RunServer::start_polling(origins, connect, setup, config, SERVE_POLL, START_WAIT)
     }
 
-    /// As start, the event streams polling every polls, and POST /run waiting as start_wait says.
+    /// As start, the event streams polling every poll, and POST /run waiting as start_wait says.
     pub(crate) fn start_polling(
         origins: &[String],
         connect: Box<Connect>,
         setup: Setup,
         config: ConfigDir,
-        app_backend: Backend,
-        polls: Polls,
+        poll: Duration,
         start_wait: StartWait,
     ) -> io::Result<RunServer> {
         let token = new_token()?;
@@ -412,10 +331,9 @@ impl RunServer {
             connect,
             projects: Mutex::new(HashMap::new()),
             setup,
-            polls,
+            poll,
             config,
             start_wait,
-            app_backend,
         });
         let listening = Arc::new(Mutex::new(Some(Arc::new(on(&listener)?))));
         let (dispatched, to) = (Arc::clone(&listening), Arc::clone(&shared));
@@ -509,24 +427,22 @@ fn lock(
 }
 
 impl Shared {
-    /// The project in directory cwd, which may start with ~, on the saved herdr machine, or here with machine empty.
-    /// Errors: it cannot be reached.
-    fn project(&self, machine: &str, cwd: &str) -> Result<Arc<ProjectRuns>, OrchestratorError> {
-        let key = (machine.to_string(), cwd.to_string());
-        if let Some(project) = self.lock_projects().get(&key) {
+    /// The project in directory cwd, which may start with ~. Errors: it cannot be reached.
+    fn project(&self, cwd: &str) -> Result<Arc<ProjectRuns>, OrchestratorError> {
+        if let Some(project) = self.lock_projects().get(cwd) {
             return Ok(Arc::clone(project));
         }
-        let reached = (self.connect)(machine, cwd, &self.stopping)?;
-        let project = Arc::new(ProjectRuns::new(reached, target_args(machine, cwd)));
+        let reached = (self.connect)(cwd, &self.stopping)?;
+        let project = Arc::new(ProjectRuns::new(reached, target_args(cwd)));
         // Every request for one directory, however it spells it and however many connected at once, gets the project
         // stored first, whose lock (ProjectRuns::forgetting) the directory's sweeps must share.
         let mut projects = self.lock_projects();
-        let stored = projects.iter().find(|((m, _), p)| m == machine && p.cwd() == project.cwd()).map(|(_, p)| p);
+        let stored = projects.values().find(|p| p.cwd() == project.cwd());
         let project = Arc::clone(stored.unwrap_or(&project));
-        Ok(Arc::clone(projects.entry(key).or_insert(project)))
+        Ok(Arc::clone(projects.entry(cwd.to_string()).or_insert(project)))
     }
 
-    fn lock_projects(&self) -> std::sync::MutexGuard<'_, HashMap<(String, String), Arc<ProjectRuns>>> {
+    fn lock_projects(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<ProjectRuns>>> {
         // A poisoned lock only means a thread panicked while it held it; the map is still whole.
         self.projects.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -664,8 +580,7 @@ fn project_of(shared: &Shared, query: &HashMap<String, String>, params: &[&str])
     if let Some(answer) = missing(query, params) {
         return Err(answer);
     }
-    let param = |name: &str| query.get(name).map_or("", String::as_str);
-    shared.project(param("machine"), param("cwd")).map_err(|e| (502, error(&e.0)))
+    shared.project(query.get("cwd").map_or("", String::as_str)).map_err(|e| (502, error(&e.0)))
 }
 
 /// The answer to a read of a run that failed with e.
@@ -722,10 +637,7 @@ fn unreached_answer(shared: &Shared, path: &str, query: &HashMap<String, String>
         SETUP => match query.get("cwd").map(String::as_str) {
             None => (400, error("missing parameter cwd")),
             Some("") => (400, error("parameter cwd is empty")),
-            Some(cwd) => {
-                let machine = query.get("machine").map_or("", String::as_str);
-                (200, shared.setup.checks(machine, cwd, &shared.stopping))
-            }
+            Some(cwd) => (200, shared.setup.checks(cwd, &shared.stopping)),
         },
         SETUP_CHECKED => match shared.setup.checked() {
             Ok(checked) => (200, object([("checked", Value::from(checked))])),
@@ -736,7 +648,6 @@ fn unreached_answer(shared: &Shared, path: &str, query: &HashMap<String, String>
             Err(e) => (500, error(&e.0)),
         },
         WORKFLOW => workflows::read(&shared.config, query),
-        CLOSE_CHOICE if shared.app_backend == Backend::Herdr => (200, object([("choice", Value::Null)])),
         CLOSE_CHOICE => match CloseChoice::read(&shared.config) {
             Ok(choice) => (200, object([("choice", Value::from(choice.name()))])),
             Err(why) => (500, error(&why)),
@@ -906,10 +817,7 @@ fn post_setup_adapter(shared: &Shared, request: Request, query: &HashMap<String,
     let (code, body) = match Adapter::named(agent) {
         None => (400, error(&format!("agent {agent:?} has no ACP adapter the app installs"))),
         Some(adapter) => match shared.setup.install_adapter(adapter, &shared.stopping) {
-            Ok(true) => (200, object([("installed", Value::from(true))])),
-            Ok(false) => {
-                (409, error("the app's runs are in herdr, whose agents are their CLIs: there is no adapter to install"))
-            }
+            Ok(()) => (200, object([("installed", Value::from(true))])),
             Err(why) => (502, error(&why)),
         },
     };
@@ -1145,7 +1053,7 @@ fn run_closed(run: &RunClosed) -> Value {
 /// The answer to POST /run once its body is run and its project project: the run started, by this program, as a new
 /// run id, and waited for.
 fn start_answer(shared: &Shared, project: &ProjectRuns, run: &RunRequest) -> Answer {
-    let program = match run_program(project) {
+    let program = match run_program() {
         Ok(path) => path,
         Err(why) => return (500, error(&why)),
     };
@@ -1154,26 +1062,15 @@ fn start_answer(shared: &Shared, project: &ProjectRuns, run: &RunRequest) -> Ans
         Ok(id) => id,
         Err(e) => return (500, error(&e.0)),
     };
-    let (ended, herdr_session) = match project.start(run, &program, &run_id, shared.start_wait, &shared.stopping) {
-        Ok(started) => started,
-        Err(e) => return read_failure(e),
-    };
-    if let Started::Exited(shown) = ended {
-        let why = format!("run {run_id} exited before it saved its state; {shown}");
-        return (422, object([("error", Value::from(why)), ("run", Value::from(run_id))]));
+    match project.start(run, &program, &run_id, shared.start_wait, &shared.stopping) {
+        Ok(Started::Listed) => (201, object([("run", Value::from(run_id))])),
+        Ok(Started::Unlisted) => (202, object([("run", Value::from(run_id)), ("listed", Value::from(false))])),
+        Ok(Started::Exited(shown)) => {
+            let why = format!("run {run_id} exited before it saved its state; {shown}");
+            (422, object([("error", Value::from(why)), ("run", Value::from(run_id))]))
+        }
+        Err(e) => read_failure(e),
     }
-    // A run that started: its id, whether it is listed yet, and the herdr session it is in.
-    let mut fields = crate::json::object([("run", Value::from(run_id))]);
-    let code = if matches!(ended, Started::Unlisted) {
-        fields.insert("listed".to_string(), Value::from(false));
-        202
-    } else {
-        201
-    };
-    if let Some(session) = herdr_session {
-        fields.insert("herdr_session".to_string(), Value::from(session));
-    }
-    (code, Value::Object(fields))
 }
 
 /// Answer a POST of /resume with the query's parameters: resume the run it names, as RunServer's doc comment says.
@@ -1190,7 +1087,7 @@ fn post_resume(shared: &Shared, request: Request, query: &HashMap<String, String
 
 /// POST /resume's answer, once its project is reached, for the run run_id.
 fn resume_answer(shared: &Shared, project: &ProjectRuns, run_id: &str) -> Answer {
-    let program = match run_program(project) {
+    let program = match run_program() {
         Ok(path) => path,
         Err(why) => return (500, error(&why)),
     };
@@ -1210,12 +1107,12 @@ fn resume_answer(shared: &Shared, project: &ProjectRuns, run_id: &str) -> Answer
     }
 }
 
-/// The program a run of project, or its resume, is started by: serve's own (serve_program), but under an AppImage,
-/// for a detached run, the AppImage file. Errors: serve_program's.
-fn run_program(project: &ProjectRuns) -> Result<String, String> {
+/// The program a run, or its resume, is started by: serve's own (serve_program), but under an AppImage the AppImage
+/// file. Errors: serve_program's.
+fn run_program() -> Result<String, String> {
     // Under an AppImage serve's program is in its mount, which ends with the app; the AppImage file itself starts
-    // the same program (ui/src-tauri/src/lib.rs's CLI dispatch) for a detached run, which outlives the app.
-    let appimage = std::env::var("APPIMAGE").ok().filter(|_| project.detached()).filter(|p| !p.is_empty());
+    // the same program (ui/src-tauri/src/lib.rs's CLI dispatch) for a run, which outlives the app.
+    let appimage = std::env::var("APPIMAGE").ok().filter(|p| !p.is_empty());
     appimage.map_or_else(serve_program, Ok)
 }
 
@@ -1274,7 +1171,6 @@ fn events(shared: &Shared, request: Request, project: &ProjectRuns) {
         return;
     }
     let mut watch = RunWatch::new(project);
-    let interval = if project.remote() { shared.polls.remote } else { shared.polls.local };
     while !shared.stopping.is_raised() {
         let events = watch.poll();
         // A poll the stop cut short reports the commands it stopped, which is no problem of the project's.
@@ -1287,7 +1183,7 @@ fn events(shared: &Shared, request: Request, project: &ProjectRuns) {
         if out.write_all(part.as_bytes()).and_then(|()| out.flush()).is_err() {
             return;
         }
-        shared.stopping.sleep(interval);
+        shared.stopping.sleep(shared.poll);
     }
     if chunked {
         // The client may have gone meanwhile; there is no one to tell.
@@ -1372,10 +1268,10 @@ fn error(message: &str) -> Value {
     object([("error", Value::from(message))])
 }
 
-/// The --machine and --cwd flags a request's machine and cwd stand for, each left out when empty.
-fn target_args(machine: &str, cwd: &str) -> Vec<String> {
-    let given = |flag: &str| (!flag.is_empty()).then(|| flag.to_string());
-    crate::cli::Target { machine: given(machine), cwd: given(cwd), acp: false }.flags()
+/// The --cwd flag a request's cwd stands for, left out when empty.
+fn target_args(cwd: &str) -> Vec<String> {
+    let cwd = (!cwd.is_empty()).then(|| cwd.to_string());
+    crate::cli::Target { machine: None, cwd, acp: false }.flags()
 }
 
 /// Whether given and expected are the same bytes, in a time that depends on their lengths alone and not on where

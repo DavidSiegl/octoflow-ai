@@ -52,7 +52,7 @@ export function Dialog({ label, title, project, className, children }: Props) {
         <h2>{title}</h2>
         {project && (
           <p className="where">
-            {project.cwd} {project.machine ? `on ${project.machine}` : "on this computer"}
+            {project.cwd} on this computer
           </p>
         )}
         {children}

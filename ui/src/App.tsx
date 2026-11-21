@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Api, type Connection, type Project, type StartedRun } from "./api";
+import { Api, type Connection, type Project } from "./api";
 import { About } from "./components/About";
 import { CleanUpDialog } from "./components/CleanUpDialog";
 import { CloseGuard, type AppWindow } from "./components/CloseGuard";
@@ -17,17 +17,19 @@ import { runsNewestFirst } from "./runs";
 // The project last opened, kept per viewer across starts.
 const PROJECT_KEY = "orchestrator.project";
 
-/** The project last opened, else fallback's; a project with an empty cwd when there is neither. */
-function savedProject(fallback: string | null): Project {
+/** The project last opened, else fallback's (a project with an empty cwd when there is neither), and the herdr
+ * machine it was saved with, which an app before 0.94.0 ran a project on and this one does not; null for none. */
+function savedProject(fallback: string | null): { project: Project; machine: string | null } {
   try {
-    const saved = JSON.parse(localStorage.getItem(PROJECT_KEY) ?? "null") as Project | null;
-    if (saved && typeof saved.cwd === "string" && typeof saved.machine === "string") {
-      return saved;
+    const saved = JSON.parse(localStorage.getItem(PROJECT_KEY) ?? "null") as { cwd?: unknown; machine?: unknown } | null;
+    if (saved && typeof saved.cwd === "string") {
+      const machine = typeof saved.machine === "string" && saved.machine !== "" ? saved.machine : null;
+      return { project: { cwd: saved.cwd }, machine };
     }
   } catch {
     // Storage may be unavailable or hold something else; the fallback will do.
   }
-  return { cwd: fallback ?? "", machine: "" };
+  return { project: { cwd: fallback ?? "" }, machine: null };
 }
 
 function saveProject(project: Project): void {
@@ -38,8 +40,7 @@ function saveProject(project: Project): void {
   }
 }
 
-/** The app: the top bar (logo and name, which open About, the project bar, Workflows… and, with the app's runs over
- * ACP, Settings…), and the project's runs or one run in detail. connect resolves to the sidecar's server, or rejects
+/** The app: the top bar (logo and name, which open About, the project bar, Workflows… and Settings…), and the project's runs or one run in detail. connect resolves to the sidecar's server, or rejects
  * with why it could not be started; appWindow is the window the app is in, whose close it guards while runs are
  * running (CloseGuard). */
 export function App({ connect, appWindow }: { connect: () => Promise<Connection>; appWindow: AppWindow }) {
@@ -60,24 +61,20 @@ export function App({ connect, appWindow }: { connect: () => Promise<Connection>
 
 function Connected({ connection, appWindow }: { connection: Connection; appWindow: AppWindow }) {
   const api = useMemo(() => new Api(connection), [connection]);
-  const [project, setProject] = useState(() => savedProject(connection.project));
+  const [saved] = useState(() => savedProject(connection.project));
+  const [project, setProject] = useState(saved.project);
+  // The machine the project was saved with, while the note that the app runs no project on one is shown: until it is
+  // dismissed or another project opens. Saved again without it, so the note shows once.
+  const [droppedMachine, setDroppedMachine] = useState(saved.machine);
+  useEffect(() => {
+    if (saved.machine !== null) {
+      saveProject(saved.project);
+    }
+  }, [saved]);
   const [settingUp, setSettingUp] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [workflowsOpen, setWorkflowsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // Whether Settings… is offered: not while the app's runs are in herdr, with no close choice to set
-  // (Api.closeChoice). A choice that cannot be read still offers it, and its dialog says why.
-  const [hasSettings, setHasSettings] = useState(false);
-  useEffect(() => {
-    let current = true;
-    api.closeChoice().then(
-      (choice) => current && setHasSettings(choice !== null),
-      () => current && setHasSettings(true),
-    );
-    return () => {
-      current = false;
-    };
-  }, [api]);
   // On start, with a project, the setup dialog opens by itself unless the server says it need not (setupChecked).
   // When the server cannot tell, the dialog stays closed: "Check setup…" still opens it.
   const [startedWithProject] = useState(project.cwd !== "");
@@ -97,6 +94,7 @@ function Connected({ connection, appWindow }: { connection: Connection; appWindo
   const open = (next: Project) => {
     saveProject(next);
     setProject(next);
+    setDroppedMachine(null);
   };
   return (
     <main>
@@ -116,21 +114,29 @@ function Connected({ connection, appWindow }: { connection: Connection; appWindo
         <button type="button" className="workflows-button" onClick={() => setWorkflowsOpen(true)}>
           Workflows…
         </button>
-        {hasSettings && (
-          <button type="button" className="settings-button" onClick={() => setSettingsOpen(true)}>
-            Settings…
-          </button>
-        )}
+        <button type="button" className="settings-button" onClick={() => setSettingsOpen(true)}>
+          Settings…
+        </button>
       </header>
+      {droppedMachine !== null && (
+        <p className="notice">
+          This project was opened on the machine {droppedMachine}; the app now runs projects on this computer only, and
+          opens {saved.project.cwd} here. Remote machines are a feature of octoflow's command line:{" "}
+          <code>octoflow run --machine {droppedMachine}</code>.{" "}
+          <button type="button" onClick={() => setDroppedMachine(null)}>
+            Dismiss
+          </button>
+        </p>
+      )}
       {project.cwd ? (
         // Keyed by the project, so opening another one starts from its overview.
-        <ProjectRuns key={`${project.machine}:${project.cwd}`} api={api} project={project} />
+        <ProjectRuns key={project.cwd} api={api} project={project} />
       ) : (
         <p className="empty">Open a project folder to see its runs.</p>
       )}
       {settingUp && project.cwd && (
         // Keyed by the project, so that a dialog left open across a change of project checks the new one.
-        <SetupDialog key={`setup:${project.machine}:${project.cwd}`} api={api} project={project} onClose={() => setSettingUp(false)} />
+        <SetupDialog key={`setup:${project.cwd}`} api={api} project={project} onClose={() => setSettingUp(false)} />
       )}
       {workflowsOpen && <WorkflowsDialog api={api} onClose={() => setWorkflowsOpen(false)} />}
       {aboutOpen && <About version={connection.version} onClose={() => setAboutOpen(false)} />}
@@ -151,15 +157,15 @@ function ProjectRuns({ api, project }: { api: Api; project: Project }) {
   // Whether the overview lists closed runs. Kept here, not in the overview, so that it lasts while a run is shown in
   // detail; it starts false each time a project opens, as ProjectRuns is keyed by the project.
   const [showClosed, setShowClosed] = useState(false);
-  // The run last started from the form; null before one is.
-  const [started, setStarted] = useState<StartedRun | null>(null);
+  // The id of the run last started from the form; null before one is.
+  const [started, setStarted] = useState<string | null>(null);
   const state = useRunStream(api, project);
   const now = useNow();
   const entry = selected ? state.runs[selected] : undefined;
-  const openStarted = (run: StartedRun) => {
+  const openStarted = (run: string) => {
     setFormOpen(false);
     setStarted(run);
-    setSelected(run.run);
+    setSelected(run);
   };
   return (
     <>
@@ -178,17 +184,11 @@ function ProjectRuns({ api, project }: { api: Api; project: Project }) {
             <button type="button" onClick={() => setCleaningUp(true)}>
               Clean up runs…
             </button>
-            {selected !== null && selected === started?.run && (
+            {selected !== null && selected === started && (
               <>
                 <p className="loading">
-                  Run {selected} has started but is not listed yet; it opens once it is. If it never is,{" "}
-                  {started.herdrSession ? (
-                    <>
-                      <code>herdr session attach {started.herdrSession}</code> shows why.
-                    </>
-                  ) : (
-                    "its herdr workspace shows why."
-                  )}
+                  Run {selected} has started but is not listed yet; it opens once it is. If it never is, its log,{" "}
+                  <code>.octoflow-ai/runs/{selected}/run.log</code> in the project, shows why.
                 </p>
                 <button type="button" onClick={() => setSelected(null)}>
                   Stop waiting

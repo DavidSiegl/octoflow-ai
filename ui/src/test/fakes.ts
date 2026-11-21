@@ -189,7 +189,7 @@ export interface FakeResume {
 /** What a stubbed server's POST /stop and /close-choice answer: `running` to a dry run of /stop (none unless given),
  * and `stopped` to a stop (each of `running` stopped unless given), or a 502 with `error`; a stop is answered once
  * `held`, if given, resolves, and counted in `stops`. GET /close-choice answers `choice` ("ask" unless given), or a 500
- * with `choiceError`, or null with `inHerdr`, as for a release's app; POST /close-choice sets `choice`. A dry run of
+ * with `choiceError`; POST /close-choice sets `choice`. A dry run of
  * /stop is answered once `previewHeld`, if given, resolves. */
 export interface FakeStop {
   running?: StoppedRun[];
@@ -199,7 +199,6 @@ export interface FakeStop {
   stops?: number;
   choice?: CloseChoice;
   choiceError?: string;
-  inHerdr?: boolean;
   previewHeld?: Promise<void>;
 }
 
@@ -400,8 +399,6 @@ export function stubServer(
         stop.choice = (JSON.parse(String(init.body)) as { choice: CloseChoice }).choice;
       } else if (stop.choiceError !== undefined) {
         return answer(500, { error: stop.choiceError });
-      } else if (stop.inHerdr) {
-        return answer(200, { choice: null });
       }
       return answer(200, { choice: stop.choice ?? "ask" });
     }

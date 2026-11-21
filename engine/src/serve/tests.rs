@@ -1,4 +1,4 @@
-//! serve's endpoints, security checks and events, here and on a machine, and serve_command's in-process cases: a
+//! serve's endpoints, security checks and events, and serve_command's in-process cases: a
 //! RunServer on a free port of 127.0.0.1, asked over a TCP connection of the test's own, so that each header
 //! and byte on the wire is the test's. The process cases are engine/tests/program.rs'.
 
@@ -11,14 +11,13 @@ use super::*;
 use crate::acp_adapter::Installs;
 use crate::cli::doctor::{Check, Level};
 use crate::cli::listing::run_record;
-use crate::constants::{APPROVE, METRICS_FILE, RUNS_DIR, STALE_SECONDS, SUMMARY_FILE, WORKTREES_DIR};
+use crate::constants::{APPROVE, METRICS_FILE, RUNS_DIR, SUMMARY_FILE, WORKTREES_DIR};
 use crate::harness::Adapter;
-use crate::herdr::{HerdrError, HerdrServer, OWN_SESSION};
 use crate::host::tests::Repo;
 use crate::http::quote;
 use crate::json::{Object, ValueExt};
 use crate::serve::fake::{reached, FakeConsole, ServeHost};
-use crate::state::RunState;
+use crate::state::{Backend, RunState};
 use crate::test_support::TempDir;
 use serde_json::json;
 
@@ -46,8 +45,8 @@ fn serve_state(run_id: &str, extra: &[(&str, Value)]) -> String {
 }
 
 /// A ServeHost for /proj that holds the run's state, as serve_state() saves it.
-fn host_with_run(ssh_target: Option<&str>) -> Arc<ServeHost> {
-    let host = Arc::new(ServeHost::on(ssh_target));
+fn host_with_run() -> Arc<ServeHost> {
+    let host = Arc::new(ServeHost::default());
     host.state().files.insert(format!("{}/state.json", run_dir()), serve_state(SERVE_ID, &[]));
     host
 }
@@ -55,34 +54,26 @@ fn host_with_run(ssh_target: Option<&str>) -> Arc<ServeHost> {
 /// What a test's RunServer is started with, beside its projects and origins.
 struct Options {
     /// How often its event streams poll.
-    polls: Polls,
+    poll: Duration,
     /// Its setup checks and marker.
     setup: Setup,
     /// Where its workflow files are; by default a directory that is not there, so only the built-in ones.
     config: ConfigDir,
     /// How POST /run waits.
     wait: StartWait,
-    /// The backend of the app's runs; by default Herdr, as without APP_BACKEND_VARIABLE.
-    backend: Backend,
 }
 
 impl Default for Options {
     fn default() -> Options {
-        Options {
-            polls: SERVE_POLL,
-            setup: unchecked(),
-            config: ConfigDir::at("/nowhere/config"),
-            wait: START_WAIT,
-            backend: Backend::Herdr,
-        }
+        Options { poll: SERVE_POLL, setup: unchecked(), config: ConfigDir::at("/nowhere/config"), wait: START_WAIT }
     }
 }
 
-/// A RunServer for a test, the projects it connected, as (machine, cwd), and the herdr of every project.
+/// A RunServer for a test, the projects it connected, by cwd, and the herdr of every project.
 struct Served {
     server: RunServer,
     port: u16,
-    connects: Arc<Mutex<Vec<(String, String)>>>,
+    connects: Arc<Mutex<Vec<String>>>,
     console: Arc<FakeConsole>,
 }
 
@@ -92,8 +83,8 @@ impl Served {
         Served::fake_polling(host, origins, SERVE_POLL)
     }
 
-    fn fake_polling(host: &Arc<ServeHost>, origins: &[&str], polls: Polls) -> Served {
-        Served::fake_with(host, origins, Options { polls, ..Options::default() })
+    fn fake_polling(host: &Arc<ServeHost>, origins: &[&str], poll: Duration) -> Served {
+        Served::fake_with(host, origins, Options { poll, ..Options::default() })
     }
 
     /// A server whose every project is host's /proj, started with options.
@@ -103,30 +94,22 @@ impl Served {
         let seen = Arc::clone(&connects);
         let console = Arc::new(FakeConsole::default());
         let herdr = Arc::clone(&console);
-        let connect = move |machine: &str, cwd: &str, _: &Interrupt| {
-            seen.lock().unwrap().push((machine.to_string(), cwd.to_string()));
+        let connect = move |cwd: &str, _: &Interrupt| {
+            seen.lock().unwrap().push(cwd.to_string());
             Ok(reached(&host, &herdr))
         };
         Served { console, ..Served::start(Box::new(connect), origins, connects, options) }
     }
 
-    /// A server whose projects are the real directories here, their runs started as backend says.
-    fn real(backend: Backend) -> Served {
-        let connect =
-            move |machine: &str, cwd: &str, stopping: &Interrupt| project_host(machine, cwd, stopping, backend);
-        Served::start(Box::new(connect), &[], Arc::default(), Options::default())
+    /// A server whose projects are the real directories here.
+    fn real() -> Served {
+        Served::start(Box::new(project_host), &[], Arc::default(), Options::default())
     }
 
-    fn start(
-        connect: Box<Connect>,
-        origins: &[&str],
-        connects: Arc<Mutex<Vec<(String, String)>>>,
-        options: Options,
-    ) -> Served {
+    fn start(connect: Box<Connect>, origins: &[&str], connects: Arc<Mutex<Vec<String>>>, options: Options) -> Served {
         let origins: Vec<String> = origins.iter().map(|o| o.to_string()).collect();
-        let Options { polls, setup, config, wait, backend } = options;
-        let server = RunServer::start_polling(&origins, connect, setup, config, backend, polls, wait)
-            .expect("the server starts");
+        let Options { poll, setup, config, wait } = options;
+        let server = RunServer::start_polling(&origins, connect, setup, config, poll, wait).expect("the server starts");
         let port = port_of(server.url());
         Served { server, port, connects, console: Arc::default() }
     }
@@ -248,7 +231,7 @@ fn status_at(port: u16) -> Option<u16> {
 /// A Setup for a test that asks for no setup: checking a project fails the test, and the marker is nowhere.
 fn unchecked() -> Setup {
     Setup::new(
-        Box::new(|_: &str, _: &str, _: &Interrupt| panic!("no setup check was expected")),
+        Box::new(|_: &str, _: &Interrupt| panic!("no setup check was expected")),
         vec![],
         "/nowhere/setup-checked".into(),
     )
@@ -293,41 +276,11 @@ fn without_aging(mut record: Object) -> Value {
 // -- The endpoints -----------------------------------------------------------------------------------------------
 
 #[test]
-fn runs_are_list_json_records_on_a_machine() {
-    let host = Arc::new(ServeHost::on(Some("remote-host")));
-    let owner = object([
-        ("host", Value::from(crate::runs::local_host())),
-        ("pid", Value::from(i64::from(std::process::id()))),
-        ("started_at", Value::from("x")),
-    ]);
-    host.state().files.insert(format!("{}/state.json", run_dir()), serve_state(SERVE_ID, &[("owner", owner)]));
-    host.state().ages.insert(SERVE_ID.to_string(), STALE_SECONDS + 1);
-    let served = Served::fake(&host, &[]);
-    let reply = served.get(&Served::query("/runs", &[("machine", "remote")]), &[]);
-    assert_eq!(reply.status, Some(200));
-    assert_eq!(*served.connects.lock().unwrap(), [("remote".to_string(), "~/proj".to_string())]);
-    // As list --json --machine remote --cwd ~/proj prints it.
-    let target = ["--machine", "remote", "--cwd", "~/proj"].map(String::from);
-    let listed: Vec<Value> = host
-        .run_states_inside("/proj")
-        .unwrap()
-        .iter()
-        .map(|s| Value::Object(run_record(s, &crate::runs::local_host(), &crate::runs::pid_alive, &target)))
-        .collect();
-    let doc = reply.json();
-    assert_eq!(doc, object([("version", Value::from(1)), ("runs", Value::Array(listed))]));
-    assert_eq!(
-        doc.get("runs").and_then(Value::as_array).and_then(|r| r[0].get("resume_command")),
-        Some(&Value::from("octoflow resume 5e7e00 --machine remote --cwd '~/proj'"))
-    );
-}
-
-#[test]
 fn runs_are_list_json_records_locally() {
     let d = Project::new();
     d.save(SERVE_ID, &[]);
     d.save("x-beef00", &[("phase", Value::from("done")), ("verdict", Value::from(APPROVE))]);
-    let served = Served::real(Backend::Herdr);
+    let served = Served::real();
     let reply = served.get(&d.query("/runs"), &[]);
     assert_eq!(reply.status, Some(200));
     let target = ["--cwd".to_string(), d.root()];
@@ -353,16 +306,15 @@ fn runs_are_list_json_records_locally() {
 
 #[test]
 fn a_project_is_connected_once() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     served.get(&Served::query("/runs", &[]), &[]);
     served.get(&Served::query("/runs", &[]), &[]);
-    served.get(&Served::query("/runs", &[("machine", "")]), &[]);
-    assert_eq!(*served.connects.lock().unwrap(), [(String::new(), "~/proj".to_string())]);
+    assert_eq!(*served.connects.lock().unwrap(), ["~/proj"]);
 }
 
 #[test]
 fn files_with_their_mtimes() {
-    let host = host_with_run(None);
+    let host = host_with_run();
     {
         let mut s = host.state();
         s.files.insert(format!("{}/spec.md", run_dir()), "# Spec\n".to_string());
@@ -383,7 +335,7 @@ fn files_with_their_mtimes() {
 
 #[test]
 fn file() {
-    let host = Arc::new(ServeHost::on(None));
+    let host = Arc::new(ServeHost::default());
     host.state().files.insert(format!("{}/spec.md", run_dir()), "# Spec\n".to_string());
     let served = Served::fake(&host, &[]);
     let reply = served.get(&Served::query("/file", &[("run", SERVE_ID), ("name", "spec.md")]), &[]);
@@ -393,7 +345,7 @@ fn file() {
 
 #[test]
 fn missing_file() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     let reply = served.get(&Served::query("/file", &[("run", SERVE_ID), ("name", "review-1.md")]), &[]);
     assert_eq!(reply.status, Some(404));
     assert_eq!(reply.error(), format!("no file review-1.md in run {SERVE_ID}"));
@@ -401,7 +353,7 @@ fn missing_file() {
 
 #[test]
 fn paths_outside_the_run_directory_are_refused_unread() {
-    let host = host_with_run(None);
+    let host = host_with_run();
     host.state().files.insert("/proj/secret".to_string(), "secret".to_string());
     let served = Served::fake(&host, &[]);
     let run_dot_dot = format!("{SERVE_ID}/..");
@@ -434,7 +386,7 @@ fn paths_outside_the_run_directory_are_refused_unread() {
 
 #[test]
 fn files_of_a_run_outside_the_runs_directory_are_refused() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     for run in ["../..", "..", "/proj", ""] {
         assert_eq!(served.get(&Served::query("/files", &[("run", run)]), &[]).status, Some(403), "{run:?}");
     }
@@ -455,7 +407,7 @@ fn a_link_that_leads_out_of_the_run_directory_is_refused() {
     link("spec.md", &format!("{runs}/{SERVE_ID}/in.md"));
     link(&d.root(), &format!("{runs}/elsewhere"));
     link(SERVE_ID, &format!("{runs}/alias"));
-    let served = Served::real(Backend::Herdr);
+    let served = Served::real();
     let file = |run: &str, name: &str| {
         served.get(&format!("/file?{}", urlencode(&[("cwd", &d.root()), ("run", run), ("name", name)])), &[])
     };
@@ -512,7 +464,7 @@ fn a_run_whose_state_json_leads_out_of_its_run_directory_is_no_run() {
     // A state.json that is a link inside its own run directory is that run's.
     d.write(&format!("{RUNS_DIR}/x-in0000/saved.json"), &serve_state("x-in0000", &[]));
     link("saved.json", &format!("{runs}/x-in0000/state.json"));
-    let served = Served::real(Backend::Herdr);
+    let served = Served::real();
     let reply = served.get(&d.query("/runs"), &[]);
     let mut ids: Vec<String> = reply
         .json()
@@ -540,35 +492,35 @@ fn a_run_whose_state_json_leads_out_of_its_run_directory_is_no_run() {
 
 #[test]
 fn missing_parameter() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     for (path, missing) in [
         ("/runs".to_string(), "cwd"),
         (Served::query("/file", &[("run", SERVE_ID)]), "name"),
         (Served::query("/files", &[]), "run"),
         ("/file".to_string(), "cwd, run, name"),
-        ("/events?machine=x".to_string(), "cwd"),
+        ("/events?run=x".to_string(), "cwd"),
     ] {
         let reply = served.get(&path, &[]);
         assert_eq!(reply.status, Some(400), "{path}");
         assert_eq!(reply.error(), format!("missing parameter {missing}"));
     }
-    assert_eq!(*served.connects.lock().unwrap(), Vec::<(String, String)>::new());
+    assert_eq!(*served.connects.lock().unwrap(), Vec::<String>::new());
 }
 
-/// Each (machine, cwd) a project's setup was checked for, in order.
-type Asked = Arc<Mutex<Vec<(String, String)>>>;
+/// Each cwd a project's setup was checked for, in order.
+type Asked = Arc<Mutex<Vec<String>>>;
 
-/// A server for the setup tests, its marker at marker, its every project checked as checks, each check's (machine,
-/// cwd) recorded in the Asked it returns.
+/// A server for the setup tests, its marker at marker, its every project checked as checks, each check's cwd recorded
+/// in the Asked it returns.
 fn setup_served(marker: &str, checks: Vec<Check>) -> (Served, Asked) {
     let asked = Arc::new(Mutex::new(vec![]));
     let seen = Arc::clone(&asked);
-    let check = move |machine: &str, cwd: &str, _: &Interrupt| {
-        seen.lock().unwrap().push((machine.to_string(), cwd.to_string()));
+    let check = move |cwd: &str, _: &Interrupt| {
+        seen.lock().unwrap().push(cwd.to_string());
         checks.clone()
     };
     let setup = Setup::new(Box::new(check), vec![], marker.to_string());
-    (Served::fake_with(&Arc::new(ServeHost::on(None)), &[], Options { setup, ..Options::default() }), asked)
+    (Served::fake_with(&Arc::new(ServeHost::default()), &[], Options { setup, ..Options::default() }), asked)
 }
 
 fn a_check(name: &str, level: Level, ok: bool) -> Check {
@@ -580,7 +532,7 @@ fn a_check(name: &str, level: Level, ok: bool) -> Check {
 fn setup_checks_the_project_without_reaching_it() {
     let checks = vec![a_check("herdr", Level::Required, true), a_check("gh", Level::NeededForPr, false)];
     let (served, asked) = setup_served("/nowhere/setup-checked", checks);
-    let reply = served.get(&Served::query("/setup", &[("machine", "box")]), &[]);
+    let reply = served.get(&Served::query("/setup", &[]), &[]);
     assert_eq!(reply.status, Some(200));
     assert_eq!(
         reply.body,
@@ -588,8 +540,8 @@ fn setup_checks_the_project_without_reaching_it() {
             + r#"{"name":"gh","level":"needed-for-pr","ok":false,"detail":"gh detail","fix":"install gh"}],"passed":true,"#
             + r#""adapters":[]}"#
     );
-    assert_eq!(*asked.lock().unwrap(), [("box".to_string(), "~/proj".to_string())]);
-    assert_eq!(*served.connects.lock().unwrap(), Vec::<(String, String)>::new(), "a project was reached");
+    assert_eq!(*asked.lock().unwrap(), ["~/proj"]);
+    assert_eq!(*served.connects.lock().unwrap(), Vec::<String>::new(), "a project was reached");
 }
 
 #[test]
@@ -603,10 +555,10 @@ fn setup_has_not_passed_with_a_required_check_failed() {
 #[test]
 fn setup_needs_the_project() {
     let (served, asked) = setup_served("/nowhere/setup-checked", vec![]);
-    let reply = served.get("/setup?machine=box", &[]);
+    let reply = served.get("/setup", &[]);
     assert_eq!((reply.status, reply.error()), (Some(400), "missing parameter cwd".to_string()));
     // An empty cwd would check the sidecar's own directory, a project nobody named.
-    let reply = served.get("/setup?cwd=&machine=box", &[]);
+    let reply = served.get("/setup?cwd=", &[]);
     assert_eq!((reply.status, reply.error()), (Some(400), "parameter cwd is empty".to_string()));
     assert!(asked.lock().unwrap().is_empty());
 }
@@ -633,14 +585,14 @@ fn adapter_installs(data_home: &Project) -> Vec<Installs> {
     Adapter::ALL.iter().map(|a| Installs::in_environment(*a, env.clone())).collect()
 }
 
-/// Under ACP the marker keeps the dialog shut only while the adapter of DEFAULT_HARNESS, claude's, is installed for
+/// The marker keeps the dialog shut only while the adapter of DEFAULT_HARNESS, claude's, is installed for
 /// the current pins, as it is not after an upgrade raised a pin; codex's check is Optional, and its install is not
 /// needed.
 #[test]
 fn the_setup_marker_counts_under_acp_only_while_the_default_harness_s_adapter_is_installed() {
     let d = Project::new();
     let marker = format!("{}/config/setup-checked-acp", d.root());
-    let setup = Setup::new(Box::new(|_: &str, _: &str, _: &Interrupt| vec![]), adapter_installs(&d), marker);
+    let setup = Setup::new(Box::new(|_: &str, _: &Interrupt| vec![]), adapter_installs(&d), marker);
     setup.mark().unwrap();
     adapter_installs(&d)[1].install_fake("");
     assert_eq!(setup.checked(), Ok(false), "codex's install is not claude's");
@@ -665,13 +617,12 @@ fn a_setup_marker_that_cannot_be_written_or_looked_for_is_500() {
 
 /// A server whose Setup checks nothing and installs the adapters of installs.
 fn adapters_served(installs: Vec<Installs>) -> Served {
-    let setup =
-        Setup::new(Box::new(|_: &str, _: &str, _: &Interrupt| vec![]), installs, "/nowhere/setup-checked".into());
-    Served::fake_with(&Arc::new(ServeHost::on(None)), &[], Options { setup, ..Options::default() })
+    let setup = Setup::new(Box::new(|_: &str, _: &Interrupt| vec![]), installs, "/nowhere/setup-checked".into());
+    Served::fake_with(&Arc::new(ServeHost::default()), &[], Options { setup, ..Options::default() })
 }
 
 #[test]
-fn setup_offers_each_adapter_for_app_runs_over_acp_and_installs_the_one_named() {
+fn setup_offers_each_adapter_and_installs_the_one_named() {
     let data_home = Project::new();
     adapter_installs(&data_home)[1].install_fake("");
     let served = adapters_served(adapter_installs(&data_home));
@@ -698,14 +649,6 @@ fn an_agent_without_an_adapter_is_400() {
 }
 
 #[test]
-fn app_runs_in_herdr_have_no_adapter_to_install() {
-    let served = adapters_served(vec![]);
-    let reply = served.post("/setup/adapter?agent=claude", "");
-    assert_eq!(reply.status, Some(409));
-    assert!(reply.error().contains("there is no adapter to install"), "{}", reply.error());
-}
-
-#[test]
 fn the_setup_marker_needs_the_token() {
     let (served, _) = setup_served("/nowhere/setup-checked", vec![]);
     let port = served.port;
@@ -718,7 +661,7 @@ fn the_setup_marker_needs_the_token() {
 #[test]
 fn setup_gate_names_each_file_and_pins_no_release() {
     let repo = crate::host::tests::Repo::new(&[]);
-    let served = Served::real(Backend::Herdr);
+    let served = Served::real();
     let path = format!("/setup/gate?{}", urlencode(&[("cwd", &repo.path)]));
     let reply = served.post(&path, "");
     assert_eq!(reply.status, Some(200), "{reply:?}");
@@ -731,7 +674,7 @@ fn setup_gate_names_each_file_and_pins_no_release() {
 #[test]
 fn setup_gate_needs_a_checkout_and_a_cwd() {
     let repo = crate::host::tests::Repo::new(&[]);
-    let served = Served::real(Backend::Herdr);
+    let served = Served::real();
     let reply = served.post(&format!("/setup/gate?{}", urlencode(&[("cwd", &repo.outside)])), "");
     assert_eq!(reply.status, Some(502), "{reply:?}");
     assert!(reply.error().contains("not a git repository"), "{reply:?}");
@@ -741,23 +684,23 @@ fn setup_gate_needs_a_checkout_and_a_cwd() {
 
 #[test]
 fn unknown_endpoint() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     let reply = served.get(&Served::query("/state", &[]), &[]);
     assert_eq!((reply.status, reply.error()), (Some(404), "no endpoint /state".to_string()));
 }
 
 #[test]
 fn an_unreadable_project_is_a_bad_gateway() {
-    let connect = |_: &str, _: &str, _: &Interrupt| Err(OrchestratorError::new("no saved herdr machine named nosuch"));
+    let connect = |_: &str, _: &Interrupt| Err(OrchestratorError::new("cannot enter ~/proj"));
     let served = Served::start(Box::new(connect), &[], Arc::default(), Options::default());
-    let reply = served.get(&Served::query("/runs", &[("machine", "nosuch")]), &[]);
+    let reply = served.get(&Served::query("/runs", &[]), &[]);
     assert_eq!(reply.status, Some(502));
-    assert_eq!(reply.body, r#"{"error":"no saved herdr machine named nosuch"}"#);
+    assert_eq!(reply.body, r#"{"error":"cannot enter ~/proj"}"#);
 }
 
 #[test]
 fn runs_that_cannot_be_read_are_a_bad_gateway() {
-    let host = Arc::new(ServeHost::on(None));
+    let host = Arc::new(ServeHost::default());
     host.state().run_states_inside_error = Some("ssh: connection refused".to_string());
     let served = Served::fake(&host, &[]);
     let reply = served.get(&Served::query("/runs", &[]), &[]);
@@ -767,7 +710,7 @@ fn runs_that_cannot_be_read_are_a_bad_gateway() {
 #[test]
 fn a_target_read_as_http_server_reads_it() {
     // A path that starts with //, a fragment, an absolute URL, and a parameter given twice, the last one counting.
-    let host = Arc::new(ServeHost::on(None));
+    let host = Arc::new(ServeHost::default());
     host.state().files.insert(format!("{}/spec.md", run_dir()), "x".to_string());
     let served = Served::fake(&host, &[]);
     let base = format!("cwd=%7E%2Fproj&run={SERVE_ID}&name=nope&name=spec.md");
@@ -787,17 +730,17 @@ fn a_target_read_as_http_server_reads_it() {
 
 #[test]
 fn no_token() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     let reply = served.ask("GET", &Served::query("/runs", &[]), &[]);
     assert_eq!(reply.status, Some(401));
     assert_eq!(reply.header("WWW-Authenticate"), Some("Bearer"));
     assert_eq!(reply.error(), "the token is missing or wrong");
-    assert_eq!(*served.connects.lock().unwrap(), Vec::<(String, String)>::new());
+    assert_eq!(*served.connects.lock().unwrap(), Vec::<String>::new());
 }
 
 #[test]
 fn wrong_token() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     let token = served.token();
     let longer = format!("Bearer {token}x");
     let shorter = format!("Bearer {}", &token[..token.len() - 1]);
@@ -816,7 +759,7 @@ fn wrong_token() {
 
 #[test]
 fn non_ascii_tokens() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     // é's UTF-8 bytes on the wire, each sent as a Latin-1 character. tiny_http closes the connection of a request with
     // a header beyond ASCII unanswered (TODO.md, "serve answers some malformed requests abruptly or silently").
     for header in ["Bearer \u{c3}\u{a9}".to_string(), format!("Bearer {}\u{c3}\u{a9}", served.token())] {
@@ -832,7 +775,7 @@ fn non_ascii_tokens() {
 
 #[test]
 fn token_in_the_query() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     let token = served.token();
     assert_eq!(served.ask("GET", &Served::query("/runs", &[("token", &token)]), &[]).status, Some(200));
     // Either place is enough: a wrong token in the other does not undo it.
@@ -843,7 +786,7 @@ fn token_in_the_query() {
 
 #[test]
 fn tokens_differ_per_server() {
-    let host = Arc::new(ServeHost::on(None));
+    let host = Arc::new(ServeHost::default());
     let (one, other) = (Served::fake(&host, &[]), Served::fake(&host, &[]));
     assert_ne!(one.token(), other.token());
     assert_eq!(one.token().len(), 43);
@@ -883,7 +826,7 @@ fn bytes_are_the_same_only_when_equal() {
 
 #[test]
 fn bound_to_loopback_only() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     assert_eq!(served.server.url(), format!("http://127.0.0.1:{}", served.port));
     let http = lock(&served.server.listening).clone().expect("it listens");
     let bound = http.server_addr().to_ip().map(|a| a.ip().to_string());
@@ -892,7 +835,7 @@ fn bound_to_loopback_only() {
 
 #[test]
 fn foreign_host_header() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     let port = served.port;
     for host in [
         "evil.example".to_string(),
@@ -907,12 +850,12 @@ fn foreign_host_header() {
         assert_eq!(reply.status, Some(403), "{host:?}");
         assert_eq!(reply.error(), "the Host or Origin header is not this server's");
     }
-    assert_eq!(*served.connects.lock().unwrap(), Vec::<(String, String)>::new());
+    assert_eq!(*served.connects.lock().unwrap(), Vec::<String>::new());
 }
 
 #[test]
 fn a_request_without_a_host_header_is_refused() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     let raw =
         format!("GET {} HTTP/1.0\r\nAuthorization: Bearer {}\r\n\r\n", Served::query("/runs", &[]), served.token());
     assert_eq!(exchange(served.port, raw.as_bytes()).status, Some(403));
@@ -920,7 +863,7 @@ fn a_request_without_a_host_header_is_refused() {
 
 #[test]
 fn own_host_headers() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     for host in [format!("127.0.0.1:{}", served.port), format!("localhost:{}", served.port)] {
         assert_eq!(served.get(&Served::query("/runs", &[]), &[("Host", &host)]).status, Some(200), "{host}");
     }
@@ -928,7 +871,7 @@ fn own_host_headers() {
 
 #[test]
 fn foreign_origin() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[TAURI_ORIGIN]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[TAURI_ORIGIN]);
     for origin in ["http://evil.example", "null", "http://localhost:1420", "", "TAURI://localhost"] {
         let reply = served.get(&Served::query("/runs", &[]), &[("Origin", origin)]);
         assert_eq!(reply.status, Some(403), "{origin:?}");
@@ -938,14 +881,14 @@ fn foreign_origin() {
 
 #[test]
 fn foreign_origin_even_without_a_token() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     let reply = served.ask("GET", &Served::query("/runs", &[]), &[("Origin", "http://evil.example")]);
     assert_eq!(reply.status, Some(403));
 }
 
 #[test]
 fn the_webview_origin_is_allowed_by_cors() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[TAURI_ORIGIN]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[TAURI_ORIGIN]);
     let reply = served.get(&Served::query("/runs", &[]), &[("Origin", TAURI_ORIGIN)]);
     assert_eq!(reply.status, Some(200));
     assert_eq!(reply.header("Access-Control-Allow-Origin"), Some(TAURI_ORIGIN));
@@ -957,7 +900,7 @@ fn the_webview_origin_is_allowed_by_cors() {
 
 #[test]
 fn own_origin_and_none() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     let reply = served.get(&Served::query("/runs", &[]), &[]);
     assert_eq!(reply.status, Some(200));
     assert_eq!(reply.header("Access-Control-Allow-Origin"), None);
@@ -968,7 +911,7 @@ fn own_origin_and_none() {
 
 #[test]
 fn preflight_of_the_webview() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[TAURI_ORIGIN]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[TAURI_ORIGIN]);
     let reply = served.ask("OPTIONS", "/runs", &[("Origin", TAURI_ORIGIN)]);
     assert_eq!(reply.status, Some(204));
     assert_eq!(reply.header("Access-Control-Allow-Origin"), Some(TAURI_ORIGIN));
@@ -979,7 +922,7 @@ fn preflight_of_the_webview() {
 
 #[test]
 fn preflight_of_a_foreign_origin() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[TAURI_ORIGIN]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[TAURI_ORIGIN]);
     let reply = served.ask("OPTIONS", "/runs", &[("Origin", "http://evil.example")]);
     assert_eq!(reply.status, Some(403));
     assert_eq!(reply.header("Access-Control-Allow-Origin"), None);
@@ -989,7 +932,7 @@ fn preflight_of_a_foreign_origin() {
 
 #[test]
 fn writes_are_not_served() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     for method in ["POST", "PUT", "DELETE", "PATCH", "HEAD", "get"] {
         let reply = served.get(&Served::query("/runs", &[]), &[]);
         assert_eq!(reply.status, Some(200));
@@ -1001,14 +944,14 @@ fn writes_are_not_served() {
             assert_eq!(reply.body, format!(r#"{{"error":"unsupported method \"{method}\""}}"#), "{method}");
         }
     }
-    assert_eq!(*served.connects.lock().unwrap(), [(String::new(), "~/proj".to_string())]);
+    assert_eq!(*served.connects.lock().unwrap(), ["~/proj"]);
 }
 
 // -- The agents' endpoints ------------------------------------------------------------------------------------------
 
 /// A server whose project holds the run with a build agent named build-5e7e00, which shows "> ready".
 fn served_with_agent() -> Served {
-    let host = Arc::new(ServeHost::on(None));
+    let host = Arc::new(ServeHost::default());
     let agents = r#"{"spec": {"name": "", "pane": "", "kind": "claude"}, "build": {"name": "build-5e7e00", "pane": "w1:p2", "kind": "claude"}}"#;
     let state = serve_state(SERVE_ID, &[("agents", serde_json::from_str::<Value>(agents).unwrap())]);
     host.state().files.insert(format!("{}/state.json", run_dir()), state);
@@ -1050,8 +993,11 @@ fn an_agent_that_is_not_there_is_not_found() {
     assert_eq!(ask("../x", "build"), (Some(403), "\"../x\" is not a name in the run directory".to_string()));
     served.console.state().screens.clear();
     assert_eq!(ask(SERVE_ID, "build"), (Some(404), "the build agent has exited".to_string()));
+    // A run in herdr, read where herdr is not installed: the app no longer needs it, so the CLI is where to go.
     served.console.state().down = true;
-    assert_eq!(ask(SERVE_ID, "build"), (Some(502), "herdr is not on PATH".to_string()));
+    let cli = "cannot reach herdr, which this run's build agent runs in: herdr is not on PATH; follow the run and \
+               resume it from octoflow's command line";
+    assert_eq!(ask(SERVE_ID, "build"), (Some(502), cli.to_string()));
     let reply = served.get(&Served::query("/agent", &[("run", SERVE_ID)]), &[]);
     assert_eq!((reply.status, reply.error()), (Some(400), "missing parameter role".to_string()));
 }
@@ -1097,12 +1043,12 @@ fn input_needs_the_token_and_the_server_s_own_origin() {
 fn a_bad_input_is_refused_before_the_project_is_reached() {
     let connects = Arc::new(Mutex::new(vec![]));
     let seen = Arc::clone(&connects);
-    let connect = move |machine: &str, cwd: &str, _: &Interrupt| {
-        seen.lock().unwrap().push((machine.to_string(), cwd.to_string()));
+    let connect = move |cwd: &str, _: &Interrupt| {
+        seen.lock().unwrap().push(cwd.to_string());
         Err(OrchestratorError::new("ssh: connection refused"))
     };
     let served = Served::start(Box::new(connect), &[], Arc::clone(&connects), Options::default());
-    let target = Served::query("/agent/input", &[("run", SERVE_ID), ("role", "build"), ("machine", "box")]);
+    let target = Served::query("/agent/input", &[("run", SERVE_ID), ("role", "build")]);
     assert_eq!(served.post(&target, r#"{"keys": []}"#).status, Some(400));
     let long = format!(r#"{{"text": "{}"}}"#, "x".repeat(MAX_BODY_BYTES));
     assert_eq!(served.post(&target, &long).status, Some(413));
@@ -1121,126 +1067,6 @@ fn starting(host: &Arc<ServeHost>) -> Served {
     Served::fake_with(host, &[], Options { wait: QUICK_WAIT, ..Options::default() })
 }
 
-/// The run id an argv of POST /run's starts, from its --run-id.
-fn started_id(argv: &[String]) -> String {
-    argv.iter().find_map(|w| w.strip_prefix("--run-id=")).expect("a --run-id").to_string()
-}
-
-#[test]
-fn a_run_that_saves_its_state_is_answered_with_its_id_and_runs_its_own_program_in_a_workspace() {
-    // A project on a machine: its run is given the machine and the cwd as the client named them.
-    let host = Arc::new(ServeHost::on(Some("me@box")));
-    let served = starting(&host);
-    let saving = Arc::clone(&host);
-    served.console.state().on_launch = Some(Box::new(move |argv: &[String]| {
-        let id = started_id(argv);
-        saving.state().files.insert(format!("/proj/{RUNS_DIR}/{id}/state.json"), serve_state(&id, &[]));
-    }));
-    let body = r#"{"task": "--add a rate limiter", "workflow": "quick", "agent": "codex", "model": "-m",
-                   "role_agents": {"review": "pi", "build": "claude"}, "role_models": {"review": "o3"},
-                   "permission_mode": "default", "no_pr": true, "worktree": true}"#;
-    let reply = served.post(&Served::query("/run", &[("machine", "box")]), body);
-    assert_eq!(reply.status, Some(201), "{}", reply.body);
-    let id = reply.json()["run"].as_str().expect("the run's id").to_string();
-    let launches = served.console.state().launches.clone();
-    let [(cwd, label, argv)] = &launches[..] else { panic!("one launch: {launches:?}") };
-    assert_eq!(cwd, "/proj");
-    assert_eq!(*label, crate::herdr::workspace_label(&id, "--add a rate limiter"));
-    let program = std::env::current_exe().unwrap().into_os_string().into_string().unwrap();
-    let expected = [
-        program.as_str(),
-        "run",
-        &format!("--run-id={id}"),
-        "--machine",
-        "box",
-        "--cwd",
-        "~/proj",
-        "--workflow=quick",
-        "--agent=codex",
-        "--model=-m",
-        "--permission-mode=default",
-        "--role-agent=review=pi",
-        "--role-agent=build=claude",
-        "--role-model=review=o3",
-        "--no-pr",
-        "--worktree",
-        "--",
-        "--add a rate limiter",
-    ];
-    assert_eq!(argv, &expected);
-    // An id as run's own, which `run --run-id` takes.
-    let argv = ["run", "--run-id", &id, "t"].map(std::ffi::OsString::from);
-    assert!(crate::cli::parse_args(argv, &ConfigDir::at("/nowhere")).is_ok(), "{id}");
-}
-
-#[test]
-fn a_run_of_a_project_here_is_given_the_directory_serve_resolved() {
-    let host = Arc::new(ServeHost::on(None));
-    let served = starting(&host);
-    // ~/proj, as the client named it, resolves to /proj (the fake connect's), which the pane starts in too.
-    assert_eq!(served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#).status, Some(202));
-    let argv = served.console.state().launches[0].2.clone();
-    assert_eq!(argv[3..], ["--cwd", "/proj", "--", "t"]);
-}
-
-/// POST /run's reply when the panes of one herdr, the launcher's or the machine's, start nu: refused before the
-/// launcher opened a workspace, naming the shell.
-fn refused_for_nu(served: &Served) {
-    let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#);
-    assert_eq!(reply.status, Some(502), "{}", reply.body);
-    let why = reply.json()["error"].as_str().unwrap_or_default().to_string();
-    assert!(why.starts_with("herdr's panes start /usr/bin/nu ($SHELL)"), "{why}");
-    assert!(why.ends_with("POSIX shell (sh, bash, zsh, dash, ksh) or fish"), "{why}");
-    assert!(served.console.state().launches.is_empty());
-}
-
-const NU: &str = "/usr/bin/nu\n/home/me/.config/herdr/config.toml\n";
-
-#[test]
-fn a_run_is_refused_before_its_workspace_opens_when_herdrs_panes_start_a_shell_it_cannot_type_into() {
-    let host = Arc::new(ServeHost::on(None));
-    let served = starting(&host);
-    served.console.state().pane_shell = NU.to_string();
-    refused_for_nu(&served);
-    // One herdr's config.toml names, which wins over $SHELL.
-    served.console.state().pane_shell.push_str("[terminal]\ndefault_shell = \"zsh\"\n");
-    assert_eq!(served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#).status, Some(202));
-    assert_eq!(served.console.state().launches.len(), 1);
-}
-
-#[test]
-fn a_run_on_a_machine_is_refused_when_either_herdrs_panes_start_a_shell_it_cannot_type_into() {
-    let host = Arc::new(ServeHost::on(Some("me@box")));
-    let served = starting(&host);
-    // This machine's, which the run's command line is typed into, though the machine's takes it.
-    served.console.state().pane_shell = NU.to_string();
-    refused_for_nu(&served);
-    // The machine's, which its agents' exports are typed into.
-    served.console.state().pane_shell = String::new();
-    host.state().pane_shell = NU.to_string();
-    refused_for_nu(&served);
-}
-
-#[test]
-fn a_look_that_fails_once_the_run_is_launched_is_no_answer() {
-    let host = Arc::new(ServeHost::on(None));
-    let served = starting(&host);
-    let saving = Arc::clone(&host);
-    served.console.state().on_launch = Some(Box::new(move |argv: &[String]| {
-        let id = started_id(argv);
-        saving.state().files.insert(format!("/proj/{RUNS_DIR}/{id}/state.json"), serve_state(&id, &[]));
-    }));
-    // A pane the human closed: the run's state.json still tells.
-    served.console.state().exited_error = Some(HerdrError::new("pane_not_found", "pane w9:p1 not found"));
-    let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#);
-    assert_eq!(reply.status, Some(201), "{}", reply.body);
-    // Neither can be looked at: the client still gets the id of the run that is running.
-    host.state().read_error = Some("ssh: connection reset".to_string());
-    let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#);
-    assert_eq!(reply.status, Some(202), "{}", reply.body);
-    assert!(reply.json()["run"].is_string());
-}
-
 #[test]
 fn a_replaced_program_is_started_as_the_one_now_at_its_path() {
     let there = |p: &str| p == "/bin/octoflow";
@@ -1250,81 +1076,30 @@ fn a_replaced_program_is_started_as_the_one_now_at_its_path() {
 }
 
 #[test]
-fn a_run_that_exits_without_its_state_is_answered_with_what_its_pane_showed() {
-    let host = Arc::new(ServeHost::on(None));
-    let served = starting(&host);
-    served.console.state().exited = Some("error: invalid value 'nope' for '--workflow <WORKFLOW>'".to_string());
-    let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t", "workflow": "nope"}"#);
-    assert_eq!(reply.status, Some(422));
+fn a_run_that_exits_without_its_state_is_answered_with_its_log_s_last_lines() {
+    // The run's program is serve's own, this test binary, which refuses `run`'s flags and saves no state.json.
+    let d = Project::new();
+    let wait = StartWait { every: Duration::from_millis(10), limit: Duration::from_secs(20) };
+    let served = Served::start(Box::new(project_host), &[], Arc::default(), Options { wait, ..Options::default() });
+
+    let reply = served.post(&d.query("/run"), r#"{"task": "t"}"#);
+
+    assert_eq!(reply.status, Some(422), "{}", reply.body);
     let id = reply.json()["run"].as_str().expect("the run's id").to_string();
-    let why = format!("run {id} exited before it saved its state; its pane showed:\nerror: invalid value 'nope' for '--workflow <WORKFLOW>'");
-    assert_eq!(reply.error(), why);
+    let why = reply.error();
+    assert!(why.starts_with(&format!("run {id} exited before it saved its state; its log ends:\n")), "{why}");
 }
 
 #[test]
-fn a_run_neither_listed_nor_exited_in_time_is_answered_as_not_yet_listed() {
-    let host = Arc::new(ServeHost::on(None));
-    let served = starting(&host);
-    let started = Instant::now();
-    let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#);
-    assert!(started.elapsed() >= QUICK_WAIT.limit, "it waited {:?}", started.elapsed());
-    assert_eq!(reply.status, Some(202));
-    let answer = reply.json();
-    assert_eq!(answer["listed"], Value::from(false));
-    // In the server serve's environment picks: no session is named.
-    assert_eq!(answer.as_object().map(|o| o.len()), Some(2), "{answer}");
-    // A run that saved its state.json just before it exited is listed.
-    let saving = Arc::clone(&host);
-    let mut console = served.console.state();
-    console.exited = Some("error: the checkout is busy".to_string());
-    console.on_launch = Some(Box::new(move |argv: &[String]| {
-        let id = started_id(argv);
-        saving.state().files.insert(format!("/proj/{RUNS_DIR}/{id}/state.json"), serve_state(&id, &[]));
-    }));
-    drop(console);
-    assert_eq!(served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#).status, Some(201));
-}
-
-#[test]
-fn a_run_launched_into_the_own_session_is_answered_with_that_session() {
-    let host = Arc::new(ServeHost::on(None));
-    let served = starting(&host);
-    served.console.state().launched_server = Some(HerdrServer::own_session());
-    let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#);
-    assert_eq!(reply.status, Some(202), "{}", reply.body);
-    assert_eq!(reply.json()["herdr_session"], Value::from(OWN_SESSION));
-    let saving = Arc::clone(&host);
-    served.console.state().on_launch = Some(Box::new(move |argv: &[String]| {
-        let id = started_id(argv);
-        saving.state().files.insert(format!("/proj/{RUNS_DIR}/{id}/state.json"), serve_state(&id, &[]));
-    }));
-    let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#);
-    assert_eq!(reply.status, Some(201), "{}", reply.body);
-    assert_eq!(reply.json()["herdr_session"], Value::from(OWN_SESSION));
-}
-
-#[test]
-fn a_run_herdr_cannot_launch_is_refused_with_herdr_s_error() {
-    let host = Arc::new(ServeHost::on(None));
-    let served = starting(&host);
-    served.console.state().launch_error = Some(HerdrError::new("timeout", "herdr workspace create did not return"));
-    let reply = served.post(&Served::query("/run", &[]), r#"{"task": "t"}"#);
-    assert_eq!(
-        (reply.status, reply.error()),
-        (Some(502), "herdr timeout: herdr workspace create did not return".to_string())
-    );
-}
-
-#[test]
-fn a_bad_run_body_is_refused_before_the_project_is_reached_and_nothing_is_launched() {
+fn a_bad_run_body_is_refused_before_the_project_is_reached() {
     let connects = Arc::new(Mutex::new(vec![]));
     let seen = Arc::clone(&connects);
-    let connect = move |machine: &str, cwd: &str, _: &Interrupt| {
-        seen.lock().unwrap().push((machine.to_string(), cwd.to_string()));
+    let connect = move |cwd: &str, _: &Interrupt| {
+        seen.lock().unwrap().push(cwd.to_string());
         Err(OrchestratorError::new("ssh: connection refused"))
     };
     let served = Served::start(Box::new(connect), &[], Arc::clone(&connects), Options::default());
-    let target = Served::query("/run", &[("machine", "box")]);
+    let target = Served::query("/run", &[]);
     let reply = served.post(&target, r#"{"task": ""}"#);
     assert_eq!((reply.status, reply.error()), (Some(400), "task must be a string that is not empty".to_string()));
     let long = format!(r#"{{"task": "{}"}}"#, "x".repeat(MAX_BODY_BYTES));
@@ -1338,7 +1113,7 @@ fn a_bad_run_body_is_refused_before_the_project_is_reached_and_nothing_is_launch
 
 #[test]
 fn a_run_needs_the_token_and_the_server_s_own_origin() {
-    let host = Arc::new(ServeHost::on(None));
+    let host = Arc::new(ServeHost::default());
     let served = starting(&host);
     let (target, body) = (Served::query("/run", &[]), r#"{"task": "t"}"#);
     let length = body.len().to_string();
@@ -1346,7 +1121,6 @@ fn a_run_needs_the_token_and_the_server_s_own_origin() {
     let bearer = format!("Bearer {}", served.token());
     let headers = [("Authorization", bearer.as_str()), ("Origin", "http://evil.example"), ("Content-Length", &length)];
     assert_eq!(served.ask_with_body("POST", &target, &headers, body).status, Some(403));
-    assert!(served.console.state().launches.is_empty());
 }
 
 // -- POST /close: closing a project's runs ---------------------------------------------------------------------
@@ -1394,10 +1168,9 @@ fn closing() -> (Repo, String, Served) {
 fn served_in(repo: &Repo) -> Served {
     let console = Arc::new(FakeConsole::default());
     let (herdr, dir) = (Arc::clone(&console), repo.path.clone());
-    let connect = move |_: &str, _: &str, stopping: &Interrupt| {
+    let connect = move |_: &str, stopping: &Interrupt| {
         let host = Arc::new(ProcessHost::local(stopping));
-        let (console, workspaces, launch) = (herdr.clone(), herdr.clone(), Launch::Herdr(herdr.clone()));
-        Ok(Reached { host, dir: dir.clone(), console, places: workspaces, launch, launch_dir: dir.clone() })
+        Ok(Reached { host, dir: dir.clone(), console: herdr.clone(), places: herdr.clone() })
     };
     let served = Served::start(Box::new(connect), &[], Arc::default(), Options::default());
     Served { console, ..served }
@@ -1657,12 +1430,12 @@ fn a_running_app_run_whose_socket_is_gone_is_a_failure_of_its_own() {
 fn a_bad_stop_body_is_refused_before_the_project_is_reached() {
     let connects = Arc::new(Mutex::new(vec![]));
     let seen = Arc::clone(&connects);
-    let connect = move |machine: &str, cwd: &str, _: &Interrupt| {
-        seen.lock().unwrap().push((machine.to_string(), cwd.to_string()));
+    let connect = move |cwd: &str, _: &Interrupt| {
+        seen.lock().unwrap().push(cwd.to_string());
         Err(OrchestratorError::new("ssh: connection refused"))
     };
     let served = Served::start(Box::new(connect), &[], Arc::clone(&connects), Options::default());
-    let target = Served::query("/stop", &[("machine", "box")]);
+    let target = Served::query("/stop", &[]);
     let wrong = r#"the body must be {"dry_run": true} or {"dry_run": false}"#;
     for body in ["", "{}", r#"{"dry_run": 1}"#, r#"{"dry_run": true, "x": 1}"#, r#"{"stop": true}"#] {
         let reply = served.post(&target, body);
@@ -1677,9 +1450,8 @@ fn a_bad_stop_body_is_refused_before_the_project_is_reached() {
 fn the_close_choice_is_saved_in_the_configuration_directory_and_read_back() {
     let d = Project::new();
     let config = ConfigDir::at(&format!("{}/config", d.root()));
-    let options = Options { config: config.clone(), backend: Backend::Acp, ..Options::default() };
-    let served =
-        Served::start(Box::new(|_: &str, _: &str, _: &Interrupt| unreachable!()), &[], Arc::default(), options);
+    let options = Options { config: config.clone(), ..Options::default() };
+    let served = Served::start(Box::new(|_: &str, _: &Interrupt| unreachable!()), &[], Arc::default(), options);
     let choice = |served: &Served| served.get("/close-choice", &[]).json().get("choice").cloned();
     assert_eq!(choice(&served), Some(json!("ask")));
     let reply = served.post("/close-choice", r#"{"choice": "keep"}"#);
@@ -1698,27 +1470,15 @@ fn the_close_choice_is_saved_in_the_configuration_directory_and_read_back() {
 }
 
 #[test]
-fn with_the_app_s_runs_in_herdr_there_is_no_close_choice_whatever_is_saved() {
-    let d = Project::new();
-    let config = ConfigDir::at(&format!("{}/config", d.root()));
-    CloseChoice::Stop.save(&config).unwrap();
-    let options = Options { config, ..Options::default() };
-    let served =
-        Served::start(Box::new(|_: &str, _: &str, _: &Interrupt| unreachable!()), &[], Arc::default(), options);
-    let reply = served.get("/close-choice", &[]);
-    assert_eq!((reply.status, reply.body.as_str()), (Some(200), r#"{"choice":null}"#));
-}
-
-#[test]
 fn a_bad_close_body_is_refused_before_the_project_is_reached() {
     let connects = Arc::new(Mutex::new(vec![]));
     let seen = Arc::clone(&connects);
-    let connect = move |machine: &str, cwd: &str, _: &Interrupt| {
-        seen.lock().unwrap().push((machine.to_string(), cwd.to_string()));
+    let connect = move |cwd: &str, _: &Interrupt| {
+        seen.lock().unwrap().push(cwd.to_string());
         Err(OrchestratorError::new("ssh: connection refused"))
     };
     let served = Served::start(Box::new(connect), &[], Arc::clone(&connects), Options::default());
-    let target = Served::query("/close", &[("machine", "box")]);
+    let target = Served::query("/close", &[]);
     let wrong = r#"the body must be {"dry_run": true} or {"close": [{"run": "...", "detail": "...", "discarded": ["...", ...]}, ...]}"#;
     let bad = [
         "",
@@ -1751,7 +1511,7 @@ fn a_bad_close_body_is_refused_before_the_project_is_reached() {
 fn a_close_skips_a_run_whose_state_json_is_not_json_saying_why() {
     let project = Project::new();
     project.write(&format!("{RUNS_DIR}/{SERVE_ID}/state.json"), "not JSON");
-    let reply = Served::real(Backend::Herdr).post(&project.query("/close"), r#"{"dry_run": true}"#);
+    let reply = Served::real().post(&project.query("/close"), r#"{"dry_run": true}"#);
     assert_eq!(reply.status, Some(200), "{reply:?}");
     let runs = reply.json().get("runs").and_then(Value::as_array).cloned().unwrap();
     let [run] = runs.as_slice() else { panic!("{runs:?}") };
@@ -1761,7 +1521,7 @@ fn a_close_skips_a_run_whose_state_json_is_not_json_saying_why() {
 
 #[test]
 fn a_close_needs_the_token_and_the_server_s_own_origin() {
-    let host = Arc::new(ServeHost::on(None));
+    let host = Arc::new(ServeHost::default());
     let served = Served::fake(&host, &[]);
     let (target, body) = (Served::query("/close", &[]), r#"{"dry_run": true}"#);
     let length = body.len().to_string();
@@ -1795,7 +1555,7 @@ fn forgotten_runs(reply: &Reply) -> Vec<(String, String, String)> {
 
 #[test]
 fn a_forget_dry_run_names_the_closed_run_and_a_listed_forget_deletes_it_keeping_its_metrics() {
-    let (project, served) = (forgetting(), Served::real(Backend::Herdr));
+    let (project, served) = (forgetting(), Served::real());
     let target = project.query("/forget");
     let closed_dir = project.0.join(&format!("{RUNS_DIR}/{FORGET_CLOSED}"));
     let preview = forgotten_runs(&served.post(&target, r#"{"dry_run": true}"#));
@@ -1859,8 +1619,8 @@ impl crate::host::Host for ArchiveReadsMeet {
 #[test]
 fn two_forgets_of_one_run_at_once_forget_it_once() {
     let project = forgetting();
-    let connect = |machine: &str, cwd: &str, stopping: &Interrupt| {
-        let mut reached = project_host(machine, cwd, stopping, Backend::Herdr)?;
+    let connect = |cwd: &str, stopping: &Interrupt| {
+        let mut reached = project_host(cwd, stopping)?;
         reached.host = Arc::new(ArchiveReadsMeet { host: reached.host, reads: Mutex::new(0), met: Default::default() });
         Ok(reached)
     };
@@ -1892,7 +1652,7 @@ fn the_sweeps_leave_out_a_run_the_overview_does_not_show() {
     let (outside, link) =
         (project.0.join(&format!("elsewhere/{OUTSIDE}")), project.0.join(&format!("{RUNS_DIR}/{OUTSIDE}")));
     std::os::unix::fs::symlink(&outside, &link).unwrap();
-    let served = Served::real(Backend::Herdr);
+    let served = Served::real();
 
     let closing = closed_runs(&served.post(&project.query("/close"), r#"{"dry_run": true}"#));
     assert_eq!(closing.iter().map(|r| r.0.as_str()).collect::<Vec<_>>(), [FORGET_CLOSED]);
@@ -1913,12 +1673,12 @@ fn the_sweeps_leave_out_a_run_the_overview_does_not_show() {
 fn a_bad_forget_body_is_refused_before_the_project_is_reached() {
     let connects = Arc::new(Mutex::new(vec![]));
     let seen = Arc::clone(&connects);
-    let connect = move |machine: &str, cwd: &str, _: &Interrupt| {
-        seen.lock().unwrap().push((machine.to_string(), cwd.to_string()));
+    let connect = move |cwd: &str, _: &Interrupt| {
+        seen.lock().unwrap().push(cwd.to_string());
         Err(OrchestratorError::new("ssh: connection refused"))
     };
     let served = Served::start(Box::new(connect), &[], Arc::clone(&connects), Options::default());
-    let target = Served::query("/forget", &[("machine", "box")]);
+    let target = Served::query("/forget", &[]);
     let wrong = r#"the body must be {"dry_run": true} or {"forget": ["...", ...]}"#;
     let bad = [
         "",
@@ -1952,7 +1712,7 @@ fn workflows_are_the_configuration_s_with_their_roles_and_the_harnesses() {
     std::fs::write(d.join("workflows/solo.toml"), solo).unwrap();
     std::fs::write(d.join("workflows/broken.toml"), "not toml [").unwrap();
     let served = Served::fake_with(
-        &Arc::new(ServeHost::on(None)),
+        &Arc::new(ServeHost::default()),
         &[],
         Options { config: ConfigDir::at(&d.path()), ..Options::default() },
     );
@@ -1988,7 +1748,7 @@ fn workflows_are_the_configuration_s_with_their_roles_and_the_harnesses() {
 /// A server whose workflow files are in dir's workflows directory, and whose projects are none it should reach.
 fn editing(dir: &TempDir) -> Served {
     Served::fake_with(
-        &Arc::new(ServeHost::on(None)),
+        &Arc::new(ServeHost::default()),
         &[],
         Options { config: ConfigDir::at(&dir.path()), ..Options::default() },
     )
@@ -2131,7 +1891,7 @@ fn a_workflow_post_needs_the_token_and_a_body_within_bounds() {
     assert!(served.connects.lock().unwrap().is_empty(), "a project was reached");
 }
 
-// -- Events, here and on a machine -------------------------------------------------------------------------------
+// -- Events -------------------------------------------------------------------------------------------------------
 
 /// An event stream as an EventSource reads it, with the token in the URL, its events parsed on a thread as they
 /// arrive. It ends when the server stops.
@@ -2245,7 +2005,7 @@ fn the_stream() {
     let d = Project::new();
     d.save(SERVE_ID, &[]);
     d.write(&format!("{RUNS_DIR}/{SERVE_ID}/spec.md"), "# Spec\n");
-    let served = Served::real(Backend::Herdr);
+    let served = Served::real();
     let stream = EventStream::open(&served, &d.query("/events"), "");
     assert!(stream.head.starts_with("HTTP/1.1 200 OK\r\n"), "{}", stream.head);
     assert!(stream.head.contains("\r\nContent-Type: text/event-stream\r\n"), "{}", stream.head);
@@ -2262,13 +2022,13 @@ fn the_stream() {
 
     // A change is told by the first poll that starts after it, which is counted here in polls, not seconds, as a busy
     // host stretches each poll (one took 1.4 s beside the other tests, so that an event came 2.4 s after its change;
-    // GitHub issue #335). Each change is made just after a quiet poll, while the server waits SERVE_POLL.local. The
+    // GitHub issue #335). Each change is made just after a quiet poll, while the server waits SERVE_POLL. The
     // next poll may still start before the change is done, when this thread is slower than that wait, and find nothing:
     // so one quiet poll before the event is allowed, and a second means a poll that started after the change missed it.
     // A change told one poll late passes here; RunWatch's own tests (serve/runs/tests.rs) catch that. A correct server
     // fails the bound only when this thread, or the stream's reader, falls about a whole interval behind. The timeout
     // only ends a test whose server hangs.
-    let timeout = SERVE_POLL.local * 10;
+    let timeout = SERVE_POLL * 10;
     let quiet_poll = || stream.next_quiet_poll(timeout);
     // The next event, which must be of expected_kind for run and come at most one quiet poll after the count `before`.
     let soon = |before: usize, expected_kind: &str, run: &str| {
@@ -2301,7 +2061,7 @@ fn the_stream() {
 
 #[test]
 fn nothing_while_nothing_changes() {
-    let served = Served::fake(&host_with_run(None), &[]);
+    let served = Served::fake(&host_with_run(), &[]);
     let stream = EventStream::open(&served, &Served::query("/events", &[]), "");
     stream.kinds(2);
     assert!(stream.events.recv_timeout(Duration::from_millis(2500)).is_err());
@@ -2312,7 +2072,7 @@ fn a_state_json_that_is_not_json_is_the_record_of_an_unreadable_run() {
     // Not a problem of the whole project, which would hide every other run (cross-review 194 F1).
     let d = Project::new();
     d.write(&format!("{RUNS_DIR}/{SERVE_ID}/state.json"), "{not json");
-    let served = Served::real(Backend::Herdr);
+    let served = Served::real();
     let stream = EventStream::open(&served, &d.query("/events"), "");
     let (kind, payload) = stream.next(Duration::from_secs(2));
     assert_eq!(kind, "record");
@@ -2331,7 +2091,7 @@ fn a_state_json_that_is_not_json_is_the_record_of_an_unreadable_run() {
 
 #[test]
 fn the_stream_ends_when_the_server_stops() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     let stream = EventStream::open(&served, &Served::query("/events", &[]), "");
     drop(served);
     assert!(stream.ended.recv_timeout(Duration::from_secs(3)).is_ok());
@@ -2339,7 +2099,7 @@ fn the_stream_ends_when_the_server_stops() {
 
 #[test]
 fn a_stream_to_an_http_1_0_client_ends_with_its_connection() {
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     let raw = format!(
         "GET {}&token={} HTTP/1.0\r\nHost: 127.0.0.1:{}\r\n\r\n",
         Served::query("/events", &[]),
@@ -2359,9 +2119,8 @@ fn a_stream_to_an_http_1_0_client_ends_with_its_connection() {
 #[test]
 fn a_client_that_goes_ends_its_stream() {
     // The stream's thread finds the client gone at a write, and polls no more.
-    let host = host_with_run(None);
-    let fast = Polls { local: Duration::from_millis(20), remote: Duration::from_millis(20) };
-    let served = Served::fake_polling(&host, &[], fast);
+    let host = host_with_run();
+    let served = Served::fake_polling(&host, &[], Duration::from_millis(20));
     let stream = EventStream::open(&served, &Served::query("/events", &[]), "");
     stream.kinds(2);
     drop(stream);
@@ -2373,38 +2132,8 @@ fn a_client_that_goes_ends_its_stream() {
 }
 
 #[test]
-fn changes_are_polled_on_a_machine() {
-    let host = host_with_run(Some("remote-host"));
-    let polls = Polls { local: Duration::from_secs(60), remote: Duration::from_millis(100) };
-    let served = Served::fake_polling(&host, &[], polls);
-    let stream = EventStream::open(&served, &Served::query("/events", &[("machine", "remote")]), "");
-    assert_eq!(stream.kinds(2), ["record", "files"]);
-    host.state().files.insert(format!("{}/review-1.md", run_dir()), "VERDICT: APPROVE\n".to_string());
-    let (kind, payload) = stream.next(Duration::from_secs(2));
-    assert_eq!(kind, "files");
-    assert_eq!(payload.to_string(), format!(r#"{{"run":"{SERVE_ID}","files":[{{"name":"review-1.md","mtime":0}}]}}"#));
-    host.state().files.remove(&format!("{}/state.json", run_dir()));
-    let gone = object([("run", Value::from(SERVE_ID)), ("record", Value::Null)]);
-    assert_eq!(stream.next(Duration::from_secs(2)), ("record".to_string(), gone));
-}
-
-#[test]
-fn a_machine_is_polled_less_often() {
-    let host = host_with_run(Some("remote-host"));
-    let polls = Polls { local: Duration::from_millis(100), remote: Duration::from_secs(60) };
-    let served = Served::fake_polling(&host, &[], polls);
-    let stream = EventStream::open(&served, &Served::query("/events", &[("machine", "remote")]), "");
-    // The first poll, whenever the handler gets to it, sends the run; only a change after it waits for the next.
-    assert_eq!(stream.kinds(2), ["record", "files"]);
-    host.state()
-        .files
-        .insert(format!("{}/state.json", run_dir()), serve_state(SERVE_ID, &[("phase", Value::from("review"))]));
-    assert!(stream.events.recv_timeout(Duration::from_secs(1)).is_err());
-}
-
-#[test]
 fn the_stream_allows_the_webview_origin() {
-    let served = Served::fake(&host_with_run(None), &[TAURI_ORIGIN]);
+    let served = Served::fake(&host_with_run(), &[TAURI_ORIGIN]);
     let stream = EventStream::open(&served, &Served::query("/events", &[]), &format!("Origin: {TAURI_ORIGIN}\r\n"));
     assert!(
         stream.head.contains(&format!("\r\nAccess-Control-Allow-Origin: {TAURI_ORIGIN}\r\nVary: Origin\r\n")),
@@ -2416,7 +2145,7 @@ fn the_stream_allows_the_webview_origin() {
 
 #[test]
 fn a_stream_is_refused_as_any_request() {
-    let served = Served::fake(&host_with_run(None), &[TAURI_ORIGIN]);
+    let served = Served::fake(&host_with_run(), &[TAURI_ORIGIN]);
     let events = Served::query("/events", &[]);
     assert_eq!(served.ask("GET", &events, &[]).status, Some(401));
     assert_eq!(served.ask("GET", &format!("{events}&token=x"), &[]).status, Some(401));
@@ -2443,14 +2172,14 @@ impl Write for Lines {
 
 #[test]
 fn in_process() {
-    let host = Arc::new(ServeHost::on(None));
-    let connect = move |_: &str, _: &str, _: &Interrupt| Ok(reached(&host, &Arc::default()));
+    let host = Arc::new(ServeHost::default());
+    let connect = move |_: &str, _: &Interrupt| Ok(reached(&host, &Arc::default()));
     let (lines, printed) = mpsc::channel();
     let (stop, stopped) = mpsc::channel::<()>();
     let serving = std::thread::spawn(move || {
         let mut err = vec![];
         let status = serve(
-            RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config"), Backend::Herdr),
+            RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config")),
             &mut Lines(lines),
             &mut err,
             || stopped.recv().map_err(io::Error::other),
@@ -2491,10 +2220,8 @@ impl Write for BrokenPipe {
 
 #[test]
 fn an_unprintable_line_ends_it() {
-    let connect = |_: &str, _: &str, _: &Interrupt| Err(OrchestratorError::new("not asked"));
-    let started =
-        RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config"), Backend::Herdr)
-            .unwrap();
+    let connect = |_: &str, _: &Interrupt| Err(OrchestratorError::new("not asked"));
+    let started = RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config")).unwrap();
     let port = port_of(started.url());
     let mut err = vec![];
     let status = serve(Ok(started), &mut BrokenPipe, &mut err, || -> io::Result<()> { panic!("serve waited") });
@@ -2514,10 +2241,8 @@ fn no_port() {
 
 #[test]
 fn a_wait_for_the_signals_that_fails_ends_it() {
-    let connect = |_: &str, _: &str, _: &Interrupt| Err(OrchestratorError::new("not asked"));
-    let started =
-        RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config"), Backend::Herdr)
-            .unwrap();
+    let connect = |_: &str, _: &Interrupt| Err(OrchestratorError::new("not asked"));
+    let started = RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config")).unwrap();
     let port = port_of(started.url());
     let (mut out, mut err) = (vec![], vec![]);
     let status = serve(Ok(started), &mut out, &mut err, || Err(io::Error::from_raw_os_error(22)));
@@ -2532,7 +2257,7 @@ fn a_server_that_stops_accepting_is_started_again_on_the_port() {
     // Not faithful to an accept error: unblock makes the server's recv fail while the RunServer is not stopping, but
     // leaves its accept thread running, which a real accept error ends. That is why dispatch must drop the first server
     // before the new one accepts on the port.
-    let served = Served::fake(&Arc::new(ServeHost::on(None)), &[]);
+    let served = Served::fake(&Arc::new(ServeHost::default()), &[]);
     // Weak: a strong reference here would keep the first server alive, and its accept thread with it, past the restart.
     let first = Arc::downgrade(&lock(&served.server.listening).clone().expect("it listens"));
     first.upgrade().expect("it is alive").unblock();
@@ -2552,21 +2277,11 @@ fn a_server_that_stops_accepting_is_started_again_on_the_port() {
 
 #[test]
 fn a_request_names_its_target_flags() {
-    assert_eq!(target_args("", "~/proj"), ["--cwd", "~/proj"]);
-    assert_eq!(target_args("box", "/p"), ["--machine", "box", "--cwd", "/p"]);
-    assert_eq!(target_args("", ""), Vec::<String>::new());
+    assert_eq!(target_args("~/proj"), ["--cwd", "~/proj"]);
+    assert_eq!(target_args(""), Vec::<String>::new());
 }
 
-#[test]
-fn only_acp_puts_the_apps_runs_on_acp() {
-    use std::ffi::OsStr;
-    assert_eq!(app_backend(Some(OsStr::new("acp"))), Backend::Acp);
-    for other in [None, Some(OsStr::new("herdr")), Some(OsStr::new("ACP")), Some(OsStr::new(""))] {
-        assert_eq!(app_backend(other), Backend::Herdr, "{other:?}");
-    }
-}
-
-/// The project at dir, here, its runs started detached (Launch::Detached).
+/// The project at dir, here.
 fn detached_project(dir: &str, stopping: &Interrupt) -> ProjectRuns {
     let console = Arc::new(FakeConsole::default());
     let reached = Reached {
@@ -2574,8 +2289,6 @@ fn detached_project(dir: &str, stopping: &Interrupt) -> ProjectRuns {
         dir: dir.to_string(),
         console: console.clone(),
         places: console,
-        launch: Launch::Detached,
-        launch_dir: dir.to_string(),
     };
     ProjectRuns::new(reached, vec![])
 }
@@ -2600,9 +2313,9 @@ fn a_detached_run_that_saves_its_state_is_listed_and_got_its_cwd_and_acp_with_it
     let request = RunRequest { task: "a task".into(), ..RunRequest::default() };
     let id = "20261120-000000-abcdef";
 
-    let (ended, session) = project.start(&request, &program, id, QUICK_WAIT, &stopping).expect("started");
+    let ended = project.start(&request, &program, id, QUICK_WAIT, &stopping).expect("started");
 
-    assert_eq!((ended, session), (Started::Listed, None));
+    assert_eq!(ended, Started::Listed);
     let log = std::fs::read_to_string(format!("{}/.octoflow-ai/runs/{id}/run.log", tmp.path())).unwrap();
     assert_eq!(log, format!("run --run-id={id} --cwd {} --acp -- a task\n", tmp.path()));
 }
@@ -2616,23 +2329,10 @@ fn a_detached_run_that_exits_before_it_saves_its_state_is_reported_with_its_log_
     let request = RunRequest { task: "a task".into(), ..RunRequest::default() };
     let wait = StartWait { every: Duration::from_millis(10), limit: Duration::from_secs(10) };
 
-    let (ended, _) = project.start(&request, &program, "20261120-000000-abcdef", wait, &stopping).expect("started");
+    let ended = project.start(&request, &program, "20261120-000000-abcdef", wait, &stopping).expect("started");
 
     let last: Vec<String> = (6..=25).map(|i| format!("line {i}")).collect();
     assert_eq!(ended, Started::Exited(format!("its log ends:\n{}", last.join("\n"))));
-}
-
-#[test]
-fn a_detached_run_of_a_project_on_a_machine_is_refused() {
-    let host = Arc::new(ServeHost::on(Some("me@box")));
-    let console = Arc::new(FakeConsole::default());
-    let reached = Reached { launch: Launch::Detached, ..crate::serve::fake::reached(&host, &console) };
-    let project = ProjectRuns::new(reached, vec![]);
-    let request = RunRequest { task: "a task".into(), ..RunRequest::default() };
-
-    let refused = project.start(&request, "/bin/octoflow", "20261120-000000-abcdef", QUICK_WAIT, &Interrupt::new());
-
-    assert!(matches!(refused, Err(RunReadError::Failed(_))), "{refused:?}");
 }
 
 /// Save in the project at dir the run run_id, a desktop app's run in build released as interrupted, as change
@@ -2746,20 +2446,16 @@ fn a_resume_refuses_a_run_it_would_not_take_up_before_starting_anything() {
             RunReadError::Missing("no run 20261120-000000-dddddd".into()),
         ]
     );
-    let in_herdr = ProjectRuns::new(reached(&Arc::new(ServeHost::on(None)), &Arc::new(FakeConsole::default())), vec![]);
-    let refused = in_herdr.resume("/nonexistent/octoflow", "20261120-000000-aaaaaa", QUICK_WAIT, &stopping);
-    assert!(matches!(refused, Err(RunReadError::Conflict(_))), "{refused:?}");
 }
 
 #[test]
 fn post_resume_names_the_run_and_answers_404_for_no_such_run() {
     let tmp = TempDir::new();
     let dir = tmp.path();
-    let connect = move |_: &str, _: &str, stopping: &Interrupt| {
+    let connect = move |_: &str, stopping: &Interrupt| {
         let host = Arc::new(ProcessHost::local(stopping));
         let console = Arc::new(FakeConsole::default());
-        let (dir, launch_dir) = (dir.clone(), dir.clone());
-        Ok(Reached { host, dir, console: console.clone(), places: console, launch: Launch::Detached, launch_dir })
+        Ok(Reached { host, dir: dir.clone(), console: console.clone(), places: console })
     };
     let served = Served::start(Box::new(connect), &[], Arc::default(), Options::default());
 
@@ -2783,7 +2479,7 @@ const JOURNAL: &str = r#"{"journal": 1}
 
 #[test]
 fn an_acp_agent_s_events_are_its_current_session_after_the_seq_asked_for() {
-    let host = host_with_run(None);
+    let host = host_with_run();
     host.state().files.insert(format!("{}/build.events.jsonl", run_dir()), JOURNAL.to_string());
     let served = Served::fake(&host, &[]);
     let events = |after: &[(&str, &str)]| {
@@ -2809,7 +2505,7 @@ fn an_acp_agent_s_events_are_its_current_session_after_the_seq_asked_for() {
 
 #[test]
 fn an_agent_without_a_journal_is_404_and_a_journal_of_another_version_409() {
-    let host = host_with_run(None);
+    let host = host_with_run();
     host.state().files.insert(format!("{}/review.events.jsonl", run_dir()), "{\"journal\": 2}\n".to_string());
     let served = Served::fake(&host, &[]);
     let events = |role: &str| served.get(&Served::query("/agent/events", &[("run", SERVE_ID), ("role", role)]), &[]);
@@ -2857,7 +2553,7 @@ fn an_answer_and_a_message_go_to_the_run_s_socket_and_its_refusals_come_back_by_
         Value::String(_) => json!({"error": {"code": "already_answered", "message": "request 1 was answered allow"}}),
         _ => json!({"error": {"code": "not_waiting", "message": "the build agent is not waiting"}}),
     });
-    let served = Served::real(Backend::Acp);
+    let served = Served::real();
     let to_agent = |endpoint: &str, body: &str| {
         let target = format!("{endpoint}?{}", urlencode(&[("cwd", &d.root()), ("run", SERVE_ID), ("role", "build")]));
         served.post(&target, body)
@@ -2886,7 +2582,7 @@ fn an_answer_and_a_message_go_to_the_run_s_socket_and_its_refusals_come_back_by_
 fn a_message_to_a_run_that_is_not_running_is_409() {
     let d = Project::new();
     d.save(SERVE_ID, &[]);
-    let served = Served::real(Backend::Acp);
+    let served = Served::real();
     let target = format!("/agent/message?{}", urlencode(&[("cwd", &d.root()), ("run", SERVE_ID), ("role", "build")]));
 
     let reply = served.post(&target, r#"{"text": "use 10"}"#);
