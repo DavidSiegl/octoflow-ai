@@ -315,8 +315,8 @@ impl ClaudeAcp {
             Some(http) => http.send(&request),
             None => {
                 let env = |name: &str| {
-                    let value = self.env.iter().find(|(k, _)| k == name);
-                    value.map(|(_, v)| v.to_string_lossy().into_owned())
+                    let found = self.env.iter().find(|(k, _)| k == name);
+                    found.map(|(_, v)| v.to_string_lossy().into_owned())
                 };
                 HttpClient::with_env(&env).send(&request)
             }

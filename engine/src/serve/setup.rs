@@ -32,7 +32,7 @@ pub struct Setup {
     /// claude's ACP adapter's installs, for app runs over ACP; None for app runs in herdr, whose claude is the claude
     /// CLI.
     claude: Option<ClaudeAcp>,
-    /// The marker's path (ConfigDir::setup_checked_path, the backend's); its parent is created when the marker is written.
+    /// The marker's path (ConfigDir::setup_checked_path, or acp_setup_checked_path); its parent is created when the marker is written.
     marker: String,
 }
 
@@ -40,11 +40,13 @@ impl Setup {
     /// The real one, for app runs whose agents run in backend: project_checks, or acp_project_checks and claude's
     /// installs in the engine's environment; and the marker in config.
     pub fn of(config: &ConfigDir, backend: Backend) -> Setup {
-        let (check, claude): (Box<CheckProject>, _) = match backend {
-            Backend::Herdr => (Box::new(project_checks), None),
-            Backend::Acp => (Box::new(acp_project_checks), Some(ClaudeAcp::from_env())),
+        let (check, claude, marker): (Box<CheckProject>, _, _) = match backend {
+            Backend::Herdr => (Box::new(project_checks), None, config.setup_checked_path()),
+            Backend::Acp => {
+                (Box::new(acp_project_checks), Some(ClaudeAcp::from_env()), config.acp_setup_checked_path())
+            }
         };
-        Setup::new(check, claude, config.setup_checked_path(backend))
+        Setup::new(check, claude, marker)
     }
 
     /// One that checks a project by check, installs claude's adapter in claude (None for none to install), and has

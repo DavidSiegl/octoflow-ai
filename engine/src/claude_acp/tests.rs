@@ -302,7 +302,9 @@ fn the_built_in_pins_pin_every_package_and_each_platforms_node() {
     let named: Vec<Option<&str>> = built.iter().map(|(os, arch)| node_platform(os, arch)).collect();
     assert_eq!(named, platforms.iter().copied().map(Some).collect::<Vec<_>>(), "each built platform has its Node");
     assert_eq!(node_platform("windows", "x86_64"), None);
-    assert!(pins.tarball.is_some(), "the platform these tests run on is one the app is built for");
+    let here = node_platform(std::env::consts::OS, std::env::consts::ARCH).expect("a platform the app is built for");
+    let sha256 = NODE_SHA256.iter().find(|(p, _)| *p == here).unwrap().1;
+    assert_eq!(pins.tarball, Some((here.to_string(), sha256.to_string())), "this platform's tarball is pinned");
 
     let lock: serde_json::Value = serde_json::from_str(PACKAGE_LOCK).unwrap();
     let packages = lock["packages"].as_object().unwrap();
