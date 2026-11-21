@@ -415,3 +415,40 @@ fn serve_reads_a_project_without_asking_herdr() {
     let (ended, _, err) = serving.stop(Signal::SIGTERM);
     assert_eq!(ended.code(), Some(0), "{err}");
 }
+
+#[test]
+fn complete_prints_each_shell_s_registration_naming_octoflow_not_the_binary_s_path() {
+    let dir = Dir::new("complete-registration");
+    for shell in ["bash", "zsh", "fish"] {
+        let out = program(&dir, &[], None).env("OCTOFLOW_COMPLETE", shell).output().expect("octoflow runs");
+        let script = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(out.status.code(), Some(0), "{shell}: {}", stderr(&out));
+        assert!(script.contains("OCTOFLOW_COMPLETE=") && script.contains("octoflow"), "{shell}: {script}");
+        assert!(!script.contains(env!("CARGO_BIN_EXE_octoflow")), "{shell}: {script}");
+        assert_eq!(stderr(&out), "", "{shell}");
+    }
+}
+
+#[test]
+fn a_command_runs_with_clap_complete_s_default_variable_complete_exported() {
+    let dir = Dir::new("complete-other-variable");
+    let out = program(&dir, &["workflows"], None).env("COMPLETE", "1").output().expect("octoflow runs");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("default  built in\n"));
+}
+
+#[test]
+fn complete_offers_the_runs_of_the_project_the_line_names() {
+    let dir = Dir::new("complete-runs");
+    let run = dir.path().join("proj/.octoflow-ai/runs/20261024-120000-5e7e00");
+    std::fs::create_dir_all(&run).unwrap();
+    let state = r#"{"format": 2, "run_id": "20261024-120000-5e7e00", "task": "t", "phase": "build", "round": 1}"#;
+    std::fs::write(run.join("state.json"), state).unwrap();
+    let line = ["--", "octoflow", "resume", "--cwd", "proj", ""];
+    let out = program(&dir, &line, None).env("OCTOFLOW_COMPLETE", "fish").output().expect("octoflow runs");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    // The run first, then the flags an empty word may also be; this state.json, of a format 2 short of fields, is
+    // unreadable.
+    let answer = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(answer.lines().next(), Some("5e7e00\tunreadable: t"), "{answer}");
+}

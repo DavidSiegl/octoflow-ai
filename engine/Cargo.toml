@@ -1,6 +1,6 @@
 [package]
 name = "octoflow-engine"
-version = "0.94.0"
+version = "0.95.0"
 description = "The orchestrator's engine: its library and the octoflow program"
 edition = "2021"
 license = "MIT OR Apache-2.0"
@@ -11,6 +11,10 @@ publish = false
 # per role and share groups of flags between subcommands. 4.6.7 is from 2026-09-14. wrap_help wraps --help to the
 # terminal's width, which it asks of terminal_size, a crate it brings (cli-help-format/01, the user, 2026-11-15).
 clap = { version = "4.6.7", default-features = false, features = ["std", "help", "usage", "error-context", "string", "wrap_help"] }
+# Tab completion computed by the program on each Tab (crate::cli::complete), from the parser clap parses with.
+# unstable-dynamic, which turns on clap's unstable-ext, is outside semver, so the exact pin makes each update a change of
+# its own. Approved by the user for shell-completion, 2026-11-18.
+clap_complete = { version = "=4.6.12", default-features = false, features = ["unstable-dynamic"] }
 # An insertion-ordered map for what the engine shows or saves in its own order (roles, steps, a run's agents). 2.14.2
 # is from 2026-09-05 and in Cargo.lock already. Approved by the user for todo/18, 2026-11-13.
 indexmap = { version = "2.14.2", features = ["serde"] }

@@ -39,6 +39,22 @@ fn the_app_serves_as_its_own_sidecar() {
     assert!(served["token"].as_str().is_some_and(|token| !token.is_empty()), "{line}");
 }
 
+#[test]
+fn asked_by_the_shell_for_completion_the_app_prints_its_registration_and_opens_no_window() {
+    // No display to open a window on: a window attempt would fail rather than print the script.
+    let out = Command::new(APP)
+        .env("OCTOFLOW_COMPLETE", "bash")
+        .env_remove("DISPLAY")
+        .env_remove("WAYLAND_DISPLAY")
+        .stdin(Stdio::null())
+        .output()
+        .expect("the app runs");
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    let script = String::from_utf8_lossy(&out.stdout);
+    assert!(script.contains("OCTOFLOW_COMPLETE=\"bash\"") && script.contains("\"octoflow\" --"), "{script}");
+    assert!(!script.contains(APP), "{script}");
+}
+
 /// The app's executable run with args as an AppImage would start it from proj, a directory since removed: `OWD`
 /// names it, and `APPDIR` and `APPIMAGE` name a bundle, which need not exist.
 fn from_a_removed_directory(args: &[&str]) -> std::process::Output {

@@ -35,6 +35,7 @@ use serde_json::Value;
 
 pub mod args;
 pub mod close;
+pub mod complete;
 pub mod doctor;
 pub mod drain;
 pub mod forget;
@@ -151,10 +152,14 @@ pub(super) enum Stop {
 /// what a command prints is its product; an interrupted command keeps EXIT_INTERRUPTED. Either way the command runs on,
 /// the rest of what it prints lost.
 ///
+/// With OCTOFLOW_COMPLETE set, the call is a shell's Tab instead: complete::answer_shell answers it from the process's
+/// own arguments, not argv, and exits the process.
+///
 /// Must be called on the main thread before any other thread starts, since it starts the process's handling of
 /// SIGINT, SIGTERM and SIGHUP: serve's own, or else crate::interrupt::by_signals, which those signals then raise
 /// rather than end the process.
 pub fn main(argv: impl IntoIterator<Item = OsString>) -> i32 {
+    complete::answer_shell();
     let mut argv = argv.into_iter();
     if let Some(name) = argv.next().as_deref().map(Path::new).and_then(Path::file_name) {
         let _ = INVOKED_AS.set(name.to_string_lossy().into_owned());
