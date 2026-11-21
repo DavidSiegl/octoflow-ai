@@ -6,7 +6,8 @@ use std::cell::RefCell;
 
 use super::*;
 use crate::constants::{CI_POLL_SECONDS, HEARTBEAT_SECONDS};
-use crate::prompts::{QUALITY_PASSED_NOTE, QUALITY_STUCK_NOTE, QUALITY_UNRESOLVED_NOTE};
+use crate::prompts::template::fill;
+use crate::prompts::{QUALITY_FOLLOWS_NOTE, QUALITY_PASSED_NOTE, QUALITY_STUCK_NOTE, QUALITY_UNRESOLVED_NOTE};
 use crate::quality::finding_fingerprint;
 
 /// Fixture::new with the quality gate.
@@ -25,6 +26,27 @@ fn without_the_gate_no_gate_runs() {
     assert_eq!(saved.get("quality_round"), Some(&Value::from(0)));
     assert_eq!(saved.get("ci"), Some(&Value::Object(Object::new())));
     assert!(f.host.state().snapshots.is_empty());
+}
+
+/// The Builder's prompt in a gated run says that the gate follows its report and how long its turn may take, before
+/// the blocked note; without the gate it says neither (todo 88: Builders ran the gate themselves and timed out).
+#[test]
+fn the_gated_builder_hears_that_the_gate_follows_and_its_turns_time_limit() {
+    let follows = fill(QUALITY_FOLLOWS_NOTE, &|name| (name == "timeout").then(|| "60".to_string())).unwrap();
+    let settings = || RunSettings { turn_timeout: 60, ..RunSettings::default() };
+    let script = |builds: &Rc<RefCell<Vec<String>>>| {
+        vec![
+            ("spec", vec![spec_turn()]),
+            ("build", vec![recording(build_turn(1), builds)]),
+            ("review", vec![review_turn(1, APPROVE)]),
+        ]
+    };
+    let (gated_builds, plain_builds) = (seen(), seen());
+    assert_eq!(gated(script(&gated_builds)).workflow(settings()).run(), verdict(APPROVE));
+    assert_eq!(Fixture::new(script(&plain_builds)).workflow(settings()).run(), verdict(APPROVE));
+    assert!(gated_builds.borrow()[0].ends_with(&format!("\n\n{follows}{}", note())), "{}", gated_builds.borrow()[0]);
+    let plain = &plain_builds.borrow()[0];
+    assert!(plain.ends_with(&note()) && !plain.contains("quality gate") && !plain.contains("seconds"), "{plain}");
 }
 
 #[test]
@@ -80,7 +102,7 @@ fn gate_fails_then_passes() {
         built_in_gate()
     )));
     assert!(quality.contains("1. `limiter.py:3` error ruff F401: `os` imported but unused\n"));
-    assert_eq!(*builds.borrow(), [quality_fix(state, 1, 1) + &note()]);
+    assert_eq!(*builds.borrow(), [quality_fix(state, 1, 1) + &gated_note()]);
     assert!(reviews.borrow()[0].contains(&format!("The Builder's report is in {}", state.quality_build_path(1, 1))));
     assert!(reviews.borrow()[0].contains(&quality_note(QUALITY_PASSED_NOTE, &state.quality_path(1, 2))));
     assert!(f.quality_file(1, 2).starts_with("GATE: OK"));
