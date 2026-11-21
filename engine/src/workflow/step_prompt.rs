@@ -13,6 +13,8 @@ use crate::prompts::template::fill;
 use crate::prompts::{prompt_error, Prompt, Prompts};
 use crate::state::RunState;
 
+use super::turn::waiting_path;
+
 /// A run as its prompts read it. Reading only: nothing through it changes the state or writes a file.
 #[derive(Clone, Copy)]
 pub(crate) struct RunView<'a> {
@@ -30,7 +32,7 @@ impl RunView<'_> {
     /// The step's prompt for its turn in round n, and the one for a fresh session that has not seen the turns before
     /// it (None when the two are the same: the step's first turn). The quality round is the state's, for the
     /// quality-gated step; 0 for every other. Each ends with QUALITY_FOLLOWS_NOTE when the gate follows the turn and
-    /// the turn has a deadline, then with BLOCKED_NOTE when the step can block.
+    /// the turn has a deadline, then with BLOCKED_NOTE and WAITING_NOTE when the step can block.
     ///
     /// Errors: a file cannot be read, a saved record is malformed, or a template cannot be filled in (prompt_error).
     pub(crate) fn step_prompt(&self, step: &Step, n: u32) -> Result<(String, Option<String>), OrchestratorError> {
@@ -44,6 +46,8 @@ impl RunView<'_> {
         if step.can_block() {
             // Formatted with nothing, as each prompt is a template (Prompts): an override may write a brace as {{.
             notes.push(self.prompts.fill(Prompt::BlockedNote, &[])?);
+            let waiting_path = waiting_path(&self.own_path(step, n));
+            notes.push(self.prompts.fill(Prompt::WaitingNote, &[("waiting_path", &waiting_path)])?);
         }
         if notes.is_empty() {
             return Ok((text, fresh));

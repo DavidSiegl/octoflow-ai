@@ -565,6 +565,21 @@ fn rename_over_ssh() {
 }
 
 #[test]
+fn remove_deletes_a_file_and_leaves_a_missing_one_alone() {
+    let d = TempDir::new();
+    let path = d.join("build-1.waiting");
+    put(&path, "the merge of #526");
+    let host = ProcessHost::local(&Interrupt::new());
+    host.remove(&path).unwrap();
+    assert!(!std::path::Path::new(&path).exists());
+    host.remove(&path).unwrap();
+    let ssh = FakeSsh::new(&[]);
+    ssh.host.remove(&path).unwrap();
+    let argv = ssh.last();
+    assert_eq!(argv[argv.len() - 1], format!("rm -f -- {path}"));
+}
+
+#[test]
 fn rename_failure_raises() {
     let d = TempDir::new();
     let e = ProcessHost::local(&Interrupt::new())

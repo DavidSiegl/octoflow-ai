@@ -436,7 +436,9 @@ orchestrator polls for the file, and sends a herdr notification when a role:
 - has sat **idle for 3 minutes** without writing its file (not in a human-paced step, such as the Spec
   Collector's interview, which waits on you by design);
 - writes a report whose first non-blank line starts with **`BLOCKED:`**, because it cannot go on without a
-  decision from you.
+  decision from you;
+- reports that it **waits** on something outside the run, once at the start of each wait: "Builder is waiting on
+  <what>".
 
 Notifications appear in the herdr where the orchestrator runs. Answer in the named pane, and the run continues.
 
@@ -458,6 +460,16 @@ verdict. When a report is blocked, the orchestrator:
 The new file goes on as the first would have, to the Reviewer in the same round; one that starts with
 `BLOCKED:` again is moved to K+1 and waited for again, with no limit. While a running run waits, `list` and
 `show` print `blocked: <question> (pane …)` in place of `running`, and the GUI colors it as it does `stale`.
+
+An agent that has to wait for something outside the run, such as another pull request merging before its own can
+raise the version, has no question for you and should not end its turn. The same steps' prompts say how it reports
+that instead: it writes what it waits on to its file's waiting file, `<stem>.waiting` (`build-1.waiting`), and
+deletes the file when it goes back to work. While the file is there, the turn's `--timeout` stands still, so it counts
+only the time the agent works, and no idle notice is sent; you are told "Builder is waiting on <what>" once as each
+wait starts. A resume that finds the file still there waits as well. The orchestrator deletes a waiting file left
+behind once the turn's file is written. An agent that exits while it waits still fails the run. The wait is in the
+run's log only: `summary.md`'s turn table, `list`, `show` and the desktop app count a turn's time as before, waits
+included.
 
 ## Running the agents on another machine
 

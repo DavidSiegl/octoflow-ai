@@ -805,6 +805,13 @@ impl Host for FakeHost {
         Ok(())
     }
 
+    fn remove(&self, path: &str) -> Result<(), OrchestratorError> {
+        let mut s = self.state();
+        s.files.shift_remove(path);
+        s.mtimes.remove(path);
+        Ok(())
+    }
+
     fn now(&self) -> Result<i64, OrchestratorError> {
         Ok(self.state().now())
     }

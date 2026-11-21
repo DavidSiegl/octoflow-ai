@@ -25,7 +25,7 @@ const D: &str = "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3";
 // The default workflow's prompts as commit d6bb100 sent them, recorded by running these scenarios on that commit's
 // code: since then, SPEC_PROMPT's "Separate Claude Code sessions" became "Separate agent sessions", FIX_PROMPT's "The
 // Reviewer requested changes" became "Changes were requested", every prompt the Builder gets ends with
-// BLOCKED_NOTE, and in a gated run with QUALITY_FOLLOWS_NOTE before it.
+// BLOCKED_NOTE and WAITING_NOTE, and in a gated run with QUALITY_FOLLOWS_NOTE before them.
 
 pub(super) const FRESH_BUILD_2: &str = concat!(
     "You are the Builder, the second of three roles (Spec Collector -> Builder -> Reviewer). The spec in ",
@@ -47,6 +47,10 @@ pub(super) const FRESH_BUILD_2: &str = concat!(
     "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3/build-2.md in a single write, in the same shape as ",
     "before, answering each finding by its number.\n\nIf you cannot continue without a decision from the ",
     "human, write the report with a first line `BLOCKED: <your question>` instead.",
+    "\n\nIf you must wait for something outside this run before you can go on, such as another pull ",
+    "request merging, write what you are waiting for to ",
+    "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3/build-2.waiting and delete that file when you ",
+    "go back to work, as the turn's time limit stands still while it is there.",
 );
 
 const FRESH_REVIEW_2: &str = concat!(
@@ -104,6 +108,10 @@ const BUILD_1: &str = concat!(
     "report before then.\n\nIf ",
     "you cannot continue without a decision from the human, write the report with a first line ",
     "`BLOCKED: <your question>` instead.",
+    "\n\nIf you must wait for something outside this run before you can go on, such as another pull ",
+    "request merging, write what you are waiting for to ",
+    "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3/build-1.waiting and delete that file when you ",
+    "go back to work, as the turn's time limit stands still while it is there.",
 );
 
 const QUALITY_FIX_1_1: &str = concat!(
@@ -120,6 +128,10 @@ const QUALITY_FIX_1_1: &str = concat!(
     "report before then.\n\nIf you ",
     "cannot continue without a decision from the human, write the report with a first line `BLOCKED: ",
     "<your question>` instead.",
+    "\n\nIf you must wait for something outside this run before you can go on, such as another pull ",
+    "request merging, write what you are waiting for to ",
+    "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3/build-1-q1.waiting and delete that file when ",
+    "you go back to work, as the turn's time limit stands still while it is there.",
 );
 
 const REVIEW_1_PASSED: &str = concat!(
@@ -152,6 +164,10 @@ const FIX_2: &str = concat!(
     "gate yourself: run the tests your change touches. This turn may take at most 1800 seconds; write the ",
     "report before then.\n\nIf you cannot continue without a decision ",
     "from the human, write the report with a first line `BLOCKED: <your question>` instead.",
+    "\n\nIf you must wait for something outside this run before you can go on, such as another pull ",
+    "request merging, write what you are waiting for to ",
+    "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3/build-2.waiting and delete that file when you ",
+    "go back to work, as the turn's time limit stands still while it is there.",
 );
 
 const QUALITY_FIX_2_1: &str = concat!(
@@ -168,6 +184,10 @@ const QUALITY_FIX_2_1: &str = concat!(
     "report before then.\n\nIf you ",
     "cannot continue without a decision from the human, write the report with a first line `BLOCKED: ",
     "<your question>` instead.",
+    "\n\nIf you must wait for something outside this run before you can go on, such as another pull ",
+    "request merging, write what you are waiting for to ",
+    "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3/build-2-q1.waiting and delete that file when ",
+    "you go back to work, as the turn's time limit stands still while it is there.",
 );
 
 const RECHECK_2_UNRESOLVED: &str = concat!(
@@ -245,6 +265,10 @@ const FRESH_BUILD_2_AFTER_QUALITY_ROUNDS: &str = concat!(
     "gate yourself: run the tests your change touches. This turn may take at most 1800 seconds; write the ",
     "report before then.\n\nIf you cannot continue without a decision ",
     "from the human, write the report with a first line `BLOCKED: <your question>` instead.",
+    "\n\nIf you must wait for something outside this run before you can go on, such as another pull ",
+    "request merging, write what you are waiting for to ",
+    "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3/build-2.waiting and delete that file when you ",
+    "go back to work, as the turn's time limit stands still while it is there.",
 );
 
 const FRESH_QUALITY_FIX_2_1: &str = concat!(
@@ -276,6 +300,10 @@ const FRESH_QUALITY_FIX_2_1: &str = concat!(
     "report before then.\n\nIf you ",
     "cannot continue without a decision from the human, write the report with a first line `BLOCKED: ",
     "<your question>` instead.",
+    "\n\nIf you must wait for something outside this run before you can go on, such as another pull ",
+    "request merging, write what you are waiting for to ",
+    "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3/build-2-q1.waiting and delete that file when ",
+    "you go back to work, as the turn's time limit stands still while it is there.",
 );
 
 const FRESH_REVIEW_2_PASSED: &str = concat!(
@@ -658,7 +686,10 @@ fn a_build_prompt_file_words_the_builders_first_turn() {
     );
     let mut wf = f.workflow(no_pr_of(pipeline));
     assert_eq!(wf.run(), verdict(APPROVE));
-    assert_eq!(*seen.borrow(), [format!("Build {D}/spec.md in /proj; report to {D}/build-1.md.{}", note())]);
+    assert_eq!(
+        *seen.borrow(),
+        [format!("Build {D}/spec.md in /proj; report to {D}/build-1.md.{}", note(&format!("{D}/build-1.md")))]
+    );
     let overrides: Vec<(&str, &String)> = wf.state().prompt_overrides.iter().map(|(k, v)| (k.as_str(), v)).collect();
     assert_eq!(overrides, [("BUILD_PROMPT", &build.to_string())]);
     // The saved definition holds the overridden prompt, so a resume asks the same of the Builder.
@@ -673,7 +704,7 @@ fn a_follow_up_file_reaches_the_turn_that_uses_it() {
     let (mut state, pipeline) = started(&config);
     (state.phase, state.round) = ("build".into(), 2);
     let (text, _) = step_prompt_in(&pipeline, &state, &FakeHost::default(), "build", 2);
-    assert_eq!(text, format!("Fix {D}/review-1.md; report to {D}/build-2.md.{}", note()));
+    assert_eq!(text, format!("Fix {D}/review-1.md; report to {D}/build-2.md.{}", note(&format!("{D}/build-2.md"))));
 }
 
 #[test]
@@ -696,8 +727,9 @@ fn a_note_file_reaches_every_workflow() {
     let mut state = new_run(&quick);
     state.prompt_overrides = load_prompts(&config).unwrap().overrides();
     let (text, _) = step_prompt_in(&quick, &state, &FakeHost::default(), "build", 1);
-    let expected = format!("Build add a rate limiter in /proj; report to {D}/build-1.md.\n\nStuck? Write `BLOCKED: <question>` {{and stop}}.");
-    assert_eq!(text, expected);
+    let stuck = "Stuck? Write `BLOCKED: <question>` {and stop}.";
+    let expected = format!("Build add a rate limiter in /proj; report to {D}/build-1.md.\n\n{stuck}");
+    assert!(text.starts_with(&format!("{expected}\n\nIf you must wait ")), "{text}");
 }
 
 #[test]

@@ -49,7 +49,7 @@ fn workflow_without_a_spec_step() {
     assert_eq!(
         *seen.borrow(),
         [
-            format!("Build add a rate limiter in /proj; report to {D}/build-1.md.{}", note()),
+            format!("Build add a rate limiter in /proj; report to {D}/build-1.md.{}", note(&format!("{D}/build-1.md"))),
             format!("Review {CHANGE} against add a rate limiter; write {D}/review-1.md."),
         ]
     );
@@ -128,8 +128,11 @@ fn four_roles_loop_back_to_the_builder_only() {
     assert_eq!(
         *seen.borrow(),
         [
-            format!("Build {D}/spec.md against {D}/tests.md; report to {D}/build-1.md.{}", note()),
-            format!("Fix {D}/review-1.md; report to {D}/build-2.md.{}", note()),
+            format!(
+                "Build {D}/spec.md against {D}/tests.md; report to {D}/build-1.md.{}",
+                note(&format!("{D}/build-1.md"))
+            ),
+            format!("Fix {D}/review-1.md; report to {D}/build-2.md.{}", note(&format!("{D}/build-2.md"))),
         ]
     );
     assert_eq!(f.told.titles()[0], "Spec Collector is waiting for you");
@@ -256,7 +259,10 @@ fn gated_step_with_another_name() {
     );
     assert_eq!(
         *impls.borrow(),
-        [format!("Implement add a rate limiter; report to {D}/impl-1.md.{}", gated_note()), fix + &gated_note()]
+        [
+            format!("Implement add a rate limiter; report to {D}/impl-1.md.{}", gated_note(&format!("{D}/impl-1.md"))),
+            fix + &gated_note(&format!("{D}/impl-1-q1.md"))
+        ]
     );
     let passed = quality_note(QUALITY_PASSED_NOTE, &format!("{D}/quality-1-2.md"));
     assert_eq!(
@@ -297,7 +303,7 @@ fn fresh_gated_step_answering_a_quality_round() {
         *seen.borrow(),
         [format!(
             "Implement add a rate limiter; report to {D}/impl-1-q1.md.\n\nEarlier reports: {D}/impl-1.md.\n\n{fix}{}",
-            gated_note()
+            gated_note(&format!("{D}/impl-1-q1.md"))
         )]
     );
     // The second role goes to the right of the first.
