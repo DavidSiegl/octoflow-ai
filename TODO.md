@@ -80,16 +80,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   double-loading refusal was) is caught only by a real install by hand. Closed by an opt-in test that installs with
   the pinned Node's npm against a local registry, or ignored by default and run before a pin raise.
 
-- **herdr's words and fields still reach past the `Agents`/`RunPlaces` seam.** `Workflow::wait_out_block`
-  (`engine/src/workflow/turn.rs`) logs "answer in the pane" and "typed in its pane; answer there", and
-  `Plan::summary` (`engine/src/cli/close.rs`) records "workspace closed" / "workspace already gone", whatever backend
-  the run used; list and show print the run's `workspace_id` and each agent's `pane` straight from the state
-  (`run_record`, `show_run` in `engine/src/cli/listing.rs`). All were kept so the herdr-only text stays unchanged; a
-  run on the ACP backend (`engine/src/acp.rs`) prints them wrong or empty, and since 0.94.0 every app run is one
-  (`.scratch/herdr-gui-decoupling`, ticket 12); no ticket of that feature rewords them: closes when these take their
-  wording from the backend (`Agents::whereabouts`, `RunPlaces::place`). serve
-  reading `herdr_server` (`engine/src/serve/runs.rs`) is by design: its `AgentConsole` stays herdr's own.
-
 - **An ACP turn's usage is lost when its prompt is still pending at count time or at a kill.** Raised by
   cross-review 257 (F7): `acp-usage.jsonl` gets a prompt's line only when the agent answers its `session/prompt`
   (`engine/src/acp/connection.rs`, `replied`), which can come after the handoff file that ends the turn; nothing
