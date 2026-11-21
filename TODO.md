@@ -46,7 +46,8 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   user's ruling.** Review 262 (2026-11-21) found three departures, each kept as built until the spec owner amends the
   spec or asks for the code to change: (1) no in-run offer: "When claude is first needed by an ACP run ... the app
   offers to install", but a claude ACP run without the install fails, naming the setup dialog, which opens by itself
-  under ACP (its own marker, `setup-checked-acp`) until claude's Required check passes; (2) the claude check also asks
+  under ACP until claude's Required check passes (its own marker, `setup-checked-acp`, counts only while the install
+  of the current pins is there, `Setup::checked`); (2) the claude check also asks
   the adapter `initialize` (`cli/doctor.rs`, `check_acp_setup`), where R7 asks only that the install is present, so a
   present install that does not answer within PROBE_SECONDS fails it; (3) the button says about 913 MB, the measured
   size (`claude_acp::INSTALL_MEGABYTES`: npm installs both the glibc and the musl Agent SDK binary), not R6's 690.
@@ -93,13 +94,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `ProjectRuns::resume` always answers 409 ("this app's runs start in herdr"). The error is clear; the button cannot
   work. Closes when serve tells the app how its project launches runs (or the switch is gone, ticket 12 of
   `.scratch/herdr-gui-decoupling`).
-
-- **The app's setup marker does not say which backend's checks passed.** Raised by cross-review 258 (F6): herdr's
-  and ACP's checks share one marker (`Setup::of`, `engine/src/serve/setup.rs`, `setup_checked_path`). A marker
-  written after herdr's checks passed keeps the dialog shut once the app runs over ACP, where claude's Required check
-  can fail. Nobody meets it while `OCTOFLOW_APP_BACKEND` stays a developer setting. Closes before ticket 12 of
-  `.scratch/herdr-gui-decoupling` puts every app run on ACP: either the marker names its backend, or that release
-  clears it.
 
 - **An ACP turn's usage is lost when its prompt is still pending at count time or at a kill.** Raised by
   cross-review 257 (F7): `acp-usage.jsonl` gets a prompt's line only when the agent answers its `session/prompt`

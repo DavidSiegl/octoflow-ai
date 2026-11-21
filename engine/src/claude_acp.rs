@@ -206,9 +206,8 @@ impl ClaudeAcp {
         installed
     }
 
-    /// The install of the current pins, when it is there, its Node and its script; None when it is not, as before the
-    /// first install, after a pin was raised, or when part of it was deleted. It does not check that the install
-    /// still runs.
+    /// The install of the current pins, when its Node and its script are there; None when either is not, as before the
+    /// first install or after a pin was raised. It checks no other file, nor that the install still runs.
     pub fn installed(&self) -> Option<Installed> {
         let installed = self.at(&format!("{}/{}", self.root, self.pins.install_name()));
         let whole = Path::new(&installed.node).is_file() && Path::new(&installed.script).is_file();

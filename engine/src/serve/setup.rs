@@ -87,9 +87,12 @@ impl Setup {
         }
     }
 
-    /// Whether the marker is there. Errors: whether it is cannot be told, as when the directory cannot be searched.
+    /// Whether the dialog need not open by itself: the marker is there and, for app runs over ACP, claude's ACP
+    /// adapter is installed for the current pins, whose absence fails a Required check, as after an upgrade raised a
+    /// pin. Errors: whether the marker is there cannot be told, as when the directory cannot be searched.
     pub fn checked(&self) -> Result<bool, String> {
-        std::path::Path::new(&self.marker).try_exists().map_err(|e| self.failed("look for", &e))
+        let marked = std::path::Path::new(&self.marker).try_exists().map_err(|e| self.failed("look for", &e))?;
+        Ok(marked && self.claude.as_ref().is_none_or(|claude| claude.installed().is_some()))
     }
 
     /// Write the marker, an empty file, creating its directory when missing; one already there stays. It does not

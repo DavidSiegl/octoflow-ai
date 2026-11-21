@@ -661,6 +661,12 @@ describe("the setup dialog", () => {
     expect(await within(dialog).findByText("claude-agent-acp 0.101.0", { exact: false })).toBeInTheDocument();
     expect(within(dialog).queryByText("cannot download node: HTTP 503")).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: /Install claude/ })).not.toBeInTheDocument();
+    // Nor while the next round runs, nor after it.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Check again" }));
+    expect(within(dialog).queryByText("cannot download node: HTTP 503")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /Install claude/ })).not.toBeInTheDocument();
+    await within(dialog).findByText("claude-agent-acp 0.101.0", { exact: false });
+    expect(within(dialog).queryByText("cannot download node: HTTP 503")).not.toBeInTheDocument();
   });
 
   it("checks again", async () => {

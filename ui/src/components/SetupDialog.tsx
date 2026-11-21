@@ -38,13 +38,22 @@ export function SetupDialog({ api, project, onClose }: Props) {
   const [markError, setMarkError] = useState<string | null>(null);
   // The quality gate's setup: undefined until asked for, then as GateOutcome says.
   const [gate, setGate] = useState<GateOutcome | undefined>(undefined);
-  // The latest install of claude's ACP adapter: undefined until asked for and again once it succeeds, then as
-  // ClaudeOutcome says. A failure stops showing once a round reports the adapter installed, as by another window.
+  // The latest install of claude's ACP adapter: undefined until asked for, and again once it succeeds or a round
+  // reports the adapter installed, then as ClaudeOutcome says.
   const [claude, setClaude] = useState<ClaudeOutcome | undefined>(undefined);
   useEffect(() => {
     let current = true;
     api.setupChecks(project).then(
-      (report) => current && setAnswered({ round, outcome: { report } }),
+      (report) => {
+        if (!current) {
+          return;
+        }
+        setAnswered({ round, outcome: { report } });
+        // An install that failed, here or before another window installed it, is past once the adapter is there.
+        if (report.claude_install?.installed) {
+          setClaude((c) => (c === null ? c : undefined));
+        }
+      },
       (error: Error) => current && setAnswered({ round, outcome: { error: error.message } }),
     );
     return () => {
@@ -81,8 +90,6 @@ export function SetupDialog({ api, project, onClose }: Props) {
     );
   };
   const offered = outcome && "report" in outcome ? outcome.report.claude_install : null;
-  const installing = claude === null;
-  const failed = claude && !offered?.installed ? claude : undefined;
   return (
     <Dialog label="setup" title="Setup" project={project} className="setup">
       {outcome === null && <p className="loading">Checking…</p>}
@@ -93,7 +100,7 @@ export function SetupDialog({ api, project, onClose }: Props) {
           <CheckGroup key={level} heading={heading} checks={outcome.report.checks.filter((c) => c.level === level)} />
         ))}
       {gate !== undefined && <GateSetup outcome={gate} />}
-      {(installing || failed) && <ClaudeInstall outcome={failed ?? null} />}
+      {claude !== undefined && <ClaudeInstall outcome={claude} />}
       {markError !== null && <p className="problem">Could not record that setup was checked: {markError}</p>}
       <footer>
         <button type="button" onClick={() => setRound((r) => r + 1)} disabled={outcome === null || marking}>
@@ -102,8 +109,8 @@ export function SetupDialog({ api, project, onClose }: Props) {
         <button type="button" onClick={setUpGate} disabled={gate === null || marking}>
           Set up the quality gate
         </button>
-        {(installing || failed || (offered && !offered.installed)) && (
-          <button type="button" onClick={installClaude} disabled={installing || marking}>
+        {(claude !== undefined || (offered && !offered.installed)) && (
+          <button type="button" onClick={installClaude} disabled={claude === null || marking}>
             Install claude's ACP adapter{offered && ` (about ${offered.megabytes} MB)`}
           </button>
         )}

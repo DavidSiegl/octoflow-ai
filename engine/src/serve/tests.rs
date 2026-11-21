@@ -626,6 +626,21 @@ fn the_setup_marker_is_written_and_read() {
     assert!(asked.lock().unwrap().is_empty(), "the marker needs no check");
 }
 
+/// Under ACP the marker keeps the dialog shut only while claude's ACP adapter is installed for the current pins, as it
+/// is not after an upgrade raised a pin.
+#[test]
+fn the_setup_marker_counts_under_acp_only_while_claude_s_adapter_is_installed() {
+    let d = Project::new();
+    let claude = ClaudeAcp::in_environment(vec![("XDG_DATA_HOME".into(), d.root().into())]);
+    let marker = format!("{}/config/setup-checked-acp", d.root());
+    let setup = Setup::new(Box::new(|_: &str, _: &str, _: &Interrupt| vec![]), Some(claude), marker);
+    setup.mark().unwrap();
+    assert_eq!(setup.checked(), Ok(false));
+
+    ClaudeAcp::in_environment(vec![("XDG_DATA_HOME".into(), d.root().into())]).install_fake("");
+    assert_eq!(setup.checked(), Ok(true));
+}
+
 #[test]
 fn a_setup_marker_that_cannot_be_written_or_looked_for_is_500() {
     let d = Project::new();
