@@ -204,7 +204,8 @@ window:
   its first argument, and then extracts itself into `$TMPDIR` (`/tmp` by default) and leaves it there, about 340 MB
   for each version. Install FUSE, or extract it once with `--appimage-extract` and run the `squashfs-root/AppRun`
   that makes instead.
-- **`.deb`:** it installs the app as `/usr/bin/octoflow`.
+- **`.deb`:** it installs the app as `/usr/bin/octoflow`, with its [Tab completion](#tab-completion) for bash, zsh
+  and fish, which works in each new shell with nothing to add to your startup files.
 - **macOS:** link the app's executable onto your `PATH`:
 
   ```bash
@@ -243,8 +244,8 @@ this machine. Its endpoints and security checks are in [serve](docs/architecture
 each run's phase and task). The shell runs `octoflow` on each Tab, so new runs and workflow files show up at once.
 Runs are read from the project of `--cwd`, else the current directory, and only on this computer: with `--machine`,
 no runs are offered. bash and zsh read the `--cwd` as typed, so a quoted or escaped path, or one with a variable,
-gives no runs there; fish reads it only before the cursor. Add the line for your shell to its startup file, with
-`octoflow` on your `PATH`:
+gives no runs there; fish reads it only before the cursor. The `.deb` sets completion up for all three shells;
+otherwise add the line for your shell to its startup file, with `octoflow` on your `PATH`:
 
 ```bash
 source <(OCTOFLOW_COMPLETE=bash octoflow)                          # ~/.bashrc

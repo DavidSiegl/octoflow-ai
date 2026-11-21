@@ -430,6 +430,31 @@ fn complete_prints_each_shell_s_registration_naming_octoflow_not_the_binary_s_pa
 }
 
 #[test]
+fn the_deb_s_completion_scripts_are_what_the_program_prints() {
+    let dir = Dir::new("complete-packaged");
+    let packaged = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packaging/completions");
+    // The zsh script's last line is generate.sh's, which says why it is there.
+    for (shell, file, appended) in [
+        ("bash", "octoflow", ""),
+        ("zsh", "_octoflow", "_clap_dynamic_completer_octoflow \"$@\"\n"),
+        ("fish", "octoflow.fish", ""),
+    ] {
+        let out = program(&dir, &[], None).env("OCTOFLOW_COMPLETE", shell).output().expect("octoflow runs");
+        assert_eq!(out.status.code(), Some(0), "{shell}: {}", stderr(&out));
+        // generate.sh writes the script as a shell's $(...) reads it: its trailing newlines made one.
+        let printed = String::from_utf8_lossy(&out.stdout);
+        let expected = format!("{}\n{appended}", printed.trim_end_matches('\n'));
+        let path = packaged.join(file);
+        let committed = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+        assert!(
+            committed == expected,
+            "packaging/completions/{file} is not what OCTOFLOW_COMPLETE={shell} octoflow prints; run \
+             packaging/completions/generate.sh and commit what it writes"
+        );
+    }
+}
+
+#[test]
 fn a_command_runs_with_clap_complete_s_default_variable_complete_exported() {
     let dir = Dir::new("complete-other-variable");
     let out = program(&dir, &["workflows"], None).env("COMPLETE", "1").output().expect("octoflow runs");

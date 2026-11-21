@@ -467,7 +467,9 @@ is of its source, and each hidden test rejects its task's starting point and acc
   the one executable in it. It writes
   `dist/octoflow-desktop-<os>-<arch>` `.deb` and `.AppImage` on Linux, `.dmg` on macOS (signed ad hoc),
   each with its `.sha256`, and refuses a bundle without `build-binary.sh`'s third-party
-  licenses, which it bundles as the resource `THIRD-PARTY-LICENSES.html`. Beside it, as
+  licenses, which it bundles as the resource `THIRD-PARTY-LICENSES.html`, and a `.deb` without the shell completion
+  scripts of `packaging/completions/` at bash's, zsh's and fish's vendor paths (`generate.sh` there writes them from
+  the program; `engine/tests/program.rs` fails while one differs). Beside the licenses, as
   `THIRD-PARTY-LICENSES-NPM.html`, go the licenses of the npm packages the app's window bundles, which
   `ui/scripts/npm-licenses.js` writes after `npm ci` to `dist/octoflow-desktop-npm-licenses.html`, the release's
   copy: every package of `ui/package-lock.json`'s production tree, and the build tools that add code of their own to
