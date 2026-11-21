@@ -331,7 +331,7 @@ octoflow metrics | jq -s 'map(.rounds) | add / length'
 | `--machine NAME` | Saved herdr machine to run the agents on. Requires `--cwd`. |
 | `--cwd PATH` | Project directory, on the machine if `--machine` is given. Default: current directory. |
 | `--max-rounds N` | Review rounds before giving up (default 3). |
-| `--timeout SECONDS` | How long one Builder or Reviewer turn may take (default 1800), not counting the time its agent reports it waits on something outside the run. The interview has no limit. |
+| `--timeout SECONDS` | How long one Builder or Reviewer turn may take (default 1800), not counting the time its agent reports it waits on something outside the run; 0 (or less) for no limit. The interview has no limit. |
 | `--agent KIND` | The [harness](#harnesses) every role runs in. Overrides a role's `agent` in the workflow file. |
 | `--role-agent ROLE=KIND` | The harness of one role, by its key, e.g. `review=codex`. Overrides `--agent`; repeatable. |
 | `--permission-mode MODE` | Permission mode for every role, by Claude Code's names; each other harness gets its [equivalent](#harnesses). Which to choose for a run nobody watches: [unattended runs](#unattended-runs). |

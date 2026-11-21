@@ -51,6 +51,20 @@ fn the_gated_builder_hears_that_the_gate_follows_and_its_turns_time_limit() {
     assert!(plain.ends_with(&end) && !plain.contains("quality gate") && !plain.contains("seconds"), "{plain}");
 }
 
+/// A gated Builder whose turn has no limit (`--timeout 0`) hears no time limit, and so not that the gate follows.
+#[test]
+fn a_gated_builder_with_no_turn_limit_hears_no_time_limit() {
+    let builds = seen();
+    let f = gated(vec![
+        ("spec", vec![spec_turn()]),
+        ("build", vec![recording(build_turn(1), &builds)]),
+        ("review", vec![review_turn(1, APPROVE)]),
+    ]);
+    assert_eq!(f.workflow(RunSettings { turn_timeout: 0, ..RunSettings::default() }).run(), verdict(APPROVE));
+    let build = &builds.borrow()[0];
+    assert!(build.ends_with(&note(&f.state.build_path(1))) && !build.contains("seconds"), "{build}");
+}
+
 #[test]
 fn a_builder_turn_that_changed_nothing_tracked_skips_the_quality_step() {
     let f = gated(vec![

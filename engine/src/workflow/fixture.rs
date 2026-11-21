@@ -223,10 +223,11 @@ impl Fixture {
         self.herdr.state().script.entry(role.to_string()).or_default().extend(turns);
     }
 
-    /// The settings a resume of the fixture's state runs with: the defaults, the pull request as the state saved it,
-    /// as main gives a resumed run the choice it was started with.
+    /// The settings a resume of the fixture's state runs with: the defaults, the pull request and the turn timeout as
+    /// the state saved them, as cli::run_workflow gives a resumed run the choices it was started with.
     pub fn as_saved(&self) -> RunSettings {
-        RunSettings { pull_request: self.state.pull_request, ..RunSettings::default() }
+        let s = &self.state;
+        RunSettings { pull_request: s.pull_request, turn_timeout: s.turn_timeout, ..RunSettings::default() }
     }
 
     /// Put text at path straight into FakeHost.files: no write is recorded, and the

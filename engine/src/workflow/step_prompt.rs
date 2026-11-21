@@ -56,10 +56,10 @@ impl RunView<'_> {
         Ok((format!("{text}\n\n{notes}"), fresh.map(|f| if f.is_empty() { f } else { format!("{f}\n\n{notes}") })))
     }
 
-    /// Seconds the step's turn may take; None for a human-paced step, whose turn waits on the human and has no
-    /// deadline.
+    /// Seconds the step's turn may take; None for no deadline: a human-paced step, whose turn waits on the human, or
+    /// a run whose turn_timeout is 0.
     pub(crate) fn turn_timeout(&self, step: &Step) -> Option<u64> {
-        (!step.human_paced).then_some(self.state.turn_timeout)
+        (!step.human_paced).then_some(self.state.turn_timeout).filter(|&t| t != 0)
     }
 
     /// step_prompt as the step's definition words it, without its notes.

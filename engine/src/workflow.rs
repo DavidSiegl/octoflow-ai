@@ -101,7 +101,7 @@ pub struct RunSettings {
     /// last verdict step when there is none, whatever the verdict; a human-paced one's request for changes raises
     /// max_rounds by one, as saved, and sends the run back as in an earlier round (Workflow::after_rejection).
     pub max_rounds: u32,
-    /// Seconds a turn of a step that is not human-paced may take.
+    /// Seconds a turn of a step that is not human-paced may take; 0 for no limit.
     pub turn_timeout: u64,
     pub agents: AgentSettings,
     /// Whether the run ends in a pull request: the editing steps work on a branch of their own, which is committed,

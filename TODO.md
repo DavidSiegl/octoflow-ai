@@ -56,13 +56,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `cli::resume_command` adds both for the CLI's own hints. `workflow` cannot call into `cli`, which depends on it.
   Closed when the workflow is given the program name and the target flags (or a hint builder) by its caller.
 
-- **`resume --timeout 0` tells a gated Builder "This turn may take at most 0 seconds".** Raised by cross-review 268
-  (F2): "`resume --timeout 0` (or negative) sets `state.turn_timeout = 0` with no zero check, while `run`
-  (start.rs:57) maps 0 to DEFAULT_TURN_TIMEOUT. `RunView::turn_timeout` (step_prompt.rs:57) passes that 0 both to the
-  turn's deadline and ... into QUALITY_FOLLOWS_NOTE." The deadline half predates todo/88. Closes with
-  `.scratch/turn-timeout-waits/issues/02-timeout-zero-means-no-limit.md`: once `RunView::turn_timeout` gives None for
-  a `turn_timeout` of 0, the note is left out as for a human-paced step.
-
 - **"The run has the quality gate" is spelt two ways.** Raised by cross-review 268 (F6): `step_prompt.rs` tests
   `quality_job.is_some()`, while `gate_switch.rs`, `cli.rs` (resume's gate check) and `cli/listing.rs` test
   `quality_job.as_deref().is_some_and(|j| !j.is_empty())`; within a run they agree (workflow.rs sets quality_job from

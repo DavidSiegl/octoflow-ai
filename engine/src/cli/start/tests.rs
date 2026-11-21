@@ -93,6 +93,14 @@ fn flags_override_saved_settings() {
 }
 
 #[test]
+fn a_resume_timeout_of_0_or_less_is_no_limit() {
+    for given in ["0", "-5"] {
+        let state = resumable(&["--timeout", given], &saved_settings(&[])).unwrap();
+        assert_eq!(state.turn_timeout, 0, "--timeout {given}");
+    }
+}
+
+#[test]
 fn a_run_an_earlier_release_saved_is_refused_with_what_to_do() {
     let mut saved = saved_settings(&[]);
     saved.shift_remove("format");
@@ -371,9 +379,11 @@ fn a_new_run_takes_the_defaults_and_the_flags() {
     assert_eq!(dumps(&state.next_harnesses), r#"{"spec":"agy","build":"codex","review":"codex"}"#);
     assert_eq!((state.pull_request, state.quality_job.as_deref()), (false, Some(LOCAL_GATE)));
     assert_eq!(state.worktree, Some(format!("/proj/.octoflow-ai/worktrees/{}", state.key())));
-    // A timeout of 0 is none given: DEFAULT_TURN_TIMEOUT.
-    let (state, _) = new_state(&run_args(&["--timeout", "0", "t"], &config), "/proj", None, &world).unwrap();
-    assert_eq!(state.turn_timeout, 1800);
+    // A timeout of 0 is no limit, and a negative one is taken as 0.
+    for given in ["0", "-5"] {
+        let (state, _) = new_state(&run_args(&["--timeout", given, "t"], &config), "/proj", None, &world).unwrap();
+        assert_eq!(state.turn_timeout, 0, "--timeout {given}");
+    }
 }
 
 #[test]

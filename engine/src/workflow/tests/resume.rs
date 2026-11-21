@@ -24,6 +24,25 @@ fn build_and_approve(n: u32, seen: &Rc<RefCell<Vec<String>>>) -> Script {
     vec![("build", vec![recording(build_turn(n), seen)]), ("review", vec![review_turn(n, APPROVE)])]
 }
 
+/// A run whose state says turn_timeout 0, as `resume --timeout 0` saved it before 0 meant no limit, resumes with no
+/// deadline: its Builder writes past DEFAULT_TURN_TIMEOUT and the run goes on.
+#[test]
+fn a_run_saved_with_a_turn_timeout_of_0_resumes_with_no_limit() {
+    let mut state = prompted(saved_run("build", 1, &["spec", "build"]), "build-1.md");
+    state.turn_timeout = 0;
+    state.pull_request = false;
+    let host = Rc::new(FakeHost::default());
+    host.write(&state.spec_path(), SPEC, false).unwrap();
+    let build = state.build_path(1);
+    let f = Fixture::resume(Rc::clone(&host), state, vec![("review", vec![review_turn(1, APPROVE)])], &["build"], &[]);
+    f.clock.hook(move |now| {
+        if now > (DEFAULT_TURN_TIMEOUT + 60) as f64 {
+            host.write(&build, "report 1", false).unwrap();
+        }
+    });
+    assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
+}
+
 #[test]
 fn spec_written_while_orchestrator_was_gone() {
     // Run e292fb: the collector wrote spec.md and exited after the orchestrator died.
