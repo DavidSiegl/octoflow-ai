@@ -50,22 +50,22 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   of the current pins is there, `Setup::checked`); (2) the claude check also asks
   the adapter `initialize` (`cli/doctor.rs`, `check_acp_setup`), where R7 asks only that the install is present, so a
   present install that does not answer within PROBE_SECONDS fails it; (3) the button says about 913 MB, the measured
-  size (`claude_acp::INSTALL_MEGABYTES`: npm installs both the glibc and the musl Agent SDK binary), not R6's 690.
-- **An install of claude's ACP adapter removes other pins' installs that runs may still use.** Review 262: runs outlive
+  size (`acp_adapter::Adapter::megabytes`: npm installs both the glibc and the musl Agent SDK binary), not R6's 690.
+- **An install of an ACP adapter removes other pins' installs that runs may still use.** Review 262: runs outlive
   the app (Keep running), so after an upgrade raises a pin, Install in the new app deletes the old pins' directory
   under a live run of the old engine, whose next claude role then fails with "claude's ACP adapter is not installed"
-  (`claude_acp.rs`, `remove_others`). R6 asks for old versions to go once the new one is in place and does not cover
+  (`acp_adapter.rs`, `remove_others`). R6 asks for old versions to go once the new one is in place and does not cover
   installs in use. Closed by keeping the previous install and removing only older ones, or by skipping installs a
   running run uses.
-- **A successful install of claude's ACP adapter is reported as a failure when removing an old install fails.** Review
-  262: once the new install is in place, an error of `remove_others` makes POST /setup/claude answer 502, though the
+- **A successful install of an ACP adapter is reported as a failure when removing an old install fails.** Review
+  262: once the new install is in place, an error of `remove_others` makes POST /setup/adapter answer 502, though the
   adapter is installed; the dialog's next round shows it installed. Closed by reporting the leftover as a warning
-  beside a success, which /setup/claude's answer has no field for yet.
-- **POST /setup/claude holds one HTTP request for the whole install, up to NPM_TIMEOUT.** Review 262: closing and
+  beside a success, which /setup/adapter's answer has no field for yet.
+- **POST /setup/adapter holds one HTTP request for the whole install, up to NPM_TIMEOUT.** Review 262: closing and
   reopening the setup dialog loses "Installing…" and offers Install again (a second click waits on the lock, then
   succeeds). Whether WKWebView or WebKitGTK time out an idle fetch is unchecked; the macOS by-hand install of ticket 07
   answers it. Closed by an install the server runs in the background, with its progress in /setup's answer.
-- **No test runs the pinned Node's real npm.** Review 263: the tests' fake npm (`claude_acp/tests.rs`) knows only the
+- **No test runs the pinned Node's real npm.** Review 263: the tests' fake npm (`acp_adapter/tests.rs`) knows only the
   npm rules someone added to it after they broke an install, so a config rule it does not know (as 0.93.5's
   double-loading refusal was) is caught only by a real install by hand. Closed by an opt-in test that installs with
   the pinned Node's npm against a local registry, or ignored by default and run before a pin raise.

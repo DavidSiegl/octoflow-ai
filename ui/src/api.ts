@@ -197,14 +197,20 @@ export interface SetupCheck {
   fix: string;
 }
 
+/** An ACP adapter installAdapter() installs: the agent it is for, as a harness name (claude, codex), whether it is
+ * installed for the pins this octoflow carries, and the disk an install takes, in megabytes. */
+export interface AdapterInstall {
+  agent: string;
+  installed: boolean;
+  megabytes: number;
+}
+
 /** A project's setup checks, in the order the server made them; passed is true when every `required` one is ok.
- * claude_install is what installClaude() would install: whether claude's ACP adapter is installed for the pins this
- * octoflow carries, and the disk an install takes, in megabytes; null when there is none to install, for app runs in
- * herdr, whose claude is the claude CLI. */
+ * adapters are the ACP adapters the app installs, none for app runs in herdr, whose agents are the harnesses' CLIs. */
 export interface SetupReport {
   checks: SetupCheck[];
   passed: boolean;
-  claude_install: { installed: boolean; megabytes: number } | null;
+  adapters: AdapterInstall[];
 }
 
 /** A file the quality gate's setup looked after: its path from the project's top level, and whether the setup wrote
@@ -485,11 +491,13 @@ export class Api {
     return body.files as GateFile[];
   }
 
-  /** Install, on this computer, the Node and claude's ACP adapter that claude's runs over ACP start, at the versions
-   * this octoflow pins, unless they are installed. It downloads them, so it takes minutes. Rejects with the server's
-   * error message: status 409 for app runs in herdr, which have none to install, 502 for an install that fails. */
-  async installClaude(): Promise<void> {
-    await this.json(`${this.connection.url}/setup/claude`, { method: "POST" });
+  /** Install, on this computer, the Node and the ACP adapter that agent's runs over ACP start, agent being an
+   * AdapterInstall's, at the versions this octoflow pins, unless they are installed. It downloads them, so it takes
+   * minutes. Rejects with the server's error message: status 400 for an agent without an adapter, 409 for app runs
+   * in herdr, which have none to install, 502 for an install that fails. */
+  async installAdapter(agent: string): Promise<void> {
+    const query = new URLSearchParams({ agent });
+    await this.json(`${this.connection.url}/setup/adapter?${query}`, { method: "POST" });
   }
 
   /** What a run can be started with, from the configuration of this computer, where the server starts its runs, so

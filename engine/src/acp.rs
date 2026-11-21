@@ -28,8 +28,8 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
+use crate::acp_adapter::Installs;
 use crate::agents::{AgentError, AgentLaunch, Agents, RunPlaces, Seen, Started, Waiting};
-use crate::claude_acp::ClaudeAcp;
 use crate::env::without_withheld;
 use crate::error::OrchestratorError;
 use crate::harness::{harness, AcpLaunch, AcpProgram, Harness, ModeSetting, Tokens, Usage};
@@ -466,16 +466,17 @@ pub fn probe(
 }
 
 /// The program and the arguments that start how's agent in env: a program on PATH by its name, which Connection::spawn
-/// finds on env's PATH, and claude's adapter as installed in env's data directory (crate::claude_acp). Errors: the
-/// adapter is not installed.
+/// finds on env's PATH, and an adapter as installed in env's data directory (crate::acp_adapter). Errors: the adapter
+/// is not installed.
 fn command(how: &AcpLaunch, env: &[(OsString, OsString)]) -> Result<(String, Vec<String>), OrchestratorError> {
     match how.program {
         AcpProgram::OnPath(name) => Ok((name.to_string(), how.args.clone())),
-        AcpProgram::ClaudeAdapter => {
-            let Some(installed) = ClaudeAcp::in_environment(env.to_vec()).installed() else {
-                return Err(OrchestratorError::new(
-                    "claude's ACP adapter is not installed: install it from the app's setup dialog (Check setup…)",
-                ));
+        AcpProgram::Adapter(adapter) => {
+            let Some(installed) = Installs::in_environment(adapter, env.to_vec()).installed() else {
+                return Err(OrchestratorError(format!(
+                    "{}'s ACP adapter is not installed: install it from the app's setup dialog (Check setup…)",
+                    adapter.harness()
+                )));
             };
             Ok((installed.node, [vec![installed.script], how.args.clone()].concat()))
         }

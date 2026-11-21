@@ -2,6 +2,7 @@
 //! permission mode, model, session and directory, and the token usage of sample session logs.
 
 use super::*;
+use crate::acp_adapter::Adapter;
 use crate::constants::DEFAULT_HARNESS;
 use crate::json::Object;
 use crate::test_support::{oracle, unhex};
@@ -268,4 +269,26 @@ fn a_harness_without_a_session_log_reads_none() {
     .as_bytes();
     assert!(harness("codex").unwrap().session_usage(log).is_empty());
     assert_eq!(harness("claude").unwrap().session_usage(log).len(), 1);
+}
+
+#[test]
+fn codex_launches_as_its_installed_adapter_with_each_mode_set_over_acp_and_its_grant_a_session_root() {
+    let codex = harness("codex").unwrap();
+    let modes = [
+        ("default", "read-only"),
+        ("acceptEdits", "workspace-write"),
+        ("bypassPermissions", "agent-full-access"),
+        ("plan", "read-only"),
+    ];
+    for (mode, id) in modes {
+        let launch = codex.acp_launch(mode, Some("gpt-6[high]"), Some("/runs")).unwrap();
+        let expected = AcpLaunch {
+            program: AcpProgram::Adapter(Adapter::Codex),
+            args: vec![],
+            mode: ModeSetting::Set(id),
+            model: Some("gpt-6[high]".to_string()),
+            extra_dir: Some("/runs".to_string()),
+        };
+        assert_eq!(launch, expected, "{mode}");
+    }
 }

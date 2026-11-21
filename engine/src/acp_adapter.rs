@@ -1,20 +1,20 @@
-//! claude's ACP agent as the desktop app installs it on first use (herdr-gui-decoupling spec R6): claude speaks the
-//! Agent Client Protocol only through `@agentclientprotocol/claude-agent-acp`, a Node program that brings its own
-//! Claude Code binary, so the app installs a pinned Node and the pinned adapter, and runs the adapter's script with
-//! that Node ([`Installed`]).
+//! The ACP adapters the desktop app installs on first use (herdr-gui-decoupling spec R6, R8): claude and codex speak
+//! the Agent Client Protocol only through an adapter ([`Adapter`]), a Node program that brings its agent's own binary,
+//! so the app installs a pinned Node and the pinned adapter, and runs the adapter's script with that Node
+//! ([`Installed`]).
 //!
 //! Both are pinned in the engine ([`Pins::built_in`]): Node by its version and the sha256 its release's
-//! `SHASUMS256.txt` gives each platform's tarball, which a download must match; the adapter by `engine/claude-acp/`,
-//! a package.json naming its version and the package-lock.json that pins every package it pulls in, with its
-//! `integrity`, which npm checks. npm installs from that lockfile alone (`npm ci`), running no package's scripts, and
-//! reads none of the user's npm settings ([`ClaudeAcp::install`] says how). Raising a pin is a change to this module or
-//! that directory, released like any other.
+//! `SHASUMS256.txt` gives each platform's tarball, which a download must match; each adapter by its directory under
+//! `engine/acp-adapters/`, a package.json naming its version and the package-lock.json that pins every package it
+//! pulls in, with its `integrity`, which npm checks. npm installs from that lockfile alone (`npm ci`), running no
+//! package's scripts, and reads none of the user's npm settings ([`Installs::install`] says how). Raising a pin is a
+//! change to this module or that directory, released like any other.
 //!
-//! An install is a directory named by its pins, `node-<node>-adapter-<adapter>`, among the installs in
-//! `claude-acp` in the engine's data directory (crate::env::data_dir). It is made in a temporary directory beside it
-//! and renamed into place whole, under a lock on a file there, so that a directory of that name is always a whole
-//! install, and two installs at once, from two of the app's windows, make one. A raised pin installs beside the old
-//! install, which goes once the new one is in place.
+//! An install is a directory named by its pins, `node-<node>-adapter-<adapter>`, among one adapter's installs in
+//! `<adapter>-acp` in the engine's data directory (crate::env::data_dir), each with a Node of its own. It is made in
+//! a temporary directory beside it and renamed into place whole, under a lock on a file there, so that a directory of
+//! that name is always a whole install, and two installs at once, from two of the app's windows, make one. A raised
+//! pin installs beside the old install, which goes once the new one is in place.
 
 use std::ffi::OsString;
 use std::fs::{self, File};
@@ -28,12 +28,6 @@ use crate::error::{os_error, OrchestratorError};
 use crate::host::{run_process, ProcessError};
 use crate::http::{Http, HttpClient, HttpError, Request};
 use crate::interrupt::Interrupt;
-
-/// The disk an install of the built-in pins takes, in megabytes, as the setup dialog's button says before it
-/// downloads: measured on linux-x64 on 2026-11-21, Node 203 MB and the adapter 710 MB. npm installs both the glibc and
-/// the musl build of the Agent SDK's Claude Code binary, about 310 MB each, since the lockfile records no package's
-/// libc. Measure it again when a pin is raised.
-pub const INSTALL_MEGABYTES: u64 = 913;
 
 /// Node's version: a 22 LTS, since the adapter declares `"engines": {"node": ">=22"}`. 22.23.4 is from 2026-10-20,
 /// the newest 22 at least two weeks old on 2026-11-21.
@@ -49,15 +43,71 @@ const NODE_SHA256: [(&str, &str); 4] = [
     ("darwin-arm64", "c9e1dbc748b33ed2d14f42445191ecaf14c56259c7a9a26d0042c49ec2b66428"),
 ];
 
-/// The adapter's package.json, which names its version. The adapter, 0.101.0, is from 2026-11-05, the newest release
-/// at least two weeks old on 2026-11-21.
-const PACKAGE_JSON: &str = include_str!("../claude-acp/package.json");
-/// The lockfile npm installs the adapter from, every package with its integrity hash, made from PACKAGE_JSON by the
-/// pinned Node's npm (10.9.9) with `npm install --package-lock-only --ignore-scripts`.
-const PACKAGE_LOCK: &str = include_str!("../claude-acp/package-lock.json");
+/// An agent the app runs over ACP through an adapter it installs. Each adapter's pins are its directory in
+/// `engine/acp-adapters/`: package.json, which names the adapter's version, the newest release at least two weeks old
+/// when it was pinned, and the lockfile npm installs it from, every package with its integrity hash, made from
+/// package.json by the pinned Node's npm (10.9.9) with `npm install --package-lock-only --ignore-scripts`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Adapter {
+    /// `@agentclientprotocol/claude-agent-acp` 0.101.0 (2026-11-05), which brings its own Claude Code.
+    Claude,
+    /// `@agentclientprotocol/codex-acp` 2.5.0 (2026-10-29), which brings its own codex (`@openai/codex` 0.165.0) and
+    /// runs it, not a codex on PATH, while CODEX_PATH is unset.
+    Codex,
+}
 
-/// The adapter's npm package, as package.json depends on it.
-const ADAPTER_PACKAGE: &str = "@agentclientprotocol/claude-agent-acp";
+impl Adapter {
+    /// Every adapter, in HARNESSES' order of their harnesses.
+    pub const ALL: [Adapter; 2] = [Adapter::Claude, Adapter::Codex];
+
+    /// The harness whose agent this adapter is, as crate::harness::HARNESSES names it; also what /setup and
+    /// POST /setup/adapter call the adapter.
+    pub fn harness(self) -> &'static str {
+        match self {
+            Adapter::Claude => "claude",
+            Adapter::Codex => "codex",
+        }
+    }
+
+    /// The adapter named name, as harness gives it; None for any other name.
+    pub fn named(name: &str) -> Option<Adapter> {
+        Adapter::ALL.into_iter().find(|a| a.harness() == name)
+    }
+
+    /// The disk an install of the built-in pins takes, in megabytes, as the setup dialog's button says before it
+    /// downloads, measured on linux-x64 on 2026-11-21 with Node's 203 MB. Measure it again when a pin is raised.
+    pub fn megabytes(self) -> u64 {
+        match self {
+            // npm installs both the glibc and the musl build of the Agent SDK's Claude Code binary, about 310 MB each,
+            // since the lockfile records no package's libc.
+            Adapter::Claude => 913,
+            // @openai/codex's linux-x64 build is 426 MB of it.
+            Adapter::Codex => 649,
+        }
+    }
+
+    /// The adapter's npm package, as its package.json depends on it.
+    fn package(self) -> &'static str {
+        match self {
+            Adapter::Claude => "@agentclientprotocol/claude-agent-acp",
+            Adapter::Codex => "@agentclientprotocol/codex-acp",
+        }
+    }
+
+    /// The text of its package.json and of its lockfile.
+    fn pinned(self) -> (&'static str, &'static str) {
+        match self {
+            Adapter::Claude => (
+                include_str!("../acp-adapters/claude/package.json"),
+                include_str!("../acp-adapters/claude/package-lock.json"),
+            ),
+            Adapter::Codex => (
+                include_str!("../acp-adapters/codex/package.json"),
+                include_str!("../acp-adapters/codex/package-lock.json"),
+            ),
+        }
+    }
+}
 
 /// Where Node's releases are downloaded from.
 const NODE_DIST: &str = "https://nodejs.org/dist";
@@ -76,7 +126,7 @@ const NPM_TIMEOUT: Duration = Duration::from_secs(3600);
 /// The start of the name of an install still being made, in the installs' directory, which no lookup takes for one.
 const TEMPORARY: &str = ".tmp-";
 
-/// What an install holds: Node's version and its tarball for this platform, and the adapter's package.json and
+/// What an install holds: Node's version and its tarball for this platform, and an adapter's package.json and
 /// lockfile.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pins {
@@ -85,6 +135,8 @@ pub struct Pins {
     /// Node's platform, as its tarballs name it (`linux-x64`), with the sha256 of its tarball, in lowercase hex; None
     /// on a platform the app is not built for, which install refuses.
     tarball: Option<(String, String)>,
+    /// The adapter's npm package, whose script an install runs.
+    package: &'static str,
     /// The adapter's version, as package.json depends on it.
     adapter: String,
     /// The text of the adapter's package.json, written into an install for npm to read.
@@ -94,32 +146,36 @@ pub struct Pins {
 }
 
 impl Pins {
-    /// The pins this engine was built with, for the platform it was built for.
-    pub fn built_in() -> Pins {
+    /// The pins this engine was built with for adapter, for the platform it was built for.
+    pub fn built_in(adapter: Adapter) -> Pins {
         let platform = node_platform(std::env::consts::OS, std::env::consts::ARCH);
         let tarball = platform.and_then(|p| NODE_SHA256.iter().find(|(q, _)| *q == p));
         let tarball = tarball.map(|(p, sha256)| (p.to_string(), sha256.to_string()));
-        Pins::new(NODE_VERSION, tarball, PACKAGE_JSON, PACKAGE_LOCK)
-            .expect("engine/claude-acp/package.json names the adapter")
+        let (package_json, lockfile) = adapter.pinned();
+        Pins::new(NODE_VERSION, tarball, adapter.package(), package_json, lockfile)
+            .expect("each package.json in engine/acp-adapters/ names its adapter")
     }
 
-    /// Pins of Node node, its tarball (platform, sha256) as Pins::tarball says, and the adapter package_json depends
-    /// on, installed from lockfile. Errors: package_json is not JSON, or names no version of ADAPTER_PACKAGE.
+    /// Pins of Node node, its tarball (platform, sha256) as Pins::tarball says, and the version of package, an npm
+    /// package, that package_json depends on, installed from lockfile. Errors: package_json is not JSON, or names no
+    /// version of package.
     pub fn new(
         node: &str,
         tarball: Option<(String, String)>,
+        package: &'static str,
         package_json: &str,
         lockfile: &str,
     ) -> Result<Pins, OrchestratorError> {
         let manifest: serde_json::Value = serde_json::from_str(package_json)
-            .map_err(|e| OrchestratorError(format!("the adapter's package.json is not JSON: {e}")))?;
-        let adapter = manifest.pointer(&format!("/dependencies/{}", ADAPTER_PACKAGE.replace('/', "~1")));
+            .map_err(|e| OrchestratorError(format!("{package}'s package.json is not JSON: {e}")))?;
+        let adapter = manifest.pointer(&format!("/dependencies/{}", package.replace('/', "~1")));
         let Some(adapter) = adapter.and_then(serde_json::Value::as_str) else {
-            return Err(OrchestratorError(format!("the adapter's package.json names no version of {ADAPTER_PACKAGE}")));
+            return Err(OrchestratorError(format!("the adapter's package.json names no version of {package}")));
         };
         Ok(Pins {
             node: node.to_string(),
             tarball,
+            package,
             adapter: adapter.to_string(),
             package_json: package_json.to_string(),
             lockfile: lockfile.to_string(),
@@ -141,10 +197,22 @@ pub struct Installed {
     pub script: String,
 }
 
-/// The installs of claude's ACP adapter in one environment's data directory, and how a new one is made: for one set of
+/// An adapter's agent that cannot log in on its own (Installs::logged_in).
+#[derive(Debug, PartialEq, Eq)]
+pub struct NotLoggedIn {
+    /// What is missing: the files and variables looked for.
+    pub detail: String,
+    /// One sentence on how to log in: with the codex of the current pins' install, or the codex CLI before there is
+    /// one.
+    pub fix: String,
+}
+
+/// The installs of one ACP adapter in one environment's data directory, and how a new one is made: for one set of
 /// pins, the current ones, with Node and the adapter downloaded from where it says.
-pub struct ClaudeAcp {
-    /// The directory the installs are in, `claude-acp` in the data directory; made by the first install.
+pub struct Installs {
+    /// Whose installs these are.
+    adapter: Adapter,
+    /// The directory the installs are in, `<adapter>-acp` in the data directory; made by the first install.
     root: String,
     /// The pins of the one install this looks for and makes; installs of any others are removed by the next install.
     pins: Pins,
@@ -159,23 +227,20 @@ pub struct ClaudeAcp {
     http: Option<Arc<dyn Http>>,
 }
 
-impl ClaudeAcp {
-    /// The installs of the engine's own environment, as crate::env::child_env gives it, for the built-in pins.
-    pub fn from_env() -> ClaudeAcp {
-        ClaudeAcp::in_environment(crate::env::child_env())
-    }
-
-    /// The installs in the data directory of env, the environment of the processes the engine starts (an ACP run's
-    /// agents', which find the install there), for the built-in pins, downloaded from Node's and npm's own servers.
-    pub fn in_environment(env: Vec<(OsString, OsString)>) -> ClaudeAcp {
+impl Installs {
+    /// adapter's installs in the data directory of env, the environment of the processes the engine starts (an ACP
+    /// run's agents', which find the install there), for the built-in pins, downloaded from Node's and npm's own
+    /// servers.
+    pub fn in_environment(adapter: Adapter, env: Vec<(OsString, OsString)>) -> Installs {
         let var = |name: &str| {
             let found = env.iter().find(|(k, _)| k == name).map(|(_, v)| v.to_string_lossy().into_owned());
             found.filter(|v| !v.is_empty())
         };
-        let root = format!("{}/claude-acp", crate::env::data_dir(&var));
-        ClaudeAcp {
+        let root = format!("{}/{}-acp", crate::env::data_dir(&var), adapter.harness());
+        Installs {
+            adapter,
             root,
-            pins: Pins::built_in(),
+            pins: Pins::built_in(adapter),
             node_dist: NODE_DIST.to_string(),
             registry: REGISTRY.to_string(),
             env: without_npm_config(env),
@@ -186,9 +251,9 @@ impl ClaudeAcp {
     /// These installs, but of pins, downloaded by http from node_dist (Node's releases, as NODE_DIST) and registry (as
     /// REGISTRY): what the tests make in place of the network.
     #[cfg(test)]
-    pub(crate) fn with_sources(self, pins: Pins, http: Arc<dyn Http>, node_dist: &str, registry: &str) -> ClaudeAcp {
+    pub(crate) fn with_sources(self, pins: Pins, http: Arc<dyn Http>, node_dist: &str, registry: &str) -> Installs {
         let node_dist = node_dist.trim_end_matches('/').to_string();
-        ClaudeAcp { pins, http: Some(http), node_dist, registry: registry.to_string(), ..self }
+        Installs { pins, http: Some(http), node_dist, registry: registry.to_string(), ..self }
     }
 
     /// Put in place an install of the current pins whose Node is a script of text and whose adapter script is empty,
@@ -206,12 +271,49 @@ impl ClaudeAcp {
         installed
     }
 
+    /// Whose installs these are.
+    pub fn adapter(&self) -> Adapter {
+        self.adapter
+    }
+
     /// The install of the current pins, when its Node and its script are there; None when either is not, as before the
     /// first install or after a pin was raised. It checks no other file, nor that the install still runs.
     pub fn installed(&self) -> Option<Installed> {
         let installed = self.at(&format!("{}/{}", self.root, self.pins.install_name()));
         let whole = Path::new(&installed.node).is_file() && Path::new(&installed.script).is_file();
         whole.then_some(installed)
+    }
+
+    /// Whether the adapter's agent can log in on its own, as far as the files and variables of the installs'
+    /// environment tell: codex when `auth.json` is in its home (CODEX_HOME, else ~/.codex) or OPENAI_API_KEY or
+    /// CODEX_API_KEY is set, which is what codex-acp 2.5.0 reads; claude always, its adapter reporting no login it
+    /// lacks until a turn. Errors: codex is not logged in.
+    pub fn logged_in(&self) -> Result<(), NotLoggedIn> {
+        if self.adapter != Adapter::Codex {
+            return Ok(());
+        }
+        let var =
+            |name: &str| self.env.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone()).filter(|v| !v.is_empty());
+        if var("OPENAI_API_KEY").is_some() || var("CODEX_API_KEY").is_some() {
+            return Ok(());
+        }
+        let home = match (var("CODEX_HOME"), var("HOME")) {
+            (Some(codex_home), _) => codex_home.to_string_lossy().into_owned(),
+            (None, Some(home)) => format!("{}/.codex", home.to_string_lossy()),
+            (None, None) => "~/.codex".to_string(),
+        };
+        if Path::new(&format!("{home}/auth.json")).is_file() {
+            return Ok(());
+        }
+        let codex = match self.installed() {
+            Some(installed) => {
+                let package = installed.script.trim_end_matches(&format!("{}/dist/index.js", self.pins.package));
+                format!("`{} {package}@openai/codex/bin/codex.js login`", installed.node)
+            }
+            None => "`codex login`".to_string(),
+        };
+        let detail = format!("codex is not logged in: no {home}/auth.json, no OPENAI_API_KEY");
+        Err(NotLoggedIn { detail, fix: format!("log in with {codex}") })
     }
 
     /// Install the current pins, unless they are installed already, and then remove every other install: download
@@ -245,7 +347,8 @@ impl ClaudeAcp {
     fn install_locked(&self, stopping: &Interrupt) -> Result<Installed, OrchestratorError> {
         let Some((platform, sha256)) = &self.pins.tarball else {
             return Err(OrchestratorError(format!(
-                "the app installs claude's ACP adapter only on Linux and macOS, on x86_64 or arm64, not on {} {}",
+                "the app installs {}'s ACP adapter only on Linux and macOS, on x86_64 or arm64, not on {} {}",
+                self.adapter.harness(),
                 std::env::consts::OS,
                 std::env::consts::ARCH
             )));
@@ -299,9 +402,10 @@ impl ClaudeAcp {
         let quiet = ["--no-audit", "--no-fund", "--no-update-notifier"];
         let into = ["--prefix", &adapter, "--cache", &cache];
         let argv = [&[node_bin.as_str(), &npm, "ci", "--ignore-scripts"][..], &isolated, &into, &quiet].concat();
-        self.run(&argv, NPM_TIMEOUT, stopping, "install claude's ACP adapter")?;
+        let doing = format!("install {}'s ACP adapter", self.adapter.harness());
+        self.run(&argv, NPM_TIMEOUT, stopping, &doing)?;
         if !Path::new(&self.at(dir).script).is_file() {
-            return Err(OrchestratorError(format!("npm installed no {ADAPTER_PACKAGE} script in {adapter}")));
+            return Err(OrchestratorError(format!("npm installed no {} script in {adapter}", self.pins.package)));
         }
         for path in [&user_npmrc, &global_npmrc, &cache] {
             if Path::new(path).exists() {
@@ -397,7 +501,8 @@ impl ClaudeAcp {
     fn at(&self, dir: &str) -> Installed {
         Installed {
             node: format!("{dir}/node/bin/node"),
-            script: format!("{dir}/adapter/node_modules/{ADAPTER_PACKAGE}/dist/index.js"),
+            // Both adapters' package.json name dist/index.js as their bin.
+            script: format!("{dir}/adapter/node_modules/{}/dist/index.js", self.pins.package),
         }
     }
 

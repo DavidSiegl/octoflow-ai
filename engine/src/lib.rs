@@ -6,9 +6,9 @@
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod acp;
+pub mod acp_adapter;
 pub mod agents;
 pub mod checks;
-pub mod claude_acp;
 pub mod cli;
 pub mod constants;
 pub mod crates_io;
