@@ -68,13 +68,20 @@ impl Adapter {
     /// The environment the adapter's agent starts in, given the one the engine gives its agents: env without the
     /// variables through which codex-acp 2.5.0 would choose its codex (CODEX_PATH, else its bundled one), its first
     /// mode (INITIAL_AGENT_MODE) or a login (DEFAULT_AUTH_REQUEST), which the engine decides instead: the pinned codex,
-    /// and the mode crate::harness's row sets. claude's in env unchanged.
+    /// the mode crate::harness's row sets, and, when env has an API key (api_key_set), DEFAULT_AUTH_REQUEST naming
+    /// codex-acp's `api-key` method, with which the adapter logs in from the key when a session finds codex not
+    /// logged in, and only then; codex keeps that login, as `codex login --with-api-key` would. claude's is env
+    /// unchanged.
     pub fn environment(self, env: &[(OsString, OsString)]) -> Vec<(OsString, OsString)> {
         let withheld: &[&str] = match self {
             Adapter::Claude => &[],
             Adapter::Codex => &["CODEX_PATH", "INITIAL_AGENT_MODE", "DEFAULT_AUTH_REQUEST"],
         };
-        env.iter().filter(|(k, _)| !withheld.iter().any(|w| k == w)).cloned().collect()
+        let mut out: Vec<_> = env.iter().filter(|(k, _)| !withheld.iter().any(|w| k == w)).cloned().collect();
+        if self == Adapter::Codex && api_key_set(env) {
+            out.push(("DEFAULT_AUTH_REQUEST".into(), r#"{"methodId":"api-key"}"#.into()));
+        }
+        out
     }
 
     /// The adapter's npm package, as its package.json depends on it.
@@ -224,6 +231,14 @@ fn variable(env: &[(OsString, OsString)], name: &str) -> Option<String> {
     set.filter(|v| !v.is_empty())
 }
 
+/// The variables codex-acp 2.5.0 reads an API key from, in the order it reads them, for its `api-key` login method.
+const API_KEYS: [&str; 2] = ["CODEX_API_KEY", "OPENAI_API_KEY"];
+
+/// Whether env has an API key codex-acp would log in with: one of API_KEYS not blank, as the adapter trims it.
+fn api_key_set(env: &[(OsString, OsString)]) -> bool {
+    API_KEYS.iter().any(|name| variable(env, name).is_some_and(|v| !v.trim().is_empty()))
+}
+
 impl Installs {
     /// adapter's installs in the data directory of env, the environment of the processes the engine starts (an ACP
     /// run's agents', which find the install there), for the built-in pins, downloaded from Node's and npm's own
@@ -277,23 +292,20 @@ impl Installs {
         whole.then_some(installed)
     }
 
-    /// Whether the adapter's agent can log in on its own, as far as the files and variables of the installs'
-    /// environment tell: codex when `auth.json` is in its home (CODEX_HOME, else ~/.codex, ~ being HOME or without it
-    /// the user's home in /etc/passwd); claude always, its adapter reporting no login it lacks until a turn. An API key
-    /// alone does not count: codex-acp 2.5.0 reads OPENAI_API_KEY or CODEX_API_KEY only for an ACP `authenticate`,
-    /// which the engine does not send. Errors: codex is not logged in.
-    pub fn logged_in(&self) -> Result<(), NotLoggedIn> {
-        if self.adapter != Adapter::Codex {
+    /// Whether the adapter's agent can log in on its own, given reported, the kind of login it reported of itself
+    /// (crate::acp::SelfReport::login; None when it reported none): codex when it reported a kind other than `none`,
+    /// whichever store holds the login (its auth.json or the OS keyring), or when the installs' environment has an
+    /// API key (api_key_set), which its agent logs in with (Adapter::environment); claude always, its adapter
+    /// reporting no login it lacks until a turn. Errors: codex is not logged in, or did not say.
+    pub fn logged_in(&self, reported: Option<&str>) -> Result<(), NotLoggedIn> {
+        if self.adapter != Adapter::Codex || api_key_set(&self.env) {
             return Ok(());
         }
-        let var = |name: &str| variable(&self.env, name);
-        let home = match var("CODEX_HOME") {
-            Some(codex_home) => codex_home,
-            None => format!("{}/.codex", var("HOME").or_else(crate::env::passwd_home).unwrap_or_default()),
+        let how = match reported {
+            Some("none") => "codex is not logged in, as its agent reports",
+            Some(_) => return Ok(()),
+            None => "codex's agent did not report its login",
         };
-        if Path::new(&format!("{home}/auth.json")).is_file() {
-            return Ok(());
-        }
         let codex = match self.installed() {
             Some(installed) => {
                 let package = installed.script.trim_end_matches(&format!("{}/dist/index.js", self.pins.package));
@@ -301,7 +313,7 @@ impl Installs {
             }
             None => "`codex login`".to_string(),
         };
-        let detail = format!("codex is not logged in: no {home}/auth.json");
+        let detail = format!("{how}, and neither {} nor {} is set", API_KEYS[0], API_KEYS[1]);
         Err(NotLoggedIn { detail, fix: format!("log in with {codex}") })
     }
 

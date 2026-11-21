@@ -13,7 +13,8 @@ use crate::test_support::{ended, eventually, TempDir};
 /// The fake ACP agent. It writes its environment to `env` beside it, and appends to `log` beside it its argv
 /// (`argv …`) and each message it gets (`<method> <line>`; a reply to its own request as ` <line>`). It answers
 /// `initialize` with the agentCapabilities in `caps.json` beside it (`{}` without one) and the result fields in
-/// `info.json` (after a comma; none without one), or not at all where `mute` is beside it; and `session/new`, `session/load` and
+/// `info.json` (after a comma; none without one), or not at all where `mute` is beside it, and then reports the login
+/// kind in `login` beside it in an `_auth/status_update`, as codex-acp does (nothing without one); and `session/new`, `session/load` and
 /// `session/resume` with session `s-1` plus the result fields in `opened.json` (each after a comma; none without
 /// one); `session/load` and `session/resume` with an error where `refuse` is beside it. A prompt's text decides its
 /// answer: ASK asks a permission (request 900, offering allow and deny) and answers end_turn once it is given,
@@ -44,7 +45,11 @@ while IFS= read -r line; do
   method=$(printf '%s' "$line" | sed -n 's/^{[^{]*"method":"\([^"]*\)".*/\1/p')
   echo "$method $line" >> "$log"
   case "$method" in
-  initialize) [ -e "$here/mute" ] || reply "$id" "{\"protocolVersion\":1,\"agentCapabilities\":$caps$info}" ;;
+  initialize)
+    [ -e "$here/mute" ] || reply "$id" "{\"protocolVersion\":1,\"agentCapabilities\":$caps$info}"
+    if [ -e "$here/login" ]; then
+      printf '{"jsonrpc":"2.0","method":"_auth/status_update","params":{"authStatus":{"kind":"%s","label":"x"}}}\n' "$(cat "$here/login")"
+    fi ;;
   session/new) reply "$id" "{\"sessionId\":\"s-1\"$opened}" ;;
   session/load|session/resume)
     if [ -e "$here/refuse" ]; then refuse "$id" "no such session"; else reply "$id" "{\"x\":0$opened}"; fi ;;
@@ -690,7 +695,7 @@ fn a_usage_without_input_or_output_tokens_is_not_recorded_and_one_without_cache_
 }
 
 /// probe of harness kind's fake agent, in the fixture's environment, given timeout and stopping.
-fn probed(f: &Fixture, kind: &str, timeout: Duration, stopping: &Interrupt) -> Result<String, OrchestratorError> {
+fn probed(f: &Fixture, kind: &str, timeout: Duration, stopping: &Interrupt) -> Result<SelfReport, OrchestratorError> {
     let data_home = f.tmp.join("data");
     let env =
         environment(Some(&f.bin()), &[with_pathspec_switches().as_slice(), &[("XDG_DATA_HOME", &data_home)]].concat());
@@ -711,13 +716,34 @@ fn a_probe_reports_what_the_agent_says_of_itself() {
     let refused = probed(&f, "pi", long, &Interrupt::new()).expect_err("pi has no ACP launch");
     let uninstalled = probed(&f, "codex", long, &Interrupt::new()).expect_err("codex's adapter is not installed");
 
-    assert_eq!((unnamed.as_str(), named.as_str()), ("answers over ACP", "agy 1.5.11"));
-    assert_eq!(unversioned, "agy");
+    assert_eq!((unnamed.identity.as_str(), named.identity.as_str()), ("answers over ACP", "agy 1.5.11"));
+    assert_eq!(unversioned.identity, "agy");
+    assert_eq!((unnamed.login, named.login), (None, None));
     assert_eq!(f.methods(), ["initialize", "initialize", "initialize"]);
     assert!(f.log().contains("argv acp\n"), "{}", f.log());
     assert_eq!(refused.0, "pi has no ACP launch");
     let not_installed = "codex's ACP adapter is not installed: install it from the app's setup dialog (Check setup…)";
     assert_eq!(uninstalled.0, not_installed);
+}
+
+#[test]
+fn a_probe_waits_for_the_login_an_agent_declares_it_reports() {
+    let f = Fixture::new();
+    std::fs::create_dir_all(f.tmp.join("project")).expect("the project");
+    let reports = r#"{"_meta":{"authStatus":{}}}"#;
+
+    f.put("login", "account");
+    let undeclared = probed(&f, "agy", Duration::from_secs(30), &Interrupt::new()).expect("an answer");
+    f.put("caps.json", reports);
+    let declared = probed(&f, "agy", Duration::from_secs(30), &Interrupt::new()).expect("an answer");
+    std::fs::remove_file(format!("{}/login", f.bin())).expect("no login reported");
+    let started = std::time::Instant::now();
+    let silent = probed(&f, "agy", Duration::from_secs(1), &Interrupt::new()).expect("an answer");
+
+    assert_eq!(undeclared.login, None, "an agent that does not declare it reports a login is not waited for");
+    assert_eq!(declared.login.as_deref(), Some("account"));
+    assert_eq!((silent.identity.as_str(), silent.login), ("answers over ACP", None));
+    assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
 }
 
 #[test]
@@ -731,7 +757,7 @@ fn an_adapter_s_agent_is_its_installed_adapter_run_by_its_node() {
 
         let answer = probed(&f, adapter.harness(), Duration::from_secs(30), &Interrupt::new()).expect("an answer");
 
-        assert_eq!(answer, "answers over ACP");
+        assert_eq!(answer.identity, "answers over ACP");
         assert!(f.log().contains(&format!("argv {}\n", installed.script)), "{adapter:?}: {}", f.log());
     }
 }

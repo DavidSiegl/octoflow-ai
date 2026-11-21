@@ -24,7 +24,7 @@ pub use socket::{ask, SocketError, SOCKET_RECORD};
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
@@ -430,18 +430,29 @@ pub fn session_usage(log: &str, session: &str) -> Vec<Usage> {
     out
 }
 
+/// What an ACP agent says of itself when probe asks it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelfReport {
+    /// Its `agentInfo` as "<name> <version>", or "answers over ACP" when it gives none.
+    pub identity: String,
+    /// The kind of login it reported in an `_auth/status_update` notification, codex-acp's extension, such as `none`
+    /// or `account`; None from an agent that does not declare it reports one (`agentCapabilities._meta.authStatus`),
+    /// or reported none in time.
+    pub login: Option<String>,
+}
+
 /// What harness h's ACP agent says of itself when asked `initialize`, started as an ACP run starts it in `default`
 /// mode (Harness::acp_launch, with no model and no extra directory), from env's PATH and with env alone, working in
-/// cwd: its `agentInfo` as "<name> <version>", or "answers over ACP" when it gives none. The agent is killed once it
-/// answers, and its stderr dropped. Errors: h has no ACP launch; its program does not start; it exits, or does not
-/// answer within timeout; stopping is raised before it answers, which kills it.
+/// cwd: its identity, and the login it reports, waited for within what is left of timeout when its answer declares
+/// it reports one. The agent is killed once done, and its stderr dropped. Errors: h has no ACP launch; its program
+/// does not start; it exits, or does not answer within timeout; stopping is raised before it answers, which kills it.
 pub fn probe(
     h: &Harness,
     env: &[(OsString, OsString)],
     cwd: &str,
     timeout: Duration,
     stopping: &Interrupt,
-) -> Result<String, OrchestratorError> {
+) -> Result<SelfReport, OrchestratorError> {
     let Some(how) = h.acp_launch("default", None, None) else {
         return Err(OrchestratorError(format!("{} has no ACP launch", h.kind)));
     };
@@ -458,17 +469,26 @@ pub fn probe(
     let Some(watch) = stopping.watch(move || killed.kill()) else {
         return Err(OrchestratorError::new("interrupted"));
     };
+    let deadline = Instant::now() + timeout;
     let answer = connection.request("initialize", initialize_params(), timeout);
+    let login = match &answer {
+        Ok(a) if a.pointer("/agentCapabilities/_meta/authStatus").is_some() => {
+            connection.reported_login(deadline.saturating_duration_since(Instant::now()))
+        }
+        _ => None,
+    };
     if watch.interrupted() {
         return Err(OrchestratorError::new("interrupted"));
     }
-    let info = answer.map_err(|e| unanswered(h, "initialize", e, timeout))?.get("agentInfo").cloned();
-    let field = |key: &str| info.as_ref().and_then(|i| i.get(key)).and_then(Value::as_str).map(String::from);
-    Ok(match (field("name"), field("version")) {
+    let answer = answer.map_err(|e| unanswered(h, "initialize", e, timeout))?;
+    let info = answer.get("agentInfo");
+    let field = |key: &str| info.and_then(|i| i.get(key)).and_then(Value::as_str).map(String::from);
+    let identity = match (field("name"), field("version")) {
         (Some(name), Some(version)) => format!("{name} {version}"),
         (Some(name), None) => name,
         _ => "answers over ACP".to_string(),
-    })
+    };
+    Ok(SelfReport { identity, login })
 }
 
 /// The program, the arguments and the environment that start how's agent, given env, the one the engine gives its

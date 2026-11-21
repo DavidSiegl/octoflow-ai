@@ -413,26 +413,23 @@ fn codex_in(vars: &[(&str, &str)]) -> Installs {
 }
 
 #[test]
-fn codex_is_logged_in_by_its_auth_file_alone() {
-    let tmp = TempDir::new();
-    let home = tmp.join("home");
-    std::fs::create_dir_all(format!("{home}/.codex")).unwrap();
-    std::fs::create_dir_all(tmp.join("codex-home")).unwrap();
-    let in_codex_home = [("HOME", home.as_str()), ("CODEX_HOME", &tmp.join("codex-home"))];
-    assert!(codex_in(&in_codex_home).logged_in().is_err(), "~/.codex is not looked in while CODEX_HOME is set");
-    std::fs::write(tmp.join("codex-home/auth.json"), "{}").unwrap();
-    assert_eq!(codex_in(&in_codex_home).logged_in(), Ok(()));
+fn codex_is_logged_in_as_its_agent_reports_whatever_store_holds_it_or_by_an_api_key() {
+    // No auth.json anywhere: a login in the OS keyring counts, as the agent reports it (review 264).
+    let nowhere = [("HOME", "/nowhere")];
+    for kind in ["account", "api_key", "external", "gateway"] {
+        assert_eq!(codex_in(&nowhere).logged_in(Some(kind)), Ok(()), "{kind}");
+    }
+    assert!(codex_in(&nowhere).logged_in(Some("none")).is_err());
+    assert!(codex_in(&nowhere).logged_in(None).is_err(), "an agent that reports no login is not taken as logged in");
 
-    assert!(codex_in(&[("HOME", &home)]).logged_in().is_err());
-    std::fs::write(format!("{home}/.codex/auth.json"), "{}").unwrap();
-    assert_eq!(codex_in(&[("HOME", &home)]).logged_in(), Ok(()));
-
-    // The adapter reads an API key only for an ACP `authenticate`, which the engine does not send.
+    // The adapter logs in with a key itself when a session needs it (Adapter::environment).
     for key in ["OPENAI_API_KEY", "CODEX_API_KEY"] {
-        assert!(codex_in(&[("HOME", "/nowhere"), (key, "sk-test")]).logged_in().is_err(), "{key}");
+        assert_eq!(codex_in(&[(key, "sk-test")]).logged_in(Some("none")), Ok(()), "{key}");
+        assert_eq!(codex_in(&[(key, "sk-test")]).logged_in(None), Ok(()), "{key}");
+        assert!(codex_in(&[(key, " ")]).logged_in(Some("none")).is_err(), "a blank {key}");
     }
     let claude = Installs::in_environment(Adapter::Claude, vec![(OsString::from("HOME"), OsString::from("/nowhere"))]);
-    assert_eq!(claude.logged_in(), Ok(()), "claude's adapter reports no login before a turn");
+    assert_eq!(claude.logged_in(None), Ok(()), "claude's adapter reports no login before a turn");
 }
 
 #[test]
@@ -441,20 +438,41 @@ fn codex_not_logged_in_is_told_to_log_in_with_the_installed_codex() {
     let data = tmp.path();
     let vars = [("HOME", "/nowhere"), ("XDG_DATA_HOME", data.as_str())];
     let expected = NotLoggedIn {
-        detail: "codex is not logged in: no /nowhere/.codex/auth.json".to_string(),
+        detail: "codex is not logged in, as its agent reports, and neither CODEX_API_KEY nor OPENAI_API_KEY is set"
+            .to_string(),
         fix: "log in with `codex login`".to_string(),
     };
-    assert_eq!(codex_in(&vars).logged_in(), Err(expected));
+    assert_eq!(codex_in(&vars).logged_in(Some("none")), Err(expected));
+    let unreported = codex_in(&vars).logged_in(None).unwrap_err().detail;
+    let silent = "codex's agent did not report its login, and neither CODEX_API_KEY nor OPENAI_API_KEY is set";
+    assert_eq!(unreported, silent);
 
     let installed = codex_in(&vars).install_fake("");
     let modules = installed.script.trim_end_matches("@agentclientprotocol/codex-acp/dist/index.js");
     let fix = format!("log in with `{} {modules}@openai/codex/bin/codex.js login`", installed.node);
-    assert_eq!(codex_in(&vars).logged_in().unwrap_err().fix, fix);
+    assert_eq!(codex_in(&vars).logged_in(Some("none")).unwrap_err().fix, fix);
+}
+
+/// The variables of env named name, as Adapter::environment leaves them.
+fn values_of(env: &[(OsString, OsString)], name: &str) -> Vec<String> {
+    env.iter().filter(|(k, _)| k == name).map(|(_, v)| v.to_string_lossy().into_owned()).collect()
 }
 
 #[test]
-fn without_home_codex_s_home_is_the_user_s_in_passwd() {
-    let detail = codex_in(&[]).logged_in().map(|()| String::new()).unwrap_or_else(|e| e.detail);
+fn codex_s_agent_logs_in_with_an_api_key_only_when_one_is_set() {
+    let os = |vars: &[(&str, &str)]| -> Vec<(OsString, OsString)> {
+        vars.iter().map(|(k, v)| (OsString::from(k), OsString::from(v))).collect()
+    };
+    let users = [("DEFAULT_AUTH_REQUEST", r#"{"methodId":"chat-gpt"}"#), ("PATH", "/bin")];
 
-    assert!(!detail.contains('~'), "{detail}");
+    let without_key = Adapter::Codex.environment(&os(&users));
+    let blank_key = Adapter::Codex.environment(&os(&[users.as_slice(), &[("OPENAI_API_KEY", " ")]].concat()));
+    let with_key = Adapter::Codex.environment(&os(&[users.as_slice(), &[("CODEX_API_KEY", "sk-test")]].concat()));
+    let claude = Adapter::Claude.environment(&os(&[users.as_slice(), &[("CODEX_API_KEY", "sk-test")]].concat()));
+
+    assert!(values_of(&without_key, "DEFAULT_AUTH_REQUEST").is_empty(), "{without_key:?}");
+    assert!(values_of(&blank_key, "DEFAULT_AUTH_REQUEST").is_empty(), "{blank_key:?}");
+    assert_eq!(values_of(&with_key, "DEFAULT_AUTH_REQUEST"), [r#"{"methodId":"api-key"}"#]);
+    assert_eq!(values_of(&with_key, "PATH"), ["/bin"]);
+    assert_eq!(values_of(&claude, "DEFAULT_AUTH_REQUEST"), [r#"{"methodId":"chat-gpt"}"#], "claude's is the user's");
 }
