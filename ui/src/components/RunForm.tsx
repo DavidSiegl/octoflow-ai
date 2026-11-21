@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { type Api, DEFAULT_PERMISSION_MODE, DEFAULT_WORKFLOW, type OfferedRole, type OfferedWorkflow, type Project, type RunOptions, type StartedRun } from "../api";
+import { type Api, DEFAULT_PERMISSION_MODE, DEFAULT_WORKFLOW, type OfferedRole, type OfferedWorkflow, type Project, type RunOptions } from "../api";
 import { Dialog } from "./Dialog";
 import { type Opening, WorkflowEditor } from "./WorkflowEditor";
 
@@ -7,7 +7,7 @@ interface Props {
   api: Api;
   project: Project;
   /** Gets the run once the server has started it. */
-  onStarted: (started: StartedRun) => void;
+  onStarted: (run: string) => void;
   /** Called by Cancel, which is disabled while the run is being started and while the workflow editor is open. */
   onClose: () => void;
 }

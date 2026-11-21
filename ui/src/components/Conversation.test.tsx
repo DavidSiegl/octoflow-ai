@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentEvent, Api, Conversation as Session } from "../api";
 import { Conversation } from "./Conversation";
 
-const PROJECT = { cwd: "/home/me/proj", machine: "" };
+const PROJECT = { cwd: "/home/me/proj" };
 const RUN = "20261024-140000-c0ffee";
 
 /** An event of kind with its fields, numbered seq. */
