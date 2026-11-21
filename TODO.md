@@ -102,12 +102,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   double-loading refusal was) is caught only by a real install by hand. Closed by an opt-in test that installs with
   the pinned Node's npm against a local registry, or ignored by default and run before a pin raise.
 
-- **An ACP run's open checks the harness of every role, finished ones too.** Raised by cross-review 265, round 2:
-  `AcpAgents::open` (`engine/src/acp.rs`) refuses a run when any role's next harness cannot start under the run's
-  permission mode, so a CLI resume of an app run that changes `--permission-mode` to `default` is refused for a
-  finished role on opencode, which never starts again; `--role-agent` gets past it, and serve's resume takes no mode,
-  so the app cannot reach it. Closes when `open` checks only the roles the run's remaining steps start.
-
 - **An ACP turn's usage is lost when its prompt is still pending at count time or at a kill.** Raised by
   cross-review 257 (F7): `acp-usage.jsonl` gets a prompt's line only when the agent answers its `session/prompt`
   (`engine/src/acp/connection.rs`, `replied`), which can come after the handoff file that ends the turn; nothing

@@ -525,6 +525,29 @@ impl Pipeline {
         self.steps.get(self.index_of(step_id)? + 1)
     }
 
+    /// The roles whose agents a run in phase may still start: those of the steps from the phase's on, and of every
+    /// step a verdict step among them can loop back to, with the steps between. The quality phase is the gated step's;
+    /// publish and done, past the last step, start none; a phase the workflow has no step of gives every role, as a
+    /// run there has not shown which steps are behind it.
+    pub fn roles_from(&self, phase: &str) -> BTreeSet<&str> {
+        let at = match phase {
+            PUBLISH | DONE => Some(self.steps.len()),
+            QUALITY => self.gated().and_then(|gated| self.index_of(&gated.id)),
+            step_id => self.index_of(step_id),
+        };
+        let mut from = at.unwrap_or(0);
+        // A loop target before from brings its steps back into reach, and their own loop targets with them.
+        while let Some(back) = self.steps[from..]
+            .iter()
+            .filter_map(|st| self.index_of(st.loop_to.as_deref()?))
+            .min()
+            .filter(|&back| back < from)
+        {
+            from = back;
+        }
+        self.steps[from..].iter().map(|st| st.role.as_str()).collect()
+    }
+
     pub fn first_edit(&self) -> Option<&Step> {
         self.steps.iter().find(|st| st.edits)
     }

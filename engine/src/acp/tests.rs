@@ -446,24 +446,47 @@ fn a_run_with_a_role_no_agent_can_start_for_is_refused_when_it_opens() {
     let mut f = Fixture::new();
     let human = Heard::default();
     let agents = f.agents(&human);
-    f.run.next_harnesses.insert("builder".into(), "claude".into());
-    f.run.next_harnesses.insert("reviewer".into(), "opencode".into());
+    f.run.next_harnesses.insert("build".into(), "claude".into());
+    f.run.next_harnesses.insert("review".into(), "opencode".into());
 
     f.run.permission_mode = Some("plan".into());
     let planned = agents.open(&mut f.run, &human);
     f.run.permission_mode = None;
     let defaulted = agents.open(&mut f.run, &human);
-    f.run.next_harnesses.insert("reviewer".into(), "pi".into());
+    f.run.next_harnesses.insert("review".into(), "pi".into());
     f.run.permission_mode = Some("plan".into());
     let pi = agents.open(&mut f.run, &human);
 
     assert!(matches!(planned, Ok(false)), "{planned:?}");
-    let refusal = "the reviewer's opencode cannot run under --permission-mode default in a run the app starts: none \
+    let refusal = "the Reviewer's opencode cannot run under --permission-mode default in a run the app starts: none \
                    of its modes asks before it acts; start the run under plan or bypassPermissions, or give the role \
                    another agent";
     assert!(matches!(&defaulted, Err(AgentError::Failed(e)) if e.0 == refusal), "{defaulted:?}");
-    let refusal = "the reviewer's pi cannot run in a run the app starts: the app does not offer it yet";
+    let refusal = "the Reviewer's pi cannot run in a run the app starts: the app does not offer it yet";
     assert!(matches!(&pi, Err(AgentError::Failed(e)) if e.0 == refusal), "{pi:?}");
+}
+
+/// A role whose steps are behind the run, never to start again, is not checked: a resume that changes the mode to
+/// one its harness cannot run under opens (cross-review 265). A role a verdict step ahead loops back to is checked.
+#[test]
+fn a_run_opens_whatever_the_harness_of_a_role_it_has_finished_with() {
+    let mut f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    f.run.next_harnesses.insert("spec".into(), "opencode".into());
+    f.run.next_harnesses.insert("build".into(), "claude".into());
+
+    let at = |phase: &str, f: &mut Fixture| {
+        f.run.phase = phase.to_string();
+        agents.open(&mut f.run, &human).map_err(|e| e.to_string())
+    };
+
+    for phase in ["build", "quality", "review", "publish", "done"] {
+        assert_eq!(at(phase, &mut f), Ok(false), "{phase}");
+    }
+    assert!(at("spec", &mut f).is_err_and(|e| e.starts_with("the Spec Collector's opencode cannot run")));
+    f.run.next_harnesses.insert("build".into(), "opencode".into());
+    assert!(at("review", &mut f).is_err_and(|e| e.starts_with("the Builder's opencode cannot run")));
 }
 
 #[test]

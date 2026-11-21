@@ -217,8 +217,9 @@ impl Agents for AcpAgents<'_> {
 
     /// Nothing outlives an orchestrator, so there is no place to keep: a run resumes with no agent. Opens the run's
     /// socket (socket's module comment); a socket that cannot be opened is told to human, and the run goes on
-    /// without one, which the app then shows read-only. Errors: run's agents run in another backend; a role's next
-    /// agent is one the app starts none of under the run's permission mode (the harness has no ACP launch, or its row
+    /// without one, which the app then shows read-only. Errors: run's agents run in another backend; its workflow
+    /// cannot be read (RunState::pipeline); the next agent of a role the run may still start (Pipeline::roles_from)
+    /// is one the app starts none of under the run's permission mode (the harness has no ACP launch, or its row
     /// refuses the mode), which AcpAgents::launch would refuse only once the role's turn came.
     fn open(&self, run: &mut RunState, human: &dyn Human) -> Result<bool, AgentError> {
         if run.backend != Backend::Acp {
@@ -227,12 +228,15 @@ impl Agents for AcpAgents<'_> {
                 run.run_id
             ))));
         }
-        // Refused here, before the run's first turn, rather than when the role's turn comes and the turns before it
-        // are spent.
+        // Refused here, before the run's next turn, rather than when the role's turn comes and the turns before it
+        // are spent; a role the run is done with never starts again, whatever its harness.
         let mode = run_mode(run.permission_mode.as_deref());
-        for (role, kind) in &run.next_harnesses {
+        let pipeline = run.pipeline()?;
+        let ahead = pipeline.roles_from(&run.phase);
+        for (role, kind) in run.next_harnesses.iter().filter(|(role, _)| ahead.contains(role.as_str())) {
             if let Err(why) = harness(kind).map_err(|e| e.0).and_then(|h| startable(h, mode, None, None).map(drop)) {
-                return Err(AgentError::Failed(OrchestratorError(format!("the {role}'s {why}"))));
+                let label = pipeline.roles().get(role).unwrap_or(role);
+                return Err(AgentError::Failed(OrchestratorError(format!("the {label}'s {why}"))));
             }
         }
         human.log(&format!("run {} runs its agents over ACP", run.run_id));
