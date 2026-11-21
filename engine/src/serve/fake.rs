@@ -10,7 +10,7 @@ use crate::herdr::{
     AgentAddress, AgentConsole, HerdrError, HerdrServer, Launched, Launcher, Workspaces, PANE_SHELL_SCRIPT,
 };
 use crate::host::{Exec, ExecError, Host, RunFile, RunFileText};
-use crate::serve::{Launch, Reached};
+use crate::serve::Reached;
 use crate::state::SavedRun;
 
 /// A Host whose files are `files`, whose run_states_inside and run_state_inside read the state.json of each run among
@@ -206,14 +206,7 @@ pub const LAUNCHED_PANE: &str = "w9:p1";
 /// The project /proj on host, its agents in console and its runs launched by it there.
 pub fn reached(host: &Arc<ServeHost>, console: &Arc<FakeConsole>) -> Reached {
     let dir = "/proj".to_string();
-    Reached {
-        host: host.clone(),
-        launch_dir: dir.clone(),
-        dir,
-        console: console.clone(),
-        places: console.clone(),
-        launch: Launch::Herdr(console.clone()),
-    }
+    Reached { host: host.clone(), dir, console: console.clone(), places: console.clone() }
 }
 
 impl FakeConsole {

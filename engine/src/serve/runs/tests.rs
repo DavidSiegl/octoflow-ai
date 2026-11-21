@@ -114,7 +114,7 @@ fn a_finished_runs_files_are_read_until_they_settle_and_then_only_when_it_change
 fn a_finished_runs_file_written_later_than_a_poll_interval_is_still_sent() {
     let w = Watched::new();
     let done = [("phase", Value::from("done")), ("verdict", Value::from(APPROVE))];
-    let late = SERVE_POLL.local.as_secs() * 3;
+    let late = SERVE_POLL.as_secs() * 3;
     assert!(late < FINISHED_RUN_WRITES.as_secs());
     w.save(0, &done);
     let mut watch = RunWatch::new(&w.project);

@@ -1,15 +1,15 @@
 //! What serve gives of a project's runs: the run records `list --json` prints, each run's files and their text, and
-//! the events that tell a stream's client what
-//! changed; and each run's agents, read and typed into through herdr, in the herdr server their run saved. Every path
-//! a client names is checked before anything is read, and an agent is named only by its run and role, never by its
-//! herdr name.
+//! the events that tell a stream's client what changed; the runs it starts and resumes, detached, their agents over
+//! ACP; and the agents of its runs in herdr, read and typed into through herdr, in the herdr server their run saved.
+//! Every path a client names is checked before anything is read, and an agent is named only by its run and role, never
+//! by its herdr name.
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use super::start::{RunRequest, StartWait, Started};
-use super::{Launch, Reached};
+use super::Reached;
 use crate::acp;
 use crate::acp::LeftoverGroups;
 use crate::agents::{EitherBackend, RunPlaces};
@@ -19,7 +19,7 @@ use crate::cli::listing::run_record;
 use crate::cli::resume_check::resumable;
 use crate::cli::START_LOG;
 use crate::error::OrchestratorError;
-use crate::herdr::{AgentAddress, AgentConsole, HerdrError, Launcher};
+use crate::herdr::{AgentAddress, AgentConsole, HerdrError};
 use crate::host::spawn_detached;
 use crate::host::{Host, RunFileText, RunScope};
 use crate::interrupt::Interrupt;
@@ -84,17 +84,13 @@ pub enum AgentInput {
 pub struct ProjectRuns {
     /// Reaches the project; its commands are stopped when the server stops.
     host: Arc<dyn Host + Send + Sync>,
-    /// Reaches the project's runs' agents, each in the herdr server its run saved.
+    /// Reaches the project's herdr runs' agents, each in the herdr server its run saved.
     console: Arc<dyn AgentConsole>,
     /// Tells and closes the project's herdr runs' agents' places, each from what its run saved.
     places: Arc<dyn RunPlaces + Send + Sync>,
-    /// How a run's process starts (Reached::launch).
-    launch: Launch,
-    /// Where a run's process starts (Reached::launch_dir).
-    launch_dir: String,
-    /// The project's absolute directory on host.
+    /// The project's absolute directory, where a run serve starts starts.
     cwd: String,
-    /// The --machine and --cwd flags as the client gave them (target_args), for the records' resume commands.
+    /// The --cwd flag as the client gave it (target_args), for the records' resume commands.
     target: Vec<String>,
     /// Whether a process of an id runs on this machine, as RunState::health asks it: crate::runs::pid_alive, but in
     /// tests.
@@ -111,14 +107,12 @@ pub struct ProjectRuns {
 impl ProjectRuns {
     /// The project reached; target is as the field says.
     pub fn new(reached: Reached, target: Vec<String>) -> ProjectRuns {
-        let Reached { host, dir, console, places, launch, launch_dir } = reached;
+        let Reached { host, dir, console, places } = reached;
         let pid_alive = Arc::new(pid_alive);
         ProjectRuns {
             host,
             console,
             places,
-            launch,
-            launch_dir,
             cwd: dir,
             target,
             pid_alive,
@@ -133,8 +127,7 @@ impl ProjectRuns {
         ProjectRuns { pid_alive: Arc::new(pid_alive), ..self }
     }
 
-    /// Set the project up for the local quality gate, as crate::local_gate::set_up does without a pin, on the
-    /// machine it is on.
+    /// Set the project up for the local quality gate, as crate::local_gate::set_up does without a pin.
     pub fn set_up_gate(&self) -> Result<Vec<SetUpFile>, OrchestratorError> {
         crate::local_gate::set_up(&*self.host, &self.cwd, None)
     }
@@ -188,14 +181,9 @@ impl ProjectRuns {
         forget_all(&forgetter, &self.cwd, sweep)
     }
 
-    /// The project's absolute directory on its machine, as Host::resolve_dir gives it.
+    /// The project's absolute directory, as Host::resolve_dir gives it.
     pub fn cwd(&self) -> &str {
         &self.cwd
-    }
-
-    /// Whether the project is on another machine, read over SSH.
-    pub fn remote(&self) -> bool {
-        self.host.ssh_target().is_some()
     }
 
     /// Each run's record, as `list --json` prints them (run_record, this machine being the one serve runs on), of the
@@ -247,8 +235,9 @@ impl ProjectRuns {
         }
     }
 
-    /// The last lines of what the run's agent of role shows, at most lines of them (AgentConsole::read). Errors:
-    /// agent_name's, Missing for an agent that has exited, Failed when herdr fails otherwise.
+    /// The last lines of what the run's agent of role, a run in herdr, shows, at most lines of them
+    /// (AgentConsole::read). Errors: agent's, Missing for an agent that has exited, Failed when herdr fails otherwise,
+    /// as when it is not installed (herdr_failure).
     pub fn agent_text(&self, run_id: &str, role: &str, lines: u32) -> Result<String, RunReadError> {
         let agent = self.agent(run_id, role)?;
         self.console.read(&agent, lines).map_err(|e| herdr_failure(role, e))
@@ -293,13 +282,9 @@ impl ProjectRuns {
     }
 
     /// The directory of the run, which a run over ACP records its socket in (crate::acp::ask). Errors: Refused for a
-    /// run id that is not a plain name; Missing for a project on a machine, which has no run over ACP.
+    /// run id that is not a plain name.
     pub fn acp_dir(&self, run_id: &str) -> Result<String, RunReadError> {
-        let dir = self.dir(run_id)?;
-        if self.remote() {
-            return Err(RunReadError::Missing(format!("run {run_id} is on a machine, and runs no agent over ACP")));
-        }
-        Ok(dir)
+        self.dir(run_id)
     }
 
     /// The run's agent of role as its state.json saves it: its herdr name and its run's herdr server. Errors:
@@ -325,17 +310,11 @@ impl ProjectRuns {
         Ok(AgentAddress { name: name.clone(), server: state.herdr_server.clone() })
     }
 
-    /// Whether a run this project starts is detached (Launch::Detached), rather than in herdr.
-    pub fn detached(&self) -> bool {
-        matches!(self.launch, Launch::Detached)
-    }
-
-    /// Start the run request asks for, as run_id, by program, the orchestrator's binary, as the project's Launch says,
-    /// and wait (StartWait::until) for it to save its state.json or for its command to exit without one. Once the run
-    /// is started a look that fails, at its state.json or at it, is no answer: the wait goes on, so that the client
-    /// still gets the id of a run that is running. Gives how the wait ended, and the named herdr session the run's
-    /// pane is in (Launched::herdr_session), None for a run not in herdr. Errors: Refused for a run id that is not a
-    /// plain name; for the rest, start_in_herdr's and start_detached's.
+    /// Start the run request asks for, as run_id, by program, the orchestrator's binary, detached, its agents over ACP
+    /// (`--acp`, crate::acp), and wait (StartWait::until) for it to save its state.json or for its command to exit
+    /// without one. Once the run is started a look that fails, at its state.json or at it, is no answer: the wait goes
+    /// on, so that the client still gets the id of a run that is running. Gives how the wait ended. Errors: Refused
+    /// for a run id that is not a plain name; for the rest, start_detached's.
     pub fn start(
         &self,
         request: &RunRequest,
@@ -343,18 +322,11 @@ impl ProjectRuns {
         run_id: &str,
         wait: StartWait,
         stopping: &Interrupt,
-    ) -> Result<(Started, Option<String>), RunReadError> {
+    ) -> Result<Started, RunReadError> {
         let dir = self.dir(run_id)?;
         let saved = || self.host.read(&format!("{dir}/state.json")).is_ok_and(|text| text.is_some());
-        match &self.launch {
-            Launch::Herdr(launcher) => self.start_in_herdr(&**launcher, request, program, run_id, wait, stopping),
-            Launch::Detached => {
-                let target = ["--cwd".to_string(), self.cwd.clone(), "--acp".to_string()];
-                let ended =
-                    self.start_detached(&request.argv(program, run_id, &target), &dir, wait, stopping, saved)?;
-                Ok((ended, None))
-            }
-        }
+        let target = ["--cwd".to_string(), self.cwd.clone(), "--acp".to_string()];
+        self.start_detached(&request.argv(program, run_id, &target), &dir, wait, stopping, saved)
     }
 
     /// Resume run_id, a desktop app's run (crate::state::Backend::Acp) that a resume would take up and find something
@@ -366,8 +338,8 @@ impl ProjectRuns {
     /// resume of a run finds it taken up, and is refused.
     ///
     /// Errors: Refused for a run id that is not a plain name; Missing for no such run; Conflict for a run that is not
-    /// the app's or not resumable, saying why, or a project whose runs start in herdr; Failed for a project on a
-    /// machine, runs that cannot be read, leftover agents that cannot be ended, and start_detached's.
+    /// the app's or not resumable, saying why; Failed for runs that cannot be read, leftover agents that cannot be
+    /// ended, and start_detached's.
     pub fn resume(
         &self,
         program: &str,
@@ -376,9 +348,6 @@ impl ProjectRuns {
         stopping: &Interrupt,
     ) -> Result<Started, RunReadError> {
         let dir = self.dir(run_id)?;
-        if !self.detached() {
-            return Err(RunReadError::Conflict("this app's runs start in herdr; resume one with its command".into()));
-        }
         // A resume that panicked left nothing half-done: the next reads the run anew.
         let _one_at_a_time = self.resuming.lock().unwrap_or_else(PoisonError::into_inner);
         let runs = self.saved_runs()?;
@@ -397,10 +366,10 @@ impl ProjectRuns {
         self.start_detached(&argv, &dir, wait, stopping, saved_anew)
     }
 
-    /// Start argv detached (spawn_detached), in the project's launch directory, its output appended to the run
-    /// directory dir's START_LOG, and wait (StartWait::until) for saved to hold or for it to exit: Listed once saved
-    /// holds, Exited with its log's last lines when it exits before. Errors: Failed for a project on a machine, which
-    /// starts no run over ACP, and when dir cannot be made or the process cannot be started.
+    /// Start argv detached (spawn_detached), in the project's directory, its output appended to the run directory
+    /// dir's START_LOG, and wait (StartWait::until) for saved to hold or for it to exit: Listed once saved holds,
+    /// Exited with its log's last lines when it exits before. Errors: Failed when dir cannot be made or the process
+    /// cannot be started.
     fn start_detached(
         &self,
         argv: &[String],
@@ -409,12 +378,9 @@ impl ProjectRuns {
         stopping: &Interrupt,
         saved: impl Fn() -> bool,
     ) -> Result<Started, RunReadError> {
-        if self.remote() {
-            return Err(OrchestratorError::new("a run over ACP starts on this machine only, not on a machine").into());
-        }
         let log = format!("{dir}/{START_LOG}");
         std::fs::create_dir_all(dir).map_err(|e| OrchestratorError(format!("cannot make {dir}: {e}")))?;
-        let run = spawn_detached(argv, &self.launch_dir, &log)?;
+        let run = spawn_detached(argv, &self.cwd, &log)?;
         Ok(wait.until(stopping, || {
             if saved() {
                 return Some(Started::Listed);
@@ -425,44 +391,6 @@ impl ProjectRuns {
             // It may have saved just before it exited, as a run that fails after its claim does.
             Some(if saved() { Started::Listed } else { Started::Exited(log_tail(&log)) })
         }))
-    }
-
-    /// start's run in a new workspace of launcher's herdr, labelled as the run labels its own
-    /// (crate::herdr::workspace_label). The project is given to `run` as `--cwd` and the directory serve resolved, for
-    /// a project here, and as the client named it, with its `--machine`, for one on a machine. Errors: Failed, before
-    /// any workspace opens, when the panes of a herdr the run types into start a shell that its lines cannot be typed
-    /// into or that cannot be told (crate::herdr::pane_shell): the launcher's, which the run's command is typed into,
-    /// and for a project on a machine also the machine's, where its agents run; and when herdr cannot launch it
-    /// (Launcher::launch).
-    fn start_in_herdr(
-        &self,
-        launcher: &dyn Launcher,
-        request: &RunRequest,
-        program: &str,
-        run_id: &str,
-        wait: StartWait,
-        stopping: &Interrupt,
-    ) -> Result<(Started, Option<String>), RunReadError> {
-        let state = format!("{}/state.json", self.dir(run_id)?);
-        let label = crate::herdr::workspace_label(run_id, &request.task);
-        // The pane starts in the resolved directory too, where a relative cwd or one with ~ would resolve elsewhere.
-        let target = if self.remote() { self.target.clone() } else { vec!["--cwd".to_string(), self.cwd.clone()] };
-        let argv = request.argv(program, run_id, &target);
-        // The launcher checks its own panes; a project here has its agents in those too.
-        if self.remote() {
-            crate::herdr::pane_shell(&*self.host)?;
-        }
-        let launched = launcher.launch(&self.launch_dir, &label, &argv).map_err(OrchestratorError::from)?;
-        let saved = || self.host.read(&state).is_ok_and(|text| text.is_some());
-        let ended = wait.until(stopping, || {
-            if saved() {
-                return Some(Started::Listed);
-            }
-            let shown = launcher.exited(&launched, START_ERROR_LINES).ok().flatten()?;
-            // It may have saved its state.json just before it exited, as a run that fails after its claim does.
-            Some(if saved() { Started::Listed } else { Started::Exited(format!("its pane showed:\n{shown}")) })
-        });
-        Ok((ended, launched.herdr_session().map(String::from)))
     }
 
     fn dir(&self, run_id: &str) -> Result<String, RunReadError> {
@@ -483,15 +411,20 @@ fn log_tail(log: &str) -> String {
     }
 }
 
-/// The most lines of its pane, or its log, that a run which exited before it saved its state.json gives as its error.
+/// The most lines of its log that a run which exited before it saved its state.json gives as its error.
 const START_ERROR_LINES: u32 = 20;
 
-/// The RunReadError of herdr's failure e on role's agent: Missing when the agent has exited.
+/// The RunReadError of herdr's failure e on role's agent: Missing when the agent has exited; else Failed, saying that
+/// the run is the CLI's to follow, since the app no longer needs herdr and may run where there is none.
 fn herdr_failure(role: &str, e: HerdrError) -> RunReadError {
     if e.code() == Some("agent_not_found") {
         return RunReadError::Missing(format!("the {role} agent has exited"));
     }
-    RunReadError::Failed(e.into())
+    let e = OrchestratorError::from(e).0;
+    RunReadError::Failed(OrchestratorError(format!(
+        "cannot reach herdr, which this run's {role} agent runs in: {e}; follow the run and resume it from octoflow's \
+         command line"
+    )))
 }
 
 /// One event of a stream, as RunWatch::poll gives it.

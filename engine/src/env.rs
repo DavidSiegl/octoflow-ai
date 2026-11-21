@@ -64,16 +64,11 @@ impl ConfigDir {
         self.join("workflows")
     }
 
-    /// The file whose presence means the desktop app's setup dialog once closed with every Required check passed for
-    /// app runs in herdr, which Setup::checked (crate::serve::setup) reads to tell whether the dialog opens by itself;
-    /// empty. App runs over ACP have their own (acp_setup_checked_path), since the two have their own Required checks
-    /// (claude's ACP adapter among ACP's), so passing one's says nothing of the other's.
+    /// The file whose presence means the desktop app's setup dialog once closed with every Required check passed, which
+    /// Setup::checked (crate::serve::setup) reads to tell whether the dialog opens by itself; empty. Named for app runs
+    /// over ACP: `setup-checked`, an app's before 0.94.0, was the marker of the checks for app runs in herdr, which say
+    /// nothing of ACP's (claude's ACP adapter among its Required ones).
     pub fn setup_checked_path(&self) -> String {
-        self.join("setup-checked")
-    }
-
-    /// setup_checked_path's file for app runs over ACP.
-    pub fn acp_setup_checked_path(&self) -> String {
         self.join("setup-checked-acp")
     }
 
