@@ -16,9 +16,10 @@ const DIST: &str = "http://dist.test";
 const REGISTRY_URL: &str = "http://registry.test/";
 
 /// The bin/node of the fake tarball: run as npm-cli.js, it records its arguments in $FAKE_RECORD/argv, its
-/// environment in $FAKE_RECORD/env and the size of its --userconfig in $FAKE_RECORD/userconfig-bytes, then writes the
-/// adapter's script under --prefix as `npm ci` would, and a file in --cache. With FAKE_NPM_FAILS set it fails first,
-/// with FAKE_NPM_SLOW set it takes a second.
+/// environment in $FAKE_RECORD/env and the sizes of its --userconfig and --globalconfig in $FAKE_RECORD/config-bytes,
+/// then writes the adapter's script under --prefix as `npm ci` would, and a file in --cache. As npm 10.9.9 does, it
+/// fails when --userconfig and --globalconfig name the same file ("double-loading config"). With FAKE_NPM_FAILS set it
+/// fails first, with FAKE_NPM_SLOW set it takes a second.
 const FAKE_NODE: &str = r#"#!/bin/sh
 echo "$@" > "$FAKE_RECORD/argv"
 env > "$FAKE_RECORD/env"
@@ -28,10 +29,13 @@ while [ $# -gt 0 ]; do
   case "$1" in
   --prefix) prefix=$2 ;;
   --cache) cache=$2 ;;
-  --userconfig) wc -c < "$2" | tr -d ' ' > "$FAKE_RECORD/userconfig-bytes" ;;
+  --userconfig) user=$2 ;;
+  --globalconfig) global=$2 ;;
   esac
   shift
 done
+[ "$user" = "$global" ] && { echo "double-loading config \"$global\" as \"global\"" >&2; exit 1; }
+echo "$(wc -c < "$user" | tr -d ' ') $(wc -c < "$global" | tr -d ' ')" > "$FAKE_RECORD/config-bytes"
 mkdir -p "$prefix/node_modules/@agentclientprotocol/claude-agent-acp/dist" "$cache"
 echo script > "$prefix/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"
 echo cached > "$cache/entry"
@@ -149,7 +153,7 @@ fn an_install_downloads_node_installs_the_adapter_and_is_found_in_place() {
     let mut kept: Vec<String> =
         std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
     kept.sort();
-    assert_eq!(kept, ["adapter", "node"], "the tarball, the empty npmrc and npm's cache are gone");
+    assert_eq!(kept, ["adapter", "node"], "the tarball, the empty npmrcs and npm's cache are gone");
     let lock = std::fs::read_to_string(format!("{dir}/adapter/package.json")).unwrap();
     assert!(lock.contains("0.5.0"), "{lock}");
 }
@@ -168,11 +172,11 @@ fn npm_installs_from_the_lockfile_without_scripts_or_the_users_npm_settings() {
     let dir = format!("{}/.tmp-node-{NODE}-adapter-0.5.0", f.root());
     let expected = format!(
         "{dir}/node/lib/node_modules/npm/bin/npm-cli.js ci --ignore-scripts --userconfig {dir}/empty-npmrc \
-         --globalconfig {dir}/empty-npmrc --registry {REGISTRY_URL} --prefix {dir}/adapter --cache {dir}/npm-cache \
+         --globalconfig {dir}/empty-global-npmrc --registry {REGISTRY_URL} --prefix {dir}/adapter --cache {dir}/npm-cache \
          --no-audit --no-fund --no-update-notifier\n"
     );
     assert_eq!(argv, expected);
-    assert_eq!(f.record("userconfig-bytes").trim(), "0");
+    assert_eq!(f.record("config-bytes").trim(), "0 0");
     let env = f.record("env");
     assert!(!env.to_ascii_lowercase().contains("npm_config_"), "{env}");
     assert!(env.contains("HTTPS_PROXY=http://proxy.test:3128"), "{env}");
