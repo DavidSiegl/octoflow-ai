@@ -124,10 +124,10 @@ fn run_candidates(host: &dyn Host, dir: &str) -> Vec<CompletionCandidate> {
         .map(|run| {
             let s = run.shown();
             let key = run_key(&s.run_id);
-            let value = if runs_by_key[key] > 1 { s.run_id.as_str() } else { key };
+            let named_by = if runs_by_key[key] > 1 { s.run_id.as_str() } else { key };
             let phase = if run.problem().is_some() { "unreadable" } else { s.phase.as_str() };
             let task = s.task.lines().next().unwrap_or("");
-            CompletionCandidate::new(value).help(Some(StyledStr::from(format!("{phase}: {task}"))))
+            CompletionCandidate::new(named_by).help(Some(StyledStr::from(format!("{phase}: {task}"))))
         })
         .collect()
 }
