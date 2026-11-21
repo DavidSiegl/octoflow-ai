@@ -6,7 +6,9 @@
 # holds build-binary.sh's third-party licenses, the crates', as THIRD-PARTY-LICENSES.html among the app's resources, and
 # beside it as THIRD-PARTY-LICENSES-NPM.html those of the npm packages its window bundles, which
 # ui/scripts/npm-licenses.js writes here to dist/octoflow-desktop-npm-licenses.html, the release's copy. The app's
-# version is the release's, as ci/release-version.sh reads it. Run build-binary.sh first. Jenkins's Package stage builds
+# version is the release's, as ci/release-version.sh reads it. The .deb also installs octoflow's Tab completion for
+# bash, zsh and fish, packaging/completions' scripts, and the build fails on a .deb without them or without the
+# licenses. Run build-binary.sh first. Jenkins's Package stage builds
 # the Linux app with it, and .github/workflows/macos-binary.yml the macOS one.
 set -eu
 
@@ -33,6 +35,17 @@ mkdir -p build/desktop
 # relative to.
 cp "$notices" ui/src-tauri/THIRD-PARTY-LICENSES.html
 
+# Where the .deb installs its shell completion scripts: the vendor directories bash-completion, zsh's compinit and
+# fish load a command's completion from on its first Tab. Each is packaging/completions' file of the same name
+# (generate.sh there writes them); the config below maps them, and the check of the built .deb looks for them.
+deb_completions="usr/share/bash-completion/completions/octoflow usr/share/zsh/vendor-completions/_octoflow
+usr/share/fish/vendor_completions.d/octoflow.fish"
+deb_files=""
+for completion in $deb_completions; do
+    # Relative to ui/src-tauri, as Tauri reads a bundled file's source path.
+    deb_files="${deb_files:+$deb_files, }\"/$completion\": \"../../packaging/completions/${completion##*/}\""
+done
+
 # Merged over tauri.conf.json, which bundles nothing, so that cargo test and tauri dev need no license files on
 # disk. signingIdentity "-" signs the macOS app ad hoc: macOS reports an unsigned app downloaded onto Apple
 # silicon as damaged, and an app signed ad hoc only as from an unidentified developer.
@@ -43,6 +56,7 @@ cat > "$config" <<EOF
   "bundle": {
     "active": true,
     "resources": ["THIRD-PARTY-LICENSES.html", "THIRD-PARTY-LICENSES-NPM.html"],
+    "linux": { "deb": { "files": { $deb_files } } },
     "macOS": { "signingIdentity": "-" }
   }
 }
@@ -270,6 +284,10 @@ if [ "$os" = linux ]; then
         for resource in THIRD-PARTY-LICENSES.html THIRD-PARTY-LICENSES-NPM.html; do
             printf '%s\n' "$files" | grep -Eq "/${resource%.html}\\.html\$" \
                 || { echo "build-desktop.sh: $deb has no $resource" >&2; exit 1; }
+        done
+        for completion in $deb_completions; do
+            printf '%s\n' "$files" | grep -Fqx -e "$completion" -e "./$completion" \
+                || { echo "build-desktop.sh: $deb has no $completion" >&2; exit 1; }
         done
     done
     publish deb "$out/deb/Octoflow_${version}_"*.deb
