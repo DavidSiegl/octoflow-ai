@@ -34,7 +34,7 @@ use crate::pull_request::{branch_name, commit_note, pr_body, provenance, spec_ti
 use crate::quality::parse_gate;
 use crate::runs::{local_host, RUNNING};
 use crate::spec_file::SpecFile;
-use crate::state::{AgentStart, Backend, RunState};
+use crate::state::{run_key, AgentStart, Backend, RunState, SavedRun};
 use crate::summary::{iso_utc, run_metrics, run_summary, turn_tokens};
 use crate::workflow_file::{run_pipeline, workflow_definition};
 use serde_json::Value;
@@ -541,10 +541,7 @@ impl<'a> Workflow<'a> {
                 "--worktree starts the run from {REMOTE}'s branch, and {cwd} has no {REMOTE}"
             ))));
         }
-        // Kept once recorded, as check_repo keeps it.
-        if self.state.base_branch.as_deref().is_none_or(str::is_empty) {
-            self.state.base_branch = Some(branch);
-        }
+        self.take_base_branch(branch)?;
         let run_id = self.state.run_id.clone();
         // A resume before the first editing step: the run's worktree holds nothing it needs to keep.
         if self.host.is_worktree(&cwd, &worktree)? {
@@ -572,6 +569,19 @@ impl<'a> Workflow<'a> {
         )))
     }
 
+    /// The project's runs other than this one, as Host::run_states gives them. Errors: as run_states'.
+    fn other_runs(&self) -> Result<Vec<SavedRun>, OrchestratorError> {
+        let mut runs = self.host.run_states(&self.state.cwd)?;
+        runs.retain(|run| run.shown().run_id != self.state.run_id);
+        Ok(runs)
+    }
+
+    /// The health of run as this orchestrator's host sees it: SavedRun::health, with this host as the local one.
+    fn health_of(&self, run: &SavedRun) -> Option<(&'static str, String)> {
+        let me = self.me.get("host").and_then(Value::as_str).unwrap_or_default();
+        run.health(me, self.pid_alive)
+    }
+
     /// Fail if another run in this checkout is live: the two would share one working tree.
     ///
     /// A worktree run shares no working tree, neither with another worktree run nor with the run in the checkout.
@@ -582,14 +592,13 @@ impl<'a> Workflow<'a> {
         if s.worktree.is_some() {
             return Ok(());
         }
-        let me = self.me.get("host").and_then(Value::as_str).unwrap_or_default();
-        for run in self.host.run_states(&s.cwd)? {
+        for run in self.other_runs()? {
             // As far as it reads: a run another release drives shares the checkout too.
             let other = run.shown();
-            if other.run_id == s.run_id || other.worktree.as_deref().is_some_and(|w| !w.is_empty()) {
+            if other.worktree.as_deref().is_some_and(|w| !w.is_empty()) {
                 continue;
             }
-            if let Some((RUNNING, why)) = run.health(me, self.pid_alive) {
+            if let Some((RUNNING, why)) = self.health_of(&run) {
                 return Err(OrchestratorError(format!(
                     "run {} is running in {} ({why}); one run at a time per checkout: wait for it, stop it, or \
                      use another clone",
@@ -793,10 +802,7 @@ impl<'a> Workflow<'a> {
                 "{cwd} is on a detached HEAD; check out the branch the pull request targets"
             )));
         }
-        // Kept once recorded: a run resumed after it switched to its own branch still targets the first one.
-        if self.state.base_branch.as_deref().is_none_or(str::is_empty) {
-            self.state.base_branch = Some(branch.clone());
-        }
+        self.take_base_branch(branch.clone())?;
         self.require_clean()?;
         // So the Spec Collector reads current code. A resume already on the run's own branch leaves it to
         // switch_to_branch.
@@ -804,6 +810,43 @@ impl<'a> Workflow<'a> {
         if branch == base_branch {
             self.reaching_origin(|| self.host.fast_forward(&cwd, &base_branch))?;
         }
+        Ok(())
+    }
+
+    /// Record branch, the one checked out in the project, as the run's base branch, unless the run has one: a run
+    /// resumed after it switched to its own branch still targets the first one.
+    ///
+    /// Errors, before recording: branch is the branch of another run of the project that is not closed. An in-place
+    /// run that fails leaves the checkout on its branch for resume, and that branch reaches origin only when the run
+    /// publishes; taken as a base, it could not be fetched, or would get a pull request against another run's work.
+    /// The error says to check out that run's base, after the run ends when it is running: close leaves an in-place
+    /// run's checkout where it is (cli::close's WorktreeFate), so closing alone would not help.
+    fn take_base_branch(&mut self, branch: String) -> Result<(), OrchestratorError> {
+        let s = &self.state;
+        if s.base_branch.as_deref().is_some_and(|b| !b.is_empty()) {
+            return Ok(());
+        }
+        for run in self.other_runs()? {
+            let other = run.shown();
+            if other.branch.as_deref() != Some(branch.as_str()) || other.is_closed() {
+                continue;
+            }
+            let id = &other.run_id;
+            let base = match other.base_branch.as_deref() {
+                Some(b) if !b.is_empty() => format!("its base branch, {b}"),
+                _ => "the branch it started from".to_string(),
+            };
+            let key = run_key(id);
+            let advice = match self.health_of(&run) {
+                Some((RUNNING, why)) => format!("which is running ({why}); wait for it to end, then check out {base}"),
+                _ => format!(
+                    "which is not closed; check out {base}, and close that run with `octoflow close {key}` once \
+                     you are done with it"
+                ),
+            };
+            return Err(OrchestratorError(format!("{} is on {branch}, the branch of run {id}, {advice}", s.cwd)));
+        }
+        self.state.base_branch = Some(branch);
         Ok(())
     }
 
