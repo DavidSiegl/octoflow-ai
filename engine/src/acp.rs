@@ -156,20 +156,9 @@ impl<'h> AcpAgents<'h> {
         h: &'static Harness,
         launch: &AgentLaunch,
     ) -> Result<(Agent, Vec<String>), AgentError> {
-        let mode = launch.permission_mode.filter(|m| !m.is_empty()).unwrap_or("default");
-        let Some(how) = h.acp_launch(mode, launch.model, launch.extra_dir) else {
-            return Err(AgentError::Failed(OrchestratorError(format!(
-                "{} cannot run in a run the app starts: the app does not offer it yet",
-                h.kind
-            ))));
-        };
-        if how.mode == ModeSetting::Refused {
-            return Err(AgentError::Failed(OrchestratorError(format!(
-                "{} cannot run under --permission-mode {mode} in a run the app starts: none of its modes asks before it \
-                 acts; start the run under plan or bypassPermissions, or give the role another agent",
-                h.kind
-            ))));
-        }
+        let mode = run_mode(launch.permission_mode);
+        let how = startable(h, mode, launch.model, launch.extra_dir)
+            .map_err(|why| AgentError::Failed(OrchestratorError(why)))?;
         let dir = run.dir();
         let journal = Arc::new(Journal::open(&format!("{dir}/{}", journal_name(role)))?);
         let records = Records {
@@ -228,13 +217,23 @@ impl Agents for AcpAgents<'_> {
 
     /// Nothing outlives an orchestrator, so there is no place to keep: a run resumes with no agent. Opens the run's
     /// socket (socket's module comment); a socket that cannot be opened is told to human, and the run goes on
-    /// without one, which the app then shows read-only. Errors: run's agents run in another backend.
+    /// without one, which the app then shows read-only. Errors: run's agents run in another backend; a role's next
+    /// agent is one the app starts none of under the run's permission mode (the harness has no ACP launch, or its row
+    /// refuses the mode), which AcpAgents::launch would refuse only once the role's turn came.
     fn open(&self, run: &mut RunState, human: &dyn Human) -> Result<bool, AgentError> {
         if run.backend != Backend::Acp {
             return Err(AgentError::Failed(OrchestratorError(format!(
                 "run {} runs its agents in herdr, not over ACP; resume it from the command line",
                 run.run_id
             ))));
+        }
+        // Refused here, before the run's first turn, rather than when the role's turn comes and the turns before it
+        // are spent.
+        let mode = run_mode(run.permission_mode.as_deref());
+        for (role, kind) in &run.next_harnesses {
+            if let Err(why) = harness(kind).map_err(|e| e.0).and_then(|h| startable(h, mode, None, None).map(drop)) {
+                return Err(AgentError::Failed(OrchestratorError(format!("the {role}'s {why}"))));
+            }
         }
         human.log(&format!("run {} runs its agents over ACP", run.run_id));
         let commands: Arc<dyn Commands> = self.running.clone();
@@ -546,10 +545,35 @@ fn reopen(
     }
 }
 
+/// The permission mode an ACP run's agents start under, given the run's: `default` when it has none
+/// (Harness::acp_launch says why).
+fn run_mode(permission_mode: Option<&str>) -> &str {
+    permission_mode.filter(|m| !m.is_empty()).unwrap_or("default")
+}
+
+/// How harness h's agent starts under mode, on model and with extra_dir, as Harness::acp_launch gives it. Errors: the
+/// sentence, starting with h's name, saying why the app starts no agent of h under mode: h has no ACP launch, or its
+/// row refuses mode (ModeSetting::Refused).
+fn startable(h: &Harness, mode: &str, model: Option<&str>, extra_dir: Option<&str>) -> Result<AcpLaunch, String> {
+    let Some(how) = h.acp_launch(mode, model, extra_dir) else {
+        return Err(format!("{} cannot run in a run the app starts: the app does not offer it yet", h.kind));
+    };
+    if how.mode == ModeSetting::Refused {
+        return Err(format!(
+            "{} cannot run under --permission-mode {mode} in a run the app starts: none of its modes asks before it \
+             acts; start the run under plan or bypassPermissions, or give the role another agent",
+            h.kind
+        ));
+    }
+    Ok(how)
+}
+
 /// Put the session that the agent of harness h opened, as its answer opened has it, in mode's equivalent as setting
 /// says, asking the agent by ask (choose). Setting a mode is this function alone. Returns the log's sentence when the
 /// agent runs without the equivalent: h has none, or the session does not offer it. Errors: the agent refuses the
-/// request, or does not answer it. setting is not ModeSetting::Refused, under which no agent starts (AcpAgents::launch).
+/// request, or does not answer it; Failed when the session does not offer it and the agent would stay in a mode that
+/// acts unasked where mode asks first (a harness whose row refuses `default`, under any mode but bypassPermissions).
+/// setting is not ModeSetting::Refused, under which no agent starts (AcpAgents::launch).
 fn set_mode(
     h: &Harness,
     ask: &dyn Fn(&str, Value) -> Result<Value, AgentError>,
@@ -561,12 +585,22 @@ fn set_mode(
     match *setting {
         ModeSetting::Launched => Ok(None),
         ModeSetting::NoEquivalent | ModeSetting::Refused => Ok(Some(h.without_mode(mode))),
-        ModeSetting::Set(id) => Ok((!choose(ask, session, opened, &MODE, id)?).then(|| {
-            format!(
-                "{}'s session offers no mode {id}, its equivalent of --permission-mode {mode}; starting it without one",
-                h.kind
-            )
-        })),
+        ModeSetting::Set(id) => {
+            if choose(ask, session, opened, &MODE, id)? {
+                return Ok(None);
+            }
+            let missing =
+                format!("{}'s session offers no mode {id}, its equivalent of --permission-mode {mode}", h.kind);
+            // A harness whose row refuses `default` has no mode that asks first, so its own mode, which the agent
+            // stays in, would act where every mode but bypassPermissions asks.
+            let own_acts_unasked = h.acp_launch("default", None, None).is_some_and(|l| l.mode == ModeSetting::Refused);
+            if own_acts_unasked && mode != "bypassPermissions" {
+                return Err(AgentError::Failed(OrchestratorError(format!(
+                    "{missing}, and its own mode acts without asking"
+                ))));
+            }
+            Ok(Some(format!("{missing}; starting it without one")))
+        }
     }
 }
 

@@ -383,6 +383,24 @@ fn bypass_is_passed_at_launch_and_a_mode_the_session_lacks_is_reported_unpassed(
 }
 
 #[test]
+fn opencode_is_refused_under_plan_when_its_session_offers_no_plan_but_runs_on_under_bypass() {
+    let f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    let plan = AgentLaunch { permission_mode: Some("plan"), ..launch("opencode") };
+
+    let planned = agents.start(&f.run, "builder", &plan);
+    let bypassed = agents.start(&f.run, "builder", &opencode_launch()).expect("start");
+
+    let refusal = "opencode's session offers no mode plan, its equivalent of --permission-mode plan, and its own \
+                   mode acts without asking";
+    assert!(matches!(&planned, Err(AgentError::Failed(e)) if e.0 == refusal), "{planned:?}");
+    let no_build = "opencode's session offers no mode build, its equivalent of --permission-mode bypassPermissions; \
+                    starting it without one";
+    assert_eq!(bypassed.unpassed, [no_build]);
+}
+
+#[test]
 fn a_mode_is_set_by_the_session_s_mode_config_option_where_it_has_one() {
     let f = Fixture::new();
     f.put("opened.json", &format!(r#","configOptions":[{OPENCODE_MODES}]"#));
@@ -416,6 +434,31 @@ fn opencode_is_refused_under_default_and_accept_edits_before_it_starts() {
         assert!(matches!(&started, Err(AgentError::Failed(e)) if e.0 == refusal), "{mode:?}: {started:?}");
     }
     assert!(!std::path::Path::new(&format!("{}/log", f.bin())).exists(), "an agent started");
+}
+
+#[test]
+fn a_run_with_a_role_no_agent_can_start_for_is_refused_when_it_opens() {
+    let mut f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    f.run.next_harnesses.insert("builder".into(), "claude".into());
+    f.run.next_harnesses.insert("reviewer".into(), "opencode".into());
+
+    f.run.permission_mode = Some("plan".into());
+    let planned = agents.open(&mut f.run, &human);
+    f.run.permission_mode = None;
+    let defaulted = agents.open(&mut f.run, &human);
+    f.run.next_harnesses.insert("reviewer".into(), "pi".into());
+    f.run.permission_mode = Some("plan".into());
+    let pi = agents.open(&mut f.run, &human);
+
+    assert!(matches!(planned, Ok(false)), "{planned:?}");
+    let refusal = "the reviewer's opencode cannot run under --permission-mode default in a run the app starts: none \
+                   of its modes asks before it acts; start the run under plan or bypassPermissions, or give the role \
+                   another agent";
+    assert!(matches!(&defaulted, Err(AgentError::Failed(e)) if e.0 == refusal), "{defaulted:?}");
+    let refusal = "the reviewer's pi cannot run in a run the app starts: the app does not offer it yet";
+    assert!(matches!(&pi, Err(AgentError::Failed(e)) if e.0 == refusal), "{pi:?}");
 }
 
 #[test]
