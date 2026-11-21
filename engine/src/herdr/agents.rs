@@ -140,6 +140,8 @@ impl<H: Herdr + ?Sized> Agents for H {
     fn whereabouts(&self, run: &RunState, role: &str) -> String {
         format!("pane {}", pane(run, role))
     }
+
+    fn settle(&self, _run: &RunState) {}
 }
 
 impl<W: Workspaces + ?Sized> RunPlaces for W {

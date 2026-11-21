@@ -1,5 +1,5 @@
 //! When a turn lets the human's message reach its agent (Agents::await_human): while the agent is idle in an
-//! interview, and once a non-interview agent has stalled.
+//! interview, and once a non-interview agent has stalled; and when a run lets its agents settle (Agents::settle).
 
 use std::cell::RefCell;
 
@@ -9,11 +9,21 @@ use crate::herdr::fake::FakeHerdr;
 use crate::human::Human;
 use crate::workflow::{Collaborators, Workflow};
 
-/// The fixture's FakeHerdr as the run's Agents, with each Agents::await_human it is asked recorded.
+/// The fixture's FakeHerdr as the run's Agents, with each Agents::await_human and Agents::settle it is asked
+/// recorded.
 struct Awaited<'f> {
     herdr: &'f FakeHerdr,
     /// Each await_human's role and why, in order.
     asked: RefCell<Vec<(String, Waiting)>>,
+    /// For each settle, in order, whether any turn of the run had its tokens counted by then.
+    settled: RefCell<Vec<bool>>,
+}
+
+impl<'f> Awaited<'f> {
+    /// herdr as the run's Agents, nothing asked yet.
+    fn new(herdr: &'f FakeHerdr) -> Awaited<'f> {
+        Awaited { herdr, asked: RefCell::default(), settled: RefCell::default() }
+    }
 }
 
 impl RunPlaces for Awaited<'_> {
@@ -62,6 +72,10 @@ impl Agents for Awaited<'_> {
     fn whereabouts(&self, run: &RunState, role: &str) -> String {
         self.herdr.whereabouts(run, role)
     }
+    fn settle(&self, run: &RunState) {
+        self.settled.borrow_mut().push(run.turns.iter().any(|t| t.tokens.is_set()));
+        self.herdr.settle(run)
+    }
 }
 
 #[test]
@@ -86,7 +100,7 @@ fn an_idle_interview_and_a_stalled_agent_wait_on_the_human_and_a_working_one_doe
             write(&review, &format!("VERDICT: {APPROVE}\n"));
         }
     });
-    let agents = Awaited { herdr: &f.herdr, asked: RefCell::default() };
+    let agents = Awaited::new(&f.herdr);
 
     let ran = Workflow::new(Collaborators { agents: &agents, ..f.collaborators() }, f.state.clone(), no_pr())
         .expect("Workflow::new takes the settings")
@@ -118,7 +132,7 @@ fn an_agent_that_reports_a_wait_waits_on_the_human_before_it_would_stall() {
             host.write(&build, "report", false).unwrap();
         }
     });
-    let agents = Awaited { herdr: &f.herdr, asked: RefCell::default() };
+    let agents = Awaited::new(&f.herdr);
 
     let ran = Workflow::new(Collaborators { agents: &agents, ..f.collaborators() }, f.state.clone(), no_pr())
         .expect("Workflow::new takes the settings")
@@ -126,4 +140,23 @@ fn an_agent_that_reports_a_wait_waits_on_the_human_before_it_would_stall() {
 
     assert_eq!(ran, verdict(APPROVE));
     assert!(agents.asked.into_inner().contains(&("build".to_string(), Waiting::Idle)));
+}
+
+/// A run's agents settle once its turns are over, before its tokens are counted: an ACP agent records a turn's usage
+/// only when it answers the turn's prompt (cross-review 257 F7).
+#[test]
+fn a_finished_run_s_agents_settle_before_its_tokens_are_counted() {
+    let f = Fixture::new(vec![
+        ("spec", vec![spec_turn()]),
+        ("build", vec![build_turn(1)]),
+        ("review", vec![review_turn(1, APPROVE)]),
+    ]);
+    let agents = Awaited::new(&f.herdr);
+
+    let ran = Workflow::new(Collaborators { agents: &agents, ..f.collaborators() }, f.state.clone(), no_pr())
+        .expect("Workflow::new takes the settings")
+        .run();
+
+    assert_eq!(ran, verdict(APPROVE));
+    assert_eq!(agents.settled.into_inner(), [false]);
 }

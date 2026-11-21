@@ -112,6 +112,9 @@ struct State {
     /// The kind of login it last reported of itself in an `_auth/status_update` notification (codex-acp's extension:
     /// its `authStatus.kind`, such as `none` or `account`); None until it reports one.
     login: Option<String>,
+    /// True once Connection::stop cancelled what the agent was doing: a prompt still pending then was cancelled
+    /// and not answered, or answered as cancelled.
+    cancelled: bool,
 }
 
 impl Connection {
@@ -262,10 +265,21 @@ impl Connection {
     /// Wait at most seconds until the agent waits on no permission, or has exited; false when the time runs out
     /// first.
     pub(super) fn wait_unblocked(&self, seconds: u64) -> bool {
-        let deadline = Instant::now() + Duration::from_secs(seconds);
+        self.wait_until(Instant::now() + Duration::from_secs(seconds), |state| state.permissions.is_empty())
+    }
+
+    /// Wait until deadline at most for the agent to have answered every prompt sent to it, its usage then recorded,
+    /// or to have exited; false when the time runs out first.
+    pub(super) fn wait_answered(&self, deadline: Instant) -> bool {
+        self.wait_until(deadline, |state| state.prompts.is_empty())
+    }
+
+    /// Wait until deadline at most for done to hold of the agent's state, or for it to have exited; false when the
+    /// time runs out first.
+    fn wait_until(&self, deadline: Instant, done: impl Fn(&State) -> bool) -> bool {
         let mut state = self.shared.lock();
         loop {
-            if state.exited || state.permissions.is_empty() {
+            if state.exited || done(&state) {
                 return true;
             }
             let Some(left) = deadline.checked_duration_since(Instant::now()) else { return false };
@@ -302,6 +316,7 @@ impl Connection {
     /// reason `cancelled`. An agent that cannot be written to has exited, and has nothing left to stop.
     pub(super) fn stop(&self) {
         let mut state = self.shared.lock();
+        state.cancelled = true;
         for pending in std::mem::take(&mut state.permissions) {
             let _ = self.settle(&mut state, &pending, "cancelled", "stop", json!({"outcome": "cancelled"}));
         }
@@ -329,6 +344,11 @@ impl Connection {
         state.answered.insert(pending.number, (option.to_string(), by.to_string()));
         self.shared.journal.write("answered", json!({"request": pending.number, "option": option, "by": by}));
         self.send(&json!({"jsonrpc": "2.0", "id": pending.id, "result": {"outcome": outcome}}))
+    }
+
+    /// Whether stop cancelled what the agent was doing, at any time before.
+    pub(super) fn cancelled(&self) -> bool {
+        self.shared.lock().cancelled
     }
 
     /// The error the agent answered a prompt with, once: None when it answered none with one, or it was taken before.

@@ -386,10 +386,10 @@ impl<'a> Workflow<'a> {
         }))
     }
 
-    /// What follows the last phase, for a run saved as done, as far as left says: its tokens counted, its summary and
-    /// metrics written, and then, for a run this orchestrator owns, the run released, the human told, and the
-    /// workspace of a published run closed. What only costs a file or a notice is logged when it fails, but none
-    /// goes on past the Ctrl-C.
+    /// What follows the last phase, for a run saved as done, as far as left says: its tokens counted once its agents
+    /// settle (Agents::settle), its summary and metrics written, and then, for a run this orchestrator owns, the run
+    /// released, the human told, and the workspace of a published run closed. What only costs a file or a notice is
+    /// logged when it fails, but none goes on past the Ctrl-C.
     ///
     /// The files are written before the release, so that a run released is one whose files were written: a resume
     /// (ending_left) tells an ending cut short by the owner alone. The notice and the closing
@@ -398,6 +398,7 @@ impl<'a> Workflow<'a> {
     /// closes it, which is accepted over telling them twice of every run ended whole.
     fn end_done_run(&mut self, left: Ending) -> Outcome<()> {
         if left.count_tokens {
+            self.agents.settle(&self.state);
             self.count_tokens();
             self.check_interrupt()?;
         }

@@ -147,8 +147,10 @@ agent gives after writing its handoff file, if any, counts for no turn.
 An ACP run (one the app starts over the [Agent Client Protocol](https://agentclientprotocol.com)) reads no session
 log: its tokens are the `usage` each `session/prompt` response carries (`inputTokens`, `outputTokens`,
 `cachedReadTokens`, `cachedWriteTokens`), which the orchestrator appends to `acp-usage.jsonl` in the run directory,
-timed when the prompt was sent, so that a prompt answered after its handoff file still counts for its turn. A session
-no response gave a `usage` for has `"unknown"` tokens. ACP's `usage_update` notification is not read: it carries the
+timed when the prompt was sent, so that a prompt answered after its handoff file still counts for its turn. A prompt
+still unanswered once the run's turns are over, or when its agent is ended or started again, is given a few seconds
+(`SETTLE_MS`) to be answered, then cancelled (`session/cancel`) and given as long again, so that the usage of the
+answer is still recorded; a Ctrl-C cuts the wait short. A session no response gave a `usage` for has `"unknown"` tokens. ACP's `usage_update` notification is not read: it carries the
 context window and a cost, not the four kinds.
 
 An ACP run also keeps, in its run directory, each role's journal `<role>.events.jsonl`: every session the role ran,

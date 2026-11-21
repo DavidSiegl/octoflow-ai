@@ -19,10 +19,11 @@ use crate::test_support::{ended, eventually, TempDir};
 /// `session/load` and `session/resume` with an error where `refuse` is beside it. A prompt's text decides its answer:
 /// ASK asks a permission (request 900, offering allow and deny) and answers end_turn once it is given, UPDATE sends a
 /// session update (an agent_message_chunk) and answers end_turn, READ asks to read a file (request 901) and answers
-/// end_turn once refused, FAIL answers with an error, EXIT exits, HANG never answers, FORK starts a `sleep` that holds
-/// its output, its pid in `forked` beside it, and answers end_turn; CANCELLED, MAXTOKENS and REFUSAL answer with that
-/// stop reason, PARTIAL with a usage of no kind the engine counts, NOCACHE with input and output tokens alone (1 and
-/// 2); anything else answers end_turn with usage 10/20/30/40.
+/// end_turn once refused, FAIL answers with an error, EXIT exits, HANG answers only a `session/cancel`, with stop
+/// reason cancelled and the usage below, DEAF never answers, SLOW answers as anything else after a second, FORK starts
+/// a `sleep` that holds its output, its pid in `forked` beside it, and answers end_turn; CANCELLED, MAXTOKENS and
+/// REFUSAL answer with that stop reason, PARTIAL with a usage of no kind the engine counts, NOCACHE with input and
+/// output tokens alone (1 and 2); anything else answers end_turn with usage 10/20/30/40.
 const FAKE_AGENT: &str = r#"#!/bin/sh
 here=$(dirname "$0")
 log="$here/log"
@@ -55,6 +56,11 @@ while IFS= read -r line; do
     if [ -e "$here/refuse" ]; then refuse "$id" "no such session"; else reply "$id" "{\"x\":0$opened}"; fi ;;
   session/set_mode|session/set_model) reply "$id" '{}' ;;
   session/set_config_option) reply "$id" '{"configOptions":[]}' ;;
+  session/cancel)
+    if [ -e "$here/hung.$$" ]; then
+      reply "$(cat "$here/hung.$$")" '{"stopReason":"cancelled","usage":{"inputTokens":10,"outputTokens":20,"totalTokens":30}}'
+      rm "$here/hung.$$"
+    fi ;;
   session/prompt)
     case "$line" in
     *ASK*)
@@ -70,7 +76,8 @@ while IFS= read -r line; do
       reply "$id" '{"stopReason":"end_turn"}' ;;
     *FAIL*) refuse "$id" "not logged in" ;;
     *EXIT*) exit 0 ;;
-    *HANG*) ;;
+    *HANG*) echo "$id" > "$here/hung.$$" ;;
+    *DEAF*) ;;
     *FORK*)
       sleep 30 &
       echo $! > "$here/forked"
@@ -79,6 +86,9 @@ while IFS= read -r line; do
     *MAXTOKENS*) reply "$id" '{"stopReason":"max_tokens"}' ;;
     *REFUSAL*) reply "$id" '{"stopReason":"refusal"}' ;;
     *PARTIAL*) reply "$id" '{"stopReason":"end_turn","usage":{"totalTokens":5}}' ;;
+    *SLOW*)
+      sleep 1
+      reply "$id" '{"stopReason":"end_turn","usage":{"inputTokens":10,"outputTokens":20,"totalTokens":30}}' ;;
     *NOCACHE*) reply "$id" '{"stopReason":"end_turn","usage":{"inputTokens":1,"outputTokens":2}}' ;;
     *) reply "$id" '{"stopReason":"end_turn","usage":{"inputTokens":10,"outputTokens":20,"cachedReadTokens":30,"cachedWriteTokens":40,"totalTokens":100}}' ;;
     esac ;;
@@ -607,6 +617,59 @@ fn a_new_start_of_a_role_kills_its_agent_before_and_end_kills_them_all() {
 
     assert_eq!(agents.place(&f.run).expect("place"), None);
     assert!(agents.find(&f.run, "builder").expect("find").is_none());
+}
+
+/// A prompt still pending when its agent is ended or started again, or the run's agents settle before its tokens are
+/// counted, is given time to be answered, then cancelled, so that the usage its answer carries is recorded
+/// (cross-review 257 F7).
+#[test]
+fn the_usage_of_a_prompt_pending_at_an_end_a_restart_or_a_settle_is_recorded() {
+    let f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    let recorded = |f: &Fixture| session_usage(&read(&usage_file(&f.run)), "s-1").len();
+    let pending_at = |text: &str, ending: &dyn Fn()| {
+        agents.start(&f.run, "builder", &launch("agy")).expect("start");
+        agents.prompt(&f.run, "builder", text).expect("prompt");
+        ending();
+    };
+    let end = || agents.end(&f.run).expect("end");
+    let restart = || drop(agents.start(&f.run, "builder", &launch("agy")).expect("start again"));
+    let settle = || agents.settle(&f.run);
+
+    for (n, (text, ending)) in
+        [("SLOW", &end as &dyn Fn()), ("HANG", &end), ("HANG", &restart), ("SLOW", &settle)].into_iter().enumerate()
+    {
+        pending_at(text, ending);
+        assert_eq!(recorded(&f), n + 1, "{text} at ending {n}");
+    }
+    agents.prompt(&f.run, "builder", "HANG").expect("prompt");
+    settle();
+    assert_eq!(recorded(&f), 5, "HANG at a settle");
+    assert_eq!(activity(&agents, &f.run), Some(Activity::Idle), "a settled agent runs on");
+}
+
+/// An agent that answers neither its prompt nor the cancel is waited for once: the run's end that follows its settle
+/// kills it at once. A settle once the run's Ctrl-C is raised waits for none.
+#[test]
+fn an_agent_settled_once_or_after_the_ctrl_c_is_not_waited_for() {
+    let f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    agents.start(&f.run, "builder", &launch("agy")).expect("start");
+    agents.prompt(&f.run, "builder", "DEAF").expect("prompt");
+    agents.settle(&f.run);
+
+    let ending = Instant::now();
+    agents.end(&f.run).expect("end");
+    assert!(ending.elapsed() < Duration::from_millis(SETTLE_MS / 2), "{:?}", ending.elapsed());
+
+    agents.start(&f.run, "builder", &launch("agy")).expect("start");
+    agents.prompt(&f.run, "builder", "DEAF").expect("prompt");
+    f.interrupt.raise();
+    let settling = Instant::now();
+    agents.settle(&f.run);
+    assert!(settling.elapsed() < Duration::from_millis(SETTLE_MS / 2), "{:?}", settling.elapsed());
 }
 
 #[test]

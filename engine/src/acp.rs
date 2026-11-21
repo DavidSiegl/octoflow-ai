@@ -48,6 +48,14 @@ const USAGE_FILE: &str = "acp-usage.jsonl";
 /// agent may log in or load a long session first.
 const REQUEST_SECONDS: u64 = 120;
 
+/// How long the agents being settled (AcpAgents::settle_all) have to answer their prompts pending, and then, once those left are
+/// cancelled, to answer them as cancelled, in milliseconds: about as long as an agent takes to end a turn. Tests,
+/// whose fake agent answers at once or never, wait less.
+const SETTLE_MS: u64 = if cfg!(test) { 2_000 } else { 10_000 };
+
+/// How often, in milliseconds, a settle looks at the run's Ctrl-C while it waits.
+const SETTLE_SLICE_MS: u64 = 100;
+
 /// The protocol version the engine speaks (ACP's `initialize`).
 const PROTOCOL_VERSION: u64 = 1;
 
@@ -270,10 +278,15 @@ impl Agents for AcpAgents<'_> {
     /// can load one (ACP's `loadSession`), else resumed where it can (`sessionCapabilities.resume`); with neither, or
     /// when the agent refuses it, the start is Refused, so a fresh session follows. The role's agent before it, if
     /// still running, is killed first, and so is the process group of one an orchestrator of the run before left
-    /// running (groups::end_leftover), told to the human.
+    /// running (groups::end_leftover), told to the human; the usage of a prompt it has pending is recorded first, as
+    /// far as settle gets it.
     fn start(&self, run: &RunState, role: &str, launch: &AgentLaunch) -> Result<Started, AgentError> {
-        if let Some(old) = self.lock().remove(role) {
-            old.connection.kill();
+        // Settled while still in the map, where the socket's answer to a permission it waits on reaches it.
+        let old = self.lock().get(role).map(|a| a.connection.clone());
+        if let Some(old) = old {
+            self.settle_all(std::slice::from_ref(&old));
+            old.kill();
+            self.lock().remove(role);
         }
         match groups::end_leftover(&group_record(&run.dir(), role)) {
             Ok(false) => {}
@@ -334,6 +347,10 @@ impl Agents for AcpAgents<'_> {
     fn whereabouts(&self, _run: &RunState, role: &str) -> String {
         format!("the {role} agent's tab in the app")
     }
+
+    fn settle(&self, _run: &RunState) {
+        self.settle_all(&self.connections());
+    }
 }
 
 impl RunPlaces for AcpAgents<'_> {
@@ -343,13 +360,53 @@ impl RunPlaces for AcpAgents<'_> {
         Ok((n > 0).then(|| format!("{n} ACP agents")))
     }
 
-    /// Kill every agent.
+    /// Kill every agent, the usage of the prompts they have pending recorded first, as far as settle gets it.
     fn end(&self, _run: &RunState) -> Result<(), AgentError> {
+        // Settled while still in the map, as start settles a role's agent before it.
+        self.settle_all(&self.connections());
         for (_, agent) in self.lock().drain() {
             agent.connection.kill();
         }
         Ok(())
     }
+}
+
+impl AcpAgents<'_> {
+    /// The connection of every agent started and not ended.
+    fn connections(&self) -> Vec<Arc<Connection>> {
+        self.lock().values().map(|a| a.connection.clone()).collect()
+    }
+
+    /// Give the agents of connections SETTLE_MS to answer every prompt they have pending, then cancel what each has
+    /// left (Connection::stop: its prompts, and the permissions they wait on) and give them as long again, so that
+    /// the usage each answer carries is recorded. An agent cancelled before (Connection::cancelled), which answered
+    /// the cancel then or never will, is not waited for again; nor is any, once the run's Ctrl-C is raised. What
+    /// answers neither is left as it is, for the caller to kill or keep.
+    fn settle_all(&self, connections: &[Arc<Connection>]) {
+        let interrupt = &self.running.interrupt;
+        let pending = connections.iter().filter(|c| !c.cancelled()).collect();
+        let pending = still_pending(pending, interrupt);
+        if pending.is_empty() || interrupt.is_raised() {
+            return;
+        }
+        for connection in &pending {
+            connection.stop();
+        }
+        still_pending(pending, interrupt);
+    }
+}
+
+/// Those of connections whose agent still has a prompt pending after SETTLE_MS, or at once when interrupt is
+/// raised meanwhile.
+fn still_pending<'c>(mut connections: Vec<&'c Arc<Connection>>, interrupt: &Interrupt) -> Vec<&'c Arc<Connection>> {
+    let deadline = Instant::now() + Duration::from_millis(SETTLE_MS);
+    // In slices, so that a Ctrl-C ends the wait within one.
+    while !connections.is_empty() && !interrupt.is_raised() {
+        let Some(left) = deadline.checked_duration_since(Instant::now()) else { break };
+        let slice = Instant::now() + left.min(Duration::from_millis(SETTLE_SLICE_MS));
+        connections.retain(|c| !c.wait_answered(slice));
+    }
+    connections
 }
 
 /// What is left of an ACP run's agents once its orchestrator is gone, as after a SIGKILL: the process groups it

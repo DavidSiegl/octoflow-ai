@@ -102,14 +102,13 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   double-loading refusal was) is caught only by a real install by hand. Closed by an opt-in test that installs with
   the pinned Node's npm against a local registry, or ignored by default and run before a pin raise.
 
-- **An ACP turn's usage is lost when its prompt is still pending at count time or at a kill.** Raised by
-  cross-review 257 (F7): `acp-usage.jsonl` gets a prompt's line only when the agent answers its `session/prompt`
-  (`engine/src/acp/connection.rs`, `replied`), which can come after the handoff file that ends the turn; nothing
-  waits for prompts in flight before `Workflow::count_tokens`, and `AcpAgents::start` and `end` kill agents with
-  pending prompts, whose usage is never written. The last turn of a run, or a turn whose role was restarted, is
-  counted "unknown" although the agent reported usage. Closes when the backend lets a pending prompt settle (a
-  bounded wait, or a cancel whose response carries the usage) before tokens are counted or an agent is killed: a
-  seam change, so for when ACP runs exist (herdr-gui-decoupling ticket 03).
+- **An ACP turn's usage is lost when the run is interrupted with its prompt pending.** Raised by cross-review 275
+  (F5): "`Drop for Connection` kills the agent with no settle, which is how an ACP run released as interrupted
+  (Ctrl-C, or the app's stop) loses its agents. The prompt pending at that moment never gets its `acp-usage.jsonl`
+  line, so that turn can count 'unknown' on a later resume." The count, a restart and `end` settle their agents
+  first (`AcpAgents::settle_all`, gui-followups 03); an interrupt skips the wait on purpose, so that the Ctrl-C is
+  not held up. Closes when an interrupted run's agents are cancelled and their answers to the cancel read before
+  the kill, within a wait short enough for a Ctrl-C.
 
 - **A resumed done run's late summary.md or metrics.json can miss the desktop app.** Raised by cross-review 238 (F3):
   a done run stopped before its ending wrote them is finished by a resume that writes them without saving state.json
