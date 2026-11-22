@@ -241,14 +241,21 @@ pipeline {
         // A pull request into main must raise the release version over main's, unless it changes only docs, tests, CI
         // or repository tooling: the Release stage releases a merge into main only when its version has no release
         // yet, so a merge that kept it would go unreleased (ci/version-raised.sh, which lists those paths). Nor may
-        // it while an older open pull request into main changes what is released, which gh lists. After Gate, so
-        // that a build that fails it has reported its tests and gate first.
+        // it while an older open pull request into main raises it too. After Gate, so that a build that fails it has
+        // reported its tests and gate first.
         stage('Version') {
             when { changeRequest target: 'main' }
             steps {
+                // The open pull requests are listed here, before the script fetches main, so that one missing from
+                // the list has merged into what it fetches; and here rather than in the script, so that the token
+                // reaches only this step of the Jenkinsfile, not a script the pull request can change.
                 withCredentials([string(credentialsId: 'GitHub-Agents', variable: 'GH_TOKEN')]) {
-                    sh 'ci/version-raised.sh'
+                    sh '''
+                        gh pr list --base "$CHANGE_TARGET" --state open --limit 1000 --json number \\
+                            --jq '.[].number' > open-pull-requests.txt
+                    '''
                 }
+                sh 'OPEN_PULL_REQUESTS=open-pull-requests.txt ci/version-raised.sh'
             }
         }
 

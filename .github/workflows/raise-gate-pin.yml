@@ -7,11 +7,13 @@
 # newer release or a moved main replaces the pull request's commit, an unchanged raise is left alone, and a raise that
 # conflicts with main is made again from main the next day. A raise a dispatch named lasts until a scheduled run's
 # latest release differs from main's pin. A run whose raise leaves main as it is closes the pull request only when
-# main's pin is the branch's, main having caught up. A run that finds another open pull request changing
-# engine/Cargo.toml skips, saying so, since two bumping pull requests race for the version (CLAUDE.md, "Releases");
-# the next day's tries again. A run that names no version, whose latest release is immutable and the one main's pin
-# names, as most days', skips the toolchain and the build, saying so. While the latest release is not immutable, the
-# xtask refuses it and the run fails saying why.
+# main's pin is the branch's, main having caught up. While no pull request of its own is open, a run that finds another
+# open pull request changing engine/Cargo.toml skips, saying so: a new one would be younger, and Jenkins's Version stage
+# fails a raise while an older pull request raises the version too (ci/version-raised.sh); the next day's tries again.
+# With its own open, it makes the raise again regardless, so that the pull request that holds the version's turn is
+# kept mergeable rather than waiting on a younger one it holds back. A run that names no version, whose latest release
+# is immutable and the one main's pin names, as most days', skips the toolchain and the build, saying so. While the
+# latest release is not immutable, the xtask refuses it and the run fails saying why.
 #
 # Two jobs, so that AUTOMERGE_TOKEN never shares a machine with code the raise builds: raise runs the xtask with
 # github.token, read-only, and hands publish a patch and a title; publish, on a fresh runner, applies the patch to the
@@ -69,8 +71,15 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           # An assignment, since errexit ignores a failing command substitution in a for loop's word list.
-          numbers=$(gh pr list --state open --limit 200 --json number,headRefName,isCrossRepository |
-            jq -r --arg branch "$BRANCH" '.[] | select(.isCrossRepository or .headRefName != $branch) | .number')
+          listed=$(gh pr list --state open --limit 200 --json number,headRefName,isCrossRepository)
+          own=$(jq -r --arg branch "$BRANCH" \
+            '.[] | select((.isCrossRepository | not) and .headRefName == $branch) | .number' <<<"$listed")
+          if [ -n "$own" ]; then
+            echo "Pull request #$own of its own is open; raising again whatever else is open"
+            exit 0
+          fi
+          numbers=$(jq -r --arg branch "$BRANCH" \
+            '.[] | select(.isCrossRepository or .headRefName != $branch) | .number' <<<"$listed")
           others=
           for n in $numbers; do
             files=$(gh api --paginate "repos/$GH_REPO/pulls/$n/files" --jq '.[].filename')

@@ -1,20 +1,14 @@
 //! ci/version-raised.sh, which fails a pull request build into main that does not raise the release version, or that
-//! raises it while an older open pull request into main changes what is released too: run on a git repository of its
-//! own, whose origin's main holds a version, against a branch that changes it, with a stub of gh on PATH that lists
-//! the open pull requests the test opened, each a ref refs/pull/<number>/head on origin as GitHub keeps one.
+//! raises it while an older open pull request into main raises it too: run on a git repository of its own, whose
+//! origin's main holds a version, against a branch that changes it, given the list of open pull requests the test
+//! opened, each a ref refs/pull/<number>/head on origin as GitHub keeps one.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 /// This change's pull request number, as Jenkins gives it in CHANGE_ID.
 const CHANGE_ID: u32 = 100;
-
-/// Appends its arguments to GH_LOG, then prints FAKE_PRS, the open pull requests' numbers, one a line, whatever it
-/// is asked; fails, as an unreachable GitHub would, when FAKE_GH_FAIL is set.
-const GH_STUB: &str = "#!/bin/sh\necho \"$*\" >> \"$GH_LOG\"\n\
-                       [ -z \"${FAKE_GH_FAIL:-}\" ] || { echo 'gh: HTTP 502' >&2; exit 1; }\ncat \"$FAKE_PRS\"\n";
 
 /// An engine/Cargo.toml whose [package] has version, between tables whose own version lines must not be taken for it.
 fn manifest(version: &str) -> String {
@@ -35,7 +29,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
 /// origin's main does too; origin is a bare repository beside it, with no pull request open until open_pull_request.
 /// Removed when dropped.
 struct Repo {
-    /// Holds the repository, its origin, gh's stub and the stub's files.
+    /// Holds the repository, its origin, and the list of open pull requests.
     dir: tempfile::TempDir,
     /// The repository's top level.
     path: PathBuf,
@@ -49,10 +43,6 @@ impl Repo {
         let origin = dir.path().join("origin.git");
         git(dir.path(), &["init", "--quiet", "-b", "main", path.to_str().expect("UTF-8")]);
         git(dir.path(), &["init", "--quiet", "--bare", origin.to_str().expect("UTF-8")]);
-        let bin = dir.path().join("bin");
-        fs::create_dir_all(&bin).expect("bin made");
-        fs::write(bin.join("gh"), GH_STUB).expect("gh written");
-        fs::set_permissions(bin.join("gh"), fs::Permissions::from_mode(0o755)).expect("gh made executable");
         fs::write(dir.path().join("prs"), "").expect("prs written");
         let repo = Repo { dir, path };
         // Whatever the user's own git configuration says.
@@ -83,45 +73,37 @@ impl Repo {
     }
 
     /// Open pull request number into main from a branch of main with files committed, pushed to origin as GitHub
-    /// keeps a pull request's head, and listed by gh's stub; HEAD stays on `change`.
+    /// keeps a pull request's head, and listed as open; HEAD stays on `change`.
     fn open_pull_request(&self, number: u32, files: &[(&str, &str)]) {
         self.git(&["switch", "--quiet", "-C", &format!("pr-{number}"), "main"]);
         self.commit(files, &format!("pull request {number}"));
         self.git(&["push", "--quiet", "origin", &format!("HEAD:refs/pull/{number}/head")]);
         self.git(&["switch", "--quiet", "change"]);
+        self.list_open(number);
+    }
+
+    /// Add number to the open pull requests the script is given, whether or not origin has its head.
+    fn list_open(&self, number: u32) {
         let prs = self.dir.path().join("prs");
         let listed = fs::read_to_string(&prs).expect("prs read");
         fs::write(&prs, format!("{listed}{number}\n")).expect("prs written");
     }
 
-    /// The script's run at HEAD, as a pull request build of pull request CHANGE_ID into main runs it, with gh's stub
-    /// first on PATH; it fails as GitHub would when gh_fails.
-    fn run_script_with(&self, gh_fails: bool) -> Output {
+    /// The script's run at HEAD, as the Version stage of pull request change_id's build into main runs it.
+    fn run_script_as(&self, change_id: &str) -> Output {
         let script = xtask::checkout().join("ci/version-raised.sh");
-        let path = format!("{}:{}", self.dir.path().join("bin").display(), std::env::var("PATH").expect("PATH set"));
-        let mut command = Command::new("sh");
-        command
+        Command::new("sh")
             .arg(script)
             .current_dir(&self.path)
             .env("CHANGE_TARGET", "main")
-            .env("CHANGE_ID", CHANGE_ID.to_string())
-            .env("PATH", path)
-            .env("FAKE_PRS", self.dir.path().join("prs"))
-            .env("GH_LOG", self.dir.path().join("gh.log"))
-            .env_remove("FAKE_GH_FAIL");
-        if gh_fails {
-            command.env("FAKE_GH_FAIL", "1");
-        }
-        command.output().expect("sh runs")
+            .env("CHANGE_ID", change_id)
+            .env("OPEN_PULL_REQUESTS", self.dir.path().join("prs"))
+            .output()
+            .expect("sh runs")
     }
 
     fn run_script(&self) -> Output {
-        self.run_script_with(false)
-    }
-
-    /// What the script asked gh, one call a line; empty when it asked nothing.
-    fn gh_log(&self) -> String {
-        fs::read_to_string(self.dir.path().join("gh.log")).unwrap_or_default()
+        self.run_script_as(&CHANGE_ID.to_string())
     }
 
     /// The script's run with HEAD's engine/Cargo.toml at version, in a commit that changes another file too, so that
@@ -244,45 +226,53 @@ fn a_target_without_a_package_version_fails() {
 }
 
 #[test]
-fn an_older_open_pull_request_that_changes_what_is_released_fails_the_raise_naming_it() {
-    for version in ["0.9.1", "0.9.0"] {
-        // Raised or not yet: it can merge only by raising the version, so it holds the next one either way.
-        let repo = Repo::new();
-        repo.open_pull_request(90, &[("engine/src/main.rs", "x"), ("engine/Cargo.toml", &manifest(version))]);
-        let output = repo.check("0.9.1");
-        assert!(!output.status.success(), "{version}");
-        let said = stderr(&output);
-        assert!(said.contains("#90, older than this one (#100)"), "{version}: {said}");
-        assert!(said.contains("once #90 merges, rebase onto main, raise engine/Cargo.toml's version past"), "{said}");
-    }
+fn an_older_open_pull_request_that_raises_the_version_too_fails_the_raise_naming_it() {
+    let repo = Repo::new();
+    repo.open_pull_request(80, &[("docs/guide.md", "x")]);
+    repo.open_pull_request(90, &[("engine/src/main.rs", "x"), ("engine/Cargo.toml", &manifest("0.9.2"))]);
+    let output = repo.check("0.9.1");
+    assert!(!output.status.success());
+    let said = stderr(&output);
+    assert!(said.contains("pull request #90, older than this one (#100), raises the version to 0.9.2"), "{said}");
+    assert!(said.contains("once #90 merges, rebase onto main, raise engine/Cargo.toml's version past"), "{said}");
 }
 
 #[test]
-fn a_raise_passes_beside_younger_drafts_aside_or_unreleased_older_pull_requests() {
+fn a_raise_passes_beside_younger_unraised_or_unreleased_older_pull_requests() {
     let repo = Repo::new();
     repo.open_pull_request(110, &[("engine/src/main.rs", "x"), ("engine/Cargo.toml", &manifest("0.9.1"))]);
+    // Not raised yet: once it raises, its own Version stage compares it with main as this one leaves it.
+    repo.open_pull_request(90, &[("engine/src/main.rs", "y")]);
     repo.open_pull_request(80, &[("docs/guide.md", "x")]);
     let output = repo.check("0.9.1");
     assert_eq!((output.status.code(), stderr(&output)), (Some(0), String::new()));
-    let asked = repo.gh_log();
-    assert!(asked.contains("pr list --base main --state open --search draft:false"), "{asked}");
 }
 
 #[test]
-fn a_change_that_releases_nothing_passes_beside_an_older_one_that_does() {
+fn a_change_that_releases_nothing_passes_beside_an_older_raise() {
     let repo = Repo::new();
     repo.open_pull_request(90, &[("engine/src/main.rs", "x"), ("engine/Cargo.toml", &manifest("0.9.1"))]);
     repo.commit(&[("docs/guide.md", "x")], "docs");
     let output = repo.run_script();
     assert_eq!((output.status.code(), stderr(&output)), (Some(0), String::new()));
-    assert_eq!(repo.gh_log(), "");
 }
 
 #[test]
-fn a_raise_fails_when_the_open_pull_requests_cannot_be_listed() {
+fn a_raise_fails_when_an_older_pull_request_cannot_be_fetched() {
+    let repo = Repo::new();
+    repo.list_open(90);
+    let output = repo.check("0.9.1");
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("cannot fetch pull request #90's head"), "{}", stderr(&output));
+}
+
+#[test]
+fn a_pull_request_number_that_is_no_number_fails() {
     let repo = Repo::new();
     repo.commit(&[("engine/Cargo.toml", &manifest("0.9.1")), ("change.txt", "x")], "raise");
-    let output = repo.run_script_with(true);
-    assert!(!output.status.success());
-    assert!(stderr(&output).contains("cannot list the open pull requests into main"), "{}", stderr(&output));
+    for change_id in ["", "PR-100"] {
+        let output = repo.run_script_as(change_id);
+        assert!(!output.status.success(), "{change_id:?}");
+        assert!(stderr(&output).contains("CHANGE_ID"), "{change_id:?}: {}", stderr(&output));
+    }
 }
