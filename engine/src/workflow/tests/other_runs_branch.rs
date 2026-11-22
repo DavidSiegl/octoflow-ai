@@ -4,6 +4,7 @@
 use super::one_run::{host_with_other_run, OTHER_ID};
 use super::worktree::worktree_run;
 use super::*;
+use crate::run_commands::RunCommands;
 use crate::runs::local_host;
 
 const OTHER_BRANCH: &str = "orchestrator/another-task-537935";
@@ -33,18 +34,38 @@ fn a_run_on_a_failed_runs_branch_is_refused_before_fetching() {
         // As origin answers for a branch that only reaches it when its run publishes.
         host.state().fetch_error = Some(format!("fatal: couldn't find remote ref {OTHER_BRANCH}"));
         let f = if worktree { worktree_run(host, None) } else { Fixture::on(host, new_state(), approved()) };
-        let message = failure(f.workflow(RunSettings::default()).run());
+        // The hint is typed as the human invokes the program, in the project the human named.
+        let commands = RunCommands::new("of", &["--cwd".into(), "~/my proj".into()]);
+        let message = failure(f.workflow(RunSettings { commands, ..RunSettings::default() }).run());
         assert_eq!(
             message,
             format!(
                 "/proj is on {OTHER_BRANCH}, the branch of run {OTHER_ID}, which is not closed; check out its base \
-                 branch, main, and close that run with `octoflow close 537935` once you are done with it"
+                 branch, main, and close that run with `of close 537935 --cwd '~/my proj'` once you are done with it"
             ),
             "worktree: {worktree}"
         );
         assert!(!f.host.state().git_calls.iter().any(|c| c[0] == "fetch"), "worktree: {worktree}");
         assert!(f.herdr.state().calls.is_empty(), "worktree: {worktree}");
     }
+}
+
+#[test]
+fn a_run_on_a_desktop_app_runs_branch_is_told_to_close_it_from_the_app() {
+    let host = on_failed_runs_branch(false);
+    let path = format!("{}/state.json", super::one_run::other_dir());
+    let mut saved: Value = serde_json::from_str(&host.state().files[&path]).unwrap();
+    saved["backend"] = Value::from("acp");
+    saved["format"] = Value::from(crate::state::ACP_STATE_FORMAT);
+    host.state().files.insert(path, saved.to_string());
+    let f = Fixture::on(host, new_state(), approved());
+    assert_eq!(
+        failure(f.workflow(RunSettings::default()).run()),
+        format!(
+            "/proj is on {OTHER_BRANCH}, the branch of run {OTHER_ID}, which is not closed; check out its base \
+             branch, main, and close that run from the desktop app once you are done with it"
+        )
+    );
 }
 
 #[test]

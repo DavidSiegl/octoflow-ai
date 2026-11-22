@@ -132,6 +132,10 @@ pub const HARNESS_NAMES: [&str; 5] = ["agy", "claude", "codex", "opencode", "pi"
 /// The harness of a role that names none.
 pub const DEFAULT_HARNESS: &str = "claude";
 
+/// The binary's name, as engine/Cargo.toml's `[[bin]]` gives it: what --version names, and the name cli::program_name
+/// gives when the program was invoked by no file name.
+pub const PROGRAM: &str = "octoflow";
+
 /// The exit statuses of the orchestrator's commands, besides 0 for success.
 pub const EXIT_ERROR: i32 = 1;
 pub const EXIT_CHANGES_REQUESTED: i32 = 3;

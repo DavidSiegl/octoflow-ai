@@ -16,17 +16,18 @@ use std::sync::OnceLock;
 use crate::acp::{AcpAgents, LeftoverGroups};
 use crate::agents::{Agents, EitherBackend, RunPlaces};
 use crate::constants::{
-    EXIT_CHANGES_REQUESTED, EXIT_CONFLICT, EXIT_ERROR, EXIT_INTERRUPTED, NO_VERDICT, STATE_FILE, SUCCEEDED,
+    EXIT_CHANGES_REQUESTED, EXIT_CONFLICT, EXIT_ERROR, EXIT_INTERRUPTED, NO_VERDICT, PROGRAM, STATE_FILE, SUCCEEDED,
 };
 use crate::env::ConfigDir;
 use crate::error::OrchestratorError;
 use crate::harness::AgentSettings;
 use crate::herdr::ProcessHerdr;
-use crate::host::{shlex_join, Host, ProcessHost};
+use crate::host::{Host, ProcessHost};
 use crate::human::Notify;
 use crate::interrupt::Interrupt;
 use crate::package_index::PackageIndexes;
 use crate::pipeline::Pipeline;
+use crate::run_commands::RunCommands;
 use crate::runs::{local_host, pid_alive};
 use crate::spec_file::{read_spec_file, SpecFile};
 use crate::state::{run_dir, Backend, RunState};
@@ -75,8 +76,9 @@ pub struct Connected<'a> {
 }
 
 /// Drives the run a state describes through its workflow, as run_workflow does: given the world, the state, the
-/// workflow and, for a run started from a spec, the spec.
-pub type RunWorkflow<'w> = dyn Fn(&Connected, RunState, Pipeline, Option<SpecFile>) -> Result<Ran, Stopped> + 'w;
+/// workflow, for a run started from a spec, the spec, and how the run's hints word a command (RunSettings::commands).
+pub type RunWorkflow<'w> =
+    dyn Fn(&Connected, RunState, Pipeline, Option<SpecFile>, &RunCommands) -> Result<Ran, Stopped> + 'w;
 
 impl Connected<'_> {
     /// Print line and a line end on standard output.
@@ -374,7 +376,8 @@ fn run_command(command: &Command, world: &Connected) -> Result<Ended, Stop> {
         return Err(Stop::Interrupted(Some(state.run_id)));
     }
     let run_id = state.run_id.clone();
-    match (world.workflow)(world, state, pipeline, spec) {
+    let commands = hint_commands(&command.target().map(Target::flags).unwrap_or_default());
+    match (world.workflow)(world, state, pipeline, spec, &commands) {
         Ok(ran) => Ok(Ended::Ran(Box::new(ran))),
         Err(Stopped::Interrupted) => Err(Stop::Interrupted(Some(run_id))),
         Err(Stopped::Failed(e) | Stopped::TakenOver(e)) => Err(stop(e, interrupt, Some(&run_id))),
@@ -484,12 +487,14 @@ pub fn record_in_state(
 }
 
 /// Drive the run state describes through pipeline, by the settings saved in state, to its verdict. spec is the file
-/// a new run --spec run starts from; None for any other run. Errors: as Workflow::new and Workflow::run.
+/// a new run --spec run starts from; None for any other run. commands is RunSettings::commands. Errors: as
+/// Workflow::new and Workflow::run.
 pub fn run_workflow(
     world: &Connected,
     state: RunState,
     pipeline: Pipeline,
     spec: Option<SpecFile>,
+    commands: &RunCommands,
 ) -> Result<Ran, Stopped> {
     let settings = RunSettings {
         max_rounds: state.max_rounds,
@@ -504,6 +509,7 @@ pub fn run_workflow(
         max_quality_rounds: state.max_quality_rounds,
         pipeline: Some(pipeline.clone()),
         spec,
+        commands: commands.clone(),
     };
     let mut workflow = Workflow::new(world.with, state, settings).map_err(Stopped::Failed)?;
     let verdict = workflow.run()?;
@@ -553,10 +559,6 @@ fn finish(verdict: Option<&str>, state: &RunState, pipeline: &Pipeline, print: &
     }
 }
 
-/// The binary's name, as engine/Cargo.toml's `[[bin]]` gives it: what --version names, and what program_name gives
-/// when the program was invoked by no file name.
-pub const PROGRAM: &str = "octoflow";
-
 /// The file name of the program's command line's first word, as main was given it; unset until main runs, and when that
 /// word is empty or names no file.
 static INVOKED_AS: OnceLock<String> = OnceLock::new();
@@ -567,12 +569,15 @@ pub fn program_name() -> &'static str {
     INVOKED_AS.get().map_or(PROGRAM, String::as_str)
 }
 
+/// How a hint words a command about a run of the project target names, target being its --machine and --cwd flags
+/// (Target::flags): as the program was invoked (program_name), with those flags.
+pub fn hint_commands(target: &[String]) -> RunCommands {
+    RunCommands::new(program_name(), target)
+}
+
 /// The command that resumes the run run_id names, by its key, with target's --machine and --cwd flags.
 pub fn resume_command(run_id: &str, target: &[String]) -> String {
-    let key = run_id.rsplit('-').next().unwrap_or(run_id);
-    let argv: Vec<&str> =
-        [program_name(), "resume", key].into_iter().chain(target.iter().map(String::as_str)).collect();
-    shlex_join(&argv)
+    hint_commands(target).on_run("resume", run_id)
 }
 
 /// What to tell the human whose Ctrl-C, or a SIGTERM or SIGHUP, stopped the orchestrator, with the command that resumes the run of run_id,

@@ -180,6 +180,25 @@ fn the_resume_hint() {
     );
 }
 
+#[test]
+fn a_workflow_hint_names_the_command_with_the_runs_target() {
+    // /proj is left on the branch of a failed run that is not closed, which a new run refuses with a close hint.
+    let branch = "orchestrator/another-task-537935";
+    for flags in [&["--cwd", "/proj"][..], &["--machine", "m", "--cwd", "/proj"]] {
+        let cli = Cli::new();
+        let mut other = RunState::new("20261009-220151-537935", "another task", "/proj");
+        (other.phase, other.round) = ("build".into(), 1);
+        (other.base_branch, other.branch) = (Some("main".into()), Some(branch.into()));
+        other.error = Some("the Builder changed no files".into());
+        cli.save(&other.to_json(), 10_000);
+        cli.f.host.state().branch = branch.into();
+        let argv: Vec<&str> = ["run"].iter().chain(flags).chain(&["t"]).copied().collect();
+        let close = format!("`octoflow close 537935 {}`", flags.join(" "));
+        let message = cli.error(&argv);
+        assert!(message.contains(&format!("close that run with {close} once")), "{message}");
+    }
+}
+
 // -- Runs started through main ---------------------------------------------------------------------------------------
 
 /// A Cli whose configuration directory, d, holds files, each a (path in it, text) pair.

@@ -32,9 +32,10 @@ use crate::prompts::Prompts;
 use crate::proofs::PROOF_TIMEOUT;
 use crate::pull_request::{branch_name, commit_note, pr_body, provenance, spec_title, GateEvidence, QualityFile};
 use crate::quality::parse_gate;
+use crate::run_commands::RunCommands;
 use crate::runs::{local_host, RUNNING};
 use crate::spec_file::SpecFile;
-use crate::state::{run_key, AgentStart, Backend, RunState, SavedRun};
+use crate::state::{AgentStart, Backend, RunState, SavedRun};
 use crate::summary::{iso_utc, run_metrics, run_summary, turn_tokens};
 use crate::workflow_file::{run_pipeline, workflow_definition};
 use serde_json::Value;
@@ -92,7 +93,7 @@ pub struct Collaborators<'a> {
     pub indexes: &'a PackageIndexes,
 }
 
-/// How a run is to go: each setting but spec saved in the state, so that a resume starts from them.
+/// How a run is to go: each setting but spec and commands saved in the state, so that a resume starts from them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RunSettings {
     /// How many rounds the verdict steps' loops take at most, together: a verdict other than APPROVE in a round
@@ -118,6 +119,9 @@ pub struct RunSettings {
     /// (Pipeline::seeded_start): written as the contract step's file before the run's first state.json, where a
     /// resume, which is given none, finds it. None for every other run.
     pub spec: Option<SpecFile>,
+    /// How the run's hints word a command for the human to type, such as the one that closes another run; not saved,
+    /// since a resume may be typed with other flags than the run's start.
+    pub commands: RunCommands,
 }
 
 impl Default for RunSettings {
@@ -131,6 +135,7 @@ impl Default for RunSettings {
             max_quality_rounds: DEFAULT_MAX_QUALITY_ROUNDS,
             pipeline: None,
             spec: None,
+            commands: RunCommands::default(),
         }
     }
 }
@@ -215,6 +220,8 @@ pub struct Workflow<'a> {
     prompts: Prompts,
     /// RunSettings::spec.
     spec: Option<SpecFile>,
+    /// RunSettings::commands.
+    commands: RunCommands,
     /// This orchestrator as state.json's owner records it, {"host", "pid", "started_at"}: the run is this one's
     /// while the saved owner equals it.
     me: Object,
@@ -296,6 +303,7 @@ impl<'a> Workflow<'a> {
             pipeline: Rc::new(pipeline),
             prompts,
             spec: settings.spec,
+            commands: settings.commands,
             me,
             last_write: 0.0,
             told_unpassed: HashSet::new(),
@@ -826,8 +834,9 @@ impl<'a> Workflow<'a> {
     /// the run publishes; taken as a base, it could not be fetched, or would get a pull request against another run's
     /// work. A closed run's branch that origin has was published, and is taken (TODO.md, "A run's base can be a
     /// closed run's branch prune deletes"). The error says to check out that run's base, after the run ends when it
-    /// is running; for a run not closed, also to close it once done. Errors also when origin cannot be asked, naming
-    /// the closed run whose branch it was asked about.
+    /// is running; for a run not closed, also to close it once done: by the command RunSettings::commands words, or
+    /// from the desktop app for one of its runs. Errors also when origin cannot be asked, naming the closed run whose
+    /// branch it was asked about.
     fn take_base_branch(&mut self, branch: String) -> Result<(), OrchestratorError> {
         let s = &self.state;
         if s.base_branch.as_deref().is_some_and(|b| !b.is_empty()) {
@@ -859,10 +868,14 @@ impl<'a> Workflow<'a> {
                     Some((RUNNING, why)) => {
                         format!("which is running ({why}); wait for it to end, then check out {base}")
                     }
+                    // The CLI refuses to close the desktop app's runs (cli::refuse_app_run).
+                    _ if other.backend == Backend::Acp => format!(
+                        "which is not closed; check out {base}, and close that run from the desktop app once you are \
+                         done with it"
+                    ),
                     _ => format!(
-                        "which is not closed; check out {base}, and close that run with `octoflow close {}` once \
-                         you are done with it",
-                        run_key(id)
+                        "which is not closed; check out {base}, and close that run with `{}` once you are done with it",
+                        self.commands.on_run("close", id)
                     ),
                 }
             };
