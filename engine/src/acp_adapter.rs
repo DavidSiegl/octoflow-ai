@@ -15,7 +15,7 @@
 //! a temporary directory beside it and renamed into place whole, under a lock on a file there, so that a directory of
 //! that name is always a whole install, and two installs at once, from two of the app's windows, make one. A raised
 //! pin installs beside the old install, which stays, for the runs of the engine before the raise, until the next
-//! raise's install is in place.
+//! raise's install is in place and the old ones are removed ([`Installs::remove_old`]).
 
 use std::ffi::OsString;
 use std::fs::{self, File};
@@ -214,8 +214,8 @@ pub struct Installs {
     adapter: Adapter,
     /// The directory the installs are in, `<adapter>-acp` in the data directory; made by the first install.
     root: String,
-    /// The pins of the one install this looks for and makes; installs of others are removed by the next install, but
-    /// for the newest of them (Installs::install).
+    /// The pins of the one install this looks for and makes; installs of others are removed by remove_old, but for
+    /// the newest of them.
     pins: Pins,
     /// Where Node's releases are, without a trailing "/": NODE_DIST, or a test's server.
     node_dist: String,
@@ -320,30 +320,63 @@ impl Installs {
         Err(NotLoggedIn { detail, fix: format!("log in with {codex}") })
     }
 
-    /// Install the current pins, unless they are installed already, and then remove every other install but the
-    /// newest, which a run of the engine before the last pin raise may still use: download Node's tarball for this
-    /// platform and check its sha256, unpack it with `tar`, and install the adapter with its npm: `npm ci
-    /// --ignore-scripts`, with `--userconfig` and `--globalconfig` each an empty file, an explicit `--registry`, a
-    /// cache of its own, and none of npm's `npm_config_*` variables, so that nothing of the user's npm setup applies;
-    /// proxies and certificates come from the environment, as http.rs and npm read them. Waits for another install in
-    /// progress, by this or another process, to end first. A failure leaves no install behind, and
-    /// whatever a failed or killed one left is removed when the next starts.
+    /// Install the current pins, unless they are installed already: download Node's tarball for this platform and
+    /// check its sha256, unpack it with `tar`, and install the adapter with its npm: `npm ci --ignore-scripts`, with
+    /// `--userconfig` and `--globalconfig` each an empty file, an explicit `--registry`, a cache of its own, and none
+    /// of npm's `npm_config_*` variables, so that nothing of the user's npm setup applies; proxies and certificates
+    /// come from the environment, as http.rs and npm read them. Waits for another install in progress, by this or
+    /// another process, to end first. A failure leaves no install behind, and whatever a failed or killed one left
+    /// is removed when the next starts. Other pins' installs stay: remove_old removes them.
     ///
     /// Returns the install. Errors: this platform has no pinned Node; the installs' directory or a file in it cannot
     /// be made, locked, written or removed; the download fails, or its sha256 is not the pin's; tar or npm fails, or
     /// stopping is raised while either runs; npm's install has no adapter script.
     pub fn install(&self, stopping: &Interrupt) -> Result<Installed, OrchestratorError> {
+        let _lock = self.lock()?;
+        match self.installed() {
+            Some(installed) => Ok(installed),
+            None => self.install_locked(stopping),
+        }
+    }
+
+    /// Remove every other pins' install but the newest, and anything else in the installs' directory but its lock,
+    /// once an install of the current pins is in place: the newest other one, by its directory's modification time,
+    /// is the install of the pins before the last raise, which a run of the engine of those pins, which outlives the
+    /// app, may still start agents from. Waits for an install in progress to end first. Errors: the installs'
+    /// directory cannot be made, locked or listed, or an entry in it cannot be looked at or removed; what is left, the
+    /// next call removes.
+    pub fn remove_old(&self) -> Result<(), OrchestratorError> {
+        let _lock = self.lock()?;
+        let current = self.pins.install_name();
+        let others: Vec<String> = self.entries()?.into_iter().filter(|n| *n != current && n != ".lock").collect();
+        let mut installs = vec![];
+        for name in &others {
+            let path = format!("{}/{name}", self.root);
+            match fs::symlink_metadata(&path) {
+                Ok(meta) if meta.is_dir() && name.starts_with("node-") => {
+                    let modified = meta.modified().map_err(|e| self.failed("read the time of", &path, &e))?;
+                    installs.push((modified, name));
+                }
+                Ok(_) => {}
+                Err(e) => return Err(self.failed("look at", &path, &e)),
+            }
+        }
+        let kept = installs.into_iter().max().map(|(_, name)| name.clone());
+        for name in others.iter().filter(|n| Some(*n) != kept.as_ref()) {
+            self.remove(name)?;
+        }
+        Ok(())
+    }
+
+    /// The lock on the installs' directory, made with the directory when missing, which install and remove_old hold
+    /// while they change it, so that one waits for the other, in this or another process. Unlocked when dropped, or by
+    /// the system when the process dies. Errors: the directory or its lock file cannot be made, or locked.
+    fn lock(&self) -> Result<File, OrchestratorError> {
         fs::create_dir_all(&self.root).map_err(|e| self.failed("create", &self.root, &e))?;
-        let lock_path = format!("{}/.lock", self.root);
-        let lock = File::create(&lock_path).map_err(|e| self.failed("create", &lock_path, &e))?;
-        lock.lock().map_err(|e| self.failed("lock", &lock_path, &e))?;
-        // Unlocked when lock is dropped, at the return, or by the system when the process dies.
-        let installed = match self.installed() {
-            Some(installed) => installed,
-            None => self.install_locked(stopping)?,
-        };
-        self.remove_others()?;
-        Ok(installed)
+        let path = format!("{}/.lock", self.root);
+        let lock = File::create(&path).map_err(|e| self.failed("create", &path, &e))?;
+        lock.lock().map_err(|e| self.failed("lock", &path, &e))?;
+        Ok(lock)
     }
 
     /// install's work once the lock is held and the current pins are not installed: clear what earlier attempts
@@ -469,32 +502,6 @@ impl Installs {
             Err(ProcessError::Interrupted) => "interrupted".to_string(),
         };
         Err(OrchestratorError(format!("cannot {doing}: {why}")))
-    }
-
-    /// Remove every install but the current pins' and the newest other one, and anything else in the installs'
-    /// directory but its lock. The newest other one, by its directory's modification time, is the install of the
-    /// pins before the last raise, which a run of the engine of those pins, which outlives the app, may still start
-    /// agents from.
-    fn remove_others(&self) -> Result<(), OrchestratorError> {
-        let current = self.pins.install_name();
-        let others: Vec<String> = self.entries()?.into_iter().filter(|n| *n != current && n != ".lock").collect();
-        let mut installs = vec![];
-        for name in &others {
-            let path = format!("{}/{name}", self.root);
-            match fs::symlink_metadata(&path) {
-                Ok(meta) if meta.is_dir() && name.starts_with("node-") => {
-                    let modified = meta.modified().map_err(|e| self.failed("read the time of", &path, &e))?;
-                    installs.push((modified, name));
-                }
-                Ok(_) => {}
-                Err(e) => return Err(self.failed("look at", &path, &e)),
-            }
-        }
-        let kept = installs.into_iter().max().map(|(_, name)| name.clone());
-        for name in others.iter().filter(|n| Some(*n) != kept.as_ref()) {
-            self.remove(name)?;
-        }
-        Ok(())
     }
 
     /// The names in the installs' directory.

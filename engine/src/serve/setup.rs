@@ -72,14 +72,16 @@ impl Setup {
         object([("checks", checks), ("passed", Value::from(passed)), ("adapters", Value::Array(adapters.collect()))])
     }
 
-    /// Install adapter for the current pins, unless it is installed, as Installs::install does; stopping is the
-    /// Interrupt the server raises when it stops, which stops it. Errors: Installs::install's, and this Setup has no
-    /// installs of adapter (Setup::new).
-    pub fn install_adapter(&self, adapter: Adapter, stopping: &Interrupt) -> Result<(), String> {
-        match self.installs.iter().find(|i| i.adapter() == adapter) {
-            Some(installs) => installs.install(stopping).map(drop).map_err(|e| e.0),
-            None => Err(format!("this server installs no {} adapter", adapter.harness())),
-        }
+    /// Install adapter for the current pins, unless it is installed, as Installs::install does, then remove its old
+    /// installs (Installs::remove_old); stopping is the Interrupt the server raises when it stops, which stops it.
+    /// Returns why old installs could not be removed, None when they were. Errors: Installs::install's, and this Setup
+    /// has no installs of adapter (Setup::new).
+    pub fn install_adapter(&self, adapter: Adapter, stopping: &Interrupt) -> Result<Option<String>, String> {
+        let Some(installs) = self.installs.iter().find(|i| i.adapter() == adapter) else {
+            return Err(format!("this server installs no {} adapter", adapter.harness()));
+        };
+        installs.install(stopping).map_err(|e| e.0)?;
+        Ok(installs.remove_old().err().map(|e| e.0))
     }
 
     /// Whether the dialog need not open by itself: the marker is there and the adapter of DEFAULT_HARNESS, if it has

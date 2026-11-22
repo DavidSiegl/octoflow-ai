@@ -295,6 +295,7 @@ fn a_raised_pin_installs_beside_the_old_install_which_stays_until_the_next_raise
     let (second, _) = f.installs(f.pins("1.0.1", &sha256_of(&middle), "0.6.0"), &tarballs, &[]);
     assert_eq!(second.installed(), None, "an install of other pins is not the current one");
     let installed = second.install(&Interrupt::new()).unwrap();
+    second.remove_old().unwrap();
 
     assert!(installed.script.contains("/node-1.0.1-adapter-0.6.0/"), "{}", installed.script);
     let first_name = format!("node-{NODE}-adapter-0.5.0");
@@ -306,14 +307,15 @@ fn a_raised_pin_installs_beside_the_old_install_which_stays_until_the_next_raise
     std::fs::File::open(format!("{}/{first_name}", f.root())).unwrap().set_modified(touched).unwrap();
     let (third, _) = f.installs(f.pins("1.0.2", &sha256_of(&newest), "0.7.0"), &tarballs, &[]);
     third.install(&Interrupt::new()).unwrap();
+    third.remove_old().unwrap();
 
     assert_eq!(f.entries(), [".lock", &first_name, "node-1.0.2-adapter-0.7.0"]);
     assert_eq!(second.installed(), None);
 }
 
-/// Anything else in the installs' directory, a file or a link as much as a directory, goes once an install is in place.
+/// Anything else in the installs' directory, a file or a link as much as a directory, goes with the old installs.
 #[test]
-fn an_install_removes_files_and_links_beside_it() {
+fn removing_the_old_installs_removes_files_and_links_beside_them() {
     let f = Fixture::new();
     let pins = f.pins(NODE, &sha256_of(&f.tarball), "0.5.0");
     let (installs, _) = f.installs(pins, &[(NODE, &f.tarball)], &[]);
@@ -322,7 +324,31 @@ fn an_install_removes_files_and_links_beside_it() {
     std::os::unix::fs::symlink(f.root(), format!("{}/loop", f.root())).unwrap();
 
     installs.install(&Interrupt::new()).unwrap();
+    installs.remove_old().unwrap();
 
+    assert_eq!(f.entries(), [".lock".to_string(), format!("node-{NODE}-adapter-0.5.0")]);
+}
+
+/// An install in place is installed whether or not what is left of the others can be removed, which the next
+/// removal tries again.
+#[test]
+fn an_old_install_that_cannot_be_removed_leaves_the_install_in_place() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = Fixture::new();
+    let (installs, _) = f.installs(f.pins(NODE, &sha256_of(&f.tarball), "0.5.0"), &[(NODE, &f.tarball)], &[]);
+    let stuck = format!("{}/stray/stuck", f.root());
+    std::fs::create_dir_all(&stuck).unwrap();
+    std::fs::write(format!("{stuck}/file"), "").unwrap();
+    std::fs::set_permissions(&stuck, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+    let installed = installs.install(&Interrupt::new()).unwrap();
+    let removed = installs.remove_old();
+    std::fs::set_permissions(&stuck, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let error = removed.unwrap_err().0;
+    assert!(error.starts_with(&format!("cannot remove {}/stray: ", f.root())), "{error}");
+    assert_eq!(installs.installed(), Some(installed));
+    installs.remove_old().unwrap();
     assert_eq!(f.entries(), [".lock".to_string(), format!("node-{NODE}-adapter-0.5.0")]);
 }
 

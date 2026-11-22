@@ -634,7 +634,27 @@ fn setup_offers_each_adapter_and_installs_the_one_named() {
     assert_eq!(reply.json()["adapters"], offered);
     // Installed already, the install has nothing to download.
     let reply = served.post("/setup/adapter?agent=codex", "");
-    assert_eq!((reply.status, reply.body.as_str()), (Some(200), r#"{"installed":true}"#));
+    assert_eq!((reply.status, reply.body.as_str()), (Some(200), r#"{"installed":true,"warning":null}"#));
+}
+
+/// The adapter is installed though an old install is left: a success, with the leftover as its warning.
+#[test]
+fn an_install_whose_old_installs_cannot_be_removed_succeeds_with_a_warning() {
+    use std::os::unix::fs::PermissionsExt;
+    let data_home = Project::new();
+    adapter_installs(&data_home)[1].install_fake("");
+    let stuck = format!("{}/octoflow-ai/codex-acp/stray/stuck", data_home.root());
+    std::fs::create_dir_all(&stuck).unwrap();
+    std::fs::write(format!("{stuck}/file"), "").unwrap();
+    std::fs::set_permissions(&stuck, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let served = adapters_served(adapter_installs(&data_home));
+
+    let reply = served.post("/setup/adapter?agent=codex", "");
+    std::fs::set_permissions(&stuck, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert_eq!(reply.status, Some(200));
+    let warning = reply.json()["warning"].as_str().unwrap_or_default().to_string();
+    assert!(warning.starts_with("cannot remove ") && warning.contains("/stray: "), "{}", reply.body);
 }
 
 #[test]

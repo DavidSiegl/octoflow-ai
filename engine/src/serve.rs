@@ -181,8 +181,8 @@ pub fn project_host(cwd: &str, stopping: &Interrupt) -> Result<Reached, Orchestr
 /// - POST /setup/checked: records that it has (Setup::mark), whatever the checks say, and answers {"checked": true};
 ///   500 when the marker cannot be written.
 /// - POST /setup/adapter?agent=NAME: installs the ACP adapter of harness NAME (Setup::install_adapter), which takes
-///   minutes, and answers {"installed": true}; 400 for a NAME that has no adapter (crate::harness::Adapter), 502 for
-///   an install that fails.
+///   minutes, and answers {"installed": true, "warning"}, warning why old installs could not be removed, else null;
+///   400 for a NAME that has no adapter (crate::harness::Adapter), 502 for an install that fails.
 /// - POST /setup/gate?cwd=DIR: sets the project up for `--quality-gate local` (ProjectRuns::set_up_gate) and answers
 ///   {"files": [{"path", "written"}, ...]}, written false for a file it kept; 400 for a cwd missing, 502 for a project
 ///   that cannot be reached or a setup that fails, as for a cwd in no git checkout.
@@ -817,7 +817,7 @@ fn post_setup_adapter(shared: &Shared, request: Request, query: &HashMap<String,
     let (code, body) = match Adapter::named(agent) {
         None => (400, error(&format!("agent {agent:?} has no ACP adapter the app installs"))),
         Some(adapter) => match shared.setup.install_adapter(adapter, &shared.stopping) {
-            Ok(()) => (200, object([("installed", Value::from(true))])),
+            Ok(leftover) => (200, object([("installed", Value::from(true)), ("warning", Value::from(leftover))])),
             Err(why) => (502, error(&why)),
         },
     };
