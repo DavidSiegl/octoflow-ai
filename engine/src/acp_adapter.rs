@@ -199,6 +199,7 @@ pub struct Installed {
 /// What Installs::install gave: the install of the current pins, in place.
 #[derive(Debug)]
 pub struct Install {
+    /// How the current pins' agent starts, from the install just made or the one already in place.
     pub installed: Installed,
     /// Why the other pins' installs, or something else in the installs' directory, could not all be removed; None
     /// when they were. What is left, the next install tries again to remove.
