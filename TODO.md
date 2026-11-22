@@ -42,6 +42,14 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **A GitHub token reaches tools in directories the build user can write outside the workspace.** Review 276 (todo
+  91): the Version stage's `gh pr list` and the Release stage's `gh release create` take PATH entries outside
+  `$WORKSPACE` on trust, so a `gh` a pull request's tests leave in, say, `~/.local/bin` lasts into later builds and
+  runs with `GH_TOKEN`, main's Release included. Whether the Jenkins agent's PATH has such a directory could not be
+  checked from here (its systemInfo page is admin-only); the Go tools installed in `~/.local` on 2026-11-11 suggest
+  it may. Closed when the agent's PATH is shown to hold only root-owned directories, or both stages run `gh` by a
+  root-owned absolute path.
+
 - **A closed in-place run's branch still becomes the next run's base.** Review 267 (todo 87): "`close` leaves an
   in-place run's checkout on its local-only branch. Once the run is closed, `take_base_branch` skips it
   (`other.is_closed()`), records that branch as the new run's base, and `check_repo` fetches it and fails with the

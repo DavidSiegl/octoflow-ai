@@ -240,12 +240,34 @@ pipeline {
 
         // A pull request into main must raise the release version over main's, unless it changes only docs, tests, CI
         // or repository tooling: the Release stage releases a merge into main only when its version has no release
-        // yet, so a merge that kept it would go unreleased (ci/version-raised.sh, which lists those paths). After
-        // Gate, so that a build that fails it has reported its tests and gate first.
+        // yet, so a merge that kept it would go unreleased (ci/version-raised.sh, which lists those paths). Nor may
+        // it while an older open pull request into main changes what is released too. After Gate, so that a build
+        // that fails it has reported its tests and gate first.
         stage('Version') {
             when { changeRequest target: 'main' }
             steps {
-                sh 'ci/version-raised.sh'
+                // The open pull requests are listed here, before the script fetches main, so that one missing from
+                // the list has merged into what it fetches. The token's step takes nothing from the workspace: its
+                // PATH, worked out here in Groovy rather than by a shell found on the build's PATH, is the build's
+                // without relative directories or any under the workspace, so its shell, gh and every other command
+                // are looked up past .tools/bin; gh runs from / and is told the repository by CHANGE_URL, so the
+                // checkout's git config is not read; and ci/version-raised.sh, which the pull request can change,
+                // runs after, without the token. Not guaranteed: a directory outside the workspace that the build
+                // user can write to passes the filter, so a tool a pull request's code left there runs with the
+                // token (TODO.md); and a pull request whose own Jenkinsfile Jenkins runs controls all of this.
+                script {
+                    def trusted = env.PATH.split(':').findAll { it.startsWith('/') && !it.startsWith(env.WORKSPACE) }
+                    withEnv(["PATH=${trusted.join(':')}"]) {
+                        withCredentials([string(credentialsId: 'GitHub-Agents', variable: 'GH_TOKEN')]) {
+                            sh '''
+                                list="$WORKSPACE/open-pull-requests.txt"
+                                cd / && gh pr list --repo "${CHANGE_URL%/pull/*}" --base "$CHANGE_TARGET" \\
+                                    --state open --limit 1000 --json number --jq '.[].number' > "$list"
+                            '''
+                        }
+                    }
+                }
+                sh 'OPEN_PULL_REQUESTS="$WORKSPACE/open-pull-requests.txt" ci/version-raised.sh'
             }
         }
 
