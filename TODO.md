@@ -42,6 +42,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **A run's base can be a closed run's branch prune deletes.** Review 278 (todo 92): `take_base_branch` takes a
+  closed run's branch that `origin` has as a new run's base, and the new run's pull request targets it, but
+  `prune_remote` (`engine/src/cli/prune.rs`) deletes `origin`'s branch of a merged pull request, or of one closed past
+  `CLOSED_BRANCH_GRACE`, without asking whether another run records it as its `base_branch`; GitHub then closes the
+  new run's pull request. Closed when prune keeps a branch another live run builds on, or the refusal covers it.
+
 - **A GitHub token reaches tools in directories the build user can write outside the workspace.** Review 276 (todo
   91): the Version stage's `gh pr list` and the Release stage's `gh release create` take PATH entries outside
   `$WORKSPACE` on trust, so a `gh` a pull request's tests leave in, say, `~/.local/bin` lasts into later builds and
@@ -49,14 +55,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   checked from here (its systemInfo page is admin-only); the Go tools installed in `~/.local` on 2026-11-11 suggest
   it may. Closed when the agent's PATH is shown to hold only root-owned directories, or both stages run `gh` by a
   root-owned absolute path.
-
-- **A closed in-place run's branch still becomes the next run's base.** Review 267 (todo 87): "`close` leaves an
-  in-place run's checkout on its local-only branch. Once the run is closed, `take_base_branch` skips it
-  (`other.is_closed()`), records that branch as the new run's base, and `check_repo` fetches it and fails with the
-  original `couldn't find remote ref` error." Ticket 87 asked for a closed run's branch to start as before, so the
-  refusal (`engine/src/workflow.rs`, `take_base_branch`) skips closed runs and its message says to check out the
-  base. Closed when the check refuses any run's branch that has not reached `origin` (no `pr_url`, or absent on
-  `origin`), or when `close` switches an in-place run's checkout back to its base.
 
 - **The workflow's errors name commands as a literal `octoflow`, without the project's `--machine`/`--cwd`.**
   Review 267: `take_base_branch`'s "close that run with `octoflow close <key>`" ignores `cli::program_name()`, and

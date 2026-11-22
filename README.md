@@ -409,7 +409,8 @@ configuration instead.
 
 1. **Workspace.** The run gets its own herdr workspace, with a pane per role. The project must be on a branch with a
    clean working tree; the pull request targets that branch. It refuses the branch of another run that is not
-   closed, such as the one a failed run leaves checked out for `resume`: check out that run's base branch instead.
+   closed, such as the one a failed run leaves checked out for `resume`, and of a closed run when `origin` does not
+   have that branch, as when the run failed before publishing: check out that run's base branch instead.
    The branch is fetched from `origin` and fast-forwarded, and if that fails, for example offline or because it has
    diverged, the run stops before the interview. A fetch that could not reach `origin`, or that `origin` refused to
    let in, is tried three more times, 5, 20 and 60 s apart, each wait shown in the log, before the run stops. A
