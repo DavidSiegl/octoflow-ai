@@ -1,5 +1,6 @@
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { type AgentInput, type AgentRef, type Api, HttpError, type Project, type RunRecord } from "../api";
+import { useFollowEnd } from "../hooks";
 import { Conversation } from "./Conversation";
 
 /** How often the shown agent's terminal is read again, in milliseconds. */
@@ -71,11 +72,7 @@ function AgentPane({ api, project, run, agent }: { api: Api; project: Project; r
   // Enter sends it once and success clears what was sent.
   const [sending, setSending] = useState(false);
   const [sendProblem, setSendProblem] = useState<string | null>(null);
-  const screen = useRef<HTMLPreElement>(null);
-  useEffect(() => {
-    // Follow the end of the output, as the pane does.
-    screen.current?.scrollTo?.({ top: screen.current.scrollHeight });
-  }, [text]);
+  const screen = useFollowEnd<HTMLPreElement>(text);
 
   const type = (input: AgentInput) =>
     api.typeInto(project, run, agent.role, input).then(
