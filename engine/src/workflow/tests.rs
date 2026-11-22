@@ -8,7 +8,7 @@ use indexmap::IndexMap;
 use super::fixture::*;
 use super::{RunSettings, Stopped};
 use crate::constants::DEFAULT_HARNESS;
-use crate::constants::{APPROVE, CHANGES_REQUESTED, STALL_SECONDS};
+use crate::constants::{APPROVE, CHANGES_REQUESTED, DEFAULT_TURN_TIMEOUT, STALL_SECONDS};
 use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
 use crate::harness::AgentSettings;
@@ -306,6 +306,25 @@ fn builder_timeout() {
     let message = failure(f.workflow(RunSettings { turn_timeout: 60, ..RunSettings::default() }).run());
     assert!(message.starts_with("the Builder did not write "), "{message}");
     assert!(message.contains("build-1.md within 60s"), "{message}");
+}
+
+/// A turn_timeout of 0, as `--timeout 0` saves it, gives a turn no deadline, while an idle agent is still told.
+#[test]
+fn a_turn_timeout_of_0_is_no_limit() {
+    let f = Fixture::new(vec![
+        ("spec", vec![spec_turn()]),
+        ("build", vec![idle()]),
+        ("review", vec![review_turn(1, APPROVE)]),
+    ]);
+    let (host, build) = (Rc::clone(&f.host), f.state.build_path(1));
+    f.clock.hook(move |now| {
+        if now > (DEFAULT_TURN_TIMEOUT + 60) as f64 {
+            host.write(&build, "report", false).unwrap();
+        }
+    });
+    assert_eq!(f.workflow(RunSettings { turn_timeout: 0, ..no_pr() }).run(), verdict(APPROVE));
+    let stalls = f.told.titles().iter().filter(|t| *t == "Builder is idle without writing build-1.md").count();
+    assert_eq!(stalls, 1);
 }
 
 #[test]

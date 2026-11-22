@@ -7,7 +7,10 @@ use std::cell::RefCell;
 use super::*;
 use crate::constants::{CI_POLL_SECONDS, HEARTBEAT_SECONDS};
 use crate::prompts::template::fill;
-use crate::prompts::{QUALITY_FOLLOWS_NOTE, QUALITY_PASSED_NOTE, QUALITY_STUCK_NOTE, QUALITY_UNRESOLVED_NOTE};
+use crate::prompts::{
+    QUALITY_FOLLOWS_NOTE, QUALITY_FOLLOWS_NO_LIMIT_NOTE, QUALITY_PASSED_NOTE, QUALITY_STUCK_NOTE,
+    QUALITY_UNRESOLVED_NOTE,
+};
 use crate::quality::finding_fingerprint;
 
 /// Fixture::new with the quality gate.
@@ -49,6 +52,22 @@ fn the_gated_builder_hears_that_the_gate_follows_and_its_turns_time_limit() {
     assert!(gated_builds.borrow()[0].ends_with(&format!("\n\n{follows}{end}")), "{}", gated_builds.borrow()[0]);
     let plain = &plain_builds.borrow()[0];
     assert!(plain.ends_with(&end) && !plain.contains("quality gate") && !plain.contains("seconds"), "{plain}");
+}
+
+/// A gated Builder whose turn has no limit (`--timeout 0`) hears that the gate follows, but no time limit (the user's
+/// ruling on review 272's F1).
+#[test]
+fn a_gated_builder_with_no_turn_limit_hears_that_the_gate_follows_but_no_time_limit() {
+    let builds = seen();
+    let f = gated(vec![
+        ("spec", vec![spec_turn()]),
+        ("build", vec![recording(build_turn(1), &builds)]),
+        ("review", vec![review_turn(1, APPROVE)]),
+    ]);
+    assert_eq!(f.workflow(RunSettings { turn_timeout: 0, ..RunSettings::default() }).run(), verdict(APPROVE));
+    let build = &builds.borrow()[0];
+    let end = format!("\n\n{QUALITY_FOLLOWS_NO_LIMIT_NOTE}{}", note(&f.state.build_path(1)));
+    assert!(build.ends_with(&end) && !build.contains("seconds"), "{build}");
 }
 
 #[test]

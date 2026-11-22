@@ -54,7 +54,7 @@ pub fn new_state(
     state.prompt_overrides = prompts.overrides();
     let s = &args.settings;
     state.max_rounds = s.max_rounds.map_or(DEFAULT_MAX_ROUNDS, saturating_u32);
-    state.turn_timeout = s.timeout.filter(|&t| t != 0).map_or(DEFAULT_TURN_TIMEOUT, |t| t.max(0).unsigned_abs());
+    state.turn_timeout = s.timeout.map_or(DEFAULT_TURN_TIMEOUT, |t| t.max(0).unsigned_abs());
     state.permission_mode = s.permission_mode.clone();
     state.models = merged(pipeline.models(), role_models(s, pipeline.roles())?);
     state.next_harnesses = merged(pipeline.agents(), role_agents(s, pipeline.roles())?);

@@ -331,7 +331,7 @@ octoflow metrics | jq -s 'map(.rounds) | add / length'
 | `--machine NAME` | Saved herdr machine to run the agents on. Requires `--cwd`. |
 | `--cwd PATH` | Project directory, on the machine if `--machine` is given. Default: current directory. |
 | `--max-rounds N` | Review rounds before giving up (default 3). |
-| `--timeout SECONDS` | How long one Builder or Reviewer turn may take (default 1800), not counting the time its agent reports it waits on something outside the run. The interview has no limit. |
+| `--timeout SECONDS` | How long one Builder or Reviewer turn may take (default 1800), not counting the time its agent reports it waits on something outside the run; 0 (or less) for no limit. The interview has no limit. |
 | `--agent KIND` | The [harness](#harnesses) every role runs in. Overrides a role's `agent` in the workflow file. |
 | `--role-agent ROLE=KIND` | The harness of one role, by its key, e.g. `review=codex`. Overrides `--agent`; repeatable. |
 | `--permission-mode MODE` | Permission mode for every role, by Claude Code's names; each other harness gets its [equivalent](#harnesses). Which to choose for a run nobody watches: [unattended runs](#unattended-runs). |
@@ -588,7 +588,7 @@ place, with exactly the placeholders of the text it replaces.
 | `FIX_PROMPT.md`, `RECHECK_PROMPT.md` | the Builder's and the Reviewer's prompt in a later round |
 | `REBUILD_NOTE.md`, `REREVIEW_NOTE.md` | to a fresh Builder or Reviewer session in a later round |
 | `QUALITY_FIX_PROMPT.md` | to the quality-gated step when the gate did not pass |
-| `QUALITY_FOLLOWS_NOTE.md` | at the end of every prompt of the quality-gated step in a run with the gate, saying the gate follows and giving the turn's `--timeout` |
+| `QUALITY_FOLLOWS_NOTE.md`, `QUALITY_FOLLOWS_NO_LIMIT_NOTE.md` | at the end of every prompt of the quality-gated step in a run with the gate, saying the gate follows: the first, with the turn's `--timeout`, for a turn with a time limit, the second for one without (a human-paced step, or any under `--timeout 0`) |
 | `QUALITY_PASSED_NOTE.md`, `QUALITY_UNRESOLVED_NOTE.md`, `QUALITY_STUCK_NOTE.md`, `QUALITY_OFF_NOTE.md` | at the end of the verdict step's prompt, on how the quality gate ended |
 | `LOCKED_NOTE.md`, `PROOFS_NOTE.md`, `CARRIED_PROOFS_NOTE.md` | on restored locked files, and on the Reviewer's failing proofs |
 | `BLOCKED_NOTE.md`, `BLOCKED_PROMPT.md` | at the end of every prompt of a step that can block, and once its report asked the human |

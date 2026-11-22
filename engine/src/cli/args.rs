@@ -91,7 +91,7 @@ pub struct Target {
 pub struct Settings {
     /// --max-rounds: review rounds before giving up.
     pub max_rounds: Option<i64>,
-    /// --timeout: seconds a turn may take.
+    /// --timeout: seconds a turn may take; 0 or less for no limit.
     pub timeout: Option<i64>,
     /// --permission-mode, in Claude Code's names, as given; Some("") when given empty.
     pub permission_mode: Option<String>,
@@ -560,11 +560,9 @@ fn settings_args() -> Vec<Arg> {
             .value_parser(number())
             .allow_negative_numbers(true)
             .help(format!("Review rounds before giving up (default {DEFAULT_MAX_ROUNDS})")),
-        Arg::new("timeout")
-            .long("timeout")
-            .value_parser(number())
-            .allow_negative_numbers(true)
-            .help(format!("Seconds a Builder or Reviewer turn may take (default {DEFAULT_TURN_TIMEOUT})")),
+        Arg::new("timeout").long("timeout").value_parser(number()).allow_negative_numbers(true).help(format!(
+            "Seconds a Builder or Reviewer turn may take, 0 or less for no limit (default {DEFAULT_TURN_TIMEOUT})"
+        )),
         Arg::new("permission-mode").long("permission-mode").help(
             "Permission mode for every role, by Claude Code's names, e.g. auto or acceptEdits. claude takes any as \
              it is. agy gets nothing for default, --mode accept-edits for acceptEdits, \

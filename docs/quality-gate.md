@@ -458,8 +458,8 @@ as it answers the gate's.
 answers by number. A Builder in a fresh session gets `BUILD_PROMPT`, `REBUILD_NOTE` with every earlier report, and
 `QUALITY_FIX_PROMPT`. Every prompt of the gated step, its first included, ends with `QUALITY_FOLLOWS_NOTE`: the
 orchestrator runs the gate once the report is written, so the Builder runs the tests its change touches rather than
-the gate, within the turn's `--timeout` seconds; a human-paced gated step, whose turn has no deadline, gets no such
-note. The Reviewer's prompt ends with `QUALITY_PASSED_NOTE`, `QUALITY_UNRESOLVED_NOTE` or `QUALITY_STUCK_NOTE`, naming the round's last quality file, and points at the Builder's last report of the round.
+the gate, within the turn's `--timeout` seconds. A turn with no deadline, a human-paced gated step's or any under
+`--timeout 0`, gets `QUALITY_FOLLOWS_NO_LIMIT_NOTE` instead, the same note without the time limit. The Reviewer's prompt ends with `QUALITY_PASSED_NOTE`, `QUALITY_UNRESOLVED_NOTE` or `QUALITY_STUCK_NOTE`, naming the round's last quality file, and points at the Builder's last report of the round.
 The pull request's description includes the last quality file.
 
 A snapshot in which gitleaks, by the base's rules, finds a secret or an added comment telling it to allow a line is not
